@@ -686,7 +686,8 @@ void hgrpaint::HgrPaintEditor::pasteFloatingAt(int destX, int destY)
 
 void hgrpaint::HgrPaintEditor::paintPaletteByte(int lx, int ly)
 {
-    if (grMode || dhgrMode) return;   // per-byte palette bit is a 280-HGR concept
+    if (grMode || dhgrMode || dlgrMode) return;   // per-byte palette bit is a 280-HGR concept
+    // (dlgrMode included: its 0x800 shadow must never see HGR interleave offsets)
     if (lx < 0 || lx > 279 || ly < 0 || ly > 191) return;
     const int byteCol = lx / 7;
     const int off = hgrpaint::hgrByteOffset(0, ly) + byteCol;
@@ -1363,7 +1364,7 @@ void hgrpaint::HgrPaintEditor::renderCanvas(const std::vector<uint8_t>& memory,
     // ── Palette-seam overlay (HGR-07): mark adjacent lit bytes that disagree
     // on the shared high bit — where NTSC artifact-colour bleed happens. Scan
     // only the visible/scrolled region for perf.
-    if (showConflicts && !grMode && !dhgrMode) {   // palette seams are a 280-HGR concept
+    if (showConflicts && !grMode && !dhgrMode && !dlgrMode) {   // palette seams are a 280-HGR concept
         const float sx = ImGui::GetScrollX(), sy = ImGui::GetScrollY();
         const ImVec2 vis = ImGui::GetContentRegionAvail();
         const int y0 = std::clamp(static_cast<int>(sy / scale), 0, kHiresHeight - 1);
@@ -2173,7 +2174,7 @@ bool hgrpaint::HgrPaintEditor::performFileAction(bool forSave, int saveKind,
         // ($1FF8-$1FFF) — past the last displayed byte, so invisible. The lo-res
         // page is just 1 KB and has no such screen hole; DHGR dumps stay pristine
         // A2FC (both planes' screen holes belong to the picture format).
-        if (!grMode && !dhgrMode) {
+        if (!grMode && !dhgrMode && !dlgrMode) {
             static const char kTag[8] = { 'P','O','M','1','H','G','R','\0' };
             for (int i = 0; i < 8; ++i) {
                 const int off = 0x1FF8 + i;
