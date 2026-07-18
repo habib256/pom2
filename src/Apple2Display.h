@@ -32,6 +32,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 class LeChatMauveCard;
@@ -122,6 +123,15 @@ public:
     // Call after releasing the lock, before pixels(). No-op when nothing
     // is pending.
     void finishPendingCpuDemod();
+
+    // Serialises the two writers of this display's buffers: the UI thread
+    // (render → finishPendingCpuDemod → GL upload, with stateMutex released
+    // mid-sequence) and the AI-control HTTP worker (render → capture demod →
+    // pixels under stateMutex). Lock ORDER when both are needed: stateMutex
+    // FIRST, then captureMutex — both sides follow it, so no ABBA. Without
+    // this, an AI /screen.ppm request landing during the UI's out-of-lock
+    // demod raced the shared frame/frame80 vectors.
+    std::mutex& captureMutex() { return captureMtx_; }
 
     // Lazily completes any deferred OE-CPU demod so every consumer (tests,
     // screenshot paths) that does render() → pixels() stays correct without
@@ -236,6 +246,7 @@ public:
     bool mixedCompositeUsesFramebuffer() const { return mixedCompositeUsesFb_; }
 
 private:
+    std::mutex captureMtx_;          // see captureMutex()
     std::vector<uint32_t> frame;     // kWidth   * kHeight RGBA pixels
     std::vector<uint32_t> frame80;   // kWidth80 * kHeight RGBA pixels (IIe)
     bool useFrame80     = false;     // true for the current frame when 80-col

@@ -94,6 +94,16 @@ void SmartPortCard::onReset()
     readCacheBlock_.fill(0xFFFF);
     writeBufPrimed_.fill(false);
     ioError_.fill(false);
+    // SmartPort call engine: Ctrl-Reset mid-call must not leave the
+    // engine half-armed (stale $C0n9 result replay, $C0nD still
+    // advertising push pages).
+    spCollectN_ = 0;
+    spCollect_.fill(0);
+    spResult_.clear();
+    spResultPos_ = 0;
+    spPushPages_ = 0;
+    spError_     = 0;
+    spArmed_     = false;
     if (audibleMotorOn_ && sound_) sound_->motor(false, true);
     audibleMotorOn_ = false;
     lastAccessCycle_ = 0;
@@ -101,7 +111,7 @@ void SmartPortCard::onReset()
 
 void SmartPortCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
-    out.push_back('S'); out.push_back('P'); out.push_back(1);
+    out.push_back('S'); out.push_back('P'); out.push_back(2);
     out.push_back(static_cast<uint8_t>(activeUnit_));
     for (size_t u = 0; u < kMaxUnits; ++u) {
         out.push_back(static_cast<uint8_t>(selectedBlock_[u]));
@@ -112,14 +122,31 @@ void SmartPortCard::appendSnapshotState(std::vector<uint8_t>& out) const
         out.push_back(ioError_[u] ? 1 : 0);
         out.insert(out.end(), writeBuf_[u].begin(), writeBuf_[u].end());
     }
+    // v2 trailer: the SmartPort call engine. A dispatch (BEGIN → EXECUTE
+    // → 512-byte pull) spans thousands of cycles and can straddle a
+    // rewind-ring frame boundary; restoring without this resumed the
+    // 6502 inside the $CE00 pull loop against an EMPTY spResult_ —
+    // reg $C0n9 then streamed 512 × $00 into the guest buffer.
+    out.push_back(static_cast<uint8_t>(spCollectN_));
+    out.insert(out.end(), spCollect_.begin(), spCollect_.end());
+    out.push_back(static_cast<uint8_t>(spResult_.size() & 0xFF));
+    out.push_back(static_cast<uint8_t>(spResult_.size() >> 8));
+    out.insert(out.end(), spResult_.begin(), spResult_.end());
+    out.push_back(static_cast<uint8_t>(spResultPos_ & 0xFF));
+    out.push_back(static_cast<uint8_t>(spResultPos_ >> 8));
+    out.push_back(spPushPages_);
+    out.push_back(spError_);
+    out.push_back(spArmed_ ? 1 : 0);
 }
 
 void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     constexpr size_t kPerUnit = 6 + kBlockBytes;
     if (len < 4 + kMaxUnits * kPerUnit ||
-        data[0] != 'S' || data[1] != 'P' || data[2] != 1)
+        data[0] != 'S' || data[1] != 'P' ||
+        (data[2] != 1 && data[2] != 2))
         return;
+    const uint8_t ver = data[2];
     activeUnit_ = std::min<size_t>(data[3], kMaxUnits - 1);
     const uint8_t* p = data + 4;
     for (size_t u = 0; u < kMaxUnits; ++u) {
@@ -129,6 +156,33 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         ioError_[u]        = p[5] != 0;
         std::memcpy(writeBuf_[u].data(), p + 6, kBlockBytes);
         p += kPerUnit;
+    }
+    // Engine defaults first — v1 snapshots (and truncated v2 chunks)
+    // restore with the engine idle, which at worst re-fails a call the
+    // guest will retry.
+    spCollectN_ = 0; spCollect_.fill(0);
+    spResult_.clear(); spResultPos_ = 0;
+    spPushPages_ = 0; spError_ = 0; spArmed_ = false;
+    if (ver == 2) {
+        const uint8_t* end = data + len;
+        auto have = [&](size_t n) {
+            return static_cast<size_t>(end - p) >= n;
+        };
+        if (!have(1 + spCollect_.size() + 2)) return;
+        spCollectN_ = std::min<size_t>(*p++, spCollect_.size());
+        std::memcpy(spCollect_.data(), p, spCollect_.size());
+        p += spCollect_.size();
+        const size_t rn = static_cast<size_t>(p[0] | (p[1] << 8));
+        p += 2;
+        if (!have(rn + 5)) return;
+        spResult_.assign(p, p + rn);
+        p += rn;
+        spResultPos_ = std::min<size_t>(
+            static_cast<size_t>(p[0] | (p[1] << 8)), spResult_.size());
+        p += 2;
+        spPushPages_ = *p++;
+        spError_     = *p++;
+        spArmed_     = *p != 0;
     }
     // Media didn't move; the read cache just re-fills from the same block.
     readCacheValid_.fill(false);
@@ -270,6 +324,7 @@ void SmartPortCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             spResultPos_ = 0;
             spPushPages_ = 0;
             spError_     = 0;
+            spArmed_     = true;                // arms exactly one EXECUTE
             break;
         default:
             break;
@@ -416,11 +471,22 @@ void SmartPortCard::buildRom()
     // call handler in the $C800 bank (see buildC800) — STATUS/DIB, READ,
     // WRITE, FORMAT, CONTROL, INIT with real error codes. Callers that
     // hardcode entry+3 used to fall through NOP padding INTO the boot
-    // routine at $Cn20 (booting block 0 over $0800). Fetching $Cn0D also
-    // selects this card's expansion bank, so the JMP target is live.
-    rom_[0x0D] = 0x4C;                           // JMP $CE00
-    rom_[0x0E] = 0x00;
-    rom_[0x0F] = 0xCE;
+    // routine at $Cn20 (booting block 0 over $0800).
+    //
+    // BIT $CFFF first — mandatory expansion-window release, same dance
+    // as the real Liron firmware. On a IIe any $C3xx access with
+    // SLOTC3ROM off latches `intC8Rom` (80-col COUT, ProDOS slot scans),
+    // and while latched a bare JMP $CE00 fetches INTERNAL ROM at $CE00
+    // (Memory::memRead intC8Rom branch) — arbitrary firmware bytes
+    // instead of our handler. $CFFF clears the latch + releases any
+    // other card's claim; fetching the JMP at $Cn10 then re-claims the
+    // window for THIS slot (SlotBus::slotRomRead), so $CE00 is live.
+    rom_[0x0D] = 0x2C;                           // BIT $CFFF
+    rom_[0x0E] = 0xFF;
+    rom_[0x0F] = 0xCF;
+    rom_[0x10] = 0x4C;                           // JMP $CE00
+    rom_[0x11] = 0x00;
+    rom_[0x12] = 0xCE;
 
     // ── Boot routine ($Cn20) ───────────────────────────────────────────
     uint8_t pc = kBootOff;
@@ -592,7 +658,7 @@ void SmartPortCard::buildRom()
     // $CnFE=$BF, $CnFF=$0A — then overlay POM2's HLE service entries on
     // top: the real firmware's IWM/UniDisk code can't run without the
     // drive-side 65C02, so every serviceable entry routes to the block
-    // backend instead. Kept real: $03-$09 (signature/class), $10-$1F,
+    // backend instead. Kept real: $03-$09 (signature/class), $13-$1F,
     // $E3-$FF (ID bytes). The synthetic $Cn00 "JMP $Cn20" reproduces the
     // real page's own $Cn01=$20 signature byte by construction.
     if (lironLoaded_ && slot_ >= 1 && slot_ <= 7) {
@@ -600,7 +666,11 @@ void SmartPortCard::buildRom()
         std::memcpy(rom_.data(),
                     lironRom_.data() + static_cast<size_t>(slot_) * 256, 256);
         rom_[0x00] = 0x4C; rom_[0x01] = kBootOff; rom_[0x02] = kSlotRomHi;
-        for (int i = 0x0A; i <= 0x1F; ++i) rom_[i] = synth[i];  // $Cn0A/$Cn0D
+        // $Cn0A-$Cn12 = our driver + SmartPort entries (BIT $CFFF +
+        // JMP $CE00 spill to $Cn12); an earlier `i <= 0x1F` clobbered
+        // the real page's $10-$1F with synthetic NOP padding despite
+        // the "kept real" doc above.
+        for (int i = 0x0A; i <= 0x12; ++i) rom_[i] = synth[i];
         for (int i = kBootOff; i <= 0xE2; ++i) rom_[i] = synth[i];
     }
 
@@ -669,6 +739,15 @@ uint8_t SmartPortCard::expansionRomRead(uint16_t offset)
 // pointer, [5..] cmd-specific (statcode, or 3-byte block number).
 uint8_t SmartPortCard::spExecute()
 {
+    // One EXECUTE per BEGIN. Reading reg 0xE has side effects, so a stray
+    // read without a fresh BEGIN (probing scans, debugger views) used to
+    // replay the PREVIOUS command in full — re-arming the push machinery
+    // and desyncing an in-flight legacy stream. Disarmed: just report the
+    // last error code, leave all engine state (incl. a half-pulled
+    // result) untouched.
+    if (!spArmed_) return spError_;
+    spArmed_ = false;
+
     spResult_.clear();
     spResultPos_ = 0;
     spPushPages_ = 0;

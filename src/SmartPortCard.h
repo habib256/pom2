@@ -213,6 +213,11 @@ private:
     size_t                  spResultPos_ = 0;
     uint8_t                 spPushPages_ = 0;  // 512-byte WRITE → 2
     uint8_t                 spError_     = 0;
+    // BEGIN (write 0xE) arms exactly ONE EXECUTE (read 0xE); spExecute
+    // disarms. A stray read of reg 0xE (device-select probe, debugger
+    // memory view) must not replay the previous command or clobber a
+    // half-pulled result — it just re-reads spError_.
+    bool                    spArmed_     = false;
 
     void    buildRom();
     void    buildC800();

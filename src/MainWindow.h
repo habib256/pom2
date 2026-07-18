@@ -331,6 +331,10 @@ private:
     // Recipient for "print with e-mail" — persisted (printer_email_to)
     // so the address survives across sessions.
     std::string  printerEmailTo;
+    // Memory-viewer edits queued during memViewer->render() (which runs
+    // under stateMutex) and flushed through memWrite after the lock is
+    // released — the write callback must never re-lock (self-deadlock).
+    std::vector<std::pair<uint16_t, uint8_t>> pendingMemViewerWrites;
     // Mockingboard live state panel — shows VIA T1 / IFR / IER and the
     // two AY-3-8910 register banks. Primary use: diagnose silent
     // IRQ-driven music drivers (Ultima IV, Nox Archaist) by seeing

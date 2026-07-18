@@ -1144,11 +1144,15 @@ void AiControlServer::handleScreen(int fd, const Request& /*req*/)
 {
     if (!display_) { sendJsonError(fd, 503, "no display attached"); return; }
     // Render under stateMutex so we don't race the CPU thread mutating
-    // VRAM mid-scan — same contract as MainWindow::render().
+    // VRAM mid-scan — same contract as MainWindow::render(). captureMutex
+    // (taken second — same stateMutex → captureMutex order as MainWindow)
+    // additionally serialises us against the UI thread's out-of-lock
+    // demod + GL upload on this same display instance.
     int w = 0, h = 0;
     std::vector<uint8_t> rgb;
     {
         std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
+        std::lock_guard<std::mutex> capLk(display_->captureMutex());
         display_->render(ctrl_->memory());
         // OE-GPU mode demodulates in a GLSL pass MainWindow owns; pixels()
         // would return the LUT fallback framebuffer, not the composite image

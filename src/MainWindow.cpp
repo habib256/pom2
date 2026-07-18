@@ -148,12 +148,16 @@ MainWindow::MainWindow(bool forceIIPlus)
       charRomLocale  (pom2::CharRomLocale::ProfileDefault),
       activeProfile  (pom2::SystemProfile::AppleIIPlus)
 {
-    // Memory viewer writes go through Memory::memWrite under stateMutex,
-    // so a byte poked from the UI passes through ROM-write protection and
-    // any future I/O hooks just like a CPU store would.
+    // Memory viewer writes are DEFERRED: renderMemoryViewerWindow holds
+    // stateMutex across memViewer->render(), and this callback fires from
+    // inside render() (edit / undo / redo) — locking here again would
+    // self-deadlock the UI thread on the non-recursive mutex. The queue
+    // is flushed through Memory::memWrite under stateMutex right after
+    // render() returns, so the byte still passes through ROM-write
+    // protection and I/O hooks just like a CPU store would. UI-thread
+    // only — no synchronisation needed on the vector itself.
     memViewer->setWriteCallback([this](uint16_t a, uint8_t v) {
-        std::lock_guard<std::mutex> lk(controller->stateMutex());
-        controller->memory().memWrite(a, v);
+        pendingMemViewerWrites.emplace_back(a, v);
     });
 
     // Load any persisted runtime config. Missing/malformed file → use
@@ -1799,15 +1803,25 @@ void MainWindow::uploadScreenTexture()
         display->setOeDemodParams(dp);
     }
 
+    // captureMutex serialises us against the AI-control worker, which
+    // renders/captures this same display under stateMutex. Lock order is
+    // stateMutex → captureMutex on both sides (no ABBA); we then RELEASE
+    // stateMutex before the demod + GL upload so the CPU worker keeps
+    // running — only a concurrent AI capture (rare) waits on us.
+    std::unique_lock<std::mutex> capLk(display->captureMutex(),
+                                       std::defer_lock);
     {
         // Render under stateMutex so we get a consistent snapshot of RAM
         // (otherwise the CPU may be mid-frame with the text screen half
         // updated, producing tearing).
         std::lock_guard<std::mutex> lk(controller->stateMutex());
+        capLk.lock();
         display->render(controller->memory());
     }
-    // OE-CPU demod runs OUTSIDE the lock — it reads only display-owned
+    // OE-CPU demod runs OUTSIDE stateMutex — it reads only display-owned
     // buffers and took ~1-2 ms of CPU-worker stall per UI frame inside it.
+    // (Still under captureMutex: the demod + pixels() upload below mutate
+    // and read the shared frame buffers.)
     display->finishPendingCpuDemod();
 
     const int w = display->width();
@@ -7433,12 +7447,23 @@ void MainWindow::renderMemoryViewerWindow()
     if (!showMemViewer) return;
     ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Memory viewer", &showMemViewer)) {
-        // Hold the state mutex briefly so the snapshot the viewer reads
-        // (Memory::data()) is consistent — no torn writes mid-row.
-        std::lock_guard<std::mutex> lk(controller->stateMutex());
-        memViewer->setCmosMode(
-            controller->cpu().getCpuMode() == M6502::CpuMode::CMOS);
-        memViewer->render();
+        {
+            // Hold the state mutex briefly so the snapshot the viewer reads
+            // (Memory::data()) is consistent — no torn writes mid-row.
+            std::lock_guard<std::mutex> lk(controller->stateMutex());
+            memViewer->setCmosMode(
+                controller->cpu().getCpuMode() == M6502::CpuMode::CMOS);
+            memViewer->render();
+        }
+        // Edits queued by the write callback are applied here, after the
+        // render lock is released — memWrite needs stateMutex itself, and
+        // taking it inside render() would self-deadlock (see ctor).
+        if (!pendingMemViewerWrites.empty()) {
+            std::lock_guard<std::mutex> lk(controller->stateMutex());
+            for (const auto& [a, v] : pendingMemViewerWrites)
+                controller->memory().memWrite(a, v);
+            pendingMemViewerWrites.clear();
+        }
     }
     ImGui::End();
 }
