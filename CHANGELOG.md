@@ -14,10 +14,14 @@ not SMTP**: no credentials/network code in the emulator, works on every
 desktop OS *and* the WASM build (where file saves are impossible — this
 is the browser build's first way to get a printout off the page).
 Pitfall pinned by `printer_email_smoke`: the URL is launched through
-`system("xdg-open '...'")` on Linux, so *everything* shell-relevant must
-be percent-encoded — the test asserts no quote/backtick/`$` can survive
-`buildMailtoUrl`. Body capped at 8 000 chars (mail clients truncate
-long URLs silently; we truncate loudly with an in-body marker instead).
+`system("xdg-open '...' &")` on Linux, so *everything* shell-relevant
+must be percent-encoded — the test asserts no quote/backtick/`$` can
+survive `buildMailtoUrl` — and detached, because `xdg-open`'s generic
+fallback waits for the handler and would freeze the render loop. Body
+capped at 4 000 raw chars: worst-case URL expansion is ×6 (LF → CRLF →
+`%0D%0A`), and the cap must clear Windows' ~32 KB ShellExecute limit
+even for an all-newline spool; mail clients truncate long URLs
+silently, we truncate loudly with an in-body marker instead.
 
 ## 2026-07-12 — SoftCard/Z80 bug hunt: 6 confirmed, 6 fixed, 1 refuted-as-faithful
 

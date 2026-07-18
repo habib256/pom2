@@ -15,6 +15,7 @@
 #include <shellapi.h>
 #else
 #include <cstdlib>
+#include <sys/wait.h>
 #endif
 
 namespace pom2 {
@@ -79,7 +80,10 @@ Mailto buildMailtoUrl(std::string_view to,
     std::string bodyText(body);
     if (bodyText.size() > bodyCap) {
         bodyText.resize(bodyCap);
-        bodyText += "\n[spool truncated - use \"Save as .txt\" for the full printout]\n";
+        // Marker must hold on every build — the WASM panel has no
+        // "Save as .txt", but the full spool always stays in the panel.
+        bodyText += "\n[spool truncated - the full printout remains in "
+                    "the POM2 printer panel]\n";
         m.truncated = true;
     }
 
@@ -124,13 +128,23 @@ bool openMailClient(const std::string& mailtoUrl, std::string* err)
     const char* launcher = "xdg-open";
 #endif
     // The URL is fully percent-encoded, so it contains no quote or shell
-    // metacharacters — single-quoting is belt and braces.
+    // metacharacters — single-quoting is belt and braces. Detached with
+    // '&' so xdg-open's open_generic fallback (which waits for the
+    // handler to exit) can never block the UI thread; the shell then
+    // returns as soon as the launcher is spawned.
     const std::string cmd = std::string(launcher) + " '" + mailtoUrl +
-                            "' >/dev/null 2>&1";
+                            "' >/dev/null 2>&1 &";
     const int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        if (err) *err = std::string(launcher) + " exited with status " +
-                        std::to_string(rc);
+    if (rc == -1) {
+        if (err) *err = "could not spawn a shell to run " +
+                        std::string(launcher);
+        return false;
+    }
+    if (WIFEXITED(rc) && WEXITSTATUS(rc) != 0) {
+        // With '&' the shell itself exits 0 unless the command line was
+        // unrunnable; decode properly rather than echoing waitpid bits.
+        if (err) *err = std::string(launcher) + " failed to start (shell "
+                        "exit " + std::to_string(WEXITSTATUS(rc)) + ")";
         return false;
     }
     return true;

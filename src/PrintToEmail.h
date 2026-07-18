@@ -34,10 +34,12 @@
 namespace pom2 {
 namespace printmail {
 
-/// Raw-body cap (characters before percent-encoding). Chosen well under
-/// the ~32 KB Windows ShellExecute URL limit even at worst-case 3×
-/// percent-encoding expansion.
-constexpr size_t kDefaultBodyCap = 8000;
+/// Raw-body cap (characters before percent-encoding). Worst-case
+/// expansion is 6× — an LF doubles to CRLF, then each byte
+/// percent-encodes to 3 chars (`\n` → `%0D%0A`) — so 4 000 raw chars
+/// stay under the ~32 KB Windows ShellExecute URL limit even for an
+/// all-newline spool.
+constexpr size_t kDefaultBodyCap = 4000;
 
 /// RFC 3986 percent-encoding. Unreserved characters (ALPHA / DIGIT /
 /// "-" / "." / "_" / "~") pass through; every other byte becomes %XX
@@ -64,10 +66,11 @@ Mailto buildMailtoUrl(std::string_view to,
                       size_t bodyCap = kDefaultBodyCap);
 
 /// Hand the URL to the host's default mail client. Returns false and
-/// fills *err (if non-null) when the launcher itself fails; a launcher
-/// that succeeds but has no mail client configured is the host's
-/// problem to report. Safe to call from the UI thread — the launchers
-/// dispatch and return without waiting for the mail client.
+/// fills *err (if non-null) when the launcher could not be spawned.
+/// Safe to call from the UI thread: on POSIX the launcher is detached
+/// (`&`) so a slow `xdg-open` fallback path can never freeze the render
+/// loop — the trade-off is that a launcher that spawns but then finds
+/// no mail handler reports its failure to the desktop, not to POM2.
 bool openMailClient(const std::string& mailtoUrl, std::string* err = nullptr);
 
 } // namespace printmail

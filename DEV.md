@@ -2093,10 +2093,18 @@ default mail client — `xdg-open` on Linux, `open` on macOS,
   single-quoted `system()` launch — the smoke test pins that no quote /
   backtick / `$` survives encoding.
 * **Body cap.** `mailto:` URLs travel through argv / the URL bar, so
-  the body is truncated at 8 000 raw chars (`kDefaultBodyCap`, well
-  under the ~32 KB Windows ShellExecute limit at worst-case ×3
-  encoding expansion) with an in-body marker + a `truncated` flag the
-  panel surfaces ("use Save as .txt for the full printout").
+  the body is truncated at 4 000 raw chars (`kDefaultBodyCap`).
+  Worst-case encoding expansion is **6×** — LF doubles to CRLF, then
+  every byte percent-encodes to 3 chars — so even an all-newline spool
+  stays under the ~32 KB Windows ShellExecute limit. An in-body marker
+  + a `truncated` flag surface the cut in the panel (the advice text is
+  build-aware: "Save as .txt" natively, "copy from the preview" on
+  WASM where saves don't exist).
+* **Non-blocking launch.** The POSIX launcher runs detached
+  (`system("xdg-open '…' &")`) because `xdg-open`'s `open_generic`
+  fallback waits for the handler to exit — foregrounded, that froze
+  the render loop for as long as the mail client stayed open. Spawn
+  failures decode `WEXITSTATUS` instead of echoing raw waitpid bits.
 * Recipient persists across sessions (`printer_email_to` setting); the
   send button gates on `looksLikeEmail` (lenient: one '@', non-empty
   sides, no whitespace/quotes — real validation is the mail client's

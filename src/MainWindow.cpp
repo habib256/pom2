@@ -4022,22 +4022,39 @@ void MainWindow::renderPrinterPanelWindow()
             (nBytes > 0) && pom2::printmail::looksLikeEmail(printerEmailTo);
         ImGui::BeginDisabled(!canMail);
         if (ImGui::Button("E-mail spool", ImVec2(100, 0))) {
-            const auto t  = std::time(nullptr);
-            const auto tm = *std::localtime(&t);
-            char stamp[32];
-            std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M", &tm);
-            const auto mail = pom2::printmail::buildMailtoUrl(
-                printerEmailTo,
-                std::string("POM2 printout ") + stamp,
-                printerCard->spoolText());
-            std::string err;
-            if (pom2::printmail::openMailClient(mail.url, &err)) {
-                printerLastSaveStatus = mail.truncated
-                    ? "Opened mail client — spool truncated to fit the "
-                      "message body; use Save as .txt for the full printout"
-                    : "Opened mail client with the spool in the message body";
+            const std::string spoolBody = printerCard->spoolText();
+            if (spoolBody.empty()) {
+                // bytesWritten() can be non-zero on a NUL-only spool
+                // (strobe noise) that spoolText() renders empty.
+                printerLastSaveStatus =
+                    "Spool contains no printable text — nothing to send";
             } else {
-                printerLastSaveStatus = "E-mail failed: " + err;
+                const auto t  = std::time(nullptr);
+                const auto tm = *std::localtime(&t);
+                char stamp[32];
+                std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M", &tm);
+                const auto mail = pom2::printmail::buildMailtoUrl(
+                    printerEmailTo,
+                    std::string("POM2 printout ") + stamp,
+                    spoolBody);
+                std::string err;
+                if (pom2::printmail::openMailClient(mail.url, &err)) {
+#ifdef __EMSCRIPTEN__
+                    // No file saves in the browser build — point at the
+                    // preview instead of the greyed-out Save button.
+                    printerLastSaveStatus = mail.truncated
+                        ? "Opened mail client — spool truncated to fit the "
+                          "message body; copy the full text from the preview"
+                        : "Opened mail client with the spool in the message body";
+#else
+                    printerLastSaveStatus = mail.truncated
+                        ? "Opened mail client — spool truncated to fit the "
+                          "message body; use Save as .txt for the full printout"
+                        : "Opened mail client with the spool in the message body";
+#endif
+                } else {
+                    printerLastSaveStatus = "E-mail failed: " + err;
+                }
             }
         }
         ImGui::EndDisabled();
