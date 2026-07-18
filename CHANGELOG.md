@@ -5,6 +5,47 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-07-18 — Release bug hunt: 4-angle adversarial review, 12 fixed
+
+Pre-release sweep (printer/e-mail diff, HGR Paint, Liron SmartPort,
+cross-cutting threading + untrusted-input parsing), every finding
+re-verified in code before fixing. Untrusted-file parsing came back
+clean. Fixed:
+
+1. **DLGR heap overflows (3 sites, one family)** — the paint editor's
+   DLGR mode passed the old `grMode || dhgrMode` guards, so three
+   280-HGR-only code paths (Palette-shift tool, POM1HGR save tag,
+   palette-seam overlay) indexed the 0x800-byte DLGR shadow with
+   HGR-interleave offsets up to 0x1FF7: OOB read/WRITE on the vector,
+   plus live-RAM corruption via `emitShadowEdit`/`pokeByte` (the save
+   path stamped "POM1HGR\0" into HGR page 1 on every DLGR save).
+2. **Memory-viewer edit self-deadlock** — the write callback re-locked
+   `stateMutex` already held across `memViewer->render()`; any hex
+   edit / undo / redo froze the app. Writes are now queued and flushed
+   after the render lock drops (still through `memWrite`, so ROM
+   protection holds).
+3. **Display race UI ↔ AI-control worker** — the UI thread's
+   deliberately-out-of-lock OE-CPU demod + GL upload raced the HTTP
+   worker's `/screen.ppm` render/capture on the same `Apple2Display`.
+   New `captureMutex`, lock order `stateMutex → captureMutex` on both
+   sides; the CPU worker still never waits behind the demod.
+4. **SmartPort `$Cn0D` on IIe** — the SmartPort entry was a bare
+   `JMP $CE00`; with `intC8Rom` latched (any 80-col COUT does it) the
+   fetch hit INTERNAL rom at $CE00 → wild jump. Now `BIT $CFFF` first
+   (the real Liron protocol), JMP moved to `$Cn10` whose fetch
+   re-claims the expansion window. Also: real-ROM overlay clobbered
+   the dump's `$10-$1F` with NOPs; reset left the call engine armed;
+   a stray `$C0nE` read replayed the previous command; snapshot 'SP'
+   v2 now carries the call engine so a rewind mid-dispatch no longer
+   streams 512×$00 into the guest buffer.
+5. **Print-with-e-mail hardening** — see the entry below (cap ×6 math,
+   detached launcher, WEXITSTATUS, WASM-aware advice, NUL-only spool).
+
+Not fixed, tracked in TODO: //c-class `$C50D` non-fail-closed wild jump
+(low reachability), `intC8Rom`/expansion-owner missing from snapshots.
+Noted as intentional: HGR "Load" writing past 8 KB (full-memory dumps),
+the macOS `glDeleteProgram` change in 440d5c2 (leak fix).
+
 ## 2026-07-18 — Print with e-mail (printer spool → mailto)
 
 The printer panel gained an "E-mail spool" button: composes an RFC 6068

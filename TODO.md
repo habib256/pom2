@@ -1,6 +1,6 @@
 # POM2 — TODO
 
-Status as of 2026-07-12. Resolved items → `CHANGELOG.md`. MAME refs → `DEV.md`.
+Status as of 2026-07-18. Resolved items → `CHANGELOG.md`. MAME refs → `DEV.md`.
 
 **Format**: `🟠 high · 🟡 medium · 🟢 low` at the head of each item. Indicative
 effort in *italics*. File/line in `backticks`. Quick read:
@@ -236,6 +236,18 @@ Grouped by subsystem. Severity encoded by 🟠/🟡/🟢 at the head of each ite
   inconsistent on the same card; CONTROL calls needing the control-list
   DATA (only code 0 works — the stub has no guest→device list copy);
   extended $4x calls return $01.
+- 🟢 **SmartPort `$Cn0D` on armed //c-class hole is not fail-closed**
+  (2026-07-18 hunt): the `$C500-$C5FF` hole doesn't cover `$C800-$CFFF`,
+  so the `JMP $CE00` at `$C510` lands in //c internal firmware.
+  Reachability is low (`$Cn07=$01` steers SmartPort-aware software to
+  the ProDOS entry); a real fix needs the hole to also route the
+  expansion window while armed. `SmartPortCard.cpp` (buildRom).
+- 🟡 **`intC8Rom` + `SlotBus::activeExpansionSlot` not serialized**
+  (2026-07-18 hunt): a snapshot/rewind taken while the PC executes
+  inside `$C800-$CFFF` card code (now routine for SmartPort dispatch)
+  restores with the expansion window unclaimed → the CPU fetches open
+  bus. Add both to the Memory snapshot trailer. `Memory.cpp`,
+  `MachineSnapshot.cpp`.
 - 🟢 **`$C05E/F` ignores IOUDIS on //c-class** (MAME gates DHIRES on
   `m_ioudis`); II+ broadcasts `$C00C/D` on reads while IIe is write-only —
   both flagged for awareness by the 2026-07-12 Chat Mauve review.
