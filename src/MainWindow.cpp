@@ -22,6 +22,7 @@
 #include "GrapplerCard.h"
 #include "PhasorCard.h"
 #include "PrinterCard.h"
+#include "PrintToEmail.h"
 #include "Disk35Controller_ImGui.h"
 #include "DiskController_ImGui.h"
 #include "DiskIICard.h"
@@ -398,6 +399,7 @@ MainWindow::MainWindow(bool forceIIPlus)
         showAudioMixer     = settings->getBool ("show_mixer",      showAudioMixer);
         showSscPanel       = settings->getBool ("show_ssc",        showSscPanel);
         showPrinterPanel   = settings->getBool ("show_printer",    showPrinterPanel);
+        printerEmailTo     = settings->getString("printer_email_to", printerEmailTo);
         sscPortInput       = settings->getInt  ("ssc_port",        sscPortInput);
         diskTurboWhileMotor = settings->getBool("disk_turbo",      diskTurboWhileMotor);
         // Dallas DS1216E "No-Slot Clock" — sits under the Monitor ROM
@@ -845,6 +847,7 @@ MainWindow::~MainWindow()
     settings->setBool  ("show_mixer",      showAudioMixer);
     settings->setBool  ("show_ssc",        showSscPanel);
     settings->setBool  ("show_printer",    showPrinterPanel);
+    settings->setString("printer_email_to", printerEmailTo);
     settings->setBool  ("show_nsclock",    showNoSlotClockPanel);
     settings->setBool  ("nsclock_enable",  controller->noSlotClock().isEnabled());
     settings->setBool  ("show_ntsc",       showNtscSettings);
@@ -2140,7 +2143,7 @@ void MainWindow::renderMenuBar()
                 ? "Printer (slot " + std::to_string(printerCard->getSlot()) + ")"
                 : std::string("Printer (no card plugged)");
             devItem(lbl.c_str(), &showPrinterPanel,
-                    "Parallel printer card → text spool (.txt).",
+                    "Parallel printer card → text spool (.txt or e-mail).",
                     printerCard != nullptr);
         }
         devItem("Le Chat Mauve (slot 7)", &showChatMauvePanel,
@@ -3998,11 +4001,56 @@ void MainWindow::renderPrinterPanelWindow()
                                     " bytes → " + p.string();
         }
     }
+#endif
+
+    // Print with e-mail — compose a mailto: URL carrying the spool text
+    // and hand it to the host's default mail client (the browser's mail
+    // handler on the WASM build, where it works even though file saves
+    // don't). Composition + escaping live in PrintToEmail.cpp, pinned by
+    // the printer_email_smoke test.
+    {
+        char ebuf[256];
+        std::snprintf(ebuf, sizeof(ebuf), "%s", printerEmailTo.c_str());
+        ImGui::SetNextItemWidth(-110);
+        if (ImGui::InputTextWithHint("##printerEmailTo",
+                                     "e-mail to (name@example.com)",
+                                     ebuf, sizeof(ebuf))) {
+            printerEmailTo = ebuf;
+        }
+        ImGui::SameLine();
+        const bool canMail =
+            (nBytes > 0) && pom2::printmail::looksLikeEmail(printerEmailTo);
+        ImGui::BeginDisabled(!canMail);
+        if (ImGui::Button("E-mail spool", ImVec2(100, 0))) {
+            const auto t  = std::time(nullptr);
+            const auto tm = *std::localtime(&t);
+            char stamp[32];
+            std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M", &tm);
+            const auto mail = pom2::printmail::buildMailtoUrl(
+                printerEmailTo,
+                std::string("POM2 printout ") + stamp,
+                printerCard->spoolText());
+            std::string err;
+            if (pom2::printmail::openMailClient(mail.url, &err)) {
+                printerLastSaveStatus = mail.truncated
+                    ? "Opened mail client — spool truncated to fit the "
+                      "message body; use Save as .txt for the full printout"
+                    : "Opened mail client with the spool in the message body";
+            } else {
+                printerLastSaveStatus = "E-mail failed: " + err;
+            }
+        }
+        ImGui::EndDisabled();
+        if (!canMail) {
+            ImGui::TextDisabled(nBytes == 0
+                ? "(print something first — the spool is empty)"
+                : "(enter a valid e-mail address to enable sending)");
+        }
+    }
 
     if (!printerLastSaveStatus.empty()) {
         ImGui::TextDisabled("%s", printerLastSaveStatus.c_str());
     }
-#endif
 
     if (ImGui::Button("Clear spool")) {
         printerCard->clearSpool();

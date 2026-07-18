@@ -5,6 +5,20 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-07-18 — Print with e-mail (printer spool → mailto)
+
+The printer panel gained an "E-mail spool" button: composes an RFC 6068
+`mailto:` URL (spool text as the body, timestamped subject, persisted
+recipient) and opens the host's default mail client. **Why mailto and
+not SMTP**: no credentials/network code in the emulator, works on every
+desktop OS *and* the WASM build (where file saves are impossible — this
+is the browser build's first way to get a printout off the page).
+Pitfall pinned by `printer_email_smoke`: the URL is launched through
+`system("xdg-open '...'")` on Linux, so *everything* shell-relevant must
+be percent-encoded — the test asserts no quote/backtick/`$` can survive
+`buildMailtoUrl`. Body capped at 8 000 chars (mail clients truncate
+long URLs silently; we truncate loudly with an in-body marker instead).
+
 ## 2026-07-12 — SoftCard/Z80 bug hunt: 6 confirmed, 6 fixed, 1 refuted-as-faithful
 
 Adversarial review (8 finder angles + per-candidate verification) over the

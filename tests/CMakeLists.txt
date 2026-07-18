@@ -3041,6 +3041,21 @@ add_test(NAME printer_card_smoke COMMAND test_printer_card)
 set_tests_properties(printer_card_smoke PROPERTIES TIMEOUT 5)
 
 
+# ─── Printer e-mail smoke test ───────────────────────────────────────────
+# Pins the "print with e-mail" mailto composer (PrintToEmail.cpp): RFC 3986
+# percent-encoding, mailto URL shape with %0D%0A line breaks, body-cap
+# truncation marker, and the looksLikeEmail UI gate. Pure functions — no
+# mail client is spawned.
+add_executable(test_printer_email
+    printer_email_smoke_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrintToEmail.cpp
+)
+target_include_directories(test_printer_email PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME printer_email_smoke COMMAND test_printer_email)
+set_tests_properties(printer_email_smoke PROPERTIES TIMEOUT 5)
+
+
 # ─── Grappler+ card smoke test ───────────────────────────────────────────
 # Pins the stub-ROM fingerprint (used when no roms/grappler_plus.bin dump
 # is present), the data-port spool semantics, and the 4 KB ROM-load gate

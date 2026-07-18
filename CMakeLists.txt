@@ -122,6 +122,7 @@ set(SOURCES
     src/OpenGLShader.cpp
     src/PhasorCard.cpp
     src/PrinterCard.cpp
+    src/PrintToEmail.cpp
     src/Rewind_ImGui.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp

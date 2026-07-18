@@ -2076,6 +2076,35 @@ reverted — see the comment at `SystemProfile.cpp:127`.
 Pinned: `printer_card_smoke` — ROM fingerprint + data-port spool
 semantics + CPU-driven `PR#1` + 3 COUT-style writes flow.
 
+**Print with e-mail** (`PrintToEmail.h/.cpp`). The printer panel's
+"E-mail spool" button composes an RFC 6068 `mailto:` URL (recipient +
+timestamped subject + spool text as the body) and hands it to the host's
+default mail client — `xdg-open` on Linux, `open` on macOS,
+`ShellExecuteA` on Windows, and `window.location.href` on the WASM build
+(where it works even though file saves don't). Design points:
+
+* **No SMTP in POM2.** The user's own mail client sends; POM2 never
+  touches credentials or the network. This mirrors the save-as-.txt
+  philosophy: the card spools, the host does host things.
+* **Pure composer, launcher isolated.** `buildMailtoUrl` is a pure
+  function (RFC 3986 percent-encoding, LF → `%0D%0A` per RFC 6068 §5,
+  '@' kept verbatim in the addr-spec) so escaping is unit-testable.
+  Everything a shell could interpret is percent-encoded before the
+  single-quoted `system()` launch — the smoke test pins that no quote /
+  backtick / `$` survives encoding.
+* **Body cap.** `mailto:` URLs travel through argv / the URL bar, so
+  the body is truncated at 8 000 raw chars (`kDefaultBodyCap`, well
+  under the ~32 KB Windows ShellExecute limit at worst-case ×3
+  encoding expansion) with an in-body marker + a `truncated` flag the
+  panel surfaces ("use Save as .txt for the full printout").
+* Recipient persists across sessions (`printer_email_to` setting); the
+  send button gates on `looksLikeEmail` (lenient: one '@', non-empty
+  sides, no whitespace/quotes — real validation is the mail client's
+  job) and a non-empty spool.
+
+Pinned: `printer_email_smoke` — percent-encoding table, mailto URL
+shape, CRLF normalisation, truncation marker, address gate.
+
 ### Grappler+ (Orange Micro)
 
 `GrapplerCard` (`GrapplerCard.h/.cpp`) — ROM-gated parallel printer

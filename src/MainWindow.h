@@ -328,6 +328,9 @@ private:
     // Last save outcome — shown under the Save button, persists until the
     // user saves again or closes the panel. Empty = nothing saved yet.
     std::string  printerLastSaveStatus;
+    // Recipient for "print with e-mail" — persisted (printer_email_to)
+    // so the address survives across sessions.
+    std::string  printerEmailTo;
     // Mockingboard live state panel — shows VIA T1 / IFR / IER and the
     // two AY-3-8910 register banks. Primary use: diagnose silent
     // IRQ-driven music drivers (Ultima IV, Nox Archaist) by seeing
