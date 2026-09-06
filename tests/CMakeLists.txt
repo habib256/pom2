@@ -6369,18 +6369,11 @@ if(NOT POM2_TEST_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
         "'${POM2_TEST_TIMEOUT_SCALE}'")
 endif()
 
-get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
-foreach(_pom2_t IN LISTS _pom2_all_tests)
-    get_test_property(${_pom2_t} TIMEOUT _pom2_to)
-    if(NOT _pom2_to MATCHES "^[0-9]+$")
-        set(_pom2_to 0)                       # no TIMEOUT set — take the floor
-    endif()
-    if(_pom2_to LESS ${POM2_TEST_TIMEOUT_FLOOR})
-        set(_pom2_to ${POM2_TEST_TIMEOUT_FLOOR})
-    endif()
-    math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
-    set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
-endforeach()
+# The floor/scale sweep itself lives at the END of this file, next to the
+# SKIP_RETURN_CODE sweep: a test declared below this point used to keep its own
+# TIMEOUT (mockingboard_t1_irq_phase, added 2026-09-02 with TIMEOUT 5, timed
+# out at -j8 on 2026-09-07 while clearing in 0.02 s alone). A directory-wide
+# sweep is only directory-wide if nothing is added after it.
 
 # Tests whose assertions are about ELAPSED WALL-CLOCK TIME — a bounded wait, a
 # poll deadline, a timeout that must fire — plus the one that binds a fixed
@@ -6831,3 +6824,18 @@ if(_pom2_all_tests)
     message(STATUS "POM2: ${_pom2_test_count} ctest entries registered "
                    "(SKIP_RETURN_CODE 77 applied to all)")
 endif()
+
+# TIMEOUT floor + scale, applied LAST so it really covers every test (see the
+# note where POM2_TEST_TIMEOUT_FLOOR is defined).
+get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_pom2_t IN LISTS _pom2_all_tests)
+    get_test_property(${_pom2_t} TIMEOUT _pom2_to)
+    if(NOT _pom2_to MATCHES "^[0-9]+$")
+        set(_pom2_to 0)                       # no TIMEOUT set — take the floor
+    endif()
+    if(_pom2_to LESS ${POM2_TEST_TIMEOUT_FLOOR})
+        set(_pom2_to ${POM2_TEST_TIMEOUT_FLOOR})
+    endif()
+    math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
+    set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
+endforeach()
