@@ -52,6 +52,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -188,6 +189,46 @@ void testErrorContract()
     std::printf("  ok: error contract (empty list / malformed raster)\n");
 }
 
+// The export used to be a bare `ofstream(trunc)`: it destroyed the PREVIOUS
+// export the instant it opened, followed a symlink at the destination, and
+// published bytes still in page cache. It goes through the same durable
+// temp + rename commit as every other write-back now.
+// (Bug hunt 2026-09-06 #H6.)
+void testDurableCommit()
+{
+    namespace fs = std::filesystem;
+    ImageWriter::Page p;
+    p.w = 8; p.h = 4; p.dpi = 72;
+    p.pix.assign(static_cast<std::size_t>(p.w) * p.h, 0);
+
+    std::string err;
+    assert(writeImageWriterPdf({ &p }, kOutPath, err) && err.empty());
+    const std::string good = readAll(kOutPath);
+    assert(good.rfind("%PDF-1.4", 0) == 0);
+
+    // A failed export must leave the previous one intact and no debris.
+    const fs::path out(kOutPath);
+    const fs::path blocked = out.parent_path() / "blocked.pdf";
+    std::error_code ec;
+    fs::remove_all(blocked, ec);
+    fs::create_directory(blocked, ec);
+    err.clear();
+    assert(!writeImageWriterPdf({ &p }, blocked.string(), err) && !err.empty());
+    assert(fs::is_directory(blocked));
+    assert(readAll(kOutPath) == good && "the earlier export was disturbed");
+
+    int debris = 0;
+    for (const auto& e : fs::directory_iterator(out.parent_path(), ec)) {
+        const std::string nm = e.path().filename().string();
+        if (nm.size() > 8 && nm.compare(nm.size() - 8, 8, ".pom2tmp") == 0)
+            ++debris;
+    }
+    assert(debris == 0);
+    fs::remove_all(blocked, ec);
+
+    std::printf("  ok: durable commit (previous export survives a failure)\n");
+}
+
 }  // namespace
 
 int main()
@@ -195,6 +236,7 @@ int main()
     testStructureAndRoundTrip();
     testImageWriterIntegration();
     testErrorContract();
+    testDurableCommit();
     std::printf("OK imagewriter_pdf\n");
     return 0;
 }

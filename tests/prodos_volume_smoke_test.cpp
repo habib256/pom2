@@ -76,8 +76,14 @@ static void testEmptyFolder()
     assert(br.ok);
     assert(br.filesIncluded == 0);
     assert(br.filesSkipped  == 0);
-    assert(br.totalBlocks   == 7);   // 2 boot + 4 vol dir + 1 bitmap
-    assert(img.size() == 7 * kBlockBytes);
+    // 2 boot + 4 vol dir + 1 bitmap + the free-block slack. The volume used
+    // to be sized to fit its contents EXACTLY, which left ProDOS reporting
+    // zero free blocks: the guest could not create or re-SAVE a single file
+    // on a folder it was told was writable. The slack is 10 % of the content
+    // with a 64-block floor, so an empty folder gets the floor.
+    // (Bug hunt 2026-09-06 #H12.)
+    assert(br.totalBlocks   == 7 + 64);
+    assert(img.size() == (7 + 64) * kBlockBytes);
 
     // Volume header at offset 4 of block 2.
     const std::uint8_t* b2 = img.data() + 2 * kBlockBytes;
@@ -89,7 +95,16 @@ static void testEmptyFolder()
     assert(b2[4 + 0x20] == 13);      // entries_per_block
     assert(rd16(b2 + 4 + 0x21) == 0);// file_count
     assert(rd16(b2 + 4 + 0x23) == 6);// bit_map_pointer
-    assert(rd16(b2 + 4 + 0x25) == 7);// total_blocks
+    assert(rd16(b2 + 4 + 0x25) == 7 + 64);// total_blocks
+
+    // The slack is FREE in the bitmap — otherwise it would be 64 blocks the
+    // guest still cannot use. Structure (0..6) stays used.
+    const std::uint8_t* bm = img.data() + 6 * kBlockBytes;
+    auto blockFree = [bm](std::size_t b) {
+        return (bm[b >> 3] & (1u << (7 - (b & 7)))) != 0;
+    };
+    for (std::size_t b = 0; b < 7; ++b)  assert(!blockFree(b));
+    for (std::size_t b = 7; b < 71; ++b) assert(blockFree(b));
 }
 
 static void testSeedlingAndSapling()
@@ -116,15 +131,16 @@ static void testSeedlingAndSapling()
     assert(br.filesSkipped  == 0);
 
     // Layout: 7 structural + 1 (bas seedling) + 1 (txt seedling) +
-    // 1 (bin sapling index) + 10 (bin data blocks) = 20 blocks.
-    assert(br.totalBlocks == 20);
-    assert(img.size() == 20 * kBlockBytes);
+    // 1 (bin sapling index) + 10 (bin data blocks) = 20 blocks, plus the
+    // 64-block free-space floor (see testEmptyFolder).
+    assert(br.totalBlocks == 20 + 64);
+    assert(img.size() == (20 + 64) * kBlockBytes);
 
     const std::uint8_t* b2 = img.data() + 2 * kBlockBytes;
 
     // file_count
     assert(rd16(b2 + 4 + 0x21) == 3);
-    assert(rd16(b2 + 4 + 0x25) == 20);
+    assert(rd16(b2 + 4 + 0x25) == 20 + 64);
 
     // First file entry starts at block 2 offset 4 + 39 = 43.
     // Files are inserted in alphabetical order:
@@ -335,12 +351,14 @@ static void testRoundTripFolderToVolumeToFolder()
     assert(fs::exists(dst / "do_not_delete.txt"));
 
     // A failed host write must fail the decode; it must not be counted as a
-    // successfully persisted guest change. Directories at every temporary
-    // filename make the failure deterministic without permission tricks.
+    // successfully persisted guest change. Directories at the DESTINATION
+    // names make the commit's rename fail deterministically, without
+    // permission tricks and without assuming what the temp file is called
+    // (it is unique per process + per call now; see pom2::tempSiblingPath).
     fs::path blocked = makeTempDir("round_blocked");
-    fs::create_directory(blocked / "HELLO.bas.tmp");
-    fs::create_directory(blocked / "README.txt.tmp");
-    fs::create_directory(blocked / "GAME.bin.tmp");
+    fs::create_directory(blocked / "HELLO.bas");
+    fs::create_directory(blocked / "README.txt");
+    fs::create_directory(blocked / "GAME.bin");
     auto dr3 = pom2::decodeVolumeToFolder(img, blocked.string());
     assert(!dr3.ok);
     assert(!dr3.error.empty());
@@ -673,6 +691,93 @@ static void testHostNewerFilePreserved()
     std::printf("prodos_volume_smoke: host-newer preservation OK\n");
 }
 
+// A host folder is not a closed tree: `directory_iterator` and `is_directory`
+// both DEREFERENCE symlinks, so the scanner followed any link it met. `ln -s
+// . loop` recursed to the depth cap, and a link to a directory outside the
+// folder served that directory to the guest as part of the volume.
+// (Bug hunt 2026-09-06 #H11.)
+static void testSymlinkLoopsAndEscapesAreRefused()
+{
+    const fs::path root    = makeTempDir("symlink_root");
+    const fs::path outside = makeTempDir("symlink_outside");
+    writeFile(root / "INSIDE.txt",     {'i', 'n'});
+    writeFile(outside / "SECRET.txt",  {'s', 'e', 'c'});
+
+    std::error_code ec;
+    fs::create_directory_symlink(".",      root / "LOOP", ec);
+    if (ec) {                       // no symlink support on this filesystem
+        fs::remove_all(root, ec);
+        fs::remove_all(outside, ec);
+        std::printf("prodos_volume_smoke: symlink guard SKIPPED (no symlinks)\n");
+        return;
+    }
+    fs::create_directory_symlink(outside, root / "ESCAPE", ec);
+    assert(!ec);
+
+    std::vector<std::uint8_t> img;
+    const auto br = pom2::buildVolumeFromFolder(root.string(), "HOST", img);
+    assert(br.ok);
+
+    // Decode into a fresh folder and look at what actually came through.
+    const fs::path dst = makeTempDir("symlink_dst");
+    const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+    assert(dr.ok);
+    assert(fs::exists(dst / "INSIDE.txt"));
+    assert(!fs::exists(dst / "SECRET.txt"));
+    for (const auto& e : fs::recursive_directory_iterator(dst, ec))
+        assert(e.path().filename().string() != "SECRET.txt" &&
+               "a symlink out of the served folder reached the guest");
+
+    fs::remove_all(root, ec);
+    fs::remove_all(outside, ec);
+    fs::remove_all(dst, ec);
+    std::printf("prodos_volume_smoke: symlink loop + escape refused OK\n");
+}
+
+// `HELLO.BAS` → ProDOS `HELLO` (+type $FC) → decode `HELLO` + ".bas". On a
+// case-sensitive filesystem that is a SECOND file beside the user's, which
+// the next mount turns into two ProDOS entries, and so on every cycle.
+// (Bug hunt 2026-09-06 #H24.)
+static void testExtensionCaseRoundTripDoesNotDuplicate()
+{
+    const fs::path dir = makeTempDir("extcase");
+    writeFile(dir / "HELLO.BAS", {'h', 'i'});
+
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+    assert(dr.ok);
+
+    std::error_code ec;
+    int files = 0;
+    for (const auto& e : fs::directory_iterator(dir, ec))
+        if (e.is_regular_file(ec)) ++files;
+    assert(files == 1 && "write-back duplicated the file under a new case");
+    assert(fs::exists(dir / "HELLO.BAS"));
+
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: extension case round-trip OK\n");
+}
+
+// `AUX`, `CON`, `COM1`… are legal ProDOS names AND Windows DOS devices in
+// every directory, with any extension. Writing one back opened a port.
+// (Bug hunt 2026-09-06 #H24.)
+static void testWindowsReservedNamesRefused()
+{
+    assert(!pom2::isHostSafeProDOSName("AUX"));
+    assert(!pom2::isHostSafeProDOSName("aux"));
+    assert(!pom2::isHostSafeProDOSName("CON.TXT"));
+    assert(!pom2::isHostSafeProDOSName("NUL"));
+    assert(!pom2::isHostSafeProDOSName("PRN"));
+    assert(!pom2::isHostSafeProDOSName("COM1"));
+    assert(!pom2::isHostSafeProDOSName("LPT9.DAT"));
+    // ...and names that merely start the same way stay legal.
+    assert(pom2::isHostSafeProDOSName("AUXILIARY"));
+    assert(pom2::isHostSafeProDOSName("COM10"));
+    assert(pom2::isHostSafeProDOSName("CONFIG"));
+    std::printf("prodos_volume_smoke: Windows device names refused OK\n");
+}
+
 int main()
 {
     testEmptyFolder();
@@ -684,6 +789,9 @@ int main()
     testDecodeNeverMergesTwoEntriesOntoOneFile();
     testMultipleBitmapBlocks();
     testHostNewerFilePreserved();
+    testSymlinkLoopsAndEscapesAreRefused();
+    testExtensionCaseRoundTripDoesNotDuplicate();
+    testWindowsReservedNamesRefused();
     std::printf("prodos_volume_smoke: PASS\n");
     return 0;
 }

@@ -203,6 +203,20 @@ void testBadIndexIsIgnored()
         // Better an empty history than rows pointing at files whose meaning
         // POM2 cannot vouch for.
         assert(h.size() == 0);
+        // ...but an index POM2 cannot READ is not permission to DELETE. The
+        // sweep that removes unreferenced PNGs used to run behind the empty
+        // page list a failed parse leaves, so one unrecognised index erased
+        // up to 200 printouts on open — silently, with the size()==0 above
+        // as its only visible trace. The bytes must still be there, and the
+        // index that could not be read must be kept aside, not overwritten.
+        // (Bug hunt 2026-09-06 #H1.)
+        assert(fs::exists(dir / "p000001.png"));
+        int aside = 0;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(dir, ec))
+            if (e.path().filename().string().rfind("index.txt.bad-", 0) == 0)
+                ++aside;
+        assert(aside == 1);
     }
 
     {   // Truncated final record — the line is skipped, earlier ones survive.
@@ -410,13 +424,16 @@ void testEncodeFailureRemovesDanglingRow()
     PrinterHistory h;
     assert(h.open(dir.string(), err));
 
-    // The encoder commits through `<page>.tmp`. A directory at that exact
-    // path is a deterministic, privilege-independent way to make fopen fail.
-    fs::create_directory(dir / "p000001.png.tmp");
+    // The encoder writes a temp file and RENAMES it over the page. A
+    // directory sitting at the page's own path makes that rename fail
+    // deterministically and without privileges — and, unlike planting
+    // something at the temp name, it does not depend on what that temp name
+    // is (it is now unique per process + per call; see tempSiblingPath).
+    fs::create_directory(dir / "p000001.png");
     assert(h.addPage(makePage(16, 16, 1), 0, 0, 8.0, 11.0, err));
     h.flushPending();
     assert(h.size() == 0);
-    assert(!fs::exists(dir / "p000001.png"));
+    assert(fs::is_directory(dir / "p000001.png"));   // never became a page
 
     // The repair is durable, not merely an in-memory cosmetic cleanup.
     PrinterHistory reopened;
@@ -445,14 +462,17 @@ void testIndexFailureRollsBackAndRetries()
     PrinterHistory h;
     assert(h.open(dir.string(), err));
 
-    // Block creation of index.txt.tmp without relying on permissions.
-    fs::create_directory(dir / "index.txt.tmp");
+    // Make the index COMMIT fail, without relying on permissions and without
+    // assuming the temp file's name (it is unique per process + per call now;
+    // see pom2::tempSiblingPath). A directory at the index's own path makes
+    // the rename fail deterministically.
+    fs::create_directory(dir / "index.txt");
     assert(!h.addPage(makePage(16, 16, 1), 0, 0, 8.0, 11.0, err));
     assert(h.size() == 0);
     assert(h.pendingWrites() == 0);
     assert(!fs::exists(dir / "p000001.png"));
 
-    fs::remove_all(dir / "index.txt.tmp");
+    fs::remove_all(dir / "index.txt");
     assert(h.addPage(makePage(16, 16, 2), 0, 0, 8.0, 11.0, err));
     assert(h.pages()[0].file == "p000001.png"); // counter/job rolled back
     h.flushPending();

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 #include <vector>
@@ -45,31 +46,42 @@ bool nameSafe(char c)
 /// are folded into the name rather than recreated on disk — a server-supplied
 /// tree is exactly what a path-traversal bug is made of, and nothing here
 /// needs the shape.
-std::string cacheNameFor(const std::string& host, const std::string& path)
+std::string cacheNameFor(const std::string& host, std::uint16_t port,
+                         const std::string& path)
 {
-    std::string flat = host + path;
-    for (char& c : flat) if (!nameSafe(c)) c = '_';
-    // Keep the tail: it carries the extension, and classifyDiskForSlot reads
-    // the extension to decide which drive the image belongs in. But a pure
-    // tail truncation dropped the HOST (it sits at the front): two servers
-    // mirroring the same ≥120-char path collided on one cache file, and the
-    // existence-only cache check then served server A's bytes as server B's
-    // disk — silently, offline, and poisonable on purpose. Prefix a hash of
-    // the FULL host+path so every distinct URL keeps a distinct key.
-    constexpr std::size_t kMaxName = 120;
-    if (flat.size() > kMaxName) {
-        std::uint64_t h = 1469598103934665603ull;          // FNV-1a 64
-        for (unsigned char c : flat) { h ^= c; h *= 1099511628211ull; }
-        char hex[17];
-        for (int i = 15; i >= 0; --i) {
-            hex[i] = "0123456789abcdef"[h & 0xF];
-            h >>= 4;
-        }
-        hex[16] = '\0';
-        flat = std::string(hex) + "_" +
-               flat.substr(flat.size() - (kMaxName - 17));
+    // Hash the EXACT host+path, before any folding, and prefix it.
+    //
+    // The hash used to apply only above 120 characters, on the theory that a
+    // short name is already unique. It is not: the folding below maps every
+    // unsafe character — '/' included — to '_', so `srv/dir/img.po` and
+    // `srv/dir_img.po` produce the same key, as do two different hosts whose
+    // punctuation differs only where the folding lands, and on a
+    // case-insensitive filesystem (macOS, Windows) so do `IMG.po` and
+    // `img.po`. The cache check is existence-only and opens no socket, so a
+    // collision silently serves one server's disk as another's — offline,
+    // repeatably, and poisonable on purpose by anyone who can get the user to
+    // fetch one crafted URL first. Hashing unconditionally is one extra pass
+    // over a short string and removes the whole class.
+    // The PORT is part of the identity too: two servers on one host differ
+    // only by it, and the key used to ignore it entirely.
+    const std::string exact = host + ":" + std::to_string(port) + path;
+    std::uint64_t h = 1469598103934665603ull;              // FNV-1a 64
+    for (unsigned char c : exact) { h ^= c; h *= 1099511628211ull; }
+    char hex[17];
+    for (int i = 15; i >= 0; --i) {
+        hex[i] = "0123456789abcdef"[h & 0xF];
+        h >>= 4;
     }
-    return flat;
+    hex[16] = '\0';
+
+    // Keep a readable tail: it carries the extension, and classifyDiskForSlot
+    // reads the extension to decide which drive the image belongs in.
+    std::string flat = exact;
+    for (char& c : flat) if (!nameSafe(c)) c = '_';
+    constexpr std::size_t kMaxName = 120;
+    constexpr std::size_t kTail    = kMaxName - 17;        // 16 hex + '_'
+    if (flat.size() > kTail) flat = flat.substr(flat.size() - kTail);
+    return std::string(hex) + "_" + flat;
 }
 
 } // namespace
@@ -115,9 +127,36 @@ bool parseTnfsUrl(const std::string& url, std::string& host, std::uint16_t& port
 }
 
 TnfsFetchResult tnfsFetchImage(const std::string& url,
-                               const std::string& cacheDir)
+                               const std::string& cacheDir,
+                               const TnfsFetchLimits& limits)
 {
     TnfsFetchResult r;
+    const auto started = std::chrono::steady_clock::now();
+    const std::uint32_t sizeCap =
+        limits.maxBytes ? std::min(limits.maxBytes, kTnfsMaxImageBytes)
+                        : kTnfsMaxImageBytes;
+    // One predicate for both bounds, checked between chunks — the only place
+    // the loop is interruptible, since a request in flight is inside the
+    // client's own per-request timeout.
+    auto giveUp = [&](std::uint32_t done, std::uint32_t total) -> bool {
+        if (limits.abort && limits.abort->load()) {
+            r.error = "TNFS fetch cancelled at " + std::to_string(done) +
+                      " / " + std::to_string(total) + " bytes";
+            return true;
+        }
+        if (limits.deadlineSeconds > 0) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - started).count();
+            if (elapsed >= limits.deadlineSeconds) {
+                r.error = "TNFS fetch gave up after " +
+                          std::to_string(elapsed) + " s at " +
+                          std::to_string(done) + " / " +
+                          std::to_string(total) + " bytes";
+                return true;
+            }
+        }
+        return false;
+    };
 
     std::string host, path;
     std::uint16_t port = TnfsClient::kDefaultPort;
@@ -140,7 +179,7 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
     // whole file to find out — which costs exactly what the cache saves.
     std::error_code ec;
     fs::create_directories(cacheDir, ec);
-    const fs::path dest = fs::path(cacheDir) / cacheNameFor(host, path);
+    const fs::path dest = fs::path(cacheDir) / cacheNameFor(host, port, path);
     if (fs::exists(dest, ec)) {
         const auto sz = fs::file_size(dest, ec);
         if (!ec && sz > 0) {
@@ -174,13 +213,14 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
         r.error = "TNFS " + path + " is empty";
         return r;
     }
-    if (size > kTnfsMaxImageBytes) {
+    if (size > sizeCap) {
         r.error = "TNFS " + path + " is " + std::to_string(size) +
-                  " bytes, over the " + std::to_string(kTnfsMaxImageBytes) +
+                  " bytes, over the " + std::to_string(sizeCap) +
                   "-byte ceiling";
         return r;
     }
     r.bytes = size;
+    if (giveUp(0, size)) return r;
 
     const int handle = c.openFile(path, err);
     if (handle < 0) {
@@ -212,6 +252,11 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
                                std::to_string(size) + " bytes");
             nextReport += kChunk * 8;
         }
+        if (done < size && giveUp(done, size)) {
+            c.closeFile(handle);
+            log().warn("TNFS", r.error);
+            return r;               // nothing published: the cache file is
+        }                           // only created by the commit below
     }
     c.closeFile(handle);
 

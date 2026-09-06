@@ -155,27 +155,47 @@ bool testNavigation()
 bool testFavorites()
 {
     const std::string base = (fs::temp_directory_path() / "pom2_femu_sd").string();
+    // `favdisks.txt` lives INSIDE the emulated SD card, so the guest can
+    // write it. The listing has always clamped navigation to the SD root;
+    // this path used an absolute line verbatim and let `../..` be collapsed
+    // out by lexically_normal and then followed — so one line in a text file
+    // the guest controls put an arbitrary host file (or the user's whole
+    // home) one click away from being mounted. Both escapes are now dropped
+    // rather than rewritten: a favourite that does not name something on the
+    // card is not a favourite. (Bug hunt 2026-09-06 #H8.)
     const std::string content =
         "automount 2\n"
         "# a comment line\n"
         "GAMES/TR.2mg\n"
-        "/abs/PRODOS.po\n";
+        "/abs/PRODOS.po\n"
+        "../../etc/passwd\n"
+        "GAMES/../SYS.po\n";
     auto fav = FloppyEmuDevice::parseFavorites(content, base);
     if (!fav.present)        { std::printf("FAIL: favorites not present\n"); return false; }
     if (fav.automount != 2)  { std::printf("FAIL: automount=%d (want 2)\n", fav.automount); return false; }
+    // TR.2mg and SYS.po survive; the absolute path and the `../..` climb out
+    // of the root do not.
     if (fav.entries.size() != 2) {
         std::printf("FAIL: %zu favorites (want 2)\n", fav.entries.size()); return false;
     }
     if (fav.entries[0].name != "TR.2mg") {
         std::printf("FAIL: fav[0] name %s\n", fav.entries[0].name.c_str()); return false;
     }
-    // Relative path resolved against base; absolute path left alone.
+    // Relative path resolved against base...
     if (fav.entries[0].fullPath.find(base) == std::string::npos) {
         std::printf("FAIL: relative favorite not resolved against SD root\n"); return false;
     }
-    if (fav.entries[1].fullPath != "/abs/PRODOS.po") {
-        std::printf("FAIL: absolute favorite altered: %s\n",
+    // ...and an interior `..` that stays inside the card is fine.
+    if (fav.entries[1].fullPath != (fs::path(base) / "SYS.po").string()) {
+        std::printf("FAIL: in-root favorite altered: %s\n",
                     fav.entries[1].fullPath.c_str()); return false;
+    }
+    for (const auto& e : fav.entries) {
+        if (e.fullPath.find(base) != 0) {
+            std::printf("FAIL: favorite escaped the SD root: %s\n",
+                        e.fullPath.c_str());
+            return false;
+        }
     }
     // R6-#4: a favorite whose file doesn't exist must report size 0, not the
     // (uint64_t)-1 garbage from an ignored file_size error code. Neither
@@ -185,7 +205,7 @@ bool testFavorites()
                     static_cast<unsigned long long>(fav.entries[1].sizeBytes));
         return false;
     }
-    std::printf("OK : favdisks.txt parse (automount + paths + missing size)\n");
+    std::printf("OK : favdisks.txt parse (automount + paths + sandbox)\n");
     return true;
 }
 

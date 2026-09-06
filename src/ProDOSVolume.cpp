@@ -329,11 +329,33 @@ std::size_t numDirBlocksFor(std::size_t entryCount)
                  / kVolDirEntriesKN;
 }
 
+// True iff `p` is `root` or lives under it. Component-wise, not a string
+// prefix: "/srv/hostfolder2" starts with "/srv/hostfolder" and is not in it.
+bool pathIsUnder(const fs::path& root, const fs::path& p)
+{
+    auto rIt = root.begin(), rEnd = root.end();
+    auto pIt = p.begin(),    pEnd = p.end();
+    for (; rIt != rEnd; ++rIt, ++pIt)
+        if (pIt == pEnd || *pIt != *rIt) return false;
+    return true;
+}
+
 // Recursively populate a PreparedDir from the given host folder. `usedNames`
 // is per-directory (subdir name collisions don't conflict with parent dir
 // names). `result` accumulates filesIncluded / filesSkipped counters.
+//
+// `root` + `visited` bound the walk. `directory_iterator` and `is_directory`
+// both DEREFERENCE symlinks, so the previous version followed any link it
+// met: `ln -s . loop` inside the folder recursed to the depth cap, and a link
+// to `/` served the user's whole filesystem to the guest as a ProDOS volume
+// (capped only by the 51 root slots and the 128 KB per-file limit). A link is
+// followed only when its target is still inside the served folder, and the
+// canonical path of every directory entered is remembered so an aliased or
+// cyclic tree is walked once instead of exponentially.
 void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
-                    std::size_t depth, ProDOSBuildResult& result)
+                    std::size_t depth, ProDOSBuildResult& result,
+                    const fs::path& root,
+                    std::unordered_set<std::string>& visited)
 {
     if (depth > kMaxRecursionDepth) {
         pom2::log().warn("ProDOSVol",
@@ -344,12 +366,35 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
     std::error_code ec;
     if (!fs::is_directory(hostPath, ec)) return;
 
+    {
+        std::error_code cec;
+        const fs::path canon = fs::weakly_canonical(hostPath, cec);
+        const std::string key = cec ? hostPath.string() : canon.string();
+        if (!visited.insert(key).second) {
+            pom2::log().warn("ProDOSVol",
+                "skipping already-visited directory (link cycle): " +
+                hostPath.string());
+            return;
+        }
+    }
+
     std::vector<fs::path> children;
     for (const auto& entry : fs::directory_iterator(hostPath, ec)) {
         // Skip dotfiles (e.g. .DS_Store) — they pollute the synth volume
         // with platform metadata the guest can't make sense of.
         const std::string nm = entry.path().filename().string();
         if (!nm.empty() && nm.front() == '.') continue;
+        std::error_code lec;
+        if (entry.is_symlink(lec)) {
+            std::error_code tec;
+            const fs::path target = fs::weakly_canonical(entry.path(), tec);
+            if (tec || !pathIsUnder(root, target)) {
+                pom2::log().warn("ProDOSVol",
+                    "skipping symlink out of the served folder: " + nm);
+                ++result.filesSkipped;
+                continue;
+            }
+        }
         if (entry.is_regular_file(ec) || entry.is_directory(ec)) {
             children.push_back(entry.path());
         }
@@ -370,7 +415,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             auto sub = std::make_unique<PreparedDir>();
             sub->prodosName = uniqueName(sanitiseProDOSName(path.filename().string()),
                                          usedNames);
-            scanHostFolder(path, *sub, depth + 1, result);
+            scanHostFolder(path, *sub, depth + 1, result, root, visited);
             sub->numDirBlocks = numDirBlocksFor(sub->order.size());
             dir.order.push_back({true, dir.subdirs.size()});
             dir.subdirs.push_back(std::move(sub));
@@ -623,20 +668,57 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
 
     // Phase 1: walk the host folder tree (recursive).
     PreparedDir root;
-    scanHostFolder(hostFolder, root, /*depth=*/0, result);
+    {
+        std::error_code cec;
+        fs::path served = fs::weakly_canonical(fs::path(hostFolder), cec);
+        if (cec) served = fs::path(hostFolder);
+        std::unordered_set<std::string> visited;
+        scanHostFolder(hostFolder, root, /*depth=*/0, result, served, visited);
+    }
     root.firstDirBlock = 2;
     root.numDirBlocks  = kVolDirBlocks;        // vol dir always 4 blocks (51 slots)
 
     // Phase 2: total block count.
     const std::size_t payloadBlocks = totalBlocksForTree(root, /*isVolumeRoot=*/true);
+
+    // FREE SPACE. The volume used to be sized to fit its contents EXACTLY:
+    // every block within total_blocks was marked used, so ProDOS reported
+    // zero free blocks and the guest could not create, extend or re-SAVE a
+    // single file. A folder mounted as a volume was read-only in practice
+    // while presenting itself as writable — the guest got "DISK FULL" for a
+    // 2-block file on an otherwise empty volume.
+    //
+    // New files ARE representable in the write-back: `decodeVolumeToFolder`
+    // walks the directory graph and writes back every seedling/sapling entry
+    // it finds, whether or not the build path put it there, and the volume
+    // directory is always 4 blocks / 51 slots regardless of how many are
+    // filled. So the slack is usable, not decorative.
+    //
+    // Bounded rather than generous: the image is a RAM allocation carried in
+    // the snapshot payload, and the point is room to work, not a second hard
+    // disk. 10 % of the content, at least 64 blocks (32 KB — an empty folder
+    // still takes a few saves) and at most 4096 (2 MB).
+    std::size_t slackBlocks = (kStructuralBeforeBitmap + payloadBlocks) / 10;
+    if (slackBlocks < 64)   slackBlocks = 64;
+    if (slackBlocks > 4096) slackBlocks = 4096;
+
     std::size_t bitmapBlocks = 1;
     std::size_t totalBlocks = 0;
     for (;;) {
-        totalBlocks = kStructuralBeforeBitmap + bitmapBlocks + payloadBlocks;
+        totalBlocks = kStructuralBeforeBitmap + bitmapBlocks + payloadBlocks +
+                      slackBlocks;
         const std::size_t needed = (totalBlocks + kBlocksPerBitmap - 1) /
                                    kBlocksPerBitmap;
         if (needed == bitmapBlocks) break;
         bitmapBlocks = needed;
+    }
+    // The slack is a convenience, the content is not: give the slack back
+    // before failing a volume that would otherwise have fitted.
+    if (totalBlocks > kMaxVolumeBlocks && slackBlocks > 0) {
+        const std::size_t over = totalBlocks - kMaxVolumeBlocks;
+        slackBlocks = (over >= slackBlocks) ? 0 : (slackBlocks - over);
+        totalBlocks = kStructuralBeforeBitmap + bitmapBlocks + payloadBlocks +
+                      slackBlocks;
     }
     if (totalBlocks > kMaxVolumeBlocks) {
         result.error = "synthesised volume exceeds the 65535-block ProDOS limit";
@@ -725,8 +807,10 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
             }
         }
     }
-    fs::path tmp = dest;
-    tmp += ".tmp";
+    // Unique per process + per call — a fixed `<dest>.tmp` is the name every
+    // POM2 instance picks, and two flushing the same host folder truncated
+    // each other's in-flight write. See tempSiblingPath().
+    const fs::path tmp = tempSiblingPath(dest);
     std::error_code tmpEc;
     if (!prepareTempPath(tmp, tmpEc)) {
         err = "cannot prepare " + tmp.string() + ": " + tmpEc.message();
@@ -736,6 +820,7 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) {
             err = "cannot open " + tmp.string() + " for write";
+            fs::remove(tmp, ec);
             return FileWriteResult::Error;
         }
         if (!bytes.empty()) {
@@ -759,6 +844,15 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
     return FileWriteResult::Written;
 }
 
+// Widen `newest` to cover `p`'s modification time. See
+// ProDOSDecodeResult::completedAt for why the decode has to track this.
+void noteWriteTime(const fs::path& p, fs::file_time_type& newest)
+{
+    std::error_code ec;
+    const auto t = fs::last_write_time(p, ec);
+    if (!ec && t > newest) newest = t;
+}
+
 }  // namespace
 
 namespace {
@@ -778,6 +872,8 @@ struct DecodeWalk {
     /// Mount-time stamp: host files newer than this are preserved, not
     /// reverted (see decodeVolumeToFolder's doc). Null = legacy overwrite.
     const fs::file_time_type*         newerThan   = nullptr;
+    /// Newest mtime this walk actually wrote — see completedAt.
+    fs::file_time_type                newest{};
 };
 
 // Reserve `name` as a host filename inside one decoded directory, returning
@@ -836,6 +932,36 @@ void decodeOneDir(DecodeWalk& w,
 
     // Host names already emitted in THIS directory during THIS pass.
     std::unordered_set<std::string> usedHostNames;
+
+    // What is already on disk here, indexed case-folded.
+    //
+    // The build path strips a known extension case-INSENSITIVELY, so the host
+    // file `HELLO.BAS` becomes the ProDOS name `HELLO` with file_type $FC;
+    // the decode composes the extension back from the type and it comes out
+    // LOWER case. On a case-sensitive filesystem the write-back therefore
+    // created `HELLO.bas` beside the user's `HELLO.BAS` — a second copy that
+    // the next mount turned into two ProDOS entries, and so on every cycle.
+    // Reusing the spelling that is already there keeps the round trip closed.
+    std::unordered_map<std::string, std::string> existingHostNames;
+    {
+        std::error_code lec;
+        for (const auto& de : fs::directory_iterator(hostFolder, lec)) {
+            std::string actual = de.path().filename().string();
+            std::string folded = actual;
+            for (char& c : folded)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            existingHostNames.emplace(std::move(folded), std::move(actual));
+        }
+    }
+    auto reuseExistingSpelling = [&](const std::string& wanted) {
+        std::error_code xec;
+        if (fs::exists(fs::path(hostFolder) / wanted, xec)) return wanted;
+        std::string folded = wanted;
+        for (char& c : folded)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const auto it = existingHostNames.find(folded);
+        return (it == existingHostNames.end()) ? wanted : it->second;
+    };
 
     std::uint16_t curBlock = firstBlock;
     std::size_t   guard    = 0;
@@ -1000,8 +1126,9 @@ void decodeOneDir(DecodeWalk& w,
             const char* typeExt =
                 (name.find('.') == std::string::npos) ? extFromFileType(fileType) : "";
             const fs::path dest =
-                fs::path(hostFolder) / reserveHostName(usedHostNames,
-                                                       name + typeExt);
+                fs::path(hostFolder) /
+                reserveHostName(usedHostNames,
+                                reuseExistingSpelling(name + typeExt));
             // The volume is a snapshot taken at MOUNT time; a host file the
             // user edited since then is NEWER than that snapshot, and
             // rewriting it here would silently revert the user's edit to
@@ -1031,6 +1158,7 @@ void decodeOneDir(DecodeWalk& w,
             }
             if (wr == FileWriteResult::Written) {
                 ++r.filesWritten;
+                noteWriteTime(dest, w.newest);
             }
         }
         // Next directory block pointer is at offset 2 of every dir block.
@@ -1052,6 +1180,24 @@ bool isHostSafeProDOSName(const std::string& name)
                         (c >= '0' && c <= '9') || c == '.';
         if (!ok) return false;
     }
+    // Windows DOS-device names. `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`,
+    // `LPT1`-`LPT9` are reserved in EVERY directory and with ANY extension:
+    // `AUX.txt` opens the serial port, not a file. They are also perfectly
+    // legal ProDOS names — `AUX` is one a guest would plausibly write — so a
+    // write-back that met one on Windows opened a device and either hung on
+    // it or wrote the volume's bytes to a port. Refused for all platforms so
+    // a host folder decoded on Linux stays decodable on Windows (and vice
+    // versa): a name that is safe on one machine and a device on another is
+    // not a portable store.
+    std::string stem = name.substr(0, name.find('.'));
+    for (char& c : stem)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    static const char* kDosDevices[] = { "CON", "PRN", "AUX", "NUL" };
+    for (const char* d : kDosDevices)
+        if (stem == d) return false;
+    if (stem.size() == 4 && stem[3] >= '1' && stem[3] <= '9' &&
+        (stem.compare(0, 3, "COM") == 0 || stem.compare(0, 3, "LPT") == 0))
+        return false;
     return true;
 }
 
@@ -1081,8 +1227,13 @@ ProDOSDecodeResult decodeVolumeToFolder(
     }
 
     DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, r, false,
-                     preserveNewerThan };
+                     preserveNewerThan, {} };
     decodeOneDir(walk, /*firstBlock=*/2, hostFolder, /*depth=*/0);
+
+    // The stamp the caller must adopt: no earlier than now, and no earlier
+    // than anything this decode wrote.
+    r.completedAt = fs::file_time_type::clock::now();
+    if (walk.newest > r.completedAt) r.completedAt = walk.newest;
 
     if (walk.ioFailed) return r;
 

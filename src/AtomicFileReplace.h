@@ -19,9 +19,11 @@
 #ifndef POM2_ATOMIC_FILE_REPLACE_H
 #define POM2_ATOMIC_FILE_REPLACE_H
 
+#include <atomic>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <system_error>
 
 #ifdef _WIN32
@@ -62,12 +64,28 @@ inline bool syncFileContents(const std::filesystem::path& p,
                              std::error_code& ec)
 {
 #ifdef _WIN32
+    // FlushFileBuffers is documented to need GENERIC_WRITE on the handle, so
+    // this cannot mirror the POSIX branch's O_RDONLY. That matters because
+    // the callers restore the ORIGINAL file's permissions onto the temp copy
+    // before committing: a write-protected disk image left the temp
+    // FILE_ATTRIBUTE_READONLY, CreateFileW then failed ERROR_ACCESS_DENIED,
+    // and the whole write-back failed — on Windows only, for an image that
+    // saves fine everywhere else. A handle we cannot open for write is the
+    // same class of answer as a volume that does not implement write-through:
+    // the flush cannot be PROMISED, and refusing the user's save over a
+    // missing guarantee would be strictly worse than saving without it. So
+    // an access/sharing refusal reports success, exactly like the
+    // ERROR_INVALID_FUNCTION branch below and like POSIX's EROFS/EBADF.
     const HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-        ec = std::error_code(static_cast<int>(GetLastError()),
-                             std::system_category());
+        const DWORD openErr = GetLastError();
+        if (openErr == ERROR_ACCESS_DENIED || openErr == ERROR_SHARING_VIOLATION) {
+            ec.clear();
+            return true;
+        }
+        ec = std::error_code(static_cast<int>(openErr), std::system_category());
         return false;
     }
     const BOOL  ok  = FlushFileBuffers(h);
@@ -154,6 +172,30 @@ inline void syncParentDirectory(const std::filesystem::path& p) noexcept
 ///
 /// Returns false only when the path is still unusable afterwards; a missing
 /// temp (the normal case) is success.
+/// A sibling temporary path that is UNIQUE to this process and this call.
+///
+/// Every write-back used to derive the temp name from the target alone —
+/// `<target>.tmp` / `<target>.pom2tmp`. That name is not ours, it is the
+/// name every POM2 on the machine picks: two instances sharing one $HOME (a
+/// second window, a kiosk session, a headless run) both open `state.cfg.tmp`
+/// with `trunc`, interleave their writes, and whichever renames last
+/// publishes a file made of both. Same shape for a disk image opened twice.
+/// The pid + counter make the name collide only with ourselves, which we
+/// control; `prepareTempPath` below still runs on it, because a NAME being
+/// unlikely is not the same as a path being safe.
+inline std::filesystem::path tempSiblingPath(const std::filesystem::path& target)
+{
+    static std::atomic<unsigned long long> counter{0};
+#ifdef _WIN32
+    const unsigned long pid = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const unsigned long pid = static_cast<unsigned long>(::getpid());
+#endif
+    return std::filesystem::path(
+        target.string() + "." + std::to_string(pid) + "-" +
+        std::to_string(counter.fetch_add(1) + 1) + ".pom2tmp");
+}
+
 inline bool prepareTempPath(const std::filesystem::path& tmp,
                             std::error_code& ec)
 {
@@ -199,6 +241,29 @@ inline bool prepareTempPath(const std::filesystem::path& tmp,
     return true;
 }
 
+/// Resolve a symlinked TARGET to the file it names.
+///
+/// A rename does not follow links: renaming over `~/.config/POM2/state.cfg`
+/// when that is a symlink into a dotfiles repo REPLACES the link with a
+/// regular file. The user's setup is quietly dismantled, their repo stops
+/// tracking the file, and nothing says so. Nobody symlinks a path in order
+/// to have it replaced — the link IS the instruction "write to the thing I
+/// point at" — so POM2 follows it rather than refusing (refusing would make
+/// a symlinked settings file or disk image unsaveable, which is worse).
+///
+/// The cost is that the temp file is a sibling of the LINK, not of its
+/// target: if they sit on different filesystems the rename now fails loudly
+/// with `cross_device_link` instead of silently eating the link. A loud
+/// failure the user can act on is the better half of that trade.
+inline std::filesystem::path resolveReplaceTarget(const std::filesystem::path& to)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(to, ec)) || ec)
+        return to;
+    const std::filesystem::path real = std::filesystem::weakly_canonical(to, ec);
+    return (ec || real.empty()) ? to : real;
+}
+
 inline bool replaceFileAtomic(const std::filesystem::path& from,
                               const std::filesystem::path& to,
                               std::error_code& ec)
@@ -206,8 +271,9 @@ inline bool replaceFileAtomic(const std::filesystem::path& from,
     // Data first: the temp file's contents must be on the medium BEFORE the
     // rename publishes them, or the swap can expose blocks still in flight.
     if (!syncFileContents(from, ec)) return false;
+    const std::filesystem::path dest = resolveReplaceTarget(to);
 #ifdef _WIN32
-    if (MoveFileExW(from.c_str(), to.c_str(),
+    if (MoveFileExW(from.c_str(), dest.c_str(),
                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         ec.clear();
         return true;
@@ -216,9 +282,9 @@ inline bool replaceFileAtomic(const std::filesystem::path& from,
                          std::system_category());
     return false;
 #else
-    std::filesystem::rename(from, to, ec);
+    std::filesystem::rename(from, dest, ec);
     if (ec) return false;
-    syncParentDirectory(to);   // ...then the directory entry that names them
+    syncParentDirectory(dest); // ...then the directory entry that names them
     return true;
 #endif
 }
@@ -240,7 +306,7 @@ inline bool writeFileAtomic(const std::filesystem::path& path,
                             std::error_code& ec)
 {
     ec.clear();
-    const std::filesystem::path tmp = path.string() + ".tmp";
+    const std::filesystem::path tmp = tempSiblingPath(path);
     if (!prepareTempPath(tmp, ec)) return false;
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);

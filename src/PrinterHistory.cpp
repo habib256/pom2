@@ -90,6 +90,24 @@ std::string nowStamp()
     return buf;
 }
 
+/// Same instant as `nowStamp`, but shaped for a filename (no spaces, no
+/// colons — a colon is illegal on Windows and awkward everywhere).
+std::string fileStamp()
+{
+    const std::time_t t = static_cast<std::time_t>(nowEpoch());
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[80];
+    std::snprintf(buf, sizeof(buf), "%04d%02d%02d-%02d%02d%02d",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                  tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return buf;
+}
+
 /// Strip anything that would break a tab-separated record. Cheap insurance:
 /// the only free-text field is a timestamp POM2 formats itself today, but a
 /// label field is the obvious next addition and this is where it would bite.
@@ -137,7 +155,37 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
     pages_.clear();
     nextJob_ = nextFile_ = 1;
     lastPageEpoch_ = 0;
-    readIndex();          // absent / unreadable = empty history, not an error
+    const IndexState state = readIndex();
+
+    // The sweep below deletes every PNG the index does not mention, and the
+    // index is the ONLY record of which those are. An index that did not
+    // parse therefore mentions nothing, and the sweep turned "POM2 cannot
+    // read this file" into "POM2 deleted up to 200 of your printouts" —
+    // silently, on open, for a file that is one truncated write or one
+    // foreign version tag away. So: sweep only behind an index we actually
+    // read. A bad one is moved aside under a name that says what it is (the
+    // user may want to look at it, and a fresh index is written on the next
+    // page) and every PNG is left exactly where it is.
+    if (state == IndexState::Bad) {
+        const fs::path bad = fs::path(dir_) / kIndexName;
+        std::error_code mvEc;
+        fs::rename(bad, fs::path(dir_) /
+                            (std::string(kIndexName) + ".bad-" + fileStamp()),
+                   mvEc);
+        pom2::log().warn("PrinterHistory",
+            mvEc ? "unreadable index kept in place (" + mvEc.message() +
+                       ") — printouts left untouched"
+                 : "unreadable index moved aside — printouts left untouched");
+        return true;
+    }
+    if (state == IndexState::Missing) {
+        // No index and no way to tell a crash orphan from a printout whose
+        // index a user deleted by accident. Keeping the files costs disk;
+        // deleting them costs the printouts. The next successful index write
+        // makes the sweep possible again.
+        return true;
+    }
+
     // Clean safe, unreferenced page files left by a prior locked-file delete
     // or a process killed between PNG creation and index repair.
     std::vector<std::string> live;
@@ -153,27 +201,27 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
     return true;
 }
 
-bool PrinterHistory::readIndex()
+PrinterHistory::IndexState PrinterHistory::readIndex()
 {
     const fs::path path = fs::path(dir_) / kIndexName;
     std::error_code ec;
     constexpr std::uintmax_t kMaxIndexBytes = 1024u * 1024u;
     const auto bytes = fs::file_size(path, ec);
     std::error_code existsEc;
-    if ((!ec && bytes > kMaxIndexBytes) ||
-        (ec && fs::exists(path, existsEc) && !existsEc)) {
+    const bool present = fs::exists(path, existsEc) && !existsEc;
+    if ((!ec && bytes > kMaxIndexBytes) || (ec && present)) {
         pom2::log().warn("PrinterHistory",
                          "refusing oversized or non-regular index");
-        return false;
+        return IndexState::Bad;
     }
     std::ifstream in(path);
-    if (!in) return false;
+    if (!in) return present ? IndexState::Bad : IndexState::Missing;
 
     std::string line;
     if (!std::getline(in, line) || line.rfind(kIndexMagic, 0) != 0) {
         pom2::log().warn("PrinterHistory",
                          "unrecognised index format — starting a fresh history");
-        return false;
+        return IndexState::Bad;
     }
 
     while (std::getline(in, line)) {
@@ -235,13 +283,15 @@ bool PrinterHistory::readIndex()
 
     // Stored oldest-first; presented newest-first.
     std::reverse(pages_.begin(), pages_.end());
-    return true;
+    return IndexState::Parsed;
 }
 
 bool PrinterHistory::writeIndex(std::string& err) const
 {
-    const fs::path tmp   = fs::path(dir_) / (std::string(kIndexName) + ".tmp");
     const fs::path final = fs::path(dir_) / kIndexName;
+    // Unique per process + per call: two POM2 instances printing into one
+    // per-user history both wrote `index.txt.tmp`. See tempSiblingPath().
+    const fs::path tmp   = tempSiblingPath(final);
 
     // Anything already at the temp path is ours to clear or a plant to
     // refuse — trunc would otherwise write through a symlink. See
@@ -251,6 +301,12 @@ bool PrinterHistory::writeIndex(std::string& err) const
         err = "cannot prepare " + tmp.string() + ": " + tmpEc.message();
         return false;
     }
+    // The temp name is unique per call, so every failure path must remove it
+    // or the history directory grows one orphan per failed write.
+    auto discardTemp = [&tmp] {
+        std::error_code rm;
+        fs::remove(tmp, rm);
+    };
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) { err = "cannot write " + tmp.string(); return false; }
@@ -265,7 +321,11 @@ bool PrinterHistory::writeIndex(std::string& err) const
         }
         out.flush();
         out.close();
-        if (!out) { err = "write failed: " + tmp.string(); return false; }
+        if (!out) {
+            err = "write failed: " + tmp.string();
+            discardTemp();
+            return false;
+        }
     }
 
     // Rename over the old index: a crash mid-write then leaves the previous
@@ -273,6 +333,7 @@ bool PrinterHistory::writeIndex(std::string& err) const
     std::error_code ec;
     if (!replaceFileAtomic(tmp, final, ec)) {
         err = "cannot replace the index: " + ec.message();
+        discardTemp();
         return false;
     }
     return true;
@@ -290,8 +351,42 @@ PrinterHistory::~PrinterHistory()
 
 void PrinterHistory::startWriter()
 {
-    if (writer_.joinable()) return;
-    writer_ = pom2::guardedThread("PrinterHistory", [this] { writerLoop(); });
+    if (writer_.joinable()) {
+        bool alive = false;
+        {
+            std::lock_guard<std::mutex> lk(qMtx_);
+            alive = writerAlive_;
+        }
+        if (alive) return;
+        // The previous writer is gone (it threw, and ThreadGuard turned that
+        // into a return instead of a std::terminate). Reap it and spawn a
+        // fresh one rather than queueing onto a thread that will never run
+        // again — that is what used to hang `flushPending` for good.
+        writer_.join();
+        std::lock_guard<std::mutex> lk(qMtx_);
+        writerQuit_ = false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(qMtx_);
+        writerAlive_ = true;
+    }
+    writer_ = pom2::guardedThread("PrinterHistory", [this] {
+        // Clears the liveness flag on EVERY exit, including the one through
+        // the exception barrier, and wakes whoever is waiting on the queue.
+        struct AliveGuard {
+            PrinterHistory* h;
+            ~AliveGuard()
+            {
+                {
+                    std::lock_guard<std::mutex> lk(h->qMtx_);
+                    h->writerAlive_ = false;
+                }
+                h->qDoneCv_.notify_all();
+                h->qCv_.notify_all();
+            }
+        } guard{this};
+        writerLoop();
+    });
 }
 
 void PrinterHistory::stopWriter()
@@ -329,7 +424,7 @@ void PrinterHistory::writerLoop()
         std::vector<uint8_t> rgba;
         ImageWriter::pageToRgba(job.page, rgba);
         const fs::path out = fs::path(dir) / job.file;
-        const fs::path tmp = fs::path(dir) / (job.file + ".tmp");
+        const fs::path tmp = tempSiblingPath(out);
         std::error_code tmpEc;
         const bool tmpOk = prepareTempPath(tmp, tmpEc);
         bool written = tmpOk &&
@@ -362,7 +457,22 @@ void PrinterHistory::flushPending()
 {
     {
         std::unique_lock<std::mutex> lk(qMtx_);
-        qDoneCv_.wait(lk, [this] { return queue_.empty(); });
+        // `|| !writerAlive_`: this runs on the ImGui render thread (erase,
+        // clear, quit), and waiting on "the queue drains" alone means waiting
+        // forever when the thread that drains it has died — the window stops
+        // painting, the cancel button included. A dead writer instead fails
+        // the accepted pages the way a failed encode does: they leave the
+        // queue, land in `failedFiles_`, and reconcileWriteFailures() drops
+        // their rows from the durable index so nothing points at a PNG that
+        // will never exist.
+        qDoneCv_.wait(lk, [this] { return queue_.empty() || !writerAlive_; });
+        if (!queue_.empty()) {
+            pom2::log().warn("PrinterHistory",
+                "the page writer is gone — discarding " +
+                std::to_string(queue_.size()) + " unwritten page(s)");
+            for (const auto& q : queue_) failedFiles_.push_back(q.file);
+            queue_.clear();
+        }
     }
     retryPendingDeletes();
     std::string err;
@@ -449,7 +559,13 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
     startWriter();
     {
         std::unique_lock<std::mutex> lk(qMtx_);
-        qCv_.wait(lk, [this] { return queue_.size() < kMaxPending; });
+        // Same liveness escape as flushPending: a full queue behind a dead
+        // writer must not block the render thread. The push still happens —
+        // startWriter() above respawned the thread, so the page has a writer
+        // again; the predicate only stops the wait from being unbounded.
+        qCv_.wait(lk, [this] {
+            return queue_.size() < kMaxPending || !writerAlive_;
+        });
         queue_.push_back(PendingWrite{name, page});
     }
     qCv_.notify_all();

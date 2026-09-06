@@ -33,10 +33,28 @@
 // URL shape: `tnfs://host[:port]/path/to/image.po`. The scheme is optional,
 // so `tnfs.fujinet.online/Apple II/…` works too.
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
 namespace pom2 {
+
+/// Bounds on one fetch. Without them the transfer was limited only by the
+/// client's PER-REQUEST timeout, and a 32 MB image is ~64 000 requests: a
+/// slow or half-dead server produced a black window for the better part of an
+/// hour with no way to stop it (the positional-URL fetch runs BEFORE the
+/// window exists, so there is not even a UI to close).
+struct TnfsFetchLimits {
+    /// Whole-transfer deadline. Reached → the fetch fails with a message
+    /// naming how far it got; nothing partial is published, because the cache
+    /// file only appears through writeFileAtomic at the very end.
+    int  deadlineSeconds = 180;
+    /// Largest image to pull. Defaults to `kTnfsMaxImageBytes`; 0 = default.
+    std::uint32_t maxBytes = 0;
+    /// Polled between chunks. Set it from another thread (or a signal
+    /// handler) to abandon the transfer. Null = no cancellation.
+    const std::atomic<bool>* abort = nullptr;
+};
 
 /// Where a fetched image lands, and what it cost.
 struct TnfsFetchResult {
@@ -60,7 +78,8 @@ bool parseTnfsUrl(const std::string& url, std::string& host, std::uint16_t& port
 /// A 140 KB floppy is ~270 round trips; the caller is told the size first so
 /// it can say no.
 TnfsFetchResult tnfsFetchImage(const std::string& url,
-                               const std::string& cacheDir);
+                               const std::string& cacheDir,
+                               const TnfsFetchLimits& limits = {});
 
 /// Largest image this will pull. ProDOS's own ceiling — a 32 MB volume is
 /// ~64 000 round trips, which is already an unreasonable thing to do over the

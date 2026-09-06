@@ -47,6 +47,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -351,6 +352,91 @@ int main()
         assert(pom2::splitSettingList("").empty());
         assert(pom2::splitSettingList(std::string("a") + pom2::kSettingListSep)
                == std::vector<std::string>{"a"});
+    }
+
+    // ── KEYS, which were never escaped ──────────────────────────────────
+    // load() decides where a record starts and where it splits BEFORE it
+    // unescapes anything, so two characters in a KEY corrupted the store
+    // while the same characters in a VALUE were fine:
+    //   '='   the split is on the first '=', so "a=b" landed as key "a",
+    //         value "b=v" — a different setting, silently.
+    //   '#'   at position 0 made the whole line a comment; the key vanished.
+    // (Bug hunt 2026-09-06 #H24.)
+    {
+        const std::string kEqKey   = "weird=key";
+        const std::string kHashKey = "#hashkey";
+        pom2::Settings s;
+        s.setString(kEqKey,   "eqvalue");
+        s.setString(kHashKey, "hashvalue");
+        s.setString("plain",  "kept");
+        assert(s.save());
+
+        pom2::Settings back;
+        assert(back.load());
+        assert(back.getString(kEqKey,   "MISSING") == "eqvalue");
+        assert(back.getString(kHashKey, "MISSING") == "hashvalue");
+        assert(back.getString("plain",  "MISSING") == "kept");
+        // ...and nothing invented a key from the mangled halves.
+        assert(back.getString("weird", "MISSING") == "MISSING");
+    }
+
+    // ── A UTF-8 BOM must not eat the first key ──────────────────────────
+    // What a Windows editor leaves behind when a user hand-edits the file
+    // the header invites them to edit. Three bytes glued to the first key,
+    // one setting lost, no message.
+    {
+        pom2::Settings seed;
+        seed.setString("aaa_first", "one");
+        seed.setString("zzz_last",  "two");
+        assert(seed.save());
+
+        const fs::path file(seed.getStorePath());
+        std::string all;
+        {
+            std::ifstream in(file, std::ios::binary);
+            all.assign(std::istreambuf_iterator<char>(in),
+                       std::istreambuf_iterator<char>());
+        }
+        {
+            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+            out << "\xEF\xBB\xBF" << all;
+        }
+        pom2::Settings back;
+        assert(back.load());
+        assert(back.getString("aaa_first", "MISSING") == "one");
+        assert(back.getString("zzz_last",  "MISSING") == "two");
+    }
+
+    // ── The store holds the AI control token: 0600, not 0644 ────────────
+    // And a failed save must not leave its temp file behind: the name is
+    // unique per call now, so debris would accumulate one file per attempt.
+    {
+        pom2::Settings s;
+        s.setString("ai_control_token", "s3cret");
+        assert(s.save());
+        const fs::path file(s.getStorePath());
+#if !defined(_WIN32)
+        const auto perms = fs::status(file).permissions();
+        assert((perms & fs::perms::group_all) == fs::perms::none);
+        assert((perms & fs::perms::others_all) == fs::perms::none);
+        assert((perms & fs::perms::owner_read) != fs::perms::none);
+        assert((perms & fs::perms::owner_write) != fs::perms::none);
+#endif
+        // Make the commit fail without permission tricks: a directory at the
+        // store's own path makes the rename fail.
+        fs::remove(file);
+        fs::create_directory(file);
+        s.setString("something_new", "x");
+        assert(!s.save());
+        int debris = 0;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(file.parent_path(), ec)) {
+            const std::string nm = e.path().filename().string();
+            if (nm.size() > 8 && nm.compare(nm.size() - 8, 8, ".pom2tmp") == 0)
+                ++debris;
+        }
+        assert(debris == 0);
+        fs::remove_all(file);
     }
 
     fs::remove_all(home);

@@ -85,6 +85,14 @@ struct ProDOSDecodeResult {
     /// `ok` — the files it did write are valid — but `error` then carries a
     /// human-readable reason for callers that want to surface it.
     bool        aborted       = false;
+    /// An instant at or after every file this decode wrote. It is what the
+    /// caller must adopt as the volume's new mount stamp: the files the
+    /// write-back just created are NEWER than the old stamp, so on the next
+    /// flush `preserveNewerThan` would classify POM2's own output as a
+    /// host-side edit and preserve the guest's SECOND round of changes away.
+    /// Taken as max(clock now, newest mtime actually written) so a server
+    /// clock ahead of ours cannot defeat it.
+    std::filesystem::file_time_type completedAt{};
 };
 
 /// Reverse of `buildVolumeFromFolder`: walk a synthesised volume's directory

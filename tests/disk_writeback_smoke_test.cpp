@@ -173,14 +173,17 @@ int main()
         fs::remove(p);
     }
 
-    // ── <image>.pom2tmp is OURS by construction ─────────────────────────
-    // The caller validates the TARGET; the sibling temp name is derived
-    // afterwards and gets none of that scrutiny, while ofstream(trunc)
-    // follows symlinks like any other open. Before `writeFileAtomic` here
-    // called prepareTempPath, a link planted at <image>.pom2tmp sent the
-    // whole 140 KB rewrite to its victim and the rename then carried the
-    // link away, leaving the user's image destroyed with nothing to show
-    // what happened. (Bug hunt 2026-09-06 #3.)
+    // ── The temp name is UNIQUE, so the old fixed one captures nothing ──
+    // The sibling temp used to be `<image>.pom2tmp` — derived from the target
+    // alone, i.e. the name EVERY POM2 on the machine picks. Two instances
+    // saving one image opened it with trunc, interleaved, and the last rename
+    // published a disk made of both; anything else on the box could also
+    // guess it. It is now `<image>.<pid>-<n>.pom2tmp` (pom2::tempSiblingPath),
+    // and prepareTempPath still runs on it — the symlink / hard-link /
+    // directory refusals it enforces are pinned directly in
+    // atomic_file_replace_test. What this case pins is that a plant at the
+    // LEGACY name neither redirects the write nor blocks it.
+    // (Bug hunt 2026-09-06 #H7, formerly #3.)
     {
         const fs::path p      = tmpFile("tmppath-symlink.dsk");
         const fs::path victim = tmpFile("tmppath-victim.bin");
@@ -197,26 +200,26 @@ int main()
         const uint8_t cur3 = img.nibbleAt(3, 60);
         img.writeNibbleAt(3, 60, static_cast<uint8_t>(cur3 ^ 0x01));
         img.setWriteBackEnabled(true);
-        // prepareTempPath removes the link (the name is ours), so the save
-        // proceeds — onto the real image, which is the point.
         assert(img.saveDirty());
         assert(fs::file_size(victim) == 6);   // victim untouched, not rewritten
         // The image is still a real file of the right size — not the symlink
         // the rename would otherwise have moved on top of it.
         assert(fs::symlink_status(p).type() == fs::file_type::regular);
         assert(fs::file_size(p) == DiskImage::kBytesPerImage);
-        assert(!fs::exists(fs::symlink_status(tmp)));   // link consumed
+        // The plant at the legacy name was simply never used.
+        assert(fs::symlink_status(tmp).type() == fs::file_type::symlink);
         DiskImage back;
         assert(back.loadFile(p.string()));
 
+        fs::remove(tmp, ec);
         fs::remove(victim, ec);
         fs::remove(p, ec);
-        std::printf("disk_writeback: .pom2tmp symlink not followed OK\n");
+        std::printf("disk_writeback: legacy .pom2tmp name no longer used OK\n");
     }
 
-    // ...and anything at that name we may NOT simply delete (a directory, a
-    // fifo) refuses the save instead of writing through it. The dirty state
-    // survives so the user can clear it and retry.
+    // ...and a directory at the legacy name no longer blocks the save either.
+    // The unique temp must also be cleaned up — a per-call name that survived
+    // a failure would leave one orphan per attempt beside the user's image.
     {
         const fs::path p   = tmpFile("tmppath-dir.dsk");
         const fs::path tmp = fs::path(p.string() + ".pom2tmp");
@@ -232,14 +235,25 @@ int main()
         const uint8_t cur = img.nibbleAt(4, 70);
         img.writeNibbleAt(4, 70, static_cast<uint8_t>(cur ^ 0x01));
         img.setWriteBackEnabled(true);
-        assert(!img.saveDirty());
-        assert(img.hasUnsavedChanges());
+        assert(img.saveDirty());              // no longer refused
+        assert(!img.hasUnsavedChanges());
         assert(fs::file_size(p) == before);
-        assert(fs::is_directory(tmp));        // refused, not deleted
+        assert(fs::is_directory(tmp));        // untouched, not deleted
+
+        int leftovers = 0;
+        for (const auto& e : fs::directory_iterator(p.parent_path(), ec)) {
+            const std::string nm = e.path().filename().string();
+            if (nm.rfind(p.filename().string() + ".", 0) == 0 &&
+                nm.size() > 8 &&
+                nm.compare(nm.size() - 8, 8, ".pom2tmp") == 0 &&
+                !fs::is_directory(e.path(), ec))
+                ++leftovers;
+        }
+        assert(leftovers == 0);
 
         fs::remove_all(tmp, ec);
         fs::remove(p, ec);
-        std::printf("disk_writeback: .pom2tmp directory refuses save OK\n");
+        std::printf("disk_writeback: unique temp name, no debris OK\n");
     }
 
     // Reject a sparse hostile image before allocating from its apparent size.

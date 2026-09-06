@@ -68,14 +68,27 @@ std::string trim(const std::string& s)
 // Escape the record-separator and the escape char so arbitrary string values
 // round-trip through the line-oriented `key=value` store: a newline would
 // otherwise split one entry into two (the second dropped as a no-`=` line),
-// and a backslash is escaped to keep the encoding unambiguous. ('#' does NOT
-// need escaping — load treats it as a comment only at the start of a line.)
-std::string escapeValue(const std::string& s)
+// and a backslash is escaped to keep the encoding unambiguous.
+//
+// A KEY needs two more escapes a value does not, because load() decides where
+// a record starts and where it splits BEFORE it unescapes anything:
+//   '='  — the split is on the FIRST '=', so a key containing one lands half
+//          of itself in the value ("a=b" → key "a", value "b=v") and the
+//          setting silently becomes a different setting.
+//   '#'  — only at position 0, where it makes the whole line a comment and
+//          the key vanishes on the next load.
+// Values are exempt from both: a '#' after column 0 is data, and every '='
+// past the first is data too. `isKey` therefore widens the escape set rather
+// than changing it for everyone — state.cfg stays readable for the ~200 keys
+// that need neither.
+std::string escapeValue(const std::string& s, bool isKey = false)
 {
     std::string out;
     out.reserve(s.size());
     for (size_t i = 0; i < s.size(); ++i) {
         const char c = s[i];
+        if (isKey && c == '=') { out += "\\="; continue; }
+        if (isKey && c == '#' && i == 0) { out += "\\#"; continue; }
         // Leading/trailing space & tab must be escaped too: load() runs the
         // value through trim() (needed to drop a CRLF '\r' artifact), which
         // would otherwise silently strip boundary whitespace from a value —
@@ -105,6 +118,8 @@ std::string unescapeValue(const std::string& s)
             else if (n == 'r')  out += '\r';
             else if (n == 's')  out += ' ';
             else if (n == 't')  out += '\t';
+            else if (n == '=')  out += '=';    // key-only escapes (see above)
+            else if (n == '#')  out += '#';
             else if (n == '\\') out += '\\';
             else { out += '\\'; out += n; }   // unknown escape — pass through
         } else {
@@ -112,6 +127,20 @@ std::string unescapeValue(const std::string& s)
         }
     }
     return out;
+}
+
+// Index of the '=' that separates key from value: the first one NOT preceded
+// by an odd run of backslashes. A plain `find('=')` would split inside the
+// `\=` an escaped key writes, turning "a\=b=v" into key "a\" / value "b=v".
+size_t findSeparator(const std::string& line)
+{
+    size_t backslashes = 0;
+    for (size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == '\\') { ++backslashes; continue; }
+        if (line[i] == '=' && (backslashes % 2) == 0) return i;
+        backslashes = 0;
+    }
+    return std::string::npos;
 }
 
 } // namespace
@@ -137,14 +166,27 @@ bool Settings::load()
     if (!f) return false;     // missing → use defaults; not an error
 
     std::string line;
+    bool first = true;
     while (std::getline(f, line)) {
+        // A UTF-8 BOM is what a Windows text editor leaves behind when a user
+        // hand-edits state.cfg (the header invites exactly that). Those three
+        // bytes glue themselves to the first key, which then matches nothing
+        // and is silently dropped — one setting lost, no message, and only on
+        // the machine where someone opened the file in Notepad.
+        if (first) {
+            first = false;
+            if (line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
+                static_cast<unsigned char>(line[1]) == 0xBB &&
+                static_cast<unsigned char>(line[2]) == 0xBF)
+                line.erase(0, 3);
+        }
         line = trim(line);
         // A '#' is a comment marker ONLY at the start of a line — stripping
         // after the first '#' anywhere would truncate any value that legally
         // contains '#' (e.g. a disk path "/home/u/My#Disks/game.dsk").
         if (line.empty() || line[0] == '#') continue;
 
-        const size_t eq = line.find('=');
+        const size_t eq = findSeparator(line);
         if (eq == std::string::npos) continue;
         const std::string key   = unescapeValue(trim(line.substr(0, eq)));
         const std::string value = unescapeValue(trim(line.substr(eq + 1)));
@@ -172,7 +214,18 @@ bool Settings::save() const
     // when every save wrote unconditionally.
     if (hasWritten_ && store == lastWritten_) return true;
     const fs::path path = resolveStorePath();
-    const fs::path tmp  = path.string() + ".tmp";
+    // Unique per process AND per call: two POM2 instances sharing one $HOME
+    // both used to open `state.cfg.tmp` with trunc and interleave their
+    // writes. See tempSiblingPath().
+    const fs::path tmp  = pom2::tempSiblingPath(path);
+    // Every early return below must take the temp file with it: a leftover
+    // `state.cfg.<pid>-<n>.pom2tmp` beside the config is debris the user
+    // cannot interpret, and a full disk (the commonest reason to get here)
+    // would grow one on every save attempt.
+    auto discardTemp = [&tmp] {
+        std::error_code rm;
+        fs::remove(tmp, rm);
+    };
     std::error_code tmpEc;
     if (!pom2::prepareTempPath(tmp, tmpEc)) {
         pom2::log().warn("Settings",
@@ -184,12 +237,14 @@ bool Settings::save() const
         if (!f) {
             pom2::log().warn("Settings",
                 "Cannot open " + tmp.string() + " for write");
+            discardTemp();
             return false;
         }
         f << "# POM2 runtime config — written automatically on exit.\n";
         f << "# Edit by hand at your own risk; unknown keys are preserved.\n";
         for (const auto& kv : store) {
-            f << escapeValue(kv.first) << '=' << escapeValue(kv.second) << '\n';
+            f << escapeValue(kv.first, /*isKey=*/true) << '='
+              << escapeValue(kv.second) << '\n';
         }
         // Flush + close BEFORE the rename so a deferred write error (disk full /
         // quota) is observed here — checking the stream while it's still open
@@ -199,13 +254,31 @@ bool Settings::save() const
         f.close();
         if (!f) {
             pom2::log().warn("Settings", "Write/flush failed on " + tmp.string());
+            discardTemp();
             return false;
         }
+    }
+    // state.cfg holds the AI control server's auth token, which is the whole
+    // of that server's security: anyone who can read it can drive the
+    // emulator, mount images and write snapshots over the user's files. A
+    // 0644 file in a shared $HOME hands it to every local account. Set the
+    // mode on the TEMP file, before the rename, so the published file is
+    // never briefly world-readable. Windows ignores POSIX bits — the API is a
+    // no-op there and the file inherits the directory ACL, which for
+    // %APPDATA%\POM2 is already per-user.
+    {
+        std::error_code permEc;
+        fs::permissions(tmp,
+                        fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace, permEc);
+        // Best effort: a filesystem with no permission model (FAT, MEMFS)
+        // fails here and that is not a reason to lose the user's settings.
     }
     std::error_code ec;
     if (!replaceFileAtomic(tmp, path, ec)) {
         pom2::log().warn("Settings",
             "Rename " + tmp.string() + " → " + path.string() + " failed: " + ec.message());
+        discardTemp();
         return false;
     }
     // Native: the rename above is already durable. Browser: the file now

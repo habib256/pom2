@@ -82,9 +82,19 @@ fs::path executableDir()
     return cached;
 }
 
-fs::path userDataDir()
+namespace {
+
+struct UserDataDir {
+    fs::path path;
+    /// False when nothing per-user resolved and this is the temp-dir last
+    /// resort. See resourceSearchDirs() for why the distinction matters.
+    bool     perUser = false;
+};
+
+const UserDataDir& userDataDirInfo()
 {
-    static const fs::path cached = [] {
+    static const UserDataDir cached = [] {
+        UserDataDir out;
         fs::path dir;
 #if defined(_WIN32)
         if (const char* local = std::getenv("LOCALAPPDATA"); local && *local)
@@ -98,6 +108,7 @@ fs::path userDataDir()
         else if (const char* home = std::getenv("HOME"); home && *home)
             dir = fs::path(home) / ".local" / "share" / "POM2";
 #endif
+        out.perUser = !dir.empty();
         if (dir.empty()) {
             std::error_code ec;
             dir = fs::temp_directory_path(ec) / "POM2";
@@ -105,9 +116,17 @@ fs::path userDataDir()
         }
         std::error_code ec;
         fs::create_directories(dir, ec);
-        return dir;
+        out.path = dir;
+        return out;
     }();
     return cached;
+}
+
+} // namespace
+
+fs::path userDataDir()
+{
+    return userDataDirInfo().path;
 }
 
 fs::path userConfigDir()
@@ -175,7 +194,16 @@ const std::vector<fs::path>& resourceSearchDirs()
         // duplicated XDG logic accidentally searched ~/.local/share on macOS
         // while documentation and writes used ~/Library/Application Support;
         // user ROM overrides therefore worked on Linux but not in a .app.
-        push(userDataDir());
+        //
+        // ONLY when it really is a per-user directory. With no $HOME (a
+        // daemon, a locked-down service account, a container) userDataDir()
+        // falls back to `<temp>/POM2`, and /tmp is world-writable: any local
+        // user could plant `/tmp/POM2/roms/apple2e.rom` and have POM2 boot it
+        // in preference to the installed dump. The fallback stays searchable
+        // — it is where that session's own downloads land — but behind the
+        // install tree, where it can no longer override anything shipped.
+        const UserDataDir& udd = userDataDirInfo();
+        if (udd.perUser) push(udd.path);
 
         // 2-4: executable-relative roots (portable bundle + FHS install).
         const fs::path exe = executableDir();
@@ -184,6 +212,7 @@ const std::vector<fs::path>& resourceSearchDirs()
             push(exe / "..");                 // binary in bin/, assets a level up
             push(exe / ".." / "share" / "POM2");  // /usr/bin + /usr/share/POM2
         }
+        if (!udd.perUser) push(udd.path);
 
         // 5-7: legacy development roots. Keep them last: a desktop launch
         // often inherits the directory containing a disk image, and an

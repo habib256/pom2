@@ -98,6 +98,21 @@ inline void pumpPersistentState()
                 // is what makes "my settings do not stick" unreportable.
                 console.warn('POM2: could not persist settings:', err);
                 Module.pom2PersistFailed = true;
+                // A failed flush stored nothing: the state is still dirty,
+                // and clearing the flag before starting had already said
+                // otherwise. Without this, one quota error made every later
+                // write invisible to the pump until something else set the
+                // flag again.
+                Module.pom2StateDirty = true;
+            }
+            // Re-arm for anything that asked while this was in flight:
+            // flushPersistentStateNow() sets the flag instead of starting a
+            // second sync, and the pump would otherwise not look at it again
+            // until the NEXT write — so a pagehide during a running flush
+            // dropped exactly the data it was trying to save.
+            if (Module.pom2FlushRequested) {
+                Module.pom2FlushRequested = false;
+                Module.pom2StateDirty = true;
             }
         });
     }, kFlushDebounceSeconds);
@@ -113,13 +128,38 @@ inline void flushPersistentStateNow()
 {
 #ifdef __EMSCRIPTEN__
     EM_ASM({
-        if (Module.pom2FlushInFlight) { Module.pom2StateDirty = true; return; }
+        if (Module.pom2FlushInFlight) {
+            // Ask the in-flight flush's callback to run another one. Setting
+            // only `pom2StateDirty` was not enough: the pump ignores it for
+            // `kFlushDebounceSeconds` after the running flush completes, and
+            // this call site is "the user is leaving" — there is no next
+            // frame to be debounced into.
+            Module.pom2StateDirty = true;
+            Module.pom2FlushRequested = true;
+            return;
+        }
         Module.pom2StateDirty = false;
         Module.pom2FlushInFlight = true;
         FS.syncfs(false, function(err) {
             Module.pom2FlushInFlight = false;
             Module.pom2LastFlush = Date.now();
-            if (err) console.warn('POM2: could not persist settings:', err);
+            if (err) {
+                console.warn('POM2: could not persist settings:', err);
+                Module.pom2StateDirty = true;   // stored nothing — still dirty
+            }
+            if (Module.pom2FlushRequested) {
+                Module.pom2FlushRequested = false;
+                Module.pom2StateDirty = false;
+                Module.pom2FlushInFlight = true;
+                FS.syncfs(false, function(e2) {
+                    Module.pom2FlushInFlight = false;
+                    Module.pom2LastFlush = Date.now();
+                    if (e2) {
+                        console.warn('POM2: could not persist settings:', e2);
+                        Module.pom2StateDirty = true;
+                    }
+                });
+            }
         });
     });
 #endif
