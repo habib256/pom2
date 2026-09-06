@@ -164,7 +164,7 @@ int main(int argc, char** argv)
                                           : std::vector<std::string>{diskArg});
     if (rom.empty() || po.empty()) {
         std::printf("SKIP: missing apple2e.rom or disks_3.5/DIX.po\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

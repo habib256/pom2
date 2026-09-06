@@ -17,6 +17,7 @@
 #include "EmulationController.h"
 
 #include "CpuClock.h"
+#include "Block512Backing.h"   // pom2::mediaWriteEpoch
 #include "Logger.h"
 #include "ThreadGuard.h"
 
@@ -58,7 +59,7 @@ void EmulationController::setVideoStandard(VideoStandard s)
 }
 
 EmulationController::EmulationController()
-    : processor(&mem)
+    : processor(&mem), writeBackQueue_(*this)
 {
     cyclesPerFrame.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
 
@@ -182,6 +183,13 @@ EmulationController::~EmulationController()
 #ifndef __EMSCRIPTEN__
     if (worker.joinable()) worker.join();
 #endif
+
+    // Stop the deferred 3.5" write-back thread while `stateMtx` and the drives
+    // are still alive: it takes that lock to report each commit, and member
+    // destruction order would have destroyed the mutex first (it is declared
+    // AFTER the queue, so it goes first). Leftover payloads are committed
+    // here, which is the last chance the session's guest writes get.
+    writeBackQueue_.shutdown();
 
     // Tear down audio first so the callback thread is drained before the
     // sources it's pulling from go away.
@@ -372,6 +380,11 @@ bool EmulationController::mount35(int idx, const std::string& path)
 
 EmulationController::WriteBackQueue::~WriteBackQueue()
 {
+    shutdown();
+}
+
+void EmulationController::WriteBackQueue::shutdown()
+{
     {
         std::lock_guard<std::mutex> lk(mtx_);
         stopping_ = true;
@@ -381,22 +394,50 @@ EmulationController::WriteBackQueue::~WriteBackQueue()
     // session's guest writes, and the process is about to exit.
     if (worker_.joinable()) worker_.join();
     // Anything still queued when the thread never started (or exited early)
-    // is committed here rather than dropped.
-    for (auto& pending : queue_) {
+    // is committed here rather than dropped. No completion is delivered: the
+    // machine is being torn down, so the drive that would take the answer is
+    // either gone or about to be.
+    for (auto& item : queue_) {
         std::string error;
-        if (!pom2::Disk35Image::commitWriteBack(std::move(pending), error))
+        if (!pom2::Disk35Image::commitWriteBack(std::move(item.pending), error))
             pom2::log().warn("Sony35", "Deferred write-back failed: " + error);
     }
+    queue_.clear();
+}
+
+void EmulationController::WriteBackQueue::report(
+    const Item& item, bool ok, const std::string& error)
+{
+    if (!item.done) return;
+    // `mtx_` MUST be released here: `submit` runs with stateMtx held and takes
+    // mtx_, so taking them in the other order would be the classic inversion.
+    std::lock_guard<std::mutex> lk(owner_.stateMtx);
+    item.done(ok, error);
 }
 
 void EmulationController::WriteBackQueue::submit(
-    pom2::Disk35Image::PendingWriteBack&& pending)
+    pom2::Disk35Image::PendingWriteBack&& pending, Completion onDone)
 {
     if (!pending.valid) return;
+#ifdef __EMSCRIPTEN__
+    // The browser build is compiled WITHOUT pthreads by design, so spawning a
+    // thread here aborts the tab and takes the payload with it. There is no
+    // lock to get out from under either — one thread runs the machine and the
+    // frame loop — so the commit happens inline, exactly as the sinkless
+    // branch in Sony35Drive does, and the completion runs on this thread with
+    // the caller's lock already held (hence no `report()`, which would take
+    // it a second time on a non-recursive mutex).
+    Item item{ std::move(pending), std::move(onDone) };
+    std::string error;
+    const bool ok =
+        pom2::Disk35Image::commitWriteBack(std::move(item.pending), error);
+    if (!ok) pom2::log().warn("Sony35", "Deferred write-back failed: " + error);
+    if (item.done) item.done(ok, error);
+#else
     {
         std::lock_guard<std::mutex> lk(mtx_);
         if (stopping_) return;
-        queue_.push_back(std::move(pending));
+        queue_.push_back(Item{ std::move(pending), std::move(onDone) });
         if (!worker_.joinable()) {
             // Guarded: an exception escaping a std::thread callable calls
             // std::terminate() with no log line (CLAUDE.md § thread barrier).
@@ -404,6 +445,7 @@ void EmulationController::WriteBackQueue::submit(
         }
     }
     cv_.notify_one();
+#endif
 }
 
 void EmulationController::WriteBackQueue::run()
@@ -415,13 +457,17 @@ void EmulationController::WriteBackQueue::run()
             if (stopping_) return;
             continue;
         }
-        pom2::Disk35Image::PendingWriteBack pending = std::move(queue_.front());
+        Item item = std::move(queue_.front());
         queue_.erase(queue_.begin());
         busy_ = true;
         lk.unlock();                       // ← the file I/O happens here
         std::string error;
-        if (!pom2::Disk35Image::commitWriteBack(std::move(pending), error))
+        const bool ok =
+            pom2::Disk35Image::commitWriteBack(std::move(item.pending), error);
+        if (!ok)
             pom2::log().warn("Sony35", "Deferred write-back failed: " + error);
+        // Outside `mtx_`, inside `stateMtx` — see report().
+        report(item, ok, error);
         lk.lock();
         busy_ = false;
         idleCv_.notify_all();
@@ -599,6 +645,7 @@ void EmulationController::tickFrame()
     // disabled ring costs nothing.
     if (rewind_.enabled()) {
         std::lock_guard<std::mutex> lk(stateMtx);
+        noteMediaWrite();   // a rewind may not cross a media write
         rewind_.capture(processor, mem);
     }
 }
@@ -947,15 +994,54 @@ void EmulationController::rewindEndAndResume(size_t index)
     setMode(Mode::Running);
 }
 
+void EmulationController::noteMediaWrite()
+{
+    // See the header for the policy. Called from the ring's capture points,
+    // with `stateMtx` held, right before the frame is appended: clearing here
+    // means the frame we are about to record becomes the new keyframe and the
+    // history starts AFTER the write, so no scrub can span it.
+    const uint64_t now = pom2::mediaWriteEpoch().load(std::memory_order_relaxed);
+    if (now == rewindMediaEpoch_) return;
+    rewindMediaEpoch_ = now;
+    if (!rewind_.empty()) {
+        rewind_.clear();
+        pom2::log().info("Rewind",
+            "history cleared: an effect a rewind cannot undo (block-device / "
+            "3.5\" / WOZ media write, or printed output)");
+    }
+}
+
 void EmulationController::flushAudioForRewind()
 {
+    noteTimeJump();
+}
+
+void EmulationController::noteTimeJump()
+{
     // Caller holds stateMtx. Jumping the CPU/RAM back in time leaves the
-    // speaker's 1-bit reconstruction holding samples from a future that no
-    // longer happens; reset it so a scrub/rewind is silent instead of
-    // popping, and the resumed timeline starts clean. (Deeper sound-chip
-    // continuity — Mockingboard AY/VIA mid-note — is a separate follow-up;
-    // those cards don't yet serialize their state.)
-    if (spk) spk->reset();
+    // free-running audio devices holding samples — and cycle stamps — from a
+    // future that no longer happens.
+    //
+    //  * The speaker's 1-bit reconstruction cursor only snaps FORWARD and
+    //    purges older-stamped toggles as stale, so without a reset audio
+    //    stays dead until the counter re-passes its pre-jump value.
+    //  * The cassette deck is in no snapshot at all and compares its stamps
+    //    with unsigned subtraction, so a backwards jump wrapped them (see
+    //    CassetteDevice::resetForTimeJump). It keeps its tape and cursor.
+    //
+    // The sound CARDS need nothing here: Mockingboard / Phasor serialize
+    // their VIA + AY + SSI263 state through the SLOTn sections.
+    if (spk)  spk->reset();
+    if (tape) tape->resetForTimeJump();
+    // The debugger's transients name addresses in the timeline we just left:
+    // a resume amnesty would silently skip the first breakpoint at that pc,
+    // and a latched hit_ still reads stopRequested() so the worker would park
+    // again the instant it resumed, blaming a breakpoint nothing hit.
+    // Breakpoints / watchpoints themselves survive — they are user state.
+    if (debugger_) {
+        debugger_->clearForTimeJump();
+        syncDebugHook();
+    }
 }
 
 void EmulationController::rewindEndPaused()
@@ -998,6 +1084,26 @@ int EmulationController::runCpuSlice(int chunk)
             return spent + processor.run(chunk - spent);
         return spent;
     }
+    // The hook must not outlive what armed it. `M6502::step` gates its
+    // interrupt-entry split on `debugHook_ != nullptr` and NOT on "is
+    // anything armed", because the split changes how the entry's 7 cycles
+    // reach `memory->advanceCycles` — two small advances instead of one sum —
+    // and that moves the sub-instruction phase every lazily-synced peripheral
+    // derives from (Mockingboard/Phasor T1, the Disk II LSS, the video beam;
+    // pinned by mockingboard_t1_irq_phase / via_t1_rearm_chain).
+    //
+    // A step-over or run-to-cursor attaches the hook, and the transient that
+    // armed it is dropped by `setMode(Mode::Stopped)` — which deliberately
+    // does not re-sync (it must not take the lock). So after ONE step-over
+    // plus Run the machine kept a debugged CPU for the rest of the session,
+    // with nothing armed and the interrupt phase perturbed. Reconciling here
+    // rather than in setMode costs two relaxed loads per 4096-cycle chunk,
+    // runs exactly once per transition (afterwards the hook IS null), and
+    // covers every resume path — toolbar Play, Machine ▸ Run, the palette,
+    // the kiosk menu — instead of only the debugger panel's.
+    // The caller holds `stateMutex`, which is what syncDebugHook needs.
+    if (debugger_ && processor.getDebugHook() != nullptr && !debugger_->armed())
+        syncDebugHook();
     const int spent = processor.run(chunk);
     // A debugger stop ends the slice early. Handled HERE, in the one funnel
     // both drivers (worker thread and the WASM RAF tick) go through, rather
@@ -1346,6 +1452,7 @@ void EmulationController::workerLoop()
         // consistent view vs. any UI-thread memory write.
         if (rewind_.enabled()) {
             std::lock_guard<std::mutex> lk(stateMtx);
+            noteMediaWrite();   // a rewind may not cross a media write
             rewind_.capture(processor, mem);
         }
 

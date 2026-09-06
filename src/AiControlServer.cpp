@@ -84,11 +84,30 @@ constexpr int    kRequestDeadlineMs = 10000;   // 10 s — generous for localhos
 // works for both load paths (file must exist) and save paths (file
 // doesn't exist yet). Caller decides which mode it needs via the
 // `mustExist` flag.
+/// True when `s` carries a byte that must never reach a filesystem call.
+///
+/// A NUL is the one that matters. Every path check in this file runs on a
+/// `std::string` (which happily holds a NUL) while the OS call underneath
+/// runs on `c_str()` (which stops at one), so the two see DIFFERENT paths:
+/// `"roms/apple2e.rom\0.pom2snap"` passes an "ends with .pom2snap" test and
+/// then opens `roms/apple2e.rom`. Every other control byte is refused with
+/// it — nothing legitimate names a file with a newline or an escape, and a
+/// path spliced into a log line or a JSON reply is one less thing to think
+/// about.
+bool pathHasControlBytes(const std::string& s)
+{
+    for (unsigned char c : s)
+        if (c < 0x20 || c == 0x7F) return true;
+    return false;
+}
+
 std::optional<std::string> safeCwdRelativePath(const std::string& in,
                                                bool mustExist)
 {
     namespace fs = std::filesystem;
     if (in.empty()) return std::nullopt;
+    // Before anything looks at the string's SHAPE: see pathHasControlBytes.
+    if (pathHasControlBytes(in)) return std::nullopt;
     std::error_code ec;
     const fs::path cwd = fs::weakly_canonical(fs::current_path(ec), ec);
     if (ec) return std::nullopt;
@@ -1265,6 +1284,15 @@ void AiControlServer::handleSnapshotSave(socket_t fd, const Request& req)
     if (req.method != "POST") { sendJsonError(fd, 405, "POST only"); return; }
     const std::string path = jsonGetString(req.body, "path");
     if (path.empty()) { sendJsonError(fd, 400, "missing \"path\""); return; }
+    // BEFORE the extension test, because that test is exactly what a NUL
+    // defeats: `"roms/apple2e.rom\0.pom2snap"` ends with ".pom2snap" as far
+    // as std::string is concerned, and the write underneath — which goes
+    // through c_str() — lands on the ROM. See pathHasControlBytes.
+    if (pathHasControlBytes(path)) {
+        sendJsonError(fd, 400,
+            "path contains a control byte (NUL or similar) — refused");
+        return;
+    }
     // The save path must end with `.pom2snap`. Without this an agent with
     // an empty / leaked auth token could `POST /snapshot/save {"path":
     // "roms/apple2.rom"}` and shred a ROM, settings file, or disk image
@@ -1285,6 +1313,17 @@ void AiControlServer::handleSnapshotSave(socket_t fd, const Request& req)
         sendJsonError(fd, 403,
             "path rejected: must resolve under the emulator working "
             "directory (received \"" + path + "\")");
+        return;
+    }
+    // Re-check on the RESOLVED path. The test above ran on the request's
+    // string; `weakly_canonical` resolves symlinks and `..`, so what is
+    // actually about to be written is this, and it is what the extension
+    // rule has to hold for.
+    if (safe->size() <= kSaveExtLen ||
+        safe->compare(safe->size() - kSaveExtLen, kSaveExtLen, kSaveExt) != 0) {
+        sendJsonError(fd, 400,
+            "path resolves to \"" + *safe +
+            "\", which does not end with \".pom2snap\" — refused");
         return;
     }
 
@@ -1388,12 +1427,13 @@ void AiControlServer::handleSnapshotLoad(socket_t fd, const Request& req)
         ok    = res.ok;
         error = res.error;
         if (ok) {
-            // The restore usually rewinds mem's cycleCounter; the speaker's
-            // reconstruction cursor only snaps FORWARD and purges
-            // older-stamped toggles as stale, so without this flush audio
-            // stays dead until the counter re-passes its pre-load value
-            // (minutes of emulated time).
-            ctrl_->speaker().reset();
+            // The restore usually rewinds mem's cycleCounter, which strands
+            // every free-running audio device on the abandoned timeline (the
+            // speaker's reconstruction cursor only snaps FORWARD; the
+            // cassette's stamps wrap under unsigned subtraction). This is the
+            // same call the rewind transport makes — hand-rolling
+            // `speaker().reset()` here missed the deck entirely.
+            ctrl_->noteTimeJump();
             // The rewind ring recorded the abandoned timeline — its stamps
             // would break indexForCycle's monotonicity — so drop it after
             // SUCCESS. Failed loads roll back completely and must preserve

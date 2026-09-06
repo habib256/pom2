@@ -116,7 +116,7 @@ int main()
 
     if (tested == 0) {
         std::printf("iic_ioudis_dhgr SKIPPED (no //c ROM present)\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     if (failures) {
         std::printf("iic_ioudis_dhgr FAILED (%d)\n", failures);

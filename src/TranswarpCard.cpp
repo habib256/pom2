@@ -31,7 +31,9 @@ namespace pom2 {
 namespace {
 
 constexpr uint32_t kSnapMagic   = 0x50525754u;   // 'TWRP' little-endian
-constexpr uint16_t kSnapVersion = 1;
+// v2 appends the displaced $F000 window (see appendSnapshotState). v1 blobs
+// still load — they simply leave `displaced_` at whatever the live card has.
+constexpr uint16_t kSnapVersion = 2;
 
 /// Microseconds → 6502 cycles at the Apple's own clock. The slowdown
 /// windows are specified in real time on the board (an RC one-shot), so
@@ -286,6 +288,16 @@ void TranswarpCard::appendSnapshotState(std::vector<uint8_t>& out) const
     // The shadow flag is NOT written: whether $F000 currently holds the
     // card's ROM is a property of Memory, which the snapshot captures
     // wholesale. Restoring it here would swap 4 KB a second time.
+    //
+    // `displaced_` IS written (v2). It is the Apple's OWN $F000-$FFFF, saved
+    // aside while the card shadows it, and the only copy that exists —
+    // Memory holds the card's ROM there. Without it a restore + a later
+    // `$C072` (readA2Rom) put 4 KB of zeroes over Applesoft + Monitor. It is
+    // only meaningful while shadowing, so a flag byte keeps the cost at one
+    // byte otherwise; while shadowing the bytes never change, so the rewind
+    // XOR delta codec collapses them to nothing after the first keyframe.
+    out.push_back(shadowing_ ? 1 : 0);
+    if (shadowing_) out.insert(out.end(), displaced_.begin(), displaced_.end());
 }
 
 void TranswarpCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -293,7 +305,8 @@ void TranswarpCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     byteio::Reader r(data, len);
     if (!r.has(4 + 2 + 6 + 4)) return;
     if (r.u32() != kSnapMagic)   return;
-    if (r.u16() != kSnapVersion) return;
+    const uint16_t version = r.u16();
+    if (version == 0 || version > kSnapVersion) return;
 
     dsw1_      = r.u8();
     dsw2_      = r.u8();
@@ -301,11 +314,23 @@ void TranswarpCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     readA2Rom_ = r.u8() != 0;
     in1MHz_    = r.u8() != 0;
     halted_    = r.u8() != 0;
+    // Clamp: a crafted/corrupt blob must not park the card in a slow window
+    // that never expires (advanceCycles only counts down).
     slowCycles_ = static_cast<int>(r.u32());
+    if (slowCycles_ < 0) slowCycles_ = 0;
+    if (slowCycles_ > microsToCycles(kJoySlowMicros))
+        slowCycles_ = microsToCycles(kJoySlowMicros);
     // Memory came back with whatever was at $F000 when the snapshot was
     // taken, so track that rather than swapping: if the card was shadowing
     // then, the restored ROM mirror already IS the card's.
     shadowing_ = !readA2Rom_ && hasRom();
+    if (version >= 2 && r.has(1)) {
+        const bool hadDisplaced = r.u8() != 0;
+        if (hadDisplaced && r.has(kRomSize)) {
+            std::memcpy(displaced_.data(), r.p + r.pos, kRomSize);
+            r.pos += kRomSize;
+        }
+    }
 }
 
 } // namespace pom2

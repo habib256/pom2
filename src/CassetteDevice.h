@@ -81,6 +81,25 @@ public:
     /// because the host got power-cycled.
     void resetCpuSide();
 
+    /// Snapshot-load / rewind mitigation ("time jump").
+    ///
+    /// The deck is NOT in any snapshot: its recorded buffer can be megabytes
+    /// and its playback cursor belongs to a tape file the snapshot does not
+    /// name. So a restore leaves the deck holding the ABANDONED timeline's
+    /// cycle stamps while the CPU counter jumps backwards — and every stamp
+    /// here is compared with unsigned subtraction, so `currentCycle -
+    /// lastTapeInputCycle` wrapped to ~2^64 and the playback path saw one
+    /// impossible gap (leader re-arm on the next access), while the queued
+    /// pulse audio kept a segment from a future that no longer happens.
+    ///
+    /// This re-bases the three stamps and drops the live audio queue. What it
+    /// deliberately does NOT do is roll the tape back: the recorded
+    /// transitions and the playback cursor stay where they are, the same
+    /// contract the block-device media follows (see
+    /// `EmulationController::noteMediaWrite`). A real deck does not rewind
+    /// itself because the computer went back in time either.
+    void resetForTimeJump();
+
     /// Advance the deck by `cycles` CPU cycles.
     ///
     /// Defined inline because `Memory::advanceCycles` calls it once per

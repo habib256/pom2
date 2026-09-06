@@ -144,6 +144,12 @@ public:
 
     /// Block until every deferred 3.5" write-back has been committed.
     /// Shutdown / test hook — the queue drains on its own thread otherwise.
+    ///
+    /// Call it with `stateMutex` NOT held: the queue takes that lock to
+    /// deliver each completion, so draining from inside it deadlocks. The
+    /// quit path calls it before the settings are written, which is the one
+    /// place a user can tell the difference (the destructor's own drain runs
+    /// after that).
     void drainDeferredWriteBacks() { writeBackQueue_.drain(); }
 
     // ─── Cassette transport (forwarded to CassetteDevice under stateMtx) ──
@@ -255,6 +261,37 @@ public:
     void   rewindEndAndResume(size_t index);
     /// Leave scrub but stay paused at the current frame (keeps the ring).
     void   rewindEndPaused();
+    /// Media-write policy for the rewind ring.
+    ///
+    /// The ring never captures MEDIA of a block device (HDV / CFFA /
+    /// SmartPort, up to 32 MiB), a 3.5" image (800 KB) or a writable WOZ
+    /// (its bits live in `wozRaw`, a store the Disk II media snapshot does
+    /// not cover). Rolling RAM back over a ProDOS SAVE while the volume
+    /// stayed written is a real corruption path: the restored directory and
+    /// bitmap disagree with the blocks on the disk and the next allocation
+    /// cross-links them.
+    ///
+    /// Policy (the safe minimum, chosen over per-frame media capture): a
+    /// rewind may never CROSS such a write. Every one of those write paths
+    /// bumps `pom2::mediaWriteEpoch()`; this checks it at the ring's capture
+    /// point and clears the history when it moved, so the timeline restarts
+    /// after the write instead of spanning it. Cheap — one relaxed atomic
+    /// load per captured frame — and it also covers write paths that do not
+    /// exist yet, because the epoch is bumped at the storage leaf.
+    ///
+    /// Non-WOZ Disk II nibble writes deliberately do NOT bump: those ARE
+    /// captured (DiskIICard's v2 media snapshot) and a rewind is expected to
+    /// undo them.
+    void   noteMediaWrite();
+    /// Put everything that is NOT in the snapshot back onto the restored
+    /// timeline after a time jump (rewind scrub OR a snapshot load): the
+    /// free-running audio devices, and the debugger's per-timeline
+    /// transients. PUBLIC because
+    /// the two file-driven load paths — the AI server's `/snapshot/load` and
+    /// the CLI's `--snapshot-load` — used to hand-roll `speaker().reset()`
+    /// and so silently missed every device added to this function since.
+    /// Callers must hold `stateMutex`.
+    void   noteTimeJump();
     /// True while a scrub owns the machine — the worker is parked at a
     /// historical frame and the live state is that frame, not the newest.
     ///
@@ -350,16 +387,36 @@ private:
     class WriteBackQueue final : public pom2::Disk35WriteBackSink
     {
     public:
+        explicit WriteBackQueue(EmulationController& owner) : owner_(owner) {}
         ~WriteBackQueue() override;
-        void submit(pom2::Disk35Image::PendingWriteBack&& pending) override;
+        void submit(pom2::Disk35Image::PendingWriteBack&& pending,
+                    Completion onDone = {}) override;
         /// Block until the queue is empty and the in-flight commit is done.
+        /// Never call it holding `stateMtx` — see drainDeferredWriteBacks().
         void drain();
+        /// Stop the thread and commit whatever is left, WITHOUT reporting:
+        /// by then there is nothing to report to. Idempotent, and called from
+        /// `~EmulationController`'s body rather than left to the member
+        /// destructor — `stateMtx` is declared after this queue, so it would
+        /// already be gone when the worker tried to take it (see report()).
+        void shutdown();
     private:
+        struct Item {
+            pom2::Disk35Image::PendingWriteBack pending;
+            Completion                          done;
+        };
         void run();
+        /// Report one outcome to the submitter WITH `stateMtx` held and this
+        /// queue's own mutex released — the callback touches drive/image
+        /// state, and taking the two locks in the other order would invert
+        /// `submit`'s (stateMtx → mtx_).
+        void report(const Item& item, bool ok, const std::string& error);
+
+        EmulationController&    owner_;
         std::mutex              mtx_;
         std::condition_variable cv_;
         std::condition_variable idleCv_;
-        std::vector<pom2::Disk35Image::PendingWriteBack> queue_;
+        std::vector<Item>       queue_;
         std::thread             worker_;
         bool                    stopping_ = false;
         bool                    busy_     = false;
@@ -375,6 +432,9 @@ private:
     std::unique_ptr<pom2::NoSlotClock>  noSlotClock_;
 
     pom2::RewindBuffer rewind_;
+    /// Last `pom2::mediaWriteEpoch()` value the ring was reconciled against
+    /// — see noteMediaWrite().
+    uint64_t rewindMediaEpoch_ = 0;
     std::unique_ptr<pom2::Debugger> debugger_;
 
     std::atomic<Mode> mode{Mode::Stopped};
@@ -427,7 +487,7 @@ private:
     void stepBusMaster();
     void workerLoop();
     void waitUntilParked();      // block (bounded) until workerParked_ is set
-    void flushAudioForRewind();  // silence the speaker after a time jump
+    void flushAudioForRewind();  // → flushAudioForTimeJump (rewind callers)
 };
 
 namespace pom2 {

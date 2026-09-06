@@ -372,13 +372,25 @@ void WorkstationCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     for (auto& v : latch_) v = r.u8();
     romBase_ = r.u32();
     if (romBase_ != 0x0000 && romBase_ != 0x8000) romBase_ = 0x8000;
+    // Clamp: `timerAcc_` is consumed by `while (timerAcc_ >= period)
+    // timerAcc_ -= period;`. A restored NEGATIVE value (the field is signed
+    // and the blob is a raw u32) never satisfies that test, so the card's
+    // 1 ms tick — and with it the LocalTalk timer IRQ — stalled for good.
+    // An absurdly large one spins that loop for millions of iterations
+    // inside one advanceCycles.
     timerAcc_   = static_cast<int>(r.u32());
+    if (timerAcc_ < 0 || timerAcc_ >= kTimerPeriodCycles) timerAcc_ = 0;
     timerFlag_  = r.u8() != 0;
     entropy_    = r.u8();
     postFailed_ = r.u8() != 0;
 
     sccInt_ = r.u8() != 0;
+    // Same shape: the live invariant is `sccAcc_ < cpuClockHz_` (it is a
+    // remainder, `sccAcc_ %= cpuClockHz_`). A blob carrying more than that
+    // makes the very next `sccAcc_ / cpuClockHz_` hand the SCC a tick count
+    // in the billions.
     sccAcc_ = r.u64();
+    if (cpuClockHz_ == 0 || sccAcc_ >= cpuClockHz_) sccAcc_ = 0;
     // The chip carries its own blob. If it refuses one — foreign, short,
     // newer — the card is left with a chip its firmware will reprogram
     // rather than with half a restore.

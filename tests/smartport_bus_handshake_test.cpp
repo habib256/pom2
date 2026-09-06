@@ -78,7 +78,7 @@ int main()
     if (rom.empty() || disk.empty()) {
         std::printf("SKIP smartport_bus_handshake: need roms/apple2e.rom and "
                     "an 800K image\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     constexpr int kSlot = 5;
@@ -91,7 +91,7 @@ int main()
     if (!mem.loadAppleIIRom(rom.c_str())) {
         std::printf("SKIP smartport_bus_handshake: cannot load %s\n",
                     rom.c_str());
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     auto card = std::make_unique<pom2::LironCard>(kSlot);
@@ -99,13 +99,13 @@ int main()
     if (!liron->romLoaded()) {
         std::printf("SKIP smartport_bus_handshake: %s\n",
                     liron->lastError().c_str());
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     liron->setBusResponderEnabled(true);
     std::string err;
     if (!liron->mountBay(0, disk, err)) {
         std::printf("SKIP smartport_bus_handshake: %s\n", err.c_str());
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     mem.slotBus().plug(kSlot, std::move(card));
 

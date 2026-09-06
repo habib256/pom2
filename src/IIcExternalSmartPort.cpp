@@ -190,8 +190,10 @@ void IIcExternalSmartPort::appendSnapshotState(std::vector<uint8_t>& out) const
 
 std::size_t IIcExternalSmartPort::loadSnapshotState(const uint8_t* data, std::size_t n)
 {
-    reset();
+    // Magic first, reset second: a blob that is not ours must leave the
+    // live port exactly as it was (see LironCard::loadSnapshotState).
     if (!data || n < 8 || std::memcmp(data, kPortBlobMagic, 4) != 0) return 0;
+    reset();
     std::size_t i = 4;
     const std::size_t iwmLen = get32(data + i); i += 4;
     if (iwmLen > n - i) return 0;

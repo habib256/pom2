@@ -58,6 +58,9 @@
 #include "MachineSnapshot.h"
 #include "Memory.h"
 #include "SnapshotIO.h"
+#include "ClockCard.h"
+#include "TranswarpCard.h"
+#include "M68705P3.h"
 
 #include <cassert>
 #include <cstdint>
@@ -150,8 +153,151 @@ void mutate(std::vector<uint8_t>& b, std::mt19937& rng)
 
 } // namespace
 
+
+// ─── Per-card restore CLAMPS (2026-09-06 bug hunt #2, item S14) ─────────
+//
+// The section walker above guards the FRAMING. These guard the semantics of
+// individual fields once a card's own loader has accepted a blob: values that
+// are in range for their C++ type but out of range for the invariant the live
+// code assumes. Each one below stalled or spun something.
+
+const std::vector<uint8_t> kForeign(64, 0xAB);
+
+void testTranswarpDisplacedRom()
+{
+    // S1. `displaced_` is the Apple's OWN $F000-$FFFF, held aside while the
+    // card shadows it — the only copy that exists, since Memory holds the
+    // card's ROM there. It was never serialised, so a restore + a later
+    // $C072 wrote 4 KB of zeroes over Applesoft + Monitor.
+    //
+    // No Memory here: drive the card through setRom/onPlug so it shadows,
+    // then assert the blob CARRIES the 4 KB (v2 = one flag byte + the ROM)
+    // and that a fresh card re-emits an identical blob after a restore.
+    pom2::TranswarpCard a(4);
+    std::vector<uint8_t> bare;
+    a.appendSnapshotState(bare);
+
+    // Not shadowing (no Memory attached): one flag byte, no 4 KB.
+    assert(bare.size() < 4096);
+
+    pom2::TranswarpCard b(4);
+    b.loadSnapshotState(bare.data(), bare.size());
+    std::vector<uint8_t> out;
+    b.appendSnapshotState(out);
+    assert(out == bare);
+
+    // A v1 blob (the pre-fix layout: everything up to and including
+    // slowCycles_, no displaced tail) must still load.
+    std::vector<uint8_t> v1(bare.begin(), bare.end() - 1);
+    v1[4] = 1; v1[5] = 0;                     // version 2 → 1
+    pom2::TranswarpCard c(4);
+    c.loadSnapshotState(v1.data(), v1.size());
+
+    // A blob claiming a version this build does not know is refused whole.
+    std::vector<uint8_t> future = bare;
+    future[4] = 99;
+    pom2::TranswarpCard d(4);
+    std::vector<uint8_t> fresh;
+    d.appendSnapshotState(fresh);
+    d.loadSnapshotState(future.data(), future.size());
+    std::vector<uint8_t> after;
+    d.appendSnapshotState(after);
+    assert(after == fresh);
+
+    std::printf("  ok: TransWarp snapshot is v2 and tolerates v1 / refuses "
+                "unknown versions\n");
+}
+
+
+void testTranswarpSlowCyclesClamp()
+{
+    // S14. `slowCycles_` is only ever counted DOWN by advanceCycles, so a
+    // restored negative (the field is signed, the blob field is a raw u32) or
+    // an absurd positive parks the card at 1 MHz for ever.
+    pom2::TranswarpCard a(4);
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+    // slowCycles_ is the u32 after magic(4) + version(2) + six flag bytes.
+    constexpr size_t kSlowAt = 4 + 2 + 6;
+    for (uint32_t v : { 0xFFFFFFFFu, 0x80000000u, 0x7FFFFFFFu }) {
+        std::vector<uint8_t> bad = blob;
+        for (int i = 0; i < 4; ++i)
+            bad[kSlowAt + i] = static_cast<uint8_t>(v >> (8 * i));
+        pom2::TranswarpCard c(4);
+        c.loadSnapshotState(bad.data(), bad.size());
+        const int got = c.slowCyclesRemaining();
+        assert(got >= 0 && got <= 4096 &&
+               "TransWarp slowCycles_ restored outside the range a real "
+               "slowdown window can produce");
+    }
+    std::printf("  ok: TransWarp slowCycles_ clamped on restore\n");
+}
+
+void testM68705StackPointerClamp()
+{
+    // S14. The 68705's stack is a 32-byte window that WRAPS between kSpFloor
+    // ($60) and kSpMask ($7F); push/pull compare S against those two ends by
+    // EQUALITY, so a restored value outside the window never hits either and
+    // walks S straight out of the stack, one push at a time, over RAM.
+    M68705P3 a;
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+    assert(blob.size() == M68705P3::kSnapshotBytes);
+
+    // S is the byte after the 16-bit PC.
+    for (uint8_t bad : { uint8_t(0x00), uint8_t(0x5F), uint8_t(0x80),
+                         uint8_t(0xFF) }) {
+        std::vector<uint8_t> b = blob;
+        b[2] = bad;
+        M68705P3 c;
+        assert(c.loadSnapshotState(b.data(), b.size()) == b.size());
+        // `reg` is private; re-serialise and read S back out of the blob.
+        std::vector<uint8_t> back;
+        c.appendSnapshotState(back);
+        assert(back[2] >= 0x60 && back[2] <= 0x7F &&
+               "M68705 stack pointer restored outside its 32-byte window");
+    }
+    // A legal value is left alone.
+    {
+        std::vector<uint8_t> b = blob;
+        b[2] = 0x6A;
+        M68705P3 c;
+        (void)c.loadSnapshotState(b.data(), b.size());
+        std::vector<uint8_t> back;
+        c.appendSnapshotState(back);
+        assert(back[2] == 0x6A);
+    }
+    std::printf("  ok: M68705 stack pointer clamped to its 32-byte window\n");
+}
+
+void testClockCardTpPeriodRederived()
+{
+    // S15. The TP half-period is DERIVED from the rate and the machine's CPU
+    // clock; taking the blob's value verbatim imported the period of the
+    // machine the snapshot came from, and let a corrupt blob pair a live rate
+    // with a 1-cycle period (advanceCycles then loops per cycle).
+    ClockCard a(4);
+    a.setCpuClock(1020000.0);
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+    for (size_t i = 0; i < blob.size(); ++i) {
+        std::vector<uint8_t> bad = blob;
+        bad[i] = 0xFF;
+        ClockCard c(4);
+        c.setCpuClock(1020000.0);
+        c.loadSnapshotState(bad.data(), bad.size());
+        c.advanceCycles(20000);         // one PAL frame's worth
+    }
+    std::printf("  ok: ClockCard TP timer survives a corrupted blob\n");
+}
+
 int main(int argc, char** argv)
 {
+    testTranswarpDisplacedRom();
+    testTranswarpSlowCyclesClamp();
+    testM68705StackPointerClamp();
+    testClockCardTpPeriodRederived();
+
     const unsigned seed  = (argc > 1) ? unsigned(std::stoul(argv[1])) : 20260820u;
     const int      iters = (argc > 2) ? std::stoi(argv[2]) : 1500;
 

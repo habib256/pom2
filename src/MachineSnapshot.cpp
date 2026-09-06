@@ -351,7 +351,20 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
     SnapshotReader stagedReader(staged.data(), staged.size());
     RestoreResult result = applyMachineState(stagedReader, cpu, mem,
                                              /*allowSlots=*/false);
-    if (result.ok) return result;
+    if (result.ok) {
+        // Say it out loud (2026-09-06). `allowSlots=false` is the documented
+        // FILE contract — an archival snapshot can outlive a media swap, so a
+        // stale head position or a primed write block must not come back with
+        // it — but nothing ever told the user, and the visible symptom is a
+        // restored machine whose disk I/O, printer and sound cards are simply
+        // where the live session left them. Logged on the file path only; the
+        // rewind ring restores slots and never reaches here.
+        pom2::log().info("Snapshot",
+            "restored CPU + RAM. Card state (disk heads, sound chips, "
+            "printer, network) is NOT part of a .pom2snap file and keeps its "
+            "live values — only Rewind restores it.");
+        return result;
+    }
 
     SnapshotReader before(rollback.data(), rollback.size());
     const RestoreResult rolledBack = applyMachineState(before, cpu, mem,

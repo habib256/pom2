@@ -950,7 +950,13 @@ size_t M68705P3::loadSnapshotState(const uint8_t* data, size_t len)
     size_t p = 0;
     reg.PC = static_cast<uint16_t>(data[p] | (data[p + 1] << 8)); p += 2;
     reg.PC &= kAddrMask;
+    // The 68705's stack is a 32-byte window that WRAPS between kSpFloor and
+    // kSpMask; push/pull compare S against those two ends by equality, so a
+    // restored value outside [kSpFloor, kSpMask] never hits either and walks
+    // S straight out of the window, writing over RAM (or reading it) one
+    // push at a time. RESET's own value is kSpMask, so that is the fallback.
     reg.S  = data[p++];
+    if (reg.S < kSpFloor || reg.S > kSpMask) reg.S = kSpMask;
     reg.A  = data[p++];
     reg.X  = data[p++];
     reg.CC = data[p++];

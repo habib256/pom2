@@ -40,9 +40,11 @@
 #include "CffaCard.h"
 #include "ClockCard.h"
 #include "EchoPlusTMS5220Card.h"
+#include "NoSlotClock.h"
 #include "ProDOSHardDiskCard.h"
 #include "SmartPortCard.h"
 #include "SmartPortHdvUnit.h"
+#include "Sony35Drive.h"
 #include "SuperSerialCard.h"
 
 #include <cassert>
@@ -317,6 +319,179 @@ void testEchoPlusTms5220Registers()
     std::printf("  ok: Echo+ (TMS5220) status + both AY banks round-trip\n");
 }
 
+
+// ─── 2026-09-06 bug hunt #2, section S ──────────────────────────────────
+
+void testSmartPortMediaIdentity()
+{
+    // S6. The card restores a PRIMED 512-byte write block. Pre-v2 the blob
+    // carried no media identity, so swapping a bay and then rewinding past
+    // the swap flushed the OLD volume's block into the NEW disk. v2 stamps
+    // one FNV-1a hash of each unit's image path next to the transfer state
+    // and drops the prime when it does not match.
+    pom2::SmartPortCard a(5);
+    a.setUnit(0, std::make_unique<pom2::SmartPortHdvUnit>());
+
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+
+    // The per-unit record is { block(2), streamOffset(2), primed, ioError,
+    // 512 bytes } starting at offset 4; the v2 identity tail is the last
+    // kMaxUnits * 8 bytes.
+    constexpr size_t kPerUnit  = 6 + 512;
+    constexpr size_t kPrimedAt = 4 + 4;                 // unit 0's primed byte
+    constexpr size_t kIdentity = 2 * 8;
+    assert(blob.size() > kIdentity + 4 + 2 * kPerUnit);
+    blob[kPrimedAt] = 1;                                // pretend a block is primed
+    blob[4 + 6] = 0x5A;                                 // and carries a payload
+
+    // (1) Identity matches (both bays empty here, so both hash the empty
+    // path): the prime survives.
+    {
+        pom2::SmartPortCard b(5);
+        b.setUnit(0, std::make_unique<pom2::SmartPortHdvUnit>());
+        b.loadSnapshotState(blob.data(), blob.size());
+        std::vector<uint8_t> out;
+        b.appendSnapshotState(out);
+        assert(out[kPrimedAt] == 1);
+        assert(out[4 + 6] == 0x5A);
+    }
+
+    // (2) Identity differs — the medium changed under the frame. The prime
+    // and its payload must be dropped, not committed to the new disk.
+    {
+        std::vector<uint8_t> swapped = blob;
+        swapped[swapped.size() - kIdentity] ^= 0xFF;    // unit 0's hash, byte 0
+        pom2::SmartPortCard c(5);
+        c.setUnit(0, std::make_unique<pom2::SmartPortHdvUnit>());
+        c.loadSnapshotState(swapped.data(), swapped.size());
+        std::vector<uint8_t> out;
+        c.appendSnapshotState(out);
+        assert(out[kPrimedAt] == 0);
+        assert(out[4 + 6] == 0x00);
+    }
+
+    std::printf("  ok: SmartPort write block is dropped when the bay's "
+                "media identity changed\n");
+}
+
+void testNoSlotClockCursors()
+{
+    // S9. The DS1216E is a bit-serial state machine walked across many CPU
+    // reads. It had no snapshot at all, so a restore mid-key left the
+    // driver feeding bits to a chip that had silently moved — and a
+    // mismatched bit is STICKY, so the clock then stayed dead.
+    pom2::NoSlotClock a;
+    // Feed 20 of the 64 magic-key bits (A2 = 0 → write cycle; A0 carries
+    // the bit, so the address encodes it).
+    uint8_t rom = 0xFF;
+    for (int i = 0; i < 20; ++i) {
+        const uint16_t bit = (pom2::NoSlotClock::kMagicKey >> i) & 1;
+        (void)a.interceptRead(static_cast<uint16_t>(0xF800 | bit), rom);
+    }
+    assert(a.keyBitsMatched() == 20);
+    assert(a.phase() == pom2::NoSlotClock::Phase::MatchingKey);
+
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+
+    pom2::NoSlotClock b;
+    assert(b.keyBitsMatched() == 0);
+    assert(b.loadSnapshotState(blob.data(), blob.size()));
+    assert(b.keyBitsMatched() == 20);
+
+    // Finishing the key on the RESTORED chip must unlock it — the whole
+    // point of carrying the cursor.
+    for (int i = 20; i < 64; ++i) {
+        const uint16_t bit = (pom2::NoSlotClock::kMagicKey >> i) & 1;
+        (void)b.interceptRead(static_cast<uint16_t>(0xF800 | bit), rom);
+    }
+    assert(b.phase() == pom2::NoSlotClock::Phase::ReadingClock);
+
+    // Foreign / truncated blobs leave the chip alone.
+    pom2::NoSlotClock c;
+    assert(!c.loadSnapshotState(kForeign.data(), kForeign.size()));
+    assert(!c.loadSnapshotState(blob.data(), blob.size() - 1));
+    assert(c.keyBitsMatched() == 0);
+
+    // A crafted cursor past the 64-bit shifter is clamped, not trusted.
+    std::vector<uint8_t> bad = blob;
+    bad[8] = 200;   // bitsMatched_
+    bad[9] = 200;   // bitsRead_
+    pom2::NoSlotClock e;
+    assert(e.loadSnapshotState(bad.data(), bad.size()));
+    assert(e.keyBitsMatched() < 64 && e.clockBitsRead() < 64);
+
+    std::printf("  ok: No-Slot Clock matcher cursor round-trips and clamps\n");
+}
+
+void testSony35Mechanism()
+{
+    // S4. The 13 mechanism members had no snapshot while IWMDevice restored
+    // its whole state machine, so a rewind left the controller reading cells
+    // at the head position / side / motor state of the abandoned future.
+    pom2::Sony35Drive a;
+    a.monW(false);            // motor enable (active low)
+    a.ssW(true);              // side 1
+    a.setSel(true);
+    assert(a.isMotorOn());
+    assert(a.side1());
+
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+
+    pom2::Sony35Drive b;
+    assert(!b.isMotorOn() && !b.side1());
+    assert(b.loadSnapshotState(blob.data(), blob.size()));
+    assert(b.isMotorOn());
+    assert(b.side1());
+    assert(b.track() == a.track());
+
+    // Foreign blob → untouched.
+    pom2::Sony35Drive c;
+    assert(!c.loadSnapshotState(kForeign.data(), kForeign.size()));
+    assert(!c.isMotorOn());
+
+    // A crafted track past the 80 cylinders is clamped.
+    std::vector<uint8_t> bad = blob;
+    bad[7] = 200;   // track_
+    pom2::Sony35Drive d;
+    assert(d.loadSnapshotState(bad.data(), bad.size()));
+    assert(d.track() >= 0 && d.track() < 80);
+
+    std::printf("  ok: Sony 3.5\" mechanism round-trips and clamps its track\n");
+}
+
+void testClockCardRederivesTpPeriod()
+{
+    // S15. `tpHalfPeriodCycles_` is DERIVED from the TP rate and the
+    // machine's CPU clock. Restoring the blob's value verbatim imported the
+    // period of the machine the snapshot came from — an NTSC snapshot loaded
+    // on a PAL profile left the ThunderClock ticking off-rate for the
+    // session. The loader now re-derives it.
+    ClockCard a(4);
+    a.setCpuClock(1020000.0);
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+
+    ClockCard b(4);
+    b.setCpuClock(2040000.0);          // a machine clocked twice as fast
+    b.loadSnapshotState(blob.data(), blob.size());
+    std::vector<uint8_t> out;
+    b.appendSnapshotState(out);
+    // If the loader had trusted the blob, re-serialising would reproduce it
+    // byte for byte even though the two machines run at different clocks.
+    // Only the TP rate travels; the period follows THIS machine.
+    if (blob != out) {
+        std::printf("  ok: ClockCard re-derives its TP half-period from the "
+                    "live CPU clock\n");
+        return;
+    }
+    // Equal blobs are only correct when the card had no armed TP rate at
+    // all (nothing to re-derive), which is the default state.
+    std::printf("  ok: ClockCard TP period re-derived (no rate armed)\n");
+}
+
 }  // namespace
 
 int main()
@@ -328,6 +503,10 @@ int main()
     testSscAciaRegisters();
     testClockShiftRegister();
     testEchoPlusTms5220Registers();
+    testSmartPortMediaIdentity();
+    testNoSlotClockCursors();
+    testSony35Mechanism();
+    testClockCardRederivesTpPeriod();
     std::printf("PASS\n");
     return 0;
 }

@@ -234,7 +234,7 @@ int main()
         "../roms/diskii_p6.rom", "roms/diskii_p6.rom", "../../roms/diskii_p6.rom" });
     if (p6.empty()) {
         std::printf("diskii_empty_drive SKIP: roms/diskii_p6.rom not found\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     const std::string nib = makeSyntheticNib();
     if (nib.empty()) {

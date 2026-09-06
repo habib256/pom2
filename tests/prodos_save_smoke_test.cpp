@@ -99,13 +99,17 @@ int main() {
         "../roms/apple2.rom", "roms/apple2.rom", "../../roms/apple2.rom" });
     const std::string promPath = findFirst({
         "../roms/disk2.rom", "roms/disk2.rom", "../../roms/disk2.rom" });
+    // Sector images moved to disks_5.4/dsk/ in 2026; the bare roots stay as
+    // a fallback for older trees.
     const std::string masterPath = findFirst({
+        "../disks_5.4/dsk/ProDOS_2_4_3.po", "disks_5.4/dsk/ProDOS_2_4_3.po",
+        "../../disks_5.4/dsk/ProDOS_2_4_3.po",
         "../disks_5.4/ProDOS_2_4_3.po", "disks_5.4/ProDOS_2_4_3.po",
         "../../disks_5.4/ProDOS_2_4_3.po" });
 
     if (romPath.empty() || promPath.empty() || masterPath.empty()) {
         std::printf("prodos_save_smoke SKIP: missing ROM or disk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     fs::path scratch = fs::temp_directory_path() / "pom2_prodos_save_scratch.po";

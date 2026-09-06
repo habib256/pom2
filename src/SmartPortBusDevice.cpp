@@ -539,8 +539,10 @@ void SmartPortBusDevice::appendSnapshotState(std::vector<uint8_t>& out) const
 
 std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size_t n)
 {
-    busReset();
+    // Magic first, reset second: a foreign blob must not abort a live bus
+    // transaction (see LironCard::loadSnapshotState).
     if (!data || n < 4 || std::memcmp(data, kBusBlobMagic, 4) != 0) return 0;
+    busReset();
     std::size_t i = 4;
     auto need = [&](std::size_t k) { return i + k <= n; };
     if (!need(2)) return 0;

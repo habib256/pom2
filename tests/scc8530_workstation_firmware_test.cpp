@@ -143,7 +143,7 @@ int main()
     if (romPath.empty()) {
         std::printf("scc8530_workstation_firmware: SKIP "
                     "(roms/341-0358-A.bin not found)\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     std::vector<uint8_t> rom(0x10000, 0);
@@ -153,7 +153,7 @@ int main()
         if (f.gcount() != static_cast<std::streamsize>(rom.size())) {
             std::printf("scc8530_workstation_firmware: SKIP "
                         "(%s is not a 64 KiB dump)\n", romPath.c_str());
-            return 0;
+            return 77;   // ctest SKIP_RETURN_CODE
         }
     }
 

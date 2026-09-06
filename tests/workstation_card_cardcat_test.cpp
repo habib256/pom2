@@ -124,7 +124,7 @@ int main()
         std::printf("workstation_card_cardcat: SKIP "
                     "(needs roms/apple2e.rom, roms/341-0358-A.bin and "
                     "\"disks_3.5/CardCat 1.94.po\")\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     const std::string withCard = bootAndReadScreen(cardRom, true, /*dump=*/true);

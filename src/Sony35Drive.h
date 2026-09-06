@@ -70,6 +70,7 @@
 #include "Disk35Image.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 class FloppySoundSink;
@@ -224,7 +225,32 @@ public:
     /// `nextTransition()` instead.
     std::vector<uint8_t> debugCellStream() const;
 
+    // ── Snapshot / rewind ──────────────────────────────────────────────
+    //
+    // The MECHANISM state only: head track, side, motor, SEL/phase
+    // latches, the step direction, the disk-change latch, the WP sense and
+    // the sound-cadence stamp. Everything else on the drive either derives
+    // (the bit-cell cache — `loadSnapshotState` invalidates it) or is a
+    // host wiring pointer (`image_`, `sound_`, `writeBackSink_`).
+    //
+    // Why it has to travel: `IWMDevice` already restores its own state
+    // machine, so a rewind put the controller back where it was while the
+    // drive kept the head, side and motor of the ABANDONED future — the
+    // walker then read cells from the wrong track and the //c+ / Liron 3.5"
+    // reported I/O ERROR until the next recalibrate.
+    //
+    // The MEDIA is deliberately NOT captured here (an 800 K image per
+    // rewind frame). The controller clears the rewind ring on a 3.5" write
+    // instead, so a rewind can never cross one — see
+    // `EmulationController::noteMediaWrite`.
+    void appendSnapshotState(std::vector<uint8_t>& out) const;
+    bool loadSnapshotState(const uint8_t* data, std::size_t len);
+
 private:
+    /// Drop the medium and ring the mechanism — the tail of a firmware
+    /// eject, once the write-back is known to be on disk.
+    void completeEject();
+
     Disk35Image* image_         = nullptr;
     bool         motorOn_       = false;
     bool         writeProtect_  = true;   // safe default until image probed
@@ -245,6 +271,19 @@ private:
     FloppySoundSink* sound_     = nullptr;
     /// Optional deferred-write-back sink (see setWriteBackSink). Non-owning.
     Disk35WriteBackSink* writeBackSink_ = nullptr;
+    /// A firmware eject whose payload is queued but not yet on disk. The
+    /// medium stays in the bay until the sink reports: `submit()` returning
+    /// means "queued", not "saved", and the pre-sink code ejected on the spot
+    /// — a failed commit then logged a line about a disk that no longer
+    /// existed, with the session's writes gone. Further EjectOn strobes are
+    /// ignored while it is set (the payload is already captured).
+    bool         ejectPending_  = false;
+    /// Liveness token for that deferred completion. The callback runs on the
+    /// write-back thread under the machine lock, and a slot rebuild can have
+    /// destroyed the drive (a Liron's bays) in between; the token dies with
+    /// the drive, and destruction happens under the same lock, so an expired
+    /// weak_ptr is a reliable "do not touch `this`".
+    std::shared_ptr<int> aliveToken_ = std::make_shared<int>(0);
     /// Emulated CPU cycle of the last IWM strobe — used to stamp
     /// sound_->step() and sound_->motor() calls so cadence is measured
     /// in emulated time (matches the FloppySoundDevice's `emuCycles`

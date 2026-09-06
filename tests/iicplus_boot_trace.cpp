@@ -92,7 +92,7 @@ int main()
     });
     if (romPath.empty()) {
         std::printf("SKIP iicplus_boot_trace: no //c+ ROM found\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     if (!mem.loadAppleIIRom(romPath.c_str(), /*pickLowerHalf=*/true)) {
         std::printf("FAIL: could not load %s\n", romPath.c_str());

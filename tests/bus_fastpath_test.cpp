@@ -119,7 +119,7 @@ int main()
     const std::string rom = findRom();
     if (rom.empty()) {
         std::fprintf(stderr, "bus_fastpath: roms/apple2e.rom not found — skipped\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     for (int iie = 0; iie < 2; ++iie) {

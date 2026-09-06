@@ -42,6 +42,7 @@
 #include <cstdio>
 #include <fstream>
 #include <vector>
+#include "TestTempPath.h"
 
 namespace {
 
@@ -62,7 +63,7 @@ std::vector<uint8_t> haltRom()
 
 std::string writeBlob(const std::vector<uint8_t>& bytes, const std::string& s)
 {
-    const std::string p = "/tmp/pom2_mouse_q_" + s;
+    const std::string p = pom2test::tempPath("pom2_mouse_q_" + s);
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
     f.write(reinterpret_cast<const char*>(bytes.data()),
             static_cast<std::streamsize>(bytes.size()));

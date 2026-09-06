@@ -86,7 +86,7 @@ int main(int argc, char** argv)
         "disks_5.4/demo/digidream/DD2.woz"});
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("dd2_ay_trace SKIP: missing apple2e.rom / disk2.rom / DD2.woz\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

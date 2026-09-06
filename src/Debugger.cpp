@@ -161,6 +161,17 @@ void Debugger::clearTransient()
     transientArmed_.store(false, std::memory_order_relaxed);
 }
 
+void Debugger::clearForTimeJump()
+{
+    // See the header. Unlike clearTransient() this one is lock-protected, so
+    // the plain members can be written directly.
+    transientArmed_.store(false, std::memory_order_relaxed);
+    resumeSkipArmed_ = false;
+    resumeSkip_      = 0;
+    curPc_           = 0;
+    hit_             = {};
+}
+
 // ── The hot hooks ────────────────────────────────────────────────────────
 
 bool Debugger::onInstruction(uint16_t pc)

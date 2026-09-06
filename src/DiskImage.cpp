@@ -15,8 +15,11 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskImage.h"
+
+#include "Block512Backing.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
+#include "PersistentFs.h"
 #include "TwoImg.h"
 
 #include <algorithm>
@@ -1862,6 +1865,15 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         if (changed) {
             wozQtDirty[qt] = true;
             anyDirty       = true;
+            // A WRITABLE WOZ is the one medium the rewind media snapshot
+            // cannot undo: its authoritative bits live in `wozRaw`, a
+            // different store from the nibble buffers `appendMediaSnapshot`
+            // captures (DEV.md § Rewind "Known gap"). So the write bumps the
+            // media epoch and the controller clears the ring — a rewind can
+            // no longer land on a .woz whose bits moved under it. Non-WOZ
+            // nibble writes deliberately do NOT bump: those ARE captured,
+            // and a rewind is expected to undo them.
+            pom2::noteMediaWrite();
             // Flux cache for this qt is now stale — drop it. Do NOT
             // call invalidateBitStream(qt): that would clear the bit
             // stream we just edited.
@@ -2311,7 +2323,12 @@ template <typename Emit>
 bool writeFileAtomic(const std::string& path, std::string& lastError,
                      Emit&& emit)
 {
-    const std::string tmp = path + ".pom2tmp";
+    // Unique per process AND per call. A fixed `<image>.pom2tmp` is the name
+    // EVERY POM2 instance derives, so two of them saving the same image (a
+    // second window, a headless run) opened one temp file with trunc,
+    // interleaved their writes, and whichever renamed last published a disk
+    // made of both. See pom2::tempSiblingPath.
+    const std::string tmp = pom2::tempSiblingPath(path).string();
     // The rename replaces the inode, so without this the image inherits the
     // temp file's umask-derived mode and the user's own permissions on their
     // disk image are silently rewritten on the first write-back. Capture
@@ -2354,6 +2371,12 @@ bool writeFileAtomic(const std::string& path, std::string& lastError,
         std::filesystem::remove(tmp, ec2);
         return false;
     }
+    // Browser build: the image now exists in the IDBFS mount's memory image
+    // and nowhere else until the frame loop's pump flushes it to IndexedDB.
+    // Only Settings::save used to mark the store dirty, so a session that
+    // saved a game and changed no setting lost the save on reload. No-op
+    // natively — the rename + fsync above is already durable.
+    pom2::markPersistentStateDirty();
     return true;
 }
 }  // namespace

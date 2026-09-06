@@ -68,7 +68,7 @@ int main()
     if (romPath.empty()) {
         std::printf("workstation_card_smoke: SKIP "
                     "(roms/341-0358-A.bin not found)\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     // ─── A card with no firmware is inert, and says so ───────────────────

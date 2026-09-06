@@ -54,13 +54,33 @@ constexpr uint8_t kDirIn  = 0x4;   // DirPrev  → cyl-1 (toward track 0)
 constexpr uint8_t kEject  = 0x7;   // EjectOn
 
 /// Collects what the firmware eject hands over, standing in for
-/// `EmulationController`'s committer thread.
+/// `EmulationController`'s committer thread — including the completion it
+/// owes back, which is what decides whether the disk actually leaves the bay.
 class CapturingSink final : public pom2::Disk35WriteBackSink
 {
 public:
-    void submit(pom2::Disk35Image::PendingWriteBack&& p) override
-    { got.push_back(std::move(p)); }
+    void submit(pom2::Disk35Image::PendingWriteBack&& p,
+                Completion onDone = {}) override
+    {
+        got.push_back(std::move(p));
+        done.push_back(std::move(onDone));
+    }
     std::vector<pom2::Disk35Image::PendingWriteBack> got;
+    std::vector<Completion>                          done;
+};
+
+/// A sink whose commit always fails, reported the way the real queue reports
+/// it: on the completion, with the machine lock held.
+class FailingSink final : public pom2::Disk35WriteBackSink
+{
+public:
+    void submit(pom2::Disk35Image::PendingWriteBack&& p,
+                Completion onDone = {}) override
+    {
+        captured = std::move(p);
+        if (onDone) onDone(false, "disk full (test)");
+    }
+    pom2::Disk35Image::PendingWriteBack captured;
 };
 
 /// The firmware-issued eject runs on the CPU worker with `stateMutex` held,
@@ -103,8 +123,11 @@ bool testFirmwareEjectDefersItsWriteBack()
         std::printf("FAIL: firmware eject did not hand over a payload\n");
         return false;
     }
-    if (image.isLoaded()) {
-        std::printf("FAIL: firmware eject left the medium mounted\n");
+    // Queued is NOT saved: the disk stays in the bay until the sink reports.
+    // It used to leave on the spot, so a commit that failed logged a line
+    // about a disk that no longer existed. (Bug hunt #2 R1.)
+    if (!image.isLoaded()) {
+        std::printf("FAIL: the medium left the bay before the commit\n");
         return false;
     }
     // The whole point: nothing was written while the (notional) lock was held.
@@ -124,6 +147,16 @@ bool testFirmwareEjectDefersItsWriteBack()
         std::printf("FAIL: deferred commit: %s\n", error.c_str());
         return false;
     }
+    // …and the completion is what finishes the eject.
+    if (sink.done.empty() || !sink.done[0]) {
+        std::printf("FAIL: no completion was handed back\n");
+        return false;
+    }
+    sink.done[0](true, std::string());
+    if (image.isLoaded()) {
+        std::printf("FAIL: a committed write-back did not eject the disk\n");
+        return false;
+    }
     std::vector<uint8_t> committed(pom2::Disk35Image::kBytesPerImage);
     {
         std::ifstream f(img, std::ios::binary);
@@ -136,9 +169,42 @@ bool testFirmwareEjectDefersItsWriteBack()
         return false;
     }
 
+    // ── A commit that FAILS must not cost the user the disk ──────────────
+    // The sinkless branch has always refused the eject on a failed save; the
+    // sink path ejected unconditionally and only logged. Now the medium stays
+    // in the bay AND stays dirty, so the next eject (or the shutdown flush)
+    // tries again.
+    if (!image.loadFile(img.string())) {
+        std::printf("FAIL: could not re-load the fixture\n"); return false;
+    }
+    image.setWriteBackEnabled(true);
+    const std::vector<uint8_t> block2(pom2::Disk35Image::kBlockBytes, 0x5C);
+    if (!image.writeBlock(6, block2.data())) {
+        std::printf("FAIL: guest write refused (retry case)\n"); return false;
+    }
+    FailingSink failing;
+    Sony35Drive drv2;
+    drv2.setImage(&image);
+    drv2.setWriteBackSink(&failing);
+    strobe(drv2, kEject);
+    if (!failing.captured.valid) {
+        std::printf("FAIL: no payload reached the failing sink\n");
+        return false;
+    }
+    if (!image.isLoaded()) {
+        std::printf("FAIL: a FAILED write-back still ejected the disk\n");
+        return false;
+    }
+    if (!image.hasUnsavedChanges()) {
+        std::printf("FAIL: a failed write-back left the medium clean — the "
+                    "session's writes would never be retried\n");
+        return false;
+    }
+
     std::error_code ec;
     fs::remove(img, ec);
-    std::printf("OK sony firmware eject defers its write-back off the lock\n");
+    std::printf("OK sony firmware eject defers its write-back off the lock, "
+                "and a failed commit keeps the disk\n");
     return true;
 }
 

@@ -134,9 +134,24 @@ void SmartPortCard::onReset()
     lastAccessCycle_ = 0;
 }
 
+namespace {
+// FNV-1a 64 of a unit's image path — the media identity stamped next to the
+// per-unit transfer state (v2). Same construction as DiskIICard's; an empty
+// path (no media) hashes to the basis and compares equal across an
+// empty→empty restore, which is what we want.
+uint64_t spMediaIdentity(const SmartPortUnit* u)
+{
+    uint64_t h = 14695981039346656037ULL;
+    if (u) {
+        for (unsigned char c : u->path()) { h ^= c; h *= 1099511628211ULL; }
+    }
+    return h;
+}
+}  // namespace
+
 void SmartPortCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
-    out.push_back('S'); out.push_back('P'); out.push_back(1);
+    out.push_back('S'); out.push_back('P'); out.push_back(kSnapVersion);
     out.push_back(static_cast<uint8_t>(activeUnit_));
     for (size_t u = 0; u < kMaxUnits; ++u) {
         out.push_back(static_cast<uint8_t>(selectedBlock_[u]));
@@ -163,25 +178,41 @@ void SmartPortCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(static_cast<uint8_t>(spResultPos_));
     out.push_back(static_cast<uint8_t>(spResultPos_ >> 8));
     out.insert(out.end(), spResult_.begin(), spResult_.begin() + rn);
+    // v2 tail: per-unit MEDIA IDENTITY. `writeBuf_`/`writeBufPrimed_` above
+    // is a primed 512-byte block waiting for its $C0n3 flush — restoring it
+    // onto a bay that now holds a DIFFERENT image (the user swapped disks
+    // after the ring frame was recorded) committed the old volume's block
+    // into the new one. DiskIICard has carried this guard since its v3; the
+    // SmartPort card is the other place a whole block can be written.
+    for (size_t u = 0; u < kMaxUnits; ++u) {
+        const uint64_t h = spMediaIdentity(unit(u));
+        for (int k = 0; k < 8; ++k)
+            out.push_back(static_cast<uint8_t>(h >> (8 * k)));
+    }
 }
 
 void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     constexpr size_t kPerUnit = 6 + kBlockBytes;
     constexpr size_t kBase = 4 + kMaxUnits * kPerUnit;
-    if (len < kBase ||
-        data[0] != 'S' || data[1] != 'P' || data[2] != 1)
-        return;
+    if (len < kBase || data[0] != 'S' || data[1] != 'P') return;
+    const uint8_t version = data[2];
+    if (version < 1 || version > kSnapVersion) return;
     // An absent tail is the original v1 layout. Once any tail byte exists,
     // require its full fixed header and declared result before touching the
     // live call engine or unit state.
     const size_t kTailHeader = spCollect_.size() + 3 + 4;
+    size_t identOff = 0;              // v2: offset of the media-identity tail
     if (len != kBase) {
         if (len - kBase < kTailHeader) return;
         const size_t rnOff = kBase + spCollect_.size() + 3;
         const size_t rn = static_cast<size_t>(data[rnOff] |
                                               (data[rnOff + 1] << 8));
         if (rn > len - (kBase + kTailHeader)) return;
+        if (version >= 2) {
+            identOff = kBase + kTailHeader + rn;
+            if (len - identOff < kMaxUnits * 8) return;
+        }
     }
     activeUnit_ = std::min<size_t>(data[3], kMaxUnits - 1);
     const uint8_t* p = data + 4;
@@ -191,6 +222,20 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         writeBufPrimed_[u] = p[4] != 0;
         ioError_[u]        = p[5] != 0;
         std::memcpy(writeBuf_[u].data(), p + 6, kBlockBytes);
+        // v2: never resurrect a primed write block onto a bay whose media
+        // changed since the capture. Dropping the prime costs the guest a
+        // re-issued WRITE; keeping it corrupts the new volume.
+        if (identOff) {
+            const uint8_t* ip = data + identOff + u * 8;
+            uint64_t want = 0;
+            for (int k = 0; k < 8; ++k)
+                want |= static_cast<uint64_t>(ip[k]) << (8 * k);
+            if (want != spMediaIdentity(unit(u))) {
+                writeBufPrimed_[u] = false;
+                writeBuf_[u].fill(0);
+                streamOffset_[u]   = 0;
+            }
+        }
         p += kPerUnit;
     }
     // Media didn't move; the read cache just re-fills from the same block.

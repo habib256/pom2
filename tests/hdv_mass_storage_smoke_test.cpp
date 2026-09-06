@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <fstream>
 #include <vector>
+#include "TestTempPath.h"
 
 namespace {
 
@@ -99,27 +100,27 @@ int main()
     // Real 32 MiB raw .hdv dumps (e.g. A2DeskTop-GIST.hdv) are exactly 65536
     // blocks and MUST load; only 65537+ needs the unreachable index $10000.
     {
-        const std::string p = "/tmp/pom2_hdv_max.hdv";
+        const std::string p = pom2test::tempPath("pom2_hdv_max.hdv");
         writeSparseHdv(p, 0xFFFF);           // 65535 blocks
         ProDOSHardDiskCard c;
         assert(c.loadImage(p));
         assert(c.getBlockCount() == 0xFFFF);
     }
     {
-        const std::string p = "/tmp/pom2_hdv_32mb.hdv";
+        const std::string p = pom2test::tempPath("pom2_hdv_32mb.hdv");
         writeSparseHdv(p, 0x10000);          // 65536 blocks — full 32 MiB, legal max
         ProDOSHardDiskCard c;
         assert(c.loadImage(p));
         assert(c.getBlockCount() == 0x10000);
     }
     {
-        const std::string p = "/tmp/pom2_hdv_over.hdv";
+        const std::string p = pom2test::tempPath("pom2_hdv_over.hdv");
         writeSparseHdv(p, 0x10001);          // 65537 blocks — index $10000 unaddressable
         ProDOSHardDiskCard c;
         assert(!c.loadImage(p));
     }
     {
-        const std::string p = "/tmp/pom2_hdv_ragged.hdv";
+        const std::string p = pom2test::tempPath("pom2_hdv_ragged.hdv");
         writeFile(p, std::vector<uint8_t>(kBlk + 7, 0));  // not a block multiple
         ProDOSHardDiskCard c;
         assert(!c.loadImage(p));
@@ -131,7 +132,7 @@ int main()
         std::vector<uint8_t> img(kBlocks * kBlk, 0x00);
         for (size_t i = 0; i < 16; ++i)
             img[0x101 * kBlk + i] = static_cast<uint8_t>(0xA0 + i);
-        const std::string p = "/tmp/pom2_hdv_hiblock.hdv";
+        const std::string p = pom2test::tempPath("pom2_hdv_hiblock.hdv");
         writeFile(p, img);
 
         Memory mem;
@@ -153,7 +154,7 @@ int main()
             blocks[kBlk + i] = static_cast<uint8_t>(i ^ 0x5A);
         auto two = twoImgHeader(2, off, static_cast<uint32_t>(blocks.size()));
         two.insert(two.end(), blocks.begin(), blocks.end());
-        const std::string p = "/tmp/pom2_hdv_off128.2mg";
+        const std::string p = pom2test::tempPath("pom2_hdv_off128.2mg");
         writeFile(p, two);
 
         Memory mem;

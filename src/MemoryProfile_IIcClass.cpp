@@ -319,9 +319,13 @@ void IIcClassProfile::appendSnapshotState(std::vector<uint8_t>& out) const
 
 size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
 {
-    if (extPort_) extPort_->reset();   // re-filled below when the blob has it
+    // Identify the blob BEFORE resetting anything: the external port used
+    // to be cleared first, so a foreign / absent MIG section tore down a
+    // live //c SmartPort transaction as a side effect of a blob that was
+    // then rejected two lines later.
     if (data == nullptr || n < kMigBlobBytes) return 0;
     if (std::memcmp(data, kMigBlobMagic, 4) != 0) return 0;
+    if (extPort_) extPort_->reset();   // re-filled below when the blob has it
     // migRead/migWrite index `migRam_[migPage_ + (offset & 0x1F)]`, so a
     // corrupt page pointer would read past the array. `& 0x7FF` alone is
     // not enough: the index only stays inside a 0x800 array because the

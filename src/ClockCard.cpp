@@ -534,6 +534,20 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // Clamp both to the sane range this card can actually produce.
     if (tpRateHz_ < 0 || tpRateHz_ > 4096) tpRateHz_ = 0;
     if (tpHalfPeriodCycles_ < 0) tpHalfPeriodCycles_ = 0;
+    // The half-period is DERIVED (rate + the machine's CPU clock), not
+    // independent state — `setCpuClock` re-derives it for exactly this
+    // reason. Taking the blob's value verbatim imported the period of the
+    // machine the snapshot came from: a snapshot saved on an NTSC profile
+    // and loaded on a PAL one (or a rewind frame recorded before a profile
+    // switch) left the ThunderClock ticking ~0.7 % off for the session, and
+    // a corrupt blob could pair a live 1024 Hz rate with a 1-cycle period.
+    // Same derivation as setTpRate/setCpuClock.
+    if (tpRateHz_ > 0) {
+        tpHalfPeriodCycles_ = static_cast<int>(
+            (cpuClockHz_ + tpRateHz_) / (2.0 * tpRateHz_));
+    } else {
+        tpHalfPeriodCycles_ = 0;
+    }
     if (tpAccumCycles_ < 0 ||
         (tpHalfPeriodCycles_ > 0 && tpAccumCycles_ > tpHalfPeriodCycles_))
         tpAccumCycles_ = 0;

@@ -51,7 +51,26 @@
 
 // MockingboardCard lives in the global namespace.
 
-int main()
+// A debug hook that is ATTACHED but never stops anything — the shape the CPU
+// is left in after a step-over fires and the transient that armed it is
+// dropped. `M6502::step` gates its interrupt-entry split on the hook POINTER
+// (see the comment there: testing an "armed" flag on that path costs 7.2 %),
+// so an idle hook left attached still splits an IRQ entry into two
+// `advanceCycles` calls and moves the sub-instruction phase this test pins.
+// `EmulationController::runCpuSlice` therefore detaches it as soon as nothing
+// is armed — pinned by `debugger` case "idle hook detaches". Here we pin the
+// other half: with a hook attached and nothing armed, the phase read is
+// IDENTICAL, so a debugging session that has gone quiet cannot drift OLDSKOOL.
+class IdleHook : public M6502DebugHook
+{
+public:
+    bool onInstruction(uint16_t) override { calls++; return false; }
+    int  calls = 0;
+};
+
+// The probe: arm T1 free-running, peek the raw counter just before an
+// executed `LDA $C404`, run it, and return { value read, expected }.
+static std::pair<uint8_t, uint8_t> phaseProbe(M6502DebugHook* hook)
 {
     Memory mem;
     M6502  cpu(&mem);
@@ -60,6 +79,7 @@ int main()
     MockingboardCard* card = cardp.get();
     mem.slotBus().plug(4, std::move(cardp));
     cpu.hardReset();
+    cpu.setDebugHook(hook);
     mem.slotBus().reset();
 
     // Program at $0300: arm T1 continuous (latch $2000, no underflow in
@@ -78,7 +98,11 @@ int main()
     emit({0xEA});
 
     cpu.setProgramCounter(0x0300);
-    while (cpu.getProgramCounter() != ldaPc) cpu.step();
+    // `run(1)` rather than `step()`: the per-instruction hook is consulted by
+    // `M6502::run`'s debugged loop, not by `step()`. One instruction either
+    // way (run returns as soon as the budget is met), and the same driver is
+    // used with and without a hook so the two probes are comparable.
+    while (cpu.getProgramCounter() != ldaPc) cpu.run(1);
 
     // Peek the RAW T1 counter as of the pre-instruction cycle (peek returns
     // t1Counter, no read-back bias, no sync).
@@ -86,23 +110,48 @@ int main()
         static_cast<uint16_t>(card->peekViaRegister(0, 0x04)) |
         static_cast<uint16_t>(card->peekViaRegister(0, 0x05) << 8);
 
-    cpu.step();                                  // execute LDA $C404
+    cpu.run(1);                                  // execute LDA $C404
     const uint8_t got = cpu.getAccumulator();    // value the CPU read
 
     // LDA abs = 4 cycles; the data-cycle sync lands on cycleCounter+4, and the
     // VIA read applies the -1 read-back: got == (peekBefore - 4 - 1) low byte.
     const uint8_t expected = static_cast<uint8_t>((peekBefore - 5) & 0xFF);
+    return { got, expected };
+}
+
+int main()
+{
+    const auto bare = phaseProbe(nullptr);
+    const uint8_t got = bare.first, expected = bare.second;
 
     if (got != expected) {
         std::fprintf(stderr,
             "mockingboard_t1_irq_phase: LDA $C404 read $%02X, expected $%02X "
-            "(peekBefore=$%04X). The MMIO access-cycle +1 sync is missing — "
-            "OLDSKOOL's stable-raster phase would be one too high.\n",
-            got, expected, peekBefore);
+            "The MMIO access-cycle +1 sync is missing — OLDSKOOL's "
+            "stable-raster phase would be one too high.\n",
+            got, expected);
         return 1;
     }
+    // Same probe with a debug hook attached that arms nothing.
+    IdleHook idle;
+    const auto hooked = phaseProbe(&idle);
+    if (idle.calls == 0) {
+        std::fprintf(stderr, "mockingboard_t1_irq_phase: the idle hook was "
+                             "never called — the case proves nothing.\n");
+        return 1;
+    }
+    if (hooked.first != hooked.second || hooked.first != got) {
+        std::fprintf(stderr,
+            "mockingboard_t1_irq_phase: with an idle debug hook attached the "
+            "$C404 phase read $%02X, expected $%02X (bare run read $%02X). An "
+            "attached-but-idle hook must not move the MMIO sync phase.\n",
+            hooked.first, hooked.second, got);
+        return 1;
+    }
+
     std::printf("mockingboard_t1_irq_phase OK: $C404 read reflects the "
-                "access data cycle (got $%02X = peek $%04X - 5)\n",
-                got, peekBefore);
+                "access data cycle (got $%02X), and an attached-but-idle "
+                "debug hook (%d instructions seen) does not move it\n",
+                got, idle.calls);
     return 0;
 }

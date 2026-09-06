@@ -112,6 +112,14 @@ struct Ay3_8910
     /// Value the chip drove onto the data bus on the last READ command
     /// (BDIR=0, BC1=1). The card latches it onto the VIA's port-A input,
     /// mirroring MAME's `m_porta` shadow.
+    ///
+    /// Deliberately NOT in the snapshot above, though every other field is:
+    /// it is written and consumed inside one `applyControl` call (the card
+    /// does `setPortAInput(ay->busOut)` the instant the call returns `Read`)
+    /// and recomputed from `regs` on the next READ. What survives between
+    /// calls is the VIA's `portAIn`, which the VIA's own v2 snapshot carries.
+    /// Adding it here would grow `kSnapshotBytes` and shift every field of
+    /// every existing Mockingboard / Phasor blob for no observable gain.
     uint8_t busOut = 0;
 
     /// React to a VIA Port B (and, on Latch/Write commands, also Port A)

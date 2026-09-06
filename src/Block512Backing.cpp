@@ -17,6 +17,7 @@
 #include "Block512Backing.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
+#include "PersistentFs.h"
 #include "TwoImg.h"
 #include "ProDOSVolume.h"
 
@@ -317,11 +318,22 @@ bool Block512Backing::saveDirty()
     // commit can put them back (pre-split behaviour: a failed save leaves
     // the blocks dirty so the next attempt still has them).
     const std::vector<uint32_t> captured = pending.dirtyIndices;
+    const bool wasSynth = pending.synth;
     std::string error;
-    if (!commitWriteBack(std::move(pending), error)) {
+    std::filesystem::file_time_type stamp{};
+    if (!commitWriteBack(std::move(pending), error, &stamp)) {
         lastError_ = error;
         restoreDirty(captured);
         return false;
+    }
+    // The medium is STILL MOUNTED here (this is the flush path, not the eject
+    // path), and the write-back just rewrote host files. Re-stamp the volume
+    // so those files are not "host-newer" on the next flush — otherwise the
+    // guest's first save landed and every save after it was silently
+    // preserved away as if the user had edited the file behind POM2's back.
+    if (wasSynth && synth_ && loaded_) {
+        mountTime_    = stamp;
+        hasMountTime_ = true;
     }
     return true;
 }
@@ -386,7 +398,8 @@ void Block512Backing::restoreDirty(const std::vector<uint32_t>& indices)
 }
 
 bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
-                                      std::string& error)
+                                      std::string& error,
+                                      std::filesystem::file_time_type* newMountTime)
 {
     if (!pending.valid) return true;
 
@@ -399,9 +412,14 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
             pom2::log().warn("HDV", "Synth folder write-back failed: " + error);
             return false;
         }
+        if (newMountTime) *newMountTime = r.completedAt;
         pom2::log().info("HDV", "Synth folder write-back: " +
                                 std::to_string(r.filesWritten) + " file(s) → " +
                                 pending.hostFolder);
+        // Browser build: the host "folder" lives in the IDBFS mount, and a
+        // write there reaches IndexedDB only when something flushes. No-op
+        // natively — the decode's rename+fsync is already durable.
+        markPersistentStateDirty();
         return true;
     }
 
@@ -438,7 +456,10 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     }
     const size_t written = pending.dirtyIndices.size();
 
-    const std::filesystem::path tmp = pending.path + ".pom2tmp";
+    // Unique per process + per call: a fixed `<image>.pom2tmp` is the name
+    // every POM2 instance derives, so two of them flushing the same image
+    // truncated each other's in-flight write. See tempSiblingPath().
+    const std::filesystem::path tmp = tempSiblingPath(pending.path);
     // Same temp-path scrutiny as `Disk35Image::saveDirty` and every other
     // AtomicFileReplace caller: the TARGET was validated at mount, but this
     // sibling name is derived afterwards and gets none of that. A symlink
@@ -487,6 +508,11 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         pom2::log().warn("HDV", error);
         return false;
     }
+    // Browser build: the image file lives in the IDBFS mount and reaches
+    // IndexedDB only when the frame loop's pump flushes. Before this, only
+    // Settings::save marked the store dirty, so a session that wrote a disk
+    // and changed nothing else lost the disk on reload. No-op natively.
+    markPersistentStateDirty();
     pom2::log().info("HDV", "Saved " + std::to_string(written) +
                             " modified block(s) to " + pending.path);
     return true;
@@ -518,6 +544,12 @@ bool Block512Backing::writeBlock(uint32_t blk, const uint8_t* src512)
     if (std::memcmp(&image_[base], src512, kBlockBytes) != 0) {
         std::memcpy(&image_[base], src512, kBlockBytes);
         markDirty(blk);
+        // A rewind may not cross a media write — see mediaWriteEpoch() in
+        // the header. Bumped here rather than in markDirty(): that one is
+        // idempotent per block (and is also how a failed commit re-marks
+        // its captured set), so a second write to the same block, or a
+        // restoreDirtyBlocks, would not move the epoch.
+        noteMediaWrite();
     }
     return true;
 }
@@ -536,6 +568,7 @@ void Block512Backing::writeByte(size_t absolute, uint8_t v)
     if (absolute < image_.size() && image_[absolute] != v) {
         image_[absolute] = v;
         markDirty(static_cast<uint32_t>(absolute / kBlockBytes));
+        noteMediaWrite();                       // see writeBlock
     }
 }
 

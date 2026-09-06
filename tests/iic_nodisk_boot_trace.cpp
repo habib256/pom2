@@ -76,13 +76,16 @@ std::string scrapeTextUpper(const uint8_t* ram)
 }
 
 // Run a //c-class ROM with NO disk and assert `needle` appears on the text
-// page within the instruction budget. Returns 0 on pass, 1 on fail.
+// page within the instruction budget. Returns 0 on pass, 1 on fail, 2 on skip
+// (kept out of the 0/1 bit so `rc |= …` cannot let a skip mask a failure).
+constexpr int kCaseSkipped = 2;
+
 int runNoDiskCase(const char* tag, const std::string& romPath,
                   const char* needle, int instrs)
 {
     if (romPath.empty()) {
         std::printf("SKIP iic_nodisk_boot_trace[%s]: ROM not present\n", tag);
-        return 0;   // skip is not a failure
+        return kCaseSkipped;
     }
 
     Memory mem;
@@ -144,17 +147,24 @@ int runNoDiskCase(const char* tag, const std::string& romPath,
 
 int main()
 {
-    int rc = 0;
+    int rc = 0, ran = 0;
+    auto tally = [&](int r) { if (r == kCaseSkipped) return; ++ran; rc |= r; };
+
     // //c (32 KB): empty internal 5.25" drive -> "Check Disk Drive."
-    rc |= runNoDiskCase("//c-32k",
+    tally(runNoDiskCase("//c-32k",
                         firstExisting({"roms/apple2c-32Kv0.rom"}),
-                        "CHECK DISK", 20'000'000);
+                        "CHECK DISK", 20'000'000));
     // //c+: scans 3.5"/SmartPort + 5.25", then the no-online-disk banner.
-    rc |= runNoDiskCase("//c+",
+    tally(runNoDiskCase("//c+",
                         firstExisting({"roms/apple2cp.rom",
                                        "roms/apple2c-plus.rom"}),
-                        "UNABLE TO FIND A BOOTABLE DISK", 25'000'000);
+                        "UNABLE TO FIND A BOOTABLE DISK", 25'000'000));
 
-    if (rc == 0) std::printf("PASS\n");
-    return rc;
+    if (rc != 0) return rc;
+    if (ran == 0) {
+        std::printf("SKIP iic_nodisk_boot_trace: no //c-class ROM present\n");
+        return 77;   // ctest SKIP_RETURN_CODE
+    }
+    std::printf("PASS\n");
+    return 0;
 }

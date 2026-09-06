@@ -26,10 +26,12 @@
 
 #include "Disk35Image.h"
 
+#include "Block512Backing.h"
+
 #include "Sony35Gcr.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
-#include "Logger.h"
+#include "PersistentFs.h"
 #include "TwoImg.h"
 
 #include <algorithm>
@@ -257,6 +259,10 @@ bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
     if (isWriteProtected()) return false;
     std::memcpy(blocks_.data() + idx * kBlockBytes, in, kBlockBytes);
     dirty_ = true;
+    // A rewind may not cross a media write: an 800 KB image is not captured
+    // per rewind frame, so the controller clears the ring instead. See
+    // `pom2::mediaWriteEpoch()` in Block512Backing.h.
+    noteMediaWrite();
     return true;
 }
 
@@ -379,7 +385,10 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
     // writeFileAtomic: emit a sibling temp file — same directory, therefore
     // same filesystem, therefore `rename` is atomic and cannot fail
     // cross-device — and only swap it in once the write fully succeeded.
-    const std::string tmp = pending.path + ".pom2tmp";
+    // Unique per process AND per call: a fixed `<path>.pom2tmp` is the name
+    // every POM2 instance derives, so two of them saving the same image
+    // interleaved their writes into one temp file. See tempSiblingPath().
+    const std::string tmp = tempSiblingPath(pending.path).string();
     // A rename replaces the inode, so the temp file's umask-derived mode
     // would become the image's. Carry the original's permissions across.
     std::error_code permEc;
@@ -399,6 +408,8 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
         std::ofstream f(tmp, std::ios::binary | std::ios::out | std::ios::trunc);
         if (!f) {
             error = "Disk35Image: cannot open " + tmp + " for write";
+            std::error_code rm;
+            std::filesystem::remove(tmp, rm);
             return false;
         }
         f.write(reinterpret_cast<const char*>(pending.bytes.data()),
@@ -428,6 +439,9 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
         std::filesystem::remove(tmp, ec2);
         return false;
     }
+    // Browser build: durable only once the IDBFS mount is flushed, and only
+    // Settings::save used to ask for that. No-op natively.
+    markPersistentStateDirty();
     return true;
 }
 

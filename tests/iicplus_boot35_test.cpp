@@ -86,7 +86,7 @@ int main()
     if (rom.empty() || disk.empty()) {
         std::printf("SKIP iicplus_boot35: need roms/apple2cp.rom and "
                     "disks_3.5/A2DeskTop-1.5-en_800k.2mg\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;
@@ -121,11 +121,11 @@ int main()
     // file size, and getting it wrong runs the CPU through the char ROM.
     if (!mem.loadAppleIIRom(rom.c_str(), /*pickLower16KFor32K=*/true)) {
         std::printf("SKIP iicplus_boot35: cannot load %s\n", rom.c_str());
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     if (!imgInt.loadFile(disk)) {
         std::printf("SKIP iicplus_boot35: cannot load %s\n", disk.c_str());
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     drvInt.notifyMediaChange();
     cpu.setCpuMode(M6502::CpuMode::CMOS);

@@ -50,13 +50,14 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "TestTempPath.h"
 
 namespace {
 
 std::string writeTempBlob(const std::vector<uint8_t>& bytes,
                           const std::string& nameSuffix)
 {
-    const std::string path = "/tmp/pom2_mouseaw_test_" + nameSuffix;
+    const std::string path = pom2test::tempPath("pom2_mouseaw_test_" + nameSuffix);
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     f.write(reinterpret_cast<const char*>(bytes.data()),
             static_cast<std::streamsize>(bytes.size()));
@@ -77,7 +78,7 @@ std::vector<uint8_t> buildBankSignatureRom()
 void test_missing_rom_refuses_to_load()
 {
     MouseCardAppleWin card(4);
-    assert(!card.loadRom("/tmp/pom2_does_not_exist_slot_aw.bin"));
+    assert(!card.loadRom(pom2test::tempPath("pom2_does_not_exist_slot_aw.bin")));
     assert(!card.isReady());
 }
 

@@ -317,6 +317,31 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if ((present & 0x02) && !loadVia(via_[1])) return;
     for (int i = 0; i < 4; ++i)
         if ((present & (0x04 << i)) && !loadAy(ay_[i])) return;
+
+    // ── Re-anchor the derived state the restore just invalidated ────────
+    // Three things the Phasor was missing that MockingboardCard already
+    // does at the end of ITS loadSnapshotState:
+    //
+    //  1. `lastSyncCycle_` is an ABSOLUTE emuCycles stamp and is not in the
+    //     blob (it would be meaningless there — what matters is the restored
+    //     CPU counter). Left alone, a snapshot taken LATER than the live
+    //     machine leaves the stamp in the past and the next lazy sync
+    //     advances both 6522s by the whole gap in one `advance()` — a burst
+    //     of phantom T1 underflows and IRQs. Re-anchor it on the machine we
+    //     have actually landed on. (A BACKWARDS jump was already survivable:
+    //     `syncToCpuCycleAt` pins the stamp down. Forwards was not.)
+    //  2. `ayResetCount_` is the Phasor's equivalent of Mockingboard's
+    //     `ayQueueGen_`: the audio thread re-seeds a chip's generators only
+    //     when the counter CHANGES against its own `lastSeenResetCount`.
+    //     Restored registers with an unchanged counter meant the synth kept
+    //     playing the pre-restore note — bump, don't assign (see onReset).
+    //  3. The restored IFR/IER may not match the IRQ line the card is
+    //     currently driving on the slot bus, and nothing else re-evaluates
+    //     it until the next VIA access — which a guest waiting in its IRQ
+    //     handler never makes.
+    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    for (int i = 0; i < 4; ++i) ++ayResetCount_[i];
+    updateIrq();
 }
 
 void PhasorCard::onReset()
@@ -414,6 +439,11 @@ void PhasorCard::syncToCpuCycleAt(uint64_t now)
         // smaller value so the next syncs the freshly-elapsed delta and
         // doesn't no-op every batch tick.
         lastSyncCycle_ = now;
+        // The line still has to be re-evaluated: `updateIrq()` is what
+        // publishes IFR&IER onto the slot bus, and an MMIO access that
+        // cleared an interrupt flag and then took this early-out left the
+        // card asserting IRQ with nothing pending (or the reverse).
+        updateIrq();
         return;
     }
     const uint64_t delta = now - lastSyncCycle_;

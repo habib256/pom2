@@ -32,6 +32,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "TestTempPath.h"
 
 namespace {
 
@@ -68,7 +69,7 @@ int main()
     for (int i = 0; i < kImg; ++i)
         orig[i] = static_cast<uint8_t>((i * 197u + (i >> 8) * 13u + 0x5A) & 0xFF);
 
-    const std::string p = "/tmp/pom2_d13_roundtrip.d13";
+    const std::string p = pom2test::tempPath("pom2_d13_roundtrip.d13");
     writeFile(p, orig);
 
     DiskImage img;
@@ -94,14 +95,14 @@ int main()
 
     // Format detection: a ragged (non-13×256-multiple) file is refused.
     {
-        const std::string bad = "/tmp/pom2_d13_bad.d13";
+        const std::string bad = pom2test::tempPath("pom2_d13_bad.d13");
         writeFile(bad, std::vector<uint8_t>(kImg + 7, 0));
         DiskImage b;
         assert(!b.loadFile(bad));
     }
     // A 16-sector image must NOT be flagged 13-sector.
     {
-        const std::string p16 = "/tmp/pom2_d13_16.dsk";
+        const std::string p16 = pom2test::tempPath("pom2_d13_16.dsk");
         writeFile(p16, std::vector<uint8_t>(DiskImage::kBytesPerImage, 0));
         DiskImage s;
         assert(s.loadFile(p16));

@@ -97,6 +97,12 @@ public:
     /// protocol in the ROM driver (not wired today).
     static constexpr size_t kMaxUnits      = 2;
 
+    /// Snapshot blob version. v1 = transfer state (+ an optional v1.1 call
+    /// engine tail); v2 appends one media-identity hash per unit so a primed
+    /// write block is never flushed into a disk that was swapped in after
+    /// the capture. Older blobs still load.
+    static constexpr uint8_t kSnapVersion  = 2;
+
     /// `slot` is baked into the slot ROM (signature byte, driver
     /// address, soft-switch trampolines). All units start empty;
     /// the host plugs / replaces units via `setUnit`.

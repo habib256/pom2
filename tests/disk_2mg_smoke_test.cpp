@@ -95,6 +95,9 @@ bool loadFixture(const std::string& name, std::vector<uint8_t>& out,
                  std::size_t expectedSize)
 {
     static const char* prefixes[] = {
+        // Sector images live under disks_5.4/dsk/ since the 2026 move; the
+        // bare roots are kept for older trees.
+        "../../disks_5.4/dsk/", "../disks_5.4/dsk/", "disks_5.4/dsk/",
         "../../disks_5.4/", "../../disks2/", "disks_5.4/", "disks2/"
     };
     for (const char* pfx : prefixes) {

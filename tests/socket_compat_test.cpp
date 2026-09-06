@@ -60,7 +60,7 @@
 int main()
 {
     std::puts("SKIP: built without host sockets (Emscripten)");
-    return 0;
+    return 77;   // ctest SKIP_RETURN_CODE
 }
 #else
 

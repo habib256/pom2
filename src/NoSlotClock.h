@@ -62,8 +62,10 @@
 // path is a no-op for software that doesn't trigger the magic key).
 // Detail → DEV.md § No-Slot Clock.
 
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <vector>
 
 namespace pom2 {
 
@@ -115,6 +117,19 @@ public:
     /// transmission of the Dallas DS1216E datasheet's 8-byte canonical
     /// sequence  C5 3A A3 5C C5 3A A3 5C  packed little-endian.
     static constexpr uint64_t kMagicKey = 0x5CA33AC55CA33AC5ULL;
+
+    /// Snapshot / rewind. The chip is a bit-serial state machine walked
+    /// across MANY CPU reads: a driver is typically 40-odd bits into the
+    /// 64-bit magic key, or halfway through shifting a BCD date out, when
+    /// a rewind frame is captured. Restoring RAM + PC without the matcher
+    /// cursor resumed the driver mid-sequence against a chip that had
+    /// silently moved (or reset) — the read-back date came out garbage and,
+    /// because a mismatched bit is sticky, the clock then stayed dead for
+    /// the session. `enabled_` is a USER setting and is deliberately not
+    /// carried. Self-describing (magic + version); an unrecognised or
+    /// truncated blob leaves the live chip untouched and returns false.
+    void appendSnapshotState(std::vector<uint8_t>& out) const;
+    bool loadSnapshotState(const uint8_t* data, std::size_t len);
 
 private:
     void    loadClockSnapshot();

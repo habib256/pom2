@@ -82,7 +82,7 @@ int main_impl()
         std::fprintf(stderr,
             "skip: apple2e.rom not found — this test needs the //e "
             "Enhanced ROM to exercise the real Monitor IRQ entry path\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     M6502 cpu(&mem);
     mem.setCpu(&cpu);   // installs SlotBus IRQ router

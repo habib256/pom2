@@ -75,7 +75,7 @@ int main()
     const std::string romPath = firstExisting({"roms/apple2c-32Kv0.rom"});
     if (romPath.empty()) {
         std::printf("SKIP iic_boot_trace: roms/apple2c-32Kv0.rom not present\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     if (!mem.loadAppleIIRom(romPath.c_str(), /*pickLowerHalf=*/true)) {
         std::printf("FAIL: could not load %s\n", romPath.c_str());
@@ -90,7 +90,7 @@ int main()
     const std::string disk = firstExisting({"disks_5.4/dsk/dos33_master.dsk"});
     if (disk.empty()) {
         std::printf("SKIP iic_boot_trace: disks_5.4/dsk/dos33_master.dsk not present\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     card->insertDisk(disk);
     card->setIWM(&iwm);

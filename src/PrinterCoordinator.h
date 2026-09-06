@@ -117,6 +117,9 @@ private:
     };
 
     void prepareDrain(SourceIdentity identity, std::size_t total);
+    /// Declare the batch irreversible so the rewind ring drops its history
+    /// (see the .cpp for why a cursor reset would be the wrong fix).
+    static void notePrinted(const FeedBatch& batch);
 
     SourceIdentity source_;
     std::size_t consumed_ = 0;

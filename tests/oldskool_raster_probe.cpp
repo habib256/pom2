@@ -106,7 +106,7 @@ int main(int argc, char** argv)
         firstExisting({"disks_5.4/demo/oldskool/oldskool.dsk"});
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("SKIP: missing rom/disk2.rom/oldskool.dsk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

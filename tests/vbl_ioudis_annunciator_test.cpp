@@ -76,32 +76,49 @@ void advance(Memory& mem, uint64_t cycles)
     }
 }
 
-// Tail of appendSnapshotState:
-//   [len=7][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
-// The section's length is the last four bytes before its payload, so read it
-// rather than assuming: the payload has grown once already.
-constexpr size_t kIouSectionLen = 7;
+// The paging/IOU section of appendSnapshotState:
+//   [len=9][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
+//          [vblWasActive][iicCardWindow_]
+// The payload has grown twice already, so its length is READ rather than
+// assumed. It is also no longer the tail: three more optional length-prefixed
+// sections follow it (the No-Slot Clock and the two on-board Sony 3.5"
+// mechanisms), each empty on a bare Memory with none of them wired.
+constexpr size_t kIouSectionLen  = 9;
+constexpr size_t kEmptyTailCount = 3;
 
 uint8_t iouByte(Memory& mem, size_t index)
 {
     std::vector<uint8_t> blob;
     mem.appendSnapshotState(blob);
-    // The section is the tail of the blob, so its 4-byte little-endian length
-    // prefix sits just before it. Check the prefix against what this test
-    // assumes: if the section ever grows again, that mismatch is a loud
-    // failure here instead of two probes that silently read the wrong bytes.
-    const size_t at = blob.size() - kIouSectionLen - 4;
-    const size_t len = static_cast<size_t>(blob[at]) |
-                       (static_cast<size_t>(blob[at + 1]) << 8) |
-                       (static_cast<size_t>(blob[at + 2]) << 16) |
-                       (static_cast<size_t>(blob[at + 3]) << 24);
+    auto len32 = [&](size_t at) {
+        return static_cast<size_t>(blob[at]) |
+               (static_cast<size_t>(blob[at + 1]) << 8) |
+               (static_cast<size_t>(blob[at + 2]) << 16) |
+               (static_cast<size_t>(blob[at + 3]) << 24);
+    };
+    // Walk back over the trailing optional sections, asserting each is the
+    // empty one this configuration produces — if a device ever starts writing
+    // one here, that is a loud failure rather than a silent misread.
+    size_t end = blob.size();
+    for (size_t k = 0; k < kEmptyTailCount; ++k) {
+        if (end < 4 || len32(end - 4) != 0) {
+            std::printf("FAIL: the Memory snapshot trailer no longer ends in "
+                        "%zu empty sections — update kEmptyTailCount\n",
+                        kEmptyTailCount);
+            std::exit(1);
+        }
+        end -= 4;
+    }
+    // The 4-byte little-endian length prefix sits just before the payload.
+    const size_t at  = end - kIouSectionLen - 4;
+    const size_t len = len32(at);
     if (len != kIouSectionLen) {
         std::printf("FAIL: the IOU snapshot section is no longer %zu bytes "
                     "— update kIouSectionLen and the indices below\n",
                     kIouSectionLen);
         std::exit(1);
     }
-    return blob[blob.size() - kIouSectionLen + index];
+    return blob[end - kIouSectionLen + index];
 }
 bool vblMask(Memory& mem)    { return iouByte(mem, 2) != 0; }
 bool vblPending(Memory& mem) { return iouByte(mem, 3) != 0; }
