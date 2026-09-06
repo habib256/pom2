@@ -92,6 +92,24 @@ public:
     /// `graceMs`, then kill the process tree. Safe when nothing is running.
     void stop(int graceMs = 2000);
 
+    /// The same shutdown, without waiting for it.
+    ///
+    /// `stop()` polls for the WHOLE grace period, deliberately — a FujiNet
+    /// flushing an SD-card image should be allowed to finish. That is fine on
+    /// a button press and wrong in a destructor: `~FujiNetCard` runs inside
+    /// `SlotBus::plug()`, which POM2 calls with the emulator's state mutex
+    /// held on every slot rebuild and every profile switch, so a card being
+    /// swapped out froze the machine and the window for two seconds
+    /// (CLAUDE.md, "never hold stateMutex across file I/O" — a process
+    /// teardown is worse, since the child decides how long it takes).
+    ///
+    /// This asks politely RIGHT NOW, from the caller's thread, then hands the
+    /// grace period, the kill and the reap to a detached guarded thread and
+    /// returns. Ownership of the child moves with it: this object is left
+    /// holding nothing, so its own destructor has nothing to wait for, and
+    /// `lastExitCode()` is -1 because nobody stayed to collect it.
+    void stopDetached();
+
     /// Exit status of the last child that finished, or -1 if it was killed /
     /// never ran. Only meaningful once `isRunning()` has returned false.
     int  lastExitCode() const { return exitCode_; }

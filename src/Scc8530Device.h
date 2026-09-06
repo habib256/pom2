@@ -200,6 +200,21 @@ public:
     /// only between the first byte of a frame and its close.
     std::size_t txFrameSize(int channel) const;
 
+    /// SDLC (datasheet, not MAME): ceiling on ONE transmitted frame.
+    ///
+    /// The chip has no such limit — bytes leave the shift register onto the
+    /// wire as they are loaded, and the frame ends when the transmitter
+    /// underruns. POM2 has to BUFFER the frame instead, because `frameCb_`
+    /// delivers it whole, so a guest that keeps the transmit buffer fed and
+    /// never lets the underrun latch fire grows a std::vector without bound:
+    /// a leak on the CPU thread with no error anywhere, and a frame past
+    /// 65535 bytes would also truncate the 16-bit length the snapshot writes.
+    /// The protocol this exists for is LocalTalk, whose LLAP frame is a
+    /// 3-byte header plus at most 600 data bytes; 1024 is comfortably past
+    /// anything legal. Reaching it ABORTS the frame — the same outcome as
+    /// WR0's Send Abort, which is what a receiver would see anyway.
+    static constexpr std::size_t kMaxTxFrameBytes = 1024;
+
     /// Advance the chip by `pclkCycles` PCLK ticks: the transmit shift
     /// registers and the baud-rate generator's Zero Count timer.
     void tick(uint64_t pclkCycles);

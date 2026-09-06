@@ -34,6 +34,12 @@
 //     truncates the page or spins forever.
 //   * The byte count is capped at 512, because guest code sizes its buffer
 //     from it.
+//   * THE FETCH IS NOT ON THE CALLER'S THREAD. `open()` starts it and
+//     returns; the guest learns the verdict by polling STATUS, which is how
+//     it drives `N:` anyway. `open()` is reached from a SmartPort call with
+//     the emulator's state mutex held, so doing DNS + connect + a whole HTTP
+//     body there froze the machine and the window together for up to 12 s.
+//     Tests that want the verdict use `openAndSettle` below.
 
 #include "FujiNetNetDevice.h"
 #include "FujiNetNetwork.h"   // the kNetErr* bytes are contract, not detail
@@ -144,6 +150,18 @@ struct HttpStub {
     }
 };
 
+/// `open()` STARTS the fetch and returns — it runs on the CPU thread with the
+/// emulator's state mutex held, so it may not do DNS, a connect and an HTTP
+/// body there (see the async case at the end of this file). A test that wants
+/// the VERDICT therefore waits for the fetch to settle first, which is the
+/// same thing the guest does by polling STATUS.
+bool openAndSettle(pom2::FujiNetNetDevice& net, const std::string& spec)
+{
+    if (!net.open(spec)) return false;        // refused outright: no fetch
+    while (net.busy()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    return net.isOpen();
+}
+
 }  // namespace
 
 int main()
@@ -156,7 +174,7 @@ int main()
 
         pom2::FujiNetNetDevice net;
         const std::string spec = "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/index.html";
-        check(net.open(spec), "opens N:HTTP://host:port/path");
+        check(openAndSettle(net, spec), "opens N:HTTP://host:port/path");
         check(net.isOpen(), "reports itself open");
 
         // Only the body, never the headers.
@@ -188,7 +206,7 @@ int main()
         if (!stub.start()) { std::printf("FAIL: cannot start the HTTP stub\n"); return 1; }
 
         pom2::FujiNetNetDevice net;
-        check(net.open("N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
+        check(openAndSettle(net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "opens a larger document");
         check(net.available() == 1300, "buffers the whole body");
 
@@ -222,13 +240,12 @@ int main()
 
     // ── A stalled server must not become a half page ──────────────────────
     //
-    // This runs on the CPU thread with the emulator's state mutex held, so the
-    // fetch carries ONE deadline for the whole exchange. Two things are pinned
-    // here: the deadline is honoured at all (a per-recv timeout never bounds a
-    // server that drip-feeds just inside it), and what comes out is an ERROR —
-    // never the bytes that did arrive. A truncated document the guest cannot
-    // tell from a whole one is the failure nobody can diagnose from the Apple
-    // II side.
+    // The fetch carries ONE deadline for the whole exchange. Two things are
+    // pinned here: the deadline is honoured at all (a per-recv timeout never
+    // bounds a server that drip-feeds just inside it), and what comes out is
+    // an ERROR — never the bytes that did arrive. A truncated document the
+    // guest cannot tell from a whole one is the failure nobody can diagnose
+    // from the Apple II side.
     {
         HttpStub stub;
         stub.stall = true;
@@ -238,7 +255,8 @@ int main()
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(600);
         const auto t0 = std::chrono::steady_clock::now();
-        const bool ok = net.open("N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/");
+        const bool ok = openAndSettle(
+            net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - t0).count();
 
@@ -259,7 +277,7 @@ int main()
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(800);
         const auto t0 = std::chrono::steady_clock::now();
-        const bool ok = net.open("N:HTTP://192.0.2.1/");
+        const bool ok = openAndSettle(net, "N:HTTP://192.0.2.1/");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - t0).count();
         check(!ok, "an unreachable host fails rather than hanging");
@@ -267,6 +285,65 @@ int main()
         // instantly and passes too. What must never happen is the OS default.
         check(ms < 30000, "a blackholed host is bounded by the deadline, not by the OS");
         if (ms >= 30000) std::printf("      (took %lld ms)\n", (long long)ms);
+    }
+
+    // ── open() ITSELF must not do the fetch ───────────────────────────────
+    //
+    // THE POINT OF THE ASYNC PATH. `open()` is reached from a SmartPort call,
+    // on the CPU thread, with the emulator's state mutex held — the mutex the
+    // CPU worker takes every 4096-cycle chunk and the UI thread takes to paint
+    // every frame. A fetch there is up to `deadlineMs` of machine AND window
+    // frozen together, with the FujiNet panel's own controls unreachable
+    // because drawing them needs that same mutex. Against a blackholed host
+    // that was the full connect budget, every time.
+    {
+        pom2::FujiNetNetDevice net;
+        net.setFetchDeadlineMs(4000);
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool started = net.open("N:HTTP://192.0.2.1/");
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count();
+        check(started, "open() accepts a well-formed spec");
+        // One PAL frame is 20 ms. 100 is the slack for a loaded CI box; what
+        // must never happen again is the 4 s connect being paid here.
+        check(ms < 100, "open() returns inside a frame, not after the connect");
+        if (ms >= 100) std::printf("      (took %lld ms)\n", (long long)ms);
+        check(net.busy(), "the fetch is in flight, not finished on this thread");
+        check(net.isOpen(), "and the session counts as open while it runs");
+
+        // What the guest sees meanwhile: connected, nothing waiting. That is
+        // what a slow server looks like anyway, and it keeps a STATUS poll
+        // loop polling instead of concluding the device is dead.
+        uint8_t st[4];
+        net.status(st);
+        check(st[0] == 0 && st[1] == 0, "no bytes announced while fetching");
+        check(st[2] == 1, "STATUS says connected while the fetch runs");
+        check(net.read(st, 1) == 0, "and nothing is readable yet");
+
+        while (net.busy()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        check(!net.isOpen(), "the blackholed host settles as a failure");
+        check(net.lastError() == pom2::kNetErrGeneral, "reported as GENERAL");
+    }
+
+    // ── Destroying the device mid-fetch must not wait for it ──────────────
+    //
+    // ~FujiNetCard runs inside SlotBus::plug(), with the machine lock held, so
+    // a destructor that joined the fetch would be the freeze this whole change
+    // exists to remove — just moved.
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        {
+            pom2::FujiNetNetDevice net;
+            net.setFetchDeadlineMs(1000);
+            check(net.open("N:HTTP://192.0.2.1/"), "start a fetch, then destroy it");
+        }
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count();
+        check(ms < 100, "the destructor abandons the fetch instead of joining it");
+        if (ms >= 100) std::printf("      (took %lld ms)\n", (long long)ms);
+        // Let the abandoned worker finish before main() returns: it holds only
+        // its own shared block, but tidying up keeps the process exit quiet.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1300));
     }
 
     // ── Specs that must be refused for their NUMBERS, not their scheme ────
@@ -297,7 +374,7 @@ int main()
         if (!stub.start()) { std::printf("FAIL: stub bind\n"); return 2; }
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(4000);
-        check(net.open("N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
+        check(openAndSettle(net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "an LF-only reply still opens");
         std::vector<uint8_t> got(net.available());
         if (!got.empty()) net.read(got.data(), got.size());
@@ -320,7 +397,8 @@ int main()
         if (!stub.start()) { std::printf("FAIL: stub bind\n"); return 2; }
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(10000);
-        check(!net.open("N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
+        check(!openAndSettle(net,
+                  "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "a reply over the 512 KB cap fails the open");
         check(net.lastError() == pom2::kNetErrGeneral, "and reports GENERAL");
         check(net.available() == 0, "and leaves no partial body reachable");
@@ -341,7 +419,8 @@ int main()
 
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(2000);
-        check(!net.open("N:HTTP://127.0.0.1:" + std::to_string(deadPort) + "/"),
+        check(!openAndSettle(net,
+                  "N:HTTP://127.0.0.1:" + std::to_string(deadPort) + "/"),
               "a refused connection fails the open");
         check(net.lastError() == pom2::kNetErrGeneral,
               "a reachable host with nothing listening is GENERAL");
@@ -351,7 +430,7 @@ int main()
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(2000);
         const auto t0 = std::chrono::steady_clock::now();
-        check(!net.open("N:HTTP://pom2-no-such-host.invalid/x"),
+        check(!openAndSettle(net, "N:HTTP://pom2-no-such-host.invalid/x"),
               "an unresolvable name fails the open");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - t0).count();
@@ -370,7 +449,7 @@ int main()
         if (!stub.start()) { std::printf("FAIL: stub bind\n"); return 2; }
         pom2::FujiNetNetDevice net;
         net.setFetchDeadlineMs(4000);
-        check(net.open("N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
+        check(openAndSettle(net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "fetch for the close() case");
         check(net.available() == stub.body.size(), "body is there before close");
         net.close();

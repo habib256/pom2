@@ -1267,7 +1267,22 @@ void Scc8530Device::traComplete(int index)
         // SDLC (datasheet, not MAME): in a framed mode the byte belongs to
         // the frame, not to the host — `frameCb_` delivers it when the frame
         // closes. In async the byte goes out as MAME sends it.
-        if (sdlc) c.txFrame.push_back(sent);
+        if (sdlc) {
+            if (c.txFrame.size() >= kMaxTxFrameBytes) {
+                // SDLC (datasheet, not MAME): past any frame this seam can
+                // deliver. Real silicon would keep streaming — it buffers
+                // nothing — but POM2 must not grow a vector for as long as a
+                // driver keeps feeding it, so the frame is ABORTED exactly the
+                // way WR0's Send Abort aborts one: destroyed rather than
+                // delivered, with the Tx Underrun/EOM latch set so the next
+                // status read shows the transmitter is no longer inside a
+                // frame. See kMaxTxFrameBytes for why 1024.
+                c.txFrame.clear();
+                c.rr0 |= RR0_TX_UNDERRUN;
+            } else {
+                c.txFrame.push_back(sent);
+            }
+        }
         else if (txCb_) txCb_(index, sent);
 
         if (c.wr14 & WR14_LOCAL_LOOPBACK)
@@ -1597,7 +1612,12 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
         c.brgAcc             = r.u64();
         const std::size_t frameLen = r.u16();
         if (!r.has(frameLen)) return false;
-        c.txFrame.assign(data + r.pos, data + r.pos + frameLen);
+        // A snapshot is a file: a hand-edited length must not restore a frame
+        // past the ceiling the transmit path enforces (kMaxTxFrameBytes).
+        c.txFrame.assign(data + r.pos,
+                         data + r.pos +
+                             (frameLen < kMaxTxFrameBytes ? frameLen
+                                                          : kMaxTxFrameBytes));
         r.pos += frameLen;
     }
 

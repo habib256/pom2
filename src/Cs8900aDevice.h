@@ -134,6 +134,15 @@ public:
     uint64_t framesSent()         const { return framesSent_; }
     uint64_t framesReceived()     const { return framesReceived_; }
     uint64_t framesFiltered()     const { return framesFiltered_; }
+    /// The transmit handshake's own state, so a test can assert that a
+    /// restored snapshot left it COHERENT: `txState` is the four-step enum
+    /// (0 = idle), and `txCount` may never exceed `txLength` — the release
+    /// test is an equality, so a count above the length is a frame that can
+    /// never be sent. See loadSnapshotState.
+    uint8_t  txState()            const { return txState_; }
+    uint16_t txCount()            const { return txCount_; }
+    uint16_t txLength()           const { return txLength_; }
+    uint8_t  rxState()            const { return rxState_; }
     /// Raw PacketPage window for the hex view. `len` is clamped.
     const uint8_t* packetPage() const { return packetPage_.data(); }
 

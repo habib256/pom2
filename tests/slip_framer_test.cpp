@@ -123,6 +123,43 @@ void testBackToBackFrames()
     assert(frames[1] == b);
 }
 
+void testSharedDelimiterBetweenFrames()
+{
+    // RFC 1055 lets a sender end one packet and begin the next with a SINGLE
+    // END, and POM2 has to decode what a peer sends rather than only what its
+    // own encoder emits. The decoder used to drop back to "waiting for a
+    // delimiter" here, so `C0 a C0 b C0` delivered `a`, skipped `b` as
+    // inter-frame noise, and let b's closing delimiter merely OPEN a frame:
+    // one packet lost, and every answer after it read one request behind.
+    const std::vector<uint8_t> a{ 0x10, 0x11 };
+    const std::vector<uint8_t> b{ 0x20, 0xC0, 0x21 };   // and it still unescapes
+    std::vector<uint8_t> wire{ 0xC0 };
+    for (uint8_t x : a) wire.push_back(x);
+    wire.push_back(0xC0);                               // closes a, opens b
+    wire.push_back(0x20);
+    wire.push_back(0xDB); wire.push_back(0xDC);         // escaped $C0
+    wire.push_back(0x21);
+    wire.push_back(0xC0);                               // closes b
+
+    SlipFramer f;
+    int truncations = 0;
+    const auto frames = feedAll(f, wire, &truncations);
+    assert(truncations == 0);
+    assert(frames.size() == 2);
+    assert(frames[0] == a);
+    assert(frames[1] == b);
+
+    // Three packets in a row, sharing both delimiters — the shape a peer that
+    // has traffic queued produces.
+    SlipFramer g;
+    const std::vector<uint8_t> chain{ 0xC0, 0x01, 0xC0, 0x02, 0xC0, 0x03, 0xC0 };
+    const auto three = feedAll(g, chain);
+    assert(three.size() == 3);
+    assert(three[0] == (std::vector<uint8_t>{ 0x01 }));
+    assert(three[1] == (std::vector<uint8_t>{ 0x02 }));
+    assert(three[2] == (std::vector<uint8_t>{ 0x03 }));
+}
+
 void testLeadingGarbageIsSkipped()
 {
     // A transport that attaches mid-stream sees the tail of somebody else's
@@ -243,6 +280,7 @@ int main()
     testEscaping();
     testRoundTripAllByteValues();
     testBackToBackFrames();
+    testSharedDelimiterBetweenFrames();
     testLeadingGarbageIsSkipped();
     testTruncatedMidEscape();
     testInvalidEscapeByte();

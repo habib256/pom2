@@ -85,7 +85,18 @@ FujiNetCard::~FujiNetCard()
     // cleanly, then terminate the helper. The other way round leaves the
     // link's worker chasing a socket whose far end just died.
     transport_->stop();
-    helper_.stop();
+
+    // stopDetached(), not stop(): this destructor is called by
+    // `SlotBus::plug()`, which POM2 runs with the emulator's state mutex held
+    // on every slot rebuild and every profile switch. `stop()` polls for its
+    // whole 2 s grace — on purpose, so a FujiNet flushing an SD-card image
+    // gets to finish — and under that lock those two seconds are the CPU
+    // worker blocked on its next chunk and the UI thread blocked trying to
+    // paint: the freeze CLAUDE.md forbids, cancel button included. The
+    // detached form sends the same SIGTERM from here, right now, and only
+    // hands the WAITING to a guarded thread; the helper still gets its grace,
+    // still gets the SIGKILL sweep, and is still reaped.
+    helper_.stopDetached();
 }
 
 bool FujiNetCard::startHelper(const std::string& exePath, std::string& errOut)

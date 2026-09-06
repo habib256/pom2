@@ -388,6 +388,44 @@ void testChildDoesNotInheritListeners()
     assert(rebound && "the helper inherited POM2's listening socket");
 }
 
+// ── 9. stopDetached(): the same shutdown, without the wait ───────────────
+//
+// `stop()` polls for its whole grace period on purpose — a FujiNet flushing an
+// SD-card image deserves to finish. `~FujiNetCard` cannot afford that: it runs
+// inside `SlotBus::plug()`, which POM2 calls with the emulator's state mutex
+// held on every slot rebuild and every profile switch, so swapping a card out
+// froze the machine and the window together for two seconds.
+//
+// Two things are pinned. The RETURN is immediate even for a child that ignores
+// SIGTERM (the case that costs stop() the full grace). And the child still
+// dies: the grandchild `sleep` holds this process's stdout pipe, so if the
+// detached thread's SIGKILL sweep of the group ever regresses, ctest — which
+// waits for every process on that pipe — HANGS rather than failing an assert.
+// That is the same trap testStubbornChildIsKilled documents.
+void testStopDetachedDoesNotWait()
+{
+    ChildProcess p;
+    std::string err;
+    assert(p.start("/bin/sh", { "-c", "trap '' TERM; sleep 60" }, "", err));
+    sleepMs(80);
+    assert(p.isRunning());
+
+    const auto t0 = std::chrono::steady_clock::now();
+    p.stopDetached();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0).count();
+
+    // stop() would have sat here for the whole 2 s grace and then some.
+    assert(ms < 100 && "stopDetached() waited for the child");
+    // The object owns nothing any more, so its own destructor has nothing to
+    // do either — that is what makes it safe in a destructor under the lock.
+    assert(!p.isRunning());
+
+    // Outlive the detached reaper: the grace, the SIGKILL and the reap all run
+    // on a thread this process must not exit from under.
+    sleepMs(2500);
+}
+
 } // namespace
 
 int main()
@@ -400,6 +438,7 @@ int main()
     testRestartReplaces();
     testFindOnPath();
     testChildDoesNotInheritListeners();
+    testStopDetachedDoesNotWait();
 
     std::puts("child_process: OK");
     return 0;

@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 #if POM2_HAS_CHILD_PROCESS
 #  ifdef _WIN32
@@ -55,6 +56,7 @@ bool ChildProcess::start(const std::string&, const std::vector<std::string>&,
 { errOut = "launching helper programs is not available in this build"; return false; }
 bool ChildProcess::isRunning() { return false; }
 void ChildProcess::stop(int) {}
+void ChildProcess::stopDetached() {}
 void ChildProcess::reset() {}
 std::string ChildProcess::findOnPath(const std::string&) { return {}; }
 int ChildProcess::runConsoleSignalBrokerIfRequested(int, char*[]) { return -1; }
@@ -289,6 +291,52 @@ void ChildProcess::stop(int graceMs)
     while (::waitpid(pid_, &status, 0) < 0 && errno == EINTR) {}
     exitCode_ = -1;
     reset();
+}
+
+void ChildProcess::stopDetached()
+{
+    if (pid_ < 0) return;
+
+    // The polite ask happens HERE, synchronously, so the helper starts
+    // shutting down at the instant the caller asked for it — only the WAIT is
+    // handed off. Same negated pid as stop(): the whole process group.
+    const pid_t group = pid_;
+    ::kill(-group, SIGTERM);
+
+    // Ownership moves to the thread: this object must not waitpid() for a
+    // child somebody else is reaping, and its own destructor must find
+    // nothing to do.
+    reset();
+    exitCode_ = -1;
+
+    // The exception barrier CLAUDE.md requires on every long-lived thread,
+    // written out by hand: `pom2::guardedThread` lives in ThreadGuard.h, which
+    // is a RUNTIME header, and this file is FOUNDATION — the layer check
+    // (cmake/Pom2Architecture.cmake) refuses the include. Nothing in the body
+    // below can throw, and if that ever changes the catch is what keeps an
+    // escaping exception from calling std::terminate() on the whole emulator.
+    std::thread([group] {
+        try {
+            // The same grace poll stop() does, with the same 25 ms step, and
+            // then the same unconditional SIGKILL sweep of the group — a
+            // wrapper script that dies on SIGTERM leaves a SIGTERM-trapping
+            // grandchild otherwise, still holding the loopback port.
+            constexpr int kGraceMs = 2000;
+            constexpr int kStepMs  = 25;
+            for (int waited = 0; waited < kGraceMs; waited += kStepMs) {
+                int status = 0;
+                const pid_t r = ::waitpid(group, &status, WNOHANG);
+                if (r != 0 && !(r < 0 && errno == EINTR)) break;
+                ::usleep(static_cast<useconds_t>(kStepMs) * 1000);
+            }
+            ::kill(-group, SIGKILL);
+            // Reap, or the zombie outlives us until POM2 exits. ECHILD simply
+            // means the poll above already collected it.
+            int status = 0;
+            while (::waitpid(group, &status, 0) < 0 && errno == EINTR) {}
+        } catch (...) {
+        }
+    }).detach();
 }
 
 std::string ChildProcess::findOnPath(const std::string& name)
@@ -591,6 +639,49 @@ void ChildProcess::stop(int graceMs)
     WaitForSingleObject(H(handle_), 1000);
     exitCode_ = -1;
     reset();
+}
+
+void ChildProcess::stopDetached()
+{
+    if (!handle_) return;
+
+    // Ownership of BOTH handles moves to the thread — the job especially:
+    // it carries JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so closing it here would
+    // kill the tree instantly and defeat the grace period this preserves.
+    // reset() is bypassed for the same reason (it closes them).
+    void* const h = handle_;
+    void* const j = job_;
+    handle_   = nullptr;
+    job_      = nullptr;
+    exitCode_ = -1;
+
+    // Hand-written exception barrier — see the POSIX branch for why
+    // ThreadGuard.h is not available to this file.
+    std::thread([h, j] {
+        try {
+            const bool signalled =
+                launchConsoleSignalBroker(GetProcessId(H(h)));
+            bool exited = false;
+            if (signalled) {
+                constexpr DWORD stepMs = 25;
+                constexpr DWORD grace  = 2000;
+                for (DWORD waited = 0; waited < grace; waited += stepMs) {
+                    if (WaitForSingleObject(H(h), stepMs) == WAIT_OBJECT_0) {
+                        exited = true;
+                        break;
+                    }
+                }
+            }
+            if (!exited) {
+                if (j) TerminateJobObject(H(j), 1);
+                else TerminateProcess(H(h), 1);
+            }
+            WaitForSingleObject(H(h), 1000);
+            CloseHandle(H(h));
+            if (j) CloseHandle(H(j));
+        } catch (...) {
+        }
+    }).detach();
 }
 
 std::string ChildProcess::findOnPath(const std::string& name)

@@ -79,6 +79,37 @@ public:
         return waitSocket(fd_, SocketWait::Write, 0) == WaitResult::Ready;
     }
 
+    bool bind(uint16_t port) override
+    {
+        // SO_REUSEADDR first: without it a UDP port the guest used a moment
+        // ago (a reset, a re-open, a previous POM2 session) can still be held
+        // by the kernel and the bind fails for a socket nobody is using.
+        int one = 1;
+        ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR,
+                     reinterpret_cast<const char*>(&one), sizeof(one));
+
+        sockaddr_in local{};
+        local.sin_family      = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_ANY);
+        local.sin_port        = hostToNet16(port);
+        if (::bind(fd_, reinterpret_cast<sockaddr*>(&local),
+                   static_cast<socklen_c>(sizeof(local))) == 0)
+            return true;
+
+        // Not fatal, and deliberately not a close: the guest can still talk
+        // OUTBOUND from the ephemeral port the kernel will pick, which is
+        // every request/response exchange it is likely to attempt. Only
+        // unsolicited inbound traffic is lost, and that is what the log line
+        // is for — the alternative, refusing the OPEN, would break working
+        // configurations because some unrelated host program holds port 68.
+        log().warn("W5100", "could not bind local port " +
+                            std::to_string(port) + ": " +
+                            lastSocketErrorText() +
+                            " — outbound still works, unsolicited inbound "
+                            "datagrams will not arrive");
+        return false;
+    }
+
     W5100ReceiveResult receive(uint8_t* data, std::size_t capacity) override
     {
         W5100ReceiveResult out;

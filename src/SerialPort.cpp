@@ -180,8 +180,13 @@ bool SerialPort::open(const std::string& path, int baud)
 
     // O_NONBLOCK on the open() itself matters even on a device that has no
     // carrier concept: without it the open can block indefinitely on a port
-    // whose driver waits for DCD. We clear it below — reads are paced by
-    // poll(), not by O_NONBLOCK.
+    // whose driver waits for DCD. The flag then STAYS SET for the life of the
+    // descriptor — deliberately, and nothing below clears it. It is not what
+    // paces a read (poll() does that, in readSome); it is what guarantees
+    // read()/write() come back with EAGAIN instead of parking in the driver,
+    // which is what lets writeAll() wait on POLLOUT rather than block. The
+    // VMIN=0/VTIME=0 pair set below asks the tty layer for the same "return
+    // what is there" behaviour, so the two agree either way.
     // O_NOCTTY: never let a serial device become POM2's controlling terminal,
     // or a hangup on the line would deliver SIGHUP to the emulator.
     fd_ = ::open(path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
@@ -570,10 +575,19 @@ int SerialPort::readSome(uint8_t* p, std::size_t n, int timeoutMs)
     // "Wait up to timeoutMs for the FIRST byte, then return what's there" is
     // exactly the ReadIntervalTimeout=MAXDWORD + ReadTotalTimeoutConstant
     // combination.
+    //
+    // The constant is clamped to at least 1 ms because that combination is
+    // only defined for a constant BETWEEN 1 and MAXDWORD-1 (SetCommTimeouts,
+    // "remarks"): a constant of ZERO alongside MAXDWORD/MAXDWORD is not
+    // "return immediately" — that shape needs a multiplier of 0 as well — it
+    // is an INFINITE wait for the first byte. So a caller passing
+    // timeoutMs <= 0 (the session layer does, as `waitMs > 0 ? waitMs : 1`
+    // shows it means to avoid) would have blocked the link until a byte
+    // happened to arrive, with no way to interrupt it.
     COMMTIMEOUTS to{};
     to.ReadIntervalTimeout         = MAXDWORD;
     to.ReadTotalTimeoutMultiplier  = MAXDWORD;
-    to.ReadTotalTimeoutConstant    = static_cast<DWORD>(timeoutMs < 0 ? 0 : timeoutMs);
+    to.ReadTotalTimeoutConstant    = static_cast<DWORD>(timeoutMs < 1 ? 1 : timeoutMs);
     to.WriteTotalTimeoutMultiplier = 0;
     to.WriteTotalTimeoutConstant   = 1000;
     if (!SetCommTimeouts(H(handle_), &to)) {

@@ -110,13 +110,14 @@ void NetworkCoordinator::applyFujiNetPanel(
     if (r.requestRescan) rescanSerialDevices();
     if (r.helperPathChanged) setHelperPath(r.helperPathTo);
 
-    // Everything that touches the card, in ONE acquisition, with the card
-    // re-resolved inside it. The code this replaces bound `link` OUTSIDE any
-    // lock and then wrote through that reference in six separate critical
-    // sections — a slot rebuild between any two of them left the rest writing
-    // to a freed link — and applied the timeout change with no lock at all.
-    // The one exception is the helper process, whose teardown is slow; see
-    // below.
+    // The card is resolved ONCE, under the lock, and the two host objects it
+    // owns — the link and the helper process — are then driven with the lock
+    // released. The code this replaces resolved the card afresh for each of
+    // six separate critical sections (a slot rebuild between any two of them
+    // left the rest writing to a freed link) and applied the timeout change
+    // with no lock at all; one acquisition fixed that, and then held the lock
+    // across two teardowns that can take seconds. Why carrying the pointers
+    // out is safe is spelled out below.
     const bool touchesCard =
         r.transportChanged || r.portChanged || r.serialChanged ||
         r.timeoutChanged || r.requestStart || r.requestStop ||
@@ -127,7 +128,7 @@ void NetworkCoordinator::applyFujiNetPanel(
         bool startFailed = false;
         std::string helperMessage;
 
-        // Stopping the helper is the one SLOW thing in this function:
+        // Stopping the helper is not the only SLOW thing in this function:
         // ChildProcess::stop() signals the helper's process group and then
         // polls for the whole 2 s grace — deliberately, so a FujiNet flushing
         // an SD-card image gets to finish. Under the machine lock that is two
@@ -137,51 +138,28 @@ void NetworkCoordinator::applyFujiNetPanel(
         // sections below, and only the sub-millisecond spawn stays under the
         // lock.
         //
-        // Carrying the helper across that gap is safe where carrying the link
-        // would not be. The ChildProcess is host state — the CPU thread never
-        // touches it, while it is inside the link on every SmartPort call —
-        // and SlotBus topology is UI-thread-confined, so the only thread that
-        // can unplug the card is the one standing right here.
-        ChildProcess* helper = nullptr;
+        // Carrying the helper — and the link — across that gap is safe. Both
+        // are host state whose lifetime is the CARD's, the ChildProcess is
+        // never touched by the CPU thread at all, and SlotBus topology is
+        // UI-thread-confined: the only thread that can unplug the card is the
+        // one standing right here, between these two statements.
+        //
+        // The link needs one thing more, and it has it: `SpOverSlipLink`
+        // guards its transport with its own `callMtx_`, so a SmartPort call
+        // in flight on the CPU thread and a `stop()` here cannot overlap. That
+        // is exactly why callMtx_ exists (see SpOverSlipLink::stop) — the
+        // emulator's state mutex USED to serialise the two by accident, and
+        // relying on that accident is what kept this work under the lock.
+        ChildProcess*      helper = nullptr;
+        FujiNetTransport*  link   = nullptr;
 
         {
+            // Resolving the card is a bus read and nothing else — microseconds
+            // — so it is all that stays under the lock.
             auto state = controller.lockState();
             auto* card = findFujiNet(state.memory().slotBus());
             if (card) {
-                auto& link = card->transportLink();
-
-                if (r.transportChanged) {
-                    switch (r.transportTo) {
-                    case FujiNet_ImGui::Transport::Tcp:
-                        link.setTcpMode(link.tcpPort());
-                        break;
-                    case FujiNet_ImGui::Transport::Serial:
-                        link.setSerialMode(link.serialPath(), link.serialBaud());
-                        break;
-                    case FujiNet_ImGui::Transport::Off:
-                        link.setOff();
-                        break;
-                    }
-                }
-                if (r.portChanged)    link.setTcpMode(r.portTo);
-                if (r.serialChanged)  link.setSerialMode(r.serialPathTo,
-                                                         r.serialBaudTo);
-                if (r.timeoutChanged) link.setTimeoutMs(r.timeoutTo);
-
-                if (r.requestStart) {
-                    std::string err;
-                    if (!link.start(err)) { startError = err; startFailed = true; }
-                }
-                if (r.requestStop)     link.stop();
-                if (r.requestDropPeer) {
-                    // Stop then start: the button means "let the peer
-                    // reconnect", not "turn the bridge off", so the listener
-                    // comes straight back up.
-                    link.stop();
-                    std::string err;
-                    link.start(err);
-                }
-
+                link = &card->transportLink();
                 // Every helper request stops whatever is running first —
                 // `ChildProcess::start()` does it internally anyway, with the
                 // same 2 s grace — so pick the process up here and stop it
@@ -192,8 +170,54 @@ void NetworkCoordinator::applyFujiNetPanel(
             }
         }
 
-        // Off the lock: the grace poll, and on POSIX the SIGKILL sweep and
-        // the reap that follow it.
+        // ── Off the lock from here ───────────────────────────────────────
+        // Link first, helper second: the same order ~FujiNetCard uses, so the
+        // peer goes away cleanly before the process serving it is killed.
+        if (link) {
+            if (r.transportChanged) {
+                switch (r.transportTo) {
+                case FujiNet_ImGui::Transport::Tcp:
+                    link->setTcpMode(link->tcpPort());
+                    break;
+                case FujiNet_ImGui::Transport::Serial:
+                    link->setSerialMode(link->serialPath(), link->serialBaud());
+                    break;
+                case FujiNet_ImGui::Transport::Off:
+                    link->setOff();
+                    break;
+                }
+            }
+            if (r.portChanged)    link->setTcpMode(r.portTo);
+            if (r.serialChanged)  link->setSerialMode(r.serialPathTo,
+                                                      r.serialBaudTo);
+            if (r.timeoutChanged) link->setTimeoutMs(r.timeoutTo);
+
+            if (r.requestStart) {
+                std::string err;
+                if (!link->start(err)) { startError = err; startFailed = true; }
+            }
+            // stop() JOINS the link's worker, and that worker can be inside a
+            // device enumeration — up to `kMaxUnits` round trips, each bounded
+            // by the panel's own timeout (5 s at the maximum setting). Under
+            // the machine lock that is the freeze CLAUDE.md forbids: the CPU
+            // worker blocked on its next chunk, the UI thread blocked trying
+            // to paint, and the panel's own Stop button unreachable because
+            // drawing it needs the same mutex. Every mode change above is a
+            // stop too (setTcpMode/setSerialMode/setOff all call it), which is
+            // why the whole block moved and not just the stop button.
+            if (r.requestStop)     link->stop();
+            if (r.requestDropPeer) {
+                // Stop then start: the button means "let the peer
+                // reconnect", not "turn the bridge off", so the listener
+                // comes straight back up.
+                link->stop();
+                std::string err;
+                link->start(err);
+            }
+        }
+
+        // The grace poll, and on POSIX the SIGKILL sweep and the reap that
+        // follow it.
         if (helper) helper->stop();
 
         if (r.requestHelperStart || r.requestHelperRestart) {

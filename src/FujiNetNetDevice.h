@@ -62,7 +62,10 @@
 #include "FujiNetNetwork.h"
 #include "SocketCompat.h"
 
+#include <atomic>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -81,12 +84,34 @@ public:
 
     /// Open a devicespec: "N:HTTP://host[:port]/path" (the "N:" and the
     /// scheme are case-insensitive, as the guest usually shouts them). The
-    /// whole response body is fetched now and buffered — the guest then drains
-    /// it with STATUS/READ, which is exactly the shape its code expects and
+    /// whole response body is fetched and buffered — the guest then drains it
+    /// with STATUS/READ, which is exactly the shape its code expects and
     /// avoids holding a socket open across an emulated machine's lifetime.
+    ///
+    /// THE FETCH DOES NOT HAPPEN HERE. This is called from a SmartPort call,
+    /// on the CPU thread, with the emulator's state mutex held, and a fetch
+    /// is DNS + connect + a whole HTTP body: bounded at 12 s by
+    /// `deadlineMs_`, which is 12 s of frozen machine and frozen window, with
+    /// the FujiNet panel's own controls unreachable because drawing them
+    /// needs the same mutex. So `open()` STARTS the fetch on a worker and
+    /// returns at once.
+    ///
+    /// The return value is therefore "accepted", not "succeeded": false only
+    /// for a spec that cannot be served at all (not HTTP over plain TCP, no
+    /// host, a bad port). The verdict arrives through `status()` — which is
+    /// how the guest is meant to drive `N:` anyway (STATUS until bytes are
+    /// waiting, then READ), and it reads "connected, nothing waiting yet"
+    /// while the fetch is in flight, exactly as it does for a slow server.
     bool open(const std::string& devicespec) override;
     void close() override;
-    bool isOpen() const override { return open_; }
+
+    /// True from `open()` until `close()`, a fetch still in flight included:
+    /// the session exists, whatever its bytes are doing.
+    bool isOpen() const override { pump(); return open_ || fetch_ != nullptr; }
+
+    /// A fetch started by `open()` has not landed yet. Nothing is readable
+    /// while this is true, and `status()` says "connected, 0 waiting".
+    bool busy() const { pump(); return fetch_ != nullptr; }
 
     /// 4-byte status: bytes waiting (LE 16), connected flag, error code.
     void status(uint8_t out[4]) const override;
@@ -95,7 +120,8 @@ public:
     std::size_t read(uint8_t* dst, std::size_t n) override;
 
     /// Bytes still unread.
-    std::size_t available() const override { return body_.size() - cursor_; }
+    std::size_t available() const override
+    { pump(); return body_.size() - cursor_; }
 
     /// Last error, in the firmware's numbering: 1 = success, 144 = general
     /// failure, 170 = file not found. Guest code compares against these.
@@ -105,16 +131,46 @@ public:
     const std::string& describe() const { return description_; }
 
     /// Wall-clock budget for a whole fetch — DNS, connect, request and body
-    /// together. It exists because this runs on the CPU thread with the
-    /// emulator's state mutex held, so it is really "how long may the emulated
-    /// machine freeze". Lowered by the tests so the truncation rule can be
-    /// pinned in under a second.
+    /// together. No longer "how long may the emulated machine freeze" (the
+    /// fetch is off the CPU thread now), but still a hard ceiling: a server
+    /// that drip-feeds one byte just inside a per-recv timeout would keep a
+    /// worker and a socket alive for ever. Lowered by the tests so the
+    /// truncation rule can be pinned in under a second.
     void setFetchDeadlineMs(int ms) { deadlineMs_ = ms; }
     int  fetchDeadlineMs() const    { return deadlineMs_; }
 
 private:
-    bool fetchHttp(const std::string& host, uint16_t port,
-                   const std::string& path);
+    /// A fetch in flight, shared with the worker that performs it.
+    ///
+    /// Shared rather than owned so the DEVICE can be destroyed while the
+    /// fetch is still running — which it can be: `~FujiNetCard` runs inside
+    /// `SlotBus::plug()` with the emulator's state mutex held, and joining a
+    /// 12-second fetch there would be the very freeze this class moved the
+    /// fetch off the CPU thread to avoid. The device just sets `cancel` and
+    /// lets go; the worker notices at its next wait slice, frees its own
+    /// socket and exits. Same shape as SocketUtil.h's BoundedLookup, for the
+    /// same reason.
+    struct Fetch {
+        std::mutex           mtx;
+        bool                 done  = false;   ///< guarded by mtx
+        bool                 ok    = false;   ///< guarded by mtx
+        uint8_t              error = kNetErrGeneral;   ///< guarded by mtx
+        std::vector<uint8_t> body;             ///< guarded by mtx
+        std::atomic<bool>    cancel{false};
+    };
+
+    /// The whole fetch. Static, and it touches nothing but its own `Fetch`:
+    /// the device may be gone by the time it finishes.
+    static void fetchInto(Fetch& out, std::string host, uint16_t port,
+                          std::string path, int deadlineMs);
+
+    /// Publish a finished fetch into the readable state. Called by every
+    /// accessor, which is what makes "the answer arrived" visible to a guest
+    /// that is polling STATUS.
+    void harvest();
+    /// harvest() from a const accessor. The mutation is entirely of members
+    /// this object owns and the alternative is marking six of them mutable.
+    void pump() const { const_cast<FujiNetNetDevice*>(this)->harvest(); }
 
     int                  deadlineMs_ = 12000;
     bool                 open_   = false;
@@ -122,6 +178,8 @@ private:
     std::vector<uint8_t> body_;
     std::size_t          cursor_ = 0;
     std::string          description_;
+    std::string          spec_;            ///< what open() was asked for
+    std::shared_ptr<Fetch> fetch_;         ///< null when nothing is in flight
 };
 
 }  // namespace pom2

@@ -254,6 +254,14 @@ void SpOverSlipLink::enumerateDevices()
     std::vector<SpDevice> found;
 
     for (uint8_t unit = 1; unit <= kMaxUnits; ++unit) {
+        // Once per unit, because a sweep is up to kMaxUnits round trips and
+        // `stop()` joins this thread. A peer that answers every INIT but is
+        // slow about it — or one that answers INIT and drops the DIB STATUS,
+        // where the consecutive-timeout guard never trips because each INIT
+        // resets it — costs one timeout per unit, and with the panel's 5 s
+        // maximum that is minutes of a stop() that cannot return. Bail with
+        // whatever has been found; stop() clears `devices_` anyway.
+        if (stopFlag_.load()) return;
         Response r = init(unit);
 
         if (!r.replied) {
@@ -262,7 +270,12 @@ void SpOverSlipLink::enumerateDevices()
             // it brings its own device stack up. Retry before concluding
             // anything — for every unit, not just the first.
             for (int attempt = 0; attempt < 2 && !r.replied; ++attempt) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                // Sliced, so a stop() lands INSIDE the retry pause rather
+                // than after it — this pause is on the path stop() joins.
+                for (int slept = 0; slept < 200; slept += 25) {
+                    if (stopFlag_.load()) return;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                }
                 if (stopFlag_.load()) return;
                 r = init(unit);
             }

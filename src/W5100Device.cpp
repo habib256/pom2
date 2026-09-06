@@ -359,6 +359,19 @@ void W5100Device::openSystemSocket(size_t i, W5100SocketKind kind,
     auto host = socketFactory_->open(kind);
     if (!host) return;
 
+    // Sn_PORT is the socket's LOCAL port, and the guest writes it BEFORE the
+    // OPEN command (datasheet §5.2.1: "Sn_PORT should be set before OPEN").
+    // Claiming it on the host socket is what the chip does, and without it
+    // nothing unsolicited can reach the guest: a DHCP client opens UDP on 68
+    // and waits for the server's broadcast, an NTP or TFTP exchange expects
+    // its answer at the port it named, and an unbound host socket listens on
+    // an ephemeral one instead — so those replies went to a port nobody was
+    // reading and the guest simply timed out. Zero means "any", which is what
+    // an unbound socket already is.
+    const uint16_t localPort = readNetworkWord(
+        static_cast<uint16_t>(sockets_[i].registerAddress + kW5100SnPort0));
+    if (localPort != 0) host->bind(localPort);   // failure is logged, not fatal
+
     sockets_[i].host = std::move(host);
     setSocketStatus(i, status);
 #endif

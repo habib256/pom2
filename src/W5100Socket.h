@@ -65,6 +65,19 @@ public:
 
     /// Poll for writability + SO_ERROR, used by the SYN_SENT walker.
     virtual bool writable() const = 0;
+
+    /// Claim `port` as the socket's LOCAL port, the way the chip's Sn_PORT
+    /// register does. UDP needs it or nothing unsolicited can ever arrive: a
+    /// guest that opens a socket on port 68 to hear from a DHCP server, or on
+    /// 123 for NTP, is told by the chip that it owns that port, and a host
+    /// socket left unbound listens on an ephemeral one instead — the reply
+    /// goes to a port nobody is reading.
+    ///
+    /// Not pure: a fake in a device test has no port to claim, and answering
+    /// "done" is the right answer for it. Returns false only when the host
+    /// refused the port (already in use), which is not fatal — the socket
+    /// still works outbound.
+    virtual bool bind(uint16_t /*port*/) { return true; }
 };
 
 class W5100SocketFactory

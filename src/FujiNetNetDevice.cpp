@@ -44,10 +44,14 @@ namespace pom2 {
 
 FujiNetNetDevice::~FujiNetNetDevice() = default;
 
-bool FujiNetNetDevice::fetchHttp(const std::string&, uint16_t, const std::string&)
+void FujiNetNetDevice::fetchInto(Fetch& out, std::string, uint16_t,
+                                 std::string, int)
 {
-    return false;
+    std::lock_guard<std::mutex> lk(out.mtx);
+    out.error = kNetErrGeneral;
 }
+
+void FujiNetNetDevice::harvest() {}
 
 bool FujiNetNetDevice::open(const std::string& devicespec)
 {
@@ -138,14 +142,19 @@ bool parseSpec(const std::string& spec, std::string& host, uint16_t& port,
 
 // ── Bounded host I/O ──────────────────────────────────────────────────────
 //
-// This runs on the CPU thread INSIDE a SmartPort call, and the emulation
-// worker holds the state mutex for the whole slice (EmulationController.cpp,
-// `runCpuSlice` under `stateMtx`). So every wait here is bounded, and the
-// whole exchange shares ONE deadline: otherwise the emulated machine — UI,
-// menus and the FujiNet panel's own Restart button included — freezes solid
-// for as long as some host on the internet feels like stalling.
+// This used to run on the CPU thread INSIDE a SmartPort call, with the
+// emulation worker holding the state mutex for the whole slice
+// (EmulationController.cpp, `runCpuSlice` under `stateMtx`) — so a fetch was
+// up to 12 s of frozen machine, frozen window and an unreachable FujiNet
+// panel. It runs on its own worker now (see `open`), and the deadline stayed:
+// a fetch that cannot end is a socket and a thread that never go away, and a
+// guest polling STATUS deserves an answer either way.
 //
-// SO_SNDTIMEO/SO_RCVTIMEO are not enough for that, twice over:
+// Every wait is ALSO sliced, so `cancel` — set when the device is destroyed
+// under the machine lock — is noticed within a slice rather than at the end
+// of the budget.
+//
+// SO_SNDTIMEO/SO_RCVTIMEO are not enough for the deadline, twice over:
 //   * They do not bound connect(). Measured 2026-08-21 on macOS against
 //     192.0.2.1 (TEST-NET-1, swallows SYNs): connect() returned after 75 s
 //     with the option asking for 8. That is 75 s of frozen emulator.
@@ -153,6 +162,11 @@ bool parseSpec(const std::string& spec, std::string& host, uint16_t& port,
 //     drip-feeding one byte just inside the timeout keeps the loop alive
 //     forever — an unbounded freeze, not a slow page.
 constexpr int kConnectTimeoutMs = 5000;
+
+/// How long a single wait may last before the cancel flag is re-read. Short
+/// enough that a card unplugged mid-fetch stops touching the network almost
+/// at once, long enough to cost nothing (one extra poll() per slice).
+constexpr int kWaitSliceMs = 100;
 
 /// A guard, not a policy: the guest has 128 KB of RAM and STATUS can only
 /// announce 512 bytes at a time, so a runaway response must not grow POM2's
@@ -174,26 +188,39 @@ int msLeft(SteadyPoint deadline)
 
 FujiNetNetDevice::~FujiNetNetDevice() { close(); }
 
-bool FujiNetNetDevice::fetchHttp(const std::string& host, uint16_t port,
-                                 const std::string& path)
+void FujiNetNetDevice::fetchInto(Fetch& out, std::string host, uint16_t port,
+                                 std::string path, int deadlineMs)
 {
+    /// Publish a verdict into the shared block. `done` is set by the caller
+    /// of fetchInto, AFTER this has run, so a harvest can never see half a
+    /// result.
+    const auto finishFetch = [&out](bool ok, uint8_t error,
+                                    std::vector<uint8_t> body = {}) {
+        std::lock_guard<std::mutex> lk(out.mtx);
+        out.ok    = ok;
+        out.error = error;
+        out.body  = std::move(body);
+    };
+
     const SteadyPoint deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(deadlineMs_);
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(deadlineMs);
 
     addrinfo* res = nullptr;
     if (!resolveBounded(host, std::to_string(port), msLeft(deadline), &res)) {
-        error_ = kErrFileNotFound;          // the guest reads this as "no such host"
+        // The guest reads FILE NOT FOUND as "no such host".
+        finishFetch(false, kErrFileNotFound);
         log().warn("FujiNet", "built-in N: cannot resolve \"" + host + "\"");
-        return false;
+        return;
     }
 
     socket_t fd = kInvalidSocket;
     for (addrinfo* a = res; a; a = a->ai_next) {
+        if (out.cancel.load()) break;
         const int budget = std::min(kConnectTimeoutMs, msLeft(deadline));
         if (connectBounded(a, budget, fd)) break;
     }
     ::freeaddrinfo(res);
-    if (!isValidSocket(fd)) { error_ = kErrGeneral; return false; }
+    if (!isValidSocket(fd)) { finishFetch(false, kErrGeneral); return; }
 
     // HTTP/1.0 on purpose: it ends the body at EOF, so there is no chunked
     // transfer-encoding to unpick. `Connection: close` says the same thing to
@@ -207,18 +234,26 @@ bool FujiNetNetDevice::fetchHttp(const std::string& host, uint16_t port,
     std::size_t sent = 0;
     while (sent < req.size()) {
         const int left = msLeft(deadline);
-        if (left <= 0 || waitSocket(fd, SocketWait::Write, left) != WaitResult::Ready) {
+        if (left <= 0 || out.cancel.load()) {
             closeHostSocketValue(fd);
-            error_ = kErrGeneral;
-            return false;
+            finishFetch(false, kErrGeneral);
+            return;
+        }
+        const WaitResult ww = waitSocket(fd, SocketWait::Write,
+                                         std::min(left, kWaitSliceMs));
+        if (ww == WaitResult::Timeout) continue;      // deadline re-checked
+        if (ww != WaitResult::Ready) {
+            closeHostSocketValue(fd);
+            finishFetch(false, kErrGeneral);
+            return;
         }
         const iolen_t w = sendNoSignal(fd, req.data() + sent, req.size() - sent);
         if (w > 0) { sent += static_cast<std::size_t>(w); continue; }
         const int e = lastSocketError();
         if (!errWouldBlock(e) && !errInterrupted(e)) {
             closeHostSocketValue(fd);
-            error_ = kErrGeneral;
-            return false;
+            finishFetch(false, kErrGeneral);
+            return;
         }
     }
 
@@ -228,7 +263,10 @@ bool FujiNetNetDevice::fetchHttp(const std::string& host, uint16_t port,
     for (;;) {
         const int left = msLeft(deadline);
         if (left <= 0) { truncated = true; break; }
-        const WaitResult wr = waitSocket(fd, SocketWait::Read, left);
+        if (out.cancel.load()) { truncated = true; break; }
+        const WaitResult wr = waitSocket(fd, SocketWait::Read,
+                                         std::min(left, kWaitSliceMs));
+        if (wr == WaitResult::Timeout) continue;      // deadline re-checked
         if (wr != WaitResult::Ready) { truncated = true; break; }
 
         const iolen_t r = ::recv(fd, reinterpret_cast<char*>(buf), sizeof buf, 0);
@@ -248,24 +286,55 @@ bool FujiNetNetDevice::fetchHttp(const std::string& host, uint16_t port,
     // cannot tell from a whole one is the one failure nobody can diagnose from
     // the Apple II side, so say so instead.
     if (truncated) {
-        error_ = kErrGeneral;
+        finishFetch(false, kErrGeneral);
         log().warn("FujiNet", "built-in N: incomplete response from " + host + path +
                               " — " + std::to_string(raw.size()) +
                               " bytes before the deadline or the size cap; refusing to"
                               " hand the guest a half page");
-        return false;
+        return;
     }
 
     // Hand the guest the BODY only. Guest-side browsers parse HTML, not
     // response headers, and the FujiNet's own N: does the same split.
     static const uint8_t kCrLfCrLf[4] = { '\r', '\n', '\r', '\n' };
     auto it = std::search(raw.begin(), raw.end(), kCrLfCrLf, kCrLfCrLf + 4);
-    if (it != raw.end()) body_.assign(it + 4, raw.end());
-    else                 body_ = raw;      // headerless reply: pass it through
+    std::vector<uint8_t> body;
+    if (it != raw.end()) body.assign(it + 4, raw.end());
+    else                 body = std::move(raw);   // headerless: pass it through
 
+    finishFetch(true, kErrSuccess, std::move(body));
+}
+
+void FujiNetNetDevice::harvest()
+{
+    if (!fetch_) return;
+
+    bool                 ok  = false;
+    uint8_t              err = kErrGeneral;
+    std::vector<uint8_t> body;
+    {
+        std::lock_guard<std::mutex> lk(fetch_->mtx);
+        if (!fetch_->done) return;             // still in flight
+        ok  = fetch_->ok;
+        err = fetch_->error;
+        body.swap(fetch_->body);
+    }
+    fetch_.reset();
+
+    open_   = ok;
+    error_  = err;
     cursor_ = 0;
-    error_  = kErrSuccess;
-    return true;
+    // available()/read() are public and do not consult open_; a failed fetch
+    // must not leave partial bytes reachable.
+    if (ok) body_ = std::move(body);
+    else    body_.clear();
+
+    description_ = spec_ + (ok ? " — " + std::to_string(body_.size()) + " B"
+                               : " — failed");
+    log().info("FujiNet", std::string("built-in N: ") +
+                          (ok ? "fetched " : "failed ") + spec_ +
+                          (ok ? " (" + std::to_string(body_.size()) + " bytes)"
+                              : ""));
 }
 
 bool FujiNetNetDevice::open(const std::string& devicespec)
@@ -282,21 +351,33 @@ bool FujiNetNetDevice::open(const std::string& devicespec)
         return false;
     }
 
-    const bool ok = fetchHttp(host, port, path);
-    open_ = ok;
-    // available()/read() are public and do not consult open_; a failed fetch
-    // must not leave partial bytes reachable.
-    if (!ok) { body_.clear(); cursor_ = 0; }
-    description_ = devicespec + (ok ? " — " + std::to_string(body_.size()) + " B"
-                                    : " — failed");
-    log().info("FujiNet", std::string("built-in N: ") + (ok ? "fetched " : "failed ") +
-                          host + path + (ok ? " (" + std::to_string(body_.size()) +
-                                              " bytes)" : ""));
-    return ok;
+    // Off the CPU thread — see the header. The worker is DETACHED and holds
+    // its own reference to the shared block, so nothing here ever waits for
+    // it: the device can be destroyed (which it is, under the machine lock,
+    // whenever the card is unplugged) while the fetch is still running.
+    spec_        = devicespec;
+    error_       = kErrSuccess;   // nothing has gone wrong yet
+    description_ = devicespec + " — fetching";
+    auto f = std::make_shared<Fetch>();
+    fetch_ = f;
+    const int budget = deadlineMs_;
+    std::thread([f, host, port, path, budget] {
+        pom2::runGuarded("FujiNetN", [&] {
+            fetchInto(*f, host, port, path, budget);
+        });
+        // Outside runGuarded on purpose: an exception that escaped the fetch
+        // must still end it, or a guest polls STATUS for ever.
+        std::lock_guard<std::mutex> lk(f->mtx);
+        f->done = true;
+    }).detach();
+    return true;
 }
 
 void FujiNetNetDevice::close()
 {
+    // Abandon anything in flight rather than waiting for it: the worker sees
+    // the flag at its next slice and tidies up after itself.
+    if (fetch_) { fetch_->cancel.store(true); fetch_.reset(); }
     open_ = false;
     body_.clear();
     cursor_ = 0;
@@ -304,6 +385,16 @@ void FujiNetNetDevice::close()
 
 void FujiNetNetDevice::status(uint8_t out[4]) const
 {
+    pump();
+    if (fetch_) {
+        // The fetch is still running. "Connected, nothing waiting" is what a
+        // slow server looks like anyway, and it is what keeps a guest's poll
+        // loop polling instead of concluding the device is dead.
+        out[0] = out[1] = 0;
+        out[2] = 1;
+        out[3] = kErrSuccess;
+        return;
+    }
     const std::size_t avail = std::min<std::size_t>(available(), kMaxStatusAvail);
     out[0] = static_cast<uint8_t>(avail & 0xFF);
     out[1] = static_cast<uint8_t>((avail >> 8) & 0xFF);
@@ -315,6 +406,7 @@ void FujiNetNetDevice::status(uint8_t out[4]) const
 
 std::size_t FujiNetNetDevice::read(uint8_t* dst, std::size_t n)
 {
+    harvest();
     const std::size_t take = std::min(n, available());
     if (take) {
         std::memcpy(dst, body_.data() + cursor_, take);

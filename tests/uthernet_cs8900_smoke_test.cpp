@@ -416,6 +416,78 @@ void testSnapshotRoundTrip()
     std::printf("  snapshot round-trip OK (%zu bytes)\n", blob.size());
 }
 
+// A snapshot is a FILE. A corrupt or hand-edited one must leave the transmit
+// handshake COHERENT, because `transmitByte` releases the frame on
+// `txCount_ == txLength_` exactly: restore a count ABOVE the length and the
+// equality never comes round, so every byte the driver pushes for the frame
+// it was in the middle of disappears and it waits for a completion that can
+// never arrive. Same for a state byte outside the four-step enum — it is
+// compared for equality at each step, so a fifth value simply never advances.
+void testSnapshotCorruptTxStateIsClamped()
+{
+    pom2::UthernetCard card(3);
+    card.setBackend(std::make_unique<pom2::LoopbackNetworkBackend>());
+    programMac(card, kOurMac);
+    enableTxRx(card);
+
+    std::vector<uint8_t> blob;
+    card.appendSnapshotState(blob);
+
+    // Field offsets inside the blob. The CARD writes its own magic(4) +
+    // version(2) first, then the CHIP writes magic(4), version(2), mac(6),
+    // hash(8), I/O regs, PacketPage, ppPtr(2), recvControl(2), flags(1), and
+    // then txBuffer/rxBuffer/txCount/rxCount/txLength/rxLength (2 each)
+    // followed by txState/rxState (1 each).
+    const size_t base = 6 +                       // the card's own header
+                        4 + 2 + 6 + 8 +
+                        pom2::Cs8900aDevice::kIoRegisterCount +
+                        pom2::Cs8900aDevice::kPacketPageSize + 2 + 2 + 1;
+    const size_t txCountAt  = base + 4;
+    const size_t txLengthAt = base + 8;
+    const size_t txStateAt  = base + 12;
+    const size_t rxStateAt  = base + 13;
+    // Everything after the states: rxEventReadMask(2) + three counters (8
+    // each). Asserted so a layout change fails HERE rather than silently
+    // corrupting some other field and passing.
+    assert(blob.size() == base + 14 + 2 + 24 &&
+           "snapshot layout moved — fix the offsets above");
+
+    auto putU16At = [&blob](size_t at, uint16_t v) {
+        blob[at]     = static_cast<uint8_t>(v & 0xFF);
+        blob[at + 1] = static_cast<uint8_t>(v >> 8);
+    };
+    putU16At(txLengthAt, 64);
+    putU16At(txCountAt, 1000);        // > txLength: unreachable equality
+    blob[txStateAt] = 3;              // READ_BUSST — "pushing payload now"
+    blob[rxStateAt] = 0x7F;           // outside the two-value enum
+
+    pom2::UthernetCard restored(3);
+    restored.setBackend(std::make_unique<pom2::LoopbackNetworkBackend>());
+    restored.loadSnapshotState(blob.data(), blob.size());
+
+    assert(restored.chip().txCount() <= restored.chip().txLength());
+    assert(restored.chip().txState() == 0 && "an impossible count restores to idle");
+    assert(restored.chip().rxState() <= 1);
+
+    // And the card still transmits: the restore left a startable machine, not
+    // a wedged one.
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    restored.setBackend(std::move(backend));
+    const std::vector<uint8_t> frame = makeFrame(kOurMac, kOurMac, 64, 0x20);
+    transmitFrame(restored, frame);
+    assert(raw->queued() == 1);
+
+    // A txState outside the enum is refused the same way.
+    blob[txStateAt] = 9;
+    putU16At(txCountAt, 0);
+    pom2::UthernetCard restored2(3);
+    restored2.loadSnapshotState(blob.data(), blob.size());
+    assert(restored2.chip().txState() == 0);
+
+    std::printf("  corrupt transmit state restores coherent\n");
+}
+
 // The chip keeps its programmed IA across a bus reset — MAME
 // `cs8900a.cpp` device_reset does not touch it, and the uthernet.cpp
 // shim does not reprogram it. UthernetCard::onReset used to re-stamp
@@ -446,6 +518,7 @@ int main()
     testReceivePath();
     testAddressFilter();
     testSnapshotRoundTrip();
+    testSnapshotCorruptTxStateIsClamped();
     testMacSurvivesCardReset();
     std::printf("PASS\n");
     return 0;

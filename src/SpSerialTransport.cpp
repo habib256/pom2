@@ -134,12 +134,34 @@ int SpSerialTransport::readSome(uint8_t* p, std::size_t n, int timeoutMs)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     if (!port_.isOpen()) return -1;
-    const int r = port_.readSome(p, n, timeoutMs);
-    if (r < 0) {
-        std::lock_guard<std::mutex> st(statusMtx_);
-        lastError_ = port_.lastError();
+
+    // Sliced, and the stop latch re-read on every slice.
+    //
+    // shutdown() has nothing to interrupt on a serial line — there is no
+    // socket to ::shutdown() out from under a parked reader, which is what
+    // wakes the TCP transport — so it can only set `stopping_`. If this
+    // function then waits out the caller's whole budget without ever looking
+    // at that flag, `SpOverSlipLink::stop()` blocks for it: up to 5 s (the
+    // panel's maximum timeout) with the worker joined nowhere, and until
+    // NetworkCoordinator hoisted the stop off it, that was 5 s of the
+    // emulator's state mutex held — machine and window frozen together.
+    // Slicing costs one extra poll() per 25 ms of idle wait.
+    constexpr int kSliceMs = 25;
+    int left = timeoutMs > 0 ? timeoutMs : 0;
+    for (;;) {
+        if (stopping_.load()) return -1;         // the owner asked us to stop
+        const int slice = (left > kSliceMs) ? kSliceMs : (left > 0 ? left : 1);
+        const int r = port_.readSome(p, n, slice);
+        if (r != 0) {
+            if (r < 0) {
+                std::lock_guard<std::mutex> st(statusMtx_);
+                lastError_ = port_.lastError();
+            }
+            return r;
+        }
+        if (left <= slice) return 0;             // the caller's budget is spent
+        left -= slice;
     }
-    return r;
 }
 
 bool SpSerialTransport::checkPeerAlive()
@@ -171,9 +193,11 @@ void SpSerialTransport::dropPeer()
 void SpSerialTransport::shutdown()
 {
     // A serial pollForPeer never parks in a long wait (it either opens the
-    // device or reports "not there"), so there is nothing to interrupt —
-    // just latch the stop so a poll racing us does not reopen the port after
-    // the owner asked us to stop.
+    // device or reports "not there"), so there is nothing to interrupt THERE
+    // — the latch stops a poll racing us from reopening the port after the
+    // owner asked us to stop. A read in flight is the other half: readSome()
+    // slices its wait and re-reads this latch on every slice, so a stop lands
+    // within a slice instead of at the end of the caller's whole budget.
     //
     // The latch is atomic rather than mtx_-guarded because shutdown() is the
     // one method that must stay callable while a read is in flight, and

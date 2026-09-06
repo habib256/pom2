@@ -618,6 +618,31 @@ void testSdlcFraming()
     assert(frames.empty());
     std::printf("  ok: Send Abort destroys the frame in flight\n");
 
+    // A driver that never lets the transmitter underrun must not grow POM2's
+    // heap without bound. The chip buffers nothing — its bytes are already on
+    // the wire — but this seam delivers a frame whole, so the buffer needs a
+    // ceiling, and the ceiling is past any legal LocalTalk frame (3-byte LLAP
+    // header + 600 data bytes). Reaching it aborts the frame the way WR0's
+    // Send Abort does, rather than delivering a frame nothing could have sent.
+    frames.clear();
+    scc.controlWrite(A, 0xC0);          // arm the close, then never allow it
+    for (std::size_t i = 0; i < Scc8530Device::kMaxTxFrameBytes + 64; ++i) {
+        while (!(scc.peekRr(A, 0) & 0x04)) scc.tick(1);
+        scc.dataWrite(A, static_cast<uint8_t>(i & 0xFF));
+        assert(scc.txFrameSize(A) <= Scc8530Device::kMaxTxFrameBytes);
+    }
+    for (const auto& f : frames)
+        assert(f.size() <= Scc8530Device::kMaxTxFrameBytes);
+    assert((scc.peekRr(A, 0) & 0x40) != 0 &&
+           "the abort sets Tx Underrun/EOM, as Send Abort does");
+    // Clean up before the next case: drain the byte still in the shift
+    // register (and the one behind it) so the transmit buffer is free again,
+    // then abort whatever frame those bytes opened.
+    scc.tick(byteCycles * 4);
+    scc.controlWrite(A, 0x18);
+    assert(scc.txFrameSize(A) == 0);
+    std::printf("  ok: an unending SDLC frame is capped, not grown for ever\n");
+
     // And a one-byte frame is legal: the underrun that closes it arrives
     // the moment the byte leaves the shift register.
     frames.clear();

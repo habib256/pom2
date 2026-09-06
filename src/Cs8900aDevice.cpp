@@ -929,6 +929,23 @@ void Cs8900aDevice::loadSnapshotState(const uint8_t* data, std::size_t len)
     framesReceived_ = getU64(data + p); p += 8;
     framesFiltered_ = getU64(data + p);
 
+    // A snapshot is a FILE, and a corrupt or hand-edited one must not be able
+    // to wedge the NIC. The transmit handshake is the state machine that can:
+    // `transmitByte` releases the frame when `txCount_ == txLength_` exactly,
+    // so a restored txCount_ ABOVE txLength_ never matches — every further
+    // byte the guest pushes increments past it, the frame is never sent, and
+    // the card looks alive while transmitting nothing, for the rest of the
+    // session. The same for a txState_ outside the four-step enum: it is
+    // compared for equality at each step, so a fifth value simply never
+    // advances. Restore both to a coherent point rather than trusting them.
+    if (txState_ > kTxReadBusSt) { txState_ = kTxIdle; txCount_ = 0; }
+    if (txLength_ > kMaxEthFrame) { txLength_ = 0; txState_ = kTxIdle; }
+    if (txCount_ > txLength_)     { txState_ = kTxIdle; txCount_ = 0; }
+    // The receive side cannot wedge the same way (its end test is `>=`), but a
+    // state byte outside the enum still leaves the model reading a frame that
+    // is not there.
+    if (rxState_ > kRxGotFrame) { rxState_ = kRxIdle; rxCount_ = 0; }
+
     frameQueue_.clear();
 }
 

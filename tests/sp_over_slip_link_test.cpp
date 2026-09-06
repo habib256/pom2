@@ -67,6 +67,14 @@ int main()
 #include <thread>
 #include <vector>
 
+#if !defined(_WIN32) && POM2_HAS_SERIAL
+// A pseudo-terminal stands in for a USB CDC device: `ptsname` names a real
+// device node that SerialPort::open() opens exactly as it would /dev/ttyACM0.
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 using namespace pom2;
@@ -640,6 +648,92 @@ void testControlListFraming()
     std::puts("[ OK ] CONTROL carries the 2-byte control-list length prefix");
 }
 
+// ── stop() must not wait out an enumeration sweep ────────────────────────
+//
+// `stop()` JOINS the worker, and the worker can be inside a device sweep of
+// up to kMaxUnits round trips. That join used to happen with the emulator's
+// state mutex held (NetworkCoordinator's panel apply, and ~FujiNetCard through
+// SlotBus::plug), which is the freeze CLAUDE.md forbids: CPU worker blocked on
+// its next chunk, UI thread blocked trying to paint, and the panel's own Stop
+// button unreachable because drawing it needs the same mutex. The stop is off
+// that lock now, and the sweep re-reads the stop flag once per unit so it
+// cannot outlast the unit it is on.
+//
+// The peer here answers EVERY unit, 50 ms at a time, so a full sweep is
+// kMaxUnits × 50 ms ≈ 1.6 s. No timeouts are involved — that matters, because
+// the consecutive-timeout guard would otherwise drop the peer and end the
+// sweep early for the wrong reason.
+void testStopDuringEnumerationIsPrompt()
+{
+    SpOverSlipLink link;
+    const uint16_t port = startLink(link);
+
+    FakePeer peer(port, [](const std::vector<uint8_t>& req,
+                           std::vector<uint8_t>& wire) {
+        if (req.size() >= 11 && req[1] == kSpInit) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            pushResponse(wire, req[0], 0x00);       // every unit is a device
+            return;
+        }
+        standardHandler(req, wire);
+    });
+
+    assert(waitFor([&] { return link.isConnected(); }));
+    // Solidly mid-sweep, with ~28 units still to go.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    const auto t0 = std::chrono::steady_clock::now();
+    link.stop();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0).count();
+    assert(ms < 900 && "stop() waited out the enumeration sweep");
+
+    peer.stop();
+}
+
+#if !defined(_WIN32) && POM2_HAS_SERIAL
+// ── A serial read must notice shutdown(), not wait out its budget ────────
+//
+// The TCP transport's shutdown() breaks a parked reader by ::shutdown()ing the
+// socket under it. A serial line has nothing equivalent — shutdown() can only
+// set a latch — so a readSome() that never looks at that latch holds
+// SpOverSlipLink::stop() for the caller's whole budget, up to the panel's 5 s
+// maximum. That stop is joined from ~FujiNetCard, which runs under the machine
+// lock.
+void testSerialReadNoticesShutdown()
+{
+    const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
+    assert(master >= 0);
+    assert(::grantpt(master) == 0);
+    assert(::unlockpt(master) == 0);
+    const char* slave = ::ptsname(master);
+    assert(slave != nullptr);
+
+    SpSerialTransport t(slave, 115200);
+    assert(t.pollForPeer(0) && "opening the device IS the connect event");
+    assert(t.isOpen());
+
+    // Nothing will ever arrive on this line: the master end is never written.
+    std::thread stopper([&t] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        t.shutdown();
+    });
+
+    uint8_t buf[64];
+    const auto t0 = std::chrono::steady_clock::now();
+    const int r = t.readSome(buf, sizeof buf, 3000);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0).count();
+    stopper.join();
+
+    assert(r < 0 && "a stop reads as 'the peer is gone', which ends the call");
+    assert(ms < 1000 && "readSome waited out its whole budget after shutdown()");
+
+    t.dropPeer();
+    ::close(master);
+}
+#endif  // !_WIN32 && POM2_HAS_SERIAL
+
 } // namespace
 
 int main()
@@ -655,6 +749,10 @@ int main()
     testIdlePeerDeathIsNoticed();
     testStopResetsTheFramer();
     testControlListFraming();
+    testStopDuringEnumerationIsPrompt();
+#if !defined(_WIN32) && POM2_HAS_SERIAL
+    testSerialReadNoticesShutdown();
+#endif
 
     std::puts("sp_over_slip_link: OK");
     return 0;

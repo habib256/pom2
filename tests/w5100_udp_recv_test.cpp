@@ -144,6 +144,22 @@ public:
         return false;
     }
 
+    /// Send to a port the guest CHOSE, with no prior traffic from it — the
+    /// unsolicited case (a DHCP OFFER, an NTP or TFTP reply).
+    void sendToPort(uint16_t port, size_t length)
+    {
+        sockaddr_in to{};
+        to.sin_family      = AF_INET;
+        to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        to.sin_port        = htons(port);
+        std::vector<uint8_t> payload(length);
+        for (size_t i = 0; i < length; ++i)
+            payload[i] = static_cast<uint8_t>(i & 0xFF);
+        ::sendto(fd_, reinterpret_cast<const char*>(payload.data()),
+                 static_cast<int>(payload.size()), 0,
+                 reinterpret_cast<const sockaddr*>(&to), sizeof(to));
+    }
+
     /// Send `length` bytes of a recognisable pattern to the guest.
     void sendToGuest(size_t length)
     {
@@ -415,6 +431,73 @@ void testHighMirrorReads()
     std::puts("OK high_mirror_reads_decode_registers");
 }
 
+// ─── 6: Sn_PORT is claimed on the host socket ─────────────────────────
+//
+// The guest writes Sn_PORT and then OPEN, and the chip listens on THAT port
+// (datasheet §5.2.1: Sn_PORT is set before OPEN). The host socket was never
+// bound, so the kernel gave it an ephemeral port instead and the guest's
+// choice meant nothing: every UNSOLICITED datagram — a DHCP OFFER to port 68,
+// an NTP or TFTP reply, anything a peer sends without being spoken to first —
+// arrived at a port nobody was reading, and the guest timed out with no error
+// anywhere to point at. Outbound request/response worked, which is exactly
+// why this survived: the socket looked fine.
+void testLocalPortIsBound()
+{
+    // Learn a port nothing is using by taking one and giving it straight
+    // back. A race with some other process is possible but not likely; the
+    // retry covers it rather than making the test flaky.
+    auto freeUdpPort = []() -> uint16_t {
+        socket_t s = ::socket(AF_INET, SOCK_DGRAM, 0);
+        assert(isValidSocket(s));
+        sockaddr_in a{};
+        a.sin_family      = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_port        = 0;
+        assert(::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0);
+        socklen_c len = sizeof(a);
+        assert(::getsockname(s, reinterpret_cast<sockaddr*>(&a), &len) == 0);
+        const uint16_t p = ntohs(a.sin_port);
+        closeHostSocket(s);
+        return p;
+    };
+
+    constexpr size_t kDatagram = 32;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        LocalPeer  peer;
+        W5100Device dev;
+        dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+        dev.reset(true);
+        dev.writeValueAt(kW5100Rmsr, 0x02);            // 4 KB ring for socket 0
+
+        const uint16_t chosen = freeUdpPort();
+        // Sn_PORT BEFORE the OPEN command, the order the datasheet gives.
+        writeWord(dev, static_cast<uint16_t>(kS0 + kW5100SnPort0), chosen);
+        dev.writeValueAt(static_cast<uint16_t>(kS0 + kW5100SnMr), kW5100SnMrUdp);
+        dev.writeValueAt(static_cast<uint16_t>(kS0 + kW5100SnCr), kW5100SnCrOpen);
+        assert(dev.readValueAt(static_cast<uint16_t>(kS0 + kW5100SnSr)) ==
+               kW5100SnSrUdp);
+        assert(dev.socketInfo(0).localPort == chosen);
+
+        // The guest has sent NOTHING. This is the peer talking first.
+        peer.sendToPort(chosen, kDatagram);
+
+        const uint16_t pending = pollForData(dev, 1500);
+        if (pending == 0) continue;              // port stolen: try another
+        assert(pending == kUdpHeader + kDatagram);
+
+        const auto staged = drainRing(dev, pending);
+        assert(staged[0] == 127 && staged[3] == 1);
+        assert(((staged[4] << 8) | staged[5]) == peer.port());
+        assert(((staged[6] << 8) | staged[7]) == static_cast<int>(kDatagram));
+        for (size_t i = 0; i < kDatagram; ++i)
+            assert(staged[kUdpHeader + i] == static_cast<uint8_t>(i & 0xFF));
+
+        std::puts("OK local_port_is_bound_for_unsolicited_udp");
+        return;
+    }
+    assert(false && "an unsolicited datagram never reached the guest's Sn_PORT");
+}
+
 }  // namespace
 
 int main()
@@ -426,6 +509,7 @@ int main()
     testZeroLengthDatagramKeepsSocket();
     testFullRingLosesTheNextDatagram();
     testHighMirrorReads();
+    testLocalPortIsBound();
     std::puts("All W5100 receive-path tests passed.");
     return 0;
 }

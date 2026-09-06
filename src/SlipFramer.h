@@ -110,6 +110,12 @@ public:
     /// the link down.
     Feed feed(uint8_t b)
     {
+        // The frame handed out by the last `Feed::Frame` stays readable until
+        // this call — `frame()` documents exactly that — so a delimiter that
+        // both closes one frame and opens the next cannot clear the body on
+        // the spot. It arms this instead, and the clear happens here.
+        if (openedByCloser_) { body_.clear(); openedByCloser_ = false; }
+
         switch (state_) {
         case State::Idle:
             // Outside a frame: everything but a delimiter is line noise
@@ -124,7 +130,19 @@ public:
                 // delimiter or two frames' delimiters back to back. Both are
                 // legal and neither is an empty packet.
                 if (body_.empty()) return Feed::NeedMore;
-                state_ = State::Idle;
+                // It also OPENS the next one. RFC 1055 lets a sender put a
+                // single END between packets instead of a closing one and an
+                // opening one ("if there is no data waiting... the END is
+                // sent once"), and POM2 has to decode what a peer sends, not
+                // what its own encoder emits: dropping to Idle here threw the
+                // whole of `C0 body1 C0 body2 C0`'s second packet away — the
+                // body was skipped as inter-frame noise and its closing
+                // delimiter merely opened the next frame, so the link lost a
+                // packet and then answered every later request one behind.
+                // The price is that bytes between two frames are now a
+                // (runt) frame rather than skipped noise, which is what RFC
+                // 1055 says they are.
+                openedByCloser_ = true;
                 return Feed::Frame;
             }
             if (b == kEsc) { state_ = State::Escape; return Feed::NeedMore; }
@@ -171,6 +189,7 @@ public:
     void reset()
     {
         body_.clear();
+        openedByCloser_ = false;
         state_ = State::Idle;
     }
 
@@ -180,12 +199,17 @@ private:
     Feed giveUp()
     {
         body_.clear();
+        openedByCloser_ = false;
         state_ = State::Idle;
         return Feed::Truncated;
     }
 
     std::vector<uint8_t> body_;
     State                state_ = State::Idle;
+    /// Set by the delimiter that closed a frame AND opened the next one: the
+    /// body it delivered has to outlive that call, so the clear is deferred
+    /// to the next feed().
+    bool                 openedByCloser_ = false;
 };
 
 } // namespace pom2
