@@ -447,11 +447,19 @@ void MainWindow::pumpPostScript(const std::vector<uint8_t>& fresh)
             // into the print history, exactly like a form feed does for the
             // matrix heads.
             imageWriter->formFeed();
+            // …and a job may have said `showpage` more than once. Every
+            // further sheet the interpreter drew gets the same treatment,
+            // in order, so a multi-page document arrives whole instead of
+            // as its first page plus a note.
+            for (const auto& extra : page.more) {
+                imageWriter->adoptRenderedPage(extra.gray.data(),
+                                               extra.w, extra.h);
+                imageWriter->formFeed();
+            }
             if (page.extraPages > 0) {
                 tapeStatusMessage =
-                    "LaserWriter: printed page 1 of " +
-                    std::to_string(page.extraPages + 1) +
-                    " (multi-page jobs render their first page only)";
+                    "LaserWriter: printed " +
+                    std::to_string(page.extraPages + 1) + " pages";
                 tapeStatusUntil = lastFrameTime + 6.0;
             }
         } else {

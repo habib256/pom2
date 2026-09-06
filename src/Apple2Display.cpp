@@ -58,9 +58,12 @@ void Apple2Display::setHiResMode(HiResMode m)
     std::fill(signalBuf.begin(), signalBuf.end(), 0);
     signalProducedFlag = false;
     // Also clear the AppleWin Tv sub-mode's "previous frame" buffer so
-    // we don't blend leftover content from another mode.
+    // we don't blend leftover content from another mode — and say so, or
+    // the first frame blends against the black we just wrote.
     std::fill(appleWinPrev  .begin(), appleWinPrev  .end(), 0xFF000000u);
     std::fill(appleWinPrev80.begin(), appleWinPrev80.end(), 0xFF000000u);
+    appleWinPrevValid_ = false;
+    appleWinPainted_   = false;
 }
 
 void Apple2Display::setAppleWinSubMode(AppleWinSubMode m)
@@ -72,6 +75,8 @@ void Apple2Display::setAppleWinSubMode(AppleWinSubMode m)
     // frame in.
     std::fill(appleWinPrev  .begin(), appleWinPrev  .end(), 0xFF000000u);
     std::fill(appleWinPrev80.begin(), appleWinPrev80.end(), 0xFF000000u);
+    appleWinPrevValid_ = false;
+    appleWinPainted_   = false;
 }
 
 uint16_t Apple2Display::textRowAddress(int y, bool page2)
@@ -180,9 +185,15 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
     return same;
 }
 
-void Apple2Display::renderInternal(Memory& mem)
+void Apple2Display::renderInternal(Memory& mem,
+                                   const Memory::DisplayState& state)
 {
-    renderInternalBand(mem, mem.getDisplayState(), 0, kHeight);
+    // `state` comes from render() — the PUBLISHED frame's, never
+    // `mem.getDisplayState()`. Re-reading the live one here made the full-
+    // frame repaint disagree with the frame-skip key (which is built from the
+    // published state): a switch thrown just after the frame boundary left
+    // the key saying "nothing changed, skip" while this painted the new mode.
+    renderInternalBand(mem, state, 0, kHeight);
 }
 
 void Apple2Display::renderInternalBand(Memory& mem, const Memory::DisplayState& state,
@@ -374,9 +385,15 @@ Apple2Display::RasterPos Apple2Display::frameCycleToPos(uint64_t emuCycle,
     return {scanline, byteCol};
 }
 
-void Apple2Display::patchMixedTextBand(Memory& mem)
+void Apple2Display::patchMixedTextBand(Memory& mem,
+                                       const Memory::DisplayState& state)
 {
-    const auto state = mem.getDisplayState();
+    // `state` is the PUBLISHED frame's state, handed down by render() — the
+    // same one that chose this path. Polling `mem.getDisplayState()` here
+    // instead asked the LIVE recording frame, which the CPU worker has
+    // already advanced past: a guest that flipped to TEXT after the frame
+    // closed skipped the band entirely (the demod's graphics rows stayed
+    // under the text), and a page flip drew it from the wrong page.
     if (!state.mixedMode || state.textMode) return;
 
     if (mem.isIIE() && state.eightyCol)
@@ -437,9 +454,21 @@ void Apple2Display::render(Memory& mem)
     // error. Fold the published events onto the published frame-start
     // state instead; with no events the two are identical, so the
     // non-beam-raced path is unchanged.
+    //
+    // A frame with NO events used to fall through to the live state, which
+    // is the same error one frame later: nothing happened DURING the
+    // published frame, but the guest may well have thrown a switch right
+    // after it closed (that switch sits in Memory's recording log, not in
+    // `events`), and painting the published frame in the new mode flipped it
+    // a frame early. `frameCounter > 0` is the machine having completed a
+    // video frame, i.e. Memory having published one: before that the
+    // published snapshot is still the power-on default and the live state is
+    // the only description of the screen there is — which is also how the
+    // display tests drive this class, poking soft switches into Memory with
+    // no clock running at all.
     auto events = mem.takeVideoEvents();
     Memory::DisplayState state = mem.getDisplayState();
-    if (!events.empty()) {
+    if (!events.empty() || frameCounter > 0) {
         state = mem.getDisplayStateAtFrameStart();
         for (const auto& e : events) applyVideoEvent(state, e.kind, e.value);
     }
@@ -492,7 +521,7 @@ void Apple2Display::render(Memory& mem)
             // Repaint unless this is the very same full-screen text frame that
             // is already in the framebuffer. Beam-raced frames take the else
             // branch and are never skipped.
-            if (!staticTextFrameUnchanged(mem, state)) renderInternal(mem);
+            if (!staticTextFrameUnchanged(mem, state)) renderInternal(mem, state);
         } else {
             // A beam-raced frame publishes no key: the framebuffer no longer
             // corresponds to any single whole-frame text state.
@@ -508,7 +537,7 @@ void Apple2Display::render(Memory& mem)
     if (cpuDemodGfx && !signalProducedFlag) {
         // Defensive fallback: no signal → render the normal framebuffer so
         // the screen isn't left showing the previous frame's demod output.
-        renderInternal(mem);
+        renderInternal(mem, state);
     }
 
     // The 17-tap FP demod (~1-2 ms) is DEFERRED to finishPendingCpuDemod():
@@ -520,7 +549,7 @@ void Apple2Display::render(Memory& mem)
     // rows [0, 160) in mixed mode, so the patch survives it.
     if (oeCpu && signalProducedFlag && (!state.textMode || oeDemodsText)) {
         if (mixedGfx) {
-            patchMixedTextBand(mem);
+            patchMixedTextBand(mem, state);
             scheduleCpuDemodInto80(kMixedTextFirstScanline);
         } else {
             scheduleCpuDemodInto80(kSignalHeight);
@@ -529,7 +558,7 @@ void Apple2Display::render(Memory& mem)
 
     if ((mixedGfx && hiResMode == HiResMode::ColorCompositeOE)
         && signalProducedFlag) {
-        patchMixedTextBand(mem);
+        patchMixedTextBand(mem, state);
         scheduleCpuDemodInto80(kMixedTextFirstScanline);
         mixedCompositeUsesFb_ = true;
     }
@@ -552,22 +581,32 @@ void Apple2Display::render(Memory& mem)
         // render call made the blur reference the previous *UI* frame, so on
         // a 144 Hz monitor the 50 % blend collapsed toward nothing (and
         // repeated renders of one paused frame blended it into itself).
-        // frame80 still holds the previous frame's final output here.
-        if (emuFrameDelta_ > 0) {
+        // frame80 still holds the previous frame's final output here — but
+        // only if THIS path is what put it there. On the first frame after a
+        // boot or a mode / sub-mode switch it holds another mode's picture,
+        // or nothing at all, and blending against it dimmed the whole frame
+        // by half (the black clear the switch does) or ghosted the outgoing
+        // mode into it. So the stash is taken only once an AppleWin frame
+        // exists to stash, and the blend is skipped — prevFrame = nullptr,
+        // the "very first frame" case the API documents — until it does.
+        if (emuFrameDelta_ > 0 && appleWinPainted_) {
             std::memcpy(appleWinPrev80.data(), frame80.data(),
                         static_cast<size_t>(w) * h * sizeof(uint32_t));
+            appleWinPrevValid_ = true;
         }
         pom2::AppleWinNtsc::renderFrame(signalBuf.data(),
                                   frame80.data(),
                                   w, h,
                                   sub,
-                                  appleWinPrev80.data(),
+                                  appleWinPrevValid_ ? appleWinPrev80.data()
+                                                     : nullptr,
                                   signalPhaseOffset_);
+        appleWinPainted_ = true;
         // The output IS native 560-wide regardless of the Apple II's
         // soft-switch state, so route the UI to frame80.
         setUseFrame80(true);
         if (mixedGfx)
-            patchMixedTextBand(mem);
+            patchMixedTextBand(mem, state);
     }
 }
 
@@ -2022,9 +2061,17 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     // mirroring renderBeamRacing()'s replay, but writing the 14.318 MHz
     // waveform instead of the RGBA framebuffer. `state` is mutable so the
     // paint helpers (capturing it by reference) see the per-band switches.
+    // Same rule as render()'s own `state` (see there): the frame-start
+    // snapshot describes the PUBLISHED frame, and the live one has already
+    // moved into the recording frame — an event-free frame is not an excuse
+    // to paint the signal from a state that belongs to the next one. Only
+    // before the machine's first video frame (frameCounter 0 — no publication
+    // has happened, and the display tests drive Memory with no clock at all)
+    // is the live state the better description.
     const bool beamRace = !events.empty();
-    Memory::DisplayState state = beamRace ? mem.getDisplayStateAtFrameStart()
-                                          : mem.getDisplayState();
+    Memory::DisplayState state = (beamRace || frameCounter > 0)
+                                     ? mem.getDisplayStateAtFrameStart()
+                                     : mem.getDisplayState();
     signalPhaseOffset_ = 0;
     // Zero first so bands a given mode leaves unpainted (mixed-mode text band,
     // a text→graphics split's empty rows) read as black instead of stale.

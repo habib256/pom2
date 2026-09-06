@@ -854,6 +854,35 @@ void testDiablo630()
                     s.x);
     }
 
+    // ESC P turns PROPORTIONAL SPACING on, and a proportional glyph advances
+    // by its own escapement — which is quoted in the dot unit the pitch
+    // command established, not in some absolute unit. The 630 emulation comes
+    // up at the profile's fixed 1/80" unit and ESC P left it there, so every
+    // escapement was divided by 80 instead of 144 and came out ~1.8× too
+    // wide: about 5 cpi, a daisywheel typing in slow motion. ESC Q must hand
+    // the unit back with the style.
+    {
+        const double kUnit = 144.0;      // the ESC p (10 cpi) proportional unit
+        const double wM    = 17.0;       // kIw2StdProp escapements, in 1/144"
+        const double wI    =  8.0;
+        const uint8_t prop[] = { 0x1B, 'P', 'M', 'i' };
+        const Shot s = headAfter(IwModel::LaserWriterDiablo, prop, sizeof(prop));
+        const double moved = s.x - 0.25;                 // left margin
+        assert(std::fabs(moved - (wM + wI) / kUnit) < 1e-6);
+        // Not a fixed cell: 'M' and 'i' really did advance by different
+        // amounts (the same two glyphs at 10 cpi would be exactly 0.2").
+        assert(std::fabs(moved - 0.2) > 1e-3);
+        std::printf("  ok: ESC P advances by the glyph's own escapement "
+                    "(M+i = %.4f\")\n", moved);
+
+        // ESC Q back to fixed: two cells at the power-on 10 cpi, exactly.
+        const uint8_t back[] = { 0x1B, 'P', 0x1B, 'Q', 'M', 'i' };
+        const Shot t = headAfter(IwModel::LaserWriterDiablo, back, sizeof(back));
+        assert(std::fabs((t.x - 0.25) - 0.2) < 1e-6);
+        std::printf("  ok: ESC Q restores the fixed pitch (%.4f\")\n",
+                    t.x - 0.25);
+    }
+
     // The grammars really are three. ESC E is UNDERLINE ON to a Diablo and
     // EMPHASIZED (bold) to an Epson, while on the C. Itoh family ESC E is
     // something else again — so the same four bytes must not produce the

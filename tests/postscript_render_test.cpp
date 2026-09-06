@@ -121,6 +121,74 @@ void testPgmRejects()
     std::printf("  ok: malformed / truncated / empty PGMs are refused\n");
 }
 
+void testPgmMultiPage()
+{
+    // Ghostscript writes EVERY `showpage` into the same pgmraw file when the
+    // output name carries no `%d`, so a multi-page job comes back as several
+    // P5 blocks back to back. The reader stopped after the first and nothing
+    // said so: `extraPages` was declared, documented — and never assigned, so
+    // page 2 of a two-page document vanished in silence.
+    std::vector<uint8_t> two = bytesOf("P5\n2 2\n255\n");
+    const uint8_t p1[4] = { 10, 20, 30, 40 };
+    two.insert(two.end(), p1, p1 + 4);
+    std::vector<uint8_t> hdr2 = bytesOf("P5\n2 2\n255\n");
+    two.insert(two.end(), hdr2.begin(), hdr2.end());
+    const uint8_t p2[4] = { 50, 60, 70, 80 };
+    two.insert(two.end(), p2, p2 + 4);
+
+    pom2::PsRenderResult r;
+    assert(pom2::parsePgm(two.data(), two.size(), r));
+    assert(r.extraPages == 1);
+    assert(r.more.size() == 1);
+    // The FIRST block is still the inlined page…
+    for (int i = 0; i < 4; ++i) assert(r.gray[i] == p1[i]);
+    // …and the second is whole, not a re-read of the first.
+    assert(r.more[0].w == 2 && r.more[0].h == 2);
+    for (int i = 0; i < 4; ++i) assert(r.more[0].gray[i] == p2[i]);
+
+    // A single page must still report zero extras, and a trailing newline
+    // between blocks (or after the last one) must not be read as a page.
+    std::vector<uint8_t> one = bytesOf("P5\n2 1\n255\n");
+    one.push_back(1); one.push_back(2); one.push_back('\n');
+    pom2::PsRenderResult s;
+    assert(pom2::parsePgm(one.data(), one.size(), s));
+    assert(s.extraPages == 0 && s.more.empty());
+    std::printf("  ok: a concatenated two-page PGM yields both pages\n");
+}
+
+void testSpoolerQueuesTheSecondJob()
+{
+    // Two jobs arriving back to back. The second Ctrl-D used to be dropped
+    // whenever a render was in flight, which did not merely delay the job —
+    // it WELDED the two streams into one buffer, so the interpreter got one
+    // nonsensical job instead of two good ones. Each Ctrl-D must close a job,
+    // and each job must produce its own result. (No interpreter needed: with
+    // none installed each render fails loudly, and TWO failures is still two
+    // renders.)
+    pom2::PostScriptSpooler sp;
+    sp.setScratchDir("/tmp/pom2_ps_test_scratch");
+    sp.setPageGeometry(72, 1.0, 1.0);
+
+    std::vector<uint8_t> both = bytesOf("%!PS-Adobe-2.0\nshowpage\n");
+    both.push_back(pom2::kPsEndOfJob);
+    const auto second = bytesOf("%!PS-Adobe-2.0\n0 0 moveto\nshowpage\n");
+    both.insert(both.end(), second.begin(), second.end());
+    both.push_back(pom2::kPsEndOfJob);
+    sp.feed(both.data(), both.size());
+    // Nothing left half-fed: both jobs are closed, one running or queued.
+    assert(sp.pendingBytes() == 0);
+
+    int collected = 0;
+    for (int i = 0; i < 8000 && collected < 2; ++i) {
+        pom2::PsRenderResult page;
+        if (sp.takeResult(page)) ++collected;
+        else std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    assert(collected == 2 && "the second job never rendered");
+    assert(sp.queuedJobs() == 0 && !sp.busy());
+    std::printf("  ok: two jobs back to back produce two renders\n");
+}
+
 void testJobSniffer()
 {
     const auto ps = bytesOf("%!PS-Adobe-2.0\n100 100 moveto\n");
@@ -299,7 +367,9 @@ int main()
     testPgmMaxvalNormalised();
     testPgmSingleWhitespaceTerminator();
     testPgmRejects();
+    testPgmMultiPage();
     testJobSniffer();
+    testSpoolerQueuesTheSecondJob();
     testSpoolerWithoutInterpreter();
     testAdoptRenderedPage();
     testPostScriptHeadFallsBackToText();

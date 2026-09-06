@@ -85,6 +85,32 @@ std::vector<uint8_t> signalOf(Memory& mem)
     return std::vector<uint8_t>(s, s + static_cast<size_t>(d.signalWidth()) * d.signalHeight());
 }
 
+// One render: the composite signal AND the framebuffer it presents. The
+// framebuffer is what the mixed-mode text band lands in, so the published-
+// frame check below needs both.
+struct Shot {
+    std::vector<uint8_t>  sig;
+    std::vector<uint32_t> pix;
+    int                   w = 0, h = 0;
+};
+
+Shot renderOf(Memory& mem)
+{
+    Apple2Display d;
+    d.setAuxMemory(mem.auxData());
+    d.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+    d.render(mem);
+    assert(d.signalProduced());
+    Shot s;
+    const uint8_t* g = d.signal();
+    s.sig.assign(g, g + static_cast<size_t>(d.signalWidth()) * d.signalHeight());
+    s.w = d.width();
+    s.h = d.height();
+    const uint32_t* p = d.pixels();       // runs the deferred CPU demod
+    s.pix.assign(p, p + static_cast<size_t>(s.w) * s.h);
+    return s;
+}
+
 // memcmp a horizontal sample span [x0, x1) of scanline `y` between two signals.
 bool spanEqual(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b,
                int y, int x0, int x1)
@@ -149,6 +175,58 @@ int main()
                && "split line: left window must NOT be TEXT");
         assert(!spanEqual(sBeam, sHgr, y, kSplitSample, W)
                && "split line: right window must NOT be HGR");
+    }
+
+    // ── The PUBLISHED frame, not the live one ────────────────────────────
+    //
+    // render() paints the frame Memory published. A soft switch thrown AFTER
+    // that frame closed sits in Memory's recording log — not in the published
+    // events — while the live DisplayState already carries it. Two places
+    // read the live state anyway: render() itself fell back to it whenever
+    // the published frame had no events (so a mode flip showed up a frame
+    // early, on pixels that still belonged to the old mode), and
+    // patchMixedTextBand polled it directly (so the bottom text band of a
+    // mixed frame was skipped for that frame, leaving demodulated graphics
+    // where the text should be).
+    //
+    // Two machines, identical up to and including a fully published mixed
+    // frame; one of them then flips to TEXT the way a guest does at the top
+    // of the next frame. The frame on screen must be the same for both.
+    {
+        constexpr uint16_t SET_MIXED = 0xC053;
+        auto build = [](Memory& m) {
+            populate(m);
+            m.memRead(CLR_TEXT);
+            m.memRead(SET_HIRES);
+            m.memRead(SET_PAGE1);
+            m.memRead(SET_MIXED);
+            // Two whole NTSC video frames: frame 0 publishes the switches
+            // above, frame 1 publishes with NO events at all — which is the
+            // case that used to fall through to the live state.
+            for (int i = 0; i < 2 * 262; ++i) m.advanceCycles(65);
+        };
+        Memory quiet;  build(quiet);
+        Memory moved;  build(moved);
+        moved.memRead(SET_TEXT);      // …the guest flips after the frame closed
+
+        const Shot a = renderOf(quiet);
+        const Shot b = renderOf(moved);
+        assert(a.sig == b.sig
+               && "the composite signal must describe the published frame");
+        assert(a.w == b.w && a.h == b.h && a.pix == b.pix
+               && "the framebuffer must too, mixed-mode text band included");
+
+        // …and the comparison means something: the band really was painted.
+        // Rows 160..191 are the text band over the demodulated graphics, and
+        // a skipped patch leaves them black.
+        bool bandInk = false;
+        for (int y = 160; y < a.h && !bandInk; ++y)
+            for (int x = 0; x < a.w; ++x)
+                if ((a.pix[static_cast<size_t>(y) * a.w + x] & 0x00FFFFFFu) != 0) {
+                    bandInk = true;
+                    break;
+                }
+        assert(bandInk && "the mixed text band was never painted");
     }
 
     std::printf("horizontal_split_composite OK\n");

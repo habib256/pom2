@@ -43,6 +43,7 @@
 // would mean carrying a PNG *decoder* to read back what POM2 only ever writes.
 
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -50,18 +51,31 @@
 
 namespace pom2 {
 
-/// Where the rendered page came from and what shape it is. `gray` is one byte
-/// per pixel, 0 = full ink and 255 = bare paper (Ghostscript's `pgmraw`
-/// convention), row-major, `w` bytes per row.
+/// One rendered sheet. `gray` is one byte per pixel, 0 = full ink and 255 =
+/// bare paper (Ghostscript's `pgmraw` convention), row-major, `w` bytes per
+/// row.
+struct PsRenderPage {
+    int                  w = 0;
+    int                  h = 0;
+    std::vector<uint8_t> gray;
+};
+
+/// Where the rendered job came from and what shape it is. The FIRST page is
+/// inlined (`w`/`h`/`gray`) because most jobs have exactly one; `more` holds
+/// pages 2..n in order.
 struct PsRenderResult {
     bool                 ok = false;
     std::string          error;
     int                  w = 0;
     int                  h = 0;
     std::vector<uint8_t> gray;
-    /// Pages past the first. A PostScript job may emit any number of
-    /// `showpage`s; only the first is rendered today, and this says how many
-    /// were dropped rather than letting them vanish silently.
+    /// Pages past the first, in order. A PostScript job may emit any number
+    /// of `showpage`s, and Ghostscript writes every one of them into the same
+    /// `pgmraw` file when the output name carries no `%d` — so they arrive as
+    /// consecutive `P5` blocks and `parsePgm` unpacks all of them. Reading
+    /// only the first truncated multi-page jobs in silence.
+    std::vector<PsRenderPage> more;
+    /// `more.size()`, kept as a plain count for status text.
     int                  extraPages = 0;
 };
 
@@ -103,9 +117,11 @@ bool renderPostScript(const std::string& interpreterPath,
                       const PsRenderRequest& req,
                       PsRenderResult& out);
 
-/// Parse a binary PGM (`P5`). Exposed for its own sake because it is the one
-/// piece of `renderPostScript` that can be tested without an interpreter
-/// installed — which is most CI machines.
+/// Parse a binary PGM (`P5`) — or a concatenation of them, which is what a
+/// multi-page job comes back as: the first block fills `out`'s own fields and
+/// every further block is appended to `out.more`. Exposed for its own sake
+/// because it is the one piece of `renderPostScript` that can be tested
+/// without an interpreter installed — which is most CI machines.
 bool parsePgm(const uint8_t* data, std::size_t n, PsRenderResult& out);
 
 /// Asynchronous front end for `renderPostScript`.
@@ -133,6 +149,9 @@ public:
 
     /// Feed bytes from the guest. A Ctrl-D (`kPsEndOfJob`) ends the job and
     /// starts a render; bytes arriving while one runs are held for the next.
+    /// A Ctrl-D arriving DURING a render closes that next job and queues it —
+    /// dropping the separator instead (which is what this used to do) welded
+    /// two jobs into one stream that no interpreter could make sense of.
     void feed(const uint8_t* data, std::size_t n);
 
     /// Render what has been fed so far without waiting for a Ctrl-D. For the
@@ -150,6 +169,8 @@ public:
     bool busy() const;
     /// Bytes waiting for a Ctrl-D or a `flushNow`.
     std::size_t pendingBytes() const;
+    /// Complete jobs waiting for the interpreter to free up.
+    std::size_t queuedJobs() const;
 
     /// Drop everything: the buffer, any finished page not yet collected. Does
     /// NOT abandon a running render — that would leak the child process — so
@@ -157,7 +178,14 @@ public:
     void reset();
 
 private:
-    void startRender();                 ///< caller must hold `mtx_`
+    /// Move `pending_` into `queued_` as one complete job. Caller holds `mtx_`.
+    void closeJobLocked();
+    /// Start the job at the head of `queued_` if the interpreter is free AND
+    /// the result slot is empty (starting one would overwrite an uncollected
+    /// page). Caller must hold `mtx_`; the retired worker handle is moved into
+    /// `retired` for the caller to join OUTSIDE the lock (joining under `mtx_`
+    /// deadlocks — the worker takes it to publish).
+    void startNextLocked(std::thread& retired);
     void joinWorker();
 
     mutable std::mutex   mtx_;
@@ -165,7 +193,10 @@ private:
     int                  dpi_      = 144;
     double               widthIn_  = 8.5;
     double               heightIn_ = 11.0;
-    std::vector<uint8_t> pending_;
+    std::vector<uint8_t> pending_;      // bytes since the last Ctrl-D
+    /// Jobs closed by a Ctrl-D and waiting their turn. One interpreter runs
+    /// at a time; a second job must WAIT, not merge into the first.
+    std::deque<std::vector<uint8_t>> queued_;
     std::vector<uint8_t> inFlight_;
     PsRenderResult       done_;
     bool                 haveResult_ = false;
@@ -175,6 +206,11 @@ private:
     /// A runaway job must not eat the heap. A page of PostScript is a few
     /// tens of KB; a megabyte is already a driver gone wrong.
     static constexpr std::size_t kMaxJobBytes = 4u << 20;
+    /// …and neither must a queue of them. Past this the OLDEST waiting job is
+    /// dropped: a guest that outruns the interpreter this far is not going to
+    /// be caught up with, and the newest job is the one the user is waiting
+    /// for. Dropping is logged.
+    static constexpr std::size_t kMaxQueuedJobs = 16;
 };
 
 } // namespace pom2

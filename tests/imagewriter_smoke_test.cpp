@@ -219,6 +219,11 @@ void testBitImageGraphics()
     // ESC C selects the LQ 3-byte column format (24 pins at 216 dpi).
     ImageWriter lq(144, ImageWriter::PaperSize::Letter);
     feed(lq, "\x1b" "E\x1b" "C0002");
+    // …and it selects an LQ DENSITY: pitch index 2 | 8 = 10, which is
+    // 192 dpi, not the 96 dpi of index 2. The status line read the density
+    // out of a truncated 8-entry copy of the table with `printRes_ & 7`, so
+    // every LQ pass reported its non-LQ twin.
+    assert(lq.status().graphicsDpi == 192);
     for (int i = 0; i < 6; ++i) lq.printChar(0xFF);   // 2 columns x 3 bytes
     assert(!lq.status().inGraphics);
     assert(inkPixels(lq.currentPage()) > 0);
@@ -1209,6 +1214,47 @@ void testGraphicsStopsAtTheRightMargin()
                 "bounded time)\n");
 }
 
+// ── The PACED drain has a work budget too, not only a credit one ────────
+//
+// tick() banks elapsed seconds and spends them against the cost model, which
+// bounds how much MECHANISM TIME one tick may run through. It does not bound
+// the WORK, and not every unit costs time: escape parameters are free, and so
+// is every bit-image column past the right margin (the carriage is against
+// the stop, the column is discarded). A guest that floods `ESC V 9999` past
+// the margin therefore queued millions of zero-cost units, and one tick — on
+// the UI thread, from pumpImageWriter() — drained the lot with the window
+// frozen for it. The catch-up path has had a per-tick budget since the
+// 1 MiB-backlog fix; this is the same budget on the paced path.
+void testPacedDrainIsBounded()
+{
+    ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+    iw.setSpeed(ImageWriter::Speed::Draft);
+
+    // 1. Park the head at the right margin, where columns become free. One
+    //    over-long run does it, and it drains in bounded time (§ above).
+    const uint8_t run[] = { 0x1B, 'V', '9', '9', '9', '9', 0xFF };
+    iw.queueBytes(run, sizeof run);
+    for (int i = 0; i < 400 && iw.busy(); ++i) iw.tick(0.05);
+    assert(!iw.busy());
+
+    // 2. 200 more such runs — about two million units, every one of them
+    //    free, and only ~1.4 KiB of queue, so catch-up never arms and this
+    //    is squarely the paced path.
+    std::vector<uint8_t> flood;
+    for (int i = 0; i < 200; ++i)
+        flood.insert(flood.end(), run, run + sizeof run);
+    iw.queueBytes(flood.data(), flood.size());
+    assert(!iw.catchingUp());
+
+    iw.tick(1.0 / 60.0);
+    assert(iw.busy() && "one frame must not drain a two-million-unit flood");
+
+    // 3. It still finishes — the budget delays the work, it never drops it.
+    for (int i = 0; i < 2000 && iw.busy(); ++i) iw.tick(1.0 / 60.0);
+    assert(!iw.busy());
+    std::printf("  ok: the paced drain is bounded per tick as well\n");
+}
+
 // ── A Print Shop-shaped COLOUR job prints in colour, on one line ─────────
 //
 // This is the shape the 2026-07-26 trace captured from the real Print Shop's
@@ -1322,6 +1368,7 @@ int main()
     testEjectInvalidatesSheetReferences();
     testRepeatIsPacedNotAtomic();
     testGraphicsStopsAtTheRightMargin();
+    testPacedDrainIsBounded();
     testPrintShopColourPass();
     std::printf("PASS\n");
     return 0;

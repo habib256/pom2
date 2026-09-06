@@ -272,6 +272,17 @@ constexpr double kFeedIps  = 5.0;
 /// long host stall must not dump half a page in one frame.
 constexpr double kMaxCredit = 1.0;
 
+/// Bit-image horizontal density (dots per inch) per pitch index.
+/// 0-7 = ImageWriter II pitches (8 pins/column, 72 dpi vertical),
+/// 8-15 = ImageWriter LQ (24 pins/column over three bytes, 216 dpi).
+/// SIXTEEN entries: `printRes_` reaches 8-15 on the LQ pitches, and the
+/// status line used to index a truncated 8-entry copy with `printRes_ & 7`,
+/// reporting 72 dpi for a 144 dpi pass.
+constexpr uint16_t kBitImageHorizDpi[16] = {
+    72, 80, 96, 107, 120, 136, 144, 160,
+    144, 160, 192, 216, 240, 272, 288, 320
+};
+
 } // namespace
 
 const char* ImageWriter::paperSizeName(PaperSize s)
@@ -1219,8 +1230,15 @@ void ImageWriter::tick(double dt)
         credit_ = std::min(credit_ + dt, std::max(kMaxCredit, nextUnitCost()));
     }
 
+    // The paced loop needs the SAME work budget as the catch-up one. Credit
+    // bounds the mechanism SECONDS a tick may spend, and most bytes cost
+    // some — but not all do: an escape sequence's parameter digits are free,
+    // and so is every bit-image column past the right margin (the carriage
+    // is against the stop and the column is discarded). An `ESC V 9999` flood
+    // is therefore millions of zero-cost units that credit can never stop,
+    // drained in one UI-thread tick with the window frozen for it.
     size_t units = 0;
-    while (busy()) {
+    while (busy() && units < kCatchUpBytes) {
         const double cost = nextUnitCost();    // state-dependent: read first
         if (cost > credit_) break;
         credit_ -= cost;
@@ -1277,15 +1295,9 @@ void ImageWriter::tick(double dt)
 
 void ImageWriter::setupBitImage(uint8_t dens, uint32_t numCols)
 {
-    // 0-7 = ImageWriter II pitches (8 pins/column, 72 dpi vertical),
-    // 8-15 = ImageWriter LQ (24 pins/column over three bytes, 216 dpi).
-    static constexpr uint16_t kHoriz[16] = {
-        72, 80, 96, 107, 120, 136, 144, 160,
-        144, 160, 192, 216, 240, 272, 288, 320
-    };
     if (dens > 15) return;              // reference logs and drops
 
-    bitGraph_.horizDens   = kHoriz[dens];
+    bitGraph_.horizDens   = kBitImageHorizDpi[dens];
     bitGraph_.swallow     = false;
     bitGraph_.vertDens    = (dens < 8) ? 72 : 216;
     bitGraph_.adjacent    = true;
@@ -2292,8 +2304,21 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
         case 'R': style_ &= ~kStyleUnderline;                return true;
         case 'O': style_ |=  kStyleBold;                     return true;
         case '&': style_ &= ~kStyleBold;                     return true;
-        case 'P': style_ |=  kStyleProp;  updateMetrics();   return true;
-        case 'Q': style_ &= ~kStyleProp;  updateMetrics();   return true;
+        // Proportional spacing on / off. The unit matters as much as the
+        // style bit: a proportional glyph advances by its OWN escapement
+        // (glyphAdvance), and that escapement is quoted in the dot unit the
+        // pitch command established. The 630 emulation powers up at the
+        // profile's fixed pitch (1/80"), and dividing the ROM's escapements
+        // by that gave every glyph ~1.8× its width — about 5 cpi. The bank
+        // it draws from is the C. Itoh proportional face, whose widths are
+        // the `ESC p` unit — 1/144", the 10 cpi proportional pitch, which is
+        // also the pitch this head comes up in. ESC Q hands the unit back to
+        // the profile with the style.
+        case 'P': style_ |=  kStyleProp;  definedUnit_ = 144;
+                  updateMetrics();                           return true;
+        case 'Q': style_ &= ~kStyleProp;
+                  definedUnit_ = modelProfile().defaultUnit;
+                  updateMetrics();                           return true;
 
         // ── Fractional and reverse motion ──────────────────────────────
         case 'U':                                        // half line feed
@@ -2467,15 +2492,13 @@ void ImageWriter::pageToRgba(const Page& p, std::vector<uint8_t>& out)
 
 ImageWriter::Status ImageWriter::status() const
 {
-    static constexpr uint16_t kHoriz[8] = { 72, 80, 96, 107, 120, 136, 144, 160 };
-
     Status s;
     s.headX       = curX_;
     s.headY       = curY_;
     s.cpi         = actcpi_;
     s.lineSpacing = lineSpacing_;
     s.colorName   = bandName(static_cast<uint8_t>(color_ >> 5));
-    s.graphicsDpi = kHoriz[printRes_ & 7];
+    s.graphicsDpi = kBitImageHorizDpi[printRes_ & 15];
     s.inGraphics  = bitGraph_.remBytes > 0;
 
     struct { uint16_t bit; const char* name; } kNames[] = {

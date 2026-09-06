@@ -42,8 +42,13 @@ constexpr int kPollMs          = 10;
 
 /// Refuse to render a page bigger than this. A guest can ask for any paper
 /// size, and w*h bytes is allocated for the result: at 144 dpi a 100-inch
-/// sheet is already 200 MB.
+/// sheet is already 200 MB. Also the ceiling on a whole multi-page job: the
+/// pages are unpacked into memory together.
 constexpr std::size_t kMaxRasterBytes = 64u << 20;
+
+/// Hard cap on the pages one job may hand back, so a runaway `showpage` loop
+/// cannot turn into an unbounded vector of rasters. Well past any real job.
+constexpr std::size_t kMaxPagesPerJob = 64;
 
 /// Skip PGM header whitespace AND comments — `#` to end of line may appear
 /// between any two tokens, which is the part of the format hand-rolled
@@ -72,6 +77,59 @@ bool readPgmInt(const uint8_t* d, std::size_t n, std::size_t& i, long& out)
     }
     out = v;
     return true;
+}
+
+/// One `P5` block: its geometry and where its raster starts and ends.
+struct PgmBlock {
+    long        w = 0, h = 0, maxval = 0;
+    std::size_t data = 0;     // first raster byte
+    std::size_t end  = 0;     // one past the last raster byte
+};
+
+/// Parse the `P5` block starting at `i`. Same rules as the single-page reader
+/// always had; factored out so the pages after the first go through exactly
+/// the same code rather than a second, looser copy of it.
+bool readPgmBlock(const uint8_t* d, std::size_t n, std::size_t i,
+                  PgmBlock& out, std::string& err)
+{
+    if (i >= n || n - i < 8) { err = "PGM too short"; return false; }
+    if (d[i] != 'P' || d[i + 1] != '5') {
+        err = "not a binary PGM (P5)";
+        return false;
+    }
+    std::size_t p = i + 2;
+    if (!readPgmInt(d, n, p, out.w) || !readPgmInt(d, n, p, out.h) ||
+        !readPgmInt(d, n, p, out.maxval)) {
+        err = "malformed PGM header";
+        return false;
+    }
+    if (out.w <= 0 || out.h <= 0 || out.maxval <= 0 || out.maxval > 255) {
+        err = "unsupported PGM geometry";
+        return false;
+    }
+    // Exactly ONE whitespace byte separates the header from the data, and it
+    // is part of the format — skipping "all whitespace" here would eat a
+    // leading 0x20 pixel (a light-grey one) off the first row.
+    if (p >= n || !std::isspace(static_cast<unsigned char>(d[p]))) {
+        err = "missing PGM header terminator";
+        return false;
+    }
+    ++p;
+    const std::size_t need = static_cast<std::size_t>(out.w) *
+                             static_cast<std::size_t>(out.h);
+    if (need > kMaxRasterBytes) { err = "PGM raster too large"; return false; }
+    if (n - p < need)           { err = "PGM truncated";        return false; }
+    out.data = p;
+    out.end  = p + need;
+    return true;
+}
+
+/// Normalise a non-255 maxval so callers always see 0..255.
+void normalisePgm(std::vector<uint8_t>& gray, long maxval)
+{
+    if (maxval == 255 || maxval <= 0) return;
+    for (uint8_t& v : gray)
+        v = static_cast<uint8_t>(v * 255 / maxval);
 }
 
 std::string uniqueStem(const std::string& dir, const void* salt)
@@ -113,44 +171,47 @@ bool looksLikePostScript(const uint8_t* data, std::size_t n)
 bool parsePgm(const uint8_t* data, std::size_t n, PsRenderResult& out)
 {
     out.ok = false;
-    if (!data || n < 8) { out.error = "PGM too short"; return false; }
-    if (data[0] != 'P' || data[1] != '5') {
-        out.error = "not a binary PGM (P5)";
-        return false;
-    }
-    std::size_t i = 2;
-    long w = 0, h = 0, maxval = 0;
-    if (!readPgmInt(data, n, i, w) || !readPgmInt(data, n, i, h) ||
-        !readPgmInt(data, n, i, maxval)) {
-        out.error = "malformed PGM header";
-        return false;
-    }
-    if (w <= 0 || h <= 0 || maxval <= 0 || maxval > 255) {
-        out.error = "unsupported PGM geometry";
-        return false;
-    }
-    // Exactly ONE whitespace byte separates the header from the data, and it
-    // is part of the format — skipping "all whitespace" here would eat a
-    // leading 0x20 pixel (a light-grey one) off the first row.
-    if (i >= n || !std::isspace(static_cast<unsigned char>(data[i]))) {
-        out.error = "missing PGM header terminator";
-        return false;
-    }
-    ++i;
+    out.more.clear();
+    out.extraPages = 0;
+    if (!data) { out.error = "PGM too short"; return false; }
 
-    const std::size_t need = static_cast<std::size_t>(w) *
-                             static_cast<std::size_t>(h);
-    if (need > kMaxRasterBytes) { out.error = "PGM raster too large"; return false; }
-    if (n - i < need) { out.error = "PGM truncated"; return false; }
+    PgmBlock first;
+    if (!readPgmBlock(data, n, 0, first, out.error)) return false;
+    out.w = static_cast<int>(first.w);
+    out.h = static_cast<int>(first.h);
+    out.gray.assign(data + first.data, data + first.end);
+    normalisePgm(out.gray, first.maxval);
 
-    out.w = static_cast<int>(w);
-    out.h = static_cast<int>(h);
-    out.gray.assign(data + i, data + i + need);
-    // Normalise a non-255 maxval so callers always see 0..255.
-    if (maxval != 255) {
-        for (uint8_t& v : out.gray)
-            v = static_cast<uint8_t>(v * 255 / maxval);
+    // Every further `P5` block is another sheet of the SAME job: Ghostscript
+    // writes each `showpage` into the same pgmraw file whenever the output
+    // name carries no `%d`. Reading only the first is what truncated
+    // multi-page jobs in silence.
+    std::size_t i     = first.end;
+    std::size_t bytes = out.gray.size();
+    while (out.more.size() < kMaxPagesPerJob) {
+        // Tolerate a stray newline between blocks; do NOT use skipPgmSpace,
+        // whose `#` comment rule would run off into binary trailing data.
+        while (i < n && std::isspace(static_cast<unsigned char>(data[i]))) ++i;
+        if (i + 1 >= n || data[i] != 'P' || data[i + 1] != '5') break;
+        PgmBlock next;
+        std::string err;
+        // Trailing junk that only LOOKS like a page: keep the pages already
+        // read rather than failing the whole job.
+        if (!readPgmBlock(data, n, i, next, err)) break;
+        const std::size_t need = static_cast<std::size_t>(next.w) *
+                                 static_cast<std::size_t>(next.h);
+        if (bytes + need > kMaxRasterBytes) break;
+        PsRenderPage page;
+        page.w = static_cast<int>(next.w);
+        page.h = static_cast<int>(next.h);
+        page.gray.assign(data + next.data, data + next.end);
+        normalisePgm(page.gray, next.maxval);
+        out.more.push_back(std::move(page));
+        bytes += need;
+        i = next.end;
     }
+    out.extraPages = static_cast<int>(out.more.size());
+
     out.ok = true;
     out.error.clear();
     return true;
@@ -247,7 +308,10 @@ bool renderPostScript(const std::string& interpreterPath,
     std::ifstream in(pgmPath, std::ios::binary | std::ios::ate);
     if (!in) { out.error = "the interpreter produced no page"; return false; }
     const std::streampos end = in.tellg();
-    if (end <= 0 || static_cast<std::size_t>(end) > kMaxRasterBytes + 64) {
+    // A multi-page job is several P5 blocks in this one file, so the ceiling
+    // is the raster budget plus one header per page it may hold.
+    if (end <= 0 ||
+        static_cast<std::size_t>(end) > kMaxRasterBytes + 64 * kMaxPagesPerJob) {
         out.error = "the rendered page is empty or absurdly large";
         return false;
     }
@@ -262,8 +326,9 @@ bool renderPostScript(const std::string& interpreterPath,
     if (!parsePgm(raw.data(), raw.size(), out)) return false;
 
     pom2::log().info("LaserWriter",
-        "Rendered a PostScript page: " + std::to_string(out.w) + "x" +
-        std::to_string(out.h) + " at " + std::to_string(req.dpi) + " dpi");
+        "Rendered a PostScript job: " + std::to_string(out.extraPages + 1) +
+        " page(s) of " + std::to_string(out.w) + "x" + std::to_string(out.h) +
+        " at " + std::to_string(req.dpi) + " dpi");
     return true;
 }
 
@@ -308,11 +373,14 @@ void PostScriptSpooler::feed(const uint8_t* data, std::size_t n)
         for (std::size_t i = 0; i < n; ++i) {
             if (data[i] == kPsEndOfJob) {
                 // End of job. Anything after the Ctrl-D belongs to the NEXT
-                // one, so it stays in `pending_` rather than being lost.
-                if (!busy_ && !pending_.empty()) {
-                    stale = std::move(worker_);
-                    startRender();
-                }
+                // one, so it stays in `pending_` rather than being lost — and
+                // the job that just closed is QUEUED even while a render is
+                // in flight. Ignoring the separator when busy (which is what
+                // this did) concatenated the two jobs into one buffer: the
+                // second `%!PS-Adobe` landed mid-stream and the interpreter
+                // saw one nonsensical job instead of two good ones.
+                closeJobLocked();
+                startNextLocked(stale);
                 continue;
             }
             if (pending_.size() >= kMaxJobBytes) {
@@ -338,19 +406,38 @@ void PostScriptSpooler::flushNow()
     std::thread stale;
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        if (busy_ || pending_.empty()) return;
-        stale = std::move(worker_);
-        startRender();
+        if (pending_.empty()) return;
+        closeJobLocked();
+        startNextLocked(stale);
     }
     if (stale.joinable()) stale.join();
 }
 
-void PostScriptSpooler::startRender()
+void PostScriptSpooler::closeJobLocked()
 {
-    // `mtx_` is held. Take the job out of `pending_` so bytes that arrive
-    // while the interpreter runs accumulate for the next one.
-    inFlight_.swap(pending_);
+    // `mtx_` is held. The bytes since the last separator become a complete
+    // job; anything that arrives next starts a fresh `pending_`.
+    if (pending_.empty()) return;
+    if (queued_.size() >= kMaxQueuedJobs) {
+        pom2::log().warn("LaserWriter",
+            "more than " + std::to_string(kMaxQueuedJobs) +
+            " PostScript jobs are waiting; the oldest is being dropped");
+        queued_.pop_front();
+    }
+    queued_.push_back(std::move(pending_));
     pending_.clear();
+}
+
+void PostScriptSpooler::startNextLocked(std::thread& retired)
+{
+    // `mtx_` is held. One interpreter at a time, and never while a finished
+    // page is still uncollected — starting one would overwrite `done_`.
+    if (busy_ || haveResult_ || queued_.empty()) return;
+    // The previous job's worker has published and exited; hand its handle to
+    // the caller, which joins it once the lock is dropped.
+    retired = std::move(worker_);
+    inFlight_ = std::move(queued_.front());
+    queued_.pop_front();
     busy_ = true;
 
     PsRenderRequest req;
@@ -392,6 +479,15 @@ bool PostScriptSpooler::takeResult(PsRenderResult& out)
         if (!busy_) finished = std::move(worker_);
     }
     if (finished.joinable()) finished.join();
+    // The result slot is free again, so a job that arrived while this one was
+    // rendering can start now. This is the only place that can notice — the
+    // worker itself must not spawn its own successor.
+    std::thread stale;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        startNextLocked(stale);
+    }
+    if (stale.joinable()) stale.join();
     return true;
 }
 
@@ -407,6 +503,12 @@ std::size_t PostScriptSpooler::pendingBytes() const
     return pending_.size();
 }
 
+std::size_t PostScriptSpooler::queuedJobs() const
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    return queued_.size();
+}
+
 void PostScriptSpooler::reset()
 {
     // Wait for any render rather than abandoning it: the child process is
@@ -415,6 +517,7 @@ void PostScriptSpooler::reset()
     joinWorker();
     std::lock_guard<std::mutex> lk(mtx_);
     pending_.clear();
+    queued_.clear();
     inFlight_.clear();
     done_       = {};
     haveResult_ = false;

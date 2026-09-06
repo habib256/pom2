@@ -60,13 +60,12 @@ bool Apple2Display::usesLegacyPath(Memory& mem, const Memory::DisplayState& stat
     // rasters that run clean on the composite pipelines fell apart on the
     // Chat Mauve one (the only mode where graphics are 560 while the
     // machine sits in 40 columns).
+    //
+    // This SUBSUMES the narrower rule that preceded it (de2860f), which sent
+    // only the card's colour-TEXT mode down the 560 path. That test survived
+    // BELOW this return as `cm && …`, i.e. as dead code reading like a rule
+    // that still applied — removed rather than left to mislead.
     if (cm) return false;
-
-    const bool chatMauveText =
-        cm && mem.isIIE() && state.textMode && auxRam != nullptr &&
-        chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr)
-            == LeChatMauveCard::TextMode::Color;
-    if (chatMauveText) return false;
 
     // The IIe 80-col block returns (non-legacy) for every sub-state except
     // its fall-through: !textMode && !dhgr && !mixedMode (plain 40-col HGR /

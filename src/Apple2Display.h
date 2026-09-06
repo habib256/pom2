@@ -285,6 +285,13 @@ private:
     // each so HGR and DHGR don't share state.
     std::vector<uint32_t> appleWinPrev;
     std::vector<uint32_t> appleWinPrev80;
+    // `appleWinPrev80` holds a frame this path rendered (so it may be blended
+    // against), and frame80 does (so it may be stashed). Both false at
+    // power-on and after a mode / sub-mode switch: blending the first frame
+    // against a cleared-to-black stash halved its brightness, and stashing
+    // frame80 before it held an AppleWin frame ghosted the outgoing mode in.
+    bool appleWinPrevValid_ = false;
+    bool appleWinPainted_   = false;
     // History buffer for monochrome phosphor decay. One byte per pixel
     // (0..255 luminance). Color mode leaves this untouched; switching modes
     // clears it. We carry two parallel buffers so HGR (280×192) and DHGR
@@ -429,7 +436,10 @@ private:
     bool staticTextFrameUnchanged(Memory& mem, const Memory::DisplayState& state);
     static constexpr int kMixedTextFirstScanline = 160;
 
-    void patchMixedTextBand(Memory& mem);
+    /// Repaint the bottom text band of a mixed frame over a demodulated
+    /// picture. `state` MUST be the published frame's state (render()'s
+    /// `state` local), never `mem.getDisplayState()` — see the definition.
+    void patchMixedTextBand(Memory& mem, const Memory::DisplayState& state);
     // Frame counter — drives the FLASH attribute animation for screen
     // bytes in the $40-$7F range (the Apple II Monitor's blinking cursor
     // and inverse-blinking spaces). Wraps freely; only the parity of
@@ -458,7 +468,7 @@ private:
     // `state` is passed in (not re-read from mem) so beam-raced bands paint
     // with the display state active for THAT band — page select (PAGE1/PAGE2),
     // 80STORE base and ALTCHAR all switch mid-frame, not just the mode. The
-    // full-frame path passes mem.getDisplayState(), so it is unchanged.
+    // full-frame path passes render()'s published `state` down too.
     //
     // `clipY0`/`clipY1` clip the row/block painters to exact scanlines for
     // non-row-aligned beam splits: bandRows() hands a straddled text row (or
@@ -568,7 +578,9 @@ private:
 
     // The actual frame dispatch (text / hires / dhgr / mixed). render()
     // is a thin wrapper that calls this then optionally fills signalBuf.
-    void renderInternal(Memory& mem);
+    /// Full-frame repaint of the PUBLISHED frame — `state` is render()'s,
+    /// not the live one (see the definition).
+    void renderInternal(Memory& mem, const Memory::DisplayState& state);
     void renderInternalBand(Memory& mem, const Memory::DisplayState& state,
                             int scanY0, int scanY1);
     // Column-bounded variant of renderInternalBand: paints the rectangle

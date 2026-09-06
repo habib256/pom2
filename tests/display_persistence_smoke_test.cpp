@@ -46,6 +46,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -278,6 +279,53 @@ void testNonChatMauveHgrStays280()
     std::puts("  hgr_ntsc_stays_280: OK");
 }
 
+// ─── The AppleWin Tv blur has nothing to blend on its first frame ────────
+//
+// The Tv sub-mode is the AppleWin family's persistence: 50 % of the previous
+// frame mixed into this one. `appleWinPrev80` is CLEARED (to opaque black) at
+// construction and on every mode / sub-mode switch — and then blended in
+// anyway, so the first frame after a boot or a mode change came out at half
+// brightness and faded up over the following frames. (Worse: the stash is
+// refreshed from frame80 before the blend, so on a switch INTO this mode it
+// captured the outgoing mode's picture and ghosted that in instead.)
+//
+// The property: on a STATIC picture the very first frame must already be the
+// settled one — blend(raw, raw) == raw — so frame 1 and frame 2 are equal.
+void testAppleWinTvFirstFrameIsNotHalfBlack()
+{
+    Memory mem;
+    Apple2Display disp;
+    mem.memRead(CLR_TEXT);
+    mem.memRead(SET_HIRES);
+    for (uint32_t a = 0x2000; a < 0x4000; ++a)
+        mem.memWrite(static_cast<uint16_t>(a), 0x7F);   // every dot lit
+    // Past the machine's first video frame, so render() reads the published
+    // display state (see Apple2Display::render).
+    for (int i = 0; i < 2 * 262; ++i) mem.advanceCycles(65);
+
+    disp.setHiResMode(Apple2Display::HiResMode::ColorAppleWin);
+    disp.setAppleWinSubMode(Apple2Display::AppleWinSubMode::Tv);
+
+    disp.render(mem);
+    assert(disp.width() == 560);
+    std::vector<uint32_t> first(disp.pixels(),
+                                disp.pixels() + 560 * 192);
+
+    // One emulated frame later — same bytes, same switches, so the decode is
+    // identical and only the blur state differs.
+    for (int i = 0; i < 262; ++i) mem.advanceCycles(65);
+    disp.render(mem);
+    const uint32_t* second = disp.pixels();
+
+    for (size_t i = 0; i < first.size(); ++i)
+        assert(first[i] == second[i] &&
+               "the first Tv frame must not be blended against black");
+    // …and it is a bright frame, not a uniformly dark one that trivially
+    // matches itself.
+    assert(lum(first[100 * 560 + 300]) > 200);
+    std::puts("  applewin_tv_first_frame: OK");
+}
+
 }  // namespace
 
 int main()
@@ -285,6 +333,7 @@ int main()
     testDhgrMonoAfterglow();
     testHgrChatMauve560();
     testNonChatMauveHgrStays280();
+    testAppleWinTvFirstFrameIsNotHalfBlack();
     std::puts("display_persistence_smoke_test: OK");
     return 0;
 }
