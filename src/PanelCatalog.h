@@ -21,7 +21,7 @@
 // the argument: 32 lines to load its visibility, 32 to save it, 38 to offer
 // it in the command palette, 38 more to dispatch that command, 37 menu rows,
 // and a 28-assignment block that hides "every" panel on the browser build.
-// Six hand-kept lists over ~40 panels, none of them checkable against the
+// Six hand-kept lists over 38 panels, none of them checkable against the
 // others. The predictable failures had all already happened:
 //
 //   * seven panels were in the palette but had no settings key, so the user

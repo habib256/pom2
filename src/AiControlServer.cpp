@@ -1049,9 +1049,10 @@ void AiControlServer::handleKeyboard(socket_t fd, const Request& req)
     size_t n = 0;
     // Deliberately NOT under `lockState()`: the keyboard latch and paste
     // queue have their own finer-grained `Memory::kbMutex`, taken inside
-    // pasteText / pasteRawKeys (Memory.cpp:1147,1166). That is what lets the
-    // UI and this HTTP thread inject keys without contending with the worker
-    // on every keystroke — see the note at Memory.cpp:1260. The raw
+    // pasteText / pasteRawKeys (both moved to Keyboard.cpp — :64 and :119).
+    // That is what lets the UI and this HTTP thread inject keys without
+    // contending with the worker on every keystroke — see the strobe /
+    // promote-next-byte note at Keyboard.cpp:49-55. The raw
     // `memory()` accessor is correct here and nowhere else in this file.
     if (!text.empty()) n += ctrl_->memory().pasteText(text);
     if (!raw.empty())  n += ctrl_->memory().pasteRawKeys(raw.data(), raw.size());

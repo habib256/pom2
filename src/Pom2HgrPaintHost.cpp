@@ -191,7 +191,7 @@ bool Pom2HgrPaintHost::supportsDhgr() const
     // 4096-cycle slice at a time.
     //
     // Safe from the editors: MainWindow closes its own lock scope before
-    // calling `render()` (MainWindow.cpp:10079), so this never re-enters.
+    // calling `render()` (MainWindow::render, MainWindow.cpp), so this never re-enters.
     if (!emu_) return false;
     auto st = emu_->lockState();
     return st.memory().isIIE();

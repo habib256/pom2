@@ -21,7 +21,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   subsystems and all three had suites.
 - `docs/PERFORMANCE.md` — core profile (callgrind recipe + `pom2_bench`), the optimisations already done and **why**, and the PGO/LTO build recipe. Read before "optimising" anything on the hot path.
 - `CHANGELOG.md` — resolved items + the **why** behind non-obvious fixes.
-- `docs/releases/v<x.y>.md` — the release notes for that tag, written by hand. The publish job fetches the file matching the tag and uses it as the GitHub Release body (generated commit list only as fallback).
+- `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes for that tag, written by hand. The publish job tries both conventions and uses the first hit as the GitHub Release body (generated commit list only as fallback, and it says so loudly).
 
 **Conventions**:
 
@@ -40,6 +40,24 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   lock for **0 ms**. One documented exception survives, in
   `MainWindow_Slots.cpp`'s profile-switch remount, where atomicity against the
   AI server outranks latency and the CPU worker is stopped anyway.
+  **Eject and flush have the same shape** (since 2026-09-07): phase 1 takes
+  the lock and *captures* the payload (`MountableMediaCard::prepareEjectBay` /
+  `prepareFlushBay`), phase 2 commits the file unlocked, phase 3 takes the lock
+  again to finish — either retiring the bay or, on failure, putting the medium
+  back (`DiskIICard::restoreEjected`, `restoreFlushBayDirty`). A failed commit
+  therefore leaves the disk **loaded and dirty** instead of gone. The firmware
+  3.5" eject (`Sony35Drive::ejectPending_`) hands its payload to
+  `EmulationController`'s `WriteBackQueue` and only retires the medium when the
+  sink reports the file landed. `StorageCoordinator::ejectAllMedia`, the Liron
+  `flushAll` and the host-folder mount all use it.
+- **A rewind may never cross an irreversible write** — the rewind ring never
+  captures block-device (up to 32 MiB), 3.5" (800 KB) or writable-WOZ media, so
+  rolling RAM back over a ProDOS SAVE would cross-link the volume. Instead every
+  such write path bumps `pom2::mediaWriteEpoch()` at the storage leaf
+  (`Block512Backing.h`) and `EmulationController::noteMediaWrite` drops the ring
+  at its capture point. Printed output counts as irreversible too. Non-WOZ Disk II
+  nibble writes deliberately do NOT bump — those *are* captured and a rewind is
+  expected to undo them.
 - **Every long-lived thread wears an exception barrier** — an exception
   escaping a `std::thread` callable calls `std::terminate()`, killing the
   process with no log line: a crash the user cannot report and you cannot
@@ -69,9 +87,9 @@ cd build && cmake .. && make # → build/POM2
 ./run_emulator.sh            # cwd = repo root so roms/ probes resolve
 ```
 
-**Dear ImGui is pinned** — `imgui_pin.env` is the single source of truth (repo + branch + commit), shared by `setup_imgui.sh`, `tools/fetch_imgui_pinned.sh` (the release + packaging path) and both CI jobs. POM2 requires the **`docking`** branch: the DockSpace that hosts its ~36 panels needs `ImGuiConfigFlags_DockingEnable`, which does not exist on `master`. The branch is force-pushed on every upstream rebase, hence the commit pin. Multi-viewport stays off. → [DEV § Docking](DEV.md#docking--layout-presets)
+**Dear ImGui is pinned** — `imgui_pin.env` is the single source of truth (repo + branch + commit), shared by `setup_imgui.sh`, `tools/fetch_imgui_pinned.sh` (the release + packaging path) and both CI jobs. POM2 requires the **`docking`** branch: the DockSpace that hosts its 38 panels needs `ImGuiConfigFlags_DockingEnable`, which does not exist on `master`. The branch is force-pushed on every upstream rebase, hence the commit pin. Multi-viewport stays off. → [DEV § Docking](DEV.md#docking--layout-presets)
 
-`POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14). UI 60 Hz; CPU worker runs `cyclesPerFrame=17045` per tick. Single `stateMutex` guards CPU + Memory.
+`POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14). UI 60 Hz; the CPU worker's `cyclesPerFrame` comes from the active profile (`CpuClock.h`: 17045 NTSC / **20313 PAL — the default profile is PAL**), and `EmulationController`'s bare initialiser (17045) only holds until the first `applyProfile`. Single `stateMutex` guards CPU + Memory.
 
 Release packages ship the full `roms/` tree; a source build uses the same in-repo dumps. Default profile is **`Apple //e Enhanced PAL`** (`Apple ][+` only when no //e ROM is found); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
 
@@ -105,7 +123,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Slot bus + wire-OR IRQ | `SlotBus.h`, `SlotPeripheral.h` | [§ Slot bus](DEV.md#slot-bus--irq-aggregation) |
 | Hand-written slot ROMs — labels, bounded regions, resolved branches | `SlotRomAsm.h` | [§ Hand-written slot ROMs](DEV.md#hand-written-slot-roms-slotromasmh) |
 | DiskImage / DiskIICard / Snapshot | `DiskImage.*`, `DiskIICard.*`, `SnapshotIO.*` | [§ Storage](DEV.md#storage) |
-| Atomic **+ durable** file commit — every write-back goes through it | `AtomicFileReplace.h` | [§ Write-back commit](DEV.md#how-a-media-write-back-commits-atomicfilereplaceh) |
+| Atomic **+ durable** file commit — every write-back goes through it, PDF exports included; `tempSiblingPath` makes the scratch name unique per process *and* per call, so two POM2s on one `$HOME` cannot truncate each other | `AtomicFileReplace.h` | [§ Write-back commit](DEV.md#how-a-media-write-back-commits-atomicfilereplaceh) |
 | Two-phase media mount — keeps the file read off `stateMutex` | `MediaMount.h/.cpp` | [§ Two-phase mount](DEV.md#two-phase-media-mount-mediamounthcpp) |
 | Machine snapshot + Rewind ring (MicroM8-style) | `MachineSnapshot.*`, `RewindBuffer.*` | [§ Rewind](DEV.md#rewind--time-travel) |
 | 3D voxel view (MicroM8-style) + camera math | `Voxel3DRenderer.*`, `Mat4.h` | [§ 3D voxel](DEV.md#3d-voxel-view) |
@@ -204,12 +222,15 @@ $C100-$C5FF  Slot ROMs (or IIe internal I/O ROM when INTCXROM=on).
              EchoPlusCard is in slot s, $Cs00-$Cs04 routes to its
              SSI263.
 $C300-$C3FF  IIe 80-col firmware (internal when SLOTC3ROM=off)
-$C400-$C4FF  ProDOS clock card slot ROM
+$C400-$C4FF  Slot 4 ROM — defaults to the AppleWin-HLE Mouse Card
+             (`mouseaw`); the ProDOS clock card lives here only when
+             the user plugs `clock` into slot 4
 $C600-$C6FF  Disk II boot PROM (341-0027-A embedded; roms/disk2.rom
              overrides)
-$C700-$C7FF  Slot 7 ROM (free by default; //c PAL forces Le Chat
-             Mauve here, and the CLI prefers it for FujiNet / the
-             HDV auto-plug)
+$C700-$C7FF  Slot 7 ROM — `chatmauve` is the fresh-install default on
+             every profile, and the //c PAL forces it; the CLI still
+             prefers slot 7 for FujiNet / the HDV auto-plug when the
+             user has freed it
 $D000-$F7FF  Applesoft BASIC ROM
 $F800-$FFFF  Monitor ROM + 6502 vectors ($FFFA-$FFFF)
 ```
@@ -246,15 +267,15 @@ Built-in slots force their listed card onto the SlotBus on profile load (overrid
 | sl6 | `diskii` — Disk II |
 | sl7 | `chatmauve` — Le Chat Mauve RGB |
 
-The map lives in `kDefaults[]` in `MainWindow::plugSlotsFromSettings`; any `slot_N_card` key in the settings file wins over it.
+The map lives in `kDefaultCards[]` in `SlotConfigurationCoordinator.cpp`; `MainWindow::plugSlotsFromSettings` (now in `MainWindow_SlotConfig.cpp`) applies it. Any `slot_N_card` key in the settings file wins over it.
 
 **//c-class CPU + Chat Mauve rules.** The //c/+/enhanced-//e (NTSC + PAL) and //c PAL profiles have a **65C02 soldered** (`defaultCpu = CMOS`); an `cpu_mode_override = nmos` is *ignored* there (`resolveCpuMode` clamp) — forcing NMOS made their 65C02 ROMs hit KIL opcodes and freeze. The **Unenhanced PAL //e** ships NMOS (like its NTSC sibling) and accepts overrides both ways. The **Le Chat Mauve RGB** card is the one peripheral allowed on a `noPhysicalSlots` //c (it's the rear DB-15 "Adaptateur IIc", not a slot card): user-pluggable on plain //c/+ via a `{empty, Le Chat Mauve}` Slot-Config combo, and a **fixed sl7 built-in on the //c PAL profile**. Profile-forced slots are no longer persisted to `slot_N_card` on exit (quitting on //c used to clobber the user's //e card config).
 
-**Video standard (NTSC/PAL).** Each profile carries a `VideoStandard` (`CpuClock.h`): NTSC (262 lines, 60 Hz, 1.0227 MHz) for US machines, **PAL (312 lines, ~50 Hz, ~1.0156 MHz)** for the two PAL profiles. The European //c PAL is the machine that took the **Le Chat Mauve** RGB Péritel adapter on its DB-15 port; French Touch / DIX demos are PAL-timed, so their beam-raced effects and Mockingboard-T2 frame sync only land correctly under PAL. MAME oracles for European PAL: **`apple2eefr`** (//e enhanced France) and **`apple2cfr`** / **`apple2c0fr`** (//c France, UniDisk variant) — all 312 vtotal, 50.146 Hz, 14.2375 MHz pixclock. Not the US `apple2ee` / `apple2c`. Note: MAME's //c FR still has no usable 3.5" media path for an 800K `.po`; DIX on MAME stays on `apple2eefr -sl5 superdrive`. `applyProfile` calls `controller->setVideoStandard()`, which sets the worker's 50/60 Hz pacing (`frameIntervalUs`) and the 262/312-line geometry in `Memory` (`pushVideoEventLocked`) + `Apple2Display::frameCycleToPos`. The CPU budget `defaultCyclesPerFrame` (17045 NTSC / 20313 PAL) × refresh = the effective clock. Device *generator* clocks (AY/IWM/SSI263) stay at the NTSC nominal — the 0.7 % delta is an inaudible audio-pitch approximation — but `setVideoStandard` calls `setCpuClock` on **every slot card plus speaker and cassette**: their emuCycles replay cursors and cycles→samples queues starve under a wrong clock, which is audible. Pinned by `pal_timing`. CLI: `--preset iie-u-pal|iie-pal|iic-pal` (aliases `frenchtouch`, `chatmauve`).
+**Video standard (NTSC/PAL).** Each profile carries a `VideoStandard` (`CpuClock.h`): NTSC (262 lines, 60 Hz, 1.0227 MHz) for US machines, **PAL (312 lines, ~50 Hz, ~1.0156 MHz)** for the three PAL profiles (//e Unenhanced PAL, //e Enhanced PAL, //c PAL). The European //c PAL is the machine that took the **Le Chat Mauve** RGB Péritel adapter on its DB-15 port; French Touch / DIX demos are PAL-timed, so their beam-raced effects and Mockingboard-T2 frame sync only land correctly under PAL. MAME oracles for European PAL: **`apple2eefr`** (//e enhanced France) and **`apple2cfr`** / **`apple2c0fr`** (//c France, UniDisk variant) — all 312 vtotal, 50.146 Hz, 14.2375 MHz pixclock. Not the US `apple2ee` / `apple2c`. Note: MAME's //c FR still has no usable 3.5" media path for an 800K `.po`; DIX on MAME stays on `apple2eefr -sl5 superdrive`. `applyProfile` calls `controller->setVideoStandard()`, which sets the worker's 50/60 Hz pacing (`frameIntervalUs`) and the 262/312-line geometry in `Memory` (`pushVideoEventLocked`) + `Apple2Display::frameCycleToPos`. The CPU budget `defaultCyclesPerFrame` (17045 NTSC / 20313 PAL) × refresh = the effective clock. Device *generator* clocks (AY/IWM/SSI263) stay at the NTSC nominal — the 0.7 % delta is an inaudible audio-pitch approximation — but `setVideoStandard` calls `setCpuClock` on **every slot card plus speaker and cassette**: their emuCycles replay cursors and cycles→samples queues starve under a wrong clock, which is audible. Pinned by `pal_timing`. CLI: `--preset iie-u-pal|iie-pal|iic-pal` (aliases `frenchtouch`, `chatmauve`).
 
 **ROM identity check**: when the generic `apple2.rom` fallback resolves (no profile-specific dump present), the loader warns the ROM may not match the selected machine.
 
-Default `cyclesPerFrame` = 17045 for II/II+/IIe/IIc; **//c+ defaults to 68180 (4×)** for its on-board Zip-style accelerator. `$C036` 1 MHz fall-back during disk I/O not modelled (event-driven disk LSS keeps nibbles cycle-correct anyway). `cpu_mode_override = auto|nmos|65c02` (Machine → CPU menu).
+Default `cyclesPerFrame` = 17045 on the NTSC II/II+/IIe/IIc profiles and **20313 on the three PAL ones** (so 20313 on a fresh install); **//c+ defaults to 68180 (4×)** for its on-board Zip-style accelerator. `$C036` 1 MHz fall-back during disk I/O not modelled (event-driven disk LSS keeps nibbles cycle-correct anyway). `cpu_mode_override = auto|nmos|65c02` (Machine → CPU menu).
 
 **//c+ MIG + IWM**: //c+ alt firmware (bank 1) drives the Apple MIG gate-array at `$CC00-$CCFF` / `$CE00-$CEFF` + IWM at `$C0E0-$C0EF`. The IWM state machine **is** ported (`IWMDevice`, verbatim MAME, incl. the bit-cell read walker and write windows) and the Sony GCR drives exist (`Sony35Drive`, `--35-disk1/2`); and since 2026-09-01 the //c+ firmware's on-board 3.5" **boot** works through them: the ROM drives the MIG, the MIG selects the drive, the IWM walks the cells, ProDOS boots off the internal bay (pinned `iicplus_boot35`). It needed the IWM's state machine moved off the CPU clock onto the controller's own 7.16 MHz one — a Sony cell is 2.02 CPU cycles, too coarse to place a window edge in (`POM2_IWM_TICKS_PER_CPU_CYCLE`, `CpuClock.h`) — plus a flux query that asked one tick late. The Liron card and the plain //c followed the same day through the OTHER half of that firmware, the SmartPort **bus** — see the next paragraph. The Liron controller ROM **has been publicly dumped** (BMOW/Yellowstone `LIRONALL.bin`, 4 KB, [github.com/steve-chamberlin/fpga-disk-controller](https://github.com/steve-chamberlin/fpga-disk-controller), with full disassembly; MAME still lists it *WANTED* only because it never ingested the dump) and POM2 ships it as `roms/liron.rom`; the UniDisk 3.5 drive-side 65C02 firmware stays deliberately out of scope — POM2 answers its **protocol** instead (`SmartPortBusDevice`). → [DEV](DEV.md#profile-switching-internals).
 
@@ -270,10 +291,10 @@ Three classes of reset (+ one boot shortcut), mirroring MAME's split:
 
 | POM2 verb | Trigger | Behaviour | MAME analogue |
 |---|---|---|---|
-| `softReset()` | F11, toolbar, AI `/reset?kind=soft` | RAM survives. IIe-class wipes full MMU/IOU/LC; II/II+ leaves LC + display untouched (kbd strobe only). CPU `SP -= 3`, I flag set, PC = $FFFC. | `reset_w(true→false)` |
+| `softReset()` | F11, toolbar, AI `/reset?kind=soft` | RAM survives. IIe-class wipes full MMU/IOU/LC; II/II+ leaves LC + display untouched (kbd strobe only). CPU `SP -= 3`, I flag set, PC = $FFFC; on a **65C02** D is also cleared (MAME `ow65c02.lst:814`), NMOS leaves it alone. | `reset_w(true→false)` |
 | `hardReset()` | F12, toolbar, AI `/reset?kind=hard`, `applyProfile` step 11 | RAM survives; CPU additionally zeros A/X/Y, SP = $FF, P = $24 \| I. **II/II+**: display/LC preserved (same as soft reset). **IIe-class**: full MMU wipe → TEXT. | `reset_w` + register wipe |
 | `coldBoot()` | Toolbar power, AI `/reset?kind=cold`, MainWindow ctor, "Insert + boot" | Wipes user RAM + LC + aux with `00 FF 00 FF…` MAME pattern; full reset; hard reset CPU. | `machine_start` + `machine_reset` |
-| `bootFromSlot(N)` | HDV / SmartPort / Disk II Library "Boot" | coldBoot-equivalent (inlined; also arms the //c on-board SmartPort iff N=5) then `PC = $C000 + N*256` after validating JSR-dispatch trio ($Cn01=$20, $Cn03=$00, $Cn05=$03 — Apple II Ref Manual Appx C). $Cn07 NOT validated (HDV cards have $Cn07=$01). Mismatch → falls back to `coldBoot`. | Synthetic shortcut |
+| `bootFromSlot(N)` | HDV / SmartPort / Disk II Library "Boot" | coldBoot-equivalent (inlined; also arms the //c on-board SmartPort iff N=5, re-bases the cassette via `resetCpuSide()`, clears the debugger transient + resyncs the debug hook, and clears the rewind ring) then `PC = $C000 + N*256` after validating JSR-dispatch trio ($Cn01=$20, $Cn03=$00, $Cn05=$03 — Apple II Ref Manual Appx C). $Cn07 NOT validated (HDV cards have $Cn07=$01). Mismatch → falls back to `coldBoot`. **Slot 5 on a //c+** is not entered directly: its `$C500` only finds the rear-port device from the ROM's own reset scan, so that case is a `hardReset` (`Memory::iicPlusBootsSlot5ByReset`). | Synthetic shortcut |
 
 Keyboard wiring:
 
@@ -287,7 +308,7 @@ Keyboard wiring:
 
 `CliDispatcher` (parser, no `EmulationController` dep) + `CliRunner` (Phase-C runner). Three phases: parse → pre-boot (preset / ROM / display / speed) → post-boot Phase C (deferred actions: `--load addr:file`, `--snapshot-load`/`--snapshot-save`, tape ops, paste, run, step).
 
-Flags: `--preset ii|ii+|iie-u|iie|iic|iic+|iie-pal|iic-pal`, `--speed`, `--cpu-max`, `--display`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path` (//c+ Sony 3.5"), `--load addr:file`, `--run`, `--paste`, `--step`, `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--kiosk`. `printUsage()` in `CliDispatcher.cpp` is the source of truth.
+Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`, `--ii-plus` (alias `--ii+`), `--speed`, `--cpu-max`, `--ai-control[=PORT]`, `--display ntsc|chatmauve|mono-white|mono-green|mono-amber`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path` (//c+ Sony 3.5"), `--prodos-folder dir`, `--load addr:file`, `--run addr`, `--paste`, `--step N`, `--trace-brk` (accepted, not wired), `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--kiosk`, `-h`/`--help`. `printUsage()` in `CliDispatcher.cpp` is the source of truth.
 
 **Kiosk is a runtime mode, not just a flag**: `MainWindow::toggleKioskMode()`
 (Ctrl+Alt+F, F10, View menu, `view.kiosk` palette command, or the in-kiosk menu's
@@ -314,8 +335,11 @@ Current release: **v0.9.0**. **Single source of truth = `CMakeLists.txt`
 `build/generated/Version.h` (from `src/Version.h.in`); all C++ pulls the
 version from there (`POM2_VERSION` / `POM2_VERSION_STRING` macros + `pom2::
 kVersion[String]`). Consumers — `main.cpp` (banner + window title),
-`MainWindow_Slots.cpp` (runtime title), `MainWindow.cpp` (About) — no longer
-hard-code it. Bumping `project(VERSION)` re-runs CMake and rebuilds them.
+`MainWindow_Slots.cpp` (runtime title), `MainWindow_MiscPanels.cpp` (About),
+`pom2_headless.cpp` (`--version`) — no longer hard-code it, and
+`packaging/windows/POM2.rc.in` expands the same numbers into the Windows
+VERSIONINFO resource. Bumping `project(VERSION)` re-runs CMake and rebuilds
+them.
 
 To bump a release, edit **`CMakeLists.txt`** then the prose-only files that
 cannot `#include` the header:
@@ -323,19 +347,26 @@ cannot `#include` the header:
 - `CMakeLists.txt` (`project(... VERSION x.y.z ...)`) — **drives all code**
 - `README.md` (title, and the package names in § Download) — manual
 - `CLAUDE.md` (this line) — manual
-- `docs/releases/v<x.y>.md` — the release notes; the publish job reads the
-  file whose name matches the tag, so a missing one silently downgrades the
-  Release body to a generated commit list
+- `vcpkg.json` (`"version-string"`) — manual, cannot `#include` anything
+- `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes; the
+  publish job tries both conventions, and says so loudly in the log when it
+  finds neither before falling back to a generated commit list
 
 ## Package payload
 
 **`packaging/bundle.manifest` is the single list of what ships inside a
-package** — `roms/` + `fonts/` + the About photo, `wasm floppyemu` as the
+package** — `roms/` (+ `packaging/roms_README.txt` renamed to `roms/README.txt`)
++ `fonts/` + the About photo + the //e keyboard photo, `wasm floppyemu` as the
 browser-only extra (it holds the demo's boot disk), a `deny` list
-(`disks_5.4`, `hdv`, `snapshots`, …) that must never appear in one, and a
-`denyglob` archive filter (`*.zip`, `*.7z`, …) applied inside copied dirs. CMake
-parses it at configure time for **both** the `install()` rules and the WASM
-`--preload-file` arguments; `packaging/stage_data.sh` parses it for the macOS
-`.app` and the Windows `.zip`, and `--verify` is the guard every release job
-runs against its staged tree. Pinned by `bundle_manifest`. Adding an asset
-means editing the manifest, nothing else. → [DEV § Package payload](DEV.md#package-payload--packagingbundlemanifest)
+(`disks_5.4`, `hdv`, `disks_3.5`, `snapshots`, `printouts`, `cassettes`,
+`prodos_folder`) that must never appear in one, and a `denyglob` archive filter
+(`*.zip`, `*.7z`, …). Since 2026-09-07 **all three parsers enforce `deny` and
+`denyglob`**, not just `--verify`: the CMake `install()` rules, the emcc
+`--preload-file` arguments, and `packaging/stage_data.sh`'s `stage()`. Matching
+is case-insensitive and applies to directories as well as files, at any depth
+(a `foo.ZIP/` folder used to walk straight through, and `--verify` was blind
+below `-maxdepth 4`). `--verify` is the guard the six release packaging jobs run
+against their staged trees — and a payload directory holding only its README now
+*fails* it, because that is a package with zero ROMs. `--self-test` runs in CI as
+the `bundle_manifest` ctest, with negative controls. Adding an asset means
+editing the manifest, nothing else. → [DEV § Package payload](DEV.md#package-payload--packagingbundlemanifest)

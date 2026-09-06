@@ -1065,10 +1065,14 @@ int main(int argc, char* argv[])
 #endif
 
     // Record where the window ended up WHILE GLFW is still alive.
-    // ~MainWindow runs after glfwTerminate() (it is a local of main), so
-    // the capture cannot live in the destructor: glfwGetWindowPos/Size
-    // bail on the un-init check, zero their out-params, and the geometry
-    // write is silently dropped.
+    // The capture cannot live in ~MainWindow: glfwGetWindowPos/Size bail on
+    // the un-init check, zero their out-params, and the geometry write is
+    // silently dropped. (~MainWindow no longer runs after glfwTerminate() —
+    // `mainWindowOwner.reset()` a few lines below destroys it while the GL
+    // context, the GLFW window and the ImGui context are all still alive —
+    // but the capture stays here anyway: it is the one call that must happen
+    // before ANY teardown, and moving it back into the destructor would put
+    // it after the panels' own GL cleanup for no gain.)
     mainWindow.captureWindowGeometryNow();
 
     // Destroy the window object HERE, while the GL context, the GLFW window

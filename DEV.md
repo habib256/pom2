@@ -758,11 +758,22 @@ text bottom 4 rows. Pinned: `dlgr_render_smoke`, goldens
 IIe `$C00C/$C00D` 80COL, `$C000/$C001` 80STORE, `$C00E/$C00F` ALTCHAR)
 with CPU-cycle timestamps. `Apple2Display::render()` replays events per
 scanline band via `renderInternalBand` when the log is non-empty;
-otherwise the fast single-`getDisplayState()` path is unchanged.
+otherwise it takes the fast single-state path. That state is
+`getDisplayStateAtFrameStart()` from the first published frame onwards —
+the bare `getDisplayState()` survives only as the pre-first-frame fallback
+(`frameCounter == 0`, which is how the display tests drive the class with no
+clock). **A stopped machine publishes no frames**, so since 2026-09-07 both
+paths run the frame-start state through
+`Apple2Display::applyIdleSwitchOverride` (`Apple2Display.cpp:411-426`): while
+`cpuIdle_`, it diffs the live `mem.getDisplayState()` against the snapshot
+taken at the last run (`liveStateAtRun_`) and folds only the changed mode
+fields — `textMode, mixedMode, page2, hiRes, eightyCol, an3, altChar, dhgr,
+eightyStore` — onto the published state. Without it a `$C051` poked from the
+debugger or the memory editor changed the content but never the mode.
 
 **Per-video-frame publication (not per-tick)** *(2026-06-10)*. Recording is
 continuous: `Memory::advanceCycles` **publishes** the completed
-`{frameStartState, events}` pair at each video-frame boundary (65 × 262 NTSC /
+`{displayAtFrameStart_, events}` pair at each video-frame boundary (65 × 262 NTSC /
 312 PAL cycles), and `takeVideoEvents()` returns a *copy* of the last published
 frame. This replaced an earlier model that opened the log per worker CPU tick
 (`beginVideoEventFrame`) and let the UI *steal* it at vsync — under PAL the
@@ -798,7 +809,7 @@ path, so mid-scanline switches land in the 14.318 MHz waveform the composite
 modes (`ColorCompositeOE` GPU, `ColorCompositeOECpu`, `ColorAppleWin`)
 consume — not just the LUT framebuffer. `fillCompositeSignal` drives the SAME
 `forEachBeamSegment` decomposition the RGBA path uses (see below): it zeroes
-`signalBuf`, starts from `getDisplayStateAtFrameStart()`, and for each band ×
+`signalBuf`, starts from `getDisplayStateAtFrameStart()` + `applyIdleSwitchOverride`, and for each band ×
 column segment sets the mutable local `state` (the per-mode paint helpers
 capture it by reference) and calls `paintSignalBand(y0, y1, col0, col1)`,
 reusing the same `bandRows`/`bandScanlines` clipping as `renderInternalBand`.
@@ -1032,6 +1043,19 @@ edge-mask → persistence (ping-pong FBO, applied last so the afterglow isn't
 re-attenuated by the glass each frame). The scanline→mask→lighting→
 luminanceGain ordering matches OpenEmulator's display shader
 (`OpenGLCanvas.cpp:117-126`).
+
+**GL teardown and FBO limits** *(2026-09-07)*. `~CrtEffectStack` was
+`= default` and deleted nothing, opting the class out of its own teardown
+contract; it calls `destroyGL()` now (`CrtEffectStack.cpp:408/416`). Both this
+pass and `NtscPostProcessor` also resized their FBOs without clamping to
+`GL_MAX_TEXTURE_SIZE` or re-checking completeness afterwards, so a 5K dock on a
+4096-px driver (a Pi/V3D, typically) painted garbage in **silence** — the
+allocation simply failed and the shader sampled nothing. Both now clamp
+(`CrtEffectStack.cpp:452`) and re-check
+`glCheckFramebufferStatus(...) == GL_FRAMEBUFFER_COMPLETE`, logging the limit
+they hit. The bandwidth-FBO failure path leaked its program (`bwProgram = 0`
+without a delete), and `GL_UNPACK_ALIGNMENT` was left at 1 for ImGui — both
+fixed.
 
 **Glass details (2026-05 parity pass).**
 - **Hue** is applied here (RGB→YUV BT.601, rotate U/V by `hue·π`, YUV→RGB) so
@@ -1375,8 +1399,11 @@ until 2026-08-01 (full reasoning + numbers → `CHANGELOG.md`):
 
 The AY tick rate derives from the **live** CPU clock, not the NTSC
 constant — pin 22 is the slot's phase-0 line, so PAL clocks the chip at
-1 015 625 Hz (12 cents below NTSC). `PhasorCard` still lacks both the
-event queue and a `setCpuClock` override.
+1 015 625 Hz (12 cents below NTSC). `PhasorCard::setCpuClock` exists (`PhasorCard.h:162`, `PhasorCard.cpp:410` —
+the same body as `MockingboardCard::setCpuClock`), and `setVideoStandard` fans
+it out to every plugged card, not only the Mockingboard. What `PhasorCard`
+still lacks is the **event queue**: no `AyRegEvent` deque, so its register
+writes are not emuCycle-replayed the way `Mockingboard.h:275-315` does.
 
 Each VIA `irqOut() = (ifr & ier & 0x7F) != 0`; OR'd onto slot IRQ.
 
@@ -1971,10 +1998,13 @@ keeps the logic out of `MainWindow.cpp`, the god-object the file-size ratchet
 is now holding still. `insertDisk(path)` stays as the inline form for the
 single-threaded callers (CLI, headless, tests) where it reads better.
 
-Two things are deliberately **not** optimised:
+Two things are deliberately **not** optimised **on the Disk II 5.25" insert
+path** (`DiskIICard::installDisk`; block devices and 3.5" media took the other
+road — see *Eject and flush are three-phase* below):
 
 1. **The outgoing flush stays under the lock.** If the medium being ejected has
-   unsaved changes, `installDisk` still commits it inline and still refuses the
+   unsaved changes, `installDisk` still commits it inline
+   (`flushOutgoingForSwap`, `DiskIICard.cpp:379/394-397`) and still refuses the
    swap when that commit fails. Moving it out would mean either swapping before
    knowing whether the old medium could be written — losing the user's changes
    when it cannot — or handing the dirty image back for the caller to commit,
@@ -1987,6 +2017,39 @@ Two things are deliberately **not** optimised:
    collision (`getPath()` match + `hasUnsavedChanges()`), flushes, then re-reads
    under the lock. Correctness first; the case needs write-back on *and* an
    exact path match.
+
+#### Eject and flush are three-phase *(2026-09-07)*
+
+Mounting was two-phase from the start; ejecting was not, and an eject writes
+the file the user cares about. It now has the same shape, one phase longer
+because a failure has to be undoable:
+
+* **Phase 1, locked** — `MountableMediaCard::prepareEjectBay(bay, out, err)`
+  (`MountableMediaCard.h:184`) / `prepareFlushBay` (`:164`) *capture* the
+  payload: the image bytes plus the dirty-block set, as a
+  `Block512Backing::PendingWriteBack`. Opt-in by design — a card that does not
+  override them returns false with an EMPTY payload and the caller falls back
+  to the inline form. Implemented by `SmartPortCard.cpp:1138`,
+  `ProDOSBlockCard.h:132`, `LironCard.cpp:426`.
+* **Phase 2, unlocked** — `Block512Backing::commitWriteBack` writes and
+  `fsync`s. This is where the 800 KB / 32 MB and the `fsync` live, off the
+  machine lock.
+* **Phase 3, locked again** — re-resolve the card from the SlotBus (it may have
+  been unplugged while the lock was open, `StorageCoordinator.cpp:878-891`) and
+  either retire the bay or, on failure, put the medium back:
+  `DiskIICard::restoreEjected`, `restoreFlushBayDirty`. **A failed commit leaves
+  the disk loaded and dirty**, so a retry loses nothing — it used to only log a
+  line about a disk that was already gone.
+
+Drivers: `StorageCoordinator.cpp:792` (HDV eject), `:872` (bay eject), `:1375`
+(`ejectAllMedia` — the last inline holdout, converted the same day), `:1750`
+(`flushAll`'s Liron capture). The **firmware** 3.5" eject cannot block at all,
+so it hands the payload to `EmulationController::WriteBackQueue`
+(`EmulationController.h:387-424`, its `Disk35WriteBack` thread spawned at
+`EmulationController.cpp:444`) and `Sony35Drive::ejectPending_`
+(`Sony35Drive.h:280`) holds the mechanical eject until the sink reports the
+file landed. `drainDeferredWriteBacks()` is called before the settings are
+written at quit, so the queue cannot outlive the process.
 
 One caller keeps the old inline form on purpose: the profile-switch remount in
 `MainWindow_Slots.cpp`, where the SlotBus rebuild and the remounts must be one
@@ -2051,10 +2114,18 @@ too.
 
 Every write-back path — `DiskImage`, `Disk35Image`, `Block512Backing`,
 `ProDOSVolume`, plus `Settings`, `PrinterHistory`, `CassetteDevice` and the
-ImageWriter exports — writes a **sibling temp file** (`<path>.pom2tmp`, same
-directory ⇒ same filesystem ⇒ the rename cannot fail cross-device), carries
-the original's permissions onto it, then commits through
-`pom2::replaceFileAtomic`. Never `trunc` the user's own file: an ENOSPC /
+ImageWriter exports (`ImageWriterPdf.cpp:192`, through `writeFileAtomic`) —
+writes a **sibling temp file** in the same directory ⇒ same filesystem ⇒ the
+rename cannot fail cross-device, carries the original's permissions onto it,
+then commits through `pom2::replaceFileAtomic`.
+
+The temp name is **unique per process and per call** (`tempSiblingPath`,
+`AtomicFileReplace.h:186`): `<path>.<pid>-<counter>.pom2tmp`. A fixed
+`<target>.tmp` meant two POM2 instances on one `$HOME` — or one instance
+writing the same image twice — truncated each other's in-flight write and
+published a file made of both. `prepareTempPath` still runs on the result:
+a name being unlikely is not the same as a path being safe. `replaceFileAtomic`
+also **follows** a symlinked target rather than replacing the link. Never `trunc` the user's own file: an ENOSPC /
 removable-media / network-share failure part-way through would leave the
 ONLY copy of the disk truncated, since the rest of it lives in RAM.
 
@@ -2167,7 +2238,10 @@ protection positions (Locksmith, David-DOS) are preserved.
 **Write-back**: `loadWoz()` snapshots file to `wozRaw` +
 per-qt-track `(byteOff, byteLen, bitCount)`; `writeFlux()` splices
 into `bitStream[qt]`; `saveDirty()` repacks + zeros CRC32
-(Applesauce "not computed" sentinel) + rewrites in place.
+(Applesauce "not computed" sentinel) and commits through `writeFileAtomic`
+— sibling temp + `fsync` + rename, re-emitting the 2IMG/MacBinary envelope
+around `wozRaw` when `twoImgFormat` (`DiskImage.cpp:2509-2525`). It has never
+rewritten in place.
 `isWriteProtected()` honours both user toggle and
 `INFO.write_protected`. `DiskIICard::insertDisk` forces
 `useBitLss=true` when any drive holds WOZ. Pinned:
@@ -2214,16 +2288,23 @@ track_period`. Pinned: `disk_drive2_smoke`,
 
 ### DiskII multi-instances
 
-`"diskii"` is the only slot-card type allowed in >1 slot
-(`isDuplicate` short-circuits when type=="diskii"; same in
-`firstOccurrence` walk). Both cards load same `disk2.rom` +
-`diskii_p6.rom`. Per-card 2 drives + LSS state.
+**Four** card keys may sit in more than one slot —
+`SlotConfigurationCoordinator::isMultiInstance` (`SlotConfigurationCoordinator.cpp:99-104`)
+returns true for `diskii`, `cffa`, `smartport35` and `liron`; every other key
+is red-flagged as a duplicate. (`firstOccurrence` is gone. Note the Slot Config
+panel's own `isDuplicate` lambda, `MainWindow_Slots.cpp:171-181`, still
+short-circuits on `"diskii"` alone, so it warns about a second `cffa` /
+`smartport35` / `liron` the coordinator would accept — a UI-only divergence.)
+Two Disk II cards load the same `disk2.rom` + `diskii_p6.rom`. Per-card
+2 drives + LSS state.
 
-**Primary**: `MainWindow` keeps `std::vector<DiskIICard*> diskCards`
-in slot-ascending order. `diskCard` (legacy) = `diskCards.front()` —
-lowest-slot wins. Per-slot persistence: `disk_path_slotN` /
-`disk_writeback_slotN`. Primary also writes legacy unsuffixed keys
-for older builds. Profile-switch captures `savedDiskPaths[slot]`
+**Primary**: there is no cached card list. `MainWindow::diskIICards()` queries
+the SlotBus live, in slot-ascending order, and `MainWindow::primaryDiskII()`
+(`MainWindow.h:1242`) is the lowest-slot one. Per-slot persistence:
+`disk_path_slotN` / `disk_writeback_slotN`, the key spelled in exactly one
+place (`pom2::diskIIPathSettingKey`, `StorageCoordinator.h`). Primary also
+writes legacy unsuffixed keys for older builds. A profile switch captures
+`StorageCoordinator::captureRebuildSnapshot(bus)` → `RebuildSnapshot`
 from live cards before tear-down. **IWM wiring**: only slot-6
 `DiskIICard` calls `card->setIWM(&controller->iwm())`.
 
@@ -2608,7 +2689,7 @@ transitions edge-only.
 
 ### ProDOS host folder
 
-`prodos_disk/`. `ProDOSVolume` synthesises a ProDOS volume (guest-writable in RAM; persisting back to the folder is the write-back opt-in).
+`prodos_folder/`. `ProDOSVolume` synthesises a ProDOS volume (guest-writable in RAM; persisting back to the folder is the write-back opt-in).
 Blocks 0-1 boot (zeroed), 2-5 vol-dir key + 3 ext (51 entries max),
 block 6 bitmap (4096 blocks = 2 MB cap), 7+ data + sapling indexes.
 
@@ -2616,12 +2697,36 @@ Scope: flat dir; ≤ 51 files; ≤ 128 KB per file (seedling + sapling,
 tree skipped); type from extension; filenames sanitised to
 `A-Z/0-9/.` with collision suffixes `.1/.2`.
 
-Wiring: HDV slot 5 panel's Library shows `[host folder] prodos_disk/`
+Wiring: HDV slot 5 panel's Library shows `[host folder] prodos_folder/`
 entry. Click → `buildVolumeFromFolder` →
 `ProDOSHardDiskCard::loadImageFromBytes`. **No auto-boot** — user
 boots ProDOS elsewhere, then `/HOST/` appears as slot 5 drive
 (`CAT,S5,D1`). Guest writes land in RAM; with write-back ON they decode back into the folder on eject/quit — host files edited AFTER the mount are preserved (mount-time stamp carried in `PendingWriteBack`), never silently reverted to the snapshot. Pinned:
 `prodos_volume_smoke_test`.
+
+**The volume has free blocks, and the mount stamp is refreshed** *(2026-09-07)*.
+Two defects that together made a host folder read-only in practice while
+presenting itself as writable:
+
+* The bitmap marked **every** block within `total_blocks` as used, so ProDOS
+  reported zero free blocks and the guest got DISK FULL for a two-block file
+  on an otherwise empty volume. The build now adds bounded slack
+  (`ProDOSVolume.cpp:695-721`): 10 % of the content, at least 64 blocks
+  (32 KB) and at most 4096 (2 MB), given back first if it would push the
+  volume past `kMaxVolumeBlocks`. It is usable rather than decorative because
+  `decodeVolumeToFolder` walks the directory graph and writes back every
+  seedling/sapling entry it finds, whoever created it, and the volume
+  directory is always 4 blocks / 51 slots regardless of how many are filled.
+  It is bounded rather than generous because the image is a RAM allocation
+  carried in the snapshot payload.
+* `mountTime_` was set once at load. The *flush* path leaves the medium
+  mounted, so after the first flush the files it had just rewritten were
+  "host-newer" and the guest's SECOND save was preserved away as if the user
+  had edited behind POM2's back. `Block512Backing.cpp:329-338` re-stamps the
+  volume with the commit's own timestamp on a successful synth flush.
+
+Also: symlinks pointing out of the served folder are refused, and Windows
+device names (`CON`, `AUX`, …) are rejected by `isHostSafeProDOSName`.
 
 **Two ProDOS entries can want one host name** (2026-08-17, bug hunt 8
 round 3). `decodeVolumeToFolder` strips trailing dots before composing a
@@ -2819,10 +2924,75 @@ actually written; the read caches re-derive from the restored nibbles
 (`invalidateAllBitStreams`). Read-only / WOZ / empty drives cost one
 flag byte.
 
-**Known gap**: writable-WOZ writes aren't undone — WOZ keeps its
-authoritative bits in `wozRaw` (a different store from the nibble
-buffers), and WOZ originals are typically write-protected anyway. A
-clean follow-up if a writable-WOZ workflow needs it.
+**Media a rewind cannot undo, and the policy that replaced capturing it**
+*(2026-09-07)*. The ring never captures a block device (up to 32 MiB), a 3.5"
+image (800 KB) or a writable WOZ (whose authoritative bits live in `wozRaw`, a
+different store from the nibble buffers the v2 Disk II media snapshot covers).
+Rolling RAM back over a ProDOS SAVE while the volume stayed written is a real
+corruption path: the restored directory and bitmap disagree with the blocks on
+the disk, and the next allocation cross-links them. Capturing megabytes per
+frame was never the answer; the chosen policy is the safe minimum — **a rewind
+may never CROSS such a write**. Every one of those paths bumps
+`pom2::mediaWriteEpoch()` at the storage leaf (`Block512Backing.h:60-68`,
+called from `Block512Backing.cpp:552/571`, `Disk35Image.cpp:265`,
+`DiskImage.cpp:1876` and `PrinterCoordinator.cpp:171` — printed output is
+irreversible too), and `EmulationController::noteMediaWrite`
+(`EmulationController.cpp:997`) compares it at the ring's capture point and
+clears the history when it moved, so the timeline restarts *after* the write.
+One relaxed atomic load per captured frame, and it covers write paths that do
+not exist yet, because the bump is at the leaf. **Non-WOZ Disk II nibble writes
+deliberately do not bump**: those *are* captured, and a rewind is expected to
+undo them. Every coordinator mount/eject clears the ring for the same reason —
+a host-side media swap makes the recorded timeline a different machine.
+
+**What else the 2026-09-07 pass added to the snapshot.** Sixteen fields were
+restoring CPU + RAM against devices left on the abandoned timeline:
+
+* **Disk II v4** (`kDiskIISnapVersion = 4`, `DiskIICard.cpp:746`) carries the
+  in-flight **write burst** — `writeBuffer`/`writePosition`/`writeStartTime`/
+  `writeLineActive`, variable-length, header + `count` 8-byte flux stamps
+  (`DiskIICard.cpp:812-870, 955-968`). `lssCycle` was already saved; without
+  the burst a rewind during a DOS SAVE punched a hole in the sector, and with
+  write-back on that hole reached the `.dsk`. Pre-v4 blobs restore with an idle
+  controller.
+* **TransWarp v2** (`TranswarpCard.cpp:36`) serialises `displaced_`, the 4 KB
+  of `$F000` ROM the card holds while it shadows — the only copy of Applesoft +
+  Monitor at that moment. The loader used to re-derive `shadowing_` and a later
+  `$C072` wrote stale or zero bytes over the ROM.
+* **`Sony35Drive`** and **`Disk35Image`** gained hooks (the IWM already restored
+  its FSM, so a //c+ / Liron 3.5" transfer came back mid-cell → I/O ERROR), and
+  **`NoSlotClock`** gained one at all: its bit-serial key matcher and readout
+  cursor are walked over many accesses, so half a match is a real state.
+* **Memory's IOU trailer** grew two bytes at the end, under the same
+  grow-at-the-end rule (`Memory.cpp:934-946`): `vblWasActive`, the edge
+  detector behind the //c VBL IRQ (it defaults to true, so a restore taken
+  inside the blanking interval re-armed the edge and fired one spurious IRQ —
+  the frame sync a //c PAL French Touch demo races against), and
+  `iicCardWindow_`, the partner latch of the already-saved
+  `iicSmartPortArmed_`.
+* **SmartPort identity**: `SmartPortCard` restored a primed 512-byte write
+  block with no media identity, so swapping a bay and rewinding committed the
+  old block to the new disk.
+* Four cards now **identify the blob before resetting themselves** (they used
+  to `reset()` first, so a foreign blob wiped them mid-transaction, which
+  contradicts the contract in `MachineSnapshot.cpp`), and five restores clamp
+  values that stalled or spun a device (TransWarp `slowCycles_`,
+  WorkstationCard `timerAcc_`/`sccAcc_`, SSC `statusErrors_`/`irqState_`,
+  M68705 `reg.S`, the W5100's CLOSED-demoted sockets still advertising
+  RSR/FSR). The W5100 also stopped restoring `virtualDns_`, which is a user
+  setting, not machine state.
+* **Every** snapshot-load path — the AI server's `/snapshot/load`, the CLI's
+  `--snapshot-load` and the rewind scrub — now calls `flushAudioForRewind()`
+  and re-bases the cassette. Only the rewind path used to.
+
+**Declined, and documented in place**: `Ay3_8910::busOut` (consumed within one
+`applyControl`; the VIA's `portAIn`, which *is* saved, already carries what
+survives the call) and the keyboard latch / paste FIFO (host input in flight,
+and it lives in the wrong lock domain — `Memory::kbMutex`, not `stateMutex`).
+
+**Known gap**: writable-WOZ writes still aren't *undone* — they are only made
+un-crossable by the epoch policy above. WOZ originals are typically
+write-protected anyway. A clean follow-up if a writable-WOZ workflow needs it.
 
 ### 3D voxel view
 
@@ -3309,8 +3479,13 @@ convention per real SSC ROM (6502disassembly.com/a2-rom/SSC). Pinned:
 
 TCP listener on `127.0.0.1:port` (default 6502); one client. 4 KB
 rings; telnet IAC (WILL/WONT/DO/DONT + 2-byte + `$FF $FF` literal)
-swallowed by `processTelnetRx` so stock `telnet` connects.
-`TCP_NODELAY` on. Auto-plugged at startup; listener starts only when
+handled by `processTelnetRx` so stock `telnet` connects. Swallowing an
+option request is not the same as answering it — a client whose DO/WILL got
+no reply stays in **line mode**, which is what made typing feel wrong.
+`processTelnetRx` now **replies** (2026-09-07). And the ACIA's **transmit
+interrupt** was computed and then thrown away (`(void)txIrqEnable`), so a
+driver using command `$05`/`$09` and sleeping on TX IRQ never woke;
+`IRQ_TDRE` is raised now. `TCP_NODELAY` on. Auto-plugged at startup; listener starts only when
 `ssc_listening=true`. LF→CR RX symmetric; raw-mode toggle (default
 OFF). Port + state persisted. Pinned: `ssc_acia_smoke`.
 
@@ -4115,10 +4290,14 @@ the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
   serves; no TLS, no SSH, no JSON.
 
   **Every wait is bounded, and one deadline covers the whole exchange** — DNS,
-  connect, request and body together. This is not tidiness: the fetch runs on
-  the CPU thread inside `runCpuSlice`, which holds `stateMtx`, and the UI
-  thread needs that mutex to paint anything. An unbounded fetch is a frozen,
-  unpaintable window whose own Stop button is out of reach. Two traps, both
+  connect, request and body together. This *used* to be the difference between
+  a working window and a frozen one: the fetch ran on the CPU thread inside
+  `runCpuSlice`, which holds `stateMtx`, so an unbounded fetch was an
+  unpaintable window whose own Stop button was out of reach. It runs on its
+  own guarded worker now (`FujiNetNetDevice.cpp:364-372`, tag `FujiNetN`), and
+  the deadline stayed for the reason that outlives the lock: a fetch that
+  cannot end is a socket and a thread that never go away. `cancel` is noticed
+  within one `kWaitSliceMs = 100` slice (`FujiNetNetDevice.cpp:169`). Two traps, both
   measured rather than assumed: `SO_SNDTIMEO` does **not** bound `connect()`
   (macOS, 192.0.2.1 — 75 s against an 8 s request), and a per-recv timeout
   never bounds a *transfer*, so a server drip-feeding one byte just inside it
@@ -4266,6 +4445,19 @@ before the payload is drained is an "implied skip" that discards it —
 real hardware behaviour, modelled. Payload readback order is the
 datasheet's: RxStatus H/L, RxLength H/L, then payload L/H per word.
 
+**The ISQ had to be synthesised** *(2026-09-07)*. The card's interrupt-status
+queue at `$C0n8` was hard-wired to 0, so the driver idiom "read `$C0n8` until
+it returns 0" saw nothing and **no frame was ever noticed**; `TxEvent` never
+signalled `TxOK` either. Both are synthesised from the event registers now.
+The inbound queue was also wrong in the direction that hurts: 4096 *entries*
+(~6 MB, minutes of backlog) dropping the **oldest**, where the chip has ~4 KB
+and drops the **arriving** frame while counting `RxMISS` + BufEvent. It is now
+byte-capped and drops the newcomer. And a reset reloaded `RxCTL` without
+re-decoding the address filter it drives. The `readRxBuffer` advance asymmetry
+is **not** a defect — it is MAME's order, deliberate and pinned; `Skip_1` and
+the PacketPage frame-buffer window are left as MAME parity, with no oracle to
+arbitrate them.
+
 **Deltas from MAME**, all deliberate:
 
 - MAME is *pushed* frames by `device_network_interface::recv_start_cb`
@@ -4352,9 +4544,41 @@ connect) succeeds instantly. Toggle: `uthernet2_virtual_dns`.
 **What is deliberately not implemented.** `LISTEN` is in the W5100 command
 set but POM2 does not open a host listener for it: an inbound connection
 cannot reach the guest through either supported transport (libslirp is
-outbound-only without explicit port forwarding, and there is no host port
-the user asked to bind). The command logs "not supported" rather than
-pretending.
+outbound-only without explicit port forwarding). It no longer just logs,
+though — leaving `Sn_SR` at `SOCK_INIT` made a server driver spin forever
+with nothing to time out on. `listenSocket()` (`W5100Device.cpp:509-531`)
+warns, then `clearSocket(i)` (→ `SOCK_CLOSED`) and raises TIMEOUT in
+`Sn_IR`: the datasheet §5.2.3 failure every W5100 server loop already
+handles. Note `Sn_PORT` **is** bound on the host socket for **UDP**
+(`W5100Device.cpp:385-397`; IPRAW/MACRAW never reach that path — they go
+through the `NetworkBackend`, not a host socket) — and deliberately not for a TCP client, because
+WIZnet drivers reuse one fixed source port and the second connect would hit
+`EADDRINUSE` against the first 4-tuple's TIME_WAIT. The bind goes through
+`setListenerBindPolicy()`, never a raw `SO_REUSEADDR` (`SocketCompat.h`).
+
+**Interrupt registers, and the SEND paths the datasheet arbitrates**
+*(2026-09-07)*. `Sn_IR` and the common `IR`/`IMR` did not exist — reads
+returned 0 and the write-1-to-clear was dropped — so the stock WIZnet
+`send()` spun on SEND_OK for ever, and a driver polling CON/TIMEOUT never
+woke. They exist now, with the usual W1C semantics. Three SEND defects went
+with them, all reachable from the stock driver:
+
+* A SEND of **exactly** `Sn_TX_FSR` bytes transmitted nothing: the read and
+  write pointers were masked into the ring *before* being differenced, so
+  `rd == wr` read as "empty" while `Sn_TX_RD` was advanced anyway and FSR
+  reported full again. That is the driver's max-throughput path.
+* A SEND in a **non-transmitting** state (SYN_SENT, say) still advanced
+  `Sn_TX_RD`, deleting the first request after a non-blocking connect.
+* `SEND_MAC` (`$21`) and `SEND_KEEP` (`$22`) fell through to `default:` —
+  UDP driven through SEND_MAC lost every datagram and the ring filled.
+
+Also fixed: `Sn_RX_RSR` pulled a packet on *both* byte reads and therefore
+tore, and `RTR`/`RCR`/`IMR`/`PMAGIC` writes were dropped.
+
+**Declined with reasons** (reviewed, not defects): `Sn_MR` MULTI/ND is a
+feature POM2 does not offer rather than a wrong answer; the PacketPage
+frame-buffer window and `Rdy4TxNOW`-on-the-odd-read are datasheet-correct or
+MAME-parity with no oracle to arbitrate.
 
 **Snapshot**: only the datasheet-defined regions are saved — the reserved
 holes (`$0030-$03FF`, `$0800-$3FFF`) carry nothing and would just bloat
@@ -4553,6 +4777,18 @@ a terminal.
 - **The index is written to a temp file and renamed.** A crash mid-write
   leaves the previous index intact; an unrecognised index yields an EMPTY
   history rather than rows pointing at files POM2 cannot vouch for.
+
+**A bad index must not delete the printouts** *(2026-09-07)*. Those last two
+rules combined into a defect: `open()` ignored `readIndex()`'s result, and the
+sweep that removes every PNG the index does not mention then ran behind an
+*empty* index — so one truncated write or one foreign version tag turned "POM2
+cannot read this file" into "POM2 deleted up to 200 of your printouts",
+silently, on open. The sweep now runs **only behind an index that actually
+parsed** (`PrinterHistory.cpp:163-180`); a bad one is renamed
+`<index>.bad-<stamp>` (the user may want to look at it, and a fresh index is
+written on the next page) and every PNG is left where it is. The writer thread
+also has a liveness predicate now: if it died, the wait fails instead of
+hanging the window.
 
 Capped at 200 pages, deleting the PNGs as well as the rows — an emulator left
 running must not quietly fill a disk.
@@ -5235,7 +5471,11 @@ $30 MOUSE_CLEAR   1 B   wipe position + state
 $40 MOUSE_POS     5 B   set absolute position (X16, Y16)
 $50 MOUSE_INIT    3 B   clamp 0..1023, position = 0, canned $FF reply
 $60 MOUSE_CLAMP   5 B   set X or Y clamp window (cmd byte bit 0 = axis)
-$70 MOUSE_HOME    1 B   re-home to (0, 0)
+$70 MOUSE_HOME    1 B   re-home to (iMinX, iMinY) — the top-left of the
+                        CLAMPING window, per Apple's HOMEMOUSE, not (0,0).
+                        The one deliberate deviation from AppleWin here
+                        (`MouseCardAppleWin.cpp:314-329`); the two agree only
+                        while the clamp is still the power-on 0..1023.
 $90 MOUSE_TIME    1..4 B no-op
 ```
 
@@ -5338,8 +5578,9 @@ measured off the widest label ("AUX slot") so it survives the UI zoom.
 in the 880 px free-floating default but leaving the media column a ~100 px
 sliver once the panel is docked into a side dock — every label in it clipped to
 "Mount / Inser". Side-by-side now requires `avail > 46 em`; below that the two
-sections stack, with the assignment child taking
-`ImGuiChildFlags_AutoResizeY` so the media section starts right under it.
+sections stack: the assignment child is a plain `ImGuiChildFlags_Borders`
+child sized `ImVec2(0,0)` (`MainWindow_Slots.cpp:119`), so the media section
+starts right under it.
 
 ### Panel registry (`PanelCatalog.h`, `PanelRegistry.*`, `MainWindow_Panels.cpp`)
 
@@ -5439,7 +5680,7 @@ outside a body refers to it.
 
 ### The MainWindow family
 
-`MainWindow.cpp` was 8316 lines. It is ~1680, and holds only what a
+`MainWindow.cpp` was 8316 lines. It is ~1470, and holds only what a
 composition root should: construction, destruction, the dock, and the frame
 loop. Everything else is a sibling TU named for what it owns.
 
@@ -5457,10 +5698,66 @@ loop. Everything else is a sibling TU named for what it owns.
 | `MainWindow_*Panels.cpp` | audio, device, settings, misc panel bodies |
 | `MainWindow_MemoryMaps.cpp` | the memory-map views |
 | `MainWindow_Panels.cpp` | the panel registry binding |
+| `MainWindow_Session.cpp` | session persistence — `persistSession()`, settings + window geometry writes, and the IDBFS sync point on the browser build |
 
 The split that matters most is **Media vs StoragePanels**: one decides what
 happens to a disk image, the other draws. The panels call in; nothing in
 `MainWindow_Media.cpp` calls back out to ImGui.
+
+### The coordinators
+
+The other half of the split went sideways rather than down. Ten
+`pom2::*Coordinator` classes hold the *policy* that used to live as `MainWindow`
+members, so it is reachable from a headless test and cannot accidentally reach
+ImGui. None of them owns a card: `SlotBus` does, and a coordinator that needs
+one re-resolves it under `lockState()` at the moment it acts — the rule that
+survives a topology rebuild.
+
+* **`SlotConfigurationCoordinator`** (`SlotConfigurationCoordinator.h`, 209 lines)
+  — the two *non-topology* configuration values: `effectivePlan_` (the settings
+  after profile fixtures and the multi-instance policy) and `draft_` (staged UI
+  edits, never applied implicitly). Owns `kDefaultCards[]` and `isMultiInstance`.
+  SlotBus stays the sole authority for what is actually plugged.
+* **`SlotRebuildCoordinator`** (104 lines) — the *sequencing* of a topology
+  rebuild, as a `Phase` state machine (Stable / Prepared / Rebuilding) plus
+  eight `Hooks`. It exists to make it impossible to clear the SlotBus before
+  consumers are detached, or to publish AI endpoints before the replacement
+  topology is coherent.
+* **`SlotProvisioningCoordinator`** (179 lines) — additive, session-only slot
+  provisioning for explicit boot intent (`ensureHdvBootTarget`,
+  `ensureSmartPortBootTarget`). It never tears a topology down and never
+  rewrites the user's slot plan.
+* **`StorageCoordinator`** (1973 lines, the largest and the only one near the
+  2000-line watch band) — storage topology and lifecycle: cross-card media
+  discovery, the three-phase flush/eject policy above, session-only
+  auto-provisioning state, and the one definition of the
+  `disk_path_slot<N>[_drive2]` settings key (`pom2::diskIIPathSettingKey`).
+* **`AudioCoordinator`** (444 lines) — host audio policy: the whole
+  `AudioSource` registration inventory (Mockingboard / Phasor / EchoPlus /
+  EchoPlusTms5220) plus per-card volume and mute, resolving live cards under the
+  machine lock so a profile rebuild cannot leave the audio callback holding a
+  dangling card.
+* **`PrinterCoordinator`** (280 lines) — host printer-cable policy: it discovers
+  every interface card (PrinterCard / Grappler / FujiNet / SuperSerial), picks
+  exactly one by physical priority, drains it, and reports the sources it
+  ignored. Its drain also bumps `pom2::mediaWriteEpoch()` — printed output is
+  irreversible, so a rewind may not cross it.
+* **`NetworkCoordinator`** (263 lines) — the host side of the FujiNet relay: one
+  snapshot/apply pair for the panel with the card re-resolved under the lock
+  each time, plus the host-only state that has no emulated counterpart (serial
+  device scan, helper program paths, status line).
+* **`DevicePanelCoordinator`** (314 lines) — the frontend's immutable view of
+  slot devices: an `InventorySnapshot` of which slot holds Chat Mauve /
+  SmartPort / FujiNet / Uthernet I & II / printer / Grappler / clock / serial,
+  captured under `lockState()` so an ImGui panel sees only Snapshot +
+  FrameResult and never a raw card pointer.
+* **`MouseCoordinator`** (120 lines) — the renderer-free host-mouse boundary:
+  which mouse card kind is plugged (None / MAME / AppleWin), the AppleWin
+  inspector snapshot and the ProDOS screen-holes snapshot, and the routing of
+  host pointer input — without retaining a SlotBus alias.
+* **`DebugCoordinator`** (70 lines) — the memory viewer instance and its
+  two-phase contract at the emulation-state boundary: read under the lock,
+  write after unlocking.
 
 ### Coverage, and its floor
 
@@ -5488,11 +5785,42 @@ separate project against the installed archive with plain flags, which cannot
 work against an instrumented one, and it measures the export contract rather
 than POM2's code.
 
+**A skipped test says SKIPPED, not PASSED** *(2026-09-07)*. Coverage measures
+what the tests *reach*; this is about the tests admitting when they reach
+nothing. ~57 sites did `printf("SKIP …"); return 0;`, so a missing ROM or
+fixture produced a green "Passed 0.00 sec" for a binary that verified nothing
+— and that is how five registered tests came to be permanent no-ops, their
+fixture paths (`disks_5.4/dos33_master.dsk`, `ProDOS_2_4_3.po`) left behind by
+the `dsk/` move, including the **only** PROM-driven DOS 3.3 + ProDOS boot
+test. Fixing the paths exposed a second defect underneath: `disk_boot_smoke`'s
+break condition never fired, so it compared page `$08` after DOS had booted
+and run HELLO. The convention is now uniform — **77 means skipped**, every
+other non-zero value means failed — and it is applied as a **directory-wide
+sweep** over the `TESTS` directory property (`tests/CMakeLists.txt:6817-6833`)
+rather than test by test, so a new `add_test()` cannot forget it. Related, and
+for the same reason: `ci.yml` asserts the suite still declares **241** tests
+(the download-gated Klaus/zexall oracles used to deregister in silence behind
+an `if(EXISTS)`), its "no test depends on machine ROM dumps" line was false
+(~70 test files open `roms/`) and is gone, `cpu_cycle_count` fails without
+relying on `assert()`, `POM2_HAVE_SLIRP` is defined on `pom2_core` and
+`pom2_core_test` too (so the tests and the SDK compile the backend that ships
+rather than its 315-line stub), and fixed `/tmp` names and ports 36502/36503
+gave way to `tests/TestTempPath.h` and a free port picked at run time.
+
+> **Naming note.** ~27 source comments pin a test by its *file* name
+> (`prodos_volume_smoke_test`, `vbl_smoke_test`, `storage_coordinator_test`, …).
+> `add_test(NAME ...)` drops the `_test` suffix, so those names do **not**
+> resolve with `ctest -R`: strip the suffix (`prodos_volume_smoke`,
+> `vbl_smoke`, `storage_coordinator`) or run
+> `ctest -N | grep <stem>`. Left as-is rather than mass-edited — a comment
+> pointing at `tests/<name>_test.cpp` is still pointing at a real file.
+
 Two mechanisms keep it this way, and they are different on purpose:
 
 * `tools/check_file_sizes.sh` is the general ratchet — a recorded ceiling per
   file, which may fall and may not rise. `MainWindow.cpp` left it entirely:
-  at ~1680 it is below the 2000-line watch threshold, as is every sibling.
+  at ~1470 it is below the 2000-line watch threshold, as is every sibling
+  (the largest is `MainWindow_StoragePanels.cpp` at ~1740).
 * `pom2_enforce_mainwindow_line_limit()` is a **hard cap at configure time**:
   any `src/MainWindow*.cpp` over 2000 lines fails `cmake`. Family-wide on
   purpose — the failure mode was never "MainWindow.cpp grows", it was "the
@@ -5629,7 +5957,7 @@ of a saturated full-width slab.
 
 ### Docking + layout presets
 
-POM2 hosts a **DockSpace over the viewport work area** so its ~33 panels become
+POM2 hosts a **DockSpace over the viewport work area** so its 38 panels become
 tabs in a persistent layout instead of a pile of overlapping windows.
 `MainWindow::renderDockSpace()` creates it; `applyDockLayout()` seeds layouts.
 
@@ -5696,9 +6024,11 @@ menu entries are actions with no checkmarks — the moment a tab is dragged, the
 "active" preset stops describing what's on screen.
 
 **Reset is also the fresh-install startup layout**, so its top-right trio is
-what a first launch opens on: all three of `showDiskLibrary`,
-`showSlotConfigPanel` and `showImageWriterPanel` default to `true`
-(`MainWindow.h`) — seeding a dock node for a panel that is hidden would place
+what a first launch opens on: all three of `PanelId::DiskLibrary`,
+`PanelId::SlotConfig` and `PanelId::ImageWriter` carry `defaultOpen = true`
+in `PanelCatalog.h` (the per-panel `bool` is bound by `PanelRegistry`; the old
+hand-kept `showDiskLibrary` / `showSlotConfigPanel` / `showImageWriterPanel`
+members are gone) — seeding a dock node for a panel that is hidden would place
 the tab but show nothing. `Disk Library` is docked first, which makes it the
 selected tab. Cassette Deck and Floppy Emu moved down into the inspector
 group: still assigned (so they never float over the screen), just not part of
@@ -5771,8 +6101,11 @@ ctor/dtor/accessor bodies out-of-line so
 unique_ptr destruction sees a complete type. Compile-time: `touch
 CassetteDeck_ImGui.h` → 2 TUs rebuild; `touch MainWindow.h` → 4 TUs.
 
-Non-owning `*Card` pointers (`diskCard`, `hdvCard`, …) stay raw —
-`SlotBus` owns the cards.
+No `*Card` pointer is cached at all any more: the accessors
+(`MainWindow::primaryDiskII()`, `primaryHdvCard()`, `hdvDevice()`, …) resolve
+from the SlotBus on each call, and any pointer they hand back is non-owning
+and raw — `SlotBus` owns the cards, and a topology rebuild must not leave a
+stale one behind.
 
 - **MemoryViewer_ImGui** — hex + ASCII over 64 KB. Reads via
   `Memory::data()` under `stateMutex` (held by MainWindow during
@@ -5798,6 +6131,15 @@ POM2's side is `Pom2HgrPaintHost`:
   (main) / the raw aux bank (DHGR), deliberately bypassing 80STORE/RAMWRT so
   the editor always edits the plane it says it does. Freehand strokes stay
   unbatched so they appear live on screen.
+  **Strokes nest, and the counter is why** *(2026-09-07)*: `beginStroke` /
+  `commitStroke` used to bracket on a plain `bool`, so a `Ctrl+X`/`Ctrl+C`
+  (or the Copy/Cut buttons) during a batched shape drag opened a second
+  stroke, the outer `commitStroke` skipped `endBatch()`, and
+  `PaintCardBatcher` stayed stuck at depth 1 — every later poke queued into a
+  batch nobody committed, so the canvas kept updating while the Apple screen
+  froze for the rest of the session and `batch_` grew without bound. Strokes
+  now nest exactly, and Copy/Cut flush an open drag the way `Ctrl+V` already
+  did.
 - **Canvas render** — a private, never-clocked IIe `Memory` + `Apple2Display`
   pair (`renderScratch`): page bytes staged at $2000/$0400 + soft switches
   per regime (HGR / GR / DHGR), rendered with ColorNTSC (colour) or MonoWhite
@@ -5806,10 +6148,18 @@ POM2's side is `Pom2HgrPaintHost`:
   `renderInternal` path, and the canvas is pixel-identical to the live screen.
 - **setDisplayMode** — real $C050-$C05F (+$C00C/D, $C05E/F) writes on the
   live machine so the screen follows the page selector.
-- **Files** — raw page dumps via fstream under `stateMutex`; PNG via
-  `stb_image_write` (impl compiled in `Pom2HgrPaintHost.cpp` — MainWindow's
-  stb_image impl is `STB_IMAGE_STATIC`, so the host TU owns the only
-  exported stb symbols, which `HgrImageDecode.cpp` links against).
+- **Files** — raw page dumps and PNGs go through the host's checked
+  `saveBytes()`, which POM2 backs with `writeFileAtomic`; `publishBytes` and
+  `savePng` take `prepareTempPath` too. The sprite editor's raw/ASM saves used
+  to `fopen("wb")` in place and discard `fclose`'s return, so a full disk got
+  "Saved sprite" over a file that had just been truncated to nothing. PNG
+  encoding is `stb_image_write` (impl compiled in `Pom2HgrPaintHost.cpp` —
+  MainWindow's stb_image impl is `STB_IMAGE_STATIC`, so the host TU owns the
+  only exported stb symbols, which `HgrImageDecode.cpp` links against).
+
+> **The `hgrpaint/` and `hgrsprite/` changes must be mirrored into POM1's
+> copies.** The module is shared *verbatim*, and a fix that lands only here
+> makes the two diverge silently.
 
 **DHGR extension (POM2-only additions to the portable module).** Six pages:
 HGR/HGR2/GR/GR2 + DHGR/DHGR2 (shown iff `host->supportsDhgr()` = IIe-class).
@@ -6190,9 +6540,11 @@ AppleIIePAL` directly would skip all of that and leave a //e running at 60 Hz
 while the UI claimed PAL. The default degrades to the auto-probe when no //e
 ROM was found (`iiePresent == false`), and `--ii-plus` still wins over both.
 
-The matching **default slot map** is `kDefaults[]` in
-`MainWindow::plugSlotsFromSettings` (sl1 `grappler`, sl2 `mouseaw`, sl3 empty,
-sl4 `mockingboard`, sl5 `smartport35`, sl6 `diskii`, sl7 `chatmauve`) — a
+The matching **default slot map** is `kDefaultCards[]` in
+`SlotConfigurationCoordinator.cpp:49`, consumed by its `resolve()` at `:113`
+and applied by `MainWindow::plugSlotsFromSettings` (which now lives in
+`MainWindow_SlotConfig.cpp:105`): sl1 `grappler`, sl2 `mockingboard`, sl3
+empty, sl4 `mouseaw`, sl5 `smartport35`, sl6 `diskii`, sl7 `chatmauve` — a
 default only, overridden by any `slot_N_card` key. **Slot 3 is empty by
 design**: on a //e the 80-column card is not a slot card at all (internal
 `$C300` firmware + the AUX-connector ext80, both carried by `iieMode`), and a
@@ -6485,6 +6837,24 @@ chunk. `syncDebugHook()` keeps the hook detached until something is armed.
 Three `pom2_bench` workloads, identical RAM hashes, no measurable change —
 docs/PERFORMANCE.md § 8.
 
+**An idle hook is detached at the next run slice** *(2026-09-07)*. "Keeps the
+hook detached until something is armed" was true only of the paths that call
+`syncDebugHook`. `M6502::step` gates its interrupt-entry split on
+`debugHook_ != nullptr`, **not** on "is anything armed" — the split changes how
+the entry's 7 cycles reach `memory->advanceCycles` (two small advances instead
+of one sum), and that moves the sub-instruction phase every lazily-synced
+peripheral derives from: Mockingboard/Phasor T1, the Disk II LSS, the video
+beam. A step-over or run-to-cursor attaches the hook, and the transient that
+armed it is dropped by `setMode(Mode::Stopped)`, which deliberately does not
+re-sync (it must not take the lock). So after **one** step-over plus Run the
+machine kept a debugged CPU for the rest of the session, with nothing armed
+and the interrupt phase perturbed — the phase OLDSKOOL races against.
+`runCpuSlice` (`EmulationController.cpp:1104-1106`) now reconciles instead:
+two relaxed loads per 4096-cycle chunk, running exactly once per transition
+(afterwards the hook *is* null), and covering every resume path — toolbar
+Play, Machine ▸ Run, the palette, the kiosk menu — instead of only the
+debugger panel's. Pinned by `debugger` and `mockingboard_t1_irq_phase`.
+
 **Write watchpoints, and the trick that made them free** (2026-08-23). The
 naive tap — one pointer test at the top of `memRead`/`memWrite`, call a sink
 when it is set — measured **+13.4 % / +16.5 % / +9.2 %** and was thrown away
@@ -6569,9 +6939,19 @@ it calls `std::terminate()`, which kills the process with **no log line, no
 message and no snapshot**. To the user that is indistinguishable from a
 segfault, and to you it is a bug report with nothing in it.
 
-POM2 runs seven long-lived threads — the CPU worker, the SSC telnet listener,
-the FujiNet SP link, the print-history writer, the AI control server, and two
-detached DNS lookups (`W5100Device`, `FujiNetNetDevice`). An audit on
+POM2 spawns a dozen long-lived threads — the CPU worker
+(`EmulationController.cpp:559`), the 3.5" write-back queue (`Disk35WriteBack`,
+`EmulationController.cpp:444`), the SSC telnet worker
+(`SuperSerialTcpTransport.cpp:103`), the FujiNet SP link
+(`SpOverSlipLink.cpp:140`), the FujiNet HTTP fetch worker
+(`FujiNetNetDevice.cpp:365`), the print-history writer
+(`PrinterHistory.cpp:373`), the AI control server (`AiControlServer.cpp:515`),
+the LaserWriter/Ghostscript spooler (`PostScriptRender.cpp:501`), the
+RetroBIOS ROM fetch (`RomStatus_ImGui.cpp:107`), the two detached DNS lookups
+(`W5100NameResolver.cpp:128`, `SocketUtil.h:178`), the CLI deferred-action /
+autoboot threads (`main.cpp:851`, `:881`) and the `ChildProcess` reapers
+(`ChildProcess.cpp:409`, `:755`, guard hand-written — see the comment at
+`:402`). An audit on
 2026-08-22 found the rule written down at exactly one of them, in `main.cpp`'s
 CLI deferred-action thread, and applied at two. The most exposed was the one
 with no guard at all: `workerLoop()` calls `rewind_.capture()`, which grows
@@ -6618,12 +6998,28 @@ photography nothing reads), the desktop packages carried neither.
 | `denyglob` | same, by file-name pattern, *inside* a copied `dir` |
 
 `denyglob` exists because a `dir` entry copies the **working tree**, not what
-git tracks: two untracked ROM `.zip` archives sitting in `roms/` shipped in a
+git tracks: two ROM `.zip` archives sitting in `roms/` shipped in a
 locally-built WASM bundle, where nothing would have noticed them (CI builds
-from a clean checkout, so its bundle differed from the committed one). The
-patterns are excluded three ways — `install(DIRECTORY ... PATTERN … EXCLUDE)`,
-emcc's `--exclude-file`, and a prune inside `stage_data.sh` — and `--verify`
-fails on any survivor.
+from a clean checkout, so its bundle differed from the committed one). Those
+two archives **are** git-tracked — the comment that called them untracked was
+wrong, and was corrected on 2026-09-07; untracking them is the maintainer's
+call, and the manifest keeps them out of packages either way.
+
+**`deny` is enforced by all three parsers, not only the verifier**
+*(2026-09-07)*. It used to be checked by `--verify` alone — at `-maxdepth 4`,
+case-sensitively, files only — so a denied folder nested deeper inside an
+allowed `dir` walked straight through `install(DIRECTORY roms/)` and
+`stage()`, and the WASM preload appended `disks_3.5` the manifest denies. Both
+lists are now applied by the `install()` rules, by the emcc preload and by
+`stage()`, matched **case-insensitively against directories as well as files,
+at any depth** (`foo.ZIP/` used to be invisible twice over: wrong case, and a
+directory). CMake gets there by translating each glob into a case-insensitive
+REGEX — `install(DIRECTORY)`'s `PATTERN` is a case-sensitive *name* glob and
+does not apply to directories, so `pom2_glob_to_ci_regex` builds a `[aA]`
+class per letter (`CMakeLists.txt:39-60`). `--verify` also now **fails a
+payload directory that holds only its own README**: that is a package with
+zero ROMs, and the old non-empty check passed it. Six new negative controls in
+`--self-test` cover the cases.
 
 Consumers:
 
@@ -6640,8 +7036,8 @@ Consumers:
 - **`packaging/stage_data.sh <dest>`** stages the same list for the packagers
   that do not go through `cmake --install` — the macOS `.app`, the Windows
   `.zip` (which calls it through Git Bash).
-- **`packaging/stage_data.sh --verify <dest>`** is the CI guard, run in every
-  release job. Both failure modes it catches are silent: a missing font drops
+- **`packaging/stage_data.sh --verify <dest>`** is the guard the six release
+  packaging jobs run against their staged trees. Both failure modes it catches are silent: a missing font drops
   the UI to ImGui's bitmap face with blank icon boxes, and a leaked
   `disks_5.4/` turns a 6 MB download into a 200 MB one carrying media that is
   not ours to redistribute.
@@ -6722,7 +7118,7 @@ Emscripten now that Windows is a full host-socket target):
 
 | Subsystem | Stub behaviour | Apple II side |
 |---|---|---|
-| Super Serial Card TCP listener (`SuperSerialCard.cpp:168`, `:225`, `:255`, `:270`, `:451`) | `startListening` returns false + logs; `acceptClient`/`pollRx`/`writeTx` no-op | ACIA still emulated — software inside the Apple II can still PR#2 / read $C0A9; just no host network bridge |
+| Super Serial Card TCP listener (`SuperSerialCard.cpp:168`, `:225`, `:255`, `:270`, `:451`) | `startListening` (`SuperSerialCard.h:94`) returns false + logs; the transport side (`SuperSerialTransport.h:43-50` — `start`/`stop`/`isListening`/`port`) and `drainTransportTx` (`SuperSerialCard.h:168`) no-op | ACIA still emulated — software inside the Apple II can still PR#2 / read $C0A9; just no host network bridge |
 | AiControlServer HTTP listener (`AiControlServer.cpp:305+`) | `start()` returns false; `stop()` no-op | None — entire feature is a host-side control plane |
 
 ### Browser persistence (IDBFS)

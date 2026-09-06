@@ -217,8 +217,11 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
 
     // Ctrl-V intercepts the host shortcut: paste system clipboard into
     // the Apple II keyboard buffer rather than injecting raw $16. The
-    // Apple II's own Ctrl-V (rarely used) can still be reached via the
-    // Edit menu or via Ctrl-Shift-V if a future version chooses to map it.
+    // Apple II's own Ctrl-V (rarely used) is reached from the clickable
+    // //e keyboard panel: latch CONTROL, click V. NOT from the Edit menu —
+    // that menu only carries the host clipboard actions (paste from
+    // clipboard / from file / cancel). Ctrl-Shift-V is unmapped and free if
+    // a future version wants a direct chord.
     if (ctrlLetter == 'V') {
         pasteFromClipboard();
         return;

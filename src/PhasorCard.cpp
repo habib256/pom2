@@ -425,7 +425,10 @@ void PhasorCard::syncToCpuCycle()
     // (and the OLDSKOOL FORT ET VERT crash it caused) in
     // `MockingboardCard::syncToCpuCycle`; the Phasor runs the same two 6522s
     // behind the same lazy-sync, so it needs the same correction.
-    // Pinned by phasor_t1_irq_phase.
+    // NOTE: there is no `phasor_t1_irq_phase` ctest — the name this comment
+    // used to give resolves to nothing. The equivalent is
+    // `mockingboard_t1_irq_phase` (same VIA, same lazy-sync data-cycle fix);
+    // `phasor_card_smoke` covers this card's own register decode.
     syncToCpuCycleAt(cpu_->getCycleCountNow() + 1);
 }
 

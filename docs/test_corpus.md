@@ -241,8 +241,8 @@ The foundation must be flawless **before** the video demos can pass.
 | **Klaus Dormann — `65C02_extended_opcodes_test`** | 65C02 extended opcodes (BBR/BBS/RMB/SMB, `STZ`, `(zp)`, etc.). | ✅ `klaus_65c02_extended` **PASSES** @ `$24F1` (cf. `DEV.md` §CPU). |
 | **NMOS "illegal opcodes" suites** (visual6502-derived) | Behavior of the undocumented 6502 NMOS opcodes. | 🟢 Partially — the `#1` dashboard row now records the $5C 8-cyc delta as **deliberate** (matches MAME, not Harte). Mainly covers the subset used in practice. Complete via `cpu_cycle_count_test`. |
 
-> 182 `ctest`s in total (Klaus 6502+65C02, `cpu_cycle_count`, disk, video,
-> audio…). `TODO.md` Quick-win #5 (headless CI GitHub Actions) is ✅ DONE —
+> 241 `ctest`s in total (Klaus 6502+65C02, `cpu_cycle_count`, disk, video,
+> audio…) — the count `ci.yml` asserts on every push. Headless CI is ✅ DONE —
 > `.github/workflows/ci.yml` runs the suite on every push.
 
 ---

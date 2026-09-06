@@ -26,7 +26,7 @@
 #       ImageWriter head, the paper tray, PDF export and the PostScript /
 #       screen-dump seams all landed in one TU. It has clean internal seams
 #       and wants splitting, not a bigger number.
-#   src/Apple2Display.cpp 2294 -> 2713 (+2) — the irreducible cost of the
+#   src/Apple2Display.cpp                    2382 -> 2713 (+2) — the irreducible cost of the
 #     Videx LOWER CASE CHIP: two glyph helpers each take one more parameter
 #     (whether the character ROM has lowercase). The 24 lines that came with
 #     it went into src/CharRomDump.cpp instead, which is also what let
@@ -49,11 +49,38 @@
 # from an2. Small and localised; recorded at its exact size so the ratchet
 # still fails on the next line it gains.
 #
+# 2026-09-07: SIX CEILINGS RAISED, deliberately, by the two bug-hunt rounds of
+# 2026-09-06/07 (commits 266a289..70d86a2). Every line is a fix or the comment
+# that explains it, in the file where the defect lived; none is a new feature:
+#
+#   src/Apple2Display.cpp        2294 -> 2382 (+88)  published-frame state on
+#       every path, the idle-switch override for a stopped machine, AppleWin Tv
+#       first-frame flags.
+#   src/DiskImage.cpp            2835 -> 2914 (+79)  WOZ saveDirty refuses an
+#       unsplicable track instead of dropping it; prepareTempPath + the unique
+#       temp name; writeFraming in the media capture; the media-write epoch.
+#   src/ImageWriter.cpp          2501 -> 2531 (+30)  paced-drain work budget,
+#       Diablo ESC P unit, the 16-entry density table, pageToRgba bound.
+#   src/M6502.cpp                2159 -> 2185 (+26)  the interrupt split when a
+#       debug hook is attached, so a breakpoint on an IRQ handler entry fires.
+#   src/Memory.cpp               2442 -> 2545 (+103) AN0-2, vblWasActive and
+#       the //c $C800 latch in the snapshot trailer; the No-Slot Clock and the
+#       Sony 3.5" mechanisms as trailer sections; the $C000-$C07F write-side
+#       window close.
+#   src/hgrpaint/HgrPaintEditor.cpp          2525 -> 2647 (+122) nesting-exact stroke
+#       brackets (the Ctrl+X-mid-drag lockup), Copy/Cut flush, undo cleared on
+#       Load, overwrite confirmation, the screen-hole tag inside undo.
+#
+# All six are recorded at their EXACT current size, so the ratchet still fails
+# on the next line any of them gains. The splits owed remain owed (TODO § Arch):
+# Memory.cpp's snapshot trailer and DiskImage.cpp's WOZ writer are the two
+# obvious seams.
+#
 # Regenerate with: tools/check_file_sizes.sh --update
 
-src/Apple2Display.cpp                    2294
-src/DiskImage.cpp                        2835
-src/ImageWriter.cpp                      2501
-src/M6502.cpp                            2159
-src/Memory.cpp                           2442
-src/hgrpaint/HgrPaintEditor.cpp          2525
+src/Apple2Display.cpp                    2382
+src/DiskImage.cpp                        2914
+src/ImageWriter.cpp                      2531
+src/M6502.cpp                            2185
+src/Memory.cpp                           2545
+src/hgrpaint/HgrPaintEditor.cpp          2647

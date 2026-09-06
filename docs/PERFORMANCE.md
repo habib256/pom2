@@ -14,7 +14,7 @@ NeoST's were the 68000 bus and its scheduler.
 
 **Non-negotiable constraint for everything below**: POM2 is a cycle-accurate
 emulator. None of these optimisations changes a single value it produces. Each
-was validated by the full test suite (`ctest`, 182 tests) *and* by
+was validated by the full test suite (`ctest`, 241 tests) *and* by
 `pom2_bench`'s output hashes — RAM and framebuffer, byte-identical before and
 after, on every workload measured here.
 
@@ -138,7 +138,8 @@ cases and delegates everything else to `memReadSlow` (the original body,
 untouched):
 
 * `$0000-$BFFF` → main RAM (on a //e, the shared `iieReadFromAux` helper
-  picks aux vs main inline — `Memory.h:186-197`);
+  picks aux vs main inline — `Memory.h:271`, over the `iieReadFromAux`
+  helper at `Memory.h:1160`);
 * `$D000-$FFFF` with the language card mapped to ROM → ROM.
 
 > **The trap, and it is the same one NeoST hit.** The first instinct is to
@@ -269,8 +270,10 @@ Two of these have since moved — see § 7 for `Memory::advanceCycles`; the
 One lead listed here has since been **taken** (2026-07-30 callgrind pass):
 `Memory::advanceCycles` used to call `cassette->advanceCycles`
 unconditionally, even with no tape loaded — measured at 4.1 % of the core.
-It is now gated (`if (cassette)`, `Memory.cpp:377`) and the call is an inline
-fast path (`CassetteDevice.h:86-95`) that only takes the out-of-line playback
+It is now gated (`if (cassette)`, in `Memory::advanceCycles` — `Memory.h:747`,
+the hop itself `Memory::cassetteAdvanceCycles`, `Memory.cpp:391`) and the call
+is an inline fast path (`CassetteDevice.h:116-125`, rationale at `:105-115`)
+that only takes the out-of-line playback
 route when the deck is actually moving.
 
 ---
@@ -282,7 +285,7 @@ profiles are `sample <pid> 5 1 -mayDie` over a long `pom2_bench` run of the
 profiling build (`build-prof`, § 1 recipe), and the comparisons are wall time
 (best of 5) on the release build. The subject is unchanged, and so is the
 rule: **every change below leaves both `pom2_bench` hashes byte-identical on
-every workload, and `ctest` green (186 tests)**. A new test,
+every workload, and `ctest` green (186 tests at the time; 241 today)**. A new test,
 `bus_fastpath`, is part of that — see 7.2.
 
 ### 7.0 The bench's //e workload was a BRK loop
@@ -290,7 +293,7 @@ every workload, and `ctest` green (186 tests)**. A new test,
 Before any optimisation: `pom2_bench --iie` called `loadAppleIIRom()` *before*
 `setIIEMode(true)`. The loader only splits a 16/32 KB //e dump into the
 internal `$C100-$CFFF` I/O ROM when `iieMode` is already on
-(`MainWindow_Slots.cpp:1074-1083` documents the ordering rule), so the //e
+(`MainWindow_Slots.cpp:1211-1220` documents the ordering rule), so the //e
 booted into an empty `$C300`, executed `BRK` (`$00`) forever, and every "//e"
 number this file ever quoted — and **three of the PGO training runs in
 `pgo_train.sh`** — measured a BRK loop. `M6502::BRK` at 13 % of a banner

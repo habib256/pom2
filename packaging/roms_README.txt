@@ -25,17 +25,26 @@ Expected files
     apple2e.rom           Apple //e Enhanced (1985) + PAL profile
     apple2e_unenh.rom     Apple //e Unenhanced (1983)
     apple2c-32Kv0.rom     Apple //c (1984)   (or apple2c-16K.rom)
+    3420033a.256          Apple //c third probe — MAME's apple2c0 part,
+                          the "//c (UniDisk 3.5)" variant
+    a2c.128               Apple //c 16 KB ROM dump
     apple2cp.rom          Apple //c Plus (1988)
 
   Character ROMs
     apple2_char.rom       Apple ][ / ][+ character generator
     apple2e_char.rom      Apple //e character generator
     apple2e_char_*.rom    regional / unenhanced variants
+    342-0274-a.e9         international //e video ROM — one 8 KB part
+                          holding two 4 KB banks (FR-CA low, US high)
+    Videx Lower Case Chip ROM.bin
+                          Videx LOWER CASE CHIP — the 1980 drop-in
+                          generator that gave a ][ / ][+ lowercase
 
   Peripheral ROMs
     disk2.rom             Disk II 16-sector boot PROM (slot 6 auto-boot)
     disk2_13.rom          Disk II 13-sector boot PROM
-    diskii_p6.rom         Disk II P6 LSS PROM
+    diskii_p6.rom         Disk II P6 LSS PROM (16-sector)
+    diskii_p6_13.rom      Disk II P6 LSS PROM (13-sector)
     mouse_341-0270-c.bin  AppleMouse II card firmware
     mouse_341-0269.bin    AppleMouse II 68705 MCU mask ROM
     cffa20ee02.bin        CFFA 2.0 6502 firmware

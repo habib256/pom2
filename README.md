@@ -2,7 +2,7 @@
 
 # 🍏 POM2 v0.9.0 — Apple II Emulator
 
-### *Eight machines from 1977 to 1988, beam-raced to the scanline — then tilted into 3D and rewound through time.*
+### *Nine machines from 1977 to 1988, beam-raced to the scanline — then tilted into 3D and rewound through time.*
 
 🎂 **Celebrating 50 years of Apple (1976 → 2026)** with a cycle-accurate Apple II family emulator: **9 one-click machine presets** (][ · ][+ · //e · //e enhanced · //c · //c+ · PAL //e unenhanced · PAL //e · PAL //c Le Chat Mauve), MAME-faithful CPU and hardware ports, OpenEmulator-grade composite NTSC, a MicroM8-style **3D voxel view**, **time-travel rewind**, mechanical floppy sounds, and a stack of expansion cards from Mockingboard to Phasor — all running in the browser too.
 
@@ -159,7 +159,7 @@ hard-fails if `imgui/` is missing.)
 ./build_wasm.sh --with-data         # also bundle the disks_3.5/ library
 ```
 
-The browser build preloads `roms/`, `fonts/`, the About photo and `floppyemu/` — including the shipped firmware dumps. Telnet and the AI-control HTTP server are unreachable under WASM (the browser sandbox has no listening sockets), so their UI entries are hidden.
+The browser build preloads `roms/`, `fonts/`, the About and //e keyboard photos, and `floppyemu/` — including the shipped firmware dumps. Telnet and the AI-control HTTP server are unreachable under WASM (the browser sandbox has no listening sockets), so their UI entries are hidden.
 </details>
 
 ### 💿 ROMs and media
@@ -196,7 +196,7 @@ POM2 --kiosk path/to/game.dsk       # exclusive full-screen, chrome-free
 | F6 | **Hold to rewind** (time-travel) | `Ctrl+Shift+P` | **Command palette** |
 | `Ctrl+V` | Paste clipboard into the Apple II | Tab | `$09` |
 
-`Ctrl-V` is the one exception in the `Ctrl-A..Z` range — the host intercepts it for clipboard paste; the Apple II's own Ctrl-V stays reachable through the Edit menu. F9 / F10 / F11 / F12, `Ctrl+Alt+F`, `Ctrl+Alt+G`, `Ctrl+Shift+P` and both Alt keys are routed unconditionally — even when ImGui holds keyboard focus. GLFW gamepads are hot-plugged and auto-bound.
+`Ctrl-V` is the one exception in the `Ctrl-A..Z` range — the host intercepts it for clipboard paste. To send the Apple II's own Ctrl-V, open *Devices → Apple //e Keyboard*, latch **CONTROL**, then click **V** (the Edit menu only carries the host clipboard actions). F9 / F10 / F11 / F12, `Ctrl+Alt+F`, `Ctrl+Alt+G`, `Ctrl+Shift+P` and both Alt keys are routed unconditionally — even when ImGui holds keyboard focus. GLFW gamepads are hot-plugged and auto-bound.
 
 **Mouse capture.** Put the card in **slot 4** — on a //e the internal 80-column firmware owns `$C300`, so a mouse card in slot 3 is invisible to software (A2DeskTop, MousePaint and MultiScribe all decide there is no mouse and run keyboard-only); Slot Configuration flags it. With a Mouse Card plugged (`mouse` or `mouseaw`), **`Ctrl+Alt+G` or a middle click (wheel)** hands the host pointer to the guest and takes it back again: the OS cursor disappears and motion becomes unbounded, so the emulated cursor can always reach the edges of its own clamp window instead of stalling when your real pointer runs out of screen. Alt-Tabbing away also releases it. A left click never captures — it always goes to the guest, so clicks mean what they look like. The status bar shows a `GRAB` badge while captured, and spells out the way back for half a minute after; nothing is drawn over the Apple II screen. `View → Capture mouse` toggles it from the menu.
 
@@ -219,6 +219,8 @@ Nine one-click machines spanning the line — six NTSC plus three **PAL (50 Hz)*
 | **Apple //e Unenhanced PAL** (50 Hz) | NMOS 6502 | IIe | `apple2e_unenh.rom`, `342-0135-b.64.rom`, `apple2e.rom` | AUX = Ext. 80-col (built-in) · **PAL timing** |
 | **Apple //e Enhanced PAL** (50 Hz) ← *default* | 65C02 | IIe | `apple2e.rom` | AUX = Ext. 80-col (built-in) · **PAL timing** |
 | **Apple //c PAL** (Le Chat Mauve) | 65C02 | IIe | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` | same as //c **+ sl7 built-in Le Chat Mauve RGB** · **PAL timing** |
+
+Two of the probe names above — `342-0135-b.64.rom` and `apple2c-plus.rom` — are fallbacks for **user-supplied** dumps under those MAME/community filenames; POM2 ships neither, so on a stock tree they never resolve and the next name in the row wins.
 
 Aliases for `--preset`: `apple2`/`ii`, `apple2plus`/`ii+`, `iie-u`, `apple2e`/`iie`, `apple2c`/`//c`, `apple2cplus`/`//c+`, `iie-u-pal`/`frenchtouch`, `iie-pal`, `iic-pal`/`chatmauve`.
 
@@ -263,6 +265,7 @@ Assign cards, mount media, eject or boot from `Machine → Slot Configuration`. 
 | `hdv` | ProDOS HDV | `chatmauve` | Le Chat Mauve RGB |
 | `cffa` | CFFA 2.0 IDE | `mouse` / `mouseaw` | Mouse Card (MAME / AppleWin HLE) |
 | `smartport35` | SmartPort 3.5" | `mockingboard` | Mockingboard A/C |
+| `liron` | Liron 3.5" — real EPROM + IWM over the SmartPort bus | | |
 | `ssc` | Super Serial Card | `mockingboard_c` | Mockingboard C Sound II + SSI263 |
 | `printer` | Parallel printer (host spool) | `phasor` | Applied Engineering Phasor |
 | `grappler` | Orange Micro Grappler+ | `echoplus` | Cricket / Echo SSI263 |
@@ -377,7 +380,7 @@ The output is **stereo**, wired the way the hardware is: a Mockingboard puts AY1
 
 Supported images: `.dsk` `.do` `.d13` `.po` `.nib` `.2mg` `.woz` `.hdv`. Detection is **content-driven** — MacBinary wrappers, DOS/ProDOS sector skew and WOZ/2IMG write-protect flags are all handled. WOZ playback runs the genuine Disk II **P6 LSS sequencer** (`diskii_p6.rom` optional — the embedded 341-0028-A default is used when absent). ProDOS block devices back the HDV / CFFA 2.0 / SmartPort paths.
 
-Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler), and 32 KB system+video ROMs.
+Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler) and 32 KB system+video ROMs each get their own layout; any other dump between 2 KB and 64 KB is loaded best-effort at the top of the address space, so its reset vectors land at `$FFFA-$FFFF`. Anything outside that range is rejected (`Memory::loadAppleIIRom`).
 
 | File | Role |
 |---|---|
@@ -385,6 +388,8 @@ Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler), an
 | `apple2cp.rom` | //c+ banks 0 + 1 |
 | `apple2_char.rom` | II/II+ character ROM (also the IIe-class fallback) |
 | `apple2e_char.rom` / `apple2e_char_2k.rom` | //e character ROMs — Enhanced 4 KB (mousetext) / Unenhanced 2 KB |
+| `apple2e_char_<locale>.rom` | Locale character sets (US, UK, DE, FR, FR-CA, …) offered in the character-set dropdown |
+| `342-0274-a.e9` | International //e video ROM 342-0274-A — one 8 KB part holding **two** 4 KB banks (FR-CA low, US high), as fitted to the French //e; either bank is selectable from the same dropdown |
 | `Videx Lower Case Chip ROM.bin` | Videx LOWER CASE CHIP — the 1980 drop-in generator that gave a II/II+ lowercase |
 | `disk2.rom` / `disk2_13.rom` | Disk II boot PROMs (16- / 13-sector; embedded 341-0027-A default for 16-sector) |
 | `diskii_p6.rom` / `diskii_p6_13.rom` | Disk II P6 LSS sequencer PROMs (embedded default when absent) |
@@ -401,13 +406,14 @@ Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler), an
 
 ```bash
 POM2 <disk-image>                   # mount into the right slot + cold-boot
+POM2 tnfs://host/path/image.po      # fetch from a TNFS server into a local cache, then boot
 POM2 --kiosk <disk-image>           # exclusive full-screen, chrome-free, settings-read-only
 POM2 --preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal
 POM2 --snapshot-save out.pom2snap
 POM2 --snapshot-load in.pom2snap
 ```
 
-More flags: `--speed`, `--cpu-max`, `--tape`, `--35-disk1`, `--35-disk2` (//c+ Sony 3.5"), `--load addr:file`, `--run`, `--step`, `--paste`, `--play`, `--rec`, `--rewind`. Full architecture → [`CLAUDE.md`](CLAUDE.md).
+More flags: `--speed`, `--cpu-max`, `--ii-plus` (alias `--ii+`), `--ai-control[=PORT]`, `--display <ntsc|chatmauve|mono-white|mono-green|mono-amber>`, `--tape`, `--save-tape` / `--save-tape-format aci|wav`, `--35-disk1`, `--35-disk2` (//c+ Sony 3.5"), `--prodos-folder <dir>`, `--load addr:file`, `--run <addr>`, `--step N`, `--paste`, `--play`, `--rec`, `--rewind`, `--rgb-card-invert-bit7[=on|off]`, `--fujinet[=PORT]` / `--fujinet-serial[=DEV]` / `--fujinet-slot N`. `POM2 --help` is the full list. Full architecture → [`CLAUDE.md`](CLAUDE.md).
 
 ### 🕹️ Kiosk mode
 
@@ -480,8 +486,10 @@ name is enforced per job — the publish step flattens every artifact into one
 directory, so two same-named packages would overwrite each other in silence.
 
 **What ships inside a package** is declared once, in
-`packaging/bundle.manifest`: the ROM set, the two UI fonts, and the About
-photo. CMake reads it for the `install()` rules *and* for the WASM
+`packaging/bundle.manifest`: the full ROM set plus a generated
+`roms/README.txt` inventory note, the two UI fonts, the About photo, and the
+//e keyboard photo the clickable-keyboard window's hotspots are measured
+against. CMake reads it for the `install()` rules *and* for the WASM
 `--preload-file` list; `packaging/stage_data.sh` reads it for the macOS `.app`
 and the Windows `.zip`. Every release job then runs
 `stage_data.sh --verify` on the staged tree — everything the manifest promises
@@ -549,7 +557,7 @@ the profiling recipe.
 
 - Mouse absolute position can drift under A2Desktop / MGTK.
 - Some anti-//e copy-protected titles refuse to boot on //e/c/c+ hardware.
-- **//c+ 3.5"/SmartPort boot is host-served, not cycle-faithful — deliberately.** POM2 boots 3.5" and HDV images on the //c+ through a host-served SmartPort block device at the built-in slot 5, and that path works. The IWM state machine and the Sony GCR drives *are* ported (`IWMDevice`, `Sony35Drive` — `--35-disk1/2` mounts 800K images in the //c+ Sony bays), but the //c+ firmware's on-board boot path through them does not yet reach a bootable disk, and the UniDisk 3.5's drive-side 65C02 firmware stays out of scope. (The Liron-class controller firmware itself is no longer the obstacle it once was — the BMOW/Yellowstone dump is public, POM2 ships it, and the slot card presents its real identity on //e-class machines; MAME's *WANTED* entry is simply stale.)
+- **//c+ 3.5"/SmartPort: two paths, and only the drive-side firmware is out of scope.** POM2 boots 3.5" and HDV images on the //c+ through a host-served SmartPort block device at the built-in slot 5, *and* through the silicon: the IWM state machine and the Sony GCR drives are ported (`IWMDevice`, `Sony35Drive` — `--35-disk1/2` mounts 800K images in the //c+ Sony bays), and since 2026-09-01 the //c+ firmware's own on-board boot path drives them end to end — the ROM works the MIG, the MIG selects the drive, the IWM walks the bit cells, ProDOS 8 boots off the internal bay (pinned by the `iicplus_boot35` test). What stays out of scope is the UniDisk 3.5's drive-side 65C02 firmware: POM2 answers its *protocol* instead. (The Liron-class controller firmware itself is no longer the obstacle it once was — the BMOW/Yellowstone dump is public, POM2 ships it, and the slot card presents its real identity on //e-class machines; MAME's *WANTED* entry is simply stale.)
 
 ---
 
