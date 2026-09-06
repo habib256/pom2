@@ -750,14 +750,18 @@ of the finding.
   * `slotBus().clear()` on a profile switch is not a machine freeze —
     `applyProfile` has already stopped the CPU worker, so only the UI blocks,
     during a modal full cold reset.
-  * The FujiNet **Stop / Drop-peer** buttons genuinely need the lock:
-    `FujiNetCard` reaches `transact()` from the CPU thread *under* `stateMutex`,
-    and `stop()` ends in `transport_.reset()`, so dropping it trades a 200 ms
-    wait for a use-after-free on a live `SpTransport*`. The clean fix moves that
-    exclusion onto the link's own `callMtx_` (the lock order `callMtx_` →
-    `stateMtx_` is already what `transact` uses, so no inversion) — but it is a
-    lock-order change in a three-thread subsystem to save 200 ms on a button the
-    user pressed on purpose. Not a trade to make in a hurry.
+  * ~~The FujiNet **Stop / Drop-peer** buttons genuinely need the lock~~ —
+    **done 2026-09-06** (bug hunt, `958d86e`): the exclusion moved onto the
+    link's own `callMtx_` as described here, `NetworkCoordinator` resolves the
+    card under `lockState()` and drives the link off it, `enumerateDevices`
+    re-reads its stop flag per unit. `~FujiNetCard` no longer waits the 2 s
+    helper grace under `SlotBus::plug` either (`ChildProcess::stopDetached`).
+  * **Still under the lock after the 2026-09-06 hunt:**
+    `StorageCoordinator::ejectAllMedia` ejects Disk II, block, SmartPort and
+    generic bays inline, write-back included, while every single-medium eject
+    (`ejectDiskII`, `EmulationController::eject35`, the AI server's `/disk/eject`,
+    the firmware 3.5" eject through `WriteBackQueue`) is now two-phase. Same
+    fix, four families; a separate job.
   * Deliberate and staying: the profile-switch remount in `MainWindow_Slots.cpp`
     (atomicity against the AI server outranks latency, and the worker is stopped)
     and the outgoing medium's write-back inside `installDisk` (swapping before

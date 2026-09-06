@@ -905,9 +905,13 @@ private:
 
 public:
     /// Measure the live window and fold it into Settings. MUST be called
-    /// while GLFW is still initialised — ~MainWindow runs after
-    /// glfwTerminate(), where every glfwGetWindow* call is a no-op that
-    /// zeroes its out-params. Called from main() just before teardown.
+    /// while GLFW is still initialised: main() calls it just before it
+    /// destroys the MainWindow and tears GLFW down (since 2026-09-06 the
+    /// window object is heap-owned and reset BEFORE glfwTerminate(), so its
+    /// destructor still has a GL context; the geometry capture stays an
+    /// explicit call so the order is visible in one place). After
+    /// glfwTerminate() every glfwGetWindow* call is a no-op that zeroes its
+    /// out-params.
     /// No-op in kiosk (the live geometry is full-screen) and when the
     /// session is settings-read-only.
     void captureWindowGeometryNow();

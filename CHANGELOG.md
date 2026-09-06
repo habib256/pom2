@@ -5,6 +5,130 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-06 — The bug hunt: 51 findings, 49 fixed, 2 declined on evidence
+
+Eight read-only reviewers, one per subsystem, each asked for defects it could
+trace end to end; every finding was re-verified in the code before it was
+handed to a fixer. Seven commits (`266a289` → `d79444a`), one per file-owning
+lot. The full list with `file:line` lives in the session report; this entry
+keeps what the next reader must not rediscover.
+
+**Data loss and memory safety (G2 class).**
+
+* **`LironCard` was flushed by nothing.** `StorageCoordinator::flushAll`
+  walked three families (Disk II, block, SmartPort); the Liron is a fourth,
+  a `MountableMediaCard` with no keyspace of its own, and had no destructor
+  flush either. Quit or profile switch destroyed the medium with the session's
+  writes in RAM, then the remount read the old file back — no warning.
+  `MountableMediaCard::flushBay()` now exists and its **default refuses** a
+  bay with unsaved changes and no flush path, so the next such card fails a
+  test instead of a user. `LironCard::ejectBay` also discarded `saveDirty()`'s
+  return and ejected anyway; it now refuses like every sibling.
+* **`<image>.pom2tmp` got none of the target's scrutiny.** `ofstream(trunc)`
+  follows a symlink, so a link planted at the temp path took the rewrite and
+  the rename carried the link over the user's image. `prepareTempPath` was
+  written for exactly this (2026-08) but only `Disk35Image::saveDirty` and the
+  settings/snapshot writers called it. Now every write-back does: 5.25", HDV/
+  2MG, 3.5" export, the ImageWriter PNG.
+* **Eject wrote the image under `stateMutex`.** Mount has been two-phase for a
+  long time; eject never was, and the *firmware* 3.5" eject (`EjectOn` on the
+  IWM path) did an 800 KB write plus two fsyncs on the CPU worker with the lock
+  the UI thread paints under. `DiskIICard` and `Disk35Image` gained the
+  take/commit/restore triple `Block512Backing` already had; `Sony35Drive`
+  hands its payload to a `Disk35WriteBackSink` and `EmulationController`
+  commits it on its own guarded thread (`WriteBackQueue`, joined and drained
+  at shutdown). Still inline under the lock: `StorageCoordinator::ejectAllMedia`.
+* **WOZ `saveDirty` could `continue` past a quarter-track and still return
+  true** with every dirty flag cleared. Latent today (the legacy nibble gate is
+  forced off on a WOZ) but one gate away from silent loss on a copy-protected
+  disk. It refuses now, like `reportUndecodable`.
+* **`SlotRomAsm::finish()` applied fixups after a failed assembly.** `put()`
+  refuses to write past a region's limit but does not advance `pc_`, so a
+  branch emitted at an overflow recorded its operand at `limit_` — the
+  neighbour's first byte, or `rom_[256]` on a 256-byte `std::array`.
+* **A SmartPort WRITE whose data packet never came latched the bus.** Only the
+  data packet or a bus reset cleared `pendingWrite_`; the firmware abandons a
+  data packet on a bad checksum and retries the *command*, so `active()` stayed
+  true, the //c external port claimed every `$C0E0-$C0EF` access and the
+  Disk II was dead until reset. A command packet now supersedes the pending
+  one. FORMAT also answered `$00` on an empty or write-protected unit.
+
+**Lock discipline — the freeze CLAUDE.md forbids.** Six places held
+`stateMutex` across work measured in seconds: the character-set switch
+(`loadCharRom` + `settings->save()`), the FujiNet panel's `link.stop()` (a
+worker join; `enumerateDevices` could spend 32 × timeout with no stop check),
+`~FujiNetCard` (2 s SIGTERM grace, destroyed synchronously by `SlotBus::plug`
+on every slot rebuild), the built-in `N:` HTTP fetch (12 s budget on the CPU
+thread, *default on*), the AI server's snapshot-load and mouse-503 replies
+(4 s send timeout), and `SpSerialTransport::readSome` ignoring the stop latch.
+All moved off the lock. The `N:` fetch now runs on a worker that owns its
+state through a `shared_ptr` + cancel flag, so the device can be destroyed
+under the lock without joining. `ChildProcess` (FOUNDATION layer) may not
+include `ThreadGuard.h`; its detached-stop thread carries a hand-written
+barrier, with the reason recorded in place.
+
+**Emulation correctness.**
+
+* `M6502::step()` vectored an interrupt *and* ran the handler's first
+  instruction in one call, so a breakpoint on an IRQ/NMI entry never fired
+  and a watchpoint hit by `handler[0]` was blamed on the interrupted
+  instruction. Fixed **gated on `debugHook_`** so the un-hooked path's
+  `advanceCycles` granularity — and the VIA/LSS lazy-sync phase pinned by
+  `mockingboard_t1_irq_phase` / `via_t1_rearm_chain` — is untouched.
+* `AN0-AN2` were in neither the snapshot nor `resetSoftSwitches`; AN2 drives
+  A12 of an 8 KB international character generator, so rewind and reset
+  rendered the wrong font. IOU trailer section grew 4 → 7 bytes; two tests
+  that hard-coded the old length were the only casualties.
+* The CMOS disassembler gave the 30 one-byte NOPs of the `$x3`/`$xB` columns
+  their NMOS 2/3-byte lengths.
+* `PhasorCard::syncToCpuCycle` never got the `+1` in-flight data-cycle fix
+  `ccb7c55` gave the Mockingboard, so a Phasor reproduced the OLDSKOOL T1
+  phase wrap. Both cards also built the AY data bus as `portAOut & ddrA`
+  (undriven = 0) against MAME's `(m_out_a & m_ddr_a) | ~m_ddr_a`; they use
+  `Via6522::readPortA()` now. The Phasor also gained `setCpuClock` (its four
+  AYs were 0.7 % sharp under PAL) and the `cycles <= 0` guard.
+* The display painted from the **live** `DisplayState` in four places
+  (`render()` with no published events, `fillCompositeSignal`,
+  `renderInternal`, `patchMixedTextBand`) while the rest of the path
+  reconstructs the *published* frame — a mode flip one frame early and a
+  mixed frame's text band dropped. All four take the frame-start state once
+  the machine has completed a video frame; before that the live state is the
+  only description of the screen (and how the display tests drive the class).
+* Multi-page PostScript was truncated (`extraPages` was never assigned;
+  Ghostscript writes every page into one `pgmraw` stream) and a Ctrl-D during
+  a render was dropped, welding two jobs into one.
+* W5100 UDP/TCP never `bind()`ed `Sn_PORT`, so no unsolicited datagram could
+  reach the guest. The SLIP framer dropped the packet after a shared
+  delimiter. The SCC's SDLC `txFrame` grew without bound.
+* Ctrl+letter used GLFW's US key *position*: on AZERTY the key marked A sent
+  Ctrl-Q and M sent nothing. `glfwGetKeyName(key, scancode)` resolves the
+  layout's cap, positional map as fallback.
+* `MainWindow` was a local of `main()`, destroyed after `glfwTerminate()`, so
+  every `glDelete*` in its destructor chain hit a torn-down context. It is
+  heap-owned and reset before the ImGui/GLFW teardown, user pointer cleared
+  first. `MainWindow.cpp`'s comment claiming the opposite was wrong; it is
+  right now.
+
+**Declined, with the evidence.** *AppleWin HLE mouse raising VBL IRQs with
+mode `$08`*: AppleWin's `OnMouseEvent` does not gate VBL on `MOUSE_ON` and POM2
+matches it verbatim. *SmartPort INIT chain / unit-0 STATUS counting mounted
+media instead of bays*: a SmartPort device is the drive, not the disk; the
+host caches the count at boot and validates every unit number against it
+(`$CCD1`), so compacting the chain would renumber a user's volumes on an eject.
+
+**Pitfalls met on the way.**
+
+* The disk filled to 0 bytes mid-run. `build/`'s per-target
+  `compiler_depend.make` / `.internal` files are ~4 MB *each* (every test
+  compiles a slice of `src/`), ~850 MB across the tree, and regenerate on
+  every `make`. They are safe to delete to free space — but `make` then fails
+  with *No rule to make target `compiler_depend.make`* until `cmake .` has
+  recreated the stubs. A 3 GB `build-san/` sanitizer tree was the real
+  consumer.
+* `ctest` runs whatever binary is on disk: after a failed link it passes on
+  the stale one. Check `make`'s exit status first (memory note from
+  2026-08-22, confirmed again).
+
 ## 2026-09-06 — Four ejects, one coordinator: the settings keys that outlived the disk
 
 `TODO.md` G2 named three defects that reach a user's data. All three are fixed,
