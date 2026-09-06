@@ -300,7 +300,10 @@ public:
         //     both only once intC8Rom is already latched.
         // Anything else — including the latch edge itself — still goes
         // through memReadSlow(), which is the one place those side effects
-        // live. Pinned by tests/iie_internal_rom_fastpath_test.cpp.
+        // live. Pinned by tests/bus_fastpath_test.cpp, which walks the whole
+        // 64 K under every paging state and requires memRead == memReadSlow
+        // value AND side effects. (This used to name a
+        // `tests/iie_internal_rom_fastpath_test.cpp` that has never existed.)
         // (`addr < 0xD000` matters: a $D000+ read that was NOT the ROM window
         // above — the language card mapping RAM — must not land here.)
         if (iieMode && addr >= 0xC100 && addr < 0xD000 && addr != 0xCFFF
@@ -1053,10 +1056,14 @@ private:
     // Annunciator output state. AN0..AN3 are toggled by paired soft
     // switches ($C058/9 = AN0, $C05A/B = AN1, $C05C/D = AN2,
     // $C05E/F = AN3 — AN3 lives in `display.an3` because it also
-    // drives Le Chat Mauve's FIFO clock). POM2 doesn't currently
-    // forward AN0/1/2 to any external sink; the state is tracked so
-    // a future GameI/O-style pin model can pick it up without
+    // drives Le Chat Mauve's FIFO clock). AN2 is NOT decorative: on an
+    // 8 KB international character generator it is wired to the ROM's
+    // A12, so it selects the live 4 KB font (`charRomBankOffset`).
+    // AN0/AN1 have no external sink yet; the state is tracked so a
+    // future GameI/O-style pin model can pick it up without
     // restructuring the soft-switch handler.
+    // All three are cleared by `resetSoftSwitches` (the 74LS259's /CLR
+    // rides the reset line) and carried in the snapshot trailer.
     bool an0 = false;
     bool an1 = false;
     bool an2 = false;

@@ -1356,8 +1356,8 @@ void M6502::setCpuMode(CpuMode mode)
 
     // Rockwell SMBn / RMBn (2-byte) and BBRn / BBSn (3-byte).
     for (int n = 0; n < 8; ++n) {
-        opcodeTable[0x07 + n * 0x10] = u2; // SMBn zp
-        opcodeTable[0x87 + n * 0x10] = u2; // RMBn zp
+        opcodeTable[0x07 + n * 0x10] = u2; // RMBn zp ($07..$77)
+        opcodeTable[0x87 + n * 0x10] = u2; // SMBn zp ($87..$F7)
         opcodeTable[0x0F + n * 0x10] = u3; // BBRn zp,offset
         opcodeTable[0x8F + n * 0x10] = u3; // BBSn zp,offset
     }
@@ -2104,6 +2104,32 @@ void M6502::step(void)
         cycles = 0;
         handleIRQ();
         interruptCycles = cycles;
+    }
+
+    // ── An interrupt entry ENDS the step, but only for a watcher ─────────
+    // Without this, one step() both vectors and runs the handler's first
+    // instruction, so `M6502::run`'s debugged loop never offers the handler
+    // PC to `onInstruction`: a breakpoint on an IRQ/NMI entry point could not
+    // fire, and a watchpoint tripped by handler[0] was attributed to the
+    // INTERRUPTED instruction's PC (Debugger::curPc_ is latched per
+    // onInstruction call). Returning here leaves the PC on the vector target,
+    // so the next iteration offers it like any other instruction.
+    //
+    // Gated on `debugHook_` so nothing outside a debugging session changes.
+    // The cycle total is identical either way — the same 7 entry cycles and
+    // the same opcode, split across two steps instead of summed in one — but
+    // `memory->advanceCycles` then sees them as two smaller advances, which
+    // moves the sub-instruction phase every lazily-synced peripheral clock
+    // derives from (Mockingboard/Phasor T1, the Disk II LSS, the video beam).
+    // That phase is pinned by mockingboard_t1_irq_phase / via_t1_rearm_chain /
+    // dix_menu_raster_probe, so it is not something to perturb for a machine
+    // nobody is watching.
+    if (debugHook_ != nullptr && interruptCycles != 0) {
+        cycles = interruptCycles;
+        if (memory != nullptr) {
+            memory->advanceCycles(cycles);
+        }
+        return;
     }
 
     executeOpcode();

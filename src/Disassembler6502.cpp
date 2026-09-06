@@ -163,6 +163,24 @@ OpcodeInfo cmosInfo(uint8_t op)
         case 0x54: case 0xD4: case 0xF4: return {"NOP", AM_ZPX};  // 2 B (UnoffZpX)
         case 0x5C: return {"NOP", AM_ABS};                        // 3 B (Unoff3)
         case 0xDC: case 0xFC: return {"NOP", AM_ABX};             // 3 B (UnoffAbs4)
+        // The $x3 and $xB columns: 30 opcodes the 65C02 reserves as
+        // ONE-BYTE, one-cycle NOPs (M6502::Unoff — `kCmosTable` gives every
+        // one of them `&M6502::Unoff` except $CB WAI and $DB STP, handled
+        // above; MAME `m6502/ow65c02.lst` `nop_c_imp` is fetch-only). They
+        // used to fall through to `opcodeInfo[op]`, which is the NMOS table
+        // where the same slots are 2-byte (SLO/RLA/… (zp,X)) or 3-byte
+        // (ANC/LAX #imm, SLO abs,Y): the listing then consumed operand bytes
+        // the core never fetched and every following line was wrong. Same
+        // class of desync as the BBR/BBS-as-1-byte trap this file's test
+        // header names — one column over, and in the other direction.
+        case 0x03: case 0x13: case 0x23: case 0x33:
+        case 0x43: case 0x53: case 0x63: case 0x73:
+        case 0x83: case 0x93: case 0xA3: case 0xB3:
+        case 0xC3: case 0xD3: case 0xE3: case 0xF3:
+        case 0x0B: case 0x1B: case 0x2B: case 0x3B:
+        case 0x4B: case 0x5B: case 0x6B: case 0x7B:
+        case 0x8B: case 0x9B: case 0xAB: case 0xBB:
+        case 0xEB: case 0xFB: return {"NOP", AM_IMP};             // 1 B (Unoff)
         default:   return opcodeInfo[op];
     }
 }

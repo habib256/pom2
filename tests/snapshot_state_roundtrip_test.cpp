@@ -32,9 +32,12 @@
 #include "M6502.h"
 #include "Memory.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace {
@@ -121,6 +124,79 @@ int main()
         pageLcBank1RW(dst);
         CHECK(dst.memRead(0xD000) == 0x77, "LC bank1 $D000 round-trip");
         CHECK(dst.memRead(0xE000) == 0x88, "LC high  $E000 round-trip");
+    }
+
+    // ── Part B2: annunciators AN0-AN2 travel, and a reset clears them ────
+    // AN2 drives A12 of an 8 KB international character generator, so it is
+    // not bookkeeping: it picks which 4 KB font the machine renders
+    // (`charRomBankOffset`). It was in neither the snapshot trailer nor
+    // `resetSoftSwitches`, so a restore or a rewind of a French Touch "Block
+    // ASCII" screen came back in the other font, and a reset left the wrong
+    // one selected. The 74LS259 annunciator latch has its /CLR on the reset
+    // line — MAME `apple2e.cpp` machine_reset zeroes m_an0..m_an3.
+    {
+        // A synthetic 8 KB two-set char ROM: bank 0 all $11, bank 1 all $22.
+        // Content is irrelevant here — only which HALF is selected is.
+        const std::filesystem::path chr =
+            std::filesystem::temp_directory_path() / "pom2_an2_dualbank.chr";
+        {
+            std::vector<uint8_t> rom(8192, 0x11);
+            std::fill(rom.begin() + 4096, rom.end(), 0x22);
+            std::ofstream f(chr, std::ios::binary | std::ios::trunc);
+            f.write(reinterpret_cast<const char*>(rom.data()),
+                    static_cast<std::streamsize>(rom.size()));
+        }
+
+        Memory src; src.setIIEMode(true);
+        CHECK(src.loadCharRom(chr.string().c_str(), /*bank=*/-1) != 0,
+              "8 KB dual-bank char ROM loaded");
+        CHECK(src.charRomIsDualBank(),      "dual-bank flag");
+        CHECK(src.charRomBankOffset() == 0, "AN2 starts clear");
+
+        (void)src.memRead(0xC05D);          // AN2 on → second 4 KB set
+        CHECK(src.charRomBankOffset() == 4096, "AN2 selects the high bank");
+
+        std::vector<uint8_t> blob;
+        src.appendSnapshotState(blob);
+
+        // Standalone: the 74LS259's /CLR rides the reset line, so a reset
+        // drops AN2 whether or not the snapshot ever carried it.
+        src.resetSoftSwitches();
+        CHECK(src.charRomBankOffset() == 0,
+              "resetSoftSwitches left AN2 set (stale font after Ctrl-Reset)");
+
+        Memory dst; dst.setIIEMode(true);
+        CHECK(dst.loadCharRom(chr.string().c_str(), -1) != 0, "dst char ROM");
+        CHECK(dst.loadSnapshotState(blob.data(), blob.size()), "AN2 blob loads");
+        CHECK(dst.charRomBankOffset() == 4096,
+              "AN2 did not survive the snapshot — the restored machine renders "
+              "the wrong font");
+
+        // …and a reset drops the latch.
+        dst.resetSoftSwitches();
+        CHECK(dst.charRomBankOffset() == 0,
+              "resetSoftSwitches left AN2 set");
+
+        // An older 4-byte IOU section (no annunciators) must still load, and
+        // must leave the live values alone — the documented trailer rule.
+        std::vector<uint8_t> shortBlob;
+        {
+            Memory old; old.setIIEMode(true);
+            old.appendSnapshotState(shortBlob);
+            // Truncate the final section back to its pre-2026-09-06 length.
+            CHECK(shortBlob.size() > 7, "blob long enough to truncate");
+            shortBlob.resize(shortBlob.size() - 3);
+            shortBlob[shortBlob.size() - 4 - 4 + 0] = 4;  // len LE: 7 → 4
+        }
+        Memory legacy; legacy.setIIEMode(true);
+        CHECK(legacy.loadCharRom(chr.string().c_str(), -1) != 0, "legacy chr");
+        (void)legacy.memRead(0xC05D);
+        CHECK(legacy.loadSnapshotState(shortBlob.data(), shortBlob.size()),
+              "a 4-byte IOU section still loads");
+        CHECK(legacy.charRomBankOffset() == 4096,
+              "a blob that predates the annunciators must keep the live value");
+
+        std::filesystem::remove(chr);
     }
 
     // ── Part C: restoreMainRam restores RAM cells ────────────────────────

@@ -57,6 +57,7 @@
 #include "M6502.h"
 #include "MemoryWatchSink.h"
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -109,12 +110,23 @@ public:
     /// after a JSR) and run-to-cursor. A transient at an address that also
     /// carries a real breakpoint leaves the real one alone.
     void setTransient(uint16_t addr, Reason reason);
+    /// Disarm without firing. Safe to call from a thread that does NOT hold
+    /// `stateMutex` — the only member of this class for which that is true,
+    /// and deliberately so: `EmulationController::setMode(Mode::Stopped)` is
+    /// the Stop verb and MUST NOT take the lock (some of its callers reach it
+    /// already holding it, and the lock is non-recursive). See the
+    /// `transientArmed_` declaration.
     void clearTransient();
-    bool hasTransient() const { return transientArmed_; }
+    bool hasTransient() const {
+        return transientArmed_.load(std::memory_order_relaxed);
+    }
 
     // ── State the CPU and Memory consult ─────────────────────────────────
     /// Anything at all to check. False → the CPU stays on its fast loop.
-    bool armed() const { return bpCount_ || wpCount_ || transientArmed_; }
+    bool armed() const {
+        return bpCount_ || wpCount_ ||
+               transientArmed_.load(std::memory_order_relaxed);
+    }
     /// Watchpoints specifically — what Memory gates its hook on.
     bool watchArmed() const { return wpCount_ != 0; }
 
@@ -169,7 +181,17 @@ private:
 
     uint16_t transientAddr_   = 0;
     Reason   transientReason_ = Reason::None;
-    bool     transientArmed_  = false;
+    /// Atomic, alone among this class's members, because Stop clears it from
+    /// the UI thread while the CPU worker may be reading it in
+    /// `onInstruction`. Everything else here is guarded by `stateMutex`
+    /// (see § Threading), but the Stop verb — `setMode(Mode::Stopped)` —
+    /// cannot take that lock: callers such as the Disk II Library's boot
+    /// buttons already hold it when they reach setMode, and it is not
+    /// recursive. A relaxed load is exactly the cost of the plain bool it
+    /// replaces, and only on the debugged loop. `transientAddr_`/`Reason`
+    /// stay plain: they are only ever READ once this flag is seen true, and
+    /// the clear never rewrites them.
+    std::atomic<bool> transientArmed_{false};
 
     uint16_t resumeSkip_      = 0;
     bool     resumeSkipArmed_ = false;

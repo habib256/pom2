@@ -483,9 +483,84 @@ static void testRealHdvBootIIe()
     std::printf("\n");
 }
 
+// The $C800 window the //c punch opens is closed again by "the first $C0xx
+// access foreign to the slot's device-select" — that is what tells the
+// internal firmware (which hammers the soft switches constantly) apart from
+// the stub (which never touches them). Only the READ path implemented it: a
+// write to $C000-$C07F returned from memWriteSlow's soft-switch branch before
+// ever reaching the close. Firmware WRITES its soft switches at least as
+// often as it reads them (STA $C00D, STA $C051…), so the window stayed open
+// across them and the next JMP $CExx from the Monitor executed the card's
+// bank instead of the internal ROM — exactly the failure the guard exists to
+// prevent.
+static void testSoftSwitchWriteClosesTheC800Window()
+{
+    const std::string rom = firstExisting({
+        "roms/apple2c-32Kv0.rom", "roms/apple2cp.rom",
+    });
+    if (rom.empty()) {
+        std::printf("  SKIP: no 32 KB //c-class ROM present\n");
+        return;
+    }
+
+    Memory mem;
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.setIIEMode(true);
+    assert(mem.loadAppleIIRom(rom.c_str(), /*pickLowerHalf=*/true));
+
+    auto card = std::make_unique<pom2::SmartPortCard>(5);
+    pom2::SmartPortCard* raw = card.get();
+    mem.slotBus().plug(5, std::move(card));
+
+    const std::string img = makeRaw800k(0x77);
+    std::string err;
+    raw->setUnit(0, std::make_unique<pom2::SmartPort35Unit>());
+    assert(raw->mountBay(0, img, err));
+    mem.setIicSmartPortArmed(true);
+
+    const uint8_t internalC800 = mem.memRead(0xC800);   // window shut
+    const uint8_t cardC800     = raw->expansionRomRead(0);
+    assert(internalC800 != cardC800 &&
+           "the two banks are indistinguishable — this test cannot discriminate");
+
+    // A fetch in the stub's $C5xx page opens the window (and marks slot 5 as
+    // the expansion owner), exactly as entering the driver does.
+    auto openWindow = [&] {
+        (void)mem.memRead(0xC500);
+        assert(mem.memRead(0xC800) == cardC800 && "the window did not open");
+    };
+
+    // The read path — the half that already worked, kept as the control.
+    openWindow();
+    (void)mem.memRead(0xC051);                       // TEXT on, by read
+    assert(mem.memRead(0xC800) == internalC800);
+
+    // THE case: the same switch, written.
+    openWindow();
+    mem.memWrite(0xC051, 0x00);                      // TEXT on, by write
+    assert(mem.memRead(0xC800) == internalC800 &&
+           "a soft-switch WRITE left the //c $C800 card window open");
+
+    // …and a write to slot 5's own device-select ($C0D0-$C0DF) must NOT close
+    // it: that is the card talking to its own registers, not foreign traffic.
+    openWindow();
+    mem.memWrite(0xC0D0, 0x00);                      // unit select 0
+    assert(mem.memRead(0xC800) == cardC800 &&
+           "the slot's own device-select closed its expansion window");
+
+    // A foreign slot's device-select does close it, on the write path too.
+    mem.memWrite(0xC0C0, 0x00);                      // slot 4, empty
+    assert(mem.memRead(0xC800) == internalC800);
+
+    fs::remove(img);
+    std::printf("  ok: a soft-switch write closes the //c $C800 card window\n");
+}
+
 int main()
 {
     std::printf("\n[//c on-board SmartPort smoke]\n");
+    testSoftSwitchWriteClosesTheC800Window();
     testExposesRomOnlyWithMedia();
     testHdvUnitBlockReadThroughMemory();
     testHdvBootExecution();

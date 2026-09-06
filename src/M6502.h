@@ -316,8 +316,10 @@ private :
 
     // Rockwell 65C02 SMBn / RMBn (set/reset bit n in zp), 2 bytes,
     // 5 cycles. Distinct opcodes per bit so the dispatch table can
-    // call them directly. SMB0=0x07, SMB1=0x17, ..., SMB7=0x77.
-    // RMB0=0x87, RMB1=0x97, ..., RMB7=0xF7.
+    // call them directly. RMB0=0x07, RMB1=0x17, ..., RMB7=0x77.
+    // SMB0=0x87, SMB1=0x97, ..., SMB7=0xF7 — the low half of the $x7
+    // column RESETS, the high half SETS, as kCmosTable and
+    // Disassembler6502 have it. (This comment had the two swapped.)
     template <int N> void SMBn(void);
     template <int N> void RMBn(void);
 

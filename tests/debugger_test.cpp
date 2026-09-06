@@ -40,13 +40,16 @@
 //      write-protects the address — which would corrupt the machine being
 //      debugged rather than merely failing to stop it.
 
+#include "CassetteDevice.h"
 #include "Debugger.h"
+#include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <vector>
 
 namespace {
@@ -577,6 +580,221 @@ void testUnwatchedReadDoesNotStop()
     std::printf("[ OK ] an unwatched read under an armed read watch does not stop\n");
 }
 
+// ── 12. A breakpoint on an interrupt handler's first instruction ─────────
+// M6502::step() used to VECTOR and then execute the handler's first
+// instruction in the same call, so `run`'s debugged loop only ever offered
+// the PRE-interrupt PC to onInstruction: a breakpoint on $FFFE's target could
+// not fire at all (the handler was already one instruction in by the time the
+// loop came round), and a watchpoint tripped by that first instruction was
+// attributed to the interrupted instruction's PC. Both are pinned here.
+void testBreakpointOnInterruptHandlerEntry()
+{
+    // Guest: the $0300 loop from loadProgram(). Handler at $0400:
+    //   $0400  LDA #$EE   A9 EE      ← the breakpoint / the watched STA
+    //   $0402  STA $0350  8D 50 03
+    //   $0405  RTI        40
+    constexpr uint16_t kHandler = 0x0400;
+    auto buildMachine = [](Memory& mem) {
+        loadProgram(mem);
+        mem.writeRamUnchecked(0x0400, 0xA9); mem.writeRamUnchecked(0x0401, 0xEE);
+        mem.writeRamUnchecked(0x0402, 0x8D); mem.writeRamUnchecked(0x0403, 0x50);
+        mem.writeRamUnchecked(0x0404, 0x03);
+        mem.writeRamUnchecked(0x0405, 0x40);
+        // The IRQ/BRK vector lives in ROM space, where writeRamUnchecked
+        // refuses to go — so page in Language-Card RAM (two odd $C08B reads
+        // arm the sticky write-enable) and write $FFFE/$FFFF through it. The
+        // CPU's vector fetch reads the same overlay.
+        (void)mem.memRead(0xC08B);
+        (void)mem.memRead(0xC08B);
+        mem.memWrite(0xFFFE, 0x00);            // IRQ/BRK vector → $0400
+        mem.memWrite(0xFFFF, 0x04);
+    };
+
+    {
+        Memory mem;
+        M6502  cpu(&mem);
+        pom2::Debugger dbg;
+        buildMachine(mem);
+
+        dbg.addBreakpoint(kHandler);
+        cpu.setDebugHook(&dbg);
+        cpu.setProgramCounter(kStart);
+        cpu.setStatusRegister(0x20);           // I clear — the IRQ is takeable
+        cpu.setAccumulator(0x99);              // sentinel the handler overwrites
+        cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+
+        const int spent = cpu.run(1000);
+        assert(dbg.stopRequested() &&
+               "a breakpoint on the IRQ handler's first instruction never fired");
+        const pom2::Debugger::Hit hit = dbg.lastHit();
+        assert(hit.reason == pom2::Debugger::Reason::Breakpoint);
+        assert(hit.pc == kHandler);
+        assert(cpu.getProgramCounter() == kHandler &&
+               "the PC must be ON the handler's first instruction");
+        assert(cpu.getAccumulator() == 0x99 &&
+               "the handler's first instruction ran — the stop is one late");
+        // The 7 entry cycles were still charged: the interrupt happened, it
+        // is only the handler that has not started.
+        assert(spent >= 7 && spent < 1000);
+    }
+
+    // …and the watchpoint attribution that rides on the same fix: the STA
+    // inside the handler must report the HANDLER's PC, not the PC of the
+    // instruction the interrupt suspended.
+    {
+        Memory mem;
+        M6502  cpu(&mem);
+        pom2::Debugger dbg;
+        buildMachine(mem);
+
+        armWriteWatch(mem, dbg, kStoreAddr);
+        cpu.setDebugHook(&dbg);
+        cpu.setProgramCounter(kStart);
+        cpu.setStatusRegister(0x20);
+        cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+
+        cpu.run(1000);
+        assert(dbg.stopRequested());
+        const pom2::Debugger::Hit hit = dbg.lastHit();
+        assert(hit.reason == pom2::Debugger::Reason::WatchWrite);
+        assert(hit.addr == kStoreAddr && hit.value == 0xEE);
+        assert(hit.pc == 0x0402 &&
+               "the write was blamed on the interrupted instruction");
+        disarmWriteWatch(mem, dbg, kStoreAddr);
+    }
+
+    std::printf("[ OK ] a breakpoint on an interrupt handler's entry fires\n");
+}
+
+// ── 13. An un-hooked CPU is not perturbed by the interrupt-entry split ───
+// The § 12 fix is gated on `debugHook_`; a machine nobody is watching must
+// still retire the handler's first instruction in the SAME step() that took
+// the interrupt, because every lazily-synced peripheral clock derives its
+// phase from how `Memory::advanceCycles` is called (see M6502.cpp).
+void testInterruptEntryUnchangedWithoutAHook()
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    loadProgram(mem);
+    mem.writeRamUnchecked(0x0400, 0xA9); mem.writeRamUnchecked(0x0401, 0xEE);
+    mem.writeRamUnchecked(0x0402, 0x40);   // RTI
+    (void)mem.memRead(0xC08B);             // LC RAM in, for the vector
+    (void)mem.memRead(0xC08B);
+    mem.memWrite(0xFFFE, 0x00);
+    mem.memWrite(0xFFFF, 0x04);
+
+    cpu.setDebugHook(nullptr);
+    cpu.setProgramCounter(kStart);
+    cpu.setStatusRegister(0x20);
+    cpu.setAccumulator(0x99);
+    cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+
+    cpu.step();
+    assert(cpu.getAccumulator() == 0xEE &&
+           "the un-hooked step must vector AND run the handler's first "
+           "instruction, as it always has");
+    assert(cpu.getProgramCounter() == 0x0402);
+
+    std::printf("[ OK ] the un-hooked interrupt entry is byte-for-byte what it was\n");
+}
+
+// ── 14. A transient does not outlive Stop, a reset or a profile switch ───
+// Step-over and run-to-cursor arm a one-shot breakpoint at an address in the
+// code that was running. If the user presses Stop instead of letting it
+// arrive — or resets, or switches profile, which is `applyProfile` step 11
+// calling hardReset() — that address means nothing any more, but the
+// transient stayed armed and halted the machine the first time the PC
+// happened past it, minutes later and with no visible cause.
+void testTransientIsDisarmedByStopAndReset()
+{
+    EmulationController ctrl;
+
+    auto armTransient = [&](uint16_t at) {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        ctrl.debugger().setTransient(at, pom2::Debugger::Reason::RunToCursor);
+        ctrl.syncDebugHook();
+        assert(ctrl.debugger().hasTransient());
+        assert(ctrl.cpu().getDebugHook() != nullptr);
+    };
+
+    // Stop. Reached without `stateMutex` on purpose — that is the constraint
+    // the fix is shaped around (setMode is also called by holders of the lock
+    // and by the worker itself, and the lock is not recursive).
+    armTransient(0x0300);
+    ctrl.setMode(EmulationController::Mode::Stopped);
+    assert(!ctrl.debugger().hasTransient() &&
+           "Stop left a step-over breakpoint armed");
+    assert(!ctrl.debugger().armed());
+
+    // Hard reset (F12 — and the profile switch that runs through it).
+    armTransient(0x0301);
+    ctrl.hardReset();
+    assert(!ctrl.debugger().hasTransient() &&
+           "a hard reset left a step-over breakpoint armed");
+    assert(ctrl.cpu().getDebugHook() == nullptr &&
+           "nothing is armed any more — the hook must be detached again");
+
+    // Cold boot: the RAM the transient pointed into has literally been wiped.
+    armTransient(0x0302);
+    ctrl.coldBoot();
+    assert(!ctrl.debugger().hasTransient() &&
+           "a cold boot left a step-over breakpoint armed");
+    assert(ctrl.cpu().getDebugHook() == nullptr);
+
+    // A real breakpoint is NOT collateral damage: only the transient goes.
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        ctrl.debugger().addBreakpoint(0x0310);
+        ctrl.debugger().setTransient(0x0311, pom2::Debugger::Reason::StepOver);
+        ctrl.syncDebugHook();
+    }
+    ctrl.hardReset();
+    assert(!ctrl.debugger().hasTransient());
+    assert(ctrl.debugger().hasBreakpoint(0x0310) &&
+           "the reset ate a breakpoint the user placed");
+    assert(ctrl.cpu().getDebugHook() != nullptr);
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        ctrl.debugger().clearBreakpoints();
+        ctrl.syncDebugHook();
+    }
+
+    std::printf("[ OK ] a transient is disarmed by Stop, hard reset and cold boot\n");
+}
+
+// ── 15. bootFromSlot is coldBoot-equivalent, cassette included ───────────
+// CLAUDE.md § Reset architecture calls bootFromSlot "coldBoot-equivalent
+// (inlined)". The inlining dropped `tape->resetCpuSide()`, so a boot from the
+// Disk II Library left the cassette's output flip-flop set and its cycle
+// timebase un-rebased — `lastOutputToggleCycle` then sat in the future of a
+// zeroed `currentCycle` and the next $C020 toggle recorded a wrapped pulse.
+void testBootFromSlotResetsTheCassetteCpuSide()
+{
+    // The observable: resetCpuSide() clears `outputLevel`, and toggleOutput()
+    // returns the NEW level. Toggle once (level → true, returns $80); after a
+    // reset of the CPU side the next toggle must return $80 again, not $00.
+    auto levelAfterBootFrom = [](void (*boot)(EmulationController&)) {
+        EmulationController ctrl;
+        assert(ctrl.cassette().toggleOutput() == 0x80);
+        boot(ctrl);
+        return ctrl.cassette().toggleOutput();
+    };
+
+    const uint8_t afterCold = levelAfterBootFrom(
+        [](EmulationController& c) { c.coldBoot(); });
+    const uint8_t afterBoot = levelAfterBootFrom(
+        [](EmulationController& c) { (void)c.bootFromSlot(6); });
+    const uint8_t afterNothing = levelAfterBootFrom(
+        [](EmulationController&) {});
+
+    assert(afterNothing == 0x00 && "the observable does not discriminate");
+    assert(afterCold == 0x80);
+    assert(afterBoot == 0x80 &&
+           "bootFromSlot skipped the cassette CPU-side reset coldBoot does");
+
+    std::printf("[ OK ] bootFromSlot resets the cassette CPU side like coldBoot\n");
+}
+
 }  // namespace
 
 int main()
@@ -592,6 +810,10 @@ int main()
     testRestoreIgnoresTheDiversion();
     testReadWatchStopsAndTheReadHappened();
     testUnwatchedReadDoesNotStop();
+    testBreakpointOnInterruptHandlerEntry();
+    testInterruptEntryUnchangedWithoutAHook();
+    testTransientIsDisarmedByStopAndReset();
+    testBootFromSlotResetsTheCassetteCpuSide();
     std::printf("debugger: all assertions passed\n");
     return 0;
 }

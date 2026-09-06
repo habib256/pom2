@@ -35,16 +35,19 @@
 // through to the plain AN0/AN1/AN2 cases (:1975-1983) which touch `m_an1`
 // and the gameio pin and nothing else. `m_ioudis = true` at reset (:1234).
 //
-// Observation channel: `Memory::appendSnapshotState` ends with a 4-byte
-// length-prefixed IOU section — intC8Rom, ioudis, vblIrqMask, vblIrqPending —
-// so the last two bytes of the blob expose the mask and the latch directly,
-// on IIe as well as on //c.
+// Observation channel: `Memory::appendSnapshotState` ends with a
+// length-prefixed IOU section — intC8Rom, ioudis, vblIrqMask, vblIrqPending,
+// then AN0/AN1/AN2 (added 2026-09-06) — so two fixed offsets from the end of
+// the blob expose the mask and the latch directly, on IIe as well as on //c.
+// Indexed from the section's own size below rather than from `blob.back()`,
+// which is what silently re-aimed these probes at the annunciators.
 
 #include "M6502.h"
 #include "Memory.h"
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -73,19 +76,35 @@ void advance(Memory& mem, uint64_t cycles)
     }
 }
 
-// Tail of appendSnapshotState: [len=4][intC8Rom][ioudis][vblIrqMask][vblIrqPending]
-bool vblMask(Memory& mem)
+// Tail of appendSnapshotState:
+//   [len=7][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
+// The section's length is the last four bytes before its payload, so read it
+// rather than assuming: the payload has grown once already.
+constexpr size_t kIouSectionLen = 7;
+
+uint8_t iouByte(Memory& mem, size_t index)
 {
     std::vector<uint8_t> blob;
     mem.appendSnapshotState(blob);
-    return blob[blob.size() - 2] != 0;
+    // The section is the tail of the blob, so its 4-byte little-endian length
+    // prefix sits just before it. Check the prefix against what this test
+    // assumes: if the section ever grows again, that mismatch is a loud
+    // failure here instead of two probes that silently read the wrong bytes.
+    const size_t at = blob.size() - kIouSectionLen - 4;
+    const size_t len = static_cast<size_t>(blob[at]) |
+                       (static_cast<size_t>(blob[at + 1]) << 8) |
+                       (static_cast<size_t>(blob[at + 2]) << 16) |
+                       (static_cast<size_t>(blob[at + 3]) << 24);
+    if (len != kIouSectionLen) {
+        std::printf("FAIL: the IOU snapshot section is no longer %zu bytes "
+                    "— update kIouSectionLen and the indices below\n",
+                    kIouSectionLen);
+        std::exit(1);
+    }
+    return blob[blob.size() - kIouSectionLen + index];
 }
-bool vblPending(Memory& mem)
-{
-    std::vector<uint8_t> blob;
-    mem.appendSnapshotState(blob);
-    return blob[blob.size() - 1] != 0;
-}
+bool vblMask(Memory& mem)    { return iouByte(mem, 2) != 0; }
+bool vblPending(Memory& mem) { return iouByte(mem, 3) != 0; }
 bool irqAsserted(M6502& cpu)
 {
     // getIrqSourceMask() is a wire-OR BIT mask; IRQ_SRC_VBL is the bit index.

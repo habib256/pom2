@@ -679,6 +679,18 @@ void Memory::resetSoftSwitches()
     if (iieMode && ramWorksBanks_ > 1) {
         ramWorksSwapToBank(0);
     }
+    // Annunciators AN0-AN2. The 74LS259 addressable latch that drives them
+    // has its /CLR tied to the reset line, so every reset drops all four
+    // outputs — MAME `apple2e.cpp` machine_reset zeroes `m_an0..m_an3`
+    // alongside the rest of the IOU. AN3 lives in `display` and was already
+    // cleared by the `display = DisplayState{}` above; these three were not,
+    // and AN2 is not decorative: on an 8 KB international character
+    // generator it is wired to the ROM's A12, so a stale AN2 left a
+    // freshly-reset machine rendering the second 4 KB font
+    // (`charRomBankOffset`). Same reason they are in the snapshot trailer.
+    an0 = false;
+    an1 = false;
+    an2 = false;
     keyboard_.reset();   // abandon any in-flight paste, drop the strobe
 }
 
@@ -907,6 +919,17 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         sect.push_back(ioudis        ? 1 : 0);
         sect.push_back(vblIrqMask    ? 1 : 0);
         sect.push_back(vblIrqPending ? 1 : 0);
+        // Annunciators AN0-AN2, appended 2026-09-06. AN3 already travels
+        // inside DisplayState; these three did not travel at all, and AN2
+        // drives A12 of an 8 KB international character generator
+        // (`charRomBankOffset`) — so a snapshot restore or a rewind of a
+        // French Touch "Block ASCII" screen came back rendering the other
+        // 4 KB font. The section is length-prefixed and grew at the END, so
+        // a 4-byte blob from an older build still loads (the loader keeps
+        // the live values for anything the section does not carry).
+        sect.push_back(an0 ? 1 : 0);
+        sect.push_back(an1 ? 1 : 0);
+        sect.push_back(an2 ? 1 : 0);
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
@@ -1080,6 +1103,14 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n)
             // //c would spin in its IRQ vector.
             if (iicProfile_ && cpu)
                 cpu->setIrqLine(M6502::IRQ_SRC_VBL, vblIrqPending);
+            // Annunciators, appended after the four above. A blob written
+            // before 2026-09-06 stops at k == 4 and keeps the live values,
+            // which is the same back-compat rule the whole trailer follows.
+            if (k >= 7) {
+                an0 = p[4] != 0;
+                an1 = p[5] != 0;
+                an2 = p[6] != 0;
+            }
             return true;
         })) return false;
 
@@ -2344,13 +2375,22 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         return;
     }
 
+    // //c-class : meme regle que la lecture (voir memReadSlowBody) — tout
+    // acces $C0xx etranger au device-select du slot 5 referme la fenetre
+    // $C800 de la carte percee. Doit rester AVANT le retour anticipe des
+    // soft switches $C000-$C07F : le firmware interne les ECRIT autant
+    // qu'il les lit (STA $C00D, STA $C051…), et ces ecritures ne
+    // refermaient rien — la fenetre restait ouverte apres un appel du
+    // pilote et le premier JMP $CExx du moniteur executait la banque carte,
+    // exactement le bug que la garde existe pour empecher.
+    if (iicCardWindow_ && addr <= 0xC0FF &&
+        (addr < 0xC0D0 || addr > 0xC0DF))
+        iicCardWindow_ = false;
+
     if (addr <= 0xC07F) {
         softSwitchAccess(addr, /*isWrite=*/true, value);
         return;
     }
-    if (iicCardWindow_ && addr >= 0xC000 && addr <= 0xC0FF &&
-        (addr < 0xC0D0 || addr > 0xC0DF))
-        iicCardWindow_ = false;
     if (addr <= 0xC0FF) {
         if (addr <= 0xC08F) {
             languageCardSwitchAccess(addr, /*isWrite=*/true);

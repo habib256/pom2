@@ -147,13 +147,18 @@ void Debugger::setTransient(uint16_t addr, Reason reason)
 {
     transientAddr_   = addr;
     transientReason_ = reason;
-    transientArmed_  = true;
+    // Released last, so a CPU worker that observes the flag set also observes
+    // the address and reason that go with it.
+    transientArmed_.store(true, std::memory_order_release);
 }
 
 void Debugger::clearTransient()
 {
-    transientArmed_  = false;
-    transientReason_ = Reason::None;
+    // The flag only. `transientReason_` is read exclusively while the flag is
+    // true, and this is the one method callable WITHOUT `stateMutex` (the Stop
+    // verb; see the header) — a plain write to the reason here would be a race
+    // for no gain.
+    transientArmed_.store(false, std::memory_order_relaxed);
 }
 
 // ── The hot hooks ────────────────────────────────────────────────────────
@@ -180,7 +185,8 @@ bool Debugger::onInstruction(uint16_t pc)
     }
     resumeSkipArmed_ = false;
 
-    if (transientArmed_ && pc == transientAddr_) {
+    if (transientArmed_.load(std::memory_order_acquire) &&
+        pc == transientAddr_) {
         // Transients are one-shot by construction — step-over must not leave
         // a breakpoint behind at the return address.
         const Reason why = transientReason_;

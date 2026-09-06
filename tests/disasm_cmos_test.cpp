@@ -84,6 +84,34 @@ int main()
     put(0x0300, {0x04, 0x20}); assert(dis(0x0300, true, len) == "TSB $20"  && len == 2);
     put(0x0300, {0x14, 0x20}); assert(dis(0x0300, true, len) == "TRB $20"  && len == 2);
 
+    // The $x3 / $xB columns: 30 one-byte reserved NOPs on the 65C02, and the
+    // core executes them as such (`M6502::Unoff`, `kCmosTable`). They used to
+    // fall through to the NMOS table, where the same slots are 2- or 3-byte,
+    // so the listing consumed operand bytes the CPU never fetched and every
+    // following line was wrong. $CB/$DB are the two exceptions (WAI/STP).
+    for (int hi = 0; hi < 16; ++hi) {
+        for (uint8_t lo : { 0x03, 0x0B }) {
+            const uint8_t op = static_cast<uint8_t>(hi * 0x10 + lo);
+            if (op == 0xCB || op == 0xDB) continue;
+            put(0x0300, {op, 0x55, 0x66});
+            const std::string got = dis(0x0300, true, len);
+            if (!(got == "NOP" && len == 1)) {
+                std::printf("FAIL: CMOS $%02X decoded as \"%s\" (%d B), "
+                            "expected 1-byte NOP\n", op, got.c_str(), len);
+                return 1;
+            }
+        }
+    }
+    // …and the two WDC opcodes that live in those columns are NOT NOPs.
+    put(0x0300, {0xCB}); assert(dis(0x0300, true, len) == "WAI" && len == 1);
+    put(0x0300, {0xDB}); assert(dis(0x0300, true, len) == "STP" && len == 1);
+    // In NMOS mode the same slots keep their undocumented multi-byte lengths
+    // (a cracked loader embeds them and the stream must not desync).
+    put(0x0300, {0x1B, 0x55, 0x66});
+    assert(dis(0x0300, false, len) == "??? $6655,Y" && len == 3);
+    put(0x0300, {0x13, 0x55});
+    assert(dis(0x0300, false, len) == "??? ($55),Y" && len == 2);
+
     // NMOS opcodes must still decode the same in both modes.
     put(0x0300, {0xA9, 0x42});       assert(dis(0x0300, true,  len) == "LDA #$42" && len == 2);
     put(0x0300, {0x4C, 0x00, 0xFF}); assert(dis(0x0300, false, len) == "JMP $FF00" && len == 3);
