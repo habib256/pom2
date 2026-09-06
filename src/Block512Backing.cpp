@@ -439,6 +439,19 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     const size_t written = pending.dirtyIndices.size();
 
     const std::filesystem::path tmp = pending.path + ".pom2tmp";
+    // Same temp-path scrutiny as `Disk35Image::saveDirty` and every other
+    // AtomicFileReplace caller: the TARGET was validated at mount, but this
+    // sibling name is derived afterwards and gets none of that. A symlink
+    // planted at <image>.pom2tmp redirects the trunc onto whatever it points
+    // at and the rename then carries the link away, destroying the user's
+    // image with nothing left to show what happened; a hard link to the image
+    // itself truncates it before anything is committed. See prepareTempPath.
+    std::error_code prepEc;
+    if (!prepareTempPath(tmp, prepEc)) {
+        error = "Temp path unusable " + tmp.string() + ": " + prepEc.message();
+        pom2::log().warn("HDV", error);
+        return false;
+    }
     std::error_code permEc;
     const auto perms = std::filesystem::status(pending.path, permEc).permissions();
     const bool havePerms = !permEc;

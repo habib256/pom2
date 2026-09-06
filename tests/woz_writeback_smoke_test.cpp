@@ -367,6 +367,62 @@ bool testWoz1FileWriteProtected()
     return true;
 }
 
+bool testWozUnsplicableQuarterTrackRefusesSave()
+{
+    // A dirty quarter-track whose bit stream is gone cannot be spliced back
+    // into wozRaw. `saveDirty` used to `continue` past it, then
+    // `wozQtDirty.fill(false)` + `return true`: the guest's writes to that
+    // track were dropped while `hasUnsavedChanges()` went false and
+    // `getLastError()` stayed empty, so the eject path saw a clean success.
+    // Same rule as `reportUndecodable` for the sector formats — refuse, keep
+    // the changes, let the user retry. (Bug hunt 2026-09-06 #7.)
+    //
+    // Reached here through the legacy nibble gate: `writeNibbleAt` on a WOZ
+    // takes the non-WOZ branch, whose `invalidateWholeTrack` clears
+    // `bitStream[qt]` for a quarter-track `writeFlux` had already marked
+    // dirty.
+    std::vector<uint8_t> bitData = {0xD5, 0xAA, 0x96, 0xEB};
+    while (bitData.size() < 6646) bitData.push_back(0xFF);
+    const std::string path =
+        writeTempFile(buildMinimalWoz1(bitData, 6646 * 8), "v1_unsplicable");
+
+    DiskImage img;
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: load WOZ1: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    img.setWriteBackEnabled(true);
+
+    const std::array<uint8_t, 8> a5 = {1,0,1,0,0,1,0,1};
+    writeCellWindow(img, 0, a5);
+    if (!img.hasUnsavedChanges()) {
+        std::printf("FAIL: writeFlux left QT0 clean\n"); return false;
+    }
+    const auto pristine = readWholeFile(path);
+
+    // Drop the bit stream QT0's dirty flag refers to.
+    img.writeNibbleAt(0, 0, static_cast<uint8_t>(img.nibbleAt(0, 0) ^ 0xFF));
+
+    if (img.saveDirty()) {
+        std::printf("FAIL: save reported success with an unsplicable QT\n");
+        return false;
+    }
+    if (!img.hasUnsavedChanges()) {
+        std::printf("FAIL: refused save laundered the dirty flags\n");
+        return false;
+    }
+    if (img.getLastError().empty()) {
+        std::printf("FAIL: refused save left no error to show the user\n");
+        return false;
+    }
+    if (readWholeFile(path) != pristine) {
+        std::printf("FAIL: refused save wrote to the image anyway\n");
+        return false;
+    }
+    std::printf("[ OK ] WOZ unsplicable quarter-track refuses the save\n");
+    return true;
+}
+
 }  // namespace
 
 int main()
@@ -374,6 +430,7 @@ int main()
     if (!testWoz1WriteBackRoundTrip())  return 1;
     if (!testWoz2WriteBackRoundTrip())  return 1;
     if (!testWoz1FileWriteProtected())  return 1;
+    if (!testWozUnsplicableQuarterTrackRefusesSave()) return 1;
     std::printf("OK woz_writeback_smoke\n");
     return 0;
 }

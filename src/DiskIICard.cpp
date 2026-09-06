@@ -496,11 +496,11 @@ bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
     return true;
 }
 
-bool DiskIICard::ejectDisk(int drive)
+std::unique_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
 {
-    if (drive < 0 || drive >= kDriveCount) return false;
+    if (drive < 0 || drive >= kDriveCount) return nullptr;
     // Same reason insertDisk and flushPendingWrites do it: fold the burst the
-    // controller is part-way through into the image BEFORE saving, or
+    // controller is part-way through into the image BEFORE lifting it out, or
     // `img.eject()` below wipes tracks[] and writeFraming[] and takes the
     // sector the guest was writing with it. Clicking Eject during a `SAVE`
     // dropped ~30 buffered transitions plus the partly framed nibble, and the
@@ -508,13 +508,17 @@ bool DiskIICard::ejectDisk(int drive)
     // reverted to its old contents while the save reported success.
     commitInFlightWrite();
     DiskImage& img = images[drive];
+    std::unique_ptr<DiskImage> pending;
     if (img.isLoaded() && img.hasUnsavedChanges()) {
-        if (!img.saveDirty()) {
-            mediaErrors[drive] = img.getLastError();
-            pom2::log().warn("Disk II",
-                "Save-on-eject failed: " + img.getLastError());
-            return false;  // preserve dirty media so the user can retry
-        }
+        // Move-ASSIGN into an already-heap-allocated image. A `DiskImage` is
+        // ~242 KB and macOS gives a std::thread a 512 KB stack, so neither the
+        // temporary `make_unique(std::move(img))` would materialise nor a
+        // `std::swap` (which builds one) may appear on this path — same rule
+        // as `prepareDisk`. Element-wise array move is a memcpy done in
+        // place: microseconds, and no syscall, which is the whole point of
+        // doing this half under the lock.
+        pending = std::make_unique<DiskImage>();
+        *pending = std::move(img);
     }
     img.eject();
     mediaErrors[drive].clear();
@@ -528,7 +532,47 @@ bool DiskIICard::ejectDisk(int drive)
     // No click here — symmetric with insertDisk; UI / CLI sites fire
     // their own click when the user triggers the eject.
     pushIwmFloppy();
+    return pending;
+}
+
+bool DiskIICard::commitEjectWriteBack(DiskImage& pending, std::string& error)
+{
+    if (pending.saveDirty()) return true;
+    error = pending.getLastError();
+    if (error.empty()) error = "save-on-eject failed";
+    pom2::log().warn("Disk II", "Save-on-eject failed: " + error);
+    return false;
+}
+
+bool DiskIICard::restoreEjected(int drive, std::unique_ptr<DiskImage> pending)
+{
+    if (drive < 0 || drive >= kDriveCount || !pending) return false;
+    if (images[drive].isLoaded()) return false;   // bay refilled meanwhile
+    const std::string err = pending->getLastError();
+    // installPreparedLocked re-anchors the LSS exactly as an insert does, and
+    // clears mediaErrors — so the error that caused the retry is re-applied
+    // after it, or the panel would show a silently reverted disk and no
+    // explanation of why the eject did not take.
+    if (!installPreparedLocked(drive, std::move(*pending))) return false;
+    mediaErrors[drive] = err;
     return true;
+}
+
+bool DiskIICard::ejectDisk(int drive)
+{
+    if (drive < 0 || drive >= kDriveCount) return false;
+    // Composed from the three-step form so there is ONE copy of the eject
+    // logic — the same shape `Block512Backing::saveDirty` has. The phases are
+    // simply not separated in time here.
+    std::unique_ptr<DiskImage> pending = takeEjectWriteBack(drive);
+    if (!pending) return true;             // empty bay, or nothing to save
+    std::string error;
+    if (commitEjectWriteBack(*pending, error)) return true;
+    // Preserve dirty media so the user can retry — what the pre-split inline
+    // path did by never ejecting on a failed save.
+    (void)restoreEjected(drive, std::move(pending));
+    mediaErrors[drive] = error;
+    return false;
 }
 
 uint8_t DiskIICard::slotRomRead(uint8_t low8)

@@ -163,6 +163,15 @@ bool ImageWriter_ImGui::savePagePng(const ImageWriter::Page& p,
     std::vector<uint8_t> rgba;
     ImageWriter::pageToRgba(p, rgba);
     const fs::path tmp = out.string() + ".pom2tmp";
+    // The user picked `out`; this sibling name is ours by construction and got
+    // none of that choice's scrutiny, while stb's fopen("wb") follows symlinks
+    // like any other open. Clear the way (or refuse) before writing — the same
+    // guard every other write-back path in POM2 runs. See prepareTempPath.
+    std::error_code prepEc;
+    if (!prepareTempPath(tmp, prepEc)) {
+        err = "temp path unusable " + tmp.string() + ": " + prepEc.message();
+        return false;
+    }
     if (stbi_write_png(tmp.string().c_str(), p.w, p.h, 4,
                        rgba.data(), p.w * 4) == 0) {
         err = "stbi_write_png failed (is " + out.string() + " writable?)";

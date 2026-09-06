@@ -114,7 +114,44 @@ public:
     /// The replace is atomic (sibling `.pom2tmp` + rename, as in
     /// `DiskImage::saveDirty`): a failed or interrupted save leaves the
     /// user's image exactly as it was rather than truncated.
+    ///
+    /// Does its file work INLINE, so a caller holding `stateMutex` freezes the
+    /// machine and the window for a 800 KB write and two fsyncs. Composed from
+    /// the two-phase pair below, which is the split that solves that; this
+    /// entry point stays for single-threaded callers with no lock to get out
+    /// from under.
     bool saveDirty();
+
+    /// ── Two-phase write-back ────────────────────────────────────────────
+    /// The 3.5" mirror of `Block512Backing::takeWriteBack`. Mount was split in
+    /// v0.8.5 (`MediaMount.h`); the eject side kept writing 800 KB with
+    /// `stateMutex` held — the lock the CPU worker takes every 4096 cycles and
+    /// the UI thread takes to paint every frame — and the firmware-issued
+    /// eject (`Sony35Drive` register 7) did it from the IWM path itself.
+    ///
+    /// `bytes` is the COMPLETE file, 2IMG envelope included, so phase 2 needs
+    /// nothing from the object: by then the medium may already be gone.
+    struct PendingWriteBack {
+        bool                 valid = false;   ///< false → phase 2 no-ops
+        std::string          path;
+        std::vector<uint8_t> bytes;
+    };
+
+    /// Phase 1, WITH the lock: serialise what `saveDirty()` would write and
+    /// retire the dirty flag, atomically with the capture. Memcpy only — no
+    /// syscall. A no-op capture (nothing dirty, write-back off, medium WP)
+    /// returns `valid == false` and leaves `dirty_` alone, so opting back in
+    /// to write-back still saves the session's writes.
+    PendingWriteBack takeWriteBack();
+
+    /// Phase 2, with NO lock held: perform the deferred write. Static because
+    /// the image it came from may no longer exist.
+    static bool commitWriteBack(PendingWriteBack&& pending, std::string& error);
+
+    /// Phase-2 FAILURE undo: re-mark the medium dirty so a retry re-captures
+    /// it. Unlike the block backing there is no per-block set to merge — the
+    /// payload is the whole image — so this is one flag.
+    void restoreDirty() { if (loaded_) dirty_ = true; }
 
     /// Write the decoded 800K payload out as a bare ProDOS-order image
     /// (`.po`), leaving the source file untouched. Returns false and fills
@@ -159,6 +196,24 @@ private:
     // wrapper. Empty when the source was a raw `.po` / `.dsk`.
     std::vector<uint8_t> twoImgHeaderRaw_;
     std::vector<uint8_t> twoImgTrailerRaw_;
+};
+
+/// Where a `Disk35Image::PendingWriteBack` lifted out under `stateMutex` goes
+/// to be written with the lock RELEASED.
+///
+/// The firmware-issued eject (`Sony35Drive`, register 7) runs on the CPU
+/// worker inside that lock, so it cannot write and it cannot wait for a
+/// write. It captures the payload — a memcpy — and hands it here; the host
+/// (`EmulationController`) owns the thread that commits it. A drive with no
+/// sink wired falls back to the inline save, which is correct for the
+/// single-threaded hosts (CLI, tests) that have no lock to get out from under.
+class Disk35WriteBackSink
+{
+public:
+    virtual ~Disk35WriteBackSink() = default;
+    /// Takes ownership. Must not block on I/O: it is called with the machine
+    /// lock held.
+    virtual void submit(Disk35Image::PendingWriteBack&& pending) = 0;
 };
 
 }  // namespace pom2

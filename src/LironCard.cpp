@@ -83,6 +83,21 @@ LironCard::LironCard(int slot)
         std::to_string(slot_) + ", firmware-driven IWM");
 }
 
+LironCard::~LironCard()
+{
+    // Same contract as `~DiskIICard`: the card is the last owner of the
+    // guest's writes, and `SlotBus` destroys it on every slot rebuild /
+    // profile switch as well as at quit. `saveDirty` is a successful no-op
+    // when write-back is off or nothing is dirty.
+    for (int bay = 0; bay < kDrives; ++bay) {
+        std::string err;
+        if (!flushBay(bay, err) && !err.empty()) {
+            pom2::log().warn("Liron", "Shutdown flush failed on bay " +
+                             std::to_string(bay + 1) + ": " + err);
+        }
+    }
+}
+
 void LironCard::setFloppySound(FloppySoundSink* fs)
 {
     for (auto& d : drives_) d.setFloppySound(fs);
@@ -354,9 +369,31 @@ bool LironCard::ejectBay(int bay)
 {
     if (bay < 0 || bay >= kDrives) return false;
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
-    if (img.hasUnsavedChanges() && !img.isWriteProtected()) img.saveDirty();
+    // Refuse the eject when the save fails, exactly as every sibling does
+    // (`DiskIICard::ejectDisk`, `SmartPort35Unit::eject`,
+    // `EmulationController::eject35`): `Disk35Image::eject()` drops `blocks_`,
+    // which is the ONLY copy of everything the guest wrote since the mount, so
+    // ejecting anyway destroys it with a success return. Keeping the medium
+    // mounted and dirty lets the user fix the cause and retry — or turn
+    // write-back off, which makes `saveDirty` a successful no-op.
+    if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty())
+        return false;
     img.eject();
     drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
+    return true;
+}
+
+bool LironCard::flushBay(int bay, std::string& errOut)
+{
+    errOut.clear();
+    if (bay < 0 || bay >= kDrives) { errOut = "no such bay"; return false; }
+    Disk35Image& img = images_[static_cast<std::size_t>(bay)];
+    if (!img.isLoaded() || !img.hasUnsavedChanges()) return true;
+    if (!img.saveDirty()) {
+        errOut = img.lastError();
+        if (errOut.empty()) errOut = "3.5-inch write-back failed";
+        return false;
+    }
     return true;
 }
 

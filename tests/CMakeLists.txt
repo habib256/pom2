@@ -6176,12 +6176,36 @@ set_tests_properties(thread_guard PROPERTIES TIMEOUT 30)
 # one: a breakpoint must stop BEFORE its instruction runs, or the register
 # dump the user reads is the state coming out instead of going in. See the
 # file header.
+#
+# Cases 14/15 drive the real EmulationController, which is why its object
+# graph is linked in: what they pin is the RUN-CONTROL side of a reset — a
+# step-over transient must not outlive Stop / F12 / a profile switch, and
+# bootFromSlot must reset the cassette CPU side the way coldBoot does.
 add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
-target_include_directories(test_debugger PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(test_debugger PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})     # miniaudio.h location for FloppySoundDevice
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_debugger PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_debugger PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_debugger PRIVATE winmm)
+endif()
 add_test(NAME debugger COMMAND test_debugger)
 set_tests_properties(debugger PROPERTIES TIMEOUT 30)
 

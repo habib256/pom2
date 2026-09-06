@@ -34,6 +34,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -398,6 +399,78 @@ int main()
         assert(!command.ok);
         assert(!command.error.empty());
 
+        // ── Two-phase Disk II eject (bug hunt 2026-09-06 #13) ───────────
+        // `ejectDisk` re-encodes the dirty tracks, rewrites the image and
+        // fsyncs twice; doing that under `stateMutex` froze the CPU worker
+        // and the window together. The split mirrors `prepareDisk` +
+        // `installDisk` on the mount side: phase 1 lifts the medium out
+        // (a move, no syscall), phase 2 writes it with the lock released,
+        // phase 3 puts it back when the write failed.
+        {
+            // A DiskImage is ~242 KB: heap it, never a stack local (macOS
+            // gives a thread 512 KB — see DiskIICard::prepareDisk).
+            const auto stageDirty = [&](int track, int nibble) {
+                auto staged = std::make_unique<DiskImage>();
+                std::string err;
+                assert(DiskIICard::prepareDisk(diskPath, true, *staged, err));
+                const std::uint8_t cur = staged->nibbleAt(track, nibble);
+                staged->writeNibbleAt(
+                    track, nibble, static_cast<std::uint8_t>(cur ^ 0x01));
+                assert(staged->hasUnsavedChanges());
+                return staged;
+            };
+
+            std::unique_ptr<DiskImage> pending;
+            {
+                auto state = mediaController.lockState();
+                auto* card = dynamic_cast<DiskIICard*>(
+                    state.memory().slotBus().peripheral(4));
+                assert(card);
+                card->setWriteBackEnabled(true);
+                assert(card->installDisk(0, std::move(*stageDirty(6, 80))));
+                assert(card->hasUnsavedChanges(0));
+
+                pending = card->takeEjectWriteBack(0);
+                assert(pending && "phase 1 hands out the dirty medium");
+                assert(!card->isDiskLoaded(0) &&
+                       "phase 1 empties the bay with no file I/O");
+            }
+            std::string error;
+            assert(DiskIICard::commitEjectWriteBack(*pending, error));
+            assert(error.empty());
+
+            // Phase 3: a failed commit re-mounts the medium so the writes
+            // are not lost — what the inline path did by never ejecting.
+            {
+                auto state = mediaController.lockState();
+                auto* card = dynamic_cast<DiskIICard*>(
+                    state.memory().slotBus().peripheral(4));
+                assert(card);
+                assert(card->installDisk(0, std::move(*stageDirty(7, 90))));
+                std::unique_ptr<DiskImage> doomed = card->takeEjectWriteBack(0);
+                assert(doomed);
+                assert(!card->isDiskLoaded(0));
+                // Truncating the source is the deterministic, portable save
+                // failure (same trick as disk_writeback_smoke_test).
+                std::error_code ec;
+                std::filesystem::resize_file(diskPath, 1, ec);
+                assert(!ec);
+                std::string err2;
+                assert(!DiskIICard::commitEjectWriteBack(*doomed, err2));
+                assert(!err2.empty());
+                assert(card->restoreEjected(0, std::move(doomed)));
+                assert(card->isDiskLoaded(0) &&
+                       "a failed commit puts the medium back for a retry");
+                assert(card->hasUnsavedChanges(0));
+            }
+            // Put the image back so the rest of the suite still has it.
+            (void)writeImage("pom2_storage_rebuild.dsk", 35u * 16u * 256u,
+                             0x00);
+            command = mediaStorage.ejectDiskII(
+                mediaController, commandSettings, 4, 0);
+            assert(command.ok);
+        }
+
         command = mediaStorage.mountMediaBay(
             mediaController, commandSettings, 3, 0, hdvPath);
         assert(command.ok);
@@ -497,6 +570,87 @@ int main()
                     assert(info.path == lironPath);
                     assert(info.writeBackEnabled);
                     assert(card->ejectBay(0));
+                    (void)bus.unplug(1);
+                }
+                commandSettings.setString("media_slot1_bay0_path", "");
+
+                // ── flushAll reaches a generic media bay (bug hunt #1) ──
+                // `flushAll` walked Disk II / block / SmartPort cards only,
+                // so the Liron — a MountableMediaCard outside all three —
+                // was flushed by nothing: quit and profile switch destroyed
+                // the card with the session's writes still in RAM, and the
+                // remount read the untouched file back.
+                {
+                    {   // the persistence case above unplugged it
+                        auto state = mediaController.lockState();
+                        state.memory().slotBus().plug(
+                            1, std::make_unique<pom2::LironCard>(1));
+                    }
+                    command = mediaStorage.mountMediaBay(
+                        mediaController, commandSettings, 1, 0, lironPath);
+                    assert(command.ok);
+                    command = mediaStorage.setMediaBayWriteBack(
+                        mediaController, commandSettings, 1, 0, true);
+                    assert(command.ok);
+
+                    std::vector<std::uint8_t> block(512, 0xC7);
+                    {
+                        auto state = mediaController.lockState();
+                        auto& bus = state.memory().slotBus();
+                        auto* card =
+                            dynamic_cast<pom2::LironCard*>(bus.peripheral(1));
+                        assert(card);
+                        auto* image = card->drive(0).image();
+                        assert(image && image->isLoaded());
+                        assert(image->writeBlock(11, block.data()));
+                        assert(card->bayInfo(0).hasUnsavedChanges);
+
+                        std::string flushErr;
+                        assert(mediaStorage.flushAll(bus, flushErr));
+                        assert(flushErr.empty());
+                        assert(!card->bayInfo(0).hasUnsavedChanges);
+                    }
+                    std::ifstream reread(lironPath, std::ios::binary);
+                    reread.seekg(11 * 512);
+                    std::vector<char> got(512, 0);
+                    reread.read(got.data(), 512);
+                    assert(std::memcmp(got.data(), block.data(), 512) == 0 &&
+                           "flushAll must reach every mountable media bay");
+                }
+
+                // ── a failed save must refuse the eject (bug hunt #2) ────
+                // `LironCard::ejectBay` discarded saveDirty()'s return and
+                // ejected anyway; `Disk35Image::eject()` then dropped the
+                // ONLY copy of everything written since the mount, with a
+                // success return. A directory at <image>.pom2tmp is the
+                // deterministic, cross-platform save failure.
+                {
+                    const std::string tmpName = lironPath + ".pom2tmp";
+                    std::error_code ec;
+                    std::filesystem::remove_all(tmpName, ec);
+                    std::filesystem::create_directory(tmpName, ec);
+                    assert(!ec);
+
+                    std::vector<std::uint8_t> block(512, 0x3E);
+                    auto state = mediaController.lockState();
+                    auto& bus = state.memory().slotBus();
+                    auto* card =
+                        dynamic_cast<pom2::LironCard*>(bus.peripheral(1));
+                    assert(card);
+                    auto* image = card->drive(0).image();
+                    assert(image && image->isLoaded());
+                    assert(image->writeBlock(12, block.data()));
+
+                    assert(!card->ejectBay(0) &&
+                           "a failed save must refuse the eject");
+                    assert(card->bayInfo(0).loaded &&
+                           "the medium stays mounted so the user can retry");
+                    assert(card->bayInfo(0).hasUnsavedChanges);
+
+                    // …and the retry, once the obstacle is gone, works.
+                    std::filesystem::remove_all(tmpName, ec);
+                    assert(card->ejectBay(0));
+                    assert(!card->bayInfo(0).loaded);
                     (void)bus.unplug(1);
                 }
                 commandSettings.setString("media_slot1_bay0_path", "");

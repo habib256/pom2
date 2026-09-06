@@ -577,6 +577,13 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDiskII(
 {
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
+    // Two-phase, exactly as `mountDiskII` above: `DiskIICard::ejectDisk` does
+    // a full sector re-encode, a write and two fsyncs, and doing that with
+    // `stateMutex` held froze the CPU worker and the window together (the
+    // eject side of the v0.8.5 mount split — CLAUDE.md, MediaMount.h). Phase 1
+    // lifts the medium out under the lock; phase 2 writes it with the lock
+    // released; a failed phase 2 puts the medium back so the user can retry.
+    std::unique_ptr<DiskImage> pending;
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -587,10 +594,19 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDiskII(
         if (!DiskIICard::validDrive(drive))
             return commandError("invalid Disk II drive " +
                                 std::to_string(drive + 1));
-        if (!card->ejectDisk(drive))
-            return commandError(card->getLastError(drive));
+        pending = card->takeEjectWriteBack(drive);
         appendDiskIIDriveSettingUpdates(updates, bus, *card, drive);
         result.ok = true;
+    }
+    if (pending) {
+        std::string error;
+        if (!DiskIICard::commitEjectWriteBack(*pending, error)) {
+            auto state = controller.lockState();
+            auto* card = dynamic_cast<DiskIICard*>(
+                state.memory().slotBus().peripheral(slot));
+            if (card) (void)card->restoreEjected(drive, std::move(pending));
+            return commandError(error);
+        }
     }
     applySettingUpdates(settings, updates);
     if (!updates.empty()) (void)settings.save();
@@ -1500,6 +1516,26 @@ bool StorageCoordinator::flushAll(const SlotBus& bus,
                               std::to_string(card->getSlot()) + " bay " +
                               std::to_string(bay + 1) + ": " +
                               unit->lastError());
+            }
+        }
+    }
+    // Every OTHER mountable-media card — today the Liron, whose bays are
+    // `Disk35Image`s that no branch above reaches. `topology()` only knows the
+    // three historical card families, so a card outside them was flushed by
+    // nothing at all: quit and profile-switch both destroyed its medium with
+    // the session's writes still in RAM, and the remount read the untouched
+    // file back. `genericMediaCard` is the same "cards with no keyspace of
+    // their own" filter the settings path uses, so nothing is flushed twice.
+    for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
+        auto* media = genericMediaCard(bus.peripheral(slot));
+        if (!media) continue;
+        for (int bay = 0; bay < media->bayCount(); ++bay) {
+            std::string err;
+            if (!media->flushBay(bay, err)) {
+                recordFailure("slot " + std::to_string(slot) + " bay " +
+                              std::to_string(bay + 1) + ": " +
+                              (err.empty() ? std::string("write-back failed")
+                                           : err));
             }
         }
     }

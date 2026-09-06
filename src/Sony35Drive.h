@@ -67,14 +67,14 @@
 #ifndef POM2_SONY35_DRIVE_H
 #define POM2_SONY35_DRIVE_H
 
+#include "Disk35Image.h"
+
 #include <cstdint>
 #include <vector>
 
 class FloppySoundSink;
 
 namespace pom2 {
-
-class Disk35Image;
 
 class Sony35Drive
 {
@@ -127,6 +127,17 @@ public:
     /// but per-drive so internal vs external can route to different
     /// pitch / volume profiles if needed later.
     void setFloppySound(FloppySoundSink* fs) { sound_ = fs; }
+
+    /// Where the firmware-issued eject (register 7) sends its write-back.
+    ///
+    /// That register is strobed from the IWM path, i.e. on the CPU worker
+    /// with `stateMutex` held — and CLAUDE.md's rule is that the lock is
+    /// never held across file I/O: an 800 KB rewrite plus two fsyncs there
+    /// freezes the machine and the window together, cancel button included.
+    /// With a sink wired the drive captures the payload (a memcpy) and the
+    /// host writes it with the lock released. Without one it saves inline,
+    /// which is what a single-threaded host (CLI, tests) wants.
+    void setWriteBackSink(Disk35WriteBackSink* sink) { writeBackSink_ = sink; }
 
     /// User-facing one-shot — host calls this after a successful mount /
     /// eject so the drive emits a click via the sound sink without going
@@ -232,6 +243,8 @@ private:
     /// Optional mechanical-sound sink. Non-owning. Set by
     /// EmulationController at construction time.
     FloppySoundSink* sound_     = nullptr;
+    /// Optional deferred-write-back sink (see setWriteBackSink). Non-owning.
+    Disk35WriteBackSink* writeBackSink_ = nullptr;
     /// Emulated CPU cycle of the last IWM strobe — used to stamp
     /// sound_->step() and sound_->motor() calls so cadence is measured
     /// in emulated time (matches the FloppySoundDevice's `emuCycles`

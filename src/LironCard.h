@@ -74,6 +74,13 @@ public:
 
     explicit LironCard(int slot = kDefaultSlot);
 
+    /// Flushes both bays' write-back, like `~DiskIICard`. A card is destroyed
+    /// by `SlotBus::plug`/`unplug` on every slot rebuild and profile switch,
+    /// and by the machine teardown at quit; without this the medium's dirty
+    /// blocks died with the object and the remount read the untouched file
+    /// back, reverting everything the guest had written since the mount.
+    ~LironCard() override;
+
     // ── SlotPeripheral ───────────────────────────────────────────────────
     std::string_view name() const override { return "Apple II 3.5\" (Liron)"; }
 
@@ -109,6 +116,7 @@ public:
     bool         mountBay(int bay, const std::string& path,
                           std::string& errOut) override;
     bool         ejectBay(int bay) override;
+    bool         flushBay(int bay, std::string& errOut) override;
     void         setBayWriteBack(int bay, bool on) override;
 
     /// True once the EPROM was found and loaded. Without it the card is
@@ -169,7 +177,12 @@ private:
     public:
         void bind(Disk35Image* img) { img_ = img; }
         bool     hasMedia()       const override { return img_ && img_->isLoaded(); }
-        uint32_t blockCount()     const override { return Disk35Image::kBlockCount; }
+        /// An empty bay has no blocks. Answering the 800K geometry with no
+        /// media let a STATUS on an empty unit report a 1600-block volume the
+        /// firmware could then try to read — every sibling unit
+        /// (`SmartPort35Unit`, `SmartPortHdvUnit`) gates this on the medium.
+        uint32_t blockCount()     const override
+        { return hasMedia() ? Disk35Image::kBlockCount : 0u; }
         bool     writeProtected() const override { return !img_ || img_->isWriteProtected(); }
         bool readBlock (uint32_t b, uint8_t out[512]) override
         { return img_ && img_->readBlock(b, out); }

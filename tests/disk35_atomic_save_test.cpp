@@ -319,6 +319,59 @@ int main()
         assert(std::memcmp(saved.data() + 5 * kBlk, blk77.data(), kBlk) == 0);
     }
 
+    // ── Two-phase write-back (bug hunt 2026-09-06 #13) ──────────────────
+    // `saveDirty` is composed from `takeWriteBack` + `commitWriteBack` so a
+    // caller holding `stateMutex` can split them in time: phase 1 is a memcpy
+    // under the lock, phase 2 is the 800 KB write with the lock RELEASED.
+    // The firmware-issued eject (`Sony35Drive` register 7) runs on the CPU
+    // worker inside that lock and could not write at all before this split.
+    {
+        const fs::path img = base / "twophase.po";
+        writeFile(img, makeRawImage());
+        const std::vector<std::uint8_t> pristine = readFile(img);
+
+        pom2::Disk35Image d;
+        assert(d.loadFile(img.string()));
+        d.setWriteBackEnabled(true);
+        const std::vector<std::uint8_t> blkC3(kBlk, 0xC3);
+        assert(d.writeBlock(9, blkC3.data()));
+        assert(d.hasUnsavedChanges());
+
+        // Phase 1: retires the dirty flag and touches no file.
+        pom2::Disk35Image::PendingWriteBack pending = d.takeWriteBack();
+        assert(pending.valid);
+        assert(pending.path == img.string());
+        assert(pending.bytes.size() == kImageBytes);
+        assert(!d.hasUnsavedChanges() && "phase 1 retires what it captured");
+        assert(readFile(img) == pristine && "phase 1 must not write");
+
+        // The medium stays mounted and usable while phase 2 runs unlocked.
+        assert(d.isLoaded());
+
+        // Phase 2, off the lock.
+        std::string error;
+        assert(pom2::Disk35Image::commitWriteBack(std::move(pending), error));
+        assert(error.empty());
+        const std::vector<std::uint8_t> saved = readFile(img);
+        assert(std::memcmp(saved.data() + 9 * kBlk, blkC3.data(), kBlk) == 0);
+
+        // Phase-3 undo: a failed commit hands the writes back so a retry
+        // re-captures them instead of losing them with a success return.
+        const std::vector<std::uint8_t> blkD4(kBlk, 0xD4);
+        assert(d.writeBlock(10, blkD4.data()));
+        pom2::Disk35Image::PendingWriteBack second = d.takeWriteBack();
+        assert(second.valid && !d.hasUnsavedChanges());
+        second.path = (base / "no_such_directory" / "gone.po").string();
+        std::string err2;
+        assert(!pom2::Disk35Image::commitWriteBack(std::move(second), err2));
+        assert(!err2.empty());
+        d.restoreDirty();
+        assert(d.hasUnsavedChanges() && "a failed commit must be retryable");
+        assert(d.saveDirty());
+        const std::vector<std::uint8_t> retried = readFile(img);
+        assert(std::memcmp(retried.data() + 10 * kBlk, blkD4.data(), kBlk) == 0);
+    }
+
     fs::remove_all(base);
     std::printf("OK disk35_atomic_save (rename-replace, 2IMG envelope kept%s, "
                 "write-back opt-out no-ops)\n",

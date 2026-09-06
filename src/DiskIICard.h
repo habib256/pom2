@@ -75,6 +75,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -227,8 +228,36 @@ private:
     bool installPreparedLocked(int drive, DiskImage&& replacement);
 
 public:
+    /// Eject `drive`, saving its write-back first. ONE-PHASE: the save runs
+    /// inline, so a caller holding `stateMutex` freezes the machine and the
+    /// window for the whole read-modify-write + rename. Composed from the
+    /// three-step form below — kept for single-threaded callers (CLI, tests,
+    /// `Pom2Core`) that have no lock to get out from under.
     bool ejectDisk(int drive);
     bool ejectDisk() { return ejectDisk(0); }
+
+    /// ── Two-phase eject ──────────────────────────────────────────────────
+    /// The mirror of `prepareDisk` + `installDisk`. Mount got its split in
+    /// v0.8.5 (`MediaMount.h`); eject kept doing a full sector re-encode plus
+    /// a write and two fsyncs with `stateMutex` held — the lock the CPU worker
+    /// takes every 4096 cycles and the UI thread takes to paint every frame.
+    ///
+    /// Phase 1, WITH the lock: splice the in-flight write burst in, lift the
+    /// whole medium out (a move — no syscall) and leave the bay empty. Returns
+    /// null when there was nothing to write back; the bay is emptied either
+    /// way. A `DiskImage` is ~242 KB, hence the heap.
+    std::unique_ptr<DiskImage> takeEjectWriteBack(int drive);
+
+    /// Phase 2, with NO lock held: write the lifted medium out. Static — by
+    /// now the card may have been unplugged, and the payload is self-contained.
+    static bool commitEjectWriteBack(DiskImage& pending, std::string& error);
+
+    /// Phase-2 FAILURE undo, with the lock held: put the medium back so the
+    /// user can fix the cause and retry, which is what the inline path always
+    /// did. Refuses (returns false) if something was mounted into the bay
+    /// while phase 2 ran unlocked — that disk wins, and the caller reports the
+    /// loss rather than silently overwriting it.
+    bool restoreEjected(int drive, std::unique_ptr<DiskImage> pending);
 
     /// Persist any pending write-back for both drives WITHOUT ejecting.
     /// insertDisk / ejectDisk already flush on the swap, but shutdown and

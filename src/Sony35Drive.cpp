@@ -678,11 +678,27 @@ void Sony35Drive::strobeWriteRegister(uint8_t reg)
                 // write, so without this a firmware-issued eject silently
                 // loses everything written since the last save (the UI eject
                 // path in EmulationController::eject35 already does this).
-                if (image_->hasUnsavedChanges() && !image_->isWriteProtected() &&
-                    !image_->saveDirty()) {
-                    pom2::log().warn("Sony35", "eject refused: " +
-                                    image_->lastError());
-                    break;
+                //
+                // Two-phase, because THIS path runs on the CPU worker inside
+                // `stateMutex` (the IWM strobed it) and that lock must never
+                // be held across file I/O — 800 KB and two fsyncs here froze
+                // the machine and the window together. Phase 1 is a memcpy;
+                // the host's sink commits it with the lock released. A drive
+                // with no sink (headless, tests) writes inline, which is
+                // correct there: nothing else is waiting on a lock.
+                Disk35Image::PendingWriteBack pending = image_->takeWriteBack();
+                if (pending.valid) {
+                    if (writeBackSink_) {
+                        writeBackSink_->submit(std::move(pending));
+                    } else {
+                        std::string err;
+                        if (!Disk35Image::commitWriteBack(std::move(pending),
+                                                          err)) {
+                            image_->restoreDirty();
+                            pom2::log().warn("Sony35", "eject refused: " + err);
+                            break;
+                        }
+                    }
                 }
                 image_->eject();
                 dskchg_ = false;   // MAME unload(): m_dskchg = 0

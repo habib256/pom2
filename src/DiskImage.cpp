@@ -2320,6 +2320,16 @@ bool writeFileAtomic(const std::string& path, std::string& lastError,
     const std::filesystem::perms origPerms =
         std::filesystem::status(path, permEc).permissions();
     const bool havePerms = !permEc;
+    // The temp name is derived from a target the caller validated, but gets
+    // none of that scrutiny itself, and `ofstream(trunc)` follows symlinks.
+    // Anything already sitting at <image>.pom2tmp is our own crash debris or
+    // somebody else's redirection — see `prepareTempPath`, and
+    // `Disk35Image::saveDirty`, which has always done this.
+    std::error_code prepEc;
+    if (!pom2::prepareTempPath(tmp, prepEc)) {
+        lastError = "Temp path unusable " + tmp + ": " + prepEc.message();
+        return false;
+    }
     {
         std::ofstream wf(tmp, std::ios::binary | std::ios::out | std::ios::trunc);
         if (!wf) { lastError = "Cannot open " + tmp + " for write"; return false; }
@@ -2381,6 +2391,32 @@ bool reportUndecodable(const std::vector<int>& tracks, std::string& lastError)
     return false;
 }
 
+/// The WOZ counterpart of `reportUndecodable`: a dirty quarter-track whose
+/// bit stream has no slot to go back into (no TRKS entry captured at load, an
+/// empty stream, or a slot that would run past the buffer). Same reasoning —
+/// skipping it clears the dirty flag and reports success, which loses the
+/// guest's writes silently; failing keeps them in memory for a retry.
+bool reportUnsplicableWoz(const std::vector<int>& qts, std::string& lastError)
+{
+    std::string list;
+    for (std::size_t i = 0; i < qts.size(); ++i) {
+        if (i) list += ", ";
+        list += std::to_string(qts[i] / 4);
+        switch (qts[i] % 4) {
+            case 1: list += ".25"; break;
+            case 2: list += ".5";  break;
+            case 3: list += ".75"; break;
+            default: break;
+        }
+    }
+    lastError = "track " + list + " was modified but has no writable slot in "
+                "this WOZ's TRKS table, so its bit cells cannot be written "
+                "back. Nothing was saved and the changes are kept in memory; "
+                "retry, or turn write-back off to eject without saving.";
+    pom2::log().warn("Disk II", "Save refused — " + lastError);
+    return false;
+}
+
 }  // namespace
 
 bool DiskImage::saveDirty()
@@ -2399,15 +2435,35 @@ bool DiskImage::saveDirty()
             lastError = "WOZ raw buffer missing (load did not populate)";
             return false;
         }
+        // A dirty quarter-track with no usable slot in `wozRaw` — no TRKS
+        // entry captured at load, an empty bit stream, or a slot that runs
+        // past the buffer — cannot be spliced back. Refuse the WHOLE save
+        // rather than skipping it: the old `continue` fell through to
+        // `wozQtDirty.fill(false)` and `return true`, so the guest's writes to
+        // that track were dropped while `hasUnsavedChanges()` went false and
+        // the eject path saw a clean success. Same rule (and same escape
+        // hatch — turn write-back off) as `reportUndecodable` for the sector
+        // formats. Checked BEFORE any splice so a refusal leaves `wozRaw`
+        // untouched too.
+        std::vector<int> unsplicable;
+        for (int qt = 0; qt < kQuarterTracks; ++qt) {
+            if (!wozQtDirty[qt]) continue;
+            const size_t bitCnt = wozQtBitCount[qt];
+            if (wozQtByteLen[qt] == 0 || bitCnt == 0 ||
+                bitStream[qt].size() < bitCnt ||
+                wozQtByteOff[qt] + (bitCnt + 7) / 8 > wozRaw.size()) {
+                unsplicable.push_back(qt);
+            }
+        }
+        if (!unsplicable.empty())
+            return reportUnsplicableWoz(unsplicable, lastError);
+
         int dirtyQts = 0;
         for (int qt = 0; qt < kQuarterTracks; ++qt) {
             if (!wozQtDirty[qt]) continue;
             const size_t byteOff = wozQtByteOff[qt];
-            const size_t byteLen = wozQtByteLen[qt];
             const size_t bitCnt  = wozQtBitCount[qt];
             const auto&  bits    = bitStream[qt];
-            if (byteLen == 0 || bitCnt == 0 || bits.size() < bitCnt) continue;
-            if (byteOff + (bitCnt + 7) / 8 > wozRaw.size()) continue;
             // Re-pack MSB-first within each byte — same encoding as
             // loadWoz's unpack loop. Untouched trailing bits in the
             // final byte and the rest of the slot stay at their

@@ -173,6 +173,75 @@ int main()
         fs::remove(p);
     }
 
+    // ── <image>.pom2tmp is OURS by construction ─────────────────────────
+    // The caller validates the TARGET; the sibling temp name is derived
+    // afterwards and gets none of that scrutiny, while ofstream(trunc)
+    // follows symlinks like any other open. Before `writeFileAtomic` here
+    // called prepareTempPath, a link planted at <image>.pom2tmp sent the
+    // whole 140 KB rewrite to its victim and the rename then carried the
+    // link away, leaving the user's image destroyed with nothing to show
+    // what happened. (Bug hunt 2026-09-06 #3.)
+    {
+        const fs::path p      = tmpFile("tmppath-symlink.dsk");
+        const fs::path victim = tmpFile("tmppath-victim.bin");
+        const fs::path tmp    = fs::path(p.string() + ".pom2tmp");
+        writeBlankDsk(p);
+        { std::ofstream f(victim, std::ios::binary); f << "victim"; }
+        std::error_code ec;
+        fs::remove(tmp, ec);
+        fs::create_symlink(victim, tmp, ec);
+        assert(!ec && "symlink support required for this case");
+
+        DiskImage img;
+        assert(img.loadFile(p.string()));
+        const uint8_t cur3 = img.nibbleAt(3, 60);
+        img.writeNibbleAt(3, 60, static_cast<uint8_t>(cur3 ^ 0x01));
+        img.setWriteBackEnabled(true);
+        // prepareTempPath removes the link (the name is ours), so the save
+        // proceeds — onto the real image, which is the point.
+        assert(img.saveDirty());
+        assert(fs::file_size(victim) == 6);   // victim untouched, not rewritten
+        // The image is still a real file of the right size — not the symlink
+        // the rename would otherwise have moved on top of it.
+        assert(fs::symlink_status(p).type() == fs::file_type::regular);
+        assert(fs::file_size(p) == DiskImage::kBytesPerImage);
+        assert(!fs::exists(fs::symlink_status(tmp)));   // link consumed
+        DiskImage back;
+        assert(back.loadFile(p.string()));
+
+        fs::remove(victim, ec);
+        fs::remove(p, ec);
+        std::printf("disk_writeback: .pom2tmp symlink not followed OK\n");
+    }
+
+    // ...and anything at that name we may NOT simply delete (a directory, a
+    // fifo) refuses the save instead of writing through it. The dirty state
+    // survives so the user can clear it and retry.
+    {
+        const fs::path p   = tmpFile("tmppath-dir.dsk");
+        const fs::path tmp = fs::path(p.string() + ".pom2tmp");
+        writeBlankDsk(p);
+        const auto before = fs::file_size(p);
+        std::error_code ec;
+        fs::remove_all(tmp, ec);
+        fs::create_directory(tmp, ec);
+        assert(!ec);
+
+        DiskImage img;
+        assert(img.loadFile(p.string()));
+        const uint8_t cur = img.nibbleAt(4, 70);
+        img.writeNibbleAt(4, 70, static_cast<uint8_t>(cur ^ 0x01));
+        img.setWriteBackEnabled(true);
+        assert(!img.saveDirty());
+        assert(img.hasUnsavedChanges());
+        assert(fs::file_size(p) == before);
+        assert(fs::is_directory(tmp));        // refused, not deleted
+
+        fs::remove_all(tmp, ec);
+        fs::remove(p, ec);
+        std::printf("disk_writeback: .pom2tmp directory refuses save OK\n");
+    }
+
     // Reject a sparse hostile image before allocating from its apparent size.
     {
         fs::path p = tmpFile("oversized.woz");

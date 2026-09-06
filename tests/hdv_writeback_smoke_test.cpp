@@ -303,6 +303,73 @@ int main()
         std::printf("hdv_writeback: failed flush preserves mounted media OK\n");
     }
 
+    // ── Case F: <image>.pom2tmp is ours by construction ─────────────────
+    // Same defect, same fix as `DiskImage::saveDirty` — the target was
+    // validated at mount, the sibling temp name was not, and
+    // ofstream(trunc) follows symlinks. Before `commitWriteBack` called
+    // prepareTempPath, a link planted at <image>.pom2tmp took the whole
+    // rewrite and the rename then moved the link over the user's image.
+    // (Bug hunt 2026-09-06 #3.)
+    {
+        const fs::path p      = tmpFile("tmppath", ".hdv");
+        const fs::path victim = tmpFile("tmppath_victim", ".bin");
+        const fs::path tmp    = fs::path(p.string() + ".pom2tmp");
+        writeFile(p, std::vector<uint8_t>(2 * kBlock, 0x11));
+        writeFile(victim, std::vector<uint8_t>(4, 0x7E));
+        std::error_code ec;
+        fs::remove(tmp, ec);
+        fs::create_symlink(victim, tmp, ec);
+        assert(!ec && "symlink support required for this case");
+
+        ProDOSHardDiskCard card;
+        assert(card.loadImage(p.string()));
+        card.setWriteBackEnabled(true);
+        uint8_t pattern[kBlock];
+        std::memset(pattern, 0x5C, sizeof(pattern));
+        cardWriteBlock(card, 1, pattern);
+        assert(card.hasUnsavedChanges());
+        assert(card.ejectImage());                   // save-on-eject
+
+        assert(fs::file_size(victim) == 4);          // victim untouched
+        assert(fs::symlink_status(p).type() == fs::file_type::regular);
+        const auto saved = readAll(p);
+        assert(saved.size() == 2 * kBlock);
+        assert(saved[kBlock] == 0x5C);               // the block did land
+
+        fs::remove(victim, ec);
+        fs::remove(p, ec);
+        std::printf("hdv_writeback: .pom2tmp symlink not followed OK\n");
+    }
+
+    // ...and a temp name we may not simply delete refuses the save, keeping
+    // the dirty blocks in RAM for a retry.
+    {
+        const fs::path p   = tmpFile("tmppath_dir", ".hdv");
+        const fs::path tmp = fs::path(p.string() + ".pom2tmp");
+        writeFile(p, std::vector<uint8_t>(2 * kBlock, 0x22));
+        const auto original = readAll(p);
+        std::error_code ec;
+        fs::remove_all(tmp, ec);
+        fs::create_directory(tmp, ec);
+        assert(!ec);
+
+        ProDOSHardDiskCard card;
+        assert(card.loadImage(p.string()));
+        card.setWriteBackEnabled(true);
+        uint8_t pattern[kBlock];
+        std::memset(pattern, 0x6D, sizeof(pattern));
+        cardWriteBlock(card, 0, pattern);
+        assert(card.hasUnsavedChanges());
+        assert(!card.saveDirty());                   // refused
+        assert(card.hasUnsavedChanges());            // retryable
+        assert(readAll(p) == original);              // image untouched
+        assert(fs::is_directory(tmp));               // refused, not deleted
+
+        fs::remove_all(tmp, ec);
+        fs::remove(p, ec);
+        std::printf("hdv_writeback: .pom2tmp directory refuses save OK\n");
+    }
+
     std::printf("hdv_writeback_smoke OK\n");
     return 0;
 }

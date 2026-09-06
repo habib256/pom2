@@ -43,6 +43,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace pom2 { class StateAccess; }
 
@@ -133,7 +134,17 @@ public:
     bool mount35(int idx, const std::string& path);
 
     /// Unmount whatever is in 3.5" drive `idx` (0/1). No-op when empty.
+    ///
+    /// Two-phase like `mount35`: the 800 KB write-back is lifted out under
+    /// `stateMtx` (a memcpy) and committed with the lock RELEASED, then the
+    /// medium is dropped under the lock again. A failed commit puts the dirty
+    /// flag back and refuses the eject, so the user can fix the cause and
+    /// retry instead of losing the session's writes.
     bool eject35(int idx);
+
+    /// Block until every deferred 3.5" write-back has been committed.
+    /// Shutdown / test hook — the queue drains on its own thread otherwise.
+    void drainDeferredWriteBacks() { writeBackQueue_.drain(); }
 
     // ─── Cassette transport (forwarded to CassetteDevice under stateMtx) ──
     /// Load / save a tape file. Both do their file work with `stateMtx`
@@ -323,6 +334,38 @@ private:
     std::unique_ptr<FloppySoundDevice> floppy35;
     std::unique_ptr<AudioDevice>       audioDev;
     std::unique_ptr<pom2::IWMDevice>    iwmDev;
+    /// Deferred 3.5" write-backs, and the thread that commits them.
+    ///
+    /// The firmware-issued eject (`Sony35Drive` register 7) fires from the
+    /// IWM path — on the CPU worker, `stateMtx` held — and CLAUDE.md's rule
+    /// is that the lock is never held across file I/O. The drive captures the
+    /// payload (a memcpy) and submits it here; `submit` only takes this
+    /// queue's own uncontended mutex, so it is safe under the machine lock.
+    /// One thread, started on the first submission, does every write in
+    /// order — which also keeps two ejects of the same file from racing.
+    ///
+    /// Declared BEFORE the drives that point at it: members are destroyed in
+    /// reverse declaration order, so the sink outlives every `Sony35Drive`
+    /// holding its address.
+    class WriteBackQueue final : public pom2::Disk35WriteBackSink
+    {
+    public:
+        ~WriteBackQueue() override;
+        void submit(pom2::Disk35Image::PendingWriteBack&& pending) override;
+        /// Block until the queue is empty and the in-flight commit is done.
+        void drain();
+    private:
+        void run();
+        std::mutex              mtx_;
+        std::condition_variable cv_;
+        std::condition_variable idleCv_;
+        std::vector<pom2::Disk35Image::PendingWriteBack> queue_;
+        std::thread             worker_;
+        bool                    stopping_ = false;
+        bool                    busy_     = false;
+    };
+    WriteBackQueue writeBackQueue_;
+
     std::unique_ptr<pom2::Disk35Image>  image35Int;
     std::unique_ptr<pom2::Disk35Image>  image35Ext;
     std::unique_ptr<pom2::Sony35Drive>  drive35Int;

@@ -278,6 +278,14 @@ bool Disk35Image::exportRawTo(const std::string& outPath,
     // Same temp-then-rename discipline as saveDirty: a partial 800 KB write
     // must never be left behind looking like a mountable image.
     const std::string tmp = outPath + ".pom2tmp";
+    // …and the same temp-path scrutiny as `saveDirty` below: the target was
+    // just checked for existence, but the sibling temp name was not, and a
+    // symlink there would send the 800 KB write somewhere else entirely.
+    std::error_code prepEc;
+    if (!prepareTempPath(tmp, prepEc)) {
+        errOut = "temp path unusable " + tmp + ": " + prepEc.message();
+        return false;
+    }
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::out | std::ios::trunc);
         if (!f) { errOut = "cannot open " + tmp + " for write"; return false; }
@@ -309,7 +317,25 @@ bool Disk35Image::exportRawTo(const std::string& outPath,
 
 bool Disk35Image::saveDirty()
 {
-    if (!loaded_ || !dirty_) return true;
+    // Composed from the two-phase pair so there is ONE copy of the write
+    // logic (same shape as `Block512Backing::saveDirty`). The phases are
+    // simply not separated in time here.
+    PendingWriteBack pending = takeWriteBack();
+    if (!pending.valid) return true;
+    std::string error;
+    if (!commitWriteBack(std::move(pending), error)) {
+        lastError_ = error;
+        pom2::log().warn("Disk35", lastError_);
+        restoreDirty();
+        return false;
+    }
+    return true;
+}
+
+Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
+{
+    PendingWriteBack out;
+    if (!loaded_ || !dirty_) return out;
     // Write-back off (or read-only host file): a SUCCESSFUL no-op, exactly
     // like DiskImage::saveDirty. isWriteProtected() folds the user's
     // write-back opt-out in, and treating that as a hard error wedged the
@@ -319,50 +345,64 @@ bool Disk35Image::saveDirty()
     // "write-protected" error. Opting out means "discard on eject", not
     // "refuse to eject" — dirty_ is left set so re-enabling write-back
     // before the eject still saves the session's writes.
-    if (isWriteProtected()) return true;
+    if (isWriteProtected()) return out;
+
+    out.valid = true;
+    out.path  = path_;
+    out.bytes.reserve(twoImgHeaderRaw_.size() + blocks_.size() +
+                      twoImgTrailerRaw_.size());
+    out.bytes.insert(out.bytes.end(),
+                     twoImgHeaderRaw_.begin(), twoImgHeaderRaw_.end());
+    out.bytes.insert(out.bytes.end(), blocks_.begin(), blocks_.end());
+    out.bytes.insert(out.bytes.end(),
+                     twoImgTrailerRaw_.begin(), twoImgTrailerRaw_.end());
+    // The move half of "move out": retire the flag under the caller's lock,
+    // atomically with the capture. A block the guest writes while phase 2
+    // runs unlocked re-dirties the medium and is NOT in this payload — it
+    // still needs a later flush, and `restoreDirty` on failure merges with it
+    // for free (there is only the one flag).
+    dirty_ = false;
+    return out;
+}
+
+bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
+                                  std::string& error)
+{
+    error.clear();
+    if (!pending.valid) return true;
 
     // Never open the user's image with `trunc` and rewrite it in place:
     // save-on-eject writes 800 KB, and an ENOSPC / removable-media / network
     // -share failure part-way through then leaves the ONLY copy of the disk
-    // truncated — the rest lives in `blocks_`, which dies with the process.
-    // Same discipline (and same reason) as `DiskImage::saveDirty`'s
+    // truncated — the rest lives in `pending.bytes`, which dies with the
+    // process. Same discipline (and same reason) as `DiskImage::saveDirty`'s
     // writeFileAtomic: emit a sibling temp file — same directory, therefore
     // same filesystem, therefore `rename` is atomic and cannot fail
     // cross-device — and only swap it in once the write fully succeeded.
-    const std::string tmp = path_ + ".pom2tmp";
+    const std::string tmp = pending.path + ".pom2tmp";
     // A rename replaces the inode, so the temp file's umask-derived mode
     // would become the image's. Carry the original's permissions across.
     std::error_code permEc;
     const std::filesystem::perms origPerms =
-        std::filesystem::status(path_, permEc).permissions();
+        std::filesystem::status(pending.path, permEc).permissions();
     const bool havePerms = !permEc;
     // Same temp-path scrutiny as every AtomicFileReplace caller: a symlink
     // or hard link planted at <path>.pom2tmp would redirect the trunc onto
     // the user's file (or another victim) before anything is committed.
     std::error_code prepEc;
     if (!prepareTempPath(tmp, prepEc)) {
-        lastError_ = "Disk35Image: temp path unusable " + tmp + ": " +
-                     prepEc.message();
-        pom2::log().warn("Disk35", lastError_);
+        error = "Disk35Image: temp path unusable " + tmp + ": " +
+                prepEc.message();
         return false;
     }
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::out | std::ios::trunc);
         if (!f) {
-            lastError_ = "Disk35Image: cannot open " + tmp + " for write";
-            pom2::log().warn("Disk35", lastError_);
+            error = "Disk35Image: cannot open " + tmp + " for write";
             return false;
         }
-        if (!twoImgHeaderRaw_.empty()) {
-            f.write(reinterpret_cast<const char*>(twoImgHeaderRaw_.data()),
-                    static_cast<std::streamsize>(twoImgHeaderRaw_.size()));
-        }
-        f.write(reinterpret_cast<const char*>(blocks_.data()),
-                static_cast<std::streamsize>(blocks_.size()));
-        if (!twoImgTrailerRaw_.empty()) {
-            f.write(reinterpret_cast<const char*>(twoImgTrailerRaw_.data()),
-                    static_cast<std::streamsize>(twoImgTrailerRaw_.size()));
-        }
+        f.write(reinterpret_cast<const char*>(pending.bytes.data()),
+                static_cast<std::streamsize>(pending.bytes.size()));
         f.flush();
         f.close();
         if (!f) {
@@ -370,8 +410,7 @@ bool Disk35Image::saveDirty()
             // but the only copy of the session's writes is about to die with
             // the process on a shutdown flush — leave a trace, like
             // DiskIICard::flushPendingWrites does for the same case.
-            lastError_ = "Disk35Image: write failed on " + tmp;
-            pom2::log().warn("Disk35", lastError_);
+            error = "Disk35Image: write failed on " + tmp;
             std::error_code ec;
             std::filesystem::remove(tmp, ec);
             return false;
@@ -382,14 +421,13 @@ bool Disk35Image::saveDirty()
         std::filesystem::permissions(tmp, origPerms, ec);
         ec.clear();
     }
-    if (!replaceFileAtomic(tmp, path_, ec)) {
-        lastError_ = "Disk35Image: cannot replace " + path_ + ": " + ec.message();
-        pom2::log().warn("Disk35", lastError_);
+    if (!replaceFileAtomic(tmp, pending.path, ec)) {
+        error = "Disk35Image: cannot replace " + pending.path + ": " +
+                ec.message();
         std::error_code ec2;
         std::filesystem::remove(tmp, ec2);
         return false;
     }
-    dirty_ = false;
     return true;
 }
 

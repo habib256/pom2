@@ -136,6 +136,11 @@ EmulationController::EmulationController()
     // 3.5" channel stays silent.
     drive35Int->setFloppySound(floppy35.get());
     drive35Ext->setFloppySound(floppy35.get());
+    // Firmware-issued ejects (register 7) fire from the IWM path on the CPU
+    // worker, `stateMtx` held. Route their write-back through the queue so
+    // the 800 KB rewrite happens off that lock — see WriteBackQueue.
+    drive35Int->setWriteBackSink(&writeBackQueue_);
+    drive35Ext->setWriteBackSink(&writeBackQueue_);
     hub->attach(iwmDev.get());
     hub->setSony35(drive35Int.get(), drive35Ext.get());
 
@@ -359,27 +364,122 @@ bool EmulationController::mount35(int idx, const std::string& path)
     return true;
 }
 
+// ─── Deferred 3.5" write-back queue ───────────────────────────────────────
+// See EmulationController.h. `submit` runs with `stateMtx` held (the IWM
+// strobed the drive's eject register on the CPU worker), so it does nothing
+// but move a payload under its own uncontended mutex; `run` — a separate,
+// guarded thread — does the file work with no machine lock in sight.
+
+EmulationController::WriteBackQueue::~WriteBackQueue()
+{
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        stopping_ = true;
+    }
+    cv_.notify_all();
+    // Join, do not detach: the queue may still hold the only copy of a
+    // session's guest writes, and the process is about to exit.
+    if (worker_.joinable()) worker_.join();
+    // Anything still queued when the thread never started (or exited early)
+    // is committed here rather than dropped.
+    for (auto& pending : queue_) {
+        std::string error;
+        if (!pom2::Disk35Image::commitWriteBack(std::move(pending), error))
+            pom2::log().warn("Sony35", "Deferred write-back failed: " + error);
+    }
+}
+
+void EmulationController::WriteBackQueue::submit(
+    pom2::Disk35Image::PendingWriteBack&& pending)
+{
+    if (!pending.valid) return;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (stopping_) return;
+        queue_.push_back(std::move(pending));
+        if (!worker_.joinable()) {
+            // Guarded: an exception escaping a std::thread callable calls
+            // std::terminate() with no log line (CLAUDE.md § thread barrier).
+            worker_ = pom2::guardedThread("Disk35WriteBack", [this] { run(); });
+        }
+    }
+    cv_.notify_one();
+}
+
+void EmulationController::WriteBackQueue::run()
+{
+    std::unique_lock<std::mutex> lk(mtx_);
+    for (;;) {
+        cv_.wait(lk, [this] { return stopping_ || !queue_.empty(); });
+        if (queue_.empty()) {
+            if (stopping_) return;
+            continue;
+        }
+        pom2::Disk35Image::PendingWriteBack pending = std::move(queue_.front());
+        queue_.erase(queue_.begin());
+        busy_ = true;
+        lk.unlock();                       // ← the file I/O happens here
+        std::string error;
+        if (!pom2::Disk35Image::commitWriteBack(std::move(pending), error))
+            pom2::log().warn("Sony35", "Deferred write-back failed: " + error);
+        lk.lock();
+        busy_ = false;
+        idleCv_.notify_all();
+    }
+}
+
+void EmulationController::WriteBackQueue::drain()
+{
+    std::unique_lock<std::mutex> lk(mtx_);
+    idleCv_.wait(lk, [this] { return queue_.empty() && !busy_; });
+}
+
 bool EmulationController::eject35(int idx)
 {
     if (idx < 0 || idx > 1) return false;
+
+    // Two-phase, for the reason in MediaMount.h and mount35 above: an 800 KB
+    // rewrite plus two fsyncs under `stateMtx` freezes the CPU worker and the
+    // UI thread together. Phase 1 lifts the payload out (a memcpy), phase 2
+    // writes it with the lock released, phase 3 drops the medium.
+    pom2::Disk35Image::PendingWriteBack pending;
+    std::string pendingPath;
+    {
+        std::lock_guard<std::mutex> lk(stateMtx);
+        pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
+        if (!image) return false;
+        if (!image->isLoaded()) return true;      // already empty — no-op
+        pending     = image->takeWriteBack();
+        pendingPath = pending.path;
+    }
+
+    std::string error;
+    const bool committed =
+        !pending.valid ||
+        pom2::Disk35Image::commitWriteBack(std::move(pending), error);
+
     std::lock_guard<std::mutex> lk(stateMtx);
     pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
     pom2::Sony35Drive* drive = idx == 0 ? drive35Int.get() : drive35Ext.get();
-    if (image && image->isLoaded()) {
-        // Persist firmware-driven write-backs before the slot drops the
-        // payload. Mirrors `DiskIICard::ejectDisk` for 5.25". Silent
-        // on `saveDirty` failure — the panel surfaces the error on the
-        // next mount attempt via `Disk35Image::lastError`.
-        if (image->hasUnsavedChanges() && !image->isWriteProtected()) {
-            if (!image->saveDirty()) return false;
-        }
-        image->eject();
-        if (drive) {
-            drive->notifyMediaChange();
-            // Mechanical click on user-initiated eject — pairs with
-            // the click emitted by `mount35` above.
-            drive->emitInsertClick();
-        }
+    if (!image) return false;
+    if (!committed) {
+        // Refuse the eject and hand the writes back, so the user can fix the
+        // cause and retry — the pre-split behaviour. Only if the SAME medium
+        // is still in the bay: a mount that landed while phase 2 ran unlocked
+        // owns the drive now, and re-dirtying it would write this disk's
+        // blocks into that one's file.
+        if (image->isLoaded() && image->path() == pendingPath)
+            image->restoreDirty();
+        pom2::log().warn("Sony35", "3.5\" eject refused: " + error);
+        return false;
+    }
+    if (!image->isLoaded()) return true;          // ejected under us — done
+    image->eject();
+    if (drive) {
+        drive->notifyMediaChange();
+        // Mechanical click on user-initiated eject — pairs with
+        // the click emitted by `mount35` above.
+        drive->emitInsertClick();
     }
     return true;
 }
@@ -552,6 +652,14 @@ void EmulationController::hardReset()
     if (iwmDev) iwmDev->reset();
     if (hub)    hub->reset();
     if (tape)   tape->resetCpuSide();
+    // A step-over / run-to-cursor transient is armed at an address in the
+    // code that WAS running. After a reset (F12, and applyProfile step 11,
+    // which is a profile switch) that address means nothing, but the
+    // transient stays armed and fires the first time the PC happens past it
+    // — minutes later, with no visible cause. Disarm it and re-sync, because
+    // `armed()` counts the transient: dropping it may be what detaches the
+    // hook and puts the CPU back on its fast loop.
+    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
     processor.hardReset();
     pom2::log().info("Emul", "Hard reset");
 }
@@ -592,6 +700,9 @@ void EmulationController::coldBoot()
     if (iwmDev) iwmDev->reset();
     if (hub)    hub->reset();
     if (tape)   tape->resetCpuSide();
+    // As in hardReset(): the transient names an address in a program that no
+    // longer exists — here its RAM has literally been wiped.
+    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
     processor.hardReset();
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
@@ -617,6 +728,18 @@ bool EmulationController::bootFromSlot(int slot)
     if (spk)    spk->reset();
     if (iwmDev) iwmDev->reset();
     if (hub)    hub->reset();
+    // Same CPU-side cassette wipe hardReset() and coldBoot() do: the output
+    // flip-flop and the cycle timebase are clobbered by the reset line, the
+    // tape position and recording buffer are not (a real deck does not
+    // rewind because the computer was reset). bootFromSlot is documented as
+    // "coldBoot-equivalent, inlined" (CLAUDE.md § Reset architecture) and
+    // this was the one line the inlining dropped — a boot from the Library
+    // left `lastOutputToggleCycle` in the future of a rebased `currentCycle`,
+    // so the first $C020 toggle after it recorded a wrapped, huge pulse.
+    if (tape)   tape->resetCpuSide();
+    // Any step-over / run-to-cursor transient belongs to the machine that
+    // just went away — see hardReset().
+    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
     // Card-has-boot-entry sanity check. Apple II Ref Manual Appx C
@@ -742,6 +865,20 @@ void EmulationController::setMode(Mode m)
     // worker and therefore cannot deadlock against callers that reach setMode
     // while already holding stateMtx (the Disk II Library's boot buttons do).
     if (m != Mode::Stopped) scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
+    // Stop disarms any step-over / run-to-cursor transient. The user asked the
+    // machine to halt, so a breakpoint they never placed must not survive to
+    // halt it again minutes later, at an address that belonged to a step they
+    // abandoned. `Debugger::clearTransient()` is the ONE method of that class
+    // callable without `stateMutex`, for exactly this site: setMode is reached
+    // by callers that already hold the lock (the Disk II Library boot buttons)
+    // and by the CPU worker itself through `noteDebuggerStop`, and the lock is
+    // not recursive — so `transientArmed_` is an atomic instead.
+    //
+    // The hook is deliberately NOT re-synced here (that needs the lock): if
+    // this was the only thing armed, the CPU keeps its debugged loop until the
+    // next syncDebugHook, which costs a predictable branch per instruction on
+    // a machine that is stopped anyway.
+    if (m == Mode::Stopped && debugger_) debugger_->clearTransient();
     mode.store(m);
     wakeCv.notify_all();
 }

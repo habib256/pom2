@@ -118,6 +118,26 @@ public:
     /// locked context.
     virtual bool ejectBay(int bay) = 0;
 
+    /// Write this bay's pending changes back to its file WITHOUT ejecting.
+    ///
+    /// This is what a shutdown / profile-switch flush needs
+    /// (`StorageCoordinator::flushAll`): the machine is about to be torn down
+    /// and rebuilt, and a bay whose writes only reach the file on eject loses
+    /// everything the guest wrote since the mount — silently, because the
+    /// remount reads the unchanged file back.
+    ///
+    /// The default is deliberately NOT a silent no-op: a bay with nothing
+    /// outstanding succeeds, but a bay that HAS unsaved changes and no flush
+    /// path reports failure, so a MountableMediaCard added later cannot
+    /// quietly drop a user's data at quit the way `LironCard` did.
+    virtual bool flushBay(int bay, std::string& errOut)
+    {
+        errOut.clear();
+        if (!bayInfo(bay).hasUnsavedChanges) return true;
+        errOut = "this bay has unsaved changes and no flush path";
+        return false;
+    }
+
     /// Phase 1 of a two-phase EJECT, with `stateMutex` held: lift out what
     /// the save-on-eject would write, WITHOUT touching the medium. Leaving it
     /// mounted is the point — phase 2 can fail (disk full, read-only parent),

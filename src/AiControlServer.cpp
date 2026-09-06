@@ -43,6 +43,7 @@
 #include <fstream>
 #include <iterator>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -1065,6 +1066,7 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
     int slot = -1;
     uint8_t outX = 0, outY = 0;
     bool outBtn = false;
+    bool noCard = false;
     {
         auto st = ctrl_->lockState();
         SlotBus& bus = st.memory().slotBus();
@@ -1085,23 +1087,29 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
             if (!mouseLle && p->name() == MouseCardAppleWin::kCardName)
                 mouseHle = static_cast<MouseCardAppleWin*>(p);
         }
-        if (!mouseLle && !mouseHle) {
-            sendJsonError(fd, 503, "no Mouse Card plugged"); return;
+        // NOT sent from here: writing the reply is a socket write with a 4 s
+        // send timeout, and the emulated machine — CPU worker and the UI
+        // thread's next frame both — would wait behind it for as long as the
+        // client takes to read. Note it and answer once the lock is gone.
+        noCard = (!mouseLle && !mouseHle);
+        if (!noCard) {
+            slot = mouseLle ? mouseLle->getSlot() : mouseHle->getSlot();
+
+            if (rst) { mouseAccumX_ = 0; mouseAccumY_ = 0; }
+
+            if (haveAx)      mouseAccumX_ = static_cast<uint8_t>(ax & 0xFF);
+            else if (haveDx) mouseAccumX_ = static_cast<uint8_t>(mouseAccumX_ + clamp127(dx));
+            if (haveAy)      mouseAccumY_ = static_cast<uint8_t>(ay & 0xFF);
+            else if (haveDy) mouseAccumY_ = static_cast<uint8_t>(mouseAccumY_ + clamp127(dy));
+            if (haveBtn)     mouseBtn_ = (btn != 0);
+
+            if (mouseLle) mouseLle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
+            else          mouseHle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
+            outX = mouseAccumX_; outY = mouseAccumY_; outBtn = mouseBtn_;
         }
-        slot = mouseLle ? mouseLle->getSlot() : mouseHle->getSlot();
-
-        if (rst) { mouseAccumX_ = 0; mouseAccumY_ = 0; }
-
-        if (haveAx)      mouseAccumX_ = static_cast<uint8_t>(ax & 0xFF);
-        else if (haveDx) mouseAccumX_ = static_cast<uint8_t>(mouseAccumX_ + clamp127(dx));
-        if (haveAy)      mouseAccumY_ = static_cast<uint8_t>(ay & 0xFF);
-        else if (haveDy) mouseAccumY_ = static_cast<uint8_t>(mouseAccumY_ + clamp127(dy));
-        if (haveBtn)     mouseBtn_ = (btn != 0);
-
-        if (mouseLle) mouseLle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
-        else          mouseHle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
-        outX = mouseAccumX_; outY = mouseAccumY_; outBtn = mouseBtn_;
     }
+
+    if (noCard) { sendJsonError(fd, 503, "no Mouse Card plugged"); return; }
 
     std::ostringstream oss;
     oss << "{\"x\":"   << +outX
@@ -1210,6 +1218,12 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
     bool ejected = false;
     int  boundSlot = -1;
     std::string errMsg;
+    // Two-phase, like the insert path above: `ejectDisk` re-encodes the dirty
+    // tracks, writes the image and fsyncs twice, and doing that under
+    // `stateMutex` froze the CPU worker and the window for the whole
+    // round-trip. Phase 1 lifts the medium out (a memcpy), phase 2 writes it
+    // with the lock released, phase 3 puts it back if the write failed.
+    std::unique_ptr<DiskImage> pending;
     {
         std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
         if (!disk6_) noCard = true;
@@ -1221,10 +1235,18 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
             boundSlot = disk6_->getSlot();
             if (slot != -1 && slot != boundSlot) wrongSlot = true;
             else {
-                ejected = disk6_->ejectDisk(static_cast<int>(drive));
-                if (!ejected)
-                    errMsg = disk6_->getLastError(static_cast<int>(drive));
+                pending = disk6_->takeEjectWriteBack(static_cast<int>(drive));
+                ejected = true;
             }
+        }
+    }
+    if (pending) {
+        if (!DiskIICard::commitEjectWriteBack(*pending, errMsg)) {
+            ejected = false;
+            std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
+            if (disk6_)
+                (void)disk6_->restoreEjected(static_cast<int>(drive),
+                                             std::move(pending));
         }
     }
     if (noCard) { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
@@ -1348,21 +1370,38 @@ void AiControlServer::handleSnapshotLoad(socket_t fd, const Request& req)
             return;
         }
     }
-    auto st = ctrl_->lockState();
-    // Shared with the rewind ring buffer. Preserves the CPU-section length
-    // gate (crafted-snapshot over-read hardening) and the MEX size cap; an
-    // oversized MEX aborts the restore with a 400.
-    const auto res = pom2::restoreMachineState(r, st.cpu(), st.memory());
-    // The restore usually rewinds mem's cycleCounter; the speaker's
-    // reconstruction cursor only snaps FORWARD and purges older-stamped
-    // toggles as stale, so without this flush audio stays dead until the
-    // counter re-passes its pre-load value (minutes of emulated time).
-    if (!res.ok) { sendJsonError(fd, 400, res.error); return; }
-    // The rewind ring recorded the abandoned timeline — its stamps would
-    // break indexForCycle's monotonicity — so drop it after SUCCESS. Failed
-    // loads roll back completely and must preserve the existing timeline.
-    ctrl_->speaker().reset();
-    ctrl_->rewind().clear();
+    // The restore under the lock, the HTTP reply outside it. Writing the reply
+    // is a socket write with a 4 s send timeout, and the state mutex is taken
+    // by the CPU worker every 4096-cycle chunk and by the UI thread to paint
+    // every frame — so answering from inside this scope made a slow or stalled
+    // client freeze the machine and the window together (CLAUDE.md, "never
+    // hold stateMutex across file I/O"; a socket is worse, since the far end
+    // decides when it drains).
+    bool        ok = false;
+    std::string error;
+    {
+        auto st = ctrl_->lockState();
+        // Shared with the rewind ring buffer. Preserves the CPU-section length
+        // gate (crafted-snapshot over-read hardening) and the MEX size cap; an
+        // oversized MEX aborts the restore with a 400.
+        const auto res = pom2::restoreMachineState(r, st.cpu(), st.memory());
+        ok    = res.ok;
+        error = res.error;
+        if (ok) {
+            // The restore usually rewinds mem's cycleCounter; the speaker's
+            // reconstruction cursor only snaps FORWARD and purges
+            // older-stamped toggles as stale, so without this flush audio
+            // stays dead until the counter re-passes its pre-load value
+            // (minutes of emulated time).
+            ctrl_->speaker().reset();
+            // The rewind ring recorded the abandoned timeline — its stamps
+            // would break indexForCycle's monotonicity — so drop it after
+            // SUCCESS. Failed loads roll back completely and must preserve
+            // the existing timeline.
+            ctrl_->rewind().clear();
+        }
+    }
+    if (!ok) { sendJsonError(fd, 400, error); return; }
     sendJsonOk(fd, "{\"path\":\"" + jsonEscape(*safe) + "\"}");
 }
 
