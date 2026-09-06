@@ -4,6 +4,17 @@
 # drive the M6502 + Memory directly without an ImGui context, so they link
 # only the bare emulator core (no GLFW, no OpenGL, no Dear ImGui).
 
+# ─── Probe binaries (build-only, no add_test) ─────────────────────────────
+# Besides the ctest suite this file declares ~25 PROBE executables: eyeball
+# tools that dump a screen, a raster trace, an audio A/B or a PPM for a human
+# to look at. They assert nothing reproducible, several need media that is not
+# in the tree, and a few take minutes — so they are deliberately built and
+# never registered with add_test(). Run one by hand:
+#     make dix_menu_raster_probe && ./tests/dix_menu_raster_probe
+# The list is not repeated here (it would drift); a target below with no
+# matching add_test() is a probe by construction, and the five EXCLUDE_FROM_ALL
+# diagnostic dumps have their own section further down.
+#
 # CRITICAL: tests use assert() heavily, but the parent CMakeLists builds in
 # Release by default which adds -DNDEBUG (silently stripping every assert).
 # We re-enable asserts for *test* compilation only via -UNDEBUG, applied
@@ -5611,6 +5622,8 @@ add_executable(test_card_snapshot_state
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
     ${CMAKE_SOURCE_DIR}/src/EchoPlusTMS5220Card.cpp
+    ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
@@ -6315,6 +6328,9 @@ add_executable(test_fuzz_snapshot
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/TranswarpCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
+    ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
 )
 target_include_directories(test_fuzz_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -6795,3 +6811,23 @@ endif()
 
 add_test(NAME mockingboard_t1_irq_phase COMMAND test_mockingboard_t1_irq_phase)
 set_tests_properties(mockingboard_t1_irq_phase PROPERTIES TIMEOUT 5)
+
+
+# ─── Skip semantics, applied to every test above ──────────────────────────
+# A test that cannot find its fixture must report SKIPPED, not PASSED. Before
+# this, only the two Tom Harte suites carried SKIP_RETURN_CODE and ~57 other
+# call sites did `printf("SKIP …"); return 0;` — so a missing ROM or disk image
+# produced a green "Passed 0.00 sec" line for a binary that had verified
+# nothing. That is exactly the failure mode TODO.md's honesty gate is about,
+# and it is the reason five fixture-path regressions went unnoticed for months.
+#
+# The convention is now uniform: 77 means "skipped", every other non-zero value
+# means "failed". Applied here as a directory-wide sweep rather than test by
+# test so a NEW add_test() cannot forget it.
+get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
+if(_pom2_all_tests)
+    set_tests_properties(${_pom2_all_tests} PROPERTIES SKIP_RETURN_CODE 77)
+    list(LENGTH _pom2_all_tests _pom2_test_count)
+    message(STATUS "POM2: ${_pom2_test_count} ctest entries registered "
+                   "(SKIP_RETURN_CODE 77 applied to all)")
+endif()

@@ -44,8 +44,13 @@ is_exempt() {
     return 1
 }
 
+# tests/ is scanned too. A test file is first-party code with the same failure
+# mode — imagewriter_smoke_test.cpp is already 1375 lines — and leaving it out
+# meant the one directory whose files are ADDED to fastest had no ceiling at
+# all. (tests/CMakeLists.txt, 6800 lines, is not covered: it is a build
+# manifest, not a translation unit, and the ratchet only speaks about .cpp/.h.)
 list_sources() {
-    find src -type f \( -name '*.cpp' -o -name '*.h' \) | sort
+    find src tests -type f \( -name '*.cpp' -o -name '*.h' \) | sort
 }
 
 # ── --update: rewrite the budget from what is on disk ─────────────────────
@@ -121,6 +126,16 @@ while read -r f; do
     elif [ "$n" -ge "$LIMIT" ]; then
         echo "FAIL  $f: $n lines and no ceiling — a new file over $LIMIT lines." >&2
         echo "      Split it, or record the ceiling with '$0 --update' and say why." >&2
+        fail=1
+    elif [ "$n" -ge "$WATCH" ]; then
+        # The WATCH band was documented ("every first-party file at or above
+        # this must carry a ceiling") but never enforced: only --update used
+        # WATCH, so a file that grew 1999 -> 2999 passed in silence and only
+        # became visible the day it crossed LIMIT. That is a 1000-line hole in
+        # the exact direction the ratchet exists to stop.
+        echo "FAIL  $f: $n lines and no ceiling — at or above the $WATCH-line" >&2
+        echo "      watch threshold. Record it with '$0 --update' (and say in" >&2
+        echo "      the commit why it belongs in one TU), or split it now." >&2
         fail=1
     fi
 done < <(list_sources)

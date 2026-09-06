@@ -1,0 +1,60 @@
+// POM2 Windows resource script — TEMPLATE.
+//
+// GENERATED into ${CMAKE_BINARY_DIR}/generated/POM2.rc by configure_file() in
+// the WIN32 branch of CMakeLists.txt. Edit THIS file, never the generated one.
+//
+// Two things live here:
+//
+//   * The application icon and the side-by-side manifest. POM2.ico is
+//     generated from packaging/POM2.svg by tools/gen_icons.sh (which also
+//     regenerates the .icns and the hicolor PNGs) and carries 16/32/48/64/
+//     128/256 px, every entry PNG-compressed. Do not hand-edit it.
+//
+//   * VERSIONINFO. Without it Explorer's Properties ▸ Details tab is blank,
+//     every Windows installer/updater that compares file versions sees
+//     0.0.0.0, and the SmartScreen reputation of a build cannot be tied to a
+//     release. The numbers come from `project(pom2_imgui VERSION ...)` in
+//     CMakeLists.txt — the single source of truth CLAUDE.md names — so a
+//     version bump reaches the .exe metadata with no second edit.
+//
+// The icon/manifest paths are absolute (expanded by CMake) so the generated
+// script can sit in the build tree without an rc include-path flag; rc.exe
+// and windres both accept forward slashes.
+
+IDI_ICON1 ICON "@POM2_WINDOWS_RES_DIR@/POM2.ico"
+1 RT_MANIFEST "@POM2_WINDOWS_RES_DIR@/POM2.manifest"
+
+// Raw numeric constants rather than <winver.h> names: the resource compiler
+// is invoked by CMake with no guarantee about the SDK include path, and a
+// missing header here fails the whole Windows build for cosmetics.
+//   FILEOS   0x00000004L = VOS__WINDOWS32
+//   FILETYPE 0x00000001L = VFT_APP
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK  0x3fL
+ FILEFLAGS      0x0L
+ FILEOS         0x00000004L
+ FILETYPE       0x00000001L
+ FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 040904E4 = US English, Windows Multilingual (CP-1252).
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "VERHILLE Arnaud\0"
+            VALUE "FileDescription",  "POM2 Apple II Emulator\0"
+            VALUE "FileVersion",      "@PROJECT_VERSION@.0\0"
+            VALUE "InternalName",     "POM2\0"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 VERHILLE Arnaud. GPLv3 or later.\0"
+            VALUE "OriginalFilename", "POM2.exe\0"
+            VALUE "ProductName",      "POM2\0"
+            VALUE "ProductVersion",   "@PROJECT_VERSION@.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END

@@ -32,9 +32,13 @@ function(pom2_enforce_source_layers root_dir)
     # Basename inventory lets includes such as "HgrPaintModel.h" resolve even
     # when the owning file lives in src/hgrpaint and is found through an include
     # directory rather than relative to the including file.
+    # src/*.hpp was missing from this glob, so a first-party header with the
+    # C++ extension was invisible to the "unclassified header" check: a
+    # machine-layer file could include it and the guard said nothing.
     file(GLOB_RECURSE _pom2_known_headers
         RELATIVE "${root_dir}"
         "${root_dir}/src/*.h"
+        "${root_dir}/src/*.hpp"
         "${root_dir}/include/*.h"
         "${root_dir}/include/*.hpp")
     foreach(_header IN LISTS _pom2_known_headers)
@@ -201,8 +205,13 @@ function(pom2_enforce_source_layers root_dir)
             foreach(_line IN LISTS _system_include_lines)
                 string(REGEX REPLACE "^[^<]*<([^>]+)>.*$" "\\1"
                        _system_include "${_line}")
+                # netdb.h (getaddrinfo), sys/select.h (the other blocking
+                # wait) and the legacy winsock.h were escapes the first
+                # version of this list left open — each is a complete way to
+                # reach the host network or block a device-layer thread
+                # without touching any of the banned names.
                 if(_system_include MATCHES
-                   "^(thread|future|condition_variable|poll\\.h|sys/socket\\.h|arpa/inet\\.h|netinet/.*|winsock2\\.h|ws2tcpip\\.h)$")
+                   "^(thread|future|condition_variable|poll\\.h|sys/poll\\.h|sys/select\\.h|sys/socket\\.h|arpa/inet\\.h|netdb\\.h|netinet/.*|winsock\\.h|winsock2\\.h|ws2tcpip\\.h)$")
                     message(FATAL_ERROR
                         "POM2 architecture host-API violation: '${_rel}' "
                         "(${_owner}) includes <${_system_include}>. Machine "

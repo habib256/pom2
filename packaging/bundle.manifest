@@ -18,8 +18,12 @@
 #   dir      <path>        copy the whole tree; destination defaults to <path>
 #   file     <src> [<dst>] copy one file; <dst> is relative to the payload root
 #   wasm     <path>        browser build ONLY — never in a desktop package
-#   deny     <path>        must NEVER appear in any package (the guard asserts it)
-#   denyglob <pattern>     same, by file-name pattern, inside a copied `dir`
+#   deny     <path>        must NEVER appear in any package. Enforced three
+#                          ways: excluded from the install() rules and the
+#                          WASM preload, pruned by stage(), and asserted by
+#                          `--verify` at ANY depth under the payload root.
+#   denyglob <pattern>     same, by NAME pattern, matched CASE-INSENSITIVELY
+#                          against files AND directories inside a copied `dir`
 #
 # Paths are relative to the repository root. Blank lines and #-comments ignored.
 
@@ -70,11 +74,17 @@ deny printouts
 deny cassettes
 deny prodos_folder
 
-# `dir roms` copies the WORKING TREE, not what git tracks — so an archive you
-# downloaded into roms/ and never unpacked ships to every user. That is not
-# hypothetical: two untracked ROM .zip archives sitting in roms/ went into a
-# locally-built WASM bundle, where nothing would have noticed them. Archives
-# are also useless to the emulator, which reads raw dumps.
+# `dir roms` copies the WORKING TREE — so anything sitting in roms/ ships to
+# every user, tracked or not. That is not hypothetical: two ROM .zip archives
+# in roms/ (`AE Serial Pro 2.0.bin_.zip`, `AE Serial Pro PAL.zip`) went into a
+# locally-built WASM bundle, where nothing would have noticed them. They are
+# git-TRACKED, not untracked as an earlier version of this comment claimed —
+# whether they should stay in the repository is a separate call for the
+# maintainer; what this list decides is only that they never reach a package.
+# Archives are useless to the emulator anyway, which reads raw dumps.
+#
+# Matched case-insensitively, and against directories too: a `Foo.ZIP` file or
+# a `bar.zip/` folder are the same leak as `foo.zip`.
 denyglob *.zip
 denyglob *.7z
 denyglob *.rar

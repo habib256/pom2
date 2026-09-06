@@ -5,7 +5,10 @@
 #   index.html        — entry point (renamed from POM2.html)
 #   POM2.js           — Emscripten loader
 #   POM2.wasm         — compiled module
-#   POM2.data         — preloaded asset bundle (roms/ + fonts/ + pic/ + floppyemu/)
+#   POM2.data         — preloaded asset bundle. Its CONTENTS are decided by
+#                       packaging/bundle.manifest, parsed by CMakeLists.txt
+#                       (`dir` + `file` + `wasm` entries), not by this script:
+#                       today roms/ + fonts/ + the two pic/ photos + floppyemu/
 #   POM2.worker.js    — pthread worker (when USE_PTHREADS=1)
 #   serve.py          — local dev server that sets COOP+COEP headers
 #                       (required for SharedArrayBuffer / pthreads)
@@ -20,7 +23,11 @@
 #   ./build_wasm.sh                # release build
 #   ./build_wasm.sh --clean        # nuke build_wasm/ first
 #   ./build_wasm.sh --serve        # build + launch dev server on :8080
-#   ./build_wasm.sh --with-data    # also bundle the disks_3.5/ library into POM2.data
+#   ./build_wasm.sh --with-data    # also bundle the disks_3.5/ library into
+#                                 # POM2.data. LOCAL DEV ONLY: disks_3.5 is
+#                                 # `deny`-listed in packaging/bundle.manifest,
+#                                 # so CMake warns and the resulting bundle
+#                                 # must not be published.
 #   POM2_WASM_ALLOW_LARGE_DATA=1 ./build_wasm.sh --with-data
 #                                 # allow a local POM2.data over GitHub's 100 MiB limit
 
@@ -70,7 +77,10 @@ mkdir -p "$BUILD_DIR" "$WASM_DIR"
 
 # Configure with the Emscripten toolchain.
 CMAKE_EXTRA=()
-CMAKE_EXTRA+=("-DPOM2_WASM_BUNDLE=fonts;pic;floppyemu")
+# NO -DPOM2_WASM_BUNDLE here. It used to pass "fonts;pic;floppyemu" and NOTHING
+# HAS EVER READ IT — the payload moved into packaging/bundle.manifest, and this
+# variable survived as a list that looked authoritative (it is already wrong:
+# it omits roms/ and names the whole pic/ folder) while deciding nothing.
 if [ $WITH_DATA -eq 1 ]; then
     CMAKE_EXTRA+=(-DPOM2_WASM_BUNDLE_DISKS=ON)
 else
