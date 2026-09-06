@@ -165,6 +165,43 @@ int main()
                "an over-budget region must not touch its neighbour");
     }
 
+    // ── A failed page must not be patched afterwards ─────────────────────
+    // `put()` refuses to write past `limit_` but does NOT advance `pc_`, so a
+    // branch or a jmp emitted at an overflow recorded its operand at
+    // `at == limit_` — the neighbour's first byte. `finish()` applied the
+    // fixups of a failed assembly anyway, so the overflow it had just
+    // reported went on to corrupt the region next door.
+    {
+        Page rom{}; rom.fill(0xEA);
+        rom[0x10] = 0x4C;                      // the neighbour's first byte
+        pom2::SlotRomAsm a(rom, 5);
+        a.region("tight", 0x00, 0x10)
+         .emit({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 })
+         .branch(0xD0, "target");              // one byte past the budget
+        a.region("target", 0x20, 0x30).emit({ 0x60 });
+        expect(!a.finish(), "an over-budget branch must fail");
+        expectErrorMentions(a, { "tight" }, "an over-budget branch");
+        expect(rom[0x10] == 0x4C,
+               "a fixup from a failed page must not touch the neighbour");
+    }
+
+    // ── …and never one past the end of the page ──────────────────────────
+    // The same overflow in a region that ENDS the page recorded `at == 256`,
+    // which is out of bounds on the card's `std::array<uint8_t, 256>`. The
+    // canary sits immediately after the page (both are byte-aligned, so the
+    // struct has no padding) and catches the write the sanitisers would only
+    // see on a heap-allocated member.
+    {
+        struct Guarded { Page page; uint8_t canary; };
+        static_assert(sizeof(Guarded) == pom2::kSlotRomBytes + 1,
+                      "the canary must sit at page offset 256");
+        Guarded g{}; g.page.fill(0xEA); g.canary = 0x5A;
+        pom2::SlotRomAsm a(g.page, 5);
+        a.region("tail", 0xFC, 0x100).emit({ 1, 2, 3, 4 }).jmp("tail");
+        expect(!a.finish(), "a jmp emitted past the end of the page must fail");
+        expect(g.canary == 0x5A, "rom_[256] must never be written");
+    }
+
     // ── Exactly filling a region is legal ────────────────────────────────
     // Several real layouts do it — FujiNetCard's boot routine ends on the very
     // byte before its successor. Crying wolf there would be worse than useless.

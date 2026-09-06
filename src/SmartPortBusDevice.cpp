@@ -306,6 +306,21 @@ void SmartPortBusDevice::onPacketComplete()
 void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
                                       const std::vector<uint8_t>& body)
 {
+    // A command packet ends whatever came before it. The drive is holding
+    // one transaction, not two: the packet in its hands wins, and any data
+    // packet it was still expecting is gone. Only the data packet and a bus
+    // reset used to clear `pendingWrite_`, so a WRITE whose data packet never
+    // arrived — the firmware abandons one on a bad checksum and retries the
+    // command without resetting the bus — latched `active()` for ever, and
+    // the //c external port then claimed every $C0E0-$C0EF access with the
+    // Disk II dead behind it until the next machine reset. The stale unit,
+    // command and block go with it, so a later stray data packet cannot land
+    // on the block a long-abandoned WRITE named.
+    pendingWrite_ = false;
+    pendingCmd_   = 0;
+    pendingUnit_  = 0;
+    pendingBlock_ = 0;
+
     if (body.empty()) return;
     // Contents are $42..$4A as the firmware sends them: command, parameter
     // count (its table at $CDE3 — not the unit), buffer, 24-bit block. The
@@ -399,9 +414,22 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
         buildReply(0x00, sector, kBlockBytes, true);
         break;
     }
-    case kCmdFormat:
-        buildReply(unitFor(dev) ? 0x00 : kErrBadUnit, nullptr, 0, false);
+    case kCmdFormat: {
+        // Same gate as a WRITE, and for the same reason: a FORMAT is a write
+        // of the whole medium. Answering $00 on an empty bay told the
+        // firmware a disk that is not there had just been formatted, and
+        // answering it on a write-protected one broke the promise the STATUS
+        // byte had already made (bit 2 set, bit 6 clear).
+        SmartPortBusUnit* u = unitFor(dev);
+        if (!u)                  { buildReply(kErrBadUnit, nullptr, 0, false); break; }
+        if (!u->hasMedia())      { buildReply(kErrOffline, nullptr, 0, false); break; }
+        if (u->writeProtected()) { buildReply(kErrWriteProt, nullptr, 0, false); break; }
+        // Nothing else to do: POM2's units are backed by an image whose
+        // geometry is fixed, and the blocks a format would zero are the ones
+        // the filesystem writes next anyway.
+        buildReply(0x00, nullptr, 0, false);
         break;
+    }
     default:
         buildReply(kErrBadCmd, nullptr, 0, false);
         break;

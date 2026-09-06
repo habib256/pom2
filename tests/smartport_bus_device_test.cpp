@@ -23,6 +23,12 @@
 //   * a frame whose checksum does not match gets NO reply (bug hunt 3: a
 //     frame spliced from two transactions could otherwise write garbage);
 //   * WRITE is two packets, command then data, and the block lands;
+//   * a command packet that arrives INSTEAD of the promised data packet wins
+//     (bug hunt 5: the abandoned WRITE latched `active()` for ever, and the
+//     //c external port then owned $C0E0-$C0EF with the Disk II dead behind
+//     it — and its stale block could still take a later data packet);
+//   * FORMAT is gated like a write: offline with no media, $2B when
+//     protected (bug hunt 6: it answered $00 to both);
 //   * STATUS answers four bytes with the block count.
 
 #include "SmartPortBusDevice.h"
@@ -158,6 +164,48 @@ int main()
         assert((r[i + 10] & 0x7F) == 4 && "block count low byte");
     }
 
+    // A command packet ends whatever came before it. A WRITE whose data
+    // packet never arrives — the firmware abandons one on a bad checksum and
+    // retries without resetting the bus — used to latch `pendingWrite_` for
+    // ever: `active()` stayed true and the //c external port went on claiming
+    // every $C0E0-$C0EF access, with the Disk II dead behind it.
+    {
+        uint8_t before[512];
+        std::memcpy(before, &u1.blocks[3 * 512], 512);
+        // WRITE block 3 of unit 3 (= u1), command packet only…
+        transact(d, frame(3, 0x00, {0x02, 0x03, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00}),
+                 /*expectReply=*/false);
+        assert(d.active() && "the bus is busy between the two packets");
+        // …then a READ instead of the data packet the drive was promised.
+        r = transact(d, frame(2, 0x00, {0x01, 0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}));
+        assert(replyStatus(r) == 0x00 && "the new command is served");
+        assert(!d.active() && "…and the abandoned WRITE does not latch the bus");
+        // A data packet arriving now belongs to nothing: the stale unit,
+        // command and block went with the WRITE.
+        std::vector<uint8_t> stray(512, 0x5A);
+        transact(d, frame(3, 0x02, stray), /*expectReply=*/false);
+        assert(std::memcmp(&u1.blocks[3 * 512], before, 512) == 0 &&
+               "a stray data packet must not write the abandoned block");
+        assert(d.progress().blocksWritten == 1 && "…and writes nothing at all");
+    }
+
+    // FORMAT is a write of the whole medium, so it answers the same refusals
+    // as one: offline with no media, write-protected when protected.
+    {
+        const std::vector<uint8_t> fmt = {0x03, 0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00};
+        u1.media = false;
+        assert(replyStatus(transact(d, frame(3, 0x00, fmt))) == 0x2F &&
+               "FORMAT on an empty bay is offline");
+        u1.media = true;
+        u1.wp = true;
+        assert(replyStatus(transact(d, frame(3, 0x00, fmt))) == 0x2B &&
+               "FORMAT on a write-protected unit is refused");
+        u1.wp = false;
+        assert(replyStatus(transact(d, frame(3, 0x00, fmt))) == 0x00);
+        assert(replyStatus(transact(d, frame(1, 0x00, fmt))) == 0x11 &&
+               "FORMAT on a number nobody was assigned is a bad unit");
+    }
+
     // Snapshot in the middle of a transaction: the command is in, the ack
     // given, REQ not yet released. A restored device must still put the
     // reply on the wire when REQ drops — the rewind ring lands here.
@@ -199,6 +247,8 @@ int main()
     assert(replyStatus(r) == 0x00);
 
     std::printf("smartport_bus_device: OK — host-assigned numbers, checksum "
-                "enforced, two-packet WRITE, STATUS bytes, snapshot mid-transaction\n");
+                "enforced, two-packet WRITE, a new command drops the pending "
+                "one, FORMAT gated like a write, STATUS bytes, snapshot "
+                "mid-transaction\n");
     return 0;
 }

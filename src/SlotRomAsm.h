@@ -183,9 +183,26 @@ public:
 
     /// Resolve every pending reference. Call exactly once, at the end of
     /// buildRom(). Returns true when the page assembled cleanly.
+    ///
+    /// Resolve first, WRITE second, and only when nothing failed. `put()`
+    /// refuses to write past `limit_` but does NOT advance `pc_`, so a
+    /// `branch()` / `jmp()` / `byteOf()` emitted at an overflow recorded its
+    /// operand at `at == limit_` — the neighbour's first byte, which the
+    /// fixup pass then overwrote *after* the overflow had already been
+    /// reported, and index 256 of a 256-byte `std::array` when the region
+    /// ends the page. A page that failed anywhere is not going to be used
+    /// (every card publishes `romLayoutError()`), so patching it buys
+    /// nothing and costs the neighbour.
     bool finish()
     {
+        std::vector<Write> writes;
+        writes.reserve(fixups_.size());
         for (const Fixup& f : fixups_) {
+            if (f.at >= kSlotRomBytes) {
+                fail("region '" + f.region + "' references '" + f.target +
+                     "' from " + hex(f.at) + ", past the end of the page");
+                continue;
+            }
             const Label* l = find(f.target);
             if (!l) {
                 fail("region '" + f.region + "' references undefined label '" +
@@ -203,12 +220,14 @@ public:
                          " bytes away");
                     continue;
                 }
-                rom_[f.at] = static_cast<uint8_t>(d);
+                writes.push_back({ f.at, static_cast<uint8_t>(d) });
             } else {
-                rom_[f.at] = static_cast<uint8_t>(l->offset);
+                writes.push_back({ f.at, static_cast<uint8_t>(l->offset) });
             }
         }
         fixups_.clear();
+        if (!failed_)
+            for (const Write& w : writes) rom_[w.at] = w.value;
         // The listing exists to be diffed across a change, so it has to be
         // obtainable from a running build and not only from a debugger:
         //     POM2_DUMP_SLOT_ROM=1 ./POM2 2>slotroms.txt
@@ -256,6 +275,7 @@ private:
         std::string target;
         std::string region;
     };
+    struct Write  { unsigned at; uint8_t value; };
     static constexpr std::size_t kNoRegion = static_cast<std::size_t>(-1);
 
     void put(uint8_t b)
