@@ -55,6 +55,17 @@ public:
 
     bool available() const { return ready_; }
 
+    /// Delete every GL object this renderer owns (FBO, colour texture,
+    /// depth renderbuffer, VAO/VBO/EBO, shader program) and mark the
+    /// renderer released. MUST be called while the GL context is still
+    /// current; the destructor calls it too, which is safe because main()
+    /// destroys its MainWindow — and hence this renderer — BEFORE
+    /// ImGui_ImplOpenGL3_Shutdown / glfwDestroyWindow / glfwTerminate.
+    /// Idempotent: a second call (or the destructor after an explicit one)
+    /// issues no GL at all, so a host that tears the context down early can
+    /// release here and let the destructor run wherever it likes.
+    void releaseGL();
+
     // ── Tunables (Phase 3 will surface these in a panel) ──────────────────
     // MicroM8 "Voxel Cube" model: a 4:3 grid of equal-base-thickness cubes,
     // NOT a luminance height-field. `voxelDepth`/`colorShift` are in CELL-HEIGHT

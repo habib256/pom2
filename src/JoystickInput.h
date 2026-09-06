@@ -124,8 +124,17 @@ public:
 
     /// First-call auto-bind: if no host is bound yet and at least one is
     /// present, attach the first present host. Lets the emulator "just
-    /// work" without going through the panel.
+    /// work" without going through the panel. No-op once the binding has
+    /// been decided — either by a previous auto-bind or by the user.
     void autoBindIfUnconfigured();
+
+    /// "The binding is the user's now." Called by the Joystick panel when a
+    /// device is picked, and at startup when a persisted `joystick_host` key
+    /// is restored. Without it, choosing "(none)" was undone on the very
+    /// next frame: hostIdx = -1 is exactly the state autoBindIfUnconfigured
+    /// treats as unconfigured, so it re-attached the first present pad and
+    /// the game port went on reading a stick the user had just unplugged.
+    void markBindingExplicit() { autoBindDone = true; }
 
     const DeviceState& deviceState(int hostIdx) const {
         if (hostIdx < 0 || hostIdx >= kHostCount) return devices[0];

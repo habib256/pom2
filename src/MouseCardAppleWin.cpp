@@ -162,7 +162,21 @@ void MouseCardAppleWin::advanceCycles(int cycles)
     // Drain any host motion / button accumulated since the last tick. This
     // lets the firmware see input as soon as it polls, without waiting for
     // the next VBL boundary.
-    pollHostInput();
+    //
+    // advanceCycles runs once per INSTRUCTION on the CPU thread and this card
+    // is the //e default in slot 4, so the drain has to be free when nothing
+    // moved: gate it on a generation counter the UI thread bumps inside
+    // setHostMouse. One relaxed load per instruction instead of three loads
+    // plus the wrap-corrected delta arithmetic, with identical semantics —
+    // a change is still visible to the very next instruction, and the
+    // `!hostPrimed` term keeps the first tick priming the delta trackers
+    // exactly where it did before (from the shadow as it stands, not from
+    // the first move).
+    const uint32_t gen = hostGen.load(std::memory_order_relaxed);
+    if (gen != lastHostGen_ || !hostPrimed) {
+        lastHostGen_ = gen;
+        pollHostInput();
+    }
 
     vblCycleAccum += cycles;
     while (vblCycleAccum >= vblCycles_) {
@@ -299,7 +313,19 @@ void MouseCardAppleWin::onCommand()
         break;
     case MOUSE_HOME:
         nDataLen = 1;
-        setPositionAbs(0, 0);
+        // The ONE deliberate deviation from AppleWin in this file. AppleWin
+        // has `case MOUSE_HOME: m_nDataLen = 1; SetPositionAbs( 0, 0 );`,
+        // but Apple's own spec for the firmware entry this command backs
+        // (HOMEMOUSE, $Cn08 — Apple II Mouse Technical Note / the AppleMouse
+        // II User's Manual) is "sets the mouse position to the upper-left
+        // corner of the clamping window", i.e. (MinX, MinY). The two agree
+        // only while the clamp window is still the power-on 0..1023: a
+        // program that clamps to, say, X 100..500 and then homes expects the
+        // cursor at 100, and got 0 — outside its own window, where the next
+        // relative move would snap it back with a visible jump.
+        setPositionAbs(iMinX, iMinY);
+        clampX();
+        clampY();
         break;
     case MOUSE_TIME:
         switch (byBuff[0] & 0x0C) {

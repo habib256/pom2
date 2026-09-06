@@ -24,6 +24,7 @@
 #include "EmulationController.h"
 #include "HgrPaintModel.h"        // hgrpaint:: geometry constants
 #include "LeChatMauveCard.h"
+#include "Logger.h"
 #include "Memory.h"
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <string>
 
 #include "Pom2GL.h"
 
@@ -314,6 +316,20 @@ void Pom2HgrPaintHost::renderScratch(ScratchMode m, const uint8_t* main8k,
                 const uint32_t bl = (((a >> 16) & 0xFF) + ((b >> 16) & 0xFF)) >> 1;
                 out[x] = 0xFF000000u | (bl << 16) | (g << 8) | r;
             }
+        }
+    } else {
+        // Neither the contract width nor the 2× Chat Mauve one: the caller's
+        // buffer is sized for `wantW` and there is no safe way to fill it, so
+        // leave it untouched (the editor keeps the previous frame) and say so
+        // once per width rather than silently painting nothing forever.
+        static int warnedWidth = 0;
+        if (warnedWidth != gfx_->width()) {
+            warnedWidth = gfx_->width();
+            pom2::log().warn("HgrPaint",
+                "renderScratch: unexpected renderer width " +
+                std::to_string(gfx_->width()) + " (expected " +
+                std::to_string(wantW) + " or " + std::to_string(2 * wantW) +
+                ") — canvas not updated");
         }
     }
 }

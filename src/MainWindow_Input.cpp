@@ -100,7 +100,43 @@ void MainWindow::onChar(unsigned int codepoint)
     }
 }
 
-void MainWindow::onKey(int key, int /*scancode*/, int action, int mods)
+namespace {
+
+// The letter the user's KEYBOARD LAYOUT prints on this key, uppercased, or 0
+// when the key produces no single ASCII letter.
+//
+// GLFW key codes are POSITIONS on a US QWERTY board, not characters: on a
+// French AZERTY keyboard GLFW_KEY_A is the key capped 'Q', GLFW_KEY_Q is
+// 'A', GLFW_KEY_W is 'Z', GLFW_KEY_Z is 'W' — and the AZERTY 'M' key is
+// GLFW_KEY_SEMICOLON, outside the A..Z range entirely. Deriving Ctrl-letter
+// from the position therefore handed an AZERTY user Ctrl-Q when they pressed
+// the key marked A, and nothing at all for M. (Ctrl-C, the one every
+// Applesoft user needs, sits on the same physical key in both layouts, which
+// is how this survived.)
+//
+// `glfwGetKeyName(key, scancode)` returns the layout's character for the key,
+// independent of modifiers — that is what the `scancode` parameter of the
+// callback is for. GLFW requires it on the main thread, which is where GLFW
+// dispatches its own callbacks, so onKey satisfies that by construction. It
+// returns null for non-printable keys and can return a multi-byte name on a
+// layout whose cap is not ASCII, so the US positional map stays as the
+// fallback: no layout gets FEWER Ctrl-letters than it had.
+char layoutLetter(int key, int scancode)
+{
+    if (const char* name = glfwGetKeyName(key, scancode);
+        name && name[0] && name[1] == '\0') {
+        const char c = name[0];
+        if (c >= 'a' && c <= 'z') return static_cast<char>(c - 'a' + 'A');
+        if (c >= 'A' && c <= 'Z') return c;
+    }
+    if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z)
+        return static_cast<char>('A' + (key - GLFW_KEY_A));
+    return 0;
+}
+
+}  // namespace
+
+void MainWindow::onKey(int key, int scancode, int action, int mods)
 {
     // Open-Apple / Solid-Apple are read by the IIe/IIc/IIc+ firmware via
     // $C061/$C062 bit 7 (MAME `apple2e.cpp:2157-2169`) — the firmware itself
@@ -173,11 +209,17 @@ void MainWindow::onKey(int key, int /*scancode*/, int action, int mods)
     if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
     const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
 
+    // Both host shortcuts below match on the LAYOUT's letter, like the
+    // Ctrl-letter path at the bottom of this function: the user presses the
+    // key marked V (resp. P) on their own keyboard, wherever GLFW thinks
+    // that position is.
+    const char ctrlLetter = ctrl ? layoutLetter(key, scancode) : 0;
+
     // Ctrl-V intercepts the host shortcut: paste system clipboard into
     // the Apple II keyboard buffer rather than injecting raw $16. The
     // Apple II's own Ctrl-V (rarely used) can still be reached via the
     // Edit menu or via Ctrl-Shift-V if a future version chooses to map it.
-    if (ctrl && key == GLFW_KEY_V) {
+    if (ctrlLetter == 'V') {
         pasteFromClipboard();
         return;
     }
@@ -185,7 +227,7 @@ void MainWindow::onKey(int key, int /*scancode*/, int action, int mods)
     // Ctrl+Shift+P opens the command palette. Shift is what keeps it off the
     // Apple II's Ctrl-P ($10) — which CP/M under the SoftCard uses for printer
     // echo, so plain Ctrl-P must keep reaching the guest.
-    if (ctrl && (mods & GLFW_MOD_SHIFT) && key == GLFW_KEY_P) {
+    if (ctrlLetter == 'P' && (mods & GLFW_MOD_SHIFT)) {
         openCommandPalette();
         return;
     }
@@ -200,7 +242,13 @@ void MainWindow::onKey(int key, int /*scancode*/, int action, int mods)
         case GLFW_KEY_DOWN:         injectAscii(0x0A); break;
         case GLFW_KEY_ESCAPE:       injectAscii(0x1B); break;
         case GLFW_KEY_TAB:          injectAscii(0x09); break;
-        case GLFW_KEY_F9:           saveScreenshot(); break;
+        // PRESS only, like F10 below: `saveScreenshot()` takes stateMutex
+        // AND the demodulator's lock, runs a CPU-side demod of the frame and
+        // writes one PNG per call. On GLFW_REPEAT a leaned-on F9 fired that
+        // ~30×/s, spraying files and stalling the machine.
+        case GLFW_KEY_F9:
+            if (action == GLFW_PRESS) saveScreenshot();
+            break;
         // F10 = GUI <-> kiosk (Ctrl+Alt+F does the same, handled above).
         // "Full screen" in the GUI IS kiosk mode:
         // exclusive full-screen with the chrome-free render path. The
@@ -213,13 +261,25 @@ void MainWindow::onKey(int key, int /*scancode*/, int action, int mods)
         case GLFW_KEY_F10:
             if (action == GLFW_PRESS) toggleKioskMode();
             break;
-        case GLFW_KEY_F11:          controller->softReset(); break;
-        case GLFW_KEY_F12:          controller->hardReset(); break;
+        // Both resets are PRESS only for the same reason as F10/F9: a held
+        // key repeats, and re-vectoring the CPU through $FFFC ~30×/s means
+        // the machine can never get past its reset handler — the user sees a
+        // frozen screen for as long as the key is down, and (on F12) a wiped
+        // register file each time.
+        case GLFW_KEY_F11:
+            if (action == GLFW_PRESS) controller->softReset();
+            break;
+        case GLFW_KEY_F12:
+            if (action == GLFW_PRESS) controller->hardReset();
+            break;
         default:
             // Ctrl-A..Ctrl-Z generate $01..$1A — these matter for Applesoft
-            // (Ctrl-C breaks out of a running program, Ctrl-G beeps, etc.)
-            if (ctrl && key >= GLFW_KEY_A && key <= GLFW_KEY_Z) {
-                injectAscii(static_cast<uint8_t>(key - GLFW_KEY_A + 1));
+            // (Ctrl-C breaks out of a running program, Ctrl-G beeps, etc.).
+            // The letter comes from the LAYOUT, not the key position: see
+            // layoutLetter() above.
+            if (ctrl) {
+                if (const char c = layoutLetter(key, scancode))
+                    injectAscii(static_cast<uint8_t>(c - 'A' + 1));
             }
             break;
     }

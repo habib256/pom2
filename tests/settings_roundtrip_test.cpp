@@ -165,6 +165,91 @@ int main()
         if (bad) { fs::remove_all(home); return 1; }
     }
 
+    // ── Partial parses are NOT values (round 11 #39) ─────────────────────
+    // state.cfg's header invites hand-editing, and `std::stoi`/`std::stof`
+    // stop at the first character they cannot use and report success on what
+    // they got: "6503 # typo" was read as the CPU clock 6503, "4M" as 4, and
+    // "1.5x" as 1.5f. A value that is not entirely a number must fall back to
+    // the caller's default — the rule CliDispatcher::parseIntPositive already
+    // applies to command-line numbers.
+    {
+        pom2::Settings s;
+        s.setString("bad_int_comment", "6503 # was 1022727");
+        s.setString("bad_int_unit",    "4M");
+        s.setString("bad_int_trail",   "12abc");
+        s.setString("bad_float_unit",  "1.5x");
+        s.setString("bad_float_pct",   "80%");
+        s.setString("empty_val",       "");
+        // Still accepted: a clean number, and one padded with blanks (load()
+        // trims the line, but an escaped boundary space survives).
+        s.setString("good_int",        "1022727");
+        s.setString("good_int_pad",    " 42 ");
+        s.setString("good_float",      "0.25");
+        assert(s.save());
+
+        pom2::Settings r;
+        assert(r.load());
+        int bad = 0;
+        auto wantInt = [&](const char* k, int def, int want) {
+            const int got = r.getInt(k, def);
+            if (got != want) {
+                std::printf("FAIL: getInt(%s) want %d got %d\n", k, want, got);
+                ++bad;
+            }
+        };
+        auto wantFloat = [&](const char* k, float def, float want) {
+            const float got = r.getFloat(k, def);
+            if (got != want) {
+                std::printf("FAIL: getFloat(%s) want %g got %g\n",
+                            k, double(want), double(got));
+                ++bad;
+            }
+        };
+        wantInt("bad_int_comment", 1022727, 1022727);
+        wantInt("bad_int_unit",    -7,      -7);
+        wantInt("bad_int_trail",   -7,      -7);
+        wantInt("empty_val",       -7,      -7);
+        wantInt("good_int",        -7,      1022727);
+        wantInt("good_int_pad",    -7,      42);
+        wantFloat("bad_float_unit", 3.0f,   3.0f);
+        wantFloat("bad_float_pct",  3.0f,   3.0f);
+        wantFloat("good_float",    -1.0f,   0.25f);
+        // A missing key is still the default, and getString is untouched by
+        // any of this (the raw text is what a path setting needs).
+        wantInt("no_such_key", 5, 5);
+        assert(r.getString("bad_int_unit") == "4M");
+        if (bad) { fs::remove_all(home); return 1; }
+    }
+
+    // ── The Joystick panel's binding survives a restart (round 11 #40) ────
+    // Only `joystick_square_gate` was ever written, so the pad the user
+    // picked, the deadzone they dialled and the two invert flags came back
+    // as defaults every launch. `joystick_host` also doubles as the
+    // "the user decided" marker: -1 means "(none)" and must not be
+    // auto-re-bound, which is why MainWindow reads it with a -2 sentinel
+    // rather than a plain -1 default.
+    {
+        pom2::Settings s;
+        s.setInt  ("joystick_host",       -1);
+        s.setFloat("joystick_deadzone",   0.175f);
+        s.setBool ("joystick_invert_x",   true);
+        s.setBool ("joystick_invert_y",   false);
+        s.setBool ("joystick_square_gate", false);
+        assert(s.save());
+
+        pom2::Settings r;
+        assert(r.load());
+        assert(r.getInt  ("joystick_host",       -2) == -1);
+        assert(r.getFloat("joystick_deadzone",   0.10f) == 0.175f);
+        assert(r.getBool ("joystick_invert_x",   false) == true);
+        assert(r.getBool ("joystick_invert_y",   true)  == false);
+        assert(r.getBool ("joystick_square_gate", true) == false);
+        // Absent on a fresh install → the sentinel survives, and the
+        // auto-binder stays in charge.
+        pom2::Settings fresh;
+        assert(fresh.getInt("joystick_host", -2) == -2);
+    }
+
     // A damaged or hostile line-oriented state file must be rejected before
     // getline can grow a multi-megabyte string during application startup.
     {
@@ -270,7 +355,8 @@ int main()
 
     fs::remove_all(home);
     std::printf("OK settings_roundtrip (#-in-value, newline, backslash, "
-                "boundary whitespace, int/float/bool round-trip, config dir, "
+                "boundary whitespace, int/float/bool round-trip, partial "
+                "parses rejected, joystick binding keys, config dir, "
                 "unchanged-save skip, list encoding)\n");
     return 0;
 }

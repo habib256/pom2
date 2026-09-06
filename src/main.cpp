@@ -48,6 +48,7 @@
 #include <cstdio>
 #include <cctype>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 #include <thread>
@@ -629,7 +630,16 @@ int main(int argc, char* argv[])
         }
     }
 
-    MainWindow mainWindow(plan->forceIIPlus);
+    // Heap-owned, not a plain local, so its lifetime can END BEFORE the GL /
+    // GLFW / ImGui teardown at the bottom of main(). ~MainWindow deletes GPU
+    // objects — the About and keyboard textures, the paint/sprite editors'
+    // textures, and (through its members) Voxel3DRenderer's FBO + program.
+    // As a local it was destroyed after glfwTerminate(), i.e. every one of
+    // those glDelete* calls hit a context that no longer existed: undefined
+    // behaviour, and a driver-dependent crash at exit. See the `reset()`
+    // next to captureWindowGeometryNow() below.
+    auto mainWindowOwner = std::make_unique<MainWindow>(plan->forceIIPlus);
+    MainWindow& mainWindow = *mainWindowOwner;
     if (plan->forceIIPlus) {
         pom2::log().info("CLI", "--ii-plus: ignoring apple2e.rom, booting as II+");
     }
@@ -1060,6 +1070,17 @@ int main(int argc, char* argv[])
     // bail on the un-init check, zero their out-params, and the geometry
     // write is silently dropped.
     mainWindow.captureWindowGeometryNow();
+
+    // Destroy the window object HERE, while the GL context, the GLFW window
+    // and the ImGui context are all still alive — ~MainWindow issues
+    // glDeleteTextures / glDeleteProgram (About + keyboard photos, the paint
+    // and sprite editors, Voxel3DRenderer's FBO and shader). Running that
+    // after glfwTerminate(), as the old plain-local lifetime did, is a call
+    // into a torn-down context. The GLFW callbacks below all go through
+    // glfwGetWindowUserPointer, so clear it first: no event dispatched
+    // during glfwDestroyWindow can reach the freed object.
+    glfwSetWindowUserPointer(window, nullptr);
+    mainWindowOwner.reset();
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -208,6 +208,11 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
             // Currently inserted disk gets a visual marker; clicking it
             // again re-boots from track 0.
             const std::string label = (current ? "* " : "  ") + entry.displayName;
+            // PushID on the full path, like the 3.5" panel: ImGui derives a
+            // Selectable's ID from its LABEL, so two library entries with the
+            // same basename in different folders shared one ID — hovering or
+            // clicking either one drove the other's row.
+            ImGui::PushID(entry.fullPath.c_str());
             if (ImGui::Selectable(label.c_str(), current)) {
                 r.requestInsertAndBoot = entry.fullPath;
             }
@@ -215,6 +220,7 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
                 ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                 r.requestInsertOnly = entry.fullPath;
             }
+            ImGui::PopID();
         }
         ImGui::EndChild();
     }

@@ -233,18 +233,42 @@ bool Settings::getBool(const std::string& key, bool def) const
     return def;
 }
 
+// True when `idx` (where std::sto* stopped) is the end of the value, give or
+// take trailing blanks — a hand-edited "42 " is still an honest 42, while
+// "42 rpm" is not.
+static bool fullyConsumed(const std::string& s, size_t idx)
+{
+    while (idx < s.size() && (s[idx] == ' ' || s[idx] == '\t')) ++idx;
+    return idx == s.size();
+}
+
+// Both numeric getters reject a PARTIAL parse: `std::stoi("6503 # comment")`
+// happily returns 6503 and `std::stof("1.5x")` returns 1.5f, so a hand-edited
+// state.cfg line with a trailing comment or a stray unit silently yielded a
+// value the user never wrote — and "4M" became a 4-cycle CPU budget rather
+// than falling back to the default. The whole value (bar surrounding
+// whitespace, which load() already trims) must be consumed, the same rule
+// CliDispatcher::parseIntPositive applies to command-line numbers.
 int Settings::getInt(const std::string& key, int def) const
 {
     auto it = store.find(key);
     if (it == store.end()) return def;
-    try { return std::stoi(it->second); } catch (...) { return def; }
+    try {
+        size_t idx = 0;
+        const int v = std::stoi(it->second, &idx);
+        return fullyConsumed(it->second, idx) ? v : def;
+    } catch (...) { return def; }
 }
 
 float Settings::getFloat(const std::string& key, float def) const
 {
     auto it = store.find(key);
     if (it == store.end()) return def;
-    try { return std::stof(it->second); } catch (...) { return def; }
+    try {
+        size_t idx = 0;
+        const float v = std::stof(it->second, &idx);
+        return fullyConsumed(it->second, idx) ? v : def;
+    } catch (...) { return def; }
 }
 
 void Settings::setString(const std::string& key, std::string value) { store[key] = std::move(value); }

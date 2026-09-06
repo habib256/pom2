@@ -27,9 +27,18 @@
 //      the slot IRQ stays low + the card is alive afterwards (no state
 //      corruption). Also pulse MOUSE_INIT and verify the firmware ends
 //      up reading 0xFF back on Port A (the canned reply for MOUSE_INIT).
-//   4. Snapshot / rewind: mode, the mid-command byte cursor and the VBL
+//   4. MOUSE_HOME lands on the clamp window's upper-left corner, which is
+//      what Apple's HOMEMOUSE entry promises — not the hard (0,0) AppleWin
+//      uses (the two agree only at the power-on 0..1023 window).
+//   5. Snapshot / rewind: mode, the mid-command byte cursor and the VBL
 //      pacer round-trip, and a card restored from a state where the guest
 //      had interrupts OFF stops interrupting.
+//
+// Note what test_vbl_pacing_follows_set_cycles pins on purpose: mode $08
+// (MODE_INT_VBL with MOUSE_ON clear) DOES raise the VBL interrupt. That is
+// AppleWin's OnMouseEvent verbatim — its `else byState &= STAT_INT_VBL`
+// branch keeps the VBL bit rather than dropping it — and this port follows
+// it deliberately.
 
 #include "MouseCardAppleWin.h"
 #include "Memory.h"
@@ -239,6 +248,70 @@ void test_vbl_pacing_follows_set_cycles()
     std::remove(slotPath.c_str());
 }
 
+// MOUSE_HOME ($70) homes to the UPPER-LEFT CORNER OF THE CLAMPING WINDOW,
+// not to (0,0) — "sets the mouse position to the upper-left corner of the
+// clamping window" is Apple's own wording for the HOMEMOUSE firmware entry
+// this command backs. AppleWin hard-codes SetPositionAbs(0,0), which agrees
+// only while the window is still the power-on 0..1023; a program that clamps
+// to X 100..500 / Y 200..600 and then homes used to land at (0,0), outside
+// its own window.
+void test_home_goes_to_clamp_origin()
+{
+    std::vector<uint8_t> rom(0x800, 0x00);
+    const auto slotPath = writeTempBlob(rom, "home_slot.bin");
+
+    Memory mem;
+    auto card = std::make_unique<MouseCardAppleWin>(4);
+    assert(card->loadRom(slotPath));
+    MouseCardAppleWin* raw = card.get();
+    mem.slotBus().plug(4, std::move(card));
+    raw->onReset();
+
+    const uint16_t devBase = 0xC0C0;     // slot 4
+    primePiaForOutput(mem, devBase);
+
+    // MOUSE_CLAMP is a 5-byte command: cmd, then
+    //   min = (byBuff[3] << 8) | byBuff[1],  max = (byBuff[4] << 8) | byBuff[2]
+    // LSB of the command byte selects the axis (0 = X, 1 = Y).
+    auto clamp = [&](uint8_t cmd, int lo, int hi) {
+        pulseCommand(mem, devBase, cmd);
+        pulseCommand(mem, devBase, static_cast<uint8_t>(lo & 0xFF));
+        pulseCommand(mem, devBase, static_cast<uint8_t>(hi & 0xFF));
+        pulseCommand(mem, devBase, static_cast<uint8_t>((lo >> 8) & 0xFF));
+        pulseCommand(mem, devBase, static_cast<uint8_t>((hi >> 8) & 0xFF));
+    };
+    clamp(0x60, 100, 500);      // X window
+    clamp(0x61, 200, 600);      // Y window
+    {
+        const auto s = raw->debugSnapshot();
+        assert(s.iMinX == 100 && s.iMaxX == 500);
+        assert(s.iMinY == 200 && s.iMaxY == 600);
+    }
+
+    // Park the cursor somewhere inside the window (MOUSE_POS, 5 bytes:
+    // X lo/hi then Y lo/hi) so homing has something to undo.
+    pulseCommand(mem, devBase, 0x40);
+    pulseCommand(mem, devBase, 300 & 0xFF);
+    pulseCommand(mem, devBase, (300 >> 8) & 0xFF);
+    pulseCommand(mem, devBase, 400 & 0xFF);
+    pulseCommand(mem, devBase, (400 >> 8) & 0xFF);
+    {
+        const auto s = raw->debugSnapshot();
+        assert(s.iX == 300 && s.iY == 400);
+    }
+
+    pulseCommand(mem, devBase, 0x70);           // MOUSE_HOME
+    const auto s = raw->debugSnapshot();
+    if (s.iX != 100 || s.iY != 200) {
+        std::fprintf(stderr,
+            "MOUSE_HOME: expected the clamp origin (100,200), got (%d,%d)\n",
+            s.iX, s.iY);
+    }
+    assert(s.iX == 100 && s.iY == 200);
+
+    std::remove(slotPath.c_str());
+}
+
 // Snapshot / rewind. This card serialized NOTHING, and MachineSnapshot
 // skips a card whose blob comes back empty — so no SLOTn section was ever
 // written and a rewind left the LIVE card in place. The visible damage: a
@@ -350,6 +423,7 @@ int main()
     test_size_mismatch_refuses_to_load();
     test_slot_rom_bank_select();
     test_command_handshake_reaches_oncommand();
+    test_home_goes_to_clamp_origin();
     test_snapshot_round_trip_and_irq_rewind();
     test_vbl_pacing_follows_set_cycles();
 

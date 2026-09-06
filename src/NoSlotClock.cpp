@@ -153,6 +153,23 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
         // from A2=1 addresses, but any read in the range progresses
         // the shift register). Simulate that progression so a
         // misbehaving caller doesn't desync the chip.
+        //
+        //   void CNoSlotClock::ClockWrite(int address) {
+        //       ...
+        //       else if (m_ClockRegister.NextBit())
+        //           m_bClockRegisterEnabled = false;
+        //   }
+        //
+        // NextBit advances the SHARED ring position that ClockRead's
+        // ReadBit reads from, so the bit is consumed, not merely
+        // counted. Shifting the counter without shifting the register
+        // (what this did) desynced the two: the next A2=1 read handed
+        // back the bit this access had already burned, every following
+        // bit came out one position late, and the last one was lost when
+        // the counter hit 64 — a driver that interleaves a stray write
+        // into its read loop got a garbled date rather than a shifted
+        // one.
+        clockShift_ >>= 1;
         ++bitsRead_;
         if (bitsRead_ >= 64) {
             readingClock_ = false;

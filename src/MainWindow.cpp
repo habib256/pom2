@@ -483,9 +483,26 @@ MainWindow::MainWindow(bool forceIIPlus)
             hgrPaintEditor->restoreSession(hs);
         }
         controller->rewind().setEnabled(settings->getBool("rewind_enabled", false));
-        joystick->binding().squareGate =
-            settings->getBool("joystick_square_gate",
-                              joystick->binding().squareGate);
+        {
+            // The whole Joystick panel binding, not just the square gate:
+            // the pad the user chose, the deadzone they dialled and the two
+            // invert flags all used to reset to defaults on every launch.
+            auto& jb = joystick->binding();
+            jb.squareGate = settings->getBool("joystick_square_gate", jb.squareGate);
+            jb.deadzone   = std::clamp(
+                settings->getFloat("joystick_deadzone", jb.deadzone), 0.0f, 0.9f);
+            jb.invert[0]  = settings->getBool("joystick_invert_x", jb.invert[0]);
+            jb.invert[1]  = settings->getBool("joystick_invert_y", jb.invert[1]);
+            // -2 is "key absent": a fresh install must still auto-bind, and
+            // a persisted -1 means the user chose "(none)" and the
+            // auto-binder has to keep its hands off (markBindingExplicit).
+            const int host = settings->getInt("joystick_host", -2);
+            if (host != -2) {
+                jb.hostIdx = (host >= 0 && host < JoystickInput::kHostCount)
+                                 ? host : -1;
+                joystick->markBindingExplicit();
+            }
+        }
         // Paper + raster density survive a restart; the printed sheets
         // themselves deliberately do not (they are output, like the spool).
         {
@@ -871,6 +888,12 @@ MainWindow::~MainWindow()
 
     // Free the paint/sprite editors' GPU textures while the GL context is
     // still current (same window teardown order as the About-photo texture).
+    // "Still current" is a guarantee main() makes, not a property of being a
+    // destructor: MainWindow is owned by a unique_ptr there and reset()
+    // BEFORE ImGui_ImplOpenGL3_Shutdown / glfwDestroyWindow / glfwTerminate.
+    // It used to be a plain local, so every glDelete* below (and
+    // ~Voxel3DRenderer's) ran after glfwTerminate() had already torn the
+    // context down — a driver-dependent crash on the way out.
     if (hgrPaintEditor)  hgrPaintEditor->releaseGL();
     if (hgrSpriteEditor) hgrSpriteEditor->releaseGL();
     if (imageWriterPanel) imageWriterPanel->shutdown();
@@ -1327,9 +1350,21 @@ void MainWindow::render()
             }
             namespace fs = std::filesystem;
             if (!newPath.empty() && fs::exists(newPath)) {
-                auto st = controller->lockState();
-                if (st.memory().loadCharRom(
-                        newPath.c_str(), pom2::charRomBank(charRomLocale))) {
+                // The lock scope ends at `loadCharRom`. `settings->save()`
+                // is a write + fsync + rename — hundreds of microseconds to
+                // tens of milliseconds — and stateMutex is taken by the CPU
+                // worker every 4096-cycle chunk AND by this very thread to
+                // paint the next frame, so holding it across the commit
+                // freezes machine and window together. Same shape as
+                // StorageCoordinator::ejectDiskII: mutate under the lock,
+                // persist outside it.
+                bool loaded = false;
+                {
+                    auto st = controller->lockState();
+                    loaded = st.memory().loadCharRom(
+                        newPath.c_str(), pom2::charRomBank(charRomLocale));
+                }
+                if (loaded) {
                     charRomPath = newPath;
                     settings->setString("char_rom_locale",
                         pom2::charRomLocaleKey(charRomLocale));

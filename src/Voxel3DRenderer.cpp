@@ -241,8 +241,18 @@ uniform vec3  uLightDir;
 uniform float uAmbient;
 out vec4 fragColor;
 void main() {
-    vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-    float ndl = abs(dot(n, normalize(uLightDir)));
+    // Guard the normalize: on a face seen exactly edge-on the two screen-
+    // space derivatives are parallel (or zero) and the cross product is the
+    // null vector — normalize() of that is 0/0 = NaN, which propagates to
+    // fragColor and paints an undefined-colour sparkle along the silhouette.
+    // Fall back to the view direction, which shades such a face at the
+    // ambient floor. Same for a degenerate uLightDir coming from the panel.
+    vec3 c = cross(dFdx(vWorld), dFdy(vWorld));
+    float cl = length(c);
+    vec3 n = cl > 1e-8 ? c / cl : vec3(0.0, 0.0, 1.0);
+    float ll = length(uLightDir);
+    vec3 l = ll > 1e-8 ? uLightDir / ll : vec3(0.0, 0.0, 1.0);
+    float ndl = abs(dot(n, l));
     float shade = uAmbient + (1.0 - uAmbient) * ndl;
     fragColor = vec4(vColor * shade, 1.0);
 }
@@ -275,14 +285,25 @@ const float kVoxelPalette[48] = {
 
 Voxel3DRenderer::~Voxel3DRenderer()
 {
+    releaseGL();
+}
+
+void Voxel3DRenderer::releaseGL()
+{
     if (!ready_) return;
-    if (colorTex_) glDeleteTextures(1, &colorTex_);
-    if (depthRb_)  glDeleteRenderbuffers(1, &depthRb_);
-    if (fbo_)      glDeleteFramebuffers(1, &fbo_);
-    if (ebo_)      glDeleteBuffers(1, &ebo_);
-    if (vbo_)      glDeleteBuffers(1, &vbo_);
-    if (vao_)      glDeleteVertexArrays(1, &vao_);
-    if (program_)  pom2::deleteShaderProgram(program_);
+    // Clear `ready_` FIRST: it is also the "already released" flag, so a
+    // destructor running after an explicit releaseGL() issues no GL call
+    // into a context that may be gone. Each handle is zeroed as it goes for
+    // the same reason.
+    ready_ = false;
+    if (colorTex_) { glDeleteTextures(1, &colorTex_);      colorTex_ = 0; }
+    if (depthRb_)  { glDeleteRenderbuffers(1, &depthRb_);  depthRb_  = 0; }
+    if (fbo_)      { glDeleteFramebuffers(1, &fbo_);       fbo_      = 0; }
+    if (ebo_)      { glDeleteBuffers(1, &ebo_);            ebo_      = 0; }
+    if (vbo_)      { glDeleteBuffers(1, &vbo_);            vbo_      = 0; }
+    if (vao_)      { glDeleteVertexArrays(1, &vao_);       vao_      = 0; }
+    if (program_)  { pom2::deleteShaderProgram(program_);  program_  = 0; }
+    texW_ = texH_ = 0;
 }
 
 bool Voxel3DRenderer::initialize()
@@ -408,8 +429,19 @@ unsigned int Voxel3DRenderer::process(unsigned int srcTex, int dstW, int dstH,
     while (ss > 1 && (fbW > kMaxFbDim || fbH > kMaxFbDim)) {
         --ss; fbW = dstW * ss; fbH = dstH * ss;
     }
-    fbW = std::min(fbW, kMaxFbDim);
-    fbH = std::min(fbH, kMaxFbDim);
+    // Final clamp for a huge 1× window. ONE scale factor for both axes, not
+    // a per-axis min(): clamping width and height independently changes the
+    // FBO's aspect ratio, and the projection below is built from `aspect`
+    // (the *destination* rect), so the cubes came out stretched along the
+    // clamped axis. A 3840×2160 window on the GLES tier (kMaxFbDim = 2048)
+    // hit exactly that: 2048×2048 instead of 2048×1152. Scaling both axes by
+    // the same factor keeps the render an exact soft-upscale of the target.
+    if (fbW > kMaxFbDim || fbH > kMaxFbDim) {
+        const double s = std::min(static_cast<double>(kMaxFbDim) / fbW,
+                                  static_cast<double>(kMaxFbDim) / fbH);
+        fbW = std::max(1, static_cast<int>(fbW * s));
+        fbH = std::max(1, static_cast<int>(fbH * s));
+    }
     if (!createTargets(fbW, fbH)) return 0;
 
     // Save GL state we touch (mirrors NtscPostProcessor's dance, + depth).

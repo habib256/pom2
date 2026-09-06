@@ -397,11 +397,24 @@ void MainWindow::renderJoystickPanelWindow()
     auto result = joystickPanel->render("Joystick", show(pom2::PanelId::Joystick), snap);
     if (result.changed) {
         auto& bind = joystick->binding();
+        const bool hostPicked = (result.hostIdx != bind.hostIdx);
         bind.hostIdx    = result.hostIdx;
         bind.deadzone   = result.deadzone;
         bind.invert     = result.invert;
         bind.squareGate = result.squareGate;
-        if (settings) settings->setBool("joystick_square_gate", bind.squareGate);
+        // Picking a device — "(none)" included — is a decision, and the
+        // auto-binder must stop overruling it. See markBindingExplicit().
+        if (hostPicked) joystick->markBindingExplicit();
+        // The whole binding persists, not just the square gate: deadzone,
+        // invert and the chosen pad were re-derived from defaults on every
+        // launch, so a user with drift dialled out got it back each session.
+        if (settings) {
+            settings->setBool ("joystick_square_gate", bind.squareGate);
+            settings->setInt  ("joystick_host",        bind.hostIdx);
+            settings->setFloat("joystick_deadzone",    bind.deadzone);
+            settings->setBool ("joystick_invert_x",    bind.invert[0]);
+            settings->setBool ("joystick_invert_y",    bind.invert[1]);
+        }
     }
 }
 

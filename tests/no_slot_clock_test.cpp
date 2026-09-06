@@ -31,6 +31,10 @@
 //      "sticky-dead" until an A2=1 read clears it (Dallas spec).
 //   5. The packed BCD time round-trips through the readout to the
 //      same fields the fake time source produced.
+//   6. A stray A2=0 access DURING readout consumes exactly one clock bit
+//      (AppleWin's ClockWrite advances the same ring position ClockRead
+//      reads from), so an interleaved sequence still delivers the register
+//      in order rather than stalling on one bit and losing the last.
 
 #include "NoSlotClock.h"
 
@@ -232,6 +236,67 @@ void testStickyMismatch()
     std::printf("  ok: A2=1 read clears sticky-disable, recovery works\n");
 }
 
+// ─── Test 5: an A2=0 access during readout consumes a bit ─────────────
+// AppleWin's ClockWrite, when the clock register is already enabled, is
+//     else if (m_ClockRegister.NextBit()) m_bClockRegisterEnabled = false;
+// and NextBit advances the SAME ring position ClockRead's ReadBit reads
+// from — so a stray A2=0 access mid-readout consumes a bit, it does not
+// merely count one. POM2 bumped its bit counter without shifting the
+// register, which desynced the two: the next A2=1 read returned the bit the
+// stray access had already burned, everything after came out one position
+// late, and the 64th bit was lost when the counter ran out. Interleave one
+// A2=0 access after every 8 bits and check the remaining bits are the
+// clock's, still in order.
+void testInterleavedWriteDuringReadout()
+{
+    pom2::NoSlotClock nsc(&fixedTime);
+    walkMagicKey(nsc);
+
+    auto bcd = [](int v) -> uint8_t {
+        return static_cast<uint8_t>(((v / 10) << 4) | (v % 10));
+    };
+    // The register as the undisturbed readout would deliver it.
+    const uint64_t want =
+        (uint64_t)0x00           <<  0 |   // hundredths
+        (uint64_t)bcd(45)        <<  8 |
+        (uint64_t)bcd(30)        << 16 |
+        (uint64_t)bcd(21)        << 24 |
+        (uint64_t)bcd(4)         << 32 |
+        (uint64_t)bcd(27)        << 40 |
+        (uint64_t)bcd(5)         << 48 |
+        (uint64_t)bcd(26)        << 56;
+
+    int pos = 0;                       // ring position consumed so far
+    while (pos < 64) {
+        const uint8_t got = readClockBit(nsc);
+        const uint8_t bit = static_cast<uint8_t>((want >> pos) & 1);
+        if ((got & 1) != bit) {
+            std::fprintf(stderr,
+                "interleaved: bit %d = %u, want %u\n", pos, got & 1, bit);
+            std::abort();
+        }
+        ++pos;
+        // Every 8 bits, a stray A2=0 access: it must eat exactly one bit
+        // of the register, so the NEXT A2=1 read continues at pos+1.
+        if (pos % 8 == 0 && pos < 64) {
+            (void)feedKeyBit(nsc, 0);
+            ++pos;
+        }
+    }
+    // 64 positions consumed → back to pass-through.
+    if (nsc.phase() == pom2::NoSlotClock::Phase::ReadingClock) {
+        std::fprintf(stderr, "interleaved: still in readout after 64 bits\n");
+        std::abort();
+    }
+    const uint8_t after = readClockBit(nsc, 0x99);
+    if (after != 0x99) {
+        std::fprintf(stderr, "interleaved: post-readout got 0x%02X want 0x99\n",
+                     after);
+        std::abort();
+    }
+    std::printf("  ok: A2=0 access mid-readout consumes one clock bit\n");
+}
+
 }  // namespace
 
 int main()
@@ -241,6 +306,7 @@ int main()
     testDisabled();
     testKeyWalkThenReadout();
     testStickyMismatch();
+    testInterleavedWriteDuringReadout();
     std::printf("PASS\n");
     return 0;
 }

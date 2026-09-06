@@ -96,6 +96,12 @@ public:
         hostX.store(rawX, std::memory_order_relaxed);
         hostY.store(rawY, std::memory_order_relaxed);
         hostButton.store(button, std::memory_order_relaxed);
+        // Bumped LAST, and read first by advanceCycles: the CPU thread uses
+        // it to skip the whole drain while the pointer is still. Relaxed is
+        // enough — the three shadows above are themselves atomics, so the
+        // worst a reordering can do is drain one instruction early with the
+        // previous sample, which the next generation change corrects.
+        hostGen.fetch_add(1, std::memory_order_relaxed);
     }
 
     /// VBL pacing in CPU cycles between MODE_INT_VBL events. Defaults to
@@ -199,6 +205,10 @@ private:
     std::atomic<uint8_t> hostX     { 0 };
     std::atomic<uint8_t> hostY     { 0 };
     std::atomic<bool>    hostButton{ false };
+    /// Bumped by setHostMouse, read by advanceCycles: while it is unchanged
+    /// there is nothing to drain and the per-instruction poll is skipped.
+    std::atomic<uint32_t> hostGen  { 0 };
+    uint32_t lastHostGen_ = 0;
     uint8_t  lastHostX = 0;
     uint8_t  lastHostY = 0;
     bool     lastHostButton = false;
