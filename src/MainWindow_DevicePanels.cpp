@@ -335,12 +335,24 @@ void MainWindow::renderPrinterPanelWindow()
         std::error_code ec;
         const fs::path p = fs::path(printerSavePath);
         if (p.has_parent_path()) fs::create_directories(p.parent_path(), ec);
-        const fs::path tmp = p.string() + ".pom2tmp";
+        // Unique per process AND per call, then scrutinised: a fixed
+        // `<target>.pom2tmp` is the name every POM2 instance derives, and a
+        // symlink or hard link planted there redirects this trunc onto
+        // whatever it points at. Same discipline as every other write-back
+        // (AtomicFileReplace.h) — this was the last caller skipping it.
+        const fs::path tmp = pom2::tempSiblingPath(p);
+        std::error_code prepEc;
+        const bool tmpUsable = pom2::prepareTempPath(tmp, prepEc);
         std::error_code permEc;
         const fs::perms oldPerms = fs::status(p, permEc).permissions();
         const bool havePerms = !permEc;
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) {
+        std::ofstream out;
+        if (tmpUsable)
+            out.open(tmp, std::ios::binary | std::ios::trunc);
+        if (!tmpUsable) {
+            printerLastSaveStatus = "Save failed: temp path unusable " +
+                                    tmp.string() + ": " + prepEc.message();
+        } else if (!out) {
             printerLastSaveStatus = "Save failed: cannot open " +
                                     p.string();
         } else {
@@ -781,6 +793,7 @@ bool MainWindow::plugFujiNetFromCli(int& slot, bool slotExplicit, bool serial,
         return false;
     }
 
+    {
     auto  st  = controller->lockState();
     auto& bus = st.memory().slotBus();
 
@@ -813,8 +826,22 @@ bool MainWindow::plugFujiNetFromCli(int& slot, bool slotExplicit, bool serial,
         return false;
     }
 
-    if (!plugFujiNetUnlocked(st, slot, serial, serialDevice, tcpPort, errOut))
+    // Plugged with its transport CLOSED, then opened below with the lock
+    // released: a TCP listen or a tty open under `stateMutex` blocks the CPU
+    // worker and the window for as long as the host takes to answer.
+    if (!plugFujiNetUnlocked(st, slot, serial, serialDevice, tcpPort, errOut,
+                             /*startNow=*/false))
         return false;
+    }   // release the state lock before touching the network
+
+    pendingFujiNetSlots_.push_back(slot);
+    if (!startDeferredFujiNetLinks(&errOut)) {
+        // The CLI reports a transport it could not open as a failure, and did
+        // so before the card existed. Undo the plug so the two answers agree.
+        auto st = controller->lockState();
+        (void)st.memory().slotBus().unplug(slot);
+        return false;
+    }
 
     // Remember it so every later slot rebuild reproduces it — see the header.
     cliFujiNetSlot_       = slot;
@@ -827,7 +854,8 @@ bool MainWindow::plugFujiNetFromCli(int& slot, bool slotExplicit, bool serial,
 bool MainWindow::plugFujiNetUnlocked(const pom2::StateAccess& st,
                                      int slot, bool serial,
                                      const std::string& serialDevice,
-                                     int tcpPort, std::string& errOut)
+                                     int tcpPort, std::string& errOut,
+                                     bool startNow)
 {
     auto& bus = st.memory().slotBus();
     auto card = pom2::makeFujiNetCard(slot);
@@ -839,13 +867,43 @@ bool MainWindow::plugFujiNetUnlocked(const pom2::StateAccess& st,
     else
         link.setTcpMode(static_cast<uint16_t>(tcpPort));
 
-    std::string err;
-    if (!link.start(err)) { errOut = err; return false; }
+    // Only the CLI path starts the transport here, and it does so with the
+    // lock NOT yet taken (see plugFujiNetFromCli); the rebuild path passes
+    // false and opens it afterwards, because a listen()/open(tty) under
+    // `stateMutex` stalls the CPU worker and the window for as long as the
+    // host takes to answer.
+    if (startNow) {
+        std::string err;
+        if (!link.start(err)) { errOut = err; return false; }
+    }
 
     bus.plug(slot, std::move(card));
     // Session-only (CLI --fujinet / drag-and-drop): the live bus shows it,
     // the plan does not claim it.
     return true;
+}
+
+bool MainWindow::startDeferredFujiNetLinks(std::string* errOut)
+{
+    if (pendingFujiNetSlots_.empty()) return true;
+    std::vector<int> slots;
+    slots.swap(pendingFujiNetSlots_);
+    bool allStarted = true;
+    for (int slot : slots) {
+        // Topology read: every writer of the SlotBus is this thread, and the
+        // CPU worker is stopped across every rebuild that queues one of
+        // these, so the pointer stays valid for the start() below — which is
+        // the whole point of doing it out here.
+        auto* card = dynamic_cast<pom2::FujiNetCard*>(
+            controller->memory().slotBus().peripheral(slot));
+        if (!card) continue;
+        std::string err;
+        if (card->transportLink().start(err)) continue;
+        allStarted = false;
+        if (errOut && errOut->empty()) *errOut = err;
+        pom2::log().warn("FujiNet", "link not started: " + err);
+    }
+    return allStarted;
 }
 
 void MainWindow::archiveNewPrinterPages()

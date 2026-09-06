@@ -90,36 +90,6 @@ using pom2::mouseRomsPresent;
 using pom2::mouseAwRomPresent;
 using pom2::cffaRomPresent;
 
-// Persist a media bay's state with the right key scheme for its card type
-// (SmartPort per-unit, CFFA per-slot, synthetic HDV a legacy global key).
-// Called under stateMutex right after a mount/eject/type/write-back action.
-// Promoted to a member so renderSlotConfigPanel's media column can reuse it
-// (was a lambda in the now-removed Slot Manager).
-void MainWindow::persistMediaBay(int slot, int bay, SlotPeripheral* p)
-{
-    if (auto* sp = dynamic_cast<pom2::SmartPortCard*>(p)) {
-        const std::string base = "smartport_slot" + std::to_string(slot) +
-                                 "_unit" + std::to_string(bay);
-        const pom2::SmartPortUnit* u = sp->unit(static_cast<size_t>(bay));
-        settings->setString(base + "_type",
-                            u ? std::string(u->kindKey()) : std::string());
-        settings->setString(base + "_path", u ? u->path() : std::string());
-        settings->setBool  (base + "_writeback",
-                            u ? u->isWriteBackEnabled() : false);
-    } else if (auto* cffa = dynamic_cast<pom2::CffaCard*>(p)) {
-        const std::string base = "cffa_slot" + std::to_string(slot);
-        settings->setString(base + "_path", cffa->getImagePath());
-        settings->setBool  (base + "_writeback", cffa->isWriteBackEnabled());
-    } else if (auto* hdv = dynamic_cast<ProDOSHardDiskCard*>(p)) {
-        settings->setString("hdv_path", hdv->getImagePath());
-        settings->setBool  ("hdv_writeback", hdv->isWriteBackEnabled());
-        hdvPath   = hdv->getImagePath();
-        hdvStatus = hdv->isImageLoaded()
-                      ? ("loaded: " + hdv->getImagePath())
-                      : std::string("no image mounted");
-    }
-}
-
 void MainWindow::renderSlotConfigPanel()
 {
     if (!show(pom2::PanelId::SlotConfig)) return;
@@ -774,13 +744,27 @@ void MainWindow::renderMediaPanel()
                                 const bool sel = (o.first == info.typeKey);
                                 if (ImGui::Selectable(o.second.c_str(), sel) &&
                                     o.first != info.typeKey) {
-                                    {
-                                        std::lock_guard<std::mutex> lk(controller->stateMutex());
-                                        media->setBayType(b, o.first);
-                                        persistMediaBay(s, b, p);
+                                    // Through the coordinator, like Mount and
+                                    // Eject beside it: it re-resolves the card
+                                    // by slot under the lock and owns the
+                                    // bay-key rules — the hand-rolled
+                                    // `persistMediaBay` this replaces wrote
+                                    // `hdv_path` with no auto-provision or
+                                    // host-folder guard, so ticking a box on a
+                                    // synthesised /HOST/ volume overwrote the
+                                    // user's real HDV path.
+                                    const auto r =
+                                        storageCoordinator_->setMediaBayType(
+                                            *controller, *settings, s, b,
+                                            o.first);
+                                    if (r.ok) {
+                                        mPrimed[s][b] = false;
+                                    } else {
+                                        tapeStatusMessage =
+                                            "Slot " + std::to_string(s) +
+                                            ": " + r.error;
+                                        tapeStatusUntil = lastFrameTime + 4.0;
                                     }
-                                    settings->save();
-                                    mPrimed[s][b] = false;
                                 }
                                 if (sel) ImGui::SetItemDefaultFocus();
                             }
@@ -844,12 +828,17 @@ void MainWindow::renderMediaPanel()
                         bool wb = info.writeBackEnabled;
                         ImGui::BeginDisabled(!typeAllows);
                         if (ImGui::Checkbox("Write-back (save on eject)", &wb)) {
-                            {
-                                std::lock_guard<std::mutex> lk(controller->stateMutex());
-                                media->setBayWriteBack(b, wb);
-                                persistMediaBay(s, b, p);
+                            // Same reason as the type combo above: the
+                            // coordinator's guarded setter, not a second copy
+                            // of the key rules.
+                            const auto r =
+                                storageCoordinator_->setMediaBayWriteBack(
+                                    *controller, *settings, s, b, wb);
+                            if (!r.ok) {
+                                tapeStatusMessage = "Slot " +
+                                    std::to_string(s) + ": " + r.error;
+                                tapeStatusUntil = lastFrameTime + 4.0;
                             }
-                            settings->save();
                         }
                         ImGui::EndDisabled();
 
@@ -1095,11 +1084,24 @@ void MainWindow::setGlfwWindow(GLFWwindow* w)
                 if (savedWinW_ > vm->width)  savedWinW_ = vm->width;
                 if (savedWinH_ > vm->height) savedWinH_ = vm->height;
             }
-            if (!onSomeMonitor && vm) {
+            if (!onSomeMonitor && mon) {
                 // Saved on a since-disconnected screen — recentre on
-                // primary rather than reopening off-screen.
-                savedWinX_ = (vm->width  - savedWinW_) / 2;
-                savedWinY_ = (vm->height - savedWinH_) / 2;
+                // primary rather than reopening off-screen. Around the
+                // primary's WORK AREA, whose origin is a virtual-desktop
+                // coordinate: the old form centred a video-mode SIZE as
+                // though the primary always started at (0,0), so on a layout
+                // whose primary sits to the right of another monitor the
+                // "recentred" window opened on the neighbour — or under the
+                // menu bar, since a work area also excludes the system
+                // chrome the raw mode includes.
+                int px = 0, py = 0, pw = 0, ph = 0;
+                glfwGetMonitorWorkarea(mon, &px, &py, &pw, &ph);
+                if (pw > 0 && ph > 0) {
+                    if (savedWinW_ > pw) savedWinW_ = pw;
+                    if (savedWinH_ > ph) savedWinH_ = ph;
+                    savedWinX_ = px + (pw - savedWinW_) / 2;
+                    savedWinY_ = py + (ph - savedWinH_) / 2;
+                }
             }
             glfwSetWindowSize(window, savedWinW_, savedWinH_);
             glfwSetWindowPos (window, savedWinX_, savedWinY_);
@@ -1328,6 +1330,11 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
 
     }   // end stateMutex scope over steps 5-7
 
+    // 7a. Open the transports of the FujiNet cards step 7 plugged. Deferred
+    //     out of the lock on purpose (a TCP listen / tty open blocks), and
+    //     safe here: the CPU worker is still stopped.
+    (void)startDeferredFujiNetLinks();
+
     // 7b. A profile that ships an on-board Le Chat Mauve (//c PAL = the
     //     Adaptateur IIc machine) defaults its display to ChatMauveRGB — the
     //     whole point of that profile is the RGB output, so a fresh user sees
@@ -1395,7 +1402,10 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
     controller->floppySound525().setMotorPitch(floppyMotorPitchForProfile(p));
     // Kiosk is read-only: `POM2 --kiosk --preset ...` must not clobber the
     // user's saved system_profile (or persist anything else) on the way in.
-    if (!kiosk_) {
+    // `settingsReadOnly()`, not `kiosk_`: a session LAUNCHED with --kiosk
+    // stays read-only for its whole life even after toggling back to the GUI
+    // (MainWindow.h), and this is a settings write like any other.
+    if (!settingsReadOnly()) {
         settings->setString("system_profile", std::string(cfg.key));
         settings->save();
     }
@@ -1503,48 +1513,23 @@ bool MainWindow::restartEmulationFromSettings()
     slotDraftInited_ = false;
     ++mediaPanelSeedGen_;
 
-    // 4. Restore each DiskII's persisted state (matches MainWindow ctor).
-    //    Per-slot keys for multi-instance configs. Legacy `disk_path` /
-    //    `disk_writeback` (no slot suffix) is still read as the fallback
-    //    for the primary (lowest-slot) card so settings.ini files written
-    //    before option C 2026-05-15 keep working.
-    for (auto* c : diskIICards()) {
-        if (!c) continue;
-        const std::string slotKey = "_slot" + std::to_string(c->getSlot());
-        const bool isPrimary = (c == primaryDiskII());
-        const bool wb = settings->getBool(
-            "disk_writeback" + slotKey,
-            isPrimary ? settings->getBool("disk_writeback", false) : false);
-        c->setWriteBackEnabled(wb);
-        // BOTH drives, through the canonical key builder. This used to read
-        // one key and call `insertDisk(diskPath)` with its default argument,
-        // so an Apply / profile switch silently emptied drive 2 while its
-        // `_drive2` key stayed set — the same "default argument = drive 1
-        // only" mistake ~MainWindow's exit loop was fixed for, in the last
-        // place still making it. Keys come from `diskIIPathSettingKey` rather
-        // than being spelled out here: every hand-rolled copy of the
-        // `_drive2` rule in this frontend has turned out to be a bug.
-        for (std::size_t drive = 0; drive < DiskIICard::kDriveCount; ++drive) {
-            const std::string diskPath = settings->getString(
-                pom2::diskIIPathSettingKey(c->getSlot(), drive),
-                (drive == 0 && isPrimary) ? settings->getString("disk_path", "")
-                                          : std::string());
-            std::error_code ec;
-            if (diskPath.empty() ||
-                !std::filesystem::is_regular_file(diskPath, ec))
-                continue;
-            // Deliberately the INLINE insert, not the two-phase mount every
-            // other call site now uses: the block comment above is the reason
-            // — the SlotBus rebuild and these remounts have to be one atomic
-            // step against the AI server's handlers, and a two-phase mount
-            // would have to drop the lock between them. The stall it costs is
-            // bounded and invisible here: this runs on a profile switch, with
-            // the CPU worker already stopped and a cold boot to follow.
-            (void)c->insertDisk(static_cast<int>(drive), diskPath);
-        }
-    }
+    // 4. Media is restored by `plugSlotsFromSettings` itself — its phase 2
+    //    calls `StorageCoordinator::restoreMediaFromSettings` against the
+    //    finished topology, which covers BOTH Disk II drives, the per-slot
+    //    and legacy keys, the HDV/CFFA cards and the SmartPort units.
+    //
+    //    A hand-rolled copy of the Disk II half stood here and ran right
+    //    after it, so every 5.25" image was decoded twice on each Apply —
+    //    under the lock, which is where a nibble decode costs the most — and
+    //    a second copy of the `_drive2` key rule was kept alive next to the
+    //    one the coordinator owns. Whatever the two disagreed about, the
+    //    later one won silently.
 
     }   // end stateMutex scope over steps 3-4
+
+    // 4a. Same as applyProfile's step 7a: the FujiNet transports are opened
+    //     with the lock released and the worker still stopped.
+    (void)startDeferredFujiNetLinks();
 
     // 5. COLD BOOT + restart worker. `coldBoot()`, not `hardReset()`: the
     //    card set just changed, and hardReset preserves RAM — so everything

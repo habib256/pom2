@@ -531,8 +531,25 @@ int main()
         // through the generic media_slotN_bayK_* keys, so what the user
         // mounted is back on the next launch (bug hunt 3 left this open).
         {
+            // In its OWN directory: one of the cases below makes the parent
+            // read-only to force a save failure, which must not touch the
+            // other fixtures sharing the temp directory.
+            const auto lironDir =
+                std::filesystem::temp_directory_path() / "pom2_storage_liron";
+            {
+                std::error_code ec;
+                std::filesystem::permissions(
+                    lironDir, std::filesystem::perms::owner_all,
+                    std::filesystem::perm_options::replace, ec);   // last run
+                ec.clear();
+                std::filesystem::create_directories(lironDir, ec);
+            }
+            std::error_code lironDirEc;
+            const bool lironDirWritable =
+                std::filesystem::is_directory(lironDir, lironDirEc);
             const std::string lironPath =
-                writeImage("pom2_storage_liron.po", 1600u * 512u, 0x00);
+                writeImage("pom2_storage_liron/pom2_storage_liron.po",
+                           1600u * 512u, 0x00);
             bool lironPresent = false;
             {
                 auto state = mediaController.lockState();
@@ -618,18 +635,91 @@ int main()
                            "flushAll must reach every mountable media bay");
                 }
 
+                // ── …and it does it OFF the lock (bug hunt #2 R4) ───────
+                // `flushBay` writes 800 KB plus two fsyncs inline, and
+                // `flushAll` is called under `stateMutex` by every quit,
+                // profile switch and Slot Config Apply — the machine and the
+                // window froze behind it. The two-phase form captures under
+                // the lock and commits outside: nothing may reach the file
+                // until `commitDeferredFlushes` runs.
+                {
+                    std::vector<std::uint8_t> block(512, 0x5A);
+                    std::vector<pom2::StorageCoordinator::DeferredFlush>
+                        deferred;
+                    {
+                        auto state = mediaController.lockState();
+                        auto& bus = state.memory().slotBus();
+                        auto* card =
+                            dynamic_cast<pom2::LironCard*>(bus.peripheral(1));
+                        assert(card);
+                        auto* image = card->drive(0).image();
+                        assert(image && image->isLoaded());
+                        assert(image->writeBlock(13, block.data()));
+                        assert(card->bayInfo(0).hasUnsavedChanges);
+
+                        std::string flushErr;
+                        assert(mediaStorage.flushAll(bus, flushErr, &deferred));
+                        assert(flushErr.empty());
+                        assert(deferred.size() == 1 &&
+                               "the 3.5\" bay is captured, not written");
+                        assert(deferred[0].payload.valid);
+                        assert(deferred[0].payload.bytes.size() ==
+                               pom2::Disk35Image::kBytesPerImage);
+                        assert(!card->bayInfo(0).hasUnsavedChanges &&
+                               "phase 1 retires the dirty flag with the "
+                               "capture");
+                    }
+                    {   // nothing on disk yet
+                        std::ifstream probe(lironPath, std::ios::binary);
+                        probe.seekg(13 * 512);
+                        std::vector<char> got(512, 0);
+                        probe.read(got.data(), 512);
+                        assert(std::memcmp(got.data(), block.data(), 512) != 0
+                               && "phase 1 must not touch the file");
+                    }
+                    std::string commitErr;
+                    assert(mediaStorage.commitDeferredFlushes(
+                        mediaController, deferred, commitErr));
+                    assert(commitErr.empty());
+                    assert(deferred.empty());
+                    std::ifstream reread(lironPath, std::ios::binary);
+                    reread.seekg(13 * 512);
+                    std::vector<char> got(512, 0);
+                    reread.read(got.data(), 512);
+                    assert(std::memcmp(got.data(), block.data(), 512) == 0 &&
+                           "phase 2 writes what phase 1 captured");
+                }
+
                 // ── a failed save must refuse the eject (bug hunt #2) ────
                 // `LironCard::ejectBay` discarded saveDirty()'s return and
                 // ejected anyway; `Disk35Image::eject()` then dropped the
                 // ONLY copy of everything written since the mount, with a
-                // success return. A directory at <image>.pom2tmp is the
-                // deterministic, cross-platform save failure.
-                {
-                    const std::string tmpName = lironPath + ".pom2tmp";
+                // success return.
+                //
+                // The sabotage is a read-only PARENT directory: the temp
+                // sibling cannot be created there, whatever name the writer
+                // picks. It used to plant a directory at the fixed
+                // `<image>.pom2tmp`, which stopped being the name once temp
+                // siblings became unique per process (AtomicFileReplace.h).
+                // Skipped when the process can write through it anyway (root
+                // in a container), where nothing would fail.
+                if (lironDirWritable) {
                     std::error_code ec;
-                    std::filesystem::remove_all(tmpName, ec);
-                    std::filesystem::create_directory(tmpName, ec);
+                    std::filesystem::permissions(
+                        lironDir,
+                        std::filesystem::perms::owner_read |
+                            std::filesystem::perms::owner_exec,
+                        std::filesystem::perm_options::replace, ec);
                     assert(!ec);
+                    const bool stillWritable = [&] {
+                        const auto probe = lironDir / "pom2_probe.tmp";
+                        std::ofstream f(probe);
+                        const bool ok = f.good();
+                        f.close();
+                        std::error_code rm;
+                        std::filesystem::remove(probe, rm);
+                        return ok;
+                    }();
 
                     std::vector<std::uint8_t> block(512, 0x3E);
                     auto state = mediaController.lockState();
@@ -641,14 +731,19 @@ int main()
                     assert(image && image->isLoaded());
                     assert(image->writeBlock(12, block.data()));
 
-                    assert(!card->ejectBay(0) &&
-                           "a failed save must refuse the eject");
-                    assert(card->bayInfo(0).loaded &&
-                           "the medium stays mounted so the user can retry");
-                    assert(card->bayInfo(0).hasUnsavedChanges);
+                    if (!stillWritable) {
+                        assert(!card->ejectBay(0) &&
+                               "a failed save must refuse the eject");
+                        assert(card->bayInfo(0).loaded &&
+                               "the medium stays mounted so the user can retry");
+                        assert(card->bayInfo(0).hasUnsavedChanges);
+                    }
 
                     // …and the retry, once the obstacle is gone, works.
-                    std::filesystem::remove_all(tmpName, ec);
+                    std::filesystem::permissions(
+                        lironDir,
+                        std::filesystem::perms::owner_all,
+                        std::filesystem::perm_options::replace, ec);
                     assert(card->ejectBay(0));
                     assert(!card->bayInfo(0).loaded);
                     (void)bus.unplug(1);
@@ -657,6 +752,12 @@ int main()
             } else {
                 std::cout << "  (no roms/liron.rom — Liron persistence case skipped)\n";
             }
+            std::error_code cleanupError;
+            std::filesystem::permissions(
+                lironDir, std::filesystem::perms::owner_all,
+                std::filesystem::perm_options::replace, cleanupError);
+            cleanupError.clear();
+            std::filesystem::remove_all(lironDir, cleanupError);
         }
 
         assert(mediaStorage.mountDiskII(
@@ -667,6 +768,18 @@ int main()
             mediaController, commandSettings, 3, 0, hdvPath).ok);
         assert(mediaStorage.mountMediaBay(
             mediaController, commandSettings, 7, 0, cffaPath).ok);
+        // Eject-all is three-phase now (bug hunt #2 L5): the write-backs are
+        // captured under the lock, committed without it, and only then does
+        // the medium go. A commit that fails must leave that medium MOUNTED
+        // and report it without aborting the others — the aggregated-failure
+        // contract the inline version had.
+        {
+            auto state = mediaController.lockState();
+            auto* card = dynamic_cast<ProDOSHardDiskCard*>(
+                state.memory().slotBus().peripheral(3));
+            assert(card);
+            card->setWriteBackEnabled(true);
+        }
         const auto ejected = mediaStorage.ejectAllMedia(
             mediaController, commandSettings);
         assert(ejected.ok());
@@ -710,8 +823,17 @@ int main()
         disk35 = disk35Storage.captureDisk35(disk35Controller);
         assert(disk35.drives[0].loaded);
         assert(disk35.drives[0].path == disk35Path);
+        // The on-board pair persists on the COMMAND, like every other medium
+        // (bug hunt #2 L10). Only the shutdown path wrote `disk35_path_N`, so
+        // a mid-session mount survived only a clean quit — and there was no
+        // `disk35_writeback_N` key at all, so a drive the user had opted in
+        // came back write-protected on the next launch and dropped the next
+        // session's writes at eject.
+        assert(disk35Settings.getString("disk35_path_1") == disk35Path);
+        assert(!disk35Settings.getBool("disk35_writeback_1", true));
         assert(disk35Storage.setDisk35WriteBack(
             disk35Controller, disk35Settings, 0, true).ok);
+        assert(disk35Settings.getBool("disk35_writeback_1"));
         assert(disk35Storage.captureDisk35(
             disk35Controller).drives[0].writeBackEnabled);
         const auto refusedConversion = disk35Storage.convertDisk35WozToPo(
@@ -722,6 +844,8 @@ int main()
             disk35Controller, disk35Settings, 0).ok);
         assert(!disk35Storage.captureDisk35(
             disk35Controller).drives[0].loaded);
+        assert(disk35Settings.getString("disk35_path_1").empty() &&
+               "an ejected on-board 3.5\" must not come back next launch");
 
         // Exercise the complete WOZ -> writable PO transaction on a SYNTHETIC
         // 800K WOZ2. It used to copy `disks_3.5/The Oregon Trail 800K.woz`;

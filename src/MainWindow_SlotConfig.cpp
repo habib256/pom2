@@ -403,11 +403,16 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                                  pom2::SpTcpTransport::kDefaultPort)));
         }
 
-        if (settings->getBool("fujinet_enabled" + sk, true)) {
-            std::string err;
-            if (!link.start(err))
-                pom2::log().warn("FujiNet", "link not started: " + err);
-        }
+        // The link is STARTED after this function returns, not here: start()
+        // opens a TCP listener or a serial tty — syscalls that can block —
+        // and this whole function runs inside the caller's `stateMutex`
+        // scope, the lock the CPU worker takes every 4096 cycles and the UI
+        // thread takes to paint. It ran on every profile switch and every
+        // Slot Config Apply. See `startDeferredFujiNetLinks`, which the three
+        // callers run once the lock is released and while the worker is still
+        // stopped.
+        if (settings->getBool("fujinet_enabled" + sk, true))
+            pendingFujiNetSlots_.push_back(s);
 
         st.memory().slotBus().plug(s, std::move(card));
 
@@ -530,14 +535,9 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // negative-edge detection on the inverted A/!R wiring.
         auto card = std::make_unique<MockingboardCard>(s, variant);
         card->setSampleRate(controller->audio().getActualSampleRate());
-        // Emulated CPU clock for the audio thread's emuCycles replay
-        // cursor. Set HERE too, not only from setVideoStandard: a Slot
-        // Config "Apply" re-plugs cards without re-running the profile's
-        // video-standard step, so a Mockingboard added on a PAL profile
-        // would otherwise keep the NTSC default and collapse every queued
-        // AY write to the buffer edge.
-        card->setCpuClock(static_cast<double>(
-            pom2VideoTiming(controller->getVideoStandard()).cpuClockHz));
+        // The emulated CPU clock (for the audio thread's emuCycles replay
+        // cursor) is applied to EVERY plugged card at the end of this
+        // function — see the fan-out there.
         // CPU pointer feeds the lazy-sync timer back-channel
         // (getCycleCountNow); IRQ routing is auto-wired via SlotBus.
         card->setCpu(&st.cpu());
@@ -699,10 +699,14 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                                         "not restored");
         } else {
             std::string err;
+            // startNow = false: same reason as the settings-driven card
+            // above — the transport is opened once this lock is released.
             if (!plugFujiNetUnlocked(st, s, cliFujiNetSerial_,
                                      cliFujiNetSerialPath_, cliFujiNetPort_,
-                                     err))
+                                     err, /*startNow=*/false))
                 pom2::log().warn("CLI", "--fujinet: " + err);
+            else
+                pendingFujiNetSlots_.push_back(s);
         }
     }
 
@@ -722,6 +726,24 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                                                       *settings);
     for (const std::string& warning : restored.warnings)
         pom2::log().warn("Storage", warning);
+
+    // ── Emulated CPU clock, to every card that takes one ─────────────────
+    // `SlotPeripheral::setCpuClock` is a virtual with a no-op default, and
+    // four cards override it (Mockingboard, Phasor, ClockCard,
+    // WorkstationCard). Only the Mockingboard's plug function set it, so a
+    // Phasor / clock card / Workstation card added through Slot Config Apply
+    // — which re-plugs cards WITHOUT re-running the profile's video-standard
+    // step — kept the NTSC default on a PAL machine: the AY queues starve
+    // against a 0.7 % wrong clock, and the ThunderClock's bit-bang half
+    // period is measured in CPU cycles.
+    {
+        const double cpuHz = static_cast<double>(
+            pom2VideoTiming(controller->getVideoStandard()).cpuClockHz);
+        for (int s = 1; s < SlotBus::kSlotCount; ++s) {
+            if (auto* card = st.memory().slotBus().peripheral(s))
+                card->setCpuClock(cpuHz);
+        }
+    }
 
     // The HDV panel's status line is derived, not remembered.
     if (auto* hdv = primaryHdvCard()) {

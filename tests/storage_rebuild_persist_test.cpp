@@ -28,11 +28,14 @@
 // code as found.
 
 #include "Block512Backing.h"
+#include "EmulationController.h"
+#include "Memory.h"
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "StorageCoordinator.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -125,6 +128,40 @@ int main()
                                      coord.captureRebuildSnapshot(bus));
         check(settings.getBool("hdv_writeback", false),
               "HDV write-back survives a rebuild");
+    }
+
+    // ── A host-folder volume must not overwrite the user's hdv_path ──────
+    // The Slot Config media column wrote the bay keys itself, with none of
+    // the coordinator's guards: ticking "Write-back" (or picking a type) on
+    // a synthesised `[host folder] …` volume replaced `hdv_path` with the
+    // sentinel, and the next launch tried to mount a path that is not a file
+    // — the user's real HDV silently gone from the config. The guarded
+    // setters refuse to touch the key for exactly this case.
+    {
+        EmulationController controller;
+        pom2::StorageCoordinator coord;
+        pom2::Settings settings;
+        settings.setReadOnly(true);
+        settings.setString("hdv_path", image);
+        settings.setBool("hdv_writeback", false);
+        {
+            auto state = controller.lockState();
+            state.memory().slotBus().plug(
+                7, std::make_unique<ProDOSHardDiskCard>(7));
+        }
+        std::vector<std::uint8_t> bytes(2 * 512, 0);
+        check(coord.mountBlockBytes(controller, settings, 7, std::move(bytes),
+                                    "[host folder] /tmp/pom2_host",
+                                    "/tmp/pom2_host").ok,
+              "a synthesised host-folder volume mounts");
+        checkEq(settings.getString("hdv_path", ""), image,
+                "mounting a host folder leaves hdv_path alone");
+        check(coord.setMediaBayWriteBack(controller, settings, 7, 0, true).ok,
+              "write-back toggles on the host-folder volume");
+        checkEq(settings.getString("hdv_path", ""), image,
+                "toggling write-back on a host folder leaves hdv_path alone");
+        check(!settings.getBool("hdv_writeback", false),
+              "…and leaves hdv_writeback alone too");
     }
 
     std::error_code ec;

@@ -61,9 +61,11 @@
 #include "SystemProfile.h"
 #include "Voxel3DRenderer.h"
 
+#include <array>
+#include <mutex>
 #include <string>
 
-void MainWindow::persistSession()
+void MainWindow::persistSession(bool flushMedia)
 {
     // Persist the current state so the next launch restores the same
     // mounted disks, video mode, panels, and audio levels.
@@ -97,17 +99,31 @@ void MainWindow::persistSession()
     // before the settings write and inside the same teardown the user can
     // see in the log.
     {
-        std::string flushError;
-        SlotBus& bus = controller->memory().slotBus();
-        if (!storageCoordinator_->flushAll(bus, flushError))
-            pom2::log().warn("Storage", "shutdown flush: " + flushError);
+        // ONE flush per quit, and it goes through `flushSlotMedia` — which
+        // takes `stateMutex` around the capture and writes the deferred half
+        // with it released. This used to call `flushAll` directly and with NO
+        // lock at all, a second flush after ~MainWindow's own; the browser
+        // heartbeat below then ran that unlocked walk over live cards every
+        // ten seconds with the machine running.
+        //
+        // `flushMedia` is false exactly once: the desktop quit path, which
+        // flushed under the lock moments earlier. Everything else — the WASM
+        // 10 s heartbeat and its `pagehide` sibling — is a mid-session save
+        // and must flush here.
+        if (flushMedia) {
+            std::string flushError;
+            if (!flushSlotMedia(flushError))
+                pom2::log().warn("Storage", "session flush: " + flushError);
+        }
 
         // Both drives, and the legacy unsuffixed aliases from the lowest-slot
         // card so an older POM2 build reading this settings.ini still finds
         // the disk. The loop this replaces called isDiskLoaded()/getDiskPath()
         // with their default arguments, so drive 2's path was never written on
         // exit — the last of the five places that mistake was made.
-        const auto snapshot = storageCoordinator_->captureRebuildSnapshot(bus);
+        std::lock_guard<std::mutex> lk(controller->stateMutex());
+        const auto snapshot = storageCoordinator_->captureRebuildSnapshot(
+            controller->memory().slotBus());
         storageCoordinator_->persistSessionSettings(*settings, snapshot);
     }
 
@@ -115,24 +131,57 @@ void MainWindow::persistSession()
     // driven write-backs (format / save / etc.) that arrived after the
     // user opted in to write-back. Mirrors the Disk II save-on-shutdown
     // hook so changes survive a hard quit.
-    for (pom2::Disk35Image* img :
-            { &controller->disk35Internal(), &controller->disk35External() }) {
-        if (img->isLoaded() && img->hasUnsavedChanges() &&
-            !img->isWriteProtected()) {
-            // A failed flush leaves the file untouched (atomic temp+rename),
-            // but the only copy of the session's writes dies with the
-            // process — say so, like the Disk II shutdown path does.
-            if (!img->saveDirty())
-                pom2::log().warn("Disk35", "shutdown flush failed for " +
-                                 img->path() + ": " + img->lastError());
+    //
+    // Two-phase, and under the lock: `saveDirty()` writes 800 KB plus two
+    // fsyncs, and this ran with no lock at all against a machine the browser
+    // heartbeat leaves RUNNING. Capture with the lock (a memcpy), write with
+    // it released, put the dirty flag back if the write failed.
+    struct Disk35SessionState {
+        bool        loaded = false;
+        bool        writeBack = false;
+        std::string path;
+    };
+    std::array<Disk35SessionState, 2> onboard35{};
+    std::array<pom2::Disk35Image::PendingWriteBack, 2> pending35{};
+    {
+        std::lock_guard<std::mutex> lk(controller->stateMutex());
+        pom2::Disk35Image* images[2] = { &controller->disk35Internal(),
+                                         &controller->disk35External() };
+        for (std::size_t i = 0; i < 2; ++i) {
+            onboard35[i].loaded    = images[i]->isLoaded();
+            onboard35[i].writeBack = images[i]->isWriteBackEnabled();
+            if (onboard35[i].loaded) onboard35[i].path = images[i]->path();
+            pending35[i] = images[i]->takeWriteBack();
         }
     }
+    for (std::size_t i = 0; i < 2; ++i) {
+        if (!pending35[i].valid) continue;
+        const std::string path = pending35[i].path;
+        std::string error;
+        if (pom2::Disk35Image::commitWriteBack(std::move(pending35[i]), error))
+            continue;
+        // A failed flush leaves the file untouched (atomic temp+rename), but
+        // the only copy of the session's writes dies with the process — say
+        // so, like the Disk II shutdown path does, and put the flag back so a
+        // heartbeat save retries.
+        pom2::log().warn("Disk35",
+                         "session flush failed for " + path + ": " + error);
+        std::lock_guard<std::mutex> lk(controller->stateMutex());
+        pom2::Disk35Image& img = i == 0 ? controller->disk35Internal()
+                                        : controller->disk35External();
+        if (img.isLoaded() && img.path() == path) img.restoreDirty();
+    }
+    // Paths AND the write-back opt-in: only the paths were persisted, so a
+    // 3.5" drive the user had opted in came back write-protected after every
+    // restart (and silently discarded the next session's writes on eject).
     settings->setString("disk35_path_1",
-        controller->disk35Internal().isLoaded()
-            ? controller->disk35Internal().path() : std::string());
+                        onboard35[0].loaded ? onboard35[0].path
+                                            : std::string());
     settings->setString("disk35_path_2",
-        controller->disk35External().isLoaded()
-            ? controller->disk35External().path() : std::string());
+                        onboard35[1].loaded ? onboard35[1].path
+                                            : std::string());
+    settings->setBool("disk35_writeback_1", onboard35[0].writeBack);
+    settings->setBool("disk35_writeback_2", onboard35[1].writeBack);
 
     // Same auto-provision guard as `hdv_path` above: a card that
     // ensureHdvCardForBoot plugged for a one-shot drag-drop / CLI boot is

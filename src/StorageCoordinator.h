@@ -21,6 +21,7 @@
 #ifndef POM2_STORAGE_COORDINATOR_H
 #define POM2_STORAGE_COORDINATOR_H
 
+#include "MountableMediaCard.h"
 #include "SmartPort_ImGui.h"
 
 #include <array>
@@ -285,9 +286,33 @@ public:
     void restoreRebuildSnapshot(SlotBus& bus,
                                 const RebuildSnapshot& snapshot) const;
 
+    /// One bay's flush payload, lifted out under the lock and committed
+    /// without it. See `flushAll`.
+    struct DeferredFlush {
+        int         slot = -1;
+        int         bay  = 0;
+        std::string label;      ///< how the failure names the bay
+        MountableMediaCard::PendingBayFlush payload;
+    };
+
     /// Caller must hold the emulation state lock. Failure leaves every card
     /// alive and reports all media which remain dirty/retryable.
-    bool flushAll(const SlotBus& bus, std::string& error) const;
+    ///
+    /// `deferred` non-null opts into the two-phase form: bays that support it
+    /// (a `LironCard`'s 800 KB 3.5" images) are CAPTURED here instead of
+    /// written, and the caller must hand the vector to `commitDeferredFlushes`
+    /// once it has released the lock. Null keeps the inline behaviour, which
+    /// is what a single-threaded caller wants.
+    bool flushAll(const SlotBus& bus, std::string& error,
+                  std::vector<DeferredFlush>* deferred = nullptr) const;
+
+    /// Phase 2 of `flushAll`, with NO lock held: write what it captured. A
+    /// failed payload re-marks its bay dirty (phase 3, which re-takes the
+    /// lock through `controller`) so the next flush tries again, and is
+    /// appended to `error` with the same aggregation as phase 1.
+    bool commitDeferredFlushes(EmulationController& controller,
+                               std::vector<DeferredFlush>& deferred,
+                               std::string& error) const;
 
     /// Frontend boundary for the slot SmartPort panel. Both operations
     /// resolve the card from SlotBus while the machine lock is held; callers

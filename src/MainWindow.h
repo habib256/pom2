@@ -43,6 +43,8 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <initializer_list>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -224,7 +226,12 @@ public:
     /// main() never returns there — and drives this from the frame loop's
     /// heartbeat and the page's own lifecycle events instead. Idempotent, and
     /// a no-op on disk when nothing changed since the last call.
-    void persistSession();
+    ///
+    /// `flushMedia` (default true, which is what the browser heartbeat wants)
+    /// runs the media flush first. The desktop quit path passes false: it
+    /// flushed under the lock in `~MainWindow` moments earlier, and quitting
+    /// used to flush twice — once locked, once not.
+    void persistSession(bool flushMedia = true);
 
     /// Build and mount a read-only ProDOS /HOST/ volume from `path` on an
     /// HDV card, auto-provisioning the card when necessary. Does not boot it:
@@ -1142,10 +1149,29 @@ private:
 
     /// The body of `plugFujiNetFromCli`, on the same caller-owns-the-lock
     /// contract, so it can also run from inside `plugSlotsFromSettings()`.
+    ///
+    /// `startNow` false plugs the card with its transport CLOSED, for the
+    /// callers that hold the machine lock: opening a TCP listener or a serial
+    /// tty is a blocking syscall and `stateMutex` must never be held across
+    /// one. They queue the slot and call `startDeferredFujiNetLinks()`.
     bool plugFujiNetUnlocked(const pom2::StateAccess& st,
                              int slot, bool serial,
                              const std::string& serialDevice, int tcpPort,
-                             std::string& errOut);
+                             std::string& errOut, bool startNow = true);
+
+    /// Open the transports of every FujiNet card `plugSlotsFromSettings`
+    /// plugged with `startNow = false`. Runs with NO lock held and with the
+    /// CPU worker stopped — which is true of all four of its callers (the
+    /// constructor, `applyProfile`, the Slot Config rebuild and the CLI
+    /// plug), and is what makes touching the card outside the lock safe.
+    /// Returns false when a link refused to open; `errOut`, when given,
+    /// receives the first reason (the CLI turns it into an error, the rebuild
+    /// paths only log it).
+    bool startDeferredFujiNetLinks(std::string* errOut = nullptr);
+
+    /// Slots whose FujiNet card is plugged but whose link has not been opened
+    /// yet. Drained by `startDeferredFujiNetLinks()`.
+    std::vector<int> pendingFujiNetSlots_;
 
     /// A `--fujinet` request from the command line, kept so every slot
     /// rebuild can reproduce it. Slot 0 = no request. Deliberately NOT
@@ -1303,6 +1329,37 @@ private:
     /// Apple //e keyboard window: lazy-loads the photo, draws it, and turns
     /// a clicked cap into a keystroke on the emulated machine.
     void renderKeyboardPanel();
+    // ── Cached, non-throwing media-directory listings ────────────────────
+    /// One media folder as a file dialog needs it: the directory that was
+    /// found, and the entries that matched.
+    ///
+    /// The four storage pickers and the tape one each walked their folder on
+    /// EVERY frame — 60 recursive stat storms a second while a modal is open,
+    /// over a directory that can be a network share — and did it with the
+    /// THROWING std::filesystem overloads (`entry.is_regular_file()` with no
+    /// error_code). A directory that goes away mid-walk, or one entry the
+    /// process may not stat, then throws out of the middle of an ImGui frame
+    /// with the window stack unbalanced. Both halves are fixed here, once.
+    struct MediaDirEntry {
+        std::string name;   ///< what the row shows (relative for a deep walk)
+        std::string path;   ///< what a click mounts
+    };
+    struct MediaDirListing {
+        std::string                dir;      ///< "" = no candidate exists
+        std::vector<MediaDirEntry> entries;
+        double                     stamp = -1.0e9;
+    };
+    /// Listing of the first existing directory in `candidates`, filtered to
+    /// `extensions` (empty = every regular file), refreshed at most every
+    /// `kMediaDirRescanSeconds`. `cacheKey` names the call site's cache.
+    const MediaDirListing& mediaDirListing(
+        const std::string& cacheKey,
+        std::initializer_list<const char*> candidates,
+        std::initializer_list<const char*> extensions,
+        bool recursive);
+    static constexpr double kMediaDirRescanSeconds = 2.0;
+    std::map<std::string, MediaDirListing> mediaDirCaches_;
+
     /// Push the OR of the host-Alt and on-screen-keyboard sources to
     /// $C061/$C062. Every writer of either source calls this instead of
     /// touching `Memory::setOpenAppleKey` / `setSolidAppleKey` directly.
@@ -1346,10 +1403,10 @@ private:
     /// 2026-07-28; one window running two interaction models is what made
     /// "mount on the right, Revert on the left" read as undoable.
     void renderMediaPanel();
-    /// Persist a media bay's state with the right key scheme for its card
-    /// type (SmartPort per-unit / CFFA per-slot / synthetic HDV global key).
-    /// Called under stateMutex right after a mount/eject/type/write-back.
-    void persistMediaBay(int slot, int bay, SlotPeripheral* p);
+    // `persistMediaBay` lived here and hand-rolled the bay key scheme without
+    // the coordinator's auto-provision / host-folder guards. Every caller now
+    // goes through StorageCoordinator::setMediaBayType / setMediaBayWriteBack,
+    // which own those rules in one place.
     /// BMOW Floppy Emu panel — OLED-style SD browser + emulation-mode select.
     /// Routes the selected image into the matching controller card
     /// (DiskIICard / SmartPortCard units) per the device's current mode.
