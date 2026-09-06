@@ -54,7 +54,11 @@ bool iconButton(const Btn& b, bool enabled = true) {
     const bool clicked = ImGui::Button(label);
     if (b.tint) ImGui::PopStyleColor();
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered() && b.tip) ImGui::SetTooltip("%s", b.tip);
+    // AllowWhenDisabled: a greyed-out button is exactly when the user needs
+    // the tooltip that says WHY, and plain IsItemHovered() never reports a
+    // disabled item.
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && b.tip)
+        ImGui::SetTooltip("%s", b.tip);
     return clicked;
 }
 
@@ -197,7 +201,9 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
         ImGui::Button(lbl);
         if (ImGui::IsItemActive()) r.requestRewindHeld = true;
         ImGui::EndDisabled();
-        if (ImGui::IsItemHovered())
+        // The interesting half of this tooltip is the disabled one ("turn on
+        // recording"), which is the half IsItemHovered() could never show.
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("%s", canRewind
                 ? "Hold to rewind (live) — also F6, or Devices \xe2\x96\xb8 Rewind"
                 : "Rewind: turn on recording in Devices \xe2\x96\xb8 Rewind");

@@ -100,6 +100,19 @@ const Palette& palette();
 /// Geometry is scaled by `uiScale * dpiScale`; fonts by the same product,
 /// applied as two separate ImGui factors so a future per-monitor DPI change
 /// only has to touch `FontScaleDpi`.
+///
+/// **Call it between frames.** The implementation replaces the WHOLE
+/// `ImGuiStyle` (`ImGui::GetStyle() = s`), which is only safe outside a
+/// NewFrame()/Render() bracket: inside one, every `PushStyleVar`/
+/// `PushStyleColor` still on the stack holds a copy of the OLD style's value
+/// and pops it back into the NEW style, so a theme or zoom change made from a
+/// menu handler mid-frame can leave a stray padding or colour behind for the
+/// rest of that frame. Nothing worse — the next frame is drawn entirely from
+/// the new style — which is why POM2 accepts the mid-frame calls it has today
+/// (Interface menu, Ctrl+scroll zoom, a DPI change reported by GLFW) rather
+/// than queueing them; if that ever stops being acceptable, the fix is a
+/// pending-theme slot applied right after `ImGui::Render()`, not a change
+/// here.
 void applyTheme(UiAccent accent, float uiScale, float dpiScale);
 
 // ── Shared chrome primitives ──────────────────────────────────────────────

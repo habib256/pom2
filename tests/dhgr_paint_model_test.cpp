@@ -29,6 +29,7 @@
 
 #include "Apple2Display.h"
 #include "Memory.h"
+#include "PaintCardBatcher.h"
 #include "hgrpaint/HgrPaintModel.h"
 
 #include <cassert>
@@ -263,6 +264,51 @@ int main()
             }
     }
 
-    std::printf("dhgr_paint_model: OK\n");
+    // ── The paint host's write batcher must always come back to depth 0 ──
+    //
+    // Every poke the editors make goes through this. A bracket left open
+    // strands every later poke in the pending vector — the canvas silently
+    // stops reaching the machine and the vector grows without bound for the
+    // rest of the session — which is exactly what an editor operation nested
+    // inside an open stroke used to do (HgrPaintEditor::beginStroke held a
+    // plain bool, so the inner end() flipped it off and the outer commit
+    // never called endBatch()). The batcher's own contract:
+    //   * nesting coalesces into ONE commit, at the outermost end();
+    //   * a stray end() with nothing open is a no-op, not an underflow;
+    //   * balanced brackets always return depth() to 0.
+    {
+        int commits = 0;
+        PaintCardBatcher::Writes seen;
+        PaintCardBatcher b([&](const PaintCardBatcher::Writes& w) {
+            ++commits;
+            seen = w;
+        });
+        assert(b.depth() == 0);
+
+        b.poke(0x2000, 1);                    // unbracketed: commits at once
+        assert(commits == 1 && seen.size() == 1 && b.depth() == 0);
+
+        b.begin();                            // outer (a shape drag)
+        assert(b.depth() == 1);
+        b.poke(0x2001, 2);
+        b.begin();                            // inner (a cut fired mid-drag)
+        assert(b.depth() == 2);
+        b.poke(0x2002, 3);
+        b.end();                              // inner end must NOT flush
+        assert(b.depth() == 1 && commits == 1);
+        b.poke(0x2003, 4);
+        b.end();                              // outer end flushes all three
+        assert(b.depth() == 0);
+        assert(commits == 2 && seen.size() == 3);
+        assert(seen[0].first == 0x2001 && seen[2].first == 0x2003);
+
+        b.end();                              // unbalanced: no underflow
+        assert(b.depth() == 0 && commits == 2);
+
+        b.poke(0x2004, 5);                    // still reaching the card
+        assert(commits == 3 && seen.size() == 1 && seen[0].first == 0x2004);
+    }
+
+    std::printf("dhgr_paint_model: OK (incl. PaintCardBatcher nesting)\n");
     return 0;
 }

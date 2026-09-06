@@ -106,10 +106,16 @@
         attributeFilter: ['width', 'height'],
       });
       // ContextLost recovery is the user's problem (refresh tab).
-      c.addEventListener('webglcontextlost', e => {
+      // NOTE: no preventDefault() here. Cancelling this event is the page
+      // PROMISING the browser it will rebuild every GL object when
+      // 'webglcontextrestored' fires — and nothing here can: the GL objects
+      // belong to the wasm module, which has no restore path. Cancelling it
+      // and then not restoring leaves the canvas in a half-alive state with a
+      // restore event nobody listens to. Letting the default through makes the
+      // loss final, which is exactly what the message below tells the user.
+      c.addEventListener('webglcontextlost', () => {
         errEl.style.display = 'block';
         errEl.textContent = 'WebGL context lost. Reload the page.';
-        e.preventDefault();
       }, false);
       return c;
     })(),

@@ -115,6 +115,12 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
         ImGui::BeginChild("##hdv_lib", ImVec2(0, 540), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
         for (const auto& entry : snap.library) {
+            // PushID(fullPath): the label carries the "* " mount marker, so a
+            // row's ImGui ID changed the moment it was mounted (losing its
+            // hover/active state mid-click), and two images with the same
+            // basename in different folders shared one ID. The path is the
+            // stable identity.
+            ImGui::PushID(entry.fullPath.c_str());
             const bool current = (entry.fullPath == snap.imagePath);
             const std::string label = (current ? "* " : "  ") + entry.displayName;
             if (ImGui::Selectable(label.c_str(), current)) {
@@ -124,6 +130,7 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
                 ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                 r.requestMountOnly = entry.fullPath;
             }
+            ImGui::PopID();
         }
         ImGui::EndChild();
     }

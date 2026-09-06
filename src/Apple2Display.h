@@ -312,6 +312,31 @@ private:
     OeDemodParams oeDemod_{};
     Memory::DisplayState lastRenderState_{};
 
+    // ── Stopped-machine soft switches ───────────────────────────────────
+    // Memory publishes a frame-start DisplayState (and the beam-racing event
+    // log) as the CPU crosses video-frame boundaries. A stopped machine —
+    // debugger breakpoint, single-step, pause — crosses none, so the
+    // published snapshot freezes while the live one still moves under pokes
+    // from the debugger, the AI control server or the paint editor: the
+    // screen showed the new CONTENT (RAM is read live) in the OLD MODE for as
+    // long as the machine stayed stopped.
+    //
+    // `cpuIdle_` is "the CPU burned no cycles since the previous render",
+    // which makes any live-state change unambiguously one of those host-side
+    // pokes — a running machine always advances the counter between two UI
+    // frames. `liveStateAtRun_` is the live state as of the last render where
+    // it did advance, so the fields differing from it are exactly the ones
+    // moved while stopped, and only those are folded onto the published
+    // state (applyIdleSwitchOverride). Beam-raced frozen frames keep their
+    // per-band replay for every field the user did not touch.
+    uint64_t lastRenderCycle_ = 0;
+    bool     renderedOnce_    = false;
+    bool     cpuIdle_         = false;
+    Memory::DisplayState liveStateAtRun_{};
+    // Fold the switches moved while the CPU was idle onto `s`. No-op when the
+    // CPU is running.
+    void applyIdleSwitchOverride(Memory::DisplayState& s, Memory& mem) const;
+
     // ── Static-text frame skip ──────────────────────────────────────────
     // A Callgrind profile (2026-07-30) put ~30 % of POM2's total work in the
     // display, and 98 % of THAT in text: renderText + glyphRows7, ~887 host

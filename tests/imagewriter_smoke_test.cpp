@@ -314,7 +314,31 @@ void testRgbaExport()
     }
     assert(sawBlackInk && sawWhitePaper);
 
-    std::printf("  ok: page → RGBA export\n");
+    // The output is sized from w*h but the loop used to run over pix.size(),
+    // so a Page whose pixel buffer is LONGER than its declared geometry wrote
+    // past the end of the caller's vector — a heap overflow driven by the
+    // page, not by the caller. Both directions are pinned here: an oversized
+    // buffer stops at w*h, a short one stops at its own end (and leaves the
+    // rest of the sheet untouched) instead of reading past it.
+    {
+        ImageWriter::Page big;
+        big.w = 4; big.h = 2;
+        big.pix.assign(4 * 2 * 10, 0x1F);          // ten times too many pixels
+        std::vector<uint8_t> outBig;
+        ImageWriter::pageToRgba(big, outBig);
+        assert(outBig.size() == 4u * 2u * 4u);
+
+        ImageWriter::Page shortP;
+        shortP.w = 4; shortP.h = 2;
+        shortP.pix.assign(3, 0x1F);                // fewer than w*h
+        std::vector<uint8_t> outShort;
+        ImageWriter::pageToRgba(shortP, outShort);
+        assert(outShort.size() == 4u * 2u * 4u);
+        for (size_t i = 3 * 4; i < outShort.size(); ++i)
+            assert(outShort[i] == 0);              // never converted, never read
+    }
+
+    std::printf("  ok: page → RGBA export (and the w*h bound both ways)\n");
 }
 
 void testSpoolSeam()

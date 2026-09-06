@@ -72,6 +72,13 @@ public:
         }
     }
 
+    // Open bracket count. Zero between operations is the invariant that keeps
+    // pokes reaching the card: a leaked begin() strands every later poke in
+    // `batch_` (unbounded growth, canvas silently diverging from the machine
+    // for the rest of the session). Exposed so a caller — and a test — can
+    // assert it rather than discover it as a stuck canvas.
+    int depth() const { return depth_; }
+
 private:
     Commit  commit_;
     int     depth_ = 0;

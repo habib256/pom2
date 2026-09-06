@@ -237,7 +237,10 @@ FujiNet_ImGui::Result FujiNet_ImGui::render(const char* title, bool& open,
     ImGui::BeginDisabled(snap.transport != Transport::Tcp || !snap.connected);
     if (ImGui::Button("Web UI")) r.requestOpenWebUi = true;
     ImGui::EndDisabled();
-    if (snap.transport == Transport::Serial && ImGui::IsItemHovered())
+    // The button is disabled over serial, which is precisely the case this
+    // tooltip explains — so it has to be readable while disabled.
+    if (snap.transport == Transport::Serial &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("The FujiNet web UI needs an IP; over serial there "
                           "is none. Use the board's own WiFi address.");
 

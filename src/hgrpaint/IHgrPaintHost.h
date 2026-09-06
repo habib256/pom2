@@ -36,7 +36,11 @@
 #define HGRPAINT_IHGRPAINT_HOST_H
 
 #include <cstdint>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "imgui.h"   // ImTextureID for textureToImTexture()
@@ -108,6 +112,42 @@ public:
                            std::string& err) = 0;
     virtual bool savePng(const std::string& path, const uint32_t* rgba,
                          int w, int h, std::string& err) = 0;
+
+    // Write an arbitrary byte blob the editors produce themselves (raw sprite
+    // bytes, a generated .asm listing) through the host's own file-commit
+    // policy. The default below is a portable sibling-temp + rename: the
+    // previous contents of `path` survive a failed write, and the caller is
+    // TOLD about it — a plain fopen("wb") truncated the user's file in place
+    // and then reported "Saved" whatever fwrite/fclose returned (round-2 P2).
+    // POM2 overrides it with its durable commit (fsync, then rename).
+    virtual bool saveBytes(const std::string& path, const void* data,
+                           std::size_t size, std::string& err)
+    {
+        namespace fs = std::filesystem;
+        const fs::path target(path), tmp(path + ".hgrtmp");
+        std::error_code ec;
+        fs::remove(tmp, ec);            // our own name; clear any leftover
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f) { err = "cannot create " + tmp.string(); return false; }
+            if (size) f.write(static_cast<const char*>(data),
+                              static_cast<std::streamsize>(size));
+            f.close();
+            if (!f) {
+                err = "write failed (disk full?): " + tmp.string();
+                fs::remove(tmp, ec);
+                return false;
+            }
+        }
+        fs::rename(tmp, target, ec);
+        if (ec) {
+            err = "cannot replace " + path + ": " + ec.message();
+            std::error_code rm;
+            fs::remove(tmp, rm);
+            return false;
+        }
+        return true;
+    }
 
     // Native OS file picker. Returns true and writes the chosen absolute path
     // into `outPath` when the host can show a native dialog (a desktop POM1/POM2

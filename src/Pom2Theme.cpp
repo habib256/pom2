@@ -340,6 +340,9 @@ void applyTheme(UiAccent accent, float uiScale, float dpiScale)
     s.FontScaleMain = ui;
     s.FontScaleDpi  = dpi;
 
+    // Whole-style replacement — see the header's "call it between frames"
+    // note for what a mid-frame call costs (one frame of a possibly stale
+    // Push/Pop pair) and why POM2 accepts it.
     ImGui::GetStyle() = s;
 
     // Publish the semantic palette for the toolbar / status bar.

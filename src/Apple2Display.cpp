@@ -404,6 +404,27 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
     }
 }
 
+// See the member comment in the header. Only the fields that moved since the
+// last render with the CPU running are copied — an event-driven change made
+// while the machine still ran is already in `liveStateAtRun_` and is left to
+// the published frame (and to the beam-race replay) to describe.
+void Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
+                                            Memory& mem) const
+{
+    if (!cpuIdle_) return;
+    const Memory::DisplayState live = mem.getDisplayState();
+    const Memory::DisplayState& was = liveStateAtRun_;
+    if (live.textMode    != was.textMode)    s.textMode    = live.textMode;
+    if (live.mixedMode   != was.mixedMode)   s.mixedMode   = live.mixedMode;
+    if (live.page2       != was.page2)       s.page2       = live.page2;
+    if (live.hiRes       != was.hiRes)       s.hiRes       = live.hiRes;
+    if (live.eightyCol   != was.eightyCol)   s.eightyCol   = live.eightyCol;
+    if (live.an3         != was.an3)         s.an3         = live.an3;
+    if (live.altChar     != was.altChar)     s.altChar     = live.altChar;
+    if (live.dhgr        != was.dhgr)        s.dhgr        = live.dhgr;
+    if (live.eightyStore != was.eightyStore) s.eightyStore = live.eightyStore;
+}
+
 void Apple2Display::render(Memory& mem)
 {
     // The static-text skip key is published when render() returns, on every
@@ -441,6 +462,14 @@ void Apple2Display::render(Memory& mem)
         lastEmuFrame_ = emuFrame;
         frameCounter  = static_cast<uint32_t>(emuFrame);
     }
+    // Is the machine actually running? (see the cpuIdle_ member comment)
+    {
+        const uint64_t cyc = mem.getCycleCounter();
+        cpuIdle_ = renderedOnce_ && (cyc == lastRenderCycle_);
+        lastRenderCycle_ = cyc;
+        renderedOnce_ = true;
+        if (!cpuIdle_) liveStateAtRun_ = mem.getDisplayState();
+    }
     mixedCompositeUsesFb_ = false;
 
     // Routing state must describe the PUBLISHED frame — the one whose
@@ -468,9 +497,15 @@ void Apple2Display::render(Memory& mem)
     // no clock running at all.
     auto events = mem.takeVideoEvents();
     Memory::DisplayState state = mem.getDisplayState();
+    //
+    // Last: a STOPPED machine publishes nothing at all (no cycles, no frame
+    // boundaries), so the snapshot above is frozen while the debugger / the
+    // AI server / the paint editor poke $C051 or $C00D. Fold those pokes in —
+    // see applyIdleSwitchOverride.
     if (!events.empty() || frameCounter > 0) {
         state = mem.getDisplayStateAtFrameStart();
         for (const auto& e : events) applyVideoEvent(state, e.kind, e.value);
+        applyIdleSwitchOverride(state, mem);
     }
     lastRenderState_ = state;   // published-frame snapshot for present-path decisions
     // Any graphics band anywhere in the frame keeps the composite/demod
@@ -478,6 +513,7 @@ void Apple2Display::render(Memory& mem)
     bool mixedGfx = state.mixedMode && !state.textMode;
     if (!events.empty()) {
         Memory::DisplayState walk = mem.getDisplayStateAtFrameStart();
+        applyIdleSwitchOverride(walk, mem);
         if (walk.mixedMode && !walk.textMode) mixedGfx = true;
         for (const auto& e : events) {
             applyVideoEvent(walk, e.kind, e.value);
@@ -2072,6 +2108,9 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     Memory::DisplayState state = (beamRace || frameCounter > 0)
                                      ? mem.getDisplayStateAtFrameStart()
                                      : mem.getDisplayState();
+    // Switches poked while the machine is stopped never reach the published
+    // snapshot — same rule (and the same helper) as render()'s routing state.
+    applyIdleSwitchOverride(state, mem);
     signalPhaseOffset_ = 0;
     // Zero first so bands a given mode leaves unpainted (mixed-mode text band,
     // a text→graphics split's empty rows) read as black instead of stale.
@@ -2330,7 +2369,9 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     // decomposition the RGBA path uses (forEachBeamSegment), painting each
     // segment into signalBuf. `state` is the mutable local the paint helpers
     // capture by reference, so set it per segment before painting.
-    forEachBeamSegment(mem.getDisplayStateAtFrameStart(), events,
+    Memory::DisplayState beamStart = mem.getDisplayStateAtFrameStart();
+    applyIdleSwitchOverride(beamStart, mem);
+    forEachBeamSegment(beamStart, events,
         mem.videoStandard(), 0b11,
         [&](const Memory::DisplayState& st, int y0, int y1, int col0, int col1,
             uint8_t) {

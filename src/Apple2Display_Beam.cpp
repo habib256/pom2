@@ -313,7 +313,11 @@ void Apple2Display::renderBeamRacing(Memory& mem,
     const uint8_t startLatch = (chatMauve && !events.empty())
         ? static_cast<uint8_t>(chatMauve->latchBefore(events.front().emuCycle))
         : 0b11;
-    forEachBeamSegment(mem.getDisplayStateAtFrameStart(), std::move(events),
+    // Frame-start state + any soft switch poked while the machine is stopped
+    // (see Apple2Display::applyIdleSwitchOverride).
+    Memory::DisplayState beamStart = mem.getDisplayStateAtFrameStart();
+    applyIdleSwitchOverride(beamStart, mem);
+    forEachBeamSegment(beamStart, std::move(events),
         mem.videoStandard(), startLatch,
         [&](const Memory::DisplayState& st, int y0, int y1, int col0, int col1,
             uint8_t latch) {

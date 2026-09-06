@@ -98,6 +98,17 @@ std::string findPostScriptInterpreter();
 /// A false positive here would swallow a plain text job into the interpreter.
 bool looksLikePostScript(const uint8_t* data, std::size_t n);
 
+/// A host path made safe to hand to Ghostscript's `-sOutputFile=`.
+///
+/// `%` is a FORMAT introducer there, not a character: `-sOutputFile=out%d.pgm`
+/// is how a multi-page job is split into numbered files. A scratch directory
+/// holding a literal `%` — Windows `%USERPROFILE%`-style folder names, a URL-
+/// decoded download path — therefore made gs write somewhere else entirely
+/// (or refuse), and the render came back as "the interpreter produced no
+/// page". Doubling every `%` is the documented escape, and gs collapses
+/// `%%` back to one `%` when it builds the name.
+std::string escapeGsOutputFile(const std::string& path);
+
 /// Standard PostScript job separator. Drivers send it to mark end-of-job, and
 /// it is what tells the spooler a job is complete rather than still arriving.
 constexpr uint8_t kPsEndOfJob = 0x04;   // Ctrl-D
