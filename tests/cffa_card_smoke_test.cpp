@@ -58,7 +58,7 @@ int main() {
     const std::string romPath = findRom();
     if (romPath.empty()) {
         std::printf("cffa_card_smoke: SKIP (roms/cffa20ee02.bin not found)\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     constexpr int kSlot = 7;

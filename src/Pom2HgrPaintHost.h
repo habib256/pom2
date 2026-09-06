@@ -61,6 +61,11 @@ public:
                    std::string& err) override;
     bool savePng(const std::string& path, const uint32_t* rgba,
                  int w, int h, std::string& err) override;
+    // The sprite editor's raw/ASM exports, committed the way every other POM2
+    // write-back commits (durable temp + rename) instead of the portable
+    // default's plain rename.
+    bool saveBytes(const std::string& path, const void* data, std::size_t size,
+                   std::string& err) override;
     void* uploadTexture(void* tex, const void* rgba,
                         int w, int h, bool linear) override;
     void  destroyTexture(void* tex) override;

@@ -122,6 +122,24 @@ int main()
                    "skipped dest does not reappear");
     }
 
+    // Size was the ONLY gate: a download that was the right length and the
+    // wrong file (a mirror serving another revision, an error page padded
+    // out) was installed over the user's roms/ and surfaced days later as
+    // "it doesn't boot". Entries POM2 has a documented reference dump for now
+    // carry that CRC and it is checked before the file is published.
+    // (Bug hunt 2026-09-06 #H9.)
+    {
+        int withCrc = 0;
+        for (const auto& e : cat) {
+            if (!e.expectedCrc) continue;
+            ++withCrc;
+            expect(e.crcLabel && *e.crcLabel,
+                   std::string(e.destRel ? e.destRel : "?") +
+                   " names the dump its CRC identifies");
+        }
+        expect(withCrc >= 2,
+               "the entries with a documented reference dump carry its CRC32");
+    }
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

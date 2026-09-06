@@ -40,6 +40,33 @@
 
 namespace pom2 {
 
+// ── Media-write epoch ────────────────────────────────────────────────────
+//
+// The rewind ring captures CPU + RAM + slot-card state, never the MEDIA of a
+// block device (an HDV is up to 32 MiB, a 3.5" image 800 KB — capturing one
+// per rewind frame is not an option). That left a real corruption path: RAM
+// rolls back over a ProDOS SAVE but the volume does not, so the restored
+// directory and the restored bitmap disagree with the blocks on the disk and
+// the next allocation cross-links them.
+//
+// The chosen policy is the safe minimum: a rewind may never CROSS a media
+// write. Every path that mutates a block device / 3.5" medium / writable WOZ
+// bumps this counter; `EmulationController` compares it at its capture point
+// and clears the ring when it moved, so the history restarts after the write
+// instead of spanning it. It is process-wide (a leaf storage class has no
+// controller handle) and relaxed-atomic (the only requirement is that the
+// value eventually changes; the compare happens on the CPU worker, which is
+// also where every guest write originates).
+inline std::atomic<uint64_t>& mediaWriteEpoch()
+{
+    static std::atomic<uint64_t> epoch{0};
+    return epoch;
+}
+inline void noteMediaWrite()
+{
+    mediaWriteEpoch().fetch_add(1, std::memory_order_relaxed);
+}
+
 class Block512Backing
 {
 public:
@@ -158,8 +185,17 @@ public:
 
     /// Phase 2, to be called WITHOUT the lock: perform the deferred write.
     /// Static because the backing it came from may no longer exist.
+    ///
+    /// `newMountTime` (optional, host-folder case only): on success, receives
+    /// the stamp the STILL-MOUNTED volume must adopt as its mount time. The
+    /// decode has just written files whose mtime is now later than the old
+    /// stamp; without this, the very next flush classifies POM2's own output
+    /// as a host-side edit and preserves the guest's second round of changes
+    /// away. An ejecting caller has nothing left to update and passes null.
     static bool commitWriteBack(PendingWriteBack&& pending,
-                                std::string& error);
+                                std::string& error,
+                                std::filesystem::file_time_type* newMountTime
+                                    = nullptr);
 
     /// Undo a `takeWriteBack` whose commit failed: re-mark its captured
     /// blocks dirty (merging with any block dirtied since). Out-of-range

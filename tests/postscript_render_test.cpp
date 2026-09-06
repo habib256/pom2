@@ -31,6 +31,7 @@
 #include <thread>
 #include <string>
 #include <vector>
+#include "TestTempPath.h"
 
 using pom2::ImageWriter;
 
@@ -166,7 +167,7 @@ void testSpoolerQueuesTheSecondJob()
     // none installed each render fails loudly, and TWO failures is still two
     // renders.)
     pom2::PostScriptSpooler sp;
-    sp.setScratchDir("/tmp/pom2_ps_test_scratch");
+    sp.setScratchDir(pom2test::tempPath("pom2_ps_test_scratch"));
     sp.setPageGeometry(72, 1.0, 1.0);
 
     std::vector<uint8_t> both = bytesOf("%!PS-Adobe-2.0\nshowpage\n");
@@ -218,7 +219,7 @@ void testSpoolerWithoutInterpreter()
     // promptly, the job is not silently dropped, and the failure surfaces as
     // a result with an error rather than as a hang or a lost page.
     pom2::PostScriptSpooler sp;
-    sp.setScratchDir("/tmp/pom2_ps_test_scratch");
+    sp.setScratchDir(pom2test::tempPath("pom2_ps_test_scratch"));
     sp.setPageGeometry(72, 2.0, 2.0);
 
     const auto job = bytesOf("%!PS-Adobe-2.0\nshowpage\n");
@@ -261,7 +262,7 @@ void testSpoolerWithoutInterpreter()
         // PostScript's origin is bottom-left and the raster's is top-left,
         // so the filled quarter lands in the raster's BOTTOM-left.
         pom2::PostScriptSpooler drawer;
-        drawer.setScratchDir("/tmp/pom2_ps_test_scratch");
+        drawer.setScratchDir(pom2test::tempPath("pom2_ps_test_scratch"));
         drawer.setPageGeometry(72, 2.0, 2.0);
         const auto box = bytesOf(
             "%!PS-Adobe-2.0\n0 setgray 0 0 72 72 rectfill\nshowpage\n");
@@ -357,11 +358,30 @@ void testPostScriptHeadFallsBackToText()
     std::printf("  ok: a missed PostScript job prints as text (%ld dots)\n", ink);
 }
 
+// `-sOutputFile=` is a FORMAT string to Ghostscript: an unescaped `%` in the
+// scratch path made it write somewhere else (or refuse), and the job came back
+// as "the interpreter produced no page". Every `%` must be doubled, and
+// nothing else may change.
+void testOutputFileEscaping()
+{
+    assert(pom2::escapeGsOutputFile("/tmp/pom2/out.pgm") == "/tmp/pom2/out.pgm");
+    assert(pom2::escapeGsOutputFile("/tmp/100%25 done/out.pgm") ==
+           "/tmp/100%%25 done/out.pgm");
+    // The one that actually bites: a literal %d in a folder name would have
+    // been taken as the page-number placeholder.
+    assert(pom2::escapeGsOutputFile("C:\\Users\\a%db\\p.pgm") ==
+           "C:\\Users\\a%%db\\p.pgm");
+    assert(pom2::escapeGsOutputFile("%") == "%%");
+    assert(pom2::escapeGsOutputFile("").empty());
+    std::printf("  ok: %%%% escaping for -sOutputFile\n");
+}
+
 } // namespace
 
 int main()
 {
     std::puts("PostScript delegation test");
+    testOutputFileEscaping();
     testPgmHappyPath();
     testPgmComments();
     testPgmMaxvalNormalised();

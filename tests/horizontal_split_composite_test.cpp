@@ -229,6 +229,49 @@ int main()
         assert(bandInk && "the mixed text band was never painted");
     }
 
+    // ── …and a STOPPED machine still follows a poked soft switch ─────────
+    //
+    // The published snapshot only moves as the CPU crosses video-frame
+    // boundaries, so a machine halted at a breakpoint publishes nothing at
+    // all: the mode froze while the debugger / the AI server / the paint
+    // editor poked $C050-$C057. RAM is read live, so the screen showed the
+    // new CONTENT in the OLD MODE for as long as the machine stayed stopped
+    // (round-2 R5). One display across all three renders — the fix keys on
+    // the cycle counter not moving between two of them, which a fresh
+    // display (every other case in this file) can never observe.
+    {
+        Memory stopped;
+        populate(stopped);
+        stopped.memRead(CLR_TEXT);
+        stopped.memRead(SET_HIRES);
+        stopped.memRead(SET_PAGE1);
+        for (int i = 0; i < 2 * 262; ++i) stopped.advanceCycles(65);
+
+        Apple2Display d;
+        d.setAuxMemory(stopped.auxData());
+        d.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+
+        auto grab = [&]() {
+            d.render(stopped);
+            assert(d.signalProduced());
+            const uint8_t* g = d.signal();
+            return std::vector<uint8_t>(
+                g, g + static_cast<size_t>(d.signalWidth()) * d.signalHeight());
+        };
+
+        const auto running = grab();     // last frame before the machine stops
+        const auto idle    = grab();     // stopped: nothing changed
+        assert(running == idle && "a stopped machine must not repaint itself differently");
+        assert(spanEqual(idle, sHgr, 100, 0, W) && "frozen frame is still HGR");
+
+        stopped.memRead(SET_TEXT);       // …the user pokes $C051 in the debugger
+        const auto poked = grab();
+        assert(poked != idle && "a switch poked while stopped must reach the screen");
+        for (int y : {100, 150})
+            assert(spanEqual(poked, sText, y, 0, W) &&
+                   "the stopped machine must paint the mode it was poked into");
+    }
+
     std::printf("horizontal_split_composite OK\n");
     return 0;
 }

@@ -216,11 +216,11 @@ Modified files:
 | File | Change |
 |---|---|
 | `SlotCardCatalog.h` | Add `{ "fujinet", "FujiNet (SP over SLIP)" }` with the usual rationale comment. |
-| `MainWindow.cpp` | `plugFujiNet(s)` lambda next to `plugUthernetII` / `plugSmartPort35`; dispatch entry in the `kind ==` chain (line 2025). |
-| `MainWindow.cpp` (settings) | Per-slot keys `fujinet_port<sk>`, `fujinet_enabled<sk>`, `fujinet_timeout_ms<sk>` — same `+ sk` suffix pattern — plus `fujinet_helper_path<sk>` (`MainWindow.cpp:991`). |
+| `MainWindow.cpp` | `plugFujiNet(s)` lambda next to `plugUthernetII` / `plugSmartPort35`; dispatch entry in the `kind ==` chain (`MainWindow_SlotConfig.cpp:668`). |
+| `MainWindow.cpp` (settings) | Per-slot keys `fujinet_port<sk>`, `fujinet_enabled<sk>`, `fujinet_timeout_ms<sk>` — same `+ sk` suffix pattern — plus `fujinet_helper_path<sk>` (`MainWindow_Session.cpp:247` (write) / `MainWindow_SlotConfig.cpp:422` (read)). |
 | `MainWindow.cpp` (panels) | Register the FujiNet panel in the DockSpace + View menu. |
 | `CliDispatcher.cpp` | `--fujinet[=port]` → plug the card into the first free slot (or slot 7) and start listening. |
-| `tests/CMakeLists.txt` | Four `add_executable` + `add_test` blocks, modelled on `test_smartport_card` (lines 1513-1533); `serial_port_test` guarded to non-Windows. |
+| `tests/CMakeLists.txt` | Four `add_executable` + `add_test` blocks, modelled on `test_smartport_card` (`tests/CMakeLists.txt:2066-2086`); `serial_port_test` guarded to non-Windows. |
 | `CLAUDE.md`, `DEV.md`, `TODO.md`, `docs/lle_vs_hle.md`, `CHANGELOG.md` | See [12](#12-documentation-duties). |
 
 ## 6. Phase 1 — the relay
@@ -381,7 +381,7 @@ selector switches modes and re-establishes.
 ### 6.5 The slot ROM
 
 POM2 **synthesises** its own 256-byte ROM in a `buildRom()` following
-`SmartPortCard::buildRom()` (`SmartPortCard.cpp:429`) and
+`SmartPortCard::buildRom()` (`SmartPortCard.cpp:556`) and
 `ProDOSHardDiskCard`. No third-party binary is shipped, no ROM dump is
 required, and the H1 pattern is the house style.
 
@@ -423,9 +423,9 @@ The one genuinely new thing this card needs, relative to every other POM2 slot
 card: **access to emulated RAM and CPU registers.** `SlotPeripheral`
 deliberately exposes neither.
 
-There is already a precedent to copy — `SoftCardZ80` (`SoftCardZ80.h:62,67`)
+There is already a precedent to copy — `SoftCardZ80` (`SoftCardZ80.h` (`setMemory`/`setCpu`))
 takes `setMemory(Memory*)` and `setCpu(M6502*)`, injected by the host at plug
-time (`MainWindow.cpp:1611-1612`), and does all its bus work through
+time (`MainWindow_SlotConfig.cpp:297-298`), and does all its bus work through
 `Memory::memRead` / `memWrite` — *"the real bus"* — so paging is honoured.
 `FujiNetCard` does the same:
 
@@ -503,13 +503,14 @@ reasoning, not the code.
 - **Catalog** (`SlotCardCatalog.h`): `{ "fujinet", "FujiNet (SP over SLIP)" }`,
   with a comment saying it needs an external FujiNet (desktop build over TCP,
   or a real board over USB) and no ROM dump.
-- **Plug** (`MainWindow.cpp`, beside `plugUthernetII` at line 1664 —
-  `plugFujiNet` sits at 1680): construct, `setMemory` / `setCpu`, apply
+- **Plug** (`MainWindow_SlotConfig.cpp`, beside `plugUthernetII` at `:348` —
+  `plugFujiNet` sits at `:368`; the CLI/unlocked variants are
+  `MainWindow_DevicePanels.cpp:786` / `:854`): construct, `setMemory` / `setCpu`, apply
   settings, plug on the bus, remember the pointer for the panel.
 - **Settings**: per-slot suffix keys — `fujinet_transport` (`tcp` | `serial`),
   `fujinet_port`, `fujinet_serial_path`, `fujinet_serial_baud`,
   `fujinet_timeout_ms`, `fujinet_enabled`, plus `fujinet_helper_path`
-  (`MainWindow.cpp:991`).
+  (`MainWindow_Session.cpp:247` / `MainWindow_SlotConfig.cpp:422`).
 - **CLI** (`CliDispatcher`, pre-boot phase):
   - `--fujinet[=PORT]` — TCP mode, default 1985.
   - `--fujinet-serial[=DEV]` — serial mode; with no argument, auto-pick when
@@ -634,7 +635,7 @@ blocker".
 The uncomfortable part, and the one to decide before writing code.
 
 `SlotPeripheral` callbacks run **on the CPU thread under
-`EmulationController::stateMutex`** (`SlotPeripheral.h:18-21`). A SmartPort
+`EmulationController::stateMutex`** (`SlotPeripheral.h` (the file-header contract)). A SmartPort
 call is inherently synchronous — the 6502 is parked inside a `JSR` waiting for
 its result — so `transact()` blocks that thread, and therefore the UI's access
 to machine state, for the duration of the round trip.
@@ -679,7 +680,7 @@ still in flight for the pre-reset request is discarded — that is the whole
 reason the sequence number exists.
 
 **Snapshot.** `appendSnapshotState` writes a tagged blob (magic + version, per
-the `SlotPeripheral.h:77-87` contract) containing only the *local* state: the
+the `SlotPeripheral.h:90` (the snapshot-hook contract) contract) containing only the *local* state: the
 sequence number, the listening port, and a flag for "was connected". It must
 **not** try to serialise sockets or peer state.
 
@@ -703,7 +704,7 @@ connected). The user understands "the internet doesn't rewind".
 
 Per the project convention, every ported behaviour gets a smoke test under
 `tests/`, registered in `tests/CMakeLists.txt` the way `test_smartport_card`
-(lines 1513-1533) is, with a `TIMEOUT`. Socket tests have precedent:
+(`tests/CMakeLists.txt:2066-2086`) is, with a `TIMEOUT`. Socket tests have precedent:
 `socket_compat_test.cpp`, `ssc_acia_smoke_test.cpp`,
 `uthernet2_w5100_smoke_test.cpp`.
 

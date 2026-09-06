@@ -61,6 +61,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -349,7 +350,22 @@ void MainWindow::renderMenuBar()
         if (ImGui::MenuItem("Reload ROM")) {
             bool ok = false;
             std::string err;
+            // Read the file with NO lock held first. The install below still
+            // opens it by path (that is Memory's only entry point), but this
+            // pass turns that open into a warm-cache memcpy and catches an
+            // unreadable dump — a ROM on a slow or vanished network share —
+            // before anything is blocked behind `stateMutex`.
+            bool readable = false;
             {
+                std::ifstream probe(romPath, std::ios::binary);
+                if (probe) {
+                    probe.seekg(0, std::ios::end);
+                    readable = probe.tellg() > 0;
+                }
+            }
+            if (!readable) {
+                err = "cannot read " + romPath;
+            } else {
                 // Must hold the emulation lock: loadAppleIIRom rewrites
                 // $D000-$FFFF and can race with the CPU thread otherwise.
                 auto st = controller->lockState();

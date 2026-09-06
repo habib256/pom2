@@ -62,6 +62,11 @@ struct Case { const char* name; std::initializer_list<uint8_t> code; int expect;
 
 int main()
 {
+    // Every check below also asserts, but asserts vanish under NDEBUG and
+    // a build that lost tests/CMakeLists.txt's -UNDEBUG would report a
+    // silent pass. Count the failures explicitly and exit non-zero.
+    int failures = 0;
+
     Memory mem;
     mem.setTestMode(true);
     M6502 cpu(&mem);
@@ -107,6 +112,7 @@ int main()
         if (got != c.expect) {
             std::printf("FAIL %-10s expected %d cycles, got %d\n",
                         c.name, c.expect, got);
+            ++failures;
             assert(got == c.expect);
         }
         std::printf("%-10s = %d cycles: OK\n", c.name, got);
@@ -127,6 +133,7 @@ int main()
         const int dea = ccpu.run(1);
         if (ina != 2 || dea != 2) {
             std::printf("FAIL INA/DEA: expected 2/2, got %d/%d\n", ina, dea);
+            ++failures;
             assert(ina == 2 && dea == 2);
         }
         std::printf("INA = %d, DEA = %d cycles: OK\n", ina, dea);
@@ -149,6 +156,7 @@ int main()
         if (aslNoCross != 6 || aslCross != 7 || rorNoCross != 6 || incCmos != 7) {
             std::printf("FAIL CMOS abs,X: ASL %d/%d (want 6/7), ROR %d (want 6), "
                         "INC %d (want 7)\n", aslNoCross, aslCross, rorNoCross, incCmos);
+            ++failures;
             assert(aslNoCross == 6 && aslCross == 7 && rorNoCross == 6 && incCmos == 7);
         }
         std::printf("CMOS abs,X: ASL %d/%d, ROR %d, INC %d cycles: OK\n",
@@ -179,6 +187,7 @@ int main()
                         "abs,X=%d(want 4) zp=%d(want 3) $5C=%d(want 8) "
                         "$5C-NMOS=%d(want 4)\n",
                         nopImm, nopZpX, nopAbsX, nopZp, nop5c, nop5cN);
+            ++failures;
             assert(nopImm == 2 && nopZpX == 4 && nopAbsX == 4 && nopZp == 3 &&
                    nop5c == 8 && nop5cN == 4);
         }
@@ -207,6 +216,7 @@ int main()
             std::printf("FAIL NMOS remapped NOP cycles: $14=%d $74=%d(want 4) "
                         "$0C=%d $1C=%d(want 4) $80=%d $89=%d(want 2)\n",
                         n14, n74, n0c, n1c, n80, n89);
+            ++failures;
             assert(n14 == 4 && n74 == 4 && n0c == 4 && n1c == 4 &&
                    n80 == 2 && n89 == 2);
         }
@@ -231,6 +241,7 @@ int main()
             if (pc != 0x0202) {
                 std::printf("FAIL NMOS undoc $%02X: PC=$%04X (want $0202 — "
                             "operand not consumed)\n", op, pc);
+                ++failures;
                 assert(pc == 0x0202);
             }
         }
@@ -262,6 +273,7 @@ int main()
             if (ncpu.getProgramCounter() != 0x0202) {
                 std::printf("FAIL NMOS undoc $%02X: PC=$%04X (want $0202)\n",
                             op, ncpu.getProgramCounter());
+                ++failures;
                 assert(ncpu.getProgramCounter() == 0x0202);
             }
         }
@@ -274,6 +286,7 @@ int main()
             if (ncpu.getProgramCounter() != 0x0203) {
                 std::printf("FAIL NMOS undoc $%02X: PC=$%04X (want $0203)\n",
                             op, ncpu.getProgramCounter());
+                ++failures;
                 assert(ncpu.getProgramCounter() == 0x0203);
             }
         }
@@ -300,6 +313,7 @@ int main()
             std::printf("FAIL 1-byte NOP/WAI/STP cycles: $03=%d $0B=%d (want 1), "
                         "WAI=%d STP=%d (want 3), NMOS $1A=%d (want 2)\n",
                         c03, c0b, wai, stp, n1a);
+            ++failures;
             assert(c03 == 1 && c0b == 1 && wai == 3 && stp == 3 && n1a == 2);
         }
         std::printf("1-byte NOP cycles (C02=1, NMOS=2) + WAI/STP=3: OK\n");
@@ -338,6 +352,7 @@ int main()
             std::printf("FAIL NMOS decimal SBC V: setup V=%d (want 1), "
                         "$00-$01 V-clear=%d (want 1), $80-$01 V-set=%d (want 1)\n",
                         vAfterAdc, vClear, vSet);
+            ++failures;
             assert(vAfterAdc && vClear && vSet);
         }
         std::printf("NMOS decimal SBC V flag (binary-difference rule): OK\n");
@@ -373,6 +388,7 @@ int main()
         const int irqStep = icpu.run(1);       // entry(7) + handler NOP(2)
         if (irqStep != 9) {
             std::printf("FAIL IRQ entry: expected 9, got %d\n", irqStep);
+            ++failures;
             assert(irqStep == 9);
         }
         std::printf("IRQ entry + NOP = %d cycles: OK\n", irqStep);
@@ -384,11 +400,16 @@ int main()
         const int nmiStep = icpu.run(1);       // entry(7) + handler NOP(2)
         if (nmiStep != 9) {
             std::printf("FAIL NMI entry: expected 9, got %d\n", nmiStep);
+            ++failures;
             assert(nmiStep == 9);
         }
         std::printf("NMI entry + NOP = %d cycles: OK\n", nmiStep);
     }
 
+    if (failures != 0) {
+        std::printf("cpu_cycle_count FAILED: %d check(s)\n", failures);
+        return 1;
+    }
     std::printf("cpu_cycle_count OK\n");
     return 0;
 }

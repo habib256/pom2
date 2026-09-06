@@ -60,6 +60,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "TestTempPath.h"
 
 namespace {
 
@@ -67,7 +68,7 @@ namespace {
 std::string writeTempBlob(const std::vector<uint8_t>& bytes,
                            const std::string& nameSuffix)
 {
-    const std::string path = "/tmp/pom2_mouse_test_" + nameSuffix;
+    const std::string path = pom2test::tempPath("pom2_mouse_test_" + nameSuffix);
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     f.write(reinterpret_cast<const char*>(bytes.data()),
             static_cast<std::streamsize>(bytes.size()));
@@ -78,8 +79,8 @@ void test_missing_roms_refuses_to_load()
 {
     MouseCard card(4);
     // Neither file exists.
-    assert(!card.loadRoms("/tmp/pom2_does_not_exist_slot.bin",
-                          "/tmp/pom2_does_not_exist_mcu.bin"));
+    assert(!card.loadRoms(pom2test::tempPath("pom2_does_not_exist_slot.bin"),
+                          pom2test::tempPath("pom2_does_not_exist_mcu.bin")));
     assert(!card.isReady());
 }
 

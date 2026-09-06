@@ -62,7 +62,7 @@
 int main()
 {
     std::puts("SKIP: serial pty harness is POSIX-only");
-    return 0;
+    return 77;   // ctest SKIP_RETURN_CODE
 }
 
 #else

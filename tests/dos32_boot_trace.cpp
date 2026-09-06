@@ -113,7 +113,7 @@ int main()
     if (romPath.empty() || boot13.empty() || lss13.empty() || d13.empty()) {
         std::printf("dos32_boot_trace SKIP: missing apple2.rom / disk2_13.rom /"
                     " diskii_p6_13.rom / DOS32STD.d13\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

@@ -400,8 +400,8 @@ void IWMDevice::controlAccess(int offset, uint8_t data)
                 // The splice position pins the bit cell where a WOZ
                 // re-master should start writing — Applesauce uses it
                 // to keep round-trip parity. POM2's DiskImage exposes
-                // a stub `setWriteSplice` (DiskImage.h:219); see
-                // TODO.md «WOZ1 splice point (TRK +6650) ignoré» for
+                // a stub `setWriteSplice` (see DiskImage.h); see
+                // TODO.md's WOZ1 splice-point entry (TRK +6650) for
                 // the full plumbing. Call site is here so the day the
                 // stub gets a body, the splice arrives at the right
                 // moment automatically. No-op on Sony35Drive — 3.5"

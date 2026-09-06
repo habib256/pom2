@@ -244,7 +244,7 @@ int main()
     const std::string dir = findSampleDir();
     if (dir.empty()) {
         std::puts("SKIP: roms/floppy_samples not found from cwd");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     std::printf("Using sample dir: %s\n", dir.c_str());
     testDualInstanceCoexistence(dir);

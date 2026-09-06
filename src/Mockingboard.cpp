@@ -737,6 +737,17 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if ((present & 0x04) && !loadAy(ay_[0]))   return;
     if ((present & 0x08) && !loadAy(ay_[1]))   return;
     if ((present & 0x10) && !loadSsi())        return;
+
+    // `lastSyncCycle_` is an absolute emuCycles stamp that is deliberately
+    // not in the blob. `syncToCpuCycleAt` already survives a BACKWARDS jump
+    // (it pins the stamp down), but a snapshot taken LATER than the live
+    // machine left the stamp in the past and the next lazy sync handed both
+    // 6522s the whole gap in one `advance()` — a burst of phantom T1
+    // underflows. Re-anchor on the machine we actually landed on.
+    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    // The restored IFR/IER need not match the IRQ line the card is driving;
+    // nothing else re-evaluates it until the next VIA access.
+    updateIrq();
 }
 
 void MockingboardCard::onReset()

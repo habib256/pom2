@@ -163,6 +163,24 @@ public:
     /// because the PC still points at it.
     void armResumeFrom(uint16_t pc) { resumeSkip_ = pc; resumeSkipArmed_ = true; }
 
+    /// Drop every per-TIMELINE transient. Called when the machine jumps in
+    /// time — a rewind scrub, a `.pom2snap` load, an AI `/snapshot/load`.
+    ///
+    /// All four pieces of state below name an address in a timeline that no
+    /// longer exists. The armed resume amnesty is the one that bit: it
+    /// suppresses the breakpoint at ONE pc for ONE instruction, and after a
+    /// restore that pc is wherever the user last resumed from, so the first
+    /// breakpoint the restored machine reaches at that address is silently
+    /// skipped. The latched `hit_` is worse in the other direction — it
+    /// still reads `stopRequested()`, so the controller parks the worker
+    /// again the instant it resumes, reporting a breakpoint the restored
+    /// machine never hit.
+    ///
+    /// Breakpoints and watchpoints themselves are USER state and survive:
+    /// they are addresses in a program, not in a timeline. Caller must hold
+    /// `stateMutex`.
+    void clearForTimeJump();
+
 private:
     void ensureBpBits();
     void ensureWpBits();

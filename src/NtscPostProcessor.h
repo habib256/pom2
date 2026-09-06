@@ -207,10 +207,17 @@ private:
     int outH    = 0;
     int signalW = 0;
     int signalH = 0;
+    // GL_MAX_TEXTURE_SIZE, read once at initialize() — see clampTexDim().
+    int maxTexSize_ = 0;
 
     NtscParams params{};
 
     bool createTextures(int signalW_, int signalH_);
+    // A texture dimension this GL implementation can actually allocate.
+    int  clampTexDim(int v) const
+    {
+        return (maxTexSize_ > 0 && v > maxTexSize_) ? maxTexSize_ : v;
+    }
     void destroyGL();
 };
 

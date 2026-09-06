@@ -91,6 +91,15 @@ public:
     static constexpr uint16_t kPacketPageSize = 0x1000;
     /// Inbound queue backstop (`cs8900a.cpp:39` MAX_FRAME_QUEUE_ENTRIES).
     static constexpr size_t kMaxFrameQueue = 4096;
+    /// ...and the one that actually bounds it. The CS8900A holds its receive
+    /// frames in 4 KB of on-chip buffer memory (datasheet §3.2 "Memory
+    /// Organization"), so it can queue a handful of MTU-sized frames and no
+    /// more; a 4096-ENTRY queue is ~6 MB of host memory and, worse, minutes of
+    /// backlog. When the chip runs out of room it drops the frame ARRIVING —
+    /// it has nowhere to put it — and counts it in RxMISS (§4.4.20). Dropping
+    /// the OLDEST instead, as the entry cap did, hands the guest packets whose
+    /// senders gave up long ago and reorders every stream on the link.
+    static constexpr size_t kMaxFrameQueueBytes = 4096;
 
     Cs8900aDevice();
 
@@ -134,6 +143,8 @@ public:
     uint64_t framesSent()         const { return framesSent_; }
     uint64_t framesReceived()     const { return framesReceived_; }
     uint64_t framesFiltered()     const { return framesFiltered_; }
+    /// Frames the chip had nowhere to put — what RxMISS counts.
+    uint64_t framesMissed()       const { return framesMissed_; }
     /// The transmit handshake's own state, so a test can assert that a
     /// restored snapshot left it COHERENT: `txState` is the four-step enum
     /// (0 = idle), and `txCount` may never exceed `txLength` — the release
@@ -170,6 +181,16 @@ private:
 
     // `cs8900a.cpp:491-618` — pop one accepted frame into PacketPage.
     uint16_t receiveFrame();
+    /// The chip had nowhere to put an arriving frame: count it in RxMISS and
+    /// flag it in BufEvent (datasheet §4.4.20 / §4.4.17).
+    void     noteMissedFrame();
+    /// Decode CC_RXCTL into the filter booleans (`cs8900a.cpp:802-814`).
+    /// Shared by the register write and by reset(), which used to leave them
+    /// carrying the PREVIOUS configuration.
+    void     decodeReceiveControl(uint16_t content);
+    /// Build the next Interrupt Status Queue word from the event registers
+    /// (datasheet §4.4.1). See the definition for the priority order.
+    void     latchInterruptStatusQueue();
 
     // `cs8900a.cpp:641-765` — the RXTXDATA windows.
     void    writeTxBuffer(uint8_t value, bool oddAddress);
@@ -219,6 +240,10 @@ private:
     int rxEventReadMask_ = 3;
 
     std::deque<std::vector<uint8_t>> frameQueue_;
+    /// Bytes held in `frameQueue_` — what kMaxFrameQueueBytes bounds.
+    size_t   queueBytes_ = 0;
+    /// Frames the chip had no room for, as RxMISS counts them.
+    uint64_t framesMissed_ = 0;
     NetworkBackend* backend_ = nullptr;
 
     uint64_t framesSent_     = 0;

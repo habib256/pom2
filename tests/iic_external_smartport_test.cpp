@@ -297,7 +297,7 @@ int main()
     if (rom.empty() || disk525.empty() || disk35.empty()) {
         std::printf("SKIP iic_external_smartport: need roms/apple2c-32Kv0.rom, "
                     "disks_5.4/dsk/ProDOS_2_4_3.po and an 800K image\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     // A. Internal 5.25" boots; the external 3.5" is a data volume.

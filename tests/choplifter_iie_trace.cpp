@@ -93,7 +93,7 @@ int main(int argc, char** argv)
         : firstExisting({"roms/apple2e.rom"});
     if (romPath.empty()) {
         std::printf("SKIP: roms/apple2e.rom not found\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     if (!mem.loadAppleIIRom(romPath.c_str())) {
         std::printf("FAIL: could not load %s\n", romPath.c_str());

@@ -141,7 +141,7 @@ int main(int argc, char** argv)
     const int dropEvery = (argc > 8) ? std::atoi(argv[8]) : 0;
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("dd1_audio_ab SKIP: missing apple2e.rom / disk2.rom / DD.dsk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

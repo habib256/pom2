@@ -32,6 +32,7 @@
 // The guest is a 3-byte `JMP $0800` self-loop so the CPU advances
 // deterministically forever (no jam, distinct cycle stamp per frame).
 
+#include "Block512Backing.h"
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -209,6 +210,47 @@ int main()
         assert(liveCycle(wasm) == c);
     }
 
-    std::printf("Rewind transport: OK (park + frozen + seek + seekToCycle + resume + bare-resume + tickFrame)\n");
+    // ── (8) A media write clears the ring (bug hunt #2, items S3/S4/S5) ───
+    //
+    // The ring never captures the MEDIA of a block device (up to 32 MiB), a
+    // 3.5" image (800 KB) or a writable WOZ. Rolling RAM back over a ProDOS
+    // SAVE while the volume stayed written cross-links blocks on the next
+    // allocation. The policy is that a rewind may never CROSS such a write:
+    // the storage leaf bumps `pom2::mediaWriteEpoch()` and the controller
+    // drops the history at its next capture point.
+    {
+        EmulationController m;
+        {
+            std::lock_guard<std::mutex> lk(m.stateMutex());
+            Memory& mem = m.memory();
+            mem.memWrite(0x0800, 0x4C);
+            mem.memWrite(0x0801, 0x00);
+            mem.memWrite(0x0802, 0x08);
+            m.cpu().setProgramCounter(0x0800);
+        }
+        m.rewind().setEnabled(true);
+        m.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 25; ++i) m.tickFrame();
+        const size_t before = ringSize(m);
+        assert(before >= 20);
+
+        // A guest block write, straight through the leaf that every HDV /
+        // CFFA / SmartPort / 3.5" / WOZ write path funnels into.
+        pom2::noteMediaWrite();
+
+        m.tickFrame();
+        const size_t after = ringSize(m);
+        assert(after == 1 &&
+               "the rewind ring was not cleared by a media write — a scrub "
+               "could still cross it");
+
+        // Steady state: no further clearing while nothing writes.
+        for (int i = 0; i < 10; ++i) m.tickFrame();
+        assert(ringSize(m) > after &&
+               "the ring stopped growing after a media write");
+    }
+
+    std::printf("Rewind transport: OK (park + frozen + seek + seekToCycle + "
+                "resume + bare-resume + tickFrame + media-write clear)\n");
     return 0;
 }

@@ -249,7 +249,9 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 }
                 // Successful load abandons the former timeline. A failed one
                 // is transactionally rolled back, so preserve audio + rewind.
-                emu.speaker().reset();
+                // One call for every free-running audio device — the same
+                // one the rewind transport and the AI server use.
+                emu.noteTimeJump();
                 emu.rewind().clear();
                 pom2::log().info("CLI",
                     "--snapshot-load: restored " + a.pathS);

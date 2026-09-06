@@ -16,6 +16,8 @@
 
 #include "NoSlotClock.h"
 
+#include "ByteIO.h"
+
 #include <algorithm>
 #include <ctime>
 
@@ -195,6 +197,44 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
         writeEnabled_ = false;
     }
     return romByte;
+}
+
+// ─── Snapshot / rewind ──────────────────────────────────────────────────
+// See the header for why the bit cursors have to travel. Fixed 15-byte
+// layout, self-identifying, tolerant of a foreign or truncated blob.
+
+namespace {
+constexpr uint32_t kNscSnapMagic   = 0x43534E32u;   // '2NSC'
+constexpr uint16_t kNscSnapVersion = 1;
+}  // namespace
+
+void NoSlotClock::appendSnapshotState(std::vector<uint8_t>& out) const
+{
+    byteio::putU32(out, kNscSnapMagic);
+    byteio::putU16(out, kNscSnapVersion);
+    out.push_back(writeEnabled_ ? 1 : 0);
+    out.push_back(readingClock_ ? 1 : 0);
+    out.push_back(bitsMatched_);
+    out.push_back(bitsRead_);
+    byteio::putU64(out, clockShift_);
+}
+
+bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len)
+{
+    byteio::Reader r(data, len);
+    if (!r.has(4 + 2 + 4 + 8)) return false;
+    if (r.u32() != kNscSnapMagic)   return false;
+    if (r.u16() != kNscSnapVersion) return false;
+
+    writeEnabled_ = r.u8() != 0;
+    readingClock_ = r.u8() != 0;
+    // Clamp: both cursors index a 64-bit shifter and are compared with
+    // `>= 64` only AFTER an increment, so a crafted 200 would run the
+    // matcher off the end of the key for good.
+    bitsMatched_  = static_cast<uint8_t>(r.u8() & 63);
+    bitsRead_     = static_cast<uint8_t>(r.u8() & 63);
+    clockShift_   = r.u64();
+    return true;
 }
 
 }  // namespace pom2

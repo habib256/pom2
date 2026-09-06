@@ -16,6 +16,8 @@
 
 #include "PrinterCoordinator.h"
 
+#include "Block512Backing.h"   // pom2::noteMediaWrite
+
 #include "EmulationController.h"
 #include "FujiNetCard.h"
 #include "GrapplerCard.h"
@@ -150,6 +152,25 @@ PrinterCoordinator::captureHost(EmulationController& controller) const
     return snapshot;
 }
 
+// Paper is irreversible output. Bump the rewind ring's "effects that cannot
+// be undone" epoch whenever bytes actually reach the ImageWriter, so the ring
+// clears and a later scrub can never span a print.
+//
+// Resetting `consumed_` on a restore — the other candidate fix — would be
+// exactly backwards here: the card spools are deliberately NOT rewound (they
+// are append-only output logs; see GrapplerCard.h), so a cursor reset would
+// REPRINT the whole spool rather than avoid a duplicate. What the cursor
+// cannot defend against is the guest replaying the print after a rewind and
+// appending the same bytes a second time; only refusing to rewind across the
+// print does, and that is what this is.
+//
+// The coordinator is the right site: it is the single funnel where bytes stop
+// being a card's buffer and start being paper.
+void PrinterCoordinator::notePrinted(const FeedBatch& batch)
+{
+    if (!batch.bytes.empty()) pom2::noteMediaWrite();
+}
+
 void PrinterCoordinator::prepareDrain(SourceIdentity identity,
                                       std::size_t total)
 {
@@ -174,6 +195,7 @@ PrinterCoordinator::drainImageWriter(EmulationController& controller)
         prepareDrain({batch.source, reinterpret_cast<std::uintptr_t>(card)},
                      card->bytesWritten());
         consumed_ = card->drainSpoolFrom(consumed_, batch.bytes);
+        notePrinted(batch);
         return batch;
     }
     if (auto* card = findFirst<GrapplerCard>(bus)) {
@@ -182,6 +204,7 @@ PrinterCoordinator::drainImageWriter(EmulationController& controller)
         prepareDrain({batch.source, reinterpret_cast<std::uintptr_t>(card)},
                      card->bytesWritten());
         consumed_ = card->drainSpoolFrom(consumed_, batch.bytes);
+        notePrinted(batch);
         return batch;
     }
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
@@ -192,6 +215,7 @@ PrinterCoordinator::drainImageWriter(EmulationController& controller)
         prepareDrain({batch.source, reinterpret_cast<std::uintptr_t>(card)},
                      card->bytesWritten());
         consumed_ = card->drainSpoolFrom(consumed_, batch.bytes);
+        notePrinted(batch);
         return batch;
     }
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
@@ -202,6 +226,7 @@ PrinterCoordinator::drainImageWriter(EmulationController& controller)
         prepareDrain({batch.source, reinterpret_cast<std::uintptr_t>(card)},
                      card->printerSpoolBytes());
         consumed_ = card->drainPrinterSpoolFrom(consumed_, batch.bytes);
+        notePrinted(batch);
         return batch;
     }
 

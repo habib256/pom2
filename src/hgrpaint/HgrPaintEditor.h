@@ -217,7 +217,13 @@ private:
     int lastX = -1, lastY = -1;           // for Pencil/Eraser interpolation
     int lastHoverX = -1, lastHoverY = -1; // persisted for the status bar
     std::vector<ByteEdit> stroke;         // (addr, old, new) edits this op
-    bool strokeBatching = false;          // current stroke coalesces host pokes
+    // Stroke bracket nesting (see beginStroke/commitStroke). `strokeNest_` is
+    // the number of open brackets — only the outermost starts and pushes an
+    // undo step; bit i of `strokeBatchMask_` records whether level i opened a
+    // host batch, so each commit closes exactly the batch its own begin
+    // opened. A single bool here left the host batcher stuck open.
+    int      strokeNest_ = 0;
+    uint32_t strokeBatchMask_ = 0;
 
     // Symmetric undo/redo: each entry is one operation's ByteEdit list.
     std::vector<std::vector<ByteEdit>> undo;
@@ -236,6 +242,9 @@ private:
     int  browserSaveKind = 0;          // 0 = raw 8 KB HGR, 1 = PNG export
     std::string browserDir;            // directory currently shown
     char browserSaveName[256] = {0};   // editable filename (Save mode)
+    // Save target awaiting the "this file exists — overwrite?" confirmation
+    // (empty = no confirmation pending).
+    std::string browserOverwritePath;
     // Image-import (ii-pix-style) options + interactive preview dialog (decode the
     // source once, then live-reconvert as the sliders move).
     bool  importStretch = false;       // false = fit + letterbox (keep aspect)
@@ -387,6 +396,9 @@ private:
     bool performFileAction(bool forSave, int saveKind, bool importMode,
                            const std::string& fullPath);
     void renderFileBrowser();   // modal file picker for Load / Save / Save PNG / Import
+    // The path a Save will actually write (raw-page saves append the SD-card
+    // "#06AAAA" tag) — what the overwrite check has to look at.
+    std::string resolvedSaveTarget(const std::string& full) const;
     void openImportPreview(const std::string& path); // decode + open the interactive preview
     void renderImportPreview();                       // modal: sliders + live preview + apply
     void renderCanvas(const std::vector<uint8_t>& memory,

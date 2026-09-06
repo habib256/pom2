@@ -141,16 +141,17 @@ months.**
 - 🔴 **42 Apple firmware dumps in every package, while the UI says the
   opposite.** `bundle.manifest:31` ships `apple2*.rom`, fifteen character
   generators, `disk2.rom`, the mouse MCUs, `341-0358-A.bin`, `liron.rom` — and
-  `RomStatus_ImGui.cpp:416` and `MainWindow_MiscPanels.cpp:654` tell the user
-  *"POM2 ships no ROMs"* / *"Apple II firmware is copyrighted, so POM2 does not
-  ship it."* README § Download sells the bundled ROMs as a feature. **Shipping
+  `MainWindow_MiscPanels.cpp:655` tells the user *"Apple II firmware is
+  copyrighted, so POM2 does not ship it."* (Re-verified 2026-09-07: that is the
+  **only** such string left in `src/`. `RomStatus_ImGui.cpp` carries no
+  "ships no ROMs" text; the earlier entry naming it was wrong.) README § Download sells the bundled ROMs as a feature. **Shipping
   them and claiming not to is the worst of the three available positions.**
   **Decided 2026-09-05: keep the dumps, fix the words.** The ROMs stay in
   `roms/` and in every package, and so does Apple's system software on disk
   (the DOS 3.x masters, `AppleShare IIe Workstation.po`, Apple Présente //c) —
   it is the same legal class and the same established emulator practice. What
-  changes is the tree stops contradicting itself: `RomStatus_ImGui.cpp:416`,
-  `MainWindow_MiscPanels.cpp:654` and the README all say the same true thing.
+  changes is the tree stops contradicting itself: `MainWindow_MiscPanels.cpp:655`
+  and the README say the same true thing.
   *~4 h.* This is now a [G3](#g3--make-the-words-true-) job, not a G1 one.
   Third-party EPROMs sit in the same tree with no permission on record
   (`cffa20ee02.bin`, `grappler_plus.bin`, `thunderclock_u9_v1.3.bin`, the Videx
@@ -257,11 +258,11 @@ that cannot be trusted about anything.*
   frozen. Name Floppy Emu's four supported modes rather than listing it flat.
   *~1 h.*
 - 🟡 **Fix the fresh-install `][+` fallback, which is dead code.**
-  `MainWindow.cpp:782-786` sets `defaultProfile = iiePresent ? "iie-pal" : ""`,
+  `MainWindow.cpp:811-812` sets `defaultProfile = iiePresent ? "iie-pal" : ""`,
   and an empty string means `applyProfile` never runs — so
   `cfgAppleIIPlus`'s `roms/apple2p.rom` probe is **never reached on a first
   run**. A user holding only `apple2p.rom`, `apple2o.rom`, `apple2c-32Kv0.rom`
-  or `apple2e_unenh.rom` gets "NO ROM", while README:231 promises the fallback.
+  or `apple2e_unenh.rom` gets "NO ROM", while README:233 promises the fallback.
   The rest of the first-run path is in good shape: Welcome opens, nothing
   crashes, the boot refusal points at Help ▸ Welcome. *~2 h.*
 - 🟢 Dead README cross-reference (`§ Disk images` does not exist; it is
@@ -338,12 +339,12 @@ Densest policy files, none of them linked by any test:
 
 | File | Lines | policy hits / ImGui calls |
 |---|---|---|
-| `MainWindow_Session.cpp` | 358 | **81 / 0** — the entire shutdown persist |
-| `MainWindow_Media.cpp` | 540 | **30 / 0** — mount/eject/boot routing |
-| `MainWindow_Slots.cpp` | 1 627 | 65 / 162 — `applyProfile` + `kDefaults[]` |
-| `MainWindow_SlotConfig.cpp` | 791 | 8 / 0 |
+| `MainWindow_Session.cpp` | 407 | **81 / 0** — the entire shutdown persist |
+| `MainWindow_Media.cpp` | 526 | **30 / 0** — mount/eject/boot routing |
+| `MainWindow_Slots.cpp` | 1 629 | 65 / 162 — `applyProfile`; the default map itself is `kDefaultCards[]` in `SlotConfigurationCoordinator.cpp:49` |
+| `MainWindow_SlotConfig.cpp` | 813 | 8 / 0 |
 | `AudioCoordinator.cpp` | 444 | 22 / 0 |
-| `CliRunner.cpp` | 238 | 0 / 0 — every deferred CLI action |
+| `CliRunner.cpp` | 264 | 0 / 0 — every deferred CLI action |
 
 - 🟠 **G5-1 · One contract test across the parallel media paths.** *≈1 d.* The
   direct antidote to the drift shape. Enumerate every medium — `DiskImage`,
@@ -674,10 +675,8 @@ The four found on 2026-09-05 replaced them, which is the point:
 
 | Contract | Sibling A (right) | Sibling B (wrong) |
 |---|---|---|
-| Eject → settings key | `StorageCoordinator::ejectMediaBay` | `MainWindow_Media.cpp:98` — wrong drive key, no generic-media branch, no guards, lock held over file I/O |
-| AY reset counter | `Mockingboard.cpp:772` bumps | `PhasorCard.cpp:325` zeroes |
 | `setCpuClock` fan-out | speaker, cassette, every slot card | `IWMDevice` / `Sony35Drive` hardcode the NTSC constant |
-| Atomic write-back | ten call sites incl. the PNG export | `ImageWriterPdf.cpp:181-191` writes straight onto the destination |
+| Permission carry on write-back | `replaceFileAtomic` carries the original's mode | `ProDOSVolume`'s host-file decode does not |
 | Write-protect (still open) | `SmartPort35Unit.h:50` honours the base contract | `SmartPortHdvUnit.h:60-62` contradicts it |
 
 Each path is tested on its own; nothing asserts that all of them obey the same
@@ -756,12 +755,13 @@ of the finding.
     card under `lockState()` and drives the link off it, `enumerateDevices`
     re-reads its stop flag per unit. `~FujiNetCard` no longer waits the 2 s
     helper grace under `SlotBus::plug` either (`ChildProcess::stopDetached`).
-  * **Still under the lock after the 2026-09-06 hunt:**
-    `StorageCoordinator::ejectAllMedia` ejects Disk II, block, SmartPort and
-    generic bays inline, write-back included, while every single-medium eject
-    (`ejectDiskII`, `EmulationController::eject35`, the AI server's `/disk/eject`,
-    the firmware 3.5" eject through `WriteBackQueue`) is now two-phase. Same
-    fix, four families; a separate job.
+  * ✅ **Closed 2026-09-07**: `ejectAllMedia` was the last inline holdout and
+    now takes the same three-phase shape as every single-medium eject
+    (capture locked → commit unlocked → re-resolve and retire, or put the
+    medium back on failure). `flushAll`'s Liron bays and the host-folder mount
+    followed. The firmware 3.5" eject waits on the `WriteBackQueue` sink
+    (`Sony35Drive::ejectPending_`) instead of ejecting on the spot, so a failed
+    commit leaves the disk loaded and dirty rather than gone.
   * Deliberate and staying: the profile-switch remount in `MainWindow_Slots.cpp`
     (atomicity against the AI server outranks latency, and the worker is stopped)
     and the outgoing medium's write-back inside `installDisk` (swapping before
@@ -784,18 +784,66 @@ of the finding.
   *lock protocol* is covered thoroughly, *emulated execution* thinly. What
   remains is ImGui panels, `demodMutex`, slot re-plug under load — which is the
   same thing G5-10 unblocks.
-- 🟡 **`ImageWriterPdf.cpp:181-191` skips `AtomicFileReplace`.** CLAUDE.md says
-  every write-back goes through it, and ten call sites do — including the PNG
-  export in the same subsystem. Save PDF writes straight onto the destination,
-  so a crash mid-save leaves a truncated file where the old one was. Four lines.
-  *~1 h.*
-- 🟡 **Three divergent copies of the atomic file-write helper** remain:
-  `DiskImage.cpp:2311`, `Disk35Image.cpp:329`, `ProDOSVolume.cpp:709` — temp-file
-  naming, permission carry-over and error strings hand-repeated. `DiskImage`
-  caught up on permission preservation on 2026-08-08 (it had been resetting the
-  image's mode to the umask default on every write-back); `ProDOSVolume` still
-  has not. The home is `AtomicFileReplace.h`, next to `pom2::replaceFileAtomic`,
-  not a new file.
+- ✅ **`ImageWriterPdf` skips `AtomicFileReplace`** — fixed 2026-09-07: PDF
+  export goes through `pom2::writeFileAtomic` (`ImageWriterPdf.cpp:192`), so
+  CLAUDE.md's "every write-back goes through it" is now true without an
+  asterisk.
+- 🟢 **Two snapshot fields are deliberately not captured, and that is the
+  answer, not a gap** *(recorded 2026-09-07)*. `Ay3_8910::busOut` is consumed
+  within a single `applyControl`, and the VIA's `portAIn` — which *is*
+  serialised — already carries everything that survives the call. The keyboard
+  latch and paste FIFO are host input in flight and live in the wrong lock
+  domain (`Memory::kbMutex`, not `stateMutex`); capturing them would restore
+  keystrokes the user has already seen consumed. Both are documented in place
+  so the next parity audit does not re-open them.
+- 🟠 **No native file picker.** Every "open"/"save as" in POM2 is an ImGui
+  browser over the working tree. Reviewed 2026-09-07 and **declined for now**:
+  no host-dialog helper exists anywhere in the tree, so this is a new
+  dependency (portal/AppKit/Win32 per platform) rather than a fix. Worth doing,
+  but as a scoped feature with its own platform matrix — not as part of a bug
+  hunt. `Pom2HgrPaintHost` therefore still does not override `pickFilePath`,
+  and there is no sprite catalogue to reach because POM2 ships no sprites.
+- 🟢 **Network items reviewed 2026-09-07 and declined, with reasons.** `Sn_MR`
+  MULTI/ND is a W5100 feature POM2 does not offer, not a wrong answer.
+  CS8900A `Skip_1` on TRANSMIT and the PacketPage frame-buffer window are MAME
+  parity with **no oracle to arbitrate** them — changing either would be
+  guessing against the only reference implementation we have. `RxOKA` and
+  `Rdy4TxNOW`-on-the-odd-read are datasheet-correct as they stand. The SSC's
+  synthetic ROM still does not program the ACIA control register from the baud
+  DIPs, and should not: it would invent a DIP→divisor mapping and rate-limit
+  every `PR#n`. These stay open only as *stated limits*.
+- 🟠 **The two `roms/*.zip` archives are git-tracked.** `AE Serial Pro 2.0.bin_.zip`
+  and `AE Serial Pro PAL.zip` are in the index, and the manifest comment that
+  called them untracked was corrected on 2026-09-07. They cannot reach a
+  package (`denyglob *.zip`, now enforced by all three parsers), so this is a
+  repo-hygiene question rather than a payload one — **untracking them is the
+  maintainer's call**.
+- 🟠 **Six file-size ceilings were raised by the two hunt rounds, and the owed
+  splits are still owed** *(2026-09-07)*. `Apple2Display.cpp` 2294 → 2382,
+  `DiskImage.cpp` 2835 → 2914, `ImageWriter.cpp` 2501 → 2531, `M6502.cpp`
+  2159 → 2185, `Memory.cpp` 2442 → 2545, `hgrpaint/HgrPaintEditor.cpp`
+  2525 → 2647. Every added line is a fix or the comment explaining one, and
+  each is recorded at its **exact** current size so the ratchet still fails on
+  the next line any of them gains — but the two obvious seams named in
+  `tools/file_size_budget.txt` remain open jobs: `Memory.cpp`'s snapshot
+  trailer and `DiskImage.cpp`'s WOZ writer.
+- 🟢 **The file-size ratchet now covers `tests/` and enforces its WATCH band**
+  *(2026-09-07)*. `tools/check_file_sizes.sh` used to scan `src/` only, and the
+  documented "every first-party file at or above 2000 lines carries a ceiling"
+  rule was applied by `--update` but never by the check — so a file growing
+  1999 → 2999 passed in silence until the day it crossed the hard limit. Both
+  holes are closed. `tests/CMakeLists.txt` (~6 800 lines) stays outside on
+  purpose: it is a build manifest, not a translation unit, and the ratchet only
+  speaks about `.cpp`/`.h`.
+- 🟡 **One divergence left in the atomic-write family, not three.** Narrowed
+  2026-09-07: every write-back call site goes through `pom2::replaceFileAtomic`
+  / `writeFileAtomic`, and temp-file naming is now centralised in
+  `tempSiblingPath` (`AtomicFileReplace.h:186`), so the "three divergent
+  helpers" framing over-claimed. What genuinely differs is **permission
+  carry-over on the host-file decode**: `replaceFileAtomic` carries the
+  original's mode, `DiskImage` caught up on 2026-08-08, and `ProDOSVolume`'s
+  decode still writes host files at the umask default. That, and only that, is
+  the remaining job.
 
 ## MAME ↔ POM2 parity (dashboard)
 

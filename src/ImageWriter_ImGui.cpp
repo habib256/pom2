@@ -67,6 +67,28 @@ std::string timestampedName(const char* prefix, const char* ext)
     return std::string(prefix) + stamp + ext;
 }
 
+/// A stem for which `dir/<stem><probeSuffix>` does not already exist.
+///
+/// The timestamp has ONE-SECOND resolution and the export buttons are one
+/// click apart: "Save sheet as PNG" twice in the same second wrote the same
+/// filename twice and the second export silently replaced the first, while
+/// the status line reported both as saved. `probeSuffix` is what the caller
+/// really appends — the multi-sheet save adds "-p01.png", not the bare
+/// extension — so the test is on the file that will actually be written.
+std::string uniqueStem(const std::string& dir, const char* prefix,
+                       const char* probeSuffix)
+{
+    namespace fs = std::filesystem;
+    const std::string base = timestampedName(prefix, "");
+    std::error_code ec;
+    for (int n = 0; n < 1000; ++n) {
+        const std::string stem =
+            n ? base + "-" + std::to_string(n) : base;
+        if (!fs::exists(fs::path(dir) / (stem + probeSuffix), ec)) return stem;
+    }
+    return base;                       // pathological — 1000 in one second
+}
+
 } // namespace
 
 ImageWriter_ImGui::~ImageWriter_ImGui() { shutdown(); }
@@ -162,7 +184,8 @@ bool ImageWriter_ImGui::savePagePng(const ImageWriter::Page& p,
 
     std::vector<uint8_t> rgba;
     ImageWriter::pageToRgba(p, rgba);
-    const fs::path tmp = out.string() + ".pom2tmp";
+    // Unique per process + per call — see tempSiblingPath.
+    const fs::path tmp = tempSiblingPath(out);
     // The user picked `out`; this sibling name is ours by construction and got
     // none of that choice's scrutiny, while stb's fopen("wb") follows symlinks
     // like any other open. Clear the way (or refuse) before writing — the same
@@ -653,11 +676,12 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         ImGui::BeginDisabled(iw.rawStream().empty() || !host.canSaveFiles);
         if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save raw stream…")) {
             namespace fs = std::filesystem;
-            const std::string path =
-                (fs::path(host.saveDir) /
-                 timestampedName("imagewriter-stream-", ".bin")).string();
             std::error_code ec;
             fs::create_directories(host.saveDir, ec);
+            const std::string path =
+                (fs::path(host.saveDir) /
+                 (uniqueStem(host.saveDir, "imagewriter-stream-", ".bin") +
+                  ".bin")).string();
             std::ofstream f(path, std::ios::binary);
             const auto& raw = iw.rawStream();
             f.write(reinterpret_cast<const char*>(raw.data()),
@@ -717,7 +741,8 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save sheet as PNG")) {
             const std::string path =
                 (fs::path(host.saveDir) /
-                 timestampedName("imagewriter-", ".png")).string();
+                 (uniqueStem(host.saveDir, "imagewriter-", ".png") +
+                  ".png")).string();
             std::string err;
             status_ = savePagePng(sheet(sel), path, err)
                     ? "Saved " + path
@@ -726,7 +751,8 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         ImGui::SameLine();
         ImGui::BeginDisabled(sel.nDone == 0);
         if (ImGui::Button("Save all sheets")) {
-            const std::string base = timestampedName("imagewriter-", "");
+            const std::string base =
+                uniqueStem(host.saveDir, "imagewriter-", "-p01.png");
             size_t ok = 0;
             std::string err;
             for (size_t i = 0; i < sel.nDone; ++i) {
@@ -757,7 +783,8 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
             } else {
                 const std::string path =
                     (fs::path(host.saveDir) /
-                     timestampedName("imagewriter-", ".pdf")).string();
+                     (uniqueStem(host.saveDir, "imagewriter-", ".pdf") +
+                      ".pdf")).string();
                 std::string err;
                 status_ = writeImageWriterPdf(sheets, path, err)
                         ? "Saved " + std::to_string(sheets.size()) +

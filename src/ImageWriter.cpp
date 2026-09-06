@@ -2479,7 +2479,14 @@ void ImageWriter::pageToRgba(const Page& p, std::vector<uint8_t>& out)
     for (int i = 0; i < 256; ++i)
         indexToRgb(static_cast<uint8_t>(i), lut[i][0], lut[i][1], lut[i][2]);
 
-    for (size_t i = 0, n = p.pix.size(); i < n; ++i) {
+    // Bound by the OUTPUT, not by p.pix: `out` is sized from w*h, and a Page
+    // whose pixel buffer is longer than its declared geometry (a resize that
+    // grew the vector before w/h were updated, a deserialised page) wrote past
+    // the end of `out`. min() keeps both ends honest — a SHORT pix buffer
+    // still stops at its own end and leaves the rest of the page white.
+    const size_t n = std::min(p.pix.size(),
+                              static_cast<size_t>(p.w) * static_cast<size_t>(p.h));
+    for (size_t i = 0; i < n; ++i) {
         const uint8_t* c = lut[p.pix[i]];
         out[i * 4 + 0] = c[0];
         out[i * 4 + 1] = c[1];

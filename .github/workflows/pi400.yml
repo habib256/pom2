@@ -22,6 +22,9 @@
 #  The build happens IN a debian:bookworm container, not on the runner:
 #  Raspberry Pi OS IS bookworm (glibc 2.36), and ubuntu-24.04-arm would stamp
 #  GLIBC_2.39 — the binary would start on no Pi. The floor is verified twice.
+#  The image is pinned by dated tag AND digest, the same line release.yml uses:
+#  "debian:bookworm" is rebuilt on every point release, so an unpinned tag
+#  makes two runs of the same commit produce different binaries.
 #
 #  Fetch the artifact:
 #      gh run download <run-id> -n POM2-pi400-aarch64
@@ -73,7 +76,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/work -w /work \
             -e POM2_MCPU -e POM2_VERSION \
-            debian:bookworm \
+            debian:bookworm-20260824@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443 \
             bash /work/packaging/raspberry/build_in_bookworm_pi.sh
 
       - name: Verify both packages (runtime, arch, glibc floor, GLES-only, ROMs)

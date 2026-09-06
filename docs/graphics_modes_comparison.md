@@ -412,7 +412,7 @@ HGR byte is set (74LS74 flip-flop in the hardware).
 | MAME | Static lookup-symmetry in the 128 LUT. |
 | AppleWin | Implicit transient in the IIR filter + phase offset. |
 | OpenEmulator | Bitstream timing (the sample arrives 1/14 MHz later). |
-| **POM2** | **Pre-stream** in `buildHgrWordRow` ([`src/Apple2VideoDecode.h:91`](../src/Apple2VideoDecode.h)): if MSB=1, shift word by 1 + carry from the last bit of the previous word. Consistent with MAME, applicable to all 4 color modes via the common stream. |
+| **POM2** | **Pre-stream** in `buildHgrWordRow` ([`src/Apple2VideoDecode.h:102`](../src/Apple2VideoDecode.h)): if MSB=1, shift word by 1 + carry from the last bit of the previous word. Consistent with MAME, applicable to all 4 color modes via the common stream. |
 
 ### Measured performance (single x86-64 core, Release -O3)
 

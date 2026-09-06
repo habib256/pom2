@@ -78,6 +78,10 @@ std::string humanSize(std::uint64_t n)
 
 RomStatus_ImGui::~RomStatus_ImGui()
 {
+    // Ask first, then join. A bare join here made quitting POM2 block behind
+    // whatever curl was doing — up to 90 seconds per remaining catalog entry,
+    // with the window already gone and nothing on screen to explain it.
+    fetchCancel_.store(true);
     if (fetchThread_.joinable()) fetchThread_.join();
 }
 
@@ -92,6 +96,7 @@ void RomStatus_ImGui::startRetroBiosFetch()
     fetchDone_.store(0);
     fetchTotal_.store(0);
     fetchJoin_.store(false);
+    fetchCancel_.store(false);
     {
         std::lock_guard<std::mutex> lk(fetchMutex_);
         fetchLine_    = "Starting RetroBIOS download…";
@@ -100,22 +105,35 @@ void RomStatus_ImGui::startRetroBiosFetch()
     fetchRunning_.store(true);
     const fs::path dest = pom2::writableRomsDir();
     fetchThread_ = pom2::guardedThread("RomFetch", [this, dest] {
+        // RAII, not a pair of stores at the end of the body: `fetchRunning_`
+        // gates the Download button, and anything that threw on the way out
+        // (readAll's SIZE_MAX resize did exactly this) left it true forever —
+        // the button stayed disabled for the rest of the session and no
+        // message anywhere said why. ThreadGuard catches the exception; this
+        // makes sure the flag comes down with it.
+        struct DoneGuard {
+            RomStatus_ImGui* p;
+            ~DoneGuard()
+            {
+                p->fetchRunning_.store(false);
+                p->fetchJoin_.store(true);
+            }
+        } done{this};
         const auto result = pom2::fetchMissingRoms(
             dest,
-            [this](int done, int total, const char* label) {
-                fetchDone_.store(done);
+            [this](int doneN, int total, const char* label) {
+                fetchDone_.store(doneN);
                 fetchTotal_.store(total);
                 std::lock_guard<std::mutex> lk(fetchMutex_);
                 if (label && *label)
                     fetchLine_ = std::string(label);
-            });
+            },
+            [this] { return fetchCancel_.load(); });
         {
             std::lock_guard<std::mutex> lk(fetchMutex_);
             fetchSummary_ = result.summary;
             fetchLine_.clear();
         }
-        fetchRunning_.store(false);
-        fetchJoin_.store(true);
     });
 }
 

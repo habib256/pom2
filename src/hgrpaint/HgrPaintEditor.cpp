@@ -233,16 +233,40 @@ void hgrpaint::HgrPaintEditor::renderShadow(uint32_t* out, bool mono)
 // Painting primitives (operate on the shadow, emit writes, record undo)
 // ─────────────────────────────────────────────────────────────
 
+// beginStroke/commitStroke NEST. A plain bool here was a real defect: an
+// operation started inside an open stroke (Ctrl+C/X during a shape drag, an
+// undo replay fired mid-stroke) cleared the outer stroke's undo ops, and its
+// commit flipped the single `strokeBatching` flag off — so the OUTER commit
+// skipped its endBatch() and left PaintCardBatcher stuck at depth 1: every
+// later poke queued into a batch nobody ever committed, the canvas diverging
+// from the Apple screen for the rest of the session.
+//
+// The counter makes the pairing exact: only the outermost bracket starts a new
+// undo step and pushes it, and each level remembers (in `strokeBatchMask_`)
+// whether IT opened a host batch, so each begin/end pair matches its own.
 void hgrpaint::HgrPaintEditor::beginStroke(bool batch)
 {
-    stroke.clear();
-    strokeBatching = batch && host;
-    if (strokeBatching) host->beginBatch();
+    const bool doBatch = batch && host;
+    if (strokeNest_ == 0) stroke.clear();
+    if (strokeNest_ < 31) {
+        if (doBatch) strokeBatchMask_ |=  (1u << strokeNest_);
+        else         strokeBatchMask_ &= ~(1u << strokeNest_);
+    }
+    ++strokeNest_;
+    if (doBatch) host->beginBatch();
 }
 
 void hgrpaint::HgrPaintEditor::commitStroke()
 {
-    if (strokeBatching) { host->endBatch(); strokeBatching = false; }
+    // Unbalanced commit (the Select-rectangle drag ends with one and never
+    // opened a stroke): nothing to close, and nothing to push.
+    if (strokeNest_ == 0) return;
+    --strokeNest_;
+    if (strokeNest_ < 31 && (strokeBatchMask_ & (1u << strokeNest_))) {
+        strokeBatchMask_ &= ~(1u << strokeNest_);
+        if (host) host->endBatch();
+    }
+    if (strokeNest_ > 0) return;   // inner bracket: keep accumulating into the outer step
     if (stroke.empty()) return;
     undo.push_back(std::move(stroke));
     stroke.clear();
@@ -783,7 +807,9 @@ void hgrpaint::HgrPaintEditor::renderMinimap()
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(mmMin, mmMax, IM_COL32(0, 0, 0, 255));
-    dl->AddImage(host->textureToImTexture(texture), mmMin, mmMax);
+    // A hostless editor (headless/test embedding) has no texture to show; the
+    // black rect above is then the whole thumbnail rather than a null deref.
+    if (host) dl->AddImage(host->textureToImTexture(texture), mmMin, mmMax);
     dl->AddRect(mmMin, mmMax, IM_COL32(160, 160, 160, 255));
 
     // Visible viewport box (logical coords) → thumbnail.
@@ -979,9 +1005,15 @@ void hgrpaint::HgrPaintEditor::renderToolPanel()
                      "MSB: clear\0MSB: set\0MSB: toggle\0");
     }
     if (tool == Tool::Select) {
-        if (ImGui::Button("Copy")) copySelection(false);
+        if (ImGui::Button("Copy")) {
+            if (dragging) { commitStroke(); dragging = false; }   // flush an open stroke
+            copySelection(false);
+        }
         ImGui::SameLine();
-        if (ImGui::Button("Cut"))  copySelection(true);
+        if (ImGui::Button("Cut")) {
+            if (dragging) { commitStroke(); dragging = false; }
+            copySelection(true);
+        }
         if (ImGui::Button("Paste") && clipUsableHere()) {
             if (dragging) { commitStroke(); dragging = false; }   // flush an open stroke
             pasting = true; pasteX = std::min(selX0, selX1); pasteY = std::min(selY0, selY1);
@@ -1331,11 +1363,12 @@ void hgrpaint::HgrPaintEditor::renderCanvas(const std::vector<uint8_t>& memory,
     // hits the selected page regardless of which phase is on screen).
     const bool showSibling = flipShow && flipTex &&
         (static_cast<int>(ImGui::GetTime() * flipHz) & 1);
-    dl->AddImage(host->textureToImTexture(showSibling ? flipTex : texture), origin,
-                 ImVec2(origin.x + imgSize.x, origin.y + imgSize.y));
+    if (host)
+        dl->AddImage(host->textureToImTexture(showSibling ? flipTex : texture), origin,
+                     ImVec2(origin.x + imgSize.x, origin.y + imgSize.y));
     // Ghost of the sibling page (onion-skin style) — only when not flipping,
     // a flicker + ghost together would be unreadable.
-    if (ghostOther && !flipShow && flipTex)
+    if (ghostOther && !flipShow && flipTex && host)
         dl->AddImage(host->textureToImTexture(flipTex), origin,
                      ImVec2(origin.x + imgSize.x, origin.y + imgSize.y),
                      ImVec2(0, 0), ImVec2(1, 1),
@@ -2155,6 +2188,14 @@ bool hgrpaint::HgrPaintEditor::performFileAction(bool forSave, int saveKind,
             }
             host->endBatch();
             std::snprintf(filePath, sizeof(filePath), "%s", fullPath.c_str());
+            // The page just became a different picture, so the recorded edits
+            // no longer describe it: every ByteEdit carries an `old` value
+            // from the REPLACED image, and one Ctrl+Z would have written those
+            // stale bytes over the file the user just loaded. The load itself
+            // is not undoable (it is not recorded as a stroke), so the honest
+            // state is an empty history.
+            undo.clear();
+            redo.clear();
         }
         if (ok) {
             char addr[8];
@@ -2196,18 +2237,41 @@ bool hgrpaint::HgrPaintEditor::performFileAction(bool forSave, int saveKind,
         // lo-res pair too, and its 0x800 shadow ends well before $1FF8, so
         // the old `!grMode && !dhgrMode` spelling overran it by 8 bytes AND
         // stamped "POM1HGR" into live RAM at $3F8/$7F8 on every DLGR save.
+        //
+        // The tag has to be in RAM before the host reads the page back, so it
+        // is poked first — but it is a real edit of the user's page, and it
+        // used to be made behind the undo history's back AND kept even when
+        // the save then failed (a full disk left "POM1HGR" welded into the
+        // drawing with no way to take it out). Remember the bytes it
+        // displaces: a failed save puts them back, a successful one records
+        // the tag as an ordinary one-step edit the user can undo.
+        std::vector<ByteEdit> tagEdits;
         if (!sixteenMode()) {
             static const char kTag[8] = { 'P','O','M','1','H','G','R','\0' };
             for (int i = 0; i < 8; ++i) {
                 const int off = 0x1FF8 + i;
+                const uint8_t old = shadow[off];
                 shadow[off] = static_cast<uint8_t>(kTag[i]);
-                if (host) host->pokeByte(static_cast<uint16_t>(baseAddr() + off),
-                                         static_cast<uint8_t>(kTag[i]));
+                const uint32_t addr = addrOfShadowOff(off);
+                if (old != shadow[off]) tagEdits.push_back({addr, old, shadow[off]});
+                hostPoke(addr, shadow[off]);
             }
         }
         ok = host && (dhgrMode ? host->saveDhgrImage(outPath, baseAddr(), err)
                     : dlgrMode ? host->saveDlgrImage(outPath, baseAddr(), err)
                     : host->saveImage(outPath, baseAddr(), pageBytes(), err));
+        if (!tagEdits.empty()) {
+            if (ok) {
+                undo.push_back(tagEdits);
+                if (undo.size() > 64) undo.erase(undo.begin());
+                redo.clear();
+            } else {
+                for (const auto& e : tagEdits) {          // roll the tag back
+                    shadow[shadowOffOfAddr(e.addr)] = e.oldVal;
+                    hostPoke(e.addr, e.oldVal);
+                }
+            }
+        }
         const std::string outName = fs::path(outPath).filename().string();
         status = ok ? (dhgrMode ? ("Saved 16 KB DHGR (A2FC, aux+main): " + outName)
                      : dlgrMode ? ("Saved 2 KB DLGR pair (aux+main): " + outName)
@@ -2316,13 +2380,63 @@ void hgrpaint::HgrPaintEditor::renderFileBrowser()
         ImGui::SameLine();
         if (ImGui::Button("Save", ImVec2(70, 0)) && browserSaveName[0]) {
             const std::string full = (fs::path(browserDir) / browserSaveName).string();
-            if (performFileAction(true, browserSaveKind, false, full))
+            // Ask before destroying somebody's picture. A raw page save may
+            // retarget the basename to "NAME#06xxxx", so the file the user
+            // would lose is the one performFileAction will actually write —
+            // resolve the same name here rather than testing what was typed.
+            std::error_code ec;
+            if (fs::exists(resolvedSaveTarget(full), ec)) {
+                browserOverwritePath = full;
+                ImGui::OpenPopup("Overwrite?##fboverwrite");
+            } else if (performFileAction(true, browserSaveKind, false, full)) {
                 ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::SameLine();
     }
-    if (ImGui::Button("Cancel", ImVec2(70, 0))) ImGui::CloseCurrentPopup();
+    const bool cancel = ImGui::Button("Cancel", ImVec2(70, 0));
+
+    // Overwrite confirmation (stacked on the browser modal, so a "No" comes
+    // back to the file list with the name still typed in). Closing the BROWSER
+    // has to happen after EndPopup() below — inside the child popup,
+    // CloseCurrentPopup() would only close the child.
+    bool closeBrowserAfterOverwrite = false;
+    if (ImGui::BeginPopupModal("Overwrite?##fboverwrite", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("This file already exists:");
+        ImGui::TextDisabled("%s",
+            fs::path(resolvedSaveTarget(browserOverwritePath)).filename().string().c_str());
+        ImGui::TextUnformatted("Replace its contents?");
+        ImGui::Separator();
+        if (ImGui::Button("Overwrite", ImVec2(100, 0))) {
+            const bool ok = performFileAction(true, browserSaveKind, false,
+                                              browserOverwritePath);
+            browserOverwritePath.clear();
+            ImGui::CloseCurrentPopup();
+            if (ok) closeBrowserAfterOverwrite = true;   // closed below, outside this popup
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            browserOverwritePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (closeBrowserAfterOverwrite || cancel) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+}
+
+// The path a Save will really write: the raw-page kind appends the SD-CARD-OS
+// "#06AAAA" tag to an untagged basename (performFileAction does the same), so
+// an existence check on the typed name alone would miss the real target.
+std::string hgrpaint::HgrPaintEditor::resolvedSaveTarget(const std::string& full) const
+{
+    namespace fs = std::filesystem;
+    if (browserSaveKind != 0 || full.empty()) return full;
+    fs::path outP(full);
+    if (outP.filename().string().find('#') != std::string::npos) return full;
+    return (outP.parent_path() /
+            sdCardDefaultName(outP.filename().string(), baseAddr())).string();
 }
 
 void hgrpaint::HgrPaintEditor::renderFileRow()
@@ -2415,8 +2529,16 @@ void hgrpaint::HgrPaintEditor::handleShortcuts()
         // Ctrl+Z = undo, Ctrl+Y or Ctrl+Shift+Z = redo, Ctrl+C/X/V = clipboard.
         if (pressed(ImGuiKey_Z)) { if (io.KeyShift) doRedo(); else doUndo(); }
         if (pressed(ImGuiKey_Y)) doRedo();
-        if (pressed(ImGuiKey_C)) copySelection(false);
-        if (pressed(ImGuiKey_X)) copySelection(true);
+        // Same flush as Ctrl+V below: a copy/cut fired mid-drag would nest a
+        // second stroke inside the open one (Cut opens its own batch).
+        if (pressed(ImGuiKey_C)) {
+            if (dragging) { commitStroke(); dragging = false; }
+            copySelection(false);
+        }
+        if (pressed(ImGuiKey_X)) {
+            if (dragging) { commitStroke(); dragging = false; }
+            copySelection(true);
+        }
         if (pressed(ImGuiKey_V) && clipUsableHere()) {
             if (dragging) { commitStroke(); dragging = false; }   // flush an open stroke
             pasting = true;

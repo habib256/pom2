@@ -132,6 +132,37 @@ void normalisePgm(std::vector<uint8_t>& gray, long maxval)
         v = static_cast<uint8_t>(v * 255 / maxval);
 }
 
+/// Remove `pom2ps_*` leftovers from an earlier RUN.
+///
+/// Every job stages a `.ps` and a `.pgm` under the scratch directory and the
+/// Scrub guard below removes both on every exit path — but only on an exit.
+/// A crash, a kill, or a power cut during a render leaves the pair behind,
+/// and nothing ever collected them: the directory grew by up to a page raster
+/// (megabytes) per lost job, for the life of the install. Swept once per
+/// process, and only for files older than an hour so a CONCURRENT POM2's
+/// in-flight job is never pulled out from under it.
+void pruneStaleScratch(const std::string& dir)
+{
+    namespace fs = std::filesystem;
+    static bool swept = false;
+    if (swept) return;
+    swept = true;
+
+    std::error_code ec;
+    const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(1);
+    fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return;
+    for (const auto& e : it) {
+        std::error_code entryEc;
+        if (!e.is_regular_file(entryEc) || entryEc) continue;
+        const std::string name = e.path().filename().string();
+        if (name.rfind("pom2ps_", 0) != 0) continue;
+        const auto when = fs::last_write_time(e.path(), entryEc);
+        if (entryEc || when > cutoff) continue;
+        fs::remove(e.path(), entryEc);
+    }
+}
+
 std::string uniqueStem(const std::string& dir, const void* salt)
 {
     // No Date/random needed: the address of the caller's request plus a
@@ -146,6 +177,17 @@ std::string uniqueStem(const std::string& dir, const void* salt)
 }
 
 } // namespace
+
+std::string escapeGsOutputFile(const std::string& path)
+{
+    std::string out;
+    out.reserve(path.size() + 4);
+    for (char c : path) {
+        out.push_back(c);
+        if (c == '%') out.push_back('%');
+    }
+    return out;
+}
 
 std::string findPostScriptInterpreter()
 {
@@ -243,11 +285,20 @@ bool renderPostScript(const std::string& interpreterPath,
 
     std::error_code ec;
     std::filesystem::create_directories(scratchDir, ec);
+    pruneStaleScratch(scratchDir);
     const std::string stem = uniqueStem(scratchDir, &req);
     const std::string psPath  = stem + ".ps";
     const std::string pgmPath = stem + ".pgm";
 
     // Everything below must clean up both files on every exit path.
+    //
+    // ORDERING, and it matters: `scrub` is declared HERE, before the
+    // ChildProcess below, so it is destroyed LAST — the interpreter is
+    // reaped (or killed by ChildProcess's own destructor) before its input
+    // and its raster are unlinked. Declaring the child first would invert
+    // that and pull the `.ps` out from under a still-running gs, and the
+    // `.pgm` out from under its final write. Keep this declaration above the
+    // `ChildProcess gs`.
     struct Scrub {
         const std::string &a, &b;
         ~Scrub() {
@@ -275,7 +326,7 @@ bool renderPostScript(const std::string& interpreterPath,
         "-sDEVICE=pgmraw",
         "-r" + std::to_string(req.dpi),
         "-g" + std::to_string(wpx) + "x" + std::to_string(hpx),
-        "-sOutputFile=" + pgmPath,
+        "-sOutputFile=" + escapeGsOutputFile(pgmPath),
         psPath,
     };
 

@@ -876,6 +876,7 @@ void MainWindow::kioskLoadRomDirs()
 {
     namespace fs = std::filesystem;
     kioskRomDirs_.clear();
+    if (!settings) return;
     std::ifstream f(kioskRomDirsFile(*settings));
     if (!f) return;
     std::string line;
@@ -888,6 +889,7 @@ void MainWindow::kioskLoadRomDirs()
 
 void MainWindow::kioskSaveRomDirs()
 {
+    if (!settings) return;
     std::ofstream f(kioskRomDirsFile(*settings), std::ios::trunc);
     if (!f) return;
     for (const auto& d : kioskRomDirs_) f << d << '\n';
@@ -963,12 +965,15 @@ void MainWindow::setKioskModeRuntime(bool k)
         // GUI session. Without it there was nothing to restore from after a
         // quit-from-kiosk, and a --kiosk launch toggling to the GUI got a
         // hard-coded default size instead of the user's real window.
-        if (!settingsReadOnly()) {
+        // `settings` is optional (a MainWindow built without one, as the
+        // headless/test paths do): settingsReadOnly() only reports the kiosk
+        // flags, so it is no guard against a null here.
+        if (settings && !settingsReadOnly()) {
             saveWindowGeometryToSettings();
             settings->save();
         }
         kiosk_ = true;
-        settings->setReadOnly(true);   // covers every UI save site
+        if (settings) settings->setReadOnly(true);   // covers every UI save site
         pom2::log().info("Kiosk", "entered (full-screen, chrome-free, "
                                   "settings read-only)");
     } else {
@@ -1048,7 +1053,7 @@ void MainWindow::setKioskModeRuntime(bool k)
         // A session LAUNCHED with --kiosk stays read-only for life (the
         // documented "can't disturb your desktop setup" promise); a GUI
         // session that merely visited kiosk resumes writing.
-        settings->setReadOnly(launchedInKiosk_);
+        if (settings) settings->setReadOnly(launchedInKiosk_);
         pom2::log().info("Kiosk", "left (windowed, full UI)");
     }
 }

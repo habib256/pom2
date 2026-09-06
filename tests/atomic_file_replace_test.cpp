@@ -37,7 +37,9 @@
 #include <iterator>
 #include <cstdint>
 #include <cstdio>
+#include <atomic>
 #include <filesystem>
+#include <thread>
 #include <fstream>
 #include <string>
 #include <system_error>
@@ -224,6 +226,81 @@ int main()
     }
 #endif
 
+
+    // ── The temp name is unique per process AND per call ────────────────
+    // It used to be derived from the target alone (`<target>.tmp` /
+    // `<target>.pom2tmp`), i.e. the name every POM2 on the machine picks. Two
+    // instances sharing one $HOME — a second window, a kiosk session, a
+    // headless run — both opened it with trunc, interleaved their writes, and
+    // whichever renamed last published a file made of both.
+    // (Bug hunt 2026-09-06 #H7.)
+    {
+        const fs::path t = dir / "unique.bin";
+        assert(pom2::tempSiblingPath(t) != pom2::tempSiblingPath(t));
+        assert(pom2::tempSiblingPath(t).string().rfind(t.string() + ".", 0) == 0);
+
+        // ...and concurrent writers therefore never blend. Each thread writes
+        // a payload of one repeated byte; whoever wins, the file must be one
+        // of them in full and never a mixture.
+        const fs::path shared = dir / "shared.bin";
+        writeFile(shared, pattern(4096, 0x00));
+        std::atomic<int> failures{0};
+        auto writer = [&](uint8_t fill) {
+            const std::vector<uint8_t> body(64 * 1024, fill);
+            for (int i = 0; i < 40; ++i) {
+                std::error_code wec;
+                if (!pom2::writeFileAtomic(shared, body.data(), body.size(), wec))
+                    ++failures;
+            }
+        };
+        std::thread a(writer, 0xA1);
+        std::thread b(writer, 0xB2);
+        a.join();
+        b.join();
+        assert(failures.load() == 0);
+        const auto got = readFile(shared);
+        assert(got.size() == 64 * 1024);
+        const uint8_t first = got[0];
+        assert(first == 0xA1 || first == 0xB2);
+        for (uint8_t byte : got)
+            assert(byte == first && "two writers blended into one file");
+
+        // No temp debris left by either of them.
+        int debris = 0;
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            const std::string nm = e.path().filename().string();
+            if (nm.size() > 8 && nm.compare(nm.size() - 8, 8, ".pom2tmp") == 0)
+                ++debris;
+        }
+        assert(debris == 0);
+    }
+
+    // ── A symlinked TARGET is followed, not replaced ────────────────────
+    // Renaming over `~/.config/POM2/state.cfg` when it is a symlink into a
+    // dotfiles repo turned the link into a regular file: the user's setup was
+    // quietly dismantled and their repo stopped tracking the file. Nobody
+    // symlinks a path in order to have it replaced. (Bug hunt 2026-09-06 #H24.)
+#ifndef _WIN32
+    {
+        const fs::path real = dir / "real_store.cfg";
+        const fs::path link = dir / "link_store.cfg";
+        writeFile(real, pattern(64, 0x11));
+        std::error_code lec;
+        fs::remove(link, lec);
+        fs::create_symlink(real, link, lec);
+        if (!lec) {
+            const auto body = pattern(128, 0x99);
+            ec.clear();
+            assert(pom2::writeFileAtomic(link, body.data(), body.size(), ec));
+            assert(fs::is_symlink(fs::symlink_status(link)) &&
+                   "the symlink was replaced instead of followed");
+            assert(readFile(real) == body &&
+                   "the write did not reach the link's target");
+        } else {
+            std::printf("  (skipped: this filesystem has no symlinks)\n");
+        }
+    }
+#endif
 
     fs::remove_all(dir, ec);
     std::printf("atomic_file_replace: all assertions passed\n");

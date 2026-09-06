@@ -141,7 +141,7 @@ int main(int argc, char** argv)
                     iie ? "[iie]" : "",
                     iie ? "apple2e.rom" : "apple2p.rom",
                     iie ? "cpm60k.dsk" : "cpm22.dsk");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

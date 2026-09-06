@@ -230,6 +230,10 @@ LeChatMauve_ImGui::FrameResult LeChatMauve_ImGui::render(
     using Mode = LeChatMauveCard::RenderMode;
     const Mode modes[] = { Mode::BW560, Mode::Mixed, Mode::Chunky160, Mode::COL140 };
     for (Mode m : modes) {
+        // PushID(mode): the label carries the "* " selection marker, so each
+        // radio's ImGui ID changed as the selection moved between them — the
+        // widget the user was pressing became a different widget mid-click.
+        ImGui::PushID(static_cast<int>(m));
         const bool active = (snap.mode == m);
         char label[32];
         std::snprintf(label, sizeof(label), "%s%s",
@@ -238,6 +242,7 @@ LeChatMauve_ImGui::FrameResult LeChatMauve_ImGui::render(
             r.requestOverride = true;
             r.overrideTo      = m;
         }
+        ImGui::PopID();
     }
 
     ImGui::Separator();

@@ -280,6 +280,12 @@ bool NtscPostProcessor::initialize()
     }
 #endif
 
+    {
+        GLint mts = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &mts);
+        maxTexSize_ = (mts > 0) ? static_cast<int>(mts) : 2048;
+    }
+
     program = compileShaderProgram(kVertexShader, kFragmentShader, &errorMsg);
     if (!program) return false;
 
@@ -315,6 +321,12 @@ bool NtscPostProcessor::initialize()
 
 bool NtscPostProcessor::createTextures(int sw, int sh)
 {
+    // Clamp to what this GL can allocate: past GL_MAX_TEXTURE_SIZE the
+    // allocation fails with GL_INVALID_VALUE, the FBO goes incomplete and the
+    // demod silently stops (the signal is 560 wide today, so this is a guard,
+    // not a workaround).
+    sw = clampTexDim(sw);
+    sh = clampTexDim(sh);
     signalW = sw;
     signalH = sh;
     outW    = sw;          // keep horizontal sample rate
@@ -379,30 +391,58 @@ unsigned int NtscPostProcessor::process(const uint8_t* signal,
     // can allocate the FBOs, so the first call sizes everything up.
     if (signalTex == 0) {
         if (!createTextures(sw, sh)) {
+            pom2::log().warn("NTSC",
+                "cannot allocate the " + std::to_string(sw) + "x" +
+                std::to_string(sh) + " demod target (" + errorMsg +
+                ") — composite shader disabled");
             ready = false;
             return 0;
         }
-    } else if (sw != signalW || sh != signalH) {
+    } else if (clampTexDim(sw) != signalW || clampTexDim(sh) != signalH) {
         // Reallocate on dimension change (e.g. someone wired this up
         // for a hypothetical 80-col-only Apple II). Cheap; not on the
-        // per-frame path in practice.
+        // per-frame path in practice. Clamped and re-checked for the same
+        // reason createTextures clamps: a resize past the driver's limit
+        // leaves the attachment invalid, and demodulating into a broken FBO
+        // shows as a black screen with nothing in the log.
+        signalW = clampTexDim(sw);
+        signalH = clampTexDim(sh);
+        outW = signalW;
+        outH = signalH;
         glBindTexture(GL_TEXTURE_2D, signalTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, sw, sh, 0,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, signalW, signalH, 0,
                      GL_RED, GL_UNSIGNED_BYTE, nullptr);
-        signalW = sw;
-        signalH = sh;
-        outW = sw;
-        outH = sh;
         glBindTexture(GL_TEXTURE_2D, outputTex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, outW, outH, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        const bool complete =
+            glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (!complete) {
+            errorMsg = "FBO incomplete after resize";
+            pom2::log().warn("NTSC",
+                "resize to " + std::to_string(outW) + "x" + std::to_string(outH) +
+                " left the FBO incomplete (GL_MAX_TEXTURE_SIZE " +
+                std::to_string(maxTexSize_) + ") — composite shader disabled");
+            ready = false;
+            return 0;
+        }
     }
+    // The signal rows the shader samples are the ones the texture holds.
+    sw = signalW;
+    sh = signalH;
 
-    // Upload the new signal frame.
+    // Upload the new signal frame. GL_UNPACK_ALIGNMENT is context-global and
+    // ImGui's own uploads assume the default 4 — leaving it at 1 made every
+    // later texture upload in the frame use a stride this pass chose.
+    GLint prevAlign = 4;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevAlign);
     glBindTexture(GL_TEXTURE_2D, signalTex);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sw, sh,
                     GL_RED, GL_UNSIGNED_BYTE, signal);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, prevAlign);
 
     // Save current FBO + viewport + enables so we don't disturb ImGui.
     int prevFbo = 0;

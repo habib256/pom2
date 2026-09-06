@@ -40,10 +40,11 @@ extern "C" unsigned char* stbi_zlib_compress(unsigned char* data,
                                              int data_len, int* out_len,
                                              int quality);
 
+#include "AtomicFileReplace.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 
 namespace pom2 {
 
@@ -182,15 +183,15 @@ bool writeImageWriterPdf(const std::vector<const ImageWriter::Page*>& pages,
     std::error_code ec;
     const fs::path out(path);
     if (out.has_parent_path()) fs::create_directories(out.parent_path(), ec);
-    std::ofstream f(out, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        err = "cannot open " + out.string() + " for writing";
-        return false;
-    }
-    f.write(pdf.data(), static_cast<std::streamsize>(pdf.size()));
-    f.close();
-    if (!f) {
-        err = "short write to " + out.string();
+    // The durable temp + rename commit every other write-back in POM2 uses,
+    // rather than a bare ofstream(trunc). A plain truncating open destroys the
+    // PREVIOUS export the moment it succeeds, so an ENOSPC part-way through
+    // left neither file — and it follows a symlink at the destination, and
+    // publishes bytes still in page cache. The whole PDF is already assembled
+    // in `pdf`, so there is nothing to stream and no reason not to.
+    if (!pom2::writeFileAtomic(out, pdf.data(), pdf.size(), ec)) {
+        err = "cannot write " + out.string() +
+              (ec ? (": " + ec.message()) : std::string());
         return false;
     }
     return true;

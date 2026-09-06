@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
 
     if (romPath.empty() || promPath.empty() || masterPath.empty()) {
         std::printf("dos33_save_smoke SKIP: missing ROM or disk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     fs::path scratch = fs::temp_directory_path() /

@@ -225,7 +225,7 @@ int main()
         "../../disks_5.4/chatmauve/purplesoft-revb-oct83-demos.dsk" });
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("purplesoft_eve_screens SKIP: missing apple2e.rom / disk2.rom / demos disk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     const bool record = std::getenv("POM2_GOLDEN_RECORD") != nullptr;
 

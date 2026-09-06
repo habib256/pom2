@@ -94,7 +94,11 @@ bool pathIsOurs(const uint8_t* p, std::size_t n)
     std::string s;
     for (std::size_t i = 0; i < n && p[i]; ++i) s.push_back(static_cast<char>(p[i]));
     while (!s.empty() && s.front() == '/') s.erase(s.begin());
-    return s == kFileName || s == "SUBDIR" || s.empty();
+    // The two extra names exist for the cache-collision case below: they
+    // FOLD to the same flat filename ('/' → '_'), which is exactly what the
+    // old cache key could not tell apart.
+    return s == kFileName || s == "SUB/GAME.PO" || s == "SUB_GAME.PO" ||
+           s == "SUBDIR" || s.empty();
 }
 
 struct Stub {
@@ -474,6 +478,39 @@ int main()
         const auto again = pom2::tnfsFetchImage(url, cache.string());
         check(again.ok && again.fromCache, "the second fetch comes from the cache");
         check(again.localPath == got.localPath, "and names the same file");
+
+        stub.shutdownStub();
+        fs::remove_all(cache, ec);
+    }
+
+    // ── Two URLs that FOLD to one filename must not share a cache file ──
+    // The key hashed only above 120 characters; below that the folding
+    // ('/' → '_') made `SUB/GAME.PO` and `SUB_GAME.PO` the same name, and the
+    // cache check is existence-only and opens no socket — so the second URL
+    // was silently served the FIRST one's bytes, offline and repeatably.
+    // (Bug hunt 2026-09-06 #H5.)
+    {
+        TcpStub stub;
+        if (!stub.start()) { std::printf("FAIL: cannot start fetch stub\n"); return 1; }
+        const auto cache = fs::temp_directory_path() / "pom2_tnfs_collide_cache";
+        std::error_code ec;
+        fs::remove_all(cache, ec);
+        const std::string base = "tnfs://127.0.0.1:" + std::to_string(stub.port);
+
+        const auto a = pom2::tnfsFetchImage(base + "/SUB/GAME.PO", cache.string());
+        if (!a.ok) std::printf("      a error: %s\n", a.error.c_str());
+        check(a.ok && !a.fromCache, "the first colliding path fetches");
+
+        // The stub serves ONE connection, so this second call cannot reach a
+        // server — which is the point. Before the fix it did not need to: the
+        // folded key was already on disk, the existence-only check hit it, and
+        // the caller was handed the OTHER URL's bytes with no socket opened
+        // at all. What must not happen is a cache HIT.
+        const auto b = pom2::tnfsFetchImage(base + "/SUB_GAME.PO", cache.string());
+        check(!b.fromCache,
+              "a different URL must not be served from this one's cache file");
+        check(b.localPath != a.localPath,
+              "two distinct URLs keep two distinct cache files");
 
         stub.shutdownStub();
         fs::remove_all(cache, ec);

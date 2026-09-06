@@ -127,6 +127,10 @@ private:
     std::thread        fetchThread_;
     std::atomic<bool>  fetchRunning_{false};
     std::atomic<bool>  fetchJoin_{false};
+    /// Raised to abandon a run in progress. The destructor sets it before
+    /// joining, so quitting mid-download costs one curl poll interval instead
+    /// of waiting out its 90-second `--max-time`.
+    std::atomic<bool>  fetchCancel_{false};
     std::atomic<int>   fetchDone_{0};
     std::atomic<int>   fetchTotal_{0};
     std::mutex         fetchMutex_;

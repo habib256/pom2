@@ -132,16 +132,22 @@ void testMemoryTrailerCarriesIwm()
     // Backward compatibility: lop the length-prefixed trailer off
     // entirely, computing its true size from the sections a blob of this
     // configuration carries — IWM (4-byte length + payload), profile
-    // (4 + 0, no //c profile here) and the paging/IOU flags (4 + 7:
-    // intC8Rom, ioudis, vblIrqMask, vblIrqPending, then AN0/AN1/AN2, which
-    // joined that section on 2026-09-06 — AN2 selects the live 4 KB half of
-    // an 8 KB international char ROM).
+    // (4 + 0, no //c profile here), the paging/IOU flags (4 + 9), the
+    // No-Slot Clock (4 + 0, none wired here) and the two on-board Sony 3.5"
+    // mechanisms (4 + 0 each, no SmartPortHub here).
+    //
+    // The IOU section is 9 bytes since 2026-09-06: intC8Rom, ioudis,
+    // vblIrqMask, vblIrqPending, then AN0/AN1/AN2 (AN2 selects the live 4 KB
+    // half of an 8 KB international char ROM), then vblWasActive (the VBL
+    // edge detector) and iicCardWindow_ (the //c $C800 window latch).
+    //
     // A fixed "-8" bit-rotted the moment a third section was added: it
     // only removed the newest section and the "old blob" kept restoring
-    // the IWM.
+    // the IWM. Keep this sum in step with Memory::appendSnapshotState.
     std::vector<uint8_t> iwmBlob;
     iwm.appendSnapshotState(iwmBlob);
-    const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 7);
+    const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 9)
+                            + (4 + 0) + (4 + 0) + (4 + 0);
     pom2::IWMDevice iwm3;
     Memory mem3;
     mem3.setIWM(&iwm3);

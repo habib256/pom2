@@ -27,11 +27,42 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 #   POM2_BUNDLE_DIRS   folders copied whole            ("roms" "fonts")
 #   POM2_BUNDLE_FILES  "<src>|<dst>" pairs             ("pic/x.jpg|pic/x.jpg")
 #   POM2_BUNDLE_WASM   browser-only folders            ("floppyemu")
+#   POM2_BUNDLE_DENY   paths that may never be packaged ("disks_5.4" "hdv")
+#   POM2_BUNDLE_DENYGLOB  name patterns, case-insensitive ("*.zip")
 set(POM2_BUNDLE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/bundle.manifest")
 set(POM2_BUNDLE_DIRS  "")
 set(POM2_BUNDLE_FILES "")
 set(POM2_BUNDLE_WASM  "")
+set(POM2_BUNDLE_DENY  "")
 set(POM2_BUNDLE_DENYGLOB "")
+
+# A denyglob is matched case-insensitively against files AND directories. CMake
+# PATTERN is a case-sensitive name glob, so translate to REGEX: every letter
+# becomes a [aA] class, `.` is escaped and `*` becomes `.*`. install(DIRECTORY)
+# applies an EXCLUDE'd REGEX to directories as well as files, which is the
+# other half of the fix — a `foo.ZIP/` folder used to walk straight through.
+function(pom2_glob_to_ci_regex glob out_var)
+    set(_re "")
+    string(LENGTH "${glob}" _len)
+    math(EXPR _last "${_len} - 1")
+    foreach(_i RANGE 0 ${_last})
+        string(SUBSTRING "${glob}" ${_i} 1 _c)
+        if(_c STREQUAL "*")
+            string(APPEND _re ".*")
+        elseif(_c STREQUAL "?")
+            string(APPEND _re ".")
+        elseif(_c MATCHES "^[A-Za-z]$")
+            string(TOLOWER "${_c}" _lo)
+            string(TOUPPER "${_c}" _up)
+            string(APPEND _re "[${_lo}${_up}]")
+        elseif(_c MATCHES "^[A-Za-z0-9_-]$")
+            string(APPEND _re "${_c}")
+        else()
+            string(APPEND _re "\\${_c}")
+        endif()
+    endforeach()
+    set(${out_var} "${_re}$" PARENT_SCOPE)
+endfunction()
 if(EXISTS "${POM2_BUNDLE_MANIFEST}")
     # Re-run CMake when the manifest changes: it decides install() rules and
     # link options, and a stale configure would package the previous list.
@@ -79,8 +110,11 @@ if(EXISTS "${POM2_BUNDLE_MANIFEST}")
             # install rules and the WASM preload below.
             list(APPEND POM2_BUNDLE_DENYGLOB "${_src}")
         elseif(_kind STREQUAL "deny")
-            # Enforced by stage_data.sh --verify against a STAGED tree; nothing
-            # to do at configure time (CMake never copies these folders).
+            # Not "nothing to do at configure time", as this used to say: a
+            # denied path NESTED inside an allowed dir (roms/hdv/, say) is
+            # copied wholesale by install(DIRECTORY) and preloaded by emcc.
+            # The name is excluded from both below.
+            list(APPEND POM2_BUNDLE_DENY "${_src}")
         else()
             message(FATAL_ERROR "bundle.manifest: unknown entry kind '${_kind}'")
         endif()
@@ -890,12 +924,20 @@ if(NOT POM2_SLIRP_TARGET)
                    "transport (Uthernet II TCP/UDP is unaffected)")
 endif()
 
-# The Windows resource script embeds the application icon into POM2.exe. It is
-# listed as a target source so CMake drives rc.exe (MSVC) or windres (MinGW)
+# The Windows resource script embeds the application icon AND the VERSIONINFO
+# block into POM2.exe. It is generated from packaging/windows/POM2.rc.in so the
+# version numbers come from `project(... VERSION ...)` above — the same single
+# source of truth as Version.h — instead of being a second place to bump.
+# Listed as a target source so CMake drives rc.exe (MSVC) or windres (MinGW)
 # automatically; on every other platform the list is empty.
 set(POM2_PLATFORM_SOURCES "")
 if(WIN32)
-    list(APPEND POM2_PLATFORM_SOURCES packaging/windows/POM2.rc)
+    set(POM2_WINDOWS_RES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows")
+    configure_file(
+        ${POM2_WINDOWS_RES_DIR}/POM2.rc.in
+        ${POM2_GENERATED_DIR}/POM2.rc
+        @ONLY)
+    list(APPEND POM2_PLATFORM_SOURCES ${POM2_GENERATED_DIR}/POM2.rc)
 endif()
 
 add_executable(${PROJECT_NAME}
@@ -985,12 +1027,21 @@ if(EMSCRIPTEN)
         list(APPEND POM2_WASM_PRELOAD "${_pom2_dir}|${_pom2_dir}")
     endforeach()
     list(APPEND POM2_WASM_PRELOAD ${POM2_BUNDLE_FILES})
-    # Opt-in extra kept from the previous hand-written list: the small 3.5"
-    # library. `deny`-listed for packages, so it is a build-time choice here
-    # and never a default.
+    # Opt-in extra: the small 3.5" library. disks_3.5 is `deny`-listed, and the
+    # manifest means that literally — so turning this ON produces a LOCAL DEV
+    # bundle that `stage_data.sh --verify` would reject, never something to
+    # publish. Say so at configure time rather than silently overriding the
+    # one file that is supposed to decide the payload.
     option(POM2_WASM_BUNDLE_DISKS
-        "Include disks_3.5 in the WASM bundle (disks_5.4 + hdv are excluded — too large)" OFF)
+        "Include disks_3.5 in the WASM bundle (local dev only — it is deny-listed)" OFF)
     if(POM2_WASM_BUNDLE_DISKS)
+        if("disks_3.5" IN_LIST POM2_BUNDLE_DENY)
+            message(WARNING
+                "POM2_WASM_BUNDLE_DISKS=ON preloads disks_3.5, which "
+                "packaging/bundle.manifest DENIES. The resulting bundle is a "
+                "local development build: do not publish it, and expect "
+                "stage_data.sh --verify to reject any package made from it.")
+        endif()
         list(APPEND POM2_WASM_PRELOAD "disks_3.5|disks_3.5")
     endif()
     foreach(_pom2_pair ${POM2_WASM_PRELOAD})
@@ -1006,8 +1057,33 @@ if(EMSCRIPTEN)
     # as the install() PATTERN EXCLUDE: a preloaded folder is the working tree,
     # and an uncommitted archive in roms/ would otherwise be downloaded by every
     # visitor to the browser demo.
+    # emcc matches --exclude-file with fnmatch, which has no case-insensitive
+    # flag here — spell the classes out so `ROMS.ZIP` is excluded as surely as
+    # `roms.zip`, matching the install() REGEX above.
     foreach(_g ${POM2_BUNDLE_DENYGLOB})
-        list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_g}")
+        set(_pom2_ci_glob "")
+        string(LENGTH "${_g}" _pom2_glen)
+        math(EXPR _pom2_glast "${_pom2_glen} - 1")
+        foreach(_pom2_gi RANGE 0 ${_pom2_glast})
+            string(SUBSTRING "${_g}" ${_pom2_gi} 1 _pom2_gc)
+            if(_pom2_gc MATCHES "^[A-Za-z]$")
+                string(TOLOWER "${_pom2_gc}" _pom2_glo)
+                string(TOUPPER "${_pom2_gc}" _pom2_gup)
+                string(APPEND _pom2_ci_glob "[${_pom2_glo}${_pom2_gup}]")
+            else()
+                string(APPEND _pom2_ci_glob "${_pom2_gc}")
+            endif()
+        endforeach()
+        list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_ci_glob}")
+    endforeach()
+    # Same for the deny list: a preloaded `dir` is the working tree, so a
+    # denied folder that ended up inside roms/ would be downloaded by every
+    # visitor to the browser demo.
+    foreach(_d ${POM2_BUNDLE_DENY})
+        get_filename_component(_pom2_deny_name "${_d}" NAME)
+        if(NOT POM2_WASM_BUNDLE_DISKS OR NOT _pom2_deny_name STREQUAL "disks_3.5")
+            list(APPEND POM2_WASM_LINK "SHELL:--exclude-file */${_pom2_deny_name}/*")
+        endif()
     endforeach()
     target_link_options(${PROJECT_NAME} PRIVATE ${POM2_WASM_LINK})
     # Match shell.html's <canvas id="canvas"> ID convention.
@@ -1281,6 +1357,12 @@ if(WIN32)
 endif()
 if(POM2_SLIRP_TARGET)
     target_link_libraries(pom2_core PUBLIC ${POM2_SLIRP_TARGET})
+    # POM2_HAVE_SLIRP was defined on the GUI target only, so pom2_core linked
+    # libslirp and then compiled SlirpNetworkBackend's #else STUB against it:
+    # 315 lines of real backend that shipped in the SDK archive, were exercised
+    # by nothing, and counted as covered because the file was in the build.
+    # PUBLIC so a consumer's own TU sees the same shape as the archive.
+    target_compile_definitions(pom2_core PUBLIC POM2_HAVE_SLIRP)
     set(POM2_CORE_PACKAGE_WITH_SLIRP 1)
 endif()
 
@@ -1338,6 +1420,9 @@ if(WIN32)
 endif()
 if(POM2_SLIRP_TARGET)
     target_link_libraries(pom2_core_test PUBLIC ${POM2_SLIRP_TARGET})
+    # Same definition as pom2_core: without it the test archive built the stub
+    # and every slirp test would have been pinning the wrong branch.
+    target_compile_definitions(pom2_core_test PUBLIC POM2_HAVE_SLIRP)
 endif()
 endif()
 
@@ -1592,7 +1677,17 @@ foreach(_pom2_dir ${POM2_BUNDLE_DIRS})
         # packaged (it happened — see packaging/bundle.manifest).
         set(_pom2_excl "")
         foreach(_g ${POM2_BUNDLE_DENYGLOB})
-            list(APPEND _pom2_excl PATTERN "${_g}" EXCLUDE)
+            pom2_glob_to_ci_regex("${_g}" _pom2_g_re)
+            list(APPEND _pom2_excl REGEX "${_pom2_g_re}" EXCLUDE)
+        endforeach()
+        # And every `deny` name, so a denied folder nested inside an allowed
+        # one (roms/hdv/, prodos_folder/ dropped under fonts/, …) cannot ride
+        # in. The manifest calls itself the single source of truth for the
+        # payload; before this it was the single source of truth only for the
+        # things it says to INCLUDE.
+        foreach(_d ${POM2_BUNDLE_DENY})
+            get_filename_component(_pom2_deny_name "${_d}" NAME)
+            list(APPEND _pom2_excl PATTERN "${_pom2_deny_name}" EXCLUDE)
         endforeach()
         install(DIRECTORY "${_pom2_dir}/"
                 DESTINATION "${POM2_DATADIR}/${_pom2_dir}"

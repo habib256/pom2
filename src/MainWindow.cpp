@@ -398,6 +398,9 @@ MainWindow::MainWindow(bool forceIIPlus)
         auto st = controller->lockState();
         plugSlotsFromSettings(st);
     }
+    // Any FujiNet card it plugged has its transport still closed — opening
+    // one is a blocking syscall and must not happen under the lock above.
+    (void)startDeferredFujiNetLinks();
 
     // ── Restore display + UI prefs from previous session ─────────────
     {
@@ -727,6 +730,15 @@ MainWindow::MainWindow(bool forceIIPlus)
     // moved / deleted image doesn't block startup.
     {
         std::error_code ec;
+        // Write-back BEFORE the mount: `mount35` reads the flag off the image
+        // to decide what the staged copy inherits, and the drive presents a
+        // medium with write-back off as write-protected. Persisting only the
+        // paths meant a user who had opted in got the disk back read-only on
+        // every launch — and lost the session's writes at the next eject.
+        controller->disk35Internal().setWriteBackEnabled(
+            settings->getBool("disk35_writeback_1", false));
+        controller->disk35External().setWriteBackEnabled(
+            settings->getBool("disk35_writeback_2", false));
         const std::string p1 = settings->getString("disk35_path_1", "");
         if (!p1.empty() && fs::is_regular_file(p1, ec) &&
             controller->mount35(0, p1)) {
@@ -826,6 +838,15 @@ MainWindow::MainWindow(bool forceIIPlus)
     // no saved profile at all).
     controller->floppySound525().setMotorPitch(floppyMotorPitchForProfile(activeProfile));
 
+    // The machine's snapshot identity, unconditionally — `applyProfile` step
+    // 10 sets it, and the two branches above that SKIP applyProfile (the
+    // saved profile already matches the auto-probe, or `--ii-plus`) left it at
+    // 0. A zero id makes the guard dead both ways: every snapshot taken this
+    // session is stamped "unknown", and a snapshot from a real profile loads
+    // onto this machine unchallenged. Cheap and idempotent when applyProfile
+    // did run.
+    controller->setMachineId(pom2::snapshotMachineId(activeProfile));
+
     // activeProfile is now fully resolved (auto-probe + saved-profile
     // catch-up). Refresh the AI server's cached label: the wiring above set it
     // from the still-default activeProfile (AppleIIPlus) BEFORE resolution, and
@@ -898,10 +919,19 @@ MainWindow::~MainWindow()
     if (hgrSpriteEditor) hgrSpriteEditor->releaseGL();
     if (imageWriterPanel) imageWriterPanel->shutdown();
 
+    // Deferred 3.5" write-backs (a firmware eject hands its payload to the
+    // controller's queue thread) must be on disk BEFORE the settings that
+    // describe the media are written, and while the log is still being
+    // written where the user can read it. Without this the only drain was
+    // ~EmulationController's, long after both. Takes no lock, and must not:
+    // the queue takes `stateMutex` itself to report each commit.
+    controller->drainDeferredWriteBacks();
+
     // Everything the next launch needs to look like this one. Extracted to
     // MainWindow_Session.cpp so the browser build — whose MainWindow is never
-    // destroyed, see that file — can call it on a heartbeat.
-    persistSession();
+    // destroyed, see that file — can call it on a heartbeat. `false`: the
+    // flush above already ran, under the lock.
+    persistSession(false);
 
     if (aboutImageTex_) {
         GLuint t = aboutImageTex_;

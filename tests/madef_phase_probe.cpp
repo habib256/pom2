@@ -94,7 +94,7 @@ int main(int argc, char** argv)
     const int bootSecs = (argc > 2) ? std::atoi(argv[2]) : 25;
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("madef_phase_probe SKIP: missing apple2e.rom / disk2.rom / MADEF.dsk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

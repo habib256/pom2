@@ -551,12 +551,15 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
         // labelled, self-describing form.
         std::vector<uint8_t> spr; int wB = 0, hR = 0;
         buildSpriteBytes(spr, wB, hR);
-        std::FILE* f = std::fopen(fullPath.c_str(), "wb");
-        if (!f) { status = "Cannot write file"; return false; }
-        const size_t n = std::fwrite(spr.data(), 1, spr.size(), f);
-        std::fclose(f);
-        const bool ok = (n == spr.size());
-        status = ok ? (mag2_ ? "Saved sprite (\xC3\x97""2)" : "Saved sprite") : "Short write";
+        // Through the host's commit (temp + rename, fsync on POM2): fopen("wb")
+        // truncated the user's previous sprite before the first byte was
+        // written, and neither fwrite's count nor fclose's return was checked,
+        // so a full disk still said "Saved sprite".
+        if (!host) { status = "Cannot write file: no host"; return false; }
+        std::string err;
+        const bool ok = host->saveBytes(fullPath, spr.data(), spr.size(), err);
+        status = ok ? (mag2_ ? "Saved sprite (\xC3\x97""2)" : "Saved sprite")
+                    : ("Save failed: " + (err.empty() ? std::string("(error)") : err));
         return ok;
     }
     case FileAction::SavePng: {
@@ -618,14 +621,13 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
                 formatSpriteAsm(name + "_aux",  nPer, hRows_, auxB.data(),  note) +
                 "\n" +
                 formatSpriteAsm(name + "_main", nPer, hRows_, mainB.data(), note);
-            std::FILE* f = std::fopen(fullPath.c_str(), "wb");
-            if (!f) { status = "Cannot write file"; return false; }
-            const size_t n = std::fwrite(text.data(), 1, text.size(), f);
-            std::fclose(f);
-            status = (n != text.size()) ? "Write failed"
+            if (!host) { status = "Cannot write file: no host"; return false; }
+            std::string err;
+            const bool ok = host->saveBytes(fullPath, text.data(), text.size(), err);
+            status = !ok ? ("Export failed: " + (err.empty() ? std::string("(error)") : err))
                    : clipped ? "Exported ca65 DHGR sprite (aux+main) \xE2\x80\x94 clipped to 140 px"
                              : "Exported ca65 DHGR sprite (aux+main)";
-            return n == text.size();
+            return ok;
         }
         // Write the dev-catalogue ca65 format — parseable back by the host's
         // dev-sprite library loader (round-trip pinned by sprite_asm_export_smoke).
@@ -646,13 +648,11 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
             note = "x1 palette group 1 (blue/orange), bit 7 set";
         }
         const std::string text = formatSpriteAsm(name, wB, hR, spr.data(), note);
-        std::FILE* f = std::fopen(fullPath.c_str(), "wb");
-        if (!f) { status = "Cannot write file"; return false; }
-        const size_t n = std::fwrite(text.data(), 1, text.size(), f);
-        std::fclose(f);
-        const bool ok = (n == text.size());
+        if (!host) { status = "Cannot write file: no host"; return false; }
+        std::string err;
+        const bool ok = host->saveBytes(fullPath, text.data(), text.size(), err);
         status = ok ? (mag2_ ? "Exported ca65 sprite (\xC3\x97""2)" : "Exported ca65 sprite")
-                    : "Short write";
+                    : ("Export failed: " + (err.empty() ? std::string("(error)") : err));
         return ok;
     }
     }

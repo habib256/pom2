@@ -313,6 +313,15 @@ void W5100Device::setSocketStatus(size_t i, uint8_t status)
     }
 }
 
+// Datasheet §5.2.3 "Sn_IR". The chip has no interrupt LINE on the Uthernet II
+// (the card leaves INTn unconnected), but the register is not decoration: the
+// stock WIZnet driver's `send()` polls Sn_IR for SEND_OK and loops forever
+// without it, and `connect()` waits on CON or TIMEOUT rather than on Sn_SR.
+void W5100Device::raiseSocketIrq(size_t i, uint8_t bits)
+{
+    sockets_[i].interrupt = static_cast<uint8_t>(sockets_[i].interrupt | bits);
+}
+
 void W5100Device::setNameResolver(std::unique_ptr<W5100Resolver> resolver)
 {
     resolver_ = std::move(resolver);
@@ -329,6 +338,10 @@ void W5100Device::clearSocket(size_t i)
     Socket& s = sockets_[i];
     s.host.reset();   // the handle's destructor closes the host socket
     s.pendingTx.clear();
+    // CLOSE clears Sn_IR (datasheet §5.1: the socket returns to its
+    // power-on state), and a stale SEND_OK/CON on a dead socket is exactly
+    // what makes the next OPEN look already-finished to a polling driver.
+    s.interrupt = 0;
     setSocketStatus(i, kW5100SnSrClosed);
 }
 
@@ -368,9 +381,20 @@ void W5100Device::openSystemSocket(size_t i, W5100SocketKind kind,
     // an ephemeral one instead — so those replies went to a port nobody was
     // reading and the guest simply timed out. Zero means "any", which is what
     // an unbound socket already is.
-    const uint16_t localPort = readNetworkWord(
-        static_cast<uint16_t>(sockets_[i].registerAddress + kW5100SnPort0));
-    if (localPort != 0) host->bind(localPort);   // failure is logged, not fatal
+    //
+    // DATAGRAM SOCKETS ONLY. Nothing unsolicited can reach a TCP CLIENT — the
+    // 4-tuple is fixed by the connect() — so binding Sn_PORT there buys the
+    // guest nothing and costs it reconnects: WIZnet drivers pick one fixed
+    // source port and re-OPEN with it, and the second connect fails EADDRINUSE
+    // while the previous 4-tuple sits in TIME_WAIT. The chip has no such
+    // problem (it owns the port and its own TCP state machine); the host stack
+    // does. IPRAW/MACRAW never reach here at all — they go through the
+    // NetworkBackend, not through a socket.
+    if (kind == W5100SocketKind::Udp) {
+        const uint16_t localPort = readNetworkWord(
+            static_cast<uint16_t>(sockets_[i].registerAddress + kW5100SnPort0));
+        if (localPort != 0) host->bind(localPort);   // logged, not fatal
+    }
 
     sockets_[i].host = std::move(host);
     setSocketStatus(i, status);
@@ -451,6 +475,10 @@ void W5100Device::connectSocket(size_t i)
         log().warn("W5100", "CONNECT with destination 0.0.0.0 "
                             "(DNS failed or DIPR unset) — closing socket");
         clearSocket(i);
+        // The real chip's ARP for an unreachable destination expires into
+        // SOCK_CLOSED + TIMEOUT (datasheet §5.2.3), which is the failure a
+        // driver waiting on Sn_IR is written to see.
+        raiseSocketIrq(i, kW5100SnIrTimeout);
         return;
     }
     uint16_t port;
@@ -463,6 +491,7 @@ void W5100Device::connectSocket(size_t i)
     switch (s.host->connect(destinationAddress, port)) {
         case W5100ConnectResult::Connected:
             setSocketStatus(i, kW5100SnSrEstablished);
+            raiseSocketIrq(i, kW5100SnIrCon);       // datasheet §5.2.3
             return;
         case W5100ConnectResult::InProgress:
             setSocketStatus(i, kW5100SnSrSynSent);
@@ -471,6 +500,7 @@ void W5100Device::connectSocket(size_t i)
             // The reason is logged by the socket layer, which still has errno.
             log().warn("W5100", "connect() refused by the host");
             clearSocket(i);
+            raiseSocketIrq(i, kW5100SnIrTimeout);
             return;
     }
 #endif
@@ -481,10 +511,22 @@ void W5100Device::connectSocket(size_t i)
 // either supported transport (libslirp is outbound-only without explicit
 // port forwarding, and there is no host-side port to bind that the user
 // asked for). Report the command as unhandled rather than pretending.
+//
+// "Unhandled" has to be a documented FAILURE, not silence. Leaving Sn_SR at
+// SOCK_INIT is the one answer a server guest cannot act on: the datasheet
+// (§5.1 "Sn_CR") says LISTEN moves the socket to SOCK_LISTEN, so a driver
+// polls for either that or a timeout and gets neither — it spins forever with
+// no error to report to its user. POM2's policy is therefore the failure the
+// chip itself would produce if the connection never came: Sn_SR back to
+// SOCK_CLOSED with TIMEOUT set in Sn_IR (§5.2.3), which every W5100 server
+// loop already handles.
 void W5100Device::listenSocket(size_t i)
 {
     log().warn("W5100", "socket " + std::to_string(i) +
-                        ": LISTEN is not supported (no inbound path)");
+                        ": LISTEN is not supported (no inbound path) — "
+                        "answering SOCK_CLOSED + TIMEOUT");
+    clearSocket(i);
+    raiseSocketIrq(i, kW5100SnIrTimeout);
 }
 
 // `Uthernet2.cpp:1077-1102`
@@ -496,7 +538,23 @@ void W5100Device::setCommandRegister(size_t i, uint8_t value)
     case kW5100SnCrConnect: connectSocket(i); break;
     case kW5100SnCrClose:
     case kW5100SnCrDiscon:  closeSocket(i);  break;
-    case kW5100SnCrSend:    sendData(i);     break;
+    case kW5100SnCrSend:
+    // SEND_MAC is SEND with the ARP step skipped (datasheet §5.1). POM2 runs
+    // UDP over a host socket, which does its own address resolution, so the
+    // two commands are the same transmission here — and falling through to
+    // `default: break` meant a driver that uses SEND_MAC (the WIZnet UDP
+    // example does, once it has cached the peer's MAC) lost EVERY datagram
+    // while the TX ring filled up behind it.
+    case kW5100SnCrSendMac: sendData(i);     break;
+    case kW5100SnCrSendKeep:
+        // A TCP keep-alive probe carries no payload and the host stack owns
+        // keep-alives, so there is nothing to transmit — but the command must
+        // still be ACCEPTED and answered with SEND_OK, or a driver that polls
+        // Sn_IR after issuing one never comes back.
+        if (sockets_[i].status == kW5100SnSrEstablished ||
+            sockets_[i].status == kW5100SnSrCloseWait)
+            raiseSocketIrq(i, kW5100SnIrSendOk);
+        break;
     case kW5100SnCrRecv:    updateRsr(i);    break;
     default: break;
     }
@@ -575,16 +633,25 @@ uint16_t W5100Device::txDataSize(size_t i) const
     const Socket& s = sockets_[i];
     const uint16_t size = s.transmitSize;
     if (size == 0) return 0;
-    const uint16_t mask = static_cast<uint16_t>(size - 1);
 
-    const int rd = readNetworkWord(
-        static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0)) & mask;
-    const int wr = readNetworkWord(
-        static_cast<uint16_t>(s.registerAddress + kW5100SnTxWr0)) & mask;
+    // DIFFERENCE THE POINTERS UNMASKED. Sn_TX_RD and Sn_TX_WR are free-running
+    // 16-bit counters (datasheet §5.2.4: "the physical address is obtained by
+    // masking with the buffer size"); the MASK forms the OFFSET, it is not
+    // part of the arithmetic. Masking first makes a full ring — the guest
+    // staged exactly `size` bytes — read back as rd == wr, i.e. EMPTY, and
+    // that is the stock WIZnet driver's maximum-throughput path: it polls
+    // Sn_TX_FSR, is told the whole ring is free, writes all of it, and the
+    // chip transmits nothing. The unmasked difference is `size`, and clamping
+    // it is what turns a guest that over-staged into a truncated write rather
+    // than a wrapped one.
+    const uint16_t rd = readNetworkWord(
+        static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0));
+    const uint16_t wr = readNetworkWord(
+        static_cast<uint16_t>(s.registerAddress + kW5100SnTxWr0));
 
-    int present = wr - rd;
-    if (present < 0) present += size;
-    return static_cast<uint16_t>(present);
+    uint16_t present = static_cast<uint16_t>(wr - rd);   // wraps by design
+    if (present > size) present = size;
+    return present;
 }
 
 uint8_t W5100Device::txFreeSizeRegister(size_t i, unsigned shift) const
@@ -784,11 +851,13 @@ void W5100Device::receiveOnePacketFromSocket(size_t i)
         ringWrite16(i, static_cast<uint16_t>(length));
         ringWriteData(i, buffer, length);
         bytesReceived_ += static_cast<uint64_t>(length);
+        raiseSocketIrq(i, kW5100SnIrRecv);   // datasheet §5.2.3
     } else if (got > 0) {
         // TCP is a raw stream with no header at all, and `want` above
         // already fitted it to the ring.
         ringWriteData(i, buffer, static_cast<size_t>(got));
         bytesReceived_ += static_cast<uint64_t>(got);
+        raiseSocketIrq(i, kW5100SnIrRecv);
     } else if (got == 0) {
         // Orderly shutdown by the peer — half-close, not a dead socket.
         // The real chip parks in SOCK_CLOSE_WAIT: the guest may still
@@ -796,6 +865,7 @@ void W5100Device::receiveOnePacketFromSocket(size_t i)
         // ends the session with DISCON/CLOSE. Jumping straight to CLOSED
         // broke every driver that drains-then-disconnects on SR=$1C.
         setSocketStatus(i, kW5100SnSrCloseWait);
+        raiseSocketIrq(i, kW5100SnIrDiscon);   // FIN received, datasheet §5.2.3
     } else {
         if (rx.status == W5100IoStatus::WouldBlock) return;   // nothing yet
         // On a datagram socket a failure can describe the packet rather
@@ -912,41 +982,66 @@ void W5100Device::sendData(size_t i)
     Socket& s = sockets_[i];
     const uint16_t size = s.transmitSize;
     if (size == 0) return;
+
+    // NOTHING IS CONSUMED UNLESS SOMETHING WILL TRANSMIT IT. A SEND issued in
+    // a state that cannot dispatch — SOCK_INIT, or SYN_SENT while a
+    // non-blocking connect is still in flight — used to fall through to the
+    // `default:` arm below with Sn_TX_RD already advanced, so the ring was
+    // emptied and the bytes went nowhere. That is the first request of every
+    // driver that fires CONNECT and SEND back to back, deleted. The real chip
+    // simply ignores a command it cannot honour (datasheet §5.1 "Sn_CR": the
+    // command register is cleared when the chip ACCEPTS the command).
+    switch (s.status) {
+    case kW5100SnSrMacRaw:
+    case kW5100SnSrIpRaw:
+    case kW5100SnSrEstablished:
+    case kW5100SnSrCloseWait:   // half-closed: our direction still sends
+    case kW5100SnSrUdp:
+        break;
+    default:
+        return;
+    }
+
     const uint16_t mask = static_cast<uint16_t>(size - 1);
 
-    const uint16_t rd = static_cast<uint16_t>(readNetworkWord(
-        static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0)) & mask);
-    const uint16_t wr = static_cast<uint16_t>(readNetworkWord(
-        static_cast<uint16_t>(s.registerAddress + kW5100SnTxWr0)) & mask);
+    // Unmasked pointers, masked offsets — see txDataSize() for why the order
+    // matters. `present` is the number of bytes the guest staged; a SEND of
+    // exactly `transmitSize` bytes is legal and is what a maximum-throughput
+    // driver does.
+    const uint16_t rd = readNetworkWord(
+        static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0));
+    const uint16_t wr = readNetworkWord(
+        static_cast<uint16_t>(s.registerAddress + kW5100SnTxWr0));
+    uint16_t present = static_cast<uint16_t>(wr - rd);
+    if (present > size) present = size;
 
-    const uint16_t base       = s.transmitBase;
-    const uint16_t rdAddress  = static_cast<uint16_t>(base + rd);
-    const uint16_t wrAddress  = static_cast<uint16_t>(base + wr);
-
+    const uint16_t base = s.transmitBase;
     std::vector<uint8_t> data;
-    if (rdAddress < wrAddress) {
-        data.assign(memory_.begin() + rdAddress, memory_.begin() + wrAddress);
-    } else if (rdAddress > wrAddress) {
-        // Wrapped: tail of the ring, then head.
-        const uint16_t end = static_cast<uint16_t>(base + size);
-        data.assign(memory_.begin() + rdAddress, memory_.begin() + end);
-        data.insert(data.end(), memory_.begin() + base, memory_.begin() + wrAddress);
+    data.reserve(present);
+    for (uint16_t k = 0; k < present; ++k) {
+        const uint16_t offset = static_cast<uint16_t>((rd + k) & mask);
+        data.push_back(mem(static_cast<uint16_t>(base + offset)));
     }
-    // rd == wr means nothing staged; `data` stays empty and the
-    // dispatch below is a harmless zero-length send.
 
-    // The read pointer catches up with the write pointer.
+    // The read pointer catches up with the write pointer — in the guest's own
+    // unmasked counter space, so its next `wr = read(Sn_TX_WR); wr += len`
+    // still describes the same ring position we do.
     setMem(static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0), indexByte(wr, 8));
     setMem(static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd1), indexByte(wr, 0));
 
     switch (s.status) {
     case kW5100SnSrMacRaw:      sendDataMacRaw(data);      break;
     case kW5100SnSrIpRaw:       sendDataIpRaw(i, data);    break;
-    case kW5100SnSrEstablished:
-    case kW5100SnSrCloseWait:   // half-closed: our direction still sends
-    case kW5100SnSrUdp:         sendDataToSocket(i, data); break;
-    default: break;
+    default:                    sendDataToSocket(i, data); break;
     }
+
+    // SEND_OK is what the stock WIZnet `send()` waits on before returning
+    // (datasheet §5.2.3). The chip raises it once the data has left the TX
+    // ring, which for this model is now: a host-side tail parked in pendingTx
+    // is still "accepted by the chip", exactly as bytes in the real chip's
+    // internal TCP retransmit queue are.
+    if (sockets_[i].status != kW5100SnSrClosed)
+        raiseSocketIrq(i, kW5100SnIrSendOk);
 }
 
 // `Uthernet2.cpp:812-842`
@@ -1170,12 +1265,23 @@ uint8_t W5100Device::readSocketRegister(uint16_t address)
     switch (loc) {
     case kW5100SnSr:
         return sockets_[i].status;
+    case kW5100SnIr:
+        return sockets_[i].interrupt;
     case kW5100SnTxFsr0: return txFreeSizeRegister(i, 8);
     case kW5100SnTxFsr1: return txFreeSizeRegister(i, 0);
     // Reading the staged-size register is what pulls data in — the chip
     // is polled, it has no interrupt line on the Uthernet II.
+    //
+    // ONLY ON THE HIGH BYTE. Sn_RX_RSR is one 16-bit value read as two
+    // accesses, and pulling on BOTH tore it: the high byte was computed from
+    // the ring as it stood, then the low byte pulled ANOTHER packet in and was
+    // computed from a longer ring, so the guest assembled a size that never
+    // existed (high of N, low of N+M). Every W5100 driver reads high-then-low,
+    // so the pull belongs to the first access of the pair. A guest that reads
+    // only the low byte still makes progress: whatever the previous pull
+    // staged is already counted.
     case kW5100SnRxRsr0: receiveOnePacket(i); return rxDataSizeRegister(i, 8);
-    case kW5100SnRxRsr1: receiveOnePacket(i); return rxDataSizeRegister(i, 0);
+    case kW5100SnRxRsr1: return rxDataSizeRegister(i, 0);
     default:
         return mem(address);
     }
@@ -1194,6 +1300,14 @@ void W5100Device::writeSocketRegister(uint16_t address, uint8_t value)
         break;
     case kW5100SnCr:
         setCommandRegister(i, value);
+        break;
+    case kW5100SnIr:
+        // Write-1-to-clear (datasheet §5.2.3). This is why Sn_IR is a real
+        // byte and not a slot in the register file: the file's plain store
+        // would let a driver's `Sn_IR = SEND_OK` acknowledgement SET the bit
+        // it was trying to clear.
+        sockets_[i].interrupt =
+            static_cast<uint8_t>(sockets_[i].interrupt & ~value);
         break;
     case kW5100SnPort0:  case kW5100SnPort1:
     case kW5100SnDport0: case kW5100SnDport1:
@@ -1236,6 +1350,34 @@ void W5100Device::writeCommonRegister(uint16_t address, uint8_t value)
         setRxSizes(value);
     } else if (address == kW5100Tmsr) {
         setTxSizes(value);
+    } else if (address == kW5100Ir) {
+        // IR bits 0-3 (Sn_INT) are NOT clearable here — they mirror Sn_IR and
+        // clear with it (datasheet §5.1 "IR"). The upper four (CONFLICT,
+        // UNREACH, PPPoE, reserved) are write-1-to-clear and this model never
+        // raises them, so the acknowledgement is simply accepted.
+        setMem(address, static_cast<uint8_t>(mem(address) & ~(value & 0xF0)));
+    } else if (address == kW5100Imr) {
+        // Plain R/W mask (datasheet §5.1 "IMR"). The Uthernet II leaves INTn
+        // unconnected so nothing is gated by it, but a driver that writes it
+        // and reads it back to confirm the chip is alive has to see its value.
+        setMem(address, value);
+    } else if (address == kW5100Rtr0 || address == kW5100Rtr1 ||
+               address == kW5100Rcr) {
+        // Retry time / retry count (datasheet §5.1 "RTR"/"RCR"). Host TCP owns
+        // retransmission here, so these change no behaviour — but they are
+        // R/W registers and the WIZnet init sequence writes them, so dropping
+        // the write made a driver that verifies its own setup give up before
+        // it opened a socket.
+        setMem(address, value);
+    } else if (address == kW5100Pmagic ||
+               (address == kW5100Ptimer && !virtualDns_)) {
+        // PPPoE LCP magic number / echo period — R/W and inert, PPPoE is not
+        // modelled. PTIMER is R/W on real silicon too, but while virtual DNS
+        // is ON it is this card's extension MARKER (reads 0 = "the DNS
+        // extension is present", `Uthernet2.cpp:32-37`), so a guest write
+        // would silently turn the extension off from the software's point of
+        // view while it kept working. Writable only when the extension is off.
+        setMem(address, value);
     }
     // Everything else in the common range is read-only or reserved.
 }
@@ -1250,11 +1392,23 @@ uint8_t W5100Device::readValueAt(uint16_t address)
     // S0's status register, and $8426 never pulled a packet in.
     address &= kW5100MemMax;
     if (address == kW5100Mr) return modeRegister_;
+    if (address == kW5100Ir) return interruptRegister();
     if (address >= kW5100S0Base && address <= kW5100S3Max)
         return readSocketRegister(address);
     // Common registers, TX/RX buffers and everything else read straight
     // out of the array.
     return mem(address);
+}
+
+// Datasheet §5.1 "IR": bits 0-3 are Sn_INT, set while the matching socket's
+// Sn_IR is non-zero and cleared with it — derived, never stored. The upper
+// nibble (CONFLICT / UNREACH / PPPoE) is stored, and this model never sets it.
+uint8_t W5100Device::interruptRegister() const
+{
+    uint8_t value = static_cast<uint8_t>(mem(kW5100Ir) & 0xF0);
+    for (size_t i = 0; i < kSocketCount; ++i)
+        if (sockets_[i].interrupt != 0) value |= static_cast<uint8_t>(1u << i);
+    return value;
 }
 
 // `Uthernet2.cpp:1334-1354`
@@ -1278,6 +1432,7 @@ uint8_t W5100Device::peekValueAt(uint16_t address) const
 {
     address &= kW5100MemMax;        // same mirror as readValueAt
     if (address == kW5100Mr) return modeRegister_;
+    if (address == kW5100Ir) return interruptRegister();
     if (address >= kW5100S0Base && address <= kW5100S3Max) {
         const size_t i = static_cast<size_t>((address >> 8) - 0x04);
         const uint8_t loc = static_cast<uint8_t>(address & 0xFF);
@@ -1285,6 +1440,7 @@ uint8_t W5100Device::peekValueAt(uint16_t address) const
             // Same values readValueAt would give, minus the packet pull.
             switch (loc) {
             case kW5100SnSr:     return sockets_[i].status;
+            case kW5100SnIr:     return sockets_[i].interrupt;
             case kW5100SnTxFsr0: return txFreeSizeRegister(i, 8);
             case kW5100SnTxFsr1: return txFreeSizeRegister(i, 0);
             case kW5100SnRxRsr0: return rxDataSizeRegister(i, 8);
@@ -1350,10 +1506,13 @@ void W5100Device::poll()
 
         if (poll == W5100ConnectResult::Connected) {
             setSocketStatus(i, kW5100SnSrEstablished);
+            raiseSocketIrq(i, kW5100SnIrCon);
         } else {
             // Connection refused / unreachable — back to CLOSED, which is
-            // what the guest polls SN_SR for.
+            // what the guest polls SN_SR for, with TIMEOUT for the drivers
+            // that poll Sn_IR instead (datasheet §5.2.3).
             clearSocket(i);
+            raiseSocketIrq(i, kW5100SnIrTimeout);
         }
     }
 #endif
@@ -1449,7 +1608,14 @@ void W5100Device::loadSnapshotState(const uint8_t* data, std::size_t len)
     std::size_t p = 6;
     modeRegister_ = data[p++];
     dataAddress_  = getU16(data + p); p += 2;
-    virtualDns_   = data[p++] != 0;
+    // The virtual-DNS flag is READ AND DISCARDED. It is a USER SETTING
+    // (`uthernet2_virtual_dns`, a checkbox in the card's panel), not machine
+    // state: restoring it let a snapshot — including any rewind frame taken
+    // before the user last flipped it — silently re-enable an extension the
+    // user had turned off, or disable one they rely on, with the panel still
+    // showing the old value. The byte stays in the format so old and new
+    // snapshots keep the same length.
+    ++p;
 
     std::memcpy(memory_.data(), data + p, kRegionCommon);            p += kRegionCommon;
     std::memcpy(memory_.data() + kW5100S0Base, data + p, kRegionSocket); p += kRegionSocket;
@@ -1460,6 +1626,11 @@ void W5100Device::loadSnapshotState(const uint8_t* data, std::size_t len)
     // register values we just restored.
     setRxSizes(memory_[kW5100Rmsr]);
     setTxSizes(memory_[kW5100Tmsr]);
+
+    // PTIMER is the virtual-DNS detection marker, and the setting behind it is
+    // the user's, not the snapshot's (see above) — re-assert it so the byte
+    // the guest reads cannot contradict the checkbox.
+    setMem(kW5100Ptimer, virtualDns_ ? 0x00 : 0x28);
 
     for (size_t i = 0; i < kSocketCount; ++i) {
         Socket& s = sockets_[i];
@@ -1473,8 +1644,17 @@ void W5100Device::loadSnapshotState(const uint8_t* data, std::size_t len)
         // A TCP connection or a UDP binding cannot be resurrected: the
         // peer moved on while the ring was rewound, and the fd is gone.
         // The raw modes carry no host state, so those do come back.
-        if (status != kW5100SnSrMacRaw && status != kW5100SnSrIpRaw)
+        if (status != kW5100SnSrMacRaw && status != kW5100SnSrIpRaw) {
             status = kW5100SnSrClosed;
+            // ...and a CLOSED socket must not still be ADVERTISING the dead
+            // connection's data. The restored register file carries the
+            // snapshot's Sn_RX_RSR/Sn_TX_RD/Sn_TX_WR, so a guest that reads
+            // Sn_SR, sees CLOSED, re-OPENs and then reads Sn_TX_FSR was told
+            // part of its ring was still in flight and staged its request
+            // behind bytes that will never leave. Zero the pointers, exactly
+            // as a real OPEN does (`Uthernet2.cpp:897-908`).
+            resetRxTxBuffers(i);
+        }
         setSocketStatus(i, status);
     }
 

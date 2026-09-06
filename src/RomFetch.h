@@ -34,6 +34,7 @@
 #define POM2_ROM_FETCH_H
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -52,6 +53,15 @@ struct RomFetchEntry {
     /// Null-terminated extra members concatenated AFTER `zipMember`, in
     /// order. Used for the II+ firmware (six 2 KB chips → one 12 KB image).
     const char* const* zipConcat;
+    /// CRC32 (IEEE) of the dump POM2 vouches for, or 0 when there is no
+    /// reference. A download that matches `expectedSize` and not this is a
+    /// DIFFERENT file — a mirror serving another revision, or an error page
+    /// padded to length — and installing it over the user's roms/ turns into
+    /// "it doesn't boot" days later. Mirrors `RomCatalogEntry::knownCrc`,
+    /// which cannot be included here: RomCatalog.h is a frontend header and
+    /// this is a runtime one (cmake/Pom2Architecture.cmake).
+    std::uint32_t expectedCrc;
+    const char*   crcLabel;
 };
 
 /// Human-facing home of the collection. The panel quotes this; tests pin it.
@@ -88,12 +98,19 @@ struct RomFetchResult {
 using RomFetchProgress = std::function<void(int done, int total,
                                             const char* label)>;
 
+/// Polled between (and inside) downloads. Return true to abandon the run.
+/// Exists because the fetch is a background thread the panel's destructor
+/// JOINS: without a way to say stop, quitting mid-download blocked the whole
+/// application behind curl's 90-second `--max-time`.
+using RomFetchCancel = std::function<bool()>;
+
 /// Download every missing catalog entry into `destRoot` (typically
 /// writableRomsDir()). Never overwrites a destRel that findResource()
 /// already resolves. Safe to call from a worker thread — no ImGui, no
 /// emulator lock.
 RomFetchResult fetchMissingRoms(const std::filesystem::path& destRoot,
-                                const RomFetchProgress& progress = {});
+                                const RomFetchProgress& progress = {},
+                                const RomFetchCancel& cancelled = {});
 
 }  // namespace pom2
 

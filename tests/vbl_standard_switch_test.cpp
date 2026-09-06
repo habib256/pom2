@@ -158,7 +158,7 @@ int main()
                                            "roms/apple2cp.rom"});
     if (rom.empty()) {
         std::printf("SKIP vbl_standard_switch: no //c-class ROM in roms/\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     // ── Baseline: no switch. Pins that the harness itself is sound. ──

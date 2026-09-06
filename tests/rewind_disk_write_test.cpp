@@ -131,7 +131,92 @@ int main()
         assert(fullAfter == fullPre && "rewind did not undo the disk write");
     }
 
-    // (3) No disk → no media (cheap blob).
+    // (3) S2: the IN-FLIGHT write burst travels with the card.
+    //
+    // `lssCycle` (the timing anchor) was already serialised while the flux
+    // edges accumulated in `writeBuffer[32]` were not, so a rewind landing
+    // INSIDE a sector write resumed with the anchor restored and the burst
+    // gone: the splice flushed short and left a hole in the sector, which
+    // reached the .dsk once write-back committed.
+    //
+    // Driving a real burst needs the bit-level LSS and a WOZ/13-sector
+    // medium; the serialisation is pinned directly instead, by writing a
+    // burst into the v4 tail and requiring it back out unchanged.
+    {
+        Memory mem;
+        M6502  cpu(&mem);
+        (void)cpu;
+        mem.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+        auto* card = static_cast<DiskIICard*>(mem.slotBus().peripheral(6));
+        assert(card->insertDisk(0, dsk));
+
+        std::vector<uint8_t> blob;
+        card->appendSnapshotState(blob);
+        // A quiescent controller's v4 tail is 13 bytes: count(4) = 0,
+        // lineActive(1), startTime(8).
+        constexpr size_t kTail = 4 + 1 + 8;
+        assert(blob.size() > kTail);
+        for (int i = 0; i < 4; ++i) assert(blob[blob.size() - kTail + i] == 0);
+
+        // Rewrite it as a burst of three flux stamps with the write line high.
+        auto put64 = [](std::vector<uint8_t>& v, uint64_t x) {
+            for (int i = 0; i < 8; ++i)
+                v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+        };
+        std::vector<uint8_t> burst(blob.begin(), blob.end() - kTail);
+        burst.push_back(3); burst.push_back(0); burst.push_back(0); burst.push_back(0);
+        burst.push_back(1);                       // writeLineActive
+        put64(burst, 0x0011223344556677ULL);      // writeStartTime
+        put64(burst, 111); put64(burst, 222); put64(burst, 333);
+
+        Memory mem2;
+        M6502  cpu2(&mem2);
+        (void)cpu2;
+        mem2.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+        auto* card2 = static_cast<DiskIICard*>(mem2.slotBus().peripheral(6));
+        assert(card2->insertDisk(0, dsk));
+        card2->loadSnapshotState(burst.data(), burst.size());
+        std::vector<uint8_t> back;
+        card2->appendSnapshotState(back);
+        assert(back == burst && "the in-flight write burst did not round-trip");
+
+        // A count past the 32-entry buffer is refused WHOLE (framing check),
+        // leaving the card as it was rather than half-restored.
+        std::vector<uint8_t> huge = burst;
+        huge[burst.size() - 3 * 8 - 8 - 1 - 4] = 99;   // count = 99
+        Memory mem3;
+        M6502  cpu3(&mem3);
+        (void)cpu3;
+        mem3.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+        auto* card3 = static_cast<DiskIICard*>(mem3.slotBus().peripheral(6));
+        assert(card3->insertDisk(0, dsk));
+        std::vector<uint8_t> fresh3;
+        card3->appendSnapshotState(fresh3);
+        card3->loadSnapshotState(huge.data(), huge.size());
+        std::vector<uint8_t> after3;
+        card3->appendSnapshotState(after3);
+        assert(after3 == fresh3 && "an out-of-range burst count was accepted");
+
+        // A pre-v4 blob (no burst tail at all) must still load, and leave the
+        // restored controller on a CLEAN splice.
+        std::vector<uint8_t> v3(blob.begin(), blob.end() - kTail);
+        v3[4] = 3;                                   // version 4 → 3
+        Memory mem4;
+        M6502  cpu4(&mem4);
+        (void)cpu4;
+        mem4.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+        auto* card4 = static_cast<DiskIICard*>(mem4.slotBus().peripheral(6));
+        assert(card4->insertDisk(0, dsk));
+        card4->loadSnapshotState(burst.data(), burst.size());   // arm a burst
+        card4->loadSnapshotState(v3.data(), v3.size());         // then a v3 blob
+        std::vector<uint8_t> back4;
+        card4->appendSnapshotState(back4);
+        assert(back4.size() == v3.size() + kTail);
+        for (int i = 0; i < 4; ++i) assert(back4[v3.size() + i] == 0);
+        assert(back4[v3.size() + 4] == 0);           // writeLineActive cleared
+    }
+
+    // (4) No disk → no media (cheap blob).
     {
         Memory mem;
         M6502  cpu(&mem);

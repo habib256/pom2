@@ -242,47 +242,21 @@ bool MainWindow::routeMountHdv(const std::string& path, int& bootSlotOut,
         }
     }
     if (primarySmartPortCard()) {
-        const std::string base =
-            "smartport_slot" + std::to_string(primarySmartPortCard()->getSlot()) +
-            "_unit0";
-        pom2::SmartPortUnit* u;
-        bool replaced = false;
-        {
-            // Le verrou couvre l'inspection et l'echange d'unite — PAS le
-            // montage. mountSmartPortUnit prend stateMutex lui-meme (les deux
-            // phases), et stateMutex est non recursif : quand la conversion
-            // deux-phases (47f7485) a remplace le loadImage inline, la garde
-            // englobante heritee de l'ancien code re-verrouillait le meme
-            // mutex dans le meme fil — POM2 gelait sur TOUT boot HDV //c,
-            // fenetre comprise. Le pointeur d'unite reste valide hors verrou :
-            // la table des unites est confinee au fil UI (voir blockCards()).
-            std::lock_guard<std::mutex> lk(controller->stateMutex());
-            u = primarySmartPortCard()->unit(0);
-            if (!u || u->kindKey() != pom2::SmartPortHdvUnit::kKindKey) {
-                // Flush before setUnit destroys it — see routeMount35 above
-                // for why the destructor's best-effort save is not enough.
-                if (u && !u->saveDirty()) {
-                    errOut = "unsaved changes on SmartPort unit 1 could not "
-                             "be written: " + u->lastError();
-                    return false;
-                }
-                primarySmartPortCard()->setUnit(
-                    0, std::make_unique<pom2::SmartPortHdvUnit>());
-                u = primarySmartPortCard()->unit(0);
-                replaced = true;
-            }
-        }
-        // Deux phases : lecture sans verrou, echange sous verrou — dans
-        // mountSmartPortUnit. Le 3,5" au-dessus reste inline a dessein :
-        // son unite n'a pas de dos de blocs, la phase 1 serait perdue.
-        if (!pom2::mountSmartPortUnit(*controller, *u, path, errOut))
+        // Through the coordinator: it flushes the outgoing unit before the
+        // type swap destroys it, reads the image with no lock held, and
+        // writes the unit keys through `appendMediaBaySettingUpdates` — which
+        // is where the auto-provisioned-slot guard lives. The hand-rolled
+        // block this replaces wrote `smartport_slotN_unit0_*` unconditionally,
+        // so a card `ensureSmartPortCardForBoot` plugged for a one-shot
+        // drag-and-drop boot — session-local by contract — persisted its
+        // media over the user's real configuration.
+        const auto mounted = storageCoordinator_->mountHdv(
+            *controller, *settings, path, /*smartPortOnly=*/true);
+        if (!mounted.ok) {
+            errOut = mounted.error;
             return false;
-        settings->setString(base + "_type",
-            std::string(pom2::SmartPortHdvUnit::kKindKey));
-        settings->setString(base + "_path", path);
-        if (replaced) settings->setBool(base + "_writeback", false);
-        if (!settingsReadOnly()) settings->save();   // kiosk: never touch state.cfg
-        bootSlotOut = primarySmartPortCard()->getSlot();
+        }
+        bootSlotOut = mounted.bootSlot;
         return true;
     }
     errOut = "no HDV or SmartPort card plugged";
@@ -374,8 +348,21 @@ bool MainWindow::flushSlotMedia(std::string& err)
     // It is the flush half of the rebuild transaction — only a successful one
     // may prepare a teardown — so it has to be the same code as the one the
     // rebuild path uses, not a second copy that can drift.
-    std::lock_guard<std::mutex> lk(controller->stateMutex());
-    return storageCoordinator_->flushAll(controller->memory().slotBus(), err);
+    //
+    // Two-phase for the bays that offer it (a Liron's 800 KB 3.5" images):
+    // captured under the lock, written with it released. Everything else still
+    // writes inline — those cards have no capture path yet, and their callers
+    // (quit, profile switch, Apply) all have the CPU worker stopped.
+    std::vector<pom2::StorageCoordinator::DeferredFlush> deferred;
+    bool ok;
+    {
+        std::lock_guard<std::mutex> lk(controller->stateMutex());
+        ok = storageCoordinator_->flushAll(controller->memory().slotBus(), err,
+                                           &deferred);
+    }
+    if (!storageCoordinator_->commitDeferredFlushes(*controller, deferred, err))
+        ok = false;
+    return ok;
 }
 
 int MainWindow::ensureHdvCardForBoot()

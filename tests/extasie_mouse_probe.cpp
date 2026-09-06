@@ -130,7 +130,7 @@ int main()
         "../disks_5.4/gist/Extasie disk1.dsk", "disks_5.4/gist/Extasie disk1.dsk" });
     if (rom.empty() || boot.empty() || mrom.empty() || dsk.empty()) {
         std::printf("extasie_mouse_probe SKIP: missing rom/prom/mouse rom/disk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

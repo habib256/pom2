@@ -79,7 +79,7 @@ int main()
     if (stock.empty() || videx.empty()) {
         std::printf("videx_lowercase_char_rom: SKIP (needs roms/apple2_char.rom "
                     "and \"roms/Videx Lower Case Chip ROM.bin\")\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     // ─── The stock generator: no lowercase ───────────────────────────────

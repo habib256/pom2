@@ -42,6 +42,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -210,10 +211,27 @@ private:
 class Disk35WriteBackSink
 {
 public:
+    /// Outcome of the deferred commit, reported back to the submitter.
+    ///
+    /// The whole point of it is that the submitter may not drop the medium
+    /// before it arrives: `submit()` returning means "queued", not "saved",
+    /// and a commit CAN fail (disk full, read-only parent). The eject path
+    /// therefore holds the disk in the bay until this says the file landed —
+    /// the same "a failed save loses nothing" contract the sinkless branch
+    /// and `EmulationController::eject35` already honour.
+    ///
+    /// Invoked with the MACHINE LOCK HELD (the sink takes it; that is why it
+    /// may touch drive/image state) and on whatever thread ran the commit, so
+    /// the callback must do no file I/O and must not re-take that lock. A
+    /// sink that never runs the payload — the destructor's drain — simply
+    /// never calls it.
+    using Completion = std::function<void(bool ok, const std::string& error)>;
+
     virtual ~Disk35WriteBackSink() = default;
     /// Takes ownership. Must not block on I/O: it is called with the machine
     /// lock held.
-    virtual void submit(Disk35Image::PendingWriteBack&& pending) = 0;
+    virtual void submit(Disk35Image::PendingWriteBack&& pending,
+                        Completion onDone = {}) = 0;
 };
 
 }  // namespace pom2

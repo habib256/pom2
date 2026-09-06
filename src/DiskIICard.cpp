@@ -729,7 +729,13 @@ void DiskIICard::pushIwmFloppy()
 // Serialize the controller's volatile runtime state: the head position and
 // motion magnets, the motor, the selected drive, the LSS sequencer + data
 // register, and the rotational timing anchors. The PROMs are excluded (same
-// on the restored machine), as is the mid-write splice buffer.
+// on the restored machine).
+//
+// v4 also carries the mid-write splice buffer (`writeBuffer`/`writePosition`/
+// `writeStartTime`/`writeLineActive`). `lssCycle` was already saved, so a
+// rewind landing inside a sector write used to resume with the timing anchor
+// restored but the accumulated flux edges gone: the burst flushed short and
+// left a hole in the sector, which reached the .dsk once write-back committed.
 //
 // v2 also appends the writable media (nibble track buffers) for loaded,
 // non-write-protected, non-WOZ disks, so disk WRITES are undone on a rewind.
@@ -737,7 +743,7 @@ void DiskIICard::pushIwmFloppy()
 // keeps the media near-zero until a track is actually written. Blob is
 // self-describing (magic + version) so a foreign card on this slot ignores it.
 namespace {
-constexpr uint8_t kDiskIISnapVersion = 3;
+constexpr uint8_t kDiskIISnapVersion = 4;
 
 // FNV-1a 64 of the image path — the media identity stamped next to each
 // captured track buffer (v3). Restoring a media snapshot onto a drive
@@ -802,6 +808,15 @@ void DiskIICard::appendSnapshotState(std::vector<uint8_t>& out) const
             images[d].appendMediaSnapshot(out);
         }
     }
+
+    // v4: the in-flight write burst. Variable-length — an idle controller
+    // (the common case) costs 13 bytes, a full burst 269.
+    const int wp = (writePosition < 0) ? 0
+                 : (writePosition > kWriteBufferSize ? kWriteBufferSize : writePosition);
+    u32(static_cast<uint32_t>(wp));
+    u8(writeLineActive ? 1 : 0);
+    u64(static_cast<uint64_t>(writeStartTime));
+    for (int i = 0; i < wp; ++i) u64(static_cast<uint64_t>(writeBuffer[i]));
 }
 
 void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -844,6 +859,15 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
                 if (perCap > len - q) return;
                 q += perCap;
             }
+        }
+        // v4 write-burst tail: header, then `count` 8-byte flux stamps.
+        if (version >= 4) {
+            if (len - q < 4 + 1 + 8) return;
+            uint32_t wp = 0;
+            for (int i = 0; i < 4; ++i) wp |= static_cast<uint32_t>(data[q + i]) << (8 * i);
+            if (wp > static_cast<uint32_t>(kWriteBufferSize)) return;
+            q += 4 + 1 + 8;
+            if (static_cast<std::size_t>(wp) * 8 > len - q) return;
         }
     }
 
@@ -927,6 +951,28 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
             }
         }
     }
+
+    // v4: the in-flight write burst. Bounds were validated above.
+    if (version >= 4) {
+        const int wp = static_cast<int>(g32());
+        writeLineActive = g8() != 0;
+        writeStartTime  = static_cast<int64_t>(g64());
+        writePosition   = (wp < 0 || wp > kWriteBufferSize) ? 0 : wp;
+        for (int i = 0; i < writePosition; ++i)
+            writeBuffer[i] = static_cast<int64_t>(g64());
+    } else {
+        // Pre-v4 blobs carry no burst; start the restored controller from a
+        // clean splice rather than from whatever the live card had mid-write.
+        writePosition   = 0;
+        writeLineActive = false;
+        writeStartTime  = writeMode ? static_cast<int64_t>(lssCycle) : 0;
+    }
+
+    // The motor flag is a member, but the floppy sound device holds its own
+    // spin state — restoring `motorOn` silently left the spindle sample
+    // running after a rewind onto a stopped drive (or mute on a spinning
+    // one). Re-drive it through the same call the live transitions use.
+    if (sound_) sound_->motor(motorOn, images[activeDrive].isLoaded());
 
     // Re-point the IWM at the restored head position so the //c+ data path
     // and the restored LSS agree on the current track.

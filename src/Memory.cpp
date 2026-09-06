@@ -21,6 +21,7 @@
 #include "CassetteDevice.h"
 #include "IWMDevice.h"
 #include "SmartPortHub.h"
+#include "Sony35Drive.h"
 #include "Logger.h"
 #include "M6502.h"
 #include "NoSlotClock.h"
@@ -930,6 +931,47 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         sect.push_back(an0 ? 1 : 0);
         sect.push_back(an1 ? 1 : 0);
         sect.push_back(an2 ? 1 : 0);
+        // Appended 2026-09-06, same grow-at-the-end rule:
+        //  * `vblWasActive` is the EDGE detector behind the //c VBL IRQ.
+        //    It defaults to true, so a restore taken while the beam was
+        //    already inside the blanking interval re-armed the edge and
+        //    fired one spurious VBL IRQ on the next boundary — the frame
+        //    sync a //c PAL French Touch demo races against.
+        //  * `iicCardWindow_` is the partner latch of `iicSmartPortArmed_`
+        //    (already in the first trailer): it says whether the punched
+        //    $C500 page has its $C800 window open. Restoring one without
+        //    the other left the pair inconsistent.
+        sect.push_back(vblWasActive   ? 1 : 0);
+        sect.push_back(iicCardWindow_ ? 1 : 0);
+        putU32(static_cast<uint32_t>(sect.size()));
+        putBytes(sect.data(), sect.size());
+    }
+    // Fourth section: the No-Slot Clock. It uses no slot, so it gets no
+    // SLOTn section — but it is a bit-serial state machine walked over many
+    // reads (see NoSlotClock.h), and it lives behind a Memory pointer, so
+    // Memory's trailer is its home. Same length-prefixed, absent-tolerant
+    // convention: a machine with no NSC writes a zero length.
+    {
+        std::vector<uint8_t> sect;
+        if (noSlotClock_) noSlotClock_->appendSnapshotState(sect);
+        putU32(static_cast<uint32_t>(sect.size()));
+        putBytes(sect.data(), sect.size());
+    }
+    // Fifth section: the two ON-BOARD Sony 3.5" mechanisms (//c+ internal
+    // bay + the external port drive). They hang off the SmartPortHub, not
+    // off a slot, so they get no SLOTn section — yet `iwmDevice` above
+    // restores the controller that walks them. Restoring one without the
+    // other left the IWM reading cells from the head position of the
+    // abandoned future. Media is NOT captured (800 KB/frame); the ring is
+    // cleared on a 3.5" write instead. Each drive is length-prefixed on its
+    // own so a machine with one, both or neither round-trips.
+    for (int which = 0; which < 2; ++which) {
+        std::vector<uint8_t> sect;
+        if (smartPortHub) {
+            const pom2::Sony35Drive* d = (which == 0)
+                ? smartPortHub->internal35() : smartPortHub->external35();
+            if (d) d->appendSnapshotState(sect);
+        }
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
@@ -1111,8 +1153,29 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n)
                 an1 = p[5] != 0;
                 an2 = p[6] != 0;
             }
+            // VBL edge detector + the //c $C800 window latch (see
+            // appendSnapshotState). Older blobs stop before these.
+            if (k >= 9) {
+                vblWasActive   = p[7] != 0;
+                iicCardWindow_ = p[8] != 0;
+            }
             return true;
         })) return false;
+    // No-Slot Clock (see appendSnapshotState). A blob written by a build
+    // without it, or by a machine with the chip disabled, ends here.
+    if (!readSection([&](const uint8_t* p, size_t k) {
+            return !noSlotClock_ || noSlotClock_->loadSnapshotState(p, k);
+        })) return false;
+    // On-board Sony 3.5" mechanisms (see appendSnapshotState).
+    for (int which = 0; which < 2; ++which) {
+        if (!readSection([&](const uint8_t* p, size_t k) {
+                pom2::Sony35Drive* d = smartPortHub
+                    ? (which == 0 ? smartPortHub->internal35()
+                                  : smartPortHub->external35())
+                    : nullptr;
+                return !d || d->loadSnapshotState(p, k);
+            })) return false;
+    }
 
     return true;
 }

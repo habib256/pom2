@@ -103,7 +103,12 @@ public:
     /// must re-derive it here — otherwise they run 0.7 % off under PAL.
     /// Default: no-op (most cards count guest cycles, which is already
     /// standard-correct). Implemented by MockingboardCard (the audio
-    /// thread's emuCycles replay cursor) and ClockCard (uPD1990AC TP).
+    /// thread's emuCycles replay cursor), PhasorCard (same body),
+    /// ClockCard (uPD1990AC TP) and WorkstationCard (its own 65C02 and
+    /// SCC timebases). Since 2026-09-07 `setVideoStandard` fans this out to
+    /// EVERY plugged card plus the speaker and the cassette, not only the
+    /// Mockingboard: a card plugged later via Slot Config used to keep the
+    /// NTSC constant under PAL.
     virtual void setCpuClock(double /*hz*/) {}
 
     virtual void appendSnapshotState(std::vector<uint8_t>& /*out*/) const {}

@@ -87,7 +87,7 @@ int main()
     if (mainRom.empty() || slotRom.empty() || mcuRom.empty()) {
         std::printf("SKIP mouse_card_axis_parity: missing ROM(s) "
                     "(apple2e.rom / mouse_341-0270-c.bin / mouse_341-0269.bin)\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

@@ -617,14 +617,20 @@ void MainWindow::renderDiskLibraryWindow()
     }
     if (r.requestHdvEject) {
         if (pom2::ProDOSBlockCard* dev = hdvDevice()) {
-            std::lock_guard<std::mutex> lk(controller->stateMutex());
-            const bool ok = dev->ejectImage();
-            if (ok) {
+            // Through the coordinator, like every other eject on this panel:
+            // `ejectImage()` under the lock ran the save-on-eject rewrite of
+            // a volume up to 32 MiB with the machine and the window frozen
+            // behind it, and cleared no settings key, so the image came back
+            // on the next launch.
+            const auto e = storageCoordinator_->ejectMediaBay(
+                *controller, *settings, dev->getSlot(), 0);
+            if (e.ok) {
                 hdvPath.clear();
                 hdvStatus = "no image mounted";
             }
-            tapeStatusMessage = ok ? "Library: HDV ejected"
-                                   : "Library: HDV eject failed: " + dev->getLastError();
+            tapeStatusMessage = e.ok
+                ? "Library: HDV ejected"
+                : "Library: HDV eject failed: " + e.error;
             tapeStatusUntil   = lastFrameTime + 3.0;
         }
     }
@@ -821,30 +827,34 @@ void MainWindow::renderFloppyEmuWindow()
                 break;
             }
             case Mode::Disk35:
-            case Mode::Unidisk35:
-                if (primarySmartPortCard()) {
-                    std::lock_guard<std::mutex> lk(controller->stateMutex());
-                    if (pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0)) {
-                        ok = u->eject();
-                        if (!ok) err = u->lastError();
-                    }
-                } else {
-                    ok = controller->eject35(0);  // re-locks the state mutex itself
-                    if (!ok) err = controller->disk35Internal().lastError();
-                }
+            case Mode::Unidisk35: {
+                // Through the coordinator, exactly like the 5.25" case above
+                // — and for the same reason, which the comment there wrongly
+                // claimed was already true here: the inline `u->eject()` /
+                // `eject35()` cleared NO settings key, and the SmartPort unit
+                // keys are only ever written by a mount or an eject, so the
+                // disk this button removed was back on the next launch. It
+                // also ran the save-on-eject write under the lock.
+                const auto e = storageCoordinator_->ejectDisk35(
+                    *controller, *settings, 0);
+                ok = e.ok;
+                if (!ok) err = e.error;
                 break;
+            }
             case Mode::SmartportHD: {
-                std::lock_guard<std::mutex> lk(controller->stateMutex());
-                if (pom2::ProDOSBlockCard* dev = hdvDevice()) {
-                    ok = dev->ejectImage();
-                    if (!ok) err = dev->getLastError();
-                }
-                else if (primarySmartPortCard()) {
-                    if (pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0)) {
-                        ok = u->eject();
-                        if (!ok) err = u->lastError();
-                    }
-                }
+                // Same routing rule as the mount side: a dedicated block card
+                // first, the SmartPort unit otherwise. Both are bays, so one
+                // coordinator command covers them.
+                int slot = -1;
+                if (pom2::ProDOSBlockCard* dev = hdvDevice())
+                    slot = dev->getSlot();
+                else if (primarySmartPortCard())
+                    slot = primarySmartPortCard()->getSlot();
+                if (slot < 0) { err = "no HDV or SmartPort card plugged"; break; }
+                const auto e = storageCoordinator_->ejectMediaBay(
+                    *controller, *settings, slot, 0);
+                ok = e.ok;
+                if (!ok) err = e.error;
                 break;
             }
         }
@@ -929,6 +939,87 @@ void MainWindow::renderFloppyEmuWindow()
     }
 }
 
+const MainWindow::MediaDirListing& MainWindow::mediaDirListing(
+    const std::string& cacheKey,
+    std::initializer_list<const char*> candidates,
+    std::initializer_list<const char*> extensions,
+    bool recursive)
+{
+    namespace fs = std::filesystem;
+    MediaDirListing& cache = mediaDirCaches_[cacheKey];
+    if (lastFrameTime - cache.stamp < kMediaDirRescanSeconds) return cache;
+    cache.stamp = lastFrameTime;
+    cache.dir.clear();
+    cache.entries.clear();
+
+    // error_code on EVERY call, including the per-entry `is_regular_file` /
+    // `is_directory` probes: those are the ones that throw, because they stat
+    // a path the walk found a moment ago and that can be gone by now.
+    std::error_code ec;
+    for (const char* dir : candidates) {
+        if (!fs::is_directory(dir, ec)) { ec.clear(); continue; }
+        cache.dir = dir;
+        break;
+    }
+    if (cache.dir.empty()) return cache;
+
+    const auto matches = [&](const fs::path& file) {
+        if (extensions.size() == 0) return true;
+        const std::string ext = file.extension().string();
+        for (const char* candidate : extensions)
+            if (ext == candidate) return true;
+        return false;
+    };
+
+    const fs::path root(cache.dir);
+    if (recursive) {
+        // Users shelve images by collection / OS / target machine, so the
+        // deep walk is what makes one-click mount usable; dot-directories are
+        // skipped whole.
+        ec.clear();
+        for (auto it = fs::recursive_directory_iterator(
+                 root, fs::directory_options::skip_permission_denied, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) { ec.clear(); continue; }
+            const auto& entry = *it;
+            const std::string name = entry.path().filename().string();
+            if (!name.empty() && name.front() == '.') {
+                if (entry.is_directory(ec)) it.disable_recursion_pending();
+                ec.clear();
+                continue;
+            }
+            const bool regular = entry.is_regular_file(ec);
+            ec.clear();
+            if (!regular || !matches(entry.path())) continue;
+            MediaDirEntry row;
+            row.name = fs::relative(entry.path(), root, ec).string();
+            ec.clear();
+            if (row.name.empty()) row.name = name;
+            row.path = entry.path().string();
+            cache.entries.push_back(std::move(row));
+        }
+    } else {
+        ec.clear();
+        for (const auto& entry : fs::directory_iterator(root, ec)) {
+            const bool regular = entry.is_regular_file(ec);
+            ec.clear();
+            if (!regular || !matches(entry.path())) continue;
+            MediaDirEntry row;
+            row.name = entry.path().filename().string();
+            row.path = entry.path().string();
+            cache.entries.push_back(std::move(row));
+        }
+        ec.clear();
+    }
+    // Sorted so the list is stable across frames whatever order dirent
+    // returns.
+    std::sort(cache.entries.begin(), cache.entries.end(),
+              [](const MediaDirEntry& a, const MediaDirEntry& b) {
+                  return a.name < b.name;
+              });
+    return cache;
+}
+
 void MainWindow::renderHdvPanelWindow()
 {
     if (!show(pom2::PanelId::Hdv)) return;
@@ -951,59 +1042,31 @@ void MainWindow::renderHdvPanelWindow()
     // mount: contents are synthesised into a read-only ProDOS volume on
     // click, see kProDOSHostSentinel below).
     {
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        const char* dirCandidates[] = { "hdv", "../hdv", "../../hdv" };
-        for (const char* dir : dirCandidates) {
-            if (!fs::is_directory(dir, ec)) continue;
-            const fs::path root(dir);
-            // Recursive walk so users can shelve images by collection /
-            // OS / target machine (`hdv/prodos/`, `hdv/iigs/`, …) and
-            // still get one-click mount. See the Disk II library
-            // comment above for the rationale and ignore rules.
-            for (auto it = fs::recursive_directory_iterator(root,
-                     fs::directory_options::skip_permission_denied, ec);
-                 it != fs::recursive_directory_iterator(); it.increment(ec))
-            {
-                const auto& entry = *it;
-                const std::string name = entry.path().filename().string();
-                if (!name.empty() && name.front() == '.') {
-                    if (entry.is_directory(ec)) it.disable_recursion_pending();
-                    continue;
-                }
-                if (!entry.is_regular_file(ec)) continue;
-                const std::string ext = entry.path().extension().string();
-                if (ext != ".hdv" && ext != ".2mg") continue;
-                pom2::HdvController_ImGui::LibraryEntry e;
-                e.displayName = fs::relative(entry.path(), root, ec).string();
-                if (e.displayName.empty()) e.displayName = name;
-                e.fullPath    = entry.path().string();
-                snap.library.push_back(std::move(e));
-            }
-            break;
-        }
-        std::sort(snap.library.begin(), snap.library.end(),
-                  [](const auto& a, const auto& b) {
-                      return a.displayName < b.displayName;
-                  });
-
-        // Synthetic entry for the host-folder mount.
-        const char* prodosCandidates[] = {
-            "prodos_folder", "../prodos_folder", "../../prodos_folder"
-        };
-        std::string prodosDir;
-        for (const char* d : prodosCandidates) {
-            if (fs::is_directory(d, ec)) { prodosDir = d; break; }
-        }
-        if (!prodosDir.empty()) {
-            std::size_t fileCount = 0;
-            for (const auto& e : fs::directory_iterator(prodosDir, ec)) {
-                if (e.is_regular_file()) ++fileCount;
-            }
+        // Cached and non-throwing — this ran a RECURSIVE walk of hdv/ on
+        // every frame the panel was open, with the throwing overloads. See
+        // MainWindow::mediaDirListing.
+        const auto& library = mediaDirListing(
+            "hdv:panel", { "hdv", "../hdv", "../../hdv" },
+            { ".hdv", ".2mg" }, /*recursive=*/true);
+        for (const auto& row : library.entries) {
             pom2::HdvController_ImGui::LibraryEntry e;
-            e.displayName = "[host folder] " + prodosDir + "/  ("
-                          + std::to_string(fileCount) + " files)";
-            e.fullPath    = std::string(kProDOSHostSentinel) + prodosDir;
+            e.displayName = row.name;
+            e.fullPath    = row.path;
+            snap.library.push_back(std::move(e));
+        }
+
+        // Synthetic entry for the host-folder mount. Its file count is the
+        // same cached listing (every regular file, no extension filter).
+        const auto& hostFolder = mediaDirListing(
+            "prodos_folder",
+            { "prodos_folder", "../prodos_folder", "../../prodos_folder" },
+            {}, /*recursive=*/false);
+        if (!hostFolder.dir.empty()) {
+            pom2::HdvController_ImGui::LibraryEntry e;
+            e.displayName = "[host folder] " + hostFolder.dir + "/  ("
+                          + std::to_string(hostFolder.entries.size())
+                          + " files)";
+            e.fullPath    = std::string(kProDOSHostSentinel) + hostFolder.dir;
             snap.library.push_back(std::move(e));
         }
     }
@@ -1057,19 +1120,23 @@ void MainWindow::renderHdvPanelWindow()
                 tapeStatusUntil   = lastFrameTime + 5.0;
                 return;
             }
-            bool ok = false;
-            {
-                std::lock_guard<std::mutex> lk(controller->stateMutex());
-                ok = primaryHdvCard()->loadImageFromBytes(std::move(bytes),
-                                                 std::string("[host folder] ") + hostDir,
-                                                 hostDir);
-                if (ok) {
-                    hdvPath   = path;
-                    hdvStatus = std::string("synth from ") + hostDir +
-                                " (" + std::to_string(br.filesIncluded) + " files)";
-                } else {
-                    hdvStatus = "synth load failed";
-                }
+            // Through the coordinator: `loadImageFromBytes` SAVES whatever
+            // is mounted before replacing it, and this held `stateMutex`
+            // across that write — up to 30 ms for a 32 MiB HDV, against a
+            // 20 ms PAL frame. The coordinator flushes the outgoing image
+            // two-phase and refuses the mount if it could not be saved.
+            const auto mounted = storageCoordinator_->mountBlockBytes(
+                *controller, *settings, primaryHdvCard()->getSlot(),
+                std::move(bytes), std::string("[host folder] ") + hostDir,
+                hostDir);
+            const bool ok = mounted.ok;
+            if (ok) {
+                hdvPath   = path;
+                hdvStatus = std::string("synth from ") + hostDir +
+                            " (" + std::to_string(br.filesIncluded) + " files)";
+            } else {
+                hdvStatus = mounted.error.empty() ? "synth load failed"
+                                                  : mounted.error;
             }
             if (ok) {
                 char msg[200];
@@ -1145,15 +1212,20 @@ void MainWindow::renderHdvPanelWindow()
                 tapeStatusUntil   = lastFrameTime + 5.0;
                 return;
             }
-            std::lock_guard<std::mutex> lk(controller->stateMutex());
-            ok = primaryHdvCard()->loadImageFromBytes(std::move(bytes),
-                                             std::string("[host folder] ") + hostDir,
-                                             hostDir);
+            // Same as the mount-and-boot branch above: the coordinator
+            // flushes the outgoing image off the lock and refuses the mount
+            // when that write fails.
+            const auto mounted = storageCoordinator_->mountBlockBytes(
+                *controller, *settings, primaryHdvCard()->getSlot(),
+                std::move(bytes), std::string("[host folder] ") + hostDir,
+                hostDir);
+            ok = mounted.ok;
             if (ok) {
                 hdvPath   = path;
                 hdvStatus = std::string("synth from ") + hostDir;
             } else {
-                err = "synth load failed";
+                err = mounted.error.empty() ? "synth load failed"
+                                            : mounted.error;
                 hdvStatus = err;
             }
         } else {
@@ -1256,22 +1328,21 @@ void MainWindow::renderDiskFileDialog()
     }
 
     // Quick list of disk images in disks_5.4/ (mirrors the cassette dialog).
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    for (const char* dir : { "disks_5.4", "../disks_5.4", "../../disks_5.4" }) {
-        if (!fs::is_directory(dir, ec)) continue;
-        ImGui::Separator();
-        ImGui::TextDisabled("%s/", dir);
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (!entry.is_regular_file()) continue;
-            const std::string ext = entry.path().extension().string();
-            if (ext != ".dsk" && ext != ".do" && ext != ".po" &&
-                ext != ".nib" && ext != ".woz") continue;
-            const std::string name = entry.path().filename().string();
-            if (ImGui::Selectable(name.c_str()) && popupPanel)
-                popupPanel->dialogPath = entry.path().string();
+    // Cached: a modal is re-rendered every frame, and this walked the folder
+    // each time, with the throwing filesystem overloads.
+    {
+        const auto& listing = mediaDirListing(
+            "disks_5.4",
+            { "disks_5.4", "../disks_5.4", "../../disks_5.4" },
+            { ".dsk", ".do", ".po", ".nib", ".woz" }, /*recursive=*/false);
+        if (!listing.dir.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("%s/", listing.dir.c_str());
+            for (const auto& row : listing.entries) {
+                if (ImGui::Selectable(row.name.c_str()) && popupPanel)
+                    popupPanel->dialogPath = row.path;
+            }
         }
-        break;
     }
 
     ImGui::Separator();
@@ -1318,21 +1389,18 @@ void MainWindow::renderHdvFileDialog()
     else
         hdvPanel->dialogPath = buf;
 
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    for (const char* dir : { "hdv", "../hdv", "../../hdv" }) {
-        if (!fs::is_directory(dir, ec)) continue;
-        ImGui::Separator();
-        ImGui::TextDisabled("%s/", dir);
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (!entry.is_regular_file()) continue;
-            const std::string ext = entry.path().extension().string();
-            if (ext != ".hdv" && ext != ".2mg") continue;
-            const std::string name = entry.path().filename().string();
-            if (ImGui::Selectable(name.c_str()))
-                hdvPanel->dialogPath = entry.path().string();
+    {
+        const auto& listing = mediaDirListing(
+            "hdv:dialog", { "hdv", "../hdv", "../../hdv" },
+            { ".hdv", ".2mg" }, /*recursive=*/false);
+        if (!listing.dir.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("%s/", listing.dir.c_str());
+            for (const auto& row : listing.entries) {
+                if (ImGui::Selectable(row.name.c_str()))
+                    hdvPanel->dialogPath = row.path;
+            }
         }
-        break;
     }
 
     ImGui::Separator();
@@ -1639,21 +1707,19 @@ void MainWindow::renderDisk35FileDialog()
     else
         disk35Panel->dialogPath = buf;
 
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    for (const char* dir : { "disks_3.5", "../disks_3.5", "../../disks_3.5" }) {
-        if (!fs::is_directory(dir, ec)) continue;
-        ImGui::Separator();
-        ImGui::TextDisabled("%s/", dir);
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (!entry.is_regular_file()) continue;
-            const std::string ext = entry.path().extension().string();
-            if (ext != ".po" && ext != ".2mg" && ext != ".woz") continue;
-            const std::string name = entry.path().filename().string();
-            if (ImGui::Selectable(name.c_str()))
-                disk35Panel->dialogPath = entry.path().string();
+    {
+        const auto& listing = mediaDirListing(
+            "disks_3.5",
+            { "disks_3.5", "../disks_3.5", "../../disks_3.5" },
+            { ".po", ".2mg", ".woz" }, /*recursive=*/false);
+        if (!listing.dir.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("%s/", listing.dir.c_str());
+            for (const auto& row : listing.entries) {
+                if (ImGui::Selectable(row.name.c_str()))
+                    disk35Panel->dialogPath = row.path;
+            }
         }
-        break;
     }
 
     ImGui::Separator();

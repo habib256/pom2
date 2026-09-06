@@ -42,6 +42,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "TestTempPath.h"
 
 namespace {
 
@@ -145,7 +146,7 @@ void testRomLoadGate()
 
     // Wrong-size payload is also rejected so a truncated dump doesn't
     // silently break software detection.
-    const std::string tmp = "/tmp/pom2_grappler_bad.bin";
+    const std::string tmp = pom2test::tempPath("pom2_grappler_bad.bin");
     {
         std::ofstream f(tmp, std::ios::binary);
         // Anything that isn't exactly 4096 bytes.
@@ -158,7 +159,7 @@ void testRomLoadGate()
     // A 4 KB blob loads cleanly. Fill = high byte of the address so the
     // two 2 KB expansion banks are distinguishable ($00-$07 low bank,
     // $08-$0F high bank).
-    const std::string good = "/tmp/pom2_grappler_good.bin";
+    const std::string good = pom2test::tempPath("pom2_grappler_good.bin");
     {
         std::ofstream f(good, std::ios::binary);
         for (int i = 0; i < 4096; ++i) f.put(static_cast<char>((i >> 8) & 0xFF));

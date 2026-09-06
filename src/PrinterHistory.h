@@ -156,8 +156,17 @@ public:
     size_t pendingWrites() const;
 
 private:
+    /// What `readIndex` found. The distinction is the whole of the orphan
+    /// sweep's safety: only a PARSED index says which PNGs are still
+    /// referenced, so only then may unreferenced ones be deleted.
+    enum class IndexState {
+        Parsed,    ///< magic matched; `pages_` is the authoritative live set
+        Missing,   ///< no index file at all (fresh store, or one deleted)
+        Bad        ///< present but oversized / non-regular / wrong magic
+    };
+
     bool writeIndex(std::string& err) const;
-    bool readIndex();
+    IndexState readIndex();
     void writerLoop();
     void startWriter();
     void stopWriter();
@@ -190,6 +199,11 @@ private:
     std::vector<std::string>        pendingDeletes_;
     std::thread                     writer_;
     bool                            writerQuit_ = false;
+    /// True between the writer thread's spawn and its exit — including an
+    /// exit through `ThreadGuard`'s exception barrier. Both waits below key
+    /// off it: a dead writer must fail the wait, not hang the render thread
+    /// forever on a queue nothing will ever drain.
+    bool                            writerAlive_ = false;
 
     std::string              dir_;
     std::vector<HistoryPage> pages_;      ///< newest first

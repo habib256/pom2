@@ -100,13 +100,28 @@ int bootAndVerify(const std::string& romPath, const std::string& promPath,
     cpu.setProgramCounter(0xC600);
     const uint8_t* ram = mem.data();
 
+    // Stop the moment control has LEFT the boot PROM with T0S0 deposited:
+    // $0800 non-zero (the PROM has written the page) and PC outside $C600-
+    // $C6FF (the PROM has jumped to $0801). Only PROM code writes page $08 —
+    // boot0's later sector reads land at $B600-$BFFF — so the page is stable
+    // from here until boot1 has finished with it.
+    //
+    // The condition used to require PC INSIDE $0800-$08FF, sampled only at
+    // 1024-cycle slice boundaries; boot0 spends too few cycles there to be
+    // caught, so the loop always ran the full 5 M-cycle budget. That was
+    // invisible while the fixture path was wrong and the test skipped — with
+    // the disk found, it compared page $08 after DOS 3.3 had fully booted and
+    // run HELLO, which by then has zeroed $0800-$0802: two mismatches on a
+    // boot that was in fact perfect. Breaking on $0800 alone is too EARLY
+    // (the PROM's denibblise loop fills the page while $0800 already reads
+    // non-zero — 166 mismatches).
     constexpr int kMaxCycles = 5'000'000;
     int totalCycles = 0;
     while (totalCycles < kMaxCycles) {
         const int slice = cpu.run(1024);
         totalCycles += slice;
         const uint16_t pc = cpu.getProgramCounter();
-        if (pc >= 0x0800 && pc <= 0x08FF && ram[0x0800] != 0x00) break;
+        if (ram[0x0800] != 0x00 && (pc < 0xC600 || pc > 0xC6FF)) break;
     }
 
     std::array<uint8_t, 256> loaded;
@@ -150,14 +165,18 @@ int main()
         "../roms/apple2.rom", "roms/apple2.rom", "../../roms/apple2.rom" });
     const std::string promPath = findFirst({
         "../roms/disk2.rom", "roms/disk2.rom", "../../roms/disk2.rom" });
+    // Sector images moved to disks_5.4/dsk/ in 2026; the bare roots stay as
+    // a fallback for older trees.
     const std::string dskPath  = findFirst({
+        "../disks_5.4/dsk/dos33_master.dsk", "disks_5.4/dsk/dos33_master.dsk",
+        "../../disks_5.4/dsk/dos33_master.dsk",
         "../disks_5.4/dos33_master.dsk", "disks_5.4/dos33_master.dsk",
         "../../disks_5.4/dos33_master.dsk" });
 
     if (romPath.empty() || promPath.empty() || dskPath.empty()) {
         std::printf("disk_boot_smoke SKIP: missing one of"
                     " roms/apple2.rom, roms/disk2.rom, disks_5.4/dos33_master.dsk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     if (const int r = bootAndVerify(romPath, promPath, dskPath, "DOS 3.3");
@@ -168,6 +187,8 @@ int main()
     // check that the .po path round-trips through DiskIICard / GCR / the
     // boot loader.
     const std::string poPath = findFirst({
+        "../disks_5.4/dsk/ProDOS_2_4_3.po", "disks_5.4/dsk/ProDOS_2_4_3.po",
+        "../../disks_5.4/dsk/ProDOS_2_4_3.po",
         "../disks_5.4/ProDOS_2_4_3.po", "disks_5.4/ProDOS_2_4_3.po",
         "../../disks_5.4/ProDOS_2_4_3.po" });
     if (!poPath.empty()) {

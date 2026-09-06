@@ -138,6 +138,41 @@ public:
         return false;
     }
 
+    /// What a two-phase FLUSH lifted out of one bay: the complete file, ready
+    /// to be written with no lock held and nothing more asked of the card.
+    /// Deliberately not `Block512Backing::PendingWriteBack` — that one is a
+    /// dirty-block set, and the bays this serves (a `Disk35Image`) rewrite the
+    /// whole image.
+    struct PendingBayFlush {
+        bool                 valid = false;   ///< false → phase 2 no-ops
+        std::string          path;
+        std::vector<uint8_t> bytes;
+    };
+
+    /// Phase 1 of a two-phase FLUSH (no eject), with `stateMutex` held: lift
+    /// out what `flushBay` would write and retire the bay's dirty flag,
+    /// atomically with the capture.
+    ///
+    /// `flushBay` itself writes INLINE, and `StorageCoordinator::flushAll`
+    /// calls it under the machine lock on every quit, profile switch and slot
+    /// rebuild — 800 KB plus two fsyncs there froze the CPU worker and the
+    /// window together, which is the one thing CLAUDE.md forbids outright.
+    ///
+    /// Same opt-in convention as `prepareEjectBay`: false with an EMPTY
+    /// `errOut` means "this bay flushes inline", and the caller falls back to
+    /// `flushBay`. A real failure fills `errOut`.
+    virtual bool prepareFlushBay(int /*bay*/, PendingBayFlush& /*out*/,
+                                 std::string& errOut)
+    {
+        errOut.clear();
+        return false;
+    }
+
+    /// Phase-2 FAILURE undo for `prepareFlushBay`, `stateMutex` held: re-mark
+    /// the bay dirty so the medium (still mounted — a flush never ejects) is
+    /// saved again on the next attempt.
+    virtual void restoreFlushBayDirty(int /*bay*/) {}
+
     /// Phase 1 of a two-phase EJECT, with `stateMutex` held: lift out what
     /// the save-on-eject would write, WITHOUT touching the medium. Leaving it
     /// mounted is the point — phase 2 can fail (disk full, read-only parent),

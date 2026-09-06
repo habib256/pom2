@@ -99,6 +99,9 @@ std::vector<uint8_t> makeTwoImgDos(const std::vector<uint8_t>& payload,
 bool loadDosFixture(std::vector<uint8_t>& payload)
 {
     static const char* prefixes[] = {
+        // Sector images live under disks_5.4/dsk/ since the 2026 move; the
+        // bare roots are kept for older trees.
+        "../../disks_5.4/dsk/", "../disks_5.4/dsk/", "disks_5.4/dsk/",
         "../../disks_5.4/", "../../disks2/", "disks_5.4/", "disks2/"
     };
     for (const char* pfx : prefixes) {
@@ -124,7 +127,7 @@ int main()
         std::fprintf(stderr,
             "skip: no dos33_master.dsk fixture (this test needs a known "
             "DOS image to wrap and modify)\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     // A 32-byte trailer: anything non-zero so we can verify it's

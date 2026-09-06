@@ -6,7 +6,7 @@
 #
 #   packaging/POM2-{16,32,48,64,128,256}.png   hicolor theme (Linux install)
 #   packaging/macos/POM2.icns                  CFBundleIconFile of the .app
-#   packaging/windows/POM2.ico                 embedded in POM2.exe via POM2.rc
+#   packaging/windows/POM2.ico                 embedded in POM2.exe via POM2.rc.in
 #
 # Run this after ANY edit to packaging/POM2.svg, then commit the results.
 #
@@ -18,7 +18,7 @@
 #   python3       — runs tools/png2ico.py, which assembles the .ico.
 #                 `magick *.png out.ico` is NOT used: it stores every entry
 #                 as an uncompressed DIB (25 KB -> 370 KB, all of it landing
-#                 in POM2.exe via POM2.rc).
+#                 in POM2.exe via POM2.rc.in).
 #   iconutil      (macOS only) — assembles the .icns. Elsewhere that one
 #                 artefact is skipped and left as committed.
 set -euo pipefail
@@ -69,7 +69,7 @@ for sz in 16 32 48 64 128 256; do
 done
 
 # ── Windows .ico ────────────────────────────────────────────────────────────
-# Same size ladder as the PNGs (POM2.rc documents 16..256). Every entry is
+# Same size ladder as the PNGs (POM2.rc.in documents 16..256). Every entry is
 # rendered from the vector rather than downscaled from one big raster, so
 # each size gets its own clean hinting-free rasterisation.
 ico_inputs=()

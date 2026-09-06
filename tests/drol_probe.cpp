@@ -81,7 +81,7 @@ int main()
         "../../disks_5.4/gist/Drol.dsk" });
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("drol_probe SKIP: missing apple2e.rom / disk2.rom / Drol.dsk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

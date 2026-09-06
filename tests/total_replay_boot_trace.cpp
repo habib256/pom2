@@ -87,7 +87,7 @@ int main()
     });
     if (hdvPath.empty()) {
         std::printf("SKIP: no Total Replay HDV in hdv/ or floppyemu/\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
     auto card = std::make_unique<pom2::SmartPortCard>(5);
     auto u0   = std::make_unique<pom2::SmartPortHdvUnit>();

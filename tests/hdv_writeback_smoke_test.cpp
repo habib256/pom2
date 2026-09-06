@@ -31,6 +31,8 @@
 //     mounted HDV that used to surface as write-protected to ProDOS.
 
 #include "ProDOSHardDiskCard.h"
+#include "Block512Backing.h"
+#include "ProDOSVolume.h"
 
 #include <cassert>
 #include <cstdint>
@@ -38,6 +40,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -64,6 +67,13 @@ std::vector<uint8_t> readAll(const fs::path& p)
     f.read(reinterpret_cast<char*>(out.data()),
            static_cast<std::streamsize>(sz));
     return out;
+}
+
+std::string slurpText(const fs::path& p)
+{
+    std::ifstream f(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(f)),
+                       std::istreambuf_iterator<char>());
 }
 
 void writeFile(const fs::path& p, const std::vector<uint8_t>& bytes)
@@ -303,13 +313,18 @@ int main()
         std::printf("hdv_writeback: failed flush preserves mounted media OK\n");
     }
 
-    // ── Case F: <image>.pom2tmp is ours by construction ─────────────────
-    // Same defect, same fix as `DiskImage::saveDirty` — the target was
-    // validated at mount, the sibling temp name was not, and
-    // ofstream(trunc) follows symlinks. Before `commitWriteBack` called
-    // prepareTempPath, a link planted at <image>.pom2tmp took the whole
-    // rewrite and the rename then moved the link over the user's image.
-    // (Bug hunt 2026-09-06 #3.)
+    // ── Case F: the temp name is UNIQUE, so nothing at the old fixed one
+    //    can capture the write ────────────────────────────────────────────
+    // The sibling temp used to be `<image>.pom2tmp` — a name derived from the
+    // target alone, i.e. the name EVERY POM2 on the machine picks. Two
+    // instances saving one image opened it with trunc, interleaved, and the
+    // last rename published a disk made of both. It is also guessable by
+    // anything else on the box. It is now `<image>.<pid>-<n>.pom2tmp`
+    // (pom2::tempSiblingPath), and `prepareTempPath` still runs on it — the
+    // symlink/hard-link/directory refusals it enforces are pinned directly in
+    // atomic_file_replace_test. What this case pins is the collision half: a
+    // symlink planted at the LEGACY name neither redirects the write nor
+    // stops it. (Bug hunt 2026-09-06 #H7, formerly #3.)
     {
         const fs::path p      = tmpFile("tmppath", ".hdv");
         const fs::path victim = tmpFile("tmppath_victim", ".bin");
@@ -336,18 +351,21 @@ int main()
         assert(saved.size() == 2 * kBlock);
         assert(saved[kBlock] == 0x5C);               // the block did land
 
+        assert(fs::symlink_status(tmp).type() == fs::file_type::symlink);
+        fs::remove(tmp, ec);
         fs::remove(victim, ec);
         fs::remove(p, ec);
-        std::printf("hdv_writeback: .pom2tmp symlink not followed OK\n");
+        std::printf("hdv_writeback: legacy .pom2tmp name no longer used OK\n");
     }
 
-    // ...and a temp name we may not simply delete refuses the save, keeping
-    // the dirty blocks in RAM for a retry.
+    // ...and a DIRECTORY at the legacy name no longer blocks the save either
+    // (it used to, by making prepareTempPath refuse). The unique name also
+    // has to be cleaned up: a per-call temp that survived a failure would
+    // leave one orphan per attempt beside the user's image.
     {
         const fs::path p   = tmpFile("tmppath_dir", ".hdv");
         const fs::path tmp = fs::path(p.string() + ".pom2tmp");
         writeFile(p, std::vector<uint8_t>(2 * kBlock, 0x22));
-        const auto original = readAll(p);
         std::error_code ec;
         fs::remove_all(tmp, ec);
         fs::create_directory(tmp, ec);
@@ -360,14 +378,69 @@ int main()
         std::memset(pattern, 0x6D, sizeof(pattern));
         cardWriteBlock(card, 0, pattern);
         assert(card.hasUnsavedChanges());
-        assert(!card.saveDirty());                   // refused
-        assert(card.hasUnsavedChanges());            // retryable
-        assert(readAll(p) == original);              // image untouched
-        assert(fs::is_directory(tmp));               // refused, not deleted
+        assert(card.saveDirty());                    // no longer refused
+        assert(!card.hasUnsavedChanges());
+        assert(readAll(p)[0] == 0x6D);               // the block landed
+        assert(fs::is_directory(tmp));               // untouched, not deleted
+
+        // No `<image>.<pid>-<n>.pom2tmp` left behind.
+        int leftovers = 0;
+        for (const auto& e : fs::directory_iterator(p.parent_path(), ec)) {
+            const std::string nm = e.path().filename().string();
+            if (nm.rfind(p.filename().string() + ".", 0) == 0 &&
+                nm.size() > 8 &&
+                nm.compare(nm.size() - 8, 8, ".pom2tmp") == 0 &&
+                !fs::is_directory(e.path(), ec))
+                ++leftovers;
+        }
+        assert(leftovers == 0);
 
         fs::remove_all(tmp, ec);
         fs::remove(p, ec);
-        std::printf("hdv_writeback: .pom2tmp directory refuses save OK\n");
+        std::printf("hdv_writeback: unique temp name, no debris OK\n");
+    }
+
+    // ── Case H: a host folder can be flushed MORE THAN ONCE ────────────
+    // `mountTime_` was stamped at load and never again, while the write-back
+    // rewrites host files with a fresh mtime. From the second flush on, every
+    // file POM2 itself had just written looked "edited on the host after the
+    // mount" and was PRESERVED — so the guest's first save landed and every
+    // save after it was silently dropped, reported as a successful
+    // write-back. (Bug hunt 2026-09-06 #H2.)
+    {
+        const fs::path folder = fs::temp_directory_path() / "pom2_hdv_wb_folder";
+        std::error_code ec;
+        fs::remove_all(folder, ec);
+        fs::create_directories(folder, ec);
+        { std::ofstream f(folder / "NOTES.txt", std::ios::binary); f << "one"; }
+
+        std::vector<uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(folder.string(), "HOST", img).ok);
+
+        pom2::Block512Backing b;
+        assert(b.loadFromBytes(img, "HOSTVOL", folder.string()));
+        b.setWriteBackEnabled(true);
+
+        // The seedling's data block is the first data block: 6 structural +
+        // 1 bitmap. Its eof stays 3, so three bytes are what comes back.
+        auto putBody = [&](const char* three) {
+            uint8_t blk[kBlock];
+            assert(b.readBlock(7, blk));
+            std::memcpy(blk, three, 3);
+            assert(b.writeBlock(7, blk));
+        };
+
+        putBody("two");
+        assert(b.saveDirty());
+        assert(slurpText(folder / "NOTES.txt") == "two");
+
+        putBody("thr");
+        assert(b.saveDirty());
+        assert(slurpText(folder / "NOTES.txt") == "thr" &&
+               "the second host-folder flush was preserved away");
+
+        fs::remove_all(folder, ec);
+        std::printf("hdv_writeback: repeated host-folder flush lands OK\n");
     }
 
     std::printf("hdv_writeback_smoke OK\n");

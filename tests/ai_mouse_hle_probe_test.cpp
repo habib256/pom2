@@ -50,9 +50,28 @@
 
 namespace {
 
-// One above the main AI smoke test's 36502 so parallel ctest runs don't
-// collide on the port.
-constexpr uint16_t kTestPort = 36503;
+// Chosen at run time (bind :0, read it back, close) rather than hard-coded:
+// a fixed port collides with a second ctest job on the same runner. See the
+// same helper in ai_control_server_smoke_test.cpp.
+uint16_t kTestPort = 0;
+
+uint16_t pickFreePort()
+{
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port        = 0;
+    uint16_t port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+        socklen_t len = sizeof(addr);
+        if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0)
+            port = ntohs(addr.sin_port);
+    }
+    ::close(fd);
+    return port;
+}
 
 int connectLoopback(uint16_t port)
 {
@@ -150,8 +169,10 @@ int main()
 
     pom2::AiControlServer srv;
     srv.attach(&ctrl, nullptr, nullptr, nullptr);
+    kTestPort = pickFreePort();
+    assert(kTestPort != 0 && "could not obtain an ephemeral loopback port");
     const bool started = srv.start(kTestPort);
-    assert(started && "AiControlServer failed to bind test port 36503");
+    assert(started && "AiControlServer failed to bind its ephemeral test port");
 
     // Empty bus → 503 (same shape as the LLE-card case).
     HttpResponse r = postMouse("{\"dx\":1}");

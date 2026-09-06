@@ -11,7 +11,12 @@
     <generic-icon name="media-floppy"/>
     <glob pattern="*.dsk"/>
     <glob pattern="*.do"/>
-    <glob pattern="*.po"/>
+    <!-- weight 40 (default is 50): *.po is also gettext's portable-object
+         extension, and shared-mime-info resolves a glob collision by
+         weight. At the default POM2 could win the tie and hand a
+         translator's .po file to an Apple II emulator. ProDOS order
+         images are still recognised when nothing else claims the glob. -->
+    <glob pattern="*.po" weight="40"/>
     <glob pattern="*.nib"/>
     <glob pattern="*.woz"/>
     <glob pattern="*.d13"/>

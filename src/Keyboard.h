@@ -31,6 +31,25 @@
 // the cold $C011/$C012/$C019 IIe status registers, which carry the last char
 // in their low 7 bits. Pinned by `input_io_smoke`, `paste_smoke` and
 // `ui_worker_contention`.
+//
+// **Deliberately absent from every snapshot** (reviewed 2026-09-06). Both the
+// latch and the FIFO are HOST INPUT in flight, not machine state:
+//
+//   * The latch is the last key the USER pressed. Restoring it would
+//     re-deliver a keystroke the guest already consumed — a rewind past a
+//     RETURN would make the restored machine take that RETURN a second time,
+//     which is the opposite of "the machine goes back, the user's hands do
+//     not". Conversely it would drop a press the user made during a scrub.
+//   * The paste FIFO is a queue the user started from the host; rewinding it
+//     would re-type text the guest already received, and running it forward
+//     would silently swallow the rest.
+//   * Both live behind `mtx_`, written from the UI / AI-control threads,
+//     while a snapshot restore holds `stateMutex` — the two lock domains do
+//     not serialise, so a captured value can be stale before it is written
+//     back.
+//
+// The consequence is bounded and correct: after a restore the guest sees
+// whatever the host has typed since, and nothing it already read.
 
 #ifndef POM2_KEYBOARD_H
 #define POM2_KEYBOARD_H

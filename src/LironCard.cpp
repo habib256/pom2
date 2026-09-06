@@ -89,6 +89,15 @@ LironCard::~LironCard()
     // guest's writes, and `SlotBus` destroys it on every slot rebuild /
     // profile switch as well as at quit. `saveDirty` is a successful no-op
     // when write-back is off or nothing is dirty.
+    //
+    // LAST RESORT, and normally a no-op: every host path that destroys a card
+    // flushes first (`StorageCoordinator::flushAll`, which since bug hunt #2
+    // captures here and writes with the machine lock RELEASED), so reaching
+    // this with something dirty means either a host that never flushed
+    // (headless, tests, a crash-time teardown) or a guest write that landed
+    // after the flush. Both are worth an inline 800 KB write — there is no
+    // later — but neither is the common case, which is why the profile-switch
+    // path no longer pays for it under `stateMutex`.
     for (int bay = 0; bay < kDrives; ++bay) {
         std::string err;
         if (!flushBay(bay, err) && !err.empty()) {
@@ -245,9 +254,16 @@ void LironCard::onReset()
 
 // ── Snapshot / rewind ────────────────────────────────────────────────────
 // The IWM's registers and state machine, and the bus transaction in flight.
-// The Sony mechanisms are not carried: while the responder is live they are
-// bypassed, and a dumb-drive session through this card has nothing to
-// resume that the firmware does not re-establish on its next access.
+//
+// The Sony MECHANISMS are carried too, as an optional tail (2026-09-06).
+// The old note here said they had nothing to resume because the bus
+// responder bypasses them — true for a SmartPort session, but the card also
+// runs its bays as dumb drives, and there the restored IWM walked cells at a
+// head position, side and motor state left over from the abandoned future
+// (I/O ERROR until the firmware recalibrated). Only the mechanism travels:
+// the MEDIA is never captured, the controller clears the rewind ring on a
+// 3.5" write instead. Tail is length-prefixed per bay, so a blob without it
+// (older build) still loads.
 
 namespace {
 constexpr uint8_t kLironBlobMagic[4] = { 'L', 'I', 'R', '1' };
@@ -263,12 +279,24 @@ void LironCard::appendSnapshotState(std::vector<uint8_t>& out) const
     bus_.appendSnapshotState(out);
     out.push_back(static_cast<uint8_t>(active_ + 1));   // -1 → 0
     out.push_back(static_cast<uint8_t>(busMediaMask_));
+    for (int d = 0; d < kDrives; ++d) {
+        std::vector<uint8_t> mech;
+        drives_[static_cast<std::size_t>(d)].appendSnapshotState(mech);
+        for (int k = 0; k < 4; ++k)
+            out.push_back(static_cast<uint8_t>(mech.size() >> (8 * k)));
+        out.insert(out.end(), mech.begin(), mech.end());
+    }
 }
 
 void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
-    onReset();
+    // Identify the blob BEFORE touching the card. `onReset()` used to run
+    // first, so a foreign or absent section (another card's SLOTn blob,
+    // an older build's) wiped a live Liron mid-transaction instead of being
+    // ignored — the contract MachineSnapshot documents is that a card
+    // tolerates a blob it does not recognise by leaving itself alone.
     if (!data || len < 8 || std::memcmp(data, kLironBlobMagic, 4) != 0) return;
+    onReset();
     std::size_t i = 4, iwmLen = 0;
     for (int k = 0; k < 4; ++k) iwmLen |= static_cast<std::size_t>(data[i + k]) << (8 * k);
     i += 4;
@@ -282,6 +310,18 @@ void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     const int act = static_cast<int>(data[i++]) - 1;
     active_ = (act >= 0 && act < kDrives) ? act : -1;
     busMediaMask_ = data[i++];
+    // Optional per-bay mechanism tail. Absent (older blob) → the live
+    // mechanisms are left alone, which is the pre-2026-09-06 behaviour.
+    for (int d = 0; d < kDrives && i + 4 <= len; ++d) {
+        std::size_t mechLen = 0;
+        for (int k = 0; k < 4; ++k)
+            mechLen |= static_cast<std::size_t>(data[i + k]) << (8 * k);
+        i += 4;
+        if (mechLen > len - i) break;
+        if (mechLen)
+            drives_[static_cast<std::size_t>(d)].loadSnapshotState(data + i, mechLen);
+        i += mechLen;
+    }
     retargetIwm();
 }
 
@@ -381,6 +421,30 @@ bool LironCard::ejectBay(int bay)
     img.eject();
     drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
     return true;
+}
+
+bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
+                                std::string& errOut)
+{
+    errOut.clear();
+    out = PendingBayFlush{};
+    if (bay < 0 || bay >= kDrives) { errOut = "no such bay"; return false; }
+    Disk35Image& img = images_[static_cast<std::size_t>(bay)];
+    // The move half of "move out": `takeWriteBack` serialises the whole file
+    // and retires the dirty flag under the caller's lock, atomically with the
+    // capture. Nothing dirty (or write-back off) is a successful no-op with
+    // `valid == false`, exactly as `flushBay` returning true is.
+    Disk35Image::PendingWriteBack pending = img.takeWriteBack();
+    out.valid = pending.valid;
+    out.path  = std::move(pending.path);
+    out.bytes = std::move(pending.bytes);
+    return true;
+}
+
+void LironCard::restoreFlushBayDirty(int bay)
+{
+    if (bay < 0 || bay >= kDrives) return;
+    images_[static_cast<std::size_t>(bay)].restoreDirty();
 }
 
 bool LironCard::flushBay(int bay, std::string& errOut)

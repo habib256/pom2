@@ -405,7 +405,35 @@ void main()
 } // namespace
 
 CrtEffectStack::CrtEffectStack() = default;
-CrtEffectStack::~CrtEffectStack() = default;
+CrtEffectStack::~CrtEffectStack() { destroyGL(); }
+
+int CrtEffectStack::clampTexDim(int v) const
+{
+    if (maxTexSize_ > 0 && v > maxTexSize_) return maxTexSize_;
+    return v;
+}
+
+void CrtEffectStack::destroyGL()
+{
+    // Only touch GL if we ever reached it: initialize() bails before creating
+    // anything when the entry points are missing, and a never-initialised
+    // instance must not call into a driver that was never loaded.
+    if (!initialized) return;
+    if (fbo[0] || fbo[1])             glDeleteFramebuffers(2, fbo);
+    if (outputTex[0] || outputTex[1]) glDeleteTextures(2, outputTex);
+    if (bwFbo)     glDeleteFramebuffers(1, &bwFbo);
+    if (bwTex)     glDeleteTextures(1, &bwTex);
+    if (vbo)       glDeleteBuffers(1, &vbo);
+    if (vao)       glDeleteVertexArrays(1, &vao);
+    if (bwProgram) glDeleteProgram(bwProgram);
+    if (program)   glDeleteProgram(program);
+    fbo[0] = fbo[1] = 0;
+    outputTex[0] = outputTex[1] = 0;
+    bwFbo = bwTex = 0;
+    vbo = vao = 0;
+    bwProgram = program = 0;
+    ready = false;
+}
 
 bool CrtEffectStack::initialize()
 {
@@ -418,6 +446,12 @@ bool CrtEffectStack::initialize()
         return false;
     }
 #endif
+
+    {
+        GLint mts = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &mts);
+        maxTexSize_ = (mts > 0) ? static_cast<int>(mts) : 2048;
+    }
 
     program = compileShaderProgram(kVertexShader, kFragmentShader, &errorMsg);
     if (!program) return false;
@@ -482,8 +516,8 @@ bool CrtEffectStack::createTextures(int w, int h)
     // patterns be sampled finely enough to be analytically anti-aliased
     // (fwidth in the shader) instead of moiréing — and avoids a second
     // resample when ImGui blits the result 1:1.
-    outW = w;
-    outH = h;
+    outW = clampTexDim(w);
+    outH = clampTexDim(h);
 
     glGenFramebuffers(2, fbo);
     glGenTextures(2, outputTex);
@@ -553,6 +587,10 @@ unsigned int CrtEffectStack::applyBandwidth(unsigned int srcTex,
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glDeleteFramebuffers(1, &bwFbo);
             glDeleteTextures(1, &bwTex);
+            // Delete the program too: zeroing the handle only made it
+            // unreachable — the compiled program stayed resident in the
+            // driver for the rest of the session.
+            glDeleteProgram(bwProgram);
             bwFbo = 0; bwTex = 0; bwProgram = 0;
             pom2::log().warn("CRT", "analog-bandwidth FBO incomplete — knob disabled");
             return 0;
@@ -593,14 +631,39 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     srcH_ = srcH;
 
     if (outputTex[0] == 0) {
-        if (!createTextures(dstW, dstH)) { ready = false; return 0; }
-    } else if (dstW != outW || dstH != outH) {
+        if (!createTextures(dstW, dstH)) {
+            pom2::log().warn("CRT",
+                "cannot allocate the " + std::to_string(dstW) + "x" +
+                std::to_string(dstH) + " glass-pass target (" + errorMsg +
+                ") — effects disabled");
+            ready = false;
+            return 0;
+        }
+    } else if (clampTexDim(dstW) != outW || clampTexDim(dstH) != outH) {
         // Window/zoom changed (or 80-col toggled) — resize the ping-pong pair.
-        outW = dstW; outH = dstH;
+        // Clamped, and the completeness re-checked: a reallocation past
+        // GL_MAX_TEXTURE_SIZE (a 5K display on a 4096-limited GPU) leaves the
+        // attachment invalid, and the old code kept drawing into a broken FBO
+        // — a black screen with nothing said anywhere.
+        outW = clampTexDim(dstW); outH = clampTexDim(dstH);
+        bool complete = true;
         for (int i = 0; i < 2; ++i) {
             glBindTexture(GL_TEXTURE_2D, outputTex[i]);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, outW, outH, 0,
                          GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo[i]);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                complete = false;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (!complete) {
+            errorMsg = "FBO incomplete after resize";
+            pom2::log().warn("CRT",
+                "resize to " + std::to_string(outW) + "x" + std::to_string(outH) +
+                " left the FBO incomplete (GL_MAX_TEXTURE_SIZE " +
+                std::to_string(maxTexSize_) + ") — glass pass disabled");
+            ready = false;
+            return 0;
         }
         firstFrame = true;
     }

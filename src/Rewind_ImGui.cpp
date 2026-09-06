@@ -67,6 +67,14 @@ void Rewind_ImGui::syncScrub(EmulationController& ctrl)
 
 void Rewind_ImGui::beginScrubIfNeeded(EmulationController& ctrl)
 {
+    // rewindBeginScrub() stops the worker and waits for it to park before it
+    // touches the ring. That wait runs on the UI thread and is BOUNDED —
+    // EmulationController::waitUntilParked() polls at most 200 x 1 ms and
+    // returns whether the worker parked or not — so a wedged worker cannot
+    // hang the window; it degrades to one ~200 ms hitch on the frame that
+    // starts a scrub. In practice the worker parks within one frame budget
+    // (<= ~16 ms at 60 Hz, sooner under turbo), and this runs once per scrub,
+    // not once per drag frame (the early-out below).
     syncScrub(ctrl);
     if (scrubbing_) return;
     if (ctrl.rewindBeginScrub()) {

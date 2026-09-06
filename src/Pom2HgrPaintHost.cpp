@@ -65,6 +65,14 @@ bool publishBytes(const std::string& path, const uint8_t* data, size_t size,
     std::error_code permEc;
     const auto perms = fs::status(target, permEc).permissions();
     const bool havePerms = !permEc;
+    // The temp name is ours by construction; anything sitting on it is our own
+    // debris or a plant that would redirect this write somewhere else (see
+    // AtomicFileReplace.h). ofstream(trunc) follows a symlink like any open.
+    std::error_code tmpEc;
+    if (!pom2::prepareTempPath(tmp, tmpEc)) {
+        err = "cannot use temp file " + tmp.string() + ": " + tmpEc.message();
+        return false;
+    }
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     if (!out) { err = "cannot create " + tmp.string(); return false; }
     out.write(reinterpret_cast<const char*>(data),
@@ -183,7 +191,7 @@ bool Pom2HgrPaintHost::supportsDhgr() const
     // 4096-cycle slice at a time.
     //
     // Safe from the editors: MainWindow closes its own lock scope before
-    // calling `render()` (MainWindow.cpp:10079), so this never re-enters.
+    // calling `render()` (MainWindow::render, MainWindow.cpp), so this never re-enters.
     if (!emu_) return false;
     auto st = emu_->lockState();
     return st.memory().isIIE();
@@ -357,6 +365,7 @@ bool Pom2HgrPaintHost::saveDlgrImage(const std::string& path, uint16_t baseAddr,
                                      std::string& err)
 {
     if (!emu_) { err = "no emulator"; return false; }
+    if (baseAddr > 0xC000 - 0x400) { err = "save address is not RAM"; return false; }
     std::vector<uint8_t> bytes(0x800);
     {
         auto st = emu_->lockState();
@@ -373,6 +382,9 @@ bool Pom2HgrPaintHost::loadImage(const std::string& path, uint16_t baseAddr,
                                  std::string& err)
 {
     if (!emu_) { err = "no emulator"; return false; }
+    // `0xC000 - baseAddr` is unsigned: a base at or above the I/O page wraps to
+    // a ~4 GB allocation instead of a rejection. No video page lives there.
+    if (baseAddr >= 0xC000) { err = "load address is not RAM"; return false; }
     std::ifstream in(path, std::ios::binary);
     if (!in) { err = "cannot open " + path; return false; }
     const size_t maxBytes = static_cast<size_t>(0xC000 - baseAddr);
@@ -393,6 +405,7 @@ bool Pom2HgrPaintHost::saveImage(const std::string& path, uint16_t baseAddr,
                                  int sizeBytes, std::string& err)
 {
     if (!emu_) { err = "no emulator"; return false; }
+    if (baseAddr >= 0xC000) { err = "save address is not RAM"; return false; }
     if (sizeBytes <= 0) sizeBytes = hgrpaint::kHiresSize;
     sizeBytes = std::min<int>(sizeBytes, 0xC000 - baseAddr);
     std::vector<uint8_t> bytes(static_cast<size_t>(sizeBytes));
@@ -407,6 +420,9 @@ bool Pom2HgrPaintHost::loadDhgrImage(const std::string& path, uint16_t baseAddr,
                                      std::string& err)
 {
     if (!emu_) { err = "no emulator"; return false; }
+    if (baseAddr > 0xC000 - hgrpaint::kHiresSize) {
+        err = "load address is not RAM"; return false;
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) { err = "cannot open " + path; return false; }
     const size_t required = 2 * static_cast<size_t>(hgrpaint::kHiresSize);
@@ -429,6 +445,9 @@ bool Pom2HgrPaintHost::saveDhgrImage(const std::string& path, uint16_t baseAddr,
                                      std::string& err)
 {
     if (!emu_) { err = "no emulator"; return false; }
+    if (baseAddr > 0xC000 - hgrpaint::kHiresSize) {
+        err = "save address is not RAM"; return false;
+    }
     std::vector<uint8_t> bytes(2 * static_cast<size_t>(hgrpaint::kHiresSize));
     {
         auto st = emu_->lockState();
@@ -447,6 +466,12 @@ bool Pom2HgrPaintHost::savePng(const std::string& path, const uint32_t* rgba,
     // stride = w*4.
     namespace fs = std::filesystem;
     const fs::path tmp(path + ".pom2tmp");
+    // Same rule as publishBytes: clear the temp name before writing through it.
+    std::error_code tmpEc;
+    if (!pom2::prepareTempPath(tmp, tmpEc)) {
+        err = "cannot use temp file " + tmp.string() + ": " + tmpEc.message();
+        return false;
+    }
     if (stbi_write_png(tmp.string().c_str(), w, h, 4, rgba, w * 4) == 0) {
         err = "stbi_write_png failed (directory writable?)";
         std::error_code removeEc;
@@ -461,6 +486,17 @@ bool Pom2HgrPaintHost::savePng(const std::string& path, const uint32_t* rgba,
     if (!pom2::replaceFileAtomic(tmp, fs::path(path), ec)) {
         err = "cannot replace " + path + ": " + ec.message();
         fs::remove(tmp, ec);
+        return false;
+    }
+    return true;
+}
+
+bool Pom2HgrPaintHost::saveBytes(const std::string& path, const void* data,
+                                 std::size_t size, std::string& err)
+{
+    std::error_code ec;
+    if (!pom2::writeFileAtomic(std::filesystem::path(path), data, size, ec)) {
+        err = ec.message().empty() ? std::string("write failed") : ec.message();
         return false;
     }
     return true;

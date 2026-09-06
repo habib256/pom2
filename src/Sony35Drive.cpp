@@ -52,6 +52,8 @@
 
 #include "Sony35Drive.h"
 
+#include "ByteIO.h"
+
 #include "Sony35Gcr.h"
 #include "CpuClock.h"
 #include "Disk35Image.h"
@@ -626,6 +628,15 @@ void Sony35Drive::emitInsertClick()
     if (sound_) sound_->click();
 }
 
+void Sony35Drive::completeEject()
+{
+    if (!image_) return;
+    image_->eject();
+    dskchg_ = false;   // MAME unload(): m_dskchg = 0
+    if (sound_) sound_->click();
+    pom2::log().info("Sony35", "eject requested by host");
+}
+
 void Sony35Drive::strobeWriteRegister(uint8_t reg)
 {
     static const bool trace = std::getenv("POM2_TRACE_IWM_SENSE") != nullptr;
@@ -672,7 +683,7 @@ void Sony35Drive::strobeWriteRegister(uint8_t reg)
             motorOn_ = false;
             break;
         case 0x7:                                      // EjectOn
-            if (image_ && image_->isLoaded()) {
+            if (image_ && image_->isLoaded() && !ejectPending_) {
                 // Flush guest write-back blocks before dropping the image —
                 // Disk35Image::eject() clears blocks_ + dirty_ with no file
                 // write, so without this a firmware-issued eject silently
@@ -687,23 +698,51 @@ void Sony35Drive::strobeWriteRegister(uint8_t reg)
                 // with no sink (headless, tests) writes inline, which is
                 // correct there: nothing else is waiting on a lock.
                 Disk35Image::PendingWriteBack pending = image_->takeWriteBack();
+                if (pending.valid && writeBackSink_) {
+                    // Queued, NOT saved. The medium stays in the bay until
+                    // the sink reports: the pre-fix code ejected right here,
+                    // so a commit that failed (disk full, read-only parent)
+                    // only logged a line — the disk was already gone and its
+                    // writes with it, while the sinkless branch below has
+                    // always refused the eject for exactly that case.
+                    ejectPending_ = true;
+                    const std::string path = pending.path;
+                    std::weak_ptr<int> alive = aliveToken_;
+                    writeBackSink_->submit(
+                        std::move(pending),
+                        [this, alive, path](bool ok, const std::string& err) {
+                            // The completion arrives under the machine lock
+                            // but possibly a slot rebuild later: an expired
+                            // token means this drive died with its card.
+                            if (alive.expired()) return;
+                            ejectPending_ = false;
+                            // Only if the SAME medium is still in the bay —
+                            // a mount that landed while the commit ran owns
+                            // the drive now (same rule as
+                            // EmulationController::eject35).
+                            if (!image_ || !image_->isLoaded() ||
+                                image_->path() != path)
+                                return;
+                            if (!ok) {
+                                image_->restoreDirty();
+                                pom2::log().warn(
+                                    "Sony35", "eject refused: " + err);
+                                return;
+                            }
+                            completeEject();
+                        });
+                    break;
+                }
                 if (pending.valid) {
-                    if (writeBackSink_) {
-                        writeBackSink_->submit(std::move(pending));
-                    } else {
-                        std::string err;
-                        if (!Disk35Image::commitWriteBack(std::move(pending),
-                                                          err)) {
-                            image_->restoreDirty();
-                            pom2::log().warn("Sony35", "eject refused: " + err);
-                            break;
-                        }
+                    std::string err;
+                    if (!Disk35Image::commitWriteBack(std::move(pending),
+                                                      err)) {
+                        image_->restoreDirty();
+                        pom2::log().warn("Sony35", "eject refused: " + err);
+                        break;
                     }
                 }
-                image_->eject();
-                dskchg_ = false;   // MAME unload(): m_dskchg = 0
-                if (sound_) sound_->click();
-                pom2::log().info("Sony35", "eject requested by host");
+                completeEject();
             }
             break;
         case 0x9: break;                              // MFMModeOn — GCR-only drive
@@ -784,6 +823,60 @@ bool Sony35Drive::senseValue(uint8_t reg) const
         default:
             return true;
     }
+}
+
+// ─── Snapshot / rewind ────────────────────────────────────────────────────
+// See the header for the contract (mechanism only, media excluded).
+
+namespace {
+constexpr uint32_t kSonySnapMagic   = 0x594E4F53u;   // 'SONY'
+constexpr uint16_t kSonySnapVersion = 1;
+}  // namespace
+
+void Sony35Drive::appendSnapshotState(std::vector<uint8_t>& out) const
+{
+    byteio::putU32(out, kSonySnapMagic);
+    byteio::putU16(out, kSonySnapVersion);
+    uint8_t flags = 0;
+    if (motorOn_)      flags |= 0x01;
+    if (writeProtect_) flags |= 0x02;
+    if (side1_)        flags |= 0x04;
+    if (sel_)          flags |= 0x08;
+    if (directionIn_)  flags |= 0x10;
+    if (dskchg_)       flags |= 0x20;
+    out.push_back(flags);
+    out.push_back(static_cast<uint8_t>(track_ & 0xFF));
+    out.push_back(phases_);
+    out.push_back(prevPhases_);
+    byteio::putU64(out, lastStrobeCycle_);
+}
+
+bool Sony35Drive::loadSnapshotState(const uint8_t* data, std::size_t len)
+{
+    byteio::Reader r(data, len);
+    if (!r.has(4 + 2 + 4 + 8)) return false;
+    if (r.u32() != kSonySnapMagic)   return false;
+    if (r.u16() != kSonySnapVersion) return false;
+
+    const uint8_t flags = r.u8();
+    motorOn_      = (flags & 0x01) != 0;
+    writeProtect_ = (flags & 0x02) != 0;
+    side1_        = (flags & 0x04) != 0;
+    sel_          = (flags & 0x08) != 0;
+    directionIn_  = (flags & 0x10) != 0;
+    dskchg_       = (flags & 0x20) != 0;
+    // 80 cylinders. Every cell-stream helper already bails on an
+    // out-of-range track, but a restored 200 would silently make the drive
+    // read nothing for the rest of the session.
+    const int t = static_cast<int>(r.u8());
+    track_       = (t >= 0 && t < 80) ? t : 0;
+    phases_      = r.u8();
+    prevPhases_  = r.u8();
+    lastStrobeCycle_ = r.u64();
+    // The bit-cell cache is keyed on (track, side) and is a pure function of
+    // the mounted image, so drop it rather than serialise ~100 KB per frame.
+    invalidateCache();
+    return true;
 }
 
 }  // namespace pom2

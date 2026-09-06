@@ -150,8 +150,26 @@ public:
     {
         pollfd pfd{ fd_, POLLIN, 0 };
         if (::poll(&pfd, 1, timeoutMs) <= 0) return false;
+        // A test that reconnects accepts twice; do not leak the first fd.
+        if (client_ >= 0) ::close(client_);
         client_ = ::accept(fd_, nullptr, nullptr);
         return client_ >= 0;
+    }
+
+    /// Read exactly `want` bytes, however many recv() calls that takes — a
+    /// loopback TCP stream has no obligation to hand a kilobyte over in one.
+    std::string readExactly(size_t want, int timeoutMs)
+    {
+        std::string out;
+        std::vector<char> buf(want);
+        for (int waited = 0; waited < timeoutMs && out.size() < want; waited += 5) {
+            pollfd pfd{ client_, POLLIN, 0 };
+            if (::poll(&pfd, 1, 5) <= 0) continue;
+            const ssize_t n = ::recv(client_, buf.data(), want - out.size(), 0);
+            if (n <= 0) break;
+            out.append(buf.data(), static_cast<size_t>(n));
+        }
+        return out;
     }
 
     /// Read up to `max` bytes from the accepted client.
@@ -739,6 +757,269 @@ void testMirrorWriteSymmetry()
 
 } // namespace
 
+// ── Bug-hunt pins (2026-09-06) ────────────────────────────────────────
+
+// A SEND of EXACTLY Sn_TX_FSR bytes must transmit all of them.
+//
+// Sn_TX_RD / Sn_TX_WR are free-running 16-bit counters and the ring size is
+// the MASK used to turn one into an offset (datasheet §5.2.4). Masking before
+// DIFFERENCING them collapses a completely full ring onto rd == wr — which
+// reads as EMPTY — so this exact case transmitted nothing while still
+// advancing Sn_TX_RD and reporting the ring free again. It is not an edge
+// case: it is the stock WIZnet driver's maximum-throughput path, which polls
+// Sn_TX_FSR and writes whatever it is told is available.
+void testSendOfExactlyTheWholeRing()
+{
+    LocalListener listener;
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    const uint16_t base = connectSocket0(card, listener);
+
+    const uint16_t ring = card.chip().socketInfo(0).txCapacity;
+    assert(ring == 2048);   // power-on carve
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxFsr0)) == ring);
+
+    // Fill the ring completely with a recognisable pattern.
+    std::string outbound(ring, '\0');
+    for (uint16_t i = 0; i < ring; ++i)
+        outbound[i] = static_cast<char>('A' + (i % 26));
+    for (uint16_t i = 0; i < ring; ++i)
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100TxBase + i),
+                static_cast<uint8_t>(outbound[i]));
+
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0), ring);
+    // The chip must agree the ring is FULL before the SEND, not empty.
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxFsr0)) == 0);
+
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    // The tail may need a poll or two to clear a short write.
+    pumpCard(card, 400);
+    const std::string got = listener.readExactly(ring, 4000);
+    assert(got.size() == ring);
+    assert(got == outbound);
+
+    std::printf("  full-ring SEND OK (%u bytes)\n", ring);
+}
+
+// A SEND the socket cannot dispatch must not consume the TX ring.
+//
+// SOCK_INIT is a TCP socket that is open but not connected — the state a
+// driver is in between OPEN and the CONNECT completing. A SEND there used to
+// fall through to `default: break` with Sn_TX_RD ALREADY advanced to
+// Sn_TX_WR, so the staged bytes were freed and never went anywhere: the first
+// request of every driver that fires CONNECT and SEND back to back, deleted.
+void testSendInSockInitKeepsTheRing()
+{
+    LocalListener listener;
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    const uint16_t base = socketBase(0);
+
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrTcp);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrOpen);
+    assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnSr)) ==
+           pom2::kW5100SnSrInit);
+
+    const std::string request = "GET / HTTP/1.0\r\n\r\n";
+    for (size_t i = 0; i < request.size(); ++i)
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100TxBase + i),
+                static_cast<uint8_t>(request[i]));
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0),
+                static_cast<uint16_t>(request.size()));
+
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    // Untouched: the bytes are still staged, waiting for a connection.
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxRd0)) == 0);
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxFsr0)) ==
+           2048 - request.size());
+
+    // Now connect and SEND again — the request must arrive intact.
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDipr0), 127);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDipr3), 1);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDport0),
+                listener.port());
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrConnect);
+    assert(listener.acceptOne(2000));
+    pumpCard(card);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    assert(listener.readExactly(request.size(), 2000) == request);
+
+    std::printf("  SEND in SOCK_INIT keeps the ring OK\n");
+}
+
+// Sn_IR exists, carries the datasheet's bits, and is write-1-to-clear.
+//
+// The register did not exist at all: reads returned 0 out of the register
+// file and writes were dropped. WIZnet's own `send()` polls Sn_IR for SEND_OK
+// and its `connect()` waits on CON or TIMEOUT, so both spun forever.
+void testSocketInterruptRegister()
+{
+    LocalListener listener;
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    const uint16_t base = connectSocket0(card, listener);
+    const uint16_t ir   = static_cast<uint16_t>(base + pom2::kW5100SnIr);
+
+    // CON was raised by the connect (datasheet §5.2.3).
+    assert(readAt(card, ir) & pom2::kW5100SnIrCon);
+    // And the common IR's Sn_INT bit follows it.
+    assert(readAt(card, pom2::kW5100Ir) & 0x01);
+
+    // Write-1-to-clear: acknowledging CON must CLEAR it, not set it.
+    writeAt(card, ir, pom2::kW5100SnIrCon);
+    assert((readAt(card, ir) & pom2::kW5100SnIrCon) == 0);
+    assert((readAt(card, pom2::kW5100Ir) & 0x01) == 0);
+
+    // A SEND raises SEND_OK.
+    writeAt(card, pom2::kW5100TxBase, 'x');
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0), 1);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    assert(readAt(card, ir) & pom2::kW5100SnIrSendOk);
+    writeAt(card, ir, pom2::kW5100SnIrSendOk);
+    assert(readAt(card, ir) == 0);
+
+    // Data arriving raises RECV.
+    listener.write("hi");
+    uint16_t pending = 0;
+    for (int i = 0; i < 200 && pending == 0; ++i) {
+        pending = readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRsr0));
+        if (pending == 0) ::usleep(1000);
+    }
+    assert(pending == 2);
+    assert(readAt(card, ir) & pom2::kW5100SnIrRecv);
+
+    // CLOSE clears the register with the socket.
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrClose);
+    assert(readAt(card, ir) == 0);
+
+    std::printf("  Sn_IR OK (CON / SEND_OK / RECV, write-1-to-clear)\n");
+}
+
+// LISTEN is not supported, and "not supported" must be a FAILURE the guest
+// can see. Leaving Sn_SR at SOCK_INIT is the one answer a server loop cannot
+// act on — it polls for SOCK_LISTEN or a timeout and gets neither.
+void testListenIsAnHonestFailure()
+{
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    const uint16_t base = socketBase(0);
+
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrTcp);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnPort0), 8080);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrOpen);
+    assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnSr)) ==
+           pom2::kW5100SnSrInit);
+
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrListen);
+    assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnSr)) ==
+           pom2::kW5100SnSrClosed);
+    assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnIr)) &
+           pom2::kW5100SnIrTimeout);
+
+    std::printf("  LISTEN answers SOCK_CLOSED + TIMEOUT\n");
+}
+
+// A TCP client reconnecting from a FIXED Sn_PORT must succeed.
+//
+// Sn_PORT used to be bound on the host socket for TCP as well as UDP. Nothing
+// unsolicited can reach a TCP CLIENT, so the bind bought nothing — and it cost
+// every reconnect: a WIZnet driver picks one source port and re-OPENs with it,
+// and the second bind fails EADDRINUSE while the previous 4-tuple sits in
+// TIME_WAIT. Only datagram sockets claim Sn_PORT now.
+void testFixedLocalPortReconnects()
+{
+    LocalListener listener;
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    const uint16_t base = socketBase(0);
+
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr),
+                pom2::kW5100SnMrTcp);
+        // The SAME local port both times — that is the whole point.
+        writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnPort0), 4242);
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr),
+                pom2::kW5100SnCrOpen);
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDipr0), 127);
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDipr3), 1);
+        writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDport0),
+                    listener.port());
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr),
+                pom2::kW5100SnCrConnect);
+        assert(listener.acceptOne(2000));
+        pumpCard(card);
+        assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnSr)) ==
+               pom2::kW5100SnSrEstablished);
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr),
+                pom2::kW5100SnCrClose);
+    }
+
+    std::printf("  fixed Sn_PORT reconnect OK\n");
+}
+
+// RTR / RCR / IMR are R/W registers the WIZnet init sequence writes; dropping
+// the write made a driver that reads its own setup back give up before it
+// ever opened a socket (datasheet §5.1).
+void testCommonRegisterWritesStick()
+{
+    UthernetIICard card(3);
+
+    writeAt(card, pom2::kW5100Rtr0, 0x03);
+    writeAt(card, pom2::kW5100Rtr1, 0xE8);
+    writeAt(card, pom2::kW5100Rcr,  0x05);
+    writeAt(card, pom2::kW5100Imr,  0x0F);
+    assert(readAt(card, pom2::kW5100Rtr0) == 0x03);
+    assert(readAt(card, pom2::kW5100Rtr1) == 0xE8);
+    assert(readAt(card, pom2::kW5100Rcr)  == 0x05);
+    assert(readAt(card, pom2::kW5100Imr)  == 0x0F);
+
+    // PTIMER stays read-only while virtual DNS is on: it IS the extension's
+    // detection flag (reads 0), and a guest write would turn the extension
+    // off from software's point of view while it kept working.
+    assert(readAt(card, pom2::kW5100Ptimer) == 0x00);
+    writeAt(card, pom2::kW5100Ptimer, 0x28);
+    assert(readAt(card, pom2::kW5100Ptimer) == 0x00);
+
+    std::printf("  RTR/RCR/IMR writes stick, PTIMER guarded\n");
+}
+
+// A restored socket is demoted to CLOSED — and must not still be ADVERTISING
+// the dead connection's staged data, or the guest's next OPEN stages its
+// request behind bytes that will never leave. And `virtualDns_` is a USER
+// SETTING, so a snapshot must not carry it across.
+void testRestoreClearsRingPointersAndKeepsTheDnsSetting()
+{
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    const uint16_t base = socketBase(0);
+
+    // A socket with data staged in both directions, then snapshotted.
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrUdp);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrOpen);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0), 700);
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxFsr0)) ==
+           2048 - 700);
+
+    std::vector<uint8_t> blob;
+    card.appendSnapshotState(blob);
+
+    UthernetIICard restored(3);
+    restored.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    // The user turned virtual DNS OFF in this session.
+    restored.chip().setVirtualDnsEnabled(false);
+    restored.loadSnapshotState(blob.data(), blob.size());
+
+    assert(restored.chip().socketInfo(0).status == pom2::kW5100SnSrClosed);
+    assert(readWordAt(restored, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0)) == 0);
+    assert(readWordAt(restored, static_cast<uint16_t>(base + pom2::kW5100SnTxRd0)) == 0);
+    assert(readWordAt(restored, static_cast<uint16_t>(base + pom2::kW5100SnTxFsr0)) ==
+           2048);
+    // The setting survived the load — the blob did not vote on it.
+    assert(!restored.chip().virtualDnsEnabled());
+
+    std::printf("  CLOSED demotion clears the rings, DNS setting kept\n");
+}
+
 int main()
 {
     std::printf("Uthernet II / W5100 smoke test\n");
@@ -754,6 +1035,13 @@ int main()
     testRmsrShrinkUnderStagedData();
     testConnectGating();
     testMirrorWriteSymmetry();
+    testSendOfExactlyTheWholeRing();
+    testSendInSockInitKeepsTheRing();
+    testSocketInterruptRegister();
+    testListenIsAnHonestFailure();
+    testFixedLocalPortReconnects();
+    testCommonRegisterWritesStick();
+    testRestoreClearsRingPointersAndKeepsTheDnsSetting();
     std::printf("PASS\n");
     return 0;
 }

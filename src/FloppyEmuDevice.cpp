@@ -57,6 +57,18 @@ std::string trim(const std::string& s)
     return s.substr(b, e - b + 1);
 }
 
+// True iff `p` is `root` or lives under it. Component-wise, not a string
+// prefix: "/sdcard" is longer than "/sd" and is NOT inside it. Same test
+// goUp() applies to navigation; favourites now share it.
+bool pathIsUnder(const fs::path& root, const fs::path& p)
+{
+    auto rIt = root.begin(), rEnd = root.end();
+    auto pIt = p.begin(),    pEnd = p.end();
+    for (; rIt != rEnd; ++rIt, ++pIt)
+        if (pIt == pEnd || *pIt != *rIt) return false;
+    return true;
+}
+
 } // namespace
 
 const char* FloppyEmuDevice::modeLabel(FloppyEmuMode m)
@@ -240,9 +252,22 @@ FloppyEmuDevice::parseFavorites(const std::string& content,
         fs::path p(t);
         if (p.is_relative() && !resolveBase.empty())
             p = fs::path(resolveBase) / p;
+        p = p.lexically_normal();
+        // Then clamp to the sandbox, which the listing has always enforced
+        // and this path never did: `favdisks.txt` is a plain text file inside
+        // the emulated SD card, and an absolute line ("/etc/shadow") was used
+        // verbatim while `../..` was collapsed out by lexically_normal and
+        // then followed. Either one put a host file one click from being
+        // mounted into the guest — through a file the guest itself can write.
+        // Drop the entry rather than silently rewriting it: a favourite that
+        // does not name something on the card is not a favourite.
+        if (!resolveBase.empty()) {
+            const fs::path root = fs::path(resolveBase).lexically_normal();
+            if (!pathIsUnder(root, p)) continue;
+        }
         Entry e;
         e.name      = p.filename().string();
-        e.fullPath  = p.lexically_normal().string();
+        e.fullPath  = p.string();
         std::error_code ec;
         const auto sz = fs::file_size(e.fullPath, ec);
         // A favorite whose file is gone: file_size returns (uintmax_t)-1 and

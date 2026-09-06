@@ -117,6 +117,11 @@ public:
                           std::string& errOut) override;
     bool         ejectBay(int bay) override;
     bool         flushBay(int bay, std::string& errOut) override;
+    /// Two-phase flush — the bays hold 800 KB images, and `flushAll` runs
+    /// under the machine lock. See MountableMediaCard::prepareFlushBay.
+    bool         prepareFlushBay(int bay, PendingBayFlush& out,
+                                 std::string& errOut) override;
+    void         restoreFlushBayDirty(int bay) override;
     void         setBayWriteBack(int bay, bool on) override;
 
     /// True once the EPROM was found and loaded. Without it the card is

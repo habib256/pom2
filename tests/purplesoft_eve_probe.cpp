@@ -136,7 +136,7 @@ int main(int argc, char** argv)
         "../../disks_5.4/chatmauve/purplesoft-revb-oct83-demos.dsk" });
     if (rom.empty() || boot.empty() || dsk.empty()) {
         std::printf("purplesoft_eve_probe SKIP: missing apple2e.rom / disk2.rom / purplesoft demos disk\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     // Bisection knobs (diagnostic): POM2_PROBE_IIPLUS=1 boots the ][+ ROM in

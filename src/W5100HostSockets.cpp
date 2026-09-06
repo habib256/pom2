@@ -81,12 +81,18 @@ public:
 
     bool bind(uint16_t port) override
     {
-        // SO_REUSEADDR first: without it a UDP port the guest used a moment
-        // ago (a reset, a re-open, a previous POM2 session) can still be held
-        // by the kernel and the bind fails for a socket nobody is using.
-        int one = 1;
-        ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR,
-                     reinterpret_cast<const char*>(&one), sizeof(one));
+        // Bind policy first: without it a UDP port the guest used a moment ago
+        // (a reset, a re-open, a previous POM2 session) can still be held by
+        // the kernel and the bind fails for a socket nobody is using.
+        //
+        // Through setListenerBindPolicy(), NOT a raw SO_REUSEADDR — the option
+        // does not mean the same thing on the two stacks. On Winsock it lets
+        // ANY local process bind an address this socket already holds and
+        // collect the traffic (SocketCompat.h, trap 6), so the POSIX idiom
+        // spelled out here turned a guest's DHCP/NTP port into something a
+        // local program could hijack. The helper picks SO_EXCLUSIVEADDRUSE
+        // there and SO_REUSEADDR on POSIX.
+        setListenerBindPolicy(fd_);
 
         sockaddr_in local{};
         local.sin_family      = AF_INET;

@@ -216,7 +216,9 @@ inline void applyEnvShape(ChipSynthState& cs, const uint8_t* r)
     // reset zeroes it. Zeroing here made every mid-period R13 retrigger
     // (the standard buzz-bass technique across the French Touch / DIX
     // corpus) wait a full 2×EP for its first step, up to a period late vs
-    // hardware/MAME, shifting the buzz timbre. Pinned by `ay_env_retrigger`.
+    // hardware/MAME, shifting the buzz timbre. NOTE: `ay_env_retrigger` is not a
+    // registered ctest — the closest live coverage is
+    // `mockingboard_audio_quality`.
     cs.lastShape  = shape;
 }
 

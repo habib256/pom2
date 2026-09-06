@@ -121,7 +121,7 @@ int main(int argc, char** argv)
     const int frames   = (argc > 3) ? std::atoi(argv[3]) : 6;
     if (rom.empty() || po.empty()) {
         std::printf("SKIP: missing apple2e.rom or DIX .po\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     Memory mem;

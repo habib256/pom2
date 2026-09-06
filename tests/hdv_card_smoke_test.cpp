@@ -29,10 +29,11 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#include "TestTempPath.h"
 
 static std::string writeTempHdv(const std::vector<uint8_t>& bytes)
 {
-    const std::string path = "/tmp/pom2_hdv_smoke.hdv";
+    const std::string path = pom2test::tempPath("pom2_hdv_smoke.hdv");
     std::ofstream f(path, std::ios::binary);
     assert(f.good());
     f.write(reinterpret_cast<const char*>(bytes.data()),
@@ -95,7 +96,7 @@ int main()
         two[31] = static_cast<uint8_t>((dlen >> 24) & 0xFF);
         std::memcpy(two.data() + 64, hdv.data(), hdv.size());
 
-        const std::string p2 = "/tmp/pom2_hdv_smoke.2mg";
+        const std::string p2 = pom2test::tempPath("pom2_hdv_smoke.2mg");
         {
             std::ofstream f(p2, std::ios::binary);
             f.write(reinterpret_cast<const char*>(two.data()),

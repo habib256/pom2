@@ -71,6 +71,7 @@
 #include "Settings.h"
 
 #include "imgui.h"
+#include <fstream>
 
 void MainWindow::renderMemoryViewerWindow()
 {
@@ -673,19 +674,39 @@ void MainWindow::renderWelcomePanelWindow()
         ImGui::Spacing();
 #ifndef __EMSCRIPTEN__
         if (ImGui::Button("Reload ROM (re-probe folders)")) {
-            bool ok = false;
+            // Resolve and read with NO lock held. `findResource` stats every
+            // candidate in every search directory, and the read that follows
+            // is a file the user may have just dropped onto a network share;
+            // both used to run inside `lockState()`, which the CPU worker
+            // takes every 4096 cycles and the UI thread takes to paint.
+            // Re-resolve from the active profile so dropping the
+            // profile-specific dump in is picked up without a relaunch.
+            std::string newRom;
+            for (const auto& cand : pom2::profileConfig(activeProfile).romProbeOrder) {
+                std::string r = pom2::findResource(cand);
+                if (!r.empty()) { newRom = r; break; }
+            }
+            if (newRom.empty()) newRom = romPath;  // last-known path
+            // The read itself: `Memory::loadAppleIIRom` takes a PATH, so the
+            // install below still opens the file — this pass is what makes
+            // that second open a warm-cache memcpy instead of a disk (or
+            // network) round trip under the lock, and it is also where an
+            // unreadable file is discovered, with nothing blocked behind it.
+            bool readable = false;
             {
-                auto st = controller->lockState();
-                // Re-resolve from the active profile so dropping the
-                // profile-specific dump in is picked up without a relaunch.
-                std::string newRom;
-                for (const auto& cand : pom2::profileConfig(activeProfile).romProbeOrder) {
-                    std::string r = pom2::findResource(cand);
-                    if (!r.empty()) { newRom = r; break; }
+                std::ifstream probe(newRom, std::ios::binary);
+                if (probe) {
+                    probe.seekg(0, std::ios::end);
+                    readable = probe.tellg() > 0;
                 }
-                if (newRom.empty()) newRom = romPath;  // last-known path
+            }
+            bool ok = false;
+            if (readable) {
+                auto st = controller->lockState();
                 ok = st.memory().loadAppleIIRom(newRom.c_str());
                 if (ok) romPath = newRom;
+            } else {
+                romStatus = "cannot read " + newRom;
             }
             if (ok) {
                 controller->hardReset();
@@ -836,22 +857,24 @@ void MainWindow::renderTapeFileDialogs()
             cassetteDeck->dialogPath = buf;
 
         // Quick list of cassettes/ directory contents (one click → fill).
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        for (const char* dir : { "cassettes", "../cassettes", "../../cassettes" }) {
-            if (!fs::is_directory(dir, ec)) continue;
-            ImGui::Separator();
-            ImGui::TextDisabled("%s/", dir);
-            for (const auto& entry : fs::directory_iterator(dir, ec)) {
-                if (!entry.is_regular_file()) continue;
-                const std::string ext = entry.path().extension().string();
-                if (ext != ".aci" && ext != ".wav" && ext != ".mp3" &&
-                    ext != ".ogg" && ext != ".flac") continue;
-                const std::string name = entry.path().filename().string();
-                if (ImGui::Selectable(name.c_str()))
-                    cassetteDeck->dialogPath = entry.path().string();
+        // Through the shared cached listing: a modal re-renders every frame,
+        // and this rescanned the folder each time with the THROWING
+        // filesystem overloads — a directory that goes away mid-walk threw
+        // out of the middle of an ImGui frame. See MainWindow::mediaDirListing.
+        {
+            const auto& listing = mediaDirListing(
+                "cassettes",
+                { "cassettes", "../cassettes", "../../cassettes" },
+                { ".aci", ".wav", ".mp3", ".ogg", ".flac" },
+                /*recursive=*/false);
+            if (!listing.dir.empty()) {
+                ImGui::Separator();
+                ImGui::TextDisabled("%s/", listing.dir.c_str());
+                for (const auto& row : listing.entries) {
+                    if (ImGui::Selectable(row.name.c_str()))
+                        cassetteDeck->dialogPath = row.path;
+                }
             }
-            break;  // first existing candidate dir wins
         }
 
         ImGui::Separator();

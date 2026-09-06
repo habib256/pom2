@@ -59,9 +59,32 @@
 
 namespace {
 
-// Pick a port high enough to avoid colliding with anything an
-// out-of-the-box dev box might have running. 36502 ≈ "AI"+6502.
-constexpr uint16_t kTestPort = 36502;
+// The port is chosen at run time, never hard-coded: a fixed 36502 collided
+// with the second ctest job on a shared runner (and with anything a dev box
+// happened to have on that port), turning a busy machine into a red suite.
+// Bind :0, read back what the kernel handed out, close, and hand that number
+// to the server. The window between close and re-bind is theoretical on a
+// loopback-only test and the alternative — teaching AiControlServer to
+// report an ephemeral port — is a src/ change this fix does not need.
+uint16_t kTestPort = 0;
+
+uint16_t pickFreePort()
+{
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port        = 0;
+    uint16_t port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+        socklen_t len = sizeof(addr);
+        if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0)
+            port = ntohs(addr.sin_port);
+    }
+    ::close(fd);
+    return port;
+}
 
 // Connect to 127.0.0.1:port; returns the socket fd or -1 on failure.
 int connectLoopback(uint16_t port)
@@ -338,6 +361,24 @@ void testSnapshotPathSafety(EmulationController& /*ctrl*/, pom2::AiControlServer
         }
     }
 
+    // An embedded NUL splits the check from the write: every guard here runs
+    // on a std::string (which holds the NUL) while the write underneath goes
+    // through c_str() (which stops at it). So
+    // `"roms/apple2e.rom\0.pom2snap"` passed the ".pom2snap" extension gate
+    // and the file that got the snapshot bytes was the ROM.
+    // (Bug hunt 2026-09-06 #H3.)
+    {
+        std::string body = "{\"path\":\"roms/apple2e.rom";
+        body.push_back('\0');
+        body += ".pom2snap\"}";
+        const std::string req =
+            "POST /snapshot/save HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+        const HttpResponse rn = oneShot(kTestPort, req);
+        assert(rn.status == 400);
+        assert(contains(rn.body, "control byte"));
+    }
+
     std::puts("  snapshot path-safety: OK");
 }
 
@@ -607,8 +648,10 @@ int main()
 
     pom2::AiControlServer srv;
     srv.attach(&ctrl, &display, nullptr, nullptr);
+    kTestPort = pickFreePort();
+    assert(kTestPort != 0 && "could not obtain an ephemeral loopback port");
     const bool started = srv.start(kTestPort);
-    assert(started && "AiControlServer failed to bind test port — is something else on 36502?");
+    assert(started && "AiControlServer failed to bind its ephemeral test port");
 
     testStatusEndpoint   (ctrl, srv);
     testAuth             (ctrl, srv);

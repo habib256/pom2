@@ -54,6 +54,18 @@ bool writeTapeAtomic(const std::string& path, std::string& error, Emit&& emit)
     std::error_code permEc;
     const fs::perms perms = fs::status(target, permEc).permissions();
     const bool havePerms = !permEc;
+    // The temp name is ours by construction, so whatever sits on it is our own
+    // debris from a crashed run or somebody else's plant — and ofstream(trunc)
+    // follows a symlink like any other open, which would land the tape on the
+    // link's victim and then rename the link away. Same rule as every other
+    // write-back (AtomicFileReplace.h).
+    {
+        std::error_code tmpEc;
+        if (!pom2::prepareTempPath(tmp, tmpEc)) {
+            error = "Cannot use temp tape file " + tmp.string() + ": " + tmpEc.message();
+            return false;
+        }
+    }
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) { error = "Cannot write tape file: " + tmp.string(); return false; }
@@ -403,6 +415,19 @@ void CassetteDevice::resetCpuSide()
     // `currentCycle` with unsigned subtraction (leader-rewind gap check),
     // so leaving it at the pre-reset value would wrap to a huge gap.
     lastTapeInputCycle = 0;
+}
+
+void CassetteDevice::resetForTimeJump()
+{
+    // See the header. Same re-base as resetCpuSide (the stamps are compared
+    // with unsigned subtraction, so a backwards CPU jump wraps them), plus a
+    // drop of the live audio queue, which holds segments generated for cycles
+    // that are no longer going to happen.
+    currentCycle          = 0;
+    outputLevel           = false;
+    lastOutputToggleCycle = 0;
+    lastTapeInputCycle    = 0;
+    stopPulseAudio();
 }
 
 void CassetteDevice::setPlaybackPaused(bool paused)

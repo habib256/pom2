@@ -105,7 +105,7 @@ int main()
 
     if (!have(k8) || !have(kFr) || !have(kUs)) {
         std::printf("SKIP: need %s + %s + %s (user-provided ROMs)\n", k8, kFr, kUs);
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     expectSame(k8, 0, kFr, "bank 0 == FR-CA 4K dump");

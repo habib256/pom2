@@ -4,6 +4,17 @@
 # drive the M6502 + Memory directly without an ImGui context, so they link
 # only the bare emulator core (no GLFW, no OpenGL, no Dear ImGui).
 
+# ─── Probe binaries (build-only, no add_test) ─────────────────────────────
+# Besides the ctest suite this file declares ~25 PROBE executables: eyeball
+# tools that dump a screen, a raster trace, an audio A/B or a PPM for a human
+# to look at. They assert nothing reproducible, several need media that is not
+# in the tree, and a few take minutes — so they are deliberately built and
+# never registered with add_test(). Run one by hand:
+#     make dix_menu_raster_probe && ./tests/dix_menu_raster_probe
+# The list is not repeated here (it would drift); a target below with no
+# matching add_test() is a probe by construction, and the five EXCLUDE_FROM_ALL
+# diagnostic dumps have their own section further down.
+#
 # CRITICAL: tests use assert() heavily, but the parent CMakeLists builds in
 # Release by default which adds -DNDEBUG (silently stripping every assert).
 # We re-enable asserts for *test* compilation only via -UNDEBUG, applied
@@ -5611,6 +5622,8 @@ add_executable(test_card_snapshot_state
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
     ${CMAKE_SOURCE_DIR}/src/EchoPlusTMS5220Card.cpp
+    ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
@@ -6315,6 +6328,9 @@ add_executable(test_fuzz_snapshot
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/TranswarpCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
+    ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
 )
 target_include_directories(test_fuzz_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -6353,18 +6369,11 @@ if(NOT POM2_TEST_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
         "'${POM2_TEST_TIMEOUT_SCALE}'")
 endif()
 
-get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
-foreach(_pom2_t IN LISTS _pom2_all_tests)
-    get_test_property(${_pom2_t} TIMEOUT _pom2_to)
-    if(NOT _pom2_to MATCHES "^[0-9]+$")
-        set(_pom2_to 0)                       # no TIMEOUT set — take the floor
-    endif()
-    if(_pom2_to LESS ${POM2_TEST_TIMEOUT_FLOOR})
-        set(_pom2_to ${POM2_TEST_TIMEOUT_FLOOR})
-    endif()
-    math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
-    set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
-endforeach()
+# The floor/scale sweep itself lives at the END of this file, next to the
+# SKIP_RETURN_CODE sweep: a test declared below this point used to keep its own
+# TIMEOUT (mockingboard_t1_irq_phase, added 2026-09-02 with TIMEOUT 5, timed
+# out at -j8 on 2026-09-07 while clearing in 0.02 s alone). A directory-wide
+# sweep is only directory-wide if nothing is added after it.
 
 # Tests whose assertions are about ELAPSED WALL-CLOCK TIME — a bounded wait, a
 # poll deadline, a timeout that must fire — plus the one that binds a fixed
@@ -6795,3 +6804,38 @@ endif()
 
 add_test(NAME mockingboard_t1_irq_phase COMMAND test_mockingboard_t1_irq_phase)
 set_tests_properties(mockingboard_t1_irq_phase PROPERTIES TIMEOUT 5)
+
+
+# ─── Skip semantics, applied to every test above ──────────────────────────
+# A test that cannot find its fixture must report SKIPPED, not PASSED. Before
+# this, only the two Tom Harte suites carried SKIP_RETURN_CODE and ~57 other
+# call sites did `printf("SKIP …"); return 0;` — so a missing ROM or disk image
+# produced a green "Passed 0.00 sec" line for a binary that had verified
+# nothing. That is exactly the failure mode TODO.md's honesty gate is about,
+# and it is the reason five fixture-path regressions went unnoticed for months.
+#
+# The convention is now uniform: 77 means "skipped", every other non-zero value
+# means "failed". Applied here as a directory-wide sweep rather than test by
+# test so a NEW add_test() cannot forget it.
+get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
+if(_pom2_all_tests)
+    set_tests_properties(${_pom2_all_tests} PROPERTIES SKIP_RETURN_CODE 77)
+    list(LENGTH _pom2_all_tests _pom2_test_count)
+    message(STATUS "POM2: ${_pom2_test_count} ctest entries registered "
+                   "(SKIP_RETURN_CODE 77 applied to all)")
+endif()
+
+# TIMEOUT floor + scale, applied LAST so it really covers every test (see the
+# note where POM2_TEST_TIMEOUT_FLOOR is defined).
+get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_pom2_t IN LISTS _pom2_all_tests)
+    get_test_property(${_pom2_t} TIMEOUT _pom2_to)
+    if(NOT _pom2_to MATCHES "^[0-9]+$")
+        set(_pom2_to 0)                       # no TIMEOUT set — take the floor
+    endif()
+    if(_pom2_to LESS ${POM2_TEST_TIMEOUT_FLOOR})
+        set(_pom2_to ${POM2_TEST_TIMEOUT_FLOOR})
+    endif()
+    math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
+    set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
+endforeach()

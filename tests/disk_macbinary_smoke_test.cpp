@@ -49,6 +49,9 @@ namespace {
 bool loadPayload(std::vector<uint8_t>& out)
 {
     static const char* prefixes[] = {
+        // Sector images live under disks_5.4/dsk/ since the 2026 move; the
+        // bare roots are kept for older trees.
+        "../../disks_5.4/dsk/", "../disks_5.4/dsk/", "disks_5.4/dsk/",
         "../../disks_5.4/", "../../disks2/", "disks_5.4/", "disks2/"
     };
     for (const char* pfx : prefixes) {
@@ -153,7 +156,7 @@ int main()
         std::fprintf(stderr,
             "skip: no dos33_master.dsk fixture available under disks_5.4/ or "
             "disks2/ — this test needs a known-good DOS image to wrap\n");
-        return 0;
+        return 77;   // ctest SKIP_RETURN_CODE
     }
 
     bool ok = true;

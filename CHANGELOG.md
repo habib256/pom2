@@ -5,6 +5,151 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-07 — Bug hunt #2: the state a rewind dropped, the files a commit lost, and the tests that said nothing
+
+A second read-only sweep with new angles — regression review of the first
+hunt's own fixes, snapshot/rewind field parity, media lifecycle, host
+filesystem, editors and GL, network registers against the datasheets, and the
+test/build/release harness. 174 doc disagreements came out of it too; those are
+this commit. Six fix commits (`fba564d` → `70d86a2`), one per file-owning lot.
+
+**A rewind may never cross an irreversible write.** The ring restored CPU + RAM
+against devices left on the abandoned timeline — sixteen such gaps, three of
+which reached user data. The one that needed a *policy* rather than a patch is
+media: the ring cannot capture a 32 MiB block device, an 800 KB 3.5" image or a
+writable WOZ every frame, and rolling RAM back over a ProDOS SAVE while the
+volume stayed written cross-links the next allocation. The alternatives were
+per-frame media capture (unaffordable) and refusing rewind near a write (a
+mode). What shipped is the safe minimum: every irreversible write path bumps
+`pom2::mediaWriteEpoch()` **at the storage leaf**, and
+`EmulationController::noteMediaWrite` drops the ring at its capture point when
+the value moved, so the history restarts after the write instead of spanning
+it. One relaxed atomic load per captured frame — and because the bump is at the
+leaf, it covers write paths that do not exist yet. Printed output counts.
+Non-WOZ Disk II nibble writes deliberately do *not* bump: those are captured,
+and a rewind is supposed to undo them.
+
+Also serialised: the Disk II's in-flight write burst (v4 — a rewind mid-SAVE
+punched a hole in the sector and write-back committed it), the TransWarp's
+displaced `$F000` window (the only copy of Applesoft + Monitor while it
+shadows), the Sony 3.5" mechanisms, the No-Slot Clock's bit-serial cursor, and
+Memory's VBL edge detector + `iicCardWindow_` latch. Four cards now identify a
+blob *before* resetting themselves; five restores clamp values that stalled or
+spun a device. Every snapshot-load path — AI server, CLI, rewind — flushes the
+audio cursors and re-bases the cassette.
+
+**A failed save must not lose the disk.** A firmware 3.5" eject handed its
+payload to the write-back queue and ejected on the spot, so a commit that
+failed only logged a line about a disk that was already gone. The sink reports
+back now, and the medium stays in the bay until the file lands
+(`Sony35Drive::ejectPending_`). That completed the shape the first hunt started:
+eject and flush are three-phase everywhere — capture under the lock, commit
+unlocked, re-lock to retire *or* put the medium back — including
+`ejectAllMedia` (the last inline holdout), the Liron `flushAll` and the
+host-folder mount. Four frontends that hand-rolled bay keys or cleared none now
+go through the coordinator; the Floppy Emu panel's 3.5"/SmartPort ejects were
+the worst, because SmartPort unit keys are written only by mount and eject, so
+the ejected disk came back on every launch, permanently.
+
+**An idle debug hook perturbs the interrupt phase.** `M6502::step` splits
+interrupt entry on `debugHook_ != nullptr`, not on "is anything armed", and the
+split changes how the entry's 7 cycles reach `advanceCycles`. One step-over
+left the hook attached for the rest of the session, moving the sub-instruction
+phase every lazily-synced peripheral derives from — the phase OLDSKOOL races
+against. `runCpuSlice` reconciles at the next slice, which covers every resume
+path instead of only the debugger panel's.
+
+**The registers the datasheets arbitrate.** W5100: a SEND of exactly
+`Sn_TX_FSR` bytes transmitted nothing (pointers masked before differencing —
+the stock WIZnet max-throughput path); a SEND in a non-transmitting state still
+freed the ring, deleting the first request after a non-blocking connect;
+`SEND_MAC`/`SEND_KEEP` fell through to "unknown"; `Sn_IR` and the common
+`IR`/`IMR` did not exist, so drivers polling SEND_OK or CON/TIMEOUT spun for
+ever; LISTEN left `Sn_SR` at `SOCK_INIT` with no way for a server guest to
+fail, and now demotes to CLOSED + TIMEOUT (datasheet §5.2.3, the failure every
+server loop already handles); `Sn_PORT` was bound for TCP clients, costing
+every reconnect on a fixed source port — it is UDP/raw only now, and through
+`setListenerBindPolicy()` rather than a raw `SO_REUSEADDR`. CS8900A: the ISQ
+was hard-wired to 0, so the "read `$C0n8` until 0" idiom saw nothing and no
+frame was ever noticed; `TxEvent` never signalled TxOK; the inbound queue was
+4096 *entries* (~6 MB, minutes of backlog) dropping the oldest instead of ~4 KB
+dropping the arrival and counting RxMISS. SSC: the transmit interrupt was
+computed and thrown away, so a driver sleeping on TX IRQ never woke, and telnet
+option requests were swallowed and never answered — which is what puts a stock
+client in line mode.
+
+**Paths and commits.** The theme of the host-filesystem lot: a temp name every
+POM2 on the machine picks, checks that ran on a string while the write ran on
+`c_str()`, and stamps taken once and never refreshed. `tempSiblingPath` makes
+the scratch file unique per process *and* per call. `PrinterHistory::open`
+ignored `readIndex()`'s result and then swept every PNG the (empty) index did
+not mention — one truncated write turned "POM2 cannot read this file" into
+"POM2 deleted up to 200 of your printouts"; the sweep now runs only behind an
+index that parsed, and a bad one is moved aside with every PNG left in place.
+ProDOS host folders got bounded free space (the guest could not create a single
+file) and a mount stamp refreshed after each flush (only the *first* guest save
+used to land). `state.cfg` is 0600 — it holds the AI token — with keys escaped
+for `=` and a leading `#`. AI `/snapshot/save`'s extension gate no longer falls
+to an embedded NUL. TNFS cache keys are hashed unconditionally and include the
+port. RetroBIOS downloads are verified against the catalogue's CRC32.
+
+**Honesty in the harness.** Five registered tests had pointed at
+`disks_5.4/dos33_master.dsk` since the `dsk/` move and had been "Passed 0.00
+sec" ever since — including the only PROM-driven DOS 3.3 + ProDOS boot test.
+Fixing the path exposed a second defect underneath (`disk_boot_smoke`'s break
+condition never fired, so it compared page `$08` after DOS had booted and run
+HELLO). The failure mode was general: **~57 sites printed "SKIP" and returned
+0**, so a missing fixture read as a pass. All return 77 now, and
+`SKIP_RETURN_CODE` is applied directory-wide so a new `add_test()` cannot
+forget it. `ci.yml` asserts the suite still declares **241** tests — the
+download-gated Klaus/zexall oracles used to deregister in silence — and its "no
+test depends on machine ROM dumps" line, which was false for ~70 test files,
+is gone. `bundle.manifest`'s `deny` is now enforced by all three parsers
+(`install()`, the emcc preload, `stage()`), case-insensitively, against
+directories too, at any depth; a payload directory holding only its README
+fails `--verify`, because that is a package with zero ROMs. The ratchet itself
+grew teeth: `tools/check_file_sizes.sh` now scans `tests/` too and **enforces**
+the WATCH band it had only ever documented (a file growing 1999 → 2999 used to
+pass in silence). Six ceilings were raised for these two rounds — every line a
+fix or the comment explaining one — and recorded at their exact size, so the
+owed splits (`Memory.cpp`'s snapshot trailer, `DiskImage.cpp`'s WOZ writer)
+stay owed.
+
+**Editors and GL.** HGR Paint's stroke brackets were a plain `bool`, so a
+Ctrl+X during a shape drag left `PaintCardBatcher` stuck open and every later
+poke queued into a batch nobody committed — the canvas kept updating while the
+Apple screen froze for the session. Sprite saves truncated in place and
+reported success on a full disk. The CRT and NTSC passes resized FBOs without
+clamping to `GL_MAX_TEXTURE_SIZE` or re-checking completeness, so a 5K dock on
+a 4096-px driver painted garbage in silence. A stopped machine publishes no
+video frames, so a soft switch poked from the debugger changed the content but
+never the mode; `Apple2Display::applyIdleSwitchOverride` folds the fields that
+moved while the CPU was idle onto the published frame-start state. Ghostscript's
+`-sOutputFile` is a format string, so `%` in a data directory is escaped, and
+the PostScript scratch dir is swept once per process.
+**The `hgrpaint/` and `hgrsprite/` changes must be mirrored into POM1's
+copies** — the module is shared verbatim.
+
+**Declined, with reasons on the record.** `Ay3_8910::busOut` (consumed within
+one `applyControl`; the VIA's `portAIn`, which is saved, already carries what
+survives) and the keyboard latch / paste FIFO (host input in flight, and the
+wrong lock domain) stay out of the snapshot **by design**. A native file picker
+was declined because no host-dialog helper exists in the tree — that is a new
+platform dependency, not a fix — and a sprite catalogue because POM2 ships no
+sprites. W5100 `Sn_MR` MULTI/ND is a feature, not a defect; CS8900A `Skip_1`
+and the PacketPage frame-buffer window are MAME parity with no oracle to
+arbitrate; `RxOKA` and `Rdy4TxNOW` on the odd read are datasheet-correct; and
+the SSC ROM programming the control register from the baud DIPs would invent a
+mapping and rate-limit `PR#n`. The two `roms/*.zip` archives stay tracked — the
+manifest comment calling them untracked was the thing that was wrong, and
+untracking them is the maintainer's call.
+
+**Process pitfall, one line.** Two of the eight reviewing agents delivered
+their final reports as an addendum to a previous message rather than as a
+report, so their findings were invisible until re-requested. When a sweep is
+fanned out, confirm each agent's report actually arrived before treating the
+set as complete.
+
 ## 2026-09-06 — The bug hunt: 51 findings, 49 fixed, 2 declined on evidence
 
 Eight read-only reviewers, one per subsystem, each asked for defects it could
@@ -1431,7 +1576,7 @@ answer is unambiguous:
 
 Same on all five speed zones and both heads. The encoder, the zone layout,
 `sony35::blockIndexFor` and the decoder are therefore exonerated, and that
-half of the harness is now a pinned regression test (`sony35_gcr_zones`)
+half of the harness is now a pinned regression test (`sony35_iwm_read_path`)
 covering every zone on both heads — which nothing did before; the existing
 3.5" tests either stop at `debugCellStream()` or never leave track 0. It is
 mutation-checked: shifting `blockIndexFor`'s head term by one zone fails it on

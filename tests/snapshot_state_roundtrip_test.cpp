@@ -183,10 +183,23 @@ int main()
         {
             Memory old; old.setIIEMode(true);
             old.appendSnapshotState(shortBlob);
-            // Truncate the final section back to its pre-2026-09-06 length.
-            CHECK(shortBlob.size() > 7, "blob long enough to truncate");
-            shortBlob.resize(shortBlob.size() - 3);
-            shortBlob[shortBlob.size() - 4 - 4 + 0] = 4;  // len LE: 7 → 4
+            // Rebuild the blob the way a pre-2026-09-06 build wrote it: the
+            // IOU section carried 4 bytes and was the LAST thing in the
+            // trailer. Today it carries 9 (AN0/AN1/AN2 + vblWasActive +
+            // iicCardWindow_) and is followed by three more optional
+            // length-prefixed sections — the No-Slot Clock and the two
+            // on-board Sony 3.5" mechanisms — each an empty (zero-length)
+            // section on a bare Memory with none of them wired.
+            constexpr size_t kEmptyTail = 3 * 4;   // three zero length prefixes
+            constexpr size_t kIouNow    = 9;
+            constexpr size_t kIouLegacy = 4;
+            CHECK(shortBlob.size() > kEmptyTail + kIouNow + 4,
+                  "blob long enough to truncate");
+            shortBlob.resize(shortBlob.size() - kEmptyTail
+                             - (kIouNow - kIouLegacy));
+            // Length prefix is 4 bytes LE and the value fits in the low one.
+            shortBlob[shortBlob.size() - kIouLegacy - 4] =
+                static_cast<uint8_t>(kIouLegacy);
         }
         Memory legacy; legacy.setIIEMode(true);
         CHECK(legacy.loadCharRom(chr.string().c_str(), -1) != 0, "legacy chr");

@@ -122,6 +122,12 @@ private:
     int uPhosphorGamma = -1;
 
     int  outW = 0, outH = 0;
+    // GL_MAX_TEXTURE_SIZE, read once at initialize(). The glass pass renders
+    // at the on-screen size, and that can exceed the limit on the small GPUs
+    // POM2 targets (the Pi's V3D caps at 4096): an unclamped glTexImage2D
+    // there fails with GL_INVALID_VALUE, the FBO goes incomplete and the
+    // window goes black with nothing in the log.
+    int  maxTexSize_ = 0;
     int  srcW_ = 0, srcH_ = 0;
     int  pingPongIdx = 0;
     bool firstFrame  = true;
@@ -129,6 +135,13 @@ private:
     NtscParams params{};
 
     bool createTextures(int w, int h);
+    // w/h clamped to what this GL implementation can actually allocate.
+    int  clampTexDim(int v) const;
+    // Delete every GL object this stack owns. Called from the destructor —
+    // the pass is torn down while the context is still current (~MainWindow
+    // runs before glfwTerminate), and `= default` there leaked a program, a
+    // VAO, a VBO and up to three textures + FBOs per instance.
+    void destroyGL();
     // Run the bandwidth pre-pass over `srcTex` (srcW x srcH). Returns the
     // filtered texture, or 0 when the filter is inactive / unavailable — in
     // which case the caller simply keeps using srcTex.

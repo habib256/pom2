@@ -39,13 +39,14 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 #if !POM2_HAS_CHILD_PROCESS
 
 int main()
 {
     std::puts("SKIP: child processes are unavailable");
-    return 0;
+    return 77;   // ctest SKIP_RETURN_CODE
 }
 
 #elif defined(_WIN32)
@@ -162,7 +163,9 @@ int main(int argc, char** argv)
 #else
 
 #include <arpa/inet.h>
+#include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -284,7 +287,14 @@ void testStartFailures()
     assert(err.find("chdir") != std::string::npos);
     assert(!p.isRunning());
 
-    char badExe[] = "/tmp/pom2_bad_exec_XXXXXX";
+    // TMPDIR, not a hard-coded /tmp: a CI job with a per-job TMPDIR expects
+    // its scratch files inside the tree it cleans up.
+    std::string badExeTmpl =
+        (std::filesystem::temp_directory_path() / "pom2_bad_exec_XXXXXX")
+            .string();
+    std::vector<char> badExeBuf(badExeTmpl.begin(), badExeTmpl.end());
+    badExeBuf.push_back('\0');
+    char* badExe = badExeBuf.data();
     const int fd = ::mkstemp(badExe);
     assert(fd >= 0);
     const char bytes[] = "not an executable format\n";
@@ -426,6 +436,67 @@ void testStopDetachedDoesNotWait()
     sleepMs(2500);
 }
 
+// ── 10. drainDetached(): the helper is GONE before the process exits ─────
+//
+// `stopDetached()` hands the grace, the SIGKILL sweep and the reap to a
+// DETACHED thread, and a detached thread dies with the process. At quit that
+// is a race POM2 loses: `~FujiNetCard` asks for the teardown, main() returns
+// a few milliseconds later, and a helper that TRAPS SIGTERM survives POM2
+// still holding the loopback port — the exact regression the unconditional
+// group SIGKILL used to make impossible.
+//
+// `ChildProcess::drainDetached()` is main()'s one-line answer: it tells every
+// parked teardown to stop being polite and waits for the sweep. Pinned by the
+// process GROUP being gone afterwards — the child records its own pid (which
+// is the group leader's, because start() calls setpgid) into a temp file.
+void testDrainDetachedKillsTheGroup()
+{
+    const std::string pidFile = "/tmp/pom2_child_process_group.pid";
+    ::unlink(pidFile.c_str());
+
+    ChildProcess p;
+    std::string err;
+    assert(p.start("/bin/sh",
+                   { "-c", "echo $$ > " + pidFile + "; trap '' TERM; sleep 60" },
+                   "", err));
+
+    // Wait for the pid to land.
+    pid_t group = -1;
+    for (int i = 0; i < 200 && group < 0; ++i) {
+        if (std::FILE* f = std::fopen(pidFile.c_str(), "r")) {
+            long v = 0;
+            if (std::fscanf(f, "%ld", &v) == 1 && v > 0) group = static_cast<pid_t>(v);
+            std::fclose(f);
+        }
+        if (group < 0) sleepMs(10);
+    }
+    assert(group > 0 && "the stand-in helper never reported its pid");
+    assert(::kill(-group, 0) == 0 && "the process group should exist");
+
+    p.stopDetached();
+
+    const auto t0 = std::chrono::steady_clock::now();
+    ChildProcess::drainDetached(1500);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0).count();
+    // The worker's own grace is 2 s; drainDetached must cut it short, not
+    // sit through it.
+    assert(ms < 1400 && "drainDetached() waited out the full grace period");
+
+    // And the whole GROUP is gone — the shell AND its `sleep` grandchild,
+    // which is the one that holds the loopback port in production. The
+    // grandchild is reparented to init after the SIGKILL, so allow the
+    // reaper a moment before declaring the group dead.
+    bool gone = false;
+    for (int i = 0; i < 300 && !gone; ++i) {
+        if (::kill(-group, 0) != 0 && errno == ESRCH) gone = true;
+        else sleepMs(10);
+    }
+    assert(gone && "the helper's process group outlived drainDetached()");
+
+    ::unlink(pidFile.c_str());
+}
+
 } // namespace
 
 int main()
@@ -439,6 +510,7 @@ int main()
     testFindOnPath();
     testChildDoesNotInheritListeners();
     testStopDetachedDoesNotWait();
+    testDrainDetachedKillsTheGroup();
 
     std::puts("child_process: OK");
     return 0;

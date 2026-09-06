@@ -795,6 +795,98 @@ void testBootFromSlotResetsTheCassetteCpuSide()
     std::printf("[ OK ] bootFromSlot resets the cassette CPU side like coldBoot\n");
 }
 
+// ── 16. An idle hook is detached at the next run slice (R3) ─────────────
+// `M6502::step` gates its interrupt-entry split on `debugHook_ != nullptr`
+// and NOT on "is anything armed", because testing a flag on that path costs
+// 7.2 % (PERFORMANCE § 8.5). The split changes how an IRQ entry's 7 cycles
+// reach `memory->advanceCycles` — two small advances instead of one sum —
+// which moves the sub-instruction phase every lazily-synced peripheral clock
+// derives from (Mockingboard/Phasor T1, the Disk II LSS, the video beam).
+//
+// A step-over attaches the hook; `setMode(Mode::Stopped)` drops the transient
+// that armed it but deliberately does NOT re-sync (it must not take the
+// lock). So after ONE step-over plus Run the machine kept a debugged CPU for
+// the rest of the session. `runCpuSlice` now reconciles the two.
+void testIdleHookIsDetachedOnResume()
+{
+    EmulationController ctrl;
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        Memory& mem = ctrl.memory();
+        mem.memWrite(0x0800, 0xEA);          // NOP
+        mem.memWrite(0x0801, 0x4C);          // JMP $0800
+        mem.memWrite(0x0802, 0x00);
+        mem.memWrite(0x0803, 0x08);
+        ctrl.cpu().setProgramCounter(0x0800);
+        ctrl.debugger().setTransient(0x0801, pom2::Debugger::Reason::StepOver);
+        ctrl.syncDebugHook();
+    }
+    assert(ctrl.cpu().getDebugHook() != nullptr);
+
+    // Stop drops the transient without re-syncing — the state the fix targets.
+    ctrl.setMode(EmulationController::Mode::Stopped);
+    assert(!ctrl.debugger().armed());
+    assert(ctrl.cpu().getDebugHook() != nullptr &&
+           "setMode is not supposed to re-sync; the case would prove nothing");
+
+    // Resuming through the one funnel both CPU drivers use must reconcile it.
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.cpu().getDebugHook() == nullptr &&
+           "an idle debug hook survived a run slice — every IRQ entry in this "
+           "session is still charged as a separate advanceCycles");
+
+    // A hook that IS armed stays attached.
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        ctrl.debugger().addBreakpoint(0x0900);
+        ctrl.syncDebugHook();
+    }
+    ctrl.tickFrame();
+    assert(ctrl.cpu().getDebugHook() != nullptr &&
+           "a live breakpoint lost its hook");
+
+    std::printf("[ OK ] an idle debug hook is detached at the next run slice\n");
+}
+
+// ── 17. A time jump drops the debugger's per-timeline transients (S15) ───
+// A rewind scrub or a snapshot load restores RAM and the PC. The armed resume
+// amnesty, the latched hit and the current-PC shadow all name addresses in
+// the timeline that was abandoned: the amnesty silently skips the first
+// breakpoint at that pc on the restored machine, and the latched hit still
+// reads `stopRequested()`, so the worker parks again the instant it resumes,
+// blaming a breakpoint nothing hit.
+void testTimeJumpClearsDebuggerTransients()
+{
+    EmulationController ctrl;
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        Memory& mem = ctrl.memory();
+        mem.memWrite(0x0800, 0x4C);
+        mem.memWrite(0x0801, 0x00);
+        mem.memWrite(0x0802, 0x08);
+        ctrl.cpu().setProgramCounter(0x0800);
+        ctrl.debugger().addBreakpoint(0x0800);
+        ctrl.syncDebugHook();
+    }
+
+    // Run until the breakpoint latches a hit.
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.debugger().stopRequested() && "no hit to clear");
+
+    ctrl.noteTimeJump();
+
+    assert(!ctrl.debugger().stopRequested() &&
+           "a latched hit survived the time jump — the restored machine would "
+           "park again on a breakpoint it never reached");
+    assert(ctrl.debugger().hasBreakpoint(0x0800) &&
+           "the time jump ate a breakpoint the user placed");
+
+    std::printf("[ OK ] a time jump clears the debugger's transients, keeps "
+                "the user's breakpoints\n");
+}
+
 }  // namespace
 
 int main()
@@ -813,6 +905,8 @@ int main()
     testBreakpointOnInterruptHandlerEntry();
     testInterruptEntryUnchangedWithoutAHook();
     testTransientIsDisarmedByStopAndReset();
+    testIdleHookIsDetachedOnResume();
+    testTimeJumpClearsDebuggerTransients();
     testBootFromSlotResetsTheCassetteCpuSide();
     std::printf("debugger: all assertions passed\n");
     return 0;

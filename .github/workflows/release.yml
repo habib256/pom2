@@ -53,8 +53,15 @@ on:
       - '[0-9]*'         # 0.8
   workflow_dispatch:
 
+# Read-only by DEFAULT, write only where it is used. `contents: write` was set
+# here at the top and inherited by every job — including five that only compile
+# and upload artefacts (version, linux-arm64, macos, windows, wasm), each of
+# them running third-party actions and, in the container jobs, a whole apt
+# tree. A token that can push to the repository has no business in a compile
+# step. The `publish` job below re-grants it, and it is the only one that
+# touches the Release.
 permissions:
-  contents: write        # the publish job attaches packages to the Release
+  contents: read
 
 jobs:
   # ---------------------------------------------------- normalize version ----
@@ -394,9 +401,14 @@ jobs:
   #      not start on a single Pi. Bookworm's 2.36 covers Pi OS bookworm/trixie.
   #   3. -DPOM2_GLES=ON — the tier the hardware actually exposes.
   #
-  # No pinned builder image here, unlike bionic: bookworm is current and
-  # supported, so apt in the container is reliable. Freeze it the day that stops
-  # being true.
+  # The builder image IS pinned — dated tag AND digest. "debian:bookworm" is a
+  # moving tag: it is rebuilt on every point release, so two runs of the same
+  # git tag could produce packages with different glibc/libstdc++ contents and
+  # no way to tell which one a user has. A release job whose inputs move is not
+  # a repeatable release. Refresh the pin deliberately (get the digest with
+  # `docker buildx imagetools inspect debian:bookworm`) and say so in the
+  # commit; both arm64 jobs below and .github/workflows/pi400.yml use the same
+  # line, so they move together.
   raspberry:
     needs: version
     runs-on: ubuntu-24.04-arm
@@ -413,7 +425,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/work -w /work \
             -e POM2_VERSION \
-            debian:bookworm \
+            debian:bookworm-20260824@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443 \
             bash /work/packaging/linux/build_in_bookworm_arm64.sh
 
       - name: Verify the AppImage — aarch64, ET_EXEC, glibc <= 2.36, GLES-only
@@ -535,7 +547,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/work -w /work \
             -e POM2_VERSION -e POM2_MCPU \
-            debian:bookworm \
+            debian:bookworm-20260824@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443 \
             bash /work/packaging/raspberry/build_in_bookworm_pi.sh
 
       - name: Verify the AppImage — name, aarch64, glibc <= 2.36, GLES-only
@@ -797,10 +809,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Pinned, not `latest`. The WASM bundle published with a tag has to be
+      # reproducible from that tag, and `latest` silently re-toolchains it: a
+      # new Emscripten can change the generated JS glue, the pthread shape and
+      # the .data packer. Bump this deliberately, in its own commit.
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: latest
+          version: 6.0.9
           actions-cache-folder: emsdk-cache
 
       - name: Build the WASM bundle
@@ -848,6 +864,10 @@ jobs:
     needs: [version, quality, linux, linux-arm64, raspberry, pi400, macos, windows, wasm]
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag'
+    # The ONLY job that needs to write: it creates the Release and attaches the
+    # packages. Everything above builds with a read-only token.
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v5
         with:
@@ -902,22 +922,48 @@ jobs:
           # non-empty even when the file does not exist — the EXIT CODE is what
           # decides, and the failed body is deleted so a later edit cannot pick
           # it up by accident.
-          NOTES_PATH="docs/releases/v${POM2_VERSION}.md"
+          # Try v<major.minor.patch>.md first, then v<major.minor>.md — BOTH
+          # conventions exist under docs/releases/ (v0.8.md next to v0.8.3.md)
+          # and CLAUDE.md documents the second, so looking for only one of them
+          # silently downgraded a release that HAD hand-written notes.
+          NOTES_CANDIDATES=("docs/releases/v${POM2_VERSION}.md")
+          case "$POM2_VERSION" in
+            *.*.*) NOTES_CANDIDATES+=("docs/releases/v${POM2_VERSION%.*}.md") ;;
+          esac
           NOTES_ARGS=(--generate-notes)
-          if gh api "repos/${GH_REPO}/contents/${NOTES_PATH}?ref=${TAG}" \
-                 -H "Accept: application/vnd.github.raw" > notes.md 2>/dev/null &&
-             [ -s notes.md ]; then
-              NOTES_ARGS=(--notes-file notes.md)
-              echo "Release body from ${NOTES_PATH} ($(wc -l < notes.md) lines)."
-          else
+          NOTES_PATH=""
+          for _cand in "${NOTES_CANDIDATES[@]}"; do
+              if gh api "repos/${GH_REPO}/contents/${_cand}?ref=${TAG}" \
+                     -H "Accept: application/vnd.github.raw" > notes.md 2>/dev/null &&
+                 [ -s notes.md ]; then
+                  NOTES_ARGS=(--notes-file notes.md)
+                  NOTES_PATH="$_cand"
+                  echo "Release body from ${_cand} ($(wc -l < notes.md) lines)."
+                  break
+              fi
               rm -f notes.md
-              echo "No ${NOTES_PATH} at ${TAG} — using generated notes."
+          done
+          if [ -z "$NOTES_PATH" ]; then
+              # Loud, not silent. Falling back to a generated commit list is a
+              # real downgrade of the release body and used to leave no trace
+              # anywhere but a buried log line.
+              echo "::warning title=No hand-written release notes::Looked for ${NOTES_CANDIDATES[*]} at ${TAG}; using GitHub's generated commit list instead."
+              { echo "⚠ No hand-written release notes found at \`${TAG}\` (tried: ${NOTES_CANDIDATES[*]}). The Release body is a generated commit list."; } \
+                >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-              # Release already exists (e.g. drafted by hand): only add assets,
-              # never overwrite a body someone has edited.
+              # Release already exists: add assets, and never overwrite a body
+              # someone has edited. But an EMPTY body is the signature of a
+              # previous failed run of this job, and re-running it used to
+              # throw NOTES_ARGS away and leave the release permanently
+              # bodiless — so fill that one in.
               gh release upload "$TAG" "${FILES[@]}" --clobber
+              if [ -n "$NOTES_PATH" ] &&
+                 [ -z "$(gh release view "$TAG" --json body -q .body | tr -d '[:space:]')" ]; then
+                  echo "Existing release has an empty body — setting it from ${NOTES_PATH}."
+                  gh release edit "$TAG" --notes-file notes.md
+              fi
           else
               gh release create "$TAG" "${FILES[@]}" "${NOTES_ARGS[@]}" \
                                 --title "POM2 $TAG"
