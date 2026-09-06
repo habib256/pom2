@@ -110,6 +110,26 @@ public:
     /// `lastExitCode()` is -1 because nobody stayed to collect it.
     void stopDetached();
 
+    /// Wait for every `stopDetached()` teardown still in flight, process-wide,
+    /// and tell them to stop being polite while doing it.
+    ///
+    /// A detached teardown thread dies with the process. At quit that is a
+    /// race POM2 loses: `~FujiNetCard` calls `stopDetached()` from the
+    /// shutdown path, main() returns a few milliseconds later, and the thread
+    /// that still owed the group its SIGKILL sweep is gone — so a helper that
+    /// TRAPS SIGTERM (a wrapper script's grandchild) survives POM2 and keeps
+    /// holding the loopback port the next session wants. Before the fix the
+    /// destructor's unconditional group SIGKILL made that impossible.
+    ///
+    /// Call this ONCE from main(), on the way out, after the last card is
+    /// destroyed. It sets a process-wide "we are exiting" flag the workers
+    /// poll in place of their grace sleep, so they escalate to SIGKILL within
+    /// one 25 ms step instead of the full 2 s grace, then it waits up to
+    /// `maxWaitMs` for them to finish reaping. Safe when nothing is running
+    /// (returns immediately), and the flag is lowered again on return so a
+    /// long-lived process that calls it early keeps the polite behaviour.
+    static void drainDetached(int maxWaitMs = 1500);
+
     /// Exit status of the last child that finished, or -1 if it was killed /
     /// never ran. Only meaningful once `isRunning()` has returned false.
     int  lastExitCode() const { return exitCode_; }

@@ -541,6 +541,132 @@ void testRomPrInEntriesInitAcia()
     std::printf("  ok: PR#/IN# ROM entries init the ACIA (cmd=$0B)\n");
 }
 
+// ── Bug-hunt pins (2026-09-06) ───────────────────────────────────────────
+
+// The transmit interrupt must actually fire.
+//
+// `txIrqEnable` was computed from cmd[3:2] and then thrown away with a
+// `(void)` — the comment said TDRE is pinned high so the interrupt "never
+// fires anyway", which has it exactly backwards: TDRE pinned high means the
+// transmitter is empty the instant a byte is accepted, so the interrupt is
+// due immediately. A driver programmed with command $05 (DTR on, RX IRQ on,
+// TX IRQ on) writes one byte, sleeps for the ISR to ask for the next, and
+// never wakes. MAME `mos6551.cpp:293-307`.
+void testTxIrq()
+{
+    SuperSerialCard ssc(2);
+
+    // cmd $01: DTR on, cmd[3:2] == 00 → TX IRQ NOT enabled.
+    ssc.deviceSelectWrite(kCommandAddr, 0x01);
+    (void)ssc.deviceSelectRead(kStatusAddr);        // clear whatever is pending
+    ssc.deviceSelectWrite(kRdrAddr, 'A');
+    assert((ssc.irqState() & 0x08) == 0);           // IRQ_TDRE
+
+    // cmd $05: DTR on, cmd[3:2] == 01 → TX IRQ enabled. Arming it while the
+    // transmitter is already empty raises the interrupt at once, which is the
+    // first one a "enable, then wait for the ISR" driver depends on.
+    ssc.deviceSelectWrite(kCommandAddr, 0x05);
+    assert(ssc.irqState() & 0x08);
+    assert(ssc.deviceSelectRead(kStatusAddr) & SR_IRQ);
+    assert(ssc.irqState() == 0);                    // status read acknowledges
+
+    // ...and every accepted byte raises it again.
+    ssc.deviceSelectWrite(kRdrAddr, 'B');
+    assert(ssc.irqState() & 0x08);
+
+    // Disabling it clears the pending source (MAME `mos6551.cpp:293-307`).
+    ssc.deviceSelectWrite(kCommandAddr, 0x01);
+    assert((ssc.irqState() & 0x08) == 0);
+
+    // DTR gates it, like every other source.
+    ssc.deviceSelectWrite(kCommandAddr, 0x04);      // TX IRQ bits, DTR off
+    ssc.deviceSelectWrite(kRdrAddr, 'C');
+    assert((ssc.irqState() & 0x08) == 0);
+
+    std::printf("  ok: TX IRQ raised on TDR accept and on arming\n");
+}
+
+// Telnet option requests must be ANSWERED, not merely swallowed.
+//
+// RFC 854 §"Telnet Options": a party that will not enable an option must
+// refuse it — WONT to a WILL, DONT to a DO. Silence is not legal and not
+// inert: a stock `telnet` client sends its opening burst, waits, gets
+// nothing, and settles into LINE MODE with local echo, so the Apple II sees
+// a whole line at a time and the user sees every character twice.
+void testTelnetOptionNegotiation()
+{
+    SuperSerialCard ssc(2);
+    auto feed = [&](std::vector<uint8_t> in) {
+        (void)ssc.processTelnetRx(in.data(), in.size());
+        return ssc.pendingTelnetReply();
+    };
+
+    // BINARY (0) and SGA (3) are the two that make this an 8-bit,
+    // character-at-a-time pipe — accept both, in either direction.
+    ssc.resetTelnet();
+    assert((feed({0xFF, 0xFD, 0x00}) ==                  // DO BINARY
+            std::vector<uint8_t>{0xFF, 0xFB, 0x00}));    // → WILL BINARY
+    ssc.resetTelnet();
+    assert((feed({0xFF, 0xFB, 0x03}) ==                  // WILL SGA
+            std::vector<uint8_t>{0xFF, 0xFD, 0x03}));    // → DO SGA
+
+    // Anything else is refused, and refusing is still an answer.
+    ssc.resetTelnet();
+    assert((feed({0xFF, 0xFD, 0x18}) ==                  // DO TERMINAL-TYPE
+            std::vector<uint8_t>{0xFF, 0xFC, 0x18}));    // → WONT
+    ssc.resetTelnet();
+    assert((feed({0xFF, 0xFB, 0x01}) ==                  // WILL ECHO
+            std::vector<uint8_t>{0xFF, 0xFE, 0x01}));    // → DONT
+
+    // A refusal we already agree with gets NO answer — echoing DONT at a
+    // DONT is the option loop RFC 854 warns about.
+    ssc.resetTelnet();
+    assert(feed({0xFF, 0xFE, 0x18}).empty());            // DONT TERMINAL-TYPE
+    ssc.resetTelnet();
+    assert(feed({0xFF, 0xFC, 0x01}).empty());            // WONT ECHO
+
+    // Split across chunks: the command byte is remembered.
+    ssc.resetTelnet();
+    (void)feed({'A', 0xFF});
+    assert((feed({0xFD, 0x03}) ==                        // …DO SGA completes
+            std::vector<uint8_t>{0xFF, 0xFB, 0x03}));    // → WILL SGA
+
+    // The answer leaves through the TX drain VERBATIM — it is protocol, not
+    // guest data, so the IAC must NOT be doubled the way appendTelnetTxEscaped
+    // doubles a data $FF.
+    std::vector<uint8_t> out;
+    (void)ssc.drainTransportTx(out);
+    assert((out == std::vector<uint8_t>{0xFF, 0xFB, 0x03}));
+    assert(ssc.pendingTelnetReply().empty());            // queue drained once
+
+    std::printf("  ok: telnet option negotiation answered (RFC 854)\n");
+}
+
+// A snapshot is a FILE. `statusErrors_` is the STICKY-ERROR half of the
+// status register and nothing else: the other bits are computed at read time
+// and OR'd with it, so a blob carrying $FF pinned DCD and DSR high for the
+// session — a carrier-aware driver reads "NO CARRIER" with a live peer
+// attached and no register write can clear it.
+void testSnapshotStatusErrorsAreMasked()
+{
+    SuperSerialCard ssc(2);
+    std::vector<uint8_t> blob;
+    ssc.appendSnapshotState(blob);
+    assert(blob.size() >= 14);
+
+    // Byte 6 is statusErrors_ (magic 4 + cmdReg + ctlReg), byte 13 irqState_.
+    blob[6]  = 0xFF;
+    blob[13] = 0xFF;
+    ssc.loadSnapshotState(blob.data(), blob.size());
+
+    assert(ssc.statusErrorBits() ==
+           (SR_PARITY_ERROR | SR_FRAMING_ERROR | SR_OVERRUN));
+    assert((ssc.statusErrorBits() & (SR_DCD | SR_DSR | SR_RDRF | SR_TDRE)) == 0);
+    assert(ssc.irqState() == 0x0F);   // the four defined sources, nothing else
+
+    std::printf("  ok: snapshot restore masks statusErrors_ / irqState_\n");
+}
+
 int main()
 {
     testDtrAndCommandDecode();
@@ -559,6 +685,9 @@ int main()
     testPascalIdBlock();
     testPrinterTapSpool();
     testRomPrInEntriesInitAcia();
+    testTxIrq();
+    testTelnetOptionNegotiation();
+    testSnapshotStatusErrorsAreMasked();
     std::printf("OK ssc_acia_smoke\n");
     return 0;
 }

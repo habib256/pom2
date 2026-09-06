@@ -1082,6 +1082,11 @@ int main(int argc, char* argv[])
     glfwSetWindowUserPointer(window, nullptr);
     mainWindowOwner.reset();
 
+    // ~FujiNetCard hands its helper teardown to a detached thread that would
+    // die with the process; wake it and wait for the SIGKILL sweep, or a
+    // SIGTERM-trapping helper outlives POM2 holding the loopback port.
+    pom2::ChildProcess::drainDetached();
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

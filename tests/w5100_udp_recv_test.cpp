@@ -66,7 +66,7 @@
 int main()
 {
     std::puts("SKIP: built without host sockets (Emscripten)");
-    return 0;
+    return 77;   // ctest SKIP_RETURN_CODE
 }
 #else
 
@@ -124,6 +124,9 @@ public:
         port_ = ntohs(addr.sin_port);
     }
     ~LocalPeer() { closeHostSocket(fd_); }
+
+    /// The peer's own socket, for a test that reads a raw datagram back.
+    socket_t fd() const { return fd_; }
 
     uint16_t port() const { return port_; }
 
@@ -498,6 +501,50 @@ void testLocalPortIsBound()
     assert(false && "an unsolicited datagram never reached the guest's Sn_PORT");
 }
 
+// ─── 7: SEND_MAC transmits, it is not an unknown command ──────────────
+//
+// SEND_MAC ($21) is SEND with the ARP step skipped — the chip is told to use
+// the MAC already in Sn_DHAR instead of resolving one (datasheet §5.1
+// "Sn_CR"). POM2 runs UDP over a host socket, which does its own address
+// resolution, so it is the same transmission SEND performs. It used to fall
+// to `default: break`, so a driver that uses SEND_MAC once it has cached the
+// peer's MAC — the WIZnet UDP example does exactly that — lost EVERY datagram
+// while its TX ring filled up behind it and Sn_TX_FSR went to zero for good.
+void testSendMacTransmits()
+{
+    LocalPeer   peer;
+    W5100Device dev;
+    dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    openUdpSocket(dev, peer, 0x02);   // also teaches the peer our address
+
+    // Stage a second datagram and dispatch it with SEND_MAC this time.
+    const uint16_t rd = peekWord(dev, static_cast<uint16_t>(kS0 + kW5100SnTxRd0));
+    const uint8_t payload[3] = { 'M', 'A', 'C' };
+    const uint16_t ring = dev.socketInfo(0).txCapacity;
+    for (uint16_t i = 0; i < 3; ++i)
+        dev.writeValueAt(static_cast<uint16_t>(kW5100TxBase + ((rd + i) % ring)),
+                         payload[i]);
+    writeWord(dev, static_cast<uint16_t>(kS0 + kW5100SnTxWr0),
+              static_cast<uint16_t>(rd + 3));
+    dev.writeValueAt(static_cast<uint16_t>(kS0 + kW5100SnCr), kW5100SnCrSendMac);
+
+    // It reached the peer.
+    char buf[16];
+    bool got = false;
+    for (int waited = 0; waited < 2000 && !got; waited += 5) {
+        const iolen_t n = ::recvfrom(peer.fd(), buf, static_cast<int>(sizeof(buf)),
+                                     0, nullptr, nullptr);
+        if (n == 3 && std::memcmp(buf, payload, 3) == 0) got = true;
+        else sleepMs(5);
+    }
+    assert(got && "SEND_MAC transmitted nothing");
+    // And the ring was consumed, not left full.
+    assert(peekWord(dev, static_cast<uint16_t>(kS0 + kW5100SnTxRd0)) ==
+           static_cast<uint16_t>(rd + 3));
+
+    std::puts("OK send_mac_transmits");
+}
+
 }  // namespace
 
 int main()
@@ -510,6 +557,7 @@ int main()
     testFullRingLosesTheNextDatagram();
     testHighMirrorReads();
     testLocalPortIsBound();
+    testSendMacTransmits();
     std::puts("All W5100 receive-path tests passed.");
     return 0;
 }

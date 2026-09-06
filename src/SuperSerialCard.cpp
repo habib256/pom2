@@ -126,6 +126,57 @@ void SuperSerialCard::appendTelnetTxEscaped(std::vector<uint8_t>& out, uint8_t b
     else if (b == '\r') out.push_back(0x00);    // CR NUL
 }
 
+// RFC 854 §"Telnet Options": a party that receives a request to enable an
+// option it does not want MUST refuse it, and refusing means answering — WONT
+// to a WILL, DONT to a DO. Silence is not a legal answer and it is not an
+// inert one either: a stock `telnet` client sends its opening WILL/DO burst,
+// waits for the replies, and with none arriving it settles into LINE MODE and
+// local echo. The user then types a whole line before the Apple II sees any of
+// it, and sees every character twice.
+//
+// The two options POM2 does want are the ones that make the link an 8-bit
+// character-at-a-time pipe, which is what a serial port is:
+//   * BINARY (0)   — RFC 856, no 7-bit or NVT translation.
+//   * SGA    (3)   — RFC 858, suppress go-ahead; a client that gets WILL SGA
+//                    leaves line mode.
+// Everything else is refused. `swallowed` is what the caller already did and
+// stays done; only the ANSWER is new.
+void SuperSerialCard::answerTelnetOption(uint8_t command, uint8_t option)
+{
+    constexpr uint8_t kIac  = 0xFF;
+    constexpr uint8_t kWill = 0xFB, kWont = 0xFC, kDo = 0xFD, kDont = 0xFE;
+    constexpr uint8_t kOptBinary = 0x00, kOptSga = 0x03;
+
+    const bool accept = (option == kOptBinary || option == kOptSga);
+    uint8_t answer;
+    switch (command) {
+    // "You may" / "You must not": we answer about OUR OWN side.
+    case kDo:   answer = accept ? kWill : kWont; break;
+    case kDont: answer = kWont; break;
+    // "I will" / "I won't": we answer about THEIR side.
+    case kWill: answer = accept ? kDo : kDont;   break;
+    case kWont: answer = kDont; break;
+    default: return;
+    }
+
+    // Never answer a REFUSAL we already agree with — DONT/WONT are the state
+    // both ends are already in, and echoing them starts an option loop that
+    // RFC 854 §"option negotiation" specifically warns about.
+    if ((command == kDont && answer == kWont) ||
+        (command == kWont && answer == kDont))
+        return;
+
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    // Straight into the raw reply queue, not txBuf: these bytes are telnet
+    // PROTOCOL and must reach the wire unescaped, whereas everything in txBuf
+    // is guest data and gets IAC-doubled on the way out.
+    constexpr size_t kReplyCap = 256;      // a negotiation burst, not a stream
+    if (telnetReply_.size() + 3 > kReplyCap) return;
+    telnetReply_.push_back(kIac);
+    telnetReply_.push_back(answer);
+    telnetReply_.push_back(option);
+}
+
 size_t SuperSerialCard::processTelnetRx(uint8_t* data, size_t n)
 {
     size_t w = 0;
@@ -141,6 +192,9 @@ size_t SuperSerialCard::processTelnetRx(uint8_t* data, size_t n)
                 data[w++] = 0xFF;
                 telnetState_ = TelnetState::Text;
             } else if (b >= 0xFB && b <= 0xFE) {              // WILL/WONT/DO/DONT
+                // Persistent, like telnetState_: a chunk boundary can fall
+                // between the command and its option byte.
+                telnetCommand_ = b;
                 telnetState_ = TelnetState::Opt;              // one option byte follows
             } else if (b == 0xFA) {                           // SB — subnegotiation
                 telnetState_ = TelnetState::Sb;
@@ -149,7 +203,10 @@ size_t SuperSerialCard::processTelnetRx(uint8_t* data, size_t n)
             }
             break;
         case TelnetState::Opt:
-            telnetState_ = TelnetState::Text;                 // swallow the option byte
+            // Swallow the option byte — and ANSWER it. See answerTelnetOption.
+            answerTelnetOption(telnetCommand_, b);
+            telnetCommand_ = 0;
+            telnetState_ = TelnetState::Text;
             break;
         case TelnetState::Sb:
             if (b == 0xFF) telnetState_ = TelnetState::SbIac; // maybe IAC SE
@@ -245,6 +302,16 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
     size_t taken = 0;
 
     std::lock_guard<std::mutex> lk(bufferMtx);
+
+    // Telnet option answers first, VERBATIM — they are protocol, not guest
+    // data, so they must not be IAC-escaped, and they must not wait behind a
+    // rate-limited TX ring either: a peer still negotiating has nothing to
+    // send us until it has our answer.
+    if (!telnetReply_.empty() && !raw) {
+        out.insert(out.end(), telnetReply_.begin(), telnetReply_.end());
+        telnetReply_.clear();
+    }
+
     const auto now = std::chrono::steady_clock::now();
     if (bytesPerSecond_ > 0.0) {
         // Credit accrues with wall time and is capped at one buffer, so a
@@ -383,7 +450,7 @@ void SuperSerialCard::applyCommandReg(uint8_t v)
     rxIrqEnable_ = !((v >> 1) & 1) && dtrAsserted_;
     const int txCtl = (v >> 2) & 0x3;
     const bool txIrqEnable = kTxIrqEnableByCmd[txCtl] && dtrAsserted_;
-    (void)txIrqEnable;  // never consulted — TDRE is pinned high
+    txIrqEnable_ = txIrqEnable;
     echoMode_ = (v & 0x10) != 0;
 
     // Pending-IRQ cleanup when an enable bit goes off, MAME
@@ -393,6 +460,17 @@ void SuperSerialCard::applyCommandReg(uint8_t v)
     }
     if (!txIrqEnable && (irqState_ & IRQ_TDRE)) {
         irqState_ &= ~uint8_t{IRQ_TDRE};
+    }
+    // ...and the other way round. TDRE is PINNED HIGH in this model (the host
+    // side buffers TX, so the transmitter is always empty), and on a 6551 the
+    // transmit interrupt is level-driven off that bit: arming it while the
+    // transmitter is already empty raises the interrupt immediately (MAME
+    // `mos6551.cpp:293-307`, `update_irq` re-evaluates on every command
+    // write). That immediate one is what a driver written as "enable the TX
+    // interrupt, then WFI until the ISR feeds the next byte" depends on —
+    // without it there is no first interrupt and it never starts.
+    if (txIrqEnable && !(irqState_ & IRQ_TDRE)) {
+        irqState_ |= uint8_t{IRQ_TDRE};
     }
 
     // DTR transitions: MAME `mos6551.cpp:317-321` — when DTR is
@@ -622,6 +700,15 @@ void SuperSerialCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             txTail.push_back(v);
             if (txTail.size() > kTailCap) txTail.pop_front();
             ++txCount;
+            // The byte is accepted and the transmitter is empty again the
+            // instant it is — the host side buffers TX, which is why SR_TDRE
+            // is pinned high in the status read. On a 6551 that transition is
+            // exactly what raises the transmit interrupt (MAME
+            // `mos6551.cpp:668-672` does the same for the receiver). It used
+            // to be computed and thrown away, so a driver programmed with
+            // command $05 (DTR on, RX IRQ on, TX IRQ on) wrote one byte,
+            // slept waiting for the ISR to ask for the next, and never woke.
+            if (txIrqEnable_) raiseIrqSource(IRQ_TDRE);
             // Printer tap: mirror the accepted byte into the host-visible
             // spool the ImageWriter drains (see setPrinterTap in the header).
             // The spool is capped: the drain cursor speaks absolute offsets
@@ -924,15 +1011,34 @@ void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     size_t p = 4;
     cmdReg        = data[p++];
     ctlReg        = data[p++];
-    statusErrors_ = data[p++];
+    // A snapshot is a FILE, so every restored field is untrusted input.
+    // `statusErrors_` is the STICKY-ERROR half of the status register and
+    // nothing else — the other bits (RDRF, TDRE, DCD, DSR, IRQ) are computed
+    // at read time and then OR'd with this byte, so a blob carrying $FF here
+    // pinned DCD and DSR high for the rest of the session: a carrier-aware
+    // driver reads "NO CARRIER" with a live telnet peer attached, forever,
+    // and no register write can clear it (only a read of RDR clears these,
+    // and it clears only the three bits below). Keep the three that are
+    // actually sticky. MAME `mos6551.cpp:234`.
+    statusErrors_ = static_cast<uint8_t>(
+        data[p++] & (SR_PARITY_ERROR | SR_FRAMING_ERROR | SR_OVERRUN));
     dtrAsserted_  = data[p++] != 0;
     rxIrqEnable_  = data[p++] != 0;
     echoMode_     = data[p++] != 0;
     wordLength_   = data[p++];
     extraStop_    = data[p++] != 0;
     baudIndex_    = static_cast<uint8_t>(data[p++] & 0x0F);
-    irqState_.store(data[p++]);
+    // Same class of guard: the IRQ mask has four defined sources, and a bit
+    // outside them can never be cleared by `clearIrqSource` (the read paths
+    // clear named bits, and `irqState_ != 0` is what drives SR_IRQ and the
+    // slot's IRQ line) — a stuck spurious bit holds the CPU interrupt down.
+    irqState_.store(static_cast<uint8_t>(
+        data[p++] & (IRQ_DCD | IRQ_DSR | IRQ_RDRF | IRQ_TDRE)));
     irqLineDirty_.store(true);   // CPU thread re-drives the line
+
+    // DERIVED from the restored cmdReg, like rxIrqEnable_ is serialised —
+    // without it the transmit-interrupt gate keeps the LIVE session's value.
+    txIrqEnable_ = kTxIrqEnableByCmd[(cmdReg >> 2) & 0x3] && dtrAsserted_;
 
     // `bytesPerSecond_` is DERIVED from baudIndex_, not serialized — the same
     // reason wordLength_/extraStop_ are restored explicitly above. Without

@@ -20,8 +20,11 @@
 #include "ChildProcess.h"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <thread>
 
 #if POM2_HAS_CHILD_PROCESS
@@ -46,6 +49,92 @@
 #endif
 
 namespace pom2 {
+namespace {
+
+/// Process-wide bookkeeping for the teardown threads `stopDetached()` spawns.
+/// They are detached — nobody can join them — so the only way main() can know
+/// they finished their SIGKILL sweep is to count them. `draining` is the
+/// "the process is going away, stop waiting politely" flag they poll instead
+/// of sleeping through the grace period.
+struct DetachedTeardowns {
+    std::mutex              mtx;
+    std::condition_variable cv;
+    int                     pending  = 0;
+    bool                    draining = false;
+};
+
+DetachedTeardowns& detachedTeardowns()
+{
+    static DetachedTeardowns state;
+    return state;
+}
+
+/// One in-flight teardown. CONSTRUCTED ON THE CALLER'S THREAD (as a lambda
+/// capture initialiser, evaluated before std::thread starts running the body)
+/// so a drainDetached() racing the spawn still sees the teardown it must wait
+/// for; retired by the worker when the lambda is destroyed.
+class DetachedTicket
+{
+public:
+    DetachedTicket()
+    {
+        auto& d = detachedTeardowns();
+        std::lock_guard<std::mutex> lk(d.mtx);
+        ++d.pending;
+    }
+    DetachedTicket(DetachedTicket&& other) noexcept : live_(other.live_)
+    {
+        other.live_ = false;
+    }
+    DetachedTicket(const DetachedTicket&)            = delete;
+    DetachedTicket& operator=(const DetachedTicket&) = delete;
+    ~DetachedTicket()
+    {
+        if (!live_) return;
+        auto& d = detachedTeardowns();
+        {
+            std::lock_guard<std::mutex> lk(d.mtx);
+            --d.pending;
+        }
+        d.cv.notify_all();
+    }
+
+    /// The grace-period sleep, interruptible. Returns false as soon as
+    /// drainDetached() says the process is exiting, so the caller skips
+    /// straight to the kill.
+    static bool graceStep(int ms)
+    {
+        auto& d = detachedTeardowns();
+        std::unique_lock<std::mutex> lk(d.mtx);
+        d.cv.wait_for(lk, std::chrono::milliseconds(ms),
+                      [&d] { return d.draining; });
+        return !d.draining;
+    }
+
+private:
+    bool live_ = true;
+};
+
+} // namespace
+
+// Platform-independent: the registry above is the only state it touches, and
+// a build with no child processes simply never registers anything.
+void ChildProcess::drainDetached(int maxWaitMs)
+{
+    auto& d = detachedTeardowns();
+    std::unique_lock<std::mutex> lk(d.mtx);
+    if (d.pending == 0) return;
+
+    d.draining = true;
+    d.cv.notify_all();
+    if (maxWaitMs < 0) maxWaitMs = 0;
+    d.cv.wait_for(lk, std::chrono::milliseconds(maxWaitMs),
+                  [&d] { return d.pending == 0; });
+    // Lowered again on the way out: a caller that drains early (a test, or a
+    // future "close all helpers" button) must not turn every LATER
+    // stopDetached() into an instant kill.
+    d.draining = false;
+}
 
 ChildProcess::~ChildProcess() { stop(); }
 
@@ -315,7 +404,9 @@ void ChildProcess::stopDetached()
     // (cmake/Pom2Architecture.cmake) refuses the include. Nothing in the body
     // below can throw, and if that ever changes the catch is what keeps an
     // escaping exception from calling std::terminate() on the whole emulator.
-    std::thread([group] {
+    // Registered HERE, before the thread starts, so drainDetached() cannot
+    // miss a teardown it should have waited for (see DetachedTicket).
+    std::thread([group, ticket = DetachedTicket{}] {
         try {
             // The same grace poll stop() does, with the same 25 ms step, and
             // then the same unconditional SIGKILL sweep of the group — a
@@ -327,7 +418,10 @@ void ChildProcess::stopDetached()
                 int status = 0;
                 const pid_t r = ::waitpid(group, &status, WNOHANG);
                 if (r != 0 && !(r < 0 && errno == EINTR)) break;
-                ::usleep(static_cast<useconds_t>(kStepMs) * 1000);
+                // The interruptible sleep: drainDetached() wakes it so the
+                // SIGKILL below lands before main() returns, instead of this
+                // thread dying with the process still owing it.
+                if (!DetachedTicket::graceStep(kStepMs)) break;
             }
             ::kill(-group, SIGKILL);
             // Reap, or the zombie outlives us until POM2 exits. ECHILD simply
@@ -657,7 +751,8 @@ void ChildProcess::stopDetached()
 
     // Hand-written exception barrier — see the POSIX branch for why
     // ThreadGuard.h is not available to this file.
-    std::thread([h, j] {
+    // Registered HERE, before the thread starts — see the POSIX branch.
+    std::thread([h, j, ticket = DetachedTicket{}] {
         try {
             const bool signalled =
                 launchConsoleSignalBroker(GetProcessId(H(h)));
@@ -666,10 +761,14 @@ void ChildProcess::stopDetached()
                 constexpr DWORD stepMs = 25;
                 constexpr DWORD grace  = 2000;
                 for (DWORD waited = 0; waited < grace; waited += stepMs) {
-                    if (WaitForSingleObject(H(h), stepMs) == WAIT_OBJECT_0) {
+                    if (WaitForSingleObject(H(h), 0) == WAIT_OBJECT_0) {
                         exited = true;
                         break;
                     }
+                    // Interruptible: drainDetached() wakes it so the
+                    // TerminateJobObject below lands before main() returns.
+                    if (!DetachedTicket::graceStep(static_cast<int>(stepMs)))
+                        break;
                 }
             }
             if (!exited) {

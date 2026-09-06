@@ -76,6 +76,15 @@ enum IoAddr : uint8_t {
     kIoPpData2    = 0x0E,
 };
 
+/// Event-register bits. The low 6 bits of every status register are its own
+/// register number (the chip forces them), so the EVENTS start at bit 6.
+///   TxEvent bit 8 = TxOK, datasheet §4.4.15 — the frame left the wire.
+///   BufEvent bit 9 = RxMiss, §4.4.17 — the RxMISS counter moved.
+constexpr uint16_t kTxEventTxOk    = 0x0100;
+constexpr uint16_t kBufEventRxMiss = 0x0200;
+/// Everything above the register-number field, i.e. "is anything pending?".
+constexpr uint16_t kEventBitsMask  = 0xFFC0;
+
 // `cs8900a.cpp:210-220`
 enum TxState : uint8_t { kTxIdle = 0, kTxGotCmd = 1, kTxGotLen = 2, kTxReadBusSt = 3 };
 enum RxState : uint8_t { kRxIdle = 0, kRxGotFrame = 1 };
@@ -218,6 +227,7 @@ void Cs8900aDevice::setTransmitter(bool enabled)
 void Cs8900aDevice::reset()
 {
     frameQueue_.clear();
+    queueBytes_ = 0;
 
     ioRegs_.fill(0);
     std::fill(packetPage_.begin(), packetPage_.end(), 0);
@@ -259,7 +269,14 @@ void Cs8900aDevice::reset()
     // drivers spin waiting for the chip to come ready.
     ppWrite16(kPpSeSelfSt,   0x0896);
 
-    recvControl_ = ppRead16(kPpCcRxCtl);
+    // The DECODED filter must follow the register, not just be remembered
+    // alongside it. `recvControl_` was reloaded here and the six booleans it
+    // decodes into were not, so every one of them survived a reset carrying
+    // the previous configuration — and the write path only re-decodes when
+    // CC_RXCTL CHANGES, so a driver that reset the chip and then wrote back
+    // the same RxCTL value it had before never re-decoded at all. A card left
+    // promiscuous by one driver stayed promiscuous for the next one.
+    decodeReceiveControl(ppRead16(kPpCcRxCtl));
 
     // Spec says the MAC is undefined after reset; real hardware keeps the
     // last programmed address, and so do we.
@@ -275,6 +292,18 @@ void Cs8900aDevice::setMacAddress(const std::array<uint8_t, 6>& mac)
     mac_ = mac;
     for (int i = 0; i < 6; ++i)
         ppWrite8(static_cast<uint16_t>(kPpMacAddr + i), mac_[static_cast<size_t>(i)]);
+}
+
+// `cs8900a.cpp:802-814` — CC_RXCTL decode, datasheet §4.4.9.
+void Cs8900aDevice::decodeReceiveControl(uint16_t content)
+{
+    recvBroadcast_   = (content & 0x0800) != 0;
+    recvMac_         = (content & 0x0400) != 0;
+    recvMulticast_   = (content & 0x0200) != 0;
+    recvCorrect_     = (content & 0x0100) != 0;
+    recvPromiscuous_ = (content & 0x0080) != 0;
+    recvHashFilter_  = (content & 0x0040) != 0;
+    recvControl_     = content;
 }
 
 // ── Address filter (`cs8900a.cpp:410-489`) ────────────────────────────
@@ -338,6 +367,7 @@ uint16_t Cs8900aDevice::receiveFrame()
 
         const std::vector<uint8_t> frame = std::move(frameQueue_.front());
         frameQueue_.pop_front();
+        queueBytes_ -= std::min(queueBytes_, frame.size());
         // Keep the true length for the status word: MAME computes the
         // Extradata bit (0x4000) from the pre-clamp length and discards
         // the octets beyond MAX_RXLEN afterwards. Clamping first made the
@@ -410,9 +440,34 @@ void Cs8900aDevice::pumpBackend()
             continue;
         }
 
-        if (frameQueue_.size() >= kMaxFrameQueue) frameQueue_.pop_front();
+        // Out of buffer memory: the chip drops the frame ARRIVING and counts
+        // it. It cannot do anything else — the frames already queued are in
+        // the buffer it has no more of. Dropping the OLDEST (what the entry
+        // cap did) replays packets whose senders timed out minutes ago and
+        // reorders every stream on the link.
+        if (queueBytes_ + static_cast<size_t>(len) > kMaxFrameQueueBytes ||
+            frameQueue_.size() >= kMaxFrameQueue) {
+            noteMissedFrame();
+            continue;
+        }
+        queueBytes_ += static_cast<size_t>(len);
         frameQueue_.emplace_back(buf, buf + len);
     }
+}
+
+// Datasheet §4.4.20 "RxMISS": a 10-bit counter of frames the receiver had no
+// buffer for, in bits 6-15 with the register's own number in the low 6, and
+// §4.4.17 "BufEvent": the RxMiss bit tells a driver reading the ISQ that the
+// counter moved. Without either, a guest losing traffic to a full ring saw a
+// perfectly healthy card and no explanation.
+void Cs8900aDevice::noteMissedFrame()
+{
+    ++framesMissed_;
+    const uint16_t count = static_cast<uint16_t>(
+        std::min<uint64_t>(framesMissed_, 0x3FF));
+    ppWrite16(kPpSeRxMiss, static_cast<uint16_t>((count << 6) | 0x0010));
+    ppWrite16(kPpSeBufEvent,
+              static_cast<uint16_t>(ppRead16(kPpSeBufEvent) | kBufEventRxMiss));
 }
 
 // ── TX / RX data windows (`cs8900a.cpp:641-765`) ──────────────────────
@@ -446,6 +501,12 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
         static_cast<size_t>(kPpTxFrameLoc) + txLength_ <= packetPage_.size()) {
         backend_->transmit(&packetPage_[kPpTxFrameLoc], txLength_);
         ++framesSent_;
+        // TxOK (datasheet §4.4.15): the frame is on the wire. TxEvent never
+        // signalled anything, so a driver that waits for TxOK before staging
+        // the next frame — the interrupt-driven shape, and the one the ISQ
+        // exists for — waited forever after its first packet.
+        ppWrite16(kPpSeTxEvent,
+                  static_cast<uint16_t>(ppRead16(kPpSeTxEvent) | kTxEventTxOk));
     }
     // Whether or not it went out, the transmitter returns to idle.
     txState_ = kTxIdle;
@@ -503,15 +564,7 @@ void Cs8900aDevice::sideEffectsWritePp(uint16_t ppAddress, bool oddAddress)
         break;
 
     case kPpCcRxCtl:
-        if (recvControl_ != content) {
-            recvBroadcast_   = (content & 0x0800) != 0;
-            recvMac_         = (content & 0x0400) != 0;
-            recvMulticast_   = (content & 0x0200) != 0;
-            recvCorrect_     = (content & 0x0100) != 0;
-            recvPromiscuous_ = (content & 0x0080) != 0;
-            recvHashFilter_  = (content & 0x0040) != 0;
-            recvControl_     = content;
-        }
+        if (recvControl_ != content) decodeReceiveControl(content);
         break;
 
     case kPpCcLineCtl: {
@@ -593,9 +646,65 @@ void Cs8900aDevice::sideEffectsWritePp(uint16_t ppAddress, bool oddAddress)
     }
 }
 
+// Datasheet §4.4.1 "Interrupt Status Queue". The ISQ is not a register in its
+// own right: it is a WINDOW that presents the next pending event register,
+// and reading it has the same effect as reading that register directly. A
+// driver reads $C0n8/9 in a loop until it comes back 0 — which is the whole
+// interrupt-driven idiom on a card whose INTn the Uthernet I never wired, so
+// polling the ISQ IS how such a driver works.
+//
+// It was hard-wired to 0. The loop therefore exited immediately, every time,
+// and no frame was ever noticed: the driver's own read of RxEvent is what
+// pops one, and it never got that far.
+//
+// Priority is the datasheet's: RxEvent, TxEvent, BufEvent. The counters
+// (RxMISS, TxCOL) surface through BufEvent's RxMiss / TxCol_ovfl flags rather
+// than as queue entries of their own, which is what makes "read until 0"
+// terminate.
+void Cs8900aDevice::latchInterruptStatusQueue()
+{
+    uint16_t value = 0x0000;
+
+    // RxEvent first. Only when a frame can actually be popped: with one
+    // already staged (`kRxGotFrame`) a read of RxEvent is an "implied skip"
+    // that DISCARDS it, and the ISQ must not do that behind the driver's back
+    // while it is still draining the payload through RXTXDATA.
+    if (rxEnabled_ && rxState_ != kRxGotFrame && !frameQueue_.empty()) {
+        const uint16_t rx = receiveFrame();
+        ppWrite16(kPpRxStatus,  rx);
+        ppWrite16(kPpSeRxEvent, rx);
+        if (rx & 0x0100) value = rx;          // RxOK — a frame really landed
+    }
+
+    // Then TxEvent, then BufEvent. Reading either through the queue clears
+    // it, so the driver's loop makes progress and terminates.
+    if (value == 0) {
+        const uint16_t tx = ppRead16(kPpSeTxEvent);
+        if (tx & kEventBitsMask) {
+            value = tx;
+            ppWrite16(kPpSeTxEvent, 0x0008);   // back to its register number
+        }
+    }
+    if (value == 0) {
+        const uint16_t buf = ppRead16(kPpSeBufEvent);
+        if (buf & kEventBitsMask) {
+            value = buf;
+            ppWrite16(kPpSeBufEvent, 0x000C);
+        }
+    }
+
+    ppWrite16(kPpSeIsq, value);
+}
+
 void Cs8900aDevice::sideEffectsReadPp(uint16_t ppAddress, bool oddAddress)
 {
     switch (ppAddress) {
+    case kPpSeIsq:
+        // The word is fetched on the low half and latched for the high one,
+        // so the two byte reads of one $C0n8/9 access see one coherent event.
+        if (!oddAddress) latchInterruptStatusQueue();
+        break;
+
     case kPpSeRxEvent: {
         // Reading RxEvent before the staged frame is fully drained is an
         // "implied skip" — the pending frame is lost. MAME treats EVERY
@@ -928,6 +1037,10 @@ void Cs8900aDevice::loadSnapshotState(const uint8_t* data, std::size_t len)
     framesSent_     = getU64(data + p); p += 8;
     framesReceived_ = getU64(data + p); p += 8;
     framesFiltered_ = getU64(data + p);
+
+    // The inbound queue is not saved (see appendSnapshotState), so its byte
+    // accounting starts empty with it.
+    queueBytes_ = 0;
 
     // A snapshot is a FILE, and a corrupt or hand-edited one must not be able
     // to wedge the NIC. The transmit handshake is the state machine that can:

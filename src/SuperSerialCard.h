@@ -213,7 +213,27 @@ public:
     /// worker calls it on every non-raw inbound chunk). Call resetTelnet()
     /// at the start of each connection.
     size_t processTelnetRx(uint8_t* data, size_t n);
-    void   resetTelnet() { telnetState_ = TelnetState::Text; telnetPrevCR_ = false; }
+    void   resetTelnet()
+    {
+        telnetState_   = TelnetState::Text;
+        telnetPrevCR_  = false;
+        telnetCommand_ = 0;
+        std::lock_guard<std::mutex> lk(bufferMtx);
+        telnetReply_.clear();   // a new peer negotiates from scratch
+    }
+
+    /// Answer one WILL/WONT/DO/DONT (RFC 854 requires an answer to every
+    /// option request — see the definition for what silence does to a stock
+    /// telnet client). BINARY and SGA are accepted, everything else refused.
+    /// The reply is queued RAW, ahead of guest data, by drainTransportTx.
+    void answerTelnetOption(uint8_t command, uint8_t option);
+
+    /// What the card has queued in answer to telnet negotiation, for tests.
+    std::vector<uint8_t> pendingTelnetReply() const
+    {
+        std::lock_guard<std::mutex> lk(bufferMtx);
+        return telnetReply_;
+    }
 
     /// Telnet TX escaping (RFC 854): append `b` to `out`, doubling $FF
     /// (IAC IAC) and following a bare CR with NUL (the Apple II's newline
@@ -284,6 +304,13 @@ private:
     /// CR-seen state for normalizeLineEndings, persistent across recv()
     /// chunks for the same reason telnetState_ is (see resetTelnet()).
     bool telnetPrevCR_ = false;
+    /// The WILL/WONT/DO/DONT byte whose option byte has not arrived yet —
+    /// persistent because a recv() chunk can end between the two.
+    uint8_t telnetCommand_ = 0;
+    /// Telnet PROTOCOL bytes owed to the peer (option answers). Kept apart
+    /// from txBuf because guest data is IAC-escaped on the way out and these
+    /// must not be; drained ahead of it, under `bufferMtx`.
+    std::vector<uint8_t> telnetReply_;
 
     // Atomic so the UI/dtor thread can shutdown() these to wake the worker
     // out of accept()/recv() without a torn read, and so close() happens
@@ -311,9 +338,10 @@ private:
 
     static constexpr uint8_t SR_IRQ           = 0x80;
 
-    // 6551 internal IRQ-source mask (MAME `mos6551.h:71-77`). RX IRQ +
-    // DCD/DSR change are the only sources POM2 generates; TDRE-on-empty
-    // is a no-op here because we pin TDRE high (TCP buffers TX).
+    // 6551 internal IRQ-source mask (MAME `mos6551.h:71-77`). All four
+    // sources are generated: RX IRQ, DCD/DSR change, and TDRE — the last one
+    // the moment a byte is accepted into TDR, because pinning TDRE high
+    // (the host buffers TX) means the transmitter is empty again immediately.
     static constexpr uint8_t IRQ_DCD  = 0x01;
     static constexpr uint8_t IRQ_DSR  = 0x02;
     static constexpr uint8_t IRQ_RDRF = 0x04;
@@ -332,6 +360,12 @@ private:
     // echoMode_     := cmd bit 4 — see MAME `mos6551.cpp:309`
     bool dtrAsserted_ = false;
     bool rxIrqEnable_ = false;
+    // txIrqEnable_ := kTxIrqEnableByCmd[cmd[3:2]] && dtrAsserted_ — MAME
+    // `mos6551.cpp:293-307`. Only cmd[3:2] == 01 enables it. TDRE is pinned
+    // high here (the host buffers TX), so this gates a transmit interrupt
+    // raised the moment a byte is accepted into TDR, plus the immediate one a
+    // command write that ARMS it produces.
+    bool txIrqEnable_ = false;
     bool echoMode_    = false;
     // Raw mode: bypass telnet IAC strip + LF/CR normalisation on RX.
     // For 8-bit binary protocols (XMODEM / Kermit / ADTPro). Persisted

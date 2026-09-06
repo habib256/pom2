@@ -100,12 +100,15 @@ inline constexpr uint16_t kW5100Shar0    = 0x0009;
 inline constexpr uint16_t kW5100Shar5    = 0x000E;
 inline constexpr uint16_t kW5100Sipr0    = 0x000F;
 inline constexpr uint16_t kW5100Sipr3    = 0x0012;
+inline constexpr uint16_t kW5100Ir       = 0x0015;
+inline constexpr uint16_t kW5100Imr      = 0x0016;
 inline constexpr uint16_t kW5100Rtr0     = 0x0017;
 inline constexpr uint16_t kW5100Rtr1     = 0x0018;
 inline constexpr uint16_t kW5100Rcr      = 0x0019;
 inline constexpr uint16_t kW5100Rmsr     = 0x001A;
 inline constexpr uint16_t kW5100Tmsr     = 0x001B;
 inline constexpr uint16_t kW5100Ptimer   = 0x0028;
+inline constexpr uint16_t kW5100Pmagic   = 0x0029;
 inline constexpr uint16_t kW5100Uport1   = 0x002F;
 inline constexpr uint16_t kW5100S0Base   = 0x0400;
 inline constexpr uint16_t kW5100S3Max    = 0x07FF;
@@ -136,11 +139,29 @@ inline constexpr uint8_t kW5100SnCrConnect = 0x04;
 inline constexpr uint8_t kW5100SnCrDiscon  = 0x08;
 inline constexpr uint8_t kW5100SnCrClose   = 0x10;
 inline constexpr uint8_t kW5100SnCrSend    = 0x20;
+/// SEND_MAC: UDP only — send the staged data to Sn_DIPR/Sn_DPORT using the
+/// MAC already in Sn_DHAR instead of running ARP first (datasheet §5.1
+/// "Sn_CR", value $21). POM2 has no ARP on the socket path at all, so it is
+/// the same transmission SEND performs.
+inline constexpr uint8_t kW5100SnCrSendMac  = 0x21;
+/// SEND_KEEP: send a 1-byte TCP keep-alive probe with no payload
+/// (datasheet §5.1, value $22). Host TCP owns keep-alives, so the chip-level
+/// answer is "accepted, nothing staged" — but it must still be ACCEPTED, or
+/// a driver polling Sn_IR for SEND_OK after one spins forever.
+inline constexpr uint8_t kW5100SnCrSendKeep = 0x22;
 inline constexpr uint8_t kW5100SnCrRecv    = 0x40;
+
+// Socket interrupt register bits (datasheet §5.2.3 "Sn_IR"). Write-1-to-clear.
+inline constexpr uint8_t kW5100SnIrCon     = 0x01;  // connection established
+inline constexpr uint8_t kW5100SnIrDiscon  = 0x02;  // FIN / FIN-ACK received
+inline constexpr uint8_t kW5100SnIrRecv    = 0x04;  // data staged in the RX ring
+inline constexpr uint8_t kW5100SnIrTimeout = 0x08;  // ARP / TCP timeout
+inline constexpr uint8_t kW5100SnIrSendOk  = 0x10;  // SEND completed
 
 // Socket register offsets within a 256-byte bank.
 inline constexpr uint8_t kW5100SnMr      = 0x00;
 inline constexpr uint8_t kW5100SnCr      = 0x01;
+inline constexpr uint8_t kW5100SnIr      = 0x02;
 inline constexpr uint8_t kW5100SnSr      = 0x03;
 inline constexpr uint8_t kW5100SnPort0   = 0x04;
 inline constexpr uint8_t kW5100SnPort1   = 0x05;
@@ -173,8 +194,18 @@ inline constexpr uint8_t kW5100SnDnsNameCpty  =
 // Socket status register values.
 inline constexpr uint8_t kW5100SnSrClosed      = 0x00;
 inline constexpr uint8_t kW5100SnSrInit        = 0x13;
+/// The rest of the datasheet's TCP status ladder (§5.2.2 "Sn_SR"). POM2 does
+/// not reach LISTEN / the four closing states — a host socket does that
+/// bookkeeping — but the values are named so no code invents its own and so a
+/// reader can tell "not modelled" from "not known".
+inline constexpr uint8_t kW5100SnSrListen      = 0x14;
 inline constexpr uint8_t kW5100SnSrSynSent     = 0x15;
+inline constexpr uint8_t kW5100SnSrSynRecv     = 0x16;
 inline constexpr uint8_t kW5100SnSrEstablished = 0x17;
+inline constexpr uint8_t kW5100SnSrFinWait     = 0x18;
+inline constexpr uint8_t kW5100SnSrClosing     = 0x1A;
+inline constexpr uint8_t kW5100SnSrTimeWait    = 0x1B;
+inline constexpr uint8_t kW5100SnSrLastAck     = 0x1D;
 /// Peer sent FIN: the guest may still SEND its remaining data and must
 /// answer with DISCON/CLOSE (W5100 datasheet §5.2.1 "SOCK_CLOSE_WAIT").
 inline constexpr uint8_t kW5100SnSrCloseWait   = 0x1C;
@@ -302,6 +333,13 @@ private:
         /// substitutes to drive device behaviour without opening anything.
         std::unique_ptr<W5100HostSocket> host;
         uint8_t status     = kW5100SnSrClosed;
+        /// Sn_IR, the socket's interrupt register (datasheet §5.2.3). Backed
+        /// by a real byte rather than by `memory_`: the register is
+        /// write-1-to-clear, which the plain register file cannot express.
+        /// Host-side only, never snapshotted — every restored socket is
+        /// demoted to CLOSED, so a pending CON/RECV would describe a
+        /// connection that no longer exists.
+        uint8_t interrupt  = 0;
         /// Per-protocol header the chip prepends to received data in the
         /// RX ring (`Uthernet2.cpp:212-234`): none for TCP, IP+port+len
         /// for UDP, IP+len for IPRAW, len for MACRAW.
@@ -331,6 +369,9 @@ private:
 
     // Socket lifecycle (`Uthernet2.cpp:910-1102`).
     void setSocketStatus(size_t i, uint8_t status);
+    /// Set bits in Sn_IR. Datasheet §5.2.3: the bit stays set until the host
+    /// writes a 1 to it, and the matching IR bit follows it.
+    void raiseSocketIrq(size_t i, uint8_t bits);
     void clearSocket(size_t i);
     void openSystemSocket(size_t i, W5100SocketKind kind, uint8_t status);
     void openSocket(size_t i);
@@ -380,6 +421,9 @@ private:
 
     // Register decode (`Uthernet2.cpp:1104-1354`).
     uint8_t readSocketRegister(uint16_t address);
+    /// The common IR register — DERIVED from the four Sn_IR bytes, never
+    /// stored (datasheet §5.1 "IR": IR(0)-IR(3) clear when Sn_IR clears).
+    uint8_t interruptRegister() const;
     void    writeSocketRegister(uint16_t address, uint8_t value);
     void    writeCommonRegister(uint16_t address, uint8_t value);
     void    autoIncrement();

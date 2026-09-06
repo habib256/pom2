@@ -96,6 +96,12 @@ FujiNetCard::~FujiNetCard()
     // detached form sends the same SIGTERM from here, right now, and only
     // hands the WAITING to a guarded thread; the helper still gets its grace,
     // still gets the SIGKILL sweep, and is still reaped.
+    //
+    // The one case that shape does NOT cover on its own is the LAST teardown
+    // of all: at quit the detached thread dies with the process, so a helper
+    // that traps SIGTERM would outlive POM2 holding the loopback port. That
+    // is why main() calls `ChildProcess::drainDetached()` on the way out —
+    // it wakes every thread parked here and waits for the SIGKILL sweep.
     helper_.stopDetached();
 }
 
@@ -987,6 +993,23 @@ void FujiNetCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // Deliberately NOT notifyGuestReset(): the user rewound, the machine did
     // not reset, and hanging up somebody's modem because they scrubbed the
     // timeline would be wrong.
+    //
+    // data[5] is the link state AT CAPTURE. `appendSnapshotState` has always
+    // written it and this loader used to ignore it — a byte in the wire
+    // format with no reader, which is how a format grows a field nobody can
+    // change safely. It is worth exactly one diagnostic: if the link came or
+    // went across the jump, the guest's SmartPort device map now describes a
+    // relay that is not the one answering, and the user is the only one who
+    // can act on that.
+    const bool wasConnected = data[5] != 0;
+    const bool nowConnected = link().isConnected();
+    if (wasConnected != nowConnected) {
+        pom2::log().warn("FujiNet",
+            std::string("snapshot/rewind crossed a link change (was ") +
+            (wasConnected ? "connected" : "disconnected") + ", now " +
+            (nowConnected ? "connected" : "disconnected") +
+            ") — the guest's device map may no longer match the relay");
+    }
     link().resync();
 }
 
