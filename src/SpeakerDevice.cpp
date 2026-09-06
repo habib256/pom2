@@ -23,6 +23,11 @@
 SpeakerDevice::SpeakerDevice()
 {
     buildSincKernel();
+    // One up-front allocation for the audio thread's per-buffer toggle
+    // window (~2048 toggles = a 6 ms buffer at 340 kHz, far past what any
+    // real click loop produces). Growth beyond it is still legal, just
+    // rare enough not to be a per-tick cost.
+    windowEvents_.reserve(2048);
 }
 
 void SpeakerDevice::buildSincKernel()
@@ -161,7 +166,13 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
     }
 
     // Snapshot events that could fire inside this buffer's window.
-    std::vector<uint64_t> windowEvents;
+    // MEMBER, not a local: this is the realtime audio callback, and a local
+    // vector allocated once per buffer (up to kMaxEvents entries on a busy
+    // speaker) and freed at the end of it is a malloc/free pair per tick —
+    // the canonical source of underruns. Cleared here, so the capacity from
+    // the busiest previous buffer is reused. Audio thread only.
+    std::vector<uint64_t>& windowEvents = windowEvents_;
+    windowEvents.clear();
     {
         std::lock_guard<std::mutex> lk(eventMutex);
         // Consumer-ahead re-anchor — the mirror of the forward catch-up

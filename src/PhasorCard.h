@@ -158,6 +158,9 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     void    advanceCycles(int cycles) override;
+    /// Retune the four AYs' input clock (slot phase 0) on a PAL/NTSC
+    /// switch — mirrors MockingboardCard::setCpuClock.
+    void    setCpuClock(double hz) override;
     void    onReset()  override;
     void    onUnplug() override;
     // Rewind/snapshot: the 2 VIAs + 4 AYs register/timer state.

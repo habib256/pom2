@@ -195,6 +195,15 @@ public:
         playbackOffset_ = static_cast<std::size_t>(r.u64());
         const uint32_t accumBits = r.u32();
         std::memcpy(&resampleAccum_, &accumBits, sizeof(accumBits));
+        // The cursor pair (phoneme, offset) is restored from the blob
+        // without cross-validation: an offset from a long phoneme landing
+        // on a short one reads the NEXT phoneme's PCM (see the matching
+        // clamp in fillAudio, which is the audio thread's guard). Clamp the
+        // resampler accumulator too — `fillAudio`'s
+        // `while (resampleAccum_ >= 1.0f) resampleAccum_ -= 1.0f` spins for
+        // ~2^30 iterations on a corrupt large value, on the realtime thread.
+        if (!(resampleAccum_ >= 0.0f && resampleAccum_ < 1.0f))
+            resampleAccum_ = 0.0f;
     }
 
     /// Total number of phonemes accepted via writes to $00 since reset.

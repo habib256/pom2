@@ -35,8 +35,11 @@ namespace {
 // the per-sample step by `clockScale` so registers produce notes one
 // octave higher in Phasor mode than the same values would on a
 // Mockingboard.
-constexpr float kAyClockHz       = static_cast<float>(POM2_CPU_CLOCK_HZ);
-constexpr float kAyToneStepHz    = kAyClockHz / 8.0f;
+// NTSC nominal — the power-on default of `AudioSrc::cpuClockHz`, which
+// PhasorCard::setCpuClock retunes on a PAL/NTSC switch (the AY's pin-22
+// CLOCK is the slot's phase-0 line, so on a PAL machine the chip really
+// does run at 1 015 625 Hz).
+constexpr double kAyClockHz      = static_cast<double>(POM2_CPU_CLOCK_HZ);
 
 // Amplitude table lives in AyPsgSynth.h since 2026-08-01, shared with
 // MockingboardCard (the old "MAME build_single_table" citation on both
@@ -83,6 +86,10 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     std::atomic<uint32_t> sampleRate { kAudioSampleRate };
     std::atomic<float>    volume     { 0.5f };
     std::atomic<bool>     muted      { false };
+    /// Emulated CPU clock feeding the four AYs' pin-22 CLOCK — retuned by
+    /// PhasorCard::setCpuClock on a PAL/NTSC switch, exactly as
+    /// MockingboardCard::AudioSrc::cpuClockHz is.
+    std::atomic<double>   cpuClockHz { kAyClockHz };
 
     void setSampleRate(uint32_t hz) override
     {
@@ -189,14 +196,15 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         // counter ticks twice as fast per audio sample -> registers
         // produce notes one octave up.
         //
-        // Derived from the NTSC constant rather than a live CPU clock:
-        // unlike MockingboardCard, PhasorCard has no setCpuClock override
-        // yet, so a PAL machine still clocks these AYs 0.7 % fast. Minor
-        // next to the aliasing this loop used to produce, but it is a
-        // real remaining gap.
-        const float scale = static_cast<float>(clockScaleSnap);
-        const float ticksPerSample = (kAyToneStepHz * scale)
-                                     / static_cast<float>(sr);
+        // Derived from the LIVE CPU clock (see the same note in
+        // MockingboardCard::AudioSrc): the AY's pin-22 CLOCK is the slot's
+        // phase-0 line, so a PAL machine clocks these chips at 1 015 625 Hz.
+        // Synthesising PAL music at the NTSC rate put every note 0.699 %
+        // sharp = 12.05 cents.
+        const double scale = static_cast<double>(clockScaleSnap);
+        const float ticksPerSample = static_cast<float>(
+            cpuClockHz.load(std::memory_order_relaxed) / 8.0 * scale
+            / static_cast<double>(sr));
         const float invTicksPerSample =
             (ticksPerSample > 0.0f) ? (1.0f / ticksPerSample) : 0.0f;
         dcL.setRate(sr);
@@ -370,12 +378,30 @@ bool PhasorCard::isMuted() const
     return audio_->muted.load(std::memory_order_relaxed);
 }
 
+// EmulationController::setVideoStandard calls this on every slot card when
+// the machine switches between the 262-line/1.0227 MHz and 312-line/
+// 1.0156 MHz timebases. Same body as MockingboardCard::setCpuClock — the
+// four AYs hang off the same phase-0 line the two Mockingboard chips do.
+void PhasorCard::setCpuClock(double hz)
+{
+    if (hz > 0.0 && audio_) audio_->cpuClockHz.store(hz, std::memory_order_relaxed);
+}
+
 // ─── VIA lazy-sync (same pattern as MockingboardCard) ────────────────────
 
 void PhasorCard::syncToCpuCycle()
 {
     if (!cpu_) return;
-    syncToCpuCycleAt(cpu_->getCycleCountNow());
+    // +1: the bus access lands on the FINAL (data) cycle of the
+    // instruction, which `getCycleCountNow()` (= cycleCounter + cpu.cycles)
+    // does not yet count — a real 6522 has already decremented T1/T2 on that
+    // φ2. Without it every MMIO read sampled its VIA counter one too high,
+    // wrapping a free-running T1 phase measurement $00 -> $FF. Full rationale
+    // (and the OLDSKOOL FORT ET VERT crash it caused) in
+    // `MockingboardCard::syncToCpuCycle`; the Phasor runs the same two 6522s
+    // behind the same lazy-sync, so it needs the same correction.
+    // Pinned by phasor_t1_irq_phase.
+    syncToCpuCycleAt(cpu_->getCycleCountNow() + 1);
 }
 
 void PhasorCard::syncToCpuCycleAt(uint64_t now)
@@ -506,7 +532,10 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     const int ayBase = (viaIdx == 0) ? 0 : 2;
 
     auto& v  = *via_[viaIdx];
-    const uint8_t pa = v.portAOut & v.ddrA;
+    // PA *pins*, not the output latch — undriven bits float high. See the
+    // MAME citation in MockingboardCard::onViaPortBChange (same wiring,
+    // `via6522.cpp output_pa()` = `(m_out_a & m_ddr_a) | ~m_ddr_a`).
+    const uint8_t pa = v.readPortA();
     const uint8_t pb = v.portBOut & v.ddrB;
 
     // /RESET (PB2 low) is handled BEFORE the chip-select decode. MAME's
@@ -577,6 +606,12 @@ void PhasorCard::onViaPortBChange(int viaIdx)
 
 void PhasorCard::advanceCycles(int cycles)
 {
+    // Same guard as MockingboardCard::advanceCycles. A zero slice is a
+    // no-op, and a negative one would be cast to uint64_t below — turning
+    // `getCycleCountNow() - cycles` into a jump ~2^64 cycles into the
+    // future, which pins lastSyncCycle_ there and kills both VIAs' timers
+    // for the rest of the session.
+    if (cycles <= 0) return;
     std::lock_guard<std::mutex> lk(mtx_);
     if (cpu_) {
         // Same protocol as MockingboardCard::advanceCycles — sync up to

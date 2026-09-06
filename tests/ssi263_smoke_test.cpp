@@ -20,11 +20,13 @@
 // in Ssi263PhonemeData.cpp) and its playback-cursor protocol.
 
 #include "Ssi263.h"
+#include "Ssi263PhonemeData.h"
 
 #include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 namespace {
@@ -346,6 +348,100 @@ void testDurationFormulaBounds()
 
 } // namespace
 
+// A snapshot restores (playbackPhoneme_, playbackOffset_) as an
+// unvalidated PAIR, so a cursor captured deep inside a long phoneme can
+// come back attached to a short one — after a rewind that crosses a
+// DURPHON write, or from a snapshot written by another build. Pre-fix,
+// `info.offset + playbackOffset_` then indexed PCM belonging to the NEXT
+// phoneme in the blob (an audible burst of the wrong sound) or ran past
+// the end of the blob and silently truncated the buffer at the
+// `idx >= kPhonemeDataLen` break. fillAudio must re-clamp the cursor to
+// the phoneme it is actually rendering.
+void testSnapshotClampsPlaybackCursor()
+{
+    namespace pd = pom2::ssi263_data;
+    // Shortest and longest phoneme in the blob — the worst-case pair.
+    int shortest = 0, longest = 0;
+    for (size_t i = 1; i < pd::kNumPhonemes; ++i) {
+        if (pd::kPhonemeInfo[i].length < pd::kPhonemeInfo[shortest].length)
+            shortest = static_cast<int>(i);
+        if (pd::kPhonemeInfo[i].length > pd::kPhonemeInfo[longest].length)
+            longest = static_cast<int>(i);
+    }
+    assert(pd::kPhonemeInfo[shortest].length > 0);
+    assert(pd::kPhonemeInfo[longest].length > pd::kPhonemeInfo[shortest].length);
+
+    // Live chip, mid-way through the LONGEST phoneme.
+    Ssi263 live;
+    live.reset();
+    live.write(Ssi263::REG_CTTRAMP, 0x0F);       // powered up, amp 15
+    live.write(Ssi263::REG_RATEINF, 0x00);
+    live.write(Ssi263::REG_DURPHON,
+               static_cast<uint8_t>(0x80 | (longest & 0x3F)));
+    std::vector<float> scratch(pd::kPhonemeInfo[longest].length / 2, 0.0f);
+    live.fillAudio(scratch.data(), static_cast<int>(scratch.size()), 22050);
+    std::vector<uint8_t> blob;
+    live.appendSnapshot(blob);
+    assert(blob.size() == Ssi263::kSnapshotBytes);
+    const uint64_t deepOffset =
+        static_cast<uint64_t>(blob[18]) |
+        (static_cast<uint64_t>(blob[19]) << 8) |
+        (static_cast<uint64_t>(blob[20]) << 16) |
+        (static_cast<uint64_t>(blob[21]) << 24);
+    assert(deepOffset > pd::kPhonemeInfo[shortest].length &&
+           "need a cursor deeper than the short phoneme is long");
+
+    // Re-point the cursor's PHONEME at the shortest one, offset untouched:
+    // the exact mismatch a rewind can hand back.
+    blob[14] = static_cast<uint8_t>(shortest);
+    blob[15] = blob[16] = blob[17] = 0;
+    // Also point DURPHON at it so the restored chip is otherwise coherent.
+    blob[0] = static_cast<uint8_t>(0x80 | (shortest & 0x3F));
+
+    Ssi263 restored;
+    restored.reset();
+    restored.loadSnapshot(blob.data());
+
+    constexpr int N = 512;
+    std::vector<float> got(N, 0.0f);
+    restored.fillAudio(got.data(), N, 22050);
+
+    // Reference: the same phoneme rendered from its start.
+    Ssi263 ref;
+    ref.reset();
+    ref.write(Ssi263::REG_CTTRAMP, 0x0F);
+    ref.write(Ssi263::REG_RATEINF, 0x00);
+    ref.write(Ssi263::REG_DURPHON,
+              static_cast<uint8_t>(0x80 | (shortest & 0x3F)));
+    std::vector<float> want(N, 0.0f);
+    ref.fillAudio(want.data(), N, 22050);
+
+    for (int i = 0; i < N; ++i) {
+        if (got[i] != want[i]) {
+            std::fprintf(stderr,
+                "ssi263 snapshot cursor: sample %d = %.6f, expected %.6f "
+                "(phoneme %d, restored offset %llu > length %u — the clamp "
+                "is missing)\n",
+                i, got[i], want[i], shortest,
+                (unsigned long long)deepOffset,
+                pd::kPhonemeInfo[shortest].length);
+            std::abort();
+        }
+    }
+
+    // And a corrupt resampler accumulator must not spin the audio thread:
+    // fillAudio's `while (accum >= 1) accum -= 1` would iterate ~2^30 times.
+    blob[26] = 0x00; blob[27] = 0x00; blob[28] = 0x80; blob[29] = 0x4F; // 1e9f
+    Ssi263 wild;
+    wild.reset();
+    wild.loadSnapshot(blob.data());
+    wild.fillAudio(got.data(), N, 22050);
+
+    std::printf("  ok: snapshot cursor re-clamped to the restored phoneme "
+                "(phoneme %d, offset %llu -> 0)\n",
+                shortest, (unsigned long long)deepOffset);
+}
+
 int main()
 {
     std::printf("Ssi263 chip smoke test\n");
@@ -357,6 +453,7 @@ int main()
     testIrqDisabledMode();
     testAudioRenderNonSilent();
     testDurationFormulaBounds();
+    testSnapshotClampsPlaybackCursor();
     std::printf("PASS\n");
     return 0;
 }

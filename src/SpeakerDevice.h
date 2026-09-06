@@ -48,6 +48,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <vector>
 
 class SpeakerDevice : public AudioSource, public RateAware
 {
@@ -105,6 +106,11 @@ private:
     std::deque<uint64_t> events;
 
     // Audio-thread state. Touched only inside fillAudioBuffer + reset.
+    /// Toggles pulled out of `events` for the buffer being rendered. A
+    /// member so the realtime callback neither allocates nor frees it per
+    /// tick (see the note at its use site); its capacity settles at the
+    /// busiest buffer seen. Audio thread only.
+    std::vector<uint64_t> windowEvents_;
     uint64_t audioCpuCursor   = 0;     // CPU cycle at start of next sample
     double   subSampleAccum   = 0.0;   // fractional CPU cycles into next sub
     double   lastUpdateFrac   = 0.0;   // accumulator since last sub-sample

@@ -178,13 +178,31 @@ private:
     };
     mutable std::mutex cmdMtx_;
     std::vector<Cmd>   cmdQueue_;
+    /// Audio-thread-only scratch that `drainCommands` swaps `cmdQueue_`
+    /// into. A local `std::vector<Cmd>` there allocated on every buffer
+    /// that carried a command and freed at the end of the callback — a
+    /// malloc/free pair on the realtime thread. Cleared (not destroyed)
+    /// after each drain so the capacity survives. Never touched by the
+    /// producer threads.
+    std::vector<Cmd>   cmdScratch_;
 
     // ─── Audio-thread state ─────────────────────────────────────────────
     // Frame counter advanced by fillAudioBuffer (host sample rate).
     // Read by CPU thread (atomic) only as a free-running "now"; used
     // here for step-rate classification.
     std::atomic<uint64_t> audioFrameCounter_{0};
-    uint32_t outputSampleRate_ = 44100;
+    /// Host output rate. Written by `setSampleRate` (main/UI thread, when
+    /// AudioDevice negotiates or re-negotiates the device) and read by
+    /// every seek/spin cadence computation inside `fillAudioBuffer` on the
+    /// audio-callback thread — a cross-thread scalar, hence atomic like
+    /// `audioFrameCounter_` and `volume_` beside it. Relaxed: it carries no
+    /// other state, and a callback that renders one buffer at the previous
+    /// rate is inaudible. Pinned by the static_assert in the constructor.
+    std::atomic<uint32_t> outputSampleRate_{44100};
+    uint32_t hostSampleRate() const
+    {
+        return outputSampleRate_.load(std::memory_order_relaxed);
+    }
 
     // Spin state.
     bool   audioMotorOn_ = false;

@@ -41,6 +41,7 @@
 //      window at $10-$1F per the native decode above.)
 
 #include "AudioDevice.h"
+#include "CpuClock.h"
 #include "M6502.h"
 #include "Memory.h"
 #include "PhasorCard.h"
@@ -51,6 +52,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <vector>
 
@@ -525,14 +528,216 @@ void testNoEndOfStepOvershoot()
                      (unsigned long long)kCycles);
         std::abort();
     }
-    if (cpuCtr != refCtr) {
+    // The two paths differ by exactly ONE count, and only because the arm
+    // itself is an MMIO access on the CPU-driven card: `syncToCpuCycle` adds
+    // +1 for the instruction's in-flight data cycle (see testT1MmioDataCycle),
+    // so T1 starts one cycle later there and has one fewer cycle to run. The
+    // reference card has no CPU and no MMIO clock at all. The regression this
+    // test exists for — a second `via_->advance(cycles)` after the corrected
+    // sync — double-charges a WHOLE slice (40 counts here), so pinning the
+    // offset at exactly 1 still catches it.
+    if (cpuCtr != static_cast<uint16_t>(refCtr + 1)) {
         std::fprintf(stderr, "Phasor end-of-step overshoot: CPU-driven T1=%u "
-                     "!= batch-driven=%u after %llu cycles\n",
-                     cpuCtr, refCtr, (unsigned long long)elapsed);
+                     "!= batch-driven+1=%u after %llu cycles\n",
+                     cpuCtr, static_cast<unsigned>(refCtr + 1),
+                     (unsigned long long)elapsed);
         std::abort();
     }
-    std::printf("  ok: CPU-driven advance matches batch (T1=%u, %llu cycles)\n",
+    std::printf("  ok: CPU-driven advance matches batch +1 MMIO data cycle "
+                "(T1=%u, %llu cycles)\n",
                 cpuCtr, (unsigned long long)elapsed);
+}
+
+// ── MMIO access lands on the instruction's DATA cycle (the `+1`) ────────
+//
+// Port of mockingboard_t1_irq_phase to the Phasor, which runs the same two
+// 6522s behind the same lazy sync. `getCycleCountNow()` = cycleCounter +
+// cpu.cycles, and cpu.cycles does NOT yet count the in-flight data cycle of
+// the access, so without the `+1` in PhasorCard::syncToCpuCycle every MMIO
+// read samples its VIA counter one too high — the OLDSKOOL FORT ET VERT
+// phase-wrap class of bug ($00 -> $FF), on a Phasor instead of a
+// Mockingboard. Reverting the +1 fails here.
+void testT1MmioDataCycle()
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    auto cardp = std::make_unique<PhasorCard>(4);
+    cardp->setCpu(&cpu);
+    PhasorCard* card = cardp.get();
+    mem.slotBus().plug(4, std::move(cardp));
+    cpu.hardReset();
+    mem.slotBus().reset();
+
+    // Program at $0300 — the Phasor boots in MB-compat mode, so VIA1 sits
+    // at $C400-$C41F exactly where a Mockingboard's does.
+    uint16_t p = 0x0300;
+    auto emit = [&](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) mem.memWrite(p++, b);
+    };
+    emit({0xA9, 0x00, 0x8D, 0x06, 0xC4});   // LDA #$00 ; STA $C406 (T1LL)
+    emit({0xA9, 0x20, 0x8D, 0x07, 0xC4});   // LDA #$20 ; STA $C407 (T1LH)
+    emit({0xA9, 0x40, 0x8D, 0x0B, 0xC4});   // LDA #$40 ; STA $C40B (ACR cont.)
+    emit({0xA9, 0x20, 0x8D, 0x05, 0xC4});   // LDA #$20 ; STA $C405 (T1CH arms)
+    for (int i = 0; i < 4; ++i) emit({0xEA});                // settle
+    const uint16_t ldaPc = p;
+    emit({0xAD, 0x04, 0xC4});               // LDA $C404 (the phase read)
+    emit({0xEA});
+
+    cpu.setProgramCounter(0x0300);
+    while (cpu.getProgramCounter() != ldaPc) cpu.step();
+
+    // Raw counter as of the pre-instruction cycle (peek: no read-back
+    // bias, no sync).
+    const uint16_t peekBefore =
+        static_cast<uint16_t>(card->peekViaRegister(0, 0x04)) |
+        static_cast<uint16_t>(card->peekViaRegister(0, 0x05) << 8);
+
+    cpu.step();                                  // execute LDA $C404
+    const uint8_t got = cpu.getAccumulator();
+
+    // LDA abs = 4 cycles; the data-cycle sync lands on cycleCounter+4, then
+    // the VIA applies its -1 read-back bias: got == (peekBefore - 5) low.
+    const uint8_t expected = static_cast<uint8_t>((peekBefore - 5) & 0xFF);
+    if (got != expected) {
+        std::fprintf(stderr,
+            "Phasor T1 MMIO phase: LDA $C404 read $%02X, expected $%02X "
+            "(peekBefore=$%04X). The access-cycle +1 sync is missing.\n",
+            got, expected, peekBefore);
+        std::abort();
+    }
+    std::printf("  ok: $C404 read reflects the access data cycle "
+                "(got $%02X = peek $%04X - 5)\n", got, peekBefore);
+}
+
+// A zero or negative slice must be a no-op. On the CPU-attached path
+// `advanceCycles` computes `getCycleCountNow() - static_cast<uint64_t>
+// (cycles)`, so a NEGATIVE slice becomes a huge unsigned subtrahend and
+// the sync target jumps |cycles| cycles into the FUTURE: both VIAs run
+// through however many T1 periods that is, and `lastSyncCycle_` is pinned
+// ahead of the CPU so every later sync early-outs until the machine
+// catches up. `Via6522::advance` has its own `cycles <= 0` guard, so the
+// headless path never showed this — the card-level guard is what the
+// CPU path needs.
+void testAdvanceCyclesGuard()
+{
+    auto t1 = [](PhasorCard& c) -> uint16_t {
+        return static_cast<uint16_t>(c.peekViaRegister(0, 0x04)) |
+               static_cast<uint16_t>(c.peekViaRegister(0, 0x05) << 8);
+    };
+
+    Memory mem;
+    M6502  cpu(&mem);
+    auto cardp = std::make_unique<PhasorCard>(4);
+    cardp->setCpu(&cpu);
+    PhasorCard* card = cardp.get();
+    mem.slotBus().plug(4, std::move(cardp));
+    cpu.hardReset();
+    mem.slotBus().reset();
+
+    card->slotRomWrite(pom2::Via6522::VIA_T1LL, 0x00);
+    card->slotRomWrite(pom2::Via6522::VIA_T1LH, 0x20);
+    card->slotRomWrite(pom2::Via6522::VIA_ACR,  0x40);   // continuous
+    card->slotRomWrite(pom2::Via6522::VIA_T1CH, 0x20);   // arm
+
+    const uint16_t before = t1(*card);
+    card->advanceCycles(0);
+    assert(t1(*card) == before);
+    card->advanceCycles(-1);
+    assert(t1(*card) == before);
+    card->advanceCycles(-100000);
+    if (t1(*card) != before) {
+        std::fprintf(stderr,
+            "Phasor advanceCycles guard: a negative slice moved T1 from %u "
+            "to %u (the uint64 wrap)\n", before, t1(*card));
+        std::abort();
+    }
+    // Still ticks normally afterwards (the headless fall-back path).
+    PhasorCard plain(4);
+    plain.slotRomWrite(pom2::Via6522::VIA_T1LL, 0x00);
+    plain.slotRomWrite(pom2::Via6522::VIA_T1LH, 0x20);
+    plain.slotRomWrite(pom2::Via6522::VIA_ACR,  0x40);
+    plain.slotRomWrite(pom2::Via6522::VIA_T1CH, 0x20);
+    const uint16_t plainBefore = t1(plain);
+    plain.advanceCycles(-5);
+    assert(t1(plain) == plainBefore);
+    plain.advanceCycles(10);
+    assert(t1(plain) == static_cast<uint16_t>(plainBefore - 10));
+
+    std::printf("  ok: advanceCycles(<=0) is a no-op, timers survive it\n");
+}
+
+// setCpuClock must retune the four AYs' input clock (their pin-22 CLOCK is
+// the slot's phase-0 line, so a PAL machine really does run them slower).
+// Before this the synth derived its step rate from the compile-time NTSC
+// constant and PAL music came out 0.7 % sharp. A 0.7 % delta is below the
+// zero-crossing estimator's noise, so drive the mechanism with a 2x clock
+// and require a 2x tone — the same shape as testClockScaleDoublesPitch.
+void testSetCpuClockRetunesAy()
+{
+    constexpr int N = 16384;
+    constexpr uint32_t SR = 44100;
+
+    auto measureAt = [](double cpuHz) -> double {
+        PhasorCard card(4);
+        card.setSampleRate(SR);
+        card.setVolume(1.0f);
+        card.setMuted(false);
+        card.setCpuClock(cpuHz);
+        const uint8_t pb = makePb(0, 0, /*pri*/true, /*sec*/false);
+        doLatchWrite(card, 0, pb, 0, 0x00);
+        doLatchWrite(card, 0, pb, 1, 0x02);   // period $200
+        doLatchWrite(card, 0, pb, 7, 0x3E);   // tone A only
+        doLatchWrite(card, 0, pb, 8, 0x0F);   // amp 15
+        std::vector<float> buf(N);
+        card.audioSource()->fillAudioBuffer(buf.data(), N);
+        return estimateFreqHz(buf, SR);
+    };
+
+    const double base = static_cast<double>(POM2_CPU_CLOCK_HZ);
+    const double f1 = measureAt(base);
+    const double f2 = measureAt(base * 2.0);
+    std::printf("  tone @ period $200: %.1f Hz @1x clock, %.1f Hz @2x "
+                "(ratio %.3f)\n", f1, f2, (f1 > 0 ? f2 / f1 : 0));
+    assert(f1 > 50.0 && f1 < 200.0);
+    assert(f2 / f1 > 1.7 && f2 / f1 < 2.3);
+
+    std::printf("  ok: setCpuClock retunes the AY clock (PAL follows)\n");
+}
+
+// The AY data bus is the VIA's port-A PINS: a bit whose DDRA says "input"
+// is undriven and floats HIGH (MAME `via6522.cpp output_pa()` hands its
+// handler `(m_out_a & m_ddr_a) | ~m_ddr_a`). Masking with ddrA alone fed
+// the chip zeros for every undriven bit.
+void testAyBusUndrivenBitsFloatHigh()
+{
+    PhasorCard card(4);
+    // DDRA = all output, latch register 7 (mixer) with a known value so a
+    // later strobe that re-reads the bus is observable.
+    card.slotRomWrite(pom2::Via6522::VIA_DDRA, 0xFF);
+    card.slotRomWrite(pom2::Via6522::VIA_DDRB, 0xFF);
+    const uint8_t pb = makePb(0, 0, /*pri*/true, /*sec*/false);
+    card.slotRomWrite(pom2::Via6522::VIA_ORA, 0x07);          // reg 7
+    card.slotRomWrite(pom2::Via6522::VIA_ORB,
+                      static_cast<uint8_t>((pb & ~0x03) | 0x03));  // LATCH
+    card.slotRomWrite(pom2::Via6522::VIA_ORB,
+                      static_cast<uint8_t>(pb & ~0x03));           // inactive
+
+    // Now the driver releases port A (DDRA = 0) — every pin floats high —
+    // and strobes a WRITE. The chip must see $FF, not $00.
+    card.slotRomWrite(pom2::Via6522::VIA_DDRA, 0x00);
+    card.slotRomWrite(pom2::Via6522::VIA_ORB,
+                      static_cast<uint8_t>((pb & ~0x03) | 0x02));  // WRITE
+    card.slotRomWrite(pom2::Via6522::VIA_ORB,
+                      static_cast<uint8_t>(pb & ~0x03));
+
+    const uint8_t r7 = card.getAyRegister(0, 7);
+    if (r7 != 0xFF) {
+        std::fprintf(stderr,
+            "Phasor AY bus: undriven port-A bits delivered $%02X, expected "
+            "$FF (MAME output_pa = (out & ddr) | ~ddr)\n", r7);
+        std::abort();
+    }
+    std::printf("  ok: undriven port-A bits reach the AY as 1s\n");
 }
 
 } // namespace
@@ -550,6 +755,10 @@ int main()
     testTelemetry();
     testNoEndOfStepOvershoot();
     testResetBumpsAyResetCount();
+    testT1MmioDataCycle();
+    testAdvanceCyclesGuard();
+    testSetCpuClockRetunesAy();
+    testAyBusUndrivenBitsFloatHigh();
     std::printf("PASS\n");
     return 0;
 }

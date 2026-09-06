@@ -329,6 +329,39 @@ void testReset(const std::string& dir)
     std::puts("OK reset");
 }
 
+// `drainCommands` swaps the producer queue into an audio-thread-owned
+// member (`cmdScratch_`) and clear()s it instead of destroying a local
+// vector — no malloc/free per realtime callback. The swap+clear protocol
+// has to be exactly right: forget the clear and every command is replayed
+// on every later callback; swap the wrong way and commands are lost. Pin
+// both directions through the observable motor state.
+void testDrainConsumesEachCommandOnce(const std::string& dir)
+{
+    FloppySoundDevice fs;
+    assert(fs.loadSamples(dir));
+    fs.setSampleRate(44100);
+    std::vector<float> buf(512, 0.0f);
+
+    fs.motor(true, true);
+    assert(fs.queuedCommandCount() == 1);
+    fs.fillAudioBuffer(buf.data(), 512);
+    assert(fs.queuedCommandCount() == 0 && "drain must empty the queue");
+    assert(fs.audioMotorOn());
+
+    // Further callbacks carry no commands — a replayed MotorOn would keep
+    // restarting the spin-up sample, and a replayed MotorOff would stop
+    // the motor outright.
+    for (int i = 0; i < 4; ++i) fs.fillAudioBuffer(buf.data(), 512);
+    assert(fs.audioMotorOn() && "no command may be replayed after its drain");
+
+    // A command queued after a drain still lands.
+    fs.motor(false, true);
+    assert(fs.queuedCommandCount() == 1);
+    fs.fillAudioBuffer(buf.data(), 512);
+    assert(fs.queuedCommandCount() == 0);
+    std::puts("OK drain consumes each command exactly once");
+}
+
 }  // namespace
 
 int main()
@@ -356,6 +389,7 @@ int main()
     testRapidStepsNoHang(dir);
     testSameCycleStepsClampGracefully(dir);
     testReset         (dir);
+    testDrainConsumesEachCommandOnce(dir);
 
     std::puts("OK floppy_sound_smoke");
     return 0;

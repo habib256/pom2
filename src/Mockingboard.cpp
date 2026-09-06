@@ -962,7 +962,19 @@ void MockingboardCard::onViaPortBChange(int chip)
     // PA-only changes also matter because LATCH/WRITE strobes bring PA
     // (the AY data bus) to the chip just before / just after PB sets
     // BDIR/BC1. We reapply on either edge so the order doesn't matter.
-    const uint8_t pa = via_[chip]->portAOut & via_[chip]->ddrA;
+    // The AY data bus is the VIA's PA *pins*, not its output latch: a bit
+    // whose DDRA says "input" is undriven and the pull-ups take it to 1.
+    // MAME `via6522.cpp output_pa()` hands its PA handler
+    // `(m_out_a & m_ddr_a) | ~m_ddr_a`, and `a2bus_ayboard_device` latches
+    // exactly that byte into `m_porta1` — the value `update_ay1()` then
+    // gives the chip. `Via6522::readPortA()` composes the same thing, with
+    // `portAIn` (0xFF at rest, the AY's own bus value after a READ strobe)
+    // standing in for MAME's re-latched `m_porta`. Masking with ddrA alone
+    // fed the AY zeros for every undriven bit — so a driver that latches a
+    // register address and then flips DDRA to 0 to read it back (Ultima IV's
+    // Echo+ probe idiom) re-strobed register $00 instead of the one it
+    // latched.
+    const uint8_t pa = via_[chip]->readPortA();
     const uint8_t pb = via_[chip]->portBOut & via_[chip]->ddrB;
     const auto res = ay_[chip]->applyControl(pa, pb);
     // Any result other than ResetOnly means PB2 (AY /RESET) is high, so

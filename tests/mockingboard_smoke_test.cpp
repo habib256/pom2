@@ -40,6 +40,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 namespace {
@@ -477,9 +478,61 @@ void testSoundIISpeechAudio()
     assert(sumSq == 0.0);
 }
 
+// ─── AY data bus = port-A PINS, not the output latch ─────────────────────
+//
+// A port-A bit whose DDRA says "input" is undriven; the pull-ups take it
+// HIGH. MAME's `via6522_device::output_pa()` hands its PA handler
+// `(m_out_a & m_ddr_a) | ~m_ddr_a`, and `a2bus_ayboard_device` gives the
+// chip exactly that byte. POM2 built the bus as `portAOut & ddrA`, so every
+// undriven bit reached the AY as 0.
+//
+// The sequence below is the one that makes the difference visible: latch a
+// register address with DDRA = $FF, then RELEASE port A (DDRA = $00 — what a
+// driver does to read the chip back) and strobe. Pre-fix the card delivered
+// $00; a 6522 delivers $FF.
+void testAyBusUndrivenBitsFloatHigh()
+{
+    MockingboardCard card(4);
+    writeVia(card, 0, 0x03, 0xFF);            // DDRA = $FF (all output)
+    writeVia(card, 0, 0x02, 0x07);            // DDRB = PB0..PB2 out
+    writeVia(card, 0, 0x01, 0x07);            // ORA = AY register 7 (mixer)
+    writeVia(card, 0, 0x00, kPbLatch);
+    writeVia(card, 0, 0x00, kPbInactive);
+
+    // Release port A, then WRITE. The AY must see $FF on the bus.
+    writeVia(card, 0, 0x03, 0x00);            // DDRA = $00 (all input)
+    writeVia(card, 0, 0x00, kPbWrite);
+    writeVia(card, 0, 0x00, kPbInactive);
+
+    const uint8_t r7 = card.getAyRegister(0, 7);
+    if (r7 != 0xFF) {
+        std::fprintf(stderr,
+            "AY bus: undriven port-A bits delivered $%02X, expected $FF "
+            "(MAME output_pa = (out & ddr) | ~ddr)\n", r7);
+        std::abort();
+    }
+
+    // Partially-driven port A: DDRA = $0F drives the low nibble from the
+    // ORA latch and floats the high nibble high, so the byte on the bus is
+    // $F_ where the latch says $0_.
+    MockingboardCard mixed(4);
+    writeVia(mixed, 0, 0x02, 0x07);
+    writeVia(mixed, 0, 0x03, 0xFF);           // DDRA = all output
+    writeVia(mixed, 0, 0x01, 0x07);           // latch AY register 7
+    writeVia(mixed, 0, 0x00, kPbLatch);
+    writeVia(mixed, 0, 0x00, kPbInactive);
+    writeVia(mixed, 0, 0x03, 0x0F);           // DDRA = low nibble only
+    writeVia(mixed, 0, 0x01, 0x0A);           // latch holds $0A
+    writeVia(mixed, 0, 0x00, kPbWrite);       // bus = $FA (pre-fix: $0A)
+    writeVia(mixed, 0, 0x00, kPbInactive);
+    assert(mixed.getAyRegister(0, 7) == 0xFA);
+}
+
 int main()
 {
     testAddressDecode();        std::printf("address decode ........ OK\n");
+    testAyBusUndrivenBitsFloatHigh();
+                                std::printf("AY bus float-high ..... OK\n");
     testAyRegisterWrite();      std::printf("AY register write ..... OK\n");
     testT1IrqContinuous();      std::printf("T1 IRQ continuous ..... OK\n");
     testT1IrqOneShot();         std::printf("T1 IRQ one-shot ....... OK\n");

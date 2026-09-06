@@ -24,6 +24,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <type_traits>
 
 namespace {
 // MAME's floppy samples aren't designed for seamless looping — every
@@ -52,7 +53,20 @@ void applyLoopCrossfade(std::vector<float>& data)
 }
 }  // namespace
 
-FloppySoundDevice::FloppySoundDevice() = default;
+FloppySoundDevice::FloppySoundDevice()
+{
+    // Threading-discipline guard, same pin as CassetteDevice's ctor: this
+    // field is written by setSampleRate on the UI thread and read lock-free
+    // by the audio callback (drainCommands + the two mixers). Reverting it
+    // to a plain uint32_t breaks the build here on purpose.
+    static_assert(std::is_same_v<decltype(outputSampleRate_),
+                                 std::atomic<uint32_t>>,
+                  "outputSampleRate_ must be atomic (UI -> audio thread)");
+    // Pre-reserve the audio thread's command scratch so drainCommands never
+    // allocates in the realtime callback (see its comment).
+    cmdScratch_.reserve(64);
+    cmdQueue_.reserve(64);
+}
 
 bool FloppySoundDevice::loadSamples(const std::string& dir, FormFactor ff)
 {
@@ -142,7 +156,7 @@ bool FloppySoundDevice::loadOneWav(const std::string& path, Sample& out)
 void FloppySoundDevice::setSampleRate(uint32_t hz)
 {
     if (hz == 0) hz = kAudioSampleRate;
-    outputSampleRate_ = hz;
+    outputSampleRate_.store(hz, std::memory_order_relaxed);
 }
 
 void FloppySoundDevice::setVolume(float v)
@@ -211,12 +225,18 @@ int FloppySoundDevice::pickSeekSample(double rateMs)
 
 void FloppySoundDevice::drainCommands()
 {
-    std::vector<Cmd> local;
+    // `cmdScratch_` is a member, not a local: this runs on the realtime
+    // audio callback, where a per-buffer heap alloc/free is the canonical
+    // source of underruns. Swapping the (empty, capacity-carrying) scratch
+    // in hands the producer a vector that will not allocate for the first
+    // ~64 commands either, and the clear() below keeps the capacity for the
+    // next callback instead of destroying it. Audio thread only — the swap
+    // is the sole point where it meets `cmdMtx_`.
     {
         std::lock_guard<std::mutex> lk(cmdMtx_);
-        local.swap(cmdQueue_);
+        cmdScratch_.swap(cmdQueue_);
     }
-    for (const Cmd& c : local) {
+    for (const Cmd& c : cmdScratch_) {
         switch (c.kind) {
         case CmdKind::MotorOn: {
             // A fresh MotorOn cancels any pending wall-clock spin-down.
@@ -244,7 +264,7 @@ void FloppySoundDevice::drainCommands()
             // speeds where the controller's emulated 1-sec delay is too
             // short to play any loop samples.
             if (audioMotorOn_ && !pendingMotorOff_) {
-                const double sr = static_cast<double>(outputSampleRate_);
+                const double sr = static_cast<double>(hostSampleRate());
                 pendingMotorOff_  = true;
                 motorOffDeadline_ =
                     audioFrameCounter_.load(std::memory_order_relaxed) +
@@ -254,7 +274,7 @@ void FloppySoundDevice::drainCommands()
         }
         case CmdKind::Step: {
             const uint64_t now = audioFrameCounter_.load(std::memory_order_relaxed);
-            const double   sr  = static_cast<double>(outputSampleRate_);
+            const double   sr  = static_cast<double>(hostSampleRate());
             // Inter-step gap in **emulated** CPU time — mirrors MAME's
             // `(now - m_last_step_time).as_double() * 1000` in
             // floppy_sound_device::step (floppy.cpp ~lines 1532-1540).
@@ -323,6 +343,8 @@ void FloppySoundDevice::drainCommands()
         }
         }
     }
+    // Keep the capacity, drop the contents (no free on the audio thread).
+    cmdScratch_.clear();
 }
 
 void FloppySoundDevice::mixOneShot(int sampleIdx, double& pos, double pitch,
@@ -332,7 +354,7 @@ void FloppySoundDevice::mixOneShot(int sampleIdx, double& pos, double pitch,
     const Sample& s = samples_[sampleIdx];
     if (s.data.empty()) return;
     const double rate = pitch * static_cast<double>(s.sourceRate)
-                              / static_cast<double>(outputSampleRate_);
+                              / static_cast<double>(hostSampleRate());
     // Defensive: a non-finite rate (NaN/INF) from pathological pitch
     // values would hang the wrap-loop in mixLoop. Bail silently — the
     // caller's state machine will recover on its next event.
@@ -358,7 +380,7 @@ void FloppySoundDevice::mixLoop(int sampleIdx, double& pos, double pitch,
     const Sample& s = samples_[sampleIdx];
     if (s.data.size() < 2) return;
     const double rate = pitch * static_cast<double>(s.sourceRate)
-                              / static_cast<double>(outputSampleRate_);
+                              / static_cast<double>(hostSampleRate());
     // Defensive: see mixOneShot. INF rate would make the wrap-loop spin
     // forever (INF - len == INF in IEEE 754).
     if (!(rate > 0.0) || rate > 1e6) return;

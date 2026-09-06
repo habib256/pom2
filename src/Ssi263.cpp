@@ -202,6 +202,22 @@ void Ssi263::fillAudio(float* output, int frameCount, uint32_t sampleRate)
     const auto& info = ssi263_data::kPhonemeInfo[ph];
     if (info.length == 0)         return;
 
+    // Re-clamp the cursor to THIS phoneme. `playbackPhoneme_` and
+    // `playbackOffset_` are restored as an unvalidated pair by
+    // `loadSnapshot` (rewind, or a hand-edited/older .pom2snap), so an
+    // offset captured mid-way through a long phoneme can come back
+    // attached to a short one. `info.offset + playbackOffset_` then reads
+    // PCM belonging to the NEXT phoneme in the blob — an audible burst of
+    // the wrong sound until the driver latches its next DURPHON — or
+    // walks off the end of the blob and silently truncates the buffer at
+    // the `idx >= kPhonemeDataLen` break below. Cheap enough to keep in
+    // the steady-state path (one compare per callback), which also covers
+    // any future writer of these members.
+    if (playbackOffset_ >= info.length) {
+        playbackOffset_ = 0;
+        resampleAccum_  = 0.0f;
+    }
+
     const float gain = ampToGain(amp) * (1.0f / 32768.0f);
     const float step = static_cast<float>(ssi263_data::kPhonemeSampleRateHz)
                      / static_cast<float>(sampleRate);
