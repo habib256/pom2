@@ -155,19 +155,34 @@ public:
     /// `m_floppy->wpt_r()` on the IWM read path.
     /// Returns true if SENSE is HIGH (=> IWM read-side reports WP bit
     /// SET, i.e. the high bit of the status byte is 1).
-    bool senseR() const;
+    ///
+    /// `nowCycles` is the caller's emulated CPU-cycle clock. Only register
+    /// 0xB (the tachometer) needs it — MAME reads `machine().time()` there
+    /// (floppy.cpp:2711-2719). Callers that do not have a clock pass 0 and
+    /// get a tach stuck at the start of its cycle, which is what every
+    /// register-table test wants.
+    bool senseR(uint64_t nowCycles = 0) const;
 
 private:
     /// Raw register table behind senseR() — split out so the env-gated
     /// diagnostic trace (`POM2_TRACE_IWM_SENSE=1`) can log the (reg,
     /// value) pair without duplicating the switch.
-    bool senseValue(uint8_t reg) const;
+    bool senseValue(uint8_t reg, uint64_t nowCycles) const;
 
 public:
 
     /// Convenience accessors for inspectors / save state.
     bool isMotorOn()        const { return motorOn_; }
-    bool isWriteProtected() const { return writeProtect_; }
+    /// Asked of the MEDIUM, never of a cache. There used to be a
+    /// `writeProtect_` member refreshed only by `reset()` / `setImage()` /
+    /// `notifyMediaChange()`, so every later change — the user toggling
+    /// write-back on the mounted image — left it stale, and the UI snapshot
+    /// (StorageCoordinator.cpp) overwrote the image's correct value with it.
+    /// `writeFlux` and sense register 0x9 always asked the image directly, so
+    /// the cache only ever disagreed with the drive's own behaviour.
+    bool isWriteProtected() const {
+        return !image_ || image_->isWriteProtected();
+    }
     int  track()            const { return track_; }
     bool side1()            const { return side1_; }
 
@@ -253,7 +268,6 @@ private:
 
     Disk35Image* image_         = nullptr;
     bool         motorOn_       = false;
-    bool         writeProtect_  = true;   // safe default until image probed
     bool         side1_         = false;
     bool         sel_           = false;
     bool         directionIn_   = false;  // true → step toward track 0
@@ -316,7 +330,27 @@ private:
     mutable int64_t cachedCyclesPerRev_ = 0;
 
     void ensureCache() const;
+    void ensureCacheFor(int track, int head) const;
     void rebuildTransitionsFromCells() const;
+
+    // ── Write destination, latched at write start (MAME parity) ──────────
+    // MAME's `floppy_image_device::write_start` (floppy.cpp:1261-1279) latches
+    // `m_write_cyl` / `m_write_ss` when the controller enters write mode, and
+    // `write_do_flush` commits to THAT pair (floppy.cpp:1345). POM2's phase
+    // strobes reach `seekPhaseW` without flushing the IWM, so a step or a side
+    // flip between the last written flux and the flush applied the bit stream
+    // to whatever track the head had reached by then.
+    bool writeActive_ = false;
+    int  writeTrack_  = 0;
+    int  writeHead_   = 0;
+    /// Where the write head sits in the cell array, and the tick that
+    /// position stands for. `IWMDevice::flushWrite` chops one continuous
+    /// write into windows (`fluxWriteStart_ = when`), and the controller's
+    /// bit period is NOT the medium's cell period — so re-deriving the cell
+    /// from the window's start tick on every flush would make consecutive
+    /// windows overlap. A cursor keeps the arc continuous.
+    int64_t writeCursorTick_ = INT64_MIN;
+    int     writeCursorCell_ = 0;
 
 public:
     // ── Phase 4: flux write-back ───────────────────────────────────────
@@ -335,18 +369,32 @@ public:
     // `revStartTick` is the same anchor `nextTransition` reads against. All
     // in IWM ticks, like the read side — the two have to share one timeline
     // or a write lands on a different cell than the read that verifies it.
+    //
+    // `bitPeriodTicks` is the controller's OWN bit period (IWM
+    // `2 × half_window_size()`, iwm.cpp:303-313: 14 / 16 / 28 / 32 ticks).
+    // It is not the medium's cell period (14.17 ticks on the outer zone) and
+    // must not be confused with it: quantising each flux stamp onto the
+    // encoder's cell grid collided two consecutive bits into one cell every
+    // ~84 bits and deleted 1.2 % of everything ever written. Bits are laid
+    // into CONSECUTIVE cells instead, which is what a real head does.
+    /// Latch the write destination. Called from `IWMDevice::writeClockStart`,
+    /// mirroring MAME `iwm_device::write_clock_start` → `m_floppy->
+    /// write_start()` (iwm.cpp:335-343).
+    void writeStart();
+
     void writeFlux(int64_t startTick,
                    int64_t endTick,
                    const int64_t* fluxes,
                    int            count,
-                   int64_t        revStartTick);
+                   int64_t        revStartTick,
+                   int64_t        bitPeriodTicks);
 
 private:
-    /// Decode the current `cells_` stream for any complete sectors
-    /// and write changed blocks to the attached image. Called after
+    /// Decode `cells_` (which holds `track`'s stream) for any complete
+    /// sectors and write changed blocks to the attached image. Called after
     /// each writeFlux splice. Returns the number of sectors that
     /// actually got written back.
-    int decodeAndCommit() const;
+    int decodeAndCommit(int track) const;
 };
 
 }  // namespace pom2

@@ -1135,6 +1135,24 @@ bool SmartPortCard::ejectBay(int bay)
     return false;
 }
 
+bool SmartPortCard::flushBay(int bay, std::string& errOut)
+{
+    // Inline, like the base contract says — the two-phase form is
+    // `prepareFlushBay`, which this card does not implement, so callers that
+    // hold `stateMutex` should keep using `prepareEjectBay`/`flushAll`'s path.
+    // What matters here is that a dirty unit CAN be flushed at all: without
+    // this override the inherited default refused every dirty bay, and the
+    // one caller that needs it (`setMediaBayType`, before it drops the unit)
+    // had no way to tell "could not save" from "does not do saving".
+    errOut.clear();
+    SmartPortUnit* u = unit(static_cast<size_t>(bay));
+    if (!u || !u->hasUnsavedChanges()) return true;
+    if (u->saveDirty()) return true;
+    errOut = u->lastError();
+    if (errOut.empty()) errOut = "the image could not be saved";
+    return false;
+}
+
 bool SmartPortCard::prepareEjectBay(int bay,
                                     Block512Backing::PendingWriteBack& out,
                                     std::string& errOut)
