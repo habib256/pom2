@@ -86,15 +86,17 @@ int main()
 
     // Mirror of the sink MainWindow installs: it re-takes the state mutex so
     // the poke goes through Memory::memWrite like a CPU store would.
-    viewer.setWriteCallback([&](uint16_t a, uint8_t v) {
+    viewer.setWriteCallback([&](uint16_t a, uint8_t v) -> uint8_t {
         const bool lockWasFree = stateMutex.try_lock();
         assert(lockWasFree && "write callback entered with stateMutex held — "
                               "this is the recursive-lock freeze");
+        const uint8_t replaced = memory.peekCpuWriteTarget(a);
         memory.memWrite(a, v);
         stateMutex.unlock();
         ++writeCalls;
         lastAddress = a;
         lastValue   = v;
+        return replaced;
     });
 
     // One UI frame, wired exactly like renderMemoryViewerWindow(): render

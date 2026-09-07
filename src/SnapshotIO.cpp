@@ -35,7 +35,11 @@ namespace {
 class VectorOutBuf final : public std::streambuf
 {
 public:
-    explicit VectorOutBuf(std::vector<uint8_t>& v) : vec_(v) {}
+    // REPLACES the sink's contents, it does not append: writing starts at
+    // pos_ == 0, so a reused buffer (the rewind ring's capture scratch) kept
+    // whatever tail the previous, longer snapshot had left past the new
+    // length — and the reader rejects the blob as trailing garbage.
+    explicit VectorOutBuf(std::vector<uint8_t>& v) : vec_(v) { vec_.clear(); }
 
 protected:
     std::streamsize xsputn(const char* s, std::streamsize n) override

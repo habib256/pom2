@@ -38,6 +38,12 @@ class Rewind_ImGui {
 public:
     struct FrameResult {
         std::string statusMessage;   // shown in the status bar when non-empty
+        /// Non-zero when the user moved the "history (s)" slider this frame.
+        /// The panel has no Settings of its own; the host persists it under
+        /// `rewind_history_seconds` and re-applies it on the next launch.
+        /// Without that the ring silently reset to its 30 s default every
+        /// session, which is the one rewind setting a user actually tunes.
+        int historySecondsChanged = 0;
     };
 
     Rewind_ImGui() = default;

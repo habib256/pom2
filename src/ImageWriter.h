@@ -488,8 +488,27 @@ public:
     /// Advance the mechanism by `dt` seconds of host time, printing
     /// whatever the head had time to lay down.
     void tick(double dt);
-    /// Print everything still queued right now ("Print now" button).
-    void flushPending();
+    /// Print what is still queued right now ("Print now" button, and every
+    /// tick under `Speed::Instant`) — bounded by `kCatchUpSheets` ejects per
+    /// call. Instant skips the *mechanism delay*, not the page-raster copy an
+    /// eject costs, and `ESC R 999 <FF>` is one six-byte sequence asking for
+    /// 999 of them. When the budget runs out `catchingUp()` stays true and
+    /// the rest lands on the following ticks, so check `busy()` rather than
+    /// assuming this drained the queue.
+    /// Drain the queue with no mechanism delay.
+    ///
+    /// `budgetSheets` caps how many sheets one call may eject, leaving the
+    /// rest armed for the next call. The AUTOMATIC per-frame path
+    /// (`Speed::Instant`, which routes every `tick()` straight here) passes
+    /// true, because the work behind a six-byte queue is unbounded —
+    /// `ESC R 999 <FF>` asks for 999 ejects, ~2.1 s of raster copying at
+    /// 300 dpi inside one UI frame, and it blows past PrinterHistory's
+    /// eight-sheets-in-flight assumption on the way.
+    ///
+    /// The EXPLICIT "Print now" button passes false and runs the job out:
+    /// the user asked for the whole thing once, and silently leaving pages
+    /// on the platen after an explicit flush is worse than the wait.
+    void flushPending(bool budgetSheets = false);
 
     /// Bytes accepted but not yet printed. This is the input *buffer* only
     /// — an `ESC R` run outstanding behind it is six bytes on the wire

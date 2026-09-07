@@ -474,10 +474,19 @@ void Apple2Display::render(Memory& mem)
         // (it moves exactly when advanceCycles closes a video frame), and
         // the `cpuIdle_` term keeps a running machine on a fast host monitor
         // — two renders inside one published frame — out of this branch.
+        // The `cyc - lastRenderCycle_ <= 8` clamp is what makes the second
+        // clause mean "a Step" and not "a resume": on the first render after
+        // the machine starts running again the counter has moved by thousands
+        // of cycles while the publication index has not yet ticked, so the
+        // clause held and applyIdleSwitchOverride folded every live switch
+        // onto the still-frozen published frame for one or two UI frames. A
+        // backwards jump (rewind) wraps the unsigned subtraction huge, which
+        // also drops the override — the right answer there too.
         const bool wasIdle = cpuIdle_;
         cpuIdle_ = renderedOnce_ &&
                    (cyc == lastRenderCycle_ ||
-                    (wasIdle && frameCounter == lastRenderFrame_));
+                    (wasIdle && frameCounter == lastRenderFrame_ &&
+                     cyc - lastRenderCycle_ <= 8));
         lastRenderCycle_ = cyc;
         lastRenderFrame_ = frameCounter;
         renderedOnce_ = true;
@@ -1311,6 +1320,20 @@ inline Phosphor phosphorFor(Apple2Display::HiResMode m)
     }
 }
 
+// Why: phosphor decay is a property of the EMULATED frame, not of the host's
+// render() call. The UI paints at the monitor's refresh (120/144 Hz panels
+// exist) and repaints the same emulated frame while the machine is paused or
+// stepping — so multiplying by the raw per-frame factor once per render() made
+// a paused lo-res/DLGR/DHGR screen fade to black in ~2 s and ran the afterglow
+// 2-2.4x too fast on a fast panel. renderHiRes already did this inline; the
+// three other mono painters now share the same rule. delta 0 = no decay.
+inline float effectivePhosphorDecay(const Phosphor& p, uint32_t emuFrameDelta)
+{
+    return emuFrameDelta == 0 ? 1.0f
+         : emuFrameDelta == 1 ? p.decay
+         : std::pow(p.decay, static_cast<float>(emuFrameDelta));
+}
+
 } // namespace
 
 void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
@@ -1348,6 +1371,7 @@ void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
                              hiResMode == HiResMode::MonoGreen ||
                              hiResMode == HiResMode::MonoAmber);
     const Phosphor phos = phosphorFor(hiResMode);
+    const float effDecay = effectivePhosphorDecay(phos, emuFrameDelta_);
 
     // Each lo-res row corresponds to half a text row (4 scanlines).
     for (int blockRow = firstRow; blockRow < lastRow; ++blockRow) {
@@ -1372,7 +1396,7 @@ void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
                         const int s1 = (nibble >> ((px * 2 + 1) & 3)) & 1;
                         const int target = ((s0 + s1) * 255) / 2;   // 0 / 127 / 255
                         const int prev = static_cast<int>(
-                            static_cast<float>(histRow[px]) * phos.decay);
+                            static_cast<float>(histRow[px]) * effDecay);
                         const int merged = std::max(target, prev);
                         histRow[px] = static_cast<uint8_t>(merged);
                         const uint32_t r = (static_cast<uint32_t>(phos.r) * merged + 127) / 255;
@@ -1420,6 +1444,7 @@ void Apple2Display::renderLoResDouble(Memory& mem,
                              hiResMode == HiResMode::MonoGreen ||
                              hiResMode == HiResMode::MonoAmber);
     const Phosphor phos = phosphorFor(hiResMode);
+    const float effDecay = effectivePhosphorDecay(phos, emuFrameDelta_);
 
     for (int blockRow = firstRow; blockRow < lastRow; ++blockRow) {
         const int  textRow   = blockRow / 2;
@@ -1448,7 +1473,7 @@ void Apple2Display::renderLoResDouble(Memory& mem,
                         const int bit = (pat >> ((x0 + dx) & 3)) & 1;
                         const int target = bit ? 255 : 0;
                         const int prev = static_cast<int>(
-                            static_cast<float>(histRow[dx]) * phos.decay);
+                            static_cast<float>(histRow[dx]) * effDecay);
                         const int merged = std::max(target, prev);
                         histRow[dx] = static_cast<uint8_t>(merged);
                         const uint32_t r = (static_cast<uint32_t>(phos.r) * merged + 127) / 255;
@@ -1701,13 +1726,10 @@ void Apple2Display::renderHiRes(Memory& mem, const Memory::DisplayState& state,
     uint8_t stream[kStreamLen];
     const Phosphor phos = phosphorFor(effMode);
     // Decay is per EMULATED frame; the UI may render the same frame several
-    // times on a >60 Hz monitor. Raise the per-frame factor to the
-    // elapsed-emu-frames power so afterglow speed doesn't track the host
-    // refresh; delta 0 (same frame re-rendered, or paused) must not decay.
-    const float effDecay =
-        emuFrameDelta_ == 0 ? 1.0f :
-        emuFrameDelta_ == 1 ? phos.decay :
-        std::pow(phos.decay, static_cast<float>(emuFrameDelta_));
+    // times on a >60 Hz monitor. (The rule this inlined now lives in
+    // effectivePhosphorDecay, shared with the lo-res / DLGR / DHGR mono
+    // painters — same arithmetic, so this path's output is unchanged.)
+    const float effDecay = effectivePhosphorDecay(phos, emuFrameDelta_);
     for (int y = firstScanline; y < lastScanline; ++y) {
         const uint16_t rowAddr = hgrRowAddress(y, videoHgrPage2(state));
         buildBitStream(ram, rowAddr, stream, bit7Mask);
@@ -1900,6 +1922,7 @@ void Apple2Display::renderDhgr(Memory& mem, const Memory::DisplayState& state,
     // shares the same amber afterglow / green persistence characteristics
     // — only the buffer geometry differs (560×192 vs 280×192).
     const Phosphor phos = monochrome ? phosphorFor(m) : kPhosphorWhite;
+    const float effDecay = effectivePhosphorDecay(phos, emuFrameDelta_);
     const struct { uint8_t r, g, b; } tint = { phos.r, phos.g, phos.b };
 
     constexpr int kContextBits = 3;
@@ -1987,7 +2010,7 @@ void Apple2Display::renderDhgr(Memory& mem, const Memory::DisplayState& state,
             for (int x = 0; x < kWidth80; ++x) {
                 const int target = dots[x] ? 255 : 0;
                 const int prev   = static_cast<int>(
-                    static_cast<float>(histRow[x]) * phos.decay);
+                    static_cast<float>(histRow[x]) * effDecay);
                 const int merged = std::max(target, prev);
                 histRow[x] = static_cast<uint8_t>(merged);
                 const uint32_t r = (static_cast<uint32_t>(tint.r) * merged + 127) / 255;

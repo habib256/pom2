@@ -28,11 +28,12 @@ MemoryViewer_ImGui::MemoryViewer_ImGui(Memory* mem)
 {
     prevMemory.assign(0x10000, 0);
     changeFrame.assign(0x10000, 0);
+    view_.assign(0x10000, 0);
 }
 
 const uint8_t* MemoryViewer_ImGui::memoryPointer() const
 {
-    return memory ? memory->data() : nullptr;
+    return memory ? view_.data() : nullptr;
 }
 
 uint8_t MemoryViewer_ImGui::readByte(int address) const
@@ -102,6 +103,15 @@ ImVec4 MemoryViewer_ImGui::regionColour(int a) const
 
 void MemoryViewer_ImGui::render()
 {
+    // Refresh the paged view ONCE per frame, under the caller's state lock.
+    // Everything below (grid, ASCII column, disasm, search, change tracking,
+    // the undo early-out) then reads a single coherent picture of what the
+    // CPU would fetch — not the flat main-bank mirror Memory::data() exposes.
+    if (memory) {
+        if (view_.size() != 0x10000) view_.assign(0x10000, 0);
+        memory->snapshotCpuView(view_.data());
+    }
+
     if (showChanges) detectChanges();
 
     handleNavigation();
@@ -515,12 +525,14 @@ void MemoryViewer_ImGui::searchAsciiString()
 void MemoryViewer_ImGui::applyEdit(uint16_t address, uint8_t newValue)
 {
     if (!writeCallback) return;
-    const uint8_t oldValue = readByte(address);
-    if (oldValue == newValue) return;
-    pendingWrites.push_back({address, newValue});
-    undoStack.push_back({address, oldValue, newValue});
+    // The undo record is NOT built here. render() runs under the state lock
+    // and the write only happens later, in flushPendingWrites(); the byte the
+    // write replaces is read there, at the WRITE target (RAMWRT), instead of
+    // here from the read view (RAMRD). Under 80STORE/RAMWRT those are
+    // different banks, and an Undo built from the read view shoved a main-RAM
+    // byte into aux.
+    pendingWrites.push_back({address, newValue, /*record=*/true});
     redoStack.clear();
-    if (undoStack.size() > 256) undoStack.erase(undoStack.begin());
 }
 
 void MemoryViewer_ImGui::undo()
@@ -528,7 +540,7 @@ void MemoryViewer_ImGui::undo()
     if (undoStack.empty() || !writeCallback) return;
     EditRecord r = undoStack.back();
     undoStack.pop_back();
-    pendingWrites.push_back({r.address, r.oldValue});
+    pendingWrites.push_back({r.address, r.oldValue, /*record=*/false});
     redoStack.push_back(r);
 }
 
@@ -537,7 +549,7 @@ void MemoryViewer_ImGui::redo()
     if (redoStack.empty() || !writeCallback) return;
     EditRecord r = redoStack.back();
     redoStack.pop_back();
-    pendingWrites.push_back({r.address, r.newValue});
+    pendingWrites.push_back({r.address, r.newValue, /*record=*/false});
     undoStack.push_back(r);
 }
 
@@ -549,5 +561,11 @@ void MemoryViewer_ImGui::flushPendingWrites()
     std::vector<PendingWrite> batch;
     batch.swap(pendingWrites);
     if (!writeCallback) return;
-    for (const PendingWrite& w : batch) writeCallback(w.address, w.value);
+    for (const PendingWrite& w : batch) {
+        const uint8_t replaced = writeCallback(w.address, w.value);
+        if (!w.record) continue;
+        if (replaced == w.value) continue;   // nothing actually changed
+        undoStack.push_back({w.address, replaced, w.value});
+        if (undoStack.size() > 256) undoStack.erase(undoStack.begin());
+    }
 }

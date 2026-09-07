@@ -185,6 +185,15 @@ void MainWindow::renderRewindWindow(float deltaSeconds)
 {
     if (!show(pom2::PanelId::Rewind)) return;
     auto result = rewindPanel_->render("Rewind", show(pom2::PanelId::Rewind), *controller, deltaSeconds);
+    // The one rewind setting a user actually tunes had no key at all: the
+    // ring came back at its 30 s default every launch. Persisted in SECONDS
+    // (not frames) because the frame budget depends on the profile's refresh
+    // rate, and the profile can change between sessions.
+    if (result.historySecondsChanged > 0) {
+        settings->setInt("rewind_history_seconds",
+                         result.historySecondsChanged);
+        settings->save();
+    }
     if (!result.statusMessage.empty()) {
         tapeStatusMessage = std::move(result.statusMessage);
         tapeStatusUntil   = lastFrameTime + 3.0;

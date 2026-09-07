@@ -523,7 +523,11 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
                                               "%.2f\" wide");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(110);
-            const bool lCh = ImGui::DragFloat("Paper", &lIn, 0.25f,
+            // "Paper##paperL", not "Paper": the size combo above already owns
+            // the ID "Paper" under this same CollapsingHeader, and ImGui 1.92
+            // paints a "Programmer error" tooltip on a duplicate ID by default
+            // (ConfigDebugHighlightIdConflicts).
+            const bool lCh = ImGui::DragFloat("Paper##paperL", &lIn, 0.25f,
                                               static_cast<float>(ImageWriter::kMinPaperLengthIn),
                                               static_cast<float>(ImageWriter::kMaxPaperLengthIn),
                                               "%.2f\" long");

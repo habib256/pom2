@@ -443,8 +443,14 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         auto card = std::make_unique<PhasorCard>(s);
         card->setSampleRate(controller->audio().getActualSampleRate());
         card->setCpu(&st.cpu());
-        card->setVolume(settings->getFloat("phasor_volume", 0.5f));
-        card->setMuted (settings->getBool ("phasor_muted",  false));
+        // Per-slot keys first, legacy type-wide as the fallback — the same
+        // resolution `persist()` writes. Reading only `phasor_volume` meant
+        // two Phasors on the bus shared one level: the highest slot's, since
+        // that is the one persist() copies into the legacy key.
+        const auto mix = audioCoordinator_->restoreCardSettings(
+            *settings, pom2::AudioCoordinator::CardKind::Phasor, s, 0.5f);
+        card->setVolume(mix.volume);
+        card->setMuted (mix.muted);
         registerAudioSource(card->audioSource());
         st.memory().slotBus().plug(s, std::move(card));
     };
@@ -457,8 +463,11 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         auto card = std::make_unique<EchoPlusCard>(s);
         card->setSampleRate(controller->audio().getActualSampleRate());
         card->setCpu(&st.cpu());
-        card->setVolume(settings->getFloat("echoplus_volume", 0.7f));
-        card->setMuted (settings->getBool ("echoplus_muted",  false));
+        // Per-slot key with the legacy type-wide fallback (see plugPhasor).
+        const auto mix = audioCoordinator_->restoreCardSettings(
+            *settings, pom2::AudioCoordinator::CardKind::EchoPlus, s, 0.7f);
+        card->setVolume(mix.volume);
+        card->setMuted (mix.muted);
         registerAudioSource(card->audioSource());
         st.memory().slotBus().plug(s, std::move(card));
     };
@@ -555,8 +564,14 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // Default volume is conservative — the card's three-channel mix
         // can dwarf the speaker at peak; the user can crank via the
         // Mockingboard panel (TODO).
-        card->setVolume(settings->getFloat("mockingboard_volume", 0.5f));
-        card->setMuted(settings->getBool ("mockingboard_muted",  false));
+        // Per-slot key with the legacy type-wide fallback (see plugPhasor).
+        // This is the pair persist() has been writing per slot since the
+        // coordinator landed: an A/C in slot 2 and a Sound II in slot 4 now
+        // come back at the levels the user actually set on each of them.
+        const auto mix = audioCoordinator_->restoreCardSettings(
+            *settings, pom2::AudioCoordinator::CardKind::Mockingboard, s, 0.5f);
+        card->setVolume(mix.volume);
+        card->setMuted(mix.muted);
         registerAudioSource(card->audioSource());
         st.memory().slotBus().plug(s, std::move(card));
     };
@@ -792,6 +807,23 @@ bool MainWindow::swapSlotCardVariant(const char* fromKey, const char* toKey)
         tapeStatusMessage = std::string("Slot ") + std::to_string(slot) +
                             " is a built-in of this profile — " + fromKey +
                             " cannot be swapped for " + toKey + " here.";
+        tapeStatusUntil   = lastFrameTime + 6.0;
+        pom2::log().warn("Abstraction", tapeStatusMessage);
+        return false;
+    }
+
+    // The two keys are one peripheral at two abstraction levels, but `toKey`
+    // is still a distinct catalog entry — and if another slot already holds
+    // it, the single-instance rule in resolve() will empty ONE of the two
+    // slots on the next rebuild, taking that slot's saved `slot_N_card` with
+    // it when the session exits. Refuse instead: silently deleting a card the
+    // user plugged elsewhere is not an abstraction-level change.
+    // (hunt #4 #7: slot 2 = cffa + slot 5 = hdv, then "use H1" on the HDV row.)
+    if (slotConfigCoordinator_->wouldDuplicate(toKey, slot)) {
+        tapeStatusMessage = std::string(toKey) +
+                            " is already plugged into another slot — remove it "
+                            "there before switching slot " +
+                            std::to_string(slot) + " to it.";
         tapeStatusUntil   = lastFrameTime + 6.0;
         pom2::log().warn("Abstraction", tapeStatusMessage);
         return false;

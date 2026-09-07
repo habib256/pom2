@@ -18,7 +18,12 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 - `tools/coverage.sh` — line coverage over the code the tests link, with a
   floor that may rise and may not fall (`tools/coverage_floor.txt`). Run it
   before claiming something is untested: the 2026-08-28 plan named three such
-  subsystems and all three had suites.
+  subsystems and all three had suites. **Two** ratchets since 2026-09-07: the
+  percentage is blind to code no test binary links and goes *up* when you drop
+  a source from a test's link line, so the set of linked `src/**.cpp` is
+  recorded in `tools/coverage_linked_sources.txt` and may grow but not shrink.
+  `--self-test` exercises that guard's logic with no build tree (it runs in CI
+  before the instrumented rebuild).
 - `docs/PERFORMANCE.md` — core profile (callgrind recipe + `pom2_bench`), the optimisations already done and **why**, and the PGO/LTO build recipe. Read before "optimising" anything on the hot path.
 - `CHANGELOG.md` — resolved items + the **why** behind non-obvious fixes.
 - `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes for that tag, written by hand. The publish job tries both conventions and uses the first hit as the GitHub Release body (generated commit list only as fallback, and it says so loudly).
@@ -275,8 +280,16 @@ $F800-$FFFF  Monitor ROM + 6502 vectors ($FFFA-$FFFF)
 `$C100-$C7FF` and `$C800-$CFFF` all end in MAME's `read_floatingbus()`.
 `Memory` installs the source (`SlotBus::setFloatingBusSource`); a **standalone**
 `SlotBus` with no source keeps `$FF`, which is what several harnesses rely on.
-`$C800` is **first**-one-wins and only a populated slot claims it, released at
-`$CFFF`.
+`$C800` is **first**-one-wins, and only a card that **takes** it claims it —
+`SlotPeripheral::takesC800()` (MAME `a2bus.h:145` `take_c800()`, default
+**false**; `apple2e.cpp:2977` gates the claim on it). A populated slot is not
+enough: a card with no expansion ROM (Disk II, Mockingboard, mouse, 4play, Le
+Chat Mauve) must not latch the window and starve the card that serves it — on
+the fresh-install map the //e autostart scans `$C700` first and used to hand
+slot 7 a window slot 5's SmartPort ROM needed. The seven cards that override it
+true are `ClockCard`, `GrapplerCard`, `LironCard`, `WorkstationCard`,
+`CffaCard`, `SmartPortCard` and `SuperSerialCard` (the last claims for parity
+with `a2ssc.cpp:50` even though POM2 serves `$FF` there). Released at `$CFFF`.
 
 In IIe mode the same map applies but most of `$0000-$BFFF` can route to aux 64 KB under paging switches — see table at top of `Memory.h`.
 
@@ -343,6 +356,8 @@ Keyboard wiring:
 
 - **Left Alt = Open-Apple** → $C061 bit 7
 - **Right Alt = Solid-Apple** → $C062 bit 7 — both wires have **two** sources (host Alt + the on-screen //e keyboard's latches), held apart and OR'd in `AppleKeyLatch.h`; a source that assigned the wire directly released the other one. Pinned by `apple_key_latch`.
+- **The Alt→Apple binding is a setting** — `keyboard_alt_apple_keys` (default **on**). Off, the Apple keys come only from the on-screen //e keyboard: on a macOS French layout Option is how `{ } [ ] |` are typed, and $C061/$C062 are the PB0/PB1 *fire buttons*, so writing those characters pressed fire. **Windows AltGr never drives them** — it arrives as `CONTROL|ALT` on the right Alt, where it is a text-entry modifier.
+- **The keyboard POLICY is GLFW-free** (`KeyChord.h`, same shape and same reason as `MouseGrab.h`; `MainWindow_Input.cpp` static_asserts the mirrored GLFW tokens). It owns three decisions no test could reach while they lived in the callback: the layout letter behind a Ctrl-chord (`glfwGetKeyName`, with the US-positional fallback **only** when GLFW has no name — a key whose cap is punctuation is not the US letter at that position, which is how AZERTY's Ctrl+`,` arrived as `RETURN`), Windows AltGr (`CONTROL|ALT` — it must fire neither `Ctrl+Alt+F`/`Ctrl+Alt+G` nor a Ctrl-letter), and the Alt→Apple setting above. Pinned by `key_chord_policy`, which also **scans the sources** for the GLFW entry points Emscripten implements as `abort()` (`glfwGetKeyName`, `glfwSetWindowMonitor`, …) outside an `__EMSCRIPTEN__` guard — none of them is a compile error, and an `abort()` tears the whole WASM module down.
 - **Ctrl+Alt+F = full screen ⇄ windowed** (kiosk toggle — see CLI section). **F10** does the same; the chord exists because F10 is swallowed by the window manager on several desktops.
 - **Ctrl+Alt+G = capture / release the host pointer** for the Mouse Card (a middle click toggles it too; a left click never captures; policy in `MouseGrab.h`) → [DEV § Pointer capture](DEV.md#pointer-capture-mouse-grab--mousegrabh)
 - F9 / F10 / F11 / F12 / Ctrl+Alt+F / Ctrl+Alt+G / Ctrl+Shift+P / Left Alt / Right Alt routed unconditionally (even when ImGui captures keyboard focus).
@@ -351,7 +366,7 @@ Keyboard wiring:
 
 `CliDispatcher` (parser, no `EmulationController` dep) + `CliRunner` (Phase-C runner). Three phases: parse → pre-boot (preset / ROM / display / speed) → post-boot Phase C (deferred actions: `--load addr:file`, `--snapshot-load`/`--snapshot-save`, tape ops, paste, run, step).
 
-Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`, `--ii-plus` (alias `--ii+`), `--speed`, `--cpu-max`, `--ai-control[=PORT]`, `--display ntsc|chatmauve|mono-white|mono-green|mono-amber`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path` (//c+ Sony 3.5"), `--prodos-folder dir`, `--load addr:file`, `--run addr`, `--paste`, `--step N`, `--trace-brk` (accepted, not wired), `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--kiosk`, `-h`/`--help`. `printUsage()` in `CliDispatcher.cpp` is the source of truth.
+Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`, `--ii-plus` (alias `--ii+`), `--speed`, `--cpu-max`, `--ai-control[=PORT]`, `--display ntsc|chatmauve|mono-white|mono-green|mono-amber`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path` (//c+ Sony 3.5"), `--prodos-folder dir`, `--load addr:file`, `--run addr`, `--paste`, `--step N`, `--trace-brk` (accepted, not wired), `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--kiosk`, `-h`/`--help`, `-v`/`--version`. `printUsage()` in `CliDispatcher.cpp` is the source of truth. **`--save-tape <path>` is honoured on clean shutdown** (`main.cpp`, next to `captureWindowGeometryNow()`), with `--save-tape-format aci|wav` picking the extension when the path has none. The flags that carry a value after `=` — `--ai-control`, `--fujinet`, `--fujinet-serial`, `--rgb-card-invert-bit7` — **reject the space-separated form**: written that way the value used to fall through to the positional-disk branch, so `--ai-control 6503` armed the default port and then complained about a disk image called `6503`.
 
 **Kiosk is a runtime mode, not just a flag**: `MainWindow::toggleKioskMode()`
 (Ctrl+Alt+F, F10, View menu, `view.kiosk` palette command, or the in-kiosk menu's

@@ -98,6 +98,10 @@ public:
     /// $C800-$CFFF — the upper 2 KB of the dump, where the GCR routines and
     /// the SmartPort dispatcher live.
     uint8_t expansionRomRead(uint16_t offset) override;
+    /// The upper 2 KB of the Liron EPROM IS the /IOSTB window, so the card
+    /// takes it — MAME `a2bus.h:145` `take_c800()` defaults to false and
+    /// only a card with an expansion ROM overrides it (`a2ssc.cpp:50` etc.).
+    bool takesC800() const override { return true; }
 
     void advanceCycles(int cycles) override;
     void onReset() override;

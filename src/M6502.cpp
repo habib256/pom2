@@ -58,7 +58,6 @@ M6502::M6502()
 {
    memory = nullptr;
    statusRegister = 0x24;
-   IRQ = 0;
    irqSourceMask = 0;
    NMI = 0;
    // Initialiser tous les registres
@@ -76,7 +75,6 @@ M6502::M6502(Memory * mem)
 {
    statusRegister = 0x24;
    statusRegister |= M6502::Status::I; // Set interrupt disable flag
-   IRQ = 0;
    irqSourceMask = 0;
    NMI = 0;
    memory = mem;
@@ -1930,7 +1928,6 @@ void M6502::hardReset(void)
     // Memory::resetSoftSwitches documents exactly this contract.
     NMI = 0;
     irqSourceMask.store(0, std::memory_order_relaxed);
-    IRQ.store(0, std::memory_order_relaxed);
 
     // Don't wipe the stack page on F12. Real 6502 reset only decrements
     // SP (the BRK-emulating reset sequence pushes PC/P without storing),
@@ -1962,7 +1959,6 @@ void M6502::softReset(void)
     // slot-bus reset that precedes the CPU reset on every path).
     NMI = 0;
     irqSourceMask.store(0, std::memory_order_relaxed);
-    IRQ.store(0, std::memory_order_relaxed);
     // Real 6502 reset sequence is a faked BRK that pushes PC + P
     // WITHOUT writing to the stack page (the read/write line stays
     // high), but decrements SP by 3. POM2 used to snap SP=$FF which
@@ -1979,14 +1975,17 @@ void M6502::setIrqLine(int sourceId, bool asserted)
     // whichever one released last won, even if the other still wanted
     // the line asserted.
     const uint32_t bit = 1u << (sourceId & 31);
-    // Atomic RMW so a cross-thread caller (the SSC TCP worker) and the CPU
-    // thread can't lose each other's update. `newMask` is the post-op value
-    // — deriving IRQ from it keeps the level correct even if two threads
-    // interleave (the surviving asserted bit still drives IRQ=1).
-    const uint32_t newMask = asserted
-        ? (irqSourceMask.fetch_or(bit,  std::memory_order_relaxed) | bit)
-        : (irqSourceMask.fetch_and(~bit, std::memory_order_relaxed) & ~bit);
-    IRQ.store(newMask != 0 ? 1 : 0, std::memory_order_relaxed);
+    // ONE atomic RMW and nothing else. A cross-thread caller (the SSC TCP
+    // worker, the FujiNet relay) and the CPU thread cannot lose each other's
+    // update this way. A derived `IRQ` flag stored right after the RMW used
+    // to sit here, and that second store was the whole bug: thread A's
+    // fetch_or could be followed by thread B's fetch_and + IRQ.store(0)
+    // before A's own IRQ.store(1) — or, worse, B's deassert could win the
+    // flag while its bit was still set in the mask, leaving mask != 0 with
+    // the line down until some other card happened to touch it. `step()`
+    // now reads the mask itself, so the level cannot disagree with it.
+    if (asserted) irqSourceMask.fetch_or(bit,   std::memory_order_relaxed);
+    else          irqSourceMask.fetch_and(~bit, std::memory_order_relaxed);
 }
 
 void M6502::setIRQ(int state)
@@ -2081,8 +2080,9 @@ void M6502::step(void)
     // CMOS (MAME om6502.lst irq/nmi sequences; pushPC + flags + vector
     // fetch). handleNMI/handleIRQ accumulate those into `cycles`, but
     // executeOpcode() reseeds `cycles = 1` for the opcode fetch and would
-    // wipe them. Capture the entry cost first, then fold it back in after
-    // the next instruction runs. Previously every IRQ/NMI was charged 0
+    // wipe them. Capture the entry cost here, publish it to the bus in the
+    // epilogue BEFORE the handler's first instruction, and fold it back into
+    // `cycles` afterwards for run()'s budget. Previously every IRQ/NMI was charged 0
     // cycles, silently desyncing every cycleCounter-derived clock (VBL,
     // slot-peripheral timers, cassette) on interrupt-driven software.
     // ── Owned deviation: interrupt sampling is instruction-granular ──────
@@ -2112,50 +2112,63 @@ void M6502::step(void)
         handleNMI();
         interruptCycles = cycles;
     } else if (!(statusRegister & M6502::Status::I) &&
-               IRQ.load(std::memory_order_relaxed)) {
+               // THE IRQ line: the wire-OR of every source's contribution.
+               // One relaxed load, exactly what the removed derived `IRQ`
+               // flag cost, but it cannot disagree with the mask that
+               // setIrqLine() actually updates (see setIrqLine).
+               irqSourceMask.load(std::memory_order_relaxed) != 0u) {
         cycles = 0;
         handleIRQ();
         interruptCycles = cycles;
     }
 
-    // ── An interrupt entry ENDS the step, but only for a watcher ─────────
-    // Without this, one step() both vectors and runs the handler's first
-    // instruction, so `M6502::run`'s debugged loop never offers the handler
-    // PC to `onInstruction`: a breakpoint on an IRQ/NMI entry point could not
-    // fire, and a watchpoint tripped by handler[0] was attributed to the
-    // INTERRUPTED instruction's PC (Debugger::curPc_ is latched per
-    // onInstruction call). Returning here leaves the PC on the vector target,
-    // so the next iteration offers it like any other instruction.
+    // ── The entry's 7 bus cycles are published BEFORE the handler runs ───
+    // A 6502 spends those 7 cycles on the bus (push PCH/PCL/P + the two
+    // vector fetches) before the handler's first opcode fetch, so by the time
+    // that instruction executes the peripherals have already seen them. POM2
+    // used to fold them into the single epilogue advance, which left every
+    // lazily-synced clock 7 cycles behind the bus for the whole of handler[0]:
+    // MockingboardCard/PhasorCard `syncToCpuCycle` (a free-running T1 read at
+    // the top of an IRQ handler is exactly the OLDSKOOL / DIX idiom),
+    // DiskIICard's SubInstructionScope and Memory's beam position all derive
+    // from `cycleCounter + cpu.cycles`. Measured on the t1_irq_phase fixture:
+    // the handler's `LDA $C404` saw a delta of 5 where the hardware gives 12
+    // (7 entry + 4 for the LDA + the 6522's own -1 read-back).
     //
-    // Gated on `debugHook_` so nothing outside a debugging session changes.
-    // The cycle total is identical either way — the same 7 entry cycles and
-    // the same opcode, split across two steps instead of summed in one — but
-    // `memory->advanceCycles` then sees them as two smaller advances, which
-    // moves the sub-instruction phase every lazily-synced peripheral clock
-    // derives from (Mockingboard/Phasor T1, the Disk II LSS, the video beam).
-    // That phase is pinned by mockingboard_t1_irq_phase / via_t1_rearm_chain /
-    // dix_menu_raster_probe, so it is not something to perturb for a machine
-    // nobody is watching.
+    // So the entry is advanced here, on its own, and the epilogue then
+    // publishes only the instruction's own cycles. `debugHook_ != nullptr`
+    // already did exactly this — it ends the step at the vector target so the
+    // handler PC is offered to `onInstruction` — and that path was the
+    // hardware-correct one all along; the two now AGREE, which is what the
+    // t1_irq_phase IRQ case pins (with and without an idle hook).
     //
-    // ONE epilogue, deliberately. Written as an early `return` it cost a
-    // measured +2.46 % on every workload (32 of 33 paired bench runs,
-    // p = 0.00003): a second inlined `advanceCycles` call site and a second
-    // exit in the hottest function in the emulator, plus a `debugHook_` load
-    // on every instruction. `interruptCycles` is tested FIRST — it is already
-    // in a register and is zero on all but a handful of instructions — so the
-    // common path never touches `debugHook_` at all, and the whole test folds
-    // into one predicted-not-taken branch. Semantics are unchanged: skipping
-    // `executeOpcode()` and charging `interruptCycles` is exactly what the
-    // early return did. See docs/PERFORMANCE.md § 9 (hashes identical).
-    if (POM2_UNLIKELY(interruptCycles != 0 && debugHook_ != nullptr)) {
-        cycles = 0;
+    // ONE epilogue and ONE exit, deliberately. Written as an early `return`
+    // this cost a measured +2.46 % on every workload (32 of 33 paired bench
+    // runs, p = 0.00003): a second exit in the hottest function in the
+    // emulator, plus a `debugHook_` load on every instruction. Everything
+    // added here lives INSIDE the `interruptCycles != 0` test — already in a
+    // register, and zero on all but a handful of instructions — so the common
+    // path is one predicted-not-taken branch, `executeOpcode()`, and the same
+    // single `advanceCycles`. `cycles += interruptCycles` moved after that
+    // call so the epilogue publishes the instruction alone while `run()` still
+    // gets the full 7 + n budget (pinned by cpu_cycle_count).
+    // See docs/PERFORMANCE.md §§ 8-9.
+    if (POM2_UNLIKELY(interruptCycles != 0)) {
+        if (memory != nullptr) {
+            memory->advanceCycles(interruptCycles);
+        }
+        if (debugHook_ != nullptr) {
+            cycles = 0;
+        } else {
+            executeOpcode();
+        }
     } else {
         executeOpcode();
     }
-    cycles += interruptCycles;
     if (memory != nullptr) {
         memory->advanceCycles(cycles);
     }
+    cycles += interruptCycles;
 }
 
 int M6502::run(int maxCycles)

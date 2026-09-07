@@ -161,7 +161,7 @@ OpcodeInfo cmosInfo(uint8_t op)
         case 0x82: case 0xC2: case 0xE2: return {"NOP", AM_IMM};  // 2 B (UnoffImm)
         case 0x44: return {"NOP", AM_ZP};                         // 2 B (Unoff2)
         case 0x54: case 0xD4: case 0xF4: return {"NOP", AM_ZPX};  // 2 B (UnoffZpX)
-        case 0x5C: return {"NOP", AM_ABS};                        // 3 B (Unoff3)
+        case 0x5C: return {"NOP", AM_ABS};                        // 3 B (Unoff5C)
         case 0xDC: case 0xFC: return {"NOP", AM_ABX};             // 3 B (UnoffAbs4)
         // The $x3 and $xB columns: 30 opcodes the 65C02 reserves as
         // ONE-BYTE, one-cycle NOPs (M6502::Unoff — `kCmosTable` gives every

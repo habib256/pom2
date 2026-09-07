@@ -119,6 +119,93 @@ static std::pair<uint8_t, uint8_t> phaseProbe(M6502DebugHook* hook)
     return { got, expected };
 }
 
+// ── The same read, but as the IRQ handler's FIRST instruction ────────────
+//
+// A 6502 spends 7 bus cycles vectoring (push PCH/PCL/P + the two vector
+// fetches) BEFORE it fetches the handler's first opcode, so a real 6522 has
+// already been clocked 7 times by the time that instruction reads T1. POM2's
+// `M6502::step` used to fold those 7 into the single epilogue
+// `Memory::advanceCycles`, i.e. AFTER the handler's first instruction had
+// already run — so `syncToCpuCycle` saw a bus 7 cycles behind and the read
+// came out 7 too high. The `debugHook_` path (which ends the step at the
+// vector target) published them separately and was right all along.
+//
+// Delta the hardware gives for `LDA $C404` as handler[0]:
+//   7 (entry) + 4 (LDA abs, synced to its data cycle) + 1 (6522 read-back)
+//   = 12
+// The old un-hooked path gave 5. Both probes must now say 12.
+//
+// Returns { raw 16-bit T1 counter peeked just before the entry, A }.
+static std::pair<uint16_t, uint8_t> irqPhaseProbe(M6502DebugHook* hook)
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    auto cardp = std::make_unique<MockingboardCard>(4);
+    cardp->setCpu(&cpu);
+    MockingboardCard* card = cardp.get();
+    mem.slotBus().plug(4, std::move(cardp));
+    cpu.hardReset();
+    cpu.setDebugHook(hook);
+    mem.slotBus().reset();
+
+    uint16_t p = 0x0300;
+    auto emit = [&](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) mem.memWrite(p++, b);
+    };
+    emit({0xA9, 0x00, 0x8D, 0x06, 0xC4});   // LDA #$00 ; STA $C406 (T1LL)
+    emit({0xA9, 0x20, 0x8D, 0x07, 0xC4});   // LDA #$20 ; STA $C407 (T1LH)
+    emit({0xA9, 0x40, 0x8D, 0x0B, 0xC4});   // LDA #$40 ; STA $C40B (ACR continuous)
+    emit({0xA9, 0x20, 0x8D, 0x05, 0xC4});   // LDA #$20 ; STA $C405 (T1CH arms)
+    for (int i = 0; i < 4; ++i) emit({0xEA});                // settle
+    const uint16_t irqPc = p;               // the instruction the IRQ preempts
+    for (int i = 0; i < 4; ++i) emit({0xEA});
+
+    // Handler at $0400: `LDA $C404` ; RTI.
+    mem.memWrite(0x0400, 0xAD);
+    mem.memWrite(0x0401, 0x04);
+    mem.memWrite(0x0402, 0xC4);
+    mem.memWrite(0x0403, 0x40);
+    // The IRQ vector lives in ROM space; page in Language-Card RAM (two odd
+    // $C08B accesses arm the sticky write-enable) so it can be written.
+    (void)mem.memRead(0xC08B);
+    (void)mem.memRead(0xC08B);
+    mem.memWrite(0xFFFE, 0x00);
+    mem.memWrite(0xFFFF, 0x04);
+
+    cpu.setProgramCounter(0x0300);
+    while (cpu.getProgramCounter() != irqPc) cpu.run(1);
+
+    // Clear I and raise the line: the next step vectors.
+    cpu.setStatusRegister(0x20);
+    cpu.setIrqLine(M6502::IRQ_SRC_LEGACY, true);
+
+    const uint16_t peekBefore =
+        static_cast<uint16_t>(card->peekViaRegister(0, 0x04)) |
+        static_cast<uint16_t>(card->peekViaRegister(0, 0x05) << 8);
+
+    // Un-hooked: one step vectors AND runs handler[0]. Hooked: two steps.
+    // Driving both to the same PC keeps the two probes comparable.
+    while (cpu.getProgramCounter() != 0x0403) cpu.run(1);
+    return { peekBefore, cpu.getAccumulator() };
+}
+
+static int checkIrqCase(const char* what, std::pair<uint16_t, uint8_t> r)
+{
+    const uint8_t expected = static_cast<uint8_t>((r.first - 12) & 0xFF);
+    if (r.second != expected) {
+        const int delta = static_cast<int>((r.first - r.second) & 0xFF);
+        std::fprintf(stderr,
+            "mockingboard_t1_irq_phase (%s): the handler's first `LDA $C404` "
+            "read $%02X, expected $%02X — measured delta %d, hardware 12 "
+            "(7 interrupt-entry cycles + 4 for the LDA + the 6522 read-back). "
+            "M6502::step is publishing the entry cycles AFTER the handler's "
+            "first instruction instead of before it.\n",
+            what, r.second, expected, delta);
+        return 1;
+    }
+    return 0;
+}
+
 int main()
 {
     const auto bare = phaseProbe(nullptr);
@@ -149,9 +236,31 @@ int main()
         return 1;
     }
 
+    // ── The interrupt-entry case ─────────────────────────────────────────
+    const auto irqBare = irqPhaseProbe(nullptr);
+    if (checkIrqCase("no hook", irqBare) != 0) return 1;
+    IdleHook irqIdle;
+    const auto irqHooked = irqPhaseProbe(&irqIdle);
+    if (irqIdle.calls == 0) {
+        std::fprintf(stderr, "mockingboard_t1_irq_phase: the idle hook was "
+                             "never called in the IRQ case — it proves nothing.\n");
+        return 1;
+    }
+    if (checkIrqCase("idle hook", irqHooked) != 0) return 1;
+    if (irqHooked.second != irqBare.second) {
+        std::fprintf(stderr,
+            "mockingboard_t1_irq_phase: the handler's `LDA $C404` read $%02X "
+            "with an idle debug hook attached and $%02X without. The hooked "
+            "and un-hooked interrupt entries must publish the same phase.\n",
+            irqHooked.second, irqBare.second);
+        return 1;
+    }
+
     std::printf("mockingboard_t1_irq_phase OK: $C404 read reflects the "
                 "access data cycle (got $%02X), and an attached-but-idle "
-                "debug hook (%d instructions seen) does not move it\n",
-                got, idle.calls);
+                "debug hook (%d instructions seen) does not move it; the "
+                "handler's first `LDA $C404` reads 12 cycles after the "
+                "interrupt entry with and without a hook (got $%02X)\n",
+                got, idle.calls, irqBare.second);
     return 0;
 }

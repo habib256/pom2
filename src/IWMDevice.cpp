@@ -160,6 +160,10 @@ void IWMDevice::fireDevsel(uint8_t value)
 void IWMDevice::notifyMonW(bool motorOff)
 {
     if (sony_) {
+        // POM2 keeps the controller's enable line wired to the Sony's motor
+        // even though upstream's `mac_floppy_device::mon_w` is a no-op
+        // (floppy.cpp:2835-2838) — see the long note in `Sony35Drive::monW`:
+        // it is what spins the disk on the Liron and //c+ paths today.
         sony_->monW(motorOff);
     }
     // 5.25" DiskImage path: DiskIICard's motor + spin-down + audio
@@ -234,7 +238,9 @@ uint8_t IWMDevice::read(uint8_t offset)
             // no banner, no boot).
             bool wpt;
             const char* src;
-            if (sony_)      { wpt = sony_->senseR();           src = "sony"; }
+            // `now_` goes with it: MAME's mac wpt_r reads `machine().time()`
+            // for the tachometer register (floppy.cpp:2711-2719).
+            if (sony_)      { wpt = sony_->senseR(now_);       src = "sony"; }
             else if (disk_ && devsel_ != 0)
                             { wpt = disk_->isWriteProtected(); src = "disk525"; }
             else            { wpt = true;                      src = "none"; }
@@ -305,12 +311,19 @@ void IWMDevice::flushWrite(uint64_t when)
             }
             // Every timestamp here is already in IWM ticks except the
             // revolution anchor, which is latched from the host clock.
+            // The controller's own bit period goes with them: the FSM emits
+            // one bit every SW_WINDOW_MIDDLE → SW_WINDOW_END → MIDDLE round
+            // trip, i.e. `2 × half_window_size()` ticks (MAME iwm.cpp:478-496
+            // against :303-313 — 14, 16, 28 or 32). Without it the drive
+            // quantised each stamp onto the medium's 14.17-tick cell grid and
+            // dropped every ~84th bit on the floor.
             sony_->writeFlux(static_cast<int64_t>(fluxWriteStart_),
                              static_cast<int64_t>(when),
                              fluxes.empty() ? nullptr : fluxes.data(),
                              static_cast<int>(fluxes.size()),
                              static_cast<int64_t>(revStart35_) *
-                                 POM2_IWM_TICKS_PER_CPU_CYCLE);
+                                 POM2_IWM_TICKS_PER_CPU_CYCLE,
+                             static_cast<int64_t>(2 * halfWindowSize()));
         }
         fluxWriteCount_ = 0;
         if (lastOnEdge) {
@@ -602,6 +615,12 @@ void IWMDevice::writeClockStart()
     }
     fluxWriteStart_ = lastSync_;
     fluxWriteCount_ = 0;
+    // MAME `iwm.cpp:342`: `m_floppy->write_start(cycles_to_time(m_last_sync))`.
+    // That is where the destination cylinder/side is latched and where the
+    // "no medium / motor off" refusal lives (floppy.cpp:1261-1279); POM2 was
+    // calling neither, so a step between the last flux and the flush wrote
+    // the previous track's bits onto the new one.
+    if (sony_) sony_->writeStart();
 }
 
 void IWMDevice::writeClockStop()
@@ -1089,6 +1108,15 @@ bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n)
         lastV > UINT64_MAX / POM2_IWM_TICKS_PER_CPU_CYCLE ||
         nextV > UINT64_MAX / POM2_IWM_TICKS_PER_CPU_CYCLE)
         return false;
+    // `revStart35_` escaped the gate entirely: it is stored raw and then
+    // scaled as `int64_t(revStart35_) * POM2_IWM_TICKS_PER_CPU_CYCLE` on the
+    // 3.5" read AND write paths (nextTransition / flushWrite), so a crafted
+    // blob reached signed overflow — undefined behaviour, from a file. It is
+    // an absolute CPU-cycle stamp on the same clock as `now_`, and the
+    // revolution anchor can only sit within one revolution behind it.
+    if (revV > static_cast<uint64_t>(INT64_MAX) / POM2_IWM_TICKS_PER_CPU_CYCLE)
+        return false;
+    if (revV > nowV) return false;
     const uint64_t nowTicks  = nowV * POM2_IWM_TICKS_PER_CPU_CYCLE;
     const uint64_t lastTicks = lastV * k;
     const uint64_t nextTicks = nextV * k;

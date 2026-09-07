@@ -90,6 +90,18 @@ public:
 
     size_t   getQueuedEventCount() const;
 
+    /// Generation of the toggle queue — bumped by every `reset()`. The audio
+    /// callback snapshots it while it drains the queue and refuses to push
+    /// its leftovers back if the value moved meanwhile (see fillAudioBuffer).
+    /// Public so a test can pin the counter itself, the way
+    /// `MockingboardCard::ayQueueGen_` is pinned through its own queue.
+    uint32_t queueGeneration() const;
+
+    /// Toggles the audio thread dropped because they were stale: either a
+    /// leftover whose generation had been reset underneath it, or a queue
+    /// front stamped in the far future. Diagnostic/test hook only.
+    uint64_t staleDropCount() const;
+
 private:
     // CPU clock the reconstruction assumes. Runtime (not constexpr) so PAL
     // profiles can retune it; audio thread reads, UI/worker thread writes.
@@ -104,6 +116,18 @@ private:
 
     mutable std::mutex   eventMutex;
     std::deque<uint64_t> events;
+    /// Guarded by `eventMutex`. `reset()` bumps it; `fillAudioBuffer`
+    /// snapshots it under the lock it takes to drain the queue and compares
+    /// under the lock it takes to push the leftovers back. Mirrors
+    /// `MockingboardCard::ayQueueGen_`, and exists for the same reason: the
+    /// two locks are NOT one critical section, so a reset() landing between
+    /// them used to re-insert pre-reset toggles into a queue that had just
+    /// been emptied — stamps from the abandoned future, at the FRONT of a
+    /// front-ordered consumer, which silenced every live toggle behind them.
+    uint32_t queueGen_ = 0;
+    /// Count of toggles dropped as stale (generation mismatch or far-future
+    /// front). Guarded by `eventMutex`; read by tests.
+    uint64_t staleDrops_ = 0;
 
     // Audio-thread state. Touched only inside fillAudioBuffer + reset.
     /// Toggles pulled out of `events` for the buffer being rendered. A

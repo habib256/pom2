@@ -56,6 +56,7 @@
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
 #include "SettingsList.h"
+#include "SlotConfigurationCoordinator.h"
 #include "StorageCoordinator.h"
 #include "SuperSerialCard.h"
 #include "SystemProfile.h"
@@ -272,8 +273,17 @@ void MainWindow::persistSession(bool flushMedia)
             // profile's value, not the user's — shared guard with the Slot
             // Config Apply button (pom2::slotKeyIsUserChoice).
             const std::string key = "slot_" + std::to_string(s) + "_card";
-            if (!pom2::slotKeyIsUserChoice(cfg, s, slotCards[s],
-                                           settings->getString(key, "")))
+            const std::string saved = settings->getString(key, "");
+            // A slot the single-instance policy EMPTIED (the same card asked
+            // for twice) reads back as "" in the plan while the saved key
+            // still names the card. Persisting the plan there overwrote a
+            // choice the user never made — and the card was gone on the next
+            // launch, with nothing to undo it. Leave the key alone; the
+            // warning in resolve() already said the slot was ignored.
+            if (slotCards[s].empty() && !saved.empty() &&
+                saved == slotConfigCoordinator_->dedupCleared(s))
+                continue;
+            if (!pom2::slotKeyIsUserChoice(cfg, s, slotCards[s], saved))
                 continue;
             settings->setString(key, slotCards[s]);
         }

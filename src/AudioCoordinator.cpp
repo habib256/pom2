@@ -380,6 +380,11 @@ void AudioCoordinator::restore(Settings& settings,
     speaker.setVolume(settings.getFloat("speaker_volume", 1.0f));
     speaker.setMuted(settings.getBool("speaker_muted", false));
     cassette.setVolume(settings.getFloat("cassette_volume", 0.6f));
+    // The mixer panel has had a cassette mute toggle since the stereo bus
+    // landed, but no key backed it: every other channel's mute survived a
+    // restart and this one silently came back on. Default false = audible,
+    // which is what an absent key meant before.
+    cassette.setMuted(settings.getBool("cassette_muted", false));
     cassette.setAutoRewind(settings.getBool("cassette_auto_rewind", false));
 
     speaker.pan.store(settings.getFloat("speaker_pan", 0.0f));
@@ -402,6 +407,7 @@ void AudioCoordinator::persist(Settings& settings,
     settings.setFloat("speaker_volume", speaker.getVolume());
     settings.setBool("speaker_muted", speaker.isMuted());
     settings.setFloat("cassette_volume", cassette.getVolume());
+    settings.setBool("cassette_muted", cassette.isMuted());
     settings.setBool("cassette_auto_rewind", cassette.isAutoRewindEnabled());
     settings.setFloat("floppy_sound_volume", floppy525.getVolume());
     settings.setBool("floppy_sound_muted", floppy525.isMuted());
@@ -423,7 +429,7 @@ void AudioCoordinator::persist(Settings& settings,
     // each type also updates the legacy key, preserving the old last-plugged
     // behaviour for existing configurations.
     const auto cards = captureMixerCards();
-    std::array<const MixerCardSnapshot*, 3> legacy{};
+    std::array<const MixerCardSnapshot*, kCardKindCount> legacy{};
     for (const auto& card : cards) {
         settings.setFloat(slotSettingsKey(card.kind, card.slot, "volume"),
                           card.volume);

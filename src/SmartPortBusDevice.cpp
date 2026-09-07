@@ -143,8 +143,13 @@ bool SmartPortBusDevice::unitHasMedia(int index) const
 
 SmartPortBusUnit* SmartPortBusDevice::unitFor(uint8_t chainNumber) const
 {
+    // `ids_[i] == 0` means "this slot was never assigned a number". A packet
+    // addressed to device 0 is not a thing on the wire (0 is the host's own
+    // number — see buildReply's header) but a match on it would hand out a
+    // unit nobody named.
     for (int i = 0; i < unitCount_; ++i)
-        if (ids_[static_cast<std::size_t>(i)] == chainNumber)
+        if (ids_[static_cast<std::size_t>(i)] != 0 &&
+            ids_[static_cast<std::size_t>(i)] == chainNumber)
             return units_[static_cast<std::size_t>(i)];
     // No INIT seen (a host that skips the scan): count from 1, as a chain
     // freshly powered next to a Liron would be numbered.
@@ -161,14 +166,32 @@ void SmartPortBusDevice::reset()
 
 void SmartPortBusDevice::busReset()
 {
+    // The wire's own reset (PH0 + PH2 together, $C9E5 in the Liron dump): the
+    // chain forgets its numbers because the host is about to re-run the INIT
+    // scan that assigns them.
     ids_.fill(0);
     assigned_ = 0;
+    abortTransaction();
+}
+
+void SmartPortBusDevice::abortTransaction()
+{
+    // Protocol state only — the chain NUMBERS survive. They are the host's
+    // assignment and only a real bus reset followed by a fresh INIT scan can
+    // change them. Dropping them here made `unitFor` fall through to its
+    // "count from 1" guess, which is right for a Liron or a //c and wrong for
+    // a //c+, whose external chain starts at 2 (its MIG drive is device 1):
+    // a media change in the OTHER bay silently re-pointed device 2 at the
+    // second unit, so the next WRITE landed on the wrong disk.
     rx_.clear();
     reply_.clear();
     replyPos_     = 0;
     replyArmed_   = false;
     replyExposed_ = false;
     pendingWrite_ = false;
+    pendingCmd_   = 0;
+    pendingUnit_  = 0;
+    pendingBlock_ = 0;
     sense_        = true;
     req_          = false;
 }

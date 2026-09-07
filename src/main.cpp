@@ -20,6 +20,7 @@
 #include "TnfsMedia.h"
 #include "Pom2Build.h"
 #include "IconsFontAwesome6.h"
+#include "KeyChord.h"
 #include "Logger.h"
 #include "ThreadGuard.h"
 #include "MainWindow.h"
@@ -125,11 +126,25 @@ static void glfw_key_callback(GLFWwindow* w, int key, int sc, int action, int mo
         // Ctrl+Alt+G (release the captured mouse) is unconditional for the
         // strongest form of that reason: while the pointer is captured the
         // user cannot click their way to any other control.
+        //
+        // The palette test matches on the LAYOUT's letter, exactly like
+        // MainWindow::onKey does: this gate used to compare the PHYSICAL
+        // GLFW_KEY_P, so on AZERTY the two disagreed — the key that opens the
+        // palette normally was not in the unconditional set, and the key that
+        // was in the set opened nothing. Same helper, same answer.
+        // (glfwGetKeyName is an abort() stub under Emscripten; a null name
+        // means the US-positional fallback, which is what the browser had.)
+        const char layoutP =
+#ifdef __EMSCRIPTEN__
+            pom2::keychord::letterFromKeyName(nullptr, key);
+#else
+            pom2::keychord::letterFromKeyName(glfwGetKeyName(key, sc), key);
+#endif
         const bool isGlobalKey = (key == GLFW_KEY_F11 || key == GLFW_KEY_F12 ||
                                   key == GLFW_KEY_F9 || key == GLFW_KEY_F10 ||
                                   key == GLFW_KEY_LEFT_ALT ||
                                   key == GLFW_KEY_RIGHT_ALT ||
-                                  (key == GLFW_KEY_P &&
+                                  (layoutP == 'P' &&
                                    (mods & GLFW_MOD_CONTROL) &&
                                    (mods & GLFW_MOD_SHIFT)) ||
                                   (key == GLFW_KEY_G &&
@@ -651,8 +666,17 @@ int main(int argc, char* argv[])
             static_assert(std::atomic<bool>::is_always_lock_free,
                           "the TNFS abort flag is set from a signal handler");
             g_tnfsAbort.store(false);
-            const auto previousSigint = std::signal(SIGINT, [](int) {
-                g_tnfsAbort.store(true);
+            const auto previousSigint = std::signal(SIGINT, [](int sig) {
+                // A SECOND Ctrl+C is the user telling us the first one did
+                // not work. Nothing in a fetch is interruptible faster than
+                // one per-request timeout, so rather than appear to swallow
+                // the interrupt, restore the default disposition and re-raise:
+                // the process then dies the way the terminal expects.
+                // `signal` and `raise` are both async-signal-safe.
+                if (g_tnfsAbort.exchange(true)) {
+                    std::signal(sig, SIG_DFL);
+                    std::raise(sig);
+                }
             });
             pom2::TnfsFetchLimits limits;
             limits.abort = &g_tnfsAbort;
@@ -668,6 +692,18 @@ int main(int argc, char* argv[])
                 pom2::log().error("CLI", "TNFS: " + got.error);
                 plan->bootDiskPath.clear();
             }
+        }
+    }
+
+    // A positional path that simply is not there used to reach the classifier
+    // and come back as "unrecognised disk image (extension/size)" — which
+    // sends the user checking the format of a file they mistyped the name of.
+    // Say what actually happened, before anything looks at the extension.
+    if (!plan->bootDiskPath.empty()) {
+        std::error_code existEc;
+        if (!std::filesystem::exists(plan->bootDiskPath, existEc)) {
+            pom2::log().error("CLI", "file not found: " + plan->bootDiskPath);
+            plan->bootDiskPath.clear();
         }
     }
 
@@ -770,12 +806,18 @@ int main(int argc, char* argv[])
     glfwSetDropCallback       (window, glfw_drop_callback);
 
     // ─── Phase B: apply boot-time overrides on the live emulator ─────────
+    // `--speed` and `--cpu-max` set the same knob. Applied in THIS order
+    // regardless of the order they were typed, so `--speed N` always wins —
+    // it is the specific request, `--cpu-max` the blanket one. Say so when
+    // both are present rather than letting one silently evaporate.
     if (plan->cpuMax) {
         mainWindow.emul().setCyclesPerFrame(1'000'000);
         pom2::log().info("CLI", "--cpu-max: emulator running flat-out");
     }
     if (plan->executionSpeed) {
         mainWindow.emul().setCyclesPerFrame(*plan->executionSpeed);
+        if (plan->cpuMax)
+            pom2::log().warn("CLI", "--speed overrides --cpu-max (both given)");
     }
     if (plan->aiControl) {
         std::string err;
@@ -866,7 +908,13 @@ int main(int argc, char* argv[])
 #ifndef __EMSCRIPTEN__
     std::thread        deferredThread;
     if (!plan->deferredActions.empty()) {
-        deferredThread = std::thread(
+        // guardedThread, not a bare std::thread: an exception escaping a
+        // thread callable calls std::terminate() — the process dies with no
+        // log line. The barrier used to wrap only runDeferredActions, leaving
+        // the two wait loops above it (and the lambda's own captures)
+        // unguarded. CLAUDE.md § Every long-lived thread wears an exception
+        // barrier.
+        deferredThread = pom2::guardedThread("CLI",
             [actions = plan->deferredActions,
              emu     = &mainWindow.emul(),
              booted  = &bootDiskSettled,
@@ -884,14 +932,10 @@ int main(int argc, char* argv[])
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
                 if (cancel->load(std::memory_order_acquire)) return;
-                // Guard the worker: an uncaught exception escaping a
-                // std::thread callable calls std::terminate(). Deferred
-                // actions touch user-named files, so an I/O or alloc failure
-                // must not crash the whole emulator. Same barrier every other
-                // POM2 thread wears — ThreadGuard.h.
-                pom2::runGuarded("CLI", [&] {
-                    pom2::runDeferredActions(actions, *emu);
-                });
+                // Deferred actions touch user-named files, so an I/O or alloc
+                // failure must not crash the whole emulator — the barrier is
+                // the guardedThread above.
+                pom2::runDeferredActions(actions, *emu);
             });
     }
 #endif
@@ -1104,6 +1148,23 @@ int main(int argc, char* argv[])
     if (deferredThread.joinable()) deferredThread.join();
     if (autoBootThread.joinable()) autoBootThread.join();
 #endif
+
+    // ── --save-tape: dump the cassette before anything is torn down ─────
+    // The flag and --save-tape-format were parsed, documented in the usage
+    // and in the README, and then consumed by nobody: resolveSaveTapePath()
+    // had zero callers, so a session recorded with --rec and --save-tape
+    // exited with the recording still only in RAM. This is the clean-shutdown
+    // point — the worker has stopped, MainWindow is still alive, and the
+    // commit goes through the same atomic write-back the deck's Save uses.
+    if (plan && !plan->saveTapePath.empty()) {
+        const std::string out =
+            pom2::resolveSaveTapePath(plan->saveTapePath, plan->saveTapeFormat);
+        if (mainWindow.emul().saveTape(out))
+            pom2::log().info("CLI", "--save-tape wrote " + out);
+        else
+            pom2::log().error("CLI", "--save-tape failed for " + out + ": " +
+                              mainWindow.emul().cassette().getLastError());
+    }
 
     // Record where the window ended up WHILE GLFW is still alive.
     // The capture cannot live in ~MainWindow: glfwGetWindowPos/Size bail on

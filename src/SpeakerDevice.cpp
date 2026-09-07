@@ -76,6 +76,10 @@ void SpeakerDevice::reset()
     {
         std::lock_guard<std::mutex> lk(eventMutex);
         events.clear();
+        // Bump the generation so a fillAudioBuffer that is between its
+        // drain lock and its push-back lock right now discards its
+        // leftovers instead of re-filling the queue we just emptied.
+        ++queueGen_;
         latestEventCycle.store(0, std::memory_order_relaxed);
     }
     resetPending_.store(true, std::memory_order_release);
@@ -105,6 +109,18 @@ size_t SpeakerDevice::getQueuedEventCount() const
 {
     std::lock_guard<std::mutex> lk(eventMutex);
     return events.size();
+}
+
+uint32_t SpeakerDevice::queueGeneration() const
+{
+    std::lock_guard<std::mutex> lk(eventMutex);
+    return queueGen_;
+}
+
+uint64_t SpeakerDevice::staleDropCount() const
+{
+    std::lock_guard<std::mutex> lk(eventMutex);
+    return staleDrops_;
 }
 
 void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
@@ -173,8 +189,28 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
     // the busiest previous buffer is reused. Audio thread only.
     std::vector<uint64_t>& windowEvents = windowEvents_;
     windowEvents.clear();
+    uint32_t genAtDrain = 0;
     {
         std::lock_guard<std::mutex> lk(eventMutex);
+        genAtDrain = queueGen_;
+        // Self-heal a front stamped in the FUTURE of the producer's own
+        // high-water mark. The consumer is strictly front-ordered, so one
+        // such stamp blocks every live toggle queued behind it and the
+        // speaker goes silent until the cursor walks all the way up to it —
+        // ~50 s of silence for a stamp a minute ahead. It is unreachable in
+        // a healthy stream (recordToggle publishes `latestEventCycle` for
+        // every event it queues); it appeared when a reset() raced this
+        // callback's push-back (now also fenced by `queueGen_` below), and
+        // a rewind that rolls the CPU clock back under a queue full of the
+        // abandoned future produces the same shape. Same parity rule as the
+        // two purges below: flip the level when an odd count is dropped.
+        size_t futureDropped = 0;
+        while (!events.empty() && events.front() > latest + catchUpCycles) {
+            events.pop_front();
+            ++futureDropped;
+        }
+        if (futureDropped & 1u) currentLevel = !currentLevel;
+        staleDrops_ += futureDropped;
         // Consumer-ahead re-anchor — the mirror of the forward catch-up
         // above. While the machine is paused (toolbar pause, debugger
         // break: Mode::Stopped parks the worker but nothing stops the
@@ -313,6 +349,17 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
     // (rare, possible at buffer-end rounding). Keeps ordering best-effort.
     if (evIdx < windowEvents.size()) {
         std::lock_guard<std::mutex> lk(eventMutex);
+        // A reset() between the drain lock above and this one emptied the
+        // queue and bumped the generation. Pushing our leftovers back would
+        // undo that reset AND seed the queue with pre-reset stamps: after a
+        // cold boot / profile switch the cycle counter restarts near 0, so
+        // those stamps sit in the far future at the FRONT of a front-ordered
+        // consumer — permanent silence, not a glitch. Drop them instead; a
+        // reset means the machine no longer owes anyone those toggles.
+        if (queueGen_ != genAtDrain) {
+            staleDrops_ += windowEvents.size() - evIdx;
+            return;
+        }
         // Reverse-iterate: push_front of ascending k would REVERSE the tail
         // and break the strictly-ascending-by-cycle invariant the consumer
         // relies on (front() is the earliest pending toggle). Walking k

@@ -871,6 +871,33 @@ add_test(NAME rewind_roundtrip COMMAND test_rewind)
 set_tests_properties(rewind_roundtrip PROPERTIES TIMEOUT 5)
 
 
+# ─── Snapshot identity guards (hunt #4: #13, #14, #29) ────────────────────
+# The three defects a matching `snapshotMachineId` cannot catch, because it
+# hashes the profile key alone: a RamWorks bank-count mismatch silently
+# dropping up to 8 MB of aux, a 65C02 blob restored onto an NMOS core, and
+# SnapshotIO's memory writer leaving the tail of a longer previous snapshot
+# in a reused sink.
+add_executable(test_snapshot_identity_guard
+    snapshot_identity_guard_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_snapshot_identity_guard PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_snapshot_identity_guard PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_snapshot_identity_guard PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_snapshot_identity_guard PRIVATE winmm)
+endif()
+add_test(NAME snapshot_identity_guard COMMAND test_snapshot_identity_guard)
+set_tests_properties(snapshot_identity_guard PROPERTIES TIMEOUT 20)
+
+
 # ─── Rewind delta codec + keyframes (rewind Phase 2) ──────────────────────
 # Forces a small keyframe interval so reconstruction crosses keyframe
 # boundaries; pins bit-exact restore of every frame, memory shrink vs
@@ -1413,6 +1440,22 @@ target_include_directories(test_prodos_volume PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME prodos_volume_smoke COMMAND test_prodos_volume)
 set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)
 
+# ─── A failed host-folder write-back must not freeze what it wrote ────────
+# decodeVolumeToFolder stops at the first I/O error, so a failed pass leaves
+# part of the tree rewritten with an mtime newer than the mount stamp — and
+# preserveNewerThan then reads POM2's own output as a host edit and discards
+# every later guest save. Pins the stamp being published on the failure path
+# (bug hunt 4 #4).
+add_executable(test_prodos_synth_failed_flush
+    prodos_synth_failed_flush_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+)
+target_include_directories(test_prodos_synth_failed_flush
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME prodos_synth_failed_flush COMMAND test_prodos_synth_failed_flush)
+set_tests_properties(prodos_synth_failed_flush PROPERTIES TIMEOUT 20)
+
 # ─── Settings key=value round-trip (#-in-value, newline, backslash) ───────
 add_executable(test_settings_roundtrip
     settings_roundtrip_test.cpp
@@ -1449,7 +1492,9 @@ if(WIN32)
     target_link_libraries(test_speaker_overflow PRIVATE winmm)
 endif()
 add_test(NAME speaker_overflow COMMAND test_speaker_overflow)
-set_tests_properties(speaker_overflow PROPERTIES TIMEOUT 5)
+# 20 s, not 5: the reset()-vs-render generation check races a real audio
+# thread against 20 000 reset bursts.
+set_tests_properties(speaker_overflow PROPERTIES TIMEOUT 20)
 
 
 # ─── VBL ($C019) scanline-accurate smoke test ─────────────────────────────
@@ -3512,6 +3557,31 @@ endif()
 add_test(NAME bus_fastpath COMMAND test_bus_fastpath WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(bus_fastpath PROPERTIES TIMEOUT 120)
 
+# Memory::peekCpuView / snapshotCpuView / peekCpuWriteTarget — the
+# side-effect-free PAGED view the Debugger and Memory Viewer read instead of
+# Memory::data(). Same paging matrix as bus_fastpath; also asserts that
+# sweeping all 64 KiB leaves the machine bit-identical.
+add_executable(test_memory_cpu_view
+    memory_cpu_view_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_memory_cpu_view PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_memory_cpu_view PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_memory_cpu_view PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_memory_cpu_view PRIVATE winmm)
+endif()
+add_test(NAME memory_cpu_view COMMAND test_memory_cpu_view WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(memory_cpu_view PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+
 # Video-7 / Le Chat Mauve RGB parity (4 rgbmodes + fg/bg colored text)
 # against a self-contained MAME apple2video.cpp dhgr_update() oracle.
 add_executable(test_video7_parity
@@ -4437,12 +4507,71 @@ add_executable(test_cli_kiosk
     ${CMAKE_SOURCE_DIR}/src/CliDispatcher.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
 )
-target_include_directories(test_cli_kiosk PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# CliDispatcher.cpp includes the generated Version.h (`--version`).
+target_include_directories(test_cli_kiosk PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/generated)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_cli_kiosk PRIVATE Threads::Threads)
 endif()
 add_test(NAME cli_kiosk COMMAND test_cli_kiosk)
 set_tests_properties(cli_kiosk PROPERTIES TIMEOUT 5)
+
+
+# ─── CLI Phase-C runner against a live machine ───────────────────────────
+# The other half of the CLI: what a parsed plan DOES. Pins that --load
+# stores bytes rather than executing soft switches on its way across
+# $C000-$CFFF (it went through memWrite, the CPU bus), that it lands in MAIN
+# RAM regardless of the guest's RAMWRT, that the first failed action stops
+# the ones after it (CliDispatcher.h promised that and nothing did it — a
+# failed --load then let --run jump the CPU into zero RAM), and the
+# --save-tape path resolver that had no callers at all.
+add_executable(test_cli_runner
+    cli_runner_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/CliDispatcher.cpp
+    ${CMAKE_SOURCE_DIR}/src/CliRunner.cpp
+    ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_cli_runner PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/generated   # Version.h, for CliDispatcher's --version
+    ${IMGUI_DIR})     # miniaudio.h location for FloppySoundDevice
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_cli_runner PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_cli_runner PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_cli_runner PRIVATE winmm)
+endif()
+add_test(NAME cli_runner COMMAND test_cli_runner)
+set_tests_properties(cli_runner PROPERTIES TIMEOUT 30)
+
+
+# ─── Keyboard chord policy + the Emscripten abort()-stub scan ────────────
+# KeyChord.h is GLFW-free on purpose (same shape as MouseGrab.h), so the
+# layouts that broke the input path — AZERTY, QWERTZ under AltGr, macOS
+# French Option — can be driven here instead of on a borrowed laptop. The
+# second half is a source scan: Emscripten's GLFW port implements
+# glfwGetKeyName and friends as abort(), which tears the WASM module down,
+# and none of them is a compile error, so only a scan catches the class.
+add_executable(test_key_chord_policy key_chord_policy_test.cpp)
+target_include_directories(test_key_chord_policy PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(test_key_chord_policy PRIVATE
+    POM2_SOURCE_DIR=${CMAKE_SOURCE_DIR})
+add_test(NAME key_chord_policy COMMAND test_key_chord_policy)
+set_tests_properties(key_chord_policy PROPERTIES TIMEOUT 15)
 
 
 # ─── Mockingboard smoke test ─────────────────────────────────────────────
@@ -6441,6 +6570,13 @@ pom2_add_headless_test(test_storage_coordinator
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20
     SOURCES audio_coordinator_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Disk turbo's CPU-budget override composes with the base budget instead of
+# stashing/restoring it in the UI layer (see the file header).
+pom2_add_headless_test(test_disk_turbo_speed
+    NAME disk_turbo_speed TIMEOUT 10
+    SOURCES disk_turbo_speed_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_mouse_coordinator

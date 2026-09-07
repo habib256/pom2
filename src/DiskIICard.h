@@ -604,6 +604,26 @@ private:
         return phaseOn[1] || images[activeDrive].isWriteProtected();
     }
 
+    /// The WPT line as the CONTROLLER senses it — MAME
+    /// `floppy_image_device::wpt_r()` (floppy.cpp:817-820):
+    ///
+    ///     return m_wpt || (m_phases & 2);
+    ///
+    /// Same wire, same expression as `writingInhibited()` above, and that is
+    /// the point: the write gate and the sense line are one signal on the
+    /// analog card. POM2 modelled the inhibit half and left the sense half
+    /// reading the medium's flag alone (bug hunt 4 #12), so a guest that
+    /// probed with phase 1 still energized was told "writable" and then had
+    /// its write current silently gated off. RWTS drops all four phases
+    /// before it asks, which is exactly why the divergence went unnoticed.
+    ///
+    /// Empty-drive policy is NOT folded in here: the LSS shift-in opcode and
+    /// the $C0nD/$C0nE register hooks disagree about it deliberately (see the
+    /// note at the $C0nD hook), so each site adds `!isLoaded()` itself.
+    bool senseWriteProtect() const {
+        return phaseOn[1] || images[activeDrive].isWriteProtected();
+    }
+
     /// Read-amplifier noise for a head over a surface that modulates
     /// nothing: an empty drive, or a loaded disk on a quarter-track with no
     /// flux (WOZ TMAP $FF, tracks past 34). Advances `lssCycle` to the

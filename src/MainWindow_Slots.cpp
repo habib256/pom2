@@ -143,10 +143,21 @@ void MainWindow::renderSlotConfigPanel()
         auto& draft = slotConfigCoordinator_->draft();
         if (!slotDraftInited_) {
             slotConfigCoordinator_->resetDraft();
-            chatMauveVariantDraft_ =
-                settings->getString("chatmauve_variant", "feline");
+            // EMPTY means "no staged variant change", not "Féline". It used
+            // to be seeded with the setting's value once and then compared
+            // against the live setting every frame — but the Le Chat Mauve
+            // device panel writes `chatmauve_variant` LIVE, so any change made
+            // there turned into a phantom "1 staged change" here, and Apply
+            // wrote the stale draft back over it. The sentinel makes "the
+            // user picked a model in THIS panel" the only thing that stages.
+            chatMauveVariantDraft_.clear();
             slotDraftInited_ = true;
         }
+        const std::string cmVariantLive =
+            settings->getString("chatmauve_variant", "feline");
+        const std::string cmVariantEff =
+            chatMauveVariantDraft_.empty() ? cmVariantLive
+                                           : chatMauveVariantDraft_;
 
         const bool mouseAvailable    = mouseRomsPresent();
         const bool mouseAwAvailable  = mouseAwRomPresent();
@@ -159,10 +170,70 @@ void MainWindow::renderSlotConfigPanel()
             slotLabel("AUX slot");
             ImGui::TextUnformatted("Extended 80-Column Card (built-in, $C300 firmware)");
             ImGui::EndDisabled();
+
+            // RamWorks III aux size. The `ramworks_banks` key was READ in two
+            // places and WRITTEN by nothing — the only way to get more than
+            // stock 64 KB aux was to hand-edit state.cfg, and nothing said so.
+            // //c-class is excluded: those profiles force 1 bank back on
+            // (applyProfile step 4), so a picker there would be a dead
+            // control. Applying cold-boots, like every other machine change
+            // in this panel.
+            if (!profileCfg.noPhysicalSlots) {
+                struct RwTier { int banks; const char* label; };
+                static constexpr RwTier kRwTiers[] = {
+                    {   1, "64 KB (stock //e — no RamWorks)" },
+                    {   4, "256 KB RamWorks" },
+                    {   8, "512 KB RamWorks" },
+                    {  16, "1 MB RamWorks" },
+                    {  48, "3 MB RamWorks" },
+                    { 128, "8 MB RamWorks III" },
+                };
+                const int curBanks = settings->getInt("ramworks_banks", 1);
+                const char* curLabel = kRwTiers[0].label;
+                for (const auto& t : kRwTiers)
+                    if (t.banks == curBanks) curLabel = t.label;
+                slotLabel("AUX memory");
+                ImGui::SetNextItemWidth(320.0f);
+                if (ImGui::BeginCombo("##ramworks", curLabel)) {
+                    for (const auto& t : kRwTiers) {
+                        if (ImGui::Selectable(t.label, t.banks == curBanks) &&
+                            t.banks != curBanks) {
+                            settings->setInt("ramworks_banks", t.banks);
+                            if (!settings->save()) {
+                                settings->setInt("ramworks_banks", curBanks);
+                                tapeStatusMessage =
+                                    "Aux memory not changed — settings could "
+                                    "not be saved.";
+                                tapeStatusUntil = lastFrameTime + 6.0;
+                            } else if (!restartEmulationFromSettings()) {
+                                settings->setInt("ramworks_banks", curBanks);
+                                settings->save();
+                                tapeStatusMessage =
+                                    "Could not rebuild the machine with that "
+                                    "aux size.";
+                                tapeStatusUntil = lastFrameTime + 6.0;
+                            }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "RamWorks III bank-switched aux RAM ($C071/3/5/7).\n"
+                        "Changing it COLD-BOOTS the machine.\n"
+                        "A rewind snapshot only loads back into a machine\n"
+                        "with the same aux size.");
+            }
             ImGui::Spacing();
         }
 
-        // "diskii" is multi-instance — never flagged as a duplicate.
+        // Multi-instance cards are never flagged as duplicates. The list is
+        // SlotConfigurationCoordinator::isMultiInstance — the same predicate
+        // resolve() applies when it builds the effective plan. This used to
+        // hard-code "diskii" alone, so staging a second CFFA / SmartPort 3.5"
+        // / Liron (all legal, all per-slot storage) lit both rows red and
+        // hard-disabled Apply: a configuration the machine accepts that the
+        // panel would not let you reach.
         // Built-in slots forced by the profile are also exempt: e.g. //c
         // ships TWO SSC-compatible serial ports at sl1+sl2 (printer +
         // modem), both forced by cfgAppleIIc, and the user picker must
@@ -170,7 +241,8 @@ void MainWindow::renderSlotConfigPanel()
         // uniqueness check.
         auto isDuplicate = [&](int slot) -> bool {
             if (draft[slot].empty())                    return false;
-            if (draft[slot] == "diskii")                return false;
+            if (pom2::SlotConfigurationCoordinator::isMultiInstance(draft[slot]))
+                return false;
             if (profileCfg.builtInSlots[slot].has_value()) return false;
             for (int s = 1; s <= 7; ++s) {
                 if (s == slot) continue;
@@ -355,13 +427,24 @@ void MainWindow::renderSlotConfigPanel()
             // Féline / Adaptateur //c / Eve / Video-7 decide which registers
             // exist and which modes fall back). Staged like the slot itself;
             // Apply persists it and the rebuild plugs the chosen model.
-            if (draft[s] == "chatmauve") {
+            // Not offered on a //c-class machine: there the Chat Mauve is the
+            // rear "Adaptateur IIc" and the connector fixes the model, so a
+            // picker here would stage a change the profile ignores (and the
+            // pending counter below already refuses to count it).
+            if (draft[s] == "chatmauve" && !profileCfg.noPhysicalSlots) {
                 using CmVariant = LeChatMauveCard::Variant;
                 CmVariant cur;
-                if (!LeChatMauveCard::parseVariant(chatMauveVariantDraft_, cur))
+                if (!LeChatMauveCard::parseVariant(cmVariantEff, cur))
                     cur = CmVariant::Feline;
                 slotLabel("  model");
-                if (ImGui::BeginCombo("##cmvariant",
+                // Per-slot ID. A bare "##cmvariant" inside this loop is the
+                // same ImGui ID in every row (the loop body pushes none), so
+                // two rows staging a Chat Mauve — which the draft permits
+                // right up to the de-dup at Apply — collide and only the
+                // first one can be opened.
+                char cmId[24];
+                std::snprintf(cmId, sizeof(cmId), "##cmvariant%d", s);
+                if (ImGui::BeginCombo(cmId,
                                       LeChatMauveCard::variantLabel(cur))) {
                     for (int vi = 0; vi < LeChatMauveCard::kVariantCount; ++vi) {
                         const auto v = static_cast<CmVariant>(vi);
@@ -502,9 +585,8 @@ void MainWindow::renderSlotConfigPanel()
         // The staged Chat Mauve model counts as a pending change too (it is
         // persisted and applied by the same cold-boot). //c-class profiles
         // never stage it — the connector fixes the model.
-        if (!profileCfg.noPhysicalSlots &&
-            chatMauveVariantDraft_ !=
-                settings->getString("chatmauve_variant", "feline"))
+        if (!profileCfg.noPhysicalSlots && !chatMauveVariantDraft_.empty() &&
+            chatMauveVariantDraft_ != cmVariantLive)
             ++pending;
 
         if (pending > 0) {
@@ -546,8 +628,8 @@ void MainWindow::renderSlotConfigPanel()
             std::string prevCmVariant;
             bool cmVariantChanged = false;
             if (!profileCfg.noPhysicalSlots &&
-                chatMauveVariantDraft_ !=
-                    settings->getString("chatmauve_variant", "feline")) {
+                !chatMauveVariantDraft_.empty() &&
+                chatMauveVariantDraft_ != cmVariantLive) {
                 prevCmVariant = settings->getString("chatmauve_variant", "");
                 settings->setString("chatmauve_variant", chatMauveVariantDraft_);
                 cmVariantChanged = true;
@@ -585,6 +667,7 @@ void MainWindow::renderSlotConfigPanel()
                     pom2::log().warn("Slots", tapeStatusMessage);
                 }
                 slotConfigCoordinator_->resetDraft();
+                chatMauveVariantDraft_.clear();   // staged change consumed
             }
         }
         ImGui::EndDisabled();
@@ -601,8 +684,7 @@ void MainWindow::renderSlotConfigPanel()
         ImGui::BeginDisabled(pending == 0);
         if (ImGui::Button("Revert")) {
             slotConfigCoordinator_->resetDraft();
-            chatMauveVariantDraft_ =
-                settings->getString("chatmauve_variant", "feline");
+            chatMauveVariantDraft_.clear();
         }
         ImGui::EndDisabled();
         if (pending > 0 && ImGui::IsItemHovered())

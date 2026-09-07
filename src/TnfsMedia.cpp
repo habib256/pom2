@@ -254,6 +254,39 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
 
     TnfsClient c;
     std::string err;
+
+    // ── The CONNECT phase gets the same deadline as the transfer ─────────
+    // `giveUp` used to be consulted only after mount + stat, and both of them
+    // live entirely inside TnfsClient: TCP connect, then a UDP ladder of
+    // retries × per-request timeout. On an unreachable host that is ~30 s of
+    // uninterruptible wall clock — with the window already up and Ctrl+C
+    // swallowed, because the fetch is what the main thread is doing. So the
+    // client is given (a) the abort flag, so a signal is answered within one
+    // timeout, and (b) per-request bounds derived from what is left of the
+    // deadline, so the whole connect cannot outlive it. mount() makes up to
+    // two passes and the UDP one repeats `kMountRetries` times, hence the
+    // (1 + retries) divisor; half the budget is left for stat/open/transfer.
+    constexpr int kMountRetries = 3;
+    auto remainingMs = [&]() -> long long {
+        if (limits.deadlineSeconds <= 0) return -1;      // no deadline
+        const auto usedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+        return static_cast<long long>(limits.deadlineSeconds) * 1000 - usedMs;
+    };
+    if (limits.abort) c.setAbortFlag(limits.abort);
+    if (limits.deadlineSeconds > 0) {
+        const long long left = remainingMs();
+        // Already out of time before a socket is opened (a long cache scan on
+        // a cold, huge directory): fail here rather than spend the whole
+        // connect ladder discovering it.
+        if (left <= 0) { (void)giveUp(0, 0); return r; }
+        long long per = left / (2 * (1 + kMountRetries));
+        if (per < 250)  per = 250;
+        if (per > 5000) per = 5000;
+        c.setTimeoutMs(static_cast<int>(per));
+        c.setMaxRetries(kMountRetries);
+    }
+
     // MOUNT the ROOT and address the file by its absolute path. Mounting the
     // file's own directory would work too, but servers differ on whether a
     // sub-path is mountable at all, and the root always is.
@@ -262,6 +295,7 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
         return r;
     }
     r.usedTcp = c.usingTcp();
+    if (giveUp(0, 0)) return r;
 
     std::uint32_t size = 0;
     if (!c.fileSize(path, size, err)) {
@@ -286,6 +320,7 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
         r.error = "TNFS open " + path + " failed: " + err;
         return r;
     }
+    if (giveUp(0, size)) { c.closeFile(handle); return r; }
 
     log().info("TNFS", "fetching " + host + path + " (" +
                        std::to_string(size) + " bytes over " +

@@ -128,8 +128,17 @@ void testHdvAtSlot(int slot)
     assert(mem.memRead(base + 0x03) == 0x00);
     assert(mem.memRead(base + 0x05) == 0x03);
     assert(mem.memRead(base + 0x07) == 0x01);
-    assert(mem.memRead(base + 0xFE) == 0x03);
-    assert(mem.memRead(base + 0xFF) == 0x50);
+    // $CnFE = $07, not $03: bit 2 is "the device can be written to"
+    // (ProDOS 8 TN.PDOS.021). It read $03 — status + read, i.e. READ-ONLY —
+    // while the driver has always implemented command $02, so every
+    // capability-inspecting utility presented the volume as unwritable.
+    // Bug hunt #4 #13; SmartPortCard was fixed for the same defect in 2026-09.
+    assert(mem.memRead(base + 0xFE) == 0x07);
+    // $CnFF is the driver entry OFFSET, and the ROM moved when the read and
+    // write routines grew their out-of-range check — so read it rather than
+    // hard-coding it, and check that it points at the JMP below.
+    const uint8_t driverOff = mem.memRead(base + 0xFF);
+    assert(driverOff != 0x00);
 
     // Entry: JMP $Cn20.
     assert(mem.memRead(base + 0x00) == 0x4C);

@@ -355,6 +355,59 @@ void testSpeedClampedToAiServerCeiling()
     assert(p.has_value() && *p->executionSpeed == 17045);
 }
 
+// ── "--flag VALUE" for a flag whose value only attaches with "=" ────────
+// Hunt #4 item #17. `--ai-control`, `--fujinet`, `--fujinet-serial` and
+// `--rgb-card-invert-bit7` take their value after an `=`. Written with a
+// space, the value fell straight through to the positional-disk branch:
+// `POM2 --ai-control 6503` armed the server on the DEFAULT port and then
+// reported "unrecognised disk image: 6503" — two wrong outcomes from one
+// plausible command line, neither of them an error.
+void testSpaceSeparatedValueRejected()
+{
+    bool help = false;
+
+    assert(!parse({"POM2", "--ai-control", "6503"}, help).has_value());
+    assert(!parse({"POM2", "--fujinet", "1985"}, help).has_value());
+    assert(!parse({"POM2", "--rgb-card-invert-bit7", "on"}, help).has_value());
+    assert(!parse({"POM2", "--rgb-card-invert-bit7", "OFF"}, help).has_value());
+    assert(!parse({"POM2", "--fujinet-serial", "/dev/ttyUSB0"}, help).has_value());
+    assert(!parse({"POM2", "--fujinet-serial", "COM3"}, help).has_value());
+
+    // The `=` form is the one that works, and still does.
+    auto ok = parse({"POM2", "--ai-control=6503"}, help);
+    assert(ok.has_value() && ok->aiControl && ok->aiControlPort == 6503);
+    auto fj = parse({"POM2", "--fujinet=1985"}, help);
+    assert(fj.has_value() && fj->fujiNetPort == 1985);
+
+    // And the check must stay NARROW: a bare flag followed by a positional
+    // disk image is a legitimate invocation and must not be collateral.
+    auto disk = parse({"POM2", "--ai-control", "game.dsk"}, help);
+    assert(disk.has_value());
+    assert(disk->aiControl && disk->bootDiskPath == "game.dsk");
+    auto disk2 = parse({"POM2", "--rgb-card-invert-bit7", "extasie.woz"}, help);
+    assert(disk2.has_value());
+    assert(disk2->rgbCardInvertBit7.has_value() && *disk2->rgbCardInvertBit7);
+    assert(disk2->bootDiskPath == "extasie.woz");
+    // A bare flag as the LAST argument is fine too.
+    auto last = parse({"POM2", "--fujinet"}, help);
+    assert(last.has_value() &&
+           last->fujiNet == pom2::CliPlan::FujiNetTransport::Tcp);
+}
+
+// `POM2 --version` used to be rejected as an unknown flag while
+// `pom2_headless --version` worked — the one thing a user reaching for it
+// (attaching a version to a bug report) cannot work around. It takes the
+// --help exit path: nullopt, with helpRequested set so the caller exits 0.
+void testVersionFlag()
+{
+    bool help = false;
+    assert(!parse({"POM2", "--version"}, help).has_value());
+    assert(help);
+    help = false;
+    assert(!parse({"POM2", "-v"}, help).has_value());
+    assert(help);
+}
+
 }  // namespace
 
 int main()
@@ -389,6 +442,10 @@ int main()
     std::printf("classifyDiskForSlot 2IMG header (trailer/offset): OK\n");
     testFujiNetSlotExplicitness();
     std::printf("parseCli --fujinet slot preference vs explicit: OK\n");
+    testSpaceSeparatedValueRejected();
+    std::printf("parseCli rejects \"--flag VALUE\" for =VALUE flags: OK\n");
+    testVersionFlag();
+    std::printf("parseCli --version / -v: OK\n");
 
     std::printf("cli_kiosk OK\n");
     return 0;

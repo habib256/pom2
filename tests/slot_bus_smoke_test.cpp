@@ -17,10 +17,18 @@
 // SlotBus dispatch smoke test — pins:
 //   * device-select decode (slot N at $C080+N*16, low4 = addr & 0xF)
 //   * slot-ROM decode (slot N at $CN00, low8 = addr & 0xFF)
-//   * $C800 ownership: FIRST-one-wins, only a POPULATED slot claims, and
-//     the claim is released only by $CFFF (MAME `apple2e.cpp:2970-2987`
-//     `read_slot_rom`, `:2989-3025` `write_slot_rom`, `:3137-3155`
-//     `c800_r`). POM2 used to latch last-one-wins, empty slots included.
+//   * $C800 ownership: FIRST-one-wins, only a populated slot whose card
+//     answers `takesC800()` claims, and the claim is released only by
+//     $CFFF (MAME `apple2e.cpp:2970-2987` `read_slot_rom`, `:2989-3025`
+//     `write_slot_rom`, `:3137-3155` `c800_r`). POM2 used to latch
+//     last-one-wins, empty slots included; then first-one-wins for ANY
+//     populated slot — but MAME's condition is
+//     `(m_cnxx_slot == CNXX_UNCLAIMED) && m_slotdevice[slotnum]->take_c800()`
+//     and `take_c800()` defaults to FALSE (`a2bus.h:145`). A card with no
+//     expansion ROM (Disk II, Mockingboard, mouse, Le Chat Mauve) must not
+//     steal the window from the card that has one — on the fresh-install
+//     slot map the //e autostart scan hits slot 7 (Le Chat Mauve) before
+//     slot 5, and the SmartPort read $FF for its whole 2 KB.
 //   * $CFFF deactivates the expansion ROM (read or write)
 //   * an unclaimed read returns the FLOATING BUS, not a hard $FF — every
 //     one of those upstream handlers, plus `c080_r` (`:2883-2918`), ends
@@ -59,6 +67,10 @@ public:
         ++expansionReads;
         return static_cast<uint8_t>(offset & 0xFF);
     }
+    /// This fake HAS an expansion ROM, so it opts into /IOSTB the way every
+    /// such card does upstream (`a2ssc.cpp:50`, `a2thunderclock.cpp:73`,
+    /// `grappler.cpp:64`).
+    bool takesC800() const override { return true; }
     void expansionRomWrite(uint16_t offset, uint8_t v) override {
         ++expansionWrites;
         lastExpOffset = offset;
@@ -83,10 +95,70 @@ public:
     uint8_t  lastExpValue    = 0;
 };
 
+/// A card with NO expansion ROM — the shape of a Disk II, a Mockingboard, a
+/// mouse card, a 4play, a Le Chat Mauve. It serves $CnXX and nothing else,
+/// so `takesC800()` keeps the `SlotPeripheral` default (false), matching
+/// MAME `a2bus.h:145` where `take_c800()` is false unless overridden.
+class RomlessCard : public SlotPeripheral
+{
+public:
+    explicit RomlessCard(uint8_t signature) : sig(signature) {}
+    std::string_view name() const override { return "RomlessCard"; }
+    uint8_t slotRomRead(uint8_t low8) override {
+        ++slotRomReads;
+        return static_cast<uint8_t>(low8 ^ sig);
+    }
+    int slotRomReads = 0;
+    uint8_t sig;
+};
+
 } // namespace
+
+// The fresh-install slot map in miniature: a card with no expansion ROM in
+// slot 7 (Le Chat Mauve) and one with an expansion ROM in slot 5 (SmartPort /
+// Liron). The //e autostart scans $C700 downwards, so the ROM-less card is
+// touched FIRST. MAME's `read_slot_rom` claims only when
+// `m_slotdevice[slotnum]->take_c800()` (`a2bus.h:145`, default false), so the
+// window must still be free when slot 5 is touched. Before the fix slot 7
+// latched it and slot 5's whole 2 KB read $FF until a $CFFF release.
+static void testOnlyAC800CardClaimsTheWindow()
+{
+    SlotBus bus;
+    bus.plug(7, std::make_unique<RomlessCard>(0x30));   // no expansion ROM
+    auto romPtr = std::make_unique<FakeCard>(0xB0);     // has one
+    FakeCard* romCard = romPtr.get();
+    bus.plug(5, std::move(romPtr));
+
+    // Scan order: the ROM-less card first.
+    (void)bus.slotRomRead(0xC700);
+    assert(bus.getActiveExpansionSlot() == -1 &&
+           "a card with no expansion ROM must not take /IOSTB");
+    bus.slotRomWrite(0xC7F0, 0x11);                     // the write side too
+    assert(bus.getActiveExpansionSlot() == -1);
+
+    // Now the card that DOES serve $C800 — it gets the window.
+    (void)bus.slotRomRead(0xC500);
+    assert(bus.getActiveExpansionSlot() == 5);
+    assert(bus.expansionRomRead(0xC842) == 0x42 &&
+           "the expansion window must reach the card that owns it");
+    assert(romCard->expansionReads == 1);
+
+    // And first-one-wins still holds BETWEEN two $C800-capable cards.
+    (void)bus.expansionRomRead(0xCFFF);
+    assert(bus.getActiveExpansionSlot() == -1);
+    bus.plug(4, std::make_unique<FakeCard>(0xC0));
+    (void)bus.slotRomRead(0xC400);
+    assert(bus.getActiveExpansionSlot() == 4);
+    (void)bus.slotRomRead(0xC500);
+    assert(bus.getActiveExpansionSlot() == 4);
+
+    std::printf("  ok: only a takesC800() card claims $C800-$CFFF\n");
+}
 
 int main()
 {
+    testOnlyAC800CardClaimsTheWindow();
+
     SlotBus bus;
 
     // Plug card in slot 6 (typical Disk II location).

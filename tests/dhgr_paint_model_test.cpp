@@ -41,6 +41,20 @@ using namespace hgrpaint;
 
 namespace {
 
+// One emulated video frame's worth of cycles. Phosphor persistence is paced
+// by ELAPSED EMULATED FRAMES (`Apple2Display::emuFrameDelta_`), not by render
+// calls — a paused machine must not fade, and a 144 Hz host panel must not
+// fade 2.4x too fast. A harness that swaps the frame buffer's contents
+// without letting the machine run is asking for the impossible: on real
+// silicon the picture only changes because the CPU ran. So every content
+// change below advances the cycle counter by a frame first, exactly as the
+// worker would, and the afterglow of the previous fill decays away.
+void advanceOneEmulatedFrame(Memory& mem)
+{
+    const auto& vt = pom2VideoTiming(mem.videoStandard());
+    mem.advanceCycles(65u * static_cast<uint32_t>(vt.scanlinesPerFrame));
+}
+
 // Stage a 16 KB editor pair (aux 8 KB + main 8 KB, page-relative) into an
 // IIe Memory at $2000 and render DHGR through the given mode.
 void renderPair(const std::vector<uint8_t>& pair, Apple2Display::HiResMode mode,
@@ -51,6 +65,7 @@ void renderPair(const std::vector<uint8_t>& pair, Apple2Display::HiResMode mode,
                               pair[kHiresSize + i]);          // main plane
     std::memcpy(mem.auxDataMutable() + 0x2000, pair.data(), kHiresSize);
     disp.setHiResMode(mode);
+    advanceOneEmulatedFrame(mem);
     disp.render(mem);
     assert(disp.width() == Apple2Display::kWidth80);          // DHGR = 560 wide
 }
@@ -147,6 +162,7 @@ int main()
             const uint8_t bb = static_cast<uint8_t>(c | (c << 4));
             for (int i = 0; i < 0x400; ++i)
                 mem.writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), bb);
+            advanceOneEmulatedFrame(mem);
             disp.render(mem);
             assert(disp.width() == Apple2Display::kWidth);
             const uint32_t grRgb = disp.pixels()[96 * 280 + 140] & 0x00FFFFFF;
@@ -194,6 +210,7 @@ int main()
             std::memcpy(mem.auxDataMutable() + 0x0400, pair.data(), 0x400);
             mem.memWrite(0xC050, 0); mem.memWrite(0xC052, 0); mem.memWrite(0xC054, 0);
             mem.memWrite(0xC056, 0); mem.memWrite(0xC00D, 0); mem.memWrite(0xC05E, 0);
+            advanceOneEmulatedFrame(mem);
             disp.render(mem);
             assert(disp.width() == Apple2Display::kWidth80);
             const uint32_t dlgrRgb = disp.pixels()[96 * 560 + 280] & 0x00FFFFFF;
@@ -206,6 +223,7 @@ int main()
             const uint8_t bb = static_cast<uint8_t>(c | (c << 4));
             for (int i = 0; i < 0x400; ++i)
                 mem.writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), bb);
+            advanceOneEmulatedFrame(mem);
             disp.render(mem);
             assert(disp.width() == Apple2Display::kWidth);
             const uint32_t grRgb = disp.pixels()[96 * 280 + 140] & 0x00FFFFFF;
@@ -233,6 +251,7 @@ int main()
             const uint8_t bb = static_cast<uint8_t>(nib | (nib << 4));
             for (int i = 0; i < 0x400; ++i)
                 mem.writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), bb);
+            advanceOneEmulatedFrame(mem);
             disp.render(mem);
             assert(disp.width() == Apple2Display::kWidth);
         };
@@ -255,6 +274,7 @@ int main()
             mem.writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), pair[0x400 + i]);
         std::memcpy(mem.auxDataMutable() + 0x0400, pair.data(), 0x400);
         mem.memWrite(0xC00D, 0); mem.memWrite(0xC05E, 0);
+        advanceOneEmulatedFrame(mem);
         disp.render(mem);
         assert(disp.width() == Apple2Display::kWidth80);
         for (int y = 0; y < 192; ++y)

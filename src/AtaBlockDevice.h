@@ -64,6 +64,11 @@ public:
     // ATA Error-register bit: aborted command (used for a write to a
     // write-protected device — ATA-1 §9.1).
     static constexpr uint8_t kErrABRT = 0x04;
+    // ATA Error-register bit: ID NOT FOUND — the addressed sector is not on
+    // this device (ATA-1 §9.1, ATA-2 §7.2.6 "the requested sector could not
+    // be found"). That is what an out-of-range LBA is, on READ as much as on
+    // WRITE; READ used to answer a zero-filled sector with a clean status.
+    static constexpr uint8_t kErrIDNF = 0x10;
 
     // ATA commands we honour explicitly; everything else completes as a no-op.
     static constexpr uint8_t kCmdRead       = 0x20;
@@ -81,6 +86,18 @@ public:
 
     /// Hard reset (power-on / SRST): clears the taskfile and any in-flight PIO.
     void reset();
+
+    /// Is THIS device the one the host last addressed? Register 6 bit 4 (DRV
+    /// / IDE_DEVICE_HEAD_DRV) picks master (0) or slave (1) on the shared
+    /// cable, and POM2 fits exactly one device — the master. MAME
+    /// `ata_hle_device::device_selected()` (machine/atahle.cpp) compares that
+    /// bit against the device's own cable position and `read_cs0` answers 0
+    /// when they differ; POM2 read the bit nowhere, so the CFFA firmware's
+    /// slave scan (roms/cffa20ee02.bin $CCC: LDA $05F8,Y / EOR #$10 /
+    /// STA $C08E,X — the scan MAME enables by patching m_rom[0x800/0x801]
+    /// to 0x0D, a2cffa.cpp device_start) found a SECOND copy of the same
+    /// medium, and a write addressed to it landed on the master's image.
+    bool selected() const { return (devHead_ & 0x10) == 0; }
 
     /// cs0 (command block) register access. reg 0 is the 16-bit data port; the
     /// other registers carry an 8-bit value in the low byte.

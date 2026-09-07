@@ -325,6 +325,11 @@ bool TnfsClient::sendRecvUdp(const uint8_t* pkt, std::size_t n,
 {
     uint8_t buf[kHeaderSize + kMaxPayload];
     for (int attempt = 0; attempt < retries_; ++attempt) {
+        // The retry ladder is the longest uninterruptible stretch in the
+        // client (retries × per-request timeout). Poll the caller's abort
+        // flag once per attempt so Ctrl+C is answered within one timeout
+        // instead of after the whole ladder.
+        if (aborted()) { errOut = "TNFS: cancelled"; return false; }
         if (sendNoSignal(fd_, pkt, n) != static_cast<iolen_t>(n)) {
             errOut = "TNFS send failed: " + lastSocketErrorText();
             return false;
@@ -426,6 +431,14 @@ bool TnfsClient::mount(const std::string& host, uint16_t port,
     // its keep.
     std::string tcpErr, udpErr;
     for (int pass = 0; pass < 2; ++pass) {
+        // Cancellation is checked BETWEEN the two passes: a Ctrl+C during the
+        // TCP attempt on an unreachable host must not then buy the caller a
+        // whole UDP retry ladder on top.
+        if (aborted()) {
+            errOut = "TNFS mount cancelled";
+            closeTransport();
+            return false;
+        }
         const bool wantTcp = (pass == 0);
         std::string& err = wantTcp ? tcpErr : udpErr;
         if (!openTransport(host_, port_, wantTcp, err)) continue;

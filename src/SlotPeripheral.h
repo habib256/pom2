@@ -81,6 +81,16 @@ public:
     virtual uint8_t expansionRomRead (uint16_t /*offset*/) { return 0xFF; }
     virtual void    expansionRomWrite(uint16_t /*offset*/, uint8_t /*v*/) {}
 
+    /// Does this card drive the shared $C800-$CFFF (/IOSTB) window at all?
+    /// MAME `a2bus.h:145`: `virtual bool take_c800() const { return false; }`
+    /// — "override and return true if your card can take over the /IOSTB
+    /// space". `apple2e.cpp` read_slot_rom / write_slot_rom claim the window
+    /// only when the touched slot's device says yes, so a card with no
+    /// expansion ROM (Disk II, Mockingboard, mouse, 4play, Le Chat Mauve…)
+    /// must NOT steal it from the card that has one. Cards that override
+    /// `expansionRomRead` override this too.
+    virtual bool takesC800() const { return false; }
+
     /// Lifecycle. `onPlug` / `onUnplug` flank a card insertion; `onReset`
     /// fires on Apple II hardware reset (Ctrl-Reset).
     virtual void onPlug()   {}
@@ -218,6 +228,15 @@ protected:
     /// auto-release any still-asserted bit before letting the card go,
     /// so cards rarely need to clear in `onUnplug()` themselves.
     void assertIrq(bool asserted);
+
+    /// What this card should return from a decoded address it does NOT
+    /// drive — MAME's `get_open_bus()` tail, which several a2bus cards end
+    /// their `read_c0nx` switch on (`a2cffa.cpp`, `a2mockingboard.cpp`, …).
+    /// `SlotBus::openBus()` forwards to the source `Memory` installed with
+    /// `setFloatingBusSource` (hunt #3); a card that is not plugged, or a
+    /// bus with no source (several test harnesses), gets $FF — the constant
+    /// that was hard-coded everywhere before.
+    uint8_t openBus() const;
 
 private:
     friend class SlotBus;

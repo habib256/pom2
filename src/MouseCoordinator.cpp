@@ -80,18 +80,27 @@ MouseCoordinator::Snapshot MouseCoordinator::capture() const
     }
 
     if (snapshot.slot > 0 && snapshot.slot < SlotBus::kSlotCount) {
+        // The six mouse screen holes live in text page 1 ($0478/$0578/$04F8/
+        // $05F8/$0778/$07F8 + slot), and on a //e that page is exactly what
+        // 80STORE + PAGE2 moves to AUX: the firmware writes them through the
+        // CPU view, so under a mouse-driven 80-column program `peekMainRam`
+        // was reading a stale main-bank copy and the Mouse Inspector showed
+        // a cursor frozen at whatever was there before the switch. Read the
+        // same view the CPU reads — `peekCpuView` resolves the paging with
+        // no side effects (Memory.h: no soft switch, no INTC8ROM latch, no
+        // $C800 claim).
         auto& memory = state.memory();
-        snapshot.holes.xLo = memory.peekMainRam(
+        snapshot.holes.xLo = memory.peekCpuView(
             static_cast<std::uint16_t>(0x0478 + snapshot.slot));
-        snapshot.holes.xHi = memory.peekMainRam(
+        snapshot.holes.xHi = memory.peekCpuView(
             static_cast<std::uint16_t>(0x0578 + snapshot.slot));
-        snapshot.holes.yLo = memory.peekMainRam(
+        snapshot.holes.yLo = memory.peekCpuView(
             static_cast<std::uint16_t>(0x04F8 + snapshot.slot));
-        snapshot.holes.yHi = memory.peekMainRam(
+        snapshot.holes.yHi = memory.peekCpuView(
             static_cast<std::uint16_t>(0x05F8 + snapshot.slot));
-        snapshot.holes.status = memory.peekMainRam(
+        snapshot.holes.status = memory.peekCpuView(
             static_cast<std::uint16_t>(0x0778 + snapshot.slot));
-        snapshot.holes.mode = memory.peekMainRam(
+        snapshot.holes.mode = memory.peekCpuView(
             static_cast<std::uint16_t>(0x07F8 + snapshot.slot));
     }
     return snapshot;

@@ -105,8 +105,15 @@ public:
     /// scan (PH0 + PH2 raised together, $C9E5).
     void reset();
     /// The bus reset alone (PH0 + PH2 raised together, $C9E5): protocol
-    /// state goes, the diagnostics counters stay.
+    /// state AND the host-assigned chain numbers go, the diagnostics
+    /// counters stay. Only the host's own reset line may call this.
     void busReset();
+    /// Drop whatever exchange is in flight — a half-received frame, a reply
+    /// nobody read, a WRITE waiting for its data packet — WITHOUT forgetting
+    /// the chain numbers. This is what a media change under a transaction
+    /// needs: the frame must not be spliced with the next one, but the host
+    /// has not re-run its INIT scan, so its numbering still stands.
+    void abortTransaction();
     /// A byte the host wrote to the data register in write mode while the
     /// device was addressed.
     void hostWrote(uint8_t wire);

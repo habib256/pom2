@@ -337,55 +337,18 @@ MainWindow::MainWindow(bool forceIIPlus)
             dir, FloppySoundDevice::FormFactor::FF35);
         if (ok525 || ok35) break;
     }
-    {
-        // Restore persisted volume/mute per channel. The 3.5" channel
-        // inherits the 5.25" defaults on first run so users who had
-        // already tuned floppy_sound_volume don't get a louder/quieter
-        // 3.5" surprise.
-        const float vol525 = settings->getFloat("floppy_sound_volume", 0.6f);
-        const bool  mute525 = settings->getBool ("floppy_sound_muted",  false);
-        const float vol35   = settings->getFloat("floppy_sound_volume_35", vol525);
-        // WASM default boots from an HDV ("hard disk"), and the disk-drive
-        // mechanical sounds carry loud over the browser's Web Audio path.
-        // Quarter the disk channels in the browser build. (HDV access itself
-        // is silent — the 5.25"/3.5" floppy channels are the only disk sounds,
-        // so they are what the "HD noise" actually is.) The factor scales the
-        // restored value, so a user who lowers the mixer slider further still
-        // sticks (the mixer reads the live device volume, not settings).
-#ifdef __EMSCRIPTEN__
-        constexpr float kWasmDiskGain = 0.25f;
-#else
-        constexpr float kWasmDiskGain = 1.0f;
-#endif
-        controller->floppySound525().setVolume(vol525 * kWasmDiskGain);
-        controller->floppySound525().setMuted (mute525);
-        controller->floppySound35().setVolume(vol35 * kWasmDiskGain);
-        controller->floppySound35().setMuted(
-            settings->getBool ("floppy_sound_muted_35",  mute525));
-        // Audio master (mixer panel). Default 1.0 / unmuted to preserve
-        // pre-mixer behaviour.
-        controller->audio().setMasterVolume(
-            settings->getFloat("master_volume", 1.0f));
-        controller->audio().setMasterMuted(
-            settings->getBool ("master_muted",  false));
-        // Stereo bus (2026-08-01). Off = true stereo, which is what the
-        // hardware does; the switch exists for mono playback gear and
-        // for anyone who would rather not have a single-AY tune arrive
-        // from the left speaker only.
-        controller->audio().setMonoDownmix(
-            settings->getBool ("audio_mono_downmix", false));
-        // Stereo placement of the mono sources. Centre by default — the
-        // Apple's own speaker has no stereo position to be faithful to,
-        // so this is a taste knob, not an emulation one.
-        controller->speaker().pan.store(
-            settings->getFloat("speaker_pan",  0.0f));
-        controller->cassette().pan.store(
-            settings->getFloat("cassette_pan", 0.0f));
-        controller->floppySound525().pan.store(
-            settings->getFloat("floppy_sound_pan",    0.0f));
-        controller->floppySound35().pan.store(
-            settings->getFloat("floppy_sound_pan_35", 0.0f));
-    }
+    // One call for the whole host-side audio block — levels, mutes, pans,
+    // master, downmix — mirroring `audioCoordinator_->persist()` on the way
+    // out (MainWindow_Session.cpp). It used to be hand-rolled here in two
+    // separate blocks plus a third inside the printer setup, and the copies
+    // had already drifted: `printer_sound_pan` and the cassette mute were
+    // written on exit and never read back. One function, one keyspace.
+    audioCoordinator_->restore(*settings,
+                               controller->speaker(),
+                               controller->cassette(),
+                               controller->floppySound525(),
+                               controller->floppySound35(),
+                               *printerSound);
 
     // Plug all expansion cards in their user-configured slots. The
     // mapping is read from `slot_1_card`..`slot_7_card` settings; absent
@@ -486,6 +449,18 @@ MainWindow::MainWindow(bool forceIIPlus)
             hgrPaintEditor->restoreSession(hs);
         }
         controller->rewind().setEnabled(settings->getBool("rewind_enabled", false));
+        // History length, in seconds → frames at THIS profile's refresh rate.
+        // The panel writes the key (renderRewindWindow); without this read the
+        // ring silently came back at its 30 s default on every launch.
+        {
+            const int histSec = settings->getInt("rewind_history_seconds", 0);
+            if (histSec >= 5 && histSec <= 120) {
+                const int hz =
+                    pom2VideoTiming(controller->getVideoStandard()).refreshHz;
+                controller->rewind().setMaxFrames(
+                    static_cast<size_t>(histSec) * static_cast<size_t>(hz));
+            }
+        }
         {
             // The whole Joystick panel binding, not just the square gate:
             // the pad the user chose, the deadzone they dialled and the two
@@ -514,18 +489,17 @@ MainWindow::MainWindow(bool forceIIPlus)
                                 pom2::ImageWriter::PaperSize::Count))
                 imageWriter->setPaperSize(
                     static_cast<pom2::ImageWriter::PaperSize>(paper));
-            // Mechanical sound. Levels are restored here; the REGISTRATION
-            // lives at the end of plugSlotsFromSettings() instead, because
-            // both slot-rebuild paths (profile switch, Slot Config "Apply")
-            // call unregisterAllAudioSources() and then only re-register
-            // card-owned sources. Registering here meant the printer went
-            // permanently silent after the first profile switch — including
-            // the one the constructor itself performs when the saved profile
-            // differs from the ROM auto-probe.
-            printerSound->setVolume(
-                settings->getFloat("printer_sound_volume", 0.35f));
-            printerSound->setMuted(
-                settings->getBool("printer_sound_muted", false));
+            // Mechanical sound. Its LEVELS come from
+            // `audioCoordinator_->restore()` further up (volume, mute and —
+            // new — the pan that persist() had always written and nobody
+            // read). Only the WIRING is done here; the audio-source
+            // REGISTRATION lives at the end of plugSlotsFromSettings()
+            // instead, because both slot-rebuild paths (profile switch, Slot
+            // Config "Apply") call unregisterAllAudioSources() and then only
+            // re-register card-owned sources. Registering here meant the
+            // printer went permanently silent after the first profile switch
+            // — including the one the constructor itself performs when the
+            // saved profile differs from the ROM auto-probe.
             imageWriter->setSoundSink(printerSound.get());
 
             // Durable printouts, alongside the spool and trace files POM2
@@ -749,16 +723,6 @@ MainWindow::MainWindow(bool forceIIPlus)
             controller->mount35(1, p2)) {
             pom2::log().info("Sony35", "External re-mounted from settings: " + p2);
         }
-    }
-
-    // ── Restore audio levels ─────────────────────────────────────────
-    {
-        const float spkVol = settings->getFloat("speaker_volume", 1.0f);
-        controller->speaker().setVolume(spkVol);
-        controller->speaker().setMuted(settings->getBool("speaker_muted", false));
-        controller->setCassetteVolume(settings->getFloat("cassette_volume", 0.6f));
-        controller->cassette().setAutoRewind(
-            settings->getBool("cassette_auto_rewind", false));
     }
 
     // Always wake up at the Applesoft prompt. A default HDV / disk may be

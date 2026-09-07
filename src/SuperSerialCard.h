@@ -266,6 +266,12 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
+    /// MAME `a2ssc.cpp:50` `take_c800() const override { return true; }` — the
+    /// real SSC's 2 KB EPROM answers /IOSTB, so the card claims the window
+    /// even though POM2 serves no expansion ROM there (our `expansionRomRead`
+    /// stays the $FF default). Claiming it is the parity-correct behaviour:
+    /// an SSC that is scanned first DOES lock a later card out until $CFFF.
+    bool    takesC800() const override { return true; }
     void    onReset() override;
     void    onUnplug() override;
     // CPU-thread hook: apply a worker-thread-pending IRQ-line change here so

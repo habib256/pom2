@@ -265,7 +265,6 @@ CassetteDeck_ImGui::render(const char* title,
                       static_cast<int>(std::round(volume_ * 100.0f)));
         out.statusMessage = msg;
     }
-    ImGui::SetWindowFontScale(1.0f);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Volume + 10%%");
     if (ImGui::Button(ICON_FA_VOLUME_LOW "##DeckVolDown", volSize)) {
         muted_  = false;
@@ -277,6 +276,10 @@ CassetteDeck_ImGui::render(const char* title,
         out.statusMessage = msg;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Volume - 10%%");
+    // The scale reset belongs HERE, after both buttons. It sat between VOL+
+    // and VOL-, so the two halves of one control drew their icons at
+    // different sizes.
+    ImGui::SetWindowFontScale(1.0f);
     ImGui::EndGroup();
 
     // MUTE.

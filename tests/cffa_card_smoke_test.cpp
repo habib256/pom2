@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -141,6 +142,59 @@ int main() {
         back[i + 1] = regR(0x0);
     }
     for (size_t i = 0; i < kBlk; ++i) assert(back[i] == src[i]);
+
+    // ── adoptImage resets the ATA taskfile, exactly like loadImage ────────
+    // `adoptImage` is phase 2 of the two-phase mount (pom2::mountBlockCard) —
+    // the path a GUI mount actually takes. It forwarded to the backing store
+    // and nothing else, so a mount landing mid-PIO left phase_/lba_/
+    // sectorsLeft_ describing the OUTGOING medium, and the next 256 words the
+    // guest fed the data port were flushed into the NEW image at the old LBA
+    // (bug hunt 4 #9).
+    {
+        // Start a WRITE and feed it half a sector, then mount over it.
+        setLba(2, 1);
+        regW(0xF, pom2::AtaBlockDevice::kCmdWrite);
+        assert(regR(0xF) & pom2::AtaBlockDevice::kStDRQ);
+        for (size_t i = 0; i < 128; i += 2) {
+            regW(0x0, 0xEE);
+            regW(0x8, 0xEE);
+        }
+
+        std::vector<uint8_t> fresh(8u * kBlk, 0x5A);
+        const std::string freshPath =
+            (std::filesystem::temp_directory_path() / "pom2_cffa_adopt.hdv")
+                .string();
+        {
+            std::ofstream f(freshPath, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(fresh.data()),
+                    static_cast<std::streamsize>(fresh.size()));
+        }
+        pom2::Block512Backing::PreparedImage prepared;
+        std::string prepErr;
+        assert(pom2::Block512Backing::readImageFile(freshPath, prepared,
+                                                    prepErr));
+        assert(cffa->adoptImage(std::move(prepared)));
+
+        // The taskfile must be idle: no DRQ, and nothing dirty. Before the
+        // fix the card sat in PioOut and the guest's next 128 words landed in
+        // block 2 of the image that had just been mounted.
+        if ((regR(0xF) & pom2::AtaBlockDevice::kStDRQ) != 0) {
+            std::printf("FAIL: DRQ still set after adoptImage — the ATA "
+                        "taskfile survived the mount\n");
+            return 1;
+        }
+        for (size_t i = 0; i < 128; i += 2) {
+            regW(0x0, 0xEE);
+            regW(0x8, 0xEE);
+        }
+        if (cffa->hasUnsavedChanges()) {
+            std::printf("FAIL: the tail of the interrupted write reached the "
+                        "newly mounted image\n");
+            return 1;
+        }
+        std::error_code rmEc;
+        std::filesystem::remove(freshPath, rmEc);
+    }
 
     std::printf("cffa_card_smoke: OK (%s)\n", romPath.c_str());
     return 0;

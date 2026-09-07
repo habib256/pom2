@@ -339,7 +339,8 @@ constexpr uint8_t kBitIrqEnable = 0x40;
 constexpr int kCpuHz = 1022727;
 
 // Latch a TP rate via STB and enable interrupts. `tpMode` is the raw
-// C0/C1/C2 mode code (4=64Hz, 5=256Hz, 6=2048Hz, 7=4096Hz).
+// C0/C1/C2 mode code (4=64Hz, 5=256Hz, 6=2048Hz; 7 is MODE_TEST on this
+// part, not a rate — see testModeSevenIsTestNotTp4096 below).
 void armTpInterrupts(ClockCard& card, uint8_t tpMode)
 {
     const uint8_t modeShifted = static_cast<uint8_t>(tpMode << 3);
@@ -369,7 +370,7 @@ int countIrqPulses(ClockCard& card, int totalCycles)
 void testTpRatesProduceExpectedPulseCounts()
 {
     struct { uint8_t mode; int rateHz; } cases[] = {
-        { 0x04,   64 }, { 0x05,  256 }, { 0x06, 2048 }, { 0x07, 4096 },
+        { 0x04,   64 }, { 0x05,  256 }, { 0x06, 2048 },
     };
     for (const auto& c : cases) {
         auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
@@ -384,6 +385,62 @@ void testTpRatesProduceExpectedPulseCounts()
         const int hi = c.rateHz + c.rateHz / 32 + 1;
         assert(pulses >= lo && pulses <= hi);
     }
+}
+
+// Mode code 7 on the PARALLEL C0/C1/C2 field is MODE_TEST, not TP 4096 Hz.
+//
+// MAME `upd1990a.cpp:198-205` `stb_w`: `if (is_serial_mode()) m_c =
+// m_shift_reg[6]; else { m_c = m_c_unlatched; if (m_c == 7) m_c =
+// MODE_TEST; }`, and `is_serial_mode()` (`:63-67`) needs a TYPE_4990A —
+// `a2thunderclock.cpp:94` fits a plain `UPD1990A(…, 32.768_kHz_XTAL)`.
+// MODE_TP_4096HZ is enum 7 but MODE_TEST is enum 15 (`upd1990a.h:76-91`),
+// so the ThunderClock+ can never select 4096 Hz. POM2 read code 7 as that
+// rate and handed a guest 4096 IRQs/s the real card cannot produce.
+//
+// MODE_TEST itself leaves TP alone (`:344-359` never touches `m_timer_tp`)
+// and makes a following SHIFT / TIME_READ latch put TP at XTAL/1024 = 32 Hz
+// (`:240-242`, `:307-309`).
+void testModeSevenIsTestNotTp4096()
+{
+    auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+
+    // Start from a real rate so "leaves TP alone" is observable.
+    armTpInterrupts(*card, 0x06);
+    assert(card->tpRateHz() == 2048);
+    assert(!card->testModeActive());
+
+    // Latch code 7: test mode on, TP untouched — NOT 4096 Hz.
+    const uint8_t seven = static_cast<uint8_t>(0x07 << 3);
+    card->deviceSelectWrite(0, seven);
+    card->deviceSelectWrite(0, seven | kBitStb);
+    card->deviceSelectWrite(0, seven);
+    assert(card->testModeActive() && "code 7 must latch MODE_TEST");
+    assert(card->tpRateHz() == 2048 &&
+           "MODE_TEST does not reprogram TP, and 4096 Hz is unreachable here");
+
+    // A TIME_READ latch while in test mode drops TP to 32 Hz.
+    const uint8_t timeRead = static_cast<uint8_t>(0x03 << 3);
+    card->deviceSelectWrite(0, timeRead);
+    card->deviceSelectWrite(0, timeRead | kBitStb);
+    card->deviceSelectWrite(0, timeRead);
+    assert(card->tpRateHz() == 32 && "32 Hz time pulse in testmode");
+    assert(card->testModeActive() &&
+           "TIME_READ does not clear test mode (MAME :210-219)");
+
+    // ...and a TP-rate latch leaves test mode and restores a normal rate.
+    const uint8_t tp256 = static_cast<uint8_t>(0x05 << 3);
+    card->deviceSelectWrite(0, tp256);
+    card->deviceSelectWrite(0, tp256 | kBitStb);
+    card->deviceSelectWrite(0, tp256);
+    assert(!card->testModeActive());
+    assert(card->tpRateHz() == 256);
+
+    // A reset clears it too.
+    card->deviceSelectWrite(0, seven);
+    card->deviceSelectWrite(0, seven | kBitStb);
+    assert(card->testModeActive());
+    card->onReset();
+    assert(!card->testModeActive());
 }
 
 // With interrupts disabled, TP still toggles internally but never pulls IRQ.
@@ -535,7 +592,10 @@ int main()
     std::printf("MODE_SHIFT lax: CLK shifts in any mode (ProDOS compat): OK\n");
 
     testTpRatesProduceExpectedPulseCounts();
-    std::printf("TP rates 64/256/2048/4096 Hz → IRQ pulse counts: OK\n");
+    std::printf("TP rates 64/256/2048 Hz → IRQ pulse counts: OK\n");
+
+    testModeSevenIsTestNotTp4096();
+    std::printf("Mode code 7 is MODE_TEST on the parallel part: OK\n");
 
     testNoIrqWhenDisabled();
     std::printf("TP toggles but no IRQ while disabled: OK\n");

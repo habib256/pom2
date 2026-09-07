@@ -443,9 +443,13 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
 
 void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName)
 {
+    // Reap a finished fetch worker even when the panel is CLOSED. This is the
+    // only place the thread is ever joined, and closing the window while a
+    // download runs is the natural thing to do — the joinable std::thread then
+    // outlived the panel with nobody left to notice it had finished.
+    pollFetchJoin();
     if (!open || !*open) return;
     if (!scanned_) rescan();
-    pollFetchJoin();
 
     ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("ROM Status", open)) {

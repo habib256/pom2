@@ -754,6 +754,41 @@ Decisions, not work. Do not re-litigate without new evidence.
 Findings **deliberately not fixed**, because the reason for leaving them is part
 of the finding.
 
+- 🟡 **Host Shift is not wired to `$C063`, and the dead code that would wire it
+  has the polarity backwards** (bug hunt #4). `PaddleInputs::button2(iieMode)`
+  folds a `shift_` atomic into PB2 and `Memory::setShiftKey` forwards to it;
+  **nothing in the tree calls either**. Wiring it up as written would make wrong
+  behaviour visible instead of invisible, twice over. MAME's `c000_r` returns
+  `0x80` when Shift is **UP** — the SHK jumper grounds PB2, so pressing the key
+  pulls the line low — and it does so only when the machine option
+  `m_kbd_shift_mod` is set, which is a IIe Platinum machine option POM2 has no concept of.
+  A real fix owns `PaddleInputs.h`, inverts the sense, and adds the machine
+  option; a lone `onKey` branch does not.
+- 🟡 **`Sony35Drive::monW` keeps the controller's enable line wired to the
+  motor, and upstream does not** (bug hunt #4). MAME's
+  `mac_floppy_device::mon_w(int) {}` is a no-op (`floppy.cpp:2835-2838`): a
+  Sony's motor answers only its own MotorOn (0x2) / MotorOff (0x6) register
+  strobes, so `/MOTORON` and `/READY` should follow the mechanism rather than
+  the IWM. The alignment was made and reverted the same day: `liron_boot35`
+  fails with *"the drive's motor never ran"*, because POM2's Liron and //c+
+  paths reach the mechanism through `IWMDevice`'s enable line rather than
+  through a modelled MIG strobe sequencer. That sequencer comes first.
+- 🟡 **Step-over is a temp breakpoint at `PC + 3`, which never fires for the
+  Apple II's dominant call convention** (bug hunt #4). `JSR $BF00 / DB cmd /
+  DW params` returns to `pc + 6`, and the SmartPort `$Cn00` dispatch is the
+  same shape, so the transient lands on a parameter byte no opcode fetch ever
+  reads — and Step Over has already set the machine Running, so it runs free
+  until the user presses Stop. Recursion has the mirror problem. The honest fix
+  needs the stack pointer inside `M6502DebugHook::onInstruction`, which is the
+  per-instruction path `docs/PERFORMANCE.md` §§ 8.2/8.5 guards; the limit is
+  documented at the site instead.
+- 🟢 **The `$C800` claim is now right, and no shipped firmware could see that it
+  was wrong** (bug hunt #4). Worth saying plainly: six of the eight
+  fresh-install slots claimed the expansion window they had no ROM for, and
+  every ROM POM2 ships opens with `LDA $CFFF` and self-heals. The exposure is
+  the Workstation card's `$Cn00` page, which contains no `$CFFF` access, and
+  any future dump that behaves the same.
+
 - 🟢 **Blocking work under `stateMutex` — what is LEFT.** The 2026-08-22 audit
   found ~20 sites and fixed the structural cause (`MediaMount.h`: read + decode
   unlocked, swap under the lock). What remains was examined on 2026-08-23 and

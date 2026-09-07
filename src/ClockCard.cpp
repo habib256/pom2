@@ -31,18 +31,31 @@
 namespace {
 
 // uPD1990AC mode codes carried on C0/C1/C2 (bits 3,4,5 of the $C0n0
-// write). MAME `upd1990a.h:58-73` defines the full 16-entry table; the
-// parallel uPD1990AC's 3-bit C field reaches modes 0..7 only. We react to
-// the first four plus the four TP (Timing-Pulse) rates below; the interval
-// timers (modes 8..15) are uPD4990A-serial-only and unreachable here.
+// write). MAME `upd1990a.h:76-91` defines the full 16-entry table; the
+// parallel uPD1990AC's 3-bit C field reaches codes 0..7 only, so the
+// interval timers (MODE_TP_*_INT, enum 8..11) are uPD4990A-serial-only
+// and unreachable here.
+//
+// Code 7 is NOT "TP 4096 Hz". MAME `upd1990a.cpp:198-205` (`stb_w`):
+//
+//     if (is_serial_mode())  m_c = m_shift_reg[6];
+//     else { m_c = m_c_unlatched; if (m_c == 7) m_c = MODE_TEST; }
+//
+// and `is_serial_mode()` (`:63-67`) is `m_variant == TYPE_4990A &&
+// m_c_unlatched == 7`. `a2thunderclock.cpp:94` instantiates a plain
+// `UPD1990A(config, m_upd1990ac, 32.768_kHz_XTAL)`, so on THIS card the
+// parallel branch always runs and C=7 always means MODE_TEST (enum 15).
+// MODE_TP_4096HZ (enum 7) is reachable only through the serial command
+// byte of a uPD4990A, which the ThunderClock+ does not have. The shipped
+// firmware never writes 7 either — it offers 64/256/2048 Hz only.
 constexpr uint8_t kModeRegisterHold = 0x00;
-[[maybe_unused]] constexpr uint8_t kModeShift = 0x01;
+constexpr uint8_t kModeShift        = 0x01;
 constexpr uint8_t kModeTimeSet      = 0x02;
 constexpr uint8_t kModeTimeRead     = 0x03;
 constexpr uint8_t kModeTp64Hz       = 0x04;
 constexpr uint8_t kModeTp256Hz      = 0x05;
 constexpr uint8_t kModeTp2048Hz     = 0x06;
-constexpr uint8_t kModeTp4096Hz     = 0x07;
+constexpr uint8_t kModeTest         = 0x07;   // MAME MODE_TEST, not TP 4096 Hz
 
 // $C0n0 write-side bit positions.
 constexpr uint8_t kBitDataIn    = 0x01;
@@ -122,6 +135,9 @@ void ClockCard::onReset()
     // timer — the real chip doesn't program m_timer_tp until an STB
     // latches a TP/REGISTER_HOLD mode.
     irqEnabled_        = false;
+    // MAME `upd1990a.cpp:89` `m_testmode = false;` in `device_start`'s
+    // init block; the flag is only ever raised by a MODE_TEST latch.
+    testMode_          = false;
     setTpRate(0);
     clearIrqRequest();
 }
@@ -306,17 +322,41 @@ void ClockCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 
 void ClockCard::programTpTimer(uint8_t mode)
 {
-    // TP rate = XTAL / divider. MAME `upd1990a.cpp:248-257` (TP modes) and
-    // `:176-181` (REGISTER_HOLD default) — divider values 512/128/16/8 for
-    // 64/256/2048/4096 Hz against the 32.768 kHz crystal. Only these modes
-    // touch TP; SHIFT / TIME_SET / TIME_READ leave it running at its prior
-    // rate in normal (non-test) mode, matching MAME.
+    // MAME `upd1990a.cpp:210-219`, run before the mode switch: REGISTER_HOLD
+    // and the TP-rate modes re-enable the time counter and LEAVE test mode;
+    // SHIFT / TIME_SET / TIME_READ leave the flag alone, which is what makes
+    // a TEST → SHIFT sequence give a 32 Hz TP instead of the previous rate.
+    if (mode == kModeRegisterHold ||
+        (mode >= kModeTp64Hz && mode < kModeTest))
+        testMode_ = false;
+    else if (mode == kModeTest)
+        testMode_ = true;
+
+    // TP rate = XTAL / divider. MAME `upd1990a.cpp:313-322` (TP modes) and
+    // `:222-228` (REGISTER_HOLD default) — divider values 512/128/16 for
+    // 64/256/2048 Hz against the 32.768 kHz crystal. Only these modes touch
+    // TP; SHIFT / TIME_SET / TIME_READ leave it running at its prior rate in
+    // normal (non-test) mode, matching MAME.
     switch (mode) {
     case kModeRegisterHold: setTpRate(kChipXtalHz / 512); break;   // 64 Hz
     case kModeTp64Hz:       setTpRate(kChipXtalHz / 512); break;   // 64 Hz
     case kModeTp256Hz:      setTpRate(kChipXtalHz / 128); break;   // 256 Hz
     case kModeTp2048Hz:     setTpRate(kChipXtalHz / 16);  break;   // 2048 Hz
-    case kModeTp4096Hz:     setTpRate(kChipXtalHz / 8);   break;   // 4096 Hz
+    case kModeTest:
+        // MAME `:344-359` `case MODE_TEST`: stop the time counter, stop the
+        // data-out pulse, arm the internal 1024 Hz test tick — and never
+        // touch `m_timer_tp`, so TP keeps whatever rate it already had.
+        // POM2 used to read this code as "TP 4096 Hz", giving a rate the
+        // real part cannot produce through its parallel C field at all.
+        break;
+    case kModeShift:
+    case kModeTimeRead:
+        // MAME `:240-242` (MODE_SHIFT) and `:307-309` (MODE_TIME_READ):
+        // while `m_testmode` both program TP to XTAL/1024 = 32 Hz
+        // ("32Hz time pulse in testmode"). Outside test mode they leave TP
+        // alone, which is what the `default:` below does.
+        if (testMode_) setTpRate(kChipXtalHz / 1024);   // 32 Hz
+        break;
     default:                /* TP rate unchanged */        break;
     }
 }
@@ -532,7 +572,18 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // Untrusted blob: advanceCycles loops `while (accum >= half)`, so a
     // crafted accum near INT_MAX with half == 1 would spin ~2^31 times.
     // Clamp both to the sane range this card can actually produce.
-    if (tpRateHz_ < 0 || tpRateHz_ > 4096) tpRateHz_ = 0;
+    // 2048, not 4096: the parallel C field cannot select MODE_TP_4096HZ (see
+    // the mode-code note at the top of this file), so the fastest rate this
+    // card can produce is 2048 Hz.
+    if (tpRateHz_ < 0 || tpRateHz_ > 2048) tpRateHz_ = 0;
+    // `testMode_` is not a blob field (the 'CLK1' record is fixed-size and
+    // predates it). Derive it from the mode the blob DOES carry: a snapshot
+    // taken while the chip sat in MODE_TEST comes back in test mode. The one
+    // case this loses is TEST followed by a SHIFT/TIME_SET/TIME_READ latch,
+    // which leaves the flag up on real silicon (MAME `:210-219` only clears
+    // it for REGISTER_HOLD and the TP modes) — unreachable from the shipped
+    // ThunderClock+ firmware, which never writes code 7 at all.
+    testMode_ = (lastMode == kModeTest);
     if (tpHalfPeriodCycles_ < 0) tpHalfPeriodCycles_ = 0;
     // The half-period is DERIVED (rate + the machine's CPU clock), not
     // independent state — `setCpuClock` re-derives it for exactly this

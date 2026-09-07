@@ -31,6 +31,7 @@
 #include "AudioDevice.h"
 #include "FloppySoundDevice.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -236,6 +237,67 @@ void testRateAwareAutoConfig()
     std::puts("OK rate_aware_auto_config");
 }
 
+// Bug hunt #4: `setSuspended` silences the whole bus without touching any
+// source's state or the user's mixer settings.
+//
+// The host device keeps calling us ~200 buffers a second whatever the
+// emulated machine is doing, so a paused CPU (toolbar pause, a debugger
+// breakpoint, a profile switch, a rewind scrub) left the free-running
+// sources — the AY generators on a Mockingboard/Phasor, the floppy motor
+// loop — droning their last register set for as long as the pause lasted.
+// `EmulationController::setMode` drives the flag; here we pin the mixer half:
+// suspended means the SOURCES ARE NOT CALLED AT ALL (which also freezes the
+// speaker's cycle cursor against a frozen Memory::cycleCounter), the output
+// is exact silence, and the meters bleed off instead of freezing.
+class CountingSource : public AudioSource
+{
+public:
+    void fillAudioBuffer(float* output, int frameCount) override
+    {
+        ++calls;
+        for (int i = 0; i < frameCount; ++i) output[i] = 0.5f;
+    }
+    int calls = 0;
+};
+
+void testSuspendSilencesBus()
+{
+    AudioDevice dev;
+    CountingSource src;
+    dev.addSource(&src);
+    assert(!dev.isSuspended() && "a bare AudioDevice must behave as before");
+
+    constexpr int kFrames = 128;
+    std::vector<float> out(static_cast<size_t>(kFrames) * 2, 0.0f);
+
+    dev.mixSources(out.data(), kFrames);
+    assert(src.calls == 1);
+    float peak = 0.0f;
+    for (float v : out) peak = std::max(peak, std::fabs(v));
+    assert(peak > 0.0f);
+    const float livePeak = src.lastBufferPeak.load();
+    assert(livePeak > 0.0f);
+
+    dev.setSuspended(true);
+    assert(dev.isSuspended());
+    std::fill(out.begin(), out.end(), 1.0f);   // detect any stale write-through
+    dev.mixSources(out.data(), kFrames);
+    assert(src.calls == 1 && "a suspended bus must not call its sources");
+    for (float v : out) assert(v == 0.0f && "a suspended bus emits silence");
+    // Meters bleed off on the usual 0.85 envelope rather than freezing.
+    assert(src.lastBufferPeak.load() < livePeak);
+
+    dev.setSuspended(false);
+    dev.mixSources(out.data(), kFrames);
+    assert(src.calls == 2 && "resuming must call the sources again");
+    peak = 0.0f;
+    for (float v : out) peak = std::max(peak, std::fabs(v));
+    assert(peak > 0.0f);
+
+    dev.removeSource(&src);
+    std::puts("OK suspend_silences_bus");
+}
+
 }  // namespace
 
 int main()
@@ -251,6 +313,7 @@ int main()
     testMasterVolumeAndMute();
     testPerSourcePeakTracking();
     testRateAwareAutoConfig();
+    testSuspendSilencesBus();
     std::puts("All audio mixer smoke tests passed.");
     return 0;
 }

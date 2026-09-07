@@ -25,6 +25,8 @@
 // already depends on imgui_internal.h for the same family of helpers.
 #include "imgui_internal.h"
 
+#include <string>
+
 namespace pom2 {
 
 namespace {
@@ -285,11 +287,15 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
     ImGui::SetNextItemWidth(comboWidth(ICON_FA_COMPUTER " //e-U PAL"));
     if (ImGui::BeginCombo("##POM2ToolbarProfile", profileBuf)) {
         for (SystemProfile p : pom2::allProfiles()) {
-            char rowBuf[32];
-            std::snprintf(rowBuf, sizeof(rowBuf), "%s  (%s)",
-                          profileShortLabel(p),
-                          std::string(pom2::profileConfig(p).displayName).c_str());
-            if (ImGui::Selectable(rowBuf, snap.activeProfile == p)) {
+            // std::string, not a fixed char[32]: five of the nine profile
+            // display names are longer than that ("Apple //e Enhanced PAL
+            // (50 Hz)" alone is 31 chars before the short label and the
+            // parentheses), so the rows were truncated mid-word — and two
+            // of them truncated to the SAME text.
+            const std::string rowBuf =
+                std::string(profileShortLabel(p)) + "  (" +
+                std::string(pom2::profileConfig(p).displayName) + ")";
+            if (ImGui::Selectable(rowBuf.c_str(), snap.activeProfile == p)) {
                 r.setProfileRequested = true;
                 r.setProfile          = p;
             }

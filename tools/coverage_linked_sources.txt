@@ -1,0 +1,118 @@
+# The set of first-party sources (src/**.cpp) that the coverage run's binaries
+# link, recorded by tools/coverage.sh. It is a RATCHET: it may grow freely, it
+# may not shrink. A source that leaves the set fails the coverage job, because
+# unlinking a poorly covered file RAISES the percentage — the floor alone
+# rewards deleting coverage. Regenerate with `tools/coverage.sh --update`.
+#
+# seeded-statically 2026-09-07 — NOT measured. Computed from CMake's own
+# per-target source lists (build/**/DependInfo.cmake) for every binary
+# build/tests/CTestTestfile.cmake actually invokes, pom2_headless included,
+# because a coverage build configures a second ~4 GB tree the author could not
+# run. The first real `tools/coverage.sh` run REPLACES this file with what
+# llvm-cov reports and passes loudly; the ratchet starts from that run.
+src/AiControlServer.cpp
+src/Apple2Display.cpp
+src/Apple2Display_Beam.cpp
+src/Apple2Display_ChatMauve.cpp
+src/AppleWinNtsc.cpp
+src/AtaBlockDevice.cpp
+src/AudioDevice.cpp
+src/Block512Backing.cpp
+src/CassetteDevice.cpp
+src/CffaCard.cpp
+src/CharRomCatalog.cpp
+src/CharRomDump.cpp
+src/ChildProcess.cpp
+src/CliDispatcher.cpp
+src/CliRunner.cpp
+src/ClockCard.cpp
+src/Cs8900aDevice.cpp
+src/Debugger.cpp
+src/Disassembler6502.cpp
+src/Disk35Image.cpp
+src/DiskIICard.cpp
+src/DiskImage.cpp
+src/EchoPlusCard.cpp
+src/EchoPlusTMS5220Card.cpp
+src/EmulationController.cpp
+src/FloppyEmuDevice.cpp
+src/FloppySoundDevice.cpp
+src/FourPlayCard.cpp
+src/FujiNetCard.cpp
+src/FujiNetCardFactory.cpp
+src/FujiNetNetDevice.cpp
+src/GrapplerCard.cpp
+src/IIcExternalSmartPort.cpp
+src/IWMDevice.cpp
+src/ImageWriter.cpp
+src/ImageWriterPdf.cpp
+src/JoystickInput.cpp
+src/Keyboard.cpp
+src/LeChatMauveCard.cpp
+src/LironCard.cpp
+src/M6502.cpp
+src/M68705P3.cpp
+src/MC6821.cpp
+src/MachineSnapshot.cpp
+src/MediaMount.cpp
+src/Memory.cpp
+src/MemoryProfile_IIcClass.cpp
+src/MemoryViewer_ImGui.cpp
+src/MemoryWatch.cpp
+src/Mockingboard.cpp
+src/MouseCard.cpp
+src/MouseCardAppleWin.cpp
+src/NoSlotClock.cpp
+src/PanelRegistry.cpp
+src/PhasorCard.cpp
+src/PostScriptRender.cpp
+src/PrinterCard.cpp
+src/PrinterHistory.cpp
+src/PrinterScreenDump.cpp
+src/PrinterSoundDevice.cpp
+src/ProDOSHardDiskCard.cpp
+src/ProDOSVolume.cpp
+src/ResourcePaths.cpp
+src/RewindBuffer.cpp
+src/RomFetch.cpp
+src/Scc8530Device.cpp
+src/SerialPort.cpp
+src/Settings.cpp
+src/SlotBus.cpp
+src/SmartPort35Unit.cpp
+src/SmartPortBusDevice.cpp
+src/SmartPortCard.cpp
+src/SmartPortHdvUnit.cpp
+src/SmartPortHub.cpp
+src/SmartPortUnit.cpp
+src/SnapshotIO.cpp
+src/SoftCardZ80.cpp
+src/Sony35Drive.cpp
+src/Sony35Gcr.cpp
+src/SpOverSlipLink.cpp
+src/SpSerialTransport.cpp
+src/SpTcpTransport.cpp
+src/SpeakerDevice.cpp
+src/Ssi263.cpp
+src/Ssi263PhonemeData.cpp
+src/StorageCoordinator.cpp
+src/SuperSerialCard.cpp
+src/SuperSerialTcpTransport.cpp
+src/SystemProfile.cpp
+src/TnfsClient.cpp
+src/TnfsMedia.cpp
+src/TranswarpCard.cpp
+src/UthernetCard.cpp
+src/UthernetIICard.cpp
+src/W5100Device.cpp
+src/W5100HostSockets.cpp
+src/W5100NameResolver.cpp
+src/WorkstationCard.cpp
+src/Z80.cpp
+src/hgrpaint/Cam16.cpp
+src/hgrpaint/DhgrNtsc8Palette.cpp
+src/hgrpaint/HgrConvert.cpp
+src/hgrpaint/HgrFont.cpp
+src/hgrpaint/HgrPaintModel.cpp
+src/hgrsprite/HgrSpriteBlit.cpp
+src/pom2_headless.cpp

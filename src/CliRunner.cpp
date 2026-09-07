@@ -45,12 +45,12 @@ namespace {
 /// Read a file and feed it through Memory::pasteText, which normalises
 /// line-endings (\r\n / \r / \n → CR) and drains via the strobe-aware
 /// queue (one byte per $C010 clear). Capped at Memory::kPasteMaxChars.
-void runPasteFile(const std::string& path, EmulationController& emu)
+bool runPasteFile(const std::string& path, EmulationController& emu)
 {
     std::ifstream f(path);
     if (!f) {
         pom2::log().error("CLI", "--paste cannot open " + path);
-        return;
+        return false;
     }
     // Read at most the paste-queue cap so a huge/unbounded source (e.g.
     // /dev/zero) can't exhaust memory before pasteText() applies its cap —
@@ -65,14 +65,15 @@ void runPasteFile(const std::string& path, EmulationController& emu)
     const size_t queued = emu.memory().pasteText(content);
     pom2::log().info("CLI", "--paste queued " + std::to_string(queued) +
                             " chars from " + path);
+    return true;
 }
 
-void runLoad(const CliAction& a, EmulationController& emu)
+bool runLoad(const CliAction& a, EmulationController& emu)
 {
     std::ifstream f(a.pathS, std::ios::binary);
     if (!f) {
         pom2::log().error("CLI", "--load cannot open " + a.pathS);
-        return;
+        return false;
     }
     // Reject oversized sources before allocating, so an unbounded file (e.g.
     // /dev/zero) or a multi-GB file can't exhaust memory. A 6502 image can be
@@ -83,20 +84,48 @@ void runLoad(const CliAction& a, EmulationController& emu)
     bytes.resize(static_cast<size_t>(f.gcount()));
     if (bytes.size() > 0x10000) {
         pom2::log().error("CLI", "--load file exceeds 64 KiB: " + a.pathS);
-        return;
+        return false;
     }
     if (bytes.empty()) {
         pom2::log().error("CLI", "--load file is empty: " + a.pathS);
-        return;
+        return false;
     }
-    if (static_cast<size_t>(a.addressI) + bytes.size() > 0x10000) {
+    const size_t first = static_cast<size_t>(a.addressI);
+    const size_t last  = first + bytes.size();          // exclusive
+    if (last > 0x10000) {
         pom2::log().error("CLI", "--load overflows $FFFF");
-        return;
+        return false;
+    }
+    // ── $C000-$CFFF is the I/O page, not memory ─────────────────────────
+    // This used to store every byte through memWrite(), which is the CPU BUS.
+    // A span crossing the I/O page therefore EXECUTED soft switches on its
+    // way past: `--load 0:image` of a 64 KiB dump flipped RAMRD/RAMWRT/
+    // 80STORE/ALTZP, spun up the Disk II motor and stepped its head, and
+    // then wrote the rest of the file through whatever memory map it had
+    // just built. There is no honest way to "load" a byte into a soft
+    // switch, so refuse the span instead of half-doing it.
+    if (first < 0xD000 && last > 0xC000) {
+        char why[160];
+        std::snprintf(why, sizeof(why),
+                      "--load refused: $%04X-$%04X crosses the $C000-$CFFF I/O "
+                      "page (writing there executes soft switches, it does not "
+                      "store bytes)",
+                      static_cast<unsigned>(first),
+                      static_cast<unsigned>(last - 1));
+        pom2::log().error("CLI", why);
+        return false;
     }
     {
         auto st = emu.lockState();
         for (size_t i = 0; i < bytes.size(); ++i) {
-            st.memory().memWrite(static_cast<uint16_t>(a.addressI + i), bytes[i]);
+            const uint16_t addr = static_cast<uint16_t>(first + i);
+            // Below $C000 the store must bypass the bus too — memWrite there
+            // routes to aux under 80STORE/RAMWRT, so `--load` landed in the
+            // wrong bank depending on what the guest happened to have set.
+            // Above $CFFF the bus write is the right one: it is the language
+            // card's own paging, which is what a --load at $D000 means.
+            if (addr < 0xC000) st.memory().writeRamUnchecked(addr, bytes[i]);
+            else               st.memory().memWrite(addr, bytes[i]);
         }
     }
     char buf[128];
@@ -104,6 +133,7 @@ void runLoad(const CliAction& a, EmulationController& emu)
                   "--load wrote %zu bytes at $%04X (from %s)",
                   bytes.size(), a.addressI, a.pathS.c_str());
     pom2::log().info("CLI", buf);
+    return true;
 }
 
 } // namespace
@@ -111,10 +141,23 @@ void runLoad(const CliAction& a, EmulationController& emu)
 void runDeferredActions(const std::vector<CliAction>& actions,
                         EmulationController& emu)
 {
+    // ── The first failure ends the sequence ─────────────────────────────
+    // CliDispatcher.h has always said "the first fatal error short-circuits
+    // the rest"; nothing implemented it. `--load 2000:missing.bin --run 2000`
+    // logged "cannot open" and then jumped the CPU into whatever was at
+    // $2000 — on a cold machine, zeroed RAM, i.e. a BRK storm — while the
+    // user is looking at a window that shows a running Apple II. Every arm
+    // below reports its own outcome; `ok` is what stops the loop.
+    bool ok = true;
     for (const CliAction& a : actions) {
+        if (!ok) {
+            pom2::log().warn("CLI",
+                "skipping the remaining deferred action(s) after a failure");
+            break;
+        }
         switch (a.kind) {
             case CliAction::Kind::Load:
-                runLoad(a, emu);
+                ok = runLoad(a, emu);
                 break;
             case CliAction::Kind::Run: {
                 auto st = emu.lockState();
@@ -126,7 +169,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 break;
             }
             case CliAction::Kind::Paste:
-                runPasteFile(a.pathS, emu);
+                ok = runPasteFile(a.pathS, emu);
                 break;
             case CliAction::Kind::Step: {
                 emu.setMode(EmulationController::Mode::Stopped);
@@ -172,6 +215,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 if (!captured) {
                     pom2::log().error("CLI",
                         "--snapshot-save: capture failed for " + a.pathS);
+                    ok = false;
                     break;
                 }
                 std::error_code ec;
@@ -180,6 +224,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                     pom2::log().error("CLI",
                         "--snapshot-save: write failed for " + a.pathS +
                         ": " + ec.message());
+                    ok = false;
                     break;
                 }
                 pom2::log().info("CLI", "--snapshot-save: wrote " + a.pathS);
@@ -198,6 +243,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                     if (!in) {
                         pom2::log().error("CLI",
                             "--snapshot-load: cannot open " + a.pathS);
+                        ok = false;
                         break;
                     }
                     blob.assign(std::istreambuf_iterator<char>(in),
@@ -205,6 +251,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                     if (!in && !in.eof()) {
                         pom2::log().error("CLI",
                             "--snapshot-load: read error on " + a.pathS);
+                        ok = false;
                         break;
                     }
                 }
@@ -213,6 +260,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                     pom2::log().error("CLI",
                         "--snapshot-load: cannot read " + a.pathS +
                         ": " + r.error());
+                    ok = false;
                     break;
                 }
                 // Machine identity BEFORE any state is touched. CPU, MEM and
@@ -235,6 +283,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                                       : std::string(from)) +
                         ", this session is " +
                         std::string(pom2::profileNameForMachineId(want)));
+                    ok = false;
                     break;
                 }
                 auto st = emu.lockState();
@@ -245,6 +294,7 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 // the counter re-passes it) and drop the stale rewind ring.
                 if (!res.ok) {
                     pom2::log().error("CLI", "--snapshot-load: " + res.error);
+                    ok = false;
                     break;
                 }
                 // Successful load abandons the former timeline. A failed one

@@ -206,7 +206,10 @@ public:
         // of time so advanceCycles() never runs Apple II scanline bookkeeping
         // — which it would otherwise do on every emulated instruction of a
         // machine that has no display.
-        if (bus) vblNextEventCycle_ = ~uint64_t{0};
+        // …and DETACHING must un-park it, or the Memory keeps skipping video
+        // bookkeeping forever. 0 is the "re-derive on the next advanceCycles"
+        // sentinel every other reseat uses (setCycleCounter, setVideoStandard).
+        vblNextEventCycle_ = bus ? ~uint64_t{0} : 0;
     }
     ForeignBus* foreignBus() const { return foreignBus_; }
 
@@ -459,6 +462,46 @@ public:
 
     // Direct access for the display / debugger / snapshot.
     const uint8_t* data() const { return mem.data(); }
+
+    /// Side-effect-free view of what the CPU would FETCH at `addr`, i.e. the
+    /// flat mirror resolved through the live paging state:
+    ///
+    ///   * `$0000-$BFFF`  IIe aux routing (RAMRD / ALTZP / 80STORE+PAGE2),
+    ///                    which is what `data()` gets wrong for anything the
+    ///                    guest put in aux — including a RamWorks bank;
+    ///   * `$C000-$C0FF`  left as the flat mirror ON PURPOSE. Reading a soft
+    ///                    switch is an ACTION (it toggles paging, clears the
+    ///                    keyboard strobe, steps the Disk II phases), and a
+    ///                    debugger repaint must never perform it;
+    ///   * `$C100-$CFFF`  the motherboard internal I/O ROM when INTCXROM /
+    ///                    SLOTC3ROM / INTC8ROM (or a //c-class profile) map it
+    ///                    there. A window that resolves to a SLOT card falls
+    ///                    back to the flat mirror: a card's `slotRomRead` is
+    ///                    MMIO for several of them (Mockingboard VIA at
+    ///                    $Cs00-$Cs0F, CFFA's IDE task file), so peeking it
+    ///                    would have exactly the side effect this API exists
+    ///                    to avoid;
+    ///   * `$D000-$FFFF`  the language card — bank 1/2, main vs ALTZP aux,
+    ///                    or motherboard/`//c` alt-firmware ROM. The
+    ///                    NoSlotClock intercept is skipped (it is a stateful
+    ///                    magic-sequence detector).
+    ///
+    /// Callers: the Debugger panel's disassembly, the Memory Viewer's hex
+    /// grid, and anything else that wants "what the CPU sees" rather than
+    /// "what is in the main bank".
+    uint8_t peekCpuView(uint16_t addr) const;
+
+    /// Bulk form of peekCpuView() — fills all 64 KiB. `out` must have room
+    /// for 0x10000 bytes.
+    void snapshotCpuView(uint8_t* out) const;
+
+    /// Side-effect-free peek at the byte a `memWrite(addr, …)` would REPLACE.
+    /// Differs from peekCpuView() only in the //e aux table it consults
+    /// (RAMWRT rather than RAMRD), which is what makes an undo record taken
+    /// from the read view push a main-RAM byte into aux under 80STORE. Above
+    /// `$BFFF` it is the read view (the language card writes where it reads,
+    /// and I/O has no meaningful "previous value").
+    uint8_t peekCpuWriteTarget(uint16_t addr) const;
 
     /// Test/debug write into MAIN-bank RAM, bypassing IIe aux paging
     /// (80STORE/RAMRD/PAGE2/ALTZP) and ignoring the writable[] bitmap.
@@ -775,8 +818,13 @@ public:
     void appendSnapshotState(std::vector<uint8_t>& out);
     /// Restore extended state from a blob produced by appendSnapshotState.
     /// Parses defensively (returns false on a malformed/short buffer) and
-    /// best-effort on a RamWorks bank-count mismatch.
-    bool loadSnapshotState(const uint8_t* data, size_t n);
+    /// best-effort on a RamWorks bank-count mismatch — it lifts only the
+    /// saved CURRENT bank, so up to 8 MB of the blob is silently dropped.
+    /// `savedRamWorksBanks`, when non-null, reports the bank count the blob
+    /// was taken with (1 when it carries no RamWorks section) so a caller
+    /// that can refuse — restoreMachineState() — does the refusing.
+    bool loadSnapshotState(const uint8_t* data, size_t n,
+                           uint32_t* savedRamWorksBanks = nullptr);
     /// Restore the main 64 KB honouring writable[] so ROM/I-O regions are
     /// not clobbered (the snapshot records the full 64 KB incl. the ROM
     /// mirror, but only RAM cells should be written back).

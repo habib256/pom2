@@ -267,8 +267,16 @@ void MainWindow::renderDiskPanelWindow()
         }
         if (!result.requestInsertOnly.empty()) {
             const std::string path = result.requestInsertOnly;
-            std::string err;
-            const bool ok = pom2::mountDiskII(*controller, *card, 0, path, err);
+            // Through the coordinator, not the raw two-phase helper: only the
+            // coordinator writes `disk_path_slot<N>[_drive2]` (and `disk_path`
+            // for the primary card), so an insert made from here used to be
+            // lost on restart while the identical insert from the File menu
+            // survived (bug hunt 4 #7).
+            const auto r = storageCoordinator_->mountDiskII(
+                *controller, *settings, card->getSlot(), 0, path,
+                /*seekTrackZero=*/false);
+            const bool ok = r.ok;
+            const std::string err = r.error;
             if (ok) {
                 pom2::log().info("Disk II",
                     "slot " + std::to_string(card->getSlot()) +
@@ -424,9 +432,20 @@ void MainWindow::renderDiskLibraryWindow()
     if (!r.request525InsertOnly.empty()) {
         DiskIICard* target = resolve525(r.request525Slot);
         const int   drive  = (r.request525Drive == 1) ? 1 : 0;
+        // Coordinator, not the raw helper: this is the one Library action
+        // that can address DRIVE 2, and only the coordinator persists
+        // `disk_path_slot<N>_drive2`. A drive-2 insert from here was silently
+        // session-only (bug hunt 4 #7).
         std::string err = "no DiskII card";
-        if (target && pom2::mountDiskII(*controller, *target, drive,
-                                        r.request525InsertOnly, err)) {
+        bool inserted = false;
+        if (target) {
+            const auto mounted = storageCoordinator_->mountDiskII(
+                *controller, *settings, target->getSlot(), drive,
+                r.request525InsertOnly, /*seekTrackZero=*/false);
+            inserted = mounted.ok;
+            err      = mounted.error;
+        }
+        if (inserted) {
             tapeStatusMessage = "Library: inserted (slot " +
                 std::to_string(target->getSlot()) + " drive " +
                 std::to_string(drive + 1) + ", no boot): " +
@@ -539,7 +558,13 @@ void MainWindow::renderDiskLibraryWindow()
         switch (classifyDiskForSlot(path)) {
             case DiskSlotClass::Floppy525:
                 if (primaryDiskII()) {
-                    ok = pom2::mountDiskII(*controller, *primaryDiskII(), 0, path, err);
+                    // Coordinator so the path is persisted — see the note on
+                    // the Library insert above (bug hunt 4 #7).
+                    const auto m = storageCoordinator_->mountDiskII(
+                        *controller, *settings, primaryDiskII()->getSlot(), 0,
+                        path, /*seekTrackZero=*/false);
+                    ok  = m.ok;
+                    err = m.error;
                 } else {
                     err = "no Disk II card in the current config";
                 }
@@ -663,7 +688,11 @@ void MainWindow::renderSmartPortPanelWindow()
     // Re-resolves the card under the lock, applies the whole frame's request
     // in one critical section, and saves settings after unlocking. Unit-type
     // replacement flushes the outgoing unit first, so a failed write-back
-    // aborts the swap instead of destroying the dirty medium with it.
+    // aborts the swap instead of destroying the dirty medium with it — which
+    // is what this comment claimed for a year before it was true (the flush
+    // was the destructor's `(void)saveDirty()`, result discarded; bug hunt 4
+    // #3). A type change, a clear and an eject each also drop the rewind ring
+    // now, because none of them can be rewound across.
     const auto status =
         storageCoordinator_->applySmartPortPanel(*controller, *settings,
                                                  snap.slot, r);
@@ -1348,9 +1377,13 @@ void MainWindow::renderDiskFileDialog()
     ImGui::Separator();
     if (ImGui::Button("Insert", ImVec2(120, 0))) {
         if (popupCard && popupPanel && !popupPanel->dialogPath.empty()) {
-            std::string err;
-            if (pom2::mountDiskII(*controller, *popupCard, 0,
-                                  popupPanel->dialogPath, err)) {
+            // Coordinator so the path is persisted — see the note on the
+            // Library insert above (bug hunt 4 #7).
+            const auto m = storageCoordinator_->mountDiskII(
+                *controller, *settings, popupCard->getSlot(), 0,
+                popupPanel->dialogPath, /*seekTrackZero=*/false);
+            const std::string err = m.error;
+            if (m.ok) {
                 tapeStatusMessage = "Disk inserted (slot " +
                     std::to_string(popupCard->getSlot()) + "): " +
                     popupPanel->dialogPath;

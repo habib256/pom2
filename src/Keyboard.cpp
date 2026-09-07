@@ -91,11 +91,15 @@ std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldT
             prevWasCR = false;
         }
 
+        // Strip the high bit FIRST — Apple II is 7-bit ASCII. Order matters:
+        // a UTF-8 continuation/lead byte in $80-$9F (every accented French
+        // letter has one: "Ã" is $C3 $83, and $83 & $7F = $03) would pass the
+        // control filter below untouched and then be masked into a control
+        // code — a pasted "é" used to arrive as Ctrl-C. Mask, then filter.
+        b &= 0x7F;
         // Drop unprintable controls except CR and HT. Apple II keyboard
         // ROM doesn't emit anything below $20 outside those two anyway.
         if (b < 0x20 && b != 0x0D && b != 0x09) continue;
-        // Strip the high bit — Apple II is 7-bit ASCII.
-        b &= 0x7F;
         // The ][ / ][+ keyboard has no lowercase; fold a-z → A-Z so pasted
         // BASIC/Monitor input is accepted (a real II keyboard can't emit
         // $61-$7A). IIe-class keyboards do have lowercase, so leave them —

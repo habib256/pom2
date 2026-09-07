@@ -355,7 +355,18 @@ void WorkstationCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     byteio::Reader r(data, len);
     if (!r.has(5)) return;
     if (r.u32() != kSnapshotMagic) return;
-    if (r.u8()  != kSnapshotVersion) return;
+    // Version gate, not an equality test — same shape as `TranswarpCard`
+    // (`:315-316`) and `NoSlotClock` (`:231-232`). A NEWER blob is refused
+    // because its tail is unknown; anything at or below the current version
+    // is read, because the fixed part below has never changed shape (the
+    // card shipped at v2 and has written nothing else). Strict equality
+    // meant that the day someone appends a field and bumps the constant,
+    // every blob already in the rewind ring would be dropped *silently* —
+    // the card would come back with stale RAM and a stale 65C02 while the
+    // rest of the machine rewound. Any future field must be gated on
+    // `version >= 3` here, the way Transwarp gates `displaced_`.
+    const uint8_t version = r.u8();
+    if (version == 0 || version > kSnapshotVersion) return;
     if (!r.has(kRamBytes + 2 + 5 + 1 + 16 + 4 + 4 + 3 + 1 + 8)) return;
 
     std::memcpy(ram_.data(), data + r.pos, kRamBytes);

@@ -57,8 +57,14 @@ constexpr size_t kBlk      = ProDOSHardDiskCard::kBlockBytes;
 constexpr uint8_t kRomHi   = 0xC0 + kSlot;          // $C5
 constexpr uint16_t kDevBase = 0xC080 + kSlot * 16;  // $C0D0
 
-// JSR $Cn50 with the given ProDOS parameter block, run to the park loop,
-// return the CPU for register inspection.
+// JSR <the card's own ProDOS driver entry> with the given parameter block,
+// run to the park loop, return the CPU for register inspection.
+//
+// The entry offset is READ from $CnFF rather than typed: the ROM is assembled
+// from labels (SlotRomAsm.h) and $CnFF is `byteOf("driver")`, so a routine
+// moving inside the page — which is exactly what the out-of-range and STATUS
+// pre-flights did — must not need this harness edited to keep testing the
+// same thing. ProDOS itself finds the driver the same way.
 void callDriver(M6502& cpu, Memory& mem, uint8_t cmd, uint16_t block,
                 uint16_t buffer)
 {
@@ -69,8 +75,10 @@ void callDriver(M6502& cpu, Memory& mem, uint8_t cmd, uint16_t block,
     mem.memWrite(0x46, static_cast<uint8_t>(block & 0xFF));
     mem.memWrite(0x47, static_cast<uint8_t>(block >> 8));
 
-    mem.memWrite(0x0300, 0x20);              // JSR $Cn50
-    mem.memWrite(0x0301, 0x50);
+    const uint8_t entry =
+        mem.memRead(static_cast<uint16_t>((kRomHi << 8) | 0xFF));
+    mem.memWrite(0x0300, 0x20);              // JSR $Cn<entry>
+    mem.memWrite(0x0301, entry);
     mem.memWrite(0x0302, kRomHi);
     mem.memWrite(0x0303, 0x4C);              // JMP $0303 (park)
     mem.memWrite(0x0304, 0x03);
@@ -301,16 +309,89 @@ int main()
         std::filesystem::remove(locked, ec);
     }
 
-    // STATUS on the empty bay reports 0 blocks (and the count registers
-    // read 0, not $FF garbage).
+    // ── 6. STATUS on an empty bay → carry set, A = $28 ─────────────────
+    // It used to answer CLC with X = Y = 0: "there IS a device here and it
+    // has zero blocks". That is a different claim from "no device", and a
+    // ProDOS volume scanner records it as a live unit — the one thing an
+    // empty bay must not look like. READ and WRITE already said $28; STATUS
+    // was the third caller of the same wire and never asked (bug hunt 4 #14).
+    // Only bit 7 is consulted, so a stale out-of-range block selection left
+    // over from an earlier transfer cannot make STATUS fail.
+    assert(!raw->isImageLoaded());
     callDriver(cpu, mem, /*cmd=*/0x00, /*block=*/0, /*buffer=*/0x0800);
-    if (cpu.getXRegister() != 0 || cpu.getYRegister() != 0) {
-        std::printf("FAIL: empty-bay STATUS X/Y = %02X/%02X, want 00/00\n",
-                    cpu.getXRegister(), cpu.getYRegister());
+    if (!carrySet(cpu) || cpu.getAccumulator() != 0x28) {
+        std::printf("FAIL: empty-bay STATUS returned A=%02X C=%d, want "
+                    "A=28 C=1 (was CLC with a 0-block device)\n",
+                    cpu.getAccumulator(), carrySet(cpu) ? 1 : 0);
         return 1;
     }
 
+    // ── 7. Out-of-range READ/WRITE → carry set, A = $27 ────────────────
+    // A truncated .hdv, or a 2MG whose header claims more blocks than the
+    // file carries, presents ProDOS with a volume bitmap that names blocks
+    // the medium does not have. READ streamed 512 × $FF and WRITE dropped
+    // its bytes, and BOTH returned CLC "success" — so the guest read an
+    // all-$FF block as real data and believed a save that went nowhere. The
+    // ATA/CFFA path has refused since it existed
+    // (AtaBlockDevice::startCommand); this is the synthetic card catching up
+    // (bug hunt 4 #5). $27 is ProDOS's I/O ERROR, which is what a block that
+    // is not on the medium is — $28 stays reserved for an empty bay.
+    {
+        std::vector<uint8_t> five(5 * kBlk, 0x11);
+        assert(raw->loadImageFromBytes(std::move(five), "oor-test-5blk"));
+        mem.memWrite(0x0800, 0xC3);          // sentinel: must stay intact
+        callDriver(cpu, mem, /*cmd=*/0x01, /*block=*/5, /*buffer=*/0x0800);
+        if (!carrySet(cpu) || cpu.getAccumulator() != 0x27) {
+            std::printf("FAIL: out-of-range READ returned A=%02X C=%d, want "
+                        "A=27 C=1 (was CLC over a $FF stream)\n",
+                        cpu.getAccumulator(), carrySet(cpu) ? 1 : 0);
+            return 1;
+        }
+        if (mem.memRead(0x0800) != 0xC3) {
+            std::printf("FAIL: out-of-range READ clobbered the caller buffer "
+                        "($0800 = %02X)\n", mem.memRead(0x0800));
+            return 1;
+        }
+        mem.memWrite(0x0900, 0x77);
+        callDriver(cpu, mem, /*cmd=*/0x02, /*block=*/100, /*buffer=*/0x0900);
+        if (!carrySet(cpu) || cpu.getAccumulator() != 0x27) {
+            std::printf("FAIL: out-of-range WRITE returned A=%02X C=%d, want "
+                        "A=27 C=1 (was CLC and the bytes were dropped)\n",
+                        cpu.getAccumulator(), carrySet(cpu) ? 1 : 0);
+            return 1;
+        }
+        if (raw->hasUnsavedChanges()) {
+            std::printf("FAIL: an out-of-range WRITE dirtied the image\n");
+            return 1;
+        }
+        // The last block IS in range and must still work — the check is
+        // `>=`, not `>`, and getting that backwards would break the last
+        // block of every volume.
+        callDriver(cpu, mem, /*cmd=*/0x01, /*block=*/4, /*buffer=*/0x0800);
+        if (carrySet(cpu) || mem.memRead(0x0800) != 0x11) {
+            std::printf("FAIL: the LAST in-range block (4 of 5) was refused "
+                        "(A=%02X C=%d)\n",
+                        cpu.getAccumulator(), carrySet(cpu) ? 1 : 0);
+            return 1;
+        }
+    }
+
+    // ── 8. $CnFE advertises WRITE ──────────────────────────────────────
+    // ProDOS 8 TN.PDOS.021: bit 0 = status, bit 1 = read, bit 2 = write,
+    // bit 3 = format. $03 says "status + read" — a READ-ONLY device — which
+    // is not what a card with a working WRITE_BLOCK is (bug hunt 4 #13).
+    {
+        const uint8_t fe =
+            mem.memRead(static_cast<uint16_t>((kRomHi << 8) | 0xFE));
+        if ((fe & 0x04) == 0) {
+            std::printf("FAIL: $CnFE = $%02X — the write bit (2) is clear, "
+                        "so ProDOS is told this device is read-only\n", fe);
+            return 1;
+        }
+    }
+
     std::printf("OK hdv_status_driver (STATUS X/Y + clamp + read/write "
-                "round trip + no-media $28 on both)\n");
+                "round trip + no-media $28 on all three + out-of-range $27 "
+                "+ $CnFE write bit)\n");
     return 0;
 }

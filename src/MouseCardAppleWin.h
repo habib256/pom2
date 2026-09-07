@@ -109,12 +109,19 @@ public:
         hostGen.fetch_add(1, std::memory_order_relaxed);
     }
 
-    /// VBL pacing in CPU cycles between MODE_INT_VBL events. Defaults to
-    /// the NTSC frame (17045 cycles ≈ 60 Hz); PAL profiles pass their 50 Hz
-    /// frame budget (20313) at plug time so MODE_INT_VBL stays locked to
-    /// the machine's actual frame rate instead of drifting against the
-    /// 312-line beam. Mirrors AppleWin, which fires its VBL hook from the
+    /// VBL pacing in CPU cycles between MODE_INT_VBL events, so MODE_INT_VBL
+    /// stays locked to the machine's actual frame rate instead of drifting
+    /// against the beam. Mirrors AppleWin, which fires its VBL hook from the
     /// host frame loop rather than a hard-wired constant.
+    ///
+    /// `SlotCardFactory.cpp:229-231` passes the BEAM geometry —
+    /// `scanlinesPerFrame * cyclesPerScanline` (`CpuClock.h:118-119`), i.e.
+    /// **17030 NTSC (262×65)** and **20280 PAL (312×65)**. Those are not the
+    /// profile's CPU budget `defaultCyclesPerFrame` (17045 / 20313), which is
+    /// the worker's pacing quantum; VBL is a video event, so it follows the
+    /// raster. The 17045 default below is only what a hand-built card in a
+    /// test sees before anything calls this — every factory-plugged card is
+    /// overridden at plug time.
     void setVblCycles(int cycles)
     {
         if (cycles > 0) vblCycles_ = cycles;
@@ -220,7 +227,8 @@ private:
     bool     hostPrimed = false;
 
     // ── VBL pacing. Cycles per MODE_INT_VBL event; profile-plumbed via
-    //    setVblCycles (17045 NTSC default / 20313 PAL). ─────────────────
+    //    setVblCycles to the beam geometry, 17030 NTSC (262×65) / 20280 PAL
+    //    (312×65). The 17045 here is only the un-plumbed fallback. ───────
     int      vblCycles_     = 17045;
     int      vblCycleAccum  = 0;
 

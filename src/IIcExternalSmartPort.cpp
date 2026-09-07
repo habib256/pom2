@@ -57,7 +57,13 @@ bool IIcExternalSmartPort::live()
         if (bus_.unitHasMedia(i)) mask |= 1u << i;
     if (mask != mediaMask_) {
         mediaMask_ = mask;
-        bus_.busReset();
+        // abortTransaction(), NOT busReset(): the frame in flight has to go,
+        // but the host's chain numbers must not. The //c+ numbers this
+        // external chain from 2 (its internal MIG drive is device 1), and
+        // it never re-runs the INIT scan after a user-side eject — so
+        // forgetting the numbers here sent `unitFor` back to its "count
+        // from 1" fallback and re-pointed device 2 at the second bay.
+        bus_.abortTransaction();
     }
     return enabled_ && bound && mask != 0;
 }

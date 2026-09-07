@@ -167,6 +167,7 @@ public:
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead      (uint8_t low8) override;
     uint8_t expansionRomRead (uint16_t offset) override;
+    bool    takesC800() const override { return true; }  // MAME a2bus.h:145 take_c800
     bool    exposesIicOnboardRom() const override;
     void    onReset() override;
     void    advanceCycles(int cycles) override;
@@ -191,6 +192,14 @@ public:
     bool adoptBay(int bay, Block512Backing::PreparedImage&& prepared,
                   std::string& errOut) override;
     bool ejectBay(int bay) override;
+    /// Write this bay's pending changes back WITHOUT ejecting. The card had
+    /// no override, so it inherited `MountableMediaCard`'s default — which
+    /// REFUSES any dirty bay ("no flush path"). That default is a guard for
+    /// cards that genuinely cannot flush; a SmartPort unit can
+    /// (`SmartPortUnit::saveDirty`), and the missing override is what left
+    /// `StorageCoordinator::setMediaBayType` with nothing safe to call before
+    /// it destroyed a dirty unit (bug hunt 4 #3).
+    bool flushBay(int bay, std::string& errOut) override;
     bool prepareEjectBay(int bay, Block512Backing::PendingWriteBack& out,
                          std::string& errOut) override;
     void restoreBayDirty(int bay,

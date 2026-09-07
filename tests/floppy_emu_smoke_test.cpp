@@ -209,6 +209,61 @@ bool testFavorites()
     return true;
 }
 
+// R-hunt4-#10: the lexical clamp above proves only that the SPELLING stays
+// inside the card. It says nothing about what the components RESOLVE to, and
+// the guest controls `favdisks.txt`: it writes a line naming `LINK/x.po`
+// where `LINK` is a symlink out of the tree, and the favourite pointed at an
+// arbitrary host file one click from being mounted. `listing()` has refused to
+// FOLLOW symlinks since 2026-09-06; this path never looked. Both sides are
+// resolved now and the containment test re-applied.
+bool testFavoriteSymlinkEscape()
+{
+    std::error_code ec;
+    const fs::path root    = fs::temp_directory_path() / "pom2_femu_sym_sd";
+    const fs::path outside = fs::temp_directory_path() / "pom2_femu_sym_out";
+    fs::remove_all(root, ec);
+    fs::remove_all(outside, ec);
+    fs::create_directories(root, ec);
+    fs::create_directories(outside, ec);
+    { std::ofstream f(outside / "SECRET.po", std::ios::binary); f << "x"; }
+    { std::ofstream f(root / "REAL.po", std::ios::binary); f << "x"; }
+
+    ec.clear();
+    fs::create_directory_symlink(outside, root / "LINK", ec);
+    if (ec) {
+        std::printf("SKIP: no symlink support for the favourites clamp\n");
+        fs::remove_all(root, ec);
+        fs::remove_all(outside, ec);
+        return true;
+    }
+
+    const std::string content = "automount 0\nLINK/SECRET.po\nREAL.po\n";
+    auto fav = FloppyEmuDevice::parseFavorites(content, root.string());
+    bool ok = true;
+    for (const auto& e : fav.entries) {
+        const fs::path real = fs::weakly_canonical(e.fullPath, ec);
+        if (!ec && real.string().find(
+                fs::weakly_canonical(outside, ec).string()) == 0) {
+            std::printf("FAIL: favourite '%s' resolves outside the SD root "
+                        "through an in-root symlink\n", e.fullPath.c_str());
+            ok = false;
+        }
+    }
+    if (fav.entries.size() != 1) {
+        std::printf("FAIL: %zu favourites survived (want 1 — REAL.po)\n",
+                    fav.entries.size());
+        ok = false;
+    } else if (fav.entries[0].name != "REAL.po") {
+        std::printf("FAIL: the surviving favourite is '%s', want REAL.po\n",
+                    fav.entries[0].name.c_str());
+        ok = false;
+    }
+    fs::remove_all(root, ec);
+    fs::remove_all(outside, ec);
+    if (ok) std::printf("OK : favourite through an in-root symlink dropped\n");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -218,5 +273,6 @@ int main()
     ok &= testFormatFilter();
     ok &= testNavigation();
     ok &= testFavorites();
+    ok &= testFavoriteSymlinkEscape();
     return ok ? 0 : 1;
 }

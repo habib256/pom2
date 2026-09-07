@@ -139,6 +139,20 @@ void AtaBlockDevice::fillIdentify()
     wordBuf_[47] = 0x8001;                 // max sectors per READ/WRITE MULTIPLE = 1
     wordBuf_[49] = 0x0200;                 // capabilities: LBA supported (bit 9)
     wordBuf_[53] = 0x0001;                 // words 54-58 (current CHS/capacity) valid
+    // Words 54-56 = the CURRENT (post-INITIALIZE DEVICE PARAMETERS) logical
+    // geometry, and word 53 bit 0 above is the flag that says they mean
+    // something (ATA-1 §6.2.1.6). They were left at zero while the flag
+    // claimed them valid (bug hunt 4 #25) — a host that trusts the flag then
+    // computes a zero-cylinder, zero-head drive. Report the geometry the
+    // taskfile is actually decoding through, which after a $91 is the latched
+    // pair and before it the power-on default.
+    const uint32_t curSpt   = (numSectors_ != 0) ? numSectors_ : 63u;
+    const uint32_t curHeads = (numHeads_   != 0) ? numHeads_   : 16u;
+    uint32_t curCyls = total / (curSpt * curHeads);
+    if (curCyls > 0xFFFF) curCyls = 0xFFFF;
+    wordBuf_[54] = static_cast<uint16_t>(curCyls);
+    wordBuf_[55] = static_cast<uint16_t>(curHeads);
+    wordBuf_[56] = static_cast<uint16_t>(curSpt);
     // Current capacity in sectors (words 57-58, 32-bit low-word-first). The
     // CFFA firmware reads THIS field — not 60-61 — to size its partitions
     // (a2cffa firmware $CD35-$CD52); leaving it zero ⇒ 0 partitions ⇒ Err $28.
@@ -152,6 +166,13 @@ void AtaBlockDevice::fillIdentify()
 
 void AtaBlockDevice::startCommand(uint8_t cmd)
 {
+    // A command written while the host has the OTHER device selected is not
+    // ours to run — MAME `ata_hle_device::write_cs0` only starts a command on
+    // the selected device (machine/atahle.cpp), and the CFFA firmware probes
+    // the slave by setting register 6 bit 4 and issuing IDENTIFY. Answering
+    // it advertised a second drive that was the same medium.
+    if (!selected()) return;
+
     error_  = 0x00;
     status_ = kStDRDY | kStDSC; // BSY would pulse on real silicon; we settle instantly
 
@@ -173,8 +194,25 @@ void AtaBlockDevice::startCommand(uint8_t cmd)
 
         case kCmdRead:
         case kCmdReadMulti: {
-            lba_         = currentLba();
-            sectorsLeft_ = (sectorCount_ == 0) ? 256 : sectorCount_;
+            // A READ whose range leaves the medium is ID NOT FOUND, not a
+            // zero-filled sector with a clean status (bug hunt 4 #11). ATA-1
+            // §9.1 / ATA-2 §7.2.6: IDNF = "the requested sector could not be
+            // found". WRITE already refused; READ handed the caller 512 zeros
+            // and CLC, so a driver reading past a truncated image saw a valid
+            // (empty) block instead of an error.
+            const uint32_t requestedLba = currentLba();
+            const uint32_t requestedCount =
+                (sectorCount_ == 0) ? 256u : sectorCount_;
+            const size_t blocks = backing_.blockCount();
+            if (requestedLba >= blocks ||
+                requestedCount > blocks - static_cast<size_t>(requestedLba)) {
+                error_  = kErrIDNF;
+                status_ = kStDRDY | kStDSC | kStERR;
+                phase_  = Phase::Idle;
+                break;
+            }
+            lba_         = requestedLba;
+            sectorsLeft_ = static_cast<uint16_t>(requestedCount);
             loadSectorToBuffer();
             phase_  = Phase::PioIn;
             status_ = kStDRDY | kStDSC | kStDRQ;
@@ -196,7 +234,12 @@ void AtaBlockDevice::startCommand(uint8_t cmd)
             const bool outside = requestedLba >= blocks ||
                 requestedCount > blocks - static_cast<size_t>(requestedLba);
             if (backing_.isWriteProtected() || outside) {
-                error_  = kErrABRT;
+                // Two different faults, two different Error-register codes
+                // (ATA-1 §9.1): a write-protected medium ABORTS the command,
+                // an address off the end is ID NOT FOUND. They used to share
+                // ABRT, so a driver could not tell "locked disk" from "block
+                // past the end" — and READ reported neither.
+                error_  = outside ? kErrIDNF : kErrABRT;
                 status_ = kStDRDY | kStDSC | kStDF | kStERR;
                 phase_  = Phase::Idle;
                 break;
@@ -231,6 +274,12 @@ void AtaBlockDevice::startCommand(uint8_t cmd)
 
 uint16_t AtaBlockDevice::cs0_r(uint8_t reg)
 {
+    // An unselected device drives nothing onto the bus: MAME's
+    // `ata_hle_device::read_cs0` returns 0 unless `device_selected()`
+    // (machine/atahle.cpp). Status = $00 has DRDY clear, which is exactly how
+    // a driver decides "no device at this address" — and is what makes the
+    // CFFA slave scan come back empty instead of cloning the master.
+    if (!selected()) return 0x0000;
     switch (reg & 0x07) {
         case 0: { // data port (PIO in)
             if (phase_ != Phase::PioIn) return 0xFFFF;
@@ -298,6 +347,8 @@ uint16_t AtaBlockDevice::cs1_r(uint8_t reg)
 {
     // Offset 6 = alternate status (same value as the primary status register,
     // but reading it does not clear a pending interrupt — moot, no IRQ here).
+    // Same device-select gate as cs0_r: an unselected device is silent.
+    if (!selected()) return 0x0000;
     if ((reg & 0x07) == 6) return status_;
     return 0xFF;
 }

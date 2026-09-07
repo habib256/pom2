@@ -751,17 +751,26 @@ void MainWindow::updateAutoTurbo()
     const bool turboEligible =
         diskTurboWhileMotor &&
         (!diskIICards().empty() || !blocks.empty() || !smartPorts.empty());
+    // The override is COMPOSED by the controller, not stashed here. This used
+    // to save `getCyclesPerFrame()` into a MainWindow member before writing
+    // 1 M, and restore that member when the drive stopped — so anything that
+    // changed the machine's speed DURING the burst was silently reverted:
+    // a profile switch to PAL (20313) or a //c+ (68180) mid-load came back as
+    // whatever was current when the motor spun up, and a speed-menu change
+    // while loading never took effect at all. `setTurboOverride` /
+    // `clearTurboOverride` keep the base in the controller, so the exit
+    // restores the CURRENT base whoever set it (EmulationController.h).
+    constexpr int kDiskTurboCyclesPerFrame = 1'000'000;   // ~60× emulated
     if (turboEligible) {
         if (anyBusy && !diskTurboActive) {
-            diskSavedCyclesPerFrame = controller->getCyclesPerFrame();
-            controller->setCyclesPerFrame(1'000'000);
+            controller->setTurboOverride(kDiskTurboCyclesPerFrame);
             diskTurboActive = true;
         } else if (!anyBusy && diskTurboActive) {
-            controller->setCyclesPerFrame(diskSavedCyclesPerFrame);
+            controller->clearTurboOverride();
             diskTurboActive = false;
         }
     } else if (diskTurboActive) {
-        controller->setCyclesPerFrame(diskSavedCyclesPerFrame);
+        controller->clearTurboOverride();
         diskTurboActive = false;
     }
 }

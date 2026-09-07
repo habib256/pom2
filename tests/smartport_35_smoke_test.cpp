@@ -528,11 +528,16 @@ void testFluxWriteBackRoundTrip()
     assert(std::memcmp(srcBlock0, before, pom2::Disk35Image::kBlockBytes) != 0);
 
     // ── Splice the source flux into the destination drive ──
+    // bitPeriodTicks = 0: this harness generates its stamps on the MEDIUM's
+    // cell grid, not through a controller, so writeFlux keeps its exact
+    // grid-anchored mapping. The controller-driven shape is exercised by
+    // testWriteFluxAtControllerBitPeriod below.
     dstDrv.writeFlux(/*startTick*/ 0,
                      /*endTick  */ per,
                      flux.data(),
                      static_cast<int>(flux.size()),
-                     /*revStartTick*/ 0);
+                     /*revStartTick*/ 0,
+                     /*bitPeriodTicks*/ 0);
 
     // ── Verify the destination image now mirrors the source on
     //    block 0 (and the rest of the encoded track too). The
@@ -560,6 +565,98 @@ void testFluxWriteBackRoundTrip()
 // write-back disabled — the splice must NOT mutate the underlying
 // blocks. Confirms the gating in `Sony35Drive::writeFlux` honours
 // the host's write-protect opt-out.
+// ─────────────────────────────────────────────────────────────────────────
+// Bug hunt #4 · #1 — a write laid down at the CONTROLLER's bit period must
+// survive, and it must not eat every ~84th bit.
+//
+// `Sony35Drive::writeFlux` used to quantise every flux stamp onto the
+// ENCODER's cell grid: cell = round((t - revStart) * n / period). That grid
+// is 14.1678 IWM ticks wide on track 0 (76950 cells over 1090215 ticks),
+// while the IWM lays one bit every `2 * half_window_size()` ticks — 14 in
+// the mode the read path decodes, 28/32/16 otherwise (MAME iwm.cpp:303-313).
+// 14 != 14.1678, so two consecutive written bits collided into one cell
+// roughly every 84 bits and 1.2 % of the stream was silently deleted: no
+// sector on the track decoded afterwards, and the sector aimed at was
+// destroyed. The read path never showed it because its window walker
+// re-syncs on every transition.
+//
+// The regression this pins is exactly the one the round-trip test above
+// could not see: that test generates its flux AT the cell period, the one
+// rate the broken mapping inverted cleanly.
+void testWriteFluxAtControllerBitPeriod()
+{
+    const std::string srcPath = makeRaw800k(0xC1);
+    pom2::Disk35Image src;
+    assert(src.loadFile(srcPath));
+    {
+        uint8_t pattern[pom2::Disk35Image::kBlockBytes];
+        for (int i = 0; i < pom2::Disk35Image::kBlockBytes; ++i) {
+            pattern[i] = static_cast<uint8_t>(0x5A + (i & 0x1F));
+        }
+        src.setWriteBackEnabled(true);
+        assert(src.writeBlock(0, pattern));
+    }
+    pom2::Sony35Drive srcDrv;
+    srcDrv.setImage(&src);
+    srcDrv.notifyMediaChange();
+    const auto cells  = srcDrv.debugCellStream();
+    const int  ncells = srcDrv.cellsPerRev();
+    assert(static_cast<int>(cells.size()) == ncells);
+
+    // The controller's own bit period, not the medium's cell period. 14 is
+    // what `IWMDevice::halfWindowSize()` doubles to in the mode the //c+
+    // firmware uses; the deleted-bit failure appears at every value.
+    for (int64_t bitTicks : { int64_t{14}, int64_t{16}, int64_t{28} }) {
+        std::vector<int64_t> flux;
+        flux.reserve(static_cast<size_t>(ncells) / 4);
+        for (int i = 0; i < ncells; ++i) {
+            if (cells[i]) flux.push_back(static_cast<int64_t>(i) * bitTicks);
+        }
+
+        const std::string dstPath = makeRaw800k(0x00);
+        pom2::Disk35Image dst;
+        assert(dst.loadFile(dstPath));
+        dst.setWriteBackEnabled(true);
+        pom2::Sony35Drive dstDrv;
+        dstDrv.setImage(&dst);
+        dstDrv.notifyMediaChange();
+
+        uint8_t srcBlock0[pom2::Disk35Image::kBlockBytes];
+        uint8_t before[pom2::Disk35Image::kBlockBytes];
+        assert(src.readBlock(0, srcBlock0));
+        assert(dst.readBlock(0, before));
+        assert(std::memcmp(srcBlock0, before,
+                           pom2::Disk35Image::kBlockBytes) != 0);
+
+        dstDrv.writeFlux(/*startTick*/ 0,
+                         /*endTick  */ static_cast<int64_t>(ncells) * bitTicks,
+                         flux.data(),
+                         static_cast<int>(flux.size()),
+                         /*revStartTick*/ 0,
+                         bitTicks);
+
+        // Every logical block of the track has to land, not just block 0 —
+        // the old code left 11 of 12 sectors readable and destroyed one, so
+        // a block-0-only assertion would have passed 11 times out of 12.
+        for (int blk = 0; blk < 12; ++blk) {
+            uint8_t want[pom2::Disk35Image::kBlockBytes];
+            uint8_t got [pom2::Disk35Image::kBlockBytes];
+            assert(src.readBlock(blk, want));
+            assert(dst.readBlock(blk, got));
+            if (std::memcmp(want, got, sizeof(want)) != 0) {
+                std::printf("    bitTicks=%lld block %d differs\n",
+                            static_cast<long long>(bitTicks), blk);
+                assert(false && "a write at the controller bit period was "
+                                "corrupted on its way to the medium");
+            }
+        }
+        fs::remove(dstPath);
+    }
+    fs::remove(srcPath);
+    std::printf("  ok: writeFlux round-trips at the controller's bit period "
+                "(14/16/28 ticks)\n");
+}
+
 void testFluxWriteBackWriteProtect()
 {
     const std::string srcPath = makeRaw800k(0xD2);
@@ -594,7 +691,7 @@ void testFluxWriteBackWriteProtect()
     assert(dst.readBlock(0, before));
 
     dstDrv.writeFlux(0, per, flux.data(),
-                     static_cast<int>(flux.size()), 0);
+                     static_cast<int>(flux.size()), 0, /*bitPeriodTicks*/ 0);
 
     uint8_t after[pom2::Disk35Image::kBlockBytes];
     assert(dst.readBlock(0, after));
@@ -621,6 +718,7 @@ int main()
     testGcrEncoderZones();
     testIwmReadsGcrSyncByte();
     testFluxWriteBackRoundTrip();
+    testWriteFluxAtControllerBitPeriod();
     testFluxWriteBackWriteProtect();
     std::printf("[SmartPort 3.5\" Phase 1 smoke] ALL PASS\n");
     return 0;

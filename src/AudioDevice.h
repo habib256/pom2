@@ -98,6 +98,20 @@ public:
                         masterPeakR_.load(std::memory_order_relaxed));
     }
 
+    /// Silence the whole bus without touching any source's state or the
+    /// user's mixer settings. The emulated machine can be halted (toolbar
+    /// pause, a debugger breakpoint, a profile switch, a rewind scrub) while
+    /// the host device keeps calling us at 60-ish buffers a second: the
+    /// free-running sources — the AY generators on a Mockingboard/Phasor,
+    /// the floppy motor loop — have no idea the CPU stopped and go on
+    /// droning the last register set for as long as the machine is paused.
+    /// `EmulationController::setMode` drives this: silent unless Running.
+    /// Suspending here rather than in each source also freezes the speaker's
+    /// cycle→sample cursor, which is what the consumer-ahead re-anchor in
+    /// `SpeakerDevice::fillAudioBuffer` exists to repair after a pause.
+    void setSuspended(bool s) { suspended_.store(s, std::memory_order_relaxed); }
+    bool isSuspended() const  { return suspended_.load(std::memory_order_relaxed); }
+
     /// Mix all registered sources into `output` (clamped to [-1, +1]).
     /// Called from miniaudio's data callback. `output` is INTERLEAVED
     /// STEREO and must hold `frameCount * kChannels` floats.
@@ -120,6 +134,9 @@ private:
     std::atomic<float> masterVolume_{1.0f};
     std::atomic<bool>  masterMuted_{false};
     std::atomic<bool>  monoDownmix_{false};
+    // Default FALSE: a bare AudioDevice (tests, headless composition) must
+    // behave exactly as before. Only an explicit setMode(Stopped) mutes it.
+    std::atomic<bool>  suspended_{false};
     std::atomic<float> masterPeakL_{0.0f};
     std::atomic<float> masterPeakR_{0.0f};
 

@@ -379,7 +379,7 @@ namespace {
 
 }  // namespace
 
-int Sony35Drive::decodeAndCommit() const
+int Sony35Drive::decodeAndCommit(int track) const
 {
     // The GCR walk itself lives in `Sony35Gcr` — shared with the WOZ loader
     // in `Disk35Image`, which has to turn the same cells into the same
@@ -388,12 +388,12 @@ int Sony35Drive::decodeAndCommit() const
     // sector meets the mounted image.
     if (!image_ || !image_->isLoaded()) return 0;
     if (cells_.empty()) return 0;
-    if (track_ < 0 || track_ >= 80) return 0;
+    if (track < 0 || track >= 80) return 0;
 
     const auto nib = sony35::nibblesFromCells(cells_);
 
     int written = 0;
-    sony35::decodeSectors(nib, /*expectTrack=*/track_,
+    sony35::decodeSectors(nib, /*expectTrack=*/track,
         [&](int tr, int head, int sec, const uint8_t* data) {
             const int blkIdx = sony35::blockIndexFor(tr, head, sec);
             if (blkIdx < 0 ||
@@ -410,13 +410,39 @@ int Sony35Drive::decodeAndCommit() const
     return written;
 }
 
+void Sony35Drive::writeStart()
+{
+    // MAME `floppy_image_device::write_start` (floppy.cpp:1261-1279), reached
+    // from `iwm_device::write_clock_start` (iwm.cpp:335-343). Two things
+    // happen there and both were missing here: the gate
+    // `if(!m_image || m_mon) return;` (floppy.cpp:1263-1264) — no medium or
+    // motor stopped means no write at all — and the LATCH of the destination
+    // (`m_write_cyl = m_cyl; m_write_ss = m_ss;`, floppy.cpp:1273-1274) that
+    // `write_do_flush` then commits to (floppy.cpp:1345). A phase strobe
+    // reaches `seekPhaseW` without flushing the IWM, so without the latch a
+    // head step between the last written flux and the flush spliced track 0's
+    // bit stream into track 1's cells.
+    writeCursorTick_ = INT64_MIN;   // a new arc: no cursor to continue
+    if (!isInserted() || !motorOn_) { writeActive_ = false; return; }
+    writeActive_ = true;
+    writeTrack_  = track_;
+    writeHead_   = side1_ ? 1 : 0;
+}
+
 void Sony35Drive::writeFlux(int64_t startTick, int64_t endTick,
                             const int64_t* fluxes, int count,
-                            int64_t revStartTick)
+                            int64_t revStartTick, int64_t bitPeriodTicks)
 {
-    if (!isInserted() || track_ < 0 || track_ >= 80) return;
+    if (!isInserted()) return;
+    // The destination is the (track, side) latched at write start, not the
+    // one the head has reached by the time the controller flushes — see
+    // `writeStart`. A caller that never armed one (a bench test splicing a
+    // track by hand) gets the live head position.
+    const int trk  = writeActive_ ? writeTrack_ : track_;
+    const int head = writeActive_ ? writeHead_  : (side1_ ? 1 : 0);
+    if (trk < 0 || trk >= 80) return;
     if (image_->isWriteProtected()) return;
-    ensureCache();
+    ensureCacheFor(trk, head);
     if (cells_.empty() || cachedCellsPerRev_ <= 0 ||
         cachedCyclesPerRev_ <= 0) {
         return;
@@ -427,19 +453,27 @@ void Sony35Drive::writeFlux(int64_t startTick, int64_t endTick,
     // Same timeline as the read side: IWM ticks (CpuClock.h).
     const int64_t period = static_cast<int64_t>(cachedCyclesPerRev_) *
                            POM2_IWM_TICKS_PER_CPU_CYCLE;
+    // The controller's bit period. It is NOT the medium's cell period: the
+    // IWM lays one bit every `2 × half_window_size()` ticks (iwm.cpp:303-313
+    // → 14/16/28/32) while an outer-zone Sony cell is period/n = 14.17 ticks
+    // wide. Rounding each flux stamp onto the cell grid therefore folded two
+    // consecutive bits into one cell every ~84 bits — 1.2 % of every byte
+    // ever written to a 3.5" disk silently deleted, and the sector it landed
+    // in unreadable afterwards. A head lays bits down one after another; so
+    // do we. Fall back to the cell period only for a caller with no
+    // controller behind it.
+    // A caller with no controller behind it (a bench harness splicing a
+    // track it encoded itself) hands us stamps that ARE on the medium's cell
+    // grid, and `period / n` truncates 14.17 to 14, which would drift a cell
+    // every 84 bits — the very failure this argument exists to remove. So
+    // that case keeps the exact grid mapping instead of counting bits.
+    const bool    countBits = bitPeriodTicks > 0;
+    const int64_t bitTicks  = countBits ? bitPeriodTicks
+                                        : std::max<int64_t>(1, period / n);
 
     // Map tick → cell index inside one revolution (anchored on
-    // `revStartTick`). Negative offsets wrap forward; offsets ≥ period
-    // wrap modulo. The cell index for a transition at cycle T is the
-    // *floor* of (T - revStart) / period × n — the nearest cell-time
-    // earlier than or equal to T.
-    // The encoder uses floor-division when computing `cycleForCell(i)
-    // = i × period / n` for the flux time stamp; integer truncation
-    // means cell 1's stamp lands at floor(2.024) = 2 even though the
-    // true cell midpoint is 3.04 cycles later. To recover the same
-    // cell index from a flux timestamp we round-to-nearest here —
-    // floor would push every transition one cell earlier and lose
-    // address-field markers.
+    // `revStartTick`). Only the START of an arc uses this; every bit after
+    // it is placed by counting, not by time.
     auto cycleToCell = [&](int64_t cy) -> int {
         int64_t rel = cy - revStartTick;
         rel %= period;
@@ -450,51 +484,79 @@ void Sony35Drive::writeFlux(int64_t startTick, int64_t endTick,
         return cell;
     };
 
-    const int cellStart = cycleToCell(startTick);
-    const int cellEnd   = cycleToCell(endTick);
+    // A continuous write reaches us as several windows (`IWMDevice::
+    // flushWrite` sets `fluxWriteStart_ = when` and starts the next one
+    // there). Re-anchoring each window on its start tick would make them
+    // overlap, because bits advance at `bitTicks` and the anchor advances at
+    // the cell period. Continue the arc instead whenever the window abuts
+    // the previous one.
+    const int cellStart =
+        (writeCursorTick_ == startTick) ? writeCursorCell_
+                                        : cycleToCell(startTick);
 
-    // Clear cells in the write window. The window can wrap around the
-    // revolution boundary if the IWM wrote past cell n-1.
-    if (cellStart == cellEnd && endTick - startTick >= period) {
-        // Full-track rewrite — clobber everything.
-        std::fill(cells_.begin(), cells_.end(), 0);
-    } else if (cellStart <= cellEnd) {
-        std::fill(cells_.begin() + cellStart,
-                  cells_.begin() + cellEnd, 0);
+    // How many bit cells the controller laid down in this window. On the
+    // grid-anchored path the window is measured on the medium's own grid,
+    // so the span is the arc between its two cell indices.
+    int64_t span;
+    if (countBits) {
+        span = (endTick - startTick + bitTicks / 2) / bitTicks;
+    } else if (endTick - startTick >= period) {
+        span = n;
     } else {
-        std::fill(cells_.begin() + cellStart, cells_.end(), 0);
-        std::fill(cells_.begin(), cells_.begin() + cellEnd, 0);
+        const int cellEnd = cycleToCell(endTick);
+        span = (cellEnd - cellStart + n) % n;
+    }
+    if (span < 0) span = 0;
+
+    if (span >= n) {
+        // A full revolution or more — clobber everything.
+        std::fill(cells_.begin(), cells_.end(), 0);
+    } else {
+        for (int64_t k = 0; k < span; ++k)
+            cells_[static_cast<std::size_t>((cellStart + k) % n)] = 0;
     }
 
-    // Splice in the new flux transitions. Each transition lands in
-    // the cell containing its cycle stamp.
+    // Splice in the new flux transitions, one bit cell per controller bit.
     for (int i = 0; i < count; ++i) {
-        const int cell = cycleToCell(fluxes[i]);
-        cells_[cell] = 1;
+        if (!countBits) {
+            // Grid-anchored: the stamp names its own cell exactly.
+            cells_[static_cast<std::size_t>(cycleToCell(fluxes[i]))] = 1;
+            continue;
+        }
+        int64_t k = (fluxes[i] - startTick + bitTicks / 2) / bitTicks;
+        if (k < 0) k = 0;
+        cells_[static_cast<std::size_t>((cellStart + k % n) % n)] = 1;
     }
+
+    writeCursorTick_ = endTick;
+    writeCursorCell_ = static_cast<int>((cellStart + span % n) % n);
 
     rebuildTransitionsFromCells();
-    decodeAndCommit();
+    decodeAndCommit(trk);
 }
 
 void Sony35Drive::ensureCache() const
 {
-    const int head = side1_ ? 1 : 0;
-    if (cachedTrack_ == track_ && cachedHead_ == head && !cells_.empty()) {
+    ensureCacheFor(track_, side1_ ? 1 : 0);
+}
+
+void Sony35Drive::ensureCacheFor(int track, int head) const
+{
+    if (cachedTrack_ == track && cachedHead_ == head && !cells_.empty()) {
         return;
     }
     cells_.clear();
     transitionCells_.clear();
     cachedCellsPerRev_   = 0;
     cachedCyclesPerRev_  = 0;
-    cachedTrack_ = track_;
+    cachedTrack_ = track;
     cachedHead_  = head;
     if (!isInserted()) return;
-    if (track_ < 0 || track_ >= 80) return;
+    if (track < 0 || track >= 80) return;
 
-    buildTrackBits(*image_, track_, head, cells_);
+    buildTrackBits(*image_, track, head, cells_);
     cachedCellsPerRev_  = static_cast<int>(cells_.size());
-    cachedCyclesPerRev_ = kCyclesPerRev[zoneForTrack(track_)];
+    cachedCyclesPerRev_ = kCyclesPerRev[zoneForTrack(track)];
     rebuildTransitionsFromCells();
 }
 
@@ -546,7 +608,8 @@ int64_t Sony35Drive::nextTransition(int64_t fromTick,
 void Sony35Drive::reset()
 {
     motorOn_       = false;
-    writeProtect_  = true;
+    writeActive_     = false;
+    writeCursorTick_ = INT64_MIN;
     side1_         = false;
     sel_           = false;
     directionIn_   = false;   // MAME floppy.cpp:290 `m_dir(0)`
@@ -558,9 +621,6 @@ void Sony35Drive::reset()
     track_         = 0;
     phases_        = 0;
     prevPhases_    = 0;
-    if (image_) {
-        writeProtect_ = image_->isWriteProtected();
-    }
 }
 
 void Sony35Drive::setImage(Disk35Image* image)
@@ -569,7 +629,8 @@ void Sony35Drive::setImage(Disk35Image* image)
     // by EmulationController. Mounting / ejecting media is a separate
     // event signalled via `notifyMediaChange()`.
     image_ = image;
-    writeProtect_ = image && image->isWriteProtected();
+    writeActive_     = false;
+    writeCursorTick_ = INT64_MIN;
     invalidateCache();
 }
 
@@ -582,7 +643,9 @@ void Sony35Drive::notifyMediaChange()
     // boot drive-scan then walked into the read-a-disk path of a drive
     // with no disk and hung the whole cold boot at $F0FC (no banner).
     dskchg_       = image_ && image_->isLoaded();
-    writeProtect_ = image_ && image_->isWriteProtected();
+    // The medium under the head changed: any write arc in flight is void.
+    writeActive_     = false;
+    writeCursorTick_ = INT64_MIN;
     invalidateCache();
     pom2::log().info(
         "Sony35",
@@ -592,8 +655,20 @@ void Sony35Drive::notifyMediaChange()
 
 void Sony35Drive::monW(bool motorOffHigh)
 {
-    // MAME: m_floppy->mon_w(true) = motor STOP. The IWM calls this when
-    // it leaves MODE_ACTIVE.
+    // MAME: m_floppy->mon_w(true) = motor STOP. The IWM calls this when it
+    // leaves MODE_ACTIVE.
+    //
+    // Upstream would have this be a NO-OP for a 3.5" — `mac_floppy_device::
+    // mon_w(int) { /* Motor control is through commands */ }`
+    // (floppy.cpp:2835-2838) — because a Sony's motor answers only its own
+    // MotorOn (0x2) / MotorOff (0x6) register strobes, not the controller's
+    // enable line. **POM2 deliberately keeps the enable line wired**, and
+    // bug hunt #4 tried removing it and put it back: `liron_boot35` fails
+    // with "the drive's motor never ran" because POM2's Liron and //c+ paths
+    // reach the mechanism through `IWMDevice`'s enable rather than through a
+    // separately modelled MIG/strobe sequencer. Aligning with upstream here
+    // needs that sequencer first; until then this line is what spins the
+    // disk, and the divergence is recorded in TODO's parity dashboard.
     motorOn_ = !motorOffHigh;
 }
 
@@ -648,6 +723,8 @@ void Sony35Drive::completeEject()
     if (!image_) return;
     image_->eject();
     dskchg_ = false;   // MAME unload(): m_dskchg = 0
+    writeActive_     = false;
+    writeCursorTick_ = INT64_MIN;
     if (sound_) sound_->click();
     pom2::log().info("Sony35", "eject requested by host");
 }
@@ -769,10 +846,10 @@ void Sony35Drive::strobeWriteRegister(uint8_t reg)
     }
 }
 
-bool Sony35Drive::senseR() const
+bool Sony35Drive::senseR(uint64_t nowCycles) const
 {
     const uint8_t reg = regSelect();
-    const bool    v   = senseValue(reg);
+    const bool    v   = senseValue(reg, nowCycles);
     // Diagnostic: POM2_TRACE_IWM_SENSE=1 logs each (register, value)
     // CHANGE — the firmware polls sense in tight loops, so unconditional
     // logging would melt the console.
@@ -792,7 +869,7 @@ bool Sony35Drive::senseR() const
     return v;
 }
 
-bool Sony35Drive::senseValue(uint8_t reg) const
+bool Sony35Drive::senseValue(uint8_t reg, uint64_t nowCycles) const
 {
     // MAME `mac_floppy_device::wpt_r` — raw line level per register (see
     // the table at the top of this file). Notable deltas from the old
@@ -827,8 +904,20 @@ bool Sony35Drive::senseValue(uint8_t reg) const
             return !(image_ && image_->isWriteProtected());
         case 0xA:                                       // NOT track 0
             return track_ != 0;
-        case 0xB:                                       // tachometer — unmodelled
-            return true;
+        case 0xB: {                                     // tachometer
+            // MAME floppy.cpp:2711-2719: 120 inversions per rotation while a
+            // disk spins, and FALSE with no medium or the motor stopped —
+            // POM2 answered a hard-wired 1 in every state, i.e. "the platter
+            // is turning" to anything that polls the tach on an empty bay.
+            // 120 inversions = 60 full cycles per revolution, so one half
+            // period is `cyclesPerRev() / 120`.
+            if (!(image_ && image_->isLoaded()) || !motorOn_) return false;
+            const int64_t rev = cyclesPerRev();
+            const int64_t seg = rev / 60;
+            if (seg <= 0) return false;
+            return static_cast<int64_t>(nowCycles % static_cast<uint64_t>(rev))
+                       % seg < seg / 2;
+        }
         case 0xD:                                       // MFM mode active
             return false;                               // GCR only
         case 0xE:                                       // /READY — 0 = ready
@@ -861,7 +950,10 @@ void Sony35Drive::appendSnapshotState(std::vector<uint8_t>& out) const
     byteio::putU16(out, kSonySnapVersion);
     uint8_t flags = 0;
     if (motorOn_)      flags |= 0x01;
-    if (writeProtect_) flags |= 0x02;
+    // Bit 1 held a `writeProtect_` cache that no longer exists (it is asked
+    // of the medium now — see the header). The bit still travels, carrying
+    // the derived value, so v1 blobs stay byte-compatible in both directions.
+    if (isWriteProtected()) flags |= 0x02;
     if (side1_)        flags |= 0x04;
     if (sel_)          flags |= 0x08;
     if (directionIn_)  flags |= 0x10;
@@ -883,7 +975,7 @@ bool Sony35Drive::loadSnapshotState(const uint8_t* data, std::size_t len)
 
     const uint8_t flags = r.u8();
     motorOn_      = (flags & 0x01) != 0;
-    writeProtect_ = (flags & 0x02) != 0;
+    // flags & 0x02 was the write-protect cache; the medium answers now.
     side1_        = (flags & 0x04) != 0;
     sel_          = (flags & 0x08) != 0;
     directionIn_  = (flags & 0x10) != 0;
@@ -896,6 +988,10 @@ bool Sony35Drive::loadSnapshotState(const uint8_t* data, std::size_t len)
     phases_      = r.u8();
     prevPhases_  = r.u8();
     lastStrobeCycle_ = r.u64();
+    // A restored machine is not mid-write: the arc that was open when the
+    // snapshot was taken died with the controller state around it.
+    writeActive_     = false;
+    writeCursorTick_ = INT64_MIN;
     // The bit-cell cache is keyed on (track, side) and is a pure function of
     // the mounted image, so drop it rather than serialise ~100 KB per frame.
     invalidateCache();

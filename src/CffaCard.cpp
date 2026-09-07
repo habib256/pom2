@@ -70,6 +70,20 @@ bool CffaCard::loadImage(const std::string& path)
     return ok;
 }
 
+bool CffaCard::adoptImage(pom2::Block512Backing::PreparedImage&& p)
+{
+    // Mirrors loadImage. The reset is the load-bearing half: a mount that
+    // lands while the guest is mid-PIO leaves phase_/lba_/sectorsLeft_
+    // describing the OUTGOING medium, and the next 256 words the guest feeds
+    // the data port would have been flushed into the new image at the old
+    // LBA. `adoptImage` is the path pom2::mountBlockCard takes, so it was the
+    // common one, not the exotic one.
+    const bool ok = ata_.backing().adoptImage(std::move(p));
+    ata_.reset();
+    lastError_ = ok ? std::string{} : ata_.backing().lastError();
+    return ok;
+}
+
 bool CffaCard::loadImageFromBytes(std::vector<uint8_t> bytes,
                                   const std::string& label,
                                   const std::string& hostFolder)
@@ -115,15 +129,21 @@ void CffaCard::onReset()
 // ── $C0nX device-select — MAME a2cffa.cpp read_c0nx (~L117-147) ────────────
 uint8_t CffaCard::deviceSelectRead(uint8_t low4)
 {
+    // MAME's read_c0nx ends every non-data path in `get_open_bus()` — the
+    // switch cases that only flip the EEPROM write-enable latch `break` out
+    // and fall into the shared tail, as does an offset the card does not
+    // decode. POM2 answered a hard $00, which is a value a probing driver can
+    // mistake for real data; the floating bus is what the 6502 actually sees
+    // (Memory installs the source via SlotBus::setFloatingBusSource).
     switch (low4) {
         case 0x0: // high byte of the last 16-bit ATA data word read at $C0n8
             return static_cast<uint8_t>(lastReadData_ >> 8);
         case 0x3: // EEPROM write-enable off
             writeProtect_ = false;
-            return 0x00;
+            return openBus();
         case 0x4: // EEPROM write-enable on (protect)
             writeProtect_ = true;
-            return 0x00;
+            return openBus();
         case 0x8: { // ATA data register: 16-bit read, low byte to bus, high latched
             const uint16_t d = ata_.cs0_r(0);
             lastReadData_ = d;
@@ -133,7 +153,7 @@ uint8_t CffaCard::deviceSelectRead(uint8_t low4)
         case 0xD: case 0xE: case 0xF: // ATA taskfile registers 1..7
             return static_cast<uint8_t>(ata_.cs0_r(static_cast<uint8_t>(low4 - 8)) & 0xFF);
         default:
-            return 0x00;
+            return openBus();
     }
 }
 

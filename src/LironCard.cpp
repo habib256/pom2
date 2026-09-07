@@ -135,7 +135,10 @@ bool LironCard::busLive() const
         if (images_[static_cast<std::size_t>(i)].isLoaded()) mask |= 1u << i;
     if (mask != busMediaMask_) {
         busMediaMask_ = mask;
-        bus_.busReset();
+        // abortTransaction(), NOT busReset(): a media change is not a bus
+        // reset. The host has not re-run its INIT scan, so the chain numbers
+        // it assigned still stand; only the half-finished frame goes.
+        bus_.abortTransaction();
     }
     return busEnabled_ && mask != 0;
 }

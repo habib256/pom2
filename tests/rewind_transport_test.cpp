@@ -250,7 +250,64 @@ int main()
                "the ring stopped growing after a media write");
     }
 
+    // ── (9) begin-scrub on an EMPTY ring must not park the machine ────────
+    // (bug hunt #4, item #5.) `rewindBeginScrub` used to stop the worker and
+    // wait for it to park BEFORE testing whether the ring had anything to
+    // scrub. On the empty ring it then returned false with the machine
+    // stopped — and the caller (Rewind_ImGui::beginScrubIfNeeded) only sets
+    // `scrubbing_` on a true return, so `releaseHold` had nothing to resume.
+    // The ring fills only while Running, so nothing could ever un-stick it:
+    // a permanent freeze from ticking Record and holding F6 within one frame.
+    {
+        EmulationController e;
+        e.rewind().setEnabled(true);
+        e.setMode(EmulationController::Mode::Running);
+        assert(ringSize(e) == 0 && "the case needs an empty ring");
+
+        assert(!e.rewindBeginScrub() && "scrubbing an empty ring must fail");
+        assert(e.getMode() == EmulationController::Mode::Running &&
+               "a failed begin-scrub parked the machine with no scrub to "
+               "release — the UI can never resume it");
+
+        // The machine still runs, so the ring still fills, and a scrub then
+        // works normally.
+        for (int i = 0; i < 5; ++i) e.tickFrame();
+        assert(ringSize(e) >= 3);
+        assert(e.rewindBeginScrub());
+        assert(e.getMode() == EmulationController::Mode::Stopped);
+    }
+
+    // ── (10) begin-scrub consults the media-write epoch (item #31f) ───────
+    // A printed page or a block flush that lands while the machine is STOPPED
+    // never reaches `capture`'s epoch check, because nothing is capturing.
+    // Entering a scrub is the moment that matters, so the check runs here too.
+    {
+        EmulationController e;
+        {
+            std::lock_guard<std::mutex> lk(e.stateMutex());
+            Memory& mem = e.memory();
+            mem.memWrite(0x0800, 0x4C);
+            mem.memWrite(0x0801, 0x00);
+            mem.memWrite(0x0802, 0x08);
+            e.cpu().setProgramCounter(0x0800);
+        }
+        e.rewind().setEnabled(true);
+        e.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 10; ++i) e.tickFrame();
+        assert(ringSize(e) >= 5);
+
+        // Stop first, THEN write: the ring has no capture point left to
+        // notice the epoch bump.
+        e.setMode(EmulationController::Mode::Stopped);
+        pom2::noteMediaWrite();
+
+        assert(!e.rewindBeginScrub() &&
+               "a scrub was allowed to span an irreversible media write");
+        assert(ringSize(e) == 0 && "the ring was not dropped at the scrub");
+    }
+
     std::printf("Rewind transport: OK (park + frozen + seek + seekToCycle + "
-                "resume + bare-resume + tickFrame + media-write clear)\n");
+                "resume + bare-resume + tickFrame + media-write clear + "
+                "empty-ring scrub + scrub-time media epoch)\n");
     return 0;
 }

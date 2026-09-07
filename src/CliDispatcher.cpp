@@ -22,6 +22,7 @@
 
 #include "CpuClock.h"
 #include "Logger.h"
+#include "Version.h"
 
 #include <cctype>
 #include <climits>
@@ -185,7 +186,8 @@ void printUsage()
         "  --play / --rec / --rewind  Cassette transport\n"
         "  --snapshot-save <path>     Write snapshot\n"
         "\n"
-        "  -h, --help                 Show this and exit\n");
+        "  -h, --help                 Show this and exit\n"
+        "  -v, --version              Print the version and exit\n");
 }
 
 } // namespace
@@ -216,11 +218,69 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         return argv[++i];
     };
 
+    // ── "--flag VALUE" for a flag that only takes "--flag=VALUE" ────────
+    // `--ai-control`, `--fujinet`, `--fujinet-serial` and
+    // `--rgb-card-invert-bit7` carry their value after an `=`; written with a
+    // space the value fell through to the POSITIONAL branch and became
+    // `bootDiskPath`. `POM2 --ai-control 6503` therefore armed the server on
+    // the DEFAULT port and then reported "unrecognised disk image: 6503" —
+    // two wrong things from one plausible command line, neither of them an
+    // error.
+    //
+    // The test is deliberately narrow rather than the general "next token
+    // does not start with '-'": `POM2 --ai-control game.dsk` is a legitimate
+    // invocation (bare flag + positional disk) and must keep working. So each
+    // flag only rejects a next token that looks like ITS OWN value.
+    auto looksLikePort = [](const char* s) {
+        if (!s || !*s) return false;
+        for (const char* p = s; *p; ++p)
+            if (*p < '0' || *p > '9') return false;
+        return true;
+    };
+    auto looksLikeOnOff = [](const char* s) {
+        if (!s) return false;
+        std::string v = s;
+        for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return v == "on" || v == "off" || v == "true" || v == "false" ||
+               v == "1"  || v == "0";
+    };
+    auto looksLikeSerialDevice = [](const char* s) {
+        if (!s) return false;
+        const std::string v = s;
+        if (v.rfind("/dev/", 0) == 0) return true;
+        if (v.size() >= 4 && (v[0] == 'C' || v[0] == 'c') &&
+            (v[1] == 'O' || v[1] == 'o') && (v[2] == 'M' || v[2] == 'm')) {
+            for (std::size_t k = 3; k < v.size(); ++k)
+                if (v[k] < '0' || v[k] > '9') return false;
+            return true;
+        }
+        return false;
+    };
+    // Returns true when the command line is bad and the caller must bail.
+    auto rejectSpacedValue = [&](int i, const char* flag,
+                                 bool (*looks)(const char*)) -> bool {
+        if (i + 1 >= argc) return false;
+        if (!looks(argv[i + 1])) return false;
+        pom2::log().error("CLI", std::string(flag) + " takes its value as " +
+                                 flag + "=VALUE, not \"" + flag + " " +
+                                 argv[i + 1] + "\"");
+        return true;
+    };
+
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
 
         if (a == "-h" || a == "--help") {
             printUsage();
+            helpRequestedOut = true;
+            return std::nullopt;
+        }
+        // `pom2_headless --version` has always worked; `POM2 --version` was
+        // rejected as an unknown flag, which is the one thing a user reaching
+        // for it (attaching a version to a bug report) cannot work around.
+        // Same exit path as --help: printed, and the caller exits 0.
+        if (a == "--version" || a == "-v") {
+            std::printf("POM2: %s\n", POM2_VERSION_STRING);
             helpRequestedOut = true;
             return std::nullopt;
         }
@@ -237,6 +297,9 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         else if (a == "--ai-control" || a.rfind("--ai-control=", 0) == 0) {
             plan.aiControl = true;
             const auto eq = a.find('=');
+            if (eq == std::string::npos &&
+                rejectSpacedValue(i, "--ai-control", looksLikePort))
+                return std::nullopt;
             if (eq != std::string::npos) {
                 const int p = std::atoi(a.c_str() + eq + 1);
                 if (p <= 0 || p > 65535) {
@@ -259,6 +322,9 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         else if (a == "--fujinet" || a.rfind("--fujinet=", 0) == 0) {
             plan.fujiNet = CliPlan::FujiNetTransport::Tcp;
             const auto eq = a.find('=');
+            if (eq == std::string::npos &&
+                rejectSpacedValue(i, "--fujinet", looksLikePort))
+                return std::nullopt;
             if (eq != std::string::npos) {
                 const int p = std::atoi(a.c_str() + eq + 1);
                 if (p <= 0 || p > 65535) {
@@ -272,6 +338,9 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         else if (a == "--fujinet-serial" || a.rfind("--fujinet-serial=", 0) == 0) {
             plan.fujiNet = CliPlan::FujiNetTransport::Serial;
             const auto eq = a.find('=');
+            if (eq == std::string::npos &&
+                rejectSpacedValue(i, "--fujinet-serial", looksLikeSerialDevice))
+                return std::nullopt;
             if (eq != std::string::npos) plan.fujiNetSerialPath = a.substr(eq + 1);
         }
         else if (a == "--fujinet-slot") {
@@ -324,6 +393,8 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
             // Bare flag = enable; `=on`/`=off`/`=true`/`=false`/`=1`/`=0` honoured.
             const auto eq = a.find('=');
             if (eq == std::string::npos) {
+                if (rejectSpacedValue(i, "--rgb-card-invert-bit7", looksLikeOnOff))
+                    return std::nullopt;
                 plan.rgbCardInvertBit7 = true;
             } else {
                 std::string v = a.substr(eq + 1);

@@ -116,6 +116,13 @@ int main() {
             static_cast<uint32_t>(id[57]) | (static_cast<uint32_t>(id[58]) << 16);
         assert(cur == blocks);
         assert(id[53] & 0x0001);                       // words 54-58 valid
+        // ...and word 53 bit 0 is a CLAIM about words 54-56 (current logical
+        // geometry, ATA-1 §6.2.1.6). They were left at ZERO while the flag
+        // said they were valid, so a host that trusts the flag computed a
+        // zero-cylinder, zero-head drive (bug hunt 4 #25).
+        assert(id[55] != 0 && id[56] != 0);           // heads, sectors/track
+        assert(id[54] == blocks / (static_cast<uint32_t>(id[55]) * id[56]));
+        assert(id[55] == id[3] && id[56] == id[6]);   // agrees with words 1/3/6
         assert(id[49] & 0x0200);                       // LBA supported
         assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) == 0); // transfer drained
         assert(a.cs0_r(7) & AtaBlockDevice::kStDRDY);
@@ -183,16 +190,89 @@ int main() {
         assert(a.cs0_r(7) & AtaBlockDevice::kStDRQ); // still requesting (≠ 1 sector)
     }
 
-    // ── Out-of-range LBA reads as zeros, no crash ─────────────────────────
+    // ── Out-of-range READ is ID NOT FOUND, not a clean zero-filled sector ──
+    // ATA-1 §9.1 / ATA-2 §7.2.6: IDNF ($10) = "the requested sector could not
+    // be found". POM2 handed the caller 512 zeros with DRDY|DSC and no ERR —
+    // so a driver walking past the end of a truncated image read an empty
+    // block as real data. WRITE already refused; READ is the half that was
+    // missing (bug hunt 4 #11).
     {
         AtaBlockDevice a;
         assert(a.backing().loadFromBytes(makeImage(4), "oor", ""));
         setLba(a, 1000, 1);
         a.cs0_w(7, AtaBlockDevice::kCmdRead);
+        const uint8_t st = static_cast<uint8_t>(a.cs0_r(7));
+        assert((st & AtaBlockDevice::kStERR) != 0);   // error flagged
+        assert((st & AtaBlockDevice::kStDRQ) == 0);   // no data phase
+        assert((static_cast<uint8_t>(a.cs0_r(1)) &
+                AtaBlockDevice::kErrIDNF) != 0);
+
+        // A multi-sector READ that starts valid and crosses the end fails as
+        // ONE command — the caller must not get two good sectors and then
+        // silence.
+        setLba(a, 3, 2);
+        a.cs0_w(7, AtaBlockDevice::kCmdReadMulti);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStERR) != 0);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) == 0);
+
+        // The LAST in-range sector still reads: the bound is `>=`, and
+        // getting it backwards would break the last block of every volume.
+        setLba(a, 3, 1);
+        a.cs0_w(7, AtaBlockDevice::kCmdRead);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStERR) == 0);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) != 0);
         uint8_t buf[kBlk];
         readSector(a, buf);
-        for (size_t i = 0; i < kBlk; ++i) assert(buf[i] == 0x00);
-        assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) == 0);
+        for (size_t i = 0; i < kBlk; ++i) assert(buf[i] == pat(3, i));
+    }
+
+    // ── Device-select bit: the SLAVE address answers nothing ──────────────
+    // Register 6 bit 4 (IDE_DEVICE_HEAD_DRV) picks master/slave on the shared
+    // cable. POM2 read it NOWHERE, so the CFFA firmware's slave scan — which
+    // MAME deliberately enables by patching m_rom[0x800]/[0x801] to 0x0D
+    // (a2cffa.cpp device_start, copied in CffaCard::loadRom), and which the
+    // firmware drives at $CCC with `LDA $05F8,Y / EOR #$10 / STA $C08E,X` —
+    // found a SECOND drive that was the same medium, and a write addressed to
+    // it landed on the master's image (bug hunt 4 #6). MAME's
+    // `ata_hle_device::read_cs0` returns 0 for an unselected device.
+    {
+        AtaBlockDevice a;
+        assert(a.backing().loadFromBytes(makeImage(16), "sel", ""));
+
+        // Master: IDENTIFY works and reports the medium.
+        a.cs0_w(6, 0xA0);                       // bit 4 clear = master
+        a.cs0_w(7, AtaBlockDevice::kCmdIdentify);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) != 0);
+        for (size_t i = 0; i < 256; ++i) (void)a.cs0_r(0);
+
+        // Slave: every register reads 0 (DRDY clear = "nobody home"), and the
+        // command is not executed at all.
+        a.cs0_w(6, 0xB0);                       // bit 4 set = slave
+        a.cs0_w(7, AtaBlockDevice::kCmdIdentify);
+        assert(a.cs0_r(7) == 0x0000);
+        assert(a.cs0_r(1) == 0x0000);
+        assert(a.cs1_r(6) == 0x0000);           // alternate status too
+
+        // And a WRITE addressed to the slave must not reach the master's
+        // medium. Feed a whole sector at the slave address, then check the
+        // block through the backing.
+        uint8_t before[kBlk];
+        assert(a.backing().readBlock(3, before));
+        a.cs0_w(2, 1);
+        a.cs0_w(3, 3);
+        a.cs0_w(4, 0);
+        a.cs0_w(5, 0);
+        a.cs0_w(6, 0xF0);                       // LBA mode, drive 1 (slave)
+        a.cs0_w(7, AtaBlockDevice::kCmdWrite);
+        for (size_t i = 0; i < 256; ++i) a.cs0_w(0, 0xDEAD);
+        uint8_t after[kBlk];
+        assert(a.backing().readBlock(3, after));
+        for (size_t i = 0; i < kBlk; ++i) assert(after[i] == before[i]);
+        assert(!a.backing().hasUnsavedChanges());
+
+        // Back to the master and the device is there again.
+        a.cs0_w(6, 0xA0);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStDRDY) != 0);
     }
 
     // ── WRITE to a write-protected device aborts (ERR), no silent success ──
@@ -220,8 +300,11 @@ int main() {
         const uint8_t st = static_cast<uint8_t>(a.cs0_r(7));
         assert((st & AtaBlockDevice::kStERR) != 0);
         assert((st & AtaBlockDevice::kStDRQ) == 0);
+        // IDNF, not ABRT: an address off the end and a write-protected medium
+        // are different faults and used to share one Error code, so a driver
+        // could not tell "locked disk" from "block past the end" (ATA-1 §9.1).
         assert((static_cast<uint8_t>(a.cs0_r(1)) &
-                AtaBlockDevice::kErrABRT) != 0);
+                AtaBlockDevice::kErrIDNF) != 0);
         assert(!a.backing().hasUnsavedChanges());
 
         // A multi-sector request that starts valid but crosses the end must

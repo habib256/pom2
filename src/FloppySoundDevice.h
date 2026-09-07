@@ -60,6 +60,7 @@
 #define POM2_FLOPPY_SOUND_DEVICE_H
 
 #include "AudioSource.h"
+#include "CpuClock.h"
 #include "FloppySoundSink.h"
 
 #include <array>
@@ -98,6 +99,14 @@ public:
     /// (linear interpolation) so the 44.1 kHz source samples play
     /// natural-pitch regardless of the negotiated device rate.
     void setSampleRate(uint32_t hz) override;
+
+    /// Emulated CPU clock (Hz) that `step()`'s `emuCycles` stamps are
+    /// measured against. The step-cadence classifier turns a cycle delta into
+    /// milliseconds to pick a seek sample, and it used the compile-time NTSC
+    /// constant — 0.7 % wrong on the three PAL profiles, which is inaudible
+    /// but is also exactly the mistake `setVideoStandard` fans out to every
+    /// other cycle-stamped audio consumer. Defaults to the NTSC nominal.
+    void setCpuClock(double hz);
 
     // ─── CPU-thread API ─────────────────────────────────────────────────
     /// Motor state changed. `withDisk` chooses the loaded vs empty
@@ -178,6 +187,19 @@ private:
     };
     mutable std::mutex cmdMtx_;
     std::vector<Cmd>   cmdQueue_;
+    /// Hard cap on the CPU→audio queue. `drainCommands` is the ONLY consumer
+    /// and it runs on the miniaudio callback, so on a host with no audio
+    /// device (headless, WASM before the first user gesture, a machine whose
+    /// output failed to open) nothing ever drains it — while samples still
+    /// load unconditionally, so `motor`/`step`/`click` keep pushing. A
+    /// DOS 3.3 disk copy is ~80 phase steps per seek; a long session grew
+    /// this without bound. 4096 commands is ~40 s of the busiest real seek
+    /// traffic and ~64 KB, i.e. far past any audible backlog: past the cap we
+    /// drop the OLDEST, because what a listener needs is the head of the
+    /// mechanism NOW, not a minute-old spin-up.
+    static constexpr size_t kMaxCommands = 4096;
+    /// Push under `cmdMtx_`, enforcing `kMaxCommands` by dropping oldest.
+    void pushCommandLocked(const Cmd& c);
     /// Audio-thread-only scratch that `drainCommands` swaps `cmdQueue_`
     /// into. A local `std::vector<Cmd>` there allocated on every buffer
     /// that carried a command and freed at the end of the callback — a
@@ -251,6 +273,9 @@ private:
     // (original Disk II Shugart). MainWindow bumps to ~1.4 on //c / //c+
     // to approximate the Sony internal drive's faster spin-up.
     std::atomic<float> motorPitch_{1.0f};
+    /// Emulated CPU clock the step-cadence classifier divides by. UI/worker
+    /// thread writes (setCpuClock), audio thread reads (drainCommands).
+    std::atomic<double> cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
 
     // ─── Helpers ────────────────────────────────────────────────────────
     bool loadOneWav(const std::string& path, Sample& out);

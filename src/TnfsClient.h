@@ -58,6 +58,7 @@
 
 #include "SocketCompat.h"
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -136,6 +137,16 @@ public:
     void setTimeoutMs(int ms)   { timeoutMs_ = (ms > 0) ? ms : 1; }
     void setMaxRetries(int n)   { retries_   = (n  > 0) ? n  : 1; }
 
+    /// Cooperative cancellation, polled between a UDP retry and between the
+    /// TCP/UDP passes of mount(). WHY it lives here and not only in the
+    /// caller: `mount()` on an unreachable host spends TCP-connect + retries ×
+    /// per-request timeout entirely INSIDE this class, and the positional
+    /// `tnfs://` fetch runs before the window exists — so a Ctrl+C that only
+    /// the caller can see is a Ctrl+C nobody answers for ~30 s. The pointer is
+    /// borrowed and must outlive the client.
+    void setAbortFlag(const std::atomic<bool>* flag) { abort_ = flag; }
+    bool aborted() const { return abort_ && abort_->load(); }
+
 private:
     /// One request/response round trip. `payload` is the request payload;
     /// `reply` receives the response payload INCLUDING its leading status
@@ -166,6 +177,8 @@ private:
     /// Kept so a UDP session can re-address the server on every send without
     /// resolving the name again.
     std::vector<uint8_t> peerAddr_;
+    /// Borrowed cancellation flag; see setAbortFlag().
+    const std::atomic<bool>* abort_ = nullptr;
 };
 
 }  // namespace pom2

@@ -96,6 +96,9 @@ public:
     /// the ROM bank (MAME `write_cnxx`, grappler.cpp:586-591).
     void    slotRomWrite    (uint8_t low8, uint8_t v) override;
     uint8_t expansionRomRead(uint16_t offset) override;
+    /// MAME `grappler.cpp:64` `take_c800() const override { return true; }`
+    /// — the Grappler+ serves its banked 2 KB firmware from /IOSTB.
+    bool takesC800() const override { return true; }
     void    onReset() override;
 
     /// Rewind/snapshot hooks — the ROM bank / ACK latch / IRQ-enable

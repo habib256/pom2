@@ -372,6 +372,109 @@ void testIdleOverrideSurvivesStep()
 
 }  // namespace
 
+
+// ─── Item 6: re-rendering the SAME emulated frame is byte-identical ──────
+//
+// Phosphor decay is a property of the EMULATED frame, not of the host's
+// render() call. The UI paints at the monitor's refresh (120/144 Hz panels
+// exist) and repaints the same emulated frame while the machine is PAUSED or
+// single-stepping — so a decay applied once per render() faded a paused
+// lo-res / DLGR / DHGR screen to black in about two seconds, and ran the
+// afterglow 2-2.4x too fast on a fast panel. The fix is
+// effectivePhosphorDecay(phos, emuFrameDelta_) with delta 0 meaning "no time
+// passed, do not decay"; this pins the observable consequence in the three
+// painters that used to multiply unconditionally.
+//
+// Shape of each case: light the screen, advance one emulated frame; blank it,
+// advance one emulated frame and render (that frame carries the afterglow);
+// then render AGAIN with the cycle counter standing still and require the
+// framebuffer to be bit-for-bit what it was.
+
+void renderTwiceIsIdentical(const char* what,
+                            bool eightyCol, bool dhgr, bool hiRes)
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    Apple2Display disp;
+    disp.setAuxMemory(mem.auxData());
+    disp.setHiResMode(Apple2Display::HiResMode::MonoAmber);   // decay 0.96
+
+    mem.memRead(CLR_TEXT);
+    mem.memRead(hiRes ? SET_HIRES : 0xC056);
+    if (eightyCol) mem.memWrite(IIE_80COL_ON, 0);
+    mem.memRead(dhgr ? DHIRES_ON : DHIRES_OFF);
+
+    const uint16_t lo = hiRes ? 0x2000 : 0x0400;
+    const uint16_t hi = hiRes ? 0x4000 : 0x0800;
+
+    // One full emulated video frame, whichever standard Memory defaults to
+    // (65 cycles x 312 lines covers PAL and overshoots NTSC — either way the
+    // display's emuFrame index moves by at least one).
+    auto stepOneFrame = [&]() { mem.advanceCycles(65 * 312); };
+
+    // Lit.
+    for (uint32_t a = lo; a < hi; ++a) {
+        mem.memWrite(static_cast<uint16_t>(a), 0x7F);
+        mem.auxDataMutable()[a] = 0x7F;
+    }
+    stepOneFrame();
+    disp.render(mem);
+
+    // Blanked — this is the frame that carries the afterglow.
+    for (uint32_t a = lo; a < hi; ++a) {
+        mem.memWrite(static_cast<uint16_t>(a), 0x00);
+        mem.auxDataMutable()[a] = 0x00;
+    }
+    stepOneFrame();
+    disp.render(mem);
+
+    const int w = disp.width();
+    const int h = disp.height();
+    std::vector<uint32_t> first(disp.pixels(), disp.pixels() +
+                                static_cast<size_t>(w) * h);
+
+    // There must BE an afterglow, or the comparison below proves nothing.
+    int glowing = 0;
+    for (uint32_t p : first) if (lum(p) > 8) ++glowing;
+    if (glowing == 0) {
+        std::printf("  render_twice(%s): no afterglow to preserve — "
+                    "test is degenerate\n", what);
+        assert(false && "expected a phosphor afterglow in this mode");
+    }
+
+    // Same emulated frame, painted again. No emulated time has passed.
+    disp.render(mem);
+    assert(disp.width()  == w);
+    assert(disp.height() == h);
+    const uint32_t* second = disp.pixels();
+    for (size_t i = 0; i < first.size(); ++i) {
+        if (first[i] == second[i]) continue;
+        std::printf("  render_twice(%s): pixel %zu faded %08X -> %08X\n",
+                    what, i, first[i], second[i]);
+        assert(false && "re-rendering the same emulated frame decayed the "
+                        "phosphor — decay must be per EMULATED frame");
+    }
+
+    // And a third repaint is still the same picture (the bug compounded).
+    disp.render(mem);
+    const uint32_t* third = disp.pixels();
+    for (size_t i = 0; i < first.size(); ++i)
+        assert(first[i] == third[i]);
+
+    std::printf("  render_twice(%s): OK (%d glowing pixels held)\n",
+                what, glowing);
+}
+
+void testSameFrameRendersIdentically()
+{
+    renderTwiceIsIdentical("mono lo-res",   /*80col=*/false, /*dhgr=*/false,
+                           /*hires=*/false);
+    renderTwiceIsIdentical("double lo-res", /*80col=*/true,  /*dhgr=*/true,
+                           /*hires=*/false);
+    renderTwiceIsIdentical("DHGR",          /*80col=*/true,  /*dhgr=*/true,
+                           /*hires=*/true);
+}
+
 int main()
 {
     testDhgrMonoAfterglow();
@@ -379,6 +482,7 @@ int main()
     testNonChatMauveHgrStays280();
     testAppleWinTvFirstFrameIsNotHalfBlack();
     testIdleOverrideSurvivesStep();
+    testSameFrameRendersIdentically();
     std::puts("display_persistence_smoke_test: OK");
     return 0;
 }

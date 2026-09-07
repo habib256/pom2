@@ -77,7 +77,13 @@ public:
     // MainWindow plumbs this through EmulationController so the write goes
     // through Memory::memWrite under stateMutex (rather than scribbling on
     // the raw array) — hence it is NEVER invoked from render().
-    void setWriteCallback(std::function<void(uint16_t, uint8_t)> cb) {
+    //
+    // It RETURNS the byte it replaced, read from the write target under the
+    // same lock. The undo record is built from that, not from the hex grid:
+    // the grid resolves aux through RAMRD while a write resolves it through
+    // RAMWRT, so under 80STORE/RAMWRT an Undo taken from the grid pushed a
+    // MAIN-RAM byte into aux.
+    void setWriteCallback(std::function<uint8_t(uint16_t, uint8_t)> cb) {
         writeCallback = std::move(cb);
     }
 
@@ -87,8 +93,14 @@ public:
 
 private:
     Memory* memory;
-    std::function<void(uint16_t, uint8_t)> writeCallback;
+    std::function<uint8_t(uint16_t, uint8_t)> writeCallback;
     bool cmosDisasm_ = false;
+
+    // Per-frame PAGED copy of what the CPU would fetch (Memory::
+    // snapshotCpuView). The hex grid used to index Memory::data(), the flat
+    // main-bank mirror, which shows main RAM while the machine executes out
+    // of aux / a RamWorks bank / the language card.
+    std::vector<uint8_t> view_;
 
     // Layout state.
     int  startAddress  = 0x0000;
@@ -132,7 +144,11 @@ private:
     // render(): the sink re-enters the host's state mutex, which render()
     // is already inside. Ordered, so an edit followed by an Undo in the
     // same frame lands in that order.
-    struct PendingWrite { uint16_t address; uint8_t value; };
+    //
+    // `record` distinguishes a fresh user edit (which must push an undo entry
+    // built from the byte the write actually replaced) from an Undo/Redo
+    // replay (which already knows both values).
+    struct PendingWrite { uint16_t address; uint8_t value; bool record; };
     std::vector<PendingWrite> pendingWrites;
 
     // Bookmarks.

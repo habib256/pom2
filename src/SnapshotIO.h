@@ -92,9 +92,13 @@ public:
     /// existing file). `good()` is false if the file could not be opened.
     explicit SnapshotWriter(const std::string& path,
                             std::uint32_t machineId = 0);
-    /// Memory-backed: appends the snapshot straight into `sink` as it is
-    /// written (no intermediate copy). `sink` must outlive the writer.
-    /// Always `good()`.
+    /// Memory-backed: writes the snapshot straight into `sink` as it is
+    /// produced (no intermediate copy). `sink` must outlive the writer, and
+    /// its previous contents are REPLACED — the constructor clears it. It
+    /// used to say "appends", which it never did: it wrote from offset 0 and
+    /// left any longer previous content trailing past the new end, where the
+    /// reader sees it as a corrupt blob. Capacity is kept, so reusing one
+    /// buffer for the rewind ring still costs no allocation. Always `good()`.
     explicit SnapshotWriter(std::vector<uint8_t>& sink,
                             std::uint32_t machineId = 0);
     ~SnapshotWriter();

@@ -84,8 +84,14 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.hit      = ctrl.debugger().lastHit();
         snap.breakpoints = ctrl.debugger().breakpoints();
         snap.watchpoints = ctrl.debugger().watchpoints();
-        const uint8_t* raw = mem.data();
-        if (raw) snap.memory.assign(raw, raw + 0x10000);
+        // The PAGED view, not mem.data(). The flat mirror is main-bank only,
+        // so on a //e running out of aux, out of a RamWorks bank or out of
+        // language-card RAM the panel disassembled bytes the CPU never
+        // fetches — and every breakpoint the user then set from that listing
+        // landed at a non-instruction boundary. snapshotCpuView() resolves the
+        // paging without touching a soft switch (Memory.h).
+        snap.memory.assign(0x10000, 0);
+        mem.snapshotCpuView(snap.memory.data());
     }
     snap.running = ctrl.getMode() == EmulationController::Mode::Running;
 

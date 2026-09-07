@@ -70,6 +70,21 @@ int main()
                     "(roms/341-0358-A.bin not found)\n");
         return 77;   // ctest SKIP_RETURN_CODE
     }
+    // The ATINIT driver-call case below needs the //e ROM too. It used to
+    // probe for it in the middle of the run, print "(skipped ...)" and fall
+    // through to `return 0` — a run that did NOT exercise the two-CPU
+    // handshake reported PASS, which is exactly the honesty the global
+    // SKIP_RETURN_CODE 77 exists to prevent. Probe it here, once, and skip
+    // the whole binary the way the card ROM does.
+    {
+        std::ifstream f("roms/apple2e.rom", std::ios::binary);
+        if (!f.good()) {
+            std::printf("workstation_card_smoke: SKIP "
+                        "(roms/apple2e.rom not found — the $Cn14 driver-call "
+                        "case cannot run)\n");
+            return 77;
+        }
+    }
 
     // ─── A card with no firmware is inert, and says so ───────────────────
     {
@@ -246,7 +261,45 @@ int main()
     assert(card.cardPc() == pcBefore);
     card.loadSnapshotState(blob.data(), 8);         // truncated
     assert(card.cardPc() == pcBefore);
-    std::printf("  ok: snapshot round-trips and rejects foreign blobs\n");
+
+    // The version byte is a RANGE gate, not an equality test — the shape
+    // `TranswarpCard` and `NoSlotClock` already use. A blob from a NEWER
+    // build is refused (its tail is unknown); one at or below the current
+    // version is read, because the fixed part has never changed shape.
+    // Strict equality meant the next time the constant is bumped, every
+    // blob already in the rewind ring would be dropped in silence and the
+    // card would come back with stale RAM under a rewound machine.
+    {
+        const std::size_t kVersionByte = 4;         // right after the u32 magic
+        const uint8_t     current      = blob[kVersionByte];
+        assert(current >= 2 && "need a version above 1 to forge an older blob");
+
+        // A newer blob: still refused.
+        std::vector<uint8_t> newer = blob;
+        newer[kVersionByte] = static_cast<uint8_t>(current + 1);
+        runFrames(card, 20);
+        const uint16_t movedPc = card.cardPc();
+        assert(movedPc != pcBefore);
+        card.loadSnapshotState(newer.data(), newer.size());
+        assert(card.cardPc() == movedPc && "a newer blob must be refused");
+
+        // Version 0 is not a version.
+        std::vector<uint8_t> zero = blob;
+        zero[kVersionByte] = 0;
+        card.loadSnapshotState(zero.data(), zero.size());
+        assert(card.cardPc() == movedPc && "version 0 must be refused");
+
+        // An OLDER-but-readable blob restores. On the old strict-equality
+        // gate this returned silently and the card kept its moved state.
+        std::vector<uint8_t> older = blob;
+        older[kVersionByte] = static_cast<uint8_t>(current - 1);
+        card.loadSnapshotState(older.data(), older.size());
+        assert(card.cardPc() == pcBefore &&
+               "an older blob whose layout is unchanged must still restore");
+        assert(card.cardRam(0x0200) == ramBefore);
+    }
+    std::printf("  ok: snapshot round-trips, rejects foreign/newer blobs, "
+                "accepts older ones\n");
 
     // ─── It keeps running after the reset the slot bus can send ──────────
     card.onReset();
@@ -273,9 +326,12 @@ int main()
         host.clearRam();
         host.resetSoftSwitches();
         host.setIIEMode(true);
-        if (!host.loadAppleIIRom("roms/apple2e.rom", false)) {
-            std::printf("  (skipped the driver-call case: no roms/apple2e.rom)\n");
-        } else {
+        // The file's presence was checked at the top (return 77); a failure
+        // HERE is a real load failure, not a missing dump, so it must fail
+        // the test rather than skip a case inside a passing run.
+        assert(host.loadAppleIIRom("roms/apple2e.rom", false) &&
+               "roms/apple2e.rom exists but would not load");
+        {
             auto plugged = std::make_unique<pom2::WorkstationCard>(4);
             assert(plugged->loadRom(romPath));
             auto* live = plugged.get();

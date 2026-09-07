@@ -31,16 +31,17 @@ namespace {
 // with STATUS starting at $CnC0.
 constexpr uint8_t  kBootOff    = 0x20;
 /// Shared error tail, in the free bytes between the boot routine (which ends
-/// at $Cn44) and the ProDOS driver at $Cn50. Both transfer routines BRANCH
-/// here rather than carrying their own `LDA #err / SEC / RTS`, which is what
-/// buys the room for WRITE to pre-flight the bay at all — see the layout note
-/// in buildRom().
-constexpr uint8_t  kErrNoDev   = 0x45;   // → A = $28, SEC, RTS
-constexpr uint8_t  kDriverOff  = 0x50;
-constexpr uint8_t  kReadOff    = 0x66;
-constexpr uint8_t  kWriteOff   = 0x8D;
-constexpr uint8_t  kStatusOff  = 0xC0;
-constexpr uint8_t  kHaltOff    = 0xE0;   // boot-failure halt loop
+/// at $Cn44) and the ProDOS driver. Both transfer routines BRANCH here rather
+/// than carrying their own `LDA #err / SEC / RTS`, which is what buys the room
+/// for WRITE to pre-flight the bay at all — see the layout note in buildRom().
+/// It grew from 11 to 19 bytes when it took on the second question ("is the
+/// block ON the medium?"), and everything below it moved down.
+constexpr uint8_t  kErrNoDev   = 0x45;   // → A = $27 / $28 / $2B, SEC, RTS
+constexpr uint8_t  kDriverOff  = 0x58;
+constexpr uint8_t  kReadOff    = 0x6E;
+constexpr uint8_t  kWriteOff   = 0x9C;
+constexpr uint8_t  kStatusOff  = 0xD0;
+constexpr uint8_t  kHaltOff    = 0xE8;   // boot-failure halt loop
 
 // Block-level I/O trace, gated by POM2_TRACE_HDV=1 (mirrors the env-var
 // diagnostics in DiskIICard.cpp / Memory.cpp). One line per 512-byte block
@@ -66,6 +67,19 @@ ProDOSHardDiskCard::ProDOSHardDiskCard(int slotNum)
 bool ProDOSHardDiskCard::loadImage(const std::string& path)
 {
     const bool ok = backing_.loadImage(path);
+    selectedBlock = 0;
+    streamOffset  = 0;
+    return ok;
+}
+
+bool ProDOSHardDiskCard::adoptImage(pom2::Block512Backing::PreparedImage&& p)
+{
+    // Mirrors loadImage: the medium changed, so the firmware-visible cursor
+    // ($C0n0/$C0n1 block select + the byte offset inside it) must start over.
+    // adoptImage is what pom2::mountBlockCard calls — the path a GUI mount
+    // actually takes — and it used to forward to the backing alone, leaving
+    // the OUTGOING image's cursor pointed into the incoming one.
+    const bool ok = backing_.adoptImage(std::move(p));
     selectedBlock = 0;
     streamOffset  = 0;
     return ok;
@@ -142,11 +156,25 @@ uint8_t ProDOSHardDiskCard::deviceSelectRead(uint8_t low4)
     if (low4 == 0x3) {
         // Status byte. Preserves the original encoding for backward compat:
         //   bit-7 = 0 when image loaded, 1 when missing (legacy).
-        //   bit-6 = 1 when write-protected (new — used by the write driver
-        //           in the ROM to gate ProDOS WRITE_BLOCK and return $2B
-        //           without touching the in-memory image).
-        uint8_t s = backing_.isLoaded() ? 0x00 : 0x80;
+        //   bit-6 = 1 when write-protected (used by the write driver in the
+        //           ROM to gate ProDOS WRITE_BLOCK and return $2B without
+        //           touching the in-memory image).
+        //   bit-5 = 1 when the SELECTED block is past the end of the medium.
+        //
+        // Bit 5 is what makes the driver able to fail an out-of-range
+        // transfer at all (bug hunt 4 #5). Before it, a READ past the end
+        // streamed 512 × $FF and a WRITE dropped its bytes, and BOTH returned
+        // CLC "success" — so a truncated .hdv (or a 2MG whose header claims
+        // more blocks than the file carries) looked to ProDOS like a healthy
+        // volume full of $FF. The ATA/CFFA path has always refused
+        // (AtaBlockDevice::startCommand); this is the synthetic card catching
+        // up. Only meaningful with media present — the ROM's error tail reads
+        // "bit 5 clear" as "the bay is empty", so an empty bay must not set it.
+        if (!backing_.isLoaded()) return 0x80;
+        uint8_t s = 0x00;
         if (backing_.isWriteProtected()) s |= 0x40;
+        if (static_cast<size_t>(selectedBlock) >= backing_.blockCount())
+            s |= 0x20;
         return s;
     }
     if (low4 == 0x4 || low4 == 0x5) {
@@ -218,12 +246,12 @@ void ProDOSHardDiskCard::buildRom()
     // ── Layout ──────────────────────────────────────────────────────────
     //   $Cn00..$Cn07  ProDOS signature + the PR#n entry
     //   $Cn20..$Cn44  boot
-    //   $Cn45..$Cn4C  shared error tail
-    //   $Cn50..$Cn65  ProDOS driver dispatch
-    //   $Cn66..$Cn8C  read block
-    //   $Cn8D..$CnB7  write block
-    //   $CnC0..$CnC9  STATUS
-    //   $CnE0..$CnE2  boot-failure halt
+    //   $Cn45..$Cn57  shared error tail  ($27 / $28 / $2B)
+    //   $Cn58..$Cn6D  ProDOS driver dispatch
+    //   $Cn6E..$Cn96  read block
+    //   $Cn9C..$CnCB  write block
+    //   $CnD0..$CnE2  STATUS
+    //   $CnE8..$CnEA  boot-failure halt
     //   $CnFE..$CnFF  capability + driver-entry bytes
     //
     // Every address in the page below is a LABEL. The dispatch's three
@@ -265,17 +293,30 @@ void ProDOSHardDiskCard::buildRom()
      .label("bootErr").jmp("halt");
 
     // ── Shared error tail ($Cn45) ──────────────────────────────────────
-    // Two entry points into one exit. Both transfer routines branch here
-    // instead of each carrying `LDA #err / SEC / RTS`, and that is not
-    // tidiness: it is the eight bytes that let WRITE ask "is there a disk
-    // here?" at all. The routine had ZERO slack before — it ended at $CnBF
-    // with STATUS at $CnC0 — so the pre-flight had to be paid for by
-    // removing bytes, not by finding room.
+    // Three codes, one exit. Both transfer routines branch here instead of
+    // each carrying `LDA #err / SEC / RTS`, and that is not tidiness: it is
+    // the bytes that let them ask anything about the bay at all. The routine
+    // had ZERO slack before — the write routine ended at $CnBF with STATUS at
+    // $CnC0 — so the first pre-flight had to be paid for by removing bytes.
+    //
+    // `errNoDev` is now a DISCRIMINATOR, not a constant: the caller has
+    // already established that $C0n3 said "something is wrong" (bit 7 or
+    // bit 5 set), and the second read separates the two. Bit 5 is only ever
+    // set with media present, so "bit 5 clear" is unambiguously "empty bay".
+    //   $27 = I/O error        — block past the end of the medium
+    //   $28 = no device        — nothing in the bay
+    //   $2B = write protected  — WRITE only, entered at `errWProt`
     //
     // Lives in the gap the boot routine leaves. Unlike SmartPortCard, whose
     // identical first attempt had to be undone, this ROM has no authentic
     // dump overlaid on it, so the gap really is free.
     a.region("errNoDev", kErrNoDev, kDriverOff)
+     .emit({ 0xAD, statReg, 0xC0,   // LDA $C0n3
+             0x29, 0x20 })          // AND #$20   ; block out of range?
+     .branch(0xF0, "errNoMedia")    // BEQ → empty bay
+     .emit({ 0xA9, 0x27 })          // LDA #$27  I/O error
+     .branch(0xD0, "errExit")       // BNE errExit  (always: A != 0)
+     .label("errNoMedia")
      .emit({ 0xA9, 0x28 })          // LDA #$28  no device connected
      .branch(0xD0, "errExit")       // BNE errExit  (always: A != 0)
      .label("errWProt")
@@ -290,13 +331,14 @@ void ProDOSHardDiskCard::buildRom()
     //   $02 write  → write block
     //   any other  → A=$01 (bad command), SEC, RTS
     //
-    // Both transfer routines PRE-FLIGHT the bay before touching anything,
-    // through a single `BIT $C0n3`: the status byte puts "no media" at bit 7
-    // and "write protected" at bit 6 precisely so N and V answer both
-    // questions in three bytes. Media is asked about FIRST. An empty bay is
-    // $28 "no device connected" — not $27 "I/O error" and not $2B "write
-    // protected", which is what WRITE used to say because it tested the WP
-    // bit and never tested media at all.
+    // Both transfer routines PRE-FLIGHT the bay before touching anything.
+    // The block registers are latched FIRST, then one `LDA $C0n3 / AND #$A0`
+    // asks both media questions at once — bit 7 "no media", bit 5 "that block
+    // is not on this medium" — and the shared tail separates them. WRITE adds
+    // a `BIT $C0n3 / BVS` for bit 6 "write protected" AFTER that, so media is
+    // still asked about first: an empty bay is $28 "no device connected", not
+    // $2B "write protected", which is what WRITE used to say because it
+    // tested the WP bit and never tested media at all.
     a.region("driver", kDriverOff, kReadOff)
      .emit({ 0xA5, 0x42,       // LDA $42         ; command
              0xC9, 0x01 })     // CMP #$01
@@ -316,13 +358,14 @@ void ProDOSHardDiskCard::buildRom()
      .label("dispStatus").jmp("status").emit({ 0xEA });
 
     a.region("read", kReadOff, kWriteOff)
-     .emit({ 0x2C, statReg, 0xC0 })   // BIT $C0n3   ; N = no media, V = WP
-     .branch(0x30, "errNoDev")        // BMI → $28
      .emit({ 0xA5, 0x46,              // LDA $46     ; block low
              0x8D, static_cast<uint8_t>(kDeviceBase + 0x00), 0xC0,
              0xA5, 0x47,              // LDA $47     ; block high
              0x8D, static_cast<uint8_t>(kDeviceBase + 0x01), 0xC0,
-             0xA0, 0x00 })            // LDY #$00
+             0xAD, statReg, 0xC0,     // LDA $C0n3   ; after the block latch,
+             0x29, 0xA0 })            // AND #$A0    ; so bit 5 is about THIS
+     .branch(0xD0, "errNoDev")        // BNE → $28 (no media) or $27 (range)
+     .emit({ 0xA0, 0x00 })            // LDY #$00
      .label("readPage1")
      .emit({ 0xAD, dataReg, 0xC0,     // LDA $C0n2
              0x91, 0x44,              // STA ($44),Y
@@ -339,14 +382,16 @@ void ProDOSHardDiskCard::buildRom()
              0x60 });                 // RTS
 
     a.region("write", kWriteOff, kStatusOff)
-     .emit({ 0x2C, statReg, 0xC0 })   // BIT $C0n3   ; N = no media, V = WP
-     .branch(0x30, "errNoDev")        // BMI → $28   ; media FIRST
-     .branch(0x70, "errWProt")        // BVS → $2B
      .emit({ 0xA5, 0x46,              // LDA $46
              0x8D, static_cast<uint8_t>(kDeviceBase + 0x00), 0xC0,
              0xA5, 0x47,              // LDA $47
              0x8D, static_cast<uint8_t>(kDeviceBase + 0x01), 0xC0,
-             0xA0, 0x00 })            // LDY #$00
+             0xAD, statReg, 0xC0,     // LDA $C0n3
+             0x29, 0xA0 })            // AND #$A0    ; media + range, FIRST
+     .branch(0xD0, "errNoDev")        // BNE → $28 / $27
+     .emit({ 0x2C, statReg, 0xC0 })   // BIT $C0n3   ; V = write protected
+     .branch(0x70, "errWProt")        // BVS → $2B
+     .emit({ 0xA0, 0x00 })            // LDY #$00
      .label("writePage1")
      .emit({ 0xB1, 0x44,              // LDA ($44),Y
              0x8D, dataReg, 0xC0,     // STA $C0n2
@@ -363,12 +408,26 @@ void ProDOSHardDiskCard::buildRom()
              0x18,                    // CLC
              0x60 });                 // RTS
 
-    // ── STATUS ($CnC0) ─────────────────────────────────────────────────
+    // ── STATUS ($CnD0) ─────────────────────────────────────────────────
     // ProDOS STATUS (cmd $00) must return total blocks in X (low) / Y (high)
     // so a volume scanner (BITSY, ProDOS ONLINE) can size the device. The
     // count comes from $C0n4/$C0n5 (deviceSelectRead 0x4/0x5, clamped to
     // $FFFF).
+    //
+    // It pre-flights the bay like the transfer routines do (bug hunt 4 #14).
+    // An empty bay used to answer CLC with X=Y=0 — "there IS a device here
+    // and it has zero blocks" — which is a different claim from "no device",
+    // and the one a ProDOS scanner records as a live unit. $28 is the answer
+    // READ and WRITE already gave. Only bit 7 is tested here: bit 5 is about
+    // whatever block was last selected and has nothing to do with STATUS, so
+    // `BIT` (N = bit 7, V = bit 6) is exactly the right instruction.
     a.region("status", kStatusOff, kHaltOff)
+     .emit({ 0x2C, statReg, 0xC0 })   // BIT $C0n3   ; N = no media
+     .branch(0x10, "statusOk")        // BPL statusOk
+     .emit({ 0xA9, 0x28,              // LDA #$28  no device connected
+             0x38,                    // SEC
+             0x60 })                  // RTS
+     .label("statusOk")
      .emit({ 0xAE, static_cast<uint8_t>(kDeviceBase + 0x04), 0xC0, // LDX $C0n4
              0xAC, static_cast<uint8_t>(kDeviceBase + 0x05), 0xC0, // LDY $C0n5
              0xA9, 0x00,        // LDA #$00
@@ -380,8 +439,15 @@ void ProDOSHardDiskCard::buildRom()
     // fully initialised yet.
     a.region("halt", kHaltOff, kHaltOff + 3).jmp("halt");
 
+    // $CnFE = the ProDOS device-characteristics byte (ProDOS 8 Technical
+    // Reference / TN.PDOS.021): bit 0 = status, bit 1 = read, bit 2 = WRITE,
+    // bit 3 = format, bits 4-6 = extra units, bit 7 = removable. It said $03
+    // — "status + read", i.e. a READ-ONLY device — while the ROM has carried
+    // a working WRITE_BLOCK all along and ProDOS's own SAVE goes through it.
+    // $07 adds the write bit. Same fix, same reason, as SmartPortCard's
+    // $13 → $17 (SmartPortCard.cpp).
     a.region("tail", 0xFE, pom2::kSlotRomBytes)
-     .emit({ 0x03 })      // read/write/status flags; high nibble = one unit
+     .emit({ 0x07 })      // status + read + write; high nibble = one unit
      .byteOf("driver");   // ProDOS driver entry offset
 
     romLayoutError_ = !a.finish();

@@ -45,6 +45,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -98,7 +99,7 @@ void usage(const char* prog)
         "  --setup <s>           Override the setup paste. Default \"PR#2\\rIN#2\\r\"\n"
         "                        (IN#2 LAST — its CR must be the final byte the\n"
         "                        keyboard sees; see the comment at the default).\n"
-        "                        Use \\r for RETURN, \\n is left as-is.\n"
+        "                        \\r \\n \\t \\\\ are unescaped.\n"
         "  --no-setup            Don't autopaste anything.\n"
         "\n"
         "Capture mode (no telnet listener, no threads, deterministic):\n"
@@ -107,6 +108,7 @@ void usage(const char* prog)
         "                        those frames. Exits non-zero if the capture is\n"
         "                        a single flat colour — see the note below.\n"
         "  --version             Print the version and exit.\n"
+        "  -h, --help            Show this and exit.\n"
         "\n"
         "Once running (without --frames), telnet to 127.0.0.1:<port> to interact.\n",
         prog);
@@ -184,15 +186,50 @@ int main(int argc, char** argv)
     int  pasteAfter  = 6;     // emulated seconds before pasting setup
     int  frames      = 0;     // >0 = capture mode (see below)
     bool doSetup     = true;
+    // A flag written last, with its value missing, used to fall through every
+    // `&& i+1 < argc` arm to the final else and be reported as an "unknown
+    // arg" — a misdiagnosis that sends the reader looking for a typo in a
+    // flag that is spelled correctly. Recognise the name first, then complain
+    // about the missing value.
+    auto needsValue = [&](const std::string& flag) {
+        std::fprintf(stderr, "%s requires an argument\n", flag.c_str());
+    };
+    // Integer options: reject what atoi() would silently turn into 0.
+    // `--frames abc` used to DISABLE capture mode (frames = 0) and start a
+    // telnet listener instead, and `--port 70000` bound port 4464 while the
+    // banner printed 70000 — the narrowing to uint16_t happens at the bind.
+    auto parseInt = [&](const char* flag, const char* text, int lo, int hi,
+                        int& out) -> bool {
+        char* end = nullptr;
+        const long v = std::strtol(text, &end, 10);
+        if (end == text || *end != '\0' || v < lo || v > hi) {
+            std::fprintf(stderr, "%s expects an integer in %d..%d, got: %s\n",
+                         flag, lo, hi, text);
+            return false;
+        }
+        out = static_cast<int>(v);
+        return true;
+    };
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
+        if (a == "--rom" || a == "--prom" || a == "--disk" || a == "--port" ||
+            a == "--paste-after" || a == "--setup" || a == "--frames" ||
+            a == "--screenshot") {
+            if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
+        }
         if      (a == "--rom"   && i+1 < argc) romArg   = argv[++i];
         else if (a == "--prom"  && i+1 < argc) promArg  = argv[++i];
         else if (a == "--disk"  && i+1 < argc) diskArg  = argv[++i];
-        else if (a == "--port"  && i+1 < argc) port     = std::atoi(argv[++i]);
-        else if (a == "--paste-after" && i+1 < argc) pasteAfter = std::atoi(argv[++i]);
+        else if (a == "--port"  && i+1 < argc) {
+            if (!parseInt("--port", argv[++i], 1, 65535, port)) return 1;
+        }
+        else if (a == "--paste-after" && i+1 < argc) {
+            if (!parseInt("--paste-after", argv[++i], 0, 100000, pasteAfter)) return 1;
+        }
         else if (a == "--setup" && i+1 < argc) setupOverride = argv[++i];
-        else if (a == "--frames" && i+1 < argc) frames   = std::atoi(argv[++i]);
+        else if (a == "--frames" && i+1 < argc) {
+            if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
+        }
         else if (a == "--screenshot" && i+1 < argc) shotPath = argv[++i];
         else if (a == "--no-setup") doSetup = false;
         else if (a == "--version") {
