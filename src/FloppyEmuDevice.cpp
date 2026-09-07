@@ -155,21 +155,36 @@ std::vector<FloppyEmuDevice::Entry> FloppyEmuDevice::listing() const
     std::vector<Entry> dirs, files;
     std::error_code ec;
     if (fs::is_directory(currentDir_, ec)) {
-        for (const auto& de : fs::directory_iterator(currentDir_, ec)) {
+        // Explicit increment(ec), not a range-for. The CONSTRUCTOR takes an
+        // error_code, but `operator++` on a range-for does not: it throws
+        // filesystem_error, and this runs on the UI thread with no handler
+        // anywhere above it (a directory removed or made unreadable while the
+        // browser is open is enough). Same shape everything else in this file
+        // already uses — every stat here is the (ec) overload.
+        std::error_code iterEc;
+        fs::directory_iterator it(currentDir_, iterEc), last;
+        for (; !iterEc && it != last; it.increment(iterEc)) {
+            const fs::directory_entry& de = *it;
             const std::string name = de.path().filename().string();
             if (name.empty() || name.front() == '.') continue;  // skip hidden
             // Never follow a symlink: directory_iterator + is_directory()
             // dereference links, which would let an in-root symlink browse
             // (and mount) files anywhere on the host, escaping the SD-root
             // sandbox. Skip them so navigation stays inside floppyemu/.
-            if (de.is_symlink(ec)) continue;
-            if (de.is_directory(ec)) {
+            ec.clear();
+            const bool isLink = de.is_symlink(ec);
+            if (ec || isLink) continue;
+            ec.clear();
+            const bool isDir = de.is_directory(ec);
+            if (ec) continue;             // vanished between step and stat
+            if (isDir) {
                 Entry e;
                 e.name     = name;
                 e.fullPath = de.path().string();
                 e.isDir    = true;
                 dirs.push_back(std::move(e));
-            } else if (de.is_regular_file(ec) && acceptsFile(name)) {
+            } else if ((ec.clear(), de.is_regular_file(ec)) && !ec &&
+                       acceptsFile(name)) {
                 Entry e;
                 e.name      = name;
                 e.fullPath  = de.path().string();
@@ -177,6 +192,7 @@ std::vector<FloppyEmuDevice::Entry> FloppyEmuDevice::listing() const
                 // (uintmax_t)-1 and sets ec when the file vanished between
                 // the iterator step and the stat — honor ec → 0, not a
                 // 16-EiB row in the SD browser.
+                ec.clear();
                 const auto sz = de.file_size(ec);
                 e.sizeBytes = ec ? 0u : static_cast<uint64_t>(sz);
                 files.push_back(std::move(e));
@@ -264,6 +280,24 @@ FloppyEmuDevice::parseFavorites(const std::string& content,
         if (!resolveBase.empty()) {
             const fs::path root = fs::path(resolveBase).lexically_normal();
             if (!pathIsUnder(root, p)) continue;
+            // The lexical clamp above only proves the SPELLING stays inside
+            // the card. It says nothing about what the components resolve to,
+            // and the guest can arrange those: `favdisks.txt` is a file the
+            // guest itself writes, so a favourite naming `sdroot/LINK/x`
+            // where LINK is a symlink out of the tree passed the lexical
+            // check and then mounted a host file. `listing()` has always
+            // refused to FOLLOW symlinks; the favourites path never looked.
+            // Resolve both sides and re-apply the same containment test —
+            // the identical shape `ProDOSVolume`'s decode uses for its own
+            // root (`destStaysInsideRoot`). A path that will not resolve is
+            // dropped: a favourite that does not name something on the card
+            // is not a favourite.
+            std::error_code linkEc;
+            const fs::path realRoot = fs::weakly_canonical(root, linkEc);
+            if (linkEc || realRoot.empty()) continue;
+            const fs::path realP = fs::weakly_canonical(p, linkEc);
+            if (linkEc || realP.empty()) continue;
+            if (!pathIsUnder(realRoot, realP)) continue;
         }
         Entry e;
         e.name      = p.filename().string();

@@ -176,7 +176,8 @@ struct WpAnswers {
 };
 
 WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
-                           const std::string& nib, bool probeLoadedDrive)
+                           const std::string& nib, bool probeLoadedDrive,
+                           bool phase1On = false)
 {
     Memory mem;
     auto card = std::make_unique<DiskIICard>();
@@ -212,6 +213,10 @@ WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
 
     mem.memRead(0xC0E9);                                   // motor on
     mem.memRead(probeLoadedDrive ? 0xC0EA : 0xC0EB);       // select the drive
+    // Stepper phase 1 drives the SAME wire as the write-protect sense on the
+    // analog card — MAME `floppy_image_device::wpt_r()` (floppy.cpp:817-820)
+    // is `m_wpt || (m_phases & 2)`. $C0n3 energizes it, $C0n2 releases it.
+    if (phase1On) mem.memRead(0xC0E3);
 
     const uint8_t shortcut = mem.memRead(0xC0ED);          // POM2's own probe
     mem.memRead(0xC0ED);                                   // Q6 high
@@ -298,6 +303,40 @@ int main()
                 std::printf("[ OK ] %s %-21s both WP probes say %s\n",
                             gate, what, sProt ? "protected" : "writable");
             }
+        }
+    }
+
+    // ── Phase 1 energized reads as write-protected ────────────────────────
+    // The write-enable gate and the write-protect SENSE are one signal on the
+    // Disk II analog card, which is why MAME's `wpt_r()` is
+    // `m_wpt || (m_phases & 2)` (floppy.cpp:817-820) and its
+    // `writing_disabled()` is the same expression (floppy.cpp:1254-1259).
+    // POM2 modelled the inhibit half (`DiskIICard::writingInhibited`) and left
+    // the sense half reading the medium's flag alone, so a guest that probed
+    // with phase 1 still on was told "writable" and then had its write current
+    // silently gated off — the two halves of one wire disagreeing (bug hunt 4
+    // #12). RWTS drops all four phases before it asks, which is exactly why
+    // this went unnoticed for so long.
+    for (bool bitLss : { true, false }) {
+        const WpAnswers w = readWriteProtect(bitLss, p6, nib,
+                                             /*probeLoadedDrive=*/true,
+                                             /*phase1On=*/true);
+        if (!w.ok) return 1;
+        const char* gate = bitLss ? "bit-LSS" : "legacy ";
+        const bool sProt = (w.shortcut  & 0x80) != 0;
+        const bool cProt = (w.canonical & 0x80) != 0;
+        if (!sProt || !cProt) {
+            std::fprintf(stderr,
+                "FAIL: %s loaded + phase 1 energized — $C0nD says %s, $C0nE "
+                "says %s; both must say protected. Phase 1 drives the WPT "
+                "wire (MAME floppy.cpp:817-820), and this card already "
+                "inhibits the WRITE on it.\n",
+                gate, sProt ? "protected" : "writable",
+                cProt ? "protected" : "writable");
+            ++failures;
+        } else {
+            std::printf("[ OK ] %s loaded + phase 1     both WP probes say "
+                        "protected\n", gate);
         }
     }
 

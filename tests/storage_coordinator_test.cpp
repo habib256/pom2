@@ -24,6 +24,8 @@
 #include "DiskIICard.h"
 #include "EmulationController.h"
 #include "LironCard.h"
+#include "MediaMount.h"
+#include "RewindBuffer.h"
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
 #include "SlotBus.h"
@@ -518,6 +520,103 @@ int main()
         assert(command.ok);
         assert(commandSettings.getString("smartport_slot5_unit0_type") ==
                "hdv");
+
+        // ── A type change must not destroy a dirty unit ────────────────
+        // `setBayType` drops the unit's unique_ptr, and the destructor
+        // flushes with `(void)backing_.saveDirty()` — result DISCARDED. So a
+        // write-back that could not be written took the guest's only copy
+        // with it, and the command still reported success (bug hunt 4 #3).
+        // Forced here by making the image's PARENT DIRECTORY read-only: the
+        // write-back rewrites a sibling temp file and renames it over the
+        // target, which needs a writable directory.
+        {
+            const auto dirtyDir = std::filesystem::temp_directory_path() /
+                                  "pom2_storage_baytype";
+            {
+                std::error_code ec;
+                std::filesystem::permissions(
+                    dirtyDir, std::filesystem::perms::owner_all,
+                    std::filesystem::perm_options::replace, ec);   // last run
+                ec.clear();
+                std::filesystem::remove_all(dirtyDir, ec);
+                ec.clear();
+                std::filesystem::create_directories(dirtyDir, ec);
+            }
+            const std::string dirtyPath =
+                writeImage("pom2_storage_baytype/unit.hdv", 8u * 512u, 0x00);
+            command = mediaStorage.mountMediaBay(
+                mediaController, commandSettings, 5, 0, dirtyPath);
+            assert(command.ok);
+            command = mediaStorage.setMediaBayWriteBack(
+                mediaController, commandSettings, 5, 0, true);
+            assert(command.ok);
+
+            // The guest writes a block.
+            {
+                auto state = mediaController.lockState();
+                auto* card = dynamic_cast<pom2::SmartPortCard*>(
+                    state.memory().slotBus().peripheral(5));
+                assert(card && card->unit(0));
+                const std::vector<std::uint8_t> block(512u, 0xA7);
+                assert(card->unit(0)->writeBlock(2, block.data()));
+                assert(card->unit(0)->hasUnsavedChanges());
+            }
+
+            std::error_code permEc;
+            std::filesystem::permissions(
+                dirtyDir,
+                std::filesystem::perms::owner_read |
+                    std::filesystem::perms::owner_exec,
+                std::filesystem::perm_options::replace, permEc);
+            const bool parentIsReadOnly = !permEc;
+
+            if (parentIsReadOnly) {
+                command = mediaStorage.setMediaBayType(
+                    mediaController, commandSettings, 5, 0, "35");
+                if (command.ok) {
+                    std::cout << "FAIL: a type change over a dirty unit whose "
+                                 "write-back cannot be written reported "
+                                 "success — the medium was destroyed with the "
+                                 "guest's only copy in it\n";
+                    return 1;
+                }
+                // The medium is still there, still dirty, still an HDV: the
+                // user can fix the permission problem and retry.
+                auto state = mediaController.lockState();
+                auto* card = dynamic_cast<pom2::SmartPortCard*>(
+                    state.memory().slotBus().peripheral(5));
+                if (!card || !card->unit(0) ||
+                    card->unit(0)->kindKey() != "hdv" ||
+                    !card->unit(0)->hasUnsavedChanges()) {
+                    std::cout << "FAIL: the refused type change did not leave "
+                                 "the dirty medium mounted for a retry\n";
+                    return 1;
+                }
+            }
+
+            std::error_code restoreEc;
+            std::filesystem::permissions(
+                dirtyDir, std::filesystem::perms::owner_all,
+                std::filesystem::perm_options::replace, restoreEc);
+            // With the directory writable again the same command succeeds,
+            // and the guest's block reached the file.
+            command = mediaStorage.setMediaBayType(
+                mediaController, commandSettings, 5, 0, "35");
+            assert(command.ok);
+            {
+                std::ifstream check(dirtyPath, std::ios::binary);
+                check.seekg(2 * 512);
+                char byte = 0;
+                check.read(&byte, 1);
+                assert(static_cast<unsigned char>(byte) == 0xA7);
+            }
+            std::error_code cleanupEc;
+            std::filesystem::remove_all(dirtyDir, cleanupEc);
+            // Put slot 5 unit 0 back the way the rest of the file expects.
+            command = mediaStorage.setMediaBayType(
+                mediaController, commandSettings, 5, 0, "hdv");
+            assert(command.ok);
+        }
         command = mediaStorage.mountMediaBay(
             mediaController, commandSettings, 5, 0, stalePath);
         assert(command.ok);
@@ -965,6 +1064,79 @@ int main()
             assert(unit && unit->isLoaded());
             assert(unit->path() == disk35Path);
             assert(unit->isWriteBackEnabled());
+        }
+    }
+
+    // ── A media swap must drop the rewind ring ────────────────────────────
+    // CLAUDE.md: a rewind may never cross a media change. Restoring a frame
+    // captured before the swap puts the OLD disk's in-flight controller state
+    // on top of whatever is in the bay now, and the next commit writes it
+    // into the new image. `StorageCoordinator::mountDiskII` has always
+    // cleared the ring; the RAW helper `pom2::mountDiskII` — which the AI
+    // control server, the CLI and eleven GUI buttons call — did not
+    // (bug hunt 4 #7). Same for `pom2::mountBlockCard` (#8's mount arm).
+    {
+        EmulationController rewindController;
+        pom2::StorageCoordinator rewindStorage;
+        {
+            auto state = rewindController.lockState();
+            state.memory().slotBus().plug(6, std::make_unique<DiskIICard>(6));
+            state.memory().slotBus().plug(
+                5, std::make_unique<ProDOSHardDiskCard>(5));
+        }
+        rewindController.rewind().setEnabled(true);
+
+        auto captureOneFrame = [&] {
+            auto state = rewindController.lockState();
+            rewindController.rewind().capture(state.cpu(), state.memory());
+        };
+        auto ringSize = [&] {
+            auto state = rewindController.lockState();
+            return rewindController.rewind().size();
+        };
+
+        captureOneFrame();
+        assert(ringSize() == 1);
+
+        {
+            // The helper takes the lock itself (twice), so nothing may be
+            // held here.
+            DiskIICard* card = nullptr;
+            {
+                auto state = rewindController.lockState();
+                card = dynamic_cast<DiskIICard*>(
+                    state.memory().slotBus().peripheral(6));
+            }
+            std::string mountError;
+            const bool mounted = pom2::mountDiskII(
+                rewindController, *card, 0, diskPath, mountError);
+            assert(mounted);
+        }
+        if (ringSize() != 0) {
+            std::cout << "FAIL: pom2::mountDiskII left " << ringSize()
+                      << " rewind frame(s) spanning the media swap\n";
+            return 1;
+        }
+
+        // Same rule for a block device through the other raw helper.
+        captureOneFrame();
+        assert(ringSize() == 1);
+        {
+            ProDOSHardDiskCard* hdv = nullptr;
+            {
+                auto state = rewindController.lockState();
+                hdv = dynamic_cast<ProDOSHardDiskCard*>(
+                    state.memory().slotBus().peripheral(5));
+            }
+            std::string mountError;
+            const bool mounted = pom2::mountBlockCard(
+                rewindController, *hdv, hdvPath, mountError);
+            assert(mounted);
+        }
+        if (ringSize() != 0) {
+            std::cout << "FAIL: pom2::mountBlockCard left " << ringSize()
+                      << " rewind frame(s) spanning the media swap\n";
+            return 1;
         }
     }
 

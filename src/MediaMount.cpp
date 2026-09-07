@@ -23,6 +23,7 @@
 #include "Block512Backing.h"
 #include "EmulationController.h"
 #include "ProDOSBlockCard.h"
+#include "RewindBuffer.h"
 #include "SmartPortUnit.h"
 
 #include <memory>
@@ -30,6 +31,31 @@
 #include <utility>
 
 namespace pom2 {
+
+namespace {
+
+/// A HOST-side media swap makes every frame already in the rewind ring
+/// describe a machine with DIFFERENT media in it — restoring one puts the old
+/// disk's in-flight controller state on top of whatever is in the bay now, and
+/// the next commit writes it into the new image. `StorageCoordinator` has
+/// cleared the ring on its own mounts since the ring existed
+/// (`invalidateRewindForMediaChange`), but the RAW helpers here did not, and
+/// they are what the AI control server, the CLI and eleven GUI buttons call
+/// (bug hunt 4 #7/#8). Putting it here is the fix that covers all of them at
+/// once, rather than at each call site.
+///
+/// Its own lock scope, after phase 2 has released: `lockState()` /
+/// `stateMutex()` is NON-RECURSIVE (CLAUDE.md), and the worker captures
+/// frames with that mutex held, so clearing under it cannot land mid-frame.
+/// Bare `stateMutex()` is the right handle — this touches neither Memory nor
+/// the CPU, which is exactly the case the rule reserves it for.
+void noteHostMediaSwap(EmulationController& ctrl)
+{
+    std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+    ctrl.rewind().clear();
+}
+
+}  // namespace
 
 bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
                  const std::string& path, std::string& error,
@@ -58,6 +84,7 @@ bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
             error = card.getLastError(drive);
         }
     }
+    if (ok) noteHostMediaSwap(ctrl);   // see noteHostMediaSwap
     if (!ok && error.empty()) error = "insert failed";
     return ok;
 }
@@ -98,16 +125,22 @@ bool mountBlockLike(EmulationController& ctrl, const std::string& path,
             unsupported = error.empty();
         }
     }
-    if (ok) return true;
+    if (ok) { noteHostMediaSwap(ctrl); return true; }
     if (!unsupported) return false;
 
     // Fall back to the inline form for a unit that cannot do phase 2. It
     // costs the stall, and it is the honest behaviour: refusing the mount
     // because the fast path does not apply would be worse.
-    std::lock_guard<std::mutex> lk(ctrl.stateMutex());
-    if (inlineLoad(path)) { error.clear(); return true; }
-    error = lastError();
-    if (error.empty()) error = "mount failed";
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        if (inlineLoad(path)) {
+            error.clear();
+        } else {
+            error = lastError();
+            if (error.empty()) error = "mount failed";
+        }
+    }
+    if (error.empty()) { noteHostMediaSwap(ctrl); return true; }
     return false;
 }
 

@@ -62,6 +62,14 @@ namespace pom2 {
 /// Returns false with `error` filled in — the image could not be read, or the
 /// outgoing medium's write-back failed and the swap was refused.
 ///
+/// A SUCCESSFUL mount clears the rewind ring, and so do the two block-device
+/// helpers below. That is the "a rewind may never cross a media change" half
+/// of CLAUDE.md's storage rule: `StorageCoordinator` had always cleared on its
+/// own mounts and these raw helpers had not, so the AI control server, the
+/// CLI and every GUI button that called them left the ring spanning the swap
+/// (bug hunt 4 #7/#8). It happens in its own lock scope after the swap — the
+/// state lock is non-recursive.
+///
 /// **Caller contract**: `card` must stay alive and plugged for the whole call.
 /// The two phases take `stateMutex` separately, and a profile switch nulls and
 /// destroys card pointers under that same lock — so this is safe only from the

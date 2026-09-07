@@ -321,19 +321,31 @@ bool Block512Backing::saveDirty()
     const bool wasSynth = pending.synth;
     std::string error;
     std::filesystem::file_time_type stamp{};
-    if (!commitWriteBack(std::move(pending), error, &stamp)) {
-        lastError_ = error;
-        restoreDirty(captured);
-        return false;
-    }
+    const bool ok = commitWriteBack(std::move(pending), error, &stamp);
     // The medium is STILL MOUNTED here (this is the flush path, not the eject
     // path), and the write-back just rewrote host files. Re-stamp the volume
     // so those files are not "host-newer" on the next flush — otherwise the
     // guest's first save landed and every save after it was silently
     // preserved away as if the user had edited the file behind POM2's back.
-    if (wasSynth && synth_ && loaded_) {
+    //
+    // The restamp also has to happen when the commit FAILED (bug hunt 4 #4).
+    // `decodeVolumeToFolder` is not atomic across the whole tree: it writes
+    // file by file and stops at the first failure, so a half-finished pass
+    // leaves the files it DID write carrying an mtime newer than the mount
+    // stamp. On the retry `preserveNewerThan` reads those as host edits and
+    // skips them — permanently, and it is the guest's own saves that are
+    // dropped. The stamp `commitWriteBack` hands back covers everything the
+    // failed pass wrote, so honouring it is what keeps the next pass from
+    // preserving POM2's own output away.
+    if (wasSynth && synth_ && loaded_ &&
+        stamp != std::filesystem::file_time_type{}) {
         mountTime_    = stamp;
         hasMountTime_ = true;
+    }
+    if (!ok) {
+        lastError_ = error;
+        restoreDirty(captured);
+        return false;
     }
     return true;
 }
@@ -407,12 +419,19 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         pom2::ProDOSDecodeResult r = pom2::decodeVolumeToFolder(
             pending.synthImage, pending.hostFolder,
             pending.hasMountTime ? &pending.mountTime : nullptr);
+        // The stamp is published BEFORE the failure return (bug hunt 4 #4).
+        // `decodeVolumeToFolder` fills `completedAt` unconditionally
+        // (ProDOSVolume.cpp:1409-1410 — now(), raised to the newest mtime the
+        // walk actually wrote), and a FAILED pass has usually still written
+        // part of the tree. Returning early left those files newer than the
+        // mount stamp, so the next pass's `preserveNewerThan` mistook the
+        // guest's own saves for host edits and discarded them forever.
+        if (newMountTime) *newMountTime = r.completedAt;
         if (!r.ok) {
             error = r.error;
             pom2::log().warn("HDV", "Synth folder write-back failed: " + error);
             return false;
         }
-        if (newMountTime) *newMountTime = r.completedAt;
         pom2::log().info("HDV", "Synth folder write-back: " +
                                 std::to_string(r.filesWritten) + " file(s) → " +
                                 pending.hostFolder);

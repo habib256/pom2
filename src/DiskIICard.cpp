@@ -1340,8 +1340,17 @@ void DiskIICard::lssSync(uint64_t extraCycles)
                     lssData = static_cast<uint8_t>(lssData << 1);
                     break;
                 case 0xA: case 0xE:
+                    // The WPT line, not the medium's flag: MAME
+                    // `floppy_image_device::wpt_r()` (floppy.cpp:817-820) is
+                    // `m_wpt || (m_phases & 2)` — stepper phase 1 drives the
+                    // same wire, which is why RWTS drops all phases before it
+                    // asks. POM2 already modelled the WRITE half of this
+                    // (`writingInhibited()`, DiskIICard.h) and not the SENSE
+                    // half, so a guest that asked with phase 1 on was told
+                    // the disk was writable and then found its write silently
+                    // inhibited (bug hunt 4 #12).
                     lssData = static_cast<uint8_t>((lssData >> 1)
-                        | (img.isWriteProtected() ? 0x80 : 0x00));
+                        | (senseWriteProtect() ? 0x80 : 0x00));
                     break;
                 case 0xB: case 0xF:
                     lssData = writeLatch;
@@ -1722,7 +1731,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         //   Monitor hangs before clearing the text page.
         if (iwmHost_ && low4 == 0xE && wasQ6) {
             DiskImage& img = images[activeDrive];
-            const uint8_t wpt = (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
+            const uint8_t wpt = (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
             return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
         }
         // IWM write-handshake read hook (MAME `iwm.cpp:107-110`, case
@@ -1791,9 +1800,13 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         // anyone who asked through $C0nE. Answering 0x00 here said "writable"
         // about a drive with nothing in it, so the two probes for one wire
         // disagreed depending on which idiom the guest happened to use.
+        //
+        // `senseWriteProtect()` (not `img.isWriteProtected()`) because stepper
+        // phase 1 drives the same wire — MAME floppy.cpp:817-820. See the
+        // header note next to `writingInhibited()`.
         if (low4 == 0xD && !writeMode) {
             DiskImage& img = images[activeDrive];
-            return (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
+            return (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
         }
         return 0xFF;
     }
@@ -1808,7 +1821,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     // a disk in the library.
     if (iwmHost_ && low4 == 0xE && wasQ6Legacy) {
         DiskImage& img = images[activeDrive];
-        const uint8_t wpt = (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
+        const uint8_t wpt = (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
         return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
     }
     if (iwmHost_ && low4 == 0xC && writeMode) {
@@ -1834,7 +1847,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     // Same wire, same answer as the bit-LSS path and as $C0nE: no disk reads
     // as write-protected.
     if (low4 == 0xD && !writeMode) {
-        return (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
+        return (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
     }
     return 0;
 }

@@ -990,6 +990,25 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
 {
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
+
+    // Changing the type DESTROYS the unit in the bay, and the destructor
+    // flushes with `(void)backing_.saveDirty()` — a DISCARDED result
+    // (SmartPortHdvUnit.cpp, SmartPort35Unit.cpp). So a write-back that
+    // failed took the only copy of the guest's writes with it and the command
+    // still reported success (bug hunt 4 #3). The sibling that already got
+    // this right is `mountSmartPortUnitAs` above: flush explicitly, and
+    // REFUSE the swap when the flush fails, so the dirty medium stays mounted
+    // and the user can retry.
+    //
+    // Same three critical sections as `ejectMediaBay` — the flush is a
+    // whole-file rewrite plus an fsync, and CLAUDE.md forbids that under
+    // `stateMutex`:
+    //   1. locked   — validate, and MOVE the payload out (medium stays)
+    //   2. unlocked — commit it; on failure put the captured dirty set back
+    //                 and abort the type change entirely
+    //   3. locked   — re-resolve, flush any inline remainder, swap the type
+    Block512Backing::PendingWriteBack pending;
+    bool twoPhase = false;
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -1008,6 +1027,55 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
             });
         if (!supported)
             return commandError("unsupported media type '" + kind + "'");
+        std::string prepareError;
+        twoPhase = media->prepareEjectBay(bay, pending, prepareError);
+        if (!twoPhase && !prepareError.empty())
+            return commandError(prepareError);
+    }
+
+    if (twoPhase && pending.valid) {
+        const std::vector<std::uint32_t> captured = pending.dirtyIndices;
+        std::string error;
+        if (!Block512Backing::commitWriteBack(std::move(pending), error)) {
+            auto state = controller.lockState();
+            auto& bus = state.memory().slotBus();
+            if (auto* media =
+                    dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
+                media->restoreBayDirty(bay, captured);
+            return commandError(
+                "unsaved changes in slot " + std::to_string(slot) + " bay " +
+                std::to_string(bay + 1) +
+                " could not be written: " +
+                (error.empty() ? std::string("the image could not be saved")
+                               : error));
+        }
+    }
+
+    {
+        auto state = controller.lockState();
+        auto& bus = state.memory().slotBus();
+        auto* peripheral = bus.peripheral(slot);
+        auto* media = dynamic_cast<MountableMediaCard*>(peripheral);
+        // Re-resolved: the bus can be rebuilt while the commit runs unlocked.
+        if (!media)
+            return commandError("slot " + std::to_string(slot) +
+                                " has no mountable media");
+        if (bay < 0 || bay >= media->bayCount())
+            return commandError("invalid media bay " +
+                                std::to_string(bay + 1));
+        // Whatever phase 1 could not lift out (a 3.5" unit has no block
+        // backing, and the guest may have dirtied more blocks while phase 2
+        // ran unlocked) is flushed inline here. `flushBay` is the honest test:
+        // the base default REFUSES a dirty bay with no flush path, and
+        // SmartPortCard now overrides it with the real saveDirty.
+        std::string flushError;
+        if (!media->flushBay(bay, flushError))
+            return commandError(
+                "unsaved changes in slot " + std::to_string(slot) + " bay " +
+                std::to_string(bay + 1) +
+                " could not be written: " +
+                (flushError.empty() ? std::string("write-back failed")
+                                    : flushError));
         media->setBayType(bay, kind);
         (void)appendMediaBaySettingUpdates(
             updates, *peripheral, slot, bay,
@@ -1051,7 +1119,12 @@ StorageCoordinator::Disk35Snapshot StorageCoordinator::captureDisk35(
                 target.motorOn = drives[drive]->isMotorOn();
                 target.track = drives[drive]->track();
                 target.side1 = drives[drive]->side1();
-                target.writeProtected = drives[drive]->isWriteProtected();
+                // No writeProtected line here: `copyDisk35ImageState` above
+                // already took it from the medium, and re-reading it off the
+                // drive used to overwrite that with a cache the drive only
+                // refreshed on mount/reset (bug hunt 4 #17). The drive asks
+                // the image now, so the two agree — and the image is the one
+                // that answers first.
             }
         }
     }
@@ -1904,6 +1977,15 @@ StorageCoordinator::applySmartPortPanel(
         std::string    base;
     };
     std::vector<PendingMount> pendingMounts;
+    // Set by anything that changes what is IN a bay — a type swap, a clear,
+    // an eject. The rewind ring cannot span a media change (CLAUDE.md, and
+    // `invalidateRewindForMediaChange` above): SmartPortCard/SmartPortUnit
+    // have no media-identity check on snapshot restore, so a frame captured
+    // before the swap would put the old unit's primed 512-byte write block
+    // back on top of whatever is in the bay now. This panel changed media
+    // three ways and cleared nothing (bug hunt 4 #8). Mounts do NOT set it —
+    // `pom2::mountSmartPortUnit` clears the ring itself now.
+    bool mediaChanged = false;
 
     {
         auto state = controller.lockState();
@@ -1927,8 +2009,33 @@ StorageCoordinator::applySmartPortPanel(
             };
 
             if (action.clearType || !action.setType.empty()) {
+                // `setUnit` drops the outgoing unique_ptr, and the unit
+                // destructor flushes with a DISCARDED result
+                // (`(void)backing_.saveDirty()`), so a failed write-back took
+                // the guest's only copy with it and the panel said "type =
+                // hdv" (bug hunt 4 #3). Flush explicitly and refuse the swap
+                // — the rule `mountSmartPortUnitAs` already follows.
+                //
+                // Inline under the lock, deliberately: it is the shape the
+                // eject a dozen lines below has always had, this is a
+                // once-per-click user action, and hoisting it out means
+                // deferring the swap past the panel's own frame. A dirty bay
+                // with write-back OFF is a guarded no-op, so the usual case
+                // costs nothing.
+                if (SmartPortUnit* outgoing = card->unit(unitIndex)) {
+                    if (outgoing->hasUnsavedChanges() &&
+                        !outgoing->saveDirty()) {
+                        status.message = "SmartPort unit " +
+                            std::to_string(unitIndex) +
+                            ": unsaved changes could not be written (" +
+                            outgoing->lastError() + ") — type unchanged";
+                        status.visibleSeconds = 5.0;
+                        continue;
+                    }
+                }
                 if (action.clearType) {
                     card->setUnit(unitIndex, nullptr);
+                    mediaChanged = true;
                     rememberString(base + "_type", "");
                     rememberString(base + "_path", "");
                     rememberBool(base + "_writeback", false);
@@ -1938,6 +2045,7 @@ StorageCoordinator::applySmartPortPanel(
                     auto unit = makeSmartPortUnit(action.setType);
                     if (unit) {
                         card->setUnit(unitIndex, std::move(unit));
+                        mediaChanged = true;
                         rememberString(base + "_type", action.setType);
                         rememberString(base + "_path", "");
                         rememberBool(base + "_writeback", false);
@@ -1974,7 +2082,7 @@ StorageCoordinator::applySmartPortPanel(
             }
             if (action.eject) {
                 const bool ok = unit->eject();
-                if (ok) rememberString(base + "_path", "");
+                if (ok) { rememberString(base + "_path", ""); mediaChanged = true; }
                 status.message = "SmartPort unit " +
                     std::to_string(unitIndex) +
                     (ok ? ": ejected" : ": eject failed: " +
@@ -1983,6 +2091,10 @@ StorageCoordinator::applySmartPortPanel(
             }
         }
     }
+
+    // Outside the scope above, and before the mounts, because the state lock
+    // is non-recursive: a type swap or an eject just changed what is in a bay.
+    if (mediaChanged) invalidateRewindForMediaChange(controller);
 
     // Two phases, both outside the scope above: the read runs with no lock
     // held, the swap takes stateMutex on its own. The unit pointers stay valid

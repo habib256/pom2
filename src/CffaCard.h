@@ -61,9 +61,13 @@ public:
     /// Image management — forwarded to the ATA device's block backing so the
     /// HDV Library can mount .hdv/.2mg into the CFFA exactly like the HDV card.
     bool loadImage(const std::string& path) override;
-    /// Two-phase mount, phase 2 — forwards to the backing store.
-    bool adoptImage(pom2::Block512Backing::PreparedImage&& p) override
-    { return ata_.backing().adoptImage(std::move(p)); }
+    /// Two-phase mount, phase 2. Out-of-line and NOT a bare forward to the
+    /// backing store: this is the PRIMARY mount path (pom2::mountBlockCard),
+    /// so it owes the `ata_.reset()` `loadImage` does. Without it the ATA
+    /// taskfile could stay in Phase::PioOut with the OLD lba_/sectorsLeft_,
+    /// and the tail of the guest's interrupted write flushed into the image
+    /// that had just been mounted.
+    bool adoptImage(pom2::Block512Backing::PreparedImage&& p) override;
     bool loadImageFromBytes(std::vector<uint8_t> bytes, const std::string& label,
                             const std::string& hostFolder = std::string{}) override;
     bool ejectImage() override;
@@ -97,6 +101,7 @@ public:
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override; // write_c0nx
     uint8_t slotRomRead (uint8_t low8) override;            // read_cnxx
     uint8_t expansionRomRead (uint16_t offset) override;    // read_c800
+    bool    takesC800() const override { return true; }     // MAME a2bus.h:145 take_c800
     void    expansionRomWrite(uint16_t offset, uint8_t v) override; // write_c800
 
     /// Snapshot/rewind: 'CFA1'-tagged blob wrapping the ATA chip state

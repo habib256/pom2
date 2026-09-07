@@ -21,8 +21,12 @@
 // The card exposes Apple's ProDOS disk ID bytes in its slot ROM:
 //
 //   $Cn01 = $20, $Cn03 = $00, $Cn05 = $03
-//   $CnFE = $03       read/write/status advertised; writes return WP error
-//   $CnFF = $50       ProDOS block driver entry at $Cn50
+//   $CnFE = $07       status + read + WRITE (ProDOS 8 TN.PDOS.021 bit 2).
+//                     It used to read $03, which advertises a READ-ONLY
+//                     device — untrue of a card whose ROM has always
+//                     carried a working WRITE_BLOCK.
+//   $CnFF             ProDOS block driver entry offset (derived from the
+//                     assembled layout, not typed — see buildRom)
 //
 // The 6502 ROM translates the standard ProDOS device parameter block
 // ($42 command, $43 unit, $44/$45 buffer, $46/$47 block) into a byte-stream
@@ -69,9 +73,12 @@ public:
     bool romLayoutError() const { return romLayoutError_; }
 
     bool loadImage(const std::string& path) override;
-    /// Two-phase mount, phase 2 — forwards to the backing store.
-    bool adoptImage(pom2::Block512Backing::PreparedImage&& p) override
-    { return backing_.adoptImage(std::move(p)); }
+    /// Two-phase mount, phase 2. Out-of-line and NOT a bare forward to the
+    /// backing store: this is the PRIMARY mount path (pom2::mountBlockCard),
+    /// so it owes everything `loadImage` does — including resetting the
+    /// firmware's block/byte cursor. Leaving them meant a mount that landed
+    /// mid-transfer kept the outgoing image's cursor over the incoming one.
+    bool adoptImage(pom2::Block512Backing::PreparedImage&& p) override;
     /// Replace the in-memory image with synthesised bytes (e.g. produced by
     /// pom2::buildVolumeFromFolder). `label` is what the UI shows; it does
     /// not have to be a real filesystem path. `hostFolder`, when non-empty,

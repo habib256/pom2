@@ -29,6 +29,9 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#include <filesystem>
+#include <string>
+#include <utility>
 #include "TestTempPath.h"
 
 static std::string writeTempHdv(const std::vector<uint8_t>& bytes)
@@ -64,8 +67,22 @@ int main()
     assert(mem.memRead(0xC503) == 0x00);
     assert(mem.memRead(0xC505) == 0x03);
 
-    // $CnFF = driver entry offset, should point to $Cn50.
-    assert(mem.memRead(0xC5FF) == 0x50);
+    // $CnFF = the ProDOS driver entry OFFSET. Not a fixed constant: the page
+    // is assembled from labels (SlotRomAsm.h) and $CnFF is `byteOf("driver")`,
+    // so the routine may move — it did, when the shared error tail grew to
+    // separate "block past the end" ($27) from "empty bay" ($28). What has to
+    // hold is that the byte points at real code inside the page and that a
+    // JSR there lands on the dispatch, which hdv_status_driver executes.
+    {
+        const uint8_t entry = mem.memRead(0xC5FF);
+        assert(entry >= 0x08 && entry < 0xF0);
+        assert(mem.memRead(static_cast<uint16_t>(0xC500 | entry)) == 0xA5);
+    }
+
+    // $CnFE = ProDOS device characteristics (TN.PDOS.021): bit 0 status,
+    // bit 1 read, bit 2 WRITE. It read $03 — a read-only device — while the
+    // ROM has always carried a working WRITE_BLOCK (bug hunt 4 #13).
+    assert((mem.memRead(0xC5FE) & 0x07) == 0x07);
 
     // Select block 1 then stream bytes via $C0D2.
     mem.memWrite(0xC0D0, 0x01); // block low
@@ -125,6 +142,71 @@ int main()
         }
         ProDOSHardDiskCard c3;
         assert(!c3.loadImage(p2));
+    }
+
+    // ── adoptImage resets the firmware cursor, exactly like loadImage ─────
+    // `adoptImage` is phase 2 of the two-phase mount (pom2::mountBlockCard),
+    // which is the path a GUI mount actually takes — so it is the COMMON
+    // path, not the exotic one. It used to forward to the backing store and
+    // nothing else, leaving the outgoing image's $C0n0/$C0n1 block select and
+    // its byte offset pointed into the incoming medium: a mount landing
+    // mid-transfer handed the guest the rest of a 512-byte stream from the
+    // wrong offset of the wrong block (bug hunt 4 #9).
+    {
+        // Every byte distinct per (block, offset), so "resumed at the old
+        // cursor" and "restarted at block 0 byte 0" cannot alias.
+        auto makeImage = [](uint8_t tag, size_t blocks) {
+            std::vector<uint8_t> v(blocks * 512u);
+            for (size_t b = 0; b < blocks; ++b)
+                for (size_t i = 0; i < 512u; ++i)
+                    v[b * 512u + i] =
+                        static_cast<uint8_t>(tag + b * 16u + (i & 0x0Fu));
+            return v;
+        };
+        const std::string first =
+            (std::filesystem::temp_directory_path() / "pom2_hdv_adopt_a.hdv")
+                .string();
+        const std::string second =
+            (std::filesystem::temp_directory_path() / "pom2_hdv_adopt_b.hdv")
+                .string();
+        for (const auto& pr : { std::pair<std::string, uint8_t>{first, 0x40},
+                                std::pair<std::string, uint8_t>{second, 0x80} }) {
+            const auto bytes = makeImage(pr.second, 4);
+            std::ofstream f(pr.first, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(bytes.data()),
+                    static_cast<std::streamsize>(bytes.size()));
+        }
+
+        Memory mem3;
+        auto card = std::make_unique<ProDOSHardDiskCard>(5);
+        ProDOSHardDiskCard* raw = card.get();
+        assert(raw->loadImage(first));
+        mem3.slotBus().plug(5, std::move(card));
+
+        // Guest starts reading block 2 and stops three bytes in.
+        mem3.memWrite(0xC0D0, 0x02);
+        mem3.memWrite(0xC0D1, 0x00);
+        (void)mem3.memRead(0xC0D2);
+        (void)mem3.memRead(0xC0D2);
+        (void)mem3.memRead(0xC0D2);
+
+        // A mount lands. The next byte must come from block 0 offset 0 of the
+        // NEW image — the cursor is part of what a mount resets.
+        pom2::Block512Backing::PreparedImage prepared;
+        std::string prepErr;
+        assert(pom2::Block512Backing::readImageFile(second, prepared, prepErr));
+        assert(raw->adoptImage(std::move(prepared)));
+        const uint8_t next = mem3.memRead(0xC0D2);
+        if (next != 0x80) {
+            std::printf("FAIL: after adoptImage the stream resumed at $%02X, "
+                        "want $80 (block 0 byte 0 of the new image) — the "
+                        "outgoing image's block/byte cursor survived the "
+                        "mount\n", next);
+            return 1;
+        }
+        std::error_code rmEc;
+        std::filesystem::remove(first, rmEc);
+        std::filesystem::remove(second, rmEc);
     }
 
     std::printf("HDV card smoke: OK\n");
