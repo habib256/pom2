@@ -81,19 +81,22 @@ public:
 
     bool bind(uint16_t port) override
     {
-        // Bind policy first: without it a UDP port the guest used a moment ago
-        // (a reset, a re-open, a previous POM2 session) can still be held by
-        // the kernel and the bind fails for a socket nobody is using.
+        // NO BIND POLICY AT ALL on this path, and that is the fix rather than
+        // an omission. setListenerBindPolicy() used to run here, which on
+        // POSIX is SO_REUSEADDR — and SO_REUSEADDR on a UDP socket bound to
+        // INADDR_ANY is not the harmless TIME_WAIT courtesy it is on a TCP
+        // listener. On the BSDs (macOS included) it lets this socket share a
+        // port a HOST program already holds, and the kernel then hands the
+        // datagrams to one of the two arbitrarily: the guest could quietly
+        // siphon another program's traffic just by writing that port into
+        // Sn_PORT. This is a client socket claiming its own port, not a
+        // listener recovering one, so the option buys nothing to weigh
+        // against that.
         //
-        // Through setListenerBindPolicy(), NOT a raw SO_REUSEADDR — the option
-        // does not mean the same thing on the two stacks. On Winsock it lets
-        // ANY local process bind an address this socket already holds and
-        // collect the traffic (SocketCompat.h, trap 6), so the POSIX idiom
-        // spelled out here turned a guest's DHCP/NTP port into something a
-        // local program could hijack. The helper picks SO_EXCLUSIVEADDRUSE
-        // there and SO_REUSEADDR on POSIX.
-        setListenerBindPolicy(fd_);
-
+        // INADDR_ANY stays: the guest's replies come back from the LAN, not
+        // from loopback, so binding 127.0.0.1 here would break every DHCP,
+        // NTP and TFTP exchange the claim exists to serve. WHICH ports may be
+        // claimed is decided one layer up (W5100Device::localPortAllowed).
         sockaddr_in local{};
         local.sin_family      = AF_INET;
         local.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -111,8 +114,9 @@ public:
         log().warn("W5100", "could not bind local port " +
                             std::to_string(port) + ": " +
                             lastSocketErrorText() +
-                            " — outbound still works, unsolicited inbound "
-                            "datagrams will not arrive");
+                            " — falling back to an ephemeral port; outbound "
+                            "still works, unsolicited inbound datagrams will "
+                            "not arrive");
         return false;
     }
 

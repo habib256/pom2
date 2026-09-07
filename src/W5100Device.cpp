@@ -66,6 +66,151 @@ uint8_t indexByte(uint16_t value, unsigned shift)
     return static_cast<uint8_t>((value >> shift) & 0xFF);
 }
 
+/// How many bytes the guest has staged between Sn_TX_RD and Sn_TX_WR.
+///
+/// TWO CONVENTIONS, and both are in the field. The datasheet (§5.2.4) treats
+/// the pointers as free-running 16-bit counters whose masked value is only the
+/// physical OFFSET, and the WIZnet reference driver keeps them that way: the
+/// unmasked difference is the count, and a full ring reads `size` rather than
+/// zero. But a driver that writes back `Sn_TX_WR = (wr + len) & (size - 1)` —
+/// legal, and what several Apple II W5100 drivers do because the mask is what
+/// they need for their own buffer arithmetic anyway — makes that difference
+/// meaningless the first time the ring wraps: rd = $07C0, wr = $0064 gives
+/// $F8A4, which clamping to `size` turned into a 2048-byte send, 1948 of them
+/// stale ring contents, after which Sn_TX_FSR read 0 and the guest stalled.
+///
+/// So: trust the unmasked difference when it is a possible byte count, and
+/// fall back to the modulo when it cannot be one. The two agree everywhere the
+/// unmasked convention is in use, which is what keeps the maximum-throughput
+/// path (a staged `size` bytes, rd == wr masked) reading `size` and not 0.
+uint16_t stagedTxBytes(uint16_t rd, uint16_t wr, uint16_t size)
+{
+    const uint16_t unmasked = static_cast<uint16_t>(wr - rd);
+    if (unmasked <= size) return unmasked;
+
+    const uint16_t mask = static_cast<uint16_t>(size - 1);
+    return static_cast<uint16_t>(
+        (static_cast<uint16_t>(wr - rd)) & mask);
+}
+
+// ── Virtual-DNS name hygiene (POM2, not the datasheet) ────────────────
+//
+// The hostname the guest stages at socket offset $2A-$FF is RAW GUEST BYTES,
+// and until this check they went straight to the host's getaddrinfo() and, on
+// failure, straight into the log. Two problems in one:
+//
+//   * every lookup is a DNS query the host resolver sends out, so a guest can
+//     spell anything it likes into a name and watch it leave the machine —
+//     `<32-hex-bytes>.attacker.example` is an exfiltration channel with a
+//     resolver doing the transmitting. Rate-limiting (W5100NameResolver) bounds
+//     the bandwidth; this bounds what can be spelled.
+//   * control bytes reach the log through the failure message. A log line is
+//     read in a terminal.
+//
+// The grammar is the one a hostname is allowed to be (RFC 1123 §2.1 as
+// amended by RFC 952): letters, digits, '-' and '.', labels of 1-63 octets,
+// 253 octets total. Anything else is not a name that could have resolved, so
+// refusing it costs the guest nothing.
+constexpr std::size_t kMaxHostname = 253;
+constexpr std::size_t kMaxLabel    = 63;
+
+bool isValidHostname(const std::string& name)
+{
+    if (name.empty() || name.size() > kMaxHostname) return false;
+
+    std::size_t label = 0;
+    for (const char c : name) {
+        if (c == '.') {
+            if (label == 0) return false;      // empty label / leading dot
+            label = 0;
+            continue;
+        }
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '-';
+        if (!ok) return false;
+        if (++label > kMaxLabel) return false;
+    }
+    return label != 0;                         // no trailing dot
+}
+
+// ── Destination policy (POM2, not the datasheet) ──────────────────────
+//
+// The W5100's TCP and UDP sockets are HOST sockets. That is the feature — it
+// is why the Uthernet II works with no libslirp and no privileges — and it is
+// also the one place where guest software reaches past the emulated machine.
+// A program on the emulated Apple II can write any 32-bit address into Sn_DIPR
+// and CONNECT, and until this gate existed the only address refused was
+// 0.0.0.0. 127.0.0.1 was therefore reachable, and POM2's own AI control server
+// listens there and treats a loopback client with no Origin header as native:
+// /mem, /cpu, /keyboard, /reset, /snapshot/save and /disk (mount any file under
+// the cwd and read it back through the emulated Disk II) were all one CONNECT
+// away from a guest program.
+//
+// RFC 1918 stays allowed — a LAN peer is a legitimate destination and the whole
+// point of a period IRC or FTP client — so the block list is only the addresses
+// that cannot mean anything to an Apple II program:
+//
+//   127.0.0.0/8      the HOST's own services (the escape route above)
+//   0.0.0.0/8        "this network"; connect(INADDR_ANY) reaches 127.0.0.1
+//   169.254.0.0/16   link-local, incl. the cloud metadata neighbours
+//   224.0.0.0/4      multicast, and 240/4 above it
+//   255.255.255.255  limited broadcast
+//
+// The answer is the failure the chip itself produces for an unreachable
+// destination: SOCK_CLOSED with TIMEOUT in Sn_IR (datasheet §5.2.3), which
+// every W5100 driver already handles.
+struct DestinationVerdict {
+    bool        allowed = true;
+    const char* reason  = "";
+};
+
+DestinationVerdict checkDestination(uint32_t addressNetworkOrder,
+                                    bool allowLoopback)
+{
+    uint8_t o[4];
+    std::memcpy(o, &addressNetworkOrder, 4);   // network order = a.b.c.d
+
+    if (o[0] == 0)   return { false, "0.0.0.0/8 (unset destination)" };
+    if (o[0] == 127) {
+        if (allowLoopback) return { true, "" };
+        return { false, "127.0.0.0/8 (the host's own loopback services)" };
+    }
+    if (o[0] == 169 && o[1] == 254) return { false, "169.254.0.0/16 (link-local)" };
+    if ((o[0] & 0xF0) == 0xE0)      return { false, "224.0.0.0/4 (multicast)" };
+    if ((o[0] & 0xF0) == 0xF0)      return { false, "240.0.0.0/4 (reserved)" };
+    return { true, "" };
+}
+
+/// A dotted-quad for the log, built without reaching for inet_ntoa — this
+/// file may not include the host socket API.
+std::string dottedQuad(uint32_t addressNetworkOrder)
+{
+    uint8_t o[4];
+    std::memcpy(o, &addressNetworkOrder, 4);
+    return std::to_string(o[0]) + "." + std::to_string(o[1]) + "." +
+           std::to_string(o[2]) + "." + std::to_string(o[3]);
+}
+
+// ── Local-port policy for Sn_PORT (POM2, not the datasheet) ───────────
+//
+// Sn_PORT is claimed on the host socket so unsolicited datagrams can reach the
+// guest (a DHCP offer to port 68, an NTP or TFTP reply). That means the guest
+// chooses a port on the HOST, on every interface — so it may not choose one
+// that would let it stand in front of, or siphon from, something else on this
+// machine.
+bool localPortAllowed(uint16_t port)
+{
+    // Privileged ports: an emulated Apple II has no business owning one, and
+    // on a machine where POM2 can bind them it would be shadowing a real
+    // service (53, 67/68 as a server, 123, 137-139…).
+    if (port < 1024) return false;
+    // POM2's own listeners. Hard-coded rather than included: a device may not
+    // reach up into the UI layer. AiControlServer::kDefaultPort = 6503,
+    // SuperSerialCard::kDefaultPort = 6502, SpTcpTransport::kDefaultPort = 1985.
+    if (port == 6503 || port == 6502 || port == 1985) return false;
+    return true;
+}
+
 // ── IPv4 / Ethernet framing for IPRAW ─────────────────────────────────
 // AppleWin keeps these in `source/Tfe/IPRaw.cpp`; they are only needed by
 // the IPRAW path so POM2 keeps them file-local to the chip that uses them.
@@ -393,7 +538,18 @@ void W5100Device::openSystemSocket(size_t i, W5100SocketKind kind,
     if (kind == W5100SocketKind::Udp) {
         const uint16_t localPort = readNetworkWord(
             static_cast<uint16_t>(sockets_[i].registerAddress + kW5100SnPort0));
-        if (localPort != 0) host->bind(localPort);   // logged, not fatal
+        // See localPortAllowed(): the guest picks a port on the HOST here, so
+        // a refused one falls back to the ephemeral port the kernel assigns —
+        // outbound request/response still works, which is every exchange an
+        // Apple II program is likely to attempt.
+        if (localPort != 0 && localPortAllowed(localPort)) {
+            host->bind(localPort);   // logged, not fatal
+        } else if (localPort != 0) {
+            log().warn("W5100", "socket " + std::to_string(i) +
+                                ": refusing to claim local port " +
+                                std::to_string(localPort) +
+                                " — using an ephemeral port instead");
+        }
     }
 
     sockets_[i].host = std::move(host);
@@ -467,13 +623,14 @@ void W5100Device::connectSocket(size_t i)
     // device, and sockaddr belongs to the host socket layer.
     const uint32_t destinationAddress =
         readAddress(static_cast<uint16_t>(s.registerAddress + kW5100SnDipr0));
-    // DIPR 0.0.0.0 is this card's "DNS resolution failed" marker (and no
-    // valid destination either way): a real chip's ARP would time out and
-    // close, whereas connect(INADDR_ANY) on Linux reaches 127.0.0.1 — the
-    // guest would silently talk to a random host-local service.
-    if (destinationAddress == 0) {
-        log().warn("W5100", "CONNECT with destination 0.0.0.0 "
-                            "(DNS failed or DIPR unset) — closing socket");
+    // Destination policy — see checkDestination(). DIPR 0.0.0.0 is also this
+    // card's "DNS resolution failed" marker, and it is caught by the 0/8 rule.
+    const DestinationVerdict verdict =
+        checkDestination(destinationAddress, allowLoopback_);
+    if (!verdict.allowed) {
+        log().warn("W5100", "socket " + std::to_string(i) + ": CONNECT to " +
+                            dottedQuad(destinationAddress) + " refused — " +
+                            verdict.reason);
         clearSocket(i);
         // The real chip's ARP for an unreachable destination expires into
         // SOCK_CLOSED + TIMEOUT (datasheet §5.2.3), which is the failure a
@@ -520,12 +677,28 @@ void W5100Device::connectSocket(size_t i)
 // chip itself would produce if the connection never came: Sn_SR back to
 // SOCK_CLOSED with TIMEOUT set in Sn_IR (§5.2.3), which every W5100 server
 // loop already handles.
+//
+// ONCE PER SOCKET PER RESET, and that matters as much as the answer itself.
+// The canonical W5100 server loop is `socket(); listen();` retried until it
+// succeeds, so answering CLOSED + TIMEOUT makes the driver go round again —
+// and every lap cost one unbuffered `log().warn` plus a socket open and close,
+// on the CPU thread, under the emulator's stateMutex. The guest spins either
+// way (there is no inbound path to give it), but it now spins quietly instead
+// of writing to stderr thousands of times a second with the machine and the
+// window stopped behind each write. The flag is deliberately NOT cleared by
+// clearSocket(): the loop re-OPENs before each LISTEN, so an OPEN that cleared
+// it would warn exactly as often as no flag at all.
 void W5100Device::listenSocket(size_t i)
 {
-    log().warn("W5100", "socket " + std::to_string(i) +
-                        ": LISTEN is not supported (no inbound path) — "
-                        "answering SOCK_CLOSED + TIMEOUT");
+    const bool warned = sockets_[i].listenWarned;
     clearSocket(i);
+    sockets_[i].listenWarned = true;
+    if (!warned) {
+        log().warn("W5100", "socket " + std::to_string(i) +
+                            ": LISTEN is not supported (no inbound path) — "
+                            "answering SOCK_CLOSED + TIMEOUT (said once per "
+                            "socket until the chip is reset)");
+    }
     raiseSocketIrq(i, kW5100SnIrTimeout);
 }
 
@@ -634,24 +807,15 @@ uint16_t W5100Device::txDataSize(size_t i) const
     const uint16_t size = s.transmitSize;
     if (size == 0) return 0;
 
-    // DIFFERENCE THE POINTERS UNMASKED. Sn_TX_RD and Sn_TX_WR are free-running
-    // 16-bit counters (datasheet §5.2.4: "the physical address is obtained by
-    // masking with the buffer size"); the MASK forms the OFFSET, it is not
-    // part of the arithmetic. Masking first makes a full ring — the guest
-    // staged exactly `size` bytes — read back as rd == wr, i.e. EMPTY, and
-    // that is the stock WIZnet driver's maximum-throughput path: it polls
-    // Sn_TX_FSR, is told the whole ring is free, writes all of it, and the
-    // chip transmits nothing. The unmasked difference is `size`, and clamping
-    // it is what turns a guest that over-staged into a truncated write rather
-    // than a wrapped one.
+    // See stagedTxBytes(): the unmasked difference is the datasheet's, the
+    // masked modulo is what a driver that reduces Sn_TX_WR to the ring leaves
+    // behind, and both have to work.
     const uint16_t rd = readNetworkWord(
         static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0));
     const uint16_t wr = readNetworkWord(
         static_cast<uint16_t>(s.registerAddress + kW5100SnTxWr0));
 
-    uint16_t present = static_cast<uint16_t>(wr - rd);   // wraps by design
-    if (present > size) present = size;
-    return present;
+    return stagedTxBytes(rd, wr, size);
 }
 
 uint8_t W5100Device::txFreeSizeRegister(size_t i, unsigned shift) const
@@ -1004,16 +1168,15 @@ void W5100Device::sendData(size_t i)
 
     const uint16_t mask = static_cast<uint16_t>(size - 1);
 
-    // Unmasked pointers, masked offsets — see txDataSize() for why the order
-    // matters. `present` is the number of bytes the guest staged; a SEND of
-    // exactly `transmitSize` bytes is legal and is what a maximum-throughput
-    // driver does.
+    // Pointers as the guest keeps them, offsets masked — see stagedTxBytes()
+    // for the two conventions. `present` is the number of bytes the guest
+    // staged; a SEND of exactly `transmitSize` bytes is legal and is what a
+    // maximum-throughput driver does.
     const uint16_t rd = readNetworkWord(
         static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0));
     const uint16_t wr = readNetworkWord(
         static_cast<uint16_t>(s.registerAddress + kW5100SnTxWr0));
-    uint16_t present = static_cast<uint16_t>(wr - rd);
-    if (present > size) present = size;
+    const uint16_t present = stagedTxBytes(rd, wr, size);
 
     const uint16_t base = s.transmitBase;
     std::vector<uint8_t> data;
@@ -1062,6 +1225,25 @@ void W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
         mem(static_cast<uint16_t>(s.registerAddress + kW5100SnDport1))
     };
     std::memcpy(&port, portBytes, 2);
+
+    // The SAME destination policy CONNECT applies, because UDP is the other
+    // half of the same escape: a datagram to 127.0.0.1:6503 reaches the AI
+    // control server exactly as a stream would, and no CONNECT was needed to
+    // get there. TCP has already been through the gate at CONNECT time and its
+    // destination registers no longer steer anything (the 4-tuple is fixed by
+    // the host socket), so this is the UDP path's own check.
+    if (s.status == kW5100SnSrUdp) {
+        const DestinationVerdict verdict =
+            checkDestination(destinationAddress, allowLoopback_);
+        if (!verdict.allowed) {
+            log().warn("W5100", "socket " + std::to_string(i) + ": datagram to " +
+                                dottedQuad(destinationAddress) + " refused — " +
+                                verdict.reason);
+            clearSocket(i);
+            raiseSocketIrq(i, kW5100SnIrTimeout);
+            return;
+        }
+    }
 
     // TCP is a stream: whatever the non-blocking send does not take NOW
     // must be kept and retried (poll() flushes pendingTx), or the bytes
@@ -1225,6 +1407,17 @@ void W5100Device::resolveDns(size_t i)
     for (uint8_t k = 0; k < length; ++k) {
         name.push_back(static_cast<char>(mem(static_cast<uint16_t>(
             s.registerAddress + kW5100SnDnsNameBegin + k))));
+    }
+
+    // BEFORE the lookup and before the name reaches any log line — see
+    // isValidHostname(). DIPR is already 0.0.0.0 above, which is the
+    // "resolution failed" answer the guest's driver is written to see.
+    if (!isValidHostname(name)) {
+        log().warn("W5100", "socket " + std::to_string(i) +
+                            ": virtual-DNS name rejected (" +
+                            std::to_string(name.size()) +
+                            " bytes, not a hostname)");
+        return;
     }
 
     // The lookup, its cache, the bounded wait and the in-flight cap all live

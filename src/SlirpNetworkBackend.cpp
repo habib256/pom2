@@ -65,7 +65,7 @@ public:
     /// without bound when the guest stops draining.
     static constexpr size_t kMaxQueued = 4096;
 
-    explicit SlirpBackend(const std::string& hostname)
+    SlirpBackend(const std::string& hostname, const SlirpOptions& options)
     {
         SlirpConfig cfg;
         std::memset(&cfg, 0, sizeof(cfg));
@@ -76,7 +76,7 @@ public:
 #else
         cfg.version    = 1;
 #endif
-        cfg.restricted = 0;
+        cfg.restricted = options.restricted ? 1 : 0;
         cfg.in_enabled = true;
         cfg.vnetwork.s_addr     = htonl(0x0A000200);  // 10.0.2.0
         cfg.vnetmask.s_addr     = htonl(0xFFFFFF00);  // /24
@@ -89,7 +89,10 @@ public:
         // Ethernet-attached Apple II expects.
         cfg.if_mtu = 0;
         cfg.if_mru = 0;
-        cfg.disable_host_loopback = false;
+        // TRUE by default — see SlirpOptions::allowHostLoopback. This is the
+        // one line that stops a guest with its own IP stack from reaching the
+        // host's private services through the virtual router at 10.0.2.2.
+        cfg.disable_host_loopback = !options.allowHostLoopback;
         cfg.enable_emu = false;
 
         static const SlirpCb kCallbacks = [] {
@@ -116,7 +119,10 @@ public:
             log().error("Slirp", "slirp_new failed — Ethernet backend unavailable");
             return;
         }
-        name_ = "libslirp (guest 10.0.2.15, gw 10.0.2.2, dns 10.0.2.3)";
+        name_ = std::string("libslirp (guest 10.0.2.15, gw 10.0.2.2, "
+                            "dns 10.0.2.3") +
+                (options.restricted ? ", restricted" : "") +
+                (options.allowHostLoopback ? ", host loopback ALLOWED" : "") + ")";
         log().info("Slirp", "user-mode NAT up — " + name_);
     }
 
@@ -328,9 +334,10 @@ private:
 
 bool slirpAvailable() { return true; }
 
-std::unique_ptr<NetworkBackend> makeSlirpBackend(const std::string& hostname)
+std::unique_ptr<NetworkBackend> makeSlirpBackend(const std::string& hostname,
+                                                 const SlirpOptions& options)
 {
-    auto b = std::make_unique<SlirpBackend>(hostname);
+    auto b = std::make_unique<SlirpBackend>(hostname, options);
     if (!b->isValid()) return nullptr;
     return b;
 }
@@ -343,7 +350,8 @@ namespace pom2 {
 
 bool slirpAvailable() { return false; }
 
-std::unique_ptr<NetworkBackend> makeSlirpBackend(const std::string&)
+std::unique_ptr<NetworkBackend> makeSlirpBackend(const std::string&,
+                                                 const SlirpOptions&)
 {
     return nullptr;
 }

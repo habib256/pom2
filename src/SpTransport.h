@@ -97,6 +97,21 @@ public:
     /// the link. Blocking, but only ever called with small buffers.
     virtual bool writeAll(const uint8_t* p, std::size_t n) = 0;
 
+    /// Whole-call budget for the next `writeAll`, in milliseconds.
+    ///
+    /// The header above promises every transport call is bounded by the
+    /// caller's timeout, and the read half keeps that promise. The write half
+    /// did not: it carried its own fixed 2000 ms deadline, so one SmartPort
+    /// call against a peer that had stopped reading cost 2 s of write plus up
+    /// to `timeoutMs()` of read — with the panel's 5 s maximum, seven seconds
+    /// of the CPU thread holding the emulator's stateMutex, from a single
+    /// `$C0xx` access. The session layer sets this from its own budget before
+    /// every write so the two halves share one bound.
+    ///
+    /// A no-op for transports whose write cannot park (the serial port's
+    /// writes go to a device buffer, not to a peer that may stop draining).
+    virtual void setWriteDeadlineMs(int /*ms*/) {}
+
     /// Read up to `n` bytes, waiting at most `timeoutMs` for the first one.
     ///   > 0  bytes read
     ///   = 0  nothing arrived within the timeout (not an error)
@@ -159,9 +174,14 @@ public:
     void        dropPeer() override;
     void        shutdown() override;
     std::string describe() const override;
+    void        setWriteDeadlineMs(int ms) override
+    { if (ms > 0) writeDeadlineMs_.store(ms); }
 
 private:
     uint16_t            port_;
+    /// See SpTransport::setWriteDeadlineMs. The default stands in only for a
+    /// caller that never sets one.
+    std::atomic<int>    writeDeadlineMs_{2000};
     /// Serialises I/O against peer teardown: held for the whole of
     /// readSome/writeAll, so dropPeer() cannot close a descriptor another
     /// thread is inside recv() on (the use-after-close hazard

@@ -31,6 +31,14 @@
 // an oversized datagram with WSAEMSGSIZE, and an ICMP port-unreachable
 // arriving as WSAECONNRESET).
 //
+// setAllowLoopback(true) EVERYWHERE BELOW, and it is not incidental. The chip
+// refuses 127.0.0.0/8 by default: TCP/UDP run on host sockets, so a guest that
+// could name loopback could reach the host's own private services — POM2's AI
+// control server among them, which answers a loopback client with no Origin as
+// if it were native. Every peer in this file IS on loopback, which is exactly
+// the case a user who deliberately runs a local server opts into with the
+// `uthernet_allow_loopback` setting, so the tests opt into it too.
+//
 // What is pinned, and why each one is worth a test:
 //
 //   1. A datagram that does not fit the RX ring is DROPPED WHOLE. It used
@@ -271,6 +279,7 @@ void testOversizedDatagramIsDropped()
     // plugs it injects them. Inject the production factory so this
     // test exercises the same path the emulator does.
     dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    dev.setAllowLoopback(true);
     openUdpSocket(dev, peer, 0x00);
     assert(dev.socketInfo(0).rxCapacity == 1024);
 
@@ -307,6 +316,7 @@ void testFittingDatagramLandsWhole()
     // plugs it injects them. Inject the production factory so this
     // test exercises the same path the emulator does.
     dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    dev.setAllowLoopback(true);
     openUdpSocket(dev, peer, 0x02);           // 4 KB ring for socket 0
     assert(dev.socketInfo(0).rxCapacity == 4096);
 
@@ -337,6 +347,7 @@ void testZeroLengthDatagramKeepsSocket()
     // plugs it injects them. Inject the production factory so this
     // test exercises the same path the emulator does.
     dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    dev.setAllowLoopback(true);
     openUdpSocket(dev, peer, 0x02);
 
     peer.sendToGuest(0);
@@ -374,6 +385,7 @@ void testFullRingLosesTheNextDatagram()
     // plugs it injects them. Inject the production factory so this
     // test exercises the same path the emulator does.
     dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    dev.setAllowLoopback(true);
     openUdpSocket(dev, peer, 0x01);           // 2 KB ring: one datagram fits
     assert(dev.socketInfo(0).rxCapacity == 2048);
 
@@ -414,6 +426,7 @@ void testHighMirrorReads()
     // plugs it injects them. Inject the production factory so this
     // test exercises the same path the emulator does.
     dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    dev.setAllowLoopback(true);
     openUdpSocket(dev, peer, 0x02);
 
     constexpr uint16_t kMirror = static_cast<uint16_t>(kS0 + 0x8000);
@@ -469,6 +482,7 @@ void testLocalPortIsBound()
         LocalPeer  peer;
         W5100Device dev;
         dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+        dev.setAllowLoopback(true);
         dev.reset(true);
         dev.writeValueAt(kW5100Rmsr, 0x02);            // 4 KB ring for socket 0
 
@@ -515,6 +529,7 @@ void testSendMacTransmits()
     LocalPeer   peer;
     W5100Device dev;
     dev.setSocketFactory(pom2::makeHostW5100SocketFactory());
+    dev.setAllowLoopback(true);
     openUdpSocket(dev, peer, 0x02);   // also teaches the peer our address
 
     // Stage a second datagram and dispatch it with SEND_MAC this time.

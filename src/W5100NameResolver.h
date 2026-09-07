@@ -40,6 +40,7 @@
 
 #include "W5100Resolver.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -81,7 +82,30 @@ public:
     static constexpr int         kMaxInFlight = 8;
     static constexpr std::size_t kMaxCache    = 512;
 
+    /// New lookups per second, as a token bucket.
+    ///
+    /// The in-flight cap bounds how many resolver THREADS exist at once; it
+    /// does not bound how many queries leave the machine, because a lookup
+    /// that answers instantly frees its slot instantly. A guest looping OPEN
+    /// over `<payload>.attacker.example` therefore had an unmetered channel
+    /// out through the host's resolver. Four per second is far above anything
+    /// a period network client does (a name is resolved once per connection
+    /// and then cached here) and far below a useful data rate.
+    ///
+    /// CACHE HITS DO NOT SPEND A TOKEN: a guest reconnecting to the same host
+    /// in a loop is ordinary behaviour and never touches the network.
+    static constexpr int kResolvesPerSecond = 4;
+    /// Bucket capacity, i.e. how many lookups a burst may contain. Above
+    /// kMaxInFlight on purpose: the in-flight cap is a bound on resolver
+    /// THREADS and has to stay reachable — a burst ceiling below it would hide
+    /// it, and the two answer different failures (too many at once vs too many
+    /// over time). Sustained rate is still kResolvesPerSecond.
+    static constexpr int kResolveBurst = 2 * kMaxInFlight;
+
 private:
+    /// Take one token, refilling at kResolvesPerSecond. False = refused.
+    bool takeRateToken();
+
     struct Pending {
         std::string name;
         uint32_t    address = 0;
@@ -97,6 +121,11 @@ private:
     LookupFn                        lookup_;
     std::map<std::string, uint32_t> cache_;
     std::shared_ptr<Mailbox>        mailbox_ = std::make_shared<Mailbox>();
+
+    /// Token bucket. CPU thread only, like the cache — resolve() is called
+    /// from the device under the emulator's stateMutex.
+    double                                 rateTokens_ = kResolveBurst;
+    std::chrono::steady_clock::time_point  rateStamp_{};
 };
 
 } // namespace pom2

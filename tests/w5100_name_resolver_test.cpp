@@ -142,6 +142,50 @@ void testInFlightLookupsAreCapped()
     std::printf("  in-flight lookups are capped: OK\n");
 }
 
+// ── New lookups are rate limited ─────────────────────────────────────────
+//
+// The in-flight cap bounds resolver THREADS, not queries: an instant lookup
+// frees its slot instantly, so a guest looping OPEN over
+// `<payload>.attacker.example` had an unmetered channel out through the host's
+// own resolver — a DNS exfiltration path with POM2 doing the transmitting.
+// This is the meter on that, and it deliberately sits AFTER the cache lookup:
+// a guest reconnecting to one host in a loop is ordinary and costs nothing.
+void testNewLookupsAreRateLimited()
+{
+    std::atomic<int> calls{ 0 };
+    W5100NameResolver resolver([&calls](const std::string&) {
+        ++calls;
+        return 0x0400007Fu;
+    });
+
+    // A burst is allowed — the bucket starts full.
+    for (int i = 0; i < W5100NameResolver::kResolveBurst; ++i) {
+        const auto r = resolver.resolve("burst" + std::to_string(i) + ".test",
+                                        1000);
+        assert(r.status == Status::Resolved);
+    }
+    assert(calls == W5100NameResolver::kResolveBurst);
+
+    // The next NEW name is refused rather than sent, and the lookup is not
+    // even attempted — which is the property that matters.
+    const auto refused = resolver.resolve("payload.attacker.test", 1000);
+    assert(refused.status == Status::Refused);
+    assert(calls == W5100NameResolver::kResolveBurst);
+
+    // A name already in the cache still answers instantly: the limit meters
+    // what leaves the machine, not what the guest asks for.
+    const auto cached = resolver.resolve("burst0.test", 1000);
+    assert(cached.status == Status::Resolved);
+    assert(calls == W5100NameResolver::kResolveBurst);
+
+    // And the bucket refills: a short wait buys another lookup.
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const auto later = resolver.resolve("later.test", 1000);
+    assert(later.status == Status::Resolved);
+
+    std::printf("  new lookups are rate limited, cache hits are free: OK\n");
+}
+
 } // namespace
 
 int main()
@@ -151,6 +195,7 @@ int main()
     testFailureIsCachedToo();
     testSlowLookupTimesOutThenArrives();
     testInFlightLookupsAreCapped();
+    testNewLookupsAreRateLimited();
     std::printf("OK\n");
     return 0;
 }

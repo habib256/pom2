@@ -249,7 +249,7 @@ public:
     bool    echoMode()       const { return echoMode_;       }
     bool    rxIrqEnabled()   const { return rxIrqEnable_;    }
     /// SW2-6: does the card's IRQ output reach the slot at all?
-    bool    irqDipEnabled()  const { return (lastDip2 & DSW2_IRQ_ENABLE) != 0; }
+    bool    irqDipEnabled()  const { return irqSwitchOn_; }
     void    setIrqDipEnabled(bool on);
     uint8_t statusErrorBits()const { return statusErrors_;   }
     uint8_t irqState()       const { return irqState_;       }
@@ -324,18 +324,6 @@ private:
     static constexpr uint8_t SR_TDRE          = 0x10;
     static constexpr uint8_t SR_DCD           = 0x20;
     static constexpr uint8_t SR_DSR           = 0x40;
-    /// SW2-6, the interrupt-enable DIP. On a real Super Serial Card this
-    /// switch physically gates the 6551's IRQ output before it reaches the
-    /// slot's IRQ pin, so with it OFF an interrupt-driven driver simply never
-    /// fires however the ACIA's own command register is programmed — the two
-    /// are independent, which is exactly the confusion the switch causes on
-    /// real hardware. MAME `a2ssc.cpp:373`.
-    ///
-    /// POM2 reports the switch in DSW2 already; bit 5 is SW2-6 under the
-    /// usual switch-1-is-bit-0 numbering, and the shipped default (0x60) has
-    /// it ON, which is why nothing changes for existing configurations.
-    static constexpr uint8_t DSW2_IRQ_ENABLE = 0x20;
-
     static constexpr uint8_t SR_IRQ           = 0x80;
 
     // 6551 internal IRQ-source mask (MAME `mos6551.h:71-77`). All four
@@ -350,9 +338,35 @@ private:
     // ACIA register state.
     uint8_t cmdReg     = 0x00;
     uint8_t ctlReg     = 0x00;
-    // Optional latches the ROM may probe but our model doesn't care about.
-    uint8_t lastDip1   = 0xA8;     // 19200 8N1, full duplex
-    uint8_t lastDip2   = 0x60;     // CR + LF, no echo, SW2-6 interrupts ON
+    // The two DIP banks the 74LS259 presents at $C0n1 / $C0n2, laid out as
+    // MAME's `a2ssc.cpp` INPUT_PORTS does — that layout being the one the
+    // Apple firmware and every SSC utility decode:
+    //
+    //   DSW1  $F0 baud rate (SW1:4,3,2,1)   $03 mode (SW1:6,5)   $0C unused
+    //   DSW2  $80 stop bits (SW2:1)  $20 data bits (SW2:2)
+    //         $0C parity (SW2:4,3)   $02 end of line (SW2:5)   $50 unused
+    //
+    // DSW1 was 0xA8: under that layout its baud nibble is $A0, which is 2400,
+    // not the 19200 the comment claimed. $F0 is 19200 (the top of the 50-19200
+    // ladder); the $0C unused pair reads high, as MAME's IP_ACTIVE_LOW spares
+    // do. DSW2 keeps SW2-2 (data bits) where the hardware has it — see
+    // `irqSwitchOn_` for what used to sit on that bit.
+    uint8_t lastDip1   = 0xFC;     // 19200, communications mode
+    uint8_t lastDip2   = 0x52;     // 8N1, CR+LF end of line
+
+    /// SW2-6, the interrupt-enable switch. On a real Super Serial Card it
+    /// physically gates the 6551's IRQ output before it reaches the slot's IRQ
+    /// pin, so with it OFF an interrupt-driven driver never fires however the
+    /// ACIA's command register is programmed — the two are independent, which
+    /// is exactly the confusion the switch causes on real hardware. MAME
+    /// `a2ssc.cpp:373`.
+    ///
+    /// NOT A BIT OF DSW2, and that is the correction: MAME puts this switch in
+    /// a THIRD port, `DSWX` ($04, SW2:6), read only by the IRQ gate and never
+    /// exposed at $C0n2 — the memory-mapped DSW2's bit 5 is Data Bits (SW2:2).
+    /// POM2 spent bit 5 on the interrupt switch, so toggling interrupts in the
+    /// panel rewrote the word length a driver reads back from the card.
+    bool irqSwitchOn_ = true;      // shipped default: SW2-6 on
 
     // Decoded command-register state (mirrors MAME `mos6551.cpp::write_command`).
     // dtrAsserted_  := cmd bit 0 == 1 (real DTR pin pulled low = device ready)
@@ -423,6 +437,24 @@ private:
     /// then `write_command(cmd & ~0x1F)` (preserve parity bits 5-7).
     /// Caller must hold `bufferMtx`.
     void applyProgrammedReset();
+    /// The data bits of a byte at the programmed word length — the mask the
+    /// receiver's shift register imposes. 8 bits = 0xFF, i.e. no clipping.
+    /// Caller must hold `bufferMtx`.
+    uint8_t receiveDataMask() const;
+    /// Present the byte now at the head of the RX queue the way the 6551's
+    /// receiver would, and set or clear SR_PARITY_ERROR for it.
+    ///
+    /// A host TCP stream has no wire parity of its own, so what is modelled is
+    /// what the CHIP does with the byte it is handed: with fewer than 8 data
+    /// bits programmed, the bit above them IS the parity bit, and the receiver
+    /// strips it and compares it against the mode in the command register
+    /// (odd/even/mark/space, cmd[7:6], enabled by cmd[5] — MAME
+    /// `mos6551.cpp:310-315`). That is the whole of a 7E1 or 7O1 link, which
+    /// is what period terminal software configures for a BBS.
+    ///
+    /// NOT modelled at 8 data bits: 8+parity is a 9-bit frame and a byte off a
+    /// socket cannot carry the ninth. Caller must hold `bufferMtx`.
+    void evaluateRxFraming();
     /// Called from the TCP worker when a client connects or disconnects.
     /// Mirrors MAME's "DCD/DSR pin change → status XOR → IRQ if !DTR"
     /// logic (`mos6551.cpp:443-461`) but driven by connect events rather

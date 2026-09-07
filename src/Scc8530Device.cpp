@@ -402,10 +402,24 @@ int Scc8530Device::updateExtInt(int index)
     const uint8_t lrr0 = ch_[index].extIntStates;
 
     if (((lrr0 & wr15 & 0xf8) ^ (rr0 & wr15 & 0xf8)) == 0) {
+        // All serviced: reset the IP bit for external interrupts in both the
+        // internal structure and RR3 (z80scc.cpp:1182-1187).
         intState_[INT_EXTERNAL_PRIO + (index == CHAN_A ? 0 : 3)] = 0;
         ch_[CHAN_A].rr3 &= static_cast<uint8_t>(
             ~(1 << (INT_EXTERNAL_PRIO + ((index == CHAN_A) ? 3 : 0))));
         ret = 0;
+    } else {
+        // z80scc.cpp:1189-1197 — "Update latched value to match current
+        // status". This branch was missing, and its absence is a LATCH THAT
+        // NEVER RELEASES: extIntStates is what the next Reset Ext/Status
+        // compares RR0 against, so leaving it at the pre-change value means
+        // the difference the command was issued to acknowledge is still there
+        // afterwards. The external/status IP bit then stays set for ever, the
+        // condition re-asserts on every pass, and the Workstation Card ROM's
+        // Ext/Status ISR at $EE13 — which loops "Reset Ext/Status, re-read
+        // RR0, are we done?" — never leaves. One source moving (a DCD edge, a
+        // break) was enough; two made it certain.
+        ch_[index].extIntStates = rr0;
     }
     return ret;
 }

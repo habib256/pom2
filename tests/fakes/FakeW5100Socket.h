@@ -55,6 +55,13 @@ public:
 
     bool writable() const override { return writableResult; }
 
+    bool bind(uint16_t port) override
+    {
+        ++bindCount;
+        lastBindPort = port;
+        return bindResult;
+    }
+
     W5100ReceiveResult receive(uint8_t* data, std::size_t capacity) override
     {
         ++receiveCount;
@@ -92,6 +99,9 @@ public:
     uint16_t lastSendPort = 0;
     bool writableResult = true;
     W5100SendMode lastSendMode = W5100SendMode::Addressed;
+    bool bindResult = true;
+    uint16_t lastBindPort = 0;
+    int bindCount = 0;
     int connectCount = 0;
     int pollConnectCount = 0;
     int receiveCount = 0;

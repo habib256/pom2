@@ -617,7 +617,9 @@ void testRxQueueIsByteBoundedAndCountsMisses()
     const uint16_t miss = readPpWord(card, kPpSeRxMiss);
     assert((miss & 0x003F) == 0x10);
     assert((miss >> 6) == (kFrames - 4));
-    assert(readPpWord(card, kPpSeBufEvent) & 0x0200);   // RxMiss
+    // RX_MISS is BIT 10 ($0400). $0200 is TX_UNDERRUN — see the layout
+    // quoted at kBufEventRxMiss in Cs8900aDevice.cpp.
+    assert(readPpWord(card, kPpSeBufEvent) & 0x0400);   // RxMiss
 
     // The FIRST frame is the one still at the head — the oldest survived,
     // the newest were dropped. Reading RxEvent pops it.
@@ -634,6 +636,125 @@ void testRxQueueIsByteBoundedAndCountsMisses()
     assert(got[14] == static_cast<uint8_t>(0x10 + 14));   // seed 0x10 = frame 0
 
     std::printf("  RX queue byte-bounded, drops newest, counts RxMISS\n");
+}
+
+// The ISQ latch and a direct RxEvent read describe ONE staged frame.
+//
+// The queue pops a frame to report it, which leaves the payload staged for the
+// driver to drain — but the driver's own RxEvent read is an "implied skip"
+// that pops the NEXT frame. So the frame the ISQ had just announced was
+// discarded by the very read the announcement provoked, and with only one
+// frame in flight the driver got "nothing there": the ISQ RX path was dead for
+// the whole session.
+void testIsqStagedFrameSurvivesTheRxEventRead()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    // TWO frames, distinguishable by payload seed: the bug swapped one for
+    // the other, which a single frame cannot show.
+    constexpr size_t kLen = 64;
+    for (int i = 0; i < 2; ++i) {
+        const auto f = makeFrame(kOurMac, kOurMac, kLen,
+                                 static_cast<uint8_t>(0x10 * (i + 1)));
+        raw->transmit(f.data(), static_cast<int>(f.size()));
+        card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert(card.chip().queuedFrames() == 2);
+
+    // The driver polls the queue and is told a frame arrived. ONE frame left
+    // in the queue afterwards — the other is staged.
+    const uint16_t isq = readPpWord(card, kPpSeIsq);
+    assert((isq & 0x003F) == 0x04 && (isq & 0x0100));
+    assert(card.chip().queuedFrames() == 1);
+
+    // Now it reads RxEvent, exactly as the datasheet's flow says to. This
+    // must re-answer with the staged frame, NOT pop the second one.
+    const uint16_t ev = readPpWord(card, kPpSeRxEvent);
+    assert((ev & 0x0100) != 0);                  // still RxOK
+    assert(card.chip().queuedFrames() == 1);     // nothing else consumed
+
+    // And the payload it drains is frame 0's, not frame 1's.
+    (void)card.deviceSelectRead(kRxTxDataHi);    // RxStatus H
+    (void)card.deviceSelectRead(kRxTxDataLo);    // RxStatus L
+    (void)card.deviceSelectRead(kRxTxDataHi);    // RxLength H
+    (void)card.deviceSelectRead(kRxTxDataLo);    // RxLength L
+    std::vector<uint8_t> got;
+    for (size_t i = 0; i < kLen; ++i)
+        got.push_back(card.deviceSelectRead((i & 1) ? kRxTxDataHi : kRxTxDataLo));
+    assert(got[14] == static_cast<uint8_t>(0x10 + 14));
+
+    std::printf("  ISQ-staged frame survives the driver's RxEvent read\n");
+}
+
+// BufEvent and RxMISS are read-to-clear (datasheet §4.4.17 / §4.4.20).
+// Without the clear, one missed frame left RxMiss set for the rest of the
+// session and a driver reading BufEvent directly re-diagnosed the same lost
+// packet on every pass.
+void testBufEventAndRxMissClearOnRead()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    // Overflow the 4 KB buffer so RxMISS moves.
+    constexpr size_t kLen = 1024;
+    for (int i = 0; i < 6; ++i) {
+        const auto f = makeFrame(kOurMac, kOurMac, kLen, 0x30);
+        raw->transmit(f.data(), static_cast<int>(f.size()));
+        card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert(card.chip().framesMissed() == 2);
+
+    const uint16_t miss = readPpWord(card, kPpSeRxMiss);
+    assert((miss >> 6) == 2);
+    // Cleared: back to nothing but its own register number.
+    assert(readPpWord(card, kPpSeRxMiss) == 0x0010);
+    // The LIFETIME count the status panel shows is untouched by the read.
+    assert(card.chip().framesMissed() == 2);
+
+    const uint16_t buf = readPpWord(card, kPpSeBufEvent);
+    assert(buf & 0x0400);
+    assert(readPpWord(card, kPpSeBufEvent) == 0x000C);
+
+    // And the counter starts over rather than resuming from the old total.
+    for (int i = 0; i < 2; ++i) {
+        const auto f = makeFrame(kOurMac, kOurMac, kLen, 0x40);
+        raw->transmit(f.data(), static_cast<int>(f.size()));
+        card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert((readPpWord(card, kPpSeRxMiss) >> 6) == 2);
+
+    std::printf("  BufEvent / RxMISS clear on read\n");
+}
+
+// TxOK follows the CHIP's transmitter, not the presence of a host transport.
+// Gated on `backend_`, a card with none — the honest fallback when libslirp is
+// absent, and the `ethernet_backend = none` setting — hung every driver that
+// polls TxOK before staging its next frame.
+void testTxOkWithoutBackend()
+{
+    pom2::UthernetCard card(3);
+    // No setBackend() at all.
+    programMac(card, kOurMac);
+    enableTxRx(card);
+
+    transmitFrame(card, makeFrame(kOurMac, kOurMac, 64, 0x10));
+    assert(card.chip().framesSent() == 0);                // nothing left, right
+    assert(readPpWord(card, kPpSeTxEvent) & 0x0100);      // but TxOK is set
+
+    std::printf("  TxOK is raised with no backend attached\n");
 }
 
 // A reset must re-decode the receive filter, not just reload the register it
@@ -685,6 +806,9 @@ int main()
     testInterruptStatusQueue();
     testTxEventReportsTxOk();
     testRxQueueIsByteBoundedAndCountsMisses();
+    testIsqStagedFrameSurvivesTheRxEventRead();
+    testBufEventAndRxMissClearOnRead();
+    testTxOkWithoutBackend();
     testResetClearsTheDecodedFilter();
     std::printf("PASS\n");
     return 0;

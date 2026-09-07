@@ -79,9 +79,16 @@ enum IoAddr : uint8_t {
 /// Event-register bits. The low 6 bits of every status register are its own
 /// register number (the chip forces them), so the EVENTS start at bit 6.
 ///   TxEvent bit 8 = TxOK, datasheet §4.4.15 — the frame left the wire.
-///   BufEvent bit 9 = RxMiss, §4.4.17 — the RxMISS counter moved.
+///   BufEvent bit 10 = RxMiss, §4.4.17 — the RxMISS counter moved.
 constexpr uint16_t kTxEventTxOk    = 0x0100;
-constexpr uint16_t kBufEventRxMiss = 0x0200;
+/// BIT 10 ($0400), not bit 9. BufEvent's layout, from the CS8900A datasheet
+/// §4.4.17 and verbatim from Linux `drivers/net/ethernet/cirrus/cs89x0.h`:
+///   $0040 SW_INTERRUPT  $0080 RX_DMA        $0100 READY_FOR_TX
+///   $0200 TX_UNDERRUN   $0400 RX_MISS       $0800 RX_128_BYTE
+///   $1000 TX_COL_OVRFLW $2000 RX_MISS_OVRFLW $8000 RX_DEST_MATCH
+/// $0200 is TX_UNDERRUN, so raising it to announce a missed frame told the
+/// driver the transmitter had starved — the opposite half of the chip.
+constexpr uint16_t kBufEventRxMiss = 0x0400;
 /// Everything above the register-number field, i.e. "is anything pending?".
 constexpr uint16_t kEventBitsMask  = 0xFFC0;
 
@@ -213,6 +220,7 @@ void Cs8900aDevice::setReceiver(bool enabled)
     rxEnabled_ = enabled;
     rxState_   = kRxIdle;
     rxEventReadMask_ = 3;
+    isqStagedFrame_  = false;
 }
 
 void Cs8900aDevice::setTransmitter(bool enabled)
@@ -228,6 +236,10 @@ void Cs8900aDevice::reset()
 {
     frameQueue_.clear();
     queueBytes_ = 0;
+    // The RxMISS register goes back to zero below, so the delta it reports
+    // has to start over with it; the lifetime total does not move.
+    rxMissReported_ = framesMissed_;
+    isqStagedFrame_ = false;
 
     ioRegs_.fill(0);
     std::fill(packetPage_.begin(), packetPage_.end(), 0);
@@ -463,8 +475,11 @@ void Cs8900aDevice::pumpBackend()
 void Cs8900aDevice::noteMissedFrame()
 {
     ++framesMissed_;
+    // SINCE THE LAST READ, not since power-on: RxMISS clears when the guest
+    // reads it (§4.4.20), so the register counts the delta while
+    // `framesMissed_` keeps the lifetime total the status panel shows.
     const uint16_t count = static_cast<uint16_t>(
-        std::min<uint64_t>(framesMissed_, 0x3FF));
+        std::min<uint64_t>(framesMissed_ - rxMissReported_, 0x3FF));
     ppWrite16(kPpSeRxMiss, static_cast<uint16_t>((count << 6) | 0x0010));
     ppWrite16(kPpSeBufEvent,
               static_cast<uint16_t>(ppRead16(kPpSeBufEvent) | kBufEventRxMiss));
@@ -496,15 +511,28 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
     // The register path bounds TxLength to 4..1518, but a restored
     // snapshot is untrusted input: re-check against the staging area so
     // no backend is ever handed a length past the PacketPage buffer.
-    if (txEnabled_ && backend_ && txLength_ >= kMinEthFrame &&
-        txLength_ <= kMaxEthFrame &&
-        static_cast<size_t>(kPpTxFrameLoc) + txLength_ <= packetPage_.size()) {
-        backend_->transmit(&packetPage_[kPpTxFrameLoc], txLength_);
-        ++framesSent_;
+    const bool lengthUsable =
+        txLength_ >= kMinEthFrame && txLength_ <= kMaxEthFrame &&
+        static_cast<size_t>(kPpTxFrameLoc) + txLength_ <= packetPage_.size();
+
+    if (txEnabled_ && lengthUsable) {
         // TxOK (datasheet §4.4.15): the frame is on the wire. TxEvent never
         // signalled anything, so a driver that waits for TxOK before staging
         // the next frame — the interrupt-driven shape, and the one the ISQ
         // exists for — waited forever after its first packet.
+        //
+        // GATED ON tx_enabled ONLY, not on having a host transport. MAME's
+        // `cs8900a.cpp` raises it from the transmit path with no backend test,
+        // and it is right to: TxOK reports the CHIP's transmitter, and a card
+        // with no backend (the honest fallback when libslirp is absent, and
+        // the "none" ethernet_backend setting) is a card whose wire goes
+        // nowhere, not one whose transmitter is broken. With the flag inside
+        // the backend test, every such machine hung its Ethernet driver on the
+        // first packet instead of merely getting no answers to it.
+        if (backend_) {
+            backend_->transmit(&packetPage_[kPpTxFrameLoc], txLength_);
+            ++framesSent_;
+        }
         ppWrite16(kPpSeTxEvent,
                   static_cast<uint16_t>(ppRead16(kPpSeTxEvent) | kTxEventTxOk));
     }
@@ -673,7 +701,17 @@ void Cs8900aDevice::latchInterruptStatusQueue()
         const uint16_t rx = receiveFrame();
         ppWrite16(kPpRxStatus,  rx);
         ppWrite16(kPpSeRxEvent, rx);
-        if (rx & 0x0100) value = rx;          // RxOK — a frame really landed
+        if (rx & 0x0100) {
+            value = rx;                       // RxOK — a frame really landed
+            // ONE staged frame, TWO ways of noticing it. The ISQ has now
+            // popped a frame the driver has not read RxEvent for, and a
+            // direct RxEvent read is an "implied skip" that pops the NEXT
+            // one — so without this flag the driver's own read discarded the
+            // frame the queue had just told it about, every time, and the
+            // ISQ RX path was dead for the session. The flag makes the next
+            // RxEvent read RE-ANSWER with this frame's status instead.
+            isqStagedFrame_ = true;
+        }
     }
 
     // Then TxEvent, then BufEvent. Reading either through the queue clears
@@ -714,6 +752,15 @@ void Cs8900aDevice::sideEffectsReadPp(uint16_t ppAddress, bool oddAddress)
         // this to pop only on a new half — that would break MAME parity.
         const int accessMask = oddAddress ? 1 : 2;
 
+        // The frame the ISQ latch staged is THIS read's answer, not a reason
+        // to pop another one. Consumed here, so the read after it behaves
+        // exactly as MAME's does.
+        if (isqStagedFrame_) {
+            isqStagedFrame_ = false;
+            rxEventReadMask_ = accessMask;
+            break;
+        }
+
         if ((accessMask & rxEventReadMask_) != 0) {
             if (rxEnabled_) {
                 const uint16_t retVal = receiveFrame();
@@ -734,6 +781,36 @@ void Cs8900aDevice::sideEffectsReadPp(uint16_t ppAddress, bool oddAddress)
             // Observing Rdy4TxNow is the third leg of the TX handshake.
             if ((ppRead16(kPpSeBusSt) & 0x100) == 0x100) txState_ = kTxReadBusSt;
         }
+        break;
+
+    default:
+        break;
+    }
+}
+
+// Read-to-clear, on the way OUT of the access — see the header for why it
+// cannot live in sideEffectsReadPp with the rest.
+//
+// BufEvent and RxMISS had no clear at all. That is not a cosmetic gap: both
+// are latches a driver reads to find out what happened and then expects to be
+// empty, so a single missed frame left RxMiss set in BufEvent for the rest of
+// the session. A driver polling the ISQ was told "buffer event" for ever (the
+// queue drains it, so that path terminated), and one reading BufEvent directly
+// re-diagnosed the same lost packet on every pass and never saw the next one.
+void Cs8900aDevice::sideEffectsAfterReadPp(uint16_t ppAddress, bool oddAddress)
+{
+    if (!oddAddress) return;   // the low half is only half the word
+
+    switch (ppAddress) {
+    case kPpSeBufEvent:
+        // Back to its own register number, exactly as the ISQ path leaves it.
+        ppWrite16(kPpSeBufEvent, 0x000C);
+        break;
+
+    case kPpSeRxMiss:
+        // Datasheet §4.4.20: "This counter is cleared when read."
+        rxMissReported_ = framesMissed_;
+        ppWrite16(kPpSeRxMiss, 0x0010);
         break;
 
     default:
@@ -860,6 +937,7 @@ uint8_t Cs8900aDevice::read(uint8_t ioAddress)
 
         sideEffectsReadPp(ppAddress, (ioAddress & 1) != 0);
         wordValue = readRegister(ppAddress);
+        sideEffectsAfterReadPp(ppAddress, (ioAddress & 1) != 0);
     }
 
     const uint8_t lo = loByte(wordValue);
@@ -1039,8 +1117,10 @@ void Cs8900aDevice::loadSnapshotState(const uint8_t* data, std::size_t len)
     framesFiltered_ = getU64(data + p);
 
     // The inbound queue is not saved (see appendSnapshotState), so its byte
-    // accounting starts empty with it.
-    queueBytes_ = 0;
+    // accounting starts empty with it — and with no queue there is no frame
+    // the ISQ latch could have staged either.
+    queueBytes_     = 0;
+    isqStagedFrame_ = false;
 
     // A snapshot is a FILE, and a corrupt or hand-edited one must not be able
     // to wedge the NIC. The transmit handshake is the state machine that can:

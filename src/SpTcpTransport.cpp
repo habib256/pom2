@@ -27,11 +27,41 @@
 // Binds 127.0.0.1 only. The peer is a program on the same machine; exposing
 // a SmartPort bus — which can read and write the guest's disks — to the LAN
 // is not something a user should be able to do by accident.
+//
+// ── Who may connect, and why there is no authentication ───────────────────
+//
+// The peer IS the SmartPort device: whatever connects here can serve blocks
+// the guest will boot from and read blocks the guest writes. The first
+// connector is accepted unauthenticated, and that is not an oversight —
+// SP-over-SLIP has no authentication to speak. It is a framed byte stream
+// defined by fujinet-pc / the FujiNet AppleWin fork, and inventing a POM2
+// handshake would mean no stock FujiNet build could connect at all, which is
+// the entire purpose of matching their port and their direction. So the
+// exposure is bounded structurally instead, in four ways:
+//
+//   * 127.0.0.1 ONLY (the bind above) — never a LAN address, no setting.
+//   * The listener is armed only when a FujiNet CARD IS PLUGGED. The
+//     `fujinet_enabled<slot>` default is true, but it is read inside
+//     `plugFujiNet`, and `startDeferredFujiNetLinks` re-checks that the slot
+//     really holds a FujiNetCard before calling start(). A machine with no
+//     FujiNet in any slot opens no socket.
+//   * ONE peer at a time; a second connection is closed immediately
+//     (pollForPeer below), so nothing can displace a live link.
+//   * A CONNECTOR THAT DOES NOT SPEAK THE PROTOCOL IS DROPPED. The worker
+//     enumerates the moment a peer appears, and `enumerateDevices()` calls
+//     `handlePeerLost()` when NOTHING answers INIT — three attempts at the
+//     call budget apiece, so about a second of grace and then the socket is
+//     closed and the port is listening again. Squatting on it costs a
+//     reconnect per second and yields nothing.
+//
+// The port and the peer's address are both logged (startListening /
+// pollForPeer), so an unexpected connector is visible rather than silent.
 
 #include "SpTransport.h"
 
 #include "Logger.h"
 
+#include <algorithm>
 #include <chrono>
 #include "SocketUtil.h"
 
@@ -192,9 +222,14 @@ bool SpTcpTransport::writeAll(const uint8_t* p, std::size_t n)
     // window. SpOverSlipLink's header promises every call is bounded by
     // timeoutMs(); this is where TCP keeps that promise.
     //
-    // Generous next to a SmartPort call's 250 ms budget: this is the "the peer
-    // has stopped reading" line, not a latency knob.
-    constexpr int kWriteDeadlineMs = 2000;
+    // THE CALLER'S budget, capped at 2 s. It used to be a flat 2000 ms, which
+    // meant one SmartPort call could cost that PLUS the read timeout — up to
+    // 7 s of the CPU thread holding the emulator's state mutex, from a single
+    // `$C0xx` access, with the FujiNet panel's own Stop button unreachable
+    // behind the same mutex. `setWriteDeadlineMs` (SpTransport.h) is how the
+    // session layer hands its budget down; the 2 s cap keeps a user who winds
+    // the panel's timeout up from paying more than the old worst case.
+    const int kWriteDeadlineMs = std::min(2000, writeDeadlineMs_.load());
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(kWriteDeadlineMs);
 

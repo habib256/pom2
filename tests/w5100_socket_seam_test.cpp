@@ -26,12 +26,25 @@
 // get right rather than incidental plumbing.
 
 #include "W5100Device.h"
+#include "W5100Resolver.h"
 
 #include "fakes/FakeW5100Socket.h"
 
 #include <cassert>
 #include <cstdio>
 #include <memory>
+#include <string>
+#include <vector>
+
+// The LISTEN case below counts LOG LINES, which means capturing stderr. POSIX
+// only: on the platforms without dup2 the behavioural half of the case still
+// runs and the count is simply not asserted.
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#define POM2_TEST_CAN_CAPTURE_STDERR 1
+#include <unistd.h>
+#else
+#define POM2_TEST_CAN_CAPTURE_STDERR 0
+#endif
 
 namespace {
 
@@ -156,6 +169,343 @@ void testConnectRefusedClosesSocket()
     std::printf("  refused connection returns to CLOSED: OK\n");
 }
 
+// ── Case 4: a driver that MASKS Sn_TX_WR still sends exactly what it staged ─
+//
+// Sn_TX_RD/WR are free-running counters in the datasheet, but a driver that
+// writes them back reduced to the ring (`wr = (wr + len) & (size - 1)`) is
+// legal and common. The first wrap then makes the unmasked difference
+// meaningless — rd = $07C0, wr = $0064 differ by $F8A4 — and clamping that to
+// the ring size sent the WHOLE 2 KB buffer: 164 staged bytes followed by 1884
+// bytes of stale ring, after which Sn_TX_FSR read 0 and the guest stalled.
+void testMaskedTxPointersSendOnlyTheStagedBytes()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+
+    openTcpSocket(device, 0);
+    // 10.0.0.1 — RFC 1918, which the destination policy allows.
+    connectTo(device, 0, 0x0A000001u, 8080);
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+
+    // Default TMSR ($55) gives socket 0 a 2 KB ring based at $4000. Sn_TX_RD
+    // is read-only, as on the chip, so the read pointer is moved the only way
+    // a guest can move it: by sending. 1984 bytes leaves rd == wr == $07C0.
+    constexpr uint16_t kSize    = 2048;
+    constexpr uint16_t kTxBase  = kW5100TxBase;
+    constexpr uint16_t kReadPtr = 0x07C0;          // 1984
+    constexpr uint16_t kStaged  = 164;             // wraps past the end
+
+    auto setWritePtr = [&](uint16_t wr) {
+        device.writeValueAt(socketReg(0, kW5100SnTxWr0),
+                            static_cast<uint8_t>(wr >> 8));
+        device.writeValueAt(socketReg(0, kW5100SnTxWr1),
+                            static_cast<uint8_t>(wr));
+    };
+
+    for (uint16_t off = 0; off < kReadPtr; ++off)
+        device.writeValueAt(static_cast<uint16_t>(kTxBase + off), 0x11);
+    setWritePtr(kReadPtr);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+    assert(fake->lastSocket != nullptr);
+    assert(fake->lastSocket->sentBytes.size() == kReadPtr);
+    fake->lastSocket->sentBytes.clear();
+
+    // The guest now stages 164 bytes across the wrap and writes the pointer
+    // back MASKED: (1984 + 164) & 2047 == $0064.
+    for (uint16_t k = 0; k < kStaged; ++k) {
+        const uint16_t offset = static_cast<uint16_t>((kReadPtr + k) & (kSize - 1));
+        device.writeValueAt(static_cast<uint16_t>(kTxBase + offset),
+                            static_cast<uint8_t>(0x40 + (k & 0x1F)));
+    }
+    // …and the rest of the ring holds something else entirely, so a send that
+    // over-reads is visible rather than plausible.
+    for (uint16_t off = 0; off < kSize; ++off) {
+        const uint16_t staged =
+            static_cast<uint16_t>((off - kReadPtr) & (kSize - 1));
+        if (staged < kStaged) continue;
+        device.writeValueAt(static_cast<uint16_t>(kTxBase + off), 0xEE);
+    }
+    setWritePtr(static_cast<uint16_t>((kReadPtr + kStaged) & (kSize - 1)));
+
+    // Sn_TX_FSR must agree BEFORE the send, or the guest never writes at all.
+    const uint16_t free =
+        static_cast<uint16_t>((device.readValueAt(socketReg(0, kW5100SnTxFsr0)) << 8) |
+                               device.readValueAt(socketReg(0, kW5100SnTxFsr1)));
+    assert(free == kSize - kStaged);
+
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+
+    assert(fake->lastSocket->sentBytes.size() == kStaged);
+    for (uint16_t k = 0; k < kStaged; ++k)
+        assert(fake->lastSocket->sentBytes[k] ==
+               static_cast<uint8_t>(0x40 + (k & 0x1F)));
+
+    std::printf("  masked TX pointers send exactly the staged bytes: OK\n");
+}
+
+// ── Case 5: the guest may not reach the host's own loopback services ───────
+//
+// TCP/UDP run on HOST sockets, so 127.0.0.1 was a CONNECT away — and POM2's AI
+// control server sits there answering a loopback client with no Origin as if
+// it were native. The chip's own failure for an unreachable destination is
+// SOCK_CLOSED + TIMEOUT, which is what a driver is written to see.
+void testLoopbackDestinationIsRefused()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x7F000001u, 6503);      // 127.0.0.1, the AI server
+
+    assert(fake->lastSocket->connectCount == 0);  // never even attempted
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(!device.socketInfo(0).hasHostSocket);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+
+    // The same address with the escape hatch open connects normally: the
+    // policy is a default, not a wall.
+    device.setAllowLoopback(true);
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x7F000001u, 6503);
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+
+    // …and 224/4, 169.254/16 and 0/8 are refused whatever that setting says.
+    for (const uint32_t bad : { 0xE0000001u, 0xA9FE0001u, 0x00000001u,
+                                0xFFFFFFFFu }) {
+        openTcpSocket(device, 0);
+        connectTo(device, 0, bad, 80);
+        assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    }
+
+    std::printf("  loopback / link-local / multicast destinations refused: OK\n");
+}
+
+// The UDP path is the OTHER half of the same escape: a datagram needs no
+// CONNECT to reach 127.0.0.1:6503.
+void testLoopbackDatagramIsRefused()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+
+    device.writeValueAt(socketReg(0, kW5100SnMr), kW5100SnMrUdp);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrOpen);
+    assert(device.socketInfo(0).status == kW5100SnSrUdp);
+
+    // Destination 127.0.0.1:6503, one byte staged, SEND.
+    for (int b = 0; b < 4; ++b)
+        device.writeValueAt(socketReg(0, static_cast<uint8_t>(kW5100SnDipr0 + b)),
+                            b == 0 ? 0x7F : (b == 3 ? 0x01 : 0x00));
+    device.writeValueAt(socketReg(0, kW5100SnDport0), 0x19);
+    device.writeValueAt(socketReg(0, kW5100SnDport1), 0x67);   // 6503
+    device.writeValueAt(kW5100TxBase, 0x2F);
+    device.writeValueAt(socketReg(0, kW5100SnTxWr0), 0x00);
+    device.writeValueAt(socketReg(0, kW5100SnTxWr1), 0x01);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+
+    assert(fake->lastSocket->sentBytes.empty());
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+
+    std::printf("  loopback datagram refused: OK\n");
+}
+
+// ── Case 6: the guest may not claim any local port it likes ───────────────
+//
+// Sn_PORT is claimed on the HOST, on every interface. A privileged port would
+// shadow a real service; POM2's own listeners would let the guest stand in
+// front of the AI server, the SSC's telnet bridge or the FujiNet relay. Both
+// refusals fall back to an ephemeral port, which is every request/response
+// exchange an Apple II program actually attempts.
+void testLocalPortPolicy()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+
+    auto openUdpOnPort = [&](uint16_t port) {
+        device.writeValueAt(socketReg(0, kW5100SnPort0),
+                            static_cast<uint8_t>(port >> 8));
+        device.writeValueAt(socketReg(0, kW5100SnPort1),
+                            static_cast<uint8_t>(port));
+        device.writeValueAt(socketReg(0, kW5100SnMr), kW5100SnMrUdp);
+        device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrOpen);
+    };
+
+    // 68 (DHCP client) is exactly what Sn_PORT exists for on real silicon —
+    // but claiming it on the host means shadowing the host's own DHCP client.
+    openUdpOnPort(68);
+    assert(fake->lastSocket->bindCount == 0);
+    assert(device.socketInfo(0).status == kW5100SnSrUdp);   // still usable
+
+    openUdpOnPort(6503);                                    // the AI server
+    assert(fake->lastSocket->bindCount == 0);
+
+    // An ordinary high port is claimed as the datasheet says.
+    openUdpOnPort(14000);
+    assert(fake->lastSocket->bindCount == 1);
+    assert(fake->lastSocket->lastBindPort == 14000);
+
+    std::printf("  local-port policy refuses privileged + POM2 ports: OK\n");
+}
+
+#if POM2_TEST_CAN_CAPTURE_STDERR
+/// Run `fn` with stderr redirected into a pipe and return what it wrote.
+/// The pipe buffer is far larger than the handful of lines expected here.
+std::string captureStderr(void (*fn)(W5100Device&), W5100Device& device)
+{
+    int pipeFds[2] = { -1, -1 };
+    if (pipe(pipeFds) != 0) return {};
+    std::fflush(stderr);
+    const int saved = dup(STDERR_FILENO);
+    dup2(pipeFds[1], STDERR_FILENO);
+    close(pipeFds[1]);
+
+    fn(device);
+
+    std::fflush(stderr);
+    dup2(saved, STDERR_FILENO);
+    close(saved);
+
+    std::string out;
+    char buf[4096];
+    ssize_t got = 0;
+    while ((got = read(pipeFds[0], buf, sizeof buf)) > 0)
+        out.append(buf, static_cast<std::size_t>(got));
+    close(pipeFds[0]);
+    return out;
+}
+
+void listenLoop(W5100Device& device)
+{
+    // The canonical W5100 server loop, retried the way a driver retries it.
+    for (int i = 0; i < 16; ++i) {
+        openTcpSocket(device, 0);
+        device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    }
+}
+#endif
+
+// ── Case 7: LISTEN's refusal is said ONCE, not once per lap ───────────────
+//
+// LISTEN cannot be honoured (there is no inbound path), and the honest answer
+// is the chip's own SOCK_CLOSED + TIMEOUT — which makes the driver's server
+// loop go round again. Every lap used to cost an unbuffered stderr write on
+// the CPU thread with the emulator's state mutex held.
+void testListenWarnsOncePerSocket()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+
+#if POM2_TEST_CAN_CAPTURE_STDERR
+    const std::string logged = captureStderr(&listenLoop, device);
+    std::size_t lines = 0;
+    for (std::size_t at = logged.find("LISTEN is not supported");
+         at != std::string::npos;
+         at = logged.find("LISTEN is not supported", at + 1))
+        ++lines;
+    assert(lines == 1);
+#else
+    listenLoop(device);
+#endif
+
+    // The ANSWER is unchanged — every lap still ends CLOSED with TIMEOUT set,
+    // which is what the driver polls.
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(!device.socketInfo(0).hasHostSocket);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+
+    // A chip reset re-arms the warning: a fresh session deserves the reason.
+    device.reset(true);
+    openTcpSocket(device, 0);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+
+    std::printf("  LISTEN refusal logged once per socket: OK\n");
+}
+
+// ── Case 8: raw guest bytes never reach the host resolver ─────────────────
+//
+// The virtual-DNS name lives at socket offset $2A-$FF and is whatever the
+// guest wrote there. It used to go straight to getaddrinfo() — every lookup is
+// a query the host resolver puts on the wire, so an arbitrary name is an
+// exfiltration channel — and, on failure, straight into a log line a human
+// reads in a terminal, control bytes and all.
+class RecordingResolver final : public W5100Resolver
+{
+public:
+    Result resolve(const std::string& name, int) override
+    {
+        seen.push_back(name);
+        Result r;
+        r.status  = Status::Resolved;
+        r.address = 0x0100000Au;      // 10.0.0.1, network byte order
+        return r;
+    }
+    void poll() override {}
+    void clearCache() override {}
+
+    std::vector<std::string> seen;
+};
+
+void testVirtualDnsNamesAreValidated()
+{
+    W5100Device device;
+    device.setSocketFactory(std::make_unique<test::FakeW5100SocketFactory>());
+    auto resolver = std::make_unique<RecordingResolver>();
+    auto* rec = resolver.get();
+    device.setNameResolver(std::move(resolver));
+    device.reset(true);
+
+    auto openWithName = [&](const std::string& name) {
+        device.writeValueAt(socketReg(0, kW5100SnDnsNameLen),
+                            static_cast<uint8_t>(name.size()));
+        for (std::size_t k = 0; k < name.size(); ++k)
+            device.writeValueAt(
+                socketReg(0, static_cast<uint8_t>(kW5100SnDnsNameBegin + k)),
+                static_cast<uint8_t>(name[k]));
+        device.writeValueAt(socketReg(0, kW5100SnMr),
+                            kW5100SnMrTcp | kW5100SnVirtualDns);
+        device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrOpen);
+    };
+
+    // An ordinary hostname goes through, and its answer lands in DIPR.
+    openWithName("irc.libera.chat");
+    assert(rec->seen.size() == 1 && rec->seen[0] == "irc.libera.chat");
+    assert(device.readValueAt(socketReg(0, kW5100SnDipr0)) == 0x0A);
+
+    // These do not: a control byte, a space, a label past 63 octets, an empty
+    // label. None of them can be a name that would have resolved, so refusing
+    // them costs the guest nothing.
+    const std::string tooLongLabel(64, 'a');
+    for (const std::string& bad : { std::string("a\x07\x1b[2Jb.test"),
+                                    std::string("has space.test"),
+                                    tooLongLabel + ".test",
+                                    std::string(".leading.test"),
+                                    std::string("double..dot.test"),
+                                    std::string("under_score.test") }) {
+        openWithName(bad);
+        // Nothing new reached the resolver…
+        assert(rec->seen.size() == 1);
+        // …and DIPR is left at the extension's "resolution failed" marker.
+        assert(device.readValueAt(socketReg(0, kW5100SnDipr0)) == 0x00);
+    }
+
+    std::printf("  virtual-DNS names are validated before the lookup: OK\n");
+}
+
 } // namespace
 
 int main()
@@ -164,6 +514,12 @@ int main()
     testOpenUsesInjectedFactory();
     testConnectInProgressParksInSynSent();
     testConnectRefusedClosesSocket();
+    testMaskedTxPointersSendOnlyTheStagedBytes();
+    testLoopbackDestinationIsRefused();
+    testLoopbackDatagramIsRefused();
+    testLocalPortPolicy();
+    testListenWarnsOncePerSocket();
+    testVirtualDnsNamesAreValidated();
     std::printf("OK\n");
     return 0;
 }
