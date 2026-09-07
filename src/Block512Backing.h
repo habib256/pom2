@@ -54,9 +54,19 @@ namespace pom2 {
 // bumps this counter; `EmulationController` compares it at its capture point
 // and clears the ring when it moved, so the history restarts after the write
 // instead of spanning it. It is process-wide (a leaf storage class has no
-// controller handle) and relaxed-atomic (the only requirement is that the
-// value eventually changes; the compare happens on the CPU worker, which is
-// also where every guest write originates).
+// controller handle).
+//
+// Release/acquire, not relaxed. The original rationale — "the compare happens
+// on the CPU worker, which is also where every guest write originates" — has
+// not been true since the deferred 3.5" write-back moved commits onto their
+// own thread and the UI gained host-side media swaps: the bump can now come
+// from a thread the worker never synchronises with. Under relaxed on both
+// sides nothing orders the counter against the bytes the write put on the
+// medium, so the worker may capture one or two rewind frames that already
+// span the write and still read the old epoch — which is precisely the state
+// the epoch exists to make impossible. The release on the bump and the
+// acquire on the compare cost nothing measurable (one counter, read once per
+// captured frame) and make the ordering the policy already assumed.
 inline std::atomic<uint64_t>& mediaWriteEpoch()
 {
     static std::atomic<uint64_t> epoch{0};
@@ -64,7 +74,7 @@ inline std::atomic<uint64_t>& mediaWriteEpoch()
 }
 inline void noteMediaWrite()
 {
-    mediaWriteEpoch().fetch_add(1, std::memory_order_relaxed);
+    mediaWriteEpoch().fetch_add(1, std::memory_order_release);
 }
 
 class Block512Backing

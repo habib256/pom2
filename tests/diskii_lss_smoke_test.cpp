@@ -680,6 +680,149 @@ bool testSnapshotWriteBackPropagation() {
     return true;
 }
 
+namespace {
+
+// A .nib whose track 0 is entirely $00 — a loaded disk sitting on a track
+// with no flux at all. Every other track keeps sync $FF so the image is
+// otherwise ordinary. This is the shape a WOZ TMAP $FF entry, a track past
+// 34, or an erased half-track under a nibble scanner presents to the LSS.
+std::string makeBlankTrackNib(const char* name, uint8_t fill) {
+    constexpr int kTracks = DiskImage::kTracks;
+    constexpr int kBytesPerTrack = DiskImage::kNibblesPerTrack;
+    std::vector<uint8_t> img(static_cast<size_t>(kTracks) * kBytesPerTrack, 0xFF);
+    for (int i = 0; i < kBytesPerTrack; ++i) img[i] = fill;
+    const auto tmp = fs::temp_directory_path() / name;
+    std::FILE* f = std::fopen(tmp.string().c_str(), "wb");
+    assert(f);
+    const size_t wrote = std::fwrite(img.data(), 1, img.size(), f);
+    assert(wrote == img.size());
+    std::fclose(f);
+    return tmp.string();
+}
+
+}  // namespace
+
+// Test: `LDA $C08C,X / BPL` on a LOADED disk parked over a track with no flux
+// must terminate.
+//
+// `getNextTransition` answers kFluxNever for exactly that track, so PULSE
+// never fired, the sequencer shifted in nothing but zeros, bit 7 of the data
+// register never came up, and the universal wait-for-a-nibble loop spun
+// forever — with the machine and the UI frozen. Identical in shape to the
+// empty-drive hang (Ultima V $D407) that `advanceNoise` was written for; this
+// is the same wire one step further in, with media actually present. MAME
+// gets here from the other end: `cache_weakness_setup` (floppy.cpp:1176)
+// marks a cell buffer of one entry or less weak and serves noise.
+bool testBlankTrackDoesNotHang() {
+    const std::string lssPath = findFirst({
+        "../roms/diskii_p6.rom", "roms/diskii_p6.rom",
+        "../../roms/diskii_p6.rom"
+    });
+    if (lssPath.empty()) {
+        std::printf("[SKIP] roms/diskii_p6.rom not found — blank-track test\n");
+        return true;
+    }
+    DiskIICard card;
+    if (!card.loadLssRom(lssPath)) { std::printf("FAIL: loadLssRom\n"); return false; }
+    const std::string nib = makeBlankTrackNib("pom2_lss_blank_track.nib", 0x00);
+    if (!card.insertDisk(nib)) {
+        std::printf("FAIL: insertDisk: %s\n", card.getLastError().c_str());
+        return false;
+    }
+    assert(card.isDiskLoaded(0));
+
+    // Two emulated seconds of `LDA $C0EC / BPL`, exactly as the guest writes
+    // it. RWTS does not read one byte and stop — it reads a whole sector's
+    // worth before its retry counter drains, so the bar is a STREAM: sixteen
+    // successive byte-ready events, not one. (Before the fix the sequencer
+    // managed exactly one, from its power-up latch, and then never again.)
+    constexpr size_t kWant = 16;
+    const std::vector<uint8_t> got = spinAndCollect(card, 2'000'000, kWant);
+    if (got.size() < kWant) {
+        std::printf("FAIL: blank track — only %zu of %zu byte-ready events in "
+                    "2 emulated seconds; `LDA $C0EC / BPL` would hang the "
+                    "machine\n", got.size(), kWant);
+        return false;
+    }
+    for (uint8_t b : got) {
+        if (!(b & 0x80)) { std::printf("FAIL: collected byte without bit 7\n"); return false; }
+    }
+    std::printf("[ OK ] blank track on a loaded disk still raises byte-ready "
+                "(%zu bytes)\n", got.size());
+    return true;
+}
+
+// Test: weak-bit noise on a flux gap wider than MAME's
+// `m_amplifier_freakout_time` (floppy.cpp:293, 16 µs).
+//
+// A read amplifier with nothing to lock onto follows its own noise, and MAME
+// models that as one hash-drawn blip per weak zone per REVOLUTION. Without
+// it, a long erased run read back byte-identical on every pass, so weak-bit
+// protections stopped being a coin toss and became a constant. The check is
+// at the flux level (deterministic, no ROM needed): the angular position of
+// the reported transition inside one weak zone must move from revolution to
+// revolution — and a normal GCR track must NOT move, or every ordinary read
+// has just been made non-reproducible.
+bool testWeakBitNoise() {
+    // Track 0 = one sync $FF then all $00: one real transition per
+    // revolution and a gap of most of a track — far past 32 LSS cycles.
+    const std::string weakPath = makeBlankTrackNib("pom2_lss_weak.nib", 0x00);
+    {
+        std::fstream f(weakPath, std::ios::in | std::ios::out | std::ios::binary);
+        const uint8_t ff = 0xFF;
+        f.seekp(0);
+        f.write(reinterpret_cast<const char*>(&ff), 1);
+    }
+    DiskImage weak;
+    if (!weak.loadFile(weakPath)) { std::printf("FAIL: load weak nib\n"); return false; }
+    const int period = weak.trackPeriod(0);
+    if (period <= 0) { std::printf("FAIL: weak track period %d\n", period); return false; }
+
+    std::vector<int64_t> angles;
+    for (int rev = 0; rev < 12; ++rev) {
+        const int64_t from = static_cast<int64_t>(rev) * period + 64;
+        const int64_t t = weak.getNextTransition(0, from, /*revolutionStart=*/0);
+        if (t == DiskImage::kFluxNever) {
+            std::printf("FAIL: weak track reported no transition at all\n");
+            return false;
+        }
+        angles.push_back(t - static_cast<int64_t>(rev) * period);
+    }
+    size_t distinct = 0;
+    for (size_t i = 0; i < angles.size(); ++i) {
+        bool seen = false;
+        for (size_t j = 0; j < i; ++j) if (angles[j] == angles[i]) seen = true;
+        if (!seen) ++distinct;
+    }
+    if (distinct < 3) {
+        std::printf("FAIL: weak zone read the same on 12 revolutions "
+                    "(%zu distinct angles) — no amplifier noise\n", distinct);
+        return false;
+    }
+
+    // The other half of the contract: an ordinary GCR surface has no gap
+    // anywhere near 16 µs (the widest legal run is a sync $FF's two pad
+    // cells, 3 cells = 24 LSS cycles), so it must stay perfectly repeatable.
+    DiskImage normal;
+    if (!normal.loadFile(makeSyntheticNib())) { std::printf("FAIL: load nib\n"); return false; }
+    const int nperiod = normal.trackPeriod(0);
+    for (int rev = 0; rev < 4; ++rev) {
+        for (int off = 0; off < nperiod; off += nperiod / 37 + 1) {
+            const int64_t a = normal.getNextTransition(0, off, 0);
+            const int64_t b = normal.getNextTransition(
+                0, static_cast<int64_t>(rev) * nperiod + off, 0);
+            if (b - static_cast<int64_t>(rev) * nperiod != a) {
+                std::printf("FAIL: an ordinary GCR track moved between "
+                            "revolutions (rev %d, offset %d)\n", rev, off);
+                return false;
+            }
+        }
+    }
+    std::printf("[ OK ] weak zone (> 16 us gap) draws %zu distinct angles over "
+                "12 revolutions; ordinary GCR stays repeatable\n", distinct);
+    return true;
+}
+
 int main() {
     bool ok = true;
     ok &= testRomLoad();
@@ -691,6 +834,8 @@ int main() {
     ok &= testSubInstructionCycleAccuracyNoOpWithZero();
     ok &= testSpinDownNoDisk();
     ok &= testSnapshotWriteBackPropagation();
+    ok &= testBlankTrackDoesNotHang();
+    ok &= testWeakBitNoise();
     if (ok) {
         std::printf("diskii_lss_smoke OK\n");
         return 0;

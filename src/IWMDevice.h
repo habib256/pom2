@@ -194,6 +194,15 @@ public:
     uint8_t control() const { return control_; }
     uint8_t data()    const { return data_; }
 
+    /// The bit-cell window table MAME selects on mode bits 4-3
+    /// (`iwm.cpp:303-329 window_size` / `half_window_size`), in IWM ticks.
+    /// Pure functions of `mode_` + the Q3 clock flag. Public so the smoke
+    /// test can diff all four rows against upstream: a slip in a row Apple
+    /// firmware never selects (0x18 carried 18 instead of 16 until the
+    /// 2026-09-07 audit) is invisible from every other angle.
+    uint64_t windowSize()     const;                        // MAME line 317
+    uint64_t halfWindowSize() const;                        // MAME line 303
+
 private:
     // MAME `iwm.cpp:31-35` — active modes (m_active) and r/w modes
     // (m_rw) packed into one enum with a partition.
@@ -326,9 +335,7 @@ private:
     void fireDevsel(uint8_t value);
 
     bool     isSync() const { return !(mode_ & 0x02); }     // MAME line 286
-    uint64_t windowSize()              const;               // MAME line 302
-    uint64_t halfWindowSize()          const;               // MAME line 290
-    uint64_t readRegisterUpdateDelay() const;               // MAME line 314
+    uint64_t readRegisterUpdateDelay() const;               // MAME line 331
 
     // POM2-specific: fetch the next flux transition cycle from the
     // backing disk image. `from` is exclusive (we want a transition

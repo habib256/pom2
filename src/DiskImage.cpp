@@ -1574,6 +1574,29 @@ uint8_t DiskImage::bitAt(int qt, int bitIdx) const
 // 4` (since optimal_bit_timing is in 125 ns units and 1 LSS cycle =
 // 500 ns). Non-WOZ formats and WOZ1 keep the 32→8 default.
 //
+// ── The 500 ns is nominal, and the surface runs 2.2 % fast. KNOWN. ──────
+//
+// MAME clocks the LSS at `A2BUS_1M_CLOCK*2` = 2 043 600 Hz
+// (`a2diskiing.cpp` device_add_mconfig; `wozfdc.cpp:331` counts cycles at
+// `clock()*2` then halves), so its LSS cycle is 489.3 ns and a nominal
+// 4 µs cell is 8.17 LSS cycles, not 8. POM2 derives `lssCycle` as
+// `cpuCycleTotal * 2` — 2 045 454 Hz, 488.9 ns — while laying the flux
+// array out at a flat 8 cycles per 4 µs cell. Net: the platter turns
+// ~2.2 % fast (a revolution is 195.6 ms rather than 200; a GCR byte
+// arrives every 32 CPU cycles rather than 32.7).
+//
+// NOT changed, deliberately (2026-09-07 audit). `lssCyclesPerCell` returns
+// an INTEGER, so the only way to carry 8.17 is to re-base the whole 5.25"
+// timeline on a finer unit — the same surgery the IWM tick clock needed —
+// and that unit is shared by `expandTrackFlux`, `trackPeriod`,
+// `getNextTransition`, the weak-gap threshold below, `writeFlux`'s
+// `k*8 + 1 .. k*8 + 7` cell windows and every angular anchor. It cannot be
+// done as a constant swap, and it moves the byte cadence every pinned disk
+// test, the DIX/OLDSKOOL raster probes and the write-splice geometry are
+// calibrated against. Recorded here with the numbers so the next reader
+// starts from the measurement instead of rediscovering it; the fix belongs
+// with a re-basing pass that can re-bless the corpus hashes.
+//
 // Cells per byte mirrors `expandTrackBits` (8 cells/byte; sync $FF runs
 // pad +2 zero cells per byte). So the total period in LSS cycles equals
 // `bitStream.size() * cyc`, and PULSE timing under the flux model
@@ -1650,6 +1673,51 @@ const std::vector<int>& DiskImage::fluxEvents(int qt) const
 // When `revolutionStart < 0` we fall back to the pre-anchor behaviour
 // (`fromLssCycle mod track_period`) — used during boot before any
 // motor-on (`mon_w(false)`) transition anchors the drive.
+namespace {
+
+// ── Weak-bit noise (MAME `floppy.cpp:1176-1245`) ─────────────────────────
+//
+// A read amplifier with no flux to lock onto does not sit quiet: its
+// comparator reference decays and it starts following its own noise. MAME
+// models the threshold as `m_amplifier_freakout_time` (`floppy.cpp:293`,
+// 16 µs), and any gap between two consecutive transitions at or beyond it
+// makes the zone "weak": `cache_weakness_setup` sets `m_cache_weak`, and
+// `get_next_transition` then serves ONE hash-drawn blip per zone per
+// revolution instead of silence —
+//
+//     m_cache_weak_start = m_cache_start_time + 16 µs;
+//     blip = m_cache_weak_start + hash32(hash32(revolution_count) ^ 0x4242
+//                                        ^ weak_start_ticks) % 50000 ns;
+//
+// — which is what makes a weak-bit protection read differently on two
+// passes over the same surface. Without it the "unreliable" bytes those
+// protections check came back identical every revolution, so the check
+// either always passed or always failed instead of being a coin toss.
+//
+// POM2's flux timeline is LSS cycles (500 ns each, 2 MHz), so 16 µs is 32
+// cycles and MAME's 50 µs blip window is 100. A normal GCR surface never
+// gets here: the widest legal run is a sync $FF's two pad cells, 3 cells =
+// 24 LSS cycles at the standard 4 µs cell.
+constexpr int64_t kWeakGapLss      = 32;    // 16 µs — m_amplifier_freakout_time
+constexpr int64_t kWeakBlipSpanLss = 100;   // 50 µs — MAME's `% 50000` ns
+
+/// MAME's `hash32(hash32(rev) ^ 0x4242 ^ weak_start)`, reduced to the blip
+/// window. Deterministic in (revolution, angular position), so a rewind
+/// re-reads the same surface the same way while two consecutive revolutions
+/// differ — which is the whole point.
+inline int64_t weakBlipOffset(int64_t revolution, int64_t weakStart)
+{
+    uint64_t h = static_cast<uint64_t>(revolution) * 0x9E3779B97F4A7C15ull;
+    h ^= 0x4242ull;
+    h += static_cast<uint64_t>(weakStart) * 0xC2B2AE3D27D4EB4Full;
+    h ^= h >> 29;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 32;
+    return static_cast<int64_t>(h % static_cast<uint64_t>(kWeakBlipSpanLss));
+}
+
+}  // namespace
+
 int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
                                      int64_t revolutionStart) const
 {
@@ -1721,11 +1789,23 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
     lbHintQt_  = qt;
     lbHintIdx_ = idx;
 
-    if (idx == n) {
-        // Wrap to next revolution.
-        return origin + (fullRevs + 1) * period + flux.front();
+    // Angular position of the transition we are about to report, and of the
+    // one before it. Both may sit in the neighbouring revolution; expressing
+    // them as `pos ± period` keeps the arithmetic in cell space so the
+    // common (non-weak) case costs one subtract and one compare.
+    const int64_t nextPos = (idx == n) ? (int64_t{flux.front()} + period)
+                                       : int64_t{f[idx]};
+    const int64_t prevPos = (idx == 0) ? (int64_t{f[n - 1]} - period)
+                                       : int64_t{f[idx - 1]};
+
+    // Weak zone — see the comment block above this function.
+    if (nextPos - prevPos >= kWeakGapLss) {
+        const int64_t base      = origin + fullRevs * period;
+        const int64_t weakStart = base + prevPos + kWeakGapLss;
+        const int64_t blip = weakStart + weakBlipOffset(fullRevs, weakStart);
+        if (blip >= fromLssCycle && blip < base + nextPos) return blip;
     }
-    return origin + fullRevs * period + f[idx];
+    return origin + fullRevs * period + nextPos;
 }
 
 // MAME `floppy_image_device::write_flux` — splice `count` flux events

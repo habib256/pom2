@@ -86,6 +86,28 @@ namespace {
 constexpr uint64_t kDriveDisableDelayCycles =
     (8388608ull * POM2_CPU_CLOCK_HZ) / (7159090ull);
 
+// One platter revolution at 300 RPM (5.25") expressed in IWM ticks. The
+// 3.5" zones are all faster (394-590 RPM), so this is the longest single
+// revolution any drive POM2 models can have.
+constexpr uint64_t kRevolutionTicks =
+    (POM2_CPU_CLOCK_HZ / 5ull) * POM2_IWM_TICKS_PER_CPU_CYCLE;
+
+// Ceiling on how much emulated time one `sync()` call may walk. The bit-cell
+// walker closes the `lastSync_ → nextSync` gap one window at a time (14-36
+// ticks), so the cost is linear in the gap: four revolutions is ~1.6 million
+// iterations, a few milliseconds, and already far more than any legitimate
+// caller asks for (`tick()` runs every video frame = 119 315 ticks). Beyond
+// that the gap is not disk time at all — it is a drive that sat MODE_IDLE for
+// minutes (where `sync()` returns early and `lastSync_` stops tracking) and
+// was then re-enabled, or a snapshot blob whose `lastSync_` and `now_` come
+// from different machines. Left unbounded, `now_ = 0xFFFFFFFF00` against
+// `lastSync_ = 0` is ~5·10¹¹ iterations *under `stateMutex`*: the machine and
+// the window freeze with no way out, and a .pom2snap can put the emulator
+// there (fuzz F1, reachable via the //c+ IWM section, the Liron card blob and
+// the //c external port). MAME has the same walker shape and the same latent
+// property; it is bounded here because POM2 can reach it from a file.
+constexpr uint64_t kMaxSyncCatchUpTicks = 4ull * kRevolutionTicks;
+
 }
 
 namespace pom2 {
@@ -551,7 +573,12 @@ uint64_t IWMDevice::windowSize() const
         case 0x00: return 28;
         case 0x08: return 14;
         case 0x10: return 36;
-        case 0x18: return 18;
+        // MAME `iwm.cpp:326` reads 16 here. POM2 carried 18 — a transcription
+        // slip, not a scaling choice: every other row is copied verbatim.
+        // Apple firmware never selects mode bits 4+3 together, so nothing in
+        // the corpus moved; it is fixed so the table can be diffed against
+        // upstream without a false positive.
+        case 0x18: return 16;
     }
     return 28;
 }
@@ -682,6 +709,25 @@ void IWMDevice::sync(uint64_t nowCycles)
     // (CpuClock.h). Everything crossing back out — the delay deadline
     // above, `now_`, the snapshot — stays in CPU cycles.
     const uint64_t nextSync = nowCycles * POM2_IWM_TICKS_PER_CPU_CYCLE;
+    // Bound the catch-up (see kMaxSyncCatchUpTicks). Snapping `lastSync_`
+    // forward discards the bit cells in between — which is exactly what a
+    // drive nobody was reading did with them anyway — and costs a bounded
+    // walk instead of an unbounded one. The FSM restarts cleanly because
+    // `nextStateChange_` is dropped with it: the walker's S_IDLE arm
+    // recomputes the window from the new `lastSync_`.
+    if (nextSync > lastSync_ && nextSync - lastSync_ > kMaxSyncCatchUpTicks) {
+        static bool warnedCatchUp = false;
+        if (!warnedCatchUp) {
+            warnedCatchUp = true;
+            pom2::log().warn("IWM",
+                "sync gap beyond one platter revolution — timeline snapped "
+                "forward (idle drive re-enabled, or a restored snapshot)");
+        }
+        lastSync_        = nextSync - kMaxSyncCatchUpTicks;
+        nextStateChange_ = 0;
+        syncUpdate_      = 0;
+        asyncUpdate_     = 0;
+    }
     switch (rw_) {
         case MODE_IDLE:
             lastSync_ = nextSync;
@@ -1014,6 +1060,45 @@ bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n)
     // v1 wrote the FSM clock in CPU cycles; scale those fields into ticks.
     // `now_`, `revStart35_` and `delayDeadline_` were and remain CPU cycles.
     const uint64_t k = v1 ? POM2_IWM_TICKS_PER_CPU_CYCLE : 1;
+
+    // ── Plausibility gate on the timeline ────────────────────────────────
+    // `lastSync_` and `now_` are absolute stamps on the SAME clock, and
+    // `sync()` walks the distance between them one bit-cell window at a
+    // time. Whenever the device is not MODE_IDLE that distance is at most
+    // one video frame, because `tick()` runs every frame and every rw_ arm
+    // (MODE_IDLE included) parks `lastSync_` on `nextSync`. A blob that says
+    // otherwise did not come from this machine: either the two halves were
+    // captured on different timelines or the file was crafted. Accepting one
+    // hands `sync()` a gap of ~10¹¹ windows to close, on the CPU worker,
+    // under `stateMutex` — the fuzz hang (F1). One revolution of slack is
+    // ~12 frames, far more than any real capture needs.
+    //
+    // Rejecting, not clamping: a half-plausible timeline restored into a
+    // live FSM is a worse state than no restore at all, and the contract
+    // this function already documents is "false ⇒ device untouched".
+    // The three mode words index switch statements and are compared against
+    // named constants; a value outside the enum leaves the FSM in a state no
+    // arm handles and no access can leave.
+    if (activeV != MODE_IDLE && activeV != MODE_ACTIVE && activeV != MODE_DELAY)
+        return false;
+    if (rwV != MODE_IDLE && rwV != MODE_READ && rwV != MODE_WRITE)
+        return false;
+    if (rwStV > SW_UNDERRUN) return false;
+    // `× 7` must not wrap on the way to tick space either.
+    if (nowV > UINT64_MAX / POM2_IWM_TICKS_PER_CPU_CYCLE ||
+        lastV > UINT64_MAX / POM2_IWM_TICKS_PER_CPU_CYCLE ||
+        nextV > UINT64_MAX / POM2_IWM_TICKS_PER_CPU_CYCLE)
+        return false;
+    const uint64_t nowTicks  = nowV * POM2_IWM_TICKS_PER_CPU_CYCLE;
+    const uint64_t lastTicks = lastV * k;
+    const uint64_t nextTicks = nextV * k;
+    if (activeV != MODE_IDLE && (rwV == MODE_READ || rwV == MODE_WRITE)) {
+        if (lastTicks > nowTicks) return false;
+        if (nowTicks - lastTicks > kRevolutionTicks) return false;
+        if (nextTicks > nowTicks &&
+            nextTicks - nowTicks > kRevolutionTicks) return false;
+    }
+
     now_             = nowV;
     revStart35_      = revV;
     lastSync_        = lastV * k;

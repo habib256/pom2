@@ -61,10 +61,17 @@
 #include "ClockCard.h"
 #include "TranswarpCard.h"
 #include "M68705P3.h"
+#include "DiskIICard.h"
+#include "IWMDevice.h"
+#include "NoSlotClock.h"
+#include "SlotBus.h"
+#include "SmartPortHub.h"
+#include "Sony35Drive.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -301,13 +308,51 @@ int main(int argc, char** argv)
     const unsigned seed  = (argc > 1) ? unsigned(std::stoul(argv[1])) : 20260820u;
     const int      iters = (argc > 2) ? std::stoi(argv[2]) : 1500;
 
+    // ── The machine the blob is captured FROM has to have the devices ────
+    //
+    // A bare `Memory` writes a MEX trailer whose device sections are all
+    // zero-length and no SLOTn section at all, so the fuzzer was mutating
+    // length fields with nothing behind them: the IWM, No-Slot Clock and
+    // Sony 3.5" parsers (Memory.cpp's MEX trailer) and the DiskII v4 /
+    // SmartPort v2 tails (SLOTn) were never once reached. That is how F1 —
+    // an IWM blob that makes `sync()` walk ~5·10¹¹ bit-cell windows under
+    // `stateMutex` — got past 45 000 mutants of this test and had to be
+    // found by a hand-written harness.
+    //
+    // Everything below is wired the way `EmulationController` wires it, so
+    // each of those sections is written with real content and the fuzzer's
+    // structure-aware pass has lengths that mean something.
+    pom2::NoSlotClock nsc;
+    pom2::IWMDevice   iwm;
+    pom2::SmartPortHub hub;
+    pom2::Sony35Drive drive35Int;
+    pom2::Sony35Drive drive35Ext;
+    hub.setSony35(&drive35Int, &drive35Ext);
+
+    auto wireDevices = [&](Memory& mem) {
+        mem.setNoSlotClock(&nsc);
+        mem.setIWM(&iwm);
+        mem.setSmartPortHub(&hub);
+    };
+
     // One real capture to mutate from.
     std::vector<uint8_t> golden;
     {
         Memory mem;
         M6502  cpu(&mem);
+        wireDevices(mem);
         for (int i = 0; i < 4096; ++i)
             mem.writeRamUnchecked(uint16_t(i), uint8_t(i * 7));
+        // Move the devices off their cold values so the sections carry
+        // something a mutation can corrupt into a different meaning.
+        iwm.write(0x9, 0);              // motor on → MODE_ACTIVE / MODE_READ
+        iwm.tick(4096);
+        drive35Int.seekPhaseW(0x05, 4096);
+        (void)nsc.interceptRead(0xF801, 0xEA);
+        auto disk6 = std::make_unique<DiskIICard>(6);
+        disk6->deviceSelectRead(0x9);   // motor on, head state to serialise
+        disk6->deviceSelectRead(0xB);   // drive 2 selected
+        mem.slotBus().plug(6, std::move(disk6));
         pom2::SnapshotWriter w(golden);
         pom2::captureMachineState(w, cpu, mem, /*includeSlots=*/true);
         assert(w.finish() && "capture must succeed");
@@ -315,35 +360,56 @@ int main(int argc, char** argv)
     assert(!golden.empty());
 
     // The unmutated blob MUST restore, or every mutant below is only
-    // exercising the reject path and the test proves nothing.
+    // exercising the reject path and the test proves nothing. SLOT sections
+    // are rewind-only, so the golden round-trip is checked on the
+    // non-transactional path that actually accepts them.
     {
         Memory mem; M6502 cpu(&mem);
+        wireDevices(mem);
+        mem.slotBus().plug(6, std::make_unique<DiskIICard>(6));
         pom2::SnapshotReader r(golden.data(), golden.size());
-        const auto res = pom2::restoreMachineState(r, cpu, mem);
+        const auto res = pom2::restoreMachineState(r, cpu, mem,
+                                                   /*transactional=*/false);
         assert(res.ok && "golden snapshot must round-trip");
     }
 
     std::mt19937 rng(seed);
     int accepted = 0;
-    for (int i = 0; i < iters; ++i) {
-        std::vector<uint8_t> b = golden;
-        const int rounds = 1 + int(rng() % 3);
-        for (int r = 0; r < rounds; ++r) {
-            // Mostly structure-aware; the generic pass still runs sometimes,
-            // since it is what produces the ragged truncations and broken
-            // magics the front door has to reject.
-            if (!(rng() % 4) || !mutateSections(b, rng)) mutate(b, rng);
-        }
-        if (b.empty()) continue;
+    // Two passes over the same corpus. `transactional=true` is the file /
+    // AI-server door and REJECTS every SLOTn section outright, so it can
+    // never reach a card's parser; `transactional=false` is the rewind
+    // ring's door, which applies them. Both are fed untrusted bytes — the
+    // ring restores blobs the AI server's `/snapshot/load` put there — so
+    // both need fuzzing.
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool transactional = (pass == 0);
+        for (int i = 0; i < iters; ++i) {
+            std::vector<uint8_t> b = golden;
+            const int rounds = 1 + int(rng() % 3);
+            for (int r = 0; r < rounds; ++r) {
+                // Mostly structure-aware; the generic pass still runs
+                // sometimes, since it is what produces the ragged truncations
+                // and broken magics the front door has to reject.
+                if (!(rng() % 4) || !mutateSections(b, rng)) mutate(b, rng);
+            }
+            if (b.empty()) continue;
 
-        Memory mem; M6502 cpu(&mem);
-        pom2::SnapshotReader rd(b.data(), b.size());
-        const auto res = pom2::restoreMachineState(rd, cpu, mem);
-        if (res.ok) ++accepted;
-        // Use the machine: an "ok" restore that left Memory inconsistent is
-        // only visible through a read.
-        for (int a = 0; a < 64; ++a) (void)mem.memRead(uint16_t(a * 1021));
-        (void)cpu.getProgramCounter();
+            Memory mem; M6502 cpu(&mem);
+            wireDevices(mem);
+            mem.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+            pom2::SnapshotReader rd(b.data(), b.size());
+            const auto res = pom2::restoreMachineState(rd, cpu, mem,
+                                                       transactional);
+            if (res.ok) ++accepted;
+            // Use the machine: an "ok" restore that left Memory inconsistent
+            // is only visible through a read. The IWM tick is the F1 path —
+            // a restored timeline is only walked when something asks the
+            // controller for time.
+            for (int a = 0; a < 64; ++a) (void)mem.memRead(uint16_t(a * 1021));
+            (void)cpu.getProgramCounter();
+            iwm.tick(iwm.emuCycles() + 20000);
+            mem.slotBus().advanceCycles(20000);
+        }
     }
 
     // Guard the fuzzer against itself: if mutants stop being accepted, the
@@ -352,7 +418,7 @@ int main(int argc, char** argv)
     assert(accepted > iters / 20 &&
            "too few mutants accepted — the section walker is not being reached");
 
-    std::printf("fuzz_snapshot: %d mutants survived, %d accepted (seed %u)\n",
-                iters, accepted, seed);
+    std::printf("fuzz_snapshot: %d mutants survived (2 passes), %d accepted "
+                "(seed %u)\n", 2 * iters, accepted, seed);
     return 0;
 }

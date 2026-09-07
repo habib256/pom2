@@ -34,10 +34,13 @@
 #include "IWMDevice.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 using pom2::IWMDevice;
@@ -253,9 +256,142 @@ void testMemoryMirror()
     std::printf("  ok: Memory $C0E0-$C0EF mirror reaches IWMDevice on //c+ profile\n");
 }
 
+// ─── The bit-cell window table (MAME iwm.cpp:303-329) ────────────────────
+// All four mode-bit-4-3 rows, both halves, diffed against upstream. Apple
+// firmware only ever selects 0x00 and 0x08, which is how `case 0x18` sat at
+// 18 (upstream: 16) with every test and every disk in the corpus green.
+void testWindowSizeTable()
+{
+    struct Row { uint8_t mode; uint64_t window; uint64_t half; };
+    static const Row rows[] = {
+        { 0x00, 28, 14 },
+        { 0x08, 14,  7 },
+        { 0x10, 36, 16 },
+        { 0x18, 16,  8 },
+    };
+    for (const Row& row : rows) {
+        IWMDevice iwm;
+        // mode_w: write $C0nF with Q6 already high (MAME iwm.cpp:248-253).
+        iwm.write(0xD, 0);                 // Q6 set
+        iwm.write(0xF, row.mode);
+        assert((iwm.mode() & 0x18) == row.mode);
+        if (iwm.windowSize() != row.window ||
+            iwm.halfWindowSize() != row.half) {
+            std::fprintf(stderr,
+                "FAIL: mode $%02X window %llu/%llu, MAME says %llu/%llu\n",
+                row.mode,
+                static_cast<unsigned long long>(iwm.windowSize()),
+                static_cast<unsigned long long>(iwm.halfWindowSize()),
+                static_cast<unsigned long long>(row.window),
+                static_cast<unsigned long long>(row.half));
+            std::abort();
+        }
+    }
+    std::printf("  ok: window/half-window table matches MAME iwm.cpp:303-329\n");
+}
+
+// ─── A snapshot blob may not hand sync() an unwalkable timeline ───────────
+//
+// Fuzz finding F1 (2026-09-07). `lastSync_` and `now_` are absolute stamps on
+// the same clock, restored from the file independently. With `now_` far ahead
+// and `rw_` in a walking mode, `sync()`'s bit-cell walker closes the gap 14
+// ticks at a time: the 104-byte blob below is ~5·10¹¹ iterations and ~1 GB of
+// RSS, run from `phasesCb_` INSIDE loadSnapshotState, on the CPU worker,
+// under `stateMutex` — machine and window frozen with no cancel. Reachable
+// from a .pom2snap through Memory's //c+ IWM section, the Liron card blob and
+// the //c external port.
+//
+// Two things are pinned: the blob is REJECTED (state untouched), and the
+// device stays responsive afterwards. The wall-clock bound is deliberately
+// enormous — the regression takes minutes to hours, so anything that finishes
+// at all is the fixed behaviour.
+void testSnapshotTimelineRejected()
+{
+    auto put64 = [](std::vector<uint8_t>& v, uint64_t x) {
+        for (int i = 0; i < 8; ++i) v.push_back(uint8_t(x >> (8 * i)));
+    };
+    auto put32 = [](std::vector<uint8_t>& v, uint32_t x) {
+        for (int i = 0; i < 4; ++i) v.push_back(uint8_t(x >> (8 * i)));
+    };
+
+    std::vector<uint8_t> blob;
+    for (char c : std::string("IWM2")) blob.push_back(uint8_t(c));
+    put64(blob, 0x000000FFFFFFFF00ull);   // now_      — ~1.1e12 CPU cycles
+    put64(blob, 0);                       // revStart35_
+    put64(blob, 0);                       // lastSync_ — the whole gap
+    put64(blob, 0);                       // nextStateChange_
+    put64(blob, 0);                       // syncUpdate_
+    put64(blob, 0);                       // asyncUpdate_
+    put64(blob, 0);                       // fluxWriteStart_
+    put64(blob, 0);                       // delayDeadline_
+    put32(blob, 0);                       // fluxWriteCount_
+    put32(blob, 0);                       // q3Clock_
+    blob.push_back(0);                    // q3ClockActive_
+    put32(blob, 0);                       // qt_
+    put32(blob, 1);                       // active_ = MODE_ACTIVE
+    put32(blob, 4);                       // rw_     = MODE_WRITE  ← walks
+    put32(blob, 0);                       // rwState_ = S_IDLE
+    blob.push_back(0x00);                 // data_
+    blob.push_back(0xFF);                 // whd_ — bit 6 set: the write
+                                          //        walker keeps going
+    blob.push_back(0x00);                 // mode_
+    blob.push_back(0x20);                 // status_
+    blob.push_back(0xF0);                 // control_
+    blob.push_back(0x00);                 // rwBitCount_
+    blob.push_back(0x00);                 // rsh_
+    blob.push_back(0x00);                 // wsh_
+    blob.push_back(0x02);                 // devsel_
+    blob.push_back(0x0F);                 // phases_
+    blob.push_back(0x00);                 // writeDataLoaded_
+    assert(blob.size() == 104);
+
+    IWMDevice iwm;
+    const uint8_t modeBefore   = iwm.mode();
+    const uint8_t statusBefore = iwm.status();
+    const uint8_t whdBefore    = iwm.whd();
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool loaded = iwm.loadSnapshotState(blob.data(), blob.size());
+    assert(!loaded && "an implausible IWM timeline must be rejected");
+    assert(iwm.mode()   == modeBefore);
+    assert(iwm.status() == statusBefore);
+    assert(iwm.whd()    == whdBefore);
+    // Reads mutate control_/status_ by design (they ARE the soft switches),
+    // so the untouched-state check above comes first; these only prove the
+    // device is still responsive rather than walking the FSM for hours.
+    for (uint8_t r = 0; r < 16; ++r) (void)iwm.read(r);
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+    assert(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() < 10
+           && "loadSnapshotState + 16 reads must not walk the FSM for hours");
+    std::printf("  ok: implausible snapshot timeline rejected, device untouched\n");
+}
+
+// The same hazard reached the honest way: a drive left MODE_IDLE for a long
+// stretch (where sync() returns early and lastSync_ stops tracking) and then
+// re-enabled. MAME has the same walker shape; POM2 bounds the catch-up so the
+// worst case is a few milliseconds instead of unbounded.
+void testSyncCatchUpIsBounded()
+{
+    IWMDevice iwm;
+    iwm.write(0x9, 0);                 // motor on  → MODE_ACTIVE, rw = READ
+    iwm.tick(1000);
+    iwm.write(0x8, 0);                 // motor off → MODE_DELAY → drains idle
+    iwm.tick(4'000'000);               // past the ~1.2 M-cycle disable delay
+    iwm.write(0x9, 0);                 // motor back on, 500 emulated seconds on
+    const auto t0 = std::chrono::steady_clock::now();
+    iwm.tick(512'000'000ull);
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+    assert(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() < 10
+           && "sync() must bound how much emulated time one call walks");
+    std::printf("  ok: sync() catch-up is bounded after a long idle\n");
+}
+
 int main()
 {
     testResetState();
+    testWindowSizeTable();
+    testSnapshotTimelineRejected();
+    testSyncCatchUpIsBounded();
     testControlBits();
     testModeStatusEcho();
     testWhdReadIdle();

@@ -85,8 +85,23 @@ constexpr uint8_t kBitLSTRB = 0x08;
 //
 // kCellsPerRev[zone] = 30318342 / RPM  (MAME's constant, ticks per cell)
 // kRpm[zone]         = nominal spindle RPM at this zone
-constexpr int kCellsPerRev[5] = { 76950, 70695, 64234, 57749, 51388 };
+//
+// The magic numerator is MAME's own `60.0 / 1.979e-6` (flopimg.cpp:2094) —
+// one minute divided by the 1.979 µs bit cell. Written as the division
+// rather than as literals because three of the five had drifted from it
+// (zone 1 by 23 cells, zones 2 and 4 by one each), and `buildTrackBits`
+// sizes the pregap as `cellsRev - 6208 * sectors`: a cells/rev that is not
+// MAME's puts every sector of that zone at a different angle than the
+// formatter MAME's own images came out of.
+constexpr int kSonyCellNumerator = 30318342;
 constexpr int kRpm[5]         = {   394,   429,   472,   525,   590 };
+constexpr int kCellsPerRev[5] = {
+    kSonyCellNumerator / kRpm[0],   // 76 950
+    kSonyCellNumerator / kRpm[1],   // 70 672
+    kSonyCellNumerator / kRpm[2],   // 64 233
+    kSonyCellNumerator / kRpm[3],   // 57 749
+    kSonyCellNumerator / kRpm[4],   // 51 387
+};
 
 // Per-zone CPU cycles per revolution. (60 / RPM) seconds × CPU clock.
 // Pre-computed because the integer division is sensitive to ordering.
@@ -831,6 +846,13 @@ bool Sony35Drive::senseValue(uint8_t reg) const
 namespace {
 constexpr uint32_t kSonySnapMagic   = 0x594E4F53u;   // 'SONY'
 constexpr uint16_t kSonySnapVersion = 1;
+/// Highest version this reader understands. The reader is TOLERANT — it
+/// accepts anything in [1, kSonySnapVersionMax] and gates every field added
+/// after v1 on `r.has()` — because a strict `!= kSonySnapVersion` makes the
+/// NEXT bump reject every .pom2snap written by the shipped build, and the
+/// user sees "MEX truncated" on a file that is not truncated. The cards
+/// already read this way; the two device sections did not.
+constexpr uint16_t kSonySnapVersionMax = kSonySnapVersion;
 }  // namespace
 
 void Sony35Drive::appendSnapshotState(std::vector<uint8_t>& out) const
@@ -855,8 +877,9 @@ bool Sony35Drive::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     byteio::Reader r(data, len);
     if (!r.has(4 + 2 + 4 + 8)) return false;
-    if (r.u32() != kSonySnapMagic)   return false;
-    if (r.u16() != kSonySnapVersion) return false;
+    if (r.u32() != kSonySnapMagic) return false;
+    const uint16_t version = r.u16();
+    if (version == 0 || version > kSonySnapVersionMax) return false;
 
     const uint8_t flags = r.u8();
     motorOn_      = (flags & 0x01) != 0;

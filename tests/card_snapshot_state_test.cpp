@@ -459,7 +459,27 @@ void testSony35Mechanism()
     assert(d.loadSnapshotState(bad.data(), bad.size()));
     assert(d.track() >= 0 && d.track() < 80);
 
-    std::printf("  ok: Sony 3.5\" mechanism round-trips and clamps its track\n");
+    // R10 (2026-09-07): the version test used to be strict equality, which
+    // makes the NEXT bump reject every .pom2snap the shipped build wrote —
+    // the user gets "MEX truncated" on a file that is not truncated. The
+    // cards all read tolerantly; these two device sections did not. The
+    // window is [1, current]: a version from the future is still refused,
+    // because this reader genuinely cannot know what the fields mean.
+    std::vector<uint8_t> future = blob;
+    future[4] = 0xFF; future[5] = 0xFF;
+    pom2::Sony35Drive e;
+    assert(!e.loadSnapshotState(future.data(), future.size()));
+    std::vector<uint8_t> zero = blob;
+    zero[4] = 0; zero[5] = 0;
+    pom2::Sony35Drive f;
+    assert(!f.loadSnapshotState(zero.data(), zero.size()));
+    std::vector<uint8_t> v1 = blob;
+    v1[4] = 1; v1[5] = 0;
+    pom2::Sony35Drive g;
+    assert(g.loadSnapshotState(v1.data(), v1.size()));
+
+    std::printf("  ok: Sony 3.5\" mechanism round-trips, clamps its track, "
+                "and accepts the whole [1, current] version window\n");
 }
 
 void testClockCardRederivesTpPeriod()
