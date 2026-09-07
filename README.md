@@ -242,6 +242,17 @@ Slot 3 is empty because the //e's 80-column card isn't a slot card: the firmware
 
 **Core** — MAME-faithful **6502 / 65C02 / Rockwell / WDC** CPU; full IIe paging, Language Card + aux LC, and **RamWorks III up to 8 MB**; running at `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14), 17045 cycles/frame (//c+ defaults to 4× for its Zip-style accelerator).
 
+**RamWorks III aux memory** — a //e profile ships stock 64 KB aux. Pick a
+bigger card in **Slot Configuration → AUX memory**: 64 KB (none) · 256 KB ·
+512 KB · 1 MB · 3 MB · 8 MB, i.e. 1 / 4 / 8 / 16 / 48 / 128 banks behind
+`$C071/3/5/7`. It is stored as `ramworks_banks` in `state.cfg` and changing it
+**cold-boots the machine**. Two things follow from the size being machine
+configuration rather than machine state: a `.pom2snap` only loads back into a
+machine with the *same* bank count (it is refused, with the value to set, if
+not), and the rewind ring's per-frame snapshot grows with it — 128 banks means
+a 10.5 MB capture 50-60 times a second. //c and //c+ have no aux expansion and
+force 1 bank.
+
 | Subsystem | Highlights |
 |---|---|
 | 📺 **Video** | Text · lo-res · hi-res · double hi-res · 80-column. **Beam-raced** mid-scanline soft switches. Composite NTSC (OpenEmulator-style shader) · AppleWin NTSC (CPU IIR-LUT) · mono phosphor with adjustable curve + persistence · Video-7 RGB · Le Chat Mauve RGB. |
@@ -413,7 +424,7 @@ POM2 --snapshot-save out.pom2snap
 POM2 --snapshot-load in.pom2snap
 ```
 
-More flags: `--speed`, `--cpu-max`, `--ii-plus` (alias `--ii+`), `--ai-control[=PORT]`, `--display <ntsc|chatmauve|mono-white|mono-green|mono-amber>`, `--tape`, `--save-tape` / `--save-tape-format aci|wav`, `--35-disk1`, `--35-disk2` (//c+ Sony 3.5"), `--prodos-folder <dir>`, `--load addr:file`, `--run <addr>`, `--step N`, `--paste`, `--play`, `--rec`, `--rewind`, `--rgb-card-invert-bit7[=on|off]`, `--fujinet[=PORT]` / `--fujinet-serial[=DEV]` / `--fujinet-slot N`. `POM2 --help` is the full list. Full architecture → [`CLAUDE.md`](CLAUDE.md).
+More flags: `--speed`, `--cpu-max`, `--ii-plus` (alias `--ii+`), `--ai-control[=PORT]`, `--display <ntsc|chatmauve|mono-white|mono-green|mono-amber>`, `--tape`, `--save-tape` / `--save-tape-format aci|wav`, `--35-disk1`, `--35-disk2` (//c+ Sony 3.5"), `--prodos-folder <dir>`, `--load addr:file`, `--run <addr>`, `--step N`, `--paste`, `--play`, `--rec`, `--rewind`, `--rgb-card-invert-bit7[=on|off]`, `--fujinet[=PORT]` / `--fujinet-serial[=DEV]` / `--fujinet-slot N`, `--version`. `POM2 --help` is the full list. `--save-tape <path>` writes the cassette out on a clean exit; `--save-tape-format aci|wav` picks the extension when the path has none. The `[=VALUE]` flags want the `=`: `--ai-control 6503` is refused, `--ai-control=6503` is what you meant. Full architecture → [`CLAUDE.md`](CLAUDE.md).
 
 ### 🕹️ Kiosk mode
 

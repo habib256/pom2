@@ -5,6 +5,203 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-07 — Bug hunt #4: the 3.5" writes that never landed, the Play button that did nothing, and a manual we had never read
+
+Seven Opus hunters on subsystems the first three rounds had only skimmed — the
+CPU cores against Tom Harte and MAME's opcode lists, the IIe MMU and the video
+painters, the whole audio chain, the storage stack *above* the parsers, the
+printing stack against the real *ImageWriter II Technical Reference Manual*,
+the host side (window, settings, CLI, input), and the remaining slot cards
+plus the honesty of the suite that pins them. Nine fix lots, one per file
+owner; these docs are the tenth.
+
+**Every 3.5" write through the IWM was silently deleted, and it destroyed the
+sector it aimed at.** `Sony35Drive::writeFlux` quantised each flux stamp onto
+the *encoder's* cell grid — 14.1678 IWM ticks on track 0, 76 950 cells over
+1 090 215 ticks — while the IWM lays one bit every `2 × half_window_size()`
+ticks: 14, 16, 28 or 32 (`iwm.cpp:303-313`). 14 ≠ 14.1678, so two consecutive
+bits collided into one cell roughly every 84 bits and **1.2 % of everything
+ever written to a 3.5" disk went on the floor**. Not one sector on the track
+decoded afterwards. The read path never showed it because its window walker
+re-syncs on every transition; the write path has no feedback. Bits are laid
+into *consecutive* cells now, the way a head does it, with the controller's
+own bit period passed down from `IWMDevice::flushWrite`. What kept this
+invisible for a year is the shape of its only test: `smartport_35_smoke`
+synthesised its flux at `(i * per) / ncells`, the single rate the broken
+mapping inverted cleanly. It now also drives 14/16/28 ticks per bit and
+checks all twelve blocks of the track, because the old code left eleven of
+twelve readable — a block-0 assertion would have passed eleven times in
+twelve. MAME cannot have this failure mode at all: `floppy_image` stores flux
+as angular positions, not as slots in a fixed array.
+
+Two more in the same stack. **A media change re-pointed the //c+'s external
+SmartPort chain at the wrong bay**: `busReset()` dropped the host-assigned
+chain numbers along with the frame state, and `unitFor` then fell back to
+"count from 1" — right for a Liron, wrong for a //c+, whose external chain
+starts at 2 because its MIG drive is device 1. Eject a disk in *either* bay
+and the next WRITE to device 2 landed on the other disk. A media change is
+not a bus reset: it gets `abortTransaction()` now, which drops the frame in
+flight and keeps the numbering the host has not re-run its INIT scan to
+change. And **a head step between the last written flux and the flush applied
+the write to whatever track the head had reached** — MAME latches the
+destination at write start (`floppy.cpp:1273-1275`, committed at `:1345`) and
+POM2 latched nothing, so track 0's bit stream ended up in track 1's cells.
+
+**A latched debugger hit made the Play button do nothing, for ever.**
+`Debugger::hit_` was cleared in exactly two places, and the Debugger panel's
+own Run button was the only thing that reached either. Every other resume —
+the toolbar Play, Machine ▸ Run, the palette, the kiosk toggle, the Rewind
+panel, `bootFromSlot`, the CLI runner — called a bare `setMode(Running)`, so
+`onInstruction` returned true on its first call, `M6502::run` broke having
+executed nothing, and the slice re-parked. Deleting the breakpoint did not
+help. F11, F12, cold boot and a disk boot did not help. The emulator looked
+dead and the Play button looked broken. `runCpuSlice` reconciles it now, in
+the one funnel both CPU drivers use.
+
+**The interrupt entry's seven cycles were invisible to the handler's first
+instruction — unless a debugger was attached.** A 6502 spends those seven on
+the bus before the handler's first opcode fetch, but POM2 folded them into
+the single end-of-step advance, so every lazily-synced clock sat 7 cycles
+behind for the whole of `handler[0]`: the Mockingboard/Phasor VIA sync, the
+Disk II sub-instruction scope, the video beam. `IRQ: LDA $C404` — the French
+Touch stable-raster idiom, the exact mechanism `OLDSKOOL FORT ET VERT` uses —
+read a delta of 5 where the hardware gives 12. The `debugHook_` path added in
+hunt #2 had been publishing the entry separately all along and was the
+*correct* one; the two agree now, and the epilogue comment no longer calls
+the defective path the reference. Alongside it, the derived `IRQ` atomic is
+gone: a mask RMW followed by a separate flag store is not one atomic
+operation, and an off-CPU-thread card deasserting in the window could publish
+`mask != 0` with the line down until something else happened to touch it.
+`step()` reads the mask.
+
+**`$C800` was claimed by cards that have no expansion ROM** — found
+independently by the video hunter and the card hunter, in the same hour. Hunt
+#3 fixed last-one-wins → first-one-wins and "only a populated slot claims",
+citing `apple2e.cpp:2970-2987`; the third clause of that line is
+`m_slotdevice[slotnum]->take_c800()`, whose default in `a2bus.h:145` is
+**false**. So on the fresh-install slot map the Le Chat Mauve in slot 7 —
+which has no slot ROM at all — took the expansion window on the //e
+autostart's own downward scan, and the SmartPort in slot 5 read `$FF` for its
+whole 2 KB. Every shipped firmware opens with `LDA $CFFF` and self-heals,
+which is why nothing broke; the Workstation card's `$Cn00` page does not. The
+predicate exists now and seven cards opt in.
+
+**The ImageWriter II had been decoded from a port, not from the manual.**
+This is the first round to read the *Technical Reference* itself, and it
+disagreed with five commands. `US n` feeds 1-15 blank lines with the count
+*directly* after `US`; POM2 read `US` + a command letter + a parameter, so
+only the pair `US '3'` did anything and it ate the next byte out of the text.
+Tab stops are numbered from the **left margin** starting at 1 while margins
+are numbered from the paper edge starting at 0 — the manual spells it out
+("a margin setting of 5 starts each line at the same position as a tab
+setting of 6") — and POM2 had the `-1` on the wrong one, so `ESC L` sat a
+column too far left and, once a driver moved the margin right, every
+low-numbered tab landed behind the head and `HT` became a no-op. Perforation
+skip is switch **B-3**, half an inch, `ESC Z` on and `ESC D` off; POM2 had it
+on switch A bit 4 — which is A-5, *soft-select response* — with inverted
+polarity and a quarter inch, so the manual's own worked example did nothing
+while a driver restating an unrelated default silently switched a margin on.
+Proportional spacing is measured in the pitch's own dot (144/160 dpi), not a
+fixed 1/120", and `ESC m` *inserts* dot spaces between two characters rather
+than padding every character after it — the existing test asserted the
+persistent form, which is how a test written against a bug locks it in.
+`ESC v` (set top-of-form) was simply dropped. On the Epson head `ESC l` and
+`ESC Q` were not consumed, so their parameter printed as a glyph — while the
+comment two lines above the parser promised the opposite.
+
+**One out-of-order toggle could silence the speaker for the session.** The
+event deque requires strictly ascending stamps and nothing enforced it: the
+audio thread pushed its un-rendered leftovers back *after* a `reset()` from a
+rewind or a snapshot load had cleared the deque, so a pre-jump stamp sat in
+front of every post-jump toggle, neither purged nor collected, blocking the
+speaker until 16 384 more toggles pushed it out. `MockingboardCard` had
+solved exactly this with a generation counter; `SpeakerDevice` now has one.
+Beside it: the per-slot mixer keys were written on every quit and read by
+nothing — `restoreCardSettings` existed for it and had no production caller,
+so two Mockingboards came back at the highest slot's level; a paused machine
+kept droning because nothing muted the bus; and `FloppySoundDevice`'s command
+queue was the one unbounded CPU→audio queue in the tree, which on a host with
+no audio device grew for ever.
+
+**Paste turned one accented letter into a control code.** `Keyboard::pasteText`
+filtered control bytes and *then* masked the high bit, so every UTF-8
+continuation byte in `$80-$9F` sailed past the filter and was masked into
+`$00-$1F`: `Ã` arrived as `$03` — Ctrl-C, breaking a running Applesoft
+program mid-paste — and a typographic apostrophe as NUL + Ctrl-Y. `CAFÉ DÍAZ`
+pasted as `CAFC<TAB> DC<RETURN>AZ`. The mask goes first now. On the same
+keyboard: Windows AltGr arrives as `CONTROL|ALT`, which POM2 read as a real
+Ctrl — so AltGr+E injected `$05`, AltGr+M on a German layout injected a
+**RETURN**, and on layouts that put `[`, `]` and `@` on AltGr the three most
+destructive host chords (kiosk toggle, pointer capture, paste-the-whole-
+clipboard) fired from ordinary typing, ImGui focus or no. The Alt→Apple-key
+binding is a setting now (`keyboard_alt_apple_keys`), because on a macOS
+French layout Option is how `{ } [ ] |` are typed and those wires are the
+game-port fire buttons. The whole policy moved into a GLFW-free `KeyChord.h`
+so it could be tested at all — and that test also **scans the sources** for
+the GLFW entry points Emscripten implements as `abort()`, because
+`glfwGetKeyName` was one of them and the browser build tore itself down on
+the first Ctrl+C.
+
+**Two snapshot guards that were checking the wrong thing.** `snapshotMachineId`
+hashes the profile key alone, so a snapshot taken with 128 RamWorks banks
+loaded into a 1-bank machine passed the identity check and `Memory` took its
+documented best-effort arm: it lifted the saved *current* bank and dropped
+the other 127 — up to 8 MB of the guest's RAM disk gone, with a green tick
+from the loader. Restoring a 65C02 snapshot onto an NMOS core passed the same
+check and landed the PC on opcodes the NMOS core treats as KIL. Both are
+named refusals now. And `SnapshotWriter`'s vector sink documented "appends"
+while writing from offset 0 without truncating, so any longer previous
+content survived as trailing garbage that the reader then rejected.
+
+**The rewind ring cost 6-18 ms of every frame under `stateMutex` with
+RamWorks, and past its byte cap, 100 ms every two seconds.** The equal-run
+scan was a hand-written byte loop the compiler cannot turn into a `memcmp`,
+over a 10.5 MB blob, on the CPU worker with the lock held; and `evictToCap`
+freed the front keyframe by *promoting* its successor, copying the whole blob
+to reclaim a delta's worth of bytes — quadratic, in the same locked scope.
+The scan is chunked (same output records, round-trip pinned) and eviction
+walks to the next keyframe and drops the group.
+
+**Two more that reach a user's files.** A type change on a SmartPort bay
+destroyed a dirty unit with an unchecked best-effort flush in a destructor,
+reporting success — while the sibling `mountSmartPortUnitAs` had always
+refused the swap on a failed flush. And a *partially* failed ProDOS
+host-folder write-back stamped nothing, so the files the failed pass had
+already written looked newer than the volume's mount time, `preserveNewerThan`
+classified POM2's own output as a host-side edit, and **every later guest save
+to those files was discarded for the rest of the session** — the success path
+had been fixed for exactly this; the failure path had not.
+
+**And the HDV card told ProDOS it was read-only while answering writes.**
+`$CnFE` was `$03`; bit 2 means "can be written to" (ProDOS 8 TN.PDOS.021), the
+driver has always implemented command `$02`, and `SmartPortCard` had been
+fixed for the identical defect. Its READ and WRITE also reported success past
+the end of the medium — 512 bytes of `$FF` and a clean carry — where the ATA
+sibling refuses; and STATUS on an empty bay answered "a present device with
+zero blocks" instead of `$28`. On the ATA side the drive-select bit was read
+nowhere, so the CFFA firmware's own slave scan found a second copy of the
+master and a write through the alias cross-linked the volume.
+
+**Declined, with the reason in place** (→ `TODO.md`): wiring host Shift to
+`$C063`, because MAME returns `$80` when Shift is **up** and only when the
+machine option `kbd_shift_mod` is set — POM2's dead `setShiftKey` does the
+opposite and has no such option, so wiring it would make wrong behaviour
+visible instead of invisible. Aligning `Sony35Drive::monW` with upstream's
+no-op `mac_floppy_device::mon_w`, which is correct silicon and which
+`liron_boot35` refuses: POM2 reaches the mechanism through the IWM's enable
+line rather than a modelled MIG strobe sequencer, so that alignment needs the
+sequencer first. Step-over's unconditional `PC + 3`, which never fires for
+ProDOS MLI's inline-parameter convention and needs the stack pointer inside
+the per-instruction hook the performance contract guards.
+
+**Two process notes.** A test's own fixture probe can lie in the middle of a
+test as easily as at the top: `workstation_card_smoke` skipped its most
+valuable case — the two-CPU driver call — with a `printf` and then returned
+0. And a hunter that reports a defect is not the same as a hunter that
+reports a *trigger*: the `$C800` claim is wrong for six of the eight default
+slots and no shipped firmware can see it, which is worth fixing and worth
+saying plainly rather than dressing up.
+
 ## 2026-09-07 — Bug hunt #3: the guest inside the perimeter, the snapshot that hangs, and six MAME line ranges we had drifted from
 
 Seven Opus agents on new angles: a regression review of round 2's own fixes, a

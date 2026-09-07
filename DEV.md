@@ -5517,7 +5517,8 @@ applied before the escape parser sees the byte, so `ESC D`/`ESC Z` can
 only set bits 0-6. Left alone deliberately — neither bit 7 is wired to
 anything here. A-8 is the "LF after CR" switch, which POM2 models with
 `AutoFeed` above rather than the switch byte, and B-8 is unused
-(`updateSwitch` reads only the charset field, B-1 and B-6).
+(`updateSwitch` reads the charset field, B-1 slash-zero, B-3 perforation
+skip and B-6 eighth-data-bit).
 
 **Paper handling**: `FF` ($0C) and a full page both eject onto the
 completed stack; the FORM FEED button will not eject a blank sheet. The
@@ -5673,8 +5674,40 @@ character, plus a perforation skip every few. Slot Config warns; slots
 `apple2p.rom` and `apple2e.rom`).
 
 **Not modelled**: user-defined character sets (`ESC '` / `ESC I`, absent
-from the reference too) and `ESC ?` (send ID string — POM2 has no
-printer→computer back-channel).
+from the reference too), `ESC ?` (send ID string — POM2 has no
+printer→computer back-channel), and `CAN` ($18, "erase current line from
+the print buffer", *Technical Reference* Miscellaneous table) — dots are
+painted as they arrive, so there is no line buffer to erase.
+
+**Corrected against the *ImageWriter II Technical Reference Manual* (bug
+hunt #4).** Five commands had been decoded from the greg-kennedy port
+rather than from the manual, and the manual disagreed with all five:
+
+* **`US n`** feeds 1-15 blank lines and the count follows `US` *directly*
+  (`n` = `'1'`…`'9'`, `':'`…`'?'`). POM2 read `US` + a command letter +
+  a parameter, so only the byte pair `US '3'` did anything — and it then
+  ate the following byte out of the text.
+* **Tab stops** are numbered from the **left margin**, starting at 1,
+  while **margins** are numbered from the paper edge, starting at 0
+  ("a margin setting of 5 starts each line at the same position as a tab
+  setting of 6"). POM2 had the `-1` on the margin and not on the tabs, so
+  `ESC L` sat one column too far left and, once the margin moved right,
+  every low-numbered tab landed behind the head and `HT` did nothing.
+* **Perforation skip** is switch **B-3**, `ESC Z` enabling and `ESC D`
+  disabling it, and it is **half an inch** top and bottom. POM2 had it on
+  switch A bit 4 — which is A-5, *soft-select response* — with inverted
+  polarity and a quarter inch, so the manual's own `ESC Z` example did
+  nothing while `ESC D CTRL-P CTRL-@` (a driver restating a default)
+  silently switched a margin on.
+* **Proportional intercharacter spacing** (`ESC s n`) is measured in the
+  pitch's own dot (144 dpi pica-proportional, 160 elite-proportional),
+  not a fixed 1/120", and **`ESC m`** *inserts* dot spaces between two
+  characters instead of setting a persistent pad.
+* **`ESC v`** sets top-of-form to the current position; it was dropped.
+
+On the Epson head, `ESC l` and `ESC Q` (margins) are now consumed with
+their parameter, which is what the surrounding comment had always
+claimed — until then the parameter byte printed as a glyph.
 
 **Super Serial Card feed (the //c's real printer port).**
 `SuperSerialCard::setPrinterTap(true)` mirrors every byte the ACIA
