@@ -132,11 +132,34 @@
 #       the derived IRQ flag deleted in favour of reading the source mask.
 #
 # Regenerate with: tools/check_file_sizes.sh --update
+#
+# 2026-09-08: the ProDOS rounds and bug hunt #5, six Opus hunters. Every
+# hunk below is a confirmed defect with its pin, and most of each delta is
+# the comment that says WHY (the repo's rule); none of it is new feature
+# code, and none of it is the split R4 still owes.
+#   src/Apple2Display.cpp        2418 -> 2432 (+14)  VBL events belong to the
+#     next frame; the mixed text band is kept only when the frame ENDS mixed;
+#     force560_ pins a straddling 80/40-col beam frame to one buffer.
+#   src/DiskImage.cpp            2994 -> 3078 (+84)  the DOS 3.3 half of the
+#     sector-order sniff (VTOC + catalog chain), the address-field checksum
+#     gate (x2, 16 and 13 sectors), WOZ shared-TRK alias mirroring.
+#   src/ImageWriter.cpp          2686 -> 2706 (+20)  ESC V/U restore switch
+#     B-6's mask; Epson ESC R keeps ESC N's margins.
+#   src/M6502.cpp                2217 -> 2273 (+56)  eight undocumented-NMOS
+#     cycle stubs and the per-column table mapping (Tom Harte totals).
+#   src/Memory.cpp               2580 -> 2594 (+14)  the No-Slot Clock under a
+#     slot card's ROM (read + write hooks).
+#   src/StorageCoordinator.cpp   2130 -> 2167 (+37)  re-synthesise a host
+#     folder after flushing the same folder (the second save no longer
+#     reverts the first).
+# DiskImage.cpp crossed 3000. R4's debt grows by these 225 lines and is not
+# forgiven: the DOS/ProDOS sniff pair and the WOZ writer are the two seams a
+# split of DiskImage.cpp would cut along.
 
-src/Apple2Display.cpp                    2418
-src/DiskImage.cpp                        2994
-src/ImageWriter.cpp                      2686
-src/M6502.cpp                            2217
-src/Memory.cpp                           2580
-src/StorageCoordinator.cpp               2130
+src/Apple2Display.cpp                    2432
+src/DiskImage.cpp                        3078
+src/ImageWriter.cpp                      2706
+src/M6502.cpp                            2273
+src/Memory.cpp                           2594
+src/StorageCoordinator.cpp               2167
 src/hgrpaint/HgrPaintEditor.cpp          2653

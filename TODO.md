@@ -750,6 +750,11 @@ Decisions, not work. Do not re-litigate without new evidence.
   tray, PDF export and the PostScript/screen-dump seams are separate concerns in
   one TU); `src/Memory.cpp` 2 442 is 40 lines, one of which is the foreign-bus
   dispatch. *~1 d for ImageWriter, less for Memory.* Post-1.0.
+  **2026-09-08:** six ceilings raised again, +225 lines in all, every one a
+  confirmed-and-pinned bug fix from the ProDOS rounds and bug hunt #5 (the
+  deltas are itemised in `tools/file_size_budget.txt`). `src/DiskImage.cpp`
+  crossed 3 000 — the DOS/ProDOS sniff pair and the WOZ writer are the seams a
+  split would cut along. The debt is larger, not forgiven.
 - **R5 · A card CPU gets a `Memory::ForeignBus`, never a branch in `M6502`.**
   → CLAUDE.md, `docs/PERFORMANCE.md` §§ 8.2/8.5/9.
 - **R6 · MAME path drift refresher** — re-check upstream renames ~every 6
