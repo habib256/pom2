@@ -57,6 +57,15 @@
 // (loopback-only listener already limits exposure to local processes; an
 // AI agent on the same machine doesn't need to fight a token round-trip).
 //
+// Both modes ALSO require a loopback `Host` header (or none at all). A token
+// is a secret, not an origin proof: a DNS-rebound page that guessed it would
+// otherwise reach every endpoint from the browser. The token compare is
+// constant-time and six failures inside five seconds put the listener into a
+// 429 backoff, so a page cannot grind a human-typed secret. No CORS headers
+// are emitted at all — a native client needs none, and `Access-Control-Allow-
+// Origin: *` was what made the grinding cross-origin-readable in the first
+// place.
+//
 // Threading: one worker thread, one client at a time. Each request acquires
 // `EmulationController::stateMutex()` for the slice of work that touches
 // CPU/Memory/slot state, mirrors the rule the UI thread already follows.
@@ -68,6 +77,8 @@
 #include "SocketCompat.h"   // socket_t / kInvalidSocket for the listener fd
 
 #include <atomic>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -93,6 +104,18 @@ class AiControlServer
 {
 public:
     static constexpr uint16_t kDefaultPort = 6503;     // distinct from SSC's 6502
+
+    /// Shortest token worth calling one. Below this a brute force wins even
+    /// against the backoff — 16 base32-ish characters is ~80 bits, which it
+    /// does not. The panel refuses to arm a shorter one; the server itself
+    /// still honours whatever it was handed (a config file the user wrote by
+    /// hand is their call), it only warns.
+    static constexpr std::size_t kMinTokenLength = 16;
+
+    /// A fresh 32-character token from the platform CSPRNG. What the panel's
+    /// "Generate" button calls so nobody has to invent one — the previous UI
+    /// offered an empty text box, and an empty box is open mode.
+    static std::string generateToken();
 
     AiControlServer() = default;
     ~AiControlServer();
@@ -130,8 +153,16 @@ public:
         profileLabel_ = label;
     }
     void setAuthToken(const std::string& token) {
-        std::lock_guard<std::mutex> lk(mtx_);
-        authToken_ = token;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            authToken_ = token;
+        }
+        // Changing the secret invalidates every guess made against the old
+        // one, so the penalty box is cleared with it — otherwise an operator
+        // who fixes a typo in the panel is locked out of their own emulator
+        // for the rest of the window.
+        std::lock_guard<std::mutex> lk(authMtx_);
+        authFailures_ = 0;
     }
 
     /// Start the TCP listener on `127.0.0.1:port`. Returns false on bind/
@@ -151,10 +182,18 @@ public:
 
 private:
     // ─── Bound emulator handles (non-owning) ─────────────────────────────
-    EmulationController* ctrl_    = nullptr;
-    Apple2Display*       display_ = nullptr;
-    DiskIICard*          disk6_   = nullptr;
-    ProDOSHardDiskCard*  hdv5_    = nullptr;
+    // `ctrl_` / `display_` are set once and outlive every profile switch
+    // (they are MainWindow members, not slot cards). The two CARD pointers
+    // move at runtime — attach() republishes them, detach() nulls them — and
+    // are read by the server thread, so they are atomic: a plain pointer
+    // written by the UI thread and read by the worker is a data race even
+    // when the stateMutex contract below is honoured, and a handler that
+    // dereferenced the member twice could see two different cards.
+    // Load ONCE into a local, then work with that local.
+    EmulationController*             ctrl_    = nullptr;
+    Apple2Display*                   display_ = nullptr;
+    std::atomic<DiskIICard*>         disk6_   { nullptr };
+    std::atomic<ProDOSHardDiskCard*> hdv5_    { nullptr };
 
     // ─── Listener state ──────────────────────────────────────────────────
     mutable std::mutex     mtx_;
@@ -169,10 +208,28 @@ private:
     mutable std::mutex     clientFdMtx_;
     socket_t               clientFd_      = kInvalidSocket;
     uint16_t               port_     = kDefaultPort;
+    // Serialises start()/stop()/~AiControlServer against each other. Without
+    // it two threads could both pass `worker_.joinable()` and join the same
+    // thread twice (std::terminate), or a stop() could close the listener fd
+    // a concurrent start() had just published. NOT `mtx_`: the worker takes
+    // that one on every request, and stop() joins the worker while holding
+    // this. Never taken by a handler.
+    std::mutex             lifecycleMtx_;
     std::thread            worker_;
     std::string            authToken_;
     std::string            profileLabel_;
     std::string            lastClient_;
+
+    // ─── Auth-failure backoff ────────────────────────────────────────────
+    // A human-typed token is short. Without a brake, a page (or any local
+    // process) can try one per connection as fast as the listener accepts
+    // them. Five failures inside the window arm a lockout: every further
+    // request answers 429 until the window expires, whatever it carries.
+    static constexpr int  kAuthFailureLimit  = 5;
+    static constexpr long kAuthWindowMs      = 5000;
+    mutable std::mutex    authMtx_;
+    int                   authFailures_ = 0;
+    std::chrono::steady_clock::time_point authWindowStart_{};
 
     // ─── /mouse running state ────────────────────────────────────────────
     // Running Apple-cursor counters mirrored from MainWindow's own
@@ -186,6 +243,16 @@ private:
 
     void runWorker();
     void handleClient(socket_t fd);
+    /// stop() with `lifecycleMtx_` already held (start() reuses it).
+    void stopLocked();
+
+    /// True while the backoff window is armed — answer 429 and touch nothing.
+    bool authBackoffArmed();
+    /// Count one rejected request; arms the backoff on the fifth inside the
+    /// window. `noteAuthSuccess` clears it, so a legitimate agent that
+    /// mistyped once is not punished for the rest of the session.
+    void noteAuthFailure();
+    void noteAuthSuccess();
 
     // HTTP request shape (parsed in-place from the socket).
     struct Request {

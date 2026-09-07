@@ -865,8 +865,35 @@ Apple2Display&       MainWindow::displayRef() { return *display; }
 
 bool MainWindow::startAiControlFromCli(unsigned short port, std::string& errOut)
 {
+    // `setAuthToken("")` used to run UNCONDITIONALLY here, so `--ai-control`
+    // threw away whatever `ai_control_token` the user had configured in the
+    // panel and opened the control plane — /mem, /disk, /snapshot/load —
+    // to every local process, silently, on a flag that reads like "turn the
+    // feature on". The CLI now honours the configured secret. With none set it
+    // starts the way the panel does — token-less, loopback-only, behind the
+    // Origin/Host rebinding fence in checkAuth — and says so in the log.
+    //
+    // Precedence: POM2_AI_CONTROL_TOKEN (a CI step that must not write the
+    // settings file) beats `ai_control_token` from state.cfg.
+    std::string token = aiTokenInput;
+    if (const char* envTok = std::getenv("POM2_AI_CONTROL_TOKEN")) {
+        if (*envTok) token = envTok;
+    }
+    if (!token.empty() && token.size() < pom2::AiControlServer::kMinTokenLength) {
+        pom2::log().warn("CLI",
+            "ai_control_token is shorter than " +
+            std::to_string(pom2::AiControlServer::kMinTokenLength) +
+            " characters — the server's backoff slows a guess, it does not "
+            "stop one");
+    }
     aiServer->attach(controller.get(), display.get(), primaryDiskII(), primaryHdvCard());
-    aiServer->setAuthToken("");
+    aiServer->setAuthToken(token);
+    if (token.empty()) {
+        pom2::log().warn("CLI",
+            "AI control starting token-less: loopback only, native clients "
+            "only (browser pages are fenced by Origin/Host). Set "
+            "ai_control_token or $POM2_AI_CONTROL_TOKEN to require a secret.");
+    }
     if (!aiServer->start(port)) {
         errOut = "cannot listen on 127.0.0.1:" + std::to_string(port);
         return false;

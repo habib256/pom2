@@ -45,7 +45,17 @@
 #    include <sys/types.h>
 #    include <sys/wait.h>
 #    include <unistd.h>
+#    if defined(__APPLE__)
+#      include <crt_externs.h>   // _NSGetEnviron(): `environ` is not linkable
+#    endif                       //   from a macOS shared image
 #  endif
+#endif
+
+#if POM2_HAS_CHILD_PROCESS && !defined(_WIN32) && !defined(__APPLE__)
+// POSIX puts `environ` in the program's namespace but does not promise a
+// declaration in any header (glibc only exposes it under _GNU_SOURCE).
+// Declaring it here is the portable spelling; a redeclaration is harmless.
+extern "C" char** environ;
 #endif
 
 namespace pom2 {
@@ -65,7 +75,16 @@ struct DetachedTeardowns {
 
 DetachedTeardowns& detachedTeardowns()
 {
-    static DetachedTeardowns state;
+    // IMMORTAL, deliberately leaked. The teardown threads are DETACHED: they
+    // outlive every scope that could join them, and at least one of them can
+    // still be inside `graceStep()` when static destructors run. A plain
+    // function-local static registers a destructor with atexit, and a
+    // survivor then locks a destroyed mutex and waits on a destroyed
+    // condition variable — undefined behaviour on the exit path, where a
+    // crash looks like "POM2 crashed on quit" and reproduces once a month.
+    // One struct's worth of memory, released by the OS. Same shape as
+    // Logger's singleton.
+    static DetachedTeardowns& state = *new DetachedTeardowns();
     return state;
 }
 
@@ -130,10 +149,16 @@ void ChildProcess::drainDetached(int maxWaitMs)
     if (maxWaitMs < 0) maxWaitMs = 0;
     d.cv.wait_for(lk, std::chrono::milliseconds(maxWaitMs),
                   [&d] { return d.pending == 0; });
-    // Lowered again on the way out: a caller that drains early (a test, or a
-    // future "close all helpers" button) must not turn every LATER
-    // stopDetached() into an instant kill.
-    d.draining = false;
+    // Lowered again on the way out — but ONLY when everybody finished. A
+    // caller that drains early (a test, or a future "close all helpers"
+    // button) must not turn every LATER stopDetached() into an instant kill.
+    // On a TIMEOUT the flag stays LATCHED: the survivors are, by definition,
+    // threads we gave up waiting for, and lowering the flag would put them
+    // back to sleep for the rest of their 2 s grace — sleeping inside a
+    // process that is exiting, on state nobody is left to keep alive. Latched,
+    // their next graceStep() returns false immediately and they escalate to
+    // the SIGKILL sweep, which is the whole point of the drain.
+    if (d.pending == 0) d.draining = false;
 }
 
 ChildProcess::~ChildProcess() { stop(); }
@@ -159,6 +184,46 @@ int ChildProcess::runConsoleSignalBrokerIfRequested(int, char*[]) { return -1; }
 
 void ChildProcess::reset() { pid_ = -1; }
 
+namespace {
+
+#if defined(__APPLE__)
+#  define POM2_ENVIRON (*_NSGetEnviron())
+#else
+#  define POM2_ENVIRON (::environ)
+#endif
+
+/// Environment variables a helper must NOT inherit.
+///
+/// `execv()` passes POM2's whole environment through, and two families of
+/// variable in it are instructions to the child rather than data:
+///
+///   * `GS_OPTIONS` / `GS_LIB` / `GS_FONTPATH` — Ghostscript reads GS_OPTIONS
+///     as extra COMMAND LINE arguments, and `-dNOSAFER` there overrides the
+///     `-dSAFER` PostScriptRender passes explicitly. The whole point of that
+///     flag is that a guest-authored PostScript job cannot touch the host
+///     filesystem; a variable inherited from the launching shell silently
+///     turned it off.
+///   * `LD_PRELOAD` / `DYLD_*` — the dynamic loader's code-injection knobs.
+///
+/// Everything else (PATH, HOME, locale, XDG_*, the display) is kept: the
+/// helpers are ordinary desktop programs and a sanitised-to-nothing
+/// environment breaks them in ways users cannot diagnose.
+bool environmentVarIsUnsafe(const char* entry)
+{
+    static const char* kExactPrefixes[] = {
+        "GS_OPTIONS=", "GS_LIB=", "GS_FONTPATH=", "GS_DEVICE=",
+        "LD_PRELOAD=", "LD_AUDIT=",
+    };
+    for (const char* p : kExactPrefixes) {
+        if (std::strncmp(entry, p, std::strlen(p)) == 0) return true;
+    }
+    // The whole DYLD_ family — DYLD_INSERT_LIBRARIES is the macOS LD_PRELOAD,
+    // and DYLD_LIBRARY_PATH / DYLD_FRAMEWORK_PATH reach the same place.
+    return std::strncmp(entry, "DYLD_", 5) == 0;
+}
+
+}  // namespace
+
 bool ChildProcess::start(const std::string& exePath,
                          const std::vector<std::string>& args,
                          const std::string& workingDir,
@@ -183,6 +248,16 @@ bool ChildProcess::start(const std::string& exePath,
     argv.reserve(owned.size() + 1);
     for (auto& s : owned) argv.push_back(const_cast<char*>(s.c_str()));
     argv.push_back(nullptr);
+
+    // The child's environment, filtered — built here for the same reason argv
+    // is: no allocation between fork() and exec(). See
+    // environmentVarIsUnsafe() for what comes out and why.
+    std::vector<char*> envp;
+    if (char** e = POM2_ENVIRON) {
+        for (; *e != nullptr; ++e)
+            if (!environmentVarIsUnsafe(*e)) envp.push_back(*e);
+    }
+    envp.push_back(nullptr);
 
     // Descriptor ceiling for the child's close loop, queried BEFORE the fork
     // for the same reason argv is built here: sysconf() is not on the
@@ -273,7 +348,10 @@ bool ChildProcess::start(const std::string& exePath,
             }
         }
 
-        ::execv(argv[0], argv.data());
+        // execve, not execv: the third argument is the SCRUBBED environment
+        // built above. execv() hands the child `environ` verbatim, GS_OPTIONS
+        // and DYLD_INSERT_LIBRARIES included.
+        ::execve(argv[0], argv.data(), envp.data());
         failLaunch(2);
     }
 
@@ -426,8 +504,21 @@ void ChildProcess::stopDetached()
             ::kill(-group, SIGKILL);
             // Reap, or the zombie outlives us until POM2 exits. ECHILD simply
             // means the poll above already collected it.
+            //
+            // BOUNDED, not a blocking waitpid(). SIGKILL is not instant when
+            // the child is stuck in uninterruptible I/O (an NFS mount, a USB
+            // device that stopped answering), and a blocking wait there pins
+            // this thread — and therefore its DetachedTicket — forever, so
+            // drainDetached() always times out and main() never gets its
+            // quiesced shutdown. Poll for the same grace we already granted,
+            // then give up: the process is a zombie the kernel reparents to
+            // init when we exit, which costs nothing.
             int status = 0;
-            while (::waitpid(group, &status, 0) < 0 && errno == EINTR) {}
+            for (int waited = 0; waited <= kGraceMs; waited += kStepMs) {
+                const pid_t r = ::waitpid(group, &status, WNOHANG);
+                if (r != 0 && !(r < 0 && errno == EINTR)) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(kStepMs));
+            }
         } catch (...) {
         }
     }).detach();
@@ -441,8 +532,43 @@ std::string ChildProcess::findOnPath(const std::string& name)
                ::access(p.c_str(), X_OK) == 0;
     };
 
+    // A directory ANY other user can write to is a directory that can hand us
+    // a "curl" or a "gs" of somebody else's choosing. On a stock Homebrew
+    // macOS `/usr/local/bin` is group-writable by `admin`, and it sat ahead of
+    // nothing — PATH was searched first, and whatever PATH said won. Test
+    // every candidate directory, wherever it came from, and skip the ones the
+    // group or the world can write. Sticky directories (/tmp) are still
+    // refused: the sticky bit protects existing entries, not the ability to
+    // CREATE the name we are about to look up.
+    auto dirIsTrustworthy = [](const std::string& dir) {
+        struct stat st{};
+        if (::stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return false;
+        if (st.st_mode & (S_IWGRP | S_IWOTH)) return false;
+        // Owned by root or by us. Anything else means a third party controls
+        // the contents.
+        return st.st_uid == 0 || st.st_uid == ::getuid();
+    };
+    auto lookIn = [&](const std::string& dir) -> std::string {
+        if (dir.empty() || dir.front() != '/') return {};   // no relative PATH entries
+        if (!dirIsTrustworthy(dir)) return {};
+        const std::string cand = dir + "/" + name;
+        return executable(cand) ? cand : std::string{};
+    };
+
     if (name.find('/') != std::string::npos)
         return executable(name) ? name : std::string{};
+
+    // The system directories FIRST, then PATH. The old order let a PATH entry
+    // shadow /usr/bin/curl for every helper POM2 launches, `gs -dSAFER`
+    // included. `/opt/homebrew/bin` is here because that is where an Apple
+    // Silicon Homebrew puts the tools and it is root-owned and 0755 on a
+    // default install — but it goes through the same writability filter as
+    // everything else, so a loosened one is skipped rather than trusted.
+    static const char* kSystemDirs[] = {
+        "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin",
+    };
+    for (const char* d : kSystemDirs)
+        if (auto hit = lookIn(d); !hit.empty()) return hit;
 
     if (const char* path = std::getenv("PATH")) {
         std::string p(path);
@@ -452,10 +578,7 @@ std::string ChildProcess::findOnPath(const std::string& name)
             const std::string dir =
                 p.substr(start, end == std::string::npos ? std::string::npos
                                                          : end - start);
-            if (!dir.empty()) {
-                const std::string cand = dir + "/" + name;
-                if (executable(cand)) return cand;
-            }
+            if (auto hit = lookIn(dir); !hit.empty()) return hit;
             if (end == std::string::npos) break;
             start = end + 1;
         }
@@ -464,17 +587,17 @@ std::string ChildProcess::findOnPath(const std::string& name)
     // The places a FujiNet desktop build actually lands when it was not
     // installed to a PATH directory.
     const char* home = std::getenv("HOME");
-    std::vector<std::string> extra = {
-        "/usr/local/bin/" + name,
-        "/opt/" + name + "/" + name,
-        "/app/bin/" + name,                       // inside a flatpak
+    std::vector<std::string> extraDirs = {
+        "/usr/local/bin",
+        "/opt/" + name,
+        "/app/bin",                               // inside a flatpak
     };
     if (home) {
-        extra.push_back(std::string(home) + "/.local/bin/" + name);
-        extra.push_back(std::string(home) + "/bin/" + name);
+        extraDirs.push_back(std::string(home) + "/.local/bin");
+        extraDirs.push_back(std::string(home) + "/bin");
     }
-    for (const auto& c : extra)
-        if (executable(c)) return c;
+    for (const auto& d : extraDirs)
+        if (auto hit = lookIn(d); !hit.empty()) return hit;
     return {};
 }
 
