@@ -188,6 +188,12 @@ public:
     void clear();
 
 private:
+    /// So a plugged card can reach `openBus()` through
+    /// `SlotPeripheral::openBus()` — the MAME `get_open_bus()` tail several
+    /// a2bus cards end their `read_c0nx` switch on. Nothing else in the
+    /// private section is exposed by this.
+    friend class SlotPeripheral;
+
     std::array<std::unique_ptr<SlotPeripheral>, kSlotCount> slots{};
 
     /// Compact list of the cards actually plugged, so the per-instruction
@@ -219,9 +225,12 @@ private:
     SlotPeripheral* busSnooper_ = nullptr;
     void rebuildActiveCache();
 
-    /// -1 = CNXX_UNCLAIMED. Claimed by the FIRST populated slot whose
-    /// $CnXX window is touched, released by $CFFF and by unplug() of the
-    /// holder. MAME `apple2e.cpp:216` (`CNXX_UNCLAIMED`) + `:2977-2981`.
+    /// -1 = CNXX_UNCLAIMED. Claimed by the FIRST slot whose $CnXX window is
+    /// touched **and whose card returns true from `takesC800()`** (MAME
+    /// `a2bus.h:145` `take_c800()`, default false); released by $CFFF and by
+    /// unplug() of the holder. MAME `apple2e.cpp:216` (`CNXX_UNCLAIMED`) +
+    /// `:2977-2981`. The callers do the gating so `claimExpansion` stays the
+    /// one place the first-one-wins rule lives.
     int activeExpansionSlot = -1;
     void claimExpansion(int slot) {
         if (activeExpansionSlot < 0) activeExpansionSlot = slot;

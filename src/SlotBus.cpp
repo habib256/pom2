@@ -47,6 +47,14 @@ void SlotPeripheral::detachFromBus()
     busSlot_ = -1;
 }
 
+uint8_t SlotPeripheral::openBus() const
+{
+    // Defined here, not in the header: SlotPeripheral.h only forward-declares
+    // SlotBus (circular include), so the call needs the definition this file
+    // already has.
+    return bus_ ? bus_->openBus() : uint8_t{0xFF};
+}
+
 void SlotPeripheral::assertIrq(bool asserted)
 {
     if (asserted == irqAsserted_) return;
@@ -116,12 +124,13 @@ uint8_t SlotBus::slotRomRead(uint16_t addr)
     const int slot = (addr >> 8) & 0x07;     // $CN00 → N
     if (slot < 1 || slot > 7) return openBus();
 
-    // MAME `apple2e.cpp:2970-2987` `read_slot_rom`, verbatim: a POPULATED
-    // slot claims the shared $C800 window, and only if nobody holds it —
-    // "a bus fight here is resolved as first-one-wins". An empty slot
-    // claims nothing and reads the floating bus.
+    // MAME `apple2e.cpp:2970-2987` `read_slot_rom`, verbatim: the claim is
+    // `(m_cnxx_slot == CNXX_UNCLAIMED) && m_slotdevice[slotnum]->take_c800()`
+    // — first-one-wins, but ONLY among cards that actually drive /IOSTB
+    // (`a2bus.h:145`, default false). A card with no expansion ROM used to
+    // latch the window here and hand $FF to the card that has one.
     if (auto* p = slots[slot].get()) {
-        claimExpansion(slot);
+        if (p->takesC800()) claimExpansion(slot);
         return p->slotRomRead(static_cast<uint8_t>(addr & 0xFF));
     }
     return openBus();
@@ -139,9 +148,10 @@ void SlotBus::slotRomWrite(uint16_t addr, uint8_t v)
     if (slot < 1 || slot > 7) return;
 
     // MAME `apple2e.cpp:2989-3025` `write_slot_rom`: same first-one-wins
-    // claim as the read, and likewise only for a populated slot.
+    // claim as the read, and likewise gated on `take_c800()` (`a2bus.h:145`)
+    // — a populated slot is not enough, the card must serve /IOSTB.
     if (auto* p = slots[slot].get()) {
-        claimExpansion(slot);
+        if (p->takesC800()) claimExpansion(slot);
         p->slotRomWrite(static_cast<uint8_t>(addr & 0xFF), v);
     }
 }

@@ -163,10 +163,17 @@ bool TranswarpCard::busSnoop(uint16_t addr, bool isWrite, uint8_t value)
             in1MHz_ = true;
             break;
         case 3:
-            // "disable our CPU / re-enable the Apple's". In POM2 both are
-            // the same CPU, so the whole effect is that the multiplier
-            // goes to 1 and stays there until a reset.
+            // MAME `transwarp.cpp:317-323`: HALT the card's 65C02 **and**
+            // `lower_slot_dma()` — the Apple takes its bus back, which means
+            // it reads its OWN $F000-$FFFF again (the shadow lived on the
+            // card's DMA map, `dma_r:273`). POM2 has one CPU, so the halt is
+            // just "multiplier 1"; the bus hand-back is the shadow release,
+            // and without it the machine kept running the card's Monitor
+            // after the accelerator switched itself off. `readA2Rom_` stays
+            // false so `onReset` (MAME `reset_from_bus:217`, which clears
+            // `m_bReadA2ROM` and `raise_slot_dma()`s) re-covers it.
             halted_ = true;
+            releaseShadow();
             break;
         default:
             // Undocumented value: MAME ignores it and still swallows the

@@ -218,6 +218,10 @@ public:
     uint8_t slotRomRead (uint8_t low8) override;
     void    slotRomWrite(uint8_t low8, uint8_t v) override;
     uint8_t expansionRomRead (uint16_t offset) override;
+    /// The Workstation Card's $C800 page is real firmware, so it drives
+    /// /IOSTB — MAME `a2bus.h:145` `take_c800()` (default false, overridden
+    /// true by every card with an expansion ROM, e.g. `a2ssc.cpp:50`).
+    bool takesC800() const override { return true; }
 
     void onPlug()  override;
     void onReset() override;

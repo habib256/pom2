@@ -235,10 +235,31 @@ void testRomShadow()
     assert(!tw->readsAppleRom() && tw->shadowActive());
     assert(mem.memRead(0xF000) == 0xAE);
 
+    // $C074 = 3 is the OTHER release. MAME `transwarp.cpp:317-323` asserts
+    // HALT on the card's CPU *and* calls `lower_slot_dma()` — the Apple gets
+    // its bus back and reads its own ROM again (`dma_r:273` is the only path
+    // that ever served the card's $F000 bytes). POM2 used to leave the
+    // shadow up, so a self-disabling accelerator left the machine running
+    // Applied Engineering's Monitor for good.
+    assert(tw->shadowActive());
+    mem.memWrite(0xC074, 3);
+    assert(tw->cpuHalted());
+    assert(!tw->shadowActive() && "$C074 = 3 must lower the DMA / ROM shadow");
+    assert(mem.memRead(0xF000) == 0xA5);
+    assert(mem.memRead(0xFFFF) == 0xA5);
+    assert(!tw->readsAppleRom() &&
+           "$C074 = 3 is not $C072 — the passthrough flag stays clear");
+    // ...and a reset re-covers it, because `reset_from_bus` (`:212-217`)
+    // clears the halt and raises DMA again.
+    mem.slotBus().reset();
+    assert(!tw->cpuHalted() && tw->shadowActive());
+    assert(mem.memRead(0xF000) == 0xAE);
+
     // ...and unplugging must never leave the machine running AE's Monitor.
     mem.slotBus().unplug(4);
     assert(mem.memRead(0xF000) == 0xA5);
-    std::printf("  ok: $F000 shadow engages, releases on $C072, and unplugs clean\n");
+    std::printf("  ok: $F000 shadow engages, releases on $C072 and $C074=3, "
+                "and unplugs clean\n");
 }
 
 void testBusAggregationAndAbsence()

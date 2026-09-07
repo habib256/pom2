@@ -541,6 +541,14 @@ jobs:
       - name: Fetch Dear ImGui (pinned)
         run: tools/fetch_imgui_pinned.sh
 
+      # The percentage is not the whole guard: coverage.sh also ratchets the
+      # SET of first-party sources the tests link, because unlinking a poorly
+      # covered file RAISES the percentage. That guard is pure text, so its own
+      # logic is testable without the instrumented build — run it first, where
+      # a failure costs seconds instead of a full clang rebuild.
+      - name: Self-test the coverage guards
+        run: tools/coverage.sh --self-test
+
       # Ubuntu ships the LLVM tools versioned and unversioned depending on the
       # release, so the script takes them from the environment rather than
       # guessing at a suffix.

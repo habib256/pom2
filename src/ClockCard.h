@@ -65,10 +65,17 @@
 //   RESET                          disables interrupts
 //
 // The rate is the chip's TP rate, selected via the C0/C1/C2 mode field:
-// MODE_TP_64HZ/256/2048/4096 (= modes 4..7). The parallel uPD1990AC's
-// 3-bit C field can't reach the uPD4990A interval timers (1/10/30/60 s,
-// modes 8..15), so those are not modelled. The firmware exposes only
-// 64/256/2048 Hz to the user ("," "." "/" write-mode chars).
+// MODE_TP_64HZ/256/2048 (= codes 4, 5, 6). The parallel uPD1990AC's 3-bit
+// C field can't reach the uPD4990A interval timers (1/10/30/60 s, enum
+// 8..11), so those are not modelled — and it cannot reach MODE_TP_4096HZ
+// either. Code 7 on the PARALLEL field is MODE_TEST: MAME
+// `upd1990a.cpp:198-205` `stb_w` does `m_c = m_c_unlatched; if (m_c == 7)
+// m_c = MODE_TEST;` unless `is_serial_mode()` (`:63-67`, a uPD4990A with
+// C=7), and `a2thunderclock.cpp:94` fits a plain `UPD1990A`. So 4096 Hz is
+// simply not a rate this card can produce; test mode stops the time counter
+// and makes a following SHIFT / TIME_READ latch put TP at 32 Hz
+// (`:240-242`, `:307-309`). The firmware exposes only 64/256/2048 Hz to the
+// user ("," "." "/" write-mode chars), so nothing shipped ever writes 7.
 //
 // To read time, the host driver writes mode = 0b011 (MODE_TIME_READ),
 // pulses STB to load the current time counter into the 40-bit shift
@@ -147,8 +154,13 @@ public:
     /// device-select access). Mirrors the bit-5 "interrupt asserted" flag.
     bool interruptPending() const { return irqPending_; }
     /// Currently-selected TP rate in Hz (0 = TP timer stopped). One of
-    /// 64 / 256 / 2048 / 4096 once a TP/REGISTER_HOLD mode has been latched.
+    /// 64 / 256 / 2048 once a TP/REGISTER_HOLD mode has been latched, or 32
+    /// after a SHIFT / TIME_READ latched while the chip is in MODE_TEST.
+    /// Never 4096: that enum value is unreachable through the parallel C
+    /// field (see the MODE_TEST note at the top of this file).
     int  tpRateHz() const { return tpRateHz_; }
+    /// MAME `upd1990a.cpp` `m_testmode` — mode code 7 latched.
+    bool testModeActive() const { return testMode_; }
 
     /// Time-source hook. Defaults to std::time + localtime_r (reentrant:
     /// this card converts on the CPU thread while the UI thread converts
@@ -165,6 +177,10 @@ public:
     // Populated only when a 2 KB Thunderware U9 dump is loaded — the synth
     // ROM and the 256 B variant leave it empty (open bus).
     uint8_t expansionRomRead(uint16_t offset) override;
+    /// MAME `a2thunderclock.cpp:73` `take_c800() const override { return true; }`
+    /// — the ThunderClock+ drives /IOSTB. Without this the bus would let a
+    /// ROM-less card in a lower slot latch $C800 and starve this one.
+    bool takesC800() const override { return true; }
 
     /// Was the slot ROM sourced from a real Thunderware U9 dump (vs the
     /// synthetic ProDOS-signature stub)? Surfaced for the UI's About /
@@ -232,6 +248,14 @@ private:
     int  tpHalfPeriodCycles_ = 0;
     int  tpAccumCycles_      = 0;
     bool tpLevel_            = false;     // current TP output level
+
+    // MAME `upd1990a.cpp:216-218` `m_testmode`. Mode code 7 on the PARALLEL
+    // C0/C1/C2 field is MODE_TEST on a plain uPD1990A (`:202-204`), NOT
+    // "TP 4096 Hz" — that enum value is only reachable through a uPD4990A's
+    // serial command byte, and `a2thunderclock.cpp:94` fits the 1990A.
+    // While set, MODE_SHIFT / MODE_TIME_READ program TP to 32 Hz
+    // (`:240-242`, `:307-309`) instead of leaving it alone.
+    bool testMode_           = false;
 
     // ── ThunderClock+ interrupt logic (card-level, POM2-original) ───────
     //
