@@ -868,6 +868,7 @@ bool MainWindow::startAiControlFromCli(unsigned short port, std::string& errOut)
     }
     pom2::log().info("CLI", "AI control listening on 127.0.0.1:" +
                               std::to_string(port));
+    aiControlFromCliOnly_ = true;
     return true;
 }
 

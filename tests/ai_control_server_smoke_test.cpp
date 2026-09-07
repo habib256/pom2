@@ -226,6 +226,35 @@ void testAuth(EmulationController& /*ctrl*/, pom2::AiControlServer& srv)
     assert(r.status == 200);
     assert(contains(r.body, "\"ok\":true"));
 
+    // Right token with trailing optional whitespace → still 200. RFC 7230
+    // § 3.2 allows OWS on both sides of a field value; only the leading half
+    // used to be stripped, so `$TOKEN` with a stray space was a 401 — and
+    // one that fed the five-failures brake.
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\nX-POM2-Token: s3cret \r\n\r\n");
+    assert(r.status == 200);
+
+    // `Host: localhost` is loopback by specification (RFC 6761 § 6.3: never
+    // sent to DNS, so it cannot be rebound) and is what a user types. It
+    // used to be refused like any other name, and five refusals armed the
+    // 429 brake against the CORRECT client too. Case-insensitive, with or
+    // without the port.
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: LocalHost:" + std::to_string(kTestPort) +
+        "\r\nX-POM2-Token: s3cret\r\n\r\n");
+    assert(r.status == 200);
+    // A real name is still refused...
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: evil.invalid\r\nX-POM2-Token: s3cret\r\n\r\n");
+    assert(r.status == 401);
+    // ...and six localhost requests in a row must not lock 127.0.0.1 out.
+    for (int i = 0; i < 6; ++i)
+        (void)oneShot(kTestPort,
+            "GET /status HTTP/1.1\r\nHost: localhost\r\nX-POM2-Token: s3cret\r\n\r\n");
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\nX-POM2-Token: s3cret\r\n\r\n");
+    assert(r.status == 200 && "localhost requests must not arm the brake");
+
     srv.setAuthToken("");
     std::puts("  auth: OK");
 }

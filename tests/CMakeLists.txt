@@ -3712,6 +3712,32 @@ endif()
 add_test(NAME display_persistence_smoke COMMAND test_display_persistence)
 set_tests_properties(display_persistence_smoke PROPERTIES TIMEOUT 5)
 
+# ─── Bug hunt #5 beam-raced display regressions ─────────────────────────
+add_executable(test_display_beam_regressions
+    display_beam_regressions_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_display_beam_regressions PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_display_beam_regressions PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_display_beam_regressions PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_display_beam_regressions PRIVATE winmm)
+endif()
+
+add_test(NAME display_beam_regressions COMMAND test_display_beam_regressions)
+set_tests_properties(display_beam_regressions PROPERTIES TIMEOUT 5)
+
 
 # ─── 65C02 instruction smoke test ─────────────────────────────────────────
 # Pins the 65C02 additions on top of the 6502 base set: STZ, BRA, INA/DEA,

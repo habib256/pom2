@@ -32,6 +32,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -254,6 +255,58 @@ int main()
         fs::remove_all(tmp, ec);
         fs::remove(p, ec);
         std::printf("disk_writeback: unique temp name, no debris OK\n");
+    }
+
+    // ── An address field with a bad checksum must not route a data field ─
+    // RWTS verifies vol ^ trk ^ sec before trusting a header (Beneath Apple
+    // DOS); decodeTrack did not, so ONE bad nibble in a sector number sent
+    // the following data field to the wrong sector of the user's file on
+    // write-back — 253 bytes of somebody else's sector, under "Saved 1
+    // modified track(s)". With the gate the damaged field is skipped, the
+    // sector keeps the bytes saveDirty pre-filled from the file, and the
+    // file stays byte-identical.
+    {
+        fs::path p = tmpFile("badaddr.dsk");
+        // Every sector distinct — on a uniform image a misrouted payload
+        // is invisible, which is how this hid.
+        std::vector<uint8_t> before(35u * 16u * 256u);
+        for (std::size_t i = 0; i < before.size(); ++i)
+            before[i] = static_cast<uint8_t>((i / 256u) * 7u + (i & 0xFFu));
+        {
+            std::ofstream out(p, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(before.data()),
+                      static_cast<std::streamsize>(before.size()));
+        }
+        DiskImage img;
+        assert(img.loadFile(p.string()));
+        img.setWriteBackEnabled(true);
+        auto d44 = [](uint8_t a, uint8_t b) {
+            return static_cast<uint8_t>(((a << 1) | 1) & b);
+        };
+        // Find physical sector 5's address field on track 1 and rewrite its
+        // sector nibbles as 3, leaving the checksum nibbles alone.
+        int found = -1;
+        for (int i = 0; i + 14 < DiskImage::kNibblesPerTrack && found < 0; ++i) {
+            if (img.nibbleAt(1, i) != 0xD5 || img.nibbleAt(1, i + 1) != 0xAA ||
+                img.nibbleAt(1, i + 2) != 0x96) continue;
+            const uint8_t sec = d44(img.nibbleAt(1, i + 7), img.nibbleAt(1, i + 8));
+            if (sec == 5) found = i;
+        }
+        assert(found >= 0 && "physical sector 5's address field on track 1");
+        img.writeNibbleAt(1, found + 7, static_cast<uint8_t>((3 >> 1) | 0xAA));
+        img.writeNibbleAt(1, found + 8, static_cast<uint8_t>(3 | 0xAA));
+        assert(img.hasUnsavedChanges());
+        assert(img.saveDirty());
+        std::vector<uint8_t> after;
+        {
+            std::ifstream in(p, std::ios::binary);
+            after.assign((std::istreambuf_iterator<char>(in)), {});
+        }
+        assert(after == before &&
+               "a header that fails its checksum must not relocate a sector");
+        std::error_code ec;
+        fs::remove(p, ec);
+        std::printf("disk_writeback: bad address checksum routes nothing OK\n");
     }
 
     // Reject a sparse hostile image before allocating from its apparent size.

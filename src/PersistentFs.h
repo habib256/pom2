@@ -105,14 +105,25 @@ inline void pumpPersistentState()
                 // flag again.
                 Module.pom2StateDirty = true;
             }
-            // Re-arm for anything that asked while this was in flight:
-            // flushPersistentStateNow() sets the flag instead of starting a
-            // second sync, and the pump would otherwise not look at it again
-            // until the NEXT write — so a pagehide during a running flush
-            // dropped exactly the data it was trying to save.
+            // Run the flush that asked while this one was in flight — the
+            // same second syncfs flushPersistentStateNow()'s own callback
+            // starts. Re-arming `pom2StateDirty` was not enough: the pump
+            // debounces for kFlushDebounceSeconds after a flush, and the
+            // requester is "the user is leaving" (pagehide), which has no
+            // next frame to be debounced into — so the write the user left
+            // with was dropped whenever it landed during a pump flush.
             if (Module.pom2FlushRequested) {
                 Module.pom2FlushRequested = false;
-                Module.pom2StateDirty = true;
+                Module.pom2StateDirty = false;
+                Module.pom2FlushInFlight = true;
+                FS.syncfs(false, function(e2) {
+                    Module.pom2FlushInFlight = false;
+                    Module.pom2LastFlush = Date.now();
+                    if (e2) {
+                        console.warn('POM2: could not persist settings:', e2);
+                        Module.pom2StateDirty = true;
+                    }
+                });
             }
         });
     }, kFlushDebounceSeconds);

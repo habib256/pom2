@@ -740,11 +740,40 @@ void testAyBusUndrivenBitsFloatHigh()
     std::printf("  ok: undriven port-A bits reach the AY as 1s\n");
 }
 
+// Port B: PB3/PB4 are the ACTIVE-LOW chip selects and PB2 is /RESET, so
+// composing it as `portBOut & ddrB` read every undriven pin as 0 — "select
+// BOTH chips" and "reset the pair" for a driver that drives only PB0..PB2.
+// With the pull-ups (MAME `output_pb()`) an undriven select is 1 = not
+// selected, and a strobe must reach NO chip.
+void testAyBusUndrivenSelectsFloatHigh()
+{
+    PhasorCard card(4);
+    card.deviceSelectWrite(0xD, 0);                       // PH_Phasor: selects decoded
+    assert(card.mode() == PhasorCard::PH_Phasor);
+    const uint8_t base = viaBase(card, 0);
+    card.slotRomWrite(base + pom2::Via6522::VIA_DDRA, 0xFF);
+    card.slotRomWrite(base + pom2::Via6522::VIA_DDRB, 0x07);     // BC1, BDIR, /RESET
+    card.slotRomWrite(base + pom2::Via6522::VIA_ORA, 0x07);      // reg 7
+    card.slotRomWrite(base + pom2::Via6522::VIA_ORB, 0x07);      // LATCH, /RESET high
+    card.slotRomWrite(base + pom2::Via6522::VIA_ORB, 0x04);      // inactive
+    card.slotRomWrite(base + pom2::Via6522::VIA_ORA, 0x3F);
+    card.slotRomWrite(base + pom2::Via6522::VIA_ORB, 0x06);      // WRITE
+    card.slotRomWrite(base + pom2::Via6522::VIA_ORB, 0x04);
+    if (card.getAyRegister(0, 7) == 0x3F || card.getAyRegister(1, 7) == 0x3F) {
+        std::fprintf(stderr,
+            "Phasor AY bus: undriven chip selects reached a chip (PB3/PB4 must "
+            "float high = deselected)\n");
+        std::abort();
+    }
+    std::printf("  ok: undriven chip selects float high (no chip written)\n");
+}
+
 } // namespace
 
 int main()
 {
     std::printf("PhasorCard smoke test\n");
+    testAyBusUndrivenSelectsFloatHigh();
     testViaLayout();
     testNativeViaDecode();
     testModeSoftSwitch();

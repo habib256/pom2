@@ -569,7 +569,11 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     // MAME citation in MockingboardCard::onViaPortBChange (same wiring,
     // `via6522.cpp output_pa()` = `(m_out_a & m_ddr_a) | ~m_ddr_a`).
     const uint8_t pa = v.readPortA();
-    const uint8_t pb = v.portBOut & v.ddrB;
+    // ...and PB likewise (`output_pb()` = `(m_out_b & m_ddr_b) | ~m_ddr_b`).
+    // Here it decides two things at once: PB2 is /RESET, and PB3/PB4 are the
+    // ACTIVE-LOW chip selects, so reading an undriven pin as 0 both wiped the
+    // pair and reported "select BOTH" where the board selects neither.
+    const uint8_t pb = v.readPortB();
 
     // /RESET (PB2 low) is handled BEFORE the chip-select decode. MAME's
     // a2bus_phasor via_out_b resets the AY pair outside the chip_sel

@@ -103,8 +103,11 @@ std::vector<uint8_t> buildMinimalWoz1(const std::vector<uint8_t>& bitData,
     return woz;
 }
 
+// `sharedTrack`: also give quarter-tracks 3, 4 and 5 ONE second TRK (the
+// shape every real image has — a whole track owns two or three TMAP slots).
 std::vector<uint8_t> buildMinimalWoz2(const std::vector<uint8_t>& bitData,
-                                      uint32_t bitCount)
+                                      uint32_t bitCount,
+                                      bool sharedTrack = false)
 {
     std::vector<uint8_t> woz;
     woz.insert(woz.end(),
@@ -126,6 +129,7 @@ std::vector<uint8_t> buildMinimalWoz2(const std::vector<uint8_t>& bitData,
 
     std::vector<uint8_t> tmap(160, 0xFF);
     tmap[0] = 0;
+    if (sharedTrack) tmap[3] = tmap[4] = tmap[5] = 1;
     addChunk("TMAP", tmap);
 
     // trk 0 header: starting_block=3, block_count=1, bit_count=bitCount.
@@ -133,6 +137,11 @@ std::vector<uint8_t> buildMinimalWoz2(const std::vector<uint8_t>& bitData,
     putU16LE(trks, 3);
     putU16LE(trks, 1);
     putU32LE(trks, bitCount);
+    if (sharedTrack) {                   // trk 1: the block after it
+        putU16LE(trks, 4);
+        putU16LE(trks, 1);
+        putU32LE(trks, bitCount);
+    }
     while (trks.size() < 160 * 8) trks.push_back(0);
     while (trks.size() < (1536 - 12 - 8 - 60 - 8 - 160 - 8)) {
         trks.push_back(0);
@@ -141,6 +150,7 @@ std::vector<uint8_t> buildMinimalWoz2(const std::vector<uint8_t>& bitData,
     const size_t copy = std::min<size_t>(bitData.size(), 512);
     std::memcpy(blockData.data(), bitData.data(), copy);
     trks.insert(trks.end(), blockData.begin(), blockData.end());
+    if (sharedTrack) trks.insert(trks.end(), blockData.begin(), blockData.end());
     addChunk("TRKS", trks);
     return woz;
 }
@@ -425,8 +435,58 @@ bool testWozUnsplicableQuarterTrackRefusesSave()
 
 }  // namespace
 
+// ── Quarter-tracks sharing one TRK are one surface ───────────────────────
+// loadWoz unpacked every TMAP slot into its own bitStream, so a write on
+// qt 4 was invisible from qt 3 and qt 5, and when two of them went dirty
+// saveDirty spliced both into the same file offset — the higher qt's stale
+// copy landed last and the other's write was gone from the file.
+bool testSharedTrkQuarterTracksAlias()
+{
+    std::vector<uint8_t> bits(512, 0xFF);
+    const std::string path = writeTempFile(
+        buildMinimalWoz2(bits, 512 * 8, /*sharedTrack=*/true), "alias");
+    DiskImage img;
+    if (!img.loadFile(path)) { std::printf("FAIL: load alias WOZ2\n"); return false; }
+    img.setWriteBackEnabled(true);
+
+    auto writeOn = [&](int qt, int cellOffset, const std::array<uint8_t, 8>& c) {
+        std::vector<int64_t> tr;
+        for (int b = 0; b < 8; ++b)
+            if (c[b]) tr.push_back(static_cast<int64_t>(cellOffset + b) * 8 + 4);
+        img.writeFlux(qt, static_cast<int64_t>(cellOffset) * 8,
+                      static_cast<int64_t>(cellOffset + 8) * 8,
+                      static_cast<int>(tr.size()), tr.data());
+    };
+    const std::array<uint8_t, 8> a5 = {1,0,1,0,0,1,0,1};   // $A5
+    const std::array<uint8_t, 8> c3 = {1,1,0,0,0,0,1,1};   // $C3
+    writeOn(4, 0, a5);
+    for (int i = 0; i < 8; ++i) {
+        if (img.bitAt(3, i) != a5[i] || img.bitAt(5, i) != a5[i]) {
+            std::printf("FAIL: write on qt 4 not visible from qt %d at cell %d\n",
+                        img.bitAt(3, i) != a5[i] ? 3 : 5, i);
+            return false;
+        }
+    }
+    writeOn(5, 16, c3);
+    if (!img.saveDirty()) { std::printf("FAIL: saveDirty alias\n"); return false; }
+    DiskImage img2;
+    if (!img2.loadFile(path)) { std::printf("FAIL: reload alias WOZ2\n"); return false; }
+    for (int i = 0; i < 8; ++i) {
+        if (img2.bitAt(4, i) != a5[i] || img2.bitAt(4, 16 + i) != c3[i]) {
+            std::printf("FAIL: after save+reload, edit on qt %d lost at cell %d\n",
+                        img2.bitAt(4, i) != a5[i] ? 4 : 5, i);
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    std::printf("  ok: quarter-tracks sharing a TRK write and save as one surface\n");
+    return true;
+}
+
 int main()
 {
+    if (!testSharedTrkQuarterTracksAlias()) return 1;
     if (!testWoz1WriteBackRoundTrip())  return 1;
     if (!testWoz2WriteBackRoundTrip())  return 1;
     if (!testWoz1FileWriteProtected())  return 1;

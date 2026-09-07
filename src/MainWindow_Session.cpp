@@ -251,8 +251,15 @@ void MainWindow::persistSession(bool flushMedia)
 
     // AI control listener — persist enable, port, token, and the panel
     // visibility flag. Re-armed on next launch by the constructor.
-    settings->setBool  ("ai_control_enable", aiServer->isRunning());
-    settings->setInt   ("ai_control_port",   aiServer->getPort());
+    // Only the PANEL's toggle is a persistent opt-in. `--ai-control` is a
+    // Phase-A boot flag: one run with it used to write ai_control_enable=true
+    // plus the CLI port, so every LATER plain `POM2` silently reopened the
+    // loopback control plane — /mem, /disk, /snapshot/load — with no flag
+    // given and nothing on screen to say so.
+    if (!aiControlFromCliOnly_) {
+        settings->setBool("ai_control_enable", aiServer->isRunning());
+        settings->setInt ("ai_control_port",   aiServer->getPort());
+    }
     settings->setString("ai_control_token",  aiTokenInput);
     // Persist the per-slot card mapping so changes via the Slot
     // Configuration panel survive a restart. Slots the ACTIVE profile forces

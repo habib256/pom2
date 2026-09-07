@@ -528,9 +528,58 @@ void testAyBusUndrivenBitsFloatHigh()
     assert(mixed.getAyRegister(0, 7) == 0xFA);
 }
 
+// ─── Undriven PB2 (/RESET) floats HIGH ───────────────────────────────────
+//
+// The port-A twin of this lives in testAyBusUndrivenBitsFloatHigh; port B
+// was still composed as `portBOut & ddrB`, and PB2 is the AY's /RESET. A
+// driver that drives only BC1+BDIR (DDRB = $03) and leaves /RESET to the
+// board's pull-up therefore reset the chip on EVERY strobe: no register
+// store ever landed and the card was silent for the session. MAME's
+// `output_pb()` = `(m_out_b & m_ddr_b) | ~m_ddr_b`.
+void testUndrivenResetPinFloatsHigh()
+{
+    MockingboardCard card(4);
+    writeVia(card, 0, 0x03, 0xFF);            // DDRA = $FF
+    writeVia(card, 0, 0x02, 0x03);            // DDRB = $03: BC1 + BDIR only
+    writeVia(card, 0, 0x01, 0x08);            // ORA = reg 8 (channel A volume)
+    writeVia(card, 0, 0x00, kPbLatch & 0x03); // LATCH (PB2 undriven)
+    writeVia(card, 0, 0x00, 0x00);            // INACTIVE
+    writeVia(card, 0, 0x01, 0x0F);            // ORA = $0F
+    writeVia(card, 0, 0x00, kPbWrite & 0x03); // WRITE
+    writeVia(card, 0, 0x00, 0x00);            // INACTIVE
+    assert(card.getAyRegister(0, 8) == 0x0F &&
+           "undriven /RESET must float high, not wipe the AY on every strobe");
+    assert(card.getAyWriteCount(0) == 1);
+}
+
+// ─── Sound II: A/!R reaches CA1 even in the polled mode ──────────────────
+//
+// CA1 is fed from the SSI263's A/!R PIN. The strobe used to follow
+// `Ssi263::advance()`'s return value — the HOST-IRQ edge, gated by the
+// chip's own DR1:0 — so in mode 00 (host IRQ suppressed, A/!R still raised
+// on completion) IFR.CA1 never latched. $Cn4x READS go to the VIA on a
+// Sound II, so IFR.CA1 was the only window onto the pin and a polling
+// driver stalled on its first phoneme. The gate belongs to IER.
+void testARequestLatchesCa1InPolledMode()
+{
+    MockingboardCard mb(4, MockingboardCard::Variant::SoundII);
+    mb.slotRomWrite(0x43, 0x0F);              // CTTRAMP: CTL=0, amp=15
+    mb.slotRomWrite(0x42, 0xF0);              // RATEINF: rate=15 (fast)
+    mb.slotRomWrite(0x40, 0x05);              // DURPHON: mode=00, phon=5
+    assert((mb.peekViaRegister(0, 0x0D) & 0x02) == 0);   // IFR.CA1 clear
+    for (int i = 0; i < 200 && (mb.peekViaRegister(0, 0x0D) & 0x02) == 0; ++i)
+        mb.advanceCycles(1000);
+    assert((mb.peekViaRegister(0, 0x0D) & 0x02) != 0 &&
+           "A/!R must latch IFR.CA1 in the polled mode (DR1:0 = 00)");
+}
+
 int main()
 {
     testAddressDecode();        std::printf("address decode ........ OK\n");
+    testUndrivenResetPinFloatsHigh();
+                                std::printf("PB2 /RESET floats high  OK\n");
+    testARequestLatchesCa1InPolledMode();
+                                std::printf("A/!R -> CA1 polled .... OK\n");
     testAyBusUndrivenBitsFloatHigh();
                                 std::printf("AY bus float-high ..... OK\n");
     testAyRegisterWrite();      std::printf("AY register write ..... OK\n");

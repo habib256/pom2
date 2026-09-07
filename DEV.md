@@ -765,6 +765,32 @@ text bottom 4 rows. Pinned: `dlgr_render_smoke`, goldens
 
 ### Beam-racing (mid-scanline soft switches)
 
+**Three previous-frame leaks closed** *(2026-09-08, bug hunt #5)*. (1)
+`render()` folded every published event into the frame state, VBL-stamped
+ones included — while both replays (`renderBeamRacing`,
+`fillCompositeSignal`) skip those, because the beam had already finished
+the picture. A guest clearing MIXED during VBL therefore ended the frame
+"not mixed" as far as `patchMixedTextBand` was concerned while `mixedGfx`
+still shortened the OE demod to rows [0,160): rows 160-191 kept the previous
+frame. Events with `scanline >= kHeight` now belong to the next frame, and
+the text band is kept only when the frame *ends* in mixed graphics
+(`endsMixedGfx`). (2) A beam-raced frame whose segments straddle the
+280-wide (`frame`) and 560-wide (`frame80`) buffers — 80-col TEXT at the
+top, `$C050` at scanline 8 — was painted half into each, and `pixels()`
+followed the last segment. `renderBeamRacing` now probes the segmentation
+first and, when it straddles, sets `force560_` so `usesLegacyPath` sends
+every segment down the 560 path, exactly what the Chat Mauve latch split
+already did. (3) `renderInternalSegment` saved and restored `frame80` +
+`persistenceL80` around a segment but not the 280-wide `persistenceL`,
+which the mixed 80-col path (and the Chat Mauve legacy tail) still paints
+through at full width before pixel-doubling — so a MonoGreen/MonoAmber
+per-line page split re-merged the whole row's phosphor and ghosted the left
+segment's dots into the right one. It is bounded per segment now. All three
+pinned by `display_beam_regressions` (each fails without its fix). Known and
+left: in all three composite pipelines the mixed-mode text band is painted
+once from the end-of-frame state, so a mid-line page split inside rows
+160-191 draws from one page only.
+
 `Memory` logs display soft-switch edges (`$C050-$C057`, `$C05E/$C05F`,
 IIe `$C00C/$C00D` 80COL, `$C000/$C001` 80STORE, `$C00E/$C00F` ALTCHAR)
 with CPU-cycle timestamps. `Apple2Display::render()` replays events per
@@ -1360,6 +1386,22 @@ sinc (cutoff sr/4) → 0.995-pole DC blocker. Auto catch-up if drain >
 Auto-rewind 500 ms is opt-in, default off.
 
 ### Mockingboard
+
+**Port B is read from the pins, like port A** *(2026-09-08, bug hunt #5)*.
+`onViaPortBChange` composed PB as `portBOut & ddrB`, so an undriven pin read
+as 0 — and PB2 is the AY's /RESET. A driver that drives only BC1 + BDIR
+(DDRB = `$03`) and leaves /RESET to the board's pull-up had the chip wiped on
+every strobe: no register store ever landed and the card was silent. Same
+line, same defect on the Phasor, where PB3/PB4 are the *active-low* chip
+selects and "undriven = 0" meant "select both". Both now call
+`readPortB()` (MAME `output_pb()` = `(out & ddr) | ~ddr`). Also on the
+Sound II: CA1 is fed from the SSI263's A/!R **pin**, not from
+`Ssi263::advance()`'s return value (the host-IRQ edge, gated by DR1:0) — in
+the polled mode 00 the chip raises A/!R and `$Cn4x` reads go to the VIA, so
+IFR.CA1 was the only window onto the pin and it never latched. Pinned by
+`testUndrivenResetPinFloatsHigh`, `testARequestLatchesCa1InPolledMode`
+(`mockingboard_smoke`) and `testAyBusUndrivenSelectsFloatHigh`
+(`phasor_card_smoke`).
 
 Sweet Microsystems: two 6522 VIAs each driving an AY-3-8910. No ROM
 — VIAs decoded in slot ROM window (`$Cn00-$Cn0F` VIA#1,
@@ -2024,6 +2066,30 @@ forecloses on the user's only copy. Refusing at mount is the honest
 behaviour; re-encoding flux is the work that would lift either.
 
 ### DiskImage
+
+**An address field routes only when its checksum checks out** *(2026-09-08,
+bug hunt #5)*. `decodeTrack` / `decodeTrack13` took the 4-and-4 sector byte
+at face value; RWTS checks `vol ^ trk ^ sec` first (Beneath Apple DOS) and
+`Sony35Gcr` already did on the 3.5" side. One bad nibble in a sector number
+therefore sent the following data field into another sector of the user's
+file on write-back — 253 bytes of somebody else's payload under "Saved 1
+modified track(s)". A failing header is skipped; the sector keeps the bytes
+`saveDirty` pre-filled from the file. The DE AA epilogue is deliberately not
+checked (some `.nib` dumps carry non-standard ones that decode fine). Pinned
+in `disk_writeback_smoke`, on an image whose sectors are all distinct — a
+uniform one hides the relocation.
+
+**WOZ quarter-tracks that share a TRK are one surface** *(2026-09-08)*.
+Every real image gives a whole track two or three TMAP slots
+(`fastloader.woz`: `TMAP[3] = TMAP[4] = TMAP[5] = 1`), and `loadWoz`
+unpacks each slot into its own `bitStream[qt]`. `writeFlux` spliced into one
+of them only: a read a quarter-track off returned the pre-write surface, and
+when two slots went dirty `saveDirty` spliced both into the same
+`wozQtByteOff` and the higher qt's stale copy landed last, discarding the
+other's write. `writeFlux` now mirrors every changed cell into the aliases
+(same `wozQtByteOff` / bit count / size; FLUX slots have bit count 0 and
+never alias) and drops their flux caches. Pinned in `woz_writeback_smoke`
+with a shared-TRK image.
 
 143 360-byte 5.25": `.dsk`/`.do` (DOS 3.3 skew) or `.po` (ProDOS).
 Pre-nibblized into 35 × 6656-byte tracks. GCR per "Beneath Apple
@@ -4000,6 +4066,21 @@ deterministic clock. Pinned by `no_slot_clock_smoke`
 
 ### AI control server (`AiControlServer`)
 
+**Four corrections from bug hunt #5** *(2026-09-08)*. `Host: localhost`
+(any case, with or without port, with or without the trailing dot) passes
+the rebinding fence: RFC 6761 § 6.3 forbids a resolver from ever sending it
+to DNS, so it is the one name that cannot be rebound, and it is what a user
+types — refusing it produced a 401 that also counted toward the
+five-failures brake, so five of them locked out `127.0.0.1` too. Header
+values lose their *trailing* optional whitespace as well as the leading
+(RFC 7230 § 3.2), so `X-POM2-Token: SECRET ` authenticates. And
+`--ai-control` no longer persists itself: `MainWindow::aiControlFromCliOnly_`
+marks a listener the CLI started, `persistSession` skips
+`ai_control_enable` / `ai_control_port` for it, and a panel Start or Stop
+clears the mark — a boot flag is a per-run request, and one launch with it
+used to reopen the token-less control plane on every later plain launch.
+Pinned in `ai_control_server_smoke::testAuth`.
+
 An HTTP/1.1 listener on **loopback only** (`INADDR_LOOPBACK`, default port
 **6503** — deliberately one off the SSC's 6502) that lets an external process
 drive POM2 the way a human drives the UI. Written for AI agents: `curl` or an
@@ -5417,6 +5498,19 @@ other; a dump that agreed only with itself would be a screenshot with extra
 steps.
 
 ### ImageWriter II printer (host-side)
+
+**Two escape-sequence corrections** *(2026-09-08, bug hunt #5)*. `ESC V` /
+`ESC U` raise `msb_` so their pattern byte survives parameter collection and
+used to restore a constant 0 afterwards; on a printer whose switch B-6 the
+guest had opened (`ESC Z $00 $20`, what any driver printing high-ASCII or
+MouseText does) that re-armed the 7-bit mask, and from the first dot-column
+repeat on `$8D` was a carriage return, not a glyph. `armRepeat` /
+`printRepeatUnit` restore what B-6 asks for. On the FX-80 head, `ESC R n`
+(charset) ran the whole C. Itoh `updateSwitch()`, whose other half
+re-derives the page window from switch B-3 — which an FX-80 has no
+equivalent of, spelling the same thing `ESC N` / `ESC O` — so selecting a
+character set cancelled a skip-over-perforation the driver had set. The
+margins are kept across that call now. Pinned in `imagewriter_smoke`.
 
 **Character ROMs (2026-08-10).** Glyphs no longer come from POM2's bundled
 CP437 font. `src/ImageWriterRom.h` is GENERATED by

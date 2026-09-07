@@ -5,6 +5,88 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #5: six Opus hunters, every finding confirmed by a probe
+
+Six hunters in parallel — CPU cores and MMU, the video pipeline, the audio
+chain, the storage stack below the file systems, the host side, the slot
+cards and the printing stack — each told to confirm a suspicion with a probe
+before reporting it and to hand back a minimal diff plus a pin. What
+survived that bar:
+
+**A Mockingboard driver that leaves /RESET to the board's pull-up had the
+AY wiped on every strobe.** `onViaPortBChange` composed port B as
+`portBOut & ddrB`, so an undriven PB2 read as 0 — and PB2 is the AY's
+/RESET. The port-A twin of this had been fixed (Ultima IV's Echo+ probe
+idiom); port B was still wrong on the Mockingboard and, worse, on the
+Phasor, where PB3/PB4 are the active-low chip selects and "undriven = 0"
+meant "select both". Both read the pins now (`readPortB()`, MAME's
+`output_pb()` = `(out & ddr) | ~ddr`). Pinned in `mockingboard_smoke` and
+`phasor_card_smoke`.
+
+**On a Sound II, a speech driver in the polled mode never saw a phoneme
+complete.** CA1 is fed from the SSI263's A/!R *pin*; the card strobed it
+from `Ssi263::advance()`'s return value, which is the host-IRQ edge gated by
+the chip's own DR1:0. In mode 00 the chip still raises A/!R, `$Cn4x` reads
+go to the VIA, so IFR.CA1 was the only window onto the pin — and it never
+latched. The strobe follows the pin now; IER remains the gate. Pinned in
+`mockingboard_smoke`.
+
+**A 5.25" address field with a bad checksum routed the next data field
+into the wrong sector of the user's file.** `decodeTrack` (and the
+13-sector twin) took the sector byte at face value; RWTS checks `vol ^ trk
+^ sec` first, and the 3.5" decoder already did. One bad nibble in a sector
+number sent 253 bytes of another sector's payload over a good one on
+write-back, under "Saved 1 modified track(s)". The header now routes only
+when it checks out. Pinned in `disk_writeback_smoke` (a uniform image hides
+this — the pin's sectors are distinct).
+
+**WOZ quarter-tracks sharing one TRK were loaded as independent copies.**
+Every real image gives a whole track two or three TMAP slots; `writeFlux`
+spliced into one `bitStream[qt]` only, so a read a quarter-track off saw
+the pre-write surface, and if two slots went dirty `saveDirty` spliced both
+into the same file offset and the higher one's stale copy discarded the
+other's write. Changed cells are now mirrored into every alias. Pinned in
+`woz_writeback_smoke` with a shared-TRK image.
+
+**`--ai-control` wrote itself into `state.cfg`**, so one launch with the flag
+reopened the loopback control plane — `/mem`, `/disk`, `/snapshot/load`,
+token-less — on every later plain launch, with nothing on screen to say so.
+A boot flag is a per-run request; only the panel's toggle persists now.
+**`Host: localhost` was refused** by the DNS-rebinding fence (RFC 6761 § 6.3
+makes it the one name that cannot be rebound), and because a fence rejection
+counted toward the five-failures brake, five of them answered 429 to the
+correct client too. **Trailing whitespace on a header value** was kept, so a
+`$TOKEN` with a stray space was a 401 (RFC 7230 § 3.2 puts OWS on both
+sides). **`--fujinet-slot 3junk`** was accepted as 3 by `atoi`. And in the
+browser build, a `pagehide` flush requested during a pump flush waited on a
+debounce that never came; the pump's callback now starts the second syncfs
+itself. Pinned in `ai_control_server_smoke` and `cli_kiosk`.
+
+**Three "the picture shows the previous frame" defects in the beam-raced
+display.** A guest that clears MIXED during VBL — the tear-free idiom — left
+rows 160-191 of the composite OE pipelines written by nobody: `render()`
+folded the VBL-stamped event into the frame state, so the frame no longer
+*ended* in mixed graphics and `patchMixedTextBand` painted nothing, while
+`mixedGfx` still stopped the demod at row 160. VBL events now belong to the
+next frame (both replays already skipped them) and the text band is kept
+only when the frame ends mixed. A beam-raced 80-col ⇄ 40-col switch painted
+half the frame into `frame` and half into `frame80`, and `pixels()` followed
+the last segment — the other half was last frame's; a frame whose segments
+straddle the two domains is now pinned to 560, as the Chat Mauve already
+was. And the 280-wide phosphor history was shared by every segment on a
+line, so a MonoGreen/MonoAmber per-line page split ghosted the left
+segment's dots through the right one; it is bounded per segment like the
+560 one. Pinned by the new `display_beam_regressions`.
+
+**ImageWriter: `ESC V` / `ESC U` re-armed the 7-bit mask** on a printer
+whose switch B-6 the guest had opened (`ESC Z $00 $20`, what any driver
+printing high-ASCII or MouseText does): after one dot-column repeat, `$8D`
+was a carriage return again. The run's tail restores what B-6 asks for.
+**Epson `ESC R` (charset) cancelled `ESC N` (skip over perforation)** by
+running the whole C. Itoh `updateSwitch()`, whose other half re-derives the
+page window from switch B-3 — which an FX-80 spells as ESC N / ESC O. The
+charset half runs alone now. Both pinned in `imagewriter_smoke`.
+
 ## 2026-09-07 — ProDOS bug hunt, round two: a real ProDOS as the oracle
 
 The first round read the code; this one made ProDOS 8 2.4.3 walk it. Booted

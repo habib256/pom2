@@ -327,7 +327,7 @@ void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplaySta
     // it shares a buffer with the card's 560-wide segments — DIX rasters
     // mix TEXT/GR bands with Féline HGR inside one frame. Static frames
     // keep the native 280 render (goldens untouched).
-    if (cm && bandLatch_ >= 0) {
+    if ((cm && bandLatch_ >= 0) || force560_) {
         upscaleFrameToFrame80(scanY0, scanY1);
         setUseFrame80(true);
     }
@@ -526,7 +526,14 @@ void Apple2Display::render(Memory& mem)
     // see applyIdleSwitchOverride.
     if (!events.empty() || frameCounter > 0) {
         state = mem.getDisplayStateAtFrameStart();
-        for (const auto& e : events) applyVideoEvent(state, e.kind, e.value);
+        // Events stamped at scanline kHeight happened in VBL: the beam had
+        // already finished the picture, and BOTH replays (renderBeamRacing,
+        // fillCompositeSignal) skip them for exactly that reason. Folding
+        // them in here described the NEXT frame instead of this one — a
+        // guest that clears MIXED during VBL (the tear-free idiom) left the
+        // composite pipelines with a text band nobody painted.
+        for (const auto& e : events)
+            if (e.scanline < kHeight) applyVideoEvent(state, e.kind, e.value);
         applyIdleSwitchOverride(state, mem);
     }
     lastRenderState_ = state;   // published-frame snapshot for present-path decisions
@@ -538,10 +545,17 @@ void Apple2Display::render(Memory& mem)
         applyIdleSwitchOverride(walk, mem);
         if (walk.mixedMode && !walk.textMode) mixedGfx = true;
         for (const auto& e : events) {
+            if (e.scanline >= kHeight) continue;   // VBL: not on this picture
             applyVideoEvent(walk, e.kind, e.value);
             if (walk.mixedMode && !walk.textMode) mixedGfx = true;
         }
     }
+    // The 32-row text band is ours to keep ONLY when the frame ends in mixed
+    // graphics — that is the sole case patchMixedTextBand paints (it returns
+    // early otherwise). Gating the short demod on `mixedGfx`, true as soon as
+    // ANY band was mixed graphics, left rows 160-191 written by nobody, i.e.
+    // holding the previous frame, on every frame that LEFT mixed mode.
+    const bool endsMixedGfx = state.mixedMode && !state.textMode;
 
     // Both ColorCompositeOE and ColorAppleWin consume the same 14.318 MHz
     // composite bitstream. ColorCompositeOE hands it to MainWindow's GLSL
@@ -606,7 +620,7 @@ void Apple2Display::render(Memory& mem)
     // lock); the deferred demod is per-row and only rewrites the graphics
     // rows [0, 160) in mixed mode, so the patch survives it.
     if (oeCpu && signalProducedFlag && (!state.textMode || oeDemodsText)) {
-        if (mixedGfx) {
+        if (endsMixedGfx) {
             patchMixedTextBand(mem, state);
             scheduleCpuDemodInto80(kMixedTextFirstScanline);
         } else {
@@ -614,7 +628,7 @@ void Apple2Display::render(Memory& mem)
         }
     }
 
-    if ((mixedGfx && hiResMode == HiResMode::ColorCompositeOE)
+    if ((endsMixedGfx && hiResMode == HiResMode::ColorCompositeOE)
         && signalProducedFlag) {
         patchMixedTextBand(mem, state);
         scheduleCpuDemodInto80(kMixedTextFirstScanline);
