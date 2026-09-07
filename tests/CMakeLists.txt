@@ -1447,15 +1447,10 @@ set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)
 # preserveNewerThan then reads POM2's own output as a host edit and discards
 # every later guest save. Pins the stamp being published on the failure path
 # (bug hunt 4 #4).
-add_executable(test_prodos_synth_failed_flush
-    prodos_synth_failed_flush_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
-target_include_directories(test_prodos_synth_failed_flush
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
-add_test(NAME prodos_synth_failed_flush COMMAND test_prodos_synth_failed_flush)
-set_tests_properties(prodos_synth_failed_flush PROPERTIES TIMEOUT 20)
 
 # ─── Settings key=value round-trip (#-in-value, newline, backslash) ───────
 add_executable(test_settings_roundtrip

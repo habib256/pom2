@@ -162,15 +162,24 @@ to reclaim a delta's worth of bytes — quadratic, in the same locked scope.
 The scan is chunked (same output records, round-trip pinned) and eviction
 walks to the next keyframe and drops the group.
 
-**Two more that reach a user's files.** A type change on a SmartPort bay
-destroyed a dirty unit with an unchecked best-effort flush in a destructor,
-reporting success — while the sibling `mountSmartPortUnitAs` had always
-refused the swap on a failed flush. And a *partially* failed ProDOS
-host-folder write-back stamped nothing, so the files the failed pass had
-already written looked newer than the volume's mount time, `preserveNewerThan`
-classified POM2's own output as a host-side edit, and **every later guest save
-to those files was discarded for the rest of the session** — the success path
-had been fixed for exactly this; the failure path had not.
+**One more that reaches a user's files, and one that got away.** A type change
+on a SmartPort bay destroyed a dirty unit with an unchecked best-effort flush
+in a destructor, reporting success — while the sibling `mountSmartPortUnitAs`
+had always refused the swap on a failed flush. That one is fixed.
+
+The one that got away is the *partially* failed ProDOS host-folder write-back:
+the files the failed pass had already written look newer than the volume's
+mount time, `preserveNewerThan` classifies POM2's own output as a host-side
+edit, and **every later guest save to those files is discarded for the rest of
+the session**. The fix — publish the completion stamp before the failure
+return and adopt it — passes on macOS and **fails on Linux**, where CI took
+down both the new pin and the pre-existing `hdv_writeback_smoke` case that
+covers the same rule on the success path. On Linux a file POM2 has just
+written reads back newer than `max(now(), the newest mtime the walk
+recorded)`, which is precisely what the stamp scheme assumes cannot happen —
+an assumption that predates this round. Reverted rather than left red, with
+the evidence and the shape of a real fix in `TODO.md`: stop comparing against
+one clock and record what the pass actually wrote.
 
 **And the HDV card told ProDOS it was read-only while answering writes.**
 `$CnFE` was `$03`; bit 2 means "can be written to" (ProDOS 8 TN.PDOS.021), the
