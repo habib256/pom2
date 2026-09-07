@@ -421,10 +421,18 @@ int main(int argc, char** argv) {
         ++filesRun;
         grandTotal += r.total;
         grandPass  += r.passed;
-        const bool fileOk = (r.passed == r.total);
+        // A file that parsed to ZERO vectors is a failure, not a pass.
+        // `r.passed == r.total` is 0 == 0 for a truncated or empty JSON, so
+        // an opcode nobody verified used to print OK and count towards
+        // `filesRun`, which also disarmed the "nothing verified" skip below.
+        // The ctest path is protected by `pom2_download_pinned`'s SHA-256,
+        // but the documented manual sweep (tests/fetch_tomharte.sh + this
+        // binary) is not: a 404 leaves a 0-byte file behind.
+        const bool fileOk = (r.total > 0 && r.passed == r.total);
         if (!fileOk) anyFail = true;
-        std::printf("  %-2s : %6d/%-6d %s\n", stem.c_str(), r.passed, r.total,
-                    fileOk ? "OK" : "FAIL");
+        std::printf("  %-2s : %6d/%-6d %s%s\n", stem.c_str(), r.passed, r.total,
+                    fileOk ? "OK" : "FAIL",
+                    r.total == 0 ? "  <<< no vectors parsed" : "");
         if (!fileOk || verbose) {
             for (const Mismatch& m : firstFew)
                 std::printf("        ✗ \"%s\"  [A0=$%02X P0=$%02X D=%d]  %s\n",

@@ -195,15 +195,22 @@ private :
 
     bool debugBrkTrace = false;   // see setDebugBrkTrace()
     uint8_t accumulator, xRegister, yRegister, statusRegister, stackPointer;
-    // `IRQ` and `irqSourceMask` are atomic because off-CPU-thread cards (the
-    // SSC TCP worker) call setIrqLine() concurrently with the CPU thread's
-    // own setIrqLine() / per-step `IRQ` read. Relaxed atomics make the
-    // read-modify-write race-free; on x86 the hot-path load is a plain mov.
-    std::atomic<int> IRQ{0};
     int NMI = 0;
     /// OR'd contributions from every IRQ source registered via
-    /// `setIrqLine()`. `IRQ` mirrors `(irqSourceMask != 0)` after every
-    /// update so the dispatch loop stays a single-int test.
+    /// `setIrqLine()`. This IS the IRQ line: `step()` tests it directly.
+    ///
+    /// There used to be a derived `std::atomic<int> IRQ` mirroring
+    /// `(irqSourceMask != 0)`, stored right after the mask's RMW. Two stores
+    /// cannot be one atomic operation: an off-CPU-thread card (the SSC's TCP
+    /// worker, the FujiNet relay) deasserting between another thread's
+    /// fetch_or and its IRQ store published mask != 0 with IRQ == 0, and the
+    /// line stayed dropped until the next update — a hung card. Deriving the
+    /// line from the mask at the point of use removes the window entirely and
+    /// costs the same single relaxed load on the hot path.
+    ///
+    /// Atomic because those off-CPU-thread callers run concurrently with the
+    /// CPU thread's own setIrqLine() / per-step read. Relaxed makes the
+    /// read-modify-write race-free; on x86 the hot-path load is a plain mov.
     std::atomic<uint32_t> irqSourceMask{0};
     uint16_t programCounter;
     uint16_t op;

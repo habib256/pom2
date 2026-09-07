@@ -29,13 +29,18 @@
 //      doesn't disturb other bits.
 //   5. End-to-end: the dispatch loop honours the aggregated mask — a
 //      step with any bit set and I=0 vectors through $FFFE.
+//   6. Two-thread hammer: the line IS the mask. A source held asserted by
+//      one thread is never dropped by another thread's deassert of a
+//      different source (the lost-update the derived `IRQ` flag allowed).
 
 #include "M6502.h"
 #include "Memory.h"
 
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <thread>
 
 namespace {
 
@@ -159,6 +164,72 @@ int main()
         assert(cpu.getIrqSourceMask() == (1u << M6502::IRQ_SRC_SLOT3));
 
         std::printf("[ OK ] idempotent assert/release\n");
+    }
+
+    // ─── Test 4: two-thread hammer — the line cannot lag the mask ─────────
+    // `setIrqLine` used to do TWO stores: the mask's atomic RMW, then a
+    // derived `std::atomic<int> IRQ` mirroring `(mask != 0)`. Two stores are
+    // not one atomic operation. Interleave a deassert with an assert —
+    //
+    //   B: fetch_and(~B)  → its newMask reads 0        (A has not set yet)
+    //   A: fetch_or(A)    → mask = {A}
+    //   A: IRQ.store(1)
+    //   B: IRQ.store(0)                                 ← lands last
+    //
+    // — and the machine is left with mask = {A} and the line DOWN: a card
+    // that wants service and never gets it, until some unrelated source
+    // happens to touch setIrqLine again. Off-CPU-thread callers are real
+    // (the SSC's TCP worker, the FujiNet relay), so this is reachable.
+    //
+    // The pin: main holds slot 6 asserted for the whole run, so `mask != 0`
+    // is an invariant no interleaving can break, and steps the CPU in a loop
+    // — every step MUST vector. Two worker threads hammer their own bits
+    // meanwhile. With the derived flag present this fails within a few
+    // hundred thousand toggles; with `step()` reading the mask itself it
+    // cannot fail at all, because there is no second store to lose.
+    {
+        Memory mem;
+        mem.setTestMode(true);
+        M6502  cpu(&mem);
+        mem.setCpu(&cpu);
+        primeForIrq(mem, cpu);
+
+        cpu.setIrqLine(M6502::IRQ_SRC_SLOT6, true);      // held for the run
+
+        std::atomic<bool> stop{false};
+        auto hammer = [&cpu, &stop](int src) {
+            while (!stop.load(std::memory_order_relaxed)) {
+                for (int i = 0; i < 512; ++i) {
+                    cpu.setIrqLine(src, true);
+                    cpu.setIrqLine(src, false);
+                }
+            }
+        };
+        std::thread t2(hammer, M6502::IRQ_SRC_SLOT2);
+        std::thread t4(hammer, M6502::IRQ_SRC_SLOT4);
+
+        int missed = 0;
+        for (int i = 0; i < 400000; ++i) {
+            if (!stepFiredIrq(cpu)) ++missed;
+        }
+        stop.store(true, std::memory_order_relaxed);
+        t2.join();
+        t4.join();
+
+        if (missed != 0) {
+            std::printf("FAIL: slot 6 held the IRQ line asserted for the whole "
+                        "run, yet %d of 400000 steps did not vector — the line "
+                        "is being derived by a store that races the mask.\n",
+                        missed);
+            return 1;
+        }
+        // Both workers stopped with their bits clear; drop slot 6 too.
+        assert(cpu.getIrqSourceMask() == (1u << 6));
+        cpu.setIrqLine(M6502::IRQ_SRC_SLOT6, false);
+        assert(cpu.getIrqSourceMask() == 0);
+        assert(!stepFiredIrq(cpu));
+
+        std::printf("[ OK ] two-thread hammer: a held source is never lost\n");
     }
 
     std::printf("All IRQ aggregator smoke tests passed.\n");
