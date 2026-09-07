@@ -754,26 +754,6 @@ Decisions, not work. Do not re-litigate without new evidence.
 Findings **deliberately not fixed**, because the reason for leaving them is part
 of the finding.
 
-- 🔴 **A partially failed ProDOS host-folder write-back still freezes the files
-  it wrote — the fix was reverted because it does not hold on Linux** (bug hunt
-  #4 #4). The defect is real and reproduced: `decodeVolumeToFolder` writes file
-  by file and stops at the first failure, so the files the failed pass DID
-  write carry an mtime newer than the volume's mount stamp, `preserveNewerThan`
-  reads them as host edits on the retry, and every later guest save to those
-  files is discarded for the rest of the session. The attempted fix — publish
-  `completedAt` before the failure return and adopt it in `saveDirty`'s failure
-  branch — passes on macOS and **fails on Linux**, where CI showed both the new
-  pin AND the pre-existing `hdv_writeback_smoke` "repeated host-folder flush"
-  case going red with *"the second host-folder flush was preserved away"*. So
-  on Linux a file POM2 has just written reads back NEWER than
-  `max(clock::now(), the newest mtime the walk recorded)`, which is what the
-  whole stamp scheme assumes cannot happen. `ProDOSVolume.cpp` is untouched by
-  that round, so the assumption was already load-bearing before it.
-  The next attempt should stop comparing against a single stamp and record what
-  the pass actually wrote (path + the mtime left behind), so "ours" is
-  identified rather than inferred from a clock. Reverted in the same round
-  rather than left red: `src/Block512Backing.cpp` back to `f2434fc`, and
-  `tests/prodos_synth_failed_flush_test.cpp` removed with it.
 - 🟡 **Host Shift is not wired to `$C063`, and the dead code that would wire it
   has the polarity backwards** (bug hunt #4). `PaddleInputs::button2(iieMode)`
   folds a `shift_` atomic into PB2 and `Memory::setShiftKey` forwards to it;

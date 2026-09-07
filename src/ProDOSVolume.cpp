@@ -874,13 +874,36 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
     return FileWriteResult::Written;
 }
 
-// Widen `newest` to cover `p`'s modification time. See
-// ProDOSDecodeResult::completedAt for why the decode has to track this.
-void noteWriteTime(const fs::path& p, fs::file_time_type& newest)
+// Mark `p` as "written by this decode, at `stamp`".
+//
+// WHY it SETS the mtime instead of reading it. The next decode decides whether
+// a host file is the user's edit or POM2's own last output by comparing its
+// mtime against the volume's mount stamp — and the old shape (take `now()`
+// after the walk, widened to the newest mtime observed) is a comparison
+// between two clocks that are only related by assumption. On Linux CI a file
+// POM2 had just written read back NEWER than that stamp, so the next flush
+// preserved POM2's own output away and every later guest save was discarded.
+// Bug hunt #4 first tried to make the arithmetic tighter; the arithmetic was
+// not the problem.
+//
+// Giving every file the decode writes the SAME stamp removes the comparison
+// entirely: "ours" is `mtime == stamp`, exact, on any filesystem and whatever
+// the clock granularity. A user editing the file afterwards moves it strictly
+// past the stamp and is preserved, which is the rule this exists to enforce.
+//
+// If the timestamp cannot be set — a filesystem that refuses `utimensat`, a
+// medium mounted noatime-and-more — fall back to widening `newest` the way it
+// used to, so the behaviour degrades to the old approximation rather than to
+// no protection at all.
+void noteWriteTime(const fs::path& p, fs::file_time_type stamp,
+                   fs::file_time_type& newest)
 {
-    std::error_code ec;
-    const auto t = fs::last_write_time(p, ec);
-    if (!ec && t > newest) newest = t;
+    std::error_code sec;
+    fs::last_write_time(p, stamp, sec);
+    if (!sec) return;                       // exact: mtime IS the stamp
+    std::error_code rec;
+    const auto t = fs::last_write_time(p, rec);
+    if (!rec && t > newest) newest = t;
 }
 
 }  // namespace
@@ -902,8 +925,13 @@ struct DecodeWalk {
     /// Mount-time stamp: host files newer than this are preserved, not
     /// reverted (see decodeVolumeToFolder's doc). Null = legacy overwrite.
     const fs::file_time_type*         newerThan   = nullptr;
-    /// Newest mtime this walk actually wrote — see completedAt.
+    /// Newest mtime this walk actually wrote, for the fallback path only —
+    /// see noteWriteTime and completedAt.
     fs::file_time_type                newest{};
+    /// The stamp every file this walk writes is given. Fixed before the first
+    /// write, so the whole pass is one instant as far as the next decode's
+    /// "is this ours?" test is concerned.
+    fs::file_time_type                stamp{};
     /// The served root, resolved through symlinks ONCE at the start of the
     /// walk. Every path this decode is about to create or write is checked
     /// back against it — see `destStaysInsideRoot`.
@@ -1311,7 +1339,7 @@ void decodeOneDir(DecodeWalk& w,
             }
             if (wr == FileWriteResult::Written) {
                 ++r.filesWritten;
-                noteWriteTime(dest, w.newest);
+                noteWriteTime(dest, w.stamp, w.newest);
             }
         }
         // Next directory block pointer is at offset 2 of every dir block.
@@ -1393,7 +1421,8 @@ ProDOSDecodeResult decodeVolumeToFolder(
     }
 
     DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, r, false,
-                     preserveNewerThan, {}, {} };
+                     preserveNewerThan, {},
+                     fs::file_time_type::clock::now(), {} };
     // Resolved ONCE, before anything is written: every destination is checked
     // back against this. `create_directories` above has just made sure the
     // root exists, so this canonicalises a real directory.
@@ -1404,9 +1433,13 @@ ProDOSDecodeResult decodeVolumeToFolder(
     }
     decodeOneDir(walk, /*firstBlock=*/2, hostFolder, /*depth=*/0);
 
-    // The stamp the caller must adopt: no earlier than now, and no earlier
-    // than anything this decode wrote.
-    r.completedAt = fs::file_time_type::clock::now();
+    // The stamp the caller must adopt. Every file the walk wrote carries
+    // EXACTLY `walk.stamp` (noteWriteTime sets it), so the next decode's
+    // `mtime > stamp` test is false for all of them — no clock comparison is
+    // involved and none of them can read as a host edit. `walk.newest` only
+    // moves if setting a timestamp failed somewhere, in which case the old
+    // approximation is still applied on top.
+    r.completedAt = walk.stamp;
     if (walk.newest > r.completedAt) r.completedAt = walk.newest;
 
     if (walk.ioFailed) return r;

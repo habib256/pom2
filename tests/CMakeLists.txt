@@ -1443,14 +1443,22 @@ set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)
 
 # ─── A failed host-folder write-back must not freeze what it wrote ────────
 # decodeVolumeToFolder stops at the first I/O error, so a failed pass leaves
-# part of the tree rewritten with an mtime newer than the mount stamp — and
-# preserveNewerThan then reads POM2's own output as a host edit and discards
-# every later guest save. Pins the stamp being published on the failure path
-# (bug hunt 4 #4).
+# part of the tree rewritten — and if the volume's mount stamp does not cover
+# those files, preserveNewerThan reads POM2's own output as a host edit on the
+# retry and discards every later guest save. Pins both halves: the stamp is
+# published on the failure path, and every file the decode writes carries it
+# exactly, so the test does not depend on how the host's clock and its
+# filesystem's timestamps happen to line up (bug hunt 4 #4 — the first attempt
+# passed on macOS and failed on Linux for precisely that reason).
+add_executable(test_prodos_synth_failed_flush
+    prodos_synth_failed_flush_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
+target_include_directories(test_prodos_synth_failed_flush
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME prodos_synth_failed_flush COMMAND test_prodos_synth_failed_flush)
+set_tests_properties(prodos_synth_failed_flush PROPERTIES TIMEOUT 20)
 
 # ─── Settings key=value round-trip (#-in-value, newline, backslash) ───────
 add_executable(test_settings_roundtrip
