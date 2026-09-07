@@ -43,6 +43,14 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // Same starvation applies to the cassette's realtime pulse monitor (its
     // tape-FILE timebase intentionally stays NTSC-nominal — format spec).
     if (tape) tape->setCpuClock(static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+    // The floppy sound banks classify head-step cadence from emuCycles deltas
+    // (drainCommands), so they divide by the same clock. 0.7 % is not audible
+    // on its own, but leaving one cycle-stamped consumer on the compile-time
+    // NTSC constant is how the speaker/cassette bugs started.
+    if (floppy525) floppy525->setCpuClock(
+        static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+    if (floppy35) floppy35->setCpuClock(
+        static_cast<double>(pom2VideoTiming(s).cpuClockHz));
     // The Mockingboard's emuCycles replay cursor (audio thread) needs the
     // same retune: it maps a queued AY register write's CPU-cycle stamp to
     // a sample offset inside the buffer, so a cursor left at the NTSC rate
@@ -62,6 +70,7 @@ EmulationController::EmulationController()
     : processor(&mem), writeBackQueue_(*this)
 {
     cyclesPerFrame.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
+    baseCyclesPerFrame_.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
 
     // Audio device first — we want its negotiated sample rate before the
     // cassette starts streaming. miniaudio sometimes negotiates 48 kHz on
@@ -546,6 +555,10 @@ void EmulationController::start()
     // BEFORE mode leaves Stopped, or a later stop()/rewind-scrub can read
     // the stale `true` left by the previous park and proceed mid-frame.
     workerParked_.store(false);
+    // Same reason as setMode(): the bus is silent while the machine is not
+    // Running, and this path stores the mode directly instead of going
+    // through setMode(). Missing it would leave a resumed machine mute.
+    if (audioDev) audioDev->setSuspended(false);
     mode.store(Mode::Running);
     wakeCv.notify_all();
 #ifndef __EMSCRIPTEN__
@@ -732,6 +745,13 @@ void EmulationController::softReset()
     // this (E-3-1), Ctrl-Reset would keep the //c+ alt firmware's
     // last drive selection across the warm-reset boundary.
     if (hub) hub->reset();
+    // Parity with hardReset() / coldBoot() / bootFromSlot(): a step-over or
+    // run-to-cursor transient names an address in the code that was running,
+    // and Ctrl-Reset restarts the machine from $FFFC. Leaving it armed made a
+    // one-shot breakpoint fire minutes later with no visible cause — and
+    // `armed()` counts the transient, so dropping it is also what lets
+    // syncDebugHook put the CPU back on its undebugged loop.
+    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
     processor.softReset();
     pom2::log().info("Emul", "Soft reset (Ctrl-Reset)");
 }
@@ -836,6 +856,7 @@ bool EmulationController::bootFromSlot(int slot)
         mem.setIicSmartPortArmed(false);
         processor.hardReset();
         workerParked_.store(false);  // same setter-thread invariant as setMode()
+        if (audioDev) audioDev->setSuspended(false);  // ditto for the bus
         mode.store(Mode::Running);
         wakeCv.notify_all();
         return false;   // the machine is running, but NOT off this card
@@ -926,6 +947,17 @@ void EmulationController::setMode(Mode m)
     // next syncDebugHook, which costs a predictable branch per instruction on
     // a machine that is stopped anyway.
     if (m == Mode::Stopped && debugger_) debugger_->clearTransient();
+    // Silence the host bus unless the CPU is actually running. The audio
+    // device keeps calling its sources ~200×/s regardless of `mode`, so a
+    // paused machine used to keep the AY generators and the floppy motor
+    // loop droning on their last register set for as long as the pause
+    // lasted (a breakpoint at 3 a.m. is a tone until you notice).
+    // Step counts as NOT running on purpose: the worker leaves Step by
+    // storing Stopped directly (see workerLoop), so tying the flag to
+    // "Running only" means a single-step burst never flips it — no click
+    // per instruction — and one instruction of speaker toggle is not a
+    // signal anybody wants smeared over a 5 ms buffer anyway.
+    if (audioDev) audioDev->setSuspended(m != Mode::Running);
     mode.store(m);
     wakeCv.notify_all();
 }
@@ -945,10 +977,35 @@ void EmulationController::waitUntilParked()
 bool EmulationController::rewindBeginScrub()
 {
     if (!rewind_.enabled()) return false;
+    const Mode before = mode.load();
+    // Phase 1: decide WITHOUT touching the run state. Parking first and only
+    // then discovering the ring is empty left the worker stopped for ever:
+    // the caller (Rewind_ImGui::beginScrubIfNeeded) never sets `scrubbing_`
+    // on a false return, so `releaseHold` has nothing to resume, and the ring
+    // only fills while Running — so the machine could not refill it either.
+    // Reproducible by holding F6 within one frame of ticking Record on.
+    {
+        std::lock_guard<std::mutex> lk(stateMtx);
+        // Media writes that landed while the machine was STOPPED (a printed
+        // page from the UI thread, a block-device flush) only reach the ring
+        // at `capture`'s epoch check, which does not run when nothing is
+        // capturing. Consult the epoch here too, so entering a scrub can
+        // never span an effect a rewind cannot undo (CLAUDE.md § "a rewind
+        // may never cross an irreversible write").
+        noteMediaWrite();
+        if (rewind_.empty()) return false;
+    }
+    // Phase 2: now it is worth stopping the machine.
     setMode(Mode::Stopped);
     waitUntilParked();
     std::lock_guard<std::mutex> lk(stateMtx);
-    if (rewind_.empty()) return false;
+    if (rewind_.empty()) {
+        // Raced: the worker's own capture point cleared the ring (a media
+        // write) between the two scopes. Put the machine back the way we
+        // found it rather than leaving it parked with no scrub to release.
+        if (before != Mode::Stopped) setMode(before);
+        return false;
+    }
     scrubIndex_.store(rewind_.size() - 1);
     return true;
 }
@@ -1108,6 +1165,24 @@ int EmulationController::runCpuSlice(int chunk)
     // The caller holds `stateMutex`, which is what syncDebugHook needs.
     if (debugger_ && processor.getDebugHook() != nullptr && !debugger_->armed())
         syncDebugHook();
+    // …and the same reconciliation for the LATCHED HIT. `Debugger::onInstruction`
+    // returns true on its first call while `hit_` is still valid, so a machine
+    // resumed with a stale hit executes ZERO cycles and re-parks for ever.
+    // Only `debugResume()` (the Debugger panel's Run) and `clearForTimeJump()`
+    // cleared it — every OTHER resume path calls a bare `setMode(Running)`:
+    // the toolbar Play button, Machine ▸ Run, the command palette, the kiosk
+    // toggle, the Rewind panel's Play/"resume here", `bootFromSlot`, and the
+    // CLI runner. No reset cleared it either, so the machine was wedged until
+    // the user found the Debugger panel. Consuming it HERE — the one funnel
+    // both CPU drivers go through — covers every one of them, present and
+    // future, at the cost of one predictable branch per 4096-cycle chunk.
+    //
+    // Gated on Running on purpose: `noteDebuggerStop()` below parks by storing
+    // Stopped, and `tickFrame`'s chunk loop (unlike workerLoop's) does not
+    // re-check the mode, so without the gate the very next chunk of the same
+    // tick would eat the stop it just produced.
+    if (debugger_ && debugger_->stopRequested() && mode.load() == Mode::Running)
+        debugResume();
     const int spent = processor.run(chunk);
     // A debugger stop ends the slice early. Handled HERE, in the one funnel
     // both drivers (worker thread and the WASM RAF tick) go through, rather
@@ -1158,6 +1233,15 @@ void EmulationController::debugResume()
     // Amnesty for exactly one instruction at the current PC. Without it Run
     // would re-trigger the breakpoint the machine is standing on and nothing
     // would ever move.
+    //
+    // KNOWN LIMIT (bug hunt #4): the amnesty is unconditional, so it also
+    // suppresses a breakpoint the user placed at the resume PC when the stop
+    // that brought us here was NOT that breakpoint — a watchpoint or a
+    // step-over transient stops at the boundary AFTER the access, and if a
+    // real breakpoint happens to sit at that next instruction it is skipped
+    // once. Making it conditional means remembering which pc the last stop
+    // belonged to; the cost of the bug is one missed stop the user can
+    // reproduce by pressing Run again, so it is documented, not guessed at.
     debugger_->armResumeFrom(processor.getProgramCounter());
     debugger_->clearHit();
 }
@@ -1190,6 +1274,20 @@ void EmulationController::debugStepOver()
         // the opcode. The failure is benign in both directions: a missed JSR
         // becomes a single step, and a phantom JSR arms a transient that
         // simply never fires, leaving the user to press Stop.
+        //
+        // KNOWN LIMIT (bug hunt #4, item #27): the transient goes at pc + 3,
+        // which assumes the callee returns to the byte after the JSR. A great
+        // deal of Apple II code does not — ProDOS MLI (`JSR $BF00` + a command
+        // byte and a two-byte parameter pointer), the SmartPort dispatch, and
+        // every "inline parameter" convention pop the return address, skip
+        // their operands and RTS past them. Stepping over one of those arms a
+        // transient at an address the machine never reaches, so the step-over
+        // silently becomes a Run and the user has to press Stop. Fixing it
+        // properly means stopping on "SP back above the value it had at the
+        // JSR", which needs the stack pointer at the hook — i.e. handing
+        // `Debugger` an `M6502*` and testing SP inside `onInstruction`, on the
+        // per-instruction path the performance contract guards. Deliberately
+        // deferred; documented here rather than half-done.
         if (mem.peekMainRam(pc) == 0x20) {
             resumeAt = static_cast<uint16_t>(pc + 3);
             over     = true;
@@ -1224,6 +1322,17 @@ void EmulationController::debugRunToCursor(uint16_t addr)
 // the per-instruction loop exits as soon as spent >= 1.
 void EmulationController::stepBusMaster()
 {
+    // KNOWN LIMIT (bug hunt #4): neither branch goes through
+    // `M6502DebugHook::onInstruction`, so `Debugger::curPc_` — the shadow
+    // `noteAccess` uses to name the instruction responsible for a watched
+    // access — is NOT updated while single-stepping. A watchpoint that fires
+    // during a Step therefore reports the pc of the last instruction the
+    // debugged RUN loop saw, which may be stale or 0. The stop itself is
+    // correct (the machine halts, the address and value are right); only the
+    // attributed pc is. Stepping is deliberately kept off the hook: routing it
+    // through `processor.run(1)` would change how a single step's cycles reach
+    // `memory->advanceCycles`, which is the interrupt-entry phase that
+    // mockingboard_t1_irq_phase / via_t1_rearm_chain pin.
     if (SlotPeripheral* dma = mem.slotBus().dmaClaimant())
         dma->dmaRun(1);
     else

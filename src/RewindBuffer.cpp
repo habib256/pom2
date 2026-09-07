@@ -38,6 +38,35 @@ namespace {
 
 constexpr size_t kCoalesceGap = 16;   // bridge equal gaps shorter than this
 
+// Block size for the equal-run scan below. 64 B is one cache line and lets a
+// libc memcmp use its widest vector compare; anything larger only lengthens
+// the byte-wise fixup after a mismatch.
+constexpr size_t kScanChunk = 64;
+
+// Index of the first byte at or after `from` where `a` and `b` differ, or `n`.
+//
+// WHY memcmp and not the obvious `while (a[i] == b[i]) ++i`: this scan is what
+// a rewind capture spends its time in, and it runs UNDER `stateMutex` — the
+// lock the CPU worker needs for its next 4096-cycle chunk and the UI thread
+// needs to paint. With `ramworks_banks = 128` the blob is 10.5 MB and almost
+// all of it is unchanged frame to frame, so the byte loop (one load-load-
+// compare-branch per byte) was measured at 12.9-19.6 ms per capture against
+// 0.9-2.4 ms for a plain memcmp of the same span. Chunking recovers that
+// without changing a single emitted byte: the records this feeds are decided
+// by the same comparisons, only made 64 at a time.
+size_t firstDiff(const uint8_t* a, const uint8_t* b, size_t from, size_t n)
+{
+    size_t i = from;
+    while (i + kScanChunk <= n) {
+        if (std::memcmp(a + i, b + i, kScanChunk) != 0) break;
+        i += kScanChunk;
+    }
+    // Either the tail (< kScanChunk bytes) or the ≤ 64 bytes holding the
+    // mismatch the block compare just found.
+    while (i < n && a[i] == b[i]) ++i;
+    return i;
+}
+
 void appendU32(std::vector<uint8_t>& out, uint32_t v)
 {
     out.push_back(static_cast<uint8_t>(v & 0xFF));
@@ -60,17 +89,28 @@ void encodeXorDelta(const std::vector<uint8_t>& a,
 {
     out.clear();
     const size_t n = a.size();   // caller guarantees a.size() == b.size()
+    const uint8_t* pa = a.data();
+    const uint8_t* pb = b.data();
     size_t i = 0;
     while (i < n) {
-        while (i < n && a[i] == b[i]) ++i;
+        i = firstDiff(pa, pb, i, n);
         if (i >= n) break;
         const size_t spanStart = i;
         size_t spanEnd = i + 1;          // exclusive; tracks last differing byte + 1
         size_t j = i + 1;
         while (j < n) {
-            if (a[j] != b[j]) { spanEnd = j + 1; ++j; }
-            else if (j - spanEnd >= kCoalesceGap) break;   // gap too wide → cut
-            else ++j;
+            // The byte-at-a-time original walked forward tolerating equal
+            // bytes and cut at the first equal byte `kCoalesceGap` or more
+            // past `spanEnd`. Jumping straight to the next difference is the
+            // same decision made once instead of per byte: the cut happens iff
+            // the equal gap it opens is longer than the coalesce window, i.e.
+            // iff `d - spanEnd > kCoalesceGap` (the original's largest equal
+            // index is d-1, and it broke when that reached spanEnd+kCoalesceGap).
+            const size_t d = firstDiff(pa, pb, j, n);
+            if (d >= n) break;                        // no difference left
+            if (d - spanEnd > kCoalesceGap) break;    // gap too wide → cut
+            spanEnd = d + 1;
+            j = d + 1;
         }
         const uint32_t off = static_cast<uint32_t>(spanStart);
         const uint32_t len = static_cast<uint32_t>(spanEnd - spanStart);
@@ -202,12 +242,48 @@ void RewindBuffer::evictToCap()
                (maxBytes_ != 0 && totalBytes_ > maxBytes_ && frames_.size() > 1);
     };
     while (overCap()) {
-        // Invariant: the front is always a keyframe. Before dropping it, if
-        // the next frame is a delta it must be promoted to a keyframe so the
-        // chain doesn't dangle.
-        if (frames_.size() >= 2 && !frames_[1].isKeyframe) {
+        // Invariant: the front is always a keyframe, so a delta at index 1
+        // cannot simply be exposed — its base would be gone.
+        //
+        // The obvious repair (promote frames_[1] by reconstructing it) is a
+        // trap at RamWorks blob sizes: it COPIES a whole ~10.5 MB keyframe and
+        // applies a delta on top, and it frees only the evicted delta's few
+        // KB, so freeing one blob's worth of budget costs one blob-sized copy
+        // per frame — ~120 of them, over a gigabyte of memcpy under
+        // `stateMutex`, for one 256 MiB-cap eviction. Measured at 75-110 ms
+        // captures dropping ~30 frames every 2 s.
+        //
+        // Evict FORWARD to the next keyframe instead: dropping a keyframe
+        // together with every delta that hangs off it leaves a keyframe at the
+        // front by construction, copies nothing, and frees a whole blob in one
+        // step. The price is granularity — the ring now holds between
+        // `maxFrames - keyframeInterval + 1` and `maxFrames` frames instead of
+        // exactly `maxFrames` — which is history the user cannot perceive
+        // (2 s of a 30 s ring) against a stall they certainly can.
+        size_t next = 1;
+        while (next < frames_.size() && !frames_[next].isKeyframe) ++next;
+        if (next < frames_.size()) {
+            for (size_t k = 0; k < next; ++k) {
+                totalBytes_ -= frames_.front().data.size();
+                frames_.pop_front();
+            }
+            continue;
+        }
+        // No later keyframe at all (the whole ring hangs off the front, which
+        // is the normal shape for a ring shorter than one keyframe interval).
+        // Fall back to promotion — bounded here, because the ring is by
+        // definition shorter than `keyframeInterval` frames.
+        if (frames_.size() >= 2) {
             std::vector<uint8_t> full = frames_[0].data;   // front = keyframe full blob
-            applyXorDelta(full, frames_[1].data);
+            if (!applyXorDelta(full, frames_[1].data)) {
+                // A delta that does not apply to its own base means the chain
+                // is corrupt; every frame after it decodes to garbage a
+                // restore would push straight into the live machine. Drop the
+                // timeline rather than hand out wrong state (defensive — the
+                // encoder cannot produce this).
+                clear();
+                return;
+            }
             totalBytes_ -= frames_[1].data.size();
             frames_[1].data = std::move(full);
             frames_[1].isKeyframe = true;
@@ -218,7 +294,7 @@ void RewindBuffer::evictToCap()
     }
 }
 
-void RewindBuffer::reconstruct(size_t index, std::vector<uint8_t>& out) const
+bool RewindBuffer::reconstruct(size_t index, std::vector<uint8_t>& out) const
 {
     // Nearest keyframe at or below `index`. The front is always a keyframe,
     // so this terminates.
@@ -226,7 +302,13 @@ void RewindBuffer::reconstruct(size_t index, std::vector<uint8_t>& out) const
     while (k > 0 && !frames_[k].isKeyframe) --k;
     out = frames_[k].data;
     for (size_t j = k + 1; j <= index; ++j)
-        applyXorDelta(out, frames_[j].data);
+        // The return used to be dropped on the floor. A delta that does not
+        // apply leaves `out` half-XORed — a blob that still parses as a
+        // snapshot and would be restored INTO THE LIVE MACHINE. Defensive
+        // (the encoder cannot emit one), but the failure mode is silent
+        // corruption of the running state, so it is now reported.
+        if (!applyXorDelta(out, frames_[j].data)) return false;
+    return true;
 }
 
 void RewindBuffer::dropAbandonedFuture(uint64_t cycle)
@@ -277,7 +359,7 @@ RewindBuffer::FrameInfo RewindBuffer::infoAt(size_t index) const
 bool RewindBuffer::restore(size_t index, M6502& cpu, Memory& mem)
 {
     if (index >= frames_.size()) return false;
-    reconstruct(index, reconstructScratch_);
+    if (!reconstruct(index, reconstructScratch_)) return false;
     SnapshotReader r(reconstructScratch_.data(), reconstructScratch_.size());
     if (!r.good()) return false;
     return restoreMachineState(r, cpu, mem, /*transactional=*/false).ok;
@@ -309,8 +391,10 @@ void RewindBuffer::truncateAfter(size_t index)
         frames_.pop_back();
     }
     // The newest frame changed: rebuild prevBlob_ (the delta base) and the
-    // keyframe-spacing counter so the next capture continues correctly.
-    reconstruct(frames_.size() - 1, prevBlob_);
+    // keyframe-spacing counter so the next capture continues correctly. A
+    // failure here would leave every future delta based on a half-decoded
+    // blob, so drop the timeline instead (see reconstruct()).
+    if (!reconstruct(frames_.size() - 1, prevBlob_)) { clear(); return; }
     resyncSinceKeyframe();
 }
 

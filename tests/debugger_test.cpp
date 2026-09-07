@@ -726,6 +726,18 @@ void testTransientIsDisarmedByStopAndReset()
            "Stop left a step-over breakpoint armed");
     assert(!ctrl.debugger().armed());
 
+    // Soft reset (F11 / Ctrl-Reset). It was the one reset verb that did NOT
+    // disarm the transient (bug hunt #4, item #16): hardReset, coldBoot and
+    // bootFromSlot all did, so a step-over abandoned by a Ctrl-Reset stayed
+    // armed at an address in code that no longer runs — and kept the CPU on
+    // its debugged loop, because `armed()` counts the transient.
+    armTransient(0x0300);
+    ctrl.softReset();
+    assert(!ctrl.debugger().hasTransient() &&
+           "a soft reset left a step-over breakpoint armed");
+    assert(ctrl.cpu().getDebugHook() == nullptr &&
+           "nothing is armed any more — the hook must be detached again");
+
     // Hard reset (F12 — and the profile switch that runs through it).
     armTransient(0x0301);
     ctrl.hardReset();
@@ -887,6 +899,91 @@ void testTimeJumpClearsDebuggerTransients()
                 "the user's breakpoints\n");
 }
 
+// ── 18. A latched hit does not wedge the machine for ever (bug hunt #4) ──
+// `Debugger::onInstruction` returns true on its FIRST call while `hit_` is
+// still valid — that is what makes a stop survive the chunk boundary. The
+// hit was consumed by exactly two callers: `debugResume()` (the Debugger
+// panel's own Run button) and `clearForTimeJump()`. Every other way the user
+// resumes the machine — the toolbar Play button, Machine ▸ Run, the command
+// palette, the kiosk toggle, the Rewind panel's Play, `bootFromSlot`, the CLI
+// runner — calls a bare `setMode(Running)`, and no reset cleared it either.
+// The result: `M6502::run` broke out with ZERO cycles spent, `runCpuSlice`
+// re-parked, and the machine stayed frozen for the rest of the session with
+// the toolbar showing Running.
+//
+// The discriminator is the CYCLE COUNTER, not the PC: the old code was not
+// wrong about where it stood, it simply never moved.
+void testLatchedHitDoesNotWedgeAResume()
+{
+    EmulationController ctrl;
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        Memory& mem = ctrl.memory();
+        mem.memWrite(0x0800, 0xEA);   // NOP
+        mem.memWrite(0x0801, 0x4C);   // JMP $0800
+        mem.memWrite(0x0802, 0x00);
+        mem.memWrite(0x0803, 0x08);
+        ctrl.cpu().setProgramCounter(0x0800);
+        ctrl.debugger().addBreakpoint(0x0800);
+        // A SECOND breakpoint the loop never reaches. Without it the debugger
+        // would be un-armed once the first is removed, `runCpuSlice` would
+        // detach the hook and the stale hit could not be observed at all —
+        // the case would pass on the broken code and prove nothing.
+        ctrl.debugger().addBreakpoint(0x0F00);
+        ctrl.syncDebugHook();
+    }
+
+    // Run into the breakpoint.
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.debugger().stopRequested() && "the breakpoint never fired");
+    assert(ctrl.getMode() == EmulationController::Mode::Stopped);
+
+    // The user deletes the breakpoint they stopped on and presses the toolbar
+    // Play button — a bare setMode(Running), NOT debugResume().
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        ctrl.debugger().removeBreakpoint(0x0800);
+        ctrl.syncDebugHook();
+        assert(ctrl.debugger().armed() && "the $0F00 breakpoint must survive");
+    }
+    const uint64_t before = [&] {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        return ctrl.memory().getCycleCounter();
+    }();
+
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+
+    const uint64_t after = [&] {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        return ctrl.memory().getCycleCounter();
+    }();
+    assert(after > before + 1000 &&
+           "a stale debugger hit swallowed the whole frame — Play, Run, the "
+           "palette, the kiosk toggle and every reset are dead buttons");
+    assert(ctrl.getMode() == EmulationController::Mode::Running &&
+           "the machine re-parked on a breakpoint nothing hit");
+    assert(!ctrl.debugger().stopRequested());
+
+    // The surviving breakpoint is still a breakpoint: no amnesty leaked.
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        assert(ctrl.debugger().hasBreakpoint(0x0F00));
+        ctrl.cpu().setProgramCounter(0x0F00);
+        ctrl.memory().memWrite(0x0F00, 0xEA);
+        ctrl.memory().memWrite(0x0F01, 0x4C);
+        ctrl.memory().memWrite(0x0F02, 0x00);
+        ctrl.memory().memWrite(0x0F03, 0x0F);
+    }
+    ctrl.tickFrame();
+    assert(ctrl.debugger().stopRequested() &&
+           "the fix ate a live breakpoint instead of a stale hit");
+    assert(ctrl.getMode() == EmulationController::Mode::Stopped);
+
+    std::printf("[ OK ] a latched hit does not wedge a bare resume\n");
+}
+
 }  // namespace
 
 int main()
@@ -907,6 +1004,7 @@ int main()
     testTransientIsDisarmedByStopAndReset();
     testIdleHookIsDetachedOnResume();
     testTimeJumpClearsDebuggerTransients();
+    testLatchedHitDoesNotWedgeAResume();
     testBootFromSlotResetsTheCassetteCpuSide();
     std::printf("debugger: all assertions passed\n");
     return 0;

@@ -85,6 +85,12 @@ public:
     bool enabled() const     { return enabled_.load(); }
 
     /// Cap on retained frames. Shrinking drops the oldest immediately.
+    ///
+    /// Both caps are honoured as CEILINGS, not as exact counts: eviction
+    /// drops a keyframe together with the deltas that hang off it, in one
+    /// step, so the ring holds between `maxFrames - keyframeInterval + 1` and
+    /// `maxFrames` frames. See evictToCap() for why the exact-count variant
+    /// was a stall rather than a nicety.
     void   setMaxFrames(size_t n);
     size_t maxFrames() const { return maxFrames_; }
 
@@ -153,8 +159,10 @@ private:
     // Drop every frame stamped at-or-after `cycle`: the future the machine
     // has just abandoned by jumping back. One compare on the hot path.
     void dropAbandonedFuture(uint64_t cycle);
-    // Rebuild the full snapshot blob for frame `index` into `out`.
-    void reconstruct(size_t index, std::vector<uint8_t>& out) const;
+    // Rebuild the full snapshot blob for frame `index` into `out`. False iff
+    // a delta in the chain did not apply — `out` is then partially XORed and
+    // must not be restored into the live machine.
+    bool reconstruct(size_t index, std::vector<uint8_t>& out) const;
     void resyncSinceKeyframe();
 
     std::deque<Frame> frames_;

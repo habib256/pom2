@@ -309,8 +309,41 @@ public:
     // 6502 cycles per ImGui frame (CPU-pacing budget). Default = ~17 045
     // cycles/frame = 1.0227 MHz emulated. Setting it higher than the real
     // clock turbo-runs the CPU; UI uses this for the "MAX" button.
-    void setCyclesPerFrame(int n) { cyclesPerFrame.store(n); }
+    /// Set the machine's BASE budget (profile default, speed menu, CLI
+    /// --speed, AI /speed). While a turbo override is engaged this records
+    /// the new base without disturbing the override; the override's exit
+    /// then restores what the user last asked for.
+    void setCyclesPerFrame(int n)
+    {
+        baseCyclesPerFrame_.store(n);
+        if (!turboActive_.load()) cyclesPerFrame.store(n);
+    }
+    /// The budget the worker actually burns — the turbo value while turbo is
+    /// engaged, the base otherwise. This is what the toolbar's speed label,
+    /// the status bar and the AI `/speed` reply have always reported.
     int  getCyclesPerFrame() const { return cyclesPerFrame.load(); }
+    /// The budget turbo will fall back to. Read by tests and diagnostics.
+    int  getBaseCyclesPerFrame() const { return baseCyclesPerFrame_.load(); }
+
+    /// Disk turbo (~60× while a drive streams). The override COMPOSES with
+    /// the base instead of replacing it: the UI used to stash
+    /// `getCyclesPerFrame()` in a MainWindow member before writing 1 M, and
+    /// anything that changed the speed during the burst — a profile switch,
+    /// setVideoStandard, the speed menu, the AI server — was silently undone
+    /// when the drive stopped (a PAL machine restored to the NTSC 17045, a
+    /// //c+ dropped out of its 4× accelerator). Keeping both halves in the
+    /// controller means the exit restores the CURRENT base, whoever set it.
+    void setTurboOverride(int n)
+    {
+        turboActive_.store(true);
+        cyclesPerFrame.store(n);
+    }
+    void clearTurboOverride()
+    {
+        turboActive_.store(false);
+        cyclesPerFrame.store(baseCyclesPerFrame_.load());
+    }
+    bool turboOverrideActive() const { return turboActive_.load(); }
 
     /// `cyclesPerFrame` after any plugged accelerator's multiplier — the
     /// budget the frame loop actually burns. Public so the status bar and
@@ -438,7 +471,12 @@ private:
     std::unique_ptr<pom2::Debugger> debugger_;
 
     std::atomic<Mode> mode{Mode::Stopped};
+    /// EFFECTIVE budget the worker reads every frame.
     std::atomic<int>  cyclesPerFrame{17045};
+    /// Budget to fall back to when the turbo override lifts. Kept in step
+    /// with `cyclesPerFrame` by setCyclesPerFrame; see setTurboOverride.
+    std::atomic<int>  baseCyclesPerFrame_{17045};
+    std::atomic<bool> turboActive_{false};
     // Worker frame-pacing interval (µs) and the active video standard. PAL
     // paces at 50 Hz (20000 µs), NTSC at 60 Hz (~16667 µs).
     std::atomic<int>  frameIntervalUs{1'000'000 / 60};

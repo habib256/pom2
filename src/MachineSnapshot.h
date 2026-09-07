@@ -22,7 +22,9 @@
 // (RewindBuffer) need, so the two never drift. The byte layout is the
 // SnapshotIO section roster (see SnapshotIO.h):
 //
-//   CPU   16 bytes  PC A X Y P SP cpuMode + cycle counter
+//   CPU   17 bytes  PC A X Y P SP cpuMode + cycle counter + STP halt latch
+//                   (16 in v1.0 blobs, which predate the halt latch and are
+//                   still accepted)
 //   MEM   64 KiB    main RAM (restored through Memory::restoreMainRam, ROM
 //                   mirror preserved)
 //   MEX   v2 blob   aux RAM + Language-Card RAM + RamWorks banks + paging

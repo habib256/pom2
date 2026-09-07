@@ -29,6 +29,7 @@
 #include "SnapshotIO.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace pom2 {
@@ -57,9 +58,22 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
     // MEX (v2): aux RAM + Language-Card RAM + RamWorks banks + paging soft-
     // switches + DisplayState — everything the MEM main-64K misses.
     {
-        std::vector<uint8_t> mex;
-        mem.appendSnapshotState(mex);
-        w.writeSection("MEX", mex.data(), mex.size());
+        // Scratch, not a fresh vector per call. `appendSnapshotState` grows
+        // this to the whole aux/LC/RamWorks payload — 10.5 MB with
+        // `ramworks_banks = 128` — and the rewind ring calls captureMachineState
+        // ONCE PER FRAME with `stateMutex` held. A local vector meant a 10.5 MB
+        // malloc, a first-touch page fault storm over 2560 fresh pages, and a
+        // free, 60 times a second, inside the lock the CPU worker and the UI
+        // painter both need. Reusing the buffer keeps the capacity hot; the
+        // bytes written are identical, so the wire format is untouched.
+        //
+        // thread_local because a file snapshot is written from the UI thread
+        // while the ring captures on the worker — one buffer each, no lock,
+        // and each thread pays the retention only if it ever captured.
+        static thread_local std::vector<uint8_t> mexScratch;
+        mexScratch.clear();
+        mem.appendSnapshotState(mexScratch);
+        w.writeSection("MEX", mexScratch.data(), mexScratch.size());
     }
     // SLOT1..SLOT7: per-card volatile runtime state (e.g. DiskIICard's head
     // position + LSS). Opt-in: only the rewind path wants these (the
@@ -128,8 +142,6 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         // section (9..15 B) read up to 7 bytes past it → garbage cycle
         // counter / CPU mode. A normal save always writes exactly 16.
         if (name == "CPU" && len >= 16) {
-            disarmDmaOnce();
-            appliedCore = true;
             const uint16_t pc      = r.readU16();
             const uint8_t  a       = r.readU8();
             const uint8_t  x       = r.readU8();
@@ -144,16 +156,37 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             // rewind-out-of-a-crash case, where the live `halted` used to
             // survive the restore and keep the machine frozen.
             const bool halted = (len >= 17) ? (r.readU8() != 0) : false;
+            // REFUSE a core mismatch instead of restoring onto it. cpuMode is
+            // machine CONFIGURATION (profile + cpu_mode_override, with
+            // resolveCpuMode's soldered-65C02 clamp on //c-class), so it is
+            // deliberately NOT applied — but a 65C02 snapshot restored onto an
+            // NMOS core resumes at a PC pointing into 65C02-only opcodes,
+            // several of which are KIL on NMOS: the machine freezes with no
+            // message. snapshotMachineId only hashes the profile key, so the
+            // caller-side identity guards let this through. Refuse BEFORE any
+            // register is touched (the transactional wrapper would roll it
+            // back, but this way there is nothing to roll back).
+            const bool snapCmos = cpuMode != 0;
+            const bool liveCmos = cpu.getCpuMode() == M6502::CpuMode::CMOS;
+            if (snapCmos != liveCmos) {
+                return { false,
+                         snapCmos
+                             ? "snapshot was taken on a 65C02 machine; this one "
+                               "runs an NMOS 6502 (65C02 opcodes would halt it)"
+                             : "snapshot was taken on an NMOS 6502 machine; "
+                               "this one runs a 65C02" };
+            }
+            disarmDmaOnce();
+            appliedCore = true;
             cpu.setProgramCounter(pc);
-            // cpuMode is read to keep the section cursor math intact but
-            // NOT applied: CPU mode is machine CONFIGURATION (profile +
-            // cpu_mode_override, with resolveCpuMode's soldered-65C02
-            // clamp on //c-class), not machine state. Applying a foreign
-            // snapshot's byte bypassed that clamp — an NMOS-mode blob
-            // loaded on a //c forced its 65C02 ROM onto an NMOS core (KIL
-            // freeze), and the override persisted across resets. Same
-            // precedent as MEX's iieMode field (Memory.cpp).
-            (void)cpuMode;
+            // cpuMode is compared (above) but never APPLIED: CPU mode is
+            // machine CONFIGURATION (profile + cpu_mode_override, with
+            // resolveCpuMode's soldered-65C02 clamp on //c-class), not
+            // machine state. Applying a foreign snapshot's byte bypassed that
+            // clamp — an NMOS-mode blob loaded on a //c forced its 65C02 ROM
+            // onto an NMOS core (KIL freeze), and the override persisted
+            // across resets. Same precedent as MEX's iieMode field
+            // (Memory.cpp).
             cpu.setAccumulator(a);
             cpu.setXRegister(x);
             cpu.setYRegister(y);
@@ -328,13 +361,33 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         }
         std::vector<uint8_t> oldMex;
         mem.appendSnapshotState(oldMex);
+        uint32_t snapBanks = 1;
         const bool valid = mem.loadSnapshotState(candidateMex.data(),
-                                                 candidateMex.size());
+                                                 candidateMex.size(),
+                                                 &snapBanks);
         const bool restored = mem.loadSnapshotState(oldMex.data(), oldMex.size());
         if (!restored)
             return { false, "snapshot MEX validation checkpoint could not be restored" };
         if (!valid)
             return { false, "snapshot MEX section truncated or malformed" };
+        // RamWorks geometry is machine CONFIGURATION, not state, and nothing
+        // upstream checks it: snapshotMachineId hashes the profile key alone,
+        // so a 128-bank capture (8 MB of guest aux) restored into a stock
+        // 64 KB aux passed every identity guard and then had Memory's
+        // best-effort branch keep ONE bank and drop the rest — silently, and
+        // reporting success. A file load is the one path where the user can
+        // fix it (set `ramworks_banks` and relaunch), so say so and refuse.
+        // The rewind ring never reaches here (transactional=false): it
+        // restores the machine that captured it.
+        const uint32_t liveBanks = mem.ramWorksBanks();
+        if (snapBanks != liveBanks) {
+            return { false,
+                     "snapshot was taken with " + std::to_string(snapBanks) +
+                     " RamWorks aux bank(s); this machine has " +
+                     std::to_string(liveBanks) +
+                     " — set ramworks_banks=" + std::to_string(snapBanks) +
+                     " and restart before loading it" };
+        }
     }
 
     // MEX's nested device payload is semantic rather than framing-only. Keep

@@ -176,9 +176,13 @@ Rewind_ImGui::FrameResult Rewind_ImGui::render(const char* title, bool& open,
     ImGui::SetNextItemWidth(150.0f);
     ImGui::BeginDisabled(scrubbing_);
     if (ImGui::SliderInt("history (s)", &histSec, 5, 120)) {
-        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
-        ctrl.rewind().setMaxFrames(static_cast<size_t>(histSec) *
-                                   static_cast<size_t>(refreshHz));
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            ctrl.rewind().setMaxFrames(static_cast<size_t>(histSec) *
+                                       static_cast<size_t>(refreshHz));
+        }
+        // Report it up so the host can persist it — see FrameResult.
+        res.historySecondsChanged = histSec;
     }
     ImGui::EndDisabled();
     if (!enabled && !haveFrames)
