@@ -145,17 +145,24 @@ void testINTCXROMandSLOTC3ROM(Memory& mem)
 {
     // Stuff a sentinel in the internal I/O ROM and one in main $C100
     // (which would be slot 1 ROM if any card were plugged). Without a
-    // slot 1 card, slotRomRead returns 0xFF (open bus).
+    // slot 1 card, slotRomRead returns the FLOATING BUS — MAME
+    // `apple2e.cpp:2970-2987` `read_slot_rom` ends in
+    // `return read_floatingbus();` when `m_slotdevice[slotnum]` is null.
+    // (It used to be a hard $FF, which is only what SlotBus answers when
+    // nobody installed a floating-bus source; Memory always does.)
     //
     // We can't directly poke internalIORom from outside; instead rely on
     // it being all-zero (constructor) and check that INTCXROM=on returns
-    // 0x00 from $C100 (internal) vs 0xFF (open bus) when off.
+    // 0x00 from $C100 (internal) vs the open bus when off. No CPU is
+    // attached here, so `floatingBus()` and `peekFloatingBus()` sample the
+    // same cycle.
+    const uint8_t bus = mem.peekFloatingBus();
     mem.memWrite(IIE_INTCXROM_OFF, 0);
     mem.memWrite(IIE_SLOTC3_ON, 0);   // disable internal $C300 too
     const uint8_t off1 = mem.memRead(0xC100);
     const uint8_t off3 = mem.memRead(0xC300);
-    assert(off1 == 0xFF);  // open bus from empty slot 1
-    assert(off3 == 0xFF);  // open bus from empty slot 3
+    assert(off1 == bus);  // open bus from empty slot 1
+    assert(off3 == bus);  // open bus from empty slot 3
 
     mem.memWrite(IIE_INTCXROM_ON, 0);
     assert(mem.memRead(0xC100) == 0x00);  // internal ROM (zero-init)
@@ -165,9 +172,9 @@ void testINTCXROMandSLOTC3ROM(Memory& mem)
     // SLOTC3ROM=off forces $C300-$C3FF to internal even when INTCXROM=off.
     mem.memWrite(IIE_SLOTC3_OFF, 0);
     assert(mem.memRead(0xC300) == 0x00);  // internal
-    assert(mem.memRead(0xC100) == 0xFF);  // slot bus (still open)
+    assert(mem.memRead(0xC100) == bus);   // slot bus (still open)
     mem.memWrite(IIE_SLOTC3_ON, 0);
-    assert(mem.memRead(0xC300) == 0xFF);  // back to slot bus
+    assert(mem.memRead(0xC300) == bus);   // back to slot bus
 }
 
 void testStatusReads(Memory& mem)

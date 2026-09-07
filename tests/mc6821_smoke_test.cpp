@@ -179,6 +179,67 @@ void test_port_b_three_state()
     assert(pia.read(2) == 0x55);
 }
 
+// ── The three B-side / CA2 divergences from MAME `6821pia.cpp` ─────────
+//
+// 1. `port_b_r` (`:439-460`) restores CB2 when a port-B read clears an
+//    IRQ B1 raised by a CB1 edge, in write-strobe + CB1-reset mode. Its
+//    own comment: "Note that this is different from what happens with
+//    port A." POM2 had no restore at all.
+// 2. `port_b_w` (`:689-706`) gates the CB2 write strobe on
+//    `c2_strobe_mode(m_ctl_b)` ALONE — no `c2_output` test, unlike the
+//    A-side read strobe at `:403`. Same for `control_b_w` (`:788-802`),
+//    which calls `set_out_cb2` unconditionally.
+// 3. `port_a_r` (`:403-412`) guards the strobe-low with `if (m_out_ca2)`,
+//    because `set_out_ca2` (`:339-355`) has no change guard of its own —
+//    unlike `set_out_cb2` (`:362-385`), which does.
+void test_cb2_strobe_and_ca2_change_guard()
+{
+    // CRB = $04 (data port) | $00 (CB2 write-strobe, CB1-reset). Bit 5
+    // (c2_output) deliberately CLEAR — upstream strobes anyway.
+    {
+        MC6821 pia;
+        pia.reset();
+        int edges = 0;
+        bool level = true;
+        pia.setCB2WriteCallback([&](bool v) { ++edges; level = v; });
+        pia.write(3, 0x04);
+        const int afterCtl = edges;
+        assert(level && "control_b_w must park CB2 high in strobe mode");
+        pia.write(2, 0x5A);                 // port-B write → strobe low
+        assert(edges > afterCtl && !level &&
+               "port-B write must strobe CB2 low with CRB bit 5 clear");
+
+        // CB1 edge sets IRQ B1; the port-B read that clears it restores
+        // CB2 high (CB1-reset mode = CRB bit 3 clear).
+        pia.write(3, 0x05);                 // + CB1 IRQ enable, still strobe
+        pia.setCB1(true);
+        pia.setCB1(false);                  // active transition (high→low)
+        pia.write(2, 0x5A);                 // strobe low again
+        assert(!level);
+        (void)pia.read(2);                  // port-B read → CB1 restore
+        assert(level && "port-B read must restore CB2 on the CB1-reset rule");
+    }
+
+    // CA2 read-strobe: the second and later port-A reads must NOT re-notify
+    // the wire while CA2 is already low (strobe-E reset OFF = CRA bit 3
+    // clear, so it stays low until a CA1 edge).
+    {
+        MC6821 pia;
+        pia.reset();
+        int edges = 0;
+        pia.setCA2WriteCallback([&](bool) { ++edges; });
+        pia.write(1, 0x04 | 0x20);          // data port + CA2 output, strobe
+        const int armed = edges;            // control_a_w parked it high
+        (void)pia.read(0);                  // first read: high → low
+        const int afterFirst = edges;
+        assert(afterFirst == armed + 1 && "first port-A read strobes CA2 low");
+        (void)pia.read(0);
+        (void)pia.read(0);
+        assert(edges == afterFirst &&
+               "an already-low CA2 must not re-notify on every port-A read");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -190,6 +251,7 @@ int main()
     test_ca1_edge_irq();
     test_cra_bits_67_readonly();
     test_port_b_three_state();
+    test_cb2_strobe_and_ca2_change_guard();
 
     std::printf("OK mc6821_smoke\n");
     return 0;

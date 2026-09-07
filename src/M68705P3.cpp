@@ -28,11 +28,17 @@
 //
 //   * EPROM programming via PCR ($000B). The runtime emulator never
 //     programs the EPROM — the firmware is a fixed input.
-//   * The MOR (Mask Option Register) at offset $0784 inside the EPROM.
-//     MAME consults this for timer source / divisor configuration; on
-//     the Apple Mouse Card the firmware sets up TCR explicitly so the
-//     MOR is irrelevant here. We default to TIMER_PGM (programmable),
-//     matching the M68705 EPROM family.
+//   * EPROM *programming* through the MOR's SNM bit. The MOR itself IS
+//     honoured — see `configureTimerFromMor()`: MAME `m68705.cpp:465-476`
+//     (`device_start`) reads `get_mask_options()`, which for the P3 is
+//     `get_user_rom()[0x0784] & 0xf7` (`:765-768`), and when `MOR_TOPT`
+//     (0x40) is set switches the timer to TIMER_MOR — divisor from
+//     `MOR_PS`, source from `(MOR_CLS|MOR_TIE) >> 4` — instead of
+//     TIMER_PGM. The Apple Mouse MCU dump (`roms/mouse_341-0269.bin`)
+//     has MOR = $40: TOPT set, PS = 0, source CLOCK, i.e. the prescaler
+//     divides by ONE and the firmware's TCR writes cannot change it.
+//     The old comment here claimed the firmware programmed the divisor
+//     through TCR; it only ever touches TCR bits 6/7 (TIM/TIR).
 //   * STOP / WAIT instructions. MAME aborts on these (`fatalerror`).
 //     We park PC on the instruction so it's diagnosable but never
 //     advance — the mouse firmware never executes either.
@@ -104,6 +110,7 @@ bool M68705P3::loadRomFile(const std::string& path)
     // I/O regs and RAM and is never executable anyway.
     std::memcpy(eprom.data(), buf.data() + 0x80, 0x780);
     romLoaded = true;
+    configureTimerFromMor();
     pom2::log().info("M68705", "Loaded EPROM " + path + " (2048 bytes)");
     return true;
 }
@@ -113,7 +120,27 @@ bool M68705P3::loadRomBytes(const uint8_t* data, std::size_t len)
     if (len != 0x800) return false;
     std::memcpy(eprom.data(), data + 0x80, 0x780);
     romLoaded = true;
+    configureTimerFromMor();
     return true;
+}
+
+void M68705P3::configureTimerFromMor()
+{
+    // MAME `m68705.cpp:465-476` (`m68705_device::device_start`), with
+    // `get_mask_options()` = `get_user_rom()[0x0784] & 0xf7` for the P3
+    // (`:765-768`, "no SNM bit"). This is CONFIGURATION, not reset state:
+    // MAME does it once at device_start and `device_reset` never touches
+    // the divisor or the source, so neither does `reset()` below.
+    const uint8_t options = static_cast<uint8_t>(eprom[kMorAddr - 0x80] & 0xF7);
+    if (options & MOR_TOPT) {
+        timerMor_     = true;
+        timer.divisor = options & MOR_PS;
+        timerSource_  = static_cast<uint8_t>((options & (MOR_CLS | MOR_TIE)) >> 4);
+    } else {
+        timerMor_     = false;
+        timer.divisor = 7;             // m6805_timer ctor default
+        timerSource_  = kSrcClock;
+    }
 }
 
 void M68705P3::reset()
@@ -133,11 +160,13 @@ void M68705P3::reset()
         p.ddr   = 0x00;
         p.input = 0xFF;
     }
-    // Reset timer.
+    // Reset timer. MAME `m6805_timer::reset()` (`m68705.h:73-79`) resets
+    // only the edge counter, prescaler, TDR and TCR — the divisor and the
+    // source stay as `device_start` configured them from the MOR, so they
+    // are deliberately NOT touched here (see `configureTimerFromMor`).
     timer.tdr      = 0xFF;
     timer.tcr      = 0x7F;
     timer.prescale = 0x7F;
-    timer.divisor  = 7;
 
     // Fetch reset vector from $07FE/$07FF (big-endian).
     if (romLoaded) {
@@ -166,8 +195,12 @@ uint8_t M68705P3::rdmem(uint16_t addr)
             return 0xFF;
         case 0x0008: return timer.tdr;
         case 0x0009:
-            // PSC bit reads as 0 for non-MOR chips; we model TIMER_PGM.
-            return timer.tcr & ~0x08;
+            // MAME `m6805_timer::tcr_r` (`m68705.h:86`):
+            //   `(m_options & TIMER_MOR) ? m_tcr | TCR_PSC : m_tcr & ~TCR_PSC`
+            // — the prescaler-clear bit reads back as 1 on a MOR-configured
+            // part and as 0 on a programmable one.
+            return timerMor_ ? static_cast<uint8_t>(timer.tcr | TCR_PSC)
+                             : static_cast<uint8_t>(timer.tcr & ~TCR_PSC);
         default: break;
     }
     if (addr >= 0x10 && addr <= 0x7F) return ram[addr - 0x10];
@@ -308,17 +341,28 @@ uint8_t M68705P3::getPortPins(int port) const
 
 void M68705P3::timerWriteTcr(uint8_t v)
 {
-    // MAME's tcr_w with TIMER_PGM (programmable):
-    //   set_divisor(v & TCR_PS);
-    //   set_source(timer_source((v & (TCR_TIN | TCR_TIE)) >> 4));
-    timer.divisor = v & 0x07;
-    // Source field decoded from TCR bits 4..5; for the mouse card the
-    // 68705 uses internal clock as timer source (CLOCK = 0). We honour
-    // the bits so the firmware's timer config is round-trippable, but
-    // we always tick from the internal clock — external timer pin is
-    // not wired on the mouse card.
-    if (v & 0x08) timer.prescale = 0;     // TCR_PSC: prescaler clear
-    timer.tcr = static_cast<uint8_t>((timer.tcr & (v & 0x80)) | (v & ~(0x80 | 0x08)));
+    // MAME `m6805_timer::tcr_w` (`m68705.cpp:994-1015`), verbatim:
+    //
+    //   if (m_options & TIMER_MOR) data |= TCR_TIE;
+    //   if (m_options & TIMER_PGM) { set_divisor(data & TCR_PS);
+    //                                set_source(timer_source(
+    //                                    (data & (TCR_TIN|TCR_TIE)) >> 4)); }
+    //   if ((data & TCR_PSC) && !(m_options & TIMER_NPC)) m_prescale = 0;
+    //   m_tcr = (m_tcr & (data & TCR_TIR)) | (data & ~(TCR_TIR | TCR_PSC));
+    //
+    // On a MOR-configured part (the Apple Mouse MCU — MOR $40) the
+    // divisor and the source are FIXED by the mask option: a TCR write
+    // cannot reprogram them, it only carries TIM/TIR. Treating the mouse
+    // firmware's TCR writes as divisor writes left the prescaler at ÷128
+    // instead of the MOR's ÷1.
+    if (timerMor_) v |= TCR_TIE;
+    else {
+        timer.divisor = v & TCR_PS;
+        timerSource_  = static_cast<uint8_t>((v & (TCR_TIN | TCR_TIE)) >> 4);
+    }
+    if (v & TCR_PSC) timer.prescale = 0;     // TIMER_NPC not used by the P3
+    timer.tcr = static_cast<uint8_t>((timer.tcr & (v & TCR_TIR)) |
+                                     (v & ~(TCR_TIR | TCR_PSC)));
     // TIM bit gates the timer interrupt request. MAME models this as a
     // LEVEL-sensitive line: tcr_w calls set_input_line(M6805_INT_TIMER,
     // (m_tcr & TCR_TIR) && !(m_tcr & TCR_TIM)), which both asserts AND
@@ -334,6 +378,13 @@ void M68705P3::timerWriteTcr(uint8_t v)
 
 void M68705P3::timerUpdate(unsigned count)
 {
+    // MAME `m6805_timer::update` (`m68705.cpp:1017-1046`): a DISABLED
+    // source, or the external-pin-only TIMER source (never wired on the
+    // Mouse Card, so it contributes no edges), stops the counter dead.
+    // The MOR-configured Apple Mouse MCU sits on CLOCK, so this gate is
+    // inert there — it only matters for a TIMER_PGM part whose firmware
+    // parks the source.
+    if (timerSource_ == kSrcDisabled || timerSource_ == kSrcExternal) return;
     // Compute new prescaler value and counter decrements.
     const unsigned prescale = (timer.prescale & ((1u << timer.divisor) - 1u)) + count;
     const unsigned decrements = prescale >> timer.divisor;
@@ -903,13 +954,16 @@ int M68705P3::step()
 int M68705P3::run(int cycles)
 {
     icount = cycles;
-    int total = 0;
     while (icount > 0) {
-        const int n = step();
-        total += n;
-        if (n == 0) break;     // safety
+        if (step() == 0) break;     // safety (no table entry is 0)
     }
-    return total;
+    // MAME's scheduler advances the device by `cycles_running - m_icount`
+    // (`m6805_base_device::execute_run` leaves m_icount negative), which
+    // includes the 11 cycles `serviceInterrupt()` charges for taking a
+    // vector. Summing only the opcode costs under-reported those, so the
+    // MCU ran fast against the Apple II clock by 11 cycles per interrupt
+    // — 0.03 % at the old ÷128 timer, but 4.3 % at the MOR's real ÷1.
+    return cycles - icount;
 }
 
 // ── Snapshot ──────────────────────────────────────────────────────────────

@@ -30,6 +30,18 @@
 // Reference reserves only $C058-$C05D in that state (MAME quotes it in the
 // fall-through), which is why 80-column software keeps working at the reset
 // default.
+//
+// RDIOUDIS ($C078/$C07A/$C07C/$C07E) — the READ side of the same decode, and
+// the second thing pinned here. MAME answers it in `c000_iic_r` ONLY
+// (`apple2e.cpp:2336-2338`): `(m_ioudis ? 0x80 : 0x00) | uFloatingBus7`.
+// A plain //e has no case for it in `c000_r` at all and drops out to
+// `return uFloatingBus;`. POM2 answered on every IIe-class machine and
+// clamped bits 0-6 to zero.
+//
+// $C060 gets the same treatment (`:2177-2185`, `case 0x60: case 0x68:`):
+// the cassette comparator in bit 7, the floating bus in bits 0-6, on BOTH
+// halves of the `.mirror(0x8)` pair — POM2's $C060 branch dropped it while
+// its $C068 twin kept it.
 
 #include "M6502.h"
 #include "Memory.h"
@@ -112,6 +124,58 @@ int main()
         (void)mem.memRead(0xC05F);
         expect(!mem.getDisplayState().dhgr,
                rom + ": $C05F with IOUDIS set did not clear DHGR");
+
+        // ── RDIOUDIS on a //c: bit 7 = state, bits 0-6 = floating bus ──
+        // Park the scanner where it fetches a byte we planted, so "bits 0-6
+        // carry the bus" is provable and not 0 == 0.
+        for (uint16_t a = 0x0400; a < 0x0800; ++a) mem.memWrite(a, 0x6D);
+        mem.setCycleCounter(25);
+        const uint8_t bus7 = static_cast<uint8_t>(mem.peekFloatingBus() & 0x7F);
+        expect(bus7 != 0x00, rom + ": floating bus sample is degenerate (0)");
+
+        mem.memWrite(0xC07E, 0);          // SETIOUDIS
+        for (uint16_t a : { 0xC078, 0xC07A, 0xC07C, 0xC07E }) {
+            const uint8_t v = mem.memRead(a);
+            expect(v == static_cast<uint8_t>(0x80 | bus7),
+                   rom + ": RDIOUDIS set — wrong value");
+        }
+        mem.memWrite(0xC07F, 0);          // CLRIOUDIS
+        for (uint16_t a : { 0xC078, 0xC07A, 0xC07C, 0xC07E }) {
+            const uint8_t v = mem.memRead(a);
+            expect(v == bus7, rom + ": RDIOUDIS clear — wrong value");
+        }
+
+        // ── $C060 and its $C068 mirror agree, and both carry the bus ──
+        expect(mem.memRead(0xC060) == bus7, rom + ": $C060 lost the bus");
+        expect(mem.memRead(0xC068) == bus7, rom + ": $C068 lost the bus");
+    }
+
+    // ── A plain //e must NOT answer RDIOUDIS at all ────────────────────
+    {
+        const std::string iie = firstExisting("roms/apple2e.rom");
+        if (!iie.empty()) {
+            Memory mem;
+            M6502  cpu(&mem);
+            mem.setCpu(&cpu);
+            mem.clearRam();
+            mem.setIIEMode(true);
+            if (mem.loadAppleIIRom(iie.c_str(), /*pickLower16KFor32K=*/true)) {
+                mem.resetSoftSwitches();
+                for (uint16_t a = 0x0400; a < 0x0800; ++a) mem.memWrite(a, 0x6D);
+                mem.setCycleCounter(25);
+                const uint8_t bus = mem.peekFloatingBus();
+                expect((bus & 0x7F) != 0, "//e: floating bus sample is degenerate");
+                // Whatever IOUDIS happens to hold, the //e read is pure bus —
+                // no bit-7 override either way.
+                expect(mem.memRead(0xC07E) == bus, "//e: $C07E answered RDIOUDIS");
+                mem.memWrite(0xC07E, 0);      // write is //c-only too
+                expect(mem.memRead(0xC07E) == bus, "//e: $C07E answered RDIOUDIS");
+                expect(mem.memRead(0xC060) ==
+                           static_cast<uint8_t>(bus & 0x7F),
+                       "//e: $C060 lost the floating bus");
+                ++tested;
+            }
+        }
     }
 
     if (tested == 0) {

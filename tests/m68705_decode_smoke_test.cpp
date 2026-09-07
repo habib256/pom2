@@ -421,6 +421,97 @@ void test_mul()
     std::printf("  ok: MUL ($42) X:A = X*A, clears H and C\n");
 }
 
+// ── Timer: the MOR decides the prescaler, not TCR ────────────────────────
+//
+// MAME `m68705.cpp:465-476` reads the Mask Option Register at $0784
+// (`m68705p3_device::get_mask_options()` = `get_user_rom()[0x0784] & 0xf7`,
+// `:765-768`). `MOR_TOPT` (0x40) set → TIMER_MOR: divisor from `MOR_PS`,
+// source from `(MOR_CLS|MOR_TIE) >> 4`, and `tcr_w` then forces TCR_TIE and
+// does NOT reprogram either. Only with TOPT clear does TCR own them
+// (TIMER_PGM). `roms/mouse_341-0269.bin`, the Apple Mouse Card's MCU dump,
+// carries MOR = $40 → ÷1, so the timer interrupt period is 256 MCU cycles,
+// not the 32768 a hard-coded TIMER_PGM ÷128 produced.
+//
+// Measured the way the hardware defines it: MCU cycles between two entries
+// through the $07F8 timer vector.
+long measureTimerPeriod(uint8_t mor)
+{
+    RomImage rom;
+    // $0080  A6 07     LDA #$07         ; TIM clear, TIR clear, PS = 7
+    // $0082  B7 09     STA $09          ; TCR write — arms the timer IRQ
+    // $0084  9A        CLI              ; unmask, then idle forever
+    // $0085  20 FE     BRA $0085
+    //
+    // The SAME firmware in both configurations: under TIMER_MOR that PS = 7
+    // is ignored (MAME's `tcr_w` only reprograms the divisor under
+    // TIMER_PGM), under TIMER_PGM it selects ÷128.
+    rom.emit(0x80, { 0xA6, 0x07, 0xB7, 0x09, 0x9A, 0x20, 0xFE });
+    rom.setReset(0x0080);
+    // Timer ISR at $0100: mark the entry on port C ($02, unused by this
+    // test's wiring) then acknowledge by clearing TCR.TIR and RTI.
+    //   $0100  A6 07   LDA #$07
+    //   $0102  B7 02   STA $02          ; port-C latch write → callback
+    //   $0104  B7 09   STA $09          ; TCR: TIR cleared, TIM clear, PS=7
+    //   $0106  80      RTI
+    rom.emit(0x0100, { 0xA6, 0x07, 0xB7, 0x02, 0xB7, 0x09, 0x80 });
+    rom.bytes[0x7F8] = 0x01;
+    rom.bytes[0x7F9] = 0x00;
+    rom.put(0x784, mor);
+
+    M68705P3 cpu;
+    assert(cpu.loadRomBytes(rom.bytes.data(), rom.bytes.size()));
+    cpu.reset();
+
+    long cycles = 0;
+    long stamps[3] = { -1, -1, -1 };
+    int hits = 0;
+    cpu.setPortWriteCallback([&](int port) {
+        if (port == 2 && hits < 3) stamps[hits++] = cycles;
+    });
+    // Enough budget for two periods at ÷128 (2 × 32768) with slack.
+    for (int i = 0; i < 100000 && hits < 3; ++i) cycles += cpu.run(1);
+    assert(hits == 3 && "timer never vectored through $07F8");
+    // stamps[0] is the first (post-reset TDR = $FF) shot; the period is
+    // the gap between the two steady-state ones.
+    return stamps[2] - stamps[1];
+}
+
+void test_timer_mor_divisor()
+{
+    // The shipped Apple Mouse MCU dump: MOR = $40 → TOPT set, PS = 0.
+    const long morPeriod = measureTimerPeriod(0x40);
+    // 256 TDR steps at ÷1, plus the ISR's own run to the acknowledging
+    // STA $09 (the counter keeps running through it).
+    assert(morPeriod >= 256 && morPeriod <= 275);
+    std::printf("  ok: MOR $40 (TOPT, PS=0) → timer period %ld MCU cycles\n",
+                morPeriod);
+
+    // TOPT clear → TIMER_PGM, divisor from the firmware's TCR writes; this
+    // firmware never writes a PS field, so the reset default ÷128 stands.
+    const long pgmPeriod = measureTimerPeriod(0x00);
+    assert(pgmPeriod >= 256L * 128 && pgmPeriod <= 256L * 128 + 32);
+    std::printf("  ok: MOR $00 (TOPT clear) → TIMER_PGM, period %ld MCU cycles\n",
+                pgmPeriod);
+
+    // tcr_r: PSC (bit 3) reads back as 1 on a MOR part, 0 on a PGM one
+    // (MAME `m68705.h:86`).
+    for (uint8_t mor : { uint8_t(0x40), uint8_t(0x00) }) {
+        RomImage rom;
+        //   $0080  B6 09   LDA $09     ; read TCR
+        //   $0082  20 FE   BRA $0082
+        rom.emit(0x80, { 0xB6, 0x09, 0x20, 0xFE });
+        rom.setReset(0x0080);
+        rom.put(0x784, mor);
+        M68705P3 cpu;
+        assert(cpu.loadRomBytes(rom.bytes.data(), rom.bytes.size()));
+        cpu.reset();
+        assert(cpu.timerIsMorConfigured() == ((mor & 0x40) != 0));
+        cpu.step();
+        assert(((cpu.getA() & 0x08) != 0) == ((mor & 0x40) != 0));
+    }
+    std::printf("  ok: TCR read-back PSC bit follows the MOR option\n");
+}
+
 }  // namespace
 
 int main()
@@ -436,6 +527,7 @@ int main()
     test_port_input_read();
     test_clr_is_write_only();
     test_mul();
+    test_timer_mor_divisor();
 
     std::printf("OK m68705_decode_smoke\n");
     return 0;
