@@ -284,6 +284,18 @@ if [ "$CTEST_RC" -ne 0 ]; then
     # the failing tests' own output.
     grep -E "tests passed|\(Failed\)|\(Timeout\)|\(Subprocess aborted\)" \
          "$BUILD_DIR/ctest.log" >&2
+    # …and WHY. `tail` shows the end of the log, but a test that fails at
+    # number 44 of 246 had its output scrolled past 200 tests ago — which is
+    # how a red coverage run came back naming two casualties and giving no
+    # reason for either. Re-run just the casualties, serially, and let their
+    # own output through.
+    cov_failed_names=$(sed -n 's/^[[:space:]]*[0-9][0-9]* - \([^ ]*\) (\(Failed\|Timeout\|Subprocess aborted\|Not Run\)).*/\1/p' \
+                       "$BUILD_DIR/ctest.log" | sort -u)
+    if [ -n "$cov_failed_names" ]; then
+        cov_re="^($(echo "$cov_failed_names" | paste -sd'|' -))$"
+        echo "--- re-running the failures with their output: $cov_re ---" >&2
+        ( cd "$BUILD_DIR" && ctest --output-on-failure -R "$cov_re" >&2 ) || true
+    fi
     echo "--- last 80 lines of ctest.log ---" >&2
     tail -80 "$BUILD_DIR/ctest.log" >&2
     exit 1

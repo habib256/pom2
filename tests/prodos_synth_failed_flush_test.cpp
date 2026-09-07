@@ -38,6 +38,7 @@
 #include "ProDOSVolume.h"
 
 #include <cassert>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -85,6 +86,34 @@ bool guestPatch(pom2::Block512Backing& backing, const std::string& needle,
     return false;
 }
 
+// The host name a decode writes back is not byte-for-byte the one the volume
+// was built from — POM2 derives it from the ProDOS entry, and the extension
+// comes back lower-cased ("BFILE.TXT" in, "BFILE.txt" out). On macOS the two
+// are the same file and nothing notices; on a case-SENSITIVE filesystem they
+// are two, so a test that hard-codes either spelling reads the wrong one.
+// Ask the directory which name is actually there.
+fs::path findHostFile(const fs::path& dir, const std::string& stemWanted)
+{
+    std::error_code fec;
+    fs::path best;
+    for (fs::directory_iterator it(dir, fec), end; !fec && it != end;
+         it.increment(fec)) {
+        if (!it->is_regular_file(fec)) continue;
+        std::string stem = it->path().stem().string();
+        for (char& c : stem) c = static_cast<char>(std::toupper(
+                                    static_cast<unsigned char>(c)));
+        if (stem == stemWanted) {
+            // Prefer the most recently written one if both spellings exist.
+            if (best.empty()) { best = it->path(); continue; }
+            std::error_code aec, bec;
+            const auto a = fs::last_write_time(it->path(), aec);
+            const auto b = fs::last_write_time(best, bec);
+            if (!aec && !bec && a > b) best = it->path();
+        }
+    }
+    return best;
+}
+
 }  // namespace
 
 int main()
@@ -123,12 +152,14 @@ int main()
     // Booby-trap the SECOND destination: a non-empty directory where the
     // decode wants to rename its temp file into place. The rename fails, the
     // walk reports an I/O failure — and AFILE.TXT is already rewritten.
-    fs::remove(root / "BFILE.TXT", ec);
-    fs::create_directories(root / "BFILE.TXT" / "occupied", ec);
-    writeHostFile(root / "BFILE.TXT" / "occupied" / "x", "x");
+    const fs::path bfile = findHostFile(root, "BFILE");
+    assert(!bfile.empty() && "the volume build lost BFILE");
+    fs::remove(bfile, ec);
+    fs::create_directories(bfile / "occupied", ec);
+    writeHostFile(bfile / "occupied" / "x", "x");
     // Backdate it: a destination NEWER than the mount stamp is "preserved"
     // rather than written, which would side-step the failure this test needs.
-    fs::last_write_time(root / "BFILE.TXT",
+    fs::last_write_time(bfile,
                         fs::file_time_type::clock::now() -
                             std::chrono::hours(24), ec);
 
@@ -140,7 +171,7 @@ int main()
         return 0;
     }
     // The half that landed.
-    if (readHostFile(root / "AFILE.TXT") != "GUESTWROTETHISA1") {
+    if (readHostFile(findHostFile(root, "AFILE")) != "GUESTWROTETHISA1") {
         std::printf("SKIP prodos_synth_failed_flush: the failed pass wrote "
                     "nothing, so there is no partial state to freeze\n");
         fs::remove_all(root, ec);
@@ -152,7 +183,7 @@ int main()
     // now carries an mtime newer than the (never-updated) mount stamp, so the
     // decode preserved it as a "host edit" — and the SECOND guest write below
     // was thrown away for the rest of the session.
-    fs::remove_all(root / "BFILE.TXT", ec);
+    fs::remove_all(bfile, ec);
     assert(guestPatch(backing, "GUESTWROTETHISA1", "GUESTWROTETHISA2"));
 
     const bool secondOk = backing.saveDirty();
@@ -161,7 +192,7 @@ int main()
                     backing.lastError().c_str());
         return 1;
     }
-    const std::string afile = readHostFile(root / "AFILE.TXT");
+    const std::string afile = readHostFile(findHostFile(root, "AFILE"));
     if (afile.rfind("GUESTWROTETHISA2", 0) != 0) {
         std::printf("FAIL: the guest's second save was discarded — AFILE.TXT "
                     "still reads '%s'. The failed pass left the file newer "
@@ -176,7 +207,7 @@ int main()
     // advanced once by luck.
     assert(guestPatch(backing, "GUESTWROTETHISA2", "GUESTWROTETHISA3"));
     assert(backing.saveDirty());
-    if (readHostFile(root / "AFILE.TXT").rfind("GUESTWROTETHISA3", 0) != 0) {
+    if (readHostFile(findHostFile(root, "AFILE")).rfind("GUESTWROTETHISA3", 0) != 0) {
         std::printf("FAIL: the third save was discarded\n");
         return 1;
     }

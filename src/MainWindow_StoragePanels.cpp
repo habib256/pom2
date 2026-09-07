@@ -439,11 +439,13 @@ void MainWindow::renderDiskLibraryWindow()
         std::string err = "no DiskII card";
         bool inserted = false;
         if (target) {
-            const auto mounted = storageCoordinator_->mountDiskII(
+            // `res`, not `mounted`: the function already has a
+            // `CurrentlyMounted mounted` in scope and -Wshadow is an error.
+            const auto res = storageCoordinator_->mountDiskII(
                 *controller, *settings, target->getSlot(), drive,
                 r.request525InsertOnly, /*seekTrackZero=*/false);
-            inserted = mounted.ok;
-            err      = mounted.error;
+            inserted = res.ok;
+            err      = res.error;
         }
         if (inserted) {
             tapeStatusMessage = "Library: inserted (slot " +
