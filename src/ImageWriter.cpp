@@ -50,8 +50,26 @@ static_assert(sizeof(kPapers) / sizeof(kPapers[0]) ==
 
 // Soft switch A (imagewriter.cpp:87-98).
 constexpr uint8_t kSwitchACharsetMask    = 0x07;
-constexpr uint8_t kSwitchAPerforationSkip= 0x10;
 constexpr uint8_t kSwitchALfAfterCr      = 0x80;
+// Bit 4 of switch A is A-5, "Soft select response" (manual, software-switch
+// table: "A-5 | Soft select response | Enabled | Disabled | Disabled"), NOT
+// the perforation skip — the reference read the skip off this bit and so did
+// POM2. Nothing here answers DC1/DC3 in software, so the bit is deliberately
+// unmodelled; it is called out only so the next reader does not reuse it.
+
+// Soft switch B. Perforation skip is B-3, and its polarity is *open = skip*:
+// the same table reads "B-3 | Perforation skip | Skip (Z-setting) | No skip
+// (D-setting) | Per SW 1-5", and Table 5-12 spells the two commands out —
+// "ESC D CTRL-@ CTRL-D ... Perforation skip disabled / ESC Z CTRL-@ CTRL-D
+// ... Perforation skip enabled". ESC Z *opens* (clears) the bit, so the skip
+// is on while the bit is CLEAR.
+constexpr uint8_t kSwitchBSlashZero      = 0x01;
+constexpr uint8_t kSwitchBPerforationSkip= 0x04;
+constexpr uint8_t kSwitchBEighthDataBit  = 0x20;
+// "the printer skips over the last half inch (3 lines at 6 lines per inch) of
+// a page and the top half inch of the following page" (manual, Perforation
+// Skip). Half an inch, not the quarter POM2 used to leave.
+constexpr double  kPerforationSkipIn     = 0.5;
 
 // Ten ASCII positions the international charset switches (A-1..A-3) remap
 // (imagewriter.cpp:450-460): # @ [ \ ] ` { | } ~.
@@ -435,7 +453,13 @@ void ImageWriter::resetPrinter()
     repeatRestoresMsb_ = false;
     hmi_          = -1.0;
     switcha_      = 0;                  // SWITCHA_CHARSET_US
-    switchb_      = ' ';
+    // ' ' is B-6 set (bit 7 ignored, the factory setting). B-3 must come up
+    // SET too: the D-setting (the bit closed/set) is "No skip", and the
+    // factory default is no skip — "the factory setting of switch 1-5 is
+    // open. When it is set to the open position the printer does not skip
+    // over the perforation". Powering up with the bit clear would give every
+    // fresh printer a half-inch top margin nobody asked for.
+    switchb_      = ' ' | kSwitchBPerforationSkip;
     verticalDot_  = 0;
     numHorizTabs_ = 0;
     numVertTabs_  = 0;
@@ -501,16 +525,28 @@ void ImageWriter::updateSwitch()
     for (int i = 0; i < 10; ++i)
         curMap_[kIntlSlots[i]] = kIntlCharSets[charmap][i];
 
-    if (switcha_ & kSwitchAPerforationSkip) {
-        topMargin_    = 0.25;
-        bottomMargin_ = pageHeightIn_ - 0.25;
+    // Perforation skip: switch B-3, *open* (bit clear) = skip. Reading it off
+    // switch A bit 4 (A-5, soft select response) got every part of this
+    // wrong: `ESC Z <0><4>` — the manual's own "perforation skip enabled" —
+    // did nothing at all, while `ESC D <0x10><0>`, which a driver sends to
+    // restate the defaults, turned a margin ON. Half an inch top and bottom,
+    // "the last half inch (3 lines at 6 lines per inch) of a page and the top
+    // half inch of the following page" (manual, Perforation Skip).
+    //
+    // A page too short to hold both margins gets neither: otherwise
+    // topMargin_ >= bottomMargin_ and every single line feed ejects — the
+    // `ESC H 0000` failure mode again, arrived at from the other side.
+    const bool skipFits = pageHeightIn_ > 2.0 * kPerforationSkipIn + 1.0 / 6.0;
+    if (!(switchb_ & kSwitchBPerforationSkip) && skipFits) {
+        topMargin_    = kPerforationSkipIn;
+        bottomMargin_ = pageHeightIn_ - kPerforationSkipIn;
     } else {
         topMargin_    = 0.0;
         bottomMargin_ = pageHeightIn_;
     }
 
     // Switch B-6 selects whether bit 7 reaches the character generator.
-    msb_ = (switchb_ & 32) ? 0 : 255;
+    msb_ = (switchb_ & kSwitchBEighthDataBit) ? 0 : 255;
 }
 
 void ImageWriter::updateMetrics()
@@ -856,7 +892,7 @@ void ImageWriter::printCharInternal(uint8_t ch)
     // Overstrike, not substitution: the real switch prints a slash THROUGH
     // the zero, and with a ROM face both glyphs come from the same bank, so
     // simply rendering '/' on top at the same origin is what the head does.
-    if ((switchb_ & 1) && ch == '0') {
+    if ((switchb_ & kSwitchBSlashZero) && ch == '0') {
         if (romGlyph('0')) {
             renderGlyph('/');
         } else {
@@ -990,15 +1026,17 @@ void ImageWriter::traceCommand()
 {
     if (!trace_) return;
     traceFlushRow();
-    const bool isFs = (escCmd_ & 0x800) != 0;
+    // Only ESC reaches here. `US n` carries its count in the byte right
+    // after US, with no command selector at all, so it is executed and
+    // traced in phase 0 of processCommandChar — this used to tag it into
+    // escCmd_ as 0x800|n and decode it as a three-byte sequence.
     const uint8_t c = static_cast<uint8_t>(escCmd_ & 0xFF);
     std::string params;
     for (uint8_t i = 0; i < numParam_; ++i) {
         const uint8_t p = params_[i] & 0x7F;
         params += (p >= 0x20 && p < 0x7F) ? static_cast<char>(p) : '.';
     }
-    std::fprintf(trace_, "[%8.3f] CMD  %s %c ($%02X)%s%s\n", traceClock_,
-                 isFs ? "US " : "ESC",
+    std::fprintf(trace_, "[%8.3f] CMD  ESC %c ($%02X)%s%s\n", traceClock_,
                  (c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : '?', c,
                  params.empty() ? "" : "  params=", params.c_str());
     std::fflush(trace_);
@@ -1055,7 +1093,7 @@ void ImageWriter::setSpeed(Speed s)
     if (s >= Speed::Count) s = Speed::Draft;
     speed_ = s;
     // Switching to Instant must not strand a half-printed job.
-    if (speed_ == Speed::Instant) flushPending();
+    if (speed_ == Speed::Instant) flushPending(/*budgetSheets=*/true);
 }
 
 void ImageWriter::queueBytes(const uint8_t* data, size_t n)
@@ -1103,12 +1141,44 @@ void ImageWriter::compactPending()
     }
 }
 
-void ImageWriter::flushPending()
+void ImageWriter::flushPending(bool budgetSheets)
 {
+    // "No mechanism delay" is not "no work". `Speed::Instant` routes every
+    // tick straight here, and the WORK behind a queue is unbounded even when
+    // the queue is six bytes long: `ESC R 999 <FF>` is one sequence asking
+    // for 999 page ejects, ~2.1 s of raster copying at 300 dpi, all inside a
+    // single UI frame — and it blows past PrinterHistory's `kMaxPending`
+    // assumption (8 sheets in flight) on the way. The paced catch-up path in
+    // tick() already budgets ejects for exactly this reason; Instant needs
+    // the same budget, not an exemption from it.
+    //
+    // Only SHEETS are budgeted, not bytes: Instant's contract is "skip the
+    // mechanism delay", and 16 KiB of glyphs is ~13 ms, which is the frame
+    // cost the user asked for. An eject is ~0.5 ms of page-raster memcpy
+    // EACH, so hundreds of them is not.
+    // …but only on the automatic path. "Print now" is one deliberate click,
+    // not something that repeats sixty times a second, and a flush that
+    // silently leaves 967 pages on the platen is the worse failure.
+    const size_t sheetBudget = sheetsEjected_ + kCatchUpSheets;
+    auto spent = [&] { return budgetSheets && sheetsEjected_ >= sheetBudget; };
+
     // What a partly-expanded repeat still owes comes off the head first —
     // it was asked for before anything queued behind it.
-    while (repeatRemaining_ > 0) printRepeatUnit();
-    while (pendingHead_ < pending_.size()) printChar(pending_[pendingHead_++]);
+    while (repeatRemaining_ > 0 && !spent()) printRepeatUnit();
+    while (pendingHead_ < pending_.size() && !spent()) {
+        acceptByte(pending_[pendingHead_++]);
+        while (repeatRemaining_ > 0 && !spent()) printRepeatUnit();
+    }
+
+    if (busy()) {
+        // Budget spent with work still owed. Leave it armed so the next
+        // tick() picks it up — under Instant that is this function again,
+        // under a paced speed it is the un-paced catch-up drain, which is
+        // the closer of the two to what "print it now" asked for.
+        catchUp_ = true;
+        compactPending();
+        return;
+    }
     pending_.clear();
     pendingHead_ = 0;
     credit_      = 0.0;
@@ -1191,7 +1261,7 @@ void ImageWriter::tick(double dt)
         catchUp_     = false;
         return;
     }
-    if (speed_ == Speed::Instant) { flushPending(); return; }
+    if (speed_ == Speed::Instant) { flushPending(/*budgetSheets=*/true); return; }
 
     // Behind by more than kMaxBacklog: pacing is suspended and the head
     // runs flat out — but only for a bounded slice of this tick, so the
@@ -1412,10 +1482,35 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     const bool wasCrFed = crJustFed_;
     crJustFed_ = false;
 
-    // ── Phase 1: the byte right after ESC / US selects the command ──────
-    if (escSeen_ || fsSeen_) {
+    // ── Phase 0: US n — the byte after US IS the count ──────────────────
+    //
+    // US is not an ESC: no command selector follows it. Table 5-11 (Line
+    // Feed Commands) reads "CTRL-_ n | 31 dn | 1F hn | Feeds 1 to 15 lines
+    // of blank paper (n = 1 to 9, :, ;, <, =, >, or ?)", and the Paper
+    // Motion summary repeats it — so n is the single ASCII byte $31..$3F and
+    // the count is n - '0'.
+    //
+    // POM2 used to treat US like ESC and decode `US '3' n` as a THREE-byte
+    // sequence, which meant `US '1'` fed nothing at all, `US '?'` fed
+    // nothing, and only `US '3'` did anything — after swallowing the next
+    // byte of text as its parameter. A driver ending a paragraph with
+    // `US '5'` fed no paper and lost the following character.
+    if (fsSeen_) {
+        fsSeen_   = false;
+        escSeen_  = false;
+        escCmd_   = 0;
+        numParam_ = neededParam_ = 0;
+        const int n = (ch >= '1' && ch <= '?') ? (ch - '0') : 0;
+        if (trace_) traceEvent("CMD  US  %c ($%02X)  feed %d line%s",
+                               (ch >= 0x20 && ch < 0x7F) ? ch : '?', ch, n,
+                               n == 1 ? "" : "s");
+        for (int i = 0; i < n; ++i) lineFeed();
+        return true;
+    }
+
+    // ── Phase 1: the byte right after ESC selects the command ───────────
+    if (escSeen_) {
         escCmd_ = ch;
-        if (fsSeen_) escCmd_ |= 0x800;
         escSeen_ = fsSeen_ = false;
         numParam_ = 0;
 
@@ -1427,7 +1522,8 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         case 0x4f: case 0x50: case 0x51: case 0x57: case 0x58:
         case 0x59: case 0x63: case 0x65: case 0x66: case 0x6b:
         case 0x6d: case 0x6e: case 0x6f: case 0x70: case 0x71:
-        case 0x72: case 0x77: case 0x78: case 0x79: case 0x7a:
+        case 0x72: case 0x76: case 0x77: case 0x78: case 0x79:
+        case 0x7a:
             neededParam_ = 0;
             break;
         case 0x3d:  // ESC = n  internal font ID
@@ -1437,7 +1533,6 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         case 0x6c:  // ESC l n  insert CR before LF/FF
         case 0x73:  // ESC s n  intercharacter space
         case 0x74:  // ESC t n  shift printing down n/216 in
-        case 0x833: // US n     feed n blank lines
             neededParam_ = 1;
             break;
         case 0x44:  // ESC D nn  close (set) soft switches
@@ -1598,6 +1693,17 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         return paramDigit(params_[0]) * 1000 + paramDigit(params_[1]) * 100 +
                paramDigit(params_[2]) * 10 + paramDigit(params_[3]);
     };
+    // A tab stop is measured from the LEFT MARGIN and numbered from 1 —
+    // unlike a margin, which is measured from position 0 and numbered from 0:
+    // "Margin position column numbers start with 000, while tab position
+    // column numbers start with 001. Thus, for example, a margin setting of 5
+    // starts each line at the same position as a tab setting of 6." (manual,
+    // Setting a Line of Tab Stops; Table 5-8 gives the 001-nnn ranges per
+    // pitch). POM2 measured them from the paper edge and zero-based, so the
+    // moment a job moved the left margin right, every low stop landed to the
+    // LEFT of the head and HT became a silent no-op — one ragged column
+    // again, from a different direction than the nearest-stop bug.
+    auto tabStop = [&]() { return leftMargin_ + (param3() - 1.0) / cpi_; };
 
     // A command this head has no hardware for is DROPPED here, after its
     // parameter bytes have been collected — the manuals' rule is that an
@@ -1624,8 +1730,19 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     }
 
     case 0x73:                                  // ESC s n  intercharacter space
+        // "To set spacing between characters from zero to nine dots in both
+        // proportional pitches, use ESC s n, where n represents an ASCII
+        // character from 0 to 9 that specifies the number of dot spaces."
+        // (manual, Proportional Character Spacing.) A *dot* is the pitch's
+        // own dot, not a constant: Table 5-2 lists the two proportional
+        // pitches as "144 dpi (Pica)" and "160 dpi (Elite)", which is exactly
+        // what `ESC p` / `ESC P` put in `definedUnit_`. POM2 divided by a
+        // flat 120, so every proportional line came out 20 % (Pica) to 33 %
+        // (Elite) too wide per space — which is precisely the number a
+        // justifying driver has computed its line width from.
         if (style_ & kStyleProp) {
-            extraIntraSpace_ = paramDigit(params_[0]) / 120.0;
+            const double unit = (definedUnit_ > 0.0) ? definedUnit_ : 144.0;
+            extraIntraSpace_ = paramDigit(params_[0]) / unit;
             updateMetrics();
         }
         break;
@@ -1646,18 +1763,29 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     }
 
     case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: {
-        // ESC 1..6 — add n/120" of intercharacter space (proportional
-        // only), the same knob `ESC s n` sets. The reference
-        // (imagewriter.cpp:665-678) assigns `curX_ = n/unit` instead: an
-        // ABSOLUTE position a fraction of an inch from the left edge, so
-        // `ESC 3` mid-line threw the head from 1.25" back to 0.02" —
-        // outside the left margin — and destroyed every justified line a
-        // proportional driver (AppleWorks, the LQ GS/OS driver) produced.
-        // A deliberate deviation from the reference, matching the
-        // ImageWriter II Technical Reference.
+        // `ESC m` (m = '1'..'6') INSERTS m dot spaces once, here, between the
+        // two characters it sits between — it is not a mode. The manual is
+        // explicit about both halves: "To put extra spaces between individual
+        // characters, use ESC m, where m represents an ASCII numeral from 1
+        // to 6 corresponding to the number of dot spaces to be inserted", the
+        // worked example is "one dot space between each character but two
+        // spaces between the 'e' and the 'W'" (ESC s 1 sets the former, ESC 1
+        // adds the latter at one point in the word), and "if multiple ESC m
+        // commands are sent, the effect is cumulative" — cumulative in the
+        // gap, which a `curX_ +=` gives for free.
+        //
+        // Two wrong readings preceded this one. The reference
+        // (imagewriter.cpp:665-678) assigns `curX_ = m/unit`, an ABSOLUTE
+        // position a fraction of an inch from the left edge, so `ESC 3`
+        // mid-line threw the head from 1.25" back to 0.02". POM2 then made it
+        // a persistent `extraIntraSpace_` of m/120", which widened EVERY
+        // remaining gap on the line instead of the one the driver asked for —
+        // the same justified line, ruined more slowly. The unit is the
+        // pitch's dot (Table 5-2: 144 dpi Pica proportional, 160 dpi Elite
+        // proportional), as for `ESC s n`.
         if (style_ & kStyleProp) {
-            extraIntraSpace_ = (escCmd_ - '0') / 120.0;
-            updateMetrics();
+            const double unit = (definedUnit_ > 0.0) ? definedUnit_ : 144.0;
+            curX_ = std::min(curX_ + (escCmd_ - '0') / unit, rightMargin_);
         }
         break;
     }
@@ -1776,14 +1904,35 @@ bool ImageWriter::processCommandChar(uint8_t ch)
 
     case 0x4c:                                  // ESC L nnn  left margin
         spacesToZeros(3);
-        // Clamped to the sheet. `ESC L 000` gave a NEGATIVE margin (the
-        // -1 is the 1-based column) and clipped the first character;
-        // `ESC L 999` put it 83" out and every page came out blank, with
-        // no diagnostic either way. A margin off the paper is a garbled
-        // parameter, not an instruction.
-        leftMargin_ = std::clamp((param3() - 1.0) / cpi_,
+        // Margin columns are ZERO-based, and nnn IS the column count: "When
+        // you turn the power on, your Apple ImageWriter II is set to start
+        // each line of print as far left as the print head can travel. This
+        // is called position 0 … The default value is 000", Table 5-2 gives
+        // the ranges as 000-071 … 000-135, and the worked example is blunt —
+        // "sets the left margin to the 36th character position (note that,
+        // since the first character position is in column 0, the 36th
+        // position is in column 35): PRINT CHR$(27);"L035"". POM2 subtracted
+        // one, so every margin sat a whole character too far left and
+        // `ESC L 000` produced a NEGATIVE one that clipped the first glyph.
+        //
+        // The clamp stays: `ESC L 999` put the margin 83" out and every page
+        // came out blank with no diagnostic. A margin off the paper is a
+        // garbled parameter, not an instruction.
+        leftMargin_ = std::clamp(param3() / cpi_,
                                  0.0, std::max(0.0, pageWidthIn_ - 1.0 / cpi_));
         if (curX_ < leftMargin_) curX_ = leftMargin_;
+        break;
+
+    case 0x76:                                  // ESC v  set TOF here
+        // Declared, deliberately not modelled. Table 5-9: "ESC v … Sets TOF
+        // to current position". POM2's page is a fixed raster whose origin is
+        // the top edge of the sheet, so a movable top-of-form would have to
+        // re-base `newPage`, the perforation window and the page raster
+        // together — a page-model change, not a command. Listed here so it
+        // reads as a KNOWN command the head has no mechanism for, and is
+        // dropped as such, rather than falling through `default` as an
+        // unknown one. (Both spellings consume the same single byte; the
+        // difference is that this one is traced and documented.)
         break;
 
     case 0x4b: {                                // ESC K n  ribbon colour
@@ -1810,7 +1959,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
 
     case 0x28: {                                // ESC ( nnn,  set tabs
         spacesToZeros(3);
-        const double stop = param3() * (1.0 / cpi_);
+        const double stop = tabStop();
         if (params_[3] == ',' && numHorizTabs_ < 32) {
             horiztabs_[numHorizTabs_++] = stop;
             numParam_    = 0;
@@ -1822,7 +1971,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     }
     case 0x29: {                                // ESC ) nnn,  delete tabs
         spacesToZeros(3);
-        const double stop = param3() * (1.0 / cpi_);
+        const double stop = tabStop();
         for (uint8_t i = 0; i < numHorizTabs_; ++i)
             if (horiztabs_[i] == stop) horiztabs_[i] = 0.0;
         if (params_[3] == ',') {
@@ -1834,7 +1983,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     }
     case 0x75: {                                // ESC u nnn  add one tab stop
         spacesToZeros(3);
-        const double stop = param3() * (1.0 / cpi_);
+        const double stop = tabStop();
         bool haveStop = false;
         int  lastEmpty = (numHorizTabs_ == 32) ? 33 : numHorizTabs_;
         for (uint8_t i = 0; i < numHorizTabs_; ++i) {
@@ -1859,11 +2008,8 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         updateSwitch();
         break;
 
-    case 0x833: {                               // US n  feed n blank lines
-        const int n = paramDigit(params_[0]);
-        for (int i = 0; i < n; ++i) lineFeed();
-        break;
-    }
+    // `US n` is NOT here — it never had an ESC-style command selector. It is
+    // handled where it belongs, in phase 0 at the top of this function.
 
     default:
         break;
@@ -1995,6 +2141,15 @@ bool ImageWriter::processEpsonChar(uint8_t ch)
         case 0x53:   // ESC S n  super/subscript
         case 0x57:   // ESC W n  expanded
         case 0x6A:   // ESC j n  reverse feed n/216 in
+        // ESC l n (left margin) and ESC Q n (right margin) are the two the
+        // header, DEV.md and printer_plan.md all claimed were "CONSUMED with
+        // their parameters" and were not: they fell through to `default`,
+        // which drops the ESC and the letter but NOT the count byte, so the
+        // margin column number printed as a glyph — `ESC l 5` put a stray
+        // ENQ-turned-space and `ESC Q 70` an 'F' into the text. Consuming
+        // them is the whole point of listing an unimplemented command.
+        case 0x51:   // ESC Q n  right margin, column n
+        case 0x6C:   // ESC l n  left margin, column n
         case 0x49: case 0x55: case 0x69: case 0x73:   // consumed, no effect
             epsonNeed_ = 1;
             return true;

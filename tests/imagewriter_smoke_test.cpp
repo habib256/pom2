@@ -69,6 +69,16 @@ void feed(ImageWriter& iw, const char* s)
     iw.printBytes(reinterpret_cast<const uint8_t*>(s), std::strlen(s));
 }
 
+/// `feed()` measures with strlen, so it silently truncates at the first NUL —
+/// and half the switch commands take CTRL-@ ($00) as a parameter (`ESC Z
+/// <0><4>` is the manual's own "perforation skip enabled"). Feeding those
+/// through `feed()` delivers the ESC and the letter and drops the parameters,
+/// which then arrive as the first two bytes of whatever comes next.
+void feedN(ImageWriter& iw, const std::string& s)
+{
+    iw.printBytes(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+}
+
 size_t inkPixels(const ImageWriter::Page& p)
 {
     size_t n = 0;
@@ -515,22 +525,77 @@ void testCommandBoundsAndTabs()
     //    Reference (imagewriter.cpp:1131-1141) keeps overwriting as it
     //    scans, so the first TAB jumped to the LAST stop and every later
     //    one was a no-op — every columnar report came out as one column.
+    //
+    //    The stops themselves are measured FROM THE LEFT MARGIN and numbered
+    //    from 1: "Margin position column numbers start with 000, while tab
+    //    position column numbers start with 001. Thus … a margin setting of 5
+    //    starts each line at the same position as a tab setting of 6."
+    //    (ImageWriter II Technical Reference, Setting a Line of Tab Stops.)
+    //    POM2 measured them from the paper edge, zero-based — which is why
+    //    the numbers below are margin + (n-1) cells and not n cells.
     {
         ImageWriter iw(144, ImageWriter::PaperSize::Letter);
-        feed(iw, "\x1B(010,020,030.");         // stops at 10, 20, 30 chars
-        assert(std::abs(iw.status().headX - 0.25) < 1e-9);   // left margin
+        const double m = 0.25;                 // power-on left margin
+        feed(iw, "\x1B(010,020,030.");         // stops at columns 10, 20, 30
+        assert(std::abs(iw.status().headX - m) < 1e-9);
         feed(iw, "\t");
-        assert(std::abs(iw.status().headX - 10 * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (m +  9 * kChar)) < 1e-9);
         feed(iw, "\t");
-        assert(std::abs(iw.status().headX - 20 * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (m + 19 * kChar)) < 1e-9);
         feed(iw, "\t");
-        assert(std::abs(iw.status().headX - 30 * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (m + 29 * kChar)) < 1e-9);
     }
 
-    // 2. ESC 1..6 ADDS n/120" of intercharacter space; it is not an
-    //    absolute head position. The reference assigns curX_ = n/unit, so
-    //    `ESC 3` mid-line threw the head from 1.25" back to 0.02" and
-    //    destroyed every justified line a proportional driver produced.
+    // 1b. The manual's own worked equivalence, and the failure it hides.
+    //     With the margin moved right, a stop numbered below the margin's own
+    //     column used to land LEFT of the head and HT became a silent no-op.
+    {
+        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+        feed(iw, "\x1B" "E");                  // elite, 12 cpi
+        feed(iw, "\x1B" "L013");               // margin at column 13
+        assert(std::abs(iw.status().headX - 13 * kChar) < 1e-9);
+        feed(iw, "\x1B(005,020.");             // tab columns 5 and 20
+        feed(iw, "\t");
+        // margin + (5-1) cells — a stop "before" the margin's own number is
+        // still to the RIGHT of it, because the two scales differ by one.
+        assert(std::abs(iw.status().headX - (13 + 4) * kChar) < 1e-9);
+        feed(iw, "\t");
+        assert(std::abs(iw.status().headX - (13 + 19) * kChar) < 1e-9);
+
+        // ESC u adds one stop on the same scale, and ESC ) deletes by the
+        // same number — all three sites have to agree or a stop can be set
+        // and never deleted.
+        feed(iw, "\x1B" "u010");
+        feed(iw, "\r\t");
+        assert(std::abs(iw.status().headX - (13 + 4) * kChar) < 1e-9);
+        feed(iw, "\t");
+        assert(std::abs(iw.status().headX - (13 + 9) * kChar) < 1e-9);
+        feed(iw, "\x1B)010.");
+        feed(iw, "\r\t\t");
+        assert(std::abs(iw.status().headX - (13 + 19) * kChar) < 1e-9);
+    }
+
+    // 2. Proportional character spacing — TWO commands with two different
+    //    shapes, and a unit that is the pitch's dot, not a constant.
+    //
+    //    "To set spacing between characters from zero to nine dots in both
+    //    proportional pitches, use ESC s n" — a MODE, every gap on the line.
+    //    "To put extra spaces between individual characters, use ESC m, where
+    //    m represents an ASCII numeral from 1 to 6 corresponding to the
+    //    number of dot spaces to be inserted … If multiple ESC m commands are
+    //    sent, the effect is cumulative" — a ONE-SHOT, at the point it sits.
+    //    The manual's worked example uses both at once: "one dot space
+    //    between each character but two spaces between the 'e' and the 'W'".
+    //    (ImageWriter II Technical Reference, Proportional Character Spacing
+    //    + Table 4-6.) The dot is the pitch's: Table 5-2 lists the two
+    //    proportional pitches as 144 dpi (Pica, ESC p) and 160 dpi (Elite,
+    //    ESC P).
+    //
+    //    This case used to assert ESC 3 as a PERSISTENT +3/120" added to
+    //    every following advance — half right (it is not the reference's
+    //    absolute `curX_ = n/unit`, which threw the head from 1.25" back to
+    //    0.02"), half wrong in both the shape and the unit. It ruined the
+    //    same justified line the reference's bug did, only more slowly.
     {
         // Baseline: what one 'X' advances by in proportional mode with no
         // extra intercharacter space. NOT hardcoded — since the character
@@ -548,18 +613,62 @@ void testCommandBoundsAndTabs()
             assert(plain > 0.0);
         }
 
-        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
-        feed(iw, "\x1B" "p");                  // proportional, 10 cpi
-        feed(iw, "HELLO WORLD");
-        const double before = iw.status().headX;
-        feed(iw, "\x1B" "3");
-        assert(iw.status().headX == before);   // the command itself moves nothing
-        feed(iw, "X");
-        const double advance = iw.status().headX - before;
-        assert(advance > 0.0);                 // forward, never backward
-        // THE property: ESC 3 ADDED exactly 3/120", it did not replace the
-        // advance with an absolute position.
-        assert(std::abs(advance - (plain + 3.0 / 120.0)) < 1e-9);
+        // ESC m is a one-shot insertion: the head moves NOW, and the glyph
+        // that follows advances by its own escapement, unchanged.
+        {
+            ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+            feed(iw, "\x1B" "p");              // Pica proportional, 144 dpi
+            feed(iw, "HELLO WORLD");
+            const double before = iw.status().headX;
+            feed(iw, "\x1B" "3");
+            assert(std::abs(iw.status().headX - (before + 3.0 / 144.0)) < 1e-9);
+            const double gap = iw.status().headX;
+            feed(iw, "X");
+            assert(std::abs((iw.status().headX - gap) - plain) < 1e-9);
+
+            // "the effect is cumulative" — two more commands, two more gaps.
+            const double mark = iw.status().headX;
+            feed(iw, "\x1B" "1\x1B" "2");
+            assert(std::abs(iw.status().headX - (mark + 3.0 / 144.0)) < 1e-9);
+        }
+
+        // The unit follows the pitch: the same ESC 3 is 3/160" under ESC P.
+        {
+            ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+            feed(iw, "\x1B" "P");              // Elite proportional, 160 dpi
+            feed(iw, "HELLO");
+            const double before = iw.status().headX;
+            feed(iw, "\x1B" "3");
+            assert(std::abs(iw.status().headX - (before + 3.0 / 160.0)) < 1e-9);
+        }
+
+        // ESC s n is the mode, and its dot is the same one: every advance on
+        // the line gains n/144" under ESC p.
+        {
+            ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+            feed(iw, "\x1B" "p\x1B" "s2");
+            feed(iw, "HELLO WORLD");
+            const double before = iw.status().headX;
+            feed(iw, "X");
+            assert(std::abs((iw.status().headX - before) -
+                            (plain + 2.0 / 144.0)) < 1e-9);
+            feed(iw, "X");
+            assert(std::abs(iw.status().headX -
+                            (before + 2 * (plain + 2.0 / 144.0))) < 1e-9);
+        }
+
+        // Neither command touches a fixed pitch — "these control codes work
+        // only in the two proportional character pitches".
+        {
+            ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+            feed(iw, "\x1B" "N");              // Pica 10 cpi, fixed
+            feed(iw, "HELLO");
+            const double before = iw.status().headX;
+            feed(iw, "\x1B" "3\x1B" "s4");
+            assert(iw.status().headX == before);
+            feed(iw, "X");
+            assert(std::abs((iw.status().headX - before) - 0.1) < 1e-9);
+        }
     }
 
     // 3. `ESC c` must not silently destroy the sheet on the platen. The
@@ -592,10 +701,31 @@ void testCommandBoundsAndTabs()
         assert(iw.completedPageCount() == 0);
     }
 
-    // 5. `ESC L` clamps to the sheet. 999 put the margin 83" out and every
-    //    page came out blank; 000 gave a negative margin that clipped the
-    //    first character. Both silent.
+    // 5. `ESC L nnn` — margin columns are ZERO-based and nnn IS the count.
+    //    "This is called position 0 … The default value is 000" (Table 5-1),
+    //    Table 5-2 gives the ranges as 000-071 … 000-135, and the worked
+    //    example is unambiguous: "sets the left margin to the 36th character
+    //    position (note that, since the first character position is in column
+    //    0, the 36th position is in column 35): PRINT CHR$(27);"L035"".
+    //    POM2 subtracted one, so every margin sat a whole character too far
+    //    left and `ESC L 000` produced a negative one that clipped the first
+    //    glyph. The clamp to the sheet stays — `ESC L 999` put the margin 83"
+    //    out and every page came out blank, silently.
     {
+        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+        feed(iw, "\x1B" "L010");
+        assert(std::abs(iw.status().headX - 10 * kChar) < 1e-9);   // not 9
+        // The manual's own example, at the manual's own pitch.
+        feed(iw, "\x1B" "L035");
+        assert(std::abs(iw.status().headX - 35 * kChar) < 1e-9);
+        // …and 000 is position 0 exactly, the power-on far-left travel.
+        // Setting the margin does not RETRACT a head that is already past it
+        // — the manual's model is that a new margin takes effect from the
+        // next line — so ask the carriage to return and check where it lands.
+        feed(iw, "\x1B" "L000");
+        feed(iw, "\r");
+        assert(iw.status().headX == 0.0);
+
         ImageWriter wide(144, ImageWriter::PaperSize::Letter);
         feed(wide, "\x1B" "L999");
         feed(wide, "HELLO");
@@ -606,6 +736,116 @@ void testCommandBoundsAndTabs()
         assert(zero.status().headX >= 0.0);
         feed(zero, "HELLO");
         assert(inkPixels(zero.currentPage()) > 0);
+    }
+
+    // 7. `US n` (CONTROL-_) feeds n blank lines, and the count is the byte
+    //    RIGHT AFTER US — there is no command selector. Table 5-11: "CTRL-_ n
+    //    | 31 dn | 1F hn | Feeds 1 to 15 lines of blank paper (n = 1 to 9, :,
+    //    ;, <, =, >, or ?)". POM2 decoded it like an ESC sequence, so only
+    //    `US '3'` did anything at all — and that swallowed the next byte of
+    //    text as its parameter.
+    {
+        const double kLine = 1.0 / 6.0;
+
+        ImageWriter one(144, ImageWriter::PaperSize::Letter);
+        one.setAutoFeed(false);
+        const double y0 = one.status().headY;
+        feed(one, "\x1F" "1");
+        assert(std::abs(one.status().headY - (y0 + kLine)) < 1e-9);
+
+        // '?' is 15 — the top of the range, and the byte that used to feed 0.
+        ImageWriter fifteen(144, ImageWriter::PaperSize::Letter);
+        fifteen.setAutoFeed(false);
+        feed(fifteen, "\x1F" "?");
+        assert(std::abs(fifteen.status().headY - 15 * kLine) < 1e-9);
+
+        // '5' is five lines, and nothing after it is eaten.
+        ImageWriter five(144, ImageWriter::PaperSize::Letter);
+        five.setAutoFeed(false);
+        feed(five, "\x1F" "5");
+        assert(std::abs(five.status().headY - 5 * kLine) < 1e-9);
+
+        // `US '3'` used to be the ONLY working spelling, and it ate the 'A'.
+        ImageWriter three(144, ImageWriter::PaperSize::Letter);
+        three.setAutoFeed(false);
+        feed(three, "\x1F" "3AB");
+        assert(std::abs(three.status().headY - 3 * kLine) < 1e-9);
+        ImageWriter plainAB(144, ImageWriter::PaperSize::Letter);
+        plainAB.setAutoFeed(false);
+        feed(plainAB, "\x1F" "0AB");           // out of range: feeds nothing
+        assert(plainAB.status().headY == 0.0);
+        {
+            // Same two glyphs, same place on the sheet — so both bytes
+            // printed, not one.
+            ImageWriter bare(144, ImageWriter::PaperSize::Letter);
+            bare.setAutoFeed(false);
+            feed(bare, "AB");
+            assert(bare.status().headX == plainAB.status().headX);
+            assert(bare.currentPage().pix == plainAB.currentPage().pix);
+        }
+    }
+
+    // 8. `ESC v` (set top of form to the current position) is a KNOWN command
+    //    POM2 has no page model for — Table 5-9. It must be dropped with its
+    //    ESC and nothing else: it takes no parameter, so it may not eat the
+    //    byte after it.
+    {
+        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+        iw.setAutoFeed(false);
+        feed(iw, "\x1B" "vAB");
+        ImageWriter bare(144, ImageWriter::PaperSize::Letter);
+        bare.setAutoFeed(false);
+        feed(bare, "AB");
+        assert(iw.currentPage().pix == bare.currentPage().pix);
+        assert(iw.status().headX == bare.status().headX);
+        assert(iw.status().headY == bare.status().headY);
+    }
+
+    // 9. Perforation skip is soft switch B-3, open (bit CLEAR) = skip, and
+    //    the margin is HALF an inch top and bottom: "the printer skips over
+    //    the last half inch (3 lines at 6 lines per inch) of a page and the
+    //    top half inch of the following page". Table 5-12 names the two
+    //    commands — "ESC D CTRL-@ CTRL-D … Perforation skip disabled / ESC Z
+    //    CTRL-@ CTRL-D … Perforation skip enabled".
+    //
+    //    POM2 read it off switch A bit 4, which is A-5 (soft select
+    //    response), with the opposite polarity and a quarter inch. So the
+    //    manual's own enable did nothing, while `ESC D <0x10><0>` — bits a
+    //    driver sets to restate the defaults — switched a margin ON.
+    {
+        // Power-on: no skip (SW 1-5 factory setting), so the sheet starts at
+        // the very top and a fresh page has no margin.
+        ImageWriter off(144, ImageWriter::PaperSize::Letter);
+        assert(off.status().headY == 0.0);
+        feed(off, "\x0C");
+        assert(off.status().headY == 0.0);
+
+        // ESC Z 00 04 — the manual's "perforation skip enabled". The skip
+        // governs where the paper stops feeding, so it cannot retract a head
+        // that is already on the sheet: the current page keeps its position
+        // and the margin appears on the next one.
+        ImageWriter on(144, ImageWriter::PaperSize::Letter);
+        feedN(on, std::string("\x1B" "Z\x00\x04", 4));
+        assert(on.status().headY == 0.0);
+        feed(on, "\x0C");                      // and every following sheet
+        assert(std::abs(on.status().headY - 0.5) < 1e-9);
+        feed(on, "\x0C");
+        assert(std::abs(on.status().headY - 0.5) < 1e-9);
+
+        // ESC D 00 04 puts it back.
+        feedN(on, std::string("\x1B" "D\x00\x04", 4));
+        assert(on.status().headY == 0.0 ||
+               on.status().headY == 0.5);      // the head does not move back…
+        feed(on, "\x0C");                      // …but the next sheet has no
+        assert(on.status().headY == 0.0);      //    margin
+
+        // ESC D 10 00 — soft-select response off, a defaults restatement.
+        // It must not touch the paper at all.
+        ImageWriter restate(144, ImageWriter::PaperSize::Letter);
+        feedN(restate, std::string("\x1B" "D\x10\x00", 4));
+        assert(restate.status().headY == 0.0);
+        feed(restate, "\x0C");
+        assert(restate.status().headY == 0.0);
     }
 
     // 6. The stall watchdog must not fire on a byte that is merely SLOW.
