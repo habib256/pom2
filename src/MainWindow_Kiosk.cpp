@@ -382,7 +382,7 @@ void MainWindow::updateKioskMenu()
 
     // Keyboard fallbacks work even when the controller isn't a recognized
     // GLFW gamepad (so the gamepad-mapped buttons never fire). They mirror
-    // the pad: F1/Start opens the Start menu, K/Select the keyboard band,
+    // the pad: F1/Start opens the Start menu, F2/Select the keyboard band,
     // arrows move, Enter validates, Esc goes back.
     //
     // F1, NOT F10: F10 is the global full-screen ⇄ windowed toggle, so
@@ -390,7 +390,12 @@ void MainWindow::updateKioskMenu()
     // frame (onKey runs during glfwPollEvents, before render) — the user
     // asked for the game to go full-screen, not for a menu.
     const bool eStart   = nav.menu    || ImGui::IsKeyPressed(ImGuiKey_F1,     false);
-    const bool eSelect  = nav.select  || ImGui::IsKeyPressed(ImGuiKey_K,      false);
+    // F2, NOT K. The K fallback cost the guest the letter itself: onKey/onChar
+    // swallowed it for the whole kiosk session (gated on `kiosk_`, not on the
+    // menu being open), so LOOK and KILL TROLL were untypable in every
+    // adventure game played in kiosk. F2 sits next to the F1 Start fallback
+    // and no Apple II program can type it.
+    const bool eSelect  = nav.select  || ImGui::IsKeyPressed(ImGuiKey_F2,     false);
     const bool eConfirm = nav.confirm || ImGui::IsKeyPressed(ImGuiKey_Enter,  false);
     const bool eCancel  = nav.cancel  || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     // Left/right zone-swap is a one-shot edge (never auto-repeats).

@@ -18,13 +18,18 @@
 // POM1's 3-phase parser, narrowed to Apple II / II+ verbs.
 //
 //   Phase A (boot)       : preset, --speed/--cpu-max, initial tape path,
-//                          save-tape path, snapshot-load (start state).
+//                          save-tape path.
 //   Phase B (first frame): apply the speed override + tape path inside
 //                          MainWindow's first render() call.
 //   Phase C (deferred)   : --load addr:file, --run addr, --paste, --step,
-//                          --trace-brk, --play/--rec/--rewind, --snapshot-
-//                          save. Fires after a short settling period so a
-//                          snapshot-load (Phase A) is fully applied first.
+//                          --trace-brk, --play/--rec/--rewind,
+//                          --snapshot-save AND --snapshot-load. Fires after a
+//                          short settling period, in COMMAND-LINE ORDER — so
+//                          a `--snapshot-load x --run 300` does the restore
+//                          first because it was typed first, not because of
+//                          any phase split. (This comment used to place
+//                          --snapshot-load in Phase A; the parser has always
+//                          pushed it as a deferred action like the others.)
 //
 // Every parser is dependency-free for unit testing — pass argv,
 // receive std::optional<CliPlan>.

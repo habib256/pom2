@@ -795,6 +795,20 @@ private:
     std::string pasteDialogPath;
     bool        pasteAutoUppercase  = false;
 
+    // ── Keyboard policy state (MainWindow_Input.cpp / KeyChord.h) ───────
+    /// Right Alt currently held. GLFW's `mods` folds both Alts into one bit,
+    /// so this is the only way to recognise Windows' AltGr — which arrives as
+    /// CONTROL|ALT on the right Alt and must not fire POM2's Ctrl+Alt chords
+    /// nor press Solid-Apple.
+    bool        rightAltDown_ = false;
+    /// `keyboard_alt_apple_keys` (default on): Left/Right Alt drive
+    /// Open/Solid Apple, i.e. the PB0/PB1 fire buttons. Off is the escape
+    /// hatch for layouts where Alt/Option is how ordinary characters are
+    /// typed (macOS French: { } [ ] |). Read lazily from Settings on the
+    /// first Alt event so no constructor ordering is involved.
+    mutable bool altAppleKeysEnabled_  = true;
+    mutable bool altAppleKeysLoaded_   = false;
+
     // Slot number of the DiskII the Insert-disk popup currently routes to.
     // Latched when any panel sets `insertDialogOpen` true; cleared when
     // the popup closes. Lets the popup survive panel pointer churn (rare

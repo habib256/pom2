@@ -483,6 +483,7 @@ set(POM2_FRONTEND_HEADERS
     src/Debugger_ImGui.h
     src/DevicePanelCoordinator.h
     src/IconsFontAwesome6.h
+    src/KeyChord.h
     src/Mat4.h
     src/MouseCoordinator.h
     src/MouseGrab.h

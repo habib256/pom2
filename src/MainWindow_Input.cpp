@@ -37,6 +37,7 @@
 #include "AppleKeyLatch.h"
 #include "EmulationController.h"
 #include "JoystickInput.h"
+#include "KeyChord.h"
 #include "Keyboard_ImGui.h"
 #include "Logger.h"
 #include "Memory.h"
@@ -70,6 +71,17 @@ static_assert(pom2::mousegrab::kModAlt       == GLFW_MOD_ALT);
 static_assert(pom2::mousegrab::kButtonLeft   == GLFW_MOUSE_BUTTON_LEFT);
 static_assert(pom2::mousegrab::kButtonMiddle == GLFW_MOUSE_BUTTON_MIDDLE);
 
+// Same contract for the keyboard policy in `KeyChord.h`.
+static_assert(pom2::keychord::kKeyA        == GLFW_KEY_A);
+static_assert(pom2::keychord::kKeyZ        == GLFW_KEY_Z);
+static_assert(pom2::keychord::kKeyF        == GLFW_KEY_F);
+static_assert(pom2::keychord::kKeyP        == GLFW_KEY_P);
+static_assert(pom2::keychord::kKeyLeftAlt  == GLFW_KEY_LEFT_ALT);
+static_assert(pom2::keychord::kKeyRightAlt == GLFW_KEY_RIGHT_ALT);
+static_assert(pom2::keychord::kModShift    == GLFW_MOD_SHIFT);
+static_assert(pom2::keychord::kModControl  == GLFW_MOD_CONTROL);
+static_assert(pom2::keychord::kModAlt      == GLFW_MOD_ALT);
+
 void MainWindow::injectAscii(uint8_t apple2Code)
 {
     // Not under lockState(), on purpose: queueKey takes `Memory::kbMutex`,
@@ -87,11 +99,10 @@ void MainWindow::onChar(unsigned int codepoint)
     // band, etc.) are read via ImGui::IsKeyPressed — the same keystroke must
     // not also land in the $C000 latch.
     if (kioskMenuOpen_) return;
-    // In kiosk, K is reserved (Select fallback): the OPEN direction leaks
-    // otherwise — this callback fires while the menu is still closed, then
-    // updateKioskMenu opens the non-pausing Keys band the same frame, so the
-    // running game would receive a live 'k' on every open.
-    if (kiosk_ && (codepoint == 'k' || codepoint == 'K')) return;
+    // K used to be swallowed in kiosk for the Select fallback, gated on
+    // `kiosk_` rather than on the menu — so K simply never reached the guest
+    // in kiosk mode. The fallback is F2 now (MainWindow_Kiosk.cpp), which no
+    // Apple II program can type, and the letter is the user's again.
     // Apple II accepts the full ASCII range (uppercase and lowercase). We
     // forward the codepoint as-is — Applesoft and the Monitor pick whichever
     // case the user typed.
@@ -117,21 +128,28 @@ namespace {
 // `glfwGetKeyName(key, scancode)` returns the layout's character for the key,
 // independent of modifiers — that is what the `scancode` parameter of the
 // callback is for. GLFW requires it on the main thread, which is where GLFW
-// dispatches its own callbacks, so onKey satisfies that by construction. It
-// returns null for non-printable keys and can return a multi-byte name on a
-// layout whose cap is not ASCII, so the US positional map stays as the
-// fallback: no layout gets FEWER Ctrl-letters than it had.
+// dispatches its own callbacks, so onKey satisfies that by construction.
+//
+// EMSCRIPTEN: `glfwGetKeyName` is one of the entry points Emscripten's GLFW
+// port implements as an `abort()` stub, and this function is reached on
+// EVERY Ctrl+key — so the browser build killed the whole session the first
+// time anyone pressed Ctrl-C in Applesoft. Skipped there; a null name means
+// the US-positional fallback, which is what the browser had before layout
+// awareness existed.
+//
+// The classification itself lives in KeyChord.h so a test can drive it (the
+// layouts that broke it are not ones CI has). In particular, a key that HAS
+// a name which is not a letter now yields 0 rather than the US letter at
+// that position: AZERTY's ',' sits where QWERTY has M, and the old fallback
+// turned Ctrl+',' into Ctrl-M = RETURN.
 char layoutLetter(int key, int scancode)
 {
-    if (const char* name = glfwGetKeyName(key, scancode);
-        name && name[0] && name[1] == '\0') {
-        const char c = name[0];
-        if (c >= 'a' && c <= 'z') return static_cast<char>(c - 'a' + 'A');
-        if (c >= 'A' && c <= 'Z') return c;
-    }
-    if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z)
-        return static_cast<char>('A' + (key - GLFW_KEY_A));
-    return 0;
+#ifdef __EMSCRIPTEN__
+    (void)scancode;
+    return pom2::keychord::letterFromKeyName(nullptr, key);
+#else
+    return pom2::keychord::letterFromKeyName(glfwGetKeyName(key, scancode), key);
+#endif
 }
 
 }  // namespace
@@ -145,13 +163,29 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // released after Reset like on real hardware.
     // Through `pushAppleKeys()`, never straight to Memory: the on-screen
     // keyboard presses the same two wires and would otherwise clear this.
-    if (key == GLFW_KEY_LEFT_ALT) {
-        appleKeys_.hostOpen = (action != GLFW_RELEASE);
-        pushAppleKeys();
-        return;
-    }
-    if (key == GLFW_KEY_RIGHT_ALT) {
-        appleKeys_.hostSolid = (action != GLFW_RELEASE);
+    //
+    // Two gates, both in KeyChord.h so a test can drive them:
+    //   * `keyboard_alt_apple_keys` (default on). On a macOS French layout
+    //     Option is how { } [ ] and | are typed, and every one of them was
+    //     pressing the PB0/PB1 fire buttons. Off, the Apple keys come only
+    //     from the on-screen //e keyboard.
+    //   * Windows AltGr, which arrives as CONTROL|ALT on the RIGHT Alt: a
+    //     text-entry modifier there, not Solid-Apple.
+    // `rightAltDown_` is tracked here because GLFW's `mods` folds both Alts
+    // into one bit — the AltGr tests below need to know which one it was.
+    if (key == GLFW_KEY_RIGHT_ALT) rightAltDown_ = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT) {
+        if (!altAppleKeysLoaded_) {
+            altAppleKeysLoaded_  = true;
+            if (settings)
+                altAppleKeysEnabled_ =
+                    settings->getBool("keyboard_alt_apple_keys", true);
+        }
+        const bool drive = pom2::keychord::altDrivesAppleKeys(
+            mods, altAppleKeysEnabled_, pom2::keychord::kHostIsWindows);
+        const bool down = drive && (action != GLFW_RELEASE);
+        if (key == GLFW_KEY_LEFT_ALT) appleKeys_.hostOpen  = down;
+        else                          appleKeys_.hostSolid = down;
         pushAppleKeys();
         return;
     }
@@ -165,7 +199,13 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // guest sees a modifier press it would have seen anyway.
     // Tested before the Ctrl-letter path further down, which would otherwise
     // also inject Ctrl-G ($07) into the keyboard latch.
-    if (pom2::mousegrab::isToggleChord(key, mods)) {
+    //
+    // Not on Windows AltGr: there Ctrl+Alt IS AltGr, so AltGr+G (a legal way
+    // to type a character on several layouts) grabbed the pointer — from
+    // inside an ImGui text field, since this chord is routed unconditionally.
+    const bool chordOk = pom2::keychord::chordMayFire(
+        mods, rightAltDown_, pom2::keychord::kHostIsWindows);
+    if (chordOk && pom2::mousegrab::isToggleChord(key, mods)) {
         if (action == GLFW_PRESS) toggleMouseGrab();
         return;
     }
@@ -185,7 +225,8 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // several desktops (GNOME/KDE open the focused window's menu with it),
     // where it never reaches GLFW. A chord in the same family as Ctrl+Alt+G
     // is reachable everywhere.
-    if (key == GLFW_KEY_F && (mods & GLFW_MOD_CONTROL) && (mods & GLFW_MOD_ALT)) {
+    if (chordOk && key == GLFW_KEY_F &&
+        (mods & GLFW_MOD_CONTROL) && (mods & GLFW_MOD_ALT)) {
         if (action == GLFW_PRESS) toggleKioskMode();
         return;
     }
@@ -202,12 +243,17 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
         if (key == GLFW_KEY_F10 && action == GLFW_PRESS) toggleKioskMode();
         return;
     }
-    // K reserved in kiosk (see onChar) — also blocks Ctrl-K's $0B, since
-    // eSelect fires on the K key regardless of modifiers.
-    if (kiosk_ && key == GLFW_KEY_K) return;
+    // (K used to be swallowed here for the kiosk Select fallback. The gate
+    // was on `kiosk_`, not on the menu being open, so the letter K never
+    // reached the guest in kiosk AT ALL — LOOK and KILL TROLL are not
+    // optional in an adventure game. The fallback moved to F2, which no
+    // Apple II program can type. See MainWindow_Kiosk.cpp.)
 
     if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
-    const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+    // Alt disqualifies Ctrl here: every Ctrl+Alt chord POM2 owns is matched
+    // above and has returned, while on Windows Ctrl+Alt IS AltGr — AltGr+E
+    // on a QWERTZ layout used to type $05 at the guest instead of "€".
+    const bool ctrl = pom2::keychord::isCtrlLetter(mods);
 
     // Both host shortcuts below match on the LAYOUT's letter, like the
     // Ctrl-letter path at the bottom of this function: the user presses the
@@ -302,9 +348,16 @@ void MainWindow::pasteFromClipboard()
             if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
         }
     }
+    // Say when the clipboard did not fit. pasteText caps at kPasteMaxChars
+    // and the count alone does not read as a truncation — the file-paste path
+    // has said "(file truncated)" all along, and a half-pasted BASIC listing
+    // that stops mid-line with no word about why is a bug report waiting to
+    // happen.
+    const bool truncated = text.size() > Memory::kPasteMaxChars;
     const size_t queued = controller->memory().pasteText(text);
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), "Paste: %zu chars queued from clipboard", queued);
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "Paste: %zu chars queued from clipboard%s",
+                  queued, truncated ? " (clipboard truncated)" : "");
     tapeStatusMessage = buf;
     tapeStatusUntil   = lastFrameTime + 4.0;
 }

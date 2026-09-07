@@ -127,6 +127,33 @@ int main()
         assert(consumeKey(mem) == 'A');
     }
 
+    // ── UTF-8 bytes are masked BEFORE the control filter ─────────────────
+    // Order regression (hunt #4 item #8): the filter used to run on the raw
+    // byte, so anything in $80-$9F sailed past it and was only THEN masked
+    // into a control code. "Ã" ($C3 $83) delivered $03 = Ctrl-C, and "’"
+    // ($E2 $80 $99) delivered a NUL and a Ctrl-Y — every accented French
+    // paste typed control characters at the guest.
+    {
+        Memory mem;
+        mem.setIIEMode(true);                  // no case folding, easier to read
+        mem.pasteText("\xE2\x80\x99");         // U+2019 RIGHT SINGLE QUOTE
+        std::string out;
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        for (unsigned char c : out)
+            assert(c >= 0x20 || c == 0x0D || c == 0x09);
+        assert(out == "b");                    // $E2 & $7F; $80/$99 dropped
+    }
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        mem.pasteText("A\xC3\x83Z");           // 'A' + U+00C3 + 'Z'
+        std::string out;
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        for (unsigned char c : out)
+            assert(c >= 0x20 || c == 0x0D || c == 0x09);
+        assert(out == "ACZ");                  // $C3 & $7F = 'C'; $83 dropped
+    }
+
     // ── Cap at Memory::kPasteMaxChars ────────────────────────────────────
     {
         Memory mem;

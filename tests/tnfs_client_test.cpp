@@ -582,6 +582,115 @@ int main()
         fs::remove_all(cache, ec);
     }
 
+    // ── The DEADLINE bounds the CONNECT phase, not just the transfer ────
+    // Hunt #4 item #2. `giveUp` was consulted for the first time only after
+    // mount + stat, and both of those live entirely inside TnfsClient: a TCP
+    // connect, then a UDP ladder of retries × per-request timeout. Against a
+    // server that accepts and then says nothing, that is 5 s + 5 × 5 s = ~30 s
+    // of wall clock that no deadline and no Ctrl+C could shorten — with the
+    // window already up, because this fetch IS what the main thread is doing.
+    //
+    // The stub below is exactly that server: TCP accepts and never answers,
+    // and a UDP socket sits on the same port so the fallback pass gets silence
+    // rather than an ICMP refusal. A 2 s deadline must be honoured.
+    {
+        struct SilentStub {
+            int listenFd = -1, udpFd = -1;
+            uint16_t port = 0;
+            std::thread th;
+            std::atomic<bool> stop{false};
+            bool start()
+            {
+                listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
+                if (listenFd < 0) return false;
+                int one = 1;
+                ::setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+                sockaddr_in a{};
+                a.sin_family = AF_INET;
+                a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                a.sin_port = 0;
+                if (::bind(listenFd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0)
+                    return false;
+                socklen_t al = sizeof a;
+                if (::getsockname(listenFd, reinterpret_cast<sockaddr*>(&a), &al) != 0)
+                    return false;
+                port = ntohs(a.sin_port);
+                if (::listen(listenFd, 4) != 0) return false;
+                // Same port on UDP: a bound-but-mute socket, so the UDP pass
+                // times out instead of being refused.
+                udpFd = ::socket(AF_INET, SOCK_DGRAM, 0);
+                if (udpFd < 0) return false;
+                ::setsockopt(udpFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+                if (::bind(udpFd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0)
+                    return false;
+                th = std::thread([this] {
+                    while (!stop.load()) {
+                        const int c = ::accept(listenFd, nullptr, nullptr);
+                        if (c < 0) return;
+                        // Accepted and then ignored: exactly the half-dead
+                        // server the deadline exists for.
+                        while (!stop.load())
+                            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                        ::close(c);
+                    }
+                });
+                return true;
+            }
+            void shutdownStub()
+            {
+                stop.store(true);
+                if (listenFd >= 0) { ::shutdown(listenFd, SHUT_RDWR); ::close(listenFd); }
+                if (udpFd >= 0)    { ::close(udpFd); }
+                if (th.joinable()) th.join();
+            }
+        };
+        SilentStub stub;
+        if (!stub.start()) { std::printf("FAIL: cannot start silent stub\n"); return 1; }
+        const auto cache = fs::temp_directory_path() / "pom2_tnfs_deadline_cache";
+        std::error_code ec;
+        fs::remove_all(cache, ec);
+
+        pom2::TnfsFetchLimits limits;
+        limits.deadlineSeconds = 2;
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto got = pom2::tnfsFetchImage(
+            "tnfs://127.0.0.1:" + std::to_string(stub.port) + "/SILENT.PO",
+            cache.string(), limits);
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        std::printf("      silent-server fetch returned in %lld ms: %s\n",
+                    static_cast<long long>(elapsedMs), got.error.c_str());
+        check(!got.ok, "a silent server fails the fetch");
+        check(elapsedMs < 5000,
+              "and the whole-fetch deadline bounds the CONNECT phase too");
+
+        stub.shutdownStub();
+        fs::remove_all(cache, ec);
+    }
+
+    // ── The abort flag reaches inside the client ────────────────────────
+    // Same stub shape: a flag already set before the call must be answered
+    // during mount(), not only between transfer chunks.
+    {
+        std::atomic<bool> abort{true};
+        pom2::TnfsFetchLimits limits;
+        limits.deadlineSeconds = 30;
+        limits.abort = &abort;
+        const auto cache = fs::temp_directory_path() / "pom2_tnfs_abort_cache";
+        std::error_code ec;
+        fs::remove_all(cache, ec);
+        const auto t0 = std::chrono::steady_clock::now();
+        // 127.0.0.1 on a port nothing listens on: the TCP pass is refused
+        // instantly, and the UDP pass must be skipped because of the flag.
+        const auto got = pom2::tnfsFetchImage(
+            "tnfs://127.0.0.1:1/ABORT.PO", cache.string(), limits);
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        check(!got.ok, "an aborted fetch fails");
+        check(elapsedMs < 3000, "and gives up promptly");
+        fs::remove_all(cache, ec);
+    }
+
     if (failures) {
         std::printf("tnfs_client: %d failure(s)\n", failures);
         return 2;
