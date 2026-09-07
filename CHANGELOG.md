@@ -5,6 +5,210 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #5: six Opus hunters, every finding confirmed by a probe
+
+Six hunters in parallel — CPU cores and MMU, the video pipeline, the audio
+chain, the storage stack below the file systems, the host side, the slot
+cards and the printing stack — each told to confirm a suspicion with a probe
+before reporting it and to hand back a minimal diff plus a pin. What
+survived that bar:
+
+**Both CPU cores pass the whole Tom Harte corpus on every documented
+opcode — 256 × 10 000 vectors, registers, flags, memory and cycle count.**
+The one finding is in the undocumented NMOS set: some fifty opcodes were
+length-correct NOPs charged the generic 3 (2-byte) or 5 (3-byte) cycles,
+1-5 short of what the silicon takes (SLO (zp,X) is 8, SLO abs,X is 7, SAX
+abs is 4, LAX (zp),Y is 5+p…). On the //e Unenhanced PAL profile — the
+French Touch corpus machine — raster code that embeds LAX/SAX/SLO drifted
+per instruction, the same class as the `LSR abs,X` note. Each column now
+carries its corpus total, with the page-cross penalty where the real one
+pays it. Pinned in `cpu_cycle_count` (one representative per class).
+
+**A Mockingboard driver that leaves /RESET to the board's pull-up had the
+AY wiped on every strobe.** `onViaPortBChange` composed port B as
+`portBOut & ddrB`, so an undriven PB2 read as 0 — and PB2 is the AY's
+/RESET. The port-A twin of this had been fixed (Ultima IV's Echo+ probe
+idiom); port B was still wrong on the Mockingboard and, worse, on the
+Phasor, where PB3/PB4 are the active-low chip selects and "undriven = 0"
+meant "select both". Both read the pins now (`readPortB()`, MAME's
+`output_pb()` = `(out & ddr) | ~ddr`). Pinned in `mockingboard_smoke` and
+`phasor_card_smoke`.
+
+**On a Sound II, a speech driver in the polled mode never saw a phoneme
+complete.** CA1 is fed from the SSI263's A/!R *pin*; the card strobed it
+from `Ssi263::advance()`'s return value, which is the host-IRQ edge gated by
+the chip's own DR1:0. In mode 00 the chip still raises A/!R, `$Cn4x` reads
+go to the VIA, so IFR.CA1 was the only window onto the pin — and it never
+latched. The strobe follows the pin now; IER remains the gate. Pinned in
+`mockingboard_smoke`.
+
+**A 5.25" address field with a bad checksum routed the next data field
+into the wrong sector of the user's file.** `decodeTrack` (and the
+13-sector twin) took the sector byte at face value; RWTS checks `vol ^ trk
+^ sec` first, and the 3.5" decoder already did. One bad nibble in a sector
+number sent 253 bytes of another sector's payload over a good one on
+write-back, under "Saved 1 modified track(s)". The header now routes only
+when it checks out. Pinned in `disk_writeback_smoke` (a uniform image hides
+this — the pin's sectors are distinct).
+
+**WOZ quarter-tracks sharing one TRK were loaded as independent copies.**
+Every real image gives a whole track two or three TMAP slots; `writeFlux`
+spliced into one `bitStream[qt]` only, so a read a quarter-track off saw
+the pre-write surface, and if two slots went dirty `saveDirty` spliced both
+into the same file offset and the higher one's stale copy discarded the
+other's write. Changed cells are now mirrored into every alias. Pinned in
+`woz_writeback_smoke` with a shared-TRK image.
+
+**`--ai-control` wrote itself into `state.cfg`**, so one launch with the flag
+reopened the loopback control plane — `/mem`, `/disk`, `/snapshot/load`,
+token-less — on every later plain launch, with nothing on screen to say so.
+A boot flag is a per-run request; only the panel's toggle persists now.
+**`Host: localhost` was refused** by the DNS-rebinding fence (RFC 6761 § 6.3
+makes it the one name that cannot be rebound), and because a fence rejection
+counted toward the five-failures brake, five of them answered 429 to the
+correct client too. **Trailing whitespace on a header value** was kept, so a
+`$TOKEN` with a stray space was a 401 (RFC 7230 § 3.2 puts OWS on both
+sides). **`--fujinet-slot 3junk`** was accepted as 3 by `atoi`. And in the
+browser build, a `pagehide` flush requested during a pump flush waited on a
+debounce that never came; the pump's callback now starts the second syncfs
+itself. Pinned in `ai_control_server_smoke` and `cli_kiosk`.
+
+**Three "the picture shows the previous frame" defects in the beam-raced
+display.** A guest that clears MIXED during VBL — the tear-free idiom — left
+rows 160-191 of the composite OE pipelines written by nobody: `render()`
+folded the VBL-stamped event into the frame state, so the frame no longer
+*ended* in mixed graphics and `patchMixedTextBand` painted nothing, while
+`mixedGfx` still stopped the demod at row 160. VBL events now belong to the
+next frame (both replays already skipped them) and the text band is kept
+only when the frame ends mixed. A beam-raced 80-col ⇄ 40-col switch painted
+half the frame into `frame` and half into `frame80`, and `pixels()` followed
+the last segment — the other half was last frame's; a frame whose segments
+straddle the two domains is now pinned to 560, as the Chat Mauve already
+was. And the 280-wide phosphor history was shared by every segment on a
+line, so a MonoGreen/MonoAmber per-line page split ghosted the left
+segment's dots through the right one; it is bounded per segment like the
+560 one. Pinned by the new `display_beam_regressions`.
+
+**ImageWriter: `ESC V` / `ESC U` re-armed the 7-bit mask** on a printer
+whose switch B-6 the guest had opened (`ESC Z $00 $20`, what any driver
+printing high-ASCII or MouseText does): after one dot-column repeat, `$8D`
+was a carriage return again. The run's tail restores what B-6 asks for.
+**Epson `ESC R` (charset) cancelled `ESC N` (skip over perforation)** by
+running the whole C. Itoh `updateSwitch()`, whose other half re-derives the
+page window from switch B-3 — which an FX-80 spells as ESC N / ESC O. The
+charset half runs alone now. Both pinned in `imagewriter_smoke`.
+
+## 2026-09-07 — ProDOS bug hunt, round two: a real ProDOS as the oracle
+
+The first round read the code; this one made ProDOS 8 2.4.3 walk it. Booted
+from the tracked `.po` in slot 6, it catalogued the synthesised host-folder
+volume (root and subdirectory), `BLOAD`ed a tagged file at its aux type,
+`BSAVE`d, `CREATE`d, `SAVE`d, `DELETE`d and `RENAME`d on it, and every
+block count it printed matched the bitmap — then drove the HDV card, the
+CFFA and a SmartPort HDV unit side by side with cross `BSAVE`/`BLOAD`, and
+booted a real `.hdv` through the HDV card and the CFFA. All of that is
+sound. What the oracle did turn up:
+
+**A DOS 3.3 disk under the wrong extension booted to a blank screen.** The
+sector-order sniff read the ProDOS volume directory at `$400` / `$B00` and
+overrode a misleading `.dsk` / `.po` — for ProDOS volumes only. A DOS 3.3
+master named `.po` has no such header, so it was read ProDOS-skewed and the
+boot found garbage. The loader now reads the VTOC too and follows the
+catalog chain: sectors 0 and 15 are fixed points of the skew, but sector 15
+links to sector 14, which sits at `$11E00` in a DOS-order file and at `$11100`
+in a ProDOS-order one. Only a valid VTOC arms it, so a ProDOS volume never
+trips it. Pinned, with the real systems as the oracle, by the new
+`sector_order_smoke`: ProDOS 2.4.3 boots, SAVEs and writes back on the `.po`,
+its DOS-order twin and each under the other extension, and the four results
+de-skew to one byte-identical volume (the write-side skew had no pin before);
+the DOS 3.3 master and its ProDOS-order twin boot to the prompt under both
+extensions.
+
+**ProDOS 8 has no built-in No-Slot Clock support, and the drivers that add
+it never look where POM2's II+ chip sits.** `DEV.md` said the //e windows
+were "where ProDOS 8 ≥ 2.0.3 scans"; ProDOS 8 only ever built in the
+ThunderClock driver. The real NSC drivers (SMT's 1991 `NS.CLOCK.SYSTEM`,
+a2stuff's rework) probe slot ROMs `$C300..$C700` then `$C800` under
+INTCXROM. On a //e POM2's chip answers at `$C300` and the driver reads the
+injected date — pinned end-to-end by the new `no_slot_clock_prodos_driver`,
+which boots ProDOS 2.4.3 and runs the a2stuff driver from drive 2. On a II+
+the AppleWin placement under the Monitor ROM is one no ProDOS driver probes
+— and not how a II+ was fitted: the SmartWatch went into a peripheral card's
+ROM socket. **The chip can now also sit under a slot card's ROM**
+(`nsclock_slot`, default 1 — the fresh-install Grappler+; combo in the
+No-Slot Clock panel), intercepting that slot's `$Cn00-$CnFF` while a card is
+plugged there, so the driver's slot scan finds it at `$C100` and a II+
+finally gets ProDOS dates. The motherboard window stays for the //e drivers
+and the DOS 3.3-era patches. Pinned by the same test, in all three states.
+
+
+A bug hunt on the ProDOS side, by probing the host-folder round trip
+(`buildVolumeFromFolder` → guest → `decodeVolumeToFolder` → next mount) rather
+than by reading it. Three defects, all on the write-back path, all pinned.
+
+**The write-back dropped every file's type and aux type.** An extension
+names a type and nothing else, and the decode composed one regardless: every
+aux_type came back 0 and every type it had no extension for came back BIN.
+The loss was not even confined to files the guest changed. A host
+`PIC#062000` — the CiderPress tag the build parses, the name the HGR Paint
+editor saves under, the flow the 2026-08 changelog promised — produced a
+*second* file `PIC.bin` on every flush because nothing on disk was called
+that, and the next mount served `PIC` + `PIC.1`. A guest `BSAVE X,A$2000`
+lost its load address, so the next `BLOAD X` landed at `$0000`. An AppleWorks
+document (`$1A`) came back as a BIN AppleWorks no longer listed. The decode
+now uses the extension only when the build would derive exactly that
+(type, aux) pair back from it and composes `NAME#TTAAAA` otherwise; an entry
+whose metadata the guest changed *renames* the host file it came from instead
+of leaving it behind as a duplicate. `.bas` files get aux `$0801` on the way
+in — what BASIC.SYSTEM writes — so a re-SAVEd `hello.bas` stays `hello.bas`.
+
+**Any host name the sanitisation could not recompose grew one junk file per
+flush, for ever.** `README!` → `README.`, `Hello World.txt` → `HELLO.WORLD`, a
+third `Foo*.bin` → `FOO..1`: the decode composed a host name from the ProDOS
+name, found no such file, and wrote a new one beside the source — which the
+next mount served as an extra entry. The build's naming pass is now a
+function of the directory listing alone (`nameHostDir`), and the decode
+*replays* it over the folder to find each entry's source: same metadata,
+written in place; changed metadata, renamed to a name that carries it.
+
+**Two host files differing only by a known extension grew one junk file per
+flush, for ever.** `hello.bas` + `hello.txt` both sanitise to `HELLO`, and the
+second took `HELLO.1`. A numeric suffix is a name the decode cannot undo: it
+reads as "a file called HELLO.1 with no extension", so no `.txt` was
+appended, a new host file `HELLO.1` landed beside `hello.txt`, and the next
+mount found three files. The probe counted `HELLO.1`, `HELLO.2`, `HELLO.3`
+after three cycles. The colliding file now keeps its extension in the volume
+(`HELLO.TXT`), which the decode's case-folded lookup lands back on
+`hello.txt`.
+
+**Re-mounting the same folder with unsaved writes reverted the first save
+with the second.** `StorageCoordinator::mountBlockBytes` installed the bytes
+its caller had synthesised *before* the command flushed the outgoing volume
+into that folder: the save landed on disk, then the pre-save snapshot was
+mounted over it. The stale volume's next flush rewrote every file whose
+bytes differed from its copy, and the mount stamp taken after the flush was
+newer than the files it wrote, so nothing preserved them. The file-image
+path had closed the same hazard in `Block512Backing::adoptImage`; the synth
+path now re-synthesises from the folder after a successful same-folder
+commit.
+
+**Two bays of one SmartPort card answered the write-protect question
+differently.** `SmartPortUnit.h` declares "physically write-protected OR no
+write-back opt-in", the 3.5" unit honoured it through `Disk35Image` (as the
+Disk II does through `DiskImage`), and `SmartPortHdvUnit` reported the medium
+flag alone — so with the same toggle off, the 3.5" refused a write and the
+HDV took a session of them into RAM and dropped them at eject. Standing
+ruling R1 ("one rule per card") is settled: the HDV unit honours the contract,
+`writeBlock` refuses like the 3.5" does, and the HDV-class *cards* keep their
+documented in-session-writable policy as a stated divergence. Pinned in
+`smartport_mixed_units_smoke`, which used to pin the opposite.
+
+And the one divergence TODO.md still listed in the atomic-write family is
+closed: the host-folder decode now carries the original file's mode onto its
+replacement, as `DiskImage` and `Block512Backing` already did, so an
+executable script in the served folder keeps its `x` through a write-back.
+→ [DEV § ProDOS host folder](DEV.md#prodos-host-folder)
+
 ## 2026-09-07 — Bug hunt #4: the 3.5" writes that never landed, the Play button that did nothing, and a manual we had never read
 
 Seven Opus hunters on subsystems the first three rounds had only skimmed — the

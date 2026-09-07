@@ -40,11 +40,11 @@ bool SmartPortHdvUnit::readBlock(uint32_t idx, uint8_t* out) const
 
 bool SmartPortHdvUnit::writeBlock(uint32_t idx, const uint8_t* in)
 {
-    if (!in) return false;
-    // Block512Backing accepts the write into RAM (marking the block dirty)
-    // unless the medium is WP — write-back-off still gives a read/write
-    // session, it just won't be flushed by saveDirty(). Same semantics as
-    // the old hand-rolled store and ProDOSHardDiskCard.
+    // Mirrors SmartPort35Unit::writeBlock: the unit contract says a WRITE
+    // on a write-protected unit returns false, and write-protected includes
+    // "no write-back opt-in" (see the header). The card's dispatch already
+    // answers $2B before reaching here; this keeps a direct caller honest.
+    if (!in || !backing_.isLoaded() || isWriteProtected()) return false;
     return backing_.writeBlock(idx, in);
 }
 

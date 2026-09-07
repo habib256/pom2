@@ -559,12 +559,16 @@ MainWindow::MainWindow(bool forceIIPlus)
         }
         sscPortInput       = settings->getInt  ("ssc_port",        sscPortInput);
         diskTurboWhileMotor = settings->getBool("disk_turbo",      diskTurboWhileMotor);
-        // Dallas DS1216E "No-Slot Clock" — sits under the Monitor ROM
-        // and ProDOS 2.0.3+ / GS-OS auto-detect it via the magic-key
-        // scan. Default ON (battery-backed RTC for all profiles incl.
-        // //c, which never had a slot to host a ThunderClock card).
+        // Dallas DS1216E "No-Slot Clock" — under the motherboard ROM
+        // (Monitor on a II+, $C300/$C800 on a //e) AND under the ROM of
+        // the card in `nsclock_slot` (default 1, the Grappler+): the
+        // ProDOS NSC drivers scan slot ROMs, and on a II+ nothing else.
+        // Default ON (battery-backed RTC for all profiles incl. //c,
+        // which never had a slot to host a ThunderClock card).
         controller->noSlotClock().setEnabled(
             settings->getBool("nsclock_enable", true));
+        controller->noSlotClock().setSlot(
+            settings->getInt("nsclock_slot", 1));
         // Composite-NTSC shader params (saved under ntsc_*). We can't
         // call ntscFx->setParams() yet because the postprocessor is
         // lazy-constructed in drawScreenImage; stash them into a
@@ -864,6 +868,7 @@ bool MainWindow::startAiControlFromCli(unsigned short port, std::string& errOut)
     }
     pom2::log().info("CLI", "AI control listening on 127.0.0.1:" +
                               std::to_string(port));
+    aiControlFromCliOnly_ = true;
     return true;
 }
 

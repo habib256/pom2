@@ -85,6 +85,10 @@ void testFujiNetSlotExplicitness()
 
     // Out-of-range slots are still rejected outright.
     assert(!parse({"POM2", "--fujinet", "--fujinet-slot", "8"}, help).has_value());
+    // The same rule as every other numeric flag: trailing garbage is a
+    // typo, not a slot. `atoi` used to read "3junk" as a perfectly good 3.
+    assert(!parse({"POM2", "--fujinet", "--fujinet-slot", "3junk"}, help).has_value());
+    assert(!parse({"POM2", "--fujinet", "--fujinet-slot", ""}, help).has_value());
     assert(!parse({"POM2", "--fujinet", "--fujinet-slot", "0"}, help).has_value());
 }
 

@@ -345,8 +345,11 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         }
         else if (a == "--fujinet-slot") {
             const char* v = needArg(i, "--fujinet-slot"); if (!v) return std::nullopt;
-            const int s = std::atoi(v);
-            if (s < 1 || s > 7) {
+            // parseIntPositive, not atoi: the same rule the rest of the
+            // parser applies. `--fujinet-slot 3junk` came back as a
+            // perfectly good 3, which is the shape of a typo nobody notices.
+            int s = 0;
+            if (!parseIntPositive(v, s) || s < 1 || s > 7) {
                 pom2::log().error("CLI", std::string("--fujinet-slot must be 1-7, got ") + v);
                 return std::nullopt;
             }

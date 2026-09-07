@@ -56,10 +56,17 @@ public:
     std::string_view kindLabel() const override { return kKindLabel; }
 
     bool     isLoaded()         const override { return backing_.isLoaded(); }
-    // Reflects ONLY the real medium WP flag (2MG header), not the host-file
-    // write-back preference — so ProDOS sees a read/write volume by default.
-    // Persisting RAM writes to the file is the separate write-back opt-in.
-    bool     isWriteProtected() const override { return backing_.isWriteProtected(); }
+    /// The unit contract (`SmartPortUnit.h`): physically write-protected OR
+    /// no write-back opt-in — what `SmartPort35Unit` answers through
+    /// `Disk35Image`, and what `DiskImage` answers for the Disk II. This
+    /// unit used to report the medium flag alone, so two bays of ONE card
+    /// gave opposite answers to the same toggle (TODO.md R1 / G5-1): the
+    /// 3.5" refused a write with write-back off, the HDV took it into RAM
+    /// and dropped it at eject. The HDV-class *cards* (ProDOSHardDiskCard,
+    /// CffaCard) keep their documented in-session-writable policy; inside
+    /// a SmartPort card the rule is the card's.
+    bool     isWriteProtected() const override
+    { return backing_.isWriteProtected() || !backing_.isWriteBackEnabled(); }
     uint32_t blockCount() const override {
         return static_cast<uint32_t>(backing_.blockCount());
     }

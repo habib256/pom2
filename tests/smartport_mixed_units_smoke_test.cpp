@@ -170,18 +170,47 @@ bool testMixedStatus()
     if ((readReg(card, 0x4) & 0x80) != 0) {
         std::printf("FAIL: loaded HDV status bit7 still set\n"); return false;
     }
-    // Raw .hdv has no medium WP flag, so ProDOS sees a read/write volume
-    // regardless of the host-file write-back preference. write-back only
-    // gates whether RAM writes are flushed back to the file (saveDirty),
-    // not in-session read/write — so the WP bit stays clear either way.
-    if ((readReg(card, 0x4) & 0x40) != 0) {
-        std::printf("FAIL: HDV WP bit set with no medium WP flag (writeBack off)\n");
+    // ONE rule per card (TODO.md R1, settled by G5-1): a unit is
+    // write-protected when the medium is, OR when write-back is off — the
+    // contract `SmartPortUnit.h` declares and the 3.5" unit has always
+    // honoured. This test used to pin the opposite for the HDV unit ("WP
+    // bit stays clear either way"), which made two bays of the same card
+    // answer the same toggle differently, and let a write-back-off HDV take
+    // a session of writes into RAM and drop them at eject.
+    if ((readReg(card, 0x4) & 0x40) == 0) {
+        std::printf("FAIL: HDV WP bit clear with write-back off\n");
+        return false;
+    }
+    uint8_t blockBuf[kBlockBytes] = {0};
+    if (uraw->writeBlock(3, blockBuf)) {
+        std::printf("FAIL: HDV unit accepted a write with write-back off\n");
         return false;
     }
     uraw->setWriteBackEnabled(true);
     if ((readReg(card, 0x4) & 0x40) != 0) {
         std::printf("FAIL: HDV WP bit set after writeBack on\n");
         return false;
+    }
+    // Both bays, same toggle, same answer.
+    {
+        auto u35 = std::make_unique<pom2::SmartPort35Unit>();
+        const std::string p35 = writeSynth35("wpc", 0x11);
+        if (!u35->loadImage(p35)) {
+            std::printf("FAIL: 35 load: %s\n", u35->lastError().c_str());
+            return false;
+        }
+        u35->setWriteBackEnabled(false);
+        uraw->setWriteBackEnabled(false);
+        if (u35->isWriteProtected() != uraw->isWriteProtected()) {
+            std::printf("FAIL: 3.5\" and HDV units disagree on WP (write-back off)\n");
+            return false;
+        }
+        u35->setWriteBackEnabled(true);
+        uraw->setWriteBackEnabled(true);
+        if (u35->isWriteProtected() != uraw->isWriteProtected()) {
+            std::printf("FAIL: 3.5\" and HDV units disagree on WP (write-back on)\n");
+            return false;
+        }
     }
     std::printf("OK : per-unit status routing\n");
     return true;

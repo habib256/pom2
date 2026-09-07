@@ -465,6 +465,40 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
             overridden = true;
         }
 
+        // The other half of the sniff: a DOS 3.3 disk under the wrong
+        // extension. The vol-dir sniff above says nothing about one (no
+        // ProDOS header anywhere), so a DOS 3.3 master named `.po` was read
+        // ProDOS-skewed and booted to a blank screen. The VTOC cannot tell
+        // the orders apart — it is track 17 sector 0, and sectors 0 and 15
+        // are fixed points of the skew — but the catalog CHAIN can: sector
+        // 15 links to sector 14, which lives at $11E00 in a DOS-order file
+        // and at $11100 (ProDOS index 1) in a ProDOS-order one. Only a valid
+        // VTOC arms this, so a ProDOS volume never trips it.
+        auto looksLikeVtoc = [base, n]() -> bool {
+            constexpr std::size_t off = 17u * 4096u;      // T17 S0, both orders
+            if (off + 0x38 > n) return false;
+            const uint8_t* p = base + off;
+            return p[1] == 0x11 && p[2] >= 1 && p[2] <= 15 && p[3] == 3 &&
+                   p[0x34] == 35 && p[0x35] == 16 &&
+                   p[0x36] == 0x00 && p[0x37] == 0x01;      // 256 bytes/sector
+        };
+        auto looksLikeCatalogSector14 = [base, n](std::size_t off) -> bool {
+            if (off + 3 > n) return false;
+            const uint8_t* p = base + off;
+            return p[0] == 0x00 && p[1] == 0x11 && p[2] == 0x0D;  // next = T17 S13
+        };
+        if (!prodosVolHere && !dosVolHere && looksLikeVtoc()) {
+            const bool dosHere    = looksLikeCatalogSector14(17u * 4096u + 14u * 256u);
+            const bool prodosHere = looksLikeCatalogSector14(17u * 4096u + 1u * 256u);
+            if (order == SectorOrder::ProDOS && dosHere && !prodosHere) {
+                order = SectorOrder::Dos33;
+                overridden = true;
+            } else if (order == SectorOrder::Dos33 && prodosHere && !dosHere) {
+                order = SectorOrder::ProDOS;
+                overridden = true;
+            }
+        }
+
         r.kind = (order == SectorOrder::ProDOS) ? ImageKind::ProDos143k
                                                 : ImageKind::Dsk143k;
         r.payloadOff   = baseOff;
@@ -1925,6 +1959,24 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         // the same reason).
         auto& bits = bitStream[qt];
         const int bitCount = static_cast<int>(wozQtBitCount[qt]);
+        // Every TMAP entry that names this TRK is the SAME ring of surface —
+        // real images give a whole track two or three quarter-track slots
+        // (fastloader.woz: TMAP[3] = TMAP[4] = TMAP[5] = 1) and loadWoz
+        // unpacked each into its own bitStream. Splicing into one of them
+        // only meant a read a quarter-track off returned the pre-write
+        // surface, and — worse — if two ever went dirty, saveDirty spliced
+        // both into the same wozQtByteOff and the higher qt's stale copy
+        // landed last, silently discarding the other's writes. Mirror per
+        // changed cell, not per track: the whole-vector copy would be ~50 KB
+        // on every ~30-transition flush. FLUX-chunk slots carry
+        // wozQtBitCount == 0 and never join an alias set.
+        int alias[kQuarterTracks];
+        int nAlias = 0;
+        for (int a = 0; a < kQuarterTracks; ++a)
+            if (a != qt && wozQtBitCount[a] == wozQtBitCount[qt] &&
+                wozQtByteOff[a] == wozQtByteOff[qt] &&
+                bitStream[a].size() == bits.size())
+                alias[nAlias++] = a;
         bool changed = false;
         for (int c = 0; c < spanCells; ++c) {
             // Seam rule: the window's first/last cells may be only
@@ -1940,7 +1992,11 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
             if (partial && !newBits[c]) continue;
             const int dst = ((firstCell + c) % bitCount + bitCount) % bitCount;
             const uint8_t v = newBits[c] ? 1 : 0;
-            if (bits[dst] != v) { bits[dst] = v; changed = true; }
+            if (bits[dst] != v) {
+                bits[dst] = v;
+                for (int k = 0; k < nAlias; ++k) bitStream[alias[k]][dst] = v;
+                changed = true;
+            }
         }
         if (changed) {
             wozQtDirty[qt] = true;
@@ -1959,6 +2015,10 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
             // stream we just edited.
             fluxStreamValid[qt] = false;
             fluxStream[qt].clear();
+            for (int k = 0; k < nAlias; ++k) {
+                fluxStreamValid[alias[k]] = false;
+                fluxStream[alias[k]].clear();
+            }
         }
         return;
     }
@@ -2253,6 +2313,22 @@ bool DiskImage::decodeTrack(int track, uint8_t outSectors[kSectorsPerTrack][kSec
                 uint8_t pair[2] = { at(i + 3 + k * 2), at(i + 4 + k * 2) };
                 addr[k] = decode4and4(pair);
             }
+            // Route on the header only when it checks out. RWTS does
+            // (Beneath Apple DOS: chk = vol ^ trk ^ sec), and
+            // Sony35Gcr::decodeSectors already does on the 3.5" side. Without
+            // it ONE bad nibble in a sector number silently relocated the
+            // following data field on write-back: the payload landed in a
+            // different sector of the user's image and destroyed whatever was
+            // there, under a "Saved 1 modified track(s)" success. Skipping the
+            // field leaves that sector holding the bytes saveDirty pre-filled
+            // from the file. The DE AA epilogue is deliberately NOT checked:
+            // some .nib dumps carry non-standard epilogues that decode fine
+            // today, and the checksum is what routes.
+            if (static_cast<uint8_t>(addr[0] ^ addr[1] ^ addr[2]) != addr[3]) {
+                curSector = -1;
+                i += 13;
+                continue;
+            }
             curSector = addr[2];
             // Skip past the address field (3 + 8 + 3 epilogue = 14).
             i += 13;
@@ -2335,6 +2411,14 @@ bool DiskImage::decodeTrack13(int track,
             for (int k = 0; k < 4; ++k) {
                 uint8_t pair[2] = { at(i + 3 + k * 2), at(i + 4 + k * 2) };
                 addr[k] = decode4and4(pair);
+            }
+            // Same checksum gate as decodeTrack (writeAddressField13 writes
+            // volume ^ track ^ sector too): an unverified header must not
+            // route a data field into the wrong sector of the file.
+            if (static_cast<uint8_t>(addr[0] ^ addr[1] ^ addr[2]) != addr[3]) {
+                curSector = -1;
+                i += 13;
+                continue;
             }
             curSector = addr[2];
             i += 13;                       // 3 + 8 + 3 epilogue - 1

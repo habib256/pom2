@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -146,7 +147,29 @@ bool isDosDeviceStem(const std::string& stem)
            (stem.compare(0, 3, "COM") == 0 || stem.compare(0, 3, "LPT") == 0);
 }
 
-std::string sanitiseProDOSName(const std::string& hostName)
+/// `stripKnownExt = false` keeps a well-known extension in the name: the
+/// spelling a file falls back to when stripping it would collide with a
+/// sibling (`hello.bas` + `hello.txt` → `HELLO` + `HELLO.TXT`). See the
+/// collision note in `scanHostFolder`.
+/// CiderPress / SD-CARD-OS metadata tag: "NAME#TTAAAA" carries the ProDOS
+/// file type (TT) and aux type / load address (AAAA) in the host filename —
+/// e.g. the HGR Paint editor saves pages as "PIC#062000" (BIN at $2000), so
+/// a BLOAD needs no ,A override. Strips the tag off `name` and returns true
+/// when one was found, leaving `type` / `aux` untouched otherwise.
+bool stripMetadataTag(std::string& name, std::uint8_t& type, std::uint16_t& aux)
+{
+    const std::size_t hash = name.rfind('#');
+    if (hash == std::string::npos || name.size() - hash != 7) return false;
+    for (std::size_t i = hash + 1; i < name.size(); ++i)
+        if (!std::isxdigit(static_cast<unsigned char>(name[i]))) return false;
+    type = static_cast<std::uint8_t>(std::stoul(name.substr(hash + 1, 2), nullptr, 16));
+    aux  = static_cast<std::uint16_t>(std::stoul(name.substr(hash + 3, 4), nullptr, 16));
+    name.erase(hash);
+    return true;
+}
+
+std::string sanitiseProDOSName(const std::string& hostName,
+                               bool stripKnownExt = true)
 {
     fs::path p(hostName);
     std::string raw = p.filename().string();
@@ -159,6 +182,7 @@ std::string sanitiseProDOSName(const std::string& hostName)
         ".dsk", ".po",  ".do",  ".hdv", ".2mg"
     };
     for (const char* xe : kStripExts) {
+        if (!stripKnownExt) break;
         const std::size_t xn = std::strlen(xe);
         if (raw.size() <= xn) continue;
         std::string tail = raw.substr(raw.size() - xn);
@@ -200,12 +224,26 @@ std::string sanitiseProDOSName(const std::string& hostName)
     return out;
 }
 
+// `alt` (optional) is tried BEFORE the numeric suffixes when `base` is taken:
+// the same host name with its known extension kept. A numeric suffix is not
+// a name the write-back can undo — `HELLO.1` reads as "a file called HELLO.1
+// with no extension", so the type-derived `.txt` is never appended, a NEW
+// host file `HELLO.1` appears beside `hello.txt`, and the next mount finds
+// three files where there were two. One more per flush, for ever (the probe
+// that found it counted `HELLO.1`, `HELLO.2`, `HELLO.3` after three cycles).
+// `HELLO.TXT` instead: the dotted ProDOS name keeps its own suffix on the
+// way out, and the decode's case-folded lookup lands it back on `hello.txt`.
 std::string uniqueName(const std::string& base,
-                       std::unordered_map<std::string, int>& used)
+                       std::unordered_map<std::string, int>& used,
+                       const std::string& alt = std::string())
 {
     if (used.find(base) == used.end()) {
         used[base] = 0;
         return base;
+    }
+    if (!alt.empty() && alt != base && used.find(alt) == used.end()) {
+        used[alt] = 0;
+        return alt;
     }
     for (int i = 1; i < 1000; ++i) {
         const std::string suffix = "." + std::to_string(i);
@@ -370,9 +408,104 @@ bool pathIsUnder(const fs::path& root, const fs::path& p)
     return true;
 }
 
-// Recursively populate a PreparedDir from the given host folder. `usedNames`
-// is per-directory (subdir name collisions don't conflict with parent dir
-// names). `result` accumulates filesIncluded / filesSkipped counters.
+// One host directory entry, as the build names it.
+struct HostEntry {
+    fs::path        path;
+    bool            isDir      = false;
+    std::string     prodosName;
+    std::uint8_t    fileType   = 0;
+    std::uint16_t   auxType    = 0;
+    std::uintmax_t  size       = 0;
+    const char*     skipReason = nullptr;   // non-null → never enters the volume
+};
+
+// The naming pass, shared by the build and the decode: list `hostPath`
+// (dotfiles hidden, symlinks out of `root` refused), sort, and give every
+// entry the ProDOS name, type and aux type the volume will carry. It is a
+// function of the directory listing alone, and that is the point — the
+// decode REPLAYS it over the folder as it stands and so knows, for any
+// entry, which host file it came from, however lossy the sanitisation was:
+// `README!` → `README.`, `Hello World.txt` → `HELLOWORLD`, and whatever the
+// collision rules minted. Before the replay the decode composed a host name
+// from the ProDOS name and, finding no such file, wrote a NEW one beside the
+// source — `HELLOWORLD.txt` next to `Hello World.txt`, `README.1` next to
+// `README!` — and the next mount served both. One more per flush.
+std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& root,
+                                   std::size_t& symlinksSkipped)
+{
+    std::error_code ec;
+    std::vector<fs::path> children;
+    for (const auto& entry : fs::directory_iterator(hostPath, ec)) {
+        // Skip dotfiles (e.g. .DS_Store) — they pollute the synth volume
+        // with platform metadata the guest can't make sense of.
+        const std::string nm = entry.path().filename().string();
+        if (!nm.empty() && nm.front() == '.') continue;
+        std::error_code lec;
+        if (entry.is_symlink(lec)) {
+            std::error_code tec;
+            const fs::path target = fs::weakly_canonical(entry.path(), tec);
+            if (tec || !pathIsUnder(root, target)) {
+                pom2::log().warn("ProDOSVol",
+                    "skipping symlink out of the served folder: " + nm);
+                ++symlinksSkipped;
+                continue;
+            }
+        }
+        if (entry.is_regular_file(ec) || entry.is_directory(ec)) {
+            children.push_back(entry.path());
+        }
+    }
+    std::sort(children.begin(), children.end());
+
+    std::unordered_map<std::string, int> usedNames;
+    std::vector<HostEntry> out;
+    out.reserve(children.size());
+    for (const auto& path : children) {
+        HostEntry he;
+        he.path = path;
+        if (fs::is_directory(path, ec)) {
+            he.isDir      = true;
+            he.prodosName = uniqueName(sanitiseProDOSName(path.filename().string()),
+                                       usedNames);
+            out.push_back(std::move(he));
+            continue;
+        }
+        std::error_code sec;
+        he.size = fs::file_size(path, sec);
+        if (sec) {
+            he.skipReason = "unreadable file";
+            out.push_back(std::move(he));
+            continue;
+        }
+        if (he.size > kSaplingMaxBytes) {
+            he.skipReason = "oversized file (>128 KB)";
+            out.push_back(std::move(he));
+            continue;
+        }
+        // A `NAME#TTAAAA` tag (stripMetadataTag) overrides both; without
+        // one, the extension picks the type.
+        std::string hostName = path.filename().string();
+        he.fileType = fileTypeFromExtension(path.extension().string());
+        // BASIC.SYSTEM writes every Applesoft program with aux_type $0801 —
+        // the load address — and re-SAVEs one it LOADed the same way. With
+        // aux 0 here, the guest's re-SAVE of `hello.bas` changed the entry's
+        // metadata, and the write-back (which keeps metadata) would have had
+        // to rename the host file to `HELLO#FC0801` to carry it. $0801 is
+        // what ProDOS itself would have put there.
+        he.auxType  = (he.fileType == 0xFC) ? 0x0801 : 0;
+        if (stripMetadataTag(hostName, he.fileType, he.auxType) &&
+            hostName.empty())
+            hostName = "FILE";
+        he.prodosName = uniqueName(sanitiseProDOSName(hostName), usedNames,
+                                   sanitiseProDOSName(hostName, false));
+        out.push_back(std::move(he));
+    }
+    return out;
+}
+
+// Recursively populate a PreparedDir from the given host folder. Names come
+// from `nameHostDir` (per directory: subdir name collisions don't conflict
+// with parent dir names). `result` accumulates filesIncluded / filesSkipped.
 //
 // `root` + `visited` bound the walk. `directory_iterator` and `is_directory`
 // both DEREFERENCE symlinks, so the previous version followed any link it
@@ -408,31 +541,19 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
         }
     }
 
-    std::vector<fs::path> children;
-    for (const auto& entry : fs::directory_iterator(hostPath, ec)) {
-        // Skip dotfiles (e.g. .DS_Store) — they pollute the synth volume
-        // with platform metadata the guest can't make sense of.
-        const std::string nm = entry.path().filename().string();
-        if (!nm.empty() && nm.front() == '.') continue;
-        std::error_code lec;
-        if (entry.is_symlink(lec)) {
-            std::error_code tec;
-            const fs::path target = fs::weakly_canonical(entry.path(), tec);
-            if (tec || !pathIsUnder(root, target)) {
-                pom2::log().warn("ProDOSVol",
-                    "skipping symlink out of the served folder: " + nm);
-                ++result.filesSkipped;
-                continue;
-            }
-        }
-        if (entry.is_regular_file(ec) || entry.is_directory(ec)) {
-            children.push_back(entry.path());
-        }
-    }
-    std::sort(children.begin(), children.end());
+    std::size_t symlinksSkipped = 0;
+    const std::vector<HostEntry> entries =
+        nameHostDir(hostPath, root, symlinksSkipped);
+    result.filesSkipped += symlinksSkipped;
 
-    std::unordered_map<std::string, int> usedNames;
-    for (const auto& path : children) {
+    for (const HostEntry& he : entries) {
+        const std::string leaf = he.path.filename().string();
+        if (he.skipReason) {
+            pom2::log().warn("ProDOSVol",
+                std::string("skipping ") + he.skipReason + ": " + leaf);
+            ++result.filesSkipped;
+            continue;
+        }
         const std::size_t directChildCount = dir.order.size();
         const std::size_t budget =
             (depth == 0) ? kVolDirTotalSlots : (1u << 16);  // subdirs: large soft cap
@@ -441,73 +562,37 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             continue;
         }
 
-        if (fs::is_directory(path, ec)) {
+        if (he.isDir) {
             auto sub = std::make_unique<PreparedDir>();
-            sub->prodosName = uniqueName(sanitiseProDOSName(path.filename().string()),
-                                         usedNames);
-            scanHostFolder(path, *sub, depth + 1, result, root, visited);
+            sub->prodosName = he.prodosName;
+            scanHostFolder(he.path, *sub, depth + 1, result, root, visited);
             sub->numDirBlocks = numDirBlocksFor(sub->order.size());
             dir.order.push_back({true, dir.subdirs.size()});
             dir.subdirs.push_back(std::move(sub));
             continue;
         }
 
-        // Regular file (existing logic, mostly).
-        std::ifstream f(path, std::ios::binary);
+        std::ifstream f(he.path, std::ios::binary);
         if (!f) {
-            pom2::log().warn("ProDOSVol",
-                "skipping unreadable file: " + path.filename().string());
+            pom2::log().warn("ProDOSVol", "skipping unreadable file: " + leaf);
             ++result.filesSkipped;
             continue;
         }
-        f.seekg(0, std::ios::end);
-        const std::size_t fsize = static_cast<std::size_t>(f.tellg());
-        f.seekg(0, std::ios::beg);
-        if (fsize > kSaplingMaxBytes) {
-            pom2::log().warn("ProDOSVol",
-                "skipping oversized file (>128 KB): " + path.filename().string());
-            ++result.filesSkipped;
-            continue;
-        }
+        const std::size_t fsize = static_cast<std::size_t>(he.size);
         PreparedFile pf;
         pf.data.resize(fsize);
         if (fsize > 0) {
             f.read(reinterpret_cast<char*>(pf.data.data()),
                    static_cast<std::streamsize>(fsize));
             if (!f) {
-                pom2::log().warn("ProDOSVol",
-                    "short read, skipping: " + path.filename().string());
+                pom2::log().warn("ProDOSVol", "short read, skipping: " + leaf);
                 ++result.filesSkipped;
                 continue;
             }
         }
-        // CiderPress / SD-CARD-OS metadata tag: "NAME#TTAAAA" carries the
-        // ProDOS file type (TT) and aux type / load address (AAAA) in the host
-        // filename — e.g. the HGR Paint editor saves pages as "PIC#062000"
-        // (BIN at $2000), so a BLOAD needs no ,A override. The tag is stripped
-        // from the ProDOS name; without one, the extension picks the type and
-        // aux stays 0 (the historical behaviour).
-        std::string hostName = path.filename().string();
-        pf.fileType   = fileTypeFromExtension(path.extension().string());
-        pf.auxType    = 0;
-        {
-            const std::size_t hash = hostName.rfind('#');
-            if (hash != std::string::npos && hostName.size() - hash == 7) {
-                bool hex = true;
-                for (std::size_t i = hash + 1; i < hostName.size(); ++i)
-                    if (!std::isxdigit(static_cast<unsigned char>(hostName[i])))
-                        { hex = false; break; }
-                if (hex) {
-                    pf.fileType = static_cast<std::uint8_t>(
-                        std::stoul(hostName.substr(hash + 1, 2), nullptr, 16));
-                    pf.auxType = static_cast<std::uint16_t>(
-                        std::stoul(hostName.substr(hash + 3, 4), nullptr, 16));
-                    hostName.erase(hash);
-                    if (hostName.empty()) hostName = "FILE";
-                }
-            }
-        }
-        pf.prodosName = uniqueName(sanitiseProDOSName(hostName), usedNames);
+        pf.fileType   = he.fileType;
+        pf.auxType    = he.auxType;
+        pf.prodosName = he.prodosName;
         if (fsize <= kBlockBytes) {
             pf.storageType = kStorageSeedling;
             pf.dataBlocks  = 1;
@@ -787,18 +872,53 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
 
 namespace {
 
+// Inverse of fileTypeFromExtension: nullptr when no extension names the type.
 const char* extFromFileType(std::uint8_t t)
 {
-    // Inverse of fileTypeFromExtension. Default to .bin for anything we
-    // didn't originally produce — keeps round-trip safe.
     switch (t) {
         case 0x00: return "";       // typeless → no extension (extensionless host file)
         case 0x04: return ".txt";
+        case 0x06: return ".bin";
         case 0xFA: return ".int";
         case 0xFC: return ".bas";
         case 0xFF: return ".sys";
-        case 0x06: default: return ".bin";
+        default:   return nullptr;
     }
+}
+
+// The host filename for a decoded entry.
+//
+// An extension names a file TYPE and nothing else, so `PIC.bin` can only
+// carry BIN with aux_type 0 back into the next mount. The decode used to
+// compose that regardless — every type it had no extension for became
+// `.bin`, and every aux_type became 0 — and the loss was not even confined
+// to files the guest changed: a host `PIC#062000` (the tag the build parses,
+// and the name the HGR Paint editor saves under) came back out as a SECOND
+// file `PIC.bin` on every flush, because nothing on disk was called that.
+// The next mount then served `PIC` and `PIC.1`. A guest `BSAVE X,A$2000`
+// lost its load address the same way, and an AppleWorks document ($1A)
+// came back as BIN, which AppleWorks then no longer listed.
+//
+// So the extension is used only when the build would derive exactly this
+// (type, aux) pair back from it, and the CiderPress `NAME#TTAAAA` tag —
+// already parsed on the way in — carries everything else. A dotted ProDOS
+// name keeps its own suffix and the build reads the type off that suffix;
+// `.bas` is exchangeable with aux $0801 because that is what the build now
+// assigns and what BASIC.SYSTEM writes.
+std::string hostNameFor(const std::string& name, std::uint8_t type,
+                        std::uint16_t aux)
+{
+    const bool auxPlain = (aux == 0) || (type == 0xFC && aux == 0x0801);
+    if (name.find('.') != std::string::npos) {
+        if (auxPlain &&
+            fileTypeFromExtension(fs::path(name).extension().string()) == type)
+            return name;
+    } else if (const char* ext = extFromFileType(type); ext && auxPlain) {
+        return name + ext;
+    }
+    char tag[8];
+    std::snprintf(tag, sizeof tag, "#%02X%04X", type, aux);
+    return name + tag;
 }
 
 inline std::uint16_t rd16(const std::uint8_t* p)
@@ -863,6 +983,20 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
             fs::remove(tmp, ec);
             err = "write failed on " + tmp.string();
             return FileWriteResult::Error;
+        }
+    }
+    // Carry the original's mode onto the replacement. The last member of the
+    // atomic-write family to do so — `DiskImage` and `Block512Backing` already
+    // did — so an executable script or a 0600 note in the served folder kept
+    // its bytes through a write-back and lost its bits to the umask default.
+    // A read-only original stays read-only: the rename needs the directory,
+    // not the file, and the fsync inside `replaceFileAtomic` opens O_RDONLY.
+    {
+        std::error_code pec;
+        const auto perms = fs::status(dest, pec).permissions();
+        if (!pec) {
+            std::error_code sec;
+            fs::permissions(tmp, perms, sec);
         }
     }
     if (!replaceFileAtomic(tmp, dest, ec)) {
@@ -1050,24 +1184,44 @@ void decodeOneDir(DecodeWalk& w,
     // the next mount turned into two ProDOS entries, and so on every cycle.
     // Reusing the spelling that is already there keeps the round trip closed.
     std::unordered_map<std::string, std::string> existingHostNames;
+    auto foldCase = [](std::string s) {
+        for (char& c : s)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
     {
         std::error_code lec;
         for (const auto& de : fs::directory_iterator(hostFolder, lec)) {
             std::string actual = de.path().filename().string();
-            std::string folded = actual;
-            for (char& c : folded)
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            existingHostNames.emplace(std::move(folded), std::move(actual));
+            existingHostNames.emplace(foldCase(actual), std::move(actual));
         }
     }
-    auto reuseExistingSpelling = [&](const std::string& wanted) {
+    // The names the BUILD gave the files that are here now — the same pass,
+    // replayed (see `nameHostDir`) — so an entry finds its source by its
+    // ProDOS name alone. The source's derived type and aux type come with
+    // it: equal to the entry's, the entry is written IN PLACE, whatever the
+    // host spelling; different, the guest changed the metadata and the file
+    // is RENAMED to a host name that carries it. A file added to the folder
+    // since the mount can shift a collision suffix onto a neighbour; such a
+    // file is newer than the mount stamp and the preserve rule below refuses
+    // to touch it.
+    std::size_t symlinksIgnored = 0;
+    const std::vector<HostEntry> named =
+        nameHostDir(hostFolder, w.rootReal, symlinksIgnored);
+    std::unordered_map<std::string, const HostEntry*> sources;
+    for (const HostEntry& he : named)
+        if (!he.isDir && !he.skipReason) sources.emplace(he.prodosName, &he);
+    // The spelling to use for `wanted`: the file itself when it exists, else
+    // a case variant already on disk, else `wanted`. `found` says whether
+    // anything on disk answered.
+    auto reuseExistingSpelling = [&](const std::string& wanted, bool& found) {
+        found = true;
         std::error_code xec;
         if (fs::exists(fs::path(hostFolder) / wanted, xec)) return wanted;
-        std::string folded = wanted;
-        for (char& c : folded)
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        const auto it = existingHostNames.find(folded);
-        return (it == existingHostNames.end()) ? wanted : it->second;
+        const auto it = existingHostNames.find(foldCase(wanted));
+        if (it != existingHostNames.end()) return it->second;
+        found = false;
+        return wanted;
     };
 
     std::uint16_t curBlock = firstBlock;
@@ -1272,8 +1426,10 @@ void decodeOneDir(DecodeWalk& w,
                 }
             }
 
-            // Compose host filename: ProDOS name + extension from file_type.
-            // Strip any trailing dot the synth path may have left.
+            // Compose the host filename. `rawName` keeps the entry's exact
+            // spelling for the identity lookup (the build can mint a trailing
+            // dot); `name` is what the host path is built from.
+            const std::string rawName = name;
             while (!name.empty() && name.back() == '.') name.pop_back();
             // Reject names that aren't a safe single host component — the image
             // is guest-writable, so a crafted entry could carry '/' or '..'
@@ -1292,16 +1448,35 @@ void decodeOneDir(DecodeWalk& w,
                 if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
-            // Append a type-derived extension ONLY when the ProDOS name has
-            // no extension of its own. Names that retain a dotted suffix
-            // (sanitiseProDOSName keeps non-stripped extensions like ".DATA")
-            // must NOT accrete a spurious ".bin" on every save cycle.
-            const char* typeExt =
-                (name.find('.') == std::string::npos) ? extFromFileType(fileType) : "";
-            const fs::path dest =
-                fs::path(hostFolder) /
-                reserveHostName(usedHostNames,
-                                reuseExistingSpelling(name + typeExt));
+            const std::uint16_t auxType = rd16(e + 0x1F);
+            const std::string wanted = hostNameFor(name, fileType, auxType);
+            bool onDisk = false;
+            std::string spelled = reuseExistingSpelling(wanted, onDisk);
+            // The host file this entry came from, if the replay knows one.
+            // Same metadata: write it in place (`README!` for `README.`).
+            // Changed metadata: the entry IS that file with a new type or
+            // aux type, not a new file beside it — rename, so `doc.bin`
+            // turned into an AppleWorks document becomes `DOC#1A0000`
+            // rather than leaving `doc.bin` to be served as a second entry
+            // on the next mount. Nothing is done when the source's name is
+            // already spoken for in this pass, or when the composed name
+            // already exists on disk (then that file is the destination).
+            fs::path renameFrom;
+            if (const auto src = sources.find(rawName); src != sources.end()) {
+                const std::string srcName = src->second->path.filename().string();
+                if (usedHostNames.count(srcName) == 0) {
+                    if (src->second->fileType == fileType &&
+                        src->second->auxType  == auxType) {
+                        spelled = srcName;
+                        onDisk  = true;
+                    } else if (!onDisk) {
+                        renameFrom = fs::path(hostFolder) / srcName;
+                    }
+                }
+            }
+            const std::string hostName = reserveHostName(usedHostNames, spelled);
+            if (hostName != spelled) renameFrom.clear();  // suffixed: a fresh file
+            const fs::path dest = fs::path(hostFolder) / hostName;
             if (!destStaysInsideRoot(w, dest)) {
                 pom2::log().warn("ProDOSVol",
                     "decode: refusing " + dest.string() +
@@ -1310,23 +1485,48 @@ void decodeOneDir(DecodeWalk& w,
                 noteUnsaved(r, name);
                 continue;
             }
+            // A symlink, or a path outside the root, is not something to
+            // rename: leave it alone and write a fresh file instead.
+            if (!renameFrom.empty() && !destStaysInsideRoot(w, renameFrom))
+                renameFrom.clear();
             // The volume is a snapshot taken at MOUNT time; a host file the
             // user edited since then is NEWER than that snapshot, and
             // rewriting it here would silently revert the user's edit to
             // the mount-time copy (reported as a successful save, no less).
             // Preserve it and say so — the guest's own writes leave the
-            // host mtime alone, so they still land.
+            // host mtime alone, so they still land. The file about to be
+            // renamed is the one being overwritten, so it is the one asked.
             if (w.newerThan) {
                 std::error_code mec;
-                const auto mtime = fs::last_write_time(dest, mec);
+                const fs::path& probe = renameFrom.empty() ? dest : renameFrom;
+                const auto mtime = fs::last_write_time(probe, mec);
                 if (!mec && mtime > *w.newerThan) {
                     pom2::log().warn("ProDOSVol",
                         "decode: preserving host-newer file " +
-                        dest.filename().string() +
+                        probe.filename().string() +
                         " (edited on the host after the volume was mounted;"
                         " the volume's stale copy was NOT written)");
                     ++r.filesSkipped;
                     continue;
+                }
+            }
+            bool renamed = false;
+            if (!renameFrom.empty()) {
+                std::error_code rec;
+                fs::rename(renameFrom, dest, rec);
+                if (rec) {
+                    pom2::log().warn("ProDOSVol",
+                        "decode: cannot rename " + renameFrom.string() +
+                        " to " + hostName + " (" + rec.message() +
+                        "); writing a new file beside it");
+                } else {
+                    renamed = true;
+                    pom2::log().info("ProDOSVol",
+                        "decode: " + renameFrom.filename().string() +
+                        " → " + hostName + " (type/aux changed by the guest)");
+                    existingHostNames.erase(
+                        foldCase(renameFrom.filename().string()));
+                    existingHostNames[foldCase(hostName)] = hostName;
                 }
             }
             std::string writeErr;
@@ -1340,6 +1540,8 @@ void decodeOneDir(DecodeWalk& w,
             if (wr == FileWriteResult::Written) {
                 ++r.filesWritten;
                 noteWriteTime(dest, w.stamp, w.newest);
+            } else if (renamed) {
+                ++r.filesWritten;          // same bytes, new metadata
             }
         }
         // Next directory block pointer is at offset 2 of every dir block.

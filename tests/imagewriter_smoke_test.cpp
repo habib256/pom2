@@ -1611,8 +1611,64 @@ void testPrintShopColourPass()
                 dots[2], dots[6], dots[7]);
 }
 
+// ── ESC V must not re-arm the 7-bit mask on a printer whose B-6 is open ──
+// `ESC Z $00 $20` opens B-6 (the eighth data bit reaches the character
+// generator — what any driver printing high-ASCII or MouseText does). The
+// ESC V / ESC U repeat raised the mask for its pattern byte and restored a
+// constant 0 afterwards, so from the first dot-column repeat on $8D was a
+// carriage return again instead of a glyph.
+static void testRepeatRestoresEighthBitSwitch()
+{
+    ImageWriter esc8(144, ImageWriter::PaperSize::Letter);
+    const uint8_t open8[] = { 0x1B, 'Z', 0x00, 0x20 };
+    const uint8_t escV[]  = { 0x1B, 'V', '0', '0', '0', '1', 0xFF };
+    const uint8_t hi[]    = { 0x8D, 0x8D, 0x8D };
+    esc8.printBytes(open8, sizeof open8);
+    esc8.printBytes(escV,  sizeof escV);
+    const double y = esc8.status().headY;
+    const double x = esc8.status().headX;
+    esc8.printBytes(hi, sizeof hi);
+    assert(esc8.status().headY == y && "three $8D must be glyphs, not CR+LFs");
+    assert(esc8.status().headX > x);
+
+    // Control: with B-6 closed (the default) $8D is still a carriage return.
+    ImageWriter def(144, ImageWriter::PaperSize::Letter);
+    def.printBytes(escV, sizeof escV);
+    const double y0 = def.status().headY;
+    def.printBytes(hi, sizeof hi);
+    assert(def.status().headY > y0);
+    std::printf("  ESC V keeps switch B-6's eighth bit: OK\n");
+}
+
+// ── Epson ESC R (charset) must not cancel ESC N (skip over perforation) ──
+// The ESC/P charset handler ran the whole C. Itoh updateSwitch(), whose
+// other half re-derives the page window from switch B-3 — which an FX-80
+// spells as ESC N / ESC O instead. Selecting a character set therefore
+// wiped the skip and the form came back an inch longer.
+static void testEpsonCharsetKeepsPerforationSkip()
+{
+    auto headYAfter66LF = [](bool escN, bool escR) {
+        ImageWriter fx(144, ImageWriter::PaperSize::Letter);
+        fx.setModel(pom2::IwModel::EpsonFX80);
+        const uint8_t n[] = { 0x1B, 'N', 6 };
+        const uint8_t r[] = { 0x1B, 'R', 0 };
+        if (escN) fx.printBytes(n, sizeof n);
+        if (escR) fx.printBytes(r, sizeof r);
+        for (int i = 0; i < 66; ++i) fx.printChar(0x0A);
+        return fx.status().headY;
+    };
+    const double plain = headYAfter66LF(false, false);
+    const double skip  = headYAfter66LF(true,  false);
+    const double both  = headYAfter66LF(true,  true);
+    assert(skip > plain && "ESC N 6 must leave the head an inch down the next sheet");
+    assert(both == skip && "ESC R must not cancel the skip ESC N set");
+    std::printf("  Epson ESC R keeps ESC N's skip: OK\n");
+}
+
 int main()
 {
+    testRepeatRestoresEighthBitSwitch();
+    testEpsonCharsetKeepsPerforationSkip();
     std::printf("ImageWriter smoke test\n");
     testPaperGeometry();
     testTextAndHighBit();

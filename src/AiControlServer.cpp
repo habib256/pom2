@@ -720,6 +720,13 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
         size_t v = 0;
         while (v < value.size() && (value[v] == ' ' || value[v] == '\t')) ++v;
         value.erase(0, v);
+        // ...and the TRAILING OWS. RFC 7230 § 3.2 allows optional whitespace
+        // on BOTH sides of a field value; stripping only the leading half made
+        // `X-POM2-Token: SECRET ` a length mismatch — a 401 that also counted
+        // toward the five-failures brake, so a client with one stray space
+        // locked out every other client too.
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+            value.pop_back();
         req.headers.emplace_back(std::move(name), std::move(value));
     }
 
@@ -834,13 +841,22 @@ std::string hostPartOf(const std::string& host)
 
 bool AiControlServer::hostHeaderIsLoopback(const Request& req)
 {
-    const std::string host = hostPartOf(req.headerValue("Host"));
+    const std::string host = toLowerAscii(hostPartOf(req.headerValue("Host")));
     // No Host at all: HTTP/1.0 native clients omit it, and a browser never
     // does — so an empty one cannot be a rebound page.
     if (host.empty()) return true;
     // A literal loopback address only. A NAME is refused even if it currently
     // resolves to 127.0.0.1: resolving it again is precisely the attack.
-    return host == "127.0.0.1" || host == "::1" || host == "0:0:0:0:0:0:0:1";
+    //
+    // `localhost` is the ONE exception, because it is loopback by
+    // SPECIFICATION: RFC 6761 § 6.3 forbids a resolver from ever sending it
+    // to DNS, so it is the one name that cannot be rebound — and it is the
+    // name a user or an agent actually types. Refusing it turned
+    // `curl http://localhost:PORT/status` into a 401, and since a fence
+    // rejection counts toward the five-failures brake, five of them answered
+    // 429 to the CORRECT client as well.
+    return host == "127.0.0.1" || host == "::1" || host == "0:0:0:0:0:0:0:1" ||
+           host == "localhost" || host == "localhost.";
 }
 
 bool AiControlServer::checkAuth(const Request& req) const

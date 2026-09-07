@@ -80,6 +80,23 @@ public:
     explicit NoSlotClock(TimeFn fn);
 
     void setEnabled(bool on)        { enabled_ = on; }
+
+    /// The slot whose card ROM the chip ALSO sits under, or -1 for none.
+    ///
+    /// The chip answers under the motherboard ROM on every machine (the
+    /// AppleWin placement: Monitor ROM on a II/II+, `$C300` + `$C800` on a
+    /// //e / //c). That is where the //e drivers and the DOS 3.3-era II+
+    /// patches look — and where NO ProDOS driver looks on a II+: SMT's 1991
+    /// `NS.CLOCK.SYSTEM` and a2stuff's rework both scan the slot ROMs
+    /// `$C300..$C700` (`LDA $Cn00,Y` key walk, data on `$Cn04`), then
+    /// `$C800` under INTCXROM. On a real II+ the SmartWatch went into the
+    /// 24-pin ROM socket of a peripheral card (Grappler+, Videoterm, SSC),
+    /// which is exactly the case those drivers were written for. `slot`
+    /// names that card; `Memory` intercepts the slot's `$Cn00-$CnFF` reads
+    /// and writes only while a card is plugged there. Setting
+    /// `nsclock_slot`, default 1 (the fresh-install Grappler+).
+    void setSlot(int slot)          { slot_ = (slot >= 1 && slot <= 7) ? slot : -1; }
+    int  slot() const               { return slot_; }
     bool isEnabled() const          { return enabled_; }
 
     /// Called by `Memory::memRead` for every read in the watched range
@@ -137,6 +154,7 @@ private:
 
     TimeFn   timeFn_       = nullptr;
     bool     enabled_      = true;
+    int  slot_    = -1;
     bool     writeEnabled_ = true;     // false after a mismatched key bit
                                        //   (sticky; cleared by A2=1 read)
     bool     readingClock_ = false;    // 64-bit clock-out phase active

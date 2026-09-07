@@ -847,7 +847,11 @@ void ImageWriter::armRepeat(const uint8_t* pat, uint8_t len, uint32_t count,
     repeatPatPos_      = 0;
     repeatRemaining_   = count;
     repeatRestoresMsb_ = restoresMsb;
-    if (count == 0 && restoresMsb) msb_ = 0;   // `nnnn = 0000`: nothing owed
+    // `nnnn = 0000`: nothing owed, so restore now — to the CHARACTER
+    // GENERATOR's own rule (switch B-6), never to a constant. See
+    // printRepeatUnit.
+    if (count == 0 && restoresMsb)
+        msb_ = (switchb_ & kSwitchBEighthDataBit) ? 0 : 255;
 }
 
 void ImageWriter::printRepeatUnit()
@@ -858,7 +862,14 @@ void ImageWriter::printRepeatUnit()
     if (++repeatPatPos_ >= repeatPatLen_) repeatPatPos_ = 0;
     printCharInternal(ch);
     if (repeatRemaining_ == 0 && repeatRestoresMsb_) {
-        msb_ = 0;                     // ESC V / ESC U — see repeatPat_
+        // ESC V / ESC U raised msb_ so their pattern byte survived phase 2
+        // (see repeatPat_). Put back what switch B-6 asks for, not a flat 0:
+        // restoring the mask on a printer whose B-6 the guest had OPENED
+        // (`ESC Z $00 $20`, what any driver printing high-ASCII or MouseText
+        // does) made every byte after one dot-column repeat lose bit 7, so
+        // $8D stopped being a glyph and became a carriage return for the
+        // rest of the job.
+        msb_ = (switchb_ & kSwitchBEighthDataBit) ? 0 : 255;
         repeatRestoresMsb_ = false;
     }
 }
@@ -2335,7 +2346,16 @@ void ImageWriter::execEpsonEscape()
         };
         const uint8_t idx = (p0 < 13) ? kEpsonToSwitchA[p0] : 0;
         switcha_ = static_cast<uint8_t>((switcha_ & ~kSwitchACharsetMask) | idx);
+        // Only the CHARSET half of updateSwitch() belongs to this head. The
+        // other half re-derives the page window from the C. Itoh perforation
+        // switch B-3, which an FX-80 has no equivalent of — it spells the
+        // same thing ESC N / ESC O. So selecting a character set silently
+        // cancelled a skip-over-perforation the driver had already set, and
+        // the form came back an inch longer for the rest of the job.
+        const double keepTop = topMargin_, keepBottom = bottomMargin_;
         updateSwitch();
+        topMargin_ = keepTop;
+        bottomMargin_ = keepBottom;
         break;
     }
     case 0x53:                                     // ESC S n  super/subscript

@@ -350,6 +350,14 @@ private :
     void Unoff3(void);
     void UnoffImm(void);    // 2-byte, 2-cycle undoc NOP (imm) / NMOS ANC/SBC #imm
     void UnoffZpX(void);    // 2-byte, 4-cycle undoc NOP (zp,X)
+    void UnoffZp5(void);    // 2-byte, 5-cycle undoc RMW (zp)
+    void UnoffZpX6(void);   // 2-byte, 6-cycle undoc RMW (zp,X)
+    void UnoffInd6(void);   // 2-byte, 6-cycle undoc (zp,X)/(zp),Y
+    void UnoffInd8(void);   // 2-byte, 8-cycle undoc RMW (zp,X)/(zp),Y
+    void UnoffIndY5(void);  // 2-byte, 5+p-cycle undoc LAX (zp),Y
+    void UnoffAbs6(void);   // 3-byte, 6-cycle undoc RMW (abs)
+    void UnoffAbs7(void);   // 3-byte, 7-cycle undoc RMW (abs,X / abs,Y)
+    void UnoffAbsY(void);   // 3-byte, 4+p-cycle undoc read (abs,Y)
     void UnoffAbs4(void);   // 3-byte, 4-cycle undoc NOP (abs)
     void UnoffAbsX(void);   // 3-byte, 4+p-cycle undoc NOP (abs,X, NMOS)
     void Unoff5C(void);     // 3-byte, 8-cycle 65C02 oddball $5C

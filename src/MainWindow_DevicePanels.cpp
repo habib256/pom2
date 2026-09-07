@@ -770,6 +770,9 @@ void MainWindow::renderAiControlPanelWindow()
     ImGui::SameLine();
     if (!running) {
         if (ImGui::Button("Start")) {
+            // A panel click IS the persistent opt-in — from here on the
+            // session's listener state is the user's, not the CLI's.
+            aiControlFromCliOnly_ = false;
             // Re-attach in case slot cards were rebuilt by the slot config
             // panel since the last start — pointers may have moved.
             aiServer->attach(controller.get(), display.get(), primaryDiskII(), primaryHdvCard());
@@ -780,7 +783,7 @@ void MainWindow::renderAiControlPanelWindow()
             }
         }
     } else {
-        if (ImGui::Button("Stop")) aiServer->stop();
+        if (ImGui::Button("Stop")) { aiControlFromCliOnly_ = false; aiServer->stop(); }
     }
 
     if (aiTokenInput.empty()) {

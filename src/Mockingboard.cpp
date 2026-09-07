@@ -986,7 +986,13 @@ void MockingboardCard::onViaPortBChange(int chip)
     // Echo+ probe idiom) re-strobed register $00 instead of the one it
     // latched.
     const uint8_t pa = via_[chip]->readPortA();
-    const uint8_t pb = via_[chip]->portBOut & via_[chip]->ddrB;
+    // Port B is the same story, and for a worse reason: PB2 is /RESET.
+    // MAME hands its PB handler `output_pb()` = `(m_out_b & m_ddr_b) |
+    // ~m_ddr_b` — the pull-ups again. Masking with ddrB alone read every
+    // undriven pin as 0, so a driver that drives only BC1+BDIR (DDRB = $03)
+    // and leaves /RESET to the board's pull-up had the AY wiped on every
+    // single strobe: no register store ever landed and the card was silent.
+    const uint8_t pb = via_[chip]->readPortB();
     const auto res = ay_[chip]->applyControl(pa, pb);
     // Any result other than ResetOnly means PB2 (AY /RESET) is high, so
     // the strobe's falling edge can arm again.
@@ -1062,8 +1068,20 @@ void MockingboardCard::advanceCycles(int cycles)
     // to VIA1.CA1 — real card wires SSI263.A/!R inverted into CA1, so
     // a 0→1 of A/!R = negative edge on CA1, matching PCR.0 == 0 (the
     // default config used by stock Sound II drivers).
-    if (ssi_ && ssi_->advance(cycles)) {
-        via_[0]->setCa1NegativeEdge();
+    //
+    // Watch the PIN, not `advance()`'s return value. That return is the
+    // HOST-IRQ edge — gated by the chip's own DR1:0 — which is the right
+    // answer for the Echo+/Phasor wiring, where A/!R drives the slot line
+    // directly and there is no 6522 in between. On a Sound II there is one,
+    // and the gate belongs to IER, not to DR1:0. Wiring the strobe to the
+    // mode bits left a driver in the polled mode (DR1:0 = 00, where the chip
+    // still raises A/!R — Ssi263.h) with nothing to poll: $Cn4x READS go to
+    // the VIA, so IFR.CA1 is the only window onto the pin, and it never
+    // latched.
+    if (ssi_) {
+        const bool arBefore = ssi_->aRequest();
+        (void)ssi_->advance(cycles);
+        if (!arBefore && ssi_->aRequest()) via_[0]->setCa1NegativeEdge();
     }
     if (cpu_) {
         // Lazy-sync path: any cycles already accounted for via MMIO accesses

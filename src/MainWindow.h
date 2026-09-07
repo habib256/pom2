@@ -748,6 +748,10 @@ private:
     // for the same reason as sscPortInput above.
     int          aiPortInput   = 0;
     std::string  aiTokenInput;
+    /// True when the ONLY thing that started the AI server this session was
+    /// `--ai-control`. A boot flag is a per-run request, not a saved opt-in;
+    /// see persistSession.
+    bool         aiControlFromCliOnly_ = false;
 
     // Disk II insert dialog state moved to DiskController_ImGui (it
     // owns its own UX surface). MainWindow keeps only the ROM probe.

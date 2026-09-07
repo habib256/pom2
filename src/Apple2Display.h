@@ -655,6 +655,10 @@ private:
     // The Chat Mauve latch for the band being painted by the beam-raced
     // replay (renderDhgr consumes it); < 0 outside a replay = ask the card.
     int bandLatch_ = -1;
+    // Set for the duration of a beam-raced frame whose segments do NOT all
+    // live in the same buffer (a mid-frame 80-col ⇄ 40-col switch). See
+    // renderBeamRacing.
+    bool force560_ = false;
 
     static void applyVideoEvent(Memory::DisplayState& state, Memory::VideoEventKind kind,
                                 bool value);
