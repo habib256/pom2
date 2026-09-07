@@ -356,7 +356,10 @@ Densest policy files, none of them linked by any test:
   target: `SmartPortUnit.h:92-95` declares the contract as *"physically WP OR
   no write-back opt-in"*, `SmartPort35Unit.h:50` honours it and
   `SmartPortHdvUnit.h:60-62` contradicts it — two bays of one card, one panel,
-  one toggle, opposite answers. **That also settles standing ruling R1.**
+  one toggle, opposite answers — **fixed 2026-09-07** (`SmartPortHdvUnit`
+  honours the contract; `smartport_mixed_units_smoke` pins both units in both
+  toggle states), which settles standing ruling R1. The cross-medium contract
+  test over `DiskImage` / `Disk35Image` / `Block512Backing` remains to write.
 - 🟠 **G5-2 · The same shape for slot-card snapshots.** *≈4 h.*
   `tests/card_snapshot_state_test.cpp` covers 6 of 21 cards and asserts exactly
   the right thing for each, including *"every loader must ignore a foreign blob
@@ -688,7 +691,7 @@ The four found on 2026-09-05 replaced them, which is the point:
 | Contract | Sibling A (right) | Sibling B (wrong) |
 |---|---|---|
 | `setCpuClock` fan-out | speaker, cassette, every slot card | `IWMDevice` / `Sony35Drive` hardcode the NTSC constant |
-| Permission carry on write-back | `replaceFileAtomic` carries the original's mode | `ProDOSVolume`'s host-file decode does not |
+| Permission carry on write-back | `replaceFileAtomic` carries the original's mode | `ProDOSVolume`'s host-file decode did not — **closed 2026-09-07**, pinned `testWriteBackCarriesFileMode` |
 | Write-protect (still open) | `SmartPort35Unit.h:50` honours the base contract | `SmartPortHdvUnit.h:60-62` contradicts it |
 
 Each path is tested on its own; nothing asserts that all of them obey the same
@@ -729,8 +732,11 @@ Decisions, not work. Do not re-litigate without new evidence.
   card answer "can I write?" differently. Either rule is defensible; one card
   doing both is not. Physically write-protect belongs to the medium; the
   counter-argument is that accepting a write with write-back off loses it
-  silently. **Settled by G5-1**, which must *state* the divergence where one is
-  deliberate rather than paper over it.
+  silently. **Settled 2026-09-07**: inside a SmartPort card the rule is the
+  card's — physically write-protected *or* no write-back opt-in, as the 3.5"
+  unit and the Disk II already answered; `SmartPortHdvUnit` was aligned. The
+  HDV-class *cards* keep their in-session-writable policy, and DEV.md states
+  the divergence. G5-1's cross-medium test is still the way to keep it so.
 - **R2 · Echo+ TMS5220: ship or hide.** A detect-only stub in the catalog is the
   wrong third option. **Answered by the scope ruling: hide** → G3.
 - **R3 · One `Config`** (env → CLI → Settings → defaults), consistent `pom2::`
@@ -917,15 +923,16 @@ of the finding.
     bug. It stays open until MAME or real hardware arbitrates it.
     (`DOS13SEC.DSK` is separately known to be a hand-modified boot0 — a disk
     defect, not POM2's.)
-- 🟡 **One divergence left in the atomic-write family, not three.** Narrowed
+- ✅ **No divergence left in the atomic-write family.** Narrowed
   2026-09-07: every write-back call site goes through `pom2::replaceFileAtomic`
   / `writeFileAtomic`, and temp-file naming is now centralised in
   `tempSiblingPath` (`AtomicFileReplace.h:186`), so the "three divergent
-  helpers" framing over-claimed. What genuinely differs is **permission
-  carry-over on the host-file decode**: `replaceFileAtomic` carries the
-  original's mode, `DiskImage` caught up on 2026-08-08, and `ProDOSVolume`'s
-  decode still writes host files at the umask default. That, and only that, is
-  the remaining job.
+  helpers" framing over-claimed. The one thing that genuinely differed —
+  **permission carry-over on the host-file decode**, where `ProDOSVolume`
+  still wrote host files at the umask default while `DiskImage` had caught up
+  on 2026-08-08 — was closed the same day by the ProDOS bug hunt
+  (`writeFileAtomic` in `ProDOSVolume.cpp` now copies the original's mode
+  onto the temp file, pinned by `testWriteBackCarriesFileMode`).
 
 ## MAME ↔ POM2 parity (dashboard)
 
@@ -1220,8 +1227,9 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
 - 🟢 **UI "Force DOS / Force ProDOS"** — backend ready
   (`DiskImage::loadFile(path, SectorOrder)`, log at `DiskImage.cpp:820-827`),
   button missing in `DiskLibrary_ImGui` / `DiskController_ImGui`.
-  Auto-detect (extension + vol-dir content sniff `0x400`/`0xB00`)
-  already covers 99 % of cases; manual override useful for ambiguous /
+  Auto-detect (extension + ProDOS vol-dir sniff `0x400`/`0xB00` + DOS 3.3
+  VTOC/catalog-chain sniff, both pinned by `sector_order_smoke` since
+  2026-09-07) already covers 99 % of cases; manual override useful for ambiguous /
   non-standard / debug images. *~30 min.*
 - 🟢 **Half-tracked NIB (88)** — deliberately out of scope as long as
   WOZ covers it. Its two former companions are done: **Disk II in

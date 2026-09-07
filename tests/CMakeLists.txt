@@ -2470,6 +2470,73 @@ endif()
 add_test(NAME prodos_save_smoke COMMAND test_prodos_save)
 set_tests_properties(prodos_save_smoke PROPERTIES TIMEOUT 90)
 
+# ─── Every 5.25" sector order, the real operating systems as the oracle ──
+# ProDOS: the .po, its DOS-order twin, and each under the other extension
+# must boot, SAVE, write back and de-skew to one identical volume (pins the
+# DOS↔ProDOS skew on the WRITE side and the vol-dir sniff). DOS 3.3: the
+# master and its ProDOS-order twin must boot under both extensions (pins the
+# VTOC + catalog-chain sniff).
+add_executable(test_sector_order
+    sector_order_smoke_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_sector_order PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_sector_order PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_sector_order PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_sector_order PRIVATE winmm)
+endif()
+
+add_test(NAME sector_order_smoke COMMAND test_sector_order)
+set_tests_properties(sector_order_smoke PROPERTIES
+    TIMEOUT 300 LABELS slow SKIP_RETURN_CODE 77)
+
+# ─── No-Slot Clock against a real ProDOS clock driver ───────────────────
+# ProDOS 2.4.3 in D1, the a2stuff drivers disk in D2, `-/DRIVERS/NS.CLOCK.SYSTEM`
+# typed at the BASIC prompt. Pins the //e $C300 window end-to-end and STATES
+# the II+ limitation (the driver never probes the Monitor ROM). SKIPs without
+# the drivers disk — see the test header for where it comes from.
+add_executable(test_no_slot_clock_prodos_driver
+    no_slot_clock_prodos_driver_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_no_slot_clock_prodos_driver PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_no_slot_clock_prodos_driver PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_no_slot_clock_prodos_driver PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_no_slot_clock_prodos_driver PRIVATE winmm)
+endif()
+
+add_test(NAME no_slot_clock_prodos_driver COMMAND test_no_slot_clock_prodos_driver)
+set_tests_properties(no_slot_clock_prodos_driver PROPERTIES
+    TIMEOUT 300 LABELS slow SKIP_RETURN_CODE 77)
+
 
 # ─── Copy II Plus boot probe (diagnostic, not a CTest target) ────────────
 add_executable(c2plus_boot_probe EXCLUDE_FROM_ALL

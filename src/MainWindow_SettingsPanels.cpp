@@ -56,13 +56,35 @@ void MainWindow::renderNoSlotClockPanelWindow()
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Dallas DS1216E SmartWatch — virtual chip under the\n"
-            "internal ROM. AppleWin-parity placement:\n"
+            "Dallas DS1216E SmartWatch — virtual chip under a ROM.\n"
+            "Motherboard placement (AppleWin parity):\n"
             "  II / II+   : under Monitor ROM at $F800-$FFFF\n"
             "  //e / //c  : under $C300 + $C800 internal ROM\n"
-            "ProDOS 2.0.3+ / GS-OS walk the 64-bit magic key\n"
-            "0x5CA33AC55CA33AC5 (A2=0 reads, A0 = next bit),\n"
-            "then read 64 clock bits via A2=1 reads on D0.");
+            "The ProDOS NSC drivers (NS.CLOCK.SYSTEM) scan the slot\n"
+            "ROMs $C300..$C700, then $C800 — never the Monitor ROM —\n"
+            "so on a II+ the chip must also sit under a card's ROM.\n"
+            "Drivers walk the 64-bit key 0x5CA33AC55CA33AC5 (A0 = next\n"
+            "bit), then read 64 clock bits on D0 via A2=1 reads.");
+    }
+    {
+        // Which slot card's ROM the chip also sits under. 0 = none.
+        static const char* kSocket[] = {
+            "motherboard ROM only", "slot 1 card ROM", "slot 2 card ROM",
+            "slot 3 card ROM", "slot 4 card ROM", "slot 5 card ROM",
+            "slot 6 card ROM", "slot 7 card ROM" };
+        int socket = nsc.slot() < 0 ? 0 : nsc.slot();
+        if (ImGui::Combo("Also under", &socket, kSocket, 8)) {
+            nsc.setSlot(socket == 0 ? -1 : socket);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "A real SmartWatch went into a peripheral card's ROM socket\n"
+                "(Grappler+, Videoterm, Super Serial). Only answers while a\n"
+                "card is plugged in that slot. Needed on a II/II+ for ProDOS\n"
+                "to see a clock; harmless elsewhere.");
+        }
     }
 
     ImGui::Separator();
@@ -78,9 +100,10 @@ void MainWindow::renderNoSlotClockPanelWindow()
 
     ImGui::Separator();
     ImGui::TextWrapped(
-        "Place a free clock card in a slot for older software, or "
-        "leave this enabled for ProDOS 2.0.3+/GS-OS auto-detection "
-        "on any profile (incl. //c, where no slot card can exist).");
+        "ProDOS 8 has no built-in No-Slot Clock support at any version: "
+        "run a driver such as NS.CLOCK.SYSTEM (a2stuff prodos-drivers). "
+        "Place a ThunderClock card in a slot instead for software that "
+        "expects one.");
 
     ImGui::End();
 }

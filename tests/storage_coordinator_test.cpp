@@ -27,6 +27,7 @@
 #include "MediaMount.h"
 #include "RewindBuffer.h"
 #include "ProDOSHardDiskCard.h"
+#include "ProDOSVolume.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
@@ -40,6 +41,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -1138,6 +1140,115 @@ int main()
                       << " rewind frame(s) spanning the media swap\n";
             return 1;
         }
+    }
+
+    // ── Re-mounting the SAME host folder with unsaved guest writes ──────
+    // `mountBlockBytes` takes bytes the caller synthesised from the folder
+    // BEFORE the command flushes the outgoing volume into that folder. It
+    // used to install them as they were: the flush landed the guest's save
+    // on disk, and the machine then mounted the pre-save snapshot over it.
+    // The stale volume's next flush rewrote every file whose bytes differed
+    // from its copy — the guest's first save, reverted by its second, with
+    // both reported as written. Same hazard the file-image path closes in
+    // `Block512Backing::adoptImage`; the synth path must re-synthesise.
+    {
+        const auto folder = std::filesystem::temp_directory_path() /
+                            "pom2_storage_samefolder";
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(folder, ec);
+            ec.clear();
+            std::filesystem::create_directories(folder, ec);
+            std::ofstream note(folder / "note.txt", std::ios::binary);
+            note << "one";
+        }
+        EmulationController folderController;
+        pom2::Settings folderSettings;
+        pom2::StorageCoordinator folderStorage;
+        {
+            auto state = folderController.lockState();
+            state.memory().slotBus().plug(
+                5, std::make_unique<ProDOSHardDiskCard>(5));
+        }
+        auto synth = [&]() {
+            std::vector<std::uint8_t> bytes;
+            const auto built =
+                pom2::buildVolumeFromFolder(folder.string(), "HOST", bytes);
+            assert(built.ok && built.filesIncluded == 1);
+            return bytes;
+        };
+        auto mount = [&](std::vector<std::uint8_t> bytes) {
+            const auto r = folderStorage.mountBlockBytes(
+                folderController, folderSettings, 5, std::move(bytes),
+                "[host folder] " + folder.string(), folder.string());
+            assert(r.ok);
+        };
+        // NOTE's data block, read through the card the way the guest does.
+        auto noteDataOffset = [&]() -> std::size_t {
+            auto state = folderController.lockState();
+            auto* card = dynamic_cast<ProDOSHardDiskCard*>(
+                state.memory().slotBus().peripheral(5));
+            assert(card);
+            for (std::size_t e = 1; e < 13; ++e) {
+                const std::size_t ent = 2u * 512u + 4u + e * 39u;
+                const unsigned nl = card->backing().readByte(ent) & 0x0Fu;
+                if (nl != 4) continue;
+                if (card->backing().readByte(ent + 1) != 'N') continue;
+                const std::size_t key =
+                    card->backing().readByte(ent + 0x11) |
+                    (card->backing().readByte(ent + 0x12) << 8);
+                return key * 512u;
+            }
+            assert(!"NOTE not found in the mounted volume");
+            return 0;
+        };
+        auto readNote = [&]() {
+            std::ifstream in(folder / "note.txt", std::ios::binary);
+            std::string got((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+            return got;
+        };
+
+        mount(synth());
+        assert(folderStorage.setMediaBayWriteBack(
+            folderController, folderSettings, 5, 0, true).ok);
+
+        // The guest edits NOTE: "one" → "Xne" (dirty, unflushed).
+        {
+            const std::size_t off = noteDataOffset();
+            auto state = folderController.lockState();
+            auto* card = dynamic_cast<ProDOSHardDiskCard*>(
+                state.memory().slotBus().peripheral(5));
+            card->backing().writeByte(off, 'X');
+            assert(card->hasUnsavedChanges());
+        }
+        // The user re-mounts the same folder. The caller synthesises from
+        // the folder as it is NOW (still "one"), then the command flushes.
+        const std::vector<std::uint8_t> stale = synth();
+        mount(stale);
+        assert(readNote() == "Xne" && "the flush must land the guest's save");
+        {
+            const std::size_t off = noteDataOffset();
+            auto state = folderController.lockState();
+            auto* card = dynamic_cast<ProDOSHardDiskCard*>(
+                state.memory().slotBus().peripheral(5));
+            if (card->backing().readByte(off) != 'X') {
+                std::cout << "FAIL: re-mounting a dirty host folder installed "
+                             "the pre-flush snapshot\n";
+                return 1;
+            }
+            // Second round: "Xne" → "XYe", then flush through the eject.
+            card->backing().writeByte(off + 1, 'Y');
+        }
+        assert(folderStorage.ejectMediaBay(
+            folderController, folderSettings, 5, 0).ok);
+        if (readNote() != "XYe") {
+            std::cout << "FAIL: the second save reverted the first — "
+                         "note.txt holds '" << readNote() << "'\n";
+            return 1;
+        }
+        std::error_code ec;
+        std::filesystem::remove_all(folder, ec);
     }
 
     std::error_code removeError;

@@ -2391,7 +2391,16 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             slots.deactivateExpansion();
         }
     }
-    if (addr <= 0xC7FF) return slots.slotRomRead(addr);
+    if (addr <= 0xC7FF) {
+        uint8_t v = slots.slotRomRead(addr);
+        // No-Slot Clock under THIS slot card's ROM (NoSlotClock::setSlot):
+        // the II+ placement every ProDOS NSC driver scans for. Only while a
+        // card is plugged there — the chip needs a ROM socket to sit in.
+        if (noSlotClock_ && noSlotClock_->slot() == ((addr >> 8) & 0x07) &&
+            slots.peripheral((addr >> 8) & 0x07))
+            v = noSlotClock_->interceptRead(addr, v);
+        return v;
+    }
     return slots.expansionRomRead(addr);
 }
 
@@ -2561,6 +2570,11 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         // as the active expansion-ROM owner (same as a read into the
         // window), so cards that genuinely have read-only ROM still see
         // their slot select on writes.
+        // NSC write-cycle hook for the chip under this slot's ROM — the
+        // key bit rides on the address, R/W is irrelevant to it.
+        if (noSlotClock_ && noSlotClock_->slot() == ((addr >> 8) & 0x07) &&
+            slots.peripheral((addr >> 8) & 0x07))
+            noSlotClock_->interceptWrite(addr);
         slots.slotRomWrite(addr, value);
         return;
     }

@@ -27,6 +27,7 @@
 #include "MountableMediaCard.h"
 #include "ProDOSBlockCard.h"
 #include "ProDOSHardDiskCard.h"
+#include "ProDOSVolume.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SlotPeripheral.h"
@@ -367,6 +368,18 @@ void sweepMountDirDebris(const std::string& imagePath)
     if (const std::size_t swept = pom2::sweepStaleTempSiblings(dir))
         pom2::log().info("Storage", "swept " + std::to_string(swept) +
                          " stale temp file(s) from " + dir.string());
+}
+
+/// The volume name a synthesised image carries (block 2, offset 4: the
+/// volume directory header's name). Read back rather than passed in, so the
+/// re-synthesis below needs no second copy of the callers' constant.
+std::string synthVolumeName(const std::vector<std::uint8_t>& bytes)
+{
+    constexpr std::size_t kHeader = 2u * 512u + 4u;
+    if (bytes.size() < kHeader + 16u) return "HOST";
+    const std::size_t len = bytes[kHeader] & 0x0Fu;
+    if (len == 0) return "HOST";
+    return std::string(reinterpret_cast<const char*>(&bytes[kHeader + 1]), len);
 }
 
 StorageCoordinator::MediaCommandResult commandError(std::string error)
@@ -825,6 +838,20 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
         }
         if (twoPhase && pending.valid) {
             const std::vector<std::uint32_t> captured = pending.dirtyIndices;
+            // The SAME folder, re-mounted with unsaved guest writes: `bytes`
+            // was synthesised from the folder BEFORE the flush below puts
+            // those writes into it, so installing it would mount the
+            // pre-save snapshot over files that now hold the save. Not lost
+            // yet — but the stale volume's next flush rewrites every file
+            // whose bytes differ from its copy, and the mount stamp taken
+            // after this flush is newer than the files it wrote, so nothing
+            // preserves them: the guest's first round of saves is reverted
+            // by its second. The file-image path has the same hazard and
+            // re-reads under the lock (`Block512Backing::adoptImage`); the
+            // synth path re-synthesises after the commit.
+            const bool sameFolderDirty =
+                pending.synth && !hostFolder.empty() &&
+                pending.hostFolder == hostFolder;
             std::string error;
             if (!Block512Backing::commitWriteBack(std::move(pending), error)) {
                 auto state = controller.lockState();
@@ -835,6 +862,16 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
                     "unsaved changes on the mounted volume could not be "
                     "written: " +
                     (error.empty() ? std::string("write-back failed") : error));
+            }
+            if (sameFolderDirty) {
+                std::vector<std::uint8_t> fresh;
+                const auto rebuilt = pom2::buildVolumeFromFolder(
+                    hostFolder, synthVolumeName(bytes), fresh);
+                if (!rebuilt.ok)
+                    return commandError(
+                        "host folder could not be re-read after its "
+                        "write-back: " + rebuilt.error);
+                bytes = std::move(fresh);
             }
         }
     }

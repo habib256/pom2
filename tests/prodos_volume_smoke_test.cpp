@@ -238,9 +238,12 @@ static void testNameSanitisationAndCollisions()
 {
     fs::path dir = makeTempDir("names");
 
-    // "HELLO WORLD.TXT" → "HELLOWORLD" (letters/digits only, ≤15 chars).
+    // "HELLO WORLD.TXT" → "HELLO.WORLD" (A-Z 0-9 ".", anything else → ".", ≤15 chars).
     // "1ROOT.bin" must be prefixed → "A1ROOT".
-    // Two files producing the same sanitised name must get .1 / .2 suffixes.
+    // Two files producing the same sanitised name: the second keeps its
+    // known extension (`FOO..BIN`) rather than taking a numeric suffix —
+    // `.1` is a name the write-back cannot undo (see
+    // testKnownExtensionSiblingsDoNotAccrete).
     writeFile(dir / "hello world.txt", { 'a' });
     writeFile(dir / "1root.bin",       { 'b' });
     writeFile(dir / "Foo!.bin",        { 'c' });
@@ -260,8 +263,8 @@ static void testNameSanitisationAndCollisions()
         const std::uint8_t nl = e[0] & 0x0F;
         std::string name(reinterpret_cast<const char*>(e + 1), nl);
         if (name == "A1ROOT") found_a1root = true;
-        if (name == "FOO.")   found_foo    = true;     // first collision wins base name
-        if (name == "FOO..1") found_foo1   = true;     // second gets .1 suffix
+        if (name == "FOO.")     found_foo  = true;   // first collision wins base name
+        if (name == "FOO..BIN") found_foo1 = true;   // second keeps its extension
     }
     assert(found_a1root);
     assert(found_foo);
@@ -992,6 +995,254 @@ static void testLeadingDotNamesRefused()
     std::printf("prodos_volume_smoke: leading-dot names refused OK\n");
 }
 
+// ── Type and aux type survive the write-back ────────────────────────────
+//
+// An extension names a TYPE and nothing else, and the decode used to compose
+// one regardless: every aux_type came back as 0 and every type it had no
+// extension for came back as BIN. Found by probing the round trip the
+// CHANGELOG promises for the HGR Paint editor's `PIC#062000`: with nothing
+// changed in the volume, ONE flush wrote a second file `PIC.bin` beside it
+// (nothing on disk was called that), and the next mount served `PIC` +
+// `PIC.1`. A guest `BSAVE X,A$2000` lost its load address the same way — the
+// next `BLOAD X` landed at $0000 — and an AppleWorks document ($1A) became a
+// BIN AppleWorks no longer listed.
+//
+// The decode now composes the CiderPress tag whenever the extension cannot
+// carry the pair, and an entry whose metadata changed RENAMES the host file
+// it came from instead of leaving it behind as a duplicate.
+static void testTypeAndAuxSurviveTheWriteBack()
+{
+    const fs::path dir = makeTempDir("typeaux");
+    writeFile(dir / "PIC#062000", std::vector<std::uint8_t>(300, 0xA1));
+    writeFile(dir / "doc.bin",    std::vector<std::uint8_t>(300, 0xB2));
+    writeFile(dir / "hello.bas",  std::vector<std::uint8_t>(40,  0xC3));
+
+    auto countFiles = [&]() {
+        std::error_code ec;
+        int n = 0;
+        for (const auto& e : fs::directory_iterator(dir, ec))
+            if (e.is_regular_file(ec)) ++n;
+        return n;
+    };
+    // (type, aux) of the entry called `name` in the volume directory, and a
+    // setter for the same pair — the guest's `BSAVE` / type change.
+    auto findEntry = [](std::vector<std::uint8_t>& img, const char* name)
+        -> std::uint8_t* {
+        for (int blk = 2; blk <= 5; ++blk)
+            for (int e = 0; e < 13; ++e) {
+                std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+                const int nl = ent[0] & 0x0F;
+                if (nl == static_cast<int>(std::strlen(name)) &&
+                    std::memcmp(ent + 1, name, nl) == 0)
+                    return ent;
+            }
+        return nullptr;
+    };
+
+    // 1. Untouched volume: a flush must write NOTHING and add NOTHING.
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    {
+        std::uint8_t* bas = findEntry(img, "HELLO");
+        assert(bas && bas[0x10] == 0xFC);
+        assert(rd16(bas + 0x1F) == 0x0801 && "BASIC.SYSTEM's aux for BAS");
+    }
+    auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+    assert(dr.ok && dr.filesWritten == 0);
+    assert(countFiles() == 3 && "an untouched tagged file must not be duplicated");
+    assert(fs::exists(dir / "PIC#062000"));
+
+    // 2. The guest re-tags PIC to $4000, turns DOC into an AppleWorks word
+    //    processor file, and re-SAVEs HELLO (aux stays $0801).
+    {
+        std::uint8_t* pic = findEntry(img, "PIC");
+        assert(pic);
+        pic[0x1F] = 0x00; pic[0x20] = 0x40;
+        std::uint8_t* doc = findEntry(img, "DOC");
+        assert(doc);
+        doc[0x10] = 0x1A;
+    }
+    dr = pom2::decodeVolumeToFolder(img, dir.string());
+    assert(dr.ok);
+    assert(countFiles() == 3 && "a metadata change renames, it does not duplicate");
+    assert(fs::exists(dir / "PIC#064000") && !fs::exists(dir / "PIC#062000"));
+    assert(fs::exists(dir / "DOC#1A0000") && !fs::exists(dir / "doc.bin"));
+    assert(fs::exists(dir / "hello.bas") && "aux $0801 on a BAS is the plain case");
+
+    // 3. The next mount sees what the guest wrote.
+    std::vector<std::uint8_t> again;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", again).ok);
+    {
+        const std::uint8_t* pic = findEntry(again, "PIC");
+        assert(pic && pic[0x10] == 0x06 && rd16(pic + 0x1F) == 0x4000);
+        const std::uint8_t* doc = findEntry(again, "DOC");
+        assert(doc && doc[0x10] == 0x1A);
+    }
+
+    // 4. And a guest-created BIN with a load address keeps it: no extension
+    //    can carry aux $2000, so the tag does.
+    {
+        // Reuse HELLO's slot as a fresh BIN at $2000 — the name is what the
+        // decode composes from, the bytes on disk are already there.
+        std::uint8_t* h = findEntry(again, "HELLO");
+        assert(h);
+        h[0x10] = 0x06; h[0x1F] = 0x00; h[0x20] = 0x20;
+    }
+    dr = pom2::decodeVolumeToFolder(again, dir.string());
+    assert(dr.ok);
+    assert(fs::exists(dir / "HELLO#062000") && !fs::exists(dir / "hello.bas"));
+    assert(countFiles() == 3);
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: type + aux survive the write-back OK\n");
+}
+
+// ── Two host files that differ only by a known extension ─────────────────
+//
+// `hello.bas` + `hello.txt` both sanitise to `HELLO`; the second used to take
+// a numeric suffix, `HELLO.1`. That is a name the write-back cannot undo: it
+// reads as "a file called HELLO.1 with no extension", so no `.txt` is
+// appended, a NEW host file `HELLO.1` lands beside `hello.txt`, and the next
+// mount finds three files. One more per flush, for ever (the probe counted
+// `HELLO.1`, `HELLO.2`, `HELLO.3` after three cycles). The second file keeps
+// its extension in the volume instead — `HELLO.TXT` — which the decode's
+// case-folded lookup lands back on `hello.txt`.
+static void testKnownExtensionSiblingsDoNotAccrete()
+{
+    const fs::path dir = makeTempDir("extsiblings");
+    writeFile(dir / "hello.bas", {'b', 'a', 's'});
+    writeFile(dir / "hello.txt", {'t', 'x', 't'});
+
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        std::vector<std::uint8_t> img;
+        const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == 2);
+        const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+        assert(dr.ok && dr.filesWritten == 0 && "nothing changed: nothing written");
+        std::error_code ec;
+        int files = 0;
+        for (const auto& e : fs::directory_iterator(dir, ec))
+            if (e.is_regular_file(ec)) ++files;
+        assert(files == 2 && "a flush must not add a file per cycle");
+    }
+    assert(fs::exists(dir / "hello.bas") && fs::exists(dir / "hello.txt"));
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: known-extension siblings do not accrete OK\n");
+}
+
+// ── The write-back carries the host file's mode ──────────────────────────
+//
+// `writeFileAtomic` writes a sibling temp file and renames it over the
+// original, so the original's permission bits were replaced by the umask
+// default on every flush: an executable script kept its bytes and lost its
+// `x`, a 0600 note became 0644. The other two members of the atomic-write
+// family (`DiskImage`, `Block512Backing`) carried the mode; this was the one
+// TODO.md listed as the family's last divergence.
+static void testWriteBackCarriesFileMode()
+{
+#ifndef _WIN32
+    const fs::path dir = makeTempDir("mode");
+    writeFile(dir / "run.sh", {'#', '!', '\n'});
+    std::error_code ec;
+    fs::permissions(dir / "run.sh",
+                    fs::perms::owner_all | fs::perms::group_read |
+                        fs::perms::group_exec | fs::perms::others_exec,
+                    fs::perm_options::replace, ec);
+    assert(!ec);
+    const auto before = fs::status(dir / "run.sh", ec).permissions();
+
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    // The guest edits RUN.SH (a dotted name keeps its suffix: `RUN.SH`).
+    bool mutated = false;
+    for (int blk = 2; blk <= 5 && !mutated; ++blk)
+        for (int e = 0; e < 13; ++e) {
+            const std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+            if ((ent[0] & 0x0F) != 6 || std::memcmp(ent + 1, "RUN.SH", 6) != 0)
+                continue;
+            img[rd16(ent + 0x11) * kBlockBytes] = '%';
+            mutated = true;
+            break;
+        }
+    assert(mutated);
+    const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+    assert(dr.ok && dr.filesWritten == 1);
+    const auto after = fs::status(dir / "run.sh", ec).permissions();
+    assert(after == before && "write-back must keep the original's mode");
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: write-back carries the file mode OK\n");
+#else
+    std::printf("prodos_volume_smoke: file mode case skipped on Windows\n");
+#endif
+}
+
+// ── A lossy host name still finds its own file on the way back ───────────
+//
+// `README!` sanitises to `README.`, `Hello World.txt` to `HELLO.WORLD`, and a
+// third `Foo*.bin` gets a numeric suffix: none of these host names can be
+// recomposed from the ProDOS name. The decode used to compose one anyway and,
+// finding no such file, write a NEW one beside the source — `README.1`,
+// `HELLOWORLD.txt`, `FOO..1` — which the next mount served as an extra entry.
+// One more per flush. The decode now replays the build's naming pass over the
+// folder (`nameHostDir`) and writes each entry into the file it came from.
+static void testLossyHostNamesRoundTripInPlace()
+{
+    const fs::path dir = makeTempDir("lossy");
+    writeFile(dir / "README",          {'A'});
+    writeFile(dir / "README!",         {'B'});
+    writeFile(dir / "Hello World.txt", {'C'});
+    writeFile(dir / "Foo!.bin",        {'D'});
+    writeFile(dir / "Foo?.bin",        {'E'});
+    writeFile(dir / "Foo#.bin",        {'F'});
+
+    auto countFiles = [&]() {
+        std::error_code ec;
+        int n = 0;
+        for (const auto& e : fs::directory_iterator(dir, ec))
+            if (e.is_regular_file(ec)) ++n;
+        return n;
+    };
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        std::vector<std::uint8_t> img;
+        const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == 6);
+        const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+        assert(dr.ok && dr.filesWritten == 0 && "nothing changed: nothing written");
+        assert(countFiles() == 6 && "a flush must not add a file per cycle");
+    }
+
+    // A guest edit lands IN the lossy-named source, not in a new file.
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    for (int blk = 2; blk <= 5; ++blk)
+        for (int e = 0; e < 13; ++e) {
+            std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+            const int nl = ent[0] & 0x0F;
+            if (nl == 11 && std::memcmp(ent + 1, "HELLO.WORLD", 11) == 0)
+                img[rd16(ent + 0x11) * kBlockBytes] = 'c';
+            if (nl == 7 && std::memcmp(ent + 1, "README.", 7) == 0)
+                img[rd16(ent + 0x11) * kBlockBytes] = 'b';
+        }
+    const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+    assert(dr.ok && dr.filesWritten == 2);
+    assert(countFiles() == 6);
+    auto readOne = [&](const char* leaf) {
+        std::ifstream in(dir / leaf, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    };
+    assert(readOne("Hello World.txt") == "c");
+    assert(readOne("README!") == "b");
+    assert(readOne("README") == "A");
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: lossy host names round-trip in place OK\n");
+}
+
 int main()
 {
     testEmptyFolder();
@@ -1011,6 +1262,10 @@ int main()
     testTreeFileDecodes();
     testDecodeRefusesToWriteThroughASymlink();
     testLeadingDotNamesRefused();
+    testTypeAndAuxSurviveTheWriteBack();
+    testKnownExtensionSiblingsDoNotAccrete();
+    testWriteBackCarriesFileMode();
+    testLossyHostNamesRoundTripInPlace();
     std::printf("prodos_volume_smoke: PASS\n");
     return 0;
 }

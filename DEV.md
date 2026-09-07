@@ -2032,6 +2032,30 @@ DOS". Skew tables (physical → logical):
 - DOS 3.3: `{0,7,14,6,13,5,12,4,11,3,10,2,9,1,8,15}`
 - ProDOS:  `{0,8,1,9,2,10,3,11,4,12,5,13,6,14,7,15}`
 
+**The extension is a hint; the content decides.** `.po` means ProDOS order
+and everything else DOS order, unless the bytes say otherwise
+(`classifyImage`, the "143 360-byte image" branch). Two sniffs, one per
+operating system, each armed only by its own signature so neither can trip
+on the other's disk:
+
+- *ProDOS*: the volume directory key block (prev = 0, next < 280, storage
+  type `$F`, a legal name) is at `$400` in a ProDOS-order file and at `$B00`
+  in a DOS-order one. One matches and the other does not → that is the
+  order.
+- *DOS 3.3* (2026-09-07): the VTOC — track 17 sector 0 — is at `$11000` in
+  **both** orders (sectors 0 and 15 are fixed points of the skew), so it can
+  arm the sniff (catalog at T17, release 3, 35 × 16 × 256) but not decide
+  it. The catalog chain can: sector 15 links to sector 14, which lives at
+  `$11E00` in a DOS-order file and at `$11100` (ProDOS index 1) in a
+  ProDOS-order one. Before this half existed a DOS 3.3 master named `.po`
+  was read ProDOS-skewed and booted to a blank screen.
+
+Pinned by `sector_order_smoke` with the real systems as the oracle: ProDOS
+2.4.3 boots, SAVEs and writes back on the `.po`, its DOS-order twin and each
+under the other extension, and the four de-skew to one byte-identical
+volume — the only pin the write-side skew has; the DOS 3.3 master and its
+ProDOS-order twin boot to the prompt under both extensions.
+
 Write-back via `saveDirty()` (`.dsk`/`.do`/`.po`/`.nib` + `.2mg`
 envelopes + `.woz`) opt-in via `setWriteBackEnabled(true)`.
 
@@ -2691,6 +2715,19 @@ WP/write-back for free). Per-unit settings persist as
 `smartport_slotN_unitK_{type,path,writeback}`. Card implements
 `MountableMediaCard` over its 2 units.
 
+**One write-protect rule per card** (2026-09-07, TODO.md R1 settled). A unit
+is write-protected when its medium is **or** when write-back is off — the
+contract `SmartPortUnit.h` declares, the one `SmartPort35Unit` answers through
+`Disk35Image`, and the one `DiskImage` answers for the Disk II. The HDV unit
+used to report the medium flag alone, so two bays of one card gave opposite
+answers to the same toggle: the 3.5" refused a write with write-back off, the
+HDV took a session of writes into RAM and dropped them at eject. It now
+honours the contract, and `writeBlock` refuses like the 3.5" does. The
+HDV-class *cards* (`ProDOSHardDiskCard`, `CffaCard`) keep their documented
+in-session-writable policy — a different card, a different rule, stated.
+Pinned by `smartport_mixed_units_smoke` (both units, both toggle states, same
+answer).
+
 **Boot wiring**: a library click (or CLI insert+boot) routes 3.5"/HDV
 to the primary `SmartPortCard` and `controller->bootFromSlot(card->
 getSlot())` on every profile that has one — including //c-class
@@ -2798,9 +2835,12 @@ Blocks 0-1 boot (zeroed), 2-5 vol-dir key + 3 ext (51 entries max),
 block 6 bitmap (4096 blocks = 2 MB cap), 7+ data + sapling indexes.
 
 Scope: flat dir; ≤ 51 files; ≤ 128 KB per file on the **build** side
-(seedling + sapling); type from extension; filenames sanitised to
-`A-Z/0-9/.` with collision suffixes `.1/.2`. The **decode** side also
-handles tree (`$3`) files (`kStorageTree`, `ProDOSVolume.cpp:1141-1237`)
+(seedling + sapling); type from extension (a `.bas` gets aux `$0801`, the
+address BASIC.SYSTEM writes) or from a CiderPress `NAME#TTAAAA` tag;
+filenames sanitised to `A-Z/0-9/.`, a collision keeping its known extension
+(`hello.bas` + `hello.txt` → `HELLO` + `HELLO.TXT`) before falling back to
+`.1/.2`. The **decode** side also
+handles tree (`$3`) files (`kStorageTree`, `ProDOSVolume.cpp:1342-1428`)
 — the guest has free blocks now, so a file it grows past 128 KB becomes a
 tree and used to be skipped on the way back out, silently.
 
@@ -2818,7 +2858,7 @@ presenting itself as writable:
 * The bitmap marked **every** block within `total_blocks` as used, so ProDOS
   reported zero free blocks and the guest got DISK FULL for a two-block file
   on an otherwise empty volume. The build now adds bounded slack
-  (`ProDOSVolume.cpp:695-721`): 10 % of the content, at least 64 blocks
+  (`ProDOSVolume.cpp:816-818`): 10 % of the content, at least 64 blocks
   (32 KB) and at most 4096 (2 MB), given back first if it would push the
   volume past `kMaxVolumeBlocks`. It is usable rather than decorative because
   `decodeVolumeToFolder` walks the directory graph and writes back every
@@ -2839,7 +2879,7 @@ device names (`CON`, `AUX`, …) are rejected by `isHostSafeProDOSName`.
 filter ran on decode only, so a host `aux.txt` was published to the guest as
 `AUX`, the user edited it, and the write-back refused the name and returned
 `ok == true`: an edit lost with no error anywhere. The steering now happens on
-the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp:186-198`) appends an
+the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp:214-222`) appends an
 `X` to any DOS device stem (`isDosDeviceStem`: `CON/PRN/AUX/NUL`, `COM1-9`,
 `LPT1-9`), so the file enters the volume as `AUXX` and round-trips.
 
@@ -2847,11 +2887,11 @@ the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp:186-198`) appends an
 `ProDOSDecodeResult` carries `filesUnsaved` + `unsavedNames`
 (`ProDOSVolume.h:76-90`); a **legal** ProDOS name the host refuses sets them
 and the result is `ok == false` with the names in `error`
-(`ProDOSVolume.cpp:1428-1436`). A **crafted** entry — `../PWNED`, an embedded
+(`ProDOSVolume.cpp:1663-1678`). A **crafted** entry — `../PWNED`, an embedded
 NUL — is still skipped quietly and counted in `filesSkipped`, deliberately: a
 hostile image must not be able to jam every future save by making one entry
 permanently unsaveable. The decode destination is checked too
-(`destStaysInsideRoot`, `:941-955`): a symlink, or a path that
+(`destStaysInsideRoot`, `:1103-1118`): a symlink, or a path that
 `weakly_canonical` puts outside the served root, is refused rather than
 followed — `create_directories` used to dereference exactly the symlink the
 scan had deliberately hidden. Dotfiles are refused on both sides, so a guest
@@ -2872,6 +2912,61 @@ a clash taking a numeric suffix rather than overwriting, and the
 reservation covers THIS pass only — never what is already on disk —
 so a repeated write-back stays idempotent instead of accreting a fresh
 `.1` on every eject. Subdirectory names go through the same gate.
+
+**The write-back keeps the file type and the aux type** (2026-09-07, ProDOS
+bug hunt). An extension names a *type* and nothing else, and the decode used
+to compose one regardless: every aux_type came back 0 and every type with no
+extension of its own came back BIN. It was not confined to files the guest
+changed — a host `PIC#062000` (the tag `buildVolumeFromFolder` parses, and
+the name the HGR Paint editor saves under) produced a *second* file
+`PIC.bin` on every flush, because nothing on disk was called that, and the
+next mount served `PIC` + `PIC.1`. A guest `BSAVE X,A$2000` lost its load
+address (the next `BLOAD X` landed at `$0000`); an AppleWorks document
+(`$1A`) came back as a BIN AppleWorks no longer listed. `hostNameFor`
+(`ProDOSVolume.cpp:908`) now uses the extension only when the build would
+derive exactly that (type, aux) pair back from it and composes the
+`NAME#TTAAAA` tag otherwise.
+
+**And the decode finds each entry's source file by replaying the build's
+naming pass.** The mapping from host file to ProDOS name is a function of the
+directory listing alone — `nameHostDir` (`ProDOSVolume.cpp:433`) is that pass,
+and both sides call it. So for any entry the decode knows which host file it
+came from, however lossy the sanitisation was: `README!` → `README.`,
+`Hello World.txt` → `HELLO.WORLD`, a third `Foo*.bin` → `FOO..1`. A source
+whose derived (type, aux) equals the entry's is written **in place**
+(`:1465`); one whose pair differs is the guest's metadata change and is
+**renamed** to a host name that carries it (`:1516`) — `doc.bin` turned into
+an AppleWorks document becomes `DOC#1A0000`, not a second file beside
+`doc.bin`. Before the replay the decode composed a host name from the ProDOS
+name and, finding no such file, wrote a new one beside the source —
+`README.1` next to `README!`, `HELLOWORLD.txt` next to `Hello World.txt` —
+and the next mount served both; one more per flush. A file added to the
+folder since the mount can shift a collision suffix onto a neighbour: it is
+newer than the mount stamp, and the preserve rule refuses to touch it. The
+build also keeps a colliding file's known extension (`hello.bas` +
+`hello.txt` → `HELLO` + `HELLO.TXT`) before minting a numeric suffix, so the
+common collision needs no replay at all. Pinned by
+`testTypeAndAuxSurviveTheWriteBack`, `testKnownExtensionSiblingsDoNotAccrete`
+and `testLossyHostNamesRoundTripInPlace` in `prodos_volume_smoke`.
+
+**Re-mounting the same folder with unsaved writes re-synthesises after the
+flush** (2026-09-07). `StorageCoordinator::mountBlockBytes` takes bytes the
+caller built from the folder *before* the command flushes the outgoing volume
+into that folder, and used to install them as they were: the flush landed the
+guest's save on disk and the machine then mounted the pre-save snapshot over
+it. Not lost yet — but that stale volume's next flush rewrote every file whose
+bytes differed from its copy, and the mount stamp taken after the flush was
+newer than the files it had written, so `preserveNewerThan` protected none of
+them: the guest's first save, reverted by its second, both reported as
+written. The file-image path has the same hazard and re-reads under the lock
+(`Block512Backing::adoptImage`); the synth path now rebuilds from the folder
+after a successful same-folder commit, taking the volume name back out of the
+image it was handed. Pinned in `storage_coordinator` (the case fails without
+the fix).
+
+The decode's `writeFileAtomic` also copies the original's permission bits
+onto the temp file before the rename (2026-09-07) — the last member of the
+atomic-write family to do so; pinned by `testWriteBackCarriesFileMode`.
 
 ### Snapshot
 
@@ -3859,7 +3954,40 @@ ROM the era's drivers probe:
 | Machine | Window | Why |
 |---|---|---|
 | II / II+ | `$F800-$FFFF` (Monitor ROM), gated on LC-ROM-mapped | no internal slot-3/8 ROM to hide under; matches AppleWin's `!SW_HIGHRAM && !SW_WRITERAM` |
-| //e, //c-class | `$C300-$C3FF` and `$C800-$C8FF` | where ProDOS 8 ≥ 2.0.3 and GS/OS actually scan (AppleWin `IsPotentialNoSlotClockAccess`) |
+| //e, //c-class | `$C300-$C3FF` and `$C800-$C8FF` | where the ProDOS NSC **drivers** actually scan (AppleWin `IsPotentialNoSlotClockAccess`) |
+
+**What actually probes it, checked against the real drivers** (2026-09-07,
+ProDOS bug hunt). This table used to say "where ProDOS 8 ≥ 2.0.3 scans".
+ProDOS 8 has **no built-in No-Slot Clock support at any version** — the only
+clock driver built into ProDOS 8 (1.x, 2.0, 2.4) is the ThunderClock's; an
+NSC needs a `.SYSTEM` driver. The two that exist, SMT's 1991
+`NS.CLOCK.SYSTEM` (disassembled in bobbimanners/ProDOS-Utils) and a2stuff's
+`prodos-drivers` rework, probe identically: slot ROMs `$C300..$C700` first
+(`LDA $CFFF / STA $Cn00 / LDA $Cn04`, key walk on `$Cn00,Y`, data on
+`$Cn04`), then `$C800-$C805` with INTCXROM forced on. So on a **//e** the
+chip is found at the first place looked, `$C300`, and the driver prints the
+date it read. On a **II+** neither driver ever touches `$F800`: a chip under
+the Monitor ROM is unreachable by the ProDOS software that exists. That is
+not how a II+ was fitted anyway — the SmartWatch went into the 24-pin ROM
+socket of a peripheral card (Grappler+, Videoterm, Super Serial), which is
+exactly the case the slot scan was written for.
+
+**So the chip can also sit under a slot card's ROM** (`NoSlotClock::setSlot`,
+setting `nsclock_slot`, default **1** — the fresh-install Grappler+; the
+No-Slot Clock panel has the combo). `Memory` intercepts that slot's
+`$Cn00-$CnFF` reads and writes (`memReadSlow`'s slot-ROM tail and the
+`slotRomWrite` branch of `memWriteSlow`) only while a card is plugged there:
+the chip needs a socket. The motherboard placement stays too — the //e
+drivers scan `$C300` and the DOS 3.3-era II+ patches read the Monitor ROM —
+so both windows answer, and this section says so rather than pretending one
+chip decodes both. The chance of a card's own firmware walking the 64-bit
+key by accident is nil, which is why the real chip could live under a running
+ROM in the first place. All three cases are pinned by
+`no_slot_clock_prodos_driver` (//e at `$C300`; II+ motherboard-only *Not
+Found*; II+ with the chip under slot 1 found at `$C100` on the driver's
+second probe), which boots ProDOS 2.4.3 and runs the a2stuff driver from a
+second drive (the drivers disk is not redistributed — the test SKIPs without
+it and its header says where it comes from).
 
 That split is why `Memory`'s inline ROM-read fast path carries
 `!(noSlotClock_ && !iieMode && addr >= 0xF800)` (`Memory.h:204`) — it only has

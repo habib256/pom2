@@ -345,6 +345,7 @@ void MainWindow::persistSession(bool flushMedia)
     // values rather than being overwritten with a default.
     printerCoordinator_->persistGrappler(*settings, *controller);
     settings->setBool  ("nsclock_enable",  controller->noSlotClock().isEnabled());
+    settings->setInt   ("nsclock_slot",    controller->noSlotClock().slot());
     if (ntscFx) {
         const auto& p = ntscFx->getParams();
         settings->setFloat("ntsc_brightness",  p.brightness);

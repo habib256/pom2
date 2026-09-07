@@ -465,6 +465,40 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
             overridden = true;
         }
 
+        // The other half of the sniff: a DOS 3.3 disk under the wrong
+        // extension. The vol-dir sniff above says nothing about one (no
+        // ProDOS header anywhere), so a DOS 3.3 master named `.po` was read
+        // ProDOS-skewed and booted to a blank screen. The VTOC cannot tell
+        // the orders apart — it is track 17 sector 0, and sectors 0 and 15
+        // are fixed points of the skew — but the catalog CHAIN can: sector
+        // 15 links to sector 14, which lives at $11E00 in a DOS-order file
+        // and at $11100 (ProDOS index 1) in a ProDOS-order one. Only a valid
+        // VTOC arms this, so a ProDOS volume never trips it.
+        auto looksLikeVtoc = [base, n]() -> bool {
+            constexpr std::size_t off = 17u * 4096u;      // T17 S0, both orders
+            if (off + 0x38 > n) return false;
+            const uint8_t* p = base + off;
+            return p[1] == 0x11 && p[2] >= 1 && p[2] <= 15 && p[3] == 3 &&
+                   p[0x34] == 35 && p[0x35] == 16 &&
+                   p[0x36] == 0x00 && p[0x37] == 0x01;      // 256 bytes/sector
+        };
+        auto looksLikeCatalogSector14 = [base, n](std::size_t off) -> bool {
+            if (off + 3 > n) return false;
+            const uint8_t* p = base + off;
+            return p[0] == 0x00 && p[1] == 0x11 && p[2] == 0x0D;  // next = T17 S13
+        };
+        if (!prodosVolHere && !dosVolHere && looksLikeVtoc()) {
+            const bool dosHere    = looksLikeCatalogSector14(17u * 4096u + 14u * 256u);
+            const bool prodosHere = looksLikeCatalogSector14(17u * 4096u + 1u * 256u);
+            if (order == SectorOrder::ProDOS && dosHere && !prodosHere) {
+                order = SectorOrder::Dos33;
+                overridden = true;
+            } else if (order == SectorOrder::Dos33 && prodosHere && !dosHere) {
+                order = SectorOrder::ProDOS;
+                overridden = true;
+            }
+        }
+
         r.kind = (order == SectorOrder::ProDOS) ? ImageKind::ProDos143k
                                                 : ImageKind::Dsk143k;
         r.payloadOff   = baseOff;
