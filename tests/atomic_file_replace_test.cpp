@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <thread>
 #include <fstream>
@@ -301,6 +302,41 @@ int main()
         }
     }
 #endif
+
+    // ── Stale temp debris is swept, live debris is not ─────────────────
+    // A process killed between the write and the rename leaves its
+    // `<target>.<pid>-<n>.pom2tmp` behind for good — the pid in the name
+    // means no later run ever picks it up, and nothing collected them. Inside
+    // a folder served as a ProDOS volume they are not even inert: the scan
+    // turns them into files on the guest's volume. (Bug hunt 3 R6.)
+    {
+        const fs::path sweepDir = dir / "sweep";
+        fs::create_directories(sweepDir, ec);
+        const fs::path stale  = sweepDir / "disk.po.4242-1.pom2tmp";
+        const fs::path fresh  = sweepDir / "disk.po.4243-1.pom2tmp";
+        const fs::path keeper = sweepDir / "disk.po";
+        writeFile(stale,  pattern(16, 0x01));
+        writeFile(fresh,  pattern(16, 0x02));
+        writeFile(keeper, pattern(16, 0x03));
+        // Age only the first one: the sweep must not touch a temp another
+        // POM2 may be writing through RIGHT NOW.
+        fs::last_write_time(stale,
+                            fs::file_time_type::clock::now() -
+                                std::chrono::hours(48), ec);
+        assert(!ec);
+
+        assert(pom2::sweepStaleTempSiblings(sweepDir, 24) == 1);
+        assert(!fs::exists(stale));
+        assert(fs::exists(fresh)  && "a temp younger than the cutoff was swept");
+        assert(fs::exists(keeper) && "the sweep touched a real file");
+        // Idempotent, and a missing directory is not an error.
+        assert(pom2::sweepStaleTempSiblings(sweepDir, 24) == 0);
+        assert(pom2::sweepStaleTempSiblings(dir / "no_such_dir", 24) == 0);
+
+        // The suffix the sweep looks for is the one tempSiblingPath hands out.
+        const fs::path handed = pom2::tempSiblingPath(keeper);
+        assert(handed.extension() == pom2::kTempSiblingSuffix);
+    }
 
     fs::remove_all(dir, ec);
     std::printf("atomic_file_replace: all assertions passed\n");

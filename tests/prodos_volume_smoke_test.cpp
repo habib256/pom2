@@ -33,6 +33,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -778,6 +779,219 @@ static void testWindowsReservedNamesRefused()
     std::printf("prodos_volume_smoke: Windows device names refused OK\n");
 }
 
+// ── R4a: a host file whose ProDOS name would be a DOS device ────────────
+// `aux.txt` entered the volume as `AUX`, the guest edited it, and the write-
+// back skipped it — `isHostSafeProDOSName` refuses device names (rightly: on
+// Windows `AUX` is a serial port), but nothing said so and the decode still
+// reported success. A name the write-back cannot honour must not enter the
+// volume at all. (Bug hunt 3 R4.)
+static void testDeviceNamesNeverEnterTheVolume()
+{
+    const fs::path dir = makeTempDir("devname");
+    writeFile(dir / "aux.txt",  {'a', 'u', 'x'});
+    writeFile(dir / "com1.bin", {'c', '1'});
+
+    std::vector<std::uint8_t> img;
+    const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+    assert(br.ok);
+    assert(br.filesIncluded == 2);
+
+    // Whatever names the build chose, every one of them must be a name the
+    // decode is willing to write back.
+    const std::uint8_t* b2 = img.data() + 2 * kBlockBytes;
+    int checked = 0;
+    for (std::size_t slot = 0; slot < 12; ++slot) {
+        const std::uint8_t* e = b2 + 4 + 39 + slot * 39;
+        const std::uint8_t nameLen = e[0] & 0x0F;
+        if ((e[0] >> 4) == 0 || nameLen == 0) continue;
+        const std::string name(reinterpret_cast<const char*>(e + 1), nameLen);
+        assert(pom2::isHostSafeProDOSName(name) &&
+               "the build put a name in the volume the write-back refuses");
+        ++checked;
+    }
+    assert(checked == 2);
+
+    // And the round trip really lands both files.
+    const fs::path dst = makeTempDir("devname_dst");
+    const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+    assert(dr.ok);
+    assert(dr.filesUnsaved == 0);
+    assert(dr.filesWritten == 2);
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::remove_all(dst, ec);
+    std::printf("prodos_volume_smoke: device names kept out of the volume OK\n");
+}
+
+// ── R4b: a file the write-back cannot place FAILS the save ──────────────
+// The guest can mint a name the host will not take (it writes the directory
+// bytes itself). The decode counted it in `filesSkipped` and returned ok, so
+// the caller marked the blocks clean and the file was gone with one log line
+// as its trace. (Bug hunt 3 R4.)
+static void testUnsavedEntryFailsTheDecode()
+{
+    const fs::path dir = makeTempDir("unsaved");
+    writeFile(dir / "keep.txt",  {'k'});
+    writeFile(dir / "victim.txt", {'v'});
+
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+
+    // Rewrite one entry's name to `AUX`, exactly as a guest could.
+    std::uint8_t* b2 = img.data() + 2 * kBlockBytes;
+    std::uint8_t* victim = nullptr;
+    for (std::size_t slot = 0; slot < 12 && !victim; ++slot) {
+        std::uint8_t* e = b2 + 4 + 39 + slot * 39;
+        const std::uint8_t nameLen = e[0] & 0x0F;
+        if ((e[0] >> 4) == 0 || nameLen == 0) continue;
+        if (std::memcmp(e + 1, "VICTIM", 6) == 0) victim = e;
+    }
+    assert(victim);
+    victim[0] = static_cast<std::uint8_t>(((victim[0] >> 4) << 4) | 3);
+    std::memcpy(victim + 1, "AUX", 3);
+
+    const fs::path dst = makeTempDir("unsaved_dst");
+    const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+    assert(!dr.ok && "a save that lost a file reported success");
+    assert(dr.filesUnsaved == 1);
+    assert(!dr.error.empty());
+    assert(dr.error.find("AUX") != std::string::npos &&
+           "the error must name the file the user has to rename");
+    // The files that COULD be written are still written — a partial success
+    // reported honestly, not a rollback.
+    assert(fs::exists(dst / "KEEP.txt"));
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::remove_all(dst, ec);
+    std::printf("prodos_volume_smoke: an unsaveable entry fails the save OK\n");
+}
+
+// ── R4c: tree ($3) files decode ─────────────────────────────────────────
+// The build side only emits seedlings and saplings, but the volume carries
+// free slack and ProDOS promotes a file past 128 KB to a tree by itself. The
+// decode skipped those, so "your file grew past 128 KB" meant "your file is
+// gone". A tree is one more level of index. (Bug hunt 3 R4.)
+static void testTreeFileDecodes()
+{
+    const fs::path dir = makeTempDir("tree");
+    std::vector<std::uint8_t> payload(3000);
+    for (std::size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<std::uint8_t>((i * 11u + 5u) & 0xFF);
+    writeFile(dir / "big.bin", payload);
+
+    std::vector<std::uint8_t> img;
+    const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+    assert(br.ok);
+
+    // Promote the sapling to a tree: allocate the LAST block of the volume as
+    // a master index whose entry 0 is the existing sapling index block.
+    std::uint8_t* b2 = img.data() + 2 * kBlockBytes;
+    std::uint8_t* e = nullptr;
+    for (std::size_t slot = 0; slot < 12 && !e; ++slot) {
+        std::uint8_t* c = b2 + 4 + 39 + slot * 39;
+        if ((c[0] >> 4) == 0x2) e = c;             // the sapling
+    }
+    assert(e);
+    const std::uint16_t saplingIdx = rd16(e + 0x11);
+    const std::uint16_t master =
+        static_cast<std::uint16_t>(img.size() / kBlockBytes - 1);
+    std::uint8_t* mb = img.data() + master * kBlockBytes;
+    std::memset(mb, 0, kBlockBytes);
+    mb[0]   = static_cast<std::uint8_t>(saplingIdx & 0xFF);
+    mb[256] = static_cast<std::uint8_t>(saplingIdx >> 8);
+    e[0]    = static_cast<std::uint8_t>((0x3 << 4) | (e[0] & 0x0F));
+    e[0x11] = static_cast<std::uint8_t>(master & 0xFF);
+    e[0x12] = static_cast<std::uint8_t>(master >> 8);
+
+    const fs::path dst = makeTempDir("tree_dst");
+    const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+    assert(dr.ok);
+    assert(dr.filesUnsaved == 0);
+    assert(dr.filesWritten == 1);
+
+    std::ifstream in(dst / "BIG.bin", std::ios::binary);
+    assert(in.good());
+    const std::vector<std::uint8_t> got(
+        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    assert(got == payload && "the tree file did not round-trip");
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::remove_all(dst, ec);
+    std::printf("prodos_volume_smoke: tree ($3) files decode OK\n");
+}
+
+// ── S5: a symlinked directory inside the served root is not written through
+// The name check proves the last component is safe; it says nothing about
+// what the components AHEAD of it resolve to. `create_directories` succeeds
+// silently on an existing symlink to elsewhere and follows it, so every file
+// the walk wrote under that name landed outside the jail — and the scan
+// hides symlinks, so the user never saw what their guest was writing into.
+static void testDecodeRefusesToWriteThroughASymlink()
+{
+    const fs::path src     = makeTempDir("s5_src");
+    const fs::path outside = makeTempDir("s5_outside");
+    const fs::path dst     = makeTempDir("s5_dst");
+
+    fs::create_directories(src / "LINK");
+    writeFile(src / "LINK" / "loot.txt", {'l', 'o', 'o', 't'});
+    writeFile(src / "PLAIN.txt", {'p'});
+
+    std::error_code ec;
+    fs::create_directory_symlink(outside, dst / "LINK", ec);
+    if (ec) {
+        fs::remove_all(src, ec); fs::remove_all(outside, ec);
+        fs::remove_all(dst, ec);
+        std::printf("prodos_volume_smoke: symlink write-through SKIPPED\n");
+        return;
+    }
+
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(src.string(), "HOST", img).ok);
+    const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+
+    // Nothing reached the linked-to directory...
+    assert(!fs::exists(outside / "loot.txt") &&
+           "the decode wrote through a symlinked directory");
+    assert(fs::is_empty(outside, ec));
+    // ...the refusal is REPORTED, not silent...
+    assert(!dr.ok);
+    assert(dr.filesUnsaved >= 1);
+    // ...and the rest of the volume still decoded.
+    assert(fs::exists(dst / "PLAIN.txt"));
+
+    fs::remove_all(src, ec);
+    fs::remove_all(outside, ec);
+    fs::remove_all(dst, ec);
+    std::printf("prodos_volume_smoke: symlinked dest refused OK\n");
+}
+
+// ── S6: no dotfiles ─────────────────────────────────────────────────────
+// A guest could plant `.bashrc` / `.git` in the served folder; the scan then
+// hid it, so the user never saw it. A ProDOS name starts with a letter, so
+// nothing legitimate is lost by refusing a leading dot.
+static void testLeadingDotNamesRefused()
+{
+    assert(!pom2::isHostSafeProDOSName(".bashrc"));
+    assert(!pom2::isHostSafeProDOSName(".git"));
+    assert(!pom2::isHostSafeProDOSName(".DS.Store"));
+    assert(pom2::isHostSafeProDOSName("A.bashrc"));
+
+    // The two predicates are not the same line, and the write-back leans on
+    // the gap: a LEGAL ProDOS name the host refuses is lost user data (the
+    // save fails and names it), while a name no ProDOS could hold is a
+    // crafted or corrupt entry that is skipped quietly — failing on those
+    // would let one hostile image jam every future save of the volume.
+    assert(pom2::isProDOSLegalName("AUX") && !pom2::isHostSafeProDOSName("AUX"));
+    assert(pom2::isProDOSLegalName(".git") && !pom2::isHostSafeProDOSName(".git"));
+    assert(!pom2::isProDOSLegalName("../PWNED"));
+    assert(!pom2::isProDOSLegalName(std::string("a\0b", 3)));
+    assert(!pom2::isProDOSLegalName("0123456789ABCDEF"));
+    std::printf("prodos_volume_smoke: leading-dot names refused OK\n");
+}
+
 int main()
 {
     testEmptyFolder();
@@ -792,6 +1006,11 @@ int main()
     testSymlinkLoopsAndEscapesAreRefused();
     testExtensionCaseRoundTripDoesNotDuplicate();
     testWindowsReservedNamesRefused();
+    testDeviceNamesNeverEnterTheVolume();
+    testUnsavedEntryFailsTheDecode();
+    testTreeFileDecodes();
+    testDecodeRefusesToWriteThroughASymlink();
+    testLeadingDotNamesRefused();
     std::printf("prodos_volume_smoke: PASS\n");
     return 0;
 }

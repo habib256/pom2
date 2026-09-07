@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#include "AtomicFileReplace.h"
 #include "CliDispatcher.h"
 #include "Settings.h"
 #include "TnfsMedia.h"
@@ -217,12 +218,32 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pom2_persist_now()
 }
 #endif
 
+/// Set by the SIGINT handler installed around the pre-window TNFS fetch, and
+/// polled by it between chunks. File-scope because a signal handler cannot
+/// capture: it is the hook a future UI (a Cancel button on a progress panel)
+/// sets instead, without the fetch learning anything new.
+static std::atomic<bool> g_tnfsAbort{false};
+
 int main(int argc, char* argv[])
 {
     if (const int broker = pom2::ChildProcess::runConsoleSignalBrokerIfRequested(
             argc, argv); broker >= 0)
         return broker;
     pom2::log().info("POM2", POM2_VERSION_STRING " - Apple II Emulator (Dear ImGui)");
+
+    // Clear yesterday's crash debris out of the config directory before
+    // anything writes there. Every atomic commit in POM2 goes through a
+    // sibling `*.pom2tmp`, and a process killed between the write and the
+    // rename leaves one behind for good: the name carries the dead pid, so no
+    // later run picks it up again. Nothing else ever removes them. 24 h of
+    // slack so a second POM2 writing in the same directory RIGHT NOW is never
+    // the file we delete. Best effort, and silent unless something went.
+    if (const std::filesystem::path cfgDir = pom2::userConfigDir();
+        !cfgDir.empty()) {
+        if (const std::size_t swept = pom2::sweepStaleTempSiblings(cfgDir))
+            pom2::log().info("POM2", "swept " + std::to_string(swept) +
+                             " stale temp file(s) from " + cfgDir.string());
+    }
 
     bool helpRequested = false;
     auto plan = pom2::parseCli(argc, argv, helpRequested);
@@ -617,7 +638,27 @@ int main(int argc, char* argv[])
                 (store.has_parent_path() ? store.parent_path()
                                          : std::filesystem::path("."))
                 / "tnfs_cache";
-            const auto got = pom2::tnfsFetchImage(plan->bootDiskPath, cache.string());
+            // Ctrl+C is the ONLY user interface that exists at this point —
+            // the fetch runs before the window loop, so there is no button to
+            // press and no frame being painted. Wire it to the limits' abort
+            // flag: the transfer checks it between chunks, gives up with a
+            // message naming how far it got, and the machine still comes up.
+            // Without this, SIGINT during a fetch killed the process outright.
+            //
+            // The handler writes one atomic<bool>; it is lock-free on every
+            // platform POM2 builds for, which is what makes it legal from a
+            // signal handler (a lock-free atomic is async-signal-safe).
+            static_assert(std::atomic<bool>::is_always_lock_free,
+                          "the TNFS abort flag is set from a signal handler");
+            g_tnfsAbort.store(false);
+            const auto previousSigint = std::signal(SIGINT, [](int) {
+                g_tnfsAbort.store(true);
+            });
+            pom2::TnfsFetchLimits limits;
+            limits.abort = &g_tnfsAbort;
+            const auto got = pom2::tnfsFetchImage(plan->bootDiskPath,
+                                                  cache.string(), limits);
+            if (previousSigint != SIG_ERR) std::signal(SIGINT, previousSigint);
             if (got.ok) {
                 plan->bootDiskPath = got.localPath;
             } else {

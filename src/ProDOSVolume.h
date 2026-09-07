@@ -76,6 +76,21 @@ struct ProDOSDecodeResult {
     std::string error;
     std::size_t filesWritten  = 0;
     std::size_t filesSkipped  = 0;
+    /// The subset of `filesSkipped` that is DATA LOSS: an entry the guest
+    /// wrote and this decode could not put anywhere on the host (a name the
+    /// host cannot carry, a destination that resolves outside the served
+    /// folder, an unreadable key_pointer, a file past the size ceiling).
+    /// Deliberate skips — a host file preserved because the user edited it
+    /// after the mount — are NOT counted here.
+    ///
+    /// Non-zero makes the decode FAIL (`ok == false`, `error` naming the
+    /// entries). It used to return success: the guest's save reported "5
+    /// file(s) written", the sixth was gone, and the block stayed clean so
+    /// nothing ever retried. A save that did not save everything is a failed
+    /// save, and the user has to be able to see which file to rename.
+    std::size_t filesUnsaved  = 0;
+    /// The first few names behind `filesUnsaved`, for the error text.
+    std::vector<std::string> unsavedNames;
     std::size_t dirsCreated   = 0;
     /// Subdirectory entries the walk refused: unsafe name, cyclic/aliased
     /// key_pointer, depth cap, or exhausted directory budget.
@@ -100,8 +115,10 @@ struct ProDOSDecodeResult {
 /// using the inverse of the file_type → extension mapping. Files in the
 /// folder that are *absent* from the volume are LEFT UNTOUCHED — never
 /// deleted. Existing files whose bytes already match the volume are skipped
-/// (no write, no mtime bump). Tree files (>128 KB) are skipped with a warn.
-/// `hostFolder` is created if missing.
+/// (no write, no mtime bump). Seedling, sapling AND tree files are decoded —
+/// the build side only ever emits the first two, but the volume carries free
+/// slack and ProDOS promotes a file past 128 KB to a tree on its own, so a
+/// guest can grow one. `hostFolder` is created if missing.
 ///
 /// The image is guest-writable RAM, so its directory graph is untrusted: a
 /// subdir entry's key_pointer may alias an ancestor block and turn the walk
@@ -127,6 +144,18 @@ ProDOSDecodeResult decodeVolumeToFolder(
 /// host folder and escape the jail. A legal ProDOS name is 1..15 chars of
 /// [A-Za-z0-9.] and is never "." or ".."; anything else is rejected.
 bool isHostSafeProDOSName(const std::string& name);
+
+/// True iff `name` is one a well-formed ProDOS directory entry can hold:
+/// 1..15 characters of [A-Za-z0-9.], never "." or "..".
+///
+/// The line between "a file the guest really has" and "bytes no ProDOS ever
+/// wrote". `isHostSafeProDOSName` is strictly narrower — it additionally
+/// refuses what the HOST cannot take (a DOS device name, a leading dot) — and
+/// the write-back uses the gap between the two: a legal name the host refuses
+/// is lost user data and fails the save (`ProDOSDecodeResult::filesUnsaved`),
+/// while an illegal one is a crafted or corrupt entry that is merely skipped.
+/// Failing on the latter would let one hostile image jam every future save.
+bool isProDOSLegalName(const std::string& name);
 
 } // namespace pom2
 

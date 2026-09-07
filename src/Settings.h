@@ -30,8 +30,12 @@
 // responsible for sanity-checking each path it reads (e.g. mount only if
 // the file still exists).
 //
-// Saving is atomic: writes to `state.cfg.tmp` first, then renames over
-// the live file, so a crash mid-write never corrupts the existing config.
+// Saving is atomic: writes to a sibling temporary — `state.cfg.<pid>-<n>.
+// pom2tmp`, unique per process and per call, see `tempSiblingPath` — then
+// renames it over the live file, so a crash mid-write never corrupts the
+// existing config. (A fixed `state.cfg.tmp` was the old name; two POM2
+// instances sharing one $HOME both opened it and published a file made of
+// both.)
 
 #ifndef POM2_SETTINGS_H
 #define POM2_SETTINGS_H

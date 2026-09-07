@@ -133,6 +133,43 @@ bool validPageFile(const std::string& name)
 
 // ── Open / index ─────────────────────────────────────────────────────────
 
+uint64_t PrinterHistory::highestPageFileNumber() const
+{
+    // The index is the normal record of which file numbers are taken. When it
+    // did not parse there is no record at all — and `nextFile_` then stayed at
+    // 1 while `p000001.png…` sat right there on disk. The next print reused
+    // p000001, overwrote the oldest printout, and committed a good index
+    // naming only that one; the following open() saw a PARSED index and swept
+    // every other PNG away. The directory listing is the only surviving
+    // evidence of what is taken, so read it.
+    uint64_t highest = 0;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir_, ec)) {
+        const std::string file = entry.path().filename().string();
+        std::error_code typeEc;
+        if (!entry.is_regular_file(typeEc) || !validPageFile(file)) continue;
+        try {
+            const uint64_t n = std::stoull(file.substr(1, file.size() - 5));
+            if (n > highest) highest = n;
+        } catch (...) {
+            continue;                       // out of uint64_t range, ignore
+        }
+    }
+    return highest;
+}
+
+void PrinterHistory::resumeCountersFromDirectory()
+{
+    const uint64_t highest = highestPageFileNumber();
+    if (highest == std::numeric_limits<uint64_t>::max()) return;
+    nextFile_ = std::max(nextFile_, highest + 1);
+    // Job numbers have no on-disk trace of their own, but they are only ever
+    // read back through the index that just failed to parse, so the only
+    // requirement is that a new job does not claim a number a surviving page
+    // still carries. Walking past the highest file number is enough.
+    nextJob_ = std::max(nextJob_, highest + 1);
+}
+
 bool PrinterHistory::open(const std::string& dir, std::string& err)
 {
     // Retarget the store only once the writer is idle: it caches `dir_` per
@@ -167,6 +204,9 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
     // user may want to look at it, and a fresh index is written on the next
     // page) and every PNG is left exactly where it is.
     if (state == IndexState::Bad) {
+        // Both no-sweep paths leave PNGs on disk that no index accounts for,
+        // so the filename counter has to come from the directory instead.
+        resumeCountersFromDirectory();
         const fs::path bad = fs::path(dir_) / kIndexName;
         std::error_code mvEc;
         fs::rename(bad, fs::path(dir_) /
@@ -183,6 +223,7 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
         // index a user deleted by accident. Keeping the files costs disk;
         // deleting them costs the printouts. The next successful index write
         // makes the sweep possible again.
+        resumeCountersFromDirectory();
         return true;
     }
 
@@ -380,6 +421,22 @@ void PrinterHistory::startWriter()
                 {
                     std::lock_guard<std::mutex> lk(h->qMtx_);
                     h->writerAlive_ = false;
+                    // Anything still queued has just lost its only consumer.
+                    // A producer that read `writerAlive_ == true` a moment
+                    // ago — between the throw and this lock — has already
+                    // pushed onto a queue nothing will drain, and no later
+                    // liveness check can see that push: the flag it tested
+                    // was still true. So the DYING thread disowns the queue
+                    // here, under the same lock the push takes. The pages
+                    // surface through the normal write-failure path (the row
+                    // leaves the index, the user is told) instead of sitting
+                    // invisible until the next flush.
+                    //
+                    // Harmless on the normal exit: writerLoop only returns
+                    // with the queue empty.
+                    for (const auto& q : h->queue_)
+                        h->failedFiles_.push_back(q.file);
+                    h->queue_.clear();
                 }
                 h->qDoneCv_.notify_all();
                 h->qCv_.notify_all();
@@ -556,18 +613,27 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
     // Hand the sheet to the writer thread rather than encoding it here: this
     // runs on the ImGui render thread, once per ejected sheet, and a Letter
     // page at 144 dpi costs ~100-140 ms to convert and deflate.
-    startWriter();
+    //
+    // PUSH FIRST, spawn after, and decide from the liveness read taken in the
+    // SAME critical section as the push. Calling startWriter() before the
+    // push tested a `writerAlive_` that could go false in between — the page
+    // then landed on a queue whose writer was already gone. Reading it under
+    // the push's own lock closes that order; a writer dying with the lock not
+    // yet taken is handled on its side, by AliveGuard.
+    bool needWriter = false;
     {
         std::unique_lock<std::mutex> lk(qMtx_);
         // Same liveness escape as flushPending: a full queue behind a dead
         // writer must not block the render thread. The push still happens —
-        // startWriter() above respawned the thread, so the page has a writer
-        // again; the predicate only stops the wait from being unbounded.
+        // the respawn below gives the page a writer again; the predicate only
+        // stops the wait from being unbounded.
         qCv_.wait(lk, [this] {
             return queue_.size() < kMaxPending || !writerAlive_;
         });
         queue_.push_back(PendingWrite{name, page});
+        needWriter = !writerAlive_;
     }
+    if (needWriter) startWriter();
     qCv_.notify_all();
 
     // The committed index no longer references evicted pages. Deletion is

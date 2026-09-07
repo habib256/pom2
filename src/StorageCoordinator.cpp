@@ -16,11 +16,13 @@
 
 #include "StorageCoordinator.h"
 
+#include "AtomicFileReplace.h"
 #include "CffaCard.h"
 #include "Disk35Image.h"
 #include "DiskIICard.h"
 #include "DiskImage.h"
 #include "EmulationController.h"
+#include "Logger.h"
 #include "MediaMount.h"
 #include "MountableMediaCard.h"
 #include "ProDOSBlockCard.h"
@@ -341,6 +343,32 @@ void invalidateRewindForMediaChange(EmulationController& controller)
     controller.rewind().clear();
 }
 
+/// Clear crash debris out of the directory an image is being mounted from.
+///
+/// Every write-back in POM2 commits through a sibling `*.pom2tmp` and renames
+/// it over the target. A process killed between the two leaves the temp file
+/// behind FOREVER: its name carries the dead pid, so no later run reuses it
+/// and nothing collects it. It accumulates exactly where the user keeps their
+/// disk images, and in a folder served as a ProDOS volume it is not even
+/// inert — `buildVolumeFromFolder` scans the directory, so yesterday's failed
+/// save becomes a file on the guest's volume today.
+///
+/// A mount is the natural moment: it is the one point where POM2 knows the
+/// directory matters to the user, and the sweep is a single directory listing
+/// off the state lock (this runs in the unlocked phase of every mount). Only
+/// files older than a day go, so a second POM2 mid-write in the same folder
+/// is never the one deleted.
+void sweepMountDirDebris(const std::string& imagePath)
+{
+    if (imagePath.empty()) return;
+    const std::filesystem::path p(imagePath);
+    const std::filesystem::path dir =
+        p.has_parent_path() ? p.parent_path() : std::filesystem::path(".");
+    if (const std::size_t swept = pom2::sweepStaleTempSiblings(dir))
+        pom2::log().info("Storage", "swept " + std::to_string(swept) +
+                         " stale temp file(s) from " + dir.string());
+}
+
 StorageCoordinator::MediaCommandResult commandError(std::string error)
 {
     StorageCoordinator::MediaCommandResult result;
@@ -605,6 +633,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountDiskII(
                                 std::to_string(slot));
         writeBack = card->isWriteBackEnabled();
     }
+    sweepMountDirDebris(path);
     auto prepared = std::make_unique<DiskImage>();
     if (!DiskIICard::prepareDisk(path, writeBack, *prepared, result.error))
         return result;
@@ -711,6 +740,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
     // Phase 1, NO lock: read the image. An HDV is up to 32 MiB and this ran
     // under stateMutex before — 25.8 ms with the machine and the window both
     // stopped, against a 20 ms PAL frame.
+    sweepMountDirDebris(path);
     Block512Backing::PreparedImage prepared;
     std::string prepareError;
     const bool preparedOk =
@@ -1043,6 +1073,7 @@ StorageCoordinator::mountDisk35(
         return result;
     }
 
+    sweepMountDirDebris(path);
     std::vector<SettingUpdate> updates;
     {
         auto state = controller.lockState();
@@ -1458,16 +1489,27 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         }
     }
     if (result.changed) invalidateRewindForMediaChange(controller);
-    applySettingUpdates(settings, updates);
-    if (!updates.empty()) (void)settings.save();
 
     // EmulationController::eject35 owns the same state lock internally, so
     // on-board media must be handled after the slot-media critical section.
     // It is two-phase inside, for the same reason as everything above.
+    //
+    // BEFORE the persist below, and appending its own keys. This ran after
+    // `settings.save()` and wrote nothing: `disk35_path_N` kept naming the
+    // image that had just been ejected, so the next launch mounted it again
+    // — "Eject all" undone by a restart, for the one pair of drives that is
+    // not a slot card. Every other eject path here persists through the same
+    // `appendOnboardDisk35SettingUpdates`.
     for (int drive = 0; drive < 2; ++drive) {
         if (!onboardDisk35Loaded[drive]) continue;
         if (controller.eject35(drive)) {
             result.changed = true;
+            {
+                auto state = controller.lockState();
+                const auto& image = drive == 0
+                    ? controller.disk35Internal() : controller.disk35External();
+                appendOnboardDisk35SettingUpdates(updates, image, drive);
+            }
             invalidateRewindForMediaChange(controller);
             continue;
         }
@@ -1478,6 +1520,9 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
             "on-board 3.5-inch drive " + std::to_string(drive + 1) +
             ": " + image.lastError());
     }
+
+    applySettingUpdates(settings, updates);
+    if (!updates.empty()) (void)settings.save();
     return result;
 }
 

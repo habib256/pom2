@@ -20,6 +20,7 @@
 #define POM2_ATOMIC_FILE_REPLACE_H
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -154,6 +155,12 @@ inline void syncParentDirectory(const std::filesystem::path& p) noexcept
 #endif
 }
 
+/// The suffix `tempSiblingPath` gives every temporary it hands out. One
+/// definition, because three other places have to recognise the debris:
+/// `sweepStaleTempSiblings` below, `.gitignore`, and the packaging manifest's
+/// `denyglob`.
+inline constexpr const char* kTempSiblingSuffix = ".pom2tmp";
+
 /// Make a sibling temporary path safe to create-and-truncate.
 ///
 /// Every write-back path here writes `<target>.tmp` and then renames it over
@@ -193,7 +200,7 @@ inline std::filesystem::path tempSiblingPath(const std::filesystem::path& target
 #endif
     return std::filesystem::path(
         target.string() + "." + std::to_string(pid) + "-" +
-        std::to_string(counter.fetch_add(1) + 1) + ".pom2tmp");
+        std::to_string(counter.fetch_add(1) + 1) + kTempSiblingSuffix);
 }
 
 inline bool prepareTempPath(const std::filesystem::path& tmp,
@@ -239,6 +246,58 @@ inline bool prepareTempPath(const std::filesystem::path& tmp,
     std::filesystem::remove(tmp, rm);
     if (rm) { ec = rm; return false; }
     return true;
+}
+
+/// Delete `*.pom2tmp` files older than `maxAgeHours` directly inside `dir`.
+///
+/// A temp sibling normally lives for milliseconds — it is created, written,
+/// and renamed over its target. It survives only when the process is killed
+/// between the two, and then nothing ever removes it: the name carries the
+/// dead process's pid, so the next run picks a different one and walks past.
+/// The debris accumulates next to the user's disk images and in the config
+/// directory, and inside a folder served as a ProDOS volume it is not inert —
+/// `buildVolumeFromFolder` scans the directory, so a crashed write-back turns
+/// into a file on the guest's volume.
+///
+/// Age-gated rather than unconditional: another POM2 (a second window, a
+/// headless run) may be part-way through a write in the same directory this
+/// instant, and its temp file is not ours to remove. Hours of slack make that
+/// impossible while still clearing yesterday's crash.
+///
+/// Best effort throughout — a directory that cannot be listed, or a file that
+/// will not go, is not an error worth reporting to anybody. Returns how many
+/// were removed.
+inline std::size_t sweepStaleTempSiblings(const std::filesystem::path& dir,
+                                          int maxAgeHours = 24)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return 0;
+    const auto cutoff = fs::file_time_type::clock::now() -
+                        std::chrono::hours(maxAgeHours < 0 ? 0 : maxAgeHours);
+    std::size_t removed = 0;
+    // Non-recursive on purpose: the debris is always a SIBLING of a file POM2
+    // writes, so it is in this directory or in none.
+    fs::directory_iterator it(dir, ec), end;
+    if (ec) return 0;
+    for (; it != end; it.increment(ec)) {
+        if (ec) break;
+        const fs::path p = it->path();
+        if (p.extension() != kTempSiblingSuffix) continue;
+        // symlink_status: a planted symlink named `*.pom2tmp` is not a
+        // regular file, and unlinking the LINK (never its target) is exactly
+        // what remove() does — but a directory or a device node with that
+        // name is left alone, like prepareTempPath leaves it.
+        std::error_code stEc;
+        const auto st = fs::symlink_status(p, stEc);
+        if (stEc || st.type() != fs::file_type::regular) continue;
+        std::error_code timeEc;
+        const auto mtime = fs::last_write_time(p, timeEc);
+        if (timeEc || mtime > cutoff) continue;
+        std::error_code rmEc;
+        if (fs::remove(p, rmEc) && !rmEc) ++removed;
+    }
+    return removed;
 }
 
 /// Resolve a symlinked TARGET to the file it names.

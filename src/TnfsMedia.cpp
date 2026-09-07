@@ -86,6 +86,60 @@ std::string cacheNameFor(const std::string& host, std::uint16_t port,
 
 } // namespace
 
+std::uint64_t pruneTnfsCache(const std::string& cacheDir,
+                             std::uint64_t budgetBytes,
+                             const std::string& keep)
+{
+    // LRU by mtime, which is the only usage record a plain file keeps. The
+    // cache hit below touches the file it serves, so "least recently USED"
+    // and "least recently written" are the same order here.
+    struct Entry {
+        fs::path                 path;
+        fs::file_time_type       mtime;
+        std::uintmax_t           bytes = 0;
+    };
+    std::vector<Entry> entries;
+    std::uint64_t total = 0;
+
+    std::error_code ec;
+    fs::directory_iterator it(cacheDir, ec), end;
+    if (ec) return 0;
+    for (; it != end; it.increment(ec)) {
+        if (ec) break;
+        std::error_code entryEc;
+        if (!it->is_regular_file(entryEc) || entryEc) continue;
+        Entry e;
+        e.path  = it->path();
+        e.bytes = fs::file_size(e.path, entryEc);
+        if (entryEc) continue;
+        e.mtime = fs::last_write_time(e.path, entryEc);
+        if (entryEc) continue;
+        total += static_cast<std::uint64_t>(e.bytes);
+        entries.push_back(std::move(e));
+    }
+    if (total <= budgetBytes) return 0;
+
+    std::sort(entries.begin(), entries.end(),
+              [](const Entry& a, const Entry& b) { return a.mtime < b.mtime; });
+
+    std::uint64_t freed = 0;
+    for (const auto& e : entries) {
+        if (total <= budgetBytes) break;
+        // Never the file the caller just fetched: it is the one thing the
+        // user is about to mount, and it is also the NEWEST, so this only
+        // ever fires when the budget is smaller than a single image.
+        if (!keep.empty() && e.path.string() == keep) continue;
+        std::error_code rmEc;
+        if (!fs::remove(e.path, rmEc) || rmEc) continue;
+        total -= static_cast<std::uint64_t>(e.bytes);
+        freed += static_cast<std::uint64_t>(e.bytes);
+        log().info("TNFS", "cache prune: dropped " +
+                           e.path.filename().string() + " (" +
+                           std::to_string(e.bytes) + " bytes)");
+    }
+    return freed;
+}
+
 bool parseTnfsUrl(const std::string& url, std::string& host, std::uint16_t& port,
                   std::string& path)
 {
@@ -183,6 +237,11 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
     if (fs::exists(dest, ec)) {
         const auto sz = fs::file_size(dest, ec);
         if (!ec && sz > 0) {
+            // Touch it: the prune below is an LRU over mtimes, and a boot
+            // disk fetched once and mounted every day since would otherwise
+            // be the OLDEST file in the cache — the first one evicted.
+            std::error_code touchEc;
+            fs::last_write_time(dest, fs::file_time_type::clock::now(), touchEc);
             r.ok        = true;
             r.fromCache = true;
             r.localPath = dest.string();
@@ -272,6 +331,12 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
     r.localPath = dest.string();
     log().info("TNFS", "fetched " + dest.filename().string() + " (" +
                        std::to_string(size) + " bytes)");
+    // The cache key is a hash of host+port+path: a server that re-publishes
+    // an image under a new name, or a user who fetches a library one disk at
+    // a time, leaves every earlier file behind for good. Nothing collected
+    // them, and there was no ceiling — a bounded store is the difference
+    // between a cache and a slow leak into the user's home directory.
+    (void)pruneTnfsCache(cacheDir, kTnfsCacheBudgetBytes, r.localPath);
     return r;
 }
 
