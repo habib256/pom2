@@ -30,6 +30,22 @@ from. When MAME upstream renames a path (e.g. `wozfdc.cpp` `bus/a2bus
 
 ## CPU
 
+**Undocumented NMOS opcodes cost what the silicon costs** *(2026-09-08, bug
+hunt #5)*. They stay length-correct NOPs (no SLO/RLA/…/LAX semantics — MAME
+`om6502.lst` has them, nothing in the corpus needs the results), but the
+generic `Unoff2` / `Unoff3` (3 / 5 cycles) undershot some fifty of them by
+1-5: the `$x3` RMW column is 8, `$x7` zp 5 and zp,X 6, `$xF` abs 6 and
+abs,X 7, the `$xB` abs,Y RMWs 7, while SAX/LAX (`$83/$97/$8F/$AF/$B7`) are the
+cheap 4-6 and `$B3` / `$BB` / `$BF` pay the page-cross penalty (5+p / 4+p).
+Totals from the Tom Harte 6502 corpus (all 256 × 10 000 vectors were swept;
+every documented opcode on both cores already matched registers, flags,
+memory and cycles). `setCpuMode` maps them through `UnoffZp5` / `UnoffZpX6`
+/ `UnoffInd6` / `UnoffInd8` / `UnoffIndY5` / `UnoffAbs6` / `UnoffAbs7` /
+`UnoffAbsY`; `$9B` TAS is genuinely 5 and `$BB` must not be re-clobbered by
+the `$xB` block. Pinned in `cpu_cycle_count`. Open question, not a bug:
+the corpus says 65C02 `$5C` is 4 cycles and POM2 charges 8, which is MAME
+`ow65c02.lst`'s count and the WDC datasheet's — no Apple II software runs it.
+
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
 TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
 WDC WAI/STP (PC parks, IRQ wakes). Klaus Dormann clean.

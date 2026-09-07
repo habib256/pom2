@@ -1386,8 +1386,36 @@ void M6502::setCpuMode(CpuMode mode)
     // SBX #imm (2-byte) and DCP abs,Y (3-byte) — mapping them to 1-byte
     // NOPs (as a previous revision did) desynced the stream.
     auto uimm = OpcodeEntry{&M6502::UnoffImm, nullptr};
-    for (int hi = 0; hi < 16; ++hi)
-        opcodeTable[hi * 0x10 + 0x03] = u2;                 // $x3: 2-byte
+    // Lengths were right; the CYCLES were the generic 3/5 and undershot
+    // almost every one of these by 1-5 (bug hunt #5, Tom Harte 6502 corpus).
+    // $x3 column: SLO/RLA/SRE/RRA/DCP/ISC (zp,X) and (zp),Y are 8-cycle
+    // RMWs; $83 SAX (zp,X), $93 AHX (zp),Y and $A3 LAX (zp,X) are 6;
+    // $B3 LAX (zp),Y is 5+p.
+    {
+        const auto ind8 = OpcodeEntry{&M6502::UnoffInd8, nullptr};
+        const auto ind6 = OpcodeEntry{&M6502::UnoffInd6, nullptr};
+        for (int opc : {0x03,0x13,0x23,0x33,0x43,0x53,0x63,0x73,
+                       0xC3,0xD3,0xE3,0xF3}) opcodeTable[opc] = ind8;
+        for (int opc : {0x83,0x93,0xA3})      opcodeTable[opc] = ind6;
+        opcodeTable[0xB3] = OpcodeEntry{&M6502::UnoffIndY5, nullptr};
+        // $x7 / $xF columns (mapped to u2/u3 by the Rockwell loop above):
+        // only SAX/LAX ($87/$97/$A7/$B7, $8F/$AF/$BF) are cheap reads — the
+        // rest are RMWs.
+        for (int opc : {0x07,0x27,0x47,0x67,0xC7,0xE7})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffZp5,  nullptr}; // zp   (5)
+        for (int opc : {0x17,0x37,0x57,0x77,0xD7,0xF7})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffZpX6, nullptr}; // zp,X (6)
+        for (int opc : {0x97,0xB7})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffZpX,  nullptr}; // zp,Y (4)
+        for (int opc : {0x0F,0x2F,0x4F,0x6F,0xCF,0xEF})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs6, nullptr}; // abs   (6)
+        for (int opc : {0x1F,0x3F,0x5F,0x7F,0xDF,0xFF})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs7, nullptr}; // abs,X (7)
+        for (int opc : {0x8F,0xAF})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs4, nullptr}; // abs   (4)
+        for (int opc : {0xBB,0xBF})
+            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbsY, nullptr}; // abs,Y (4+p)
+    }
     opcodeTable[0x0B] = uimm; // ANC #imm
     opcodeTable[0x2B] = uimm; // ANC #imm
     opcodeTable[0x4B] = uimm; // ALR #imm
@@ -1396,14 +1424,11 @@ void M6502::setCpuMode(CpuMode mode)
     opcodeTable[0xAB] = uimm; // LAX #imm
     opcodeTable[0xCB] = uimm; // SBX #imm (65C02 WAI lives here)
     opcodeTable[0xEB] = uimm; // USBC #imm
-    opcodeTable[0x1B] = u3;   // SLO abs,Y
-    opcodeTable[0x3B] = u3;   // RLA abs,Y
-    opcodeTable[0x5B] = u3;   // SRE abs,Y
-    opcodeTable[0x7B] = u3;   // RRA abs,Y
-    opcodeTable[0x9B] = u3;   // TAS abs,Y
-    opcodeTable[0xBB] = u3;   // LAS abs,Y
-    opcodeTable[0xDB] = u3;   // DCP abs,Y (65C02 STP lives here)
-    opcodeTable[0xFB] = u3;   // ISC abs,Y
+    // $xB abs,Y: the RMW six are 7, TAS is genuinely 5, LAS ($BB) is 4+p and
+    // was set above — do not re-clobber it.
+    for (int opc : {0x1B,0x3B,0x5B,0x7B,0xDB,0xFB})
+        opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs7, nullptr}; // SLO/RLA/SRE/RRA/DCP/ISC abs,Y (7)
+    opcodeTable[0x9B] = u3;   // TAS abs,Y (5)
 }
 
 void M6502::Unoff1(void)
@@ -1444,6 +1469,37 @@ void M6502::UnoffAbs4(void)  // 3 bytes, 4 cycles: NOP abs ($0C, NMOS TOP)
 {
     programCounter += 2;
     cycles += 3;
+}
+// The undocumented NMOS opcodes are modelled as length-correct NOPs, but a
+// NOP that costs the WRONG number of cycles is still a raster bug: the
+// //e Unenhanced PAL profile is the French Touch corpus machine, and its
+// cycle-counted code embeds LAX/SAX/SLO. Totals from the Tom Harte 6502
+// corpus (10 000 vectors per opcode, bug hunt #5); the generic Unoff2/Unoff3
+// (3/5) were right for only a handful of them.
+void M6502::UnoffZp5(void)   { programCounter++;    cycles += 4; }
+void M6502::UnoffZpX6(void)  { programCounter++;    cycles += 5; }
+void M6502::UnoffInd6(void)  { programCounter++;    cycles += 5; }
+void M6502::UnoffInd8(void)  { programCounter++;    cycles += 7; }
+void M6502::UnoffAbs6(void)  { programCounter += 2; cycles += 5; }
+void M6502::UnoffAbs7(void)  { programCounter += 2; cycles += 6; }
+// The two indexed READ forms pay the page-cross penalty, same rule (and
+// same reason) as UnoffAbsX: 4+p / 5+p, not a flat count.
+void M6502::UnoffAbsY(void)
+{
+    uint16_t base = memory->memRead(programCounter++);
+    base |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
+    const uint16_t ea = static_cast<uint16_t>(base + yRegister);
+    cycles += 3;
+    if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
+}
+void M6502::UnoffIndY5(void)
+{
+    const uint8_t zp = memory->memRead(programCounter++);
+    uint16_t base = memory->memRead(zp);
+    base |= static_cast<uint16_t>(memory->memRead(static_cast<uint8_t>(zp + 1))) << 8;
+    const uint16_t ea = static_cast<uint16_t>(base + yRegister);
+    cycles += 4;
+    if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
 }
 void M6502::UnoffAbsX(void)  // 3 bytes, 4+p cycles: NOP abs,X (NMOS TOP)
 {

@@ -13,6 +13,17 @@ cards and the printing stack — each told to confirm a suspicion with a probe
 before reporting it and to hand back a minimal diff plus a pin. What
 survived that bar:
 
+**Both CPU cores pass the whole Tom Harte corpus on every documented
+opcode — 256 × 10 000 vectors, registers, flags, memory and cycle count.**
+The one finding is in the undocumented NMOS set: some fifty opcodes were
+length-correct NOPs charged the generic 3 (2-byte) or 5 (3-byte) cycles,
+1-5 short of what the silicon takes (SLO (zp,X) is 8, SLO abs,X is 7, SAX
+abs is 4, LAX (zp),Y is 5+p…). On the //e Unenhanced PAL profile — the
+French Touch corpus machine — raster code that embeds LAX/SAX/SLO drifted
+per instruction, the same class as the `LSR abs,X` note. Each column now
+carries its corpus total, with the page-cross penalty where the real one
+pays it. Pinned in `cpu_cycle_count` (one representative per class).
+
 **A Mockingboard driver that leaves /RESET to the board's pull-up had the
 AY wiped on every strobe.** `onViaPortBChange` composed port B as
 `portBOut & ddrB`, so an undriven PB2 read as 0 — and PB2 is the AY's
