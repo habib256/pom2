@@ -61,8 +61,11 @@ bool slirpAvailable();
 /// Policy knobs for the virtual network. Both defaults are the SAFE answer,
 /// and the wiring point for overriding them is `makeEthernetBackend` in
 /// MainWindow_SlotConfig.cpp:
-///     opts.allowHostLoopback = settings->getBool("slirp_allow_host_loopback", false);
-///     opts.restricted        = settings->getBool("slirp_restricted", false);
+///     opts.allowHostLoopback = settings->getBool("uthernet_allow_loopback", false);
+///     opts.restricted        = settings->getBool("uthernet_slirp_restricted", false);
+/// `uthernet_allow_loopback` is the SAME key that drives
+/// `W5100Device::setAllowLoopback`: the two cards' fences are one user
+/// decision, because opting one out only moves the escape to the other.
 struct SlirpOptions {
     /// Let the guest reach the HOST's loopback interface through the virtual
     /// router at 10.0.2.2.

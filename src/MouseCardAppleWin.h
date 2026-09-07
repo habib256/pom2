@@ -98,9 +98,14 @@ public:
         hostButton.store(button, std::memory_order_relaxed);
         // Bumped LAST, and read first by advanceCycles: the CPU thread uses
         // it to skip the whole drain while the pointer is still. Relaxed is
-        // enough — the three shadows above are themselves atomics, so the
-        // worst a reordering can do is drain one instruction early with the
-        // previous sample, which the next generation change corrects.
+        // enough because the ORDERING comes from stateMutex, not from these
+        // atomics: both callers (MouseCoordinator::routeHost and the AI
+        // server's /mouse handler) hold `lockState()`, and so does the CPU
+        // worker that reads them. "They are atomics, so a reordering only
+        // costs one stale sample" — the argument this comment used to make —
+        // is not a valid one: relaxed atomics give atomicity, never ordering.
+        // The atomics remain so that a future unlocked caller degrades to a
+        // torn-free stale read rather than to UB.
         hostGen.fetch_add(1, std::memory_order_relaxed);
     }
 

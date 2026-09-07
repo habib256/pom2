@@ -471,9 +471,20 @@ key callback routes those even when ImGui has focus.
 `$C078-$C07F` range decodes SET/CLR by parity — every even address
 sets, every odd clears). Init `true` every reset (MAME
 `apple2e.cpp:1224`). Writes effective only on //c-class
-(`Memory::iicProfile_` non-null; MAME `:2569-2587` gates `m_isiic`). Read
-`$C07E` on any IIe-class returns bit-7 = ioudis state (MAME
-`:2276-2278`).
+(`Memory::iicProfile_` non-null; MAME `:2569-2587` gates `m_isiic`).
+
+**RDIOUDIS is //c-class only, and it carries the floating bus** *(corrected
+2026-09-07)*. The read lives in MAME's `c000_iic_r` (`apple2e.cpp:2336-2338`,
+cases `$78/$7A/$7C/$7E`) and returns `(ioudis ? 0x80 : 0) | uFloatingBus7`; a
+plain //e's `c000_r` has **no `$7E` case at all** and falls through to the
+bare floating bus. POM2 answered on every IIe-class machine and returned a
+clean `$00`/`$80` with bits 0-6 zeroed — a value the real bus never shows.
+`Memory.cpp:1726-1729` now gates on `iicProfile_` and ORs
+`floatingBus() & 0x7F` in, and the read mirrors decode by parity like the
+write side (even = the register, odd = nothing). Pinned by
+`iic_ioudis_dhgr`. The sibling `$C060` read had lost the same bits while its
+own `$C068` mirror kept them (`Memory.cpp:1619-1624`, MAME
+`apple2e.cpp:2177-2185`).
 
 **LC reset state**: `lcWriteEnable=true`, `lcReadRam=false`,
 `lcBank2Active=true`, `lcPrewrite=false` (Sather Fig 5.13; MAME
@@ -770,6 +781,18 @@ taken at the last run (`liveStateAtRun_`) and folds only the changed mode
 fields — `textMode, mixedMode, page2, hiRes, eightyCol, an3, altChar, dhgr,
 eightyStore` — onto the published state. Without it a `$C051` poked from the
 debugger or the memory editor changed the content but never the mode.
+
+**The idle gate is the published frame index, not the cycle counter**
+*(corrected 2026-09-07)*. `cpuIdle_` was derived from "did the cycle counter
+move since the last render", so a single **Step** — 2 to 7 cycles — refreshed
+`liveStateAtRun_` and switched the override off, and the poked mode reverted
+for the ~17 000 cycles until the machine ran again. But those few cycles
+publish *nothing*: the frozen frame the override patches is exactly as stale
+as it was before the Step. The gate is now `frameCounter` — the emulated
+video-frame index, `cycles / (65 × scanlinesPerFrame)` — compared against
+`lastRenderFrame_` (`Apple2Display.cpp:463-482`), so stepping keeps the
+override and only real running drops it. Pinned by
+`display_persistence_smoke`.
 
 **Per-video-frame publication (not per-tick)** *(2026-06-10)*. Recording is
 continuous: `Memory::advanceCycles` **publishes** the completed
@@ -1256,6 +1279,17 @@ construction — its guards exist to stop unbounded *allocation*. The real
 raw-pointer parser downstream is `Memory::loadSnapshotState`, reached through
 the MEX section.
 
+**A fuzzer that never reaches the new code is a passing test that proves
+nothing** *(2026-09-07)*. `fuzz_snapshot` captured its golden blob from a
+*bare* `Memory` — no SmartPort hub, no No-Slot Clock, no cards — so every
+section added since was length 0 and no mutation could reach its parser; and
+it drove only the `transactional = true` door, which rejects any SLOT section
+outright, so the Disk II v4 and SmartPort v2 tails had never been fuzzed at
+all. It now captures from a **populated** machine (NSC, IWM, hub, two Sony
+drives, a Disk II with media) and fuzzes the non-transactional door as well.
+That is what surfaced the IWM hang (§ [IWM](#iwm-c-on-board)) — the one
+defect the whole 45 000-mutant sweep produced.
+
 They earn their keep under sanitizers; a plain build only catches an outright
 crash. Run that way after touching any loader:
 
@@ -1349,14 +1383,29 @@ continuous), **T2 (one-shot, timed phase-2)**, IFR/IER (T1/T2 bits
 `IFR.T1` (MAME `6522via.cpp` VIA_T1LH: `m_t1lh = data;
 clear_int(INT_T1)` — no counter transfer, no restart; an earlier
 POM2 note claimed the opposite). IER bit 7 set-vs-
-clear (`$C0` enables, `$40` disables). SR, CB1/CB2 outputs + T2
-PB6-count mode not modelled (PCR is partly: CA1 edge select and
-CA2-mode IFR masking are honoured). **T2 underflow IRQ fires at `TIMER2_VALUE +
+clear (`$C0` enables, `$40` disables). **T1's PB7 square wave (ACR.7) and
+port-A input latching on a CA1 edge (ACR.0) are modelled** as of 2026-09-07 —
+`t1Pb7` (`Via6522.h:127`, MAME `m_t1_pb7`) is OR'd into `readPortB()`
+*ignoring DDRB* (`6522via.cpp:605-630`), forced low by a T1C-H write
+(`:934`) and high on a one-shot underflow (`:544-549`); the continuous-mode
+toggle handles a lazy sync that crossed several periods at once, which is
+POM2's own problem and not MAME's. `latchPortAOnCa1()` (`Via6522.h:504`,
+`6522via.cpp:1107-1110`) runs *before* IFR.CA1 is raised, and `latchedPortA()`
+is what a read returns. The **complete** not-modelled list lives at
+`Via6522.h:30-44` and is now honest about what is missing and why: the SR
+shift register; CA2/CB1/CB2 entirely (no input pins, no handshake or pulse
+output modes, no IFR.CB1/CB2/SR sources — CA1 exists only as an edge
+injector); **port-B input latching (ACR.1)**, which latches on a CB1 edge
+this model has no CB1 for; PB6 pulse counting for T2 (ACR.5 is honoured as
+"stop counting phase 2", but no POM2 card wires PB6); and port-B external
+inputs (`readPortB()` pulls DDR=0 pins high — the AY read strobe is on port
+A, which does have `setPortAInput`). PCR is partly modelled: CA1 edge select
+and CA2-mode IFR masking are honoured. **T2 underflow IRQ fires at `TIMER2_VALUE +
 IFR_DELAY` (= N+3)** matching MAME `6522via.cpp:959` (POM2's
 `advance()` crosses < 0 at N+1, so T2CH pre-biases the counter by
 `IFR_DELAY-1 = 2`). This is the per-frame sync French Touch / DIX
 drive: `T2 = 7512 − latency`, IRQ → mid-scanline beam-race. Pinned
-by `via_t2_timing`.
+by `via_t2_timing`; PB7 and the port-A latch by `via_t1_continuous_period`.
 
 **AY-3-8910 synthesis** runs on the audio thread inside inner
 `AudioSrc`. CPU updates regs under `mtx`; the callback snapshots both
@@ -1781,12 +1830,34 @@ card through a real `Memory` + `SlotBus` because the snoop hooks live there.
 - `$C080-$C0FF` device-select (16 B/slot N at `$C080+N*16` ; slot 0
   = LC hook, 1-7 = expansion).
 - `$C100-$C7FF` slot ROM (256 B/slot 1-7).
-- `$C800-$CFFF` shared expansion ROM, owned by whichever slot most
-  recently touched `$CnXX`. `$CFFF` deactivates active slot;
-  auto-latch on slot-ROM access.
+- `$C800-$CFFF` shared expansion ROM, claimed by the **first** slot to
+  touch `$CnXX` while the window is unowned. `$CFFF` deactivates the
+  active slot; auto-latch on slot-ROM access.
 
 `advanceCycles()` forwards to every plugged card. Ctrl-Reset
 propagates `onReset()`.
+
+**Two open-bus rules, both corrected 2026-09-07** against
+`apple2e.cpp`:
+
+- **An unclaimed read returns the floating bus, not `$FF`.** Every
+  upstream handler ends in `read_floatingbus()` — `read_slot_rom`
+  (`:2970-2987`), `c080_r` (`:2883-2918`), `c800_r` (`:3137-3155`) — and
+  the value a real machine puts there is whatever the video scanner just
+  fetched. `Memory` installs the source at construction
+  (`Memory.cpp:73`, `SlotBus::setFloatingBusSource`) and `openBus()`
+  (`SlotBus.h:237`) uses it on the slow path only. A **standalone**
+  `SlotBus` — a unit test that never installs a source — keeps the old
+  `$FF`, which is what lets the harness note in
+  [§ IWM/3.5"](#smartport-35-stack) stay true.
+- **`$C800` is first-one-wins, and only a populated slot claims it.** POM2
+  was last-one-wins and let an *empty* slot latch the window, so a scan
+  across `$C100-$C7FF` handed the expansion ROM to whichever slot the scan
+  ended on. Upstream claims only while `m_cnxx_slot == CNXX_UNCLAIMED`
+  (`apple2e.cpp:216`) and releases at `$CFFF`. `claimExpansion()`
+  (`SlotBus.h:226`) is called from the read and write paths only when the
+  slot holds a card. Pinned by `slot_bus_smoke`;
+  `iie_memory_smoke` was updated for the new open-bus value.
 
 ### IRQ wire-OR
 
@@ -2145,6 +2216,17 @@ keeps its dirty state and the user can retry; a filesystem that merely
 MEMFS) reports success, because failing every save over a missing guarantee
 is worse than saving without it. Pinned by `atomic_file_replace`.
 
+**Debris from a crashed write is swept** *(2026-09-07)*. The per-process temp
+name is what makes the write safe, and it is also what makes the leftovers
+unrecognisable: a POM2 killed mid-write leaves `<target>.<pid>-<n>.pom2tmp`
+next to the user's disk image for ever, and inside a **served ProDOS folder**
+that file is scanned into the next volume as a guest-visible file.
+`sweepStaleTempSiblings` (`AtomicFileReplace.h:270-300`) removes them: the
+config directory once at startup (`main.cpp:243`) and an image's own directory
+on mount (`StorageCoordinator::sweepMountDirDebris`, `:367`). `*.pom2tmp` is
+also in `.gitignore` and in the manifest's `denyglob`, so debris can reach
+neither the repo nor a package.
+
 ### Format detection
 
 `detectFormat()` + `enum ImageKind`. `loadFile(path)` slurps once,
@@ -2358,6 +2440,28 @@ at LSS-cycle `cellIdx*8 + 4`. `getNextTransition` verbatim MAME
 `floppy_image_device::get_next_transition`, wraps across revs.
 `writeFlux(track, start, end, count, transitions)` splices flux
 window back into nibble buffer.
+
+**A surface with no flux must still make noise** *(2026-09-07)*. A track
+with no events at all — a WOZ whose TMAP marks the quarter-track `$FF`, a
+35-track image seeked past 34, the gap between half-tracks a nibble scanner
+walks — returned `kFluxNever`, so PULSE never fired, no byte was ever ready,
+and `LDA $C08C,X / BPL` span for ever. That is the empty-drive hang one step
+further in: MAME's read amplifier picks up noise off unwritten oxide, and so
+does POM2 now. The substitution is in the **controller**, not the image:
+`DiskIICard::lssSync` calls `advanceNoise()` when the next transition is
+`kFluxNever` (`DiskIICard.cpp:1240-1243`) — **read mode only**, because a
+write must not be fed invented transitions.
+
+**Weak bits are a coin toss again.** Past MAME's amplifier-freakout time
+(16 µs, `m_amplifier_freakout_time` → `kWeakGapLss = 32` LSS cycles,
+`DiskImage.cpp:1701`) the real head's AGC hunts and produces bits that differ
+per revolution — which is exactly what a weak-bit copy protection measures.
+POM2 answered deterministically, so those protections passed or failed the
+same way for ever. `getNextTransition` now draws **one hash-seeded blip per
+zone per revolution** inside such a gap (`:1799-1806`, span
+`kWeakBlipSpanLss = 100` ≈ 50 µs). An ordinary GCR surface never reaches the
+threshold — 24 LSS cycles at the standard 4 µs cell — so normal tracks stay
+byte-repeatable, which `diskii_lss_smoke` pins alongside the weak-zone angles.
 
 **Write framing (non-WOZ).** A nibble store has no angular length, so
 the flux the head lays down is FRAMED back into nibbles exactly as the
@@ -2693,9 +2797,12 @@ transitions edge-only.
 Blocks 0-1 boot (zeroed), 2-5 vol-dir key + 3 ext (51 entries max),
 block 6 bitmap (4096 blocks = 2 MB cap), 7+ data + sapling indexes.
 
-Scope: flat dir; ≤ 51 files; ≤ 128 KB per file (seedling + sapling,
-tree skipped); type from extension; filenames sanitised to
-`A-Z/0-9/.` with collision suffixes `.1/.2`.
+Scope: flat dir; ≤ 51 files; ≤ 128 KB per file on the **build** side
+(seedling + sapling); type from extension; filenames sanitised to
+`A-Z/0-9/.` with collision suffixes `.1/.2`. The **decode** side also
+handles tree (`$3`) files (`kStorageTree`, `ProDOSVolume.cpp:1141-1237`)
+— the guest has free blocks now, so a file it grows past 128 KB becomes a
+tree and used to be skipped on the way back out, silently.
 
 Wiring: HDV slot 5 panel's Library shows `[host folder] prodos_folder/`
 entry. Click → `buildVolumeFromFolder` →
@@ -2727,6 +2834,28 @@ presenting itself as writable:
 
 Also: symlinks pointing out of the served folder are refused, and Windows
 device names (`CON`, `AUX`, …) are rejected by `isHostSafeProDOSName`.
+
+**Refusing a name on the way OUT is too late** *(2026-09-07)*. The device-name
+filter ran on decode only, so a host `aux.txt` was published to the guest as
+`AUX`, the user edited it, and the write-back refused the name and returned
+`ok == true`: an edit lost with no error anywhere. The steering now happens on
+the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp:186-198`) appends an
+`X` to any DOS device stem (`isDosDeviceStem`: `CON/PRN/AUX/NUL`, `COM1-9`,
+`LPT1-9`), so the file enters the volume as `AUXX` and round-trips.
+
+**And a write-back that could not place a file now fails and names it.**
+`ProDOSDecodeResult` carries `filesUnsaved` + `unsavedNames`
+(`ProDOSVolume.h:76-90`); a **legal** ProDOS name the host refuses sets them
+and the result is `ok == false` with the names in `error`
+(`ProDOSVolume.cpp:1428-1436`). A **crafted** entry — `../PWNED`, an embedded
+NUL — is still skipped quietly and counted in `filesSkipped`, deliberately: a
+hostile image must not be able to jam every future save by making one entry
+permanently unsaveable. The decode destination is checked too
+(`destStaysInsideRoot`, `:941-955`): a symlink, or a path that
+`weakly_canonical` puts outside the served root, is refused rather than
+followed — `create_directories` used to dereference exactly the symlink the
+scan had deliberately hidden. Dotfiles are refused on both sides, so a guest
+cannot plant a `.bashrc` or a `.git` in the folder it is served from.
 
 **Two ProDOS entries can want one host name** (2026-08-17, bug hunt 8
 round 3). `decodeVolumeToFolder` strips trailing dots before composing a
@@ -3158,6 +3287,30 @@ MODE_DELAY entry in non-timer mode, `update_timer_tick` exit);
 (`:363-366`, returned 1/1 instead of 1/2). Pinned:
 `iwm_device_smoke_test`.
 
+**A snapshot may not hand the walker an impossible gap** *(2026-09-07,
+found by `fuzz_snapshot`)*. `sync()`'s bit-cell walker closes the interval
+between `lastSync_` and `now_ × 7` **14 ticks at a time**, which is right for
+the honest case and catastrophic for a blob whose two timestamps come from
+different timelines: a 104-byte mutated IWM section produced a ~10¹¹-iteration
+loop, ~1 GB of RSS, and it ran on the CPU worker **inside**
+`loadSnapshotState` (through `phasesCb_`) with `stateMutex` held — machine and
+window frozen, cancel button included. It is reachable from a `.pom2snap`
+three ways: `Memory`'s //c+ IWM section, `LironCard`'s blob and
+`IIcExternalSmartPort`'s.
+
+Two independent guards, because either alone is a single point of failure:
+
+- **The blob is rejected** (`IWMDevice::loadSnapshotState`,
+  `IWMDevice.cpp:1082-1100`) when a mode word is not an enum value, when a
+  tick count would overflow the `× POM2_IWM_TICKS_PER_CPU_CYCLE` conversion,
+  or when the gap exceeds `kRevolutionTicks` (`:92`) *while a walking mode is
+  active*. A rejected section fails the load; it does not silently zero.
+- **The walker is bounded** at `kMaxSyncCatchUpTicks = 4 × kRevolutionTicks`
+  (`:109`, applied `:718-730`) with a one-shot warning, so the *honest* path
+  that reaches a large gap — an idle drive re-enabled after minutes — cannot
+  hang either. Four revolutions is more history than any read needs and
+  bounded work.
+
 **Not yet ported**: Q3 fast clock (1.86 MHz, Mac/IIgs only); full
 `DiskImage::setWriteSplice` body (WOZ re-master parity).
 
@@ -3219,9 +3372,14 @@ head left track 0. On the pre-fix controller the same harness gets the
 firmware's own `UNABLE TO FIND A BOOTABLE DISK ONLINE.` with the head on
 track 0. One trap in writing such a harness: plug a `DiskIICard` into slot 6
 even with no 5.25" media. `IIcClassProfile::ioReadIWM` falls through to that
-card whenever a 3.5" drive is not selected, and an empty slot answers with the
-floating bus — $FF, whose bit 5 reads as "drive enabled", sending the firmware
-down a branch the real machine never takes.
+card whenever a 3.5" drive is not selected, and an unclaimed slot answers with
+open bus — in a bare harness that is `SlotBus`'s `$FF` fallback (a `SlotBus`
+with no floating-bus source installed; in the machine `Memory` installs one,
+see [§ Slot bus](#slot-bus--irq-aggregation)), and **bit 5 of `$FF` reads as
+"drive enabled"**, sending the firmware down a branch the real machine never
+takes. The trap survives the 2026-09-07 open-bus correction: a real floating
+bus is not `$FF` every cycle, but it is `$FF` often enough to mislead
+intermittently, which is worse.
 
 Three traps the harness hit, all of which produce a false conclusion about the
 hardware if you miss them: stepping the head while side 1 is selected silently
@@ -3489,6 +3647,30 @@ driver using command `$05`/`$09` and sleeping on TX IRQ never woke;
 `ssc_listening=true`. LF→CR RX symmetric; raw-mode toggle (default
 OFF). Port + state persisted. Pinned: `ssc_acia_smoke`.
 
+**The DIP switches, and the framing they describe** *(2026-09-07)*, all
+against MAME `bus/a2bus/a2ssc.cpp`:
+
+- **SW2-6 (the interrupt switch) is its own port**, not a bit of the
+  memory-mapped DSW2 — `irqSwitchOn_` (`SuperSerialCard.h:369`,
+  `setIrqDipEnabled`). It had been read as DSW2 bit `$20`, which upstream
+  assigns to **Data Bits** (SW2:2), so the two settings moved together.
+- **DSW1 reads `$FC`** (`SuperSerialCard.h:354`) — the 19200 the card claims
+  in the panel. The old `$A8` decoded as 2400, so the documented rate and the
+  advertised rate disagreed.
+- **Echo needs DTR.** `echoLoopback = echoMode_ && dtrAsserted_`
+  (`SuperSerialCard.cpp:407`): upstream gates the echo path on `!m_dtr`, and
+  POM2's own TDR path already honoured DTR, so echo mode was the one way to
+  transmit on a card the guest had hung up.
+- **7-bit receive and parity are modelled** — `receiveDataMask()`
+  (`:511-514`) masks the RDR to `wordLength_`, `evaluateRxFraming()`
+  (`:517-542`) computes the parity the PMC bits ask for (odd / even / mark /
+  space) and raises `SR_PARITY_ERROR`. A 7-bit driver used to see the eighth
+  bit of every byte.
+
+**Declined**: BREAK and the RTS line-condition modes. Both are conditions of
+a physical line — a TCP stream cannot carry a break or a modem-control
+transition, and inventing one would be a POM2 protocol, not a 6551.
+
 ### ProDOS clock card (slot 4)
 
 ThunderClock+ compatible. **ProDOS does NOT route through slot ROM**
@@ -3568,6 +3750,28 @@ noticed it first.
 
 Pinned by `iic_diskii_no_iwm_conflict` (plain //c must not claim — or
 even tick — the IWM; //c+ must still route to it).
+
+**`DiskIICard::setIwmHost` — the other half of that gate** *(2026-09-07)*.
+The card carries a small set of hooks that exist **because** the //c-class
+machines put an IWM behind the same soft switches: `$C0nE` returning
+`wpt | iwmMode`, the `$C0nF` mode latch, and the `$C0nC` write-handshake
+read. A real Disk II controller has no mode register at all (MAME's
+`wozfdc` has no such state), so on a ][+ or a //e those hooks were answering
+for hardware that is not there: a `STA $C08F,X` latched guest data and the
+next `$C0nE` read handed it back. `setIwmHost(bool)` (`DiskIICard.h:326`)
+gates all three, and `SlotCardFactory.cpp:109` sets it from
+`profileConfig(request.profile).noPhysicalSlots` — the //c and //c+ are
+exactly the IWM-host class. The flag **defaults to true** so a hand-built
+card in a test keeps the old behaviour, which is what `iicplus_boot35`
+relies on; only the factory path narrows it.
+
+Two smaller wozfdc-parity fixes landed with it: the `$C0nC` read in write
+mode no longer skips `lssSync(1)` (`wozfdc.cpp:206-212` ends *every* even
+offset with it), and the phase-1 write interlock is modelled —
+`writingInhibited()` (`DiskIICard.h:603`) is MAME's
+`floppy_image_device::writing_disabled`, `m_wpt || (m_phases & 2)`
+(`floppy.cpp:1254-1259`): a drive whose phase-1 coil is energised cannot
+write, which is how the //c's firmware parks a head safely.
 
 ### Host sockets (POSIX / Winsock)
 
@@ -3679,7 +3883,45 @@ snapshots and grabs the framebuffer. Inspired by `paleotronic/microm8-cln`
 `ai_control_port`, `ai_control_token`. Authentication is an optional shared
 secret in an `X-POM2-Token` header; with an empty token configured, requests
 are accepted unauthenticated, on the grounds that a loopback-only listener
-already limits exposure to local processes.
+limits exposure to local processes.
+
+**The auth model, corrected** *(2026-09-07)*. That last sentence had two
+holes, and they compounded:
+
+- **The rebinding fence ran only on the token-LESS branch.** Configuring a
+  token therefore *disabled* the `Host` check — the opposite of what a user
+  setting a secret expects. A token is a secret, not an origin proof, so a
+  page that guessed it reached every endpoint from the browser. The loopback
+  `Host` requirement (`hostHeaderIsLoopback`, `AiControlServer.cpp:835-843`)
+  is now the **first** test in `checkAuth`, before the branch, in both modes.
+- **Every response carried `Access-Control-Allow-Origin: *`** and the
+  preflight advertised `X-POM2-Token`, which is what made a cross-origin
+  brute force *readable*. No CORS header is emitted anywhere now — a native
+  client needs none. The compare is constant-time (`checkAuth`,
+  `:882-888`), and `kAuthFailureLimit = 5` failures inside
+  `kAuthWindowMs = 5000` arm a 429 lockout for the rest of the window
+  (`authBackoffArmed` / `noteAuthFailure`, `:438-463`), so a human-typed
+  secret cannot be ground down. The panel gained a **Generate** button —
+  `generateToken()` (`:471-482`) draws 32 characters from a 31-symbol
+  ambiguity-free alphabet (~160 bits) out of `std::random_device` — and warns
+  below `kMinTokenLength = 16`.
+- **`--ai-control` ignored the configured token.** It called
+  `setAuthToken("")` unconditionally, so a flag that reads like "turn the
+  feature on" silently opened `/mem`, `/disk` and `/snapshot/load` to every
+  local process even for a user who had set a secret.
+  `MainWindow::startAiControlFromCli` (`MainWindow.cpp:866-902`) now honours
+  `ai_control_token`, with `$POM2_AI_CONTROL_TOKEN` overriding it; with
+  neither set it runs the way the panel does — token-less on loopback behind
+  the fence — and **says so in the log** rather than leaving the user to
+  infer it.
+
+The other half of this threat model is not in this file: the **emulated
+machine** was inside the loopback perimeter, through the Uthernet II's host
+sockets and through libslirp's router. Both are fenced by default now
+(§ [Uthernet II](#uthernet-ii-w5100), § [Network
+backends](#network-backends)); the fences belong to this listener's threat
+model, not to the cards'. Pinned by
+`ai_control_server_smoke::testAuthHardening`.
 
 Endpoints (the header comment on `AiControlServer.h` is the source of truth
 for the exact JSON shapes):
@@ -3702,6 +3944,24 @@ for the exact JSON shapes):
 CPU/Memory/slot state — the same rule the UI thread follows. `/keyboard` is
 the exception and needs no state lock: `Memory`'s own paste-queue mutex covers
 it.
+
+Three ways the media handlers broke that rule, all fixed 2026-09-07:
+
+- **The "no Disk II card plugged" 503 was sent with `stateMutex` held.** A
+  socket write has a 4 s `SO_SNDTIMEO`, so a client that opened the
+  connection and did not read froze the machine *and* the window for four
+  seconds — a remote freeze from an error path. Every `sendJsonError` in
+  `handleDiskInsert`/`handleDiskEject` is now composed outside the lock scope.
+- **Neither invalidated the rewind ring.** The 19 host-side mount paths all
+  call `invalidateRewindForMediaChange` for exactly this reason: scrubbing
+  back across a swap restores pre-swap RAM onto the new medium. The two AI
+  endpoints now `ctrl_->rewind().clear()` under the same lock that performs
+  the swap (`:1353`, `:1436`).
+- **They re-checked the card for null, not identity.** The mount reads the
+  file unlocked (the two-phase rule), and a profile switch or a Slot Config
+  change in that window rebuilds the slot: a non-null pointer proved nothing.
+  Both handlers now re-resolve the card and compare pointer *and* slot before
+  committing.
 
 The JSON parser is hand-rolled (`AiControlServer.cpp` `jsonParseValueAt`) — a
 request reader, not a document parser, on the same "minimum external deps"
@@ -4007,6 +4267,18 @@ Two things learned by watching it that are worth not rediscovering:
   bit, or simply what this firmware does with no real network is open.
   → `TODO.md`
 
+**The Ext/Status latch must be refreshed, not only released** *(2026-09-07)*.
+`updateExtInt` (`Scc8530Device.cpp:397-423`, MAME
+`z80scc_device::update_extint`, `z80scc.cpp:793`) had lost upstream's `else`
+branch (`z80scc.cpp:1189-1197`, *"Update latched value to match current
+status"*). Without it the latched copy of RR0 is only ever written when the
+interrupt is *taken*, so once a second source moves while the first is
+pending, the latch and the live status can never agree again and the
+Ext/Status condition never releases: the Workstation ROM's ISR at `$EE13`
+loops for ever. One pre-existing assertion in `scc8530_smoke` had pinned the
+stuck latch as if it were correct, and is corrected with the code — a reminder
+that a test written against the bug locks the bug in.
+
 **One MAME divergence deliberately kept.** On receive overrun MAME writes the
 offending byte into the slot the write pointer is parked on and sets Overrun
 in the *error* FIFO, but never advances past it — so that slot is unreachable
@@ -4121,6 +4393,28 @@ full second. Only peer acquisition and enumeration live on the worker thread.
 itself) and `handlePeerLost()` for everyone else. `std::mutex` is not
 recursive, and taking it twice there deadlocks the CPU thread with the 6502
 parked mid-SmartPort-call.
+
+**The status readers need a lock of their own** *(2026-09-07)*.
+`isConnected()`, `describe()` and `lastError()` read `transport_` and are
+called from the CPU worker (`FujiNetCard`'s `$C0xx` path) and the UI, while
+`stop()` destroys that transport — a use-after-free, not a stale read. They
+could not simply take `callMtx_`: that is held for the whole SmartPort round
+trip, so the UI would park behind a silent peer just to paint a status dot.
+A second mutex, `transportMtx_` (`SpOverSlipLink.h:256`), guards the pointer
+alone, with the order stated where it is declared and at both acquisition
+sites: **`callMtx_` → `transportMtx_`, never the reverse.** In the same pass
+`transact()`'s write deadline stopped being a flat 2 s *on top of* the read
+timeout and became the same budget (`setWriteDeadlineMs`,
+`SpTcpTransport.cpp:232`) — a wedged peer could otherwise hold `stateMutex`
+for the sum of the two.
+
+**The SP listener authenticates nobody, and that is recorded rather than
+fixed.** The first process to connect to `127.0.0.1:1985` *is* the SmartPort
+device — there is no handshake in the protocol to add one to, and inventing
+one would break "any FujiNet software works unmodified", since the wire is
+fujinet-pc's. What the code does instead is state the exposure at the
+listener: it is loopback-only, it is armed only while the card is plugged,
+and the arming, the logging and the INIT-grace drop are documented in place.
 
 **Reset and rewind.** `onReset()` bumps the sequence number (so a response in
 flight for the pre-reset request cannot be mistaken for the next answer) and
@@ -4324,6 +4618,22 @@ the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
   "File System error" — with POM2 nowhere in the path. Isolate it by browsing
   from the firmware's own web UI, which never touches the emulator.
 
+**TNFS media** (`TnfsClient.*`, `TnfsMedia.*`) is the other half of the same
+world and needs no peer: a positional `tnfs://host[:port]/path/image.po`
+fetches the image into a per-user cache and boots it like any local file, and
+a cache hit opens no socket, so the second run works offline. Cache keys are
+hashed (host + port + path), which is what keeps a hostile path from choosing
+a filename — and is also what stops an old entry from ever being recognised
+again, so the cache needed a **budget**: `pruneTnfsCache`
+(`TnfsMedia.cpp:89-141`) is an LRU sweep by mtime against
+`kTnfsCacheBudgetBytes = 512 MB` (`TnfsMedia.h:104`), run after every fetch.
+The fetch itself is bounded by `TnfsFetchLimits::deadlineSeconds`, cut from
+180 to **60** (`TnfsMedia.h:57`): the number is not how long a large image
+takes, it is how long a user stares at an unpainted window — the pre-window
+fetch runs before any GLFW window exists — before deciding POM2 has hung.
+`SIGINT` is wired to the same fetch's abort flag
+(`main.cpp:221-225, 654-661`), because there is no UI yet to press cancel in.
+
 CLI: `--fujinet[=PORT]`, `--fujinet-serial[=DEVICE]`, `--fujinet-slot N`.
 Panel: View ▸ FujiNet. Design notes and the remaining phases:
 [docs/fujinet_plan.md](docs/fujinet_plan.md).
@@ -4408,6 +4718,21 @@ unconditional in the cycle hook.
 Settings key `ethernet_backend`: `slirp` (default) | `loopback` | `none`.
 Takes effect on the next plug (profile switch or Slot Config change).
 
+**The virtual router no longer reaches the host's own loopback**
+*(2026-09-07 — S2)*. libslirp's `disable_host_loopback` was left at 0, so a
+guest carrying its own IP stack could open `10.0.2.2:<port>` and slirp
+re-opened it as `127.0.0.1:<port>` on the host — the Uthernet II's SSRF
+(§ [Uthernet II](#uthernet-ii-w5100)) by a second route, and the two had to
+be closed together or the escape simply moves cards. `SlirpOptions`
+(`SlirpNetworkBackend.h:69-94`) carries the two knobs, both defaulting to the
+safe answer: `allowHostLoopback` (false → `cfg.disable_host_loopback = 1`)
+and `restricted` (false — the guest may still reach the LAN and the
+internet). `makeEthernetBackend` (`MainWindow_SlotConfig.cpp:331-335`) reads
+them from `uthernet_allow_loopback` and `uthernet_slirp_restricted`; the
+first key is shared with `W5100Device::setAllowLoopback`, because it is one
+user decision about one perimeter. Nothing else changes: the LAN, the
+internet and the virtual DHCP/DNS services at 10.0.2.2-3 keep working.
+
 ### Uthernet I (CS8900A)
 
 `UthernetCard.h/.cpp` (card, catalog key `uthernet`) +
@@ -4457,6 +4782,29 @@ re-decoding the address filter it drives. The `readRxBuffer` advance asymmetry
 is **not** a defect — it is MAME's order, deliberate and pinned; `Skip_1` and
 the PacketPage frame-buffer window are left as MAME parity, with no oracle to
 arbitrate them.
+
+**Three corrections to that synthesis** *(2026-09-07, round 3)* — the ISQ was
+right in shape and wrong in three details, each of which disarmed it:
+
+- **`RxMISS` is BufEvent bit 10, not bit 9.** `kBufEventRxMiss = 0x0400`
+  (`Cs8900aDevice.cpp:91`); bit 9 (`$0200`) is `TxUnderrun`, a different
+  event entirely, and a driver reading the queue was told the transmitter had
+  underrun every time a frame was dropped.
+- **BufEvent and RxMISS clear on read**, on the way *out* of the access so
+  the word the guest is fetching is the one it gets
+  (`sideEffectsAfterReadPp`, `Cs8900aDevice.cpp:800-816`). Without the
+  read-and-clear the ISQ re-reported the same stale event for ever, which is
+  the "read until 0" idiom's exit condition.
+- **The ISQ latch and a direct `RxEvent` read share one staged frame**
+  (`isqStagedFrame_`, `Cs8900aDevice.cpp:692-734`). They used to be two
+  consumers of one queue: the latch popped a frame to announce it, then the
+  driver's own `RxEvent` read popped the *next* one and got "nothing", so the
+  ISQ RX arm went dead for the rest of the session.
+- **`TxOK` follows the transmitter, not the backend.** It is gated on
+  `txEnabled_` alone (`Cs8900aDevice.cpp:517-536`) — upstream's condition. It
+  used to sit *inside* the `if (backend_)` test, so a card with no host
+  transport (the default on Windows, where libslirp is not built) never
+  completed a transmit and every driver polling `TxOK` span.
 
 **Deltas from MAME**, all deliberate:
 
@@ -4546,15 +4894,20 @@ set but POM2 does not open a host listener for it: an inbound connection
 cannot reach the guest through either supported transport (libslirp is
 outbound-only without explicit port forwarding). It no longer just logs,
 though — leaving `Sn_SR` at `SOCK_INIT` made a server driver spin forever
-with nothing to time out on. `listenSocket()` (`W5100Device.cpp:509-531`)
+with nothing to time out on. `listenSocket()` (`W5100Device.cpp:690-701`)
 warns, then `clearSocket(i)` (→ `SOCK_CLOSED`) and raises TIMEOUT in
 `Sn_IR`: the datasheet §5.2.3 failure every W5100 server loop already
-handles. Note `Sn_PORT` **is** bound on the host socket for **UDP**
-(`W5100Device.cpp:385-397`; IPRAW/MACRAW never reach that path — they go
+handles. The warning is said **once per socket** (`listenWarned`,
+`W5100Device.h:373`) — the refusal is precisely what makes the canonical
+`socket(); listen();` server loop spin, and the loop was paying one
+unbuffered log line plus a socket/close per lap, on the CPU worker under
+`stateMutex`. Note `Sn_PORT` **is** bound on the host socket for **UDP**
+(IPRAW/MACRAW never reach that path — they go
 through the `NetworkBackend`, not a host socket) — and deliberately not for a TCP client, because
 WIZnet drivers reuse one fixed source port and the second connect would hit
-`EADDRINUSE` against the first 4-tuple's TIME_WAIT. The bind goes through
-`setListenerBindPolicy()`, never a raw `SO_REUSEADDR` (`SocketCompat.h`).
+`EADDRINUSE` against the first 4-tuple's TIME_WAIT. That bind is
+unprivileged, never a POM2-owned port, and no longer carries
+`SO_REUSEADDR` at all (see the fence below).
 
 **Interrupt registers, and the SEND paths the datasheet arbitrates**
 *(2026-09-07)*. `Sn_IR` and the common `IR`/`IMR` did not exist — reads
@@ -4574,6 +4927,53 @@ with them, all reachable from the stock driver:
 
 Also fixed: `Sn_RX_RSR` pulled a packet on *both* byte reads and therefore
 tore, and `RTR`/`RCR`/`IMR`/`PMAGIC` writes were dropped.
+
+**Both `Sn_TX` pointer conventions are accepted** *(2026-09-07, round 3)*.
+The round-2 fix above stopped masking before differencing, which is correct
+for the driver that lets `Sn_TX_WR` run free — but a driver that masks the
+pointer into the ring itself (equally legal, and what several period stacks
+do) then differenced to `wr - rd = 0xF864`, clamped to the ring size, and
+sent 2 KB of which 1948 bytes were stale buffer; FSR read 0 afterwards and
+the guest stalled. `stagedTxBytes(rd, wr, size)` (`W5100Device.cpp:82-91`)
+takes the unmasked difference when it *can* be a byte count
+(`wr - rd <= size`) and the modulo when it cannot, so both conventions
+produce the same length.
+
+**The guest is inside the loopback perimeter** *(2026-09-07, round 3 — S1)*.
+A W5100 socket is a **host** socket, so a guest program could `CONNECT` to
+`127.0.0.1:6503` — or send a datagram there — and drive POM2's own AI control
+server, which reads a loopback peer with no `Origin` as native: `/mem`,
+`/cpu`, `/reset`, `/snapshot/save` and `/disk` (mount any file under the cwd,
+then read it back through the emulated Disk II). The same escape existed
+through libslirp's virtual router at `10.0.2.2`, so the two were closed
+together (§ [Network backends](#network-backends)).
+
+`checkDestination(addr, allowLoopback)` (`W5100Device.cpp:167-182`) refuses
+`0/8`, `127/8`, `169.254/16`, `224/4` and `240/4`; RFC 1918 stays allowed,
+because a LAN is what a period network client is for. A refusal is reported
+in the chip's own language — `clearSocket()` → `SOCK_CLOSED` plus `TIMEOUT`
+in `Sn_IR` — the failure every driver already handles. `localPortAllowed()`
+(`:201-212`) additionally refuses a guest-chosen source port below 1024 or
+one POM2 itself listens on (6503 AI server, 6502 SSC telnet, 1985 FujiNet SP);
+it falls back to an ephemeral port and logs once rather than failing the
+socket. The UDP bind no longer carries `SO_REUSEADDR`
+(`W5100HostSockets.cpp`): on BSD that let a guest socket bound to
+`INADDR_ANY` share a port a host program already held, and siphon its
+datagrams.
+
+The opt-in is `setAllowLoopback(bool)` (`W5100Device.h:299`), default
+**false**, driven by the `uthernet_allow_loopback` setting
+(`MainWindow_SlotConfig.cpp:375`) — the same key that opens libslirp's, since
+opting one card out only moves the escape to the other.
+
+**Virtual DNS is a channel, so it is validated and rate-limited.** The
+length-prefixed name the guest writes went to `getaddrinfo()` raw and at any
+rate, and reached a log line with its control bytes intact — an exfiltration
+path out of a machine that is otherwise fenced. `isValidHostname`
+(`W5100Device.cpp:110-130`) enforces the RFC 1123 charset and the 253/63
+length limits, and `W5100NameResolver::takeRateToken`
+(`W5100NameResolver.cpp:73-88`) is a token bucket — `kResolvesPerSecond = 4`,
+burst 16 — consumed only on a cache miss.
 
 **Declined with reasons** (reviewed, not defects): `Sn_MR` MULTI/ND is a
 feature POM2 does not offer rather than a wrong answer; the PacketPage
@@ -4774,6 +5174,15 @@ a terminal.
   keeps ejecting after its card is unplugged.
 - **The filename counter resumes** from the index on load. Restarting it at 1
   would clobber an existing PNG and show two history rows of the same image.
+  It resumes **from the directory, not only from the index** (2026-09-07):
+  the two paths that deliberately skip the sweep — a bad index, a missing one
+  — used to leave the counter at 1 while `p000001.png…` sat on disk, so the
+  very next print overwrote the oldest printout and wrote a good index naming
+  only it, and the *following* `open()` then swept every other PNG as
+  unreferenced. The deletion was one print behind the corruption, which is why
+  it was invisible. `highestPageFileNumber()` scans the directory and
+  `resumeCountersFromDirectory()` (`PrinterHistory.cpp:136-170`) advances both
+  counters past it, on both paths.
 - **The index is written to a temp file and renamed.** A crash mid-write
   leaves the previous index intact; an unrecognised index yields an EMPTY
   history rather than rows pointing at files POM2 cannot vouch for.
@@ -4788,7 +5197,13 @@ parsed** (`PrinterHistory.cpp:163-180`); a bad one is renamed
 `<index>.bad-<stamp>` (the user may want to look at it, and a fresh index is
 written on the next page) and every PNG is left where it is. The writer thread
 also has a liveness predicate now: if it died, the wait fails instead of
-hanging the window.
+hanging the window — and the respawn re-checks that liveness **under the same
+lock that pushes the page** (`startWriter`, `PrinterHistory.cpp:396-408`),
+because `writerAlive_` was cleared during the old writer's unwinding and a
+page pushed in that window landed on a queue with no consumer. A writer that
+dies now disowns its queue on the way out (its `AliveGuard`, `:414-434`),
+moving every unwritten item into `failedFiles_` so the page is *reported
+lost* rather than silently held.
 
 Capped at 200 pages, deleting the PNGs as well as the rows — an emulator left
 running must not quietly fill a disk.
@@ -5353,6 +5768,35 @@ MAME's `mouse.cpp` uses opposite digits (X1=0x01=dir, X0=0x02=gate).
 Same bits, same behaviour — only label differs; Y labels match MAME.
 `updateAxis` line-for-line MAME `update_axis<>`.
 
+**The MCU timer comes from the EPROM's MOR byte, not from a constant**
+*(corrected 2026-09-07)*. A 68705 latches its Mask Option Register at
+`$0784` on start (`m68705.cpp:465-476` `device_start` +
+`:765-768 get_mask_options`): with `MOR_TOPT` (`$40`) set, MAME takes the
+**TIMER_MOR** path — the prescaler divisor is `MOR & MOR_PS`, a TCR write
+can no longer reprogram source or divisor (`tcr_w`, `m68705.cpp:994-1015`,
+only forces TIE), and `tcr_r` returns with `TCR_PSC` **set** (`m68705.h:86`).
+The Apple mouse dump's MOR is `$40` — TOPT set, PS = 0, so the prescaler
+divides by **one**. POM2 hard-coded the TIMER_PGM path at ÷128 behind a
+comment claiming the firmware programmed TCR; it only ever touches bits 6
+and 7. That is not a rounding difference: it is the whole timer interrupt
+rate, two orders of magnitude out. `configureTimerFromMor()`
+(`M68705P3.cpp:134-141`) reads the byte, and `run()` now returns
+`cycles - icount` (`:966`) so the 11-cycle interrupt vector charge is
+billed — 0.03 % of a period at the old ÷128, 4.3 % at the real ÷1. Every
+LLE-mouse test stayed green through the change; `m68705_decode_smoke` now
+measures the period between two `$07F8` vectors and pins the two answers
+apart (256 vs 32768 MCU cycles).
+
+**Three MC6821 control-line rules** *(2026-09-07, `6821pia.cpp`)*. All
+three are handshake behaviour the mouse firmware happens not to depend on,
+fixed because the port claims to be verbatim: `port_b_r` restores CB2 when
+the B-side interrupt is pending and CB2 is in the right mode
+(`MC6821.cpp:157-158`, `6821pia.cpp:444-451`); the B-side strobe in
+`port_b_w`/`control_b_w` is no longer gated on `c2_output` (`:223-228`,
+`6821pia.cpp:689-706`); and `port_a_r`'s strobe is guarded by
+`if (out_ca2)` (`:132-135`) because `setOutCa2` has no change guard of its
+own. Pinned by `mc6821_smoke`.
+
 Host routing: `MainWindow::onMouseMove/onMouseButton` →
 `setHostMouse(rawX, rawY, button)` (clipped to screen rect). MCU
 computes deltas via 8-bit subtraction with wrap; POM2 emits **at most
@@ -5814,6 +6258,48 @@ gave way to `tests/TestTempPath.h` and a free port picked at run time.
 > `vbl_smoke`, `storage_coordinator`) or run
 > `ctest -N | grep <stem>`. Left as-is rather than mass-edited — a comment
 > pointing at `tests/<name>_test.cpp` is still pointing at a real file.
+
+**`return 77` belongs above the fixture check, not below it** *(2026-09-07)*.
+The sweep above was applied a little too enthusiastically in round 2: three
+tests carried it on paths *below* the "does the fixture exist" gate — a ROM
+that failed to load, a Liron EPROM that did not parse, a `.2mg` that would not
+mount (`liron_boot35`, `smartport_bus_handshake`, `iicplus_boot35`). A real
+regression in any of those reported **Skipped**, which is the same lie the
+sweep was written to end. Those paths report FAIL again.
+
+**The probes are not tests, and they are now buildable** *(2026-09-07)*. Two
+dozen `EXCLUDE_FROM_ALL` tools under `tests/` assert nothing reproducible,
+several need media that is not in the tree and a few take minutes — so they
+are deliberately outside ctest. But "not a test" had drifted into "not
+buildable in practice": nobody knows the target names, and a corpus sweep
+concluded *"no built binary can boot an HDV"* while `hdv_boot_dump` sat in the
+tree compiling fine. `make probes` (`tests/CMakeLists.txt:6851-6904`) builds
+all **24**, added through `if(TARGET)` so a probe gated on a missing
+dependency drops out instead of failing configuration, and registering no
+test. Two probe-hygiene fixes with it: `pom2test::probeOutDir()`
+(`tests/ProbeOutDir.h`) resolves `--out` → `$POM2_PROBE_OUT` →
+`$TMPDIR/pom2_probes` and **never** the cwd, which a run used to litter with
+53 untracked PPMs; and `dix_menu_raster_probe`'s extension test is
+case-insensitive, so a `DOS13SEC.DSK` no longer takes the SmartPort branch.
+
+**A harness that cannot boot the media it is pointed at reports a hardware
+conclusion.** `pom2_headless` never called `loadBootRom13`/`loadLssRom13` — as
+`SlotCardFactory` does — so DOS 3.1/3.2 media could not boot there and the
+warning blamed `roms/disk2_13.rom` for being missing while it ships
+(`pom2_headless.cpp:285,290`). It also forced `PC = $C600`, which an Autostart
+ROM does not need and does not want; it now pokes the vector only when the
+ROM's own reset vector shows no autostart. `disk_boot_smoke` latches page `$08`
+at the PROM's `JMP $0801` handover, stepping one instruction at a time
+(`disk_boot_smoke_test.cpp:130`) — its previous break condition fired 2.1 M
+cycles late, after DOS had booted and run HELLO, and the round-2 replacement
+still triggered on the PROM's own `JSR $FF58` slot detect.
+
+The same class caught `madef_phase_probe`, which reported *"MAD EFFECT never
+runs"*: it plugged a `MockingboardCard` without `setCpu()`, and a 6522 that
+syncs lazily off the CPU's cycle counter early-outs of every sync, so T1 never
+expired, no IRQ was raised and the demo sat in its wait loop for ever. The
+probe was measuring its own wiring. Its comment now says why the card is
+constructed *after* the CPU (`tests/madef_phase_probe.cpp:124-135`).
 
 Two mechanisms keep it this way, and they are different on purpose:
 
@@ -7224,3 +7710,13 @@ The short version of the tooling:
 Current hot spots, for orientation: `DiskIICard::lssSync` +
 `DiskImage::getNextTransition` dominate any disk-active workload;
 `M6502::executeOpcode` and `Memory::advanceCycles` dominate the rest.
+
+**`M6502::step()` gets one epilogue, and it is not a style preference**
+(2026-09-07, [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) § 10).
+The interrupt-split fix of round 2 gave the hottest function in the emulator a
+second inlined `advanceCycles`, a second exit and a per-instruction
+`debugHook_` load. That measured **+2.46 %** on every workload — a paired
+bisect, 32 of 33 runs, p = 0.00003. The shape that keeps the fix and the speed
+tests `interruptCycles` **first**, so `debugHook_` is never loaded on the
+common path, and falls into a single tail (`M6502.cpp:2150-2158`). RAM and
+framebuffer hashes identical.

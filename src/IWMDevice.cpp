@@ -535,13 +535,13 @@ void IWMDevice::dataW(uint8_t data)
 }
 
 // MAME's IWM window sizes are in IWM-clock ticks (the //c / //c+ runs
-// the IWM off A2BUS_7M ≈ 7.16 MHz — see `apple2e.cpp` machine config).
-// POM2 ticks the IWM with the CPU clock (POM2_CPU_CLOCK_HZ ≈ 1.023
-// MHz) to keep one cycle counter for the whole machine. Scale the
-// MAME constants by the clock ratio (≈ 7) so a "bit cell" window
-// still spans ≈ 4 µs of emulated time, which is what GCR-encoded
-// 5.25" flux transitions assume. The constants below preserve MAME's
-// relative ratios across the four mode-bit-4-3 combinations.
+// the IWM off A2BUS_7M ≈ 7.16 MHz — see `apple2e.cpp` machine config),
+// and since 2026-09-01 so is POM2's state machine
+// (`POM2_IWM_TICKS_PER_CPU_CYCLE`, CpuClock.h). The constants below are
+// therefore MAME's own, unscaled: dividing them by ≈ 7 used to collapse
+// 14/16 to 2 and 7/8 to 1, which made two of the four window settings
+// indistinguishable and left no edge placeable inside a 14.17-tick Sony
+// cell. `window_size` row 0x18 is 16, not 18 (iwm.cpp:302-313).
 
 uint64_t IWMDevice::halfWindowSize() const
 {

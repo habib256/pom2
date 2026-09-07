@@ -664,3 +664,59 @@ runs the Apple II's scanline bookkeeping once the cycle counter passes
 `setForeignBus` parks that threshold at the end of time — otherwise every
 emulated instruction of the card would have paid for video events nobody
 reads.
+
+## 10. One epilogue in `M6502::step()` — 2026-09-07
+
+A bug-fix put +2.46 % into the hottest function in the emulator, and nobody
+noticed for a round, because a correctness fix is not where anyone looks for a
+regression. This section is here so the next one is caught by measurement
+rather than by a paired bisect after the fact.
+
+**What the fix did.** Bug hunt #2 split interrupt entry in `step()` so an
+*idle* debug hook could no longer perturb the sub-instruction phase every
+lazily-synced peripheral derives from (`CHANGELOG`, 2026-09-07 round 2). The
+shape it took added three things to the per-instruction path: a **second
+inlined `advanceCycles`**, a **second function exit**, and a
+**per-instruction load of `debugHook_`** — a pointer that is null in every
+session that is not debugging.
+
+**The measurement.** `pom2_bench`, Apple M1, release build, the two binaries
+run interleaved, paired runs rather than best-of-N (the paired form is what
+makes a 2 % claim survive this host's layout noise):
+
+| | |
+|---|---|
+| Effect | **+2.46 %** wall clock, every workload |
+| Evidence | 32 of 33 paired runs slower; p = 0.00003 |
+| Control | two variants **without** the hunk land at baseline, hashes identical |
+
+`--no-render` regressed as much as the rendering workloads, which is what
+identifies the CPU loop rather than the display changes of the same round.
+
+**The shape that keeps both.** One epilogue, and `interruptCycles` tested
+*first* so `debugHook_` is never loaded on the common path
+(`M6502.cpp:2150-2158`):
+
+```cpp
+if (POM2_UNLIKELY(interruptCycles != 0 && debugHook_ != nullptr)) {
+    cycles = 0;
+} else {
+    executeOpcode();
+}
+cycles += interruptCycles;
+if (memory != nullptr) memory->advanceCycles(cycles);
+```
+
+Back at baseline, with the round-2 fix intact and **RAM + framebuffer hashes
+byte-identical** — the same contract §§ 1-9 are held to.
+
+**Two process notes, both cheap and both were paid for.**
+
+- **Rebuild `pom2_bench` before believing it.** The binary in `build/` was
+  older than its own sources during this campaign; a stale bench compares the
+  wrong tree against the right one and the answer looks like noise.
+- **A correctness commit is a performance commit when it lands in `step()`,
+  `memRead`, `advanceCycles` or `lssSync`.** § 8 already prices a branch on
+  the bus path at 13-16 % and a flag *test* there at 7.2 %; the same order of
+  magnitude applies inside the interpreter loop. Run the bench on any diff
+  that touches those four.

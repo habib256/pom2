@@ -56,11 +56,16 @@
 // the configured token is empty, requests are accepted unauthenticated
 // (loopback-only listener already limits exposure to local processes; an
 // AI agent on the same machine doesn't need to fight a token round-trip).
+// That perimeter used to include the EMULATED MACHINE: a guest driving the
+// Uthernet II's host sockets, or libslirp's router, could reach 127.0.0.1
+// here and looked native. Both are fenced off by default now
+// (`W5100Device::checkDestination`, `SlirpOptions::allowHostLoopback`), and
+// the two fences are part of this listener's threat model, not the cards'.
 //
 // Both modes ALSO require a loopback `Host` header (or none at all). A token
 // is a secret, not an origin proof: a DNS-rebound page that guessed it would
 // otherwise reach every endpoint from the browser. The token compare is
-// constant-time and six failures inside five seconds put the listener into a
+// constant-time and five failures inside five seconds put the listener into a
 // 429 backoff, so a page cannot grind a human-typed secret. No CORS headers
 // are emitted at all — a native client needs none, and `Access-Control-Allow-
 // Origin: *` was what made the grinding cross-origin-readable in the first
