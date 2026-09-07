@@ -25,7 +25,7 @@
 //     be read against what the card decodes (dhgrMode / hgrMode / textMode);
 //   * writes a PPM of the rendered frame at each such change (after a short
 //     settle) and at the end, into the directory given by
-//     POM2_PROBE_OUT (default: the current directory).
+//     POM2_PROBE_OUT (default: <TMPDIR>/pom2_probes — see ProbeOutDir.h).
 //
 // Usage: test_purplesoft_eve_probe [program]   (default "DEMO GR16K")
 // Diagnostic, not a pinned test — its output is for eyes (convert the PPMs
@@ -36,6 +36,8 @@
 #include "LeChatMauveCard.h"
 #include "M6502.h"
 #include "Memory.h"
+
+#include "ProbeOutDir.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -125,8 +127,7 @@ int main(int argc, char** argv)
     std::setvbuf(stdout, nullptr, _IOLBF, 0);   // a killed run keeps its log
     const std::string program = argc > 1 ? argv[1] : "DEMO GR16K";
     const std::string diskArg = argc > 2 ? argv[2] : "";
-    const char* outEnv = std::getenv("POM2_PROBE_OUT");
-    const std::string outDir = outEnv ? outEnv : ".";
+    const std::string outDir = pom2test::probeOutDir();
 
     const std::string rom  = findFirst({ "../roms/apple2e.rom", "roms/apple2e.rom", "../../roms/apple2e.rom" });
     const std::string boot = findFirst({ "../roms/disk2.rom", "roms/disk2.rom", "../../roms/disk2.rom" });

@@ -326,6 +326,50 @@ void testAppleWinTvFirstFrameIsNotHalfBlack()
     std::puts("  applewin_tv_first_frame: OK");
 }
 
+// ─── Item 5: the paused-machine override survives a single Step ──────────
+//
+// A stopped machine publishes no video frame, so `render()` folds the soft
+// switches poked host-side (debugger, AI server, paint editor) onto the
+// frozen published snapshot. That override used to be gated on the CYCLE
+// counter standing still — and a single Step moves it by 2-7 cycles while
+// publishing nothing, so the poked mode reverted for a whole frame's worth
+// of renders. The gate is the publication index now, not the cycle count.
+void testIdleOverrideSurvivesStep()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    Apple2Display disp;
+    disp.setAuxMemory(mem.auxData());
+
+    // Run two whole video frames so Memory has PUBLISHED one: before that,
+    // render() reads the live state directly and never reaches the override.
+    for (int i = 0; i < 2 * 262; ++i) mem.advanceCycles(65);
+    disp.render(mem);           // machine still "running" (cycles moved)
+    disp.render(mem);           // ...and now stopped (cycles stood still)
+    assert(disp.lastRenderState().textMode &&
+           "power-on default is full-screen TEXT");
+
+    // Host-side poke while stopped: graphics on. Nothing publishes it.
+    mem.memRead(CLR_TEXT);
+    disp.render(mem);
+    assert(!disp.lastRenderState().textMode &&
+           "a switch poked while stopped must show on the next render");
+
+    // One Step. A handful of cycles, still no published frame.
+    mem.advanceCycles(7);
+    disp.render(mem);
+    assert(!disp.lastRenderState().textMode &&
+           "a single Step must not revert the mode poked while stopped");
+
+    // Running again for a full frame republishes, and the override stands
+    // down — the published snapshot now describes the poke itself.
+    for (int i = 0; i < 262; ++i) mem.advanceCycles(65);
+    disp.render(mem);
+    assert(!disp.lastRenderState().textMode &&
+           "the published frame carries the poke once the machine runs");
+    std::puts("  idle_override_survives_step: OK");
+}
+
 }  // namespace
 
 int main()
@@ -334,6 +378,7 @@ int main()
     testHgrChatMauve560();
     testNonChatMauveHgrStays280();
     testAppleWinTvFirstFrameIsNotHalfBlack();
+    testIdleOverrideSurvivesStep();
     std::puts("display_persistence_smoke_test: OK");
     return 0;
 }

@@ -4768,8 +4768,10 @@ set_tests_properties(ssc_acia_smoke PROPERTIES TIMEOUT 5)
 # via X-POM2-Token returns 401 vs 200, /mem round-trips a byte through
 # Memory::memWrite, /reset accepts hard/soft/cold, /speed adjusts
 # cycles/frame, and unknown paths return 404 / wrong methods return 405.
-# Stands up a real EmulationController + the server on 127.0.0.1:36502
-# so the test exercises the full path including the worker thread.
+# Stands up a real EmulationController + the server on an EPHEMERAL
+# 127.0.0.1 port (the test asks the kernel for one and hands it to
+# AiControlServer — a fixed 36502 collided with a parallel ctest run) so the
+# test exercises the full path including the worker thread.
 add_executable(test_ai_control_server
     ai_control_server_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
@@ -6331,6 +6333,10 @@ add_executable(test_fuzz_snapshot
     ${CMAKE_SOURCE_DIR}/src/TranswarpCard.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
+    # The golden capture needs a populated machine or the MEX device trailer
+    # and the SLOTn sections are all zero-length and the fuzzer mutates
+    # lengths with nothing behind them (2026-09-07 R8).
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
 )
 target_include_directories(test_fuzz_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -6376,12 +6382,14 @@ endif()
 # sweep is only directory-wide if nothing is added after it.
 
 # Tests whose assertions are about ELAPSED WALL-CLOCK TIME — a bounded wait, a
-# poll deadline, a timeout that must fire — plus the one that binds a fixed
-# loopback port (ai_control_server_smoke, port 36502). Neither kind can be made
-# robust by a bigger budget: the first measures the very thing contention
-# distorts, the second needs the port to itself. ctest runs a RUN_SERIAL test
-# with nothing else in flight, which is the only property that actually holds
-# for them. They are short, so the cost to total suite time is small.
+# poll deadline, a timeout that must fire — plus ai_control_server_smoke, which
+# runs a real EmulationController worker thread behind its HTTP deadlines.
+# (It no longer binds a fixed port: it asks the kernel for an ephemeral one,
+# so the old "needs port 36502 to itself" reason is gone; the deadlines are
+# not.) None of them can be made robust by a bigger budget — they measure the
+# very thing contention distorts. ctest runs a RUN_SERIAL test with nothing
+# else in flight, which is the only property that actually holds for them.
+# They are short, so the cost to total suite time is small.
 set(POM2_WALLCLOCK_TESTS
     ai_control_server_smoke
     ai_mouse_hle_probe
@@ -6839,3 +6847,58 @@ foreach(_pom2_t IN LISTS _pom2_all_tests)
     math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
     set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
 endforeach()
+
+# ─── `make probes` — one command that builds every EXCLUDE_FROM_ALL tool ──
+# The probes are deliberately not ctest tests (see the header of this file):
+# they assert nothing reproducible, several need media that is not in the
+# tree, and a few take minutes. But "not a test" had drifted into "not
+# buildable in practice": nobody knows the two dozen target names, so the
+# 2026-09-07 corpus sweep concluded "no built binary can boot an HDV" while
+# `hdv_boot_dump` sat right here, compiling fine, one `make` away.
+#
+# This aggregate fixes that without putting a minute-long eyeball tool into
+# the default build or the default ctest run:
+#     make probes           # build them all, catch the bit-rot
+#     make hdv_boot_dump    # …or just the one you need
+# Targets are added through if(TARGET) so a probe guarded by a missing
+# dependency (the GL ones) drops out instead of failing configuration. Keep
+# this LAST: nothing here registers a test, so the two directory-wide test
+# sweeps above still cover everything.
+set(POM2_PROBE_TARGETS
+    artifact_probe
+    c2plus_boot_probe
+    cffa_boot_dump
+    copy2plus_boot_dump
+    cpu_smoke
+    dd2_ay_trace
+    disasm_smoke
+    dix_menu_raster_probe
+    dix_return_crash_probe
+    hdv_boot_dump
+    hero_probe
+    iic_dump
+    iicplus_boot_probe
+    madef_phase_probe
+    oldskool_crash_probe
+    oldskool_raster_probe
+    render_total_replay_modes
+    rom_basic
+    rom_boot
+    test_choplifter_iie_trace
+    test_iic_dual_boot_trace
+    test_iicplus_boot_trace
+    test_total_replay_boot_trace
+    u5_woz_save_probe
+)
+set(_pom2_probe_present)
+foreach(_pom2_p IN LISTS POM2_PROBE_TARGETS)
+    if(TARGET ${_pom2_p})
+        list(APPEND _pom2_probe_present ${_pom2_p})
+    endif()
+endforeach()
+if(_pom2_probe_present)
+    add_custom_target(probes DEPENDS ${_pom2_probe_present})
+    list(LENGTH _pom2_probe_present _pom2_probe_count)
+    message(STATUS "POM2: ${_pom2_probe_count} probe targets available "
+                   "via `make probes`")
+endif()

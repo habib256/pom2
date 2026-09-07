@@ -274,6 +274,21 @@ int main(int argc, char** argv)
                                         "../../roms/diskii_p6.rom" });
             if (!lss.empty()) (void)disk->loadLssRom(lss);
         }
+        // …and the 13-sector pair (341-0009 boot + 341-0010 LSS), exactly as
+        // SlotCardFactory does for the GUI. Without them the card cannot flip
+        // to serving13_, so every DOS 3.1/3.2/3.2.1 image mounted here hung
+        // at the boot PROM — and the card's own warning blamed
+        // `roms/disk2_13.rom` for being missing while it ships in the tree.
+        {
+            const std::string boot13 = findAsset(
+                "roms/disk2_13.rom", { "../roms/disk2_13.rom",
+                                       "../../roms/disk2_13.rom" });
+            if (!boot13.empty()) (void)disk->loadBootRom13(boot13);
+            const std::string lss13 = findAsset(
+                "roms/diskii_p6_13.rom", { "../roms/diskii_p6_13.rom",
+                                           "../../roms/diskii_p6_13.rom" });
+            if (!lss13.empty()) (void)disk->loadLssRom13(lss13);
+        }
         if (!diskPath.empty() && !disk->insertDisk(diskPath)) {
             std::fprintf(stderr, "insertDisk failed: %s\n", disk->getLastError().c_str());
             return 1;
@@ -315,12 +330,23 @@ int main(int argc, char** argv)
     controller.cpu().hardReset();
     controller.memory().slotBus().reset();
     if (diskRaw) diskRaw->seekTrack0();
-    // The boot vector in stock apple2.rom auto-jumps to $C600 via the
-    // Autostart Monitor's PR#6 path; just to be safe we also poke PC. With no
+    // Let the ROM's own Autostart cold-start do the booting when it HAS one.
+    // It sets up the page-3 vectors, the text window and the screen clear
+    // that a DOS greeting relies on, and it jumps to $C600 by itself.
+    // Poking PC=$C600 unconditionally, as this used to, skips all of that:
+    // DOS 3.3's boot1 survives it, DOS 3.2's does not — every .d13 here left
+    // the screen on the raw power-on pattern (17 262 lit pixels, byte for
+    // byte the same on two different masters) while the same disk booted to
+    // `]` in tests/dos32_boot_trace, which lets the ROM start itself.
+    //
+    // hardReset() has just put PC on the reset vector, so that vector IS the
+    // test: an Autostart ROM points it into its own cold-start ($FA62 on the
+    // II+), the original Apple ][ monitor (apple2o.rom) points it at $FF59 —
+    // no autostart, no boot, and there the poke is the only way in. With no
     // Disk II plugged (capture mode against a package, which ships no disk
-    // images) there is nothing at $C600, so let the ROM's own reset vector
-    // take the machine to the Applesoft prompt instead.
-    if (diskRaw) controller.cpu().setProgramCounter(0xC600);
+    // images) $C600 holds nothing, so never poke.
+    if (diskRaw && controller.cpu().getProgramCounter() >= 0xFF00)
+        controller.cpu().setProgramCounter(0xC600);
     controller.setMode(EmulationController::Mode::Running);
 
     // ─── Capture mode ──────────────────────────────────────────────────────

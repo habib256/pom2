@@ -30,7 +30,8 @@
 // the GR window's measured pixel edges can be compared against both the
 // event columns and the HIRES TV-frame art around them.
 //
-// Usage: dix_menu_raster_probe [disk.po] [bootSecs] [frames]
+// Usage: dix_menu_raster_probe [disk.po] [bootSecs] [frames] [outDir]
+// PPMs land in $POM2_PROBE_OUT or <TMPDIR>/pom2_probes — see ProbeOutDir.h.
 
 #include "Apple2Display.h"
 #include "CpuClock.h"
@@ -42,8 +43,11 @@
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
 
+#include "ProbeOutDir.h"
+
 #include <cstdint>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -51,6 +55,19 @@
 #include <vector>
 
 namespace {
+
+// Case-insensitive extension test (`.DSK` is as common as `.dsk`).
+bool hasExtension(const std::string& path, const std::string& ext)
+{
+    if (path.size() < ext.size()) return false;
+    for (size_t i = 0; i < ext.size(); ++i) {
+        const unsigned char a = static_cast<unsigned char>(
+            path[path.size() - ext.size() + i]);
+        const unsigned char b = static_cast<unsigned char>(ext[i]);
+        if (std::tolower(a) != std::tolower(b)) return false;
+    }
+    return true;
+}
 
 std::string firstExisting(std::initializer_list<const char*> cands)
 {
@@ -119,6 +136,8 @@ int main(int argc, char** argv)
                                                         "disks_3.5/DIX.po"});
     const int bootSecs = (argc > 2) ? std::atoi(argv[2]) : 30;
     const int frames   = (argc > 3) ? std::atoi(argv[3]) : 6;
+    const std::string outDir =
+        pom2test::probeOutDir(argc > 4 ? argv[4] : "");
     if (rom.empty() || po.empty()) {
         std::printf("SKIP: missing apple2e.rom or DIX .po\n");
         return 77;   // ctest SKIP_RETURN_CODE
@@ -142,7 +161,10 @@ int main(int argc, char** argv)
     mem.slotBus().plug(4, std::move(mb));
 
     // .po → SmartPort slot 5 (DIX); .dsk → Disk II slot 6 (TRIBU & friends).
-    if (po.size() > 4 && po.compare(po.size() - 4, 4, ".dsk") == 0) {
+    // Case-INSENSITIVE: half the 13-sector corpus is shouted (DOS13SEC.DSK),
+    // and a case-sensitive compare quietly sent those to the SmartPort branch,
+    // where an 800K unit rejects a 5.25" image.
+    if (hasExtension(po, ".dsk")) {
         const std::string boot = firstExisting({"roms/disk2.rom"});
         auto d2 = std::make_unique<DiskIICard>();
         if (boot.empty() || !d2->loadBootRom(boot) || !d2->insertDisk(po)) {
@@ -213,10 +235,10 @@ int main(int argc, char** argv)
             }
         }
         wlog.recs.clear();
-        char path[64];
-        std::snprintf(path, sizeof(path), "dix_menu_f%d.ppm", f);
-        writePpm(path, disp.pixels(), disp.width(), disp.height());
-        std::printf("  wrote %s\n", path);
+        const std::string path =
+            outDir + "/dix_menu_f" + std::to_string(f) + ".ppm";
+        writePpm(path.c_str(), disp.pixels(), disp.width(), disp.height());
+        std::printf("  wrote %s\n", path.c_str());
     }
     return 0;
 }

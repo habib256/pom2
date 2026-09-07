@@ -40,6 +40,8 @@
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
 
+#include "ProbeOutDir.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -118,8 +120,7 @@ int main()
     const double runFor = std::getenv("POM2_PROBE_RUNFOR")
         ? std::atof(std::getenv("POM2_PROBE_RUNFOR")) : 90.0;
     const char* keys = std::getenv("POM2_PROBE_KEYS");
-    const char* outEnv = std::getenv("POM2_PROBE_OUT");
-    const std::string outDir = outEnv ? outEnv : ".";
+    const std::string outDir = pom2test::probeOutDir();
 
     const std::string rom  = findFirst({ "../roms/apple2e.rom", "roms/apple2e.rom" });
     const std::string boot = findFirst({ "../roms/disk2.rom", "roms/disk2.rom" });
