@@ -442,11 +442,21 @@ unsigned int Voxel3DRenderer::process(unsigned int srcTex, int dstW, int dstH,
         fbW = std::max(1, static_cast<int>(fbW * s));
         fbH = std::max(1, static_cast<int>(fbH * s));
     }
-    if (!createTargets(fbW, fbH)) return 0;
-
-    // Save GL state we touch (mirrors NtscPostProcessor's dance, + depth).
+    // Save the caller's framebuffer BEFORE createTargets: on an allocate or a
+    // resize it binds our own FBO to check completeness and hands the binding
+    // back as 0, so reading it afterwards recorded 0 as "the caller's" — and
+    // the incomplete-FBO `return 0` left the default framebuffer bound. Same
+    // defect NtscPostProcessor::process and CrtEffectStack::process fixed.
     GLint prevFbo = 0, prevViewport[4] = { 0, 0, 0, 0 };
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+    if (!createTargets(fbW, fbH)) {
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFbo));
+        return 0;
+    }
+
+    // Save the rest of the GL state we touch (mirrors NtscPostProcessor's
+    // dance, + depth).
     glGetIntegerv(GL_VIEWPORT, prevViewport);
     const GLboolean prevBlend = glIsEnabled(GL_BLEND);
     const GLboolean prevDepth = glIsEnabled(GL_DEPTH_TEST);

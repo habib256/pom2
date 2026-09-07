@@ -27,28 +27,35 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "FujiNetCard.h"
+#include "FourPlayCard.h"
 #include "FujiNetCardFactory.h"
 #include "GrapplerCard.h"
 #include "LeChatMauveCard.h"
+#include "LironCard.h"
 #include "Mockingboard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
 #include "PhasorCard.h"
 #include "PrinterCard.h"
 #include "ProDOSHardDiskCard.h"
+#include "SlotCardCatalog.h"
 #include "SlotConfigurationCoordinator.h"
 #include "SlotBus.h"
 #include "SmartPortCard.h"
 #include "SoftCardZ80.h"
 #include "SuperSerialCard.h"
+#include "TranswarpCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
+#include "WorkstationCard.h"
 
 #include <cassert>
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 using Coordinator = pom2::SlotConfigurationCoordinator;
 static_assert(std::is_same_v<
@@ -131,6 +138,7 @@ int main()
     // Live topology is copied from SlotBus, independently of the effective
     // configuration. Exact implementation variants keep distinct keys.
     SlotBus bus;
+    std::vector<std::string> seenLiveKeys;
     auto expectLiveKey = [&](std::unique_ptr<SlotPeripheral> card,
                              const char* expected) {
         bus.plug(3, std::move(card));
@@ -138,6 +146,7 @@ int main()
         assert(live.keys[3] == expected);
         assert(live.plugged(3));
         assert(!live.names[3].empty());
+        seenLiveKeys.emplace_back(expected);
     };
     expectLiveKey(std::make_unique<DiskIICard>(3), "diskii");
     expectLiveKey(std::make_unique<ProDOSHardDiskCard>(3), "hdv");
@@ -161,6 +170,61 @@ int main()
     expectLiveKey(std::make_unique<pom2::UthernetCard>(3), "uthernet");
     expectLiveKey(std::make_unique<pom2::UthernetIICard>(3), "uthernet2");
     expectLiveKey(pom2::makeFujiNetCard(3), "fujinet");
+    // hunt #4 #31g: these three had no liveCardKey branch, so captureLive()
+    // reported their slot as empty and every "planned vs plugged" comparison
+    // showed a pending change that could not be applied away.
+    expectLiveKey(std::make_unique<pom2::WorkstationCard>(3), "workstation");
+    expectLiveKey(std::make_unique<pom2::FourPlayCard>(3), "4play");
+    expectLiveKey(std::make_unique<pom2::TranswarpCard>(3), "transwarp");
+    expectLiveKey(std::make_unique<pom2::LironCard>(3), "liron");
+
+    // Every catalog key a live card can carry must round-trip. Keys with no
+    // distinct card object of their own are listed explicitly so ADDING a
+    // card type without teaching liveCardKey about it fails here.
+    {
+        static const char* kNoLiveObject[] = {
+            "",       // the empty slot
+        };
+        for (const auto& ct : pom2::kCardTypes) {
+            bool exempt = false;
+            for (const char* e : kNoLiveObject)
+                if (std::string(ct.key) == e) exempt = true;
+            if (exempt) continue;
+            bool seen = false;
+            for (const std::string& k : seenLiveKeys)
+                if (k == ct.key) seen = true;
+            if (!seen)
+                std::fprintf(stderr,
+                    "catalog key '%s' has no liveCardKey branch\n", ct.key);
+            assert(seen && "SlotConfigurationCoordinator::liveCardKey is "
+                           "missing a catalog card type");
+        }
+    }
+
+    // ── hunt #4 #7: the de-dup must not eat the user's saved key ────────
+    // Two slots asking for the same single-instance card: resolve() empties
+    // the SECOND one. The shutdown writer persists the plan, so without a
+    // record of WHAT was dropped it wrote "" over slot_5_card and the card
+    // was gone on the next launch.
+    settings.setString("slot_1_card", "");
+    settings.setString("slot_2_card", "hdv");
+    settings.setString("slot_3_card", "");
+    settings.setString("slot_4_card", "");
+    settings.setString("slot_5_card", "hdv");
+    settings.setString("slot_6_card", "diskii");
+    settings.setString("slot_7_card", "");
+    const auto& dedup = slots.resolve(settings, pom2::SystemProfile::AppleIIe);
+    assert(dedup[2] == "hdv");
+    assert(dedup[5].empty());
+    assert(slots.dedupCleared(5) == "hdv");
+    assert(slots.dedupCleared(2).empty());
+    assert(slots.dedupCleared(6).empty());          // multi-instance, kept
+    // ...and the Abstraction Levels swap must refuse before it gets there.
+    assert(slots.wouldDuplicate("hdv", 5));         // slot 2 already has it
+    assert(!slots.wouldDuplicate("hdv", 2));        // that IS the holder
+    assert(!slots.wouldDuplicate("diskii", 3));     // multi-instance
+    assert(!slots.wouldDuplicate("", 3));
+    assert(!slots.wouldDuplicate("cffa", 3));       // nobody holds it
 
     // A live failure/absence must never erase the effective request. This is
     // the contract that preserves a CFFA assignment while its ROM is missing.

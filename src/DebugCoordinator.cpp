@@ -31,9 +31,16 @@ DebugCoordinator::DebugCoordinator(EmulationController& controller)
 {
     // All edits pass through Memory::memWrite under the same state boundary
     // as CPU stores; the viewer itself never receives an unsafe raw writer.
-    memoryViewer_->setWriteCallback([this](uint16_t address, uint8_t value) {
+    // Returns the byte that was replaced, sampled at the WRITE target under
+    // the same lock as the store — the viewer builds its undo record from it.
+    // Reading it from the hex grid instead was wrong whenever the read and
+    // write banks differ (RAMRD vs RAMWRT under 80STORE).
+    memoryViewer_->setWriteCallback([this](uint16_t address,
+                                           uint8_t value) -> uint8_t {
         auto state = controller_.lockState();
+        const uint8_t replaced = state.memory().peekCpuWriteTarget(address);
         state.memory().memWrite(address, value);
+        return replaced;
     });
 }
 

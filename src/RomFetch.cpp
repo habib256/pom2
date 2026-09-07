@@ -293,8 +293,12 @@ fs::path extractedMemberPath(const fs::path& dir, const std::string& member)
     return dir / base;
 }
 
+// `cancelled` is forwarded to the child, like the download is: without it the
+// Cancel button could not interrupt an unpack, and the panel sat unresponsive
+// for up to 30 s per member on a slow or wedged unzip.
 bool extractZipMember(const fs::path& zip, const std::string& member,
-                      const fs::path& destDir, std::string& err)
+                      const fs::path& destDir, std::string& err,
+                      const RomFetchCancel& cancelled = {})
 {
     std::error_code ec;
     fs::create_directories(destDir, ec);
@@ -304,7 +308,7 @@ bool extractZipMember(const fs::path& zip, const std::string& member,
         return runHostTool(unzip,
                            { "-o", "-q", "-j", zip.string(), member, "-d",
                              destDir.string() },
-                           {}, 30000, err);
+                           {}, 30000, err, cancelled);
     }
 
     const std::string tar = ChildProcess::findOnPath("tar");
@@ -312,7 +316,7 @@ bool extractZipMember(const fs::path& zip, const std::string& member,
         return runHostTool(tar,
                            { "-xf", zip.string(), "-C", destDir.string(),
                              member },
-                           {}, 30000, err);
+                           {}, 30000, err, cancelled);
     }
 
     err = "neither unzip nor tar was found — cannot unpack a MAME romset";
@@ -570,9 +574,34 @@ std::vector<const RomFetchEntry*> romsToFetch(
 
 std::vector<const RomFetchEntry*> romsToFetch()
 {
-    return romsToFetch([](const char* destRel) {
-        return !defaultPresent(destRel).empty();
-    });
+    std::vector<const RomFetchEntry*> out;
+    for (const auto& e : catalogStorage()) {
+        const std::string resolved = defaultPresent(e.destRel);
+        if (resolved.empty()) { out.push_back(&e); continue; }
+        // Present is not the same as CORRECT. The ROM Status panel already
+        // paints a wrong-size / wrong-digest dump red, but "Download missing"
+        // used a bare findResource() probe and reported "everything is
+        // already present" — so the one button that could replace the bad
+        // file refused to run. Re-verify with the same gate commitBytes
+        // applies to a fresh download; an entry with no reference digest and
+        // no expected size stays "present" on the strength of its existence,
+        // which is all POM2 knows about it.
+        std::vector<std::uint8_t> have;
+        std::string err;
+        if (!readAll(resolved, have, err)) { out.push_back(&e); continue; }
+        if (e.expectedSize && have.size() != e.expectedSize) {
+            out.push_back(&e);
+            continue;
+        }
+        if (e.expectedSha256 && *e.expectedSha256 &&
+            sha256Hex(have.data(), have.size()) != e.expectedSha256) {
+            out.push_back(&e);
+            continue;
+        }
+        if (e.expectedCrc && crc32Bytes(have) != e.expectedCrc)
+            out.push_back(&e);
+    }
+    return out;
 }
 
 RomFetchResult fetchMissingRoms(const fs::path& destRoot,
@@ -671,14 +700,16 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             if (!zipPath.empty()) {
                 const fs::path extractDir = scratch / ("x-" + std::to_string(done));
                 std::vector<std::uint8_t> bytes;
-                ok = extractZipMember(zipPath, e->zipMember, extractDir, err);
+                ok = extractZipMember(zipPath, e->zipMember, extractDir, err,
+                                      cancelled);
                 if (ok) {
                     ok = readAll(extractedMemberPath(extractDir, e->zipMember),
                                  bytes, err);
                 }
                 if (ok && e->zipConcat) {
                     for (const char* const* m = e->zipConcat; *m; ++m) {
-                        if (!extractZipMember(zipPath, *m, extractDir, err)) {
+                        if (!extractZipMember(zipPath, *m, extractDir, err,
+                                              cancelled)) {
                             ok = false;
                             break;
                         }

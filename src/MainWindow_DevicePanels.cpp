@@ -100,6 +100,17 @@ void MainWindow::renderSscPanelWindow()
         const int slot = ssc.slot;
         cmd.slot = slot;
         static std::map<int, int> portDrafts;
+        // Re-seed on a profile switch / slot rebuild. `portDrafts` is a
+        // function-local static keyed by SLOT, so after a rebuild it handed
+        // the NEW card in slot 2 the OLD card's draft port — the field showed
+        // a number the card had never listened on, and "Start listener" bound
+        // it. mediaPanelSeedGen_ is the same generation counter the media
+        // panel's path buffers use for exactly this.
+        static uint32_t seedGen = 0;
+        if (seedGen != mediaPanelSeedGen_) {
+            seedGen = mediaPanelSeedGen_;
+            portDrafts.clear();
+        }
         auto it = portDrafts.find(slot);
         if (it == portDrafts.end()) {
             portDrafts[slot] = ssc.port ? ssc.port

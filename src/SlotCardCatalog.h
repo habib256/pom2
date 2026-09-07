@@ -23,6 +23,8 @@
 #ifndef POM2_SLOT_CARD_CATALOG_H
 #define POM2_SLOT_CARD_CATALOG_H
 
+#include "ResourcePaths.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -146,44 +148,29 @@ inline const char* cardLabelForKey(std::string_view key)
     return scratch.c_str();
 }
 
+// ROM-presence probes. These go through pom2::findResource(), NOT bare
+// cwd-relative paths: every other ROM consumer (SlotCardFactory, the ROM
+// Status panel, RomFetch's downloader — which writes into userDataDir()
+// first) resolves through the resource search path, so a user who fetched
+// the Mouse or CFFA dump into the user data directory saw the card greyed
+// out as "(ROMs missing)" while the machine could have plugged it fine.
 inline bool mouseRomsPresent()
 {
-    namespace fs = std::filesystem;
-    bool slotRom = false, mcuRom = false;
-    for (const char* p : { "roms/mouse_341-0270-c.bin",
-                           "../roms/mouse_341-0270-c.bin",
-                           "../../roms/mouse_341-0270-c.bin" }) {
-        if (fs::exists(p)) { slotRom = true; break; }
-    }
-    for (const char* p : { "roms/mouse_341-0269.bin",
-                           "../roms/mouse_341-0269.bin",
-                           "../../roms/mouse_341-0269.bin" }) {
-        if (fs::exists(p)) { mcuRom = true; break; }
-    }
-    return slotRom && mcuRom;
+    return !findResource("roms/mouse_341-0270-c.bin").empty() &&
+           !findResource("roms/mouse_341-0269.bin").empty();
 }
 
 /// AppleWin-style Mouse HLE needs only the 2 KB slot EPROM (the MCU side
 /// is synthesised in C++). Reuses the same `mouse_341-0270-c.bin` dump.
 inline bool mouseAwRomPresent()
 {
-    namespace fs = std::filesystem;
-    for (const char* p : { "roms/mouse_341-0270-c.bin",
-                           "../roms/mouse_341-0270-c.bin",
-                           "../../roms/mouse_341-0270-c.bin" }) {
-        if (fs::exists(p)) return true;
-    }
-    return false;
+    return !findResource("roms/mouse_341-0270-c.bin").empty();
 }
 
 inline bool cffaRomPresent()
 {
-    namespace fs = std::filesystem;
-    for (const char* n : { "cffa20ee02.bin", "cffa20eec02.bin" })
-        for (const char* dir : { "roms/", "../roms/", "../../roms/" }) {
-            if (fs::exists(std::string(dir) + n)) return true;
-        }
-    return false;
+    return !findResource("roms/cffa20ee02.bin").empty() ||
+           !findResource("roms/cffa20eec02.bin").empty();
 }
 
 } // namespace pom2

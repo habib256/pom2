@@ -73,9 +73,29 @@ public:
 
     static bool isMultiInstance(const std::string& cardKey) noexcept;
 
+    /// The card key the single-instance policy DROPPED from `slot` during the
+    /// last resolve(), or empty. The saved `slot_N_card` still names that
+    /// card, and the effective plan does not — so a caller that persists the
+    /// plan back (the shutdown writer) would silently overwrite the user's
+    /// key with "". Ask here before writing an empty slot.
+    const std::string& dedupCleared(int slot) const noexcept
+    {
+        static const std::string kNone;
+        return (slot > 0 && slot < static_cast<int>(dedupCleared_.size()))
+                   ? dedupCleared_[static_cast<std::size_t>(slot)] : kNone;
+    }
+
+    /// True when `cardKey` is single-instance AND some slot other than
+    /// `exceptSlot` already holds it in the effective plan. The Abstraction
+    /// Levels panel asks before swapping a card for its other-level twin:
+    /// the swap would otherwise resolve into a de-dup that empties the OTHER
+    /// slot, and that slot's saved key with it.
+    bool wouldDuplicate(const std::string& cardKey, int exceptSlot) const noexcept;
+
 private:
     CardMap effectivePlan_{};
     CardMap draft_{};
+    CardMap dedupCleared_{};
 };
 
 } // namespace pom2

@@ -27,6 +27,7 @@
 #include "MainWindow.h"
 
 #include "Apple2Display.h"
+#include "AtomicFileReplace.h"
 #include "CrtEffectStack.h"
 #include "EmulationController.h"
 #include "IconsFontAwesome6.h"
@@ -43,6 +44,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -67,45 +70,74 @@ void MainWindow::saveScreenshot()
         pixels.assign(src, src + w * h);
     }
 
-    // Pick the next unused screenshot_NNN.ppm in the current directory so
-    // captures from successive F9 presses don't clobber each other.
-    static int lastIdx = 0;
+    // Where: `userDataDir()/screenshots`, not the process working directory.
+    // F9 used to drop screenshot_NNN.ppm wherever POM2 happened to be started
+    // — a read-only bundle directory in a packaged build, and someone else's
+    // source tree in a dev one.
+    //
+    // Which name: SCAN the directory for the highest existing index instead
+    // of walking a `static int` up from 0. The counter never went back down,
+    // so once 1000 files existed every further capture overwrote _999
+    // forever, and a fresh session with 300 existing shots re-scanned from
+    // zero on every press.
     namespace fs = std::filesystem;
     std::error_code ec;
-    std::string path;
-    while (true) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "screenshot_%03d.ppm", lastIdx);
-        path = buf;
-        if (!fs::exists(path, ec)) break;
-        ++lastIdx;
-        if (lastIdx > 999) { lastIdx = 0; break; }
+    const fs::path dir = pom2::userDataDir() / "screenshots";
+    fs::create_directories(dir, ec);
+    if (ec) {
+        tapeStatusMessage = "Screenshot: cannot create " + dir.string();
+        tapeStatusUntil   = lastFrameTime + 3.0;
+        pom2::log().warn("Screenshot", tapeStatusMessage);
+        return;
     }
+
+    long next = 0;
+    {
+        std::error_code iterEc;
+        for (const auto& entry : fs::directory_iterator(dir, iterEc)) {
+            const std::string name = entry.path().filename().string();
+            if (name.rfind("screenshot_", 0) != 0) continue;
+            if (entry.path().extension() != ".ppm") continue;
+            if (name.size() <= 11 + 4) continue;      // no digits between
+            const std::string digits = name.substr(11,
+                name.size() - 11 - 4);   // strip prefix and ".ppm"
+            if (digits.empty() ||
+                digits.find_first_not_of("0123456789") != std::string::npos)
+                continue;
+            const long idx = std::strtol(digits.c_str(), nullptr, 10);
+            if (idx >= next) next = idx + 1;
+        }
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "screenshot_%03ld.ppm", next);
+    const fs::path out = dir / buf;
 
     // PPM "P6" — binary RGB, 1 row per scanline. Apple2Display's pixels
     // are 0xAABBGGRR (RGBA little-endian); strip alpha and swizzle to RGB.
-    std::ofstream f(path, std::ios::binary);
-    if (!f) {
-        tapeStatusMessage = "Screenshot: cannot write " + path;
-        tapeStatusUntil   = lastFrameTime + 3.0;
-        return;
-    }
-    f << "P6\n" << w << " " << h << "\n255\n";
-    std::vector<uint8_t> rgb(static_cast<size_t>(w) * h * 3);
+    // Serialised into memory, then committed through the same durable
+    // temp + rename path as every other POM2 write-back: a screenshot
+    // interrupted mid-write used to leave a truncated .ppm behind.
+    std::string ppm = "P6\n" + std::to_string(w) + " " + std::to_string(h) +
+                      "\n255\n";
+    const size_t header = ppm.size();
+    ppm.resize(header + static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
     for (size_t i = 0; i < pixels.size(); ++i) {
         const uint32_t p = pixels[i];
-        rgb[i * 3 + 0] = static_cast<uint8_t>( p        & 0xFF);
-        rgb[i * 3 + 1] = static_cast<uint8_t>((p >>  8) & 0xFF);
-        rgb[i * 3 + 2] = static_cast<uint8_t>((p >> 16) & 0xFF);
+        ppm[header + i * 3 + 0] = static_cast<char>( p        & 0xFF);
+        ppm[header + i * 3 + 1] = static_cast<char>((p >>  8) & 0xFF);
+        ppm[header + i * 3 + 2] = static_cast<char>((p >> 16) & 0xFF);
     }
-    f.write(reinterpret_cast<const char*>(rgb.data()),
-            static_cast<std::streamsize>(rgb.size()));
+    if (!pom2::writeFileAtomic(out, ppm.data(), ppm.size(), ec)) {
+        tapeStatusMessage = "Screenshot: cannot write " + out.string();
+        tapeStatusUntil   = lastFrameTime + 3.0;
+        pom2::log().warn("Screenshot", tapeStatusMessage);
+        return;
+    }
 
-    pom2::log().info("Screenshot", "wrote " + path +
+    pom2::log().info("Screenshot", "wrote " + out.string() +
                      " (" + std::to_string(w) + "x" + std::to_string(h) + ")");
-    tapeStatusMessage = "Screenshot: " + path;
+    tapeStatusMessage = "Screenshot: " + out.string();
     tapeStatusUntil   = lastFrameTime + 3.0;
-    ++lastIdx;
 }
 
 void MainWindow::uploadScreenTexture()

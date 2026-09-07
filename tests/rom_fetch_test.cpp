@@ -164,6 +164,18 @@ int main()
         }
         expect(withSha >= cat.size() - 1,
                "every catalog entry but the II+ chip-set carries a SHA-256");
+        // Name the exception, don't just count it. `>= size - 1` let ANY one
+        // entry drop its digest silently; the only entry POM2 has no
+        // reference dump for is the six-chip II+ set (the RetroBIOS zip is
+        // the 12 KB image, the copy in roms/ is a different 20 KB dump), so
+        // that is the one name allowed to appear here. (hunt #4 #31l.)
+        for (const auto& e : cat) {
+            if (e.expectedSha256 && *e.expectedSha256) continue;
+            expect(e.destRel && std::string(e.destRel) == "roms/apple2p.rom",
+                   std::string("the only SHA-less catalog entry is the II+ "
+                               "chip-set, not ") +
+                   (e.destRel ? e.destRel : "?"));
+        }
     }
 
     // The digest law itself, against the FIPS 180-4 examples — a hand-rolled
