@@ -204,6 +204,7 @@ set(SOURCES
     src/Z80.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
+    src/MemoryCpuView.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -599,6 +600,7 @@ set(POM2_MACHINE_SOURCES
     src/M6502.cpp
     src/Z80.cpp
     src/Memory.cpp
+    src/MemoryCpuView.cpp
     src/MemoryProfile_IIcClass.cpp
     src/AppleWinNtsc.cpp
     src/CassetteDevice.cpp
@@ -1212,6 +1214,7 @@ set(POM2_CORE_SOURCES
     src/Z80.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
+    src/MemoryCpuView.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1464,6 +1467,7 @@ add_executable(pom2_headless
     src/M6502.cpp
     src/MachineSnapshot.cpp
     src/Memory.cpp
+    src/MemoryCpuView.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1536,6 +1540,7 @@ add_executable(pom2_bench
     src/LeChatMauveCard.cpp
     src/M6502.cpp
     src/Memory.cpp
+    src/MemoryCpuView.cpp
     src/CharRomDump.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp

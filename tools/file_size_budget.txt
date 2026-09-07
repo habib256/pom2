@@ -95,12 +95,48 @@
 #       ejectAllMedia three-phase walk and the disk35 key persistence;
 #       recorded at its exact size.
 #
+# 2026-09-07: FIVE CEILINGS RAISED for bug hunt #4, and ONE SPLIT taken.
+#
+# The split first, because it is the one this file exists to force. The new
+# side-effect-free paged CPU view (`peekCpuView` / `snapshotCpuView` /
+# `peekCpuWriteTarget` — what the 6502 would fetch, for inspectors that must
+# not clock the Disk II or clear the keyboard strobe) went into its own
+# translation unit, **src/MemoryCpuView.cpp**. It is a self-contained question
+# about the paging model, three functions and their reasoning, and it was the
+# only one of the five whose growth was mostly CODE. Memory.cpp still ends the
+# round +10 rather than +89.
+#
+# The other four are dominated by the "why" comments this project's own
+# conventions require at every fix site — measured over the round's diff:
+# ImageWriter 141 of 196 added lines, M6502 45 of 58, Apple2Display 18 of 33,
+# StorageCoordinator 51 of 110. All five stay well under the 3000-line target.
+#
+#   src/ImageWriter.cpp          2531 -> 2686 (+155) the ImageWriter II read
+#       against its actual Technical Reference for the first time: US n, the
+#       tab/margin numbering split, perforation skip on switch B-3, the
+#       proportional dot unit, ESC v, and the Epson margins that were not
+#       being consumed. Each carries the manual's own wording, because the
+#       next reader will otherwise "fix" it back to the port's behaviour.
+#   src/StorageCoordinator.cpp   2018 -> 2130 (+112) setMediaBayType rebuilt
+#       into the three-phase capture/commit/re-resolve shape every other
+#       eject already had, plus the rewind invalidation applySmartPortPanel
+#       was missing on all three of its media paths.
+#   src/Memory.cpp               2570 -> 2580 (+10)  what is LEFT after the
+#       split above: the RamWorks bank count folded into the snapshot
+#       identity, and its out-parameter.
+#   src/Apple2Display.cpp        2395 -> 2418 (+23)  phosphor decay paced by
+#       elapsed EMULATED frames in the three painters that still scaled it
+#       per render call, and the idle-override clamp beside it.
+#   src/M6502.cpp                2204 -> 2217 (+13)  the interrupt entry's
+#       seven cycles published before the handler's first instruction, and
+#       the derived IRQ flag deleted in favour of reading the source mask.
+#
 # Regenerate with: tools/check_file_sizes.sh --update
 
-src/Apple2Display.cpp                    2395
+src/Apple2Display.cpp                    2418
 src/DiskImage.cpp                        2994
-src/ImageWriter.cpp                      2531
-src/M6502.cpp                            2204
-src/Memory.cpp                           2570
-src/StorageCoordinator.cpp               2018
+src/ImageWriter.cpp                      2686
+src/M6502.cpp                            2217
+src/Memory.cpp                           2580
+src/StorageCoordinator.cpp               2130
 src/hgrpaint/HgrPaintEditor.cpp          2653
