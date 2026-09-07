@@ -166,6 +166,11 @@ void FloppySoundDevice::setVolume(float v)
     volume_.store(v, std::memory_order_relaxed);
 }
 
+void FloppySoundDevice::setCpuClock(double hz)
+{
+    if (hz > 0.0) cpuClockHz_.store(hz, std::memory_order_relaxed);
+}
+
 void FloppySoundDevice::setMotorPitch(float p)
 {
     if (p < 0.5f) p = 0.5f;
@@ -183,6 +188,20 @@ void FloppySoundDevice::reset()
     cmdQueue_.push_back({CmdKind::MotorOff, false, 0});
 }
 
+void FloppySoundDevice::pushCommandLocked(const Cmd& c)
+{
+    // Bounded queue (see kMaxCommands). Drop the OLDEST half-buffer's worth
+    // in one go rather than one command per push: erase(begin()) is O(n) on
+    // a vector, so a per-push shift at the cap would turn every enqueue into
+    // a 4096-element memmove on the CPU thread.
+    if (cmdQueue_.size() >= kMaxCommands) {
+        const size_t drop = kMaxCommands / 4;
+        cmdQueue_.erase(cmdQueue_.begin(),
+                        cmdQueue_.begin() + static_cast<std::ptrdiff_t>(drop));
+    }
+    cmdQueue_.push_back(c);
+}
+
 int FloppySoundDevice::queuedCommandCount() const
 {
     std::lock_guard<std::mutex> lk(cmdMtx_);
@@ -195,21 +214,21 @@ void FloppySoundDevice::motor(bool on, bool withDisk)
 {
     if (!samplesLoaded_.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
-    cmdQueue_.push_back({on ? CmdKind::MotorOn : CmdKind::MotorOff, withDisk, 0});
+    pushCommandLocked({on ? CmdKind::MotorOn : CmdKind::MotorOff, withDisk, 0});
 }
 
 void FloppySoundDevice::step(int /*newTrack*/, uint64_t emuCycles)
 {
     if (!samplesLoaded_.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
-    cmdQueue_.push_back({CmdKind::Step, false, emuCycles});
+    pushCommandLocked({CmdKind::Step, false, emuCycles});
 }
 
 void FloppySoundDevice::click()
 {
     if (!samplesLoaded_.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
-    cmdQueue_.push_back({CmdKind::Click, false, 0});
+    pushCommandLocked({CmdKind::Click, false, 0});
 }
 
 // ─── Audio-thread internals ─────────────────────────────────────────────
@@ -288,8 +307,12 @@ void FloppySoundDevice::drainCommands()
             if (anyStepSeen_) {
                 if (c.emuCycles > lastStepCycle_) {
                     const uint64_t dc = c.emuCycles - lastStepCycle_;
+                    // Live clock, not the compile-time NTSC constant: the
+                    // stamps come from the emulated CPU and a PAL profile
+                    // runs it at 1.0156 MHz. setVideoStandard pushes the
+                    // value, the same fan-out the speaker and cassette get.
                     gapMs = static_cast<double>(dc) * 1000.0 /
-                            static_cast<double>(POM2_CPU_CLOCK_HZ);
+                            cpuClockHz_.load(std::memory_order_relaxed);
                 } else {
                     // c.emuCycles == lastStepCycle_ (multiple events
                     // queued at the same emulated cycle — edge case) or

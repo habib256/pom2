@@ -362,6 +362,74 @@ void testDrainConsumesEachCommandOnce(const std::string& dir)
     std::puts("OK drain consumes each command exactly once");
 }
 
+// Bug hunt #4: the CPU->audio command queue is bounded.
+//
+// `drainCommands` is the ONLY consumer and it runs on the miniaudio
+// callback. On a host with no audio device (headless, CI, a browser before
+// the first user gesture, an output that failed to open) that callback never
+// fires — while `MainWindow` loads the sample banks unconditionally, so
+// `samplesLoaded_` is true and every motor/step/click keeps pushing. The
+// queue grew for the life of the session. It is now capped at
+// `kMaxCommands` (4096), dropping the OLDEST: a listener needs the head of
+// the mechanism now, not a minute-old spin-up.
+void testCommandQueueIsBounded(const std::string& dir)
+{
+    FloppySoundDevice fs;
+    assert(fs.loadSamples(dir));
+    fs.setSampleRate(44100);
+    // No fillAudioBuffer anywhere in this test — exactly the no-audio-device
+    // case. 40 000 events is ~7 minutes of a busy 5.25" seek at 10 ms.
+    for (int i = 0; i < 40000; ++i) fs.step(i % 35, cyclesForMs(i * 10.0));
+    const int queued = fs.queuedCommandCount();
+    std::printf("  queued after 40000 unconsumed steps: %d\n", queued);
+    assert(queued <= 4096 && "cmdQueue_ must be capped");
+    assert(queued > 0 && "the cap must not empty the queue");
+
+    // The survivors are the NEWEST: draining once must classify as seek
+    // (10 ms cadence), which only holds if consecutive stamps survived
+    // together rather than a random subset.
+    std::vector<float> buf(2048, 0.0f);
+    fs.fillAudioBuffer(buf.data(), 2048);
+    assert(fs.queuedCommandCount() == 0);
+    assert(fs.audioInSeek() && "kept commands must still be a contiguous run");
+    std::puts("OK command_queue_bounded");
+}
+
+// The step-cadence classifier divides an emuCycles delta by the LIVE CPU
+// clock, not the compile-time NTSC constant. Feed the same cycle delta under
+// an NTSC and a PAL clock and the derived gap must differ by the clock ratio
+// — measured through the seek-class boundary, which is the only thing the
+// gap is used for: 50.5 ms of NTSC cycles is out of seek range (> 50 ms), the
+// same cycle count re-measured against the slower PAL clock is 50.85 ms —
+// still out of range — so we straddle the boundary instead: a delta that is
+// 49.9 ms NTSC (in range, SEEK_20MS) is 50.25 ms PAL (out of range, click).
+void testStepCadenceUsesLiveCpuClock(const std::string& dir)
+{
+    // Cycle delta that sits just inside the 50 ms seek ceiling at the NTSC
+    // clock and just outside it at the PAL clock (1.0156 MHz).
+    const uint64_t delta =
+        static_cast<uint64_t>(49.9 * POM2_CPU_CLOCK_HZ / 1000.0);
+
+    auto inSeekAfterTwoSteps = [&](double clockHz) {
+        FloppySoundDevice fs;
+        assert(fs.loadSamples(dir));
+        fs.setSampleRate(44100);
+        fs.setCpuClock(clockHz);
+        std::vector<float> buf(256, 0.0f);
+        uint64_t cyc = delta * 4;
+        // Several steps at the same cadence so the classifier settles.
+        for (int i = 0; i < 4; ++i) { fs.step(i, cyc); cyc += delta; }
+        fs.fillAudioBuffer(buf.data(), 256);
+        return fs.audioInSeek();
+    };
+
+    assert(inSeekAfterTwoSteps(static_cast<double>(POM2_CPU_CLOCK_HZ)) &&
+           "49.9 ms at the NTSC clock is inside the 50 ms seek ceiling");
+    assert(!inSeekAfterTwoSteps(1015625.0) &&
+           "the same cycle delta is 50.25 ms at the PAL clock — out of range");
+    std::puts("OK step_cadence_uses_live_cpu_clock");
+}
+
 }  // namespace
 
 int main()
@@ -390,6 +458,8 @@ int main()
     testSameCycleStepsClampGracefully(dir);
     testReset         (dir);
     testDrainConsumesEachCommandOnce(dir);
+    testCommandQueueIsBounded(dir);
+    testStepCadenceUsesLiveCpuClock(dir);
 
     std::puts("OK floppy_sound_smoke");
     return 0;

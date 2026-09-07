@@ -17,6 +17,10 @@
 // AudioCoordinator slot-topology and immutable-snapshot contract.
 
 #include "AudioCoordinator.h"
+#include "AudioDevice.h"
+#include "CassetteDevice.h"
+#include "FloppySoundDevice.h"
+#include "SpeakerDevice.h"
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "EmulationController.h"
@@ -137,6 +141,121 @@ int main()
 
     command.slot = 6; // but slot 6 no longer matches the command's kind
     assert(!audio.applyMixerCard(command));
+
+    // ── restore() is THE audio restore path (bug hunt #4) ───────────────
+    //
+    // MainWindow's constructor used to hand-roll the same restore in two
+    // blocks plus a third inside the printer setup, and the copies had
+    // drifted: `printer_sound_pan` and the cassette mute were written by
+    // persist() and read back by nobody. The constructor now calls this,
+    // so the round trip has to be complete — every key persist() writes
+    // must come back through restore().
+    {
+        pom2::Settings cfg;
+        auto& speaker = controller.speaker();
+        auto& tape = controller.cassette();
+        auto& fs525 = controller.floppySound525();
+        auto& fs35 = controller.floppySound35();
+
+        speaker.setVolume(0.42f);
+        speaker.setMuted(true);
+        speaker.pan.store(-0.75f);
+        tape.setVolume(0.31f);
+        tape.setMuted(true);              // had NO settings key before
+        tape.setAutoRewind(true);
+        tape.pan.store(0.5f);
+        fs525.setVolume(0.22f);
+        fs525.setMuted(true);
+        fs525.pan.store(-0.25f);
+        fs35.setVolume(0.66f);
+        fs35.setMuted(false);
+        fs35.pan.store(0.9f);
+        printer.setVolume(0.77f);
+        printer.setMuted(true);
+        printer.pan.store(-0.6f);         // written, never restored before
+        controller.audio().setMasterVolume(0.8f);
+        controller.audio().setMasterMuted(true);
+        controller.audio().setMonoDownmix(true);
+
+        audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+
+        // Scramble every one of them, then restore.
+        speaker.setVolume(1.0f); speaker.setMuted(false); speaker.pan.store(0.0f);
+        tape.setVolume(1.0f); tape.setMuted(false); tape.setAutoRewind(false);
+        tape.pan.store(0.0f);
+        fs525.setVolume(1.0f); fs525.setMuted(false); fs525.pan.store(0.0f);
+        fs35.setVolume(1.0f); fs35.setMuted(true); fs35.pan.store(0.0f);
+        printer.setVolume(0.0f); printer.setMuted(false); printer.pan.store(0.0f);
+        controller.audio().setMasterVolume(1.0f);
+        controller.audio().setMasterMuted(false);
+        controller.audio().setMonoDownmix(false);
+
+        audio.restore(cfg, speaker, tape, fs525, fs35, printer);
+
+        assert(near(speaker.getVolume(), 0.42f) && speaker.isMuted());
+        assert(near(speaker.pan.load(), -0.75f));
+        assert(near(tape.getVolume(), 0.31f));
+        assert(tape.isMuted() && "cassette_muted must round-trip");
+        assert(tape.isAutoRewindEnabled());
+        assert(near(tape.pan.load(), 0.5f));
+        assert(near(fs525.getVolume(), 0.22f) && fs525.isMuted());
+        assert(near(fs525.pan.load(), -0.25f));
+        assert(near(fs35.getVolume(), 0.66f) && !fs35.isMuted());
+        assert(near(fs35.pan.load(), 0.9f));
+        assert(near(printer.volume(), 0.77f) && printer.muted());
+        assert(near(printer.pan.load(), -0.6f) &&
+               "printer_sound_pan must round-trip");
+        assert(near(controller.audio().getMasterVolume(), 0.8f));
+        assert(controller.audio().isMasterMuted());
+        assert(controller.audio().isMonoDownmix());
+    }
+
+    // ── Legacy type-wide keys stay the fallback ─────────────────────────
+    // A state.cfg written before the per-slot keys existed has only
+    // `mockingboard_volume`; the plug lambdas in MainWindow_SlotConfig now
+    // resolve through restoreCardSettings, so that old file must still win
+    // over the hard-coded default.
+    {
+        pom2::Settings legacyOnly;
+        legacyOnly.setFloat("mockingboard_volume", 0.11f);
+        legacyOnly.setBool("mockingboard_muted", true);
+        const auto mix = audio.restoreCardSettings(
+            legacyOnly, pom2::AudioCoordinator::CardKind::Mockingboard, 5, 0.5f);
+        assert(near(mix.volume, 0.11f) && mix.muted);
+        // No key at all → the caller's default.
+        pom2::Settings empty;
+        const auto fresh = audio.restoreCardSettings(
+            empty, pom2::AudioCoordinator::CardKind::EchoPlus, 3, 0.7f);
+        assert(near(fresh.volume, 0.7f) && !fresh.muted);
+    }
+
+    // The legacy type-wide table in persist() is sized from the enum, not
+    // hard-coded to 3 — the day the TMS scaffold grows an AudioSource it
+    // must not fall off the end of the `index < legacy.size()` guard.
+    static_assert(static_cast<std::size_t>(
+                      pom2::AudioCoordinator::CardKind::EchoPlusTms5220) <
+                      pom2::AudioCoordinator::kCardKindCount,
+                  "legacy key table must cover every CardKind");
+
+    // ── A stopped machine silences the host bus (bug hunt #4) ───────────
+    // The audio device keeps calling its sources ~200x/s whatever `mode`
+    // says, so a paused machine used to keep the AY generators and the
+    // floppy motor loop droning on their last register set. Step counts as
+    // NOT running on purpose: the worker leaves Step by storing Stopped
+    // itself, so a single-step burst never flips the flag — no click per
+    // instruction.
+    {
+        auto& dev = controller.audio();
+        controller.setMode(EmulationController::Mode::Running);
+        assert(!dev.isSuspended());
+        controller.setMode(EmulationController::Mode::Stopped);
+        assert(dev.isSuspended() && "a stopped machine must not drone");
+        controller.setMode(EmulationController::Mode::Step);
+        assert(dev.isSuspended() && "single-step stays silent");
+        controller.setMode(EmulationController::Mode::Running);
+        assert(!dev.isSuspended());
+        controller.setMode(EmulationController::Mode::Stopped);
+    }
 
     std::cout << "audio coordinator: OK\n";
     return 0;

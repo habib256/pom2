@@ -81,6 +81,26 @@ void AudioDevice::mixSources(float* output, int frameCount)
                 static_cast<size_t>(frameCount) * kChannels * sizeof(float));
 
     std::lock_guard<std::mutex> lock(sourcesMutex);
+
+    // Machine halted (see setSuspended): emit the silence the memset already
+    // wrote and DON'T call the sources at all. Calling them would let the
+    // free-running generators keep droning while the CPU that feeds them is
+    // parked, and would walk the speaker's cycle cursor past a frozen
+    // Memory::cycleCounter. The meters still bleed off on the usual 0.85
+    // envelope so the mixer's needles fall to zero instead of freezing at
+    // whatever the last live buffer measured.
+    if (suspended_.load(std::memory_order_relaxed)) {
+        for (AudioSource* src : sources) {
+            const float p = src->lastBufferPeak.load(std::memory_order_relaxed);
+            src->lastBufferPeak.store(p * 0.85f, std::memory_order_relaxed);
+        }
+        masterPeakL_.store(masterPeakL_.load(std::memory_order_relaxed) * 0.85f,
+                           std::memory_order_relaxed);
+        masterPeakR_.store(masterPeakR_.load(std::memory_order_relaxed) * 0.85f,
+                           std::memory_order_relaxed);
+        return;
+    }
+
     if (static_cast<int>(tmpBuf.size()) < frameCount) {
         tmpBuf.resize(static_cast<size_t>(frameCount));
         tmpBufR.resize(static_cast<size_t>(frameCount));
