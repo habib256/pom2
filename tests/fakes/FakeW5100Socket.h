@@ -42,6 +42,13 @@ public:
     W5100ConnectResult connect(uint32_t address, uint16_t port) override
     {
         ++connectCount;
+        // …and on the FACTORY too, which outlives us. `lastSocket` is a bare
+        // observer into a unique_ptr the device owns, so any test that asks
+        // "was connect() attempted?" *after* the device closed the socket —
+        // which is exactly what the loopback-refusal path does — was reading
+        // freed memory. ASan caught it nightly; a tally that survives the
+        // socket cannot be read too late.
+        if (factoryConnectTally) ++*factoryConnectTally;
         lastConnectAddress = address;
         lastConnectPort = port;
         return connectResult;
@@ -103,6 +110,7 @@ public:
     uint16_t lastBindPort = 0;
     int bindCount = 0;
     int connectCount = 0;
+    int* factoryConnectTally = nullptr;
     int pollConnectCount = 0;
     int receiveCount = 0;
     int sendCount = 0;
@@ -118,6 +126,7 @@ public:
         auto socket = std::make_unique<FakeW5100HostSocket>();
         socket->connectResult = nextConnectResult;
         socket->pollConnectResult = nextPollConnectResult;
+        socket->factoryConnectTally = &connectAttempts;
         lastSocket = socket.get();
         return socket;
     }
@@ -128,7 +137,12 @@ public:
     W5100ConnectResult nextConnectResult = W5100ConnectResult::Connected;
     W5100ConnectResult nextPollConnectResult = W5100ConnectResult::Connected;
     uint32_t resolveResult = 0;
+    /// DANGLES once the device closes the socket it points at — the device
+    /// owns those. Read it only while the socket is still open; for anything
+    /// asked afterwards use `connectAttempts`, which lives here.
     FakeW5100HostSocket* lastSocket = nullptr;
+    /// Every connect() any socket this factory made has attempted.
+    int connectAttempts = 0;
     W5100SocketKind lastKind = W5100SocketKind::Tcp;
     std::string lastHostname;
     int lastResolveWaitMs = 0;

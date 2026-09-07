@@ -263,7 +263,10 @@ void testLoopbackDestinationIsRefused()
     openTcpSocket(device, 0);
     connectTo(device, 0, 0x7F000001u, 6503);      // 127.0.0.1, the AI server
 
-    assert(fake->lastSocket->connectCount == 0);  // never even attempted
+    // NOT fake->lastSocket->connectCount: the refusal path closes the socket,
+    // so that pointer dangles by the time we get here (ASan caught it on the
+    // nightly). The factory's tally outlives every socket it made.
+    assert(fake->connectAttempts == 0);           // never even attempted
     assert(device.socketInfo(0).status == kW5100SnSrClosed);
     assert(!device.socketInfo(0).hasHostSocket);
     assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
