@@ -5,6 +5,243 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-07 — Bug hunt #3: the guest inside the perimeter, the snapshot that hangs, and six MAME line ranges we had drifted from
+
+Seven Opus agents on new angles: a regression review of round 2's own fixes, a
+concurrency inventory, every "verbatim port" claim diffed against the upstream
+file it names, the whole disk corpus booted headless, ~45 000 mutants over ten
+parser families, a measured performance bisect, and a defensive security
+review. Seven fix commits (`0d9a2d2` → `34cc6a8`), one per file-owning lot;
+these docs are the eighth.
+
+**The round-2 merge turned CI red, and the class matters more than the fix.**
+`CrtEffectStack.cpp` called `glDeleteProgram` directly. Only Apple's `gl3.h`
+declares it; on Linux and Windows the desktop GL entry points come through
+this project's own loader, which is exactly why `OpenGLShader.h` exports
+`deleteShaderProgram`. macOS built clean and Linux, Windows **and** the
+coverage job all failed (`4c3b97d`). This is the second time in three weeks
+that "it builds here" turned out to be a statement about libc++ and Apple's
+headers rather than about the code — the 2026-08-22 note was the transitive
+includes; this is GL names outside the loader. The regression reviewer swept
+the whole round-2 diff for more of the class and found none, which is
+reassuring about that diff and says nothing about the next one. → `TODO.md`
+G6.
+
+**The security model was wrong in one word: "local".** No POM2 listener is
+reachable from the LAN — every one binds `INADDR_LOOPBACK` and no setting
+changes that — so the AI control server's licence to treat a loopback peer
+with no `Origin` as native looked sound. It was not, because **the emulated
+machine is a local process**. The Uthernet II's sockets are *host* sockets, so
+a guest program could `CONNECT` to `127.0.0.1:6503`, or send a datagram there,
+and drive `/mem`, `/cpu`, `/keyboard`, `/reset`, `/snapshot/save` and `/disk`
+— including mounting any file under the cwd and reading it back out through
+the emulated Disk II. libslirp offered the same escape at `10.0.2.2`, since
+`disable_host_loopback` was off. The two had to close together or the escape
+just moves cards, so they share one opt-in: `checkDestination` refuses 127/8,
+0/8, 169.254/16, 224/4 and 240/4 in the chip's own language (`SOCK_CLOSED` +
+`TIMEOUT`, the failure every driver already handles), a guest may no longer
+take a privileged or POM2-owned local port, its UDP socket lost
+`SO_REUSEADDR` (on BSD that let it siphon a host program's datagrams), and
+virtual-DNS names — raw guest bytes that reached `getaddrinfo()` and a log
+line at any rate — are RFC 1123-validated and token-bucket limited. Settings:
+`uthernet_allow_loopback`, `uthernet_slirp_restricted`.
+
+Two AI-server holes underneath. **Configuring a token disabled the
+DNS-rebinding fence** — the `Host` check ran only on the token-less branch —
+while every response carried `Access-Control-Allow-Origin: *` and the
+preflight advertised `X-POM2-Token`, so a page could grind a human-typed
+secret cross-origin and read the answer. `Host` is unconditional now, the
+compare is constant-time, no CORS header is emitted anywhere, five failures in
+five seconds arm a 429, and the panel grew a **Generate** button (32 chars,
+~160 bits) with a length warning. And **`--ai-control` threw the configured
+token away**: it called `setAuthToken("")` unconditionally, so a flag that
+reads like "turn the feature on" opened everything to every local process. It
+honours `ai_control_token` (or `$POM2_AI_CONTROL_TOKEN`) now, runs token-less
+behind the fence when neither is set, and says which in the log.
+
+**A snapshot could hang the machine with the lock held.** The one defect
+45 000 mutants produced: an IWM blob whose `lastSync_` and `now_` come from
+different timelines makes `sync()`'s bit-cell walker close a ~10¹¹-tick gap
+**fourteen ticks at a time** — minutes of spin, ~1 GB of RSS — and it runs on
+the CPU worker *inside* `loadSnapshotState`, under `stateMutex`, reachable
+from a `.pom2snap` through Memory's //c+ IWM section, the Liron card and the
+//c external port. Machine and window frozen, cancel button included. Two
+guards, because either alone is a single point of failure: the blob is
+rejected (mode words, tick overflow, a gap larger than one revolution while a
+walking mode is active) and the walker is bounded at four revolutions per call
+with a one-shot warning, so the *honest* path — an idle drive re-enabled after
+minutes — cannot reach it either. The fuzzer had been unable to see any of
+this: its golden blob came from a bare `Memory` with no cards, so every
+section added since was length 0, and it drove only the transactional door,
+which rejects SLOT sections outright. It captures from a populated machine
+now.
+
+**A disk that stops answering is a hang, not a blank track.** A loaded disk on
+a quarter-track with no flux returned `kFluxNever`, PULSE never fired, and
+`LDA $C08C,X / BPL` span for ever — the empty-drive hang of round 1, one step
+further in, reachable from a WOZ whose TMAP marks the track `$FF`, from a
+seek past track 34, and from any nibble scanner. The read amplifier answers
+noise now, read mode only, because a write must not be fed invented
+transitions. Its sibling: past MAME's 16 µs `m_amplifier_freakout_time` POM2
+was deterministic, so weak-bit protections passed or failed identically for
+ever; one hash-drawn blip per zone per revolution makes them a coin toss
+again, while ordinary GCR tracks — 24 LSS cycles at the standard 4 µs cell,
+nowhere near the threshold — stay byte-repeatable.
+
+**Six places where "verbatim" had drifted, each with its upstream line.**
+Diffing the claims rather than trusting them is what this lot was, and the
+evidence is in the code:
+
+* **M68705 mouse MCU.** A 68705 latches its Mask Option Register at `$0784` on
+  start (`m68705.cpp:465-476` + `:765-768`). The Apple dump's MOR is `$40`, so
+  MAME takes TIMER_MOR at divisor 1 — a TCR write cannot reprogram it and
+  `tcr_r` returns PSC set. POM2 hard-coded TIMER_PGM at ÷128 behind a comment
+  claiming the firmware programmed TCR; it only ever touches bits 6 and 7.
+  That is the whole timer interrupt rate, two orders of magnitude out, and
+  nothing pinned it. `m68705_decode_smoke` now measures the period between two
+  `$07F8` vectors (256 vs 32768 MCU cycles by MOR).
+* **SCC `update_extint` had lost its `else`** (`z80scc.cpp:1189-1197`,
+  "update latched value to match current status"). Without it the Ext/Status
+  latch can never release once a second source moves, and the Workstation
+  ROM's ISR at `$EE13` never leaves its loop. A pre-existing assertion had
+  pinned the stuck latch as correct — a test written against a bug locks it
+  in.
+* **Empty slots answered `$FF`** where every upstream handler ends in
+  `read_floatingbus()`. `Memory` installs the source; a standalone `SlotBus`
+  keeps `$FF`, which several harnesses depend on.
+* **`$C800` was last-one-wins and latched by empty slots.** Upstream claims
+  only while `m_cnxx_slot == CNXX_UNCLAIMED` and releases at `$CFFF`, so a
+  scan across the slot ROMs handed the expansion window to whichever slot the
+  scan ended on.
+* **6522 PB7** (T1's ACR.7 square wave, ignoring DDRB) and **port-A input
+  latching** on a CA1 edge were unmodelled *and* absent from the not-modelled
+  list. Both landed; port-**B** latching did not, and now says why (it needs a
+  CB1 this model does not have).
+* **RDIOUDIS answered on a plain //e** and returned a clean `$00`/`$80`. It is
+  `c000_iic_r` only — a //e's `c000_r` has no `$7E` case — and it carries the
+  floating bus in bits 0-6, as `$C060` does through its `$C068` mirror.
+* **MC6821**: `port_b_r`'s CB1/CB2 restore rule, the B-side strobe ungated
+  from `c2_output`, and `port_a_r`'s strobe guarded by `if (out_ca2)` since
+  `set_out_ca2` has no change guard of its own.
+
+The **SSC** was the same exercise against `a2ssc.cpp`: echo mode transmitted
+with DTR de-asserted (upstream gates on it, and POM2's own TDR path already
+did), the SW2-6 interrupt switch had been read as DSW2 bit 5 — which is Data
+Bits — so two settings moved together, DSW1 decoded as 2400 while the card
+advertised 19200, and 7-bit receive and parity errors were not modelled. The
+**CS8900A**'s round-2 ISQ synthesis was right in shape and wrong in four
+details, each of which disarmed it: RxMISS is BufEvent bit **10** (bit 9 is
+TxUnderrun), BufEvent and RxMISS had no read-and-clear, the ISQ latch and a
+direct `RxEvent` read were two consumers of one queue so the ISQ RX arm went
+dead for the session, and TxOK sat inside the `if (backend_)` test rather than
+following the transmitter. The **W5100** accepts both `Sn_TX` pointer
+conventions: round 2 stopped masking before differencing, which is right for a
+driver that lets `Sn_TX_WR` run free and wrong for one that masks it into the
+ring — that one wrapped to `wr - rd = 0xF864`, clamped to the ring, and sent
+2 KB of which 1948 bytes were stale.
+
+**Round 2's own regressions, which is why the review lot exists.** A bad or
+missing print-history index left the file counter at 1 while `p000001.png…`
+sat on disk, so the next print overwrote the oldest printout and the
+*following* `open()` swept the rest — the deletion one print behind the
+corruption, which is why it was invisible; the counters resume past the
+highest page on disk on both paths. `return 77` had been applied below the
+fixture-existence check in three tests, so a genuine ROM, EPROM or mount
+failure reported **Skipped** — the same lie the sweep was written to end. The
+ProDOS host folder filtered DOS device names on the way *out* only, so a host
+`aux.txt` was published as `AUX`, edited by the guest, and refused on
+write-back with `ok == true`: the name is steered on the way **in** now
+(`AUXX`), tree (`$3`) files decode so a file grown past 128 KB in the new free
+space is not silently dropped, and a write-back that cannot place a **legal**
+ProDOS file fails and names it — while a crafted entry (`../PWNED`, a NUL
+name) is still skipped quietly, so a hostile image cannot jam every future
+save. The W5100's `LISTEN` refusal made the canonical server loop spin at one
+unbuffered log line and one socket/close per lap, on the CPU worker under
+`stateMutex`; it is said once per socket. `tempSiblingPath` debris
+(`<target>.<pid>-<n>.pom2tmp`) was never swept, not in `.gitignore`, not in
+`denyglob`, and inside a served ProDOS folder it was scanned into the next
+volume — swept at startup and on mount, and ignored in both places. The Sony
+and No-Slot Clock snapshot sections rejected on strict version *equality*, so
+the next bump would have made every v0.9 `.pom2snap` unloadable; they read
+tolerantly like the cards do. A single **Step** (2-7 cycles) dropped the
+paused-machine soft-switch override, because the gate was the cycle counter
+rather than the published video-frame index — and 2-7 cycles publish nothing,
+so the frozen frame is just as stale. TNFS grew a 60 s deadline (down from
+180 s of unpainted window, before GLFW exists), a 512 MB LRU budget pruned
+after every fetch — hashed cache keys orphan every renamed image for ever —
+and `SIGINT` wired to the pre-window fetch's abort flag.
+
+**Concurrency: the lock graph is acyclic and the leaks were at the edges.**
+Sixteen threads inventoried. `SpOverSlipLink`'s three status readers took no
+lock while `stop()` destroyed the transport — a use-after-free from the CPU
+worker — and could not simply take `callMtx_`, which is held for a whole
+SmartPort round trip; a `transportMtx_` ordered **after** `callMtx_` guards
+the pointer alone. The AI server sent its "no Disk II card" 503 with
+`stateMutex` held (4 s `SO_SNDTIMEO`: a client that does not read froze
+machine and window from an error path), never invalidated the rewind ring on
+`/disk` or `/eject` the way all nineteen host-side mount paths do, and
+re-checked the card for **null** rather than identity across the unlocked
+phase. Four display fields were read outside both locks while `/screen`
+re-rendered on its own thread, and `setHiResMode` cleared the signal buffers
+unlocked — both under `demodMutex` now. The detached-process registry and the
+`Logger` had function-local statics with non-trivial destructors that a
+surviving thread could outlive; both are immortal. And the print-history
+writer respawn trusted a `writerAlive_` cleared during unwinding, so a page
+pushed in that window landed on a consumer-less queue — the check moved under
+the lock that pushes, and a dying writer disowns its queue instead.
+
+**A correctness fix cost 2 % of the emulator, for a round.** The interrupt
+split of round 2 gave `M6502::step()` a second inlined `advanceCycles`, a
+second exit and a per-instruction `debugHook_` load — in the hottest function
+there is. Measured **+2.46 %** on every workload: 32 of 33 paired runs, p =
+0.00003, and two variants without the hunk land at baseline with identical
+hashes. The shipped shape keeps the fix and the speed by testing
+`interruptCycles` **first**, so `debugHook_` is never loaded on the common
+path, and falling into one epilogue. RAM and framebuffer hashes byte-identical
+(`docs/PERFORMANCE.md` § 10, which also records that `build/pom2_bench` was
+older than its sources for part of this campaign — a stale bench compares the
+wrong tree and the answer looks like noise).
+
+**The harness told us about hardware that was really about the harness.**
+`pom2_headless` never loaded the 13-sector PROMs the way `SlotCardFactory`
+does, so DOS 3.1/3.2 media could not boot there while the warning blamed
+`roms/disk2_13.rom` for being absent — it ships. It also forced `PC = $C600`
+over an Autostart ROM that neither needs nor wants it. `madef_phase_probe`
+reported *"MAD EFFECT never runs"* because it plugged a Mockingboard without
+`setCpu()`: a 6522 that syncs lazily off the CPU's cycle counter early-outs of
+every sync, T1 never fires, the demo waits for ever — the probe was measuring
+its own wiring, and `TODO.md` had been quoting its number. `disk_boot_smoke`'s
+latch moved to the PROM's `JMP $0801` handover, stepping one instruction at a
+time (the round-2 replacement still fired on the PROM's own `JSR $FF58` slot
+detect). Probes write under `$TMPDIR/pom2_probes` (`tests/ProbeOutDir.h`)
+instead of littering the repo root with 53 PPMs, and **`make probes`** builds
+all 24 `EXCLUDE_FROM_ALL` tools — because "not a ctest test" had drifted into
+"not buildable in practice", and a corpus sweep concluded *"no built binary
+can boot an HDV"* while `hdv_boot_dump` sat in the tree compiling fine.
+
+**Declined, with the reason recorded in place** (→ `TODO.md`, *Open, and known
+to be open*): the 489 ns LSS cell — MAME's 2 043 600 Hz `wozfdc` clock makes a
+4 µs cell 8.17 cycles against POM2's flat 8, but `lssCyclesPerCell()` is an
+integer shared by the whole 5.25" timeline, so it is a re-basing, not a
+constant swap; SSC BREAK and RTS line conditions, which a TCP stream cannot
+carry; a FujiNet SP authentication handshake, because the wire is fujinet-pc's
+and the first connector *is* the device; HDV mounting inside `pom2_headless`,
+which needs the block/SmartPort sources added to that target (`hdv_boot_dump`
+covers it); and 6522 port-B input latching, which needs a CB1 this model does
+not have. The DOS 3.1 `]` anomaly — both masters loop and sweep to half-track
+66 while every 3.2 image boots — stays open for want of an oracle.
+
+**Two process pitfalls, both cheap and both paid for.** Reading a byte "at
+`$0784`" out of a ROM dump requires knowing where the dump's origin is: the
+M68705 image starts at `$0080`, an `xxd` read at the wrong offset returned
+`$00`, and the MOR question nearly closed the wrong way on it. `od -A x -j
+0x784` on the file — the offset the loader itself indexes — says `$40`. Verify
+a dump byte at the offset the *code* uses, not at the address the datasheet
+prints. And: an agent's final report arrives as an **addendum** to what it
+already wrote, not as a replacement — several findings in this round were
+sharpened or downgraded in that last message, and reading only the running
+notes would have shipped the earlier version of three of them.
+
 ## 2026-09-07 — Bug hunt #2: the state a rewind dropped, the files a commit lost, and the tests that said nothing
 
 A second read-only sweep with new angles — regression review of the first

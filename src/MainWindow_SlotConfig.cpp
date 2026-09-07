@@ -326,7 +326,13 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                 "rebuild for raw-frame modes and the Uthernet I.");
             return std::make_unique<pom2::NullNetworkBackend>();
         }
-        auto slirp = pom2::makeSlirpBackend("pom2");
+        // Same fence for the NAT path (S2): libslirp's virtual router at
+        // 10.0.2.2 reached the host loopback by default.
+        pom2::SlirpOptions slirpOpts;
+        slirpOpts.allowHostLoopback =
+            settings->getBool("uthernet_allow_loopback", false);
+        slirpOpts.restricted = settings->getBool("uthernet_slirp_restricted", false);
+        auto slirp = pom2::makeSlirpBackend("pom2", slirpOpts);
         if (!slirp) {
             pom2::log().warn(who, "libslirp failed to start — falling back "
                                   "to no host transport");
@@ -362,6 +368,11 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // PTIMER == 0.
         card->chip().setVirtualDnsEnabled(
             settings->getBool("uthernet2_virtual_dns", true));
+        // Guest-to-host SSRF fence (bug hunt #3 S1): the W5100's sockets are
+        // HOST sockets, so a guest could CONNECT to 127.0.0.1:6503 and drive the
+        // AI control server. Loopback is refused unless the user opts in here.
+        card->chip().setAllowLoopback(
+            settings->getBool("uthernet_allow_loopback", false));
         st.memory().slotBus().plug(s, std::move(card));
     };
 

@@ -29,7 +29,8 @@
 // frames for mid-scanline switch bursts, dumping the event table (ln, hpos,
 // byteCol) and PPM frames for comparison against the art and the sources.
 //
-// Usage: oldskool_raster_probe [nmos|cmos] [brunAtSec] [maxRunSec]
+// Usage: oldskool_raster_probe [nmos|cmos] [brunAtSec] [maxRunSec] [outDir]
+// PPMs land in $POM2_PROBE_OUT or <TMPDIR>/pom2_probes — see ProbeOutDir.h.
 
 #include "Apple2Display.h"
 #include "CpuClock.h"
@@ -37,6 +38,8 @@
 #include "Memory.h"
 #include "DiskIICard.h"
 #include "Mockingboard.h"
+
+#include "ProbeOutDir.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -99,6 +102,8 @@ int main(int argc, char** argv)
     const std::string mode = (argc > 1) ? argv[1] : "nmos";
     const int brunAt   = (argc > 2) ? std::atoi(argv[2]) : 14;
     const int maxRun   = (argc > 3) ? std::atoi(argv[3]) : 90;
+    const std::string outDir =
+        pom2test::probeOutDir(argc > 4 ? argv[4] : "");
 
     const std::string rom  = firstExisting({"roms/apple2e.rom"});
     const std::string boot = firstExisting({"roms/disk2.rom"});
@@ -174,10 +179,11 @@ int main(int argc, char** argv)
             std::printf("t=%5.1fs frame %5d: %3zu events, %3d midline PC=$%04X\n",
                         brunAt + f / 50.0, f, evs.size(), midline,
                         cpu.getProgramCounter());
-            char path[64];
-            std::snprintf(path, sizeof path, "oldskool_%s_scan_f%05d.ppm",
+            char leaf[64];
+            std::snprintf(leaf, sizeof leaf, "/oldskool_%s_scan_f%05d.ppm",
                           mode.c_str(), f);
-            writePpm(path, disp.pixels(), disp.width(), disp.height());
+            const std::string path = outDir + leaf;
+            writePpm(path.c_str(), disp.pixels(), disp.width(), disp.height());
         }
         if (midline > 30) {
             std::printf("== raster frame %d (t=%.1fs): %zu events, %d midline\n",
@@ -192,11 +198,12 @@ int main(int argc, char** argv)
                             pos.byteCol, kindName(e.kind), e.value ? 1 : 0);
                 ++shown;
             }
-            char path[64];
-            std::snprintf(path, sizeof path, "oldskool_%s_raster_f%05d.ppm",
+            char leaf[64];
+            std::snprintf(leaf, sizeof leaf, "/oldskool_%s_raster_f%05d.ppm",
                           mode.c_str(), f);
-            writePpm(path, disp.pixels(), disp.width(), disp.height());
-            std::printf("  wrote %s\n", path);
+            const std::string path = outDir + leaf;
+            writePpm(path.c_str(), disp.pixels(), disp.width(), disp.height());
+            std::printf("  wrote %s\n", path.c_str());
             ++dumps;
         }
     }

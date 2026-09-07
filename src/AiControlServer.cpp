@@ -45,6 +45,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string_view>
 #if POM2_HAS_SOCKETS
@@ -432,6 +433,55 @@ std::string AiControlServer::Request::headerValue(const std::string& name) const
     return {};
 }
 
+// ─── Auth-failure backoff ─────────────────────────────────────────────────
+
+bool AiControlServer::authBackoffArmed()
+{
+    std::lock_guard<std::mutex> lk(authMtx_);
+    if (authFailures_ < kAuthFailureLimit) return false;
+    const auto now = std::chrono::steady_clock::now();
+    const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - authWindowStart_).count();
+    if (age >= kAuthWindowMs) {          // window expired — one free window
+        authFailures_ = 0;
+        return false;
+    }
+    return true;
+}
+
+void AiControlServer::noteAuthFailure()
+{
+    std::lock_guard<std::mutex> lk(authMtx_);
+    const auto now = std::chrono::steady_clock::now();
+    const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - authWindowStart_).count();
+    if (authFailures_ == 0 || age >= kAuthWindowMs) {
+        authWindowStart_ = now;
+        authFailures_    = 0;
+    }
+    ++authFailures_;
+}
+
+void AiControlServer::noteAuthSuccess()
+{
+    std::lock_guard<std::mutex> lk(authMtx_);
+    authFailures_ = 0;
+}
+
+std::string AiControlServer::generateToken()
+{
+    // Base32-ish alphabet: no 0/O/1/l, so a token read off a screen and typed
+    // into a shell survives the trip. 32 chars × 5 bits ≈ 160 bits.
+    static const char kAlphabet[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    constexpr std::size_t kLen = 32;
+    std::string out;
+    out.reserve(kLen);
+    std::random_device rd;               // platform CSPRNG (arc4random / RtlGenRandom)
+    for (std::size_t i = 0; i < kLen; ++i)
+        out.push_back(kAlphabet[rd() % (sizeof(kAlphabet) - 1)]);
+    return out;
+}
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────
 
 AiControlServer::~AiControlServer()
@@ -446,8 +496,14 @@ void AiControlServer::attach(EmulationController* ctrl,
 {
     ctrl_    = ctrl;
     display_ = display;
-    disk6_   = disk6;
-    hdv5_    = hdv5;
+    // Release stores: the card objects were fully constructed before this
+    // call, and the server thread's acquire load must not be allowed to see
+    // the pointer ahead of the object it points at. Plain assignment made
+    // this a data race with the worker even when the caller honoured the
+    // stateMutex contract above — the worker reads `disk6_` outside the lock
+    // in the null-check that precedes it.
+    disk6_.store(disk6, std::memory_order_release);
+    hdv5_ .store(hdv5,  std::memory_order_release);
 }
 
 void AiControlServer::detach()
@@ -462,8 +518,8 @@ void AiControlServer::detach()
     // MainWindow / EmulationController, not re-created) — only the
     // slot cards get torn down and rebuilt, so only their pointers
     // need clearing.
-    disk6_   = nullptr;
-    hdv5_    = nullptr;
+    disk6_.store(nullptr, std::memory_order_release);
+    hdv5_ .store(nullptr, std::memory_order_release);
 }
 
 bool AiControlServer::start(uint16_t port)
@@ -473,7 +529,12 @@ bool AiControlServer::start(uint16_t port)
     pom2::log().info("AICtrl", "HTTP control listener disabled in WASM build");
     return false;
 #else
-    stop();
+    // One lock for the whole start/stop family: two threads racing here used
+    // to be able to join `worker_` twice (std::terminate) or close a listener
+    // fd the other had just published. `stopLocked()` is the body of stop()
+    // minus the lock, so the re-entry below is not a recursive acquisition.
+    std::lock_guard<std::mutex> life(lifecycleMtx_);
+    stopLocked();
     if (!ctrl_) {
         pom2::log().warn("AICtrl", "start() called before attach() — refusing");
         return false;
@@ -521,6 +582,12 @@ bool AiControlServer::start(uint16_t port)
 }
 
 void AiControlServer::stop()
+{
+    std::lock_guard<std::mutex> life(lifecycleMtx_);
+    stopLocked();
+}
+
+void AiControlServer::stopLocked()
 {
 #if !POM2_HAS_SOCKETS
     running_ = false;
@@ -697,7 +764,9 @@ void AiControlServer::sendResponse(socket_t fd,
         case 400: reason = "Bad Request"; break;
         case 401: reason = "Unauthorized"; break;
         case 404: reason = "Not Found"; break;
+        case 403: reason = "Forbidden"; break;
         case 405: reason = "Method Not Allowed"; break;
+        case 429: reason = "Too Many Requests"; break;
         case 500: reason = "Internal Server Error"; break;
         case 503: reason = "Service Unavailable"; break;
         default:  reason = "Status"; break;
@@ -709,7 +778,12 @@ void AiControlServer::sendResponse(socket_t fd,
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: close\r\n"
-        "Access-Control-Allow-Origin: *\r\n"
+        // Deliberately NO Access-Control-* header. A native client (curl, an
+        // MCP bridge, a CI step) needs none; the wildcard that used to sit
+        // here let ANY web page read every response, which is what turned a
+        // token guess into a cross-origin oracle. If a browser-hosted agent
+        // ever needs this back it must come as a CONFIGURED origin, echoed
+        // exactly, never `*`.
         "\r\n",
         status, reason, contentType.c_str(), body.size());
     if (n <= 0) return;
@@ -794,10 +868,26 @@ bool AiControlServer::checkAuth(const Request& req) const
     // Host is the discriminator: a rebound page sends the attacker's hostname,
     // a native client sends the loopback address it dialled (or nothing at
     // all, on HTTP/1.0).
+    // The Host test is UNCONDITIONAL — it used to apply only to the
+    // token-less branch, so configuring a token actively WEAKENED the
+    // rebinding defence: a page that guessed the secret got everything.
+    // A token is a secret, not an origin proof; both gates stand together.
+    if (!hostHeaderIsLoopback(req)) return false;
     if (configured.empty())
-        return req.headerValue("Origin").empty() && hostHeaderIsLoopback(req);
-    return req.headerValue("X-POM2-Token") == configured;
+        return req.headerValue("Origin").empty();
+    // Constant-time: `operator==` bails on the first differing byte, which
+    // over a few thousand requests leaks the prefix. The length is compared
+    // first (it is not a secret — the token's ENTROPY is) and the byte loop
+    // then runs over the whole configured token either way.
+    const std::string presented = req.headerValue("X-POM2-Token");
+    if (presented.size() != configured.size()) return false;
+    unsigned diff = 0;
+    for (std::size_t i = 0; i < configured.size(); ++i)
+        diff |= static_cast<unsigned char>(presented[i]) ^
+                static_cast<unsigned char>(configured[i]);
+    return diff == 0;
 }
+
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────
 
@@ -808,24 +898,34 @@ void AiControlServer::handleClient(socket_t fd)
         sendJsonError(fd, 400, "malformed request");
         return;
     }
-    // CORS preflight — bypasses auth so a browser-hosted agent can probe
-    // the API. Auth still gates the real request that follows.
+    // OPTIONS still answers — a client probing the method set gets a clean
+    // 204 — but it no longer advertises CORS. The old preflight said "any
+    // origin may send X-POM2-Token", which is exactly the permission a page
+    // needs to grind the secret; a native client never sends OPTIONS at all.
     if (req.method == "OPTIONS") {
         char head[256];
         const int n = std::snprintf(head, sizeof(head),
             "HTTP/1.1 204 No Content\r\n"
-            "Access-Control-Allow-Origin: *\r\n"
-            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-            "Access-Control-Allow-Headers: Content-Type, X-POM2-Token\r\n"
+            "Allow: GET, POST, OPTIONS\r\n"
             "Content-Length: 0\r\n"
             "Connection: close\r\n\r\n");
         if (n > 0) sendAll(fd, head, static_cast<size_t>(n));
         return;
     }
+    // The brake goes BEFORE the compare so a caller in the penalty box
+    // cannot even learn whether its guess was right.
+    if (authBackoffArmed()) {
+        sendResponse(fd, 429, "application/json",
+                     "{\"ok\":false,\"error\":\"too many failed "
+                     "authentications — retry in a few seconds\"}");
+        return;
+    }
     if (!checkAuth(req)) {
+        noteAuthFailure();
         sendJsonError(fd, 401, "missing or invalid X-POM2-Token");
         return;
     }
+    noteAuthSuccess();
 
     if (req.path == "/status")               return handleStatus(fd, req);
     if (req.path == "/reset")                return handleReset(fd, req);
@@ -882,16 +982,19 @@ void AiControlServer::handleStatus(socket_t fd, const Request& /*req*/)
         sp = cpu.getStackPointer();
         cycles = st.memory().getCycleCounter();
         cpuMode = cpuModeName(cpu.getCpuMode());
-        if (disk6_) {
+        // ONE load, then work with the local: re-reading the member per
+        // field could straddle a detach() and mix two cards into one JSON.
+        DiskIICard* const d6 = disk6_.load(std::memory_order_acquire);
+        if (d6) {
             std::ostringstream oss;
             oss << "[";
             for (int d = 0; d < DiskIICard::kDriveCount; ++d) {
                 if (d) oss << ",";
-                oss << "{\"slot\":" << disk6_->getSlot()
+                oss << "{\"slot\":" << d6->getSlot()
                     << ",\"drive\":" << d
-                    << ",\"path\":\"" << jsonEscape(disk6_->getDiskPath(d)) << "\""
-                    << ",\"loaded\":" << (disk6_->isDiskLoaded(d) ? "true" : "false")
-                    << ",\"track\":" << disk6_->getCurrentTrack(d)
+                    << ",\"path\":\"" << jsonEscape(d6->getDiskPath(d)) << "\""
+                    << ",\"loaded\":" << (d6->isDiskLoaded(d) ? "true" : "false")
+                    << ",\"track\":" << d6->getCurrentTrack(d)
                     << "}";
             }
             oss << "]";
@@ -1179,14 +1282,25 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
     // accepted "slot 6" and then operated on the slot-5 card — the wrong
     // medium touched, 200 returned. Validate against — and report — the
     // bound card's REAL slot, read under the lock like the pointer itself.
+    //
+    // The 503 is composed OUTSIDE the lock. sendJsonError() writes to a
+    // socket with a 4 s SO_SNDTIMEO, so a client that stopped reading froze
+    // the CPU worker and the whole window for those four seconds — the exact
+    // "never block under stateMutex" rule CLAUDE.md states for file I/O, and
+    // a socket peer is less trustworthy than a disk. Every sibling handler
+    // already latches a flag and answers after the scope; this one didn't.
     bool writeBack = false;
     int  boundSlot = -1;
+    DiskIICard* card = nullptr;
     {
         std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
-        if (!disk6_) { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
-        writeBack = disk6_->isWriteBackEnabled();
-        boundSlot = disk6_->getSlot();
+        card = disk6_.load(std::memory_order_acquire);
+        if (card) {
+            writeBack = card->isWriteBackEnabled();
+            boundSlot = card->getSlot();
+        }
     }
+    if (!card) { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
     if (slot != -1 && slot != boundSlot) {
         sendJsonError(fd, 400, "Disk II endpoints drive the primary card, "
                       "which is in slot " + std::to_string(boundSlot));
@@ -1200,19 +1314,44 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         return;
     }
 
-    bool noCard = false;
-    bool ok     = false;
+    bool noCard  = false;
+    bool changed = false;
+    bool ok      = false;
     {
         std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
-        if (!disk6_) {
+        // IDENTITY, not just null. A slot rebuild between the two locked
+        // scopes (profile switch, Slot Config apply) tears the old card down
+        // and plugs a new one; the null-check alone then let the mount land
+        // in a DIFFERENT card — or in the same slot number carrying another
+        // medium — while the 200 named the slot we measured in phase 1.
+        DiskIICard* const now = disk6_.load(std::memory_order_acquire);
+        if (!now) {
             noCard = true;
+        } else if (now != card || now->getSlot() != boundSlot) {
+            changed = true;
         } else {
-            ok = disk6_->installDisk(static_cast<int>(drive), std::move(prepared));
-            if (!ok) errMsg = disk6_->getLastError(static_cast<int>(drive));
+            ok = now->installDisk(static_cast<int>(drive), std::move(prepared));
+            if (!ok) errMsg = now->getLastError(static_cast<int>(drive));
         }
     }
-    if (noCard) { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
+    if (noCard)  { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
+    if (changed) {
+        sendJsonError(fd, 503, "the Disk II card was replaced while this "
+                               "request was reading the image — retry");
+        return;
+    }
     if (!ok)    { sendJsonError(fd, 400, "insert failed: " + errMsg); return; }
+    // The bay holds different media now: every rewind frame in the ring was
+    // captured against the PREVIOUS disk, and scrubbing back would restore
+    // that RAM (DOS buffers, open-file state) on top of the new one. The 19
+    // host-side mount paths in StorageCoordinator all call
+    // invalidateRewindForMediaChange for exactly this; the AI server's two
+    // did not. Cleared AFTER the critical section — lockState() is
+    // non-recursive.
+    {
+        auto st = ctrl_->lockState();
+        ctrl_->rewind().clear();
+    }
     sendJsonOk(fd, "{\"slot\":" + std::to_string(boundSlot) +
                    ",\"drive\":" + std::to_string(drive) +
                    ",\"path\":\"" + jsonEscape(*safe) + "\"}");
@@ -1244,18 +1383,21 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
     // round-trip. Phase 1 lifts the medium out (a memcpy), phase 2 writes it
     // with the lock released, phase 3 puts it back if the write failed.
     std::unique_ptr<DiskImage> pending;
+    DiskIICard* card = nullptr;
+    bool changed = false;
     {
         std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
-        if (!disk6_) noCard = true;
+        card = disk6_.load(std::memory_order_acquire);
+        if (!card) noCard = true;
         else {
             // Same primary-vs-slot-6 rule as /disk/insert: validate the
             // requested slot against the bound card's real one BEFORE
             // touching a drive — a hard-coded "6" here ejected (and
             // flushed) the slot-5 primary while confirming slot 6.
-            boundSlot = disk6_->getSlot();
+            boundSlot = card->getSlot();
             if (slot != -1 && slot != boundSlot) wrongSlot = true;
             else {
-                pending = disk6_->takeEjectWriteBack(static_cast<int>(drive));
+                pending = card->takeEjectWriteBack(static_cast<int>(drive));
                 ejected = true;
             }
         }
@@ -1264,9 +1406,15 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
         if (!DiskIICard::commitEjectWriteBack(*pending, errMsg)) {
             ejected = false;
             std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
-            if (disk6_)
-                (void)disk6_->restoreEjected(static_cast<int>(drive),
-                                             std::move(pending));
+            // Identity, not null: the roll-back must go back into the card
+            // the medium came OUT of. A slot rebuild during the write would
+            // otherwise push a foreign image into a freshly plugged card.
+            DiskIICard* const now = disk6_.load(std::memory_order_acquire);
+            if (now && now == card && now->getSlot() == boundSlot)
+                (void)now->restoreEjected(static_cast<int>(drive),
+                                          std::move(pending));
+            else
+                changed = true;
         }
     }
     if (noCard) { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
@@ -1275,7 +1423,18 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
                       "which is in slot " + std::to_string(boundSlot));
         return;
     }
+    if (changed) {
+        sendJsonError(fd, 503, "the Disk II card was replaced while this "
+                               "request was writing the image back — the "
+                               "medium could not be restored");
+        return;
+    }
     if (!ejected) { sendJsonError(fd, 500, "eject failed: " + errMsg); return; }
+    // The bay is empty now — same rule as /disk. See the note there.
+    {
+        auto st = ctrl_->lockState();
+        ctrl_->rewind().clear();
+    }
     sendJsonOk(fd, "{\"slot\":" + std::to_string(boundSlot) +
                    ",\"drive\":" + std::to_string(drive) + "}");
 }

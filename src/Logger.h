@@ -46,7 +46,16 @@ private:
     std::mutex mtx;
 };
 
-inline Logger& log() { static Logger g; return g; }
+/// IMMORTAL on purpose: `*new Logger` is never destroyed, so `log()` stays
+/// usable for the whole life of the process — including after main() returns.
+/// A plain function-local static is registered with atexit and destroyed in
+/// reverse construction order, and the logger is reached from every thread
+/// POM2 owns: a detached reaper, a guarded worker on its way out through the
+/// exception barrier, or a static destructor in another translation unit all
+/// log AFTER that point, and each would then lock a destroyed std::mutex —
+/// undefined behaviour, at exit, where nobody can diagnose it. Leaking one
+/// mutex and a FILE* the OS reclaims anyway is the cheaper half of the trade.
+inline Logger& log() { static Logger& g = *new Logger(); return g; }
 
 } // namespace pom2
 

@@ -155,6 +155,114 @@ void testEchoLoopback()
     std::printf("  ok: echo mode loopback\n");
 }
 
+// Echo is the TRANSMITTER running, and the transmitter needs DTR.
+//
+// MAME parks TxD at MARK whenever DTR is de-asserted (`mos6551.cpp:317-321`)
+// and the echo path in `:584-594` transmits through that same gate. POM2's own
+// TDR write already honours it, so a card with DTR down dropped bytes the
+// guest wrote while happily echoing bytes the peer sent — the transmitter
+// running with its enable off.
+void testEchoRequiresDtr()
+{
+    SuperSerialCard ssc(2);
+    // Echo bit 4 set, DTR bit 0 CLEAR: $10.
+    ssc.deviceSelectWrite(kCommandAddr, 0x10);
+    assert(ssc.echoMode());
+    assert(!ssc.dtrAsserted());
+
+    const uint8_t payload[] = { 'n', 'o' };
+    ssc.deliverRxBytes(payload, sizeof(payload));
+    assert(ssc.rxQueueDepth() == 2);      // the guest still receives them
+    assert(ssc.txQueueDepth() == 0);      // nothing is transmitted back
+
+    // Assert DTR and the echo works again.
+    ssc.deviceSelectWrite(kCommandAddr, 0x11);
+    ssc.deliverRxBytes(payload, sizeof(payload));
+    assert(ssc.txQueueDepth() == 2);
+
+    std::printf("  ok: echo requires DTR\n");
+}
+
+// Word length and parity on RECEIVE.
+//
+// A host TCP stream has no wire parity, but the CHIP still frames what it is
+// handed: with 7 data bits programmed, the eighth bit IS the parity bit — the
+// receiver strips it and compares it against cmd[7:6]/cmd[5] (MAME
+// `mos6551.cpp:310-315`). That is the whole of a 7E1 link, which is what
+// period terminal software configures for a BBS, and none of it was modelled:
+// the parity bit reached RDR as data and SR_PARITY_ERROR could never be set.
+void testSevenBitWordAndParityError()
+{
+    SuperSerialCard ssc(2);
+    // Control: 7 data bits (ctl[6:5] = 01 → $20) at 9600 (index $0E).
+    ssc.deviceSelectWrite(kControlAddr, 0x2E);
+    // Command: DTR on, parity enabled (bit 5), EVEN parity (cmd[7:6] = 01).
+    ssc.deviceSelectWrite(kCommandAddr, 0x61);
+
+    // 'A' = $41, two set bits → even parity bit is 0. Correct frame.
+    const uint8_t good[] = { 0x41 };
+    ssc.deliverRxBytes(good, 1);
+    assert((ssc.deviceSelectRead(kStatusAddr) & SR_PARITY_ERROR) == 0);
+    // The data reaching RDR is seven bits wide.
+    assert(ssc.deviceSelectRead(kRdrAddr) == 0x41);
+
+    // The same character with the parity bit wrongly set: $C1.
+    const uint8_t bad[] = { 0xC1 };
+    ssc.deliverRxBytes(bad, 1);
+    assert((ssc.deviceSelectRead(kStatusAddr) & SR_PARITY_ERROR) != 0);
+    // …and the parity bit is still stripped off the data.
+    assert(ssc.deviceSelectRead(kRdrAddr) == 0x41);
+    // Reading RDR clears the sticky error, MAME `mos6551.cpp:231-236`.
+    assert((ssc.deviceSelectRead(kStatusAddr) & SR_PARITY_ERROR) == 0);
+
+    // With parity DISABLED the eighth bit is data again and no error is
+    // raised — 8-bit-clean transfers must not sprout parity errors.
+    SuperSerialCard raw(2);
+    raw.deviceSelectWrite(kControlAddr, 0x0E);   // 8 data bits
+    raw.deviceSelectWrite(kCommandAddr, 0x01);   // DTR on, PME off
+    const uint8_t binary[] = { 0xC1 };
+    raw.deliverRxBytes(binary, 1);
+    assert((raw.deviceSelectRead(kStatusAddr) & SR_PARITY_ERROR) == 0);
+    assert(raw.deviceSelectRead(kRdrAddr) == 0xC1);
+
+    std::printf("  ok: 7-bit receive mask + parity error\n");
+}
+
+// The DIP banks at $C0n1/$C0n2, and the switch that is NOT one of them.
+//
+// MAME `a2ssc.cpp` puts baud rate in DSW1 bits 7-4 and Data Bits in DSW2
+// bit 5, and keeps the SW2-6 interrupt switch in a THIRD port (DSWX) that the
+// IRQ gate reads and the guest cannot. POM2 had DSW1 = $A8, whose baud nibble
+// is 2400 rather than the 19200 its comment claimed, and spent DSW2 bit 5 on
+// the interrupt switch — so toggling interrupts in the panel rewrote the word
+// length a driver reads back from the card.
+void testDipSwitchLayout()
+{
+    SuperSerialCard ssc(2);
+
+    // $C0n1 returns DSW1, $C0n2 returns DSW2, $C0n0 returns both AND-ed,
+    // $C0n3 returns $FF (nothing selected).
+    const uint8_t dsw1 = ssc.deviceSelectRead(0x1);
+    const uint8_t dsw2 = ssc.deviceSelectRead(0x2);
+    assert(ssc.deviceSelectRead(0x0) == (dsw1 & dsw2));
+    assert(ssc.deviceSelectRead(0x3) == 0xFF);
+
+    // Baud rate lives in bits 7-4; $F0 is the top of the 50-19200 ladder.
+    assert((dsw1 & 0xF0) == 0xF0);
+
+    // The interrupt switch is on by default and moving it leaves BOTH
+    // memory-mapped banks untouched.
+    assert(ssc.irqDipEnabled());
+    ssc.setIrqDipEnabled(false);
+    assert(!ssc.irqDipEnabled());
+    assert(ssc.deviceSelectRead(0x1) == dsw1);
+    assert(ssc.deviceSelectRead(0x2) == dsw2);
+    ssc.setIrqDipEnabled(true);
+    assert(ssc.irqDipEnabled());
+
+    std::printf("  ok: DIP layout follows a2ssc, IRQ switch is not in it\n");
+}
+
 void testOverrunAndRdrClear()
 {
     SuperSerialCard ssc(2);
@@ -672,6 +780,9 @@ int main()
     testDtrAndCommandDecode();
     testTdrWhileDtrDeasserted();
     testEchoLoopback();
+    testEchoRequiresDtr();
+    testSevenBitWordAndParityError();
+    testDipSwitchLayout();
     testOverrunAndRdrClear();
     testProgrammedResetPreservesParity();
     testControlRegBaud();

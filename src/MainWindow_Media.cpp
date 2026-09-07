@@ -351,8 +351,24 @@ bool MainWindow::flushSlotMedia(std::string& err)
     //
     // Two-phase for the bays that offer it (a Liron's 800 KB 3.5" images):
     // captured under the lock, written with it released. Everything else still
-    // writes inline — those cards have no capture path yet, and their callers
-    // (quit, profile switch, Apply) all have the CPU worker stopped.
+    // writes inline, which makes this one of the documented exceptions to
+    // CLAUDE.md's "never hold stateMutex across file I/O" — so, precisely,
+    // why it is allowed here:
+    //
+    //   * The three desktop callers — quit (`MainWindow.cpp`), the profile
+    //     switch and the slot-rebuild Apply (`MainWindow_Slots.cpp`) — all
+    //     call `controller->stop()` FIRST. There is no CPU worker to stall
+    //     and no frame being painted behind it.
+    //   * The fourth is the WASM session heartbeat (`MainWindow_Session.cpp`),
+    //     which does run mid-session — but the browser build has no worker
+    //     thread at all (`EmulationController` guards its `std::thread` with
+    //     `#ifndef __EMSCRIPTEN__`; the CPU is driven from the RAF loop on
+    //     this very thread), so the lock is uncontended and the cost is main
+    //     loop time, not a stolen frame. Its writes land in IDBFS, i.e. in
+    //     memory.
+    //
+    // The day a card without a capture path is flushed from a running desktop
+    // machine, that card needs a `prepare*` half — not a comment.
     std::vector<pom2::StorageCoordinator::DeferredFlush> deferred;
     bool ok;
     {

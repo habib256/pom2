@@ -20,14 +20,27 @@
 // so PhasorCard can share the same VIA model verbatim without
 // duplicating the timer / IFR / Port-A/B logic.
 //
-// Scope: T1 (both modes), T2 (one-shot phase-2), IFR/IER, Port A/B
-// output latches + DDR, CA1 input edge (setCa1NegativeEdge — Sound II
+// Scope: T1 (both modes, INCLUDING the ACR.7 PB7 square-wave output),
+// T2 (one-shot phase-2), IFR/IER, Port A/B output latches + DDR, port-A
+// input latching (ACR.0), CA1 input edge (setCa1NegativeEdge — Sound II
 // SSI263 A/!R wiring) and the MAME `CLR_PA_INT()` rule (any reg-1/ORA
 // access clears IFR.CA1 + IFR.CA2-unless-independent; reg $F/ORANH is
-// side-effect-free). NOT modelled (matching the original MB scope):
-// SR shift register, CA2/CB1/CB2 outputs + handshake/pulse modes, PB6
-// pulse counting for T2 (acknowledged but never ticks — no POM2 card
-// wires PB6 externally).
+// side-effect-free).
+//
+// NOT modelled (matching the original MB scope) — the complete list:
+//
+//   * SR shift register (reg $A is a plain byte store).
+//   * CA2 / CB1 / CB2: no input pins, no output/handshake/pulse modes,
+//     no IFR.CB1 (0x10) / IFR.CB2 (0x08) / IFR.SR (0x04) sources. Only
+//     CA1 exists, and only as an edge injector.
+//   * **Port-B input latching (ACR.1)**, because it latches on a CB1
+//     active edge and this model has no CB1. Port-A latching (ACR.0) IS
+//     modelled — CA1 exists. MAME `6522via.cpp:645-651` / `:1181-1184`.
+//   * PB6 pulse counting for T2 (ACR.5 is honoured as "stop counting
+//     phase-2", but no POM2 card wires PB6, so it never ticks).
+//   * Port-B external inputs: `readPortB()` pulls DDR=0 pins high. No
+//     POM2 card drives port B from outside (the AY read strobe is on
+//     port A, which does have `setPortAInput`).
 //
 // Header-only: every method is `inline`, no `Via6522.cpp` to link.
 // Cards include this header, instantiate via `std::make_unique<Via6522>`,
@@ -105,11 +118,24 @@ struct Via6522
     // IFR / IER store only per-source bits (0..6); bit 7 computed on read.
     uint8_t ifr = 0x00;
     uint8_t ier = 0x00;
+    /// T1 square-wave state on PB7 (ACR bit 7). MAME `m_t1_pb7`
+    /// (`6522via.cpp:279` device_start = 0, `:347` device_reset = 1).
+    /// Toggled by every continuous-mode underflow, forced to 1 by a
+    /// one-shot underflow, cleared by a T1CH write, and OR'd into every
+    /// port-B read IGNORING DDRB (`T1_SET_PB7(c) = (c & 0x80)`,
+    /// `6522via.cpp:85` + `:605-630`).
+    bool    t1Pb7 = true;
+    /// Port-A input latch (ACR bit 0). Loaded from the composed port-A
+    /// value on an active CA1 edge and returned by ORA/ORANH while
+    /// IFR.CA1 is still set — MAME `6522via.cpp:662-700` + `:1107-1110`.
+    uint8_t latchA = 0xFF;
 
     inline void reset()
     {
         portAOut = portBOut = 0;
         portAIn  = 0xFF;
+        latchA   = 0xFF;
+        t1Pb7    = true;     // MAME device_reset (`6522via.cpp:347`)
         ddrA = ddrB = 0;
         acr  = pcr = sr = 0;
         t1Latch = 0xFFFF;
@@ -127,6 +153,11 @@ struct Via6522
     // Fixed 24-byte layout of the full register/timer state. Lazily-synced
     // counters are captured as-is (the next syncToCpuCycle re-advances them,
     // exactly as it would have on the live machine).
+    // NOT carried: `t1Pb7` and `latchA`. Both are re-derived within one T1
+    // period / one CA1 edge of a restore, and no POM2 card wires PB7 or a
+    // latched port A to anything, so widening the blob (and every card's
+    // versioned reader) would buy nothing. `loadSnapshot` leaves whatever
+    // the live object held; `reset()` puts them back to 1 / $FF.
     /// v1 layout (pre-2026-07-30): everything except `portAIn`.
     static constexpr std::size_t kSnapshotBytesV1 = 24;
     /// Current layout — v1 plus the port-A input pin latch.
@@ -166,7 +197,12 @@ struct Via6522
     inline uint8_t readPortB() const
     {
         const uint8_t input = 0xFF;
-        return (portBOut & ddrB) | (input & ~ddrB);
+        uint8_t pb = static_cast<uint8_t>((portBOut & ddrB) | (input & ~ddrB));
+        // ACR bit 7 (T1_SET_PB7): PB7 stops being a port bit and becomes
+        // the T1 output. MAME overwrites it in `input_pb`, `output_pb` AND
+        // `read_pb` (`6522via.cpp:605-630`) without consulting DDRB.
+        if (acr & 0x80) pb = static_cast<uint8_t>((pb & 0x7F) | (t1Pb7 ? 0x80 : 0x00));
+        return pb;
     }
     inline uint8_t readPortA() const
     {
@@ -178,6 +214,17 @@ struct Via6522
     }
     /// Latch an external level onto port A's input pins.
     inline void setPortAInput(uint8_t v) { portAIn = v; }
+
+    /// What a bus read of ORA/ORANH sees. With ACR bit 0 set the port is
+    /// LATCHED: the value frozen by the last active CA1 edge stands until
+    /// IFR.CA1 is acknowledged. MAME `6522via.cpp:662-671` (ORA) and
+    /// `:690-700` (ORANH), both `(PA_LATCH_ENABLE(m_acr) != 0) && ((m_ifr
+    /// & INT_CA1) != 0) ? m_latch_a : input_pa()`.
+    inline uint8_t latchedPortA() const
+    {
+        if ((acr & 0x01) && (ifr & IFR_CA1)) return latchA;
+        return readPortA();
+    }
 
     inline bool irqOut() const { return (ifr & ier & 0x7F) != 0; }
 
@@ -213,12 +260,14 @@ struct Via6522
     {
         switch (reg & 0x0F) {
         case VIA_ORB:    return readPortB();
-        case VIA_ORA:
+        case VIA_ORA: {
             // Reading ORA clears IFR.CA1 (+ CA2 unless independent) —
             // MAME 6522via.cpp:662-688 (CLR_PA_INT() at :676). CA2
             // pulse/handshake *output* modes stay unmodelled.
+            const uint8_t v = latchedPortA();
             clearPaInt();
-            return readPortA();
+            return v;
+        }
         case VIA_DDRB:   return ddrB;
         case VIA_DDRA:   return ddrA;
         // Counter read-back: while a timer is ARMED the live counter
@@ -289,7 +338,7 @@ struct Via6522
         case VIA_PCR:    return pcr;
         case VIA_IFR:    return computedIfr();
         case VIA_IER:    return static_cast<uint8_t>(ier | 0x80);
-        case VIA_ORANH:  return readPortA();
+        case VIA_ORANH:  return latchedPortA();
         default:         return 0xFF;
         }
     }
@@ -353,6 +402,9 @@ struct Via6522
             t1Counter = static_cast<int32_t>(t1Latch) + 2;
             t1FireArmed = true;
             ifr &= ~IFR_T1;
+            // MAME `6522via.cpp:934` — a T1CH write drives PB7 low, which
+            // is what makes the ACR.7 square wave start from a known phase.
+            t1Pb7 = false;
             break;
         case VIA_T1LH:
             // Latch high only: NO counter transfer, NO restart — but the
@@ -436,13 +488,22 @@ struct Via6522
     /// AppleWin parity: `if ((GetPCR(m_device) & 1) == 0) UpdateIFR(0, IxR_SSI263)`.
     inline void setCa1NegativeEdge()
     {
-        if ((pcr & 0x01) == 0) ifr |= IFR_CA1;
+        if ((pcr & 0x01) == 0) { latchPortAOnCa1(); ifr |= IFR_CA1; }
     }
 
     /// Symmetric helper for cards that need the opposite polarity.
     inline void setCa1PositiveEdge()
     {
-        if ((pcr & 0x01) != 0) ifr |= IFR_CA1;
+        if ((pcr & 0x01) != 0) { latchPortAOnCa1(); ifr |= IFR_CA1; }
+    }
+
+    /// MAME `6522via.cpp:1107-1110` (`ca1_w`): an active CA1 transition
+    /// freezes port A into the input latch when ACR bit 0 is set. Done
+    /// BEFORE IFR.CA1 is raised so `latchedPortA()` cannot return a
+    /// stale latch on the very same edge.
+    inline void latchPortAOnCa1()
+    {
+        if (acr & 0x01) latchA = readPortA();
     }
 
     // Advance T1 (and T2 in one-shot phase-2 mode) by `cycles` 1.0227 MHz
@@ -460,6 +521,11 @@ struct Via6522
                 if (!t1Continuous()) {
                     t1FireArmed = false;
                 }
+            }
+            if (!t1Continuous()) {
+                // MAME `t1_tick` one-shot branch (`6522via.cpp:544-549`):
+                // PB7 goes high and the timer stops.
+                t1Pb7 = true;
             }
             if (t1Continuous()) {
                 // Period is latch + 2 — the 6522 free-run contract. Was +3,
@@ -496,6 +562,12 @@ struct Via6522
                 const int64_t periods = deficit / period + 1;
                 t1Counter = static_cast<int32_t>(
                     static_cast<int64_t>(t1Counter) + periods * period);
+                // MAME toggles PB7 once per underflow, but only
+                // `if (TIMER1_VALUE > 0)` (`6522via.cpp:539-541`) — a zero
+                // latch leaves the wave frozen. The collapse above swallows
+                // `periods` underflows in one step, so apply their parity
+                // rather than a single flip.
+                if (t1Latch != 0 && (periods & 1)) t1Pb7 = !t1Pb7;
             } else {
                 t1Counter += 0x10000;
             }

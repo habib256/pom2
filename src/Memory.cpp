@@ -64,6 +64,14 @@ Memory::Memory()
     // Memory::memWrite).
     markRomRegion(0xD000, 0xFFFF);  // Applesoft + Monitor
 
+    // Unclaimed slot reads put the floating bus on the data lines, not a
+    // hard $FF — MAME `apple2e.cpp` ends `c080_r`, `read_slot_rom` and
+    // `c800_r` with `return read_floatingbus();`. SlotBus has no video
+    // timing of its own, so Memory hands it the source. SLOW path only:
+    // this closure is reached from `memReadSlow`'s $Cxxx dispatch, never
+    // from the fast bus path (docs/PERFORMANCE.md §§ 8.2/8.5).
+    slots.setFloatingBusSource([this]() { return floatingBus(); });
+
     // Default reset vector points at $F800 (Monitor cold start) so a
     // fresh boot without ROM loaded still runs *something* (BRK loop)
     // instead of jumping into uninitialised memory.
@@ -1602,9 +1610,17 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // sign-flip durations to recover bits from the tape. Note: $C061-$C067
     // are NOT cassette aliases on the II/II+ — they're the paddle buttons
     // and paddle inputs, handled below.
+    // Real hardware ORs the floating-bus byte into the low 7 bits here too
+    // — MAME `apple2e.cpp:2177-2185` (`case 0x60: case 0x68:`) returns
+    // `(m_cassette->input() > 0.0 ? 0 : 0x80) | uFloatingBus7`, and with no
+    // cassette device fitted it returns `uFloatingBus7` alone. POM2 returned
+    // a bare comparator byte with bits 0-6 clamped to 0, so the $C060 half
+    // of the mirrored pair disagreed with its own $C068 twin below.
     if (low == 0x60) {
-        if (cassette) return cassette->readTapeInput();
-        return 0;
+        const uint8_t bit7 = cassette
+            ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
+            : uint8_t{0};
+        return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));
     }
 
     // Cassette input + push-buttons + paddle inputs at $C060-$C067,
@@ -1696,11 +1712,20 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
             // and every odd $C079/B/D/F is CLRIOUDIS (not just $C078/E).
             ioudis = !(low & 1);
         }
-        // $C07E read returns bit 7 = ioudis state (MAME `:2276-2278`).
-        // Shared by IIe/IIc/IIc+. Other $C07x reads keep returning
-        // floating bus.
-        if (!isWrite && iieMode && low == 0x7E) {
-            return ioudis ? 0x80 : 0x00;
+        // RDIOUDIS. MAME puts this in `c000_iic_r` ONLY (`apple2e.cpp:
+        // 2336-2338`, `case 0x78: case 0x7a: case 0x7c: case 0x7e:` →
+        // `(m_ioudis ? 0x80 : 0x00) | uFloatingBus7`); the plain-//e
+        // `c000_r` switch has no $7E case at all and falls out to
+        // `return uFloatingBus;`. Two divergences fixed here: the //e read
+        // must NOT answer (there is no IOU on a //e — the switch is
+        // write-inert AND read-inert there), and the //c answer carries the
+        // floating bus in bits 0-6 like every other IOU status read.
+        // The read decodes by parity across $C078-$C07F exactly as the
+        // write above does. (The ODD half is RDDHIRES upstream — bit 7 =
+        // !dhires — which POM2 does not answer yet.)
+        if (!isWrite && iicProfile_ && low >= 0x78 && (low & 1) == 0) {
+            return static_cast<uint8_t>((ioudis ? 0x80 : 0x00) |
+                                        (floatingBus() & 0x7F));
         }
         return isWrite ? 0 : floatingBus();
     }

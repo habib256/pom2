@@ -43,6 +43,7 @@
 #include <iterator>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -513,6 +514,55 @@ int main()
               "two distinct URLs keep two distinct cache files");
 
         stub.shutdownStub();
+        fs::remove_all(cache, ec);
+    }
+
+    // ── The cache is BOUNDED, and evicts least-recently-used first ─────
+    // The key is a hash of host+port+path, so a server that renames or
+    // re-publishes an image orphans the old file forever — nothing collected
+    // them and there was no ceiling, which makes a cache a slow leak into the
+    // user's home directory. (Bug hunt 3 R12.)
+    {
+        const auto cache = fs::temp_directory_path() / "pom2_tnfs_prune_cache";
+        std::error_code ec;
+        fs::remove_all(cache, ec);
+        fs::create_directories(cache, ec);
+
+        auto put = [&](const char* name, std::size_t bytes, int hoursOld) {
+            const auto p = cache / name;
+            std::ofstream f(p, std::ios::binary | std::ios::trunc);
+            const std::vector<char> body(bytes, 'x');
+            f.write(body.data(), static_cast<std::streamsize>(body.size()));
+            f.close();
+            std::error_code tec;
+            fs::last_write_time(p, fs::file_time_type::clock::now() -
+                                       std::chrono::hours(hoursOld), tec);
+            return p;
+        };
+        const auto oldest = put("aaa_old.po",    4096, 72);
+        const auto middle = put("bbb_middle.po", 4096, 48);
+        const auto newest = put("ccc_new.po",    4096,  1);
+
+        // Budget for two of the three: the OLDEST goes, and only it.
+        const std::uint64_t freed =
+            pom2::pruneTnfsCache(cache.string(), 3 * 4096 - 1);
+        check(freed == 4096, "the prune frees exactly the oldest file");
+        check(!fs::exists(oldest), "the least-recently-used file is evicted");
+        check(fs::exists(middle) && fs::exists(newest),
+              "the prune stops as soon as it is inside the budget");
+
+        // Under budget → nothing happens at all.
+        check(pom2::pruneTnfsCache(cache.string(), 1024 * 1024) == 0,
+              "a cache inside its budget is left alone");
+
+        // `keep` is never evicted, even when it is the only thing left over
+        // budget — it is the image the caller is about to mount.
+        const std::uint64_t freed2 =
+            pom2::pruneTnfsCache(cache.string(), 1, newest.string());
+        check(!fs::exists(middle), "the prune keeps going while over budget");
+        check(fs::exists(newest), "the file just fetched is never evicted");
+        check(freed2 == 4096, "and only the evictable file was counted");
+
         fs::remove_all(cache, ec);
     }
 

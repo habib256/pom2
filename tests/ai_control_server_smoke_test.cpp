@@ -165,6 +165,19 @@ HttpResponse oneShot(uint16_t port, const std::string& request)
     return parseResponse(raw);
 }
 
+// The RAW bytes, headers included. `oneShot` throws the header block away
+// and the CORS assertions below are precisely about a header.
+std::string oneShotRaw(uint16_t port, const std::string& request)
+{
+    const int fd = connectLoopback(port);
+    assert(fd >= 0 && "loopback connect failed");
+    const bool sent = sendAll(fd, request);
+    assert(sent && "send failed");
+    const std::string raw = drainAll(fd);
+    ::close(fd);
+    return raw;
+}
+
 bool contains(const std::string& haystack, const std::string& needle)
 {
     return haystack.find(needle) != std::string::npos;
@@ -636,6 +649,95 @@ void testMouseEndpoint(EmulationController& ctrl, pom2::AiControlServer& /*srv*/
     std::puts("  mouse: OK");
 }
 
+
+// ─── S4: the token was a secret, not a fence ─────────────────────────────
+//
+// Three separate holes, all in `checkAuth` and its response headers:
+//
+//   * The Host check (the DNS-rebinding fence) applied ONLY to the
+//     token-less branch. Configuring a token therefore made the server LESS
+//     safe: a page that had the secret was let straight in from
+//     attacker.invalid.
+//   * Every response carried `Access-Control-Allow-Origin: *` and the
+//     preflight advertised `X-POM2-Token`, so any page could read every
+//     answer cross-origin — which is what turns a guess into an oracle.
+//   * `operator==` on the token, no rate limit, no length floor: a
+//     human-typed secret was grindable at connection speed.
+void testAuthHardening(EmulationController& /*ctrl*/, pom2::AiControlServer& srv)
+{
+    srv.setAuthToken("correct-horse-battery");
+
+    // The right token from a REBOUND ORIGIN is still refused: Host names a
+    // host that is not the loopback address, so the request came from a page
+    // that resolved a name, not from a native client that dialled 127.0.0.1.
+    HttpResponse r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: attacker.invalid\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(r.status == 401);
+
+    // Same token, loopback Host → 200. (Belt and braces: this is what proves
+    // the assertion above is about the Host and not about the token.)
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1:1\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(r.status == 200);
+
+    // No CORS headers, anywhere — not on a success, not on a rejection.
+    std::string raw = oneShotRaw(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(!contains(raw, "Access-Control-Allow-Origin"));
+    raw = oneShotRaw(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\nX-POM2-Token: no\r\n\r\n");
+    assert(!contains(raw, "Access-Control-Allow-Origin"));
+
+    // OPTIONS still answers 204 (a client may probe the method set) but no
+    // longer hands a browser permission to send the token header.
+    raw = oneShotRaw(kTestPort,
+        "OPTIONS /status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(contains(raw, "204 No Content"));
+    assert(!contains(raw, "Access-Control-Allow-Origin"));
+    assert(!contains(raw, "Access-Control-Allow-Headers"));
+
+    // Six wrong tokens inside the window: the first five are 401s, and the
+    // sixth request lands in the penalty box with a 429 — WITHOUT the server
+    // having compared anything, so a grinder learns nothing from it.
+    // Re-arm first: the rejections above are real failures and already count
+    // against the window.
+    srv.setAuthToken("correct-horse-battery");
+    int last = 0;
+    for (int i = 0; i < 6; ++i) {
+        const HttpResponse rr = oneShot(kTestPort,
+            "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "X-POM2-Token: guess\r\n\r\n");
+        last = rr.status;
+        if (i < 5) assert(rr.status == 401);
+    }
+    assert(last == 429);
+
+    // Even the RIGHT token is refused while the box is armed.
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(r.status == 429);
+
+    // Setting a token is an operator action and clears the box — otherwise
+    // fixing a typo in the panel locks the operator out of their own machine.
+    srv.setAuthToken("correct-horse-battery");
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(r.status == 200);
+
+    // The generator the panel's button calls: long enough to be worth having.
+    const std::string gen = pom2::AiControlServer::generateToken();
+    assert(gen.size() >= pom2::AiControlServer::kMinTokenLength);
+    assert(gen != pom2::AiControlServer::generateToken());
+
+    srv.setAuthToken("");
+    std::puts("  auth hardening (host/CORS/backoff): OK");
+}
+
 } // namespace
 
 int main()
@@ -663,6 +765,7 @@ int main()
     testCpuRegisterSet   (ctrl, srv);
     testNotFoundAndMethod(ctrl, srv);
     testMouseEndpoint    (ctrl, srv);
+    testAuthHardening    (ctrl, srv);
     testStartResumesMode (ctrl);   // last: it spawns the CPU worker thread
 
     testStopInterruptsBlockedResponse(srv);

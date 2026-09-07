@@ -630,6 +630,14 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     srcW_ = srcW;
     srcH_ = srcH;
 
+    // Save the caller's framebuffer BEFORE the allocate/resize block: that
+    // block binds our own FBOs to check completeness and used to hand the
+    // binding back as 0. On a resize frame (window drag, zoom, 80-col toggle)
+    // — and on every early `return 0` inside it — the caller's render target
+    // was silently swapped for the default framebuffer.
+    int prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
     if (outputTex[0] == 0) {
         if (!createTextures(dstW, dstH)) {
             pom2::log().warn("CRT",
@@ -637,6 +645,9 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
                 std::to_string(dstH) + " glass-pass target (" + errorMsg +
                 ") — effects disabled");
             ready = false;
+            // createTextures() leaves the default framebuffer bound on its
+            // failure path; hand the caller back the one it gave us.
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFbo));
             return 0;
         }
     } else if (clampTexDim(dstW) != outW || clampTexDim(dstH) != outH) {
@@ -655,7 +666,7 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                 complete = false;
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFbo));
         if (!complete) {
             errorMsg = "FBO incomplete after resize";
             pom2::log().warn("CRT",
@@ -668,9 +679,9 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
         firstFrame = true;
     }
 
-    // Save GL state so we don't disturb ImGui's render.
-    int prevFbo = 0, prevViewport[4] = {0};
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    // Save the rest of the GL state so we don't disturb ImGui's render
+    // (`prevFbo` was captured above, ahead of the resize path).
+    int prevViewport[4] = {0};
     glGetIntegerv(GL_VIEWPORT, prevViewport);
     const GLboolean prevBlend = glIsEnabled(GL_BLEND);
     const GLboolean prevDepth = glIsEnabled(GL_DEPTH_TEST);

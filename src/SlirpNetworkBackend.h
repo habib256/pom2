@@ -58,10 +58,46 @@ namespace pom2 {
 /// networking is unavailable, not silently hide the option.
 bool slirpAvailable();
 
+/// Policy knobs for the virtual network. Both defaults are the SAFE answer,
+/// and the wiring point for overriding them is `makeEthernetBackend` in
+/// MainWindow_SlotConfig.cpp:
+///     opts.allowHostLoopback = settings->getBool("uthernet_allow_loopback", false);
+///     opts.restricted        = settings->getBool("uthernet_slirp_restricted", false);
+/// `uthernet_allow_loopback` is the SAME key that drives
+/// `W5100Device::setAllowLoopback`: the two cards' fences are one user
+/// decision, because opting one out only moves the escape to the other.
+struct SlirpOptions {
+    /// Let the guest reach the HOST's loopback interface through the virtual
+    /// router at 10.0.2.2.
+    ///
+    /// FALSE by default, and that is a change: libslirp's
+    /// `disable_host_loopback` was left at 0, so a CS8900A guest carrying its
+    /// own IP stack (IP65, Contiki — the whole reason the Uthernet I exists)
+    /// could open 10.0.2.2:<port> and slirp would re-open it as 127.0.0.1:<port>
+    /// on the host. POM2's own AI control server listens there and treats a
+    /// loopback client with no Origin as native, so /mem, /disk and /reset were
+    /// reachable from inside the emulated machine. This is the same boundary
+    /// W5100Device::setAllowLoopback draws for the Uthernet II, and the two
+    /// have to be drawn together or the escape simply moves to the other card.
+    ///
+    /// Nothing else changes: the LAN, the internet and the virtual DHCP/DNS
+    /// servers at 10.0.2.2-3 all keep working. Only the host's own private
+    /// services stop being addressable.
+    bool allowHostLoopback = false;
+
+    /// libslirp's `restricted` mode: the guest may talk to the virtual
+    /// services (DHCP, DNS, TFTP) and to nothing else. FALSE, which is the
+    /// behaviour POM2 has always had — a period network client that cannot
+    /// reach the internet is not much of a network client. Exposed so a user
+    /// who wants the card present but inert has an answer short of unplugging.
+    bool restricted = false;
+};
+
 /// Construct a libslirp-backed backend, or nullptr when unavailable
 /// (not compiled in, or slirp_new failed). `hostname` is what the
 /// virtual DHCP server reports; empty picks libslirp's default.
-std::unique_ptr<NetworkBackend> makeSlirpBackend(const std::string& hostname = {});
+std::unique_ptr<NetworkBackend> makeSlirpBackend(const std::string& hostname = {},
+                                                 const SlirpOptions& options = {});
 
 } // namespace pom2
 

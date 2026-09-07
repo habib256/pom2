@@ -54,6 +54,22 @@ constexpr double kSscXtalHz = 1843200.0;
 // Only `tx_irq` is consulted in POM2 (TDRE is pinned high so the IRQ never
 // fires anyway, but we still mirror the state so cmdReg readback matches a
 // real driver's expectation).
+//
+// DELIBERATELY NOT MODELLED, the other two columns:
+//   * RTS. The card's RTS pin has no counterpart on a TCP stream (and the
+//     telnet peer's flow control is TCP's own window), so `cmd[3:2] == 00`
+//     — "RTS high, transmitter disabled" — cannot be distinguished from a
+//     transmitter with nothing to say. A guest that de-asserts RTS still
+//     gets its bytes delivered.
+//   * BREAK. `cmd[3:2] == 11` holds TxD at SPACE for as long as it is set,
+//     which is a LINE CONDITION, not a byte: there is nothing to put in the
+//     stream that means it, and a telnet peer would have to be sent the
+//     IAC BRK command to be told about it, which is a terminal-protocol
+//     decision rather than a UART one. The command register still reads
+//     back what the guest wrote, so a driver that programs a break and
+//     clears it sees its own state; the peer simply never notices.
+// Both matter only to hardware-handshaking software talking to a real modem,
+// which is exactly the configuration the telnet bridge replaces.
 constexpr bool kTxIrqEnableByCmd[4] = { false, true, false, false };
 
 double baudIndexToBytesPerSec(uint8_t idx)
@@ -382,7 +398,13 @@ void SuperSerialCard::deliverRxBytes(const uint8_t* data, size_t n)
             if (rxTail.size() > kTailCap) rxTail.pop_front();
         }
         armRxIrq = rxIrqEnable_;
-        echoLoopback = echoMode_;
+        // ECHO STILL NEEDS DTR. MAME's transmitter is gated on `!m_dtr`
+        // throughout (`mos6551.cpp:317-321` parks it at MARK when DTR is
+        // de-asserted, and the echo path in `:584-594` transmits through that
+        // same gate), and POM2's own TDR write already honours it — so a card
+        // with DTR down dropped bytes the guest wrote but happily echoed bytes
+        // the peer sent, which is the transmitter running with its enable off.
+        echoLoopback = echoMode_ && dtrAsserted_;
         // MAME `mos6551.cpp:584-594`: REM=1 routes the RX line to TX
         // (unless OVERRUN is set, in which case the line idles high).
         // POM2 doesn't have bit-time accuracy, so the byte-level
@@ -486,6 +508,42 @@ void SuperSerialCard::applyCommandReg(uint8_t v)
     pushIrqLine();
 }
 
+uint8_t SuperSerialCard::receiveDataMask() const
+{
+    if (wordLength_ >= 8) return 0xFF;
+    return static_cast<uint8_t>((1u << wordLength_) - 1u);
+}
+
+void SuperSerialCard::evaluateRxFraming()
+{
+    // The flag describes the byte in RDR, so it is recomputed for whichever
+    // byte is at the head now — the sticky ones (OVERRUN) are untouched.
+    statusErrors_ &= static_cast<uint8_t>(~SR_PARITY_ERROR);
+
+    if (rxBuf.empty()) return;
+    if (!(cmdReg & 0x20)) return;      // PME clear: the frame carries no parity
+    if (wordLength_ >= 8) return;      // see the header: no ninth bit to carry it
+
+    const uint8_t raw  = rxBuf.front();
+    const uint8_t data = static_cast<uint8_t>(raw & receiveDataMask());
+    const bool received =
+        (raw & static_cast<uint8_t>(1u << wordLength_)) != 0;
+
+    // Parity of the data bits — Kernighan's bit count, parity of the count.
+    bool ones = false;
+    for (uint8_t m = data; m; m = static_cast<uint8_t>(m & (m - 1)))
+        ones = !ones;
+
+    bool expected;
+    switch ((cmdReg >> 6) & 0x03) {    // PMC, MAME `mos6551.cpp:310-315`
+        case 0:  expected = !ones; break;   // odd
+        case 1:  expected = ones;  break;   // even
+        case 2:  expected = true;  break;   // mark
+        default: expected = false; break;   // space
+    }
+    if (received != expected) statusErrors_ |= SR_PARITY_ERROR;
+}
+
 void SuperSerialCard::applyControlReg(uint8_t v)
 {
     // MAME `mos6551.cpp:271-285`. We don't model rx/tx clock direction
@@ -572,8 +630,8 @@ void SuperSerialCard::pushIrqLine()
 
 void SuperSerialCard::setIrqDipEnabled(bool on)
 {
-    if (on) lastDip2 |=  DSW2_IRQ_ENABLE;
-    else    lastDip2 &= ~DSW2_IRQ_ENABLE;
+    // Its own switch, not a bit of the memory-mapped DSW2 — see irqSwitchOn_.
+    irqSwitchOn_ = on;
     // Flipping the switch takes effect on the line immediately, exactly as
     // moving it on a powered card does — the 6551's own state is untouched.
     pushIrqLine();
@@ -600,7 +658,11 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 std::lock_guard<std::mutex> lk(bufferMtx);
                 uint8_t b = 0;
                 if (!rxBuf.empty()) {
-                    b = rxBuf.front();
+                    // The receiver's shift register is `wordLength_` bits
+                    // wide: at 7 data bits the eighth bit is the parity bit
+                    // and never reaches the guest's RDR. (The TRANSMIT side
+                    // deliberately stays 8-bit clean — see the TDR write.)
+                    b = static_cast<uint8_t>(rxBuf.front() & receiveDataMask());
                     rxBuf.pop_front();
                 }
                 // MAME `mos6551.cpp:231-236`: read of RDR clears
@@ -631,6 +693,10 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
             }
             case 0x1: {  // status register
                 std::lock_guard<std::mutex> lk(bufferMtx);
+                // Parity belongs to the byte sitting in RDR, and a driver
+                // reads STATUS before RDR — so the check runs here, where the
+                // answer is still able to reach it.
+                evaluateRxFraming();
                 uint8_t s = SR_TDRE;                   // TCP buffers TX
                 s |= statusErrors_;
                 if (!rxBuf.empty()) s |= SR_RDRF;

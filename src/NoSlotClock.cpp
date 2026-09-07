@@ -206,6 +206,10 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
 namespace {
 constexpr uint32_t kNscSnapMagic   = 0x43534E32u;   // '2NSC'
 constexpr uint16_t kNscSnapVersion = 1;
+/// Highest version this reader understands. TOLERANT on purpose — see the
+/// same constant in `Sony35Drive.cpp`: a strict equality test turns the next
+/// format bump into "every .pom2snap the shipped build wrote is unloadable".
+constexpr uint16_t kNscSnapVersionMax = kNscSnapVersion;
 }  // namespace
 
 void NoSlotClock::appendSnapshotState(std::vector<uint8_t>& out) const
@@ -223,16 +227,31 @@ bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     byteio::Reader r(data, len);
     if (!r.has(4 + 2 + 4 + 8)) return false;
-    if (r.u32() != kNscSnapMagic)   return false;
-    if (r.u16() != kNscSnapVersion) return false;
+    if (r.u32() != kNscSnapMagic) return false;
+    const uint16_t version = r.u16();
+    if (version == 0 || version > kNscSnapVersionMax) return false;
 
     writeEnabled_ = r.u8() != 0;
     readingClock_ = r.u8() != 0;
-    // Clamp: both cursors index a 64-bit shifter and are compared with
-    // `>= 64` only AFTER an increment, so a crafted 200 would run the
-    // matcher off the end of the key for good.
-    bitsMatched_  = static_cast<uint8_t>(r.u8() & 63);
-    bitsRead_     = static_cast<uint8_t>(r.u8() & 63);
+    // Clamp, not mask: both cursors index a 64-bit shifter and are compared
+    // with `>= 64` only AFTER an increment, so a crafted 200 would run the
+    // matcher off the end of the key for good. `& 63` did bound them, but it
+    // also REWROTE the one legal value it could not represent: `bitsMatched_`
+    // rests at exactly 64 for the whole clock-readout phase (it is not zeroed
+    // when the key completes), and masking sent that state back to 0 — a
+    // rewind taken mid-readout came back with the matcher at the top of the
+    // key. `min` keeps 64 and still rejects everything above it.
+    // The two cursors have DIFFERENT resting ranges, which is why one mask
+    // could not serve both: `bitsMatched_` legitimately sits at 64 for the
+    // whole readout, `bitsRead_` is zeroed the instant it reaches 64 and so
+    // never rests above 63.
+    bitsMatched_  = static_cast<uint8_t>(std::min<int>(r.u8(), 64));
+    bitsRead_     = static_cast<uint8_t>(std::min<int>(r.u8(), 63));
+    // `kMagicKey >> bitsMatched_` is undefined at 64, and the matcher arm
+    // only runs while `readingClock_` is false — a pairing every state this
+    // chip can reach honours (64 matched ⇒ readout). A blob that says
+    // otherwise is inconsistent, so restart the matcher rather than shift.
+    if (!readingClock_ && bitsMatched_ >= 64) bitsMatched_ = 0;
     clockShift_   = r.u64();
     return true;
 }

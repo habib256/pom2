@@ -127,8 +127,12 @@ bool SpOverSlipLink::start(std::string& errOut)
             lastError_ = errOut;
             return false;
         }
+        // Under transportMtx_: the status readers can be in flight on the UI
+        // thread the instant start() is called from Slot Config.
+        std::lock_guard<std::mutex> lk(transportMtx_);
         transport_ = std::move(tcp);
     } else {
+        std::lock_guard<std::mutex> lk(transportMtx_);
         transport_ = std::make_unique<SpSerialTransport>(serialPath_, serialBaud_);
     }
 
@@ -145,7 +149,10 @@ void SpOverSlipLink::stop()
 {
     if (!running_.load() && !worker_.joinable()) {
         std::lock_guard<std::mutex> callLk(callMtx_);
-        transport_.reset();
+        {
+            std::lock_guard<std::mutex> tl(transportMtx_);
+            transport_.reset();
+        }
         rx_.reset();
         return;
     }
@@ -178,7 +185,13 @@ void SpOverSlipLink::stop()
         if (auto* tcp = dynamic_cast<SpTcpTransport*>(transport_.get()))
             tcp->stopListening();
     }
-    transport_.reset();
+    {
+        // The readers hold nothing but this while they call isOpen() /
+        // describe(), so it is granted immediately — and it is what makes the
+        // reset below safe against them. Lock order callMtx_ → transportMtx_.
+        std::lock_guard<std::mutex> tl(transportMtx_);
+        transport_.reset();
+    }
 
     // Same invariant peerLostLocked() documents, for the same reason: a peer
     // that left the framer mid-frame (partial packet, then silence past the
@@ -426,11 +439,20 @@ void SpOverSlipLink::handlePeerLost()
 
 // ── State ────────────────────────────────────────────────────────────────
 
+// The three status readers. All of them dereference `transport_`, all of them
+// run on threads that do not own it, and all three therefore take
+// `transportMtx_` — see the header for why that is a mutex of its own and not
+// `callMtx_`.
+
 bool SpOverSlipLink::isConnected() const
-{ return transport_ && transport_->isOpen(); }
+{
+    std::lock_guard<std::mutex> lk(transportMtx_);
+    return transport_ && transport_->isOpen();
+}
 
 std::string SpOverSlipLink::describe() const
 {
+    std::lock_guard<std::mutex> lk(transportMtx_);
     if (!transport_) return "off";
     return transport_->describe();
 }
@@ -443,6 +465,7 @@ std::string SpOverSlipLink::lastError() const
     }
     // A serial transport's open failures are the interesting ones (device
     // missing, permission denied) and it keeps its own text.
+    std::lock_guard<std::mutex> lk(transportMtx_);
     if (auto* ser = dynamic_cast<SpSerialTransport*>(transport_.get()))
         return ser->lastError();
     return std::string{};
@@ -545,6 +568,13 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
         stats_.bytesOut += txBuf_.size();
     }
 
+    // ONE budget for the whole call, write half included. The read loop below
+    // already honoured `timeoutMs_`; the write did not, and carried a fixed
+    // 2 s deadline of its own on top of it — see SpTransport::
+    // setWriteDeadlineMs for what that cost the machine.
+    const int budgetMs = timeoutMs_.load();
+    t->setWriteDeadlineMs(budgetMs);
+
     if (!t->writeAll(txBuf_.data(), txBuf_.size())) {
         peerLostLocked();          // callMtx_ is ours right now
         return out;
@@ -552,7 +582,6 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
 
     // Wait for OUR response. The deadline covers the whole exchange, not each
     // read, so a peer dribbling bytes cannot extend the stall indefinitely.
-    const int budgetMs = timeoutMs_.load();
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(budgetMs);
 

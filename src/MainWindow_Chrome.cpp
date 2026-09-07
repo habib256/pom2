@@ -52,6 +52,7 @@
 #include "ResourcePaths.h"
 #include "Settings.h"
 #include "StatusLed.h"
+#include "Apple2Display.h"
 #include "SystemProfile.h"
 
 #include "imgui.h"
@@ -62,8 +63,29 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <vector>
+
+namespace {
+
+/// Switch the colour pipeline under the display's own `demodMutex`.
+///
+/// `setHiResMode` is not a field assignment: it zeroes the phosphor
+/// histories, the composite signal buffer and the AppleWin previous-frame
+/// buffers. The AI control server's `/screen` handler walks those very
+/// buffers on its own thread holding only `demodMutex`, so a menu click
+/// could clear them out from under a capture in progress — a torn PPM at
+/// best, and `std::fill` racing a reader at worst. Every UI entry point
+/// that changes the pipeline goes through here. No stateMutex is held on
+/// these paths, so the documented stateMutex → demodMutex order stands.
+void setDisplayPipeline(Apple2Display* display, Apple2Display::HiResMode m)
+{
+    std::lock_guard<std::mutex> demodLk(display->demodMutex());
+    display->setHiResMode(m);
+}
+
+}  // namespace
 
 void MainWindow::noteLibraryRecent(const std::string& path)
 {
@@ -245,20 +267,20 @@ void MainWindow::runCommand(const std::string& id)
     }
 
     // Display
-    if (id == "disp.ntsc")     { display->setHiResMode(Apple2Display::HiResMode::ColorNTSC); return; }
-    if (id == "disp.ntscmed")  { display->setHiResMode(Apple2Display::HiResMode::ColorCompMedium); return; }
-    if (id == "disp.ntsc4bit") { display->setHiResMode(Apple2Display::HiResMode::ColorComp4Bit); return; }
-    if (id == "disp.oegpu")    { display->setHiResMode(Apple2Display::HiResMode::ColorCompositeOE); return; }
-    if (id == "disp.oecpu")    { display->setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu); return; }
+    if (id == "disp.ntsc")     { setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorNTSC); return; }
+    if (id == "disp.ntscmed")  { setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorCompMedium); return; }
+    if (id == "disp.ntsc4bit") { setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorComp4Bit); return; }
+    if (id == "disp.oegpu")    { setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorCompositeOE); return; }
+    if (id == "disp.oecpu")    { setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorCompositeOECpu); return; }
     if (id == "disp.applewin") {
         display->setAppleWinSubMode(Apple2Display::AppleWinSubMode::Tv);
-        display->setHiResMode(Apple2Display::HiResMode::ColorAppleWin);
+        setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorAppleWin);
         return;
     }
-    if (id == "disp.rgb")   { display->setHiResMode(Apple2Display::HiResMode::ChatMauveRGB); return; }
-    if (id == "disp.mono")  { display->setHiResMode(Apple2Display::HiResMode::MonoWhite); return; }
-    if (id == "disp.green") { display->setHiResMode(Apple2Display::HiResMode::MonoGreen); return; }
-    if (id == "disp.amber") { display->setHiResMode(Apple2Display::HiResMode::MonoAmber); return; }
+    if (id == "disp.rgb")   { setDisplayPipeline(display.get(), Apple2Display::HiResMode::ChatMauveRGB); return; }
+    if (id == "disp.mono")  { setDisplayPipeline(display.get(), Apple2Display::HiResMode::MonoWhite); return; }
+    if (id == "disp.green") { setDisplayPipeline(display.get(), Apple2Display::HiResMode::MonoGreen); return; }
+    if (id == "disp.amber") { setDisplayPipeline(display.get(), Apple2Display::HiResMode::MonoAmber); return; }
     if (id == "disp.aspect.square")  { aspectMode = AspectMode::Square;  return; }
     if (id == "disp.aspect.crt43")   { aspectMode = AspectMode::Crt43;   return; }
     if (id == "disp.aspect.integer") { aspectMode = AspectMode::Integer; return; }
@@ -368,6 +390,16 @@ void MainWindow::renderMenuBar()
             } else {
                 // Must hold the emulation lock: loadAppleIIRom rewrites
                 // $D000-$FFFF and can race with the CPU thread otherwise.
+                //
+                // A documented exception to "never hold stateMutex across
+                // file I/O" (CLAUDE.md): `Memory`'s only entry point takes a
+                // PATH, so the open happens inside the lock. What bounds it
+                // is the probe above — the file has just been read to its end
+                // with no lock held, so this is a warm-cache copy of at most
+                // 32 KB (a //e ROM), tens of microseconds, and an unreadable
+                // or vanished dump has already been rejected before anything
+                // blocks. Nothing here scales with a disk image's size, which
+                // is the case the rule exists for.
                 auto st = controller->lockState();
                 ok = st.memory().loadAppleIIRom(romPath.c_str());
                 if (!ok) err = st.memory().getLastError();
@@ -584,7 +616,7 @@ void MainWindow::renderMenuBar()
         auto pipeItem = [&](const char* label, const char* tip,
                             Apple2Display::HiResMode m) {
             if (ImGui::MenuItem(label, nullptr, cur == m))
-                display->setHiResMode(m);
+                setDisplayPipeline(display.get(), m);
             if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
         };
         pipeItem("NTSC (MAME)", "7-bit artifact LUT — the canonical composite look.",
@@ -610,7 +642,7 @@ void MainWindow::renderMenuBar()
         if (ImGui::MenuItem("AppleWin NTSC (TV 50% line blur)", nullptr,
                             cur == Apple2Display::HiResMode::ColorAppleWin)) {
             display->setAppleWinSubMode(Apple2Display::AppleWinSubMode::Tv);
-            display->setHiResMode(Apple2Display::HiResMode::ColorAppleWin);
+            setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorAppleWin);
         }
 
         // RGB card — clean Péritel decode, two distinct grays. Greyed out

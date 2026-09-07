@@ -98,6 +98,11 @@ int main(int argc, char** argv)
     }
 
     Memory mem;
+    // Same cold-machine ritual every other raster probe performs. Skipping
+    // clearRam()/resetSoftSwitches() left the //e paging state at whatever a
+    // default-constructed Memory happens to hold.
+    mem.clearRam();
+    mem.resetSoftSwitches();
     mem.setIIEMode(true);
     mem.setVideoStandard(VideoStandard::PAL);
     if (!mem.loadAppleIIRom(rom.c_str())) {
@@ -113,12 +118,24 @@ int main(int argc, char** argv)
     if (!p6.empty()) disk->loadLssRom(p6);
     mem.slotBus().plug(6, std::move(disk));
 
-    // The demo's whole frame sync is a Mockingboard 6522 T1 interrupt — with
-    // no card in slot 4 it never syncs and the effect is meaningless.
-    mem.slotBus().plug(4, std::make_unique<MockingboardCard>(4));
-
     M6502 cpu(&mem);
     mem.setCpu(&cpu);
+
+    // The demo's whole frame sync is a Mockingboard 6522 T1 interrupt — with
+    // no card in slot 4 it never syncs and the effect is meaningless. The
+    // card ALSO needs the CPU: its 6522s sync lazily off the CPU's cycle
+    // counter, and without setCpu() every sync early-outs, T1 never expires,
+    // no IRQ is raised and the demo sits in its wait loop for ever. That is
+    // what made this probe report "MAD EFFECT never runs" while
+    // dix_menu_raster_probe — which does call setCpu — saw 384 PAGE2 events
+    // per frame on the same class of disk. The card is constructed here,
+    // AFTER the CPU, for exactly that reason.
+    auto mb = std::make_unique<MockingboardCard>(4, MockingboardCard::Variant::AC);
+    mb->setCpu(&cpu);
+    mem.slotBus().plug(4, std::move(mb));
+
+    // apple2e.rom is the ENHANCED //e: a 65C02, like the machine profile.
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
     cpu.hardReset();
     mem.slotBus().reset();
 

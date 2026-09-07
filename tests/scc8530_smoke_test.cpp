@@ -391,10 +391,25 @@ void testModemPinsAndExtStatusLatch()
 
     // Reset External/Status Interrupt only releases the latch when nothing
     // else has changed meanwhile. CTS moved while the latch was up, so
-    // `update_extint` reports work outstanding and the latch stays
-    // (z80scc.cpp:793) — RR0 keeps hiding the CTS pin.
+    // `update_extint` reports work outstanding and the latch STAYS
+    // (z80scc.cpp:1178-1188) — but it also advances the latched copy of RR0 to
+    // the current pin state ("Update latched value to match current status",
+    // z80scc.cpp:1189-1197), which is what makes the CTS change visible and
+    // the NEXT reset able to finish.
     scc.controlWrite(A, 0x10);
-    assert((scc.peekRr(A, 0) & 0x20) == 0);
+    assert((scc.peekRr(A, 0) & 0x20) != 0);     // the CTS pin shows through now
+    assert((scc.peekRr(A, 3) & 0x08) != 0);     // …but the IP bit is still up
+    assert(scc.intAsserted());
+
+    // …and the SECOND Reset Ext/Status DOES release it. That advance is the
+    // half POM2 was missing: without the else branch `extint_states` stayed at
+    // the pre-change value for ever, so the difference never went away, the
+    // Ext/Status IP bit never cleared, and an ISR written as "Reset
+    // Ext/Status, re-read RR0, are we done?" — the Workstation Card ROM's, at
+    // $EE13 — never left the loop.
+    scc.controlWrite(A, 0x10);
+    assert((scc.peekRr(A, 3) & 0x08) == 0);     // Ext/Status IP released
+    assert(!scc.intAsserted());
 
     // With a single condition, the same command does release it and clears
     // the Ext/Status IP bit in RR3.

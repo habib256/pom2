@@ -105,6 +105,90 @@ int main()
     std::printf("tiny latch 4 → period %d\n", small);
     assert(small == 6 && "latch 4 must give a 6-cycle period");
 
-    std::printf("via_t1_continuous_period OK\n");
+    // ── ACR bit 7: PB7 is the T1 square-wave output ────────────────────
+    //
+    // MAME `6522via.cpp:85` `T1_SET_PB7(c) = (c & 0x80)`, folded into
+    // `input_pb` / `output_pb` / `read_pb` (`:605-630`) as
+    // `pb = (pb & 0x7f) | (m_t1_pb7 << 7)` — WITHOUT consulting DDRB, so a
+    // port-B pin the guest configured as an input still shows the wave.
+    // `t1_tick` (`:536-549`) toggles it on every continuous underflow and
+    // forces it to 1 when a one-shot expires; a T1CH write clears it
+    // (`:934`); reset sets it (`:347`).
+    {
+        pom2::Via6522 v;
+        v.write(pom2::Via6522::VIA_DDRB, 0x00);   // whole port an INPUT
+        assert((v.read(pom2::Via6522::VIA_ORB) & 0x80) == 0x80 &&
+               "ACR.7 clear: PB7 must read as the plain pulled-up pin");
+
+        v.write(pom2::Via6522::VIA_ACR, 0xC0);    // T1 continuous + PB7
+        v.write(pom2::Via6522::VIA_T1CL, 8);
+        v.write(pom2::Via6522::VIA_T1CH, 0);      // arm — and drive PB7 low
+        assert((v.read(pom2::Via6522::VIA_ORB) & 0x80) == 0x00 &&
+               "T1CH write must clear PB7");
+
+        bool level = false;
+        for (int i = 0; i < 6; ++i) {
+            cyclesToFire(v, 64);                  // one underflow
+            level = !level;
+            assert(((v.read(pom2::Via6522::VIA_ORB) & 0x80) != 0) == level &&
+                   "PB7 must toggle once per continuous-mode underflow");
+        }
+        // The collapse path (one advance() spanning several periods) must
+        // land on the same parity as stepping one cycle at a time.
+        const bool before = (v.read(pom2::Via6522::VIA_ORB) & 0x80) != 0;
+        v.advance(10 * 10);                       // period is 10 → 10 toggles
+        assert(((v.read(pom2::Via6522::VIA_ORB) & 0x80) != 0) == before &&
+               "collapsed reload must apply the underflow parity to PB7");
+        v.advance(10);                            // one more → flipped
+        assert(((v.read(pom2::Via6522::VIA_ORB) & 0x80) != 0) != before);
+
+        // One-shot: PB7 goes HIGH at the underflow and stays there.
+        pom2::Via6522 os;
+        os.write(pom2::Via6522::VIA_DDRB, 0xFF);
+        os.write(pom2::Via6522::VIA_ORB, 0x00);   // every output pin low
+        os.write(pom2::Via6522::VIA_ACR, 0x80);   // one-shot + PB7
+        os.write(pom2::Via6522::VIA_T1CL, 8);
+        os.write(pom2::Via6522::VIA_T1CH, 0);
+        assert((os.read(pom2::Via6522::VIA_ORB) & 0x80) == 0x00);
+        cyclesToFire(os, 64);
+        assert((os.read(pom2::Via6522::VIA_ORB) & 0x80) == 0x80 &&
+               "one-shot underflow drives PB7 high, over an output latch of 0");
+        os.advance(1000);
+        assert((os.read(pom2::Via6522::VIA_ORB) & 0x80) == 0x80 &&
+               "one-shot PB7 must stay high");
+    }
+
+    // ── ACR bit 0: port-A input latching on a CA1 edge ─────────────────
+    //
+    // MAME `6522via.cpp:1107-1110` latches `input_pa()` on an active CA1
+    // transition when ACR.0 is set; `:662-671` (ORA) and `:690-700`
+    // (ORANH) then return the latch instead of the live pins for as long
+    // as IFR.CA1 stays set. (Port-B latching, ACR.1, is NOT modelled —
+    // it needs a CB1 this VIA does not have. See Via6522.h.)
+    {
+        pom2::Via6522 v;
+        v.write(pom2::Via6522::VIA_DDRA, 0x00);   // port A all input
+        v.write(pom2::Via6522::VIA_PCR,  0x00);   // CA1 negative edge
+        v.setPortAInput(0x11);
+
+        // Latching OFF: the read follows the pins.
+        v.setCa1NegativeEdge();
+        v.setPortAInput(0x22);
+        assert(v.read(pom2::Via6522::VIA_ORA) == 0x22);
+
+        v.write(pom2::Via6522::VIA_ACR, 0x01);    // PA latch enable
+        v.setPortAInput(0x33);
+        v.setCa1NegativeEdge();                   // freezes $33
+        v.setPortAInput(0x44);                    // pins move on
+        assert(v.read(pom2::Via6522::VIA_ORANH) == 0x33 &&
+               "ORANH must return the CA1 latch while IFR.CA1 stands");
+        assert(v.read(pom2::Via6522::VIA_ORA) == 0x33 &&
+               "ORA must return the CA1 latch while IFR.CA1 stands");
+        // That ORA read cleared IFR.CA1 (CLR_PA_INT) — the latch is
+        // released and the live pins are visible again.
+        assert(v.read(pom2::Via6522::VIA_ORA) == 0x44);
+    }
+
+    std::printf("via_t1_continuous_period OK (PB7 + PA latch pinned)\n");
     return 0;
 }

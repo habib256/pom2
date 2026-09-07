@@ -17,10 +17,15 @@
 // SlotBus dispatch smoke test — pins:
 //   * device-select decode (slot N at $C080+N*16, low4 = addr & 0xF)
 //   * slot-ROM decode (slot N at $CN00, low8 = addr & 0xFF)
-//   * active-expansion-slot latching by any $CnXX access (reads only —
-//     writes-into-rom strobes go through the same path in production)
+//   * $C800 ownership: FIRST-one-wins, only a POPULATED slot claims, and
+//     the claim is released only by $CFFF (MAME `apple2e.cpp:2970-2987`
+//     `read_slot_rom`, `:2989-3025` `write_slot_rom`, `:3137-3155`
+//     `c800_r`). POM2 used to latch last-one-wins, empty slots included.
 //   * $CFFF deactivates the expansion ROM (read or write)
-//   * empty slot returns open-bus $FF on slot ROM and on expansion ROM
+//   * an unclaimed read returns the FLOATING BUS, not a hard $FF — every
+//     one of those upstream handlers, plus `c080_r` (`:2883-2918`), ends
+//     in `return read_floatingbus();`. SlotBus takes the source from
+//     `setFloatingBusSource`; with none installed it answers $FF.
 //   * unplug() of the active slot clears the latch
 
 #include "SlotBus.h"
@@ -101,17 +106,30 @@ int main()
     // Slot ROM read: slot 6 ROM at $C600-$C6FF.
     const uint8_t got = bus.slotRomRead(0xC600);
     assert(got == (0x00 ^ 0xA0));
-    // After any $C6xx access, slot 6 is the active expansion ROM owner.
+    // A populated slot's $CnXX access claims the unclaimed $C800 window.
     assert(bus.getActiveExpansionSlot() == 6);
 
-    // Empty slot ROM reads should return open-bus $FF AND still latch the
-    // expansion-active slot (matches hardware decode).
+    // An EMPTY slot reads open bus and claims NOTHING — `read_slot_rom`
+    // only reaches the claim inside `if (m_slotdevice[slotnum] != nullptr)`.
     assert(bus.slotRomRead(0xC400) == 0xFF);
-    assert(bus.getActiveExpansionSlot() == 4);
-
-    // Re-select slot 6 then read expansion ROM.
-    (void)bus.slotRomRead(0xC601);
     assert(bus.getActiveExpansionSlot() == 6);
+    // ...and a SECOND populated slot cannot steal it either: upstream's
+    // comment is literally "a bus fight here is resolved as
+    // first-one-wins", gated on `m_cnxx_slot == CNXX_UNCLAIMED`.
+    bus.plug(2, std::make_unique<FakeCard>(0x50));
+    assert(bus.slotRomRead(0xC200) == (0x00 ^ 0x50));
+    assert(bus.getActiveExpansionSlot() == 6);
+    (void)bus.unplug(2);
+    assert(bus.getActiveExpansionSlot() == 6);   // unplugging a NON-holder
+
+    // Writes into $CnXX claim on the same rule (`write_slot_rom`).
+    (void)bus.expansionRomRead(0xCFFF);          // release
+    assert(bus.getActiveExpansionSlot() == -1);
+    bus.slotRomWrite(0xC400, 0x11);              // empty slot: no claim
+    assert(bus.getActiveExpansionSlot() == -1);
+    bus.slotRomWrite(0xC600, 0x11);              // populated: claims
+    assert(bus.getActiveExpansionSlot() == 6);
+
     const uint8_t expByte = bus.expansionRomRead(0xC842);
     assert(expByte == 0x42);  // (0xC842 - 0xC800) & 0xFF == 0x42
     assert(card->expansionReads == 1);
@@ -123,6 +141,18 @@ int main()
     const int prevExpansionReads = card->expansionReads;
     assert(bus.expansionRomRead(0xC900) == 0xFF);
     assert(card->expansionReads == prevExpansionReads);
+
+    // An unclaimed read takes the floating-bus source when one is
+    // installed (Memory installs `Memory::floatingBus()`), and $FF only
+    // as the no-source fallback.
+    bus.setFloatingBusSource([]() -> uint8_t { return 0x3C; });
+    assert(bus.getActiveExpansionSlot() == -1);
+    assert(bus.slotRomRead(0xC400) == 0x3C);     // empty slot ROM
+    assert(bus.deviceSelectRead(0xC0B0) == 0x3C);// empty device select
+    assert(bus.expansionRomRead(0xC900) == 0x3C);// unclaimed $C800 window
+    assert(bus.expansionRomRead(0xCFFF) == 0x3C);// the deselect read itself
+    bus.setFloatingBusSource(nullptr);
+    assert(bus.slotRomRead(0xC400) == 0xFF);
 
     // Re-arm and write to expansion ROM.
     (void)bus.slotRomRead(0xC600);

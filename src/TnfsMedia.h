@@ -48,7 +48,13 @@ struct TnfsFetchLimits {
     /// Whole-transfer deadline. Reached → the fetch fails with a message
     /// naming how far it got; nothing partial is published, because the cache
     /// file only appears through writeFileAtomic at the very end.
-    int  deadlineSeconds = 180;
+    ///
+    /// 60 s, not the 180 s this started at. The number is not "how long a
+    /// large image takes" — it is how long a user stares at an unpainted
+    /// window before deciding POM2 has hung, and three minutes is well past
+    /// it. A server that cannot deliver a floppy in a minute is a server to
+    /// give up on; the retry costs one command line.
+    int  deadlineSeconds = 60;
     /// Largest image to pull. Defaults to `kTnfsMaxImageBytes`; 0 = default.
     std::uint32_t maxBytes = 0;
     /// Polled between chunks. Set it from another thread (or a signal
@@ -80,6 +86,22 @@ bool parseTnfsUrl(const std::string& url, std::string& host, std::uint16_t& port
 TnfsFetchResult tnfsFetchImage(const std::string& url,
                                const std::string& cacheDir,
                                const TnfsFetchLimits& limits = {});
+
+/// Prune `cacheDir` to `budgetBytes`, deleting least-recently-used files
+/// first (mtime order, oldest gone first). Called after every successful
+/// fetch, so the cache cannot grow without bound: the cache key is a hash of
+/// host+port+path, so a server that renames or re-publishes an image orphans
+/// the old file forever and nothing ever collected it. `keep` (optional) is
+/// never deleted — the file the fetch just landed. Returns the bytes freed.
+std::uint64_t pruneTnfsCache(const std::string& cacheDir,
+                             std::uint64_t budgetBytes,
+                             const std::string& keep = std::string());
+
+/// How much of the user's disk the TNFS cache may hold. Sixteen 32 MB
+/// volumes, or a few thousand floppies — generous for the cache's job
+/// (booting the same disk offline tomorrow) and bounded, which the old
+/// unlimited store was not.
+inline constexpr std::uint64_t kTnfsCacheBudgetBytes = 512ull * 1024ull * 1024ull;
 
 /// Largest image this will pull. ProDOS's own ceiling — a 32 MB volume is
 /// ~64 000 round trips, which is already an unreasonable thing to do over the

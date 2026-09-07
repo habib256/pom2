@@ -173,6 +173,20 @@ public:
     void pokeRam(uint8_t addr, uint8_t v) {
         if (addr >= 0x10 && addr <= 0x7F) ram[addr - 0x10] = v;
     }
+    /// The Mask Option Register byte the loaded EPROM carries at $0784,
+    /// already masked the way MAME's `m68705p3_device::get_mask_options()`
+    /// masks it (`& 0xf7`, "no SNM bit"). $FF when no ROM is loaded.
+    uint8_t  getMaskOptions() const {
+        return romLoaded ? static_cast<uint8_t>(eprom[kMorAddr - 0x80] & 0xF7)
+                         : uint8_t{0xFF};
+    }
+    /// True when the MOR selected TIMER_MOR (MOR_TOPT set) — the timer
+    /// divisor/source are then fixed by the mask option and TCR writes
+    /// cannot change them.
+    bool     timerIsMorConfigured() const { return timerMor_; }
+    /// Current prescaler divisor exponent (0..7 → ÷1..÷128).
+    unsigned getTimerDivisor() const { return timer.divisor; }
+    uint8_t  getTimerTdr() const { return timer.tdr; }
 
 private:
     static constexpr uint8_t  kSpMask     = 0x7F;
@@ -182,6 +196,26 @@ private:
     static constexpr uint16_t kSwiVector  = 0x07FC;
     static constexpr uint16_t kIntVector  = 0x07FA;
     static constexpr uint16_t kTmrVector  = 0x07F8;
+    /// Mask Option Register — MAME `m68705.cpp:54` (`{ 0x0784, "MOR" }`).
+    static constexpr uint16_t kMorAddr    = 0x0784;
+
+    // MOR bit assignments — MAME `m68705.h:249-253`.
+    static constexpr uint8_t MOR_PS   = 0x07;   // prescaler divisor
+    static constexpr uint8_t MOR_TIE  = 0x10;   // timer external enable
+    static constexpr uint8_t MOR_CLS  = 0x20;   // clock source
+    static constexpr uint8_t MOR_TOPT = 0x40;   // timer option
+    // TCR bit assignments — MAME `m68705.h:93-101`.
+    static constexpr uint8_t TCR_PS   = 0x07;
+    static constexpr uint8_t TCR_PSC  = 0x08;
+    static constexpr uint8_t TCR_TIE  = 0x10;
+    static constexpr uint8_t TCR_TIN  = 0x20;
+    static constexpr uint8_t TCR_TIM  = 0x40;
+    static constexpr uint8_t TCR_TIR  = 0x80;
+    // m6805_timer::timer_source — MAME `m68705.h:40-45`.
+    static constexpr uint8_t kSrcClock      = 0;   // internal clock
+    static constexpr uint8_t kSrcClockTimer = 1;   // internal AND external
+    static constexpr uint8_t kSrcDisabled   = 2;
+    static constexpr uint8_t kSrcExternal   = 3;   // external input only
 
     // Condition-code flags (bits 0..4 of CC).
     static constexpr uint8_t CFLAG = 0x01;
@@ -220,8 +254,12 @@ private:
         uint8_t tdr      = 0xFF;     // Timer Data Register
         uint8_t tcr      = 0x7F;     // Timer Control Register
         uint8_t prescale = 0x7F;
-        unsigned divisor = 7;        // PS field (bits 0..2 of TCR)
+        unsigned divisor = 7;        // prescaler exponent (÷1 … ÷128)
     } timer;
+    /// Timer configuration taken from the MOR at EPROM-load time (MAME
+    /// does it in `device_start`, so `reset()` must not disturb it).
+    bool    timerMor_    = false;         // TIMER_MOR vs TIMER_PGM
+    uint8_t timerSource_ = kSrcClock;     // m6805_timer::timer_source
 
     // Interrupts. The 68705 latches IRQ requests internally — once
     // asserted, the request stays pending until the CPU services it,
@@ -273,6 +311,8 @@ private:
     uint8_t readPortPin(int n);
 
     // ─── Timer ────────────────────────────────────────────────────────
+    /// Apply the loaded EPROM's MOR to the timer (MAME `device_start`).
+    void configureTimerFromMor();
     void timerWriteTcr(uint8_t v);
     void timerUpdate(unsigned count);
 

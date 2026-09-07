@@ -68,6 +68,25 @@ W5100NameResolver::W5100NameResolver(LookupFn lookup)
 #endif
 }
 
+// Token bucket — see kResolvesPerSecond in the header for why an in-flight
+// cap is not enough on its own.
+bool W5100NameResolver::takeRateToken()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (rateStamp_ == std::chrono::steady_clock::time_point{}) {
+        rateStamp_ = now;
+    } else {
+        const double elapsed =
+            std::chrono::duration<double>(now - rateStamp_).count();
+        rateStamp_ = now;
+        rateTokens_ = std::min<double>(kResolveBurst,
+                                       rateTokens_ + elapsed * kResolvesPerSecond);
+    }
+    if (rateTokens_ < 1.0) return false;
+    rateTokens_ -= 1.0;
+    return true;
+}
+
 W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
                                                      int waitMs)
 {
@@ -77,6 +96,16 @@ W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
     if (cached != cache_.end()) {
         out.status  = cached->second ? Status::Resolved : Status::Failed;
         out.address = cached->second;
+        return out;
+    }
+
+    // A cache MISS is the only thing that puts a query on the wire, so the
+    // meter sits here and nowhere else.
+    if (!takeRateToken()) {
+        log().warn("W5100", "virtual-DNS rate limit reached — lookup not "
+                            "attempted (name of " + std::to_string(name.size()) +
+                            " bytes)");
+        out.status = Status::Refused;
         return out;
     }
 

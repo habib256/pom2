@@ -744,7 +744,18 @@ void MainWindow::renderAiControlPanelWindow()
         aiTokenInput = tokenBuf;
         aiServer->setAuthToken(aiTokenInput);
     }
-
+    // The field used to be the whole story: an empty box meant OPEN, and a
+    // token short enough to type by hand was short enough to guess. Offer a
+    // real one in one click, and say so when the typed one is too short —
+    // the server's five-failures-in-five-seconds backoff slows a grind, it
+    // does not survive a four-character secret.
+    ImGui::SameLine();
+    if (ImGui::Button("Generate")) {
+        aiTokenInput = pom2::AiControlServer::generateToken();
+        aiServer->setAuthToken(aiTokenInput);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("32 random characters from the platform CSPRNG.");
     ImGui::SameLine();
     if (!running) {
         if (ImGui::Button("Start")) {
@@ -759,6 +770,15 @@ void MainWindow::renderAiControlPanelWindow()
         }
     } else {
         if (ImGui::Button("Stop")) aiServer->stop();
+    }
+
+    if (aiTokenInput.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                           "Open mode: any local process can drive POM2.");
+    } else if (aiTokenInput.size() < pom2::AiControlServer::kMinTokenLength) {
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.3f, 1.0f),
+                           "Token is shorter than %zu characters — guessable.",
+                           pom2::AiControlServer::kMinTokenLength);
     }
 
     ImGui::Separator();

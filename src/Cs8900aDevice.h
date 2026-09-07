@@ -199,6 +199,14 @@ private:
     // `cs8900a.cpp:773-1007` — register side effects.
     void sideEffectsWritePp(uint16_t ppAddress, bool oddAddress);
     void sideEffectsReadPp (uint16_t ppAddress, bool oddAddress);
+    /// Read-to-clear, applied AFTER the word has been fetched.
+    ///
+    /// The event registers clear when they are read (datasheet §4.4), but a
+    /// 16-bit register is fetched as two 8-bit accesses and `read()` calls
+    /// sideEffectsReadPp BEFORE readRegister — clearing there would hand the
+    /// driver a zeroed half of the very word it is reading. So the clear runs
+    /// on the way out, on the high half.
+    void sideEffectsAfterReadPp(uint16_t ppAddress, bool oddAddress);
 
     // `cs8900a.cpp:1013-1247` — register-range decode.
     uint16_t readRegister(uint16_t ppAddress) const;
@@ -242,8 +250,18 @@ private:
     std::deque<std::vector<uint8_t>> frameQueue_;
     /// Bytes held in `frameQueue_` — what kMaxFrameQueueBytes bounds.
     size_t   queueBytes_ = 0;
-    /// Frames the chip had no room for, as RxMISS counts them.
+    /// Frames the chip had no room for, as RxMISS counts them. Lifetime
+    /// total — the status panel's number, and never reset by a register read.
     uint64_t framesMissed_ = 0;
+    /// What `framesMissed_` stood at when the guest last READ RxMISS. The
+    /// register is a counter that clears on read (datasheet §4.4.20), so what
+    /// it reports is the delta since that read; the lifetime total above is
+    /// POM2's own bookkeeping and must not move with it.
+    uint64_t rxMissReported_ = 0;
+    /// The ISQ latch popped a frame the guest has not read RxEvent for yet.
+    /// See latchInterruptStatusQueue(). Host-side, never snapshotted: a
+    /// restored machine has no queued frames to have staged one from.
+    bool     isqStagedFrame_ = false;
     NetworkBackend* backend_ = nullptr;
 
     uint64_t framesSent_     = 0;

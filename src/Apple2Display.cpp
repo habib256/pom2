@@ -465,8 +465,21 @@ void Apple2Display::render(Memory& mem)
     // Is the machine actually running? (see the cpuIdle_ member comment)
     {
         const uint64_t cyc = mem.getCycleCounter();
-        cpuIdle_ = renderedOnce_ && (cyc == lastRenderCycle_);
+        // Two ways to be idle. The cycle counter standing still is the plain
+        // one (paused, breakpoint). The second keeps the override alive
+        // across a Step: a handful of cycles moves the counter but publishes
+        // no new video frame, so `state` below is still the same frozen
+        // published frame — dropping the override there reverted a poked
+        // mode for ~17 000 cycles. `frameCounter` is the publication index
+        // (it moves exactly when advanceCycles closes a video frame), and
+        // the `cpuIdle_` term keeps a running machine on a fast host monitor
+        // — two renders inside one published frame — out of this branch.
+        const bool wasIdle = cpuIdle_;
+        cpuIdle_ = renderedOnce_ &&
+                   (cyc == lastRenderCycle_ ||
+                    (wasIdle && frameCounter == lastRenderFrame_));
         lastRenderCycle_ = cyc;
+        lastRenderFrame_ = frameCounter;
         renderedOnce_ = true;
         if (!cpuIdle_) liveStateAtRun_ = mem.getDisplayState();
     }

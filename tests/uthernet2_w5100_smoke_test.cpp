@@ -47,6 +47,14 @@
 //     INCLUDES the two length bytes.
 //   * Snapshot round-trip, including the rule that a live TCP socket must
 //     come back CLOSED rather than pretending to still be connected.
+//
+// setAllowLoopback(true) EVERYWHERE BELOW, and it is not incidental. The chip
+// refuses 127.0.0.0/8 by default: TCP/UDP run on host sockets, so a guest that
+// could name loopback could reach the host's own private services — POM2's AI
+// control server among them, which answers a loopback client with no Origin as
+// if it were native. Every peer in this file IS on loopback, which is exactly
+// the case a user who deliberately runs a local server opts into with the
+// `uthernet_allow_loopback` setting, so the tests opt into it too.
 
 #include "NetworkBackend.h"
 #include "UthernetIICard.h"
@@ -228,6 +236,7 @@ void testPowerOnDefaults()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     // Retry time 0x07D0 (200 ms) and retry count 8 — datasheet defaults.
     assert(readAt(card, pom2::kW5100Rtr0) == 0x07);
     assert(readAt(card, pom2::kW5100Rtr1) == 0xD0);
@@ -260,6 +269,7 @@ void testIndirectWindowDecode()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     // Only A0/A1 are decoded: $C0n0 aliases MODE, $C0n1 aliases ADDR_HI,
     // and so on (`W5100.h:6`).
     card.deviceSelectWrite(0x0, pom2::kW5100MrAi);
@@ -295,6 +305,7 @@ void testSoftResetPreservesAddress()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     writeAt(card, pom2::kW5100Sipr0, 192);
     setAddress(card, 0x4321);
     card.deviceSelectWrite(kMode, pom2::kW5100MrRst);
@@ -307,6 +318,7 @@ void testSoftResetPreservesAddress()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card2.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card2.chip().setAllowLoopback(true);
     setAddress(card2, 0x4321);
     card2.deviceSelectWrite(kMode, pom2::kW5100MrRst);
     assert(card2.chip().dataAddress() == 0x4321);
@@ -320,6 +332,7 @@ void testBufferCarve()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     // 0x00 = 1 KB to every socket; the top 4 KB of each region is unused.
     writeAt(card, pom2::kW5100Rmsr, 0x00);
     writeAt(card, pom2::kW5100Tmsr, 0x00);
@@ -346,6 +359,7 @@ void testTcpSession()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     // Deliberately no NetworkBackend: TCP must work without one.
     assert(card.backend() == nullptr);
 
@@ -450,6 +464,7 @@ void testMacRaw()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
     auto* raw = backend.get();
     card.setBackend(std::move(backend));
@@ -504,6 +519,7 @@ void testSnapshotRoundTrip()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     constexpr size_t kSock = 1;
     const uint16_t base = socketBase(kSock);
 
@@ -537,6 +553,7 @@ void testSnapshotRoundTrip()
     // the card injects them, as MainWindow does at plug time.
 
     restored.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    restored.chip().setAllowLoopback(true);
     restored.loadSnapshotState(blob.data(), blob.size());
 
     // Registers and buffer geometry come back...
@@ -555,6 +572,7 @@ void testSnapshotRoundTrip()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     untouched.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    untouched.chip().setAllowLoopback(true);
     untouched.loadSnapshotState(foreign.data(), foreign.size());
     assert(readAt(untouched, pom2::kW5100Sipr0) == 0);
 
@@ -603,6 +621,7 @@ void testSendAfterPeerResetSurvives()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = connectSocket0(card, listener);
 
     listener.closeAbruptly();
@@ -641,6 +660,7 @@ void testHalfCloseWait()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = connectSocket0(card, listener);
 
     listener.shutdownWrite();
@@ -683,6 +703,7 @@ void testRmsrShrinkUnderStagedData()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = connectSocket0(card, listener);
 
     const std::string bulk(1500, 'x');
@@ -711,6 +732,7 @@ void testConnectGating()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = socketBase(0);
 
     writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrUdp);
@@ -750,6 +772,7 @@ void testMirrorWriteSymmetry()
     // The W5100 no longer builds its own host sockets — whoever plugs
     // the card injects them, as MainWindow does at plug time.
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     writeAt(card, static_cast<uint16_t>(0x8000 + pom2::kW5100TxBase + 0x123), 0xAB);
     assert(readAt(card, static_cast<uint16_t>(pom2::kW5100TxBase + 0x123)) == 0xAB);
     std::printf("  >= $8000 mirror write OK\n");
@@ -773,6 +796,7 @@ void testSendOfExactlyTheWholeRing()
     LocalListener listener;
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = connectSocket0(card, listener);
 
     const uint16_t ring = card.chip().socketInfo(0).txCapacity;
@@ -813,6 +837,7 @@ void testSendInSockInitKeepsTheRing()
     LocalListener listener;
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = socketBase(0);
 
     writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrTcp);
@@ -857,6 +882,7 @@ void testSocketInterruptRegister()
     LocalListener listener;
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = connectSocket0(card, listener);
     const uint16_t ir   = static_cast<uint16_t>(base + pom2::kW5100SnIr);
 
@@ -902,6 +928,7 @@ void testListenIsAnHonestFailure()
 {
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = socketBase(0);
 
     writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrTcp);
@@ -931,6 +958,7 @@ void testFixedLocalPortReconnects()
     LocalListener listener;
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = socketBase(0);
 
     for (int attempt = 0; attempt < 2; ++attempt) {
@@ -991,6 +1019,7 @@ void testRestoreClearsRingPointersAndKeepsTheDnsSetting()
 {
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
     const uint16_t base = socketBase(0);
 
     // A socket with data staged in both directions, then snapshotted.
@@ -1005,6 +1034,7 @@ void testRestoreClearsRingPointersAndKeepsTheDnsSetting()
 
     UthernetIICard restored(3);
     restored.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    restored.chip().setAllowLoopback(true);
     // The user turned virtual DNS OFF in this session.
     restored.chip().setVirtualDnsEnabled(false);
     restored.loadSnapshotState(blob.data(), blob.size());

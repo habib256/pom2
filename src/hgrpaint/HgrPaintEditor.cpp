@@ -246,7 +246,12 @@ void hgrpaint::HgrPaintEditor::renderShadow(uint32_t* out, bool mono)
 // whether IT opened a host batch, so each begin/end pair matches its own.
 void hgrpaint::HgrPaintEditor::beginStroke(bool batch)
 {
-    const bool doBatch = batch && host;
+    // The mask is the record of who opened a batch, so a level it cannot
+    // record must not open one either: `strokeNest_ >= 31` used to still call
+    // beginBatch() while commitStroke() — which reads the same mask — skipped
+    // the matching endBatch(), re-creating the very leak the counter exists to
+    // prevent, only 31 levels deeper. Beyond 31 an outer batch is open anyway.
+    const bool doBatch = batch && host && strokeNest_ < 31;
     if (strokeNest_ == 0) stroke.clear();
     if (strokeNest_ < 31) {
         if (doBatch) strokeBatchMask_ |=  (1u << strokeNest_);
@@ -1006,16 +1011,16 @@ void hgrpaint::HgrPaintEditor::renderToolPanel()
     }
     if (tool == Tool::Select) {
         if (ImGui::Button("Copy")) {
-            if (dragging) { commitStroke(); dragging = false; }   // flush an open stroke
+            flushOpenStroke();
             copySelection(false);
         }
         ImGui::SameLine();
         if (ImGui::Button("Cut")) {
-            if (dragging) { commitStroke(); dragging = false; }
+            flushOpenStroke();
             copySelection(true);
         }
         if (ImGui::Button("Paste") && clipUsableHere()) {
-            if (dragging) { commitStroke(); dragging = false; }   // flush an open stroke
+            flushOpenStroke();
             pasting = true; pasteX = std::min(selX0, selX1); pasteY = std::min(selY0, selY1);
         }
         // Clip transforms (apply to the clipboard content; paste to commit).
@@ -2530,17 +2535,18 @@ void hgrpaint::HgrPaintEditor::handleShortcuts()
         if (pressed(ImGuiKey_Z)) { if (io.KeyShift) doRedo(); else doUndo(); }
         if (pressed(ImGuiKey_Y)) doRedo();
         // Same flush as Ctrl+V below: a copy/cut fired mid-drag would nest a
-        // second stroke inside the open one (Cut opens its own batch).
+        // second stroke inside the open one (Cut opens its own batch). A
+        // Select rubber-band is NOT such a stroke — see flushOpenStroke().
         if (pressed(ImGuiKey_C)) {
-            if (dragging) { commitStroke(); dragging = false; }
+            flushOpenStroke();
             copySelection(false);
         }
         if (pressed(ImGuiKey_X)) {
-            if (dragging) { commitStroke(); dragging = false; }
+            flushOpenStroke();
             copySelection(true);
         }
         if (pressed(ImGuiKey_V) && clipUsableHere()) {
-            if (dragging) { commitStroke(); dragging = false; }   // flush an open stroke
+            flushOpenStroke();
             pasting = true;
             pasteX = hasSel ? std::min(selX0, selX1) : 0;
             pasteY = hasSel ? std::min(selY0, selY1) : 0;

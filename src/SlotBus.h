@@ -18,14 +18,27 @@
 // instances (slots 0-7) and decodes the $C080-$CFFF address space:
 //
 //   $C080-$C0FF   16-byte device-select per slot (slot N = $C080+N*16).
-//   $C100-$C7FF   256-byte slot ROM (slots 1-7). Each access also marks
-//                 the corresponding slot as "active" for the shared
-//                 expansion ROM window below.
-//   $C800-$CFFE   2 KB expansion ROM, routed to whichever slot was most
-//                 recently selected by a $CnXX access.
+//   $C100-$C7FF   256-byte slot ROM (slots 1-7). An access by a slot that
+//                 HOLDS A CARD also claims the shared expansion window
+//                 below, if nobody holds it yet.
+//   $C800-$CFFE   2 KB expansion ROM, routed to the slot that claimed it.
 //   $CFFF         Special "disable expansion ROM" switch — read or write
-//                 deactivates the active expansion slot until the next
-//                 $CnXX touches a slot ROM.
+//                 releases the claim, so the next $CnXX can take it.
+//
+// **$C800 ownership is FIRST-one-wins, and only a populated slot claims.**
+// MAME `apple2e.cpp:2970-2987` (`read_slot_rom`) / `:2989-3025`
+// (`write_slot_rom`) claim only under `m_slotdevice[slotnum] != nullptr &&
+// m_cnxx_slot == CNXX_UNCLAIMED && take_c800()`, and `c800_r` (`:3137-3155`)
+// releases at offset $7FF. On real hardware each card latches its own
+// $C800 enable off its I/O SELECT and only the $CFFF deselect clears them,
+// so a second card touching its $CnXX cannot steal the window — it starts
+// a bus fight, which MAME resolves as first-one-wins. POM2 used to latch
+// last-one-wins AND to latch on empty slots.
+//
+// **Empty slots read the FLOATING BUS, not $FF.** Every one of the three
+// upstream handlers above ends in `return read_floatingbus();`, as does
+// `c080_r` (`:2883-2918`). Install the source with `setFloatingBusSource`
+// (Memory does, at construction); without one the bus falls back to $FF.
 //
 // All entry points are called from the CPU thread under
 // EmulationController's stateMutex. Plug/unplug/reset must run under the
@@ -53,6 +66,13 @@ public:
     /// (e.g. headless tests) can install their own sink. Set to a no-op
     /// or empty function to disconnect.
     using IrqRouter = std::function<void(int slot, bool asserted)>;
+
+    /// Open-bus source for unclaimed reads. Memory installs a closure
+    /// returning `Memory::floatingBus()`; tests may leave it unset, in
+    /// which case `openBus()` answers $FF (the pre-2026-09-07 constant).
+    /// Called only on the SLOW $Cxxx dispatch paths.
+    using FloatingBusFn = std::function<uint8_t()>;
+    void setFloatingBusSource(FloatingBusFn fn) { floatingBus_ = std::move(fn); }
 
     SlotBus() = default;
     ~SlotBus() = default;
@@ -199,12 +219,22 @@ private:
     SlotPeripheral* busSnooper_ = nullptr;
     void rebuildActiveCache();
 
-    /// -1 = no slot driving expansion ROM. Set by slotRomRead, cleared
-    /// by $CFFF and by unplug() of the active slot.
+    /// -1 = CNXX_UNCLAIMED. Claimed by the FIRST populated slot whose
+    /// $CnXX window is touched, released by $CFFF and by unplug() of the
+    /// holder. MAME `apple2e.cpp:216` (`CNXX_UNCLAIMED`) + `:2977-2981`.
     int activeExpansionSlot = -1;
+    void claimExpansion(int slot) {
+        if (activeExpansionSlot < 0) activeExpansionSlot = slot;
+    }
     /// IRQ routing sink (see `IrqRouter`). Optional — left empty in
     /// tests that don't care, or before Memory wires the CPU.
     IrqRouter irqRouter;
+    /// Open-bus source (see `FloatingBusFn`). Optional.
+    FloatingBusFn floatingBus_;
+
+    /// MAME's `read_floatingbus()` tail — what an unclaimed $Cxxx read
+    /// puts on the data bus.
+    uint8_t openBus() const { return floatingBus_ ? floatingBus_() : uint8_t{0xFF}; }
 };
 
 #endif // POM2_SLOT_BUS_H

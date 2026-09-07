@@ -90,3 +90,8 @@ denyglob *.7z
 denyglob *.rar
 denyglob *.tar.gz
 denyglob *.tgz
+# Crash debris from an interrupted atomic write-back (`tempSiblingPath`:
+# `<target>.<pid>-<n>.pom2tmp`). Half of a ROM or a font, never something a
+# package should carry — and inside a copied directory it is dead weight the
+# staging `--verify` cannot otherwise tell from a real asset.
+denyglob *.pom2tmp

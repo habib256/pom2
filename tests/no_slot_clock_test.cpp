@@ -43,6 +43,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <vector>
 
 namespace {
 
@@ -297,6 +298,112 @@ void testInterleavedWriteDuringReadout()
     std::printf("  ok: A2=0 access mid-readout consumes one clock bit\n");
 }
 
+// ─── Test 6: the snapshot cursors survive a round trip mid-readout ────
+//
+// `bitsMatched_` rests at exactly 64 for the WHOLE clock-readout phase — it
+// is not zeroed when the key completes, it is what `phase()` and the matcher
+// key off. The loader clamped it with `& 63`, which is the one legal value
+// the mask cannot represent: 64 came back as 0, so a rewind taken while a
+// ProDOS driver was shifting the date out restored a chip that had forgotten
+// the key was ever matched. Clamping with `min` bounds the crafted values the
+// mask was there to stop and keeps the legal one.
+void testSnapshotMidReadoutRoundTrip()
+{
+    pom2::NoSlotClock a(&fixedTime);
+    walkMagicKey(a);
+    // Half a register shifted out: matcher parked at 64, cursor at 32.
+    for (int i = 0; i < 32; ++i) (void)readClockBit(a);
+    if (a.keyBitsMatched() != 64 || a.clockBitsRead() != 32) {
+        std::fprintf(stderr, "setup: matched=%d read=%d, want 64/32\n",
+                     a.keyBitsMatched(), a.clockBitsRead());
+        std::abort();
+    }
+
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+
+    pom2::NoSlotClock b(&fixedTime);
+    if (!b.loadSnapshotState(blob.data(), blob.size())) {
+        std::fprintf(stderr, "loadSnapshotState rejected its own blob\n");
+        std::abort();
+    }
+    if (b.keyBitsMatched() != 64 || b.clockBitsRead() != 32) {
+        std::fprintf(stderr,
+            "restored matched=%d read=%d, want 64/32 — the `& 63` clamp "
+            "rewrote the legal resting value\n",
+            b.keyBitsMatched(), b.clockBitsRead());
+        std::abort();
+    }
+    // The remaining 32 bits must come out of the restored chip unchanged.
+    for (int i = 32; i < 64; ++i) {
+        if ((readClockBit(a, 0xEA) & 1) != (readClockBit(b, 0xEA) & 1)) {
+            std::fprintf(stderr, "restored readout diverges at bit %d\n", i);
+            std::abort();
+        }
+    }
+    std::printf("  ok: mid-readout snapshot round-trips (matcher stays at 64)\n");
+}
+
+// ─── Test 7: crafted cursors are still bounded, and the reader is tolerant ──
+void testSnapshotHostileAndTolerant()
+{
+    pom2::NoSlotClock a(&fixedTime);
+    walkMagicKey(a);
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+
+    // Layout: magic[4] version[2] writeEnabled readingClock bitsMatched
+    // bitsRead clockShift[8].
+    {
+        std::vector<uint8_t> bad = blob;
+        bad[7] = 0;             // readingClock_ = false → matcher arm live
+        bad[8] = 200;           // bitsMatched_
+        bad[9] = 250;           // bitsRead_
+        pom2::NoSlotClock c(&fixedTime);
+        (void)c.loadSnapshotState(bad.data(), bad.size());
+        // `kMagicKey >> bitsMatched_` is undefined at 64+, so the loader has
+        // to bring an inconsistent pair back to a state the matcher can run.
+        if (c.keyBitsMatched() >= 64) {
+            std::fprintf(stderr, "hostile cursor left matcher at %d\n",
+                         c.keyBitsMatched());
+            std::abort();
+        }
+        for (int i = 0; i < 200; ++i) (void)c.interceptRead(0xF800 + (i & 7), 0xEA);
+    }
+
+    // A bumped version must not be rejected outright: the cards read
+    // tolerantly and this section used to demand strict equality, which
+    // makes the next bump orphan every .pom2snap the shipped build wrote.
+    {
+        std::vector<uint8_t> older = blob;
+        older[4] = 1; older[5] = 0;    // version 1, the current floor
+        pom2::NoSlotClock c(&fixedTime);
+        if (!c.loadSnapshotState(older.data(), older.size())) {
+            std::fprintf(stderr, "v1 blob rejected by the v1 reader\n");
+            std::abort();
+        }
+    }
+    {
+        std::vector<uint8_t> future = blob;
+        future[4] = 0xFF; future[5] = 0xFF;
+        pom2::NoSlotClock c(&fixedTime);
+        if (c.loadSnapshotState(future.data(), future.size())) {
+            std::fprintf(stderr, "a version from the future was accepted\n");
+            std::abort();
+        }
+    }
+    {
+        std::vector<uint8_t> zero = blob;
+        zero[4] = 0; zero[5] = 0;
+        pom2::NoSlotClock c(&fixedTime);
+        if (c.loadSnapshotState(zero.data(), zero.size())) {
+            std::fprintf(stderr, "version 0 was accepted\n");
+            std::abort();
+        }
+    }
+    std::printf("  ok: cursors clamped; version window is [1, current]\n");
+}
+
 }  // namespace
 
 int main()
@@ -307,6 +414,8 @@ int main()
     testKeyWalkThenReadout();
     testStickyMismatch();
     testInterleavedWriteDuringReadout();
+    testSnapshotMidReadoutRoundTrip();
+    testSnapshotHostileAndTolerant();
     std::printf("PASS\n");
     return 0;
 }

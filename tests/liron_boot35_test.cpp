@@ -98,7 +98,10 @@ int main()
     if (rom.empty() || disk.empty()) {
         std::printf("SKIP liron_boot35: need roms/apple2e.rom and "
                     "disks_3.5/A2DeskTop-1.5-en_800k.2mg\n");
-        return 77;   // ctest SKIP_RETURN_CODE
+        return 77;   // ctest SKIP_RETURN_CODE — the ONLY skip in this file:
+                     // the fixtures are absent. Everything below is a
+                     // genuine failure (ROM/EPROM load, mount) and must
+                     // report FAIL, not hide a regression as "Skipped".
     }
 
     Memory mem;
@@ -108,20 +111,20 @@ int main()
     mem.clearRam();
     mem.resetSoftSwitches();
     if (!mem.loadAppleIIRom(rom.c_str())) {
-        std::printf("SKIP liron_boot35: cannot load %s\n", rom.c_str());
-        return 77;   // ctest SKIP_RETURN_CODE
+        std::printf("FAIL liron_boot35: cannot load %s\n", rom.c_str());
+        return 1;
     }
 
     auto card = std::make_unique<pom2::LironCard>(kSlot);
     pom2::LironCard* liron = card.get();
     if (!liron->romLoaded()) {
-        std::printf("SKIP liron_boot35: %s\n", liron->lastError().c_str());
-        return 77;   // ctest SKIP_RETURN_CODE
+        std::printf("FAIL liron_boot35: %s\n", liron->lastError().c_str());
+        return 1;
     }
     std::string err;
     if (!liron->mountBay(0, disk, err)) {
-        std::printf("SKIP liron_boot35: mount failed: %s\n", err.c_str());
-        return 77;   // ctest SKIP_RETURN_CODE
+        std::printf("FAIL liron_boot35: mount failed: %s\n", err.c_str());
+        return 1;
     }
     mem.slotBus().plug(kSlot, std::move(card));
 

@@ -38,6 +38,8 @@
 #include "SmartPortHdvUnit.h"
 #include "Logger.h"
 
+#include "ProbeOutDir.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -191,7 +193,7 @@ struct ModeEntry {
 
 int main(int argc, char** argv)
 {
-    const std::string outDir = (argc > 1) ? argv[1] : ".";
+    const std::string outDir = pom2test::probeOutDir(argc > 1 ? argv[1] : "");
 
     Memory mem; M6502 cpu(&mem);
     mem.clearRam(); mem.resetSoftSwitches(); mem.setIIEMode(true);

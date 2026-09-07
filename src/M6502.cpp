@@ -27,6 +27,18 @@
 #include <sstream>
 #include <iomanip>
 
+// Branch hint for the one place in this file that measurably needs it (the
+// interrupt epilogue in `step()`). C++17 has no `[[unlikely]]` — that is
+// C++20 — so this is `__builtin_expect` where it exists and nothing where it
+// does not. Kept local: nothing else in POM2 has earned a hint yet, and a
+// project-wide macro invites sprinkling them where they cost more than they
+// save (docs/PERFORMANCE.md § 8).
+#if defined(__GNUC__) || defined(__clang__)
+#  define POM2_UNLIKELY(x) (__builtin_expect(!!(x), 0))
+#else
+#  define POM2_UNLIKELY(x) (x)
+#endif
+
 namespace {
 // Shared switch with Memory.cpp: `POM2_TRACE_IIE_REBOOT=1` arms the
 // $FA62 reset-entry trap below (mirrors the IIe paging + auto-INTCXROM
@@ -2124,15 +2136,22 @@ void M6502::step(void)
     // That phase is pinned by mockingboard_t1_irq_phase / via_t1_rearm_chain /
     // dix_menu_raster_probe, so it is not something to perturb for a machine
     // nobody is watching.
-    if (debugHook_ != nullptr && interruptCycles != 0) {
-        cycles = interruptCycles;
-        if (memory != nullptr) {
-            memory->advanceCycles(cycles);
-        }
-        return;
+    //
+    // ONE epilogue, deliberately. Written as an early `return` it cost a
+    // measured +2.46 % on every workload (32 of 33 paired bench runs,
+    // p = 0.00003): a second inlined `advanceCycles` call site and a second
+    // exit in the hottest function in the emulator, plus a `debugHook_` load
+    // on every instruction. `interruptCycles` is tested FIRST — it is already
+    // in a register and is zero on all but a handful of instructions — so the
+    // common path never touches `debugHook_` at all, and the whole test folds
+    // into one predicted-not-taken branch. Semantics are unchanged: skipping
+    // `executeOpcode()` and charging `interruptCycles` is exactly what the
+    // early return did. See docs/PERFORMANCE.md § 9 (hashes identical).
+    if (POM2_UNLIKELY(interruptCycles != 0 && debugHook_ != nullptr)) {
+        cycles = 0;
+    } else {
+        executeOpcode();
     }
-
-    executeOpcode();
     cycles += interruptCycles;
     if (memory != nullptr) {
         memory->advanceCycles(cycles);

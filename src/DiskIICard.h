@@ -316,6 +316,16 @@ public:
         pushIwmFloppy();
     }
 
+    /// Machine-class flag for the IWM-only $C0nE/$C0nF register hooks (mode
+    /// register + write handshake). A real wozfdc has neither, so on a II/II+/
+    /// //e a `STA $C08F,X` must not latch guest data and a `$C0nE` read must
+    /// fall through to the plain Disk II path. Defaults to ON (the //c and //c+
+    /// boot through these hooks and the standalone tests build the card by
+    /// hand); `SlotCardFactory` turns it off for every profile with physical
+    /// slots. Bug hunt #3 M10.
+    void setIwmHost(bool on) { iwmHost_ = on; }
+    bool iwmHost() const { return iwmHost_; }
+
     /// User opt-in for write-back. When true, eject (and explicit save)
     /// rewrites the source file with any modified sectors. Default off
     /// to avoid silently mutating the user's image file. The toggle is
@@ -400,6 +410,7 @@ private:
     // mode reads are atypical for the standard Disk II boot), so
     // returning whd there is a no-op for them.
     uint8_t iwmMode = 0;
+    bool    iwmHost_ = true;   // see setIwmHost()
     uint8_t iwmWhd  = 0xBF;
     bool writeBackEnabled = false;     // forwarded to DiskImage on toggle
     uint8_t writeLatch = 0xFF;         // latched data nibble for next bit-cell flush
@@ -573,6 +584,50 @@ private:
     void lssStart();
     void lssSync(uint64_t extraCycles = 0);
     void control(int offset);
+    /// MAME `floppy_image_device::writing_disabled` (floppy.cpp:1254-1259):
+    ///
+    ///     return m_wpt || (m_phases & 2);
+    ///
+    /// On a Disk II the write-enable line and stepper phase 1 share the
+    /// analog card's write gate, so an energized phase 1 inhibits the write
+    /// current no matter what the sequencer is doing — the interlock that
+    /// stops a head in motion from scribbling across the surface. POM2
+    /// checked the write-protect half (`DiskImage::writeFlux` bails on a
+    /// physically protected medium) and not the phase half.
+    ///
+    /// Divergence, deliberate: MAME samples this once in `write_start` and
+    /// latches it in `m_writing`; POM2 samples it at each splice, which
+    /// needs no new snapshot field. The two differ only if a phase moves
+    /// mid-write, which no controller does — the head is parked before the
+    /// write current comes on.
+    bool writingInhibited() const {
+        return phaseOn[1] || images[activeDrive].isWriteProtected();
+    }
+
+    /// Read-amplifier noise for a head over a surface that modulates
+    /// nothing: an empty drive, or a loaded disk on a quarter-track with no
+    /// flux (WOZ TMAP $FF, tracks past 34). Advances `lssCycle` to the
+    /// caller's target and re-hashes `lssData` once per 8 bit cells with
+    /// bit 7 set, so a "wait for a nibble" loop always terminates.
+    void advanceNoise(uint64_t extraCycles);
+
+    // ── KNOWN DIVERGENCE: the IWM register hooks answer on every machine ──
+    //
+    // $C0nC (Q7 high), $C0nE (Q6 high) and $C0nF (Q6 high) are answered
+    // below as IWM registers — write-handshake, status-with-mode-echo, and
+    // the mode latch. That is right on the 32 KB //c (rev 0/3/4) and the
+    // //c+, whose firmware drives slot 6 as an IWM and reaches this card
+    // whenever `IIcClassProfile::ioReadIWM` falls through to it. It is wrong
+    // on a ][+ / //e: MAME's `wozfdc_device` has no mode register at all and
+    // returns open bus for every odd offset, so a protection that reads
+    // $C0nE under Q6 gets `wpt | iwmMode` — and `iwmMode` is whatever the
+    // guest last wrote through `STA $C08F,X`.
+    //
+    // Gated on `iwmHost_` (2026-09-07): the card cannot tell the machine class
+    // by itself (`setIWM` is bound on every profile and `iicplus_boot35_test`
+    // boots a //c+ through these hooks without binding it), so the flag is
+    // pushed in by `SlotCardFactory`, which knows the profile, and defaults
+    // to on for hand-built cards.
 
 public:
     /// Debug-only: dump the last N $C0EC reads with their cycle stamp +

@@ -1000,7 +1000,11 @@ void EmulationController::noteMediaWrite()
     // with `stateMtx` held, right before the frame is appended: clearing here
     // means the frame we are about to record becomes the new keyframe and the
     // history starts AFTER the write, so no scrub can span it.
-    const uint64_t now = pom2::mediaWriteEpoch().load(std::memory_order_relaxed);
+    // Acquire, pairing with the release in `pom2::noteMediaWrite` — the bump
+    // no longer always comes from this thread (deferred 3.5" write-back
+    // thread, UI-side media swaps), so the counter has to order the write
+    // that caused it against the frame we are about to capture.
+    const uint64_t now = pom2::mediaWriteEpoch().load(std::memory_order_acquire);
     if (now == rewindMediaEpoch_) return;
     rewindMediaEpoch_ = now;
     if (!rewind_.empty()) {

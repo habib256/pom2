@@ -280,6 +280,25 @@ public:
     void setVirtualDnsEnabled(bool enabled);
     bool virtualDnsEnabled() const { return virtualDns_; }
 
+    /// Let the guest reach 127.0.0.0/8 through the emulated card.
+    ///
+    /// OFF by default, and that default is a security boundary rather than a
+    /// preference: the guest's TCP/UDP sockets are HOST sockets, so a program
+    /// running on the emulated Apple II can open 127.0.0.1:<anything> and talk
+    /// to services the host only ever meant to expose to itself — POM2's own
+    /// AI control server among them, which treats a loopback peer with no
+    /// Origin as native and answers /mem, /disk and /reset. Nothing an Apple II
+    /// program legitimately does needs the host's loopback interface.
+    ///
+    /// The wiring point for the escape hatch is `plugUthernetII` in
+    /// MainWindow_SlotConfig.cpp:
+    ///     card->chip().setAllowLoopback(
+    ///         settings->getBool("uthernet_allow_loopback", false));
+    /// for the user who deliberately runs a server on the host and wants the
+    /// guest to reach it.
+    void setAllowLoopback(bool allow) { allowLoopback_ = allow; }
+    bool allowLoopback() const { return allowLoopback_; }
+
     // ── Introspection for the status panel ────────────────────────────
     struct SocketInfo {
         uint8_t  mode          = 0;
@@ -344,6 +363,14 @@ private:
         /// RX ring (`Uthernet2.cpp:212-234`): none for TCP, IP+port+len
         /// for UDP, IP+len for IPRAW, len for MACRAW.
         uint8_t headerSize = 0;
+
+        /// LISTEN answered "unsupported" at least once since the last chip
+        /// reset. The canonical W5100 server loop is `socket(); listen();`
+        /// retried for ever, and every iteration used to cost one unbuffered
+        /// log write — on the CPU thread, under stateMutex. Deliberately NOT
+        /// cleared by clearSocket(): the loop re-OPENs before each LISTEN, so
+        /// a flag the OPEN resets warns just as often as no flag at all.
+        bool listenWarned = false;
 
         /// TCP bytes accepted from the guest (SEND already completed and
         /// freed the TX ring) but not yet taken by the host socket — a
@@ -442,6 +469,7 @@ private:
     uint8_t                           modeRegister_ = 0;
     uint16_t                          dataAddress_  = 0;
     bool                              virtualDns_   = true;
+    bool                              allowLoopback_ = false;
     NetworkBackend*                   backend_      = nullptr;
 
     /// The real card has no ARP cache — this one exists purely so an

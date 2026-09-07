@@ -33,7 +33,7 @@ well-written explanation of a fix is not evidence that it fixes anything.
 **A second one, new on 2026-09-05.** This file was audited against the tree and
 roughly twenty of its items were stale — three of the four rows in its own
 headline drift table were already fixed, an item called the SSC IRQ DIP
-unimplemented in two places while `SuperSerialCard.cpp:492` implements it, the
+unimplemented in two places while `SuperSerialCard.cpp` implements it, the
 `MainWindow.cpp` god-object item still said 8 319 lines against a file of 1 408,
 and a dozen `file:line` citations no longer pointed at what they named. **A TODO
 that describes a tree that no longer exists is the same class of defect as a
@@ -487,6 +487,18 @@ choosing is not.*
   should be a checklist line.
 - 🟡 **macOS x86_64 slice is never executed** — no Rosetta on the runner, so
   the universal binary gets a structural `lipo` check only.
+- 🟠 **"It builds here" is a macOS-only statement, and it has now turned CI red
+  twice.** Development happens on macOS, where libc++ pulls in transitive
+  includes the other two standard libraries do not and Apple's `gl3.h`
+  declares desktop GL entry points POM2 otherwise reaches through its own
+  loader. 2026-08-22 was the include story; 2026-09-07 was
+  `CrtEffectStack.cpp` calling `glDeleteProgram` directly instead of
+  `pom2::deleteShaderProgram`, which built clean locally and broke Linux,
+  Windows **and** the coverage job (`4c3b97d`). The class is narrow enough to
+  grep for — GL names outside `OpenGLShader.h`, POSIX-only calls, missing
+  transitive includes — and a Linux container build before pushing costs
+  minutes. Worth a pre-push hook or a fast Linux compile-only CI leg that runs
+  before the full matrix.
 - 🟢 **Notarization / signing.** Both macOS and Windows refuse the first launch;
   README documents the workaround. Absent from this file entirely until now. A
   1.0 where two of three desktop platforms show a security warning reads as
@@ -835,6 +847,41 @@ of the finding.
   holes are closed. `tests/CMakeLists.txt` (~6 800 lines) stays outside on
   purpose: it is a build manifest, not a translation unit, and the ratchet only
   speaks about `.cpp`/`.h`.
+- 🟢 **Bug hunt #3 declined these, with the evidence recorded in place**
+  *(2026-09-07)*. Each is a decision, not a backlog item:
+  * **The 489 ns LSS cell.** MAME clocks `wozfdc` at 2 043 600 Hz, so a 4 µs
+    bit cell is 8.17 of its cycles and POM2's flat 8 is ~2.2 % fast. But
+    `lssCyclesPerCell()` is an **integer shared by the whole 5.25" timeline** —
+    flux layout, the write framing grid, `getNextTransition`'s cell arithmetic
+    — so this is a re-basing of that timeline onto a finer unit (the shape the
+    IWM took on 2026-09-01), not a constant swap. Nothing in the corpus is
+    known to need it.
+  * **SSC BREAK and the RTS line-condition modes.** Both are conditions of a
+    physical line. A TCP stream cannot carry a break or a modem-control
+    transition, and synthesising one would be a POM2 protocol rather than a
+    6551.
+  * **A FujiNet SP authentication handshake.** The wire is fujinet-pc's: the
+    first process to connect to `127.0.0.1:1985` *is* the SmartPort device,
+    and there is no handshake in the protocol to add one to. Adding one breaks
+    "any FujiNet software works unmodified". The listener is loopback-only and
+    armed only while the card is plugged; the exposure is documented at the
+    listener instead.
+  * **HDV / 800K mounting inside `pom2_headless`.** It needs the block and
+    SmartPort sources added to that target in the root `CMakeLists.txt`, which
+    is a build change rather than a fix; `hdv_boot_dump` covers the gap and is
+    now reachable through `make probes`.
+  * **6522 port-B input latching (ACR.1).** It latches on a **CB1** active
+    edge and this VIA model has no CB1 at all (no CB1/CB2 pins, no
+    IFR.CB1/CB2 sources). Modelling the latch alone would be a control line
+    that nothing can ever trigger. Listed in `Via6522.h:30-44`, which is now
+    the complete not-modelled list.
+  * **The DOS 3.1 / 3.1.1 `]` anomaly needs an oracle.** Both masters loop on
+    a `]` prompt and sweep the head to half-track 66 while every DOS 3.2 image
+    boots. The plausible reading is an Integer-BASIC HELLO on an Applesoft
+    ][+, but "plausible" is how a disk defect gets recorded as an emulator
+    bug. It stays open until MAME or real hardware arbitrates it.
+    (`DOS13SEC.DSK` is separately known to be a hand-modified boot0 — a disk
+    defect, not POM2's.)
 - 🟡 **One divergence left in the atomic-write family, not three.** Narrowed
   2026-09-07: every write-back call site goes through `pom2::replaceFileAtomic`
   / `writeFileAtomic`, and temp-file naming is now centralised in
@@ -871,7 +918,7 @@ port can be high-level (`ImageWriter`) and a POM2-original can be low-level
 | 6  | Mockingboard A/C (6522 + AY)   | Partial-verbatim | `ay8910.cpp:998-1015`, `:1077-1104`, `1309`; `6522via.cpp:959`          | 🟢 Port A read mask by DDR; 6522 subset (SR/PCR; T2 one-shot done, IRQ N+3 MAME)      |
 | 6b | Mockingboard "C" Sound II      | POM2 + AppleWin  | AppleWin `source/Mockingboard.cpp` + `source/SSI263.{h,cpp}`             | — (SSI263 at `$Cs40-$Cs44`, A/!R → VIA1.CA1)                                              |
 | 7  | FloppySoundDevice              | Verbatim         | `floppy.cpp:1532-1620`, `:2925-3020`                                     | —                                                                                        |
-| 8  | SlotBus + IRQ wire-OR          | POM2-original    | MAME slot bus pattern                                                    | —                                                                                        |
+| 8  | SlotBus + IRQ wire-OR          | POM2-original    | MAME slot bus pattern; open-bus rules from `apple2e.cpp:2883-3155`       | 🟢 unclaimed `$C080`/`$CnXX`/`$C800` reads return the floating bus, and `$C800` is first-one-wins, populated slots only (2026-09-07) — a bare `SlotBus` with no source installed keeps `$FF` |
 | 9  | DiskImage                      | Partial-verbatim | `woz_dsk.cpp`, `flopimg.cpp:2017-2106`                                   | 🟡 WOZ1 splice TRK+6650; 🟢 .nib2/.app, half-tracked NIB (88)                           |
 | 10 | DiskIICard                     | Partial-verbatim | `machine/wozfdc.cpp:264-291`, P6 PROM 341-0028-A                         | 🟢 sub-instruction RAII vs per-cycle                    |
 | 11 | IWMDevice                      | Verbatim         | `machine/iwm.cpp:1-543`                                                  | 🟢 **window sizes are MAME's own again** (2026-09-01): the state machine runs on the controller's 7.16 MHz clock (`POM2_IWM_TICKS_PER_CPU_CYCLE`), not whole CPU cycles, so 28/14/36/18 are used verbatim and a window edge lands inside a 14.17-tick Sony cell. That plus a flux-query off-by-one is what unblocked the 800K read path — pinned by `sony35_iwm_read_path`. 🟢 Q3 fast clock (Mac/IIgs only) still unmodelled, and no longer load-bearing |
@@ -881,8 +928,8 @@ port can be high-level (`ImageWriter`) and a POM2-original can be low-level
 | 14bis | ProDOSHardDiskCard (key `hdv`) | POM2-original (H1) | No MAME/AppleWin analogue — hand-assembled 256 B slot ROM + an invented 4-register streaming port | 🟢 deliberate: mounts `.hdv`/`.2mg` with **no card ROM dump required**; no GCR/flux/ATA below it; `$Cn07 = $01` so the F8 autostart never scans it (use `PR#n` / `bootFromSlot`); pinned `hdv_card_smoke`, `hdv_writeback_smoke`, `hdv_mass_storage_smoke` |
 | 15 | ClockCard / ThunderClock+      | Partial-verbatim | `upd1990a.cpp:248-267`, `:312-327`; Thunderware Rev 1.3 EPROM (`roms/thunderclock_u9_v1.3.bin`) | 🟡 MODE_SHIFT lax; 🟡 DATA_OUT live vs MAME latch; 🟢 real EPROM loads from the ctor (synth ROM = fallback, untested from `$C800`) |
 | 15bis | NoSlotClock (DS1216E, no slot used) | Verbatim | MAME `ds1216.cpp`; protocol verified against AppleWin `NoSlotClock.cpp` (Nick Westgate csa2 + Dallas datasheet) | 🟢 full 64-bit pattern-match state machine on reads **and** writes (key bit rides on the address); window follows the machine — `$F800-$FFFF` on II/II+, `$C300`/`$C800` on //e + //c-class; injectable time source; pinned `no_slot_clock_smoke` |
-| 16 | SuperSerialCard                | Partial-verbatim | `mos6551.cpp:46`, `:542-543`, `a2ssc.cpp:373`                            | — (the SW2:6 IRQ gate landed: `SuperSerialCard.cpp:492` gates `assertIrq` on `irqDipEnabled()`, line-cited to MAME) |
-| 17 | MouseCard (MAME)               | Verbatim         | `bus/a2bus/mouse.cpp`, M68705 + MC6821                                   | 🟢 PIA out_a/b without `scheduler.synchronize`                                          |
+| 16 | SuperSerialCard                | Partial-verbatim | `mos6551.cpp:46`, `:542-543`, `a2ssc.cpp:373`                            | — (the SW2:6 IRQ gate landed: `SuperSerialCard.cpp:628` gates `assertIrq` on `irqDipEnabled()`, line-cited to MAME; the switch is its own DIP port, not DSW2 bit 5 (2026-09-07), and 7-bit receive + parity errors are modelled) |
+| 17 | MouseCard (MAME)               | Verbatim         | `bus/a2bus/mouse.cpp`, M68705 + MC6821                                   | 🟢 PIA out_a/b without `scheduler.synchronize`; 🟢 the MCU timer follows the EPROM's MOR byte (`$40` → TIMER_MOR ÷1), not a hard-coded ÷128 (2026-09-07) |
 | 18 | MouseCard (AppleWin HLE)       | Verbatim         | AppleWin `source/MouseInterface.cpp`                                     | — (slot EPROM only, MCU synthesized)                                                      |
 | 19 | Phasor (AE — 2×VIA, 4×AY)      | Partial-verbatim | MAME `a2bus/phasor.cpp` + AppleWin                                       | 🟢 EchoPlus mode (=7) routed as native Phasor; stereo L/R per VIA pair done (2026-08-01). 🟡 **no cycle-stamped event queue** — the AY writes are applied when the audio callback runs, not at their `emuCycles` stamp the way Mockingboard's are, so beam-raced register changes quantise to the buffer. Bus decode is verbatim; the audio timeline is not, hence Partial not Verbatim. |
 | 20 | SSI263 speech (chip model)     | AppleWin-faithful| AppleWin `source/SSI263.{h,cpp}` (MAME does not implement)                 | 🟢 formant synth → PCM blob, 62 phonemes (AppleWin LGPL → GPL3)                           |
@@ -891,9 +938,9 @@ port can be high-level (`ImageWriter`) and a POM2-original can be low-level
 | 22 | PrinterCard (parallel synth)  | POM2-original    | Apple II slot 1 convention + Pascal 1.1 sig                              | — (PDF export shipped: `src/ImageWriterPdf.*`, pinned `imagewriter_pdf`)                 |
 | 22bis | GrapplerCard (key `grappler`) | Verbatim         | MAME `bus/a2bus/grappler.cpp` (pinned 2026-07-28, line-cited) + markadev 4 KB EPROM (`roms/grappler_plus.bin`) | 🟢 /STROBE 7-clock pulse collapsed to instant (no observer); `ackEffective()` BUSY gate is POM2's back-pressure model |
 | 22ter | ImageWriter II printer (host-side, no slot) | Verbatim         | greg-kennedy/ImageWriter (GSport/KEGS/DOSBox lineage) + Apple ImageWriter II/LQ reference manuals | — (full control language, 4-band colour ribbon, 8-/24-pin bit images, paper tray + PNG & multi-page PDF export; fed by `printer` / `grappler` / SSC printer tap (//c PR#1)) |
-| 23  | UthernetCard + Cs8900aDevice (key `uthernet`) | Verbatim | MAME `machine/cs8900a.cpp` (VICE lineage) + `bus/a2bus/uthernet.cpp`, line-cited | 🟢 pull-mode RX (POM2 has no `device_network_interface` push bus); inbound frame queue out of snapshot deliberate |
-| 23bis | UthernetIICard + W5100Device (key `uthernet2`) | AppleWin-faithful | AppleWin `source/Uthernet2.cpp` + `W5100.h` (MAME has no W5100 device) + WIZnet datasheet v1.2.8 | 🟡 `LISTEN` unimplemented (no inbound path); 🟢 virtual DNS is async, not blocking like AppleWin's |
-| 23ter | NetworkBackend (Null / Loopback / libslirp) | POM2-original | AppleWin `Tfe/NetworkBackend.h` shape; libslirp user-mode NAT | 🟢 outbound-only by design (no root); no TAP/pcap path; 🟡 libslirp is Linux/macOS only, so Uthernet I has no transport on Windows |
+| 23  | UthernetCard + Cs8900aDevice (key `uthernet`) | Verbatim | MAME `machine/cs8900a.cpp` (VICE lineage) + `bus/a2bus/uthernet.cpp`, line-cited | 🟢 pull-mode RX (POM2 has no `device_network_interface` push bus); inbound frame queue out of snapshot deliberate; 🟢 ISQ synthesis corrected 2026-09-07 (RxMISS is BufEvent bit 10, BufEvent/RxMISS clear on read, one staged frame shared with a direct RxEvent read, TxOK follows the transmitter not the backend) |
+| 23bis | UthernetIICard + W5100Device (key `uthernet2`) | AppleWin-faithful | AppleWin `source/Uthernet2.cpp` + `W5100.h` (MAME has no W5100 device) + WIZnet datasheet v1.2.8 | 🟡 `LISTEN` unimplemented (no inbound path), refusal now logged once per socket; 🟢 virtual DNS is async, not blocking like AppleWin's, and validated + token-bucket limited; 🟢 host destinations fenced by default (`uthernet_allow_loopback`) — the guest is inside the loopback perimeter |
+| 23ter | NetworkBackend (Null / Loopback / libslirp) | POM2-original | AppleWin `Tfe/NetworkBackend.h` shape; libslirp user-mode NAT | 🟢 outbound-only by design (no root); no TAP/pcap path; 🟢 `disable_host_loopback` on by default via `SlirpOptions` (2026-09-07); 🟡 libslirp is Linux/macOS only, so Uthernet I has no transport on Windows |
 | 23quater | TranswarpCard (key `transwarp`) | Partial-verbatim | MAME `bus/a2bus/transwarp.cpp` (R. Belmont, 363 lines; line-cited) | 🟢 **deliberate divergence**: MAME runs a SECOND W65C02 DMA-ing the Apple's bus because a MAME card cannot retime the host CPU; POM2 scales `cyclesPerFrame` and keeps the machine's own 6502 — closer to the board and free on the hot path. Register semantics, DIP defaults and the slowdown windows are verbatim. 🟡 multiplier sampled per frame (unbiased in aggregate, wrong for where in a frame slow cycles land); 🟡 ROM shadow gated on an undumped `roms/ae_transwarp_1.4.bin`. Pinned `transwarp_card` |
 | 24 | FujiNetCard (key `fujinet`)    | POM2-original (relay) | No MAME device — published SmartPort/SP-over-SLIP spec + the FujiNet AppleWin fork | 🟢 not an emulation: the device is real and off-box, every SmartPort call is forwarded verbatim; no peer → bounded 250 ms stall then SmartPort `$27`; 🟡 **rewind cannot rewind it**; 🟡 not on //c-class (forced INTCXROM masks slot ROM); pinned `fujinet_card` |
 
@@ -1532,7 +1579,11 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   decoded but unimplemented: neither transport can route an inbound
   connection to the guest (libslirp is outbound-only without explicit
   port forwarding). Needs a user-configured host port to bind plus a
-  slirp `hostfwd`-style mapping. *1 d.*
+  slirp `hostfwd`-style mapping. The *refusal* is now cheap: it demotes to
+  `SOCK_CLOSED` + TIMEOUT and warns once per socket instead of once per lap
+  of the server loop it provokes (2026-09-07 — the loop was paying an
+  unbuffered log line and a socket/close per iteration on the CPU worker,
+  under `stateMutex`). *1 d.*
 - 🧊 **Uthernet I on WASM** — the CS8900A model is browser-safe but has
   no transport there (no raw sockets, and libslirp isn't in the
   Emscripten build). A websocket-proxied backend would fix both cards'
@@ -1766,8 +1817,14 @@ unit `ctest`s. Curated list + POM2 status + cross-refs to the dashboard's
     (`disks_5.4/demo/madef/Sources/main.a:176-218`) addresses `$C4xx` with no
     scan, and its whole frame sync is the T1 IRQ — with the card anywhere else
     it arms a timer that never fires and waits forever: a frozen screen after
-    the loader, and no code regression. `madef_phase_probe` shows 0 page-flips
-    per frame in slot 7 against ~191 in slot 4. Slot 3 is no alternative: the
+    the loader, and no code regression. The **source** is the evidence here,
+    not the probe: `madef_phase_probe` reported "MAD EFFECT never runs" until
+    2026-09-07, when it turned out to plug the Mockingboard without
+    `setCpu()` — a 6522 that syncs lazily off the CPU's cycle counter
+    early-outs of every sync, T1 never expires, and the demo waits for ever.
+    Any earlier page-flip count from that probe (this line used to quote
+    "0 in slot 7 against ~191 in slot 4") is an artefact of its own wiring.
+    Slot 3 is no alternative: the
     //e's internal 80-column firmware owns `$C300-$C3FF` (SLOTC3ROM off), so a
     Mockingboard there is silent. **The fresh-install map is mouse@4,
     Mockingboard@2** (CLAUDE.md § Fresh-install defaults — swapped 2026-09-02
@@ -1776,7 +1833,12 @@ unit `ctest`s. Curated list + POM2 status + cross-refs to the dashboard's
     hand. `MainWindow_Slots.cpp:428-438` already warns about the **mouse** side
     of this; 🟢 the Mockingboard side has no hint yet.
 - 🟡 **Spiradisc / RWTS18** (*Captain Goodnight*, *Prince of Persia*) — spiral
-  tracking + weak bits to validate on real WOZ images. → `Gap #9/#10`.
+  tracking + weak bits to validate on real WOZ images. → `Gap #9/#10`. The
+  **model** landed 2026-09-07: a flux gap past MAME's 16 µs
+  amplifier-freakout time now produces one hash-drawn blip per zone per
+  revolution, so a weak-bit protection is a coin toss instead of a constant,
+  and a track with no flux at all answers read-amplifier noise instead of
+  hanging the guest's `LDA $C08C,X / BPL`. What is unvalidated is the titles.
 
 ## Parked — wanted, not scheduled
 

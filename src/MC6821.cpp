@@ -117,10 +117,20 @@ uint8_t MC6821::read(uint8_t offset)
             updateInterrupts();
             // CA2 read-strobe: when CA2 is an output in pulse/strobe mode,
             // reading port A pulses it low (and back high if strobe-E-reset
-            // is selected). Mirrors the CB2 write-strobe in write() case 0x02
-            // and MAME pia6821_device::port_a_r.
+            // is selected). MAME `6821pia.cpp:403-412` (`port_a_r`):
+            //
+            //   if (c2_output(m_ctl_a) && c2_strobe_mode(m_ctl_a)) {
+            //       if (m_out_ca2) set_out_ca2(false);
+            //       if (strobe_e_reset(m_ctl_a)) set_out_ca2(true);
+            //   }
+            //
+            // `set_out_ca2` has NO change guard of its own (unlike
+            // `set_out_cb2`, `:362-385`) — it fires the handler every call —
+            // so the `if (m_out_ca2)` at the call site is what keeps an
+            // already-low CA2 from re-notifying the wire on every port-A
+            // read. POM2 called it unconditionally.
             if (!c2_set_mode(ctl_a) && c2_output(ctl_a)) {
-                setOutCa2(false);
+                if (out_ca2) setOutCa2(false);
                 if (c2_set(ctl_a)) setOutCa2(true);
             }
             return ret;
@@ -136,6 +146,16 @@ uint8_t MC6821::read(uint8_t offset)
     case 0x02: {
         if (output_selected(ctl_b)) {
             uint8_t ret = getInBValue();
+            // MAME `6821pia.cpp:444-451` (`port_b_r`), and the comment
+            // there says it explicitly: "This read will implicitly clear
+            // the IRQ B1 flag. If CB2 is in write-strobe mode with CB1
+            // restore, and a CB1 active transition set the flag, clearing
+            // it will cause CB2 to go high again. Note that this is
+            // different from what happens with port A." POM2 dropped the
+            // restore, so a CB1-reset strobe stayed low forever after the
+            // first CB1 edge.
+            if (irq_b1 && !c2_set_mode(ctl_b) && !c2_set(ctl_b))
+                setOutCb2(true);
             irq_b1 = false;
             irq_b2 = false;
             updateInterrupts();
@@ -195,7 +215,12 @@ void MC6821::write(uint8_t offset, uint8_t data)
             out_b = data;
             sendOutB();
             // CB2 in write strobe mode: pulse low on every port-B write.
-            if (!c2_set_mode(ctl_b) && c2_output(ctl_b)) {
+            // MAME `6821pia.cpp:689-706` (`port_b_w`) gates on
+            // `c2_strobe_mode(m_ctl_b)` ALONE — no `c2_output` test, unlike
+            // the A-side read strobe at `:403`. That asymmetry is real: the
+            // B side drives the strobe off the write itself. POM2's extra
+            // `c2_output(ctl_b)` suppressed it whenever CRB bit 5 was clear.
+            if (!c2_set_mode(ctl_b)) {
                 setOutCb2(false);
                 // Strobe-E reset: bit 3 of CRB selects whether the strobe
                 // self-clears at end of cycle.
@@ -212,10 +237,11 @@ void MC6821::write(uint8_t offset, uint8_t data)
         // CRB write.
         data &= 0x3F;
         ctl_b = data;
-        if (c2_output(ctl_b)) {
-            bool temp = c2_set_mode(ctl_b) ? c2_set(ctl_b) : true;
-            setOutCb2(temp);
-        }
+        // MAME `6821pia.cpp:788-802` (`control_b_w`) computes `temp` and
+        // calls `set_out_cb2(temp)` UNCONDITIONALLY — the same missing
+        // `c2_output` asymmetry as `port_b_w` above. `set_out_cb2` is the
+        // one with the change guard, so a no-op write stays a no-op.
+        setOutCb2(c2_set_mode(ctl_b) ? c2_set(ctl_b) : true);
         updateInterrupts();
         break;
     }

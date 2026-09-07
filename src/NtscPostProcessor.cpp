@@ -387,6 +387,14 @@ unsigned int NtscPostProcessor::process(const uint8_t* signal,
 {
     if (!ready) return 0;
 
+    // Save the caller's framebuffer BEFORE the allocate/resize block below:
+    // it binds our own FBO to check completeness and used to hand the binding
+    // back as 0, so on a resize frame — and on either early `return 0` inside
+    // it — the caller's render target was silently replaced by the default
+    // framebuffer.
+    int prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
     // Lazy texture creation: we need the signal dimensions before we
     // can allocate the FBOs, so the first call sizes everything up.
     if (signalTex == 0) {
@@ -396,6 +404,7 @@ unsigned int NtscPostProcessor::process(const uint8_t* signal,
                 std::to_string(sh) + " demod target (" + errorMsg +
                 ") — composite shader disabled");
             ready = false;
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFbo));
             return 0;
         }
     } else if (clampTexDim(sw) != signalW || clampTexDim(sh) != signalH) {
@@ -418,7 +427,7 @@ unsigned int NtscPostProcessor::process(const uint8_t* signal,
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         const bool complete =
             glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFbo));
         if (!complete) {
             errorMsg = "FBO incomplete after resize";
             pom2::log().warn("NTSC",
@@ -444,10 +453,9 @@ unsigned int NtscPostProcessor::process(const uint8_t* signal,
                     GL_RED, GL_UNSIGNED_BYTE, signal);
     glPixelStorei(GL_UNPACK_ALIGNMENT, prevAlign);
 
-    // Save current FBO + viewport + enables so we don't disturb ImGui.
-    int prevFbo = 0;
+    // Save the rest of the state (viewport + enables) so we don't disturb
+    // ImGui; `prevFbo` was captured above, ahead of the resize path.
     int prevViewport[4] = {0};
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevViewport);
     const GLboolean prevBlend = glIsEnabled(GL_BLEND);
     const GLboolean prevDepth = glIsEnabled(GL_DEPTH_TEST);

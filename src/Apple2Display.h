@@ -329,7 +329,17 @@ private:
     // moved while stopped, and only those are folded onto the published
     // state (applyIdleSwitchOverride). Beam-raced frozen frames keep their
     // per-band replay for every field the user did not touch.
+    //
+    // A single Step is the exception the cycle counter alone gets wrong: it
+    // burns 2-7 cycles and publishes NO new frame, so the published snapshot
+    // this override exists to patch is every bit as stale as it was while
+    // paused — yet the counter moved, so the override switched off and the
+    // poked mode reverted until the machine ran a whole frame again. Once
+    // idle we therefore STAY idle until Memory actually publishes a frame,
+    // which `frameCounter` (the emulated video-frame index) counts exactly.
+    // `lastRenderFrame_` is its value at the previous render.
     uint64_t lastRenderCycle_ = 0;
+    uint32_t lastRenderFrame_ = 0;
     bool     renderedOnce_    = false;
     bool     cpuIdle_         = false;
     Memory::DisplayState liveStateAtRun_{};

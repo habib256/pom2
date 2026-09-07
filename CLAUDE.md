@@ -66,6 +66,39 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   child so the regression fails a test instead of killing the runner.
 - **A card CPU gets a `Memory::ForeignBus`, never a branch in `M6502`** — POM2 has one 6502 core and it reaches memory through `Memory`. A coprocessor card (`WorkstationCard`) runs that core over its own map by putting a private `Memory` in foreign-bus mode. The rule this obeys is `docs/PERFORMANCE.md` §§ 8.2/8.5: a branch on the bus path costs 13-16 %, testing a flag there 7.2 %. So nothing was added — `flatBus_` *replaces* the `testMode` test both slow paths already made, and `foreignBus_` folds into the derived read gates the way `readDivert_` does. Measured at no cost, hashes identical (§ 9). → [DEV § Foreign bus](DEV.md#foreign-bus-memoryforeignbus)
 - **Reach the emulated state through the lock** — `controller->lockState()` returns a `pom2::StateAccess` RAII handle that hands back `Memory` and the CPU, so `st.memory()` cannot be written without having taken `stateMutex`. Bare `stateMutex()` is reserved for mutual exclusion that touches neither (serialising a card pointer against a profile switch, say). It is **non-recursive** — a helper called from both locked and unlocked callers takes a `const pom2::StateAccess&` and lets the caller prove ownership (`MainWindow::plugSlotsFromSettings`). Only three things may reach `memory()`/`cpu()` unlocked: code running before the CPU worker starts, the keyboard latch / paste queue (own `Memory::kbMutex`) and atomics, and UI-thread-confined SlotBus *topology* reads.
+- **The guest is inside the loopback perimeter** — an emulated program is not
+  outside the machine's trust boundary just because it runs on a 6502. The
+  Uthernet II's sockets are *host* sockets and libslirp's router re-opens
+  `10.0.2.2` as `127.0.0.1`, so a guest could drive POM2's own AI control
+  server, which reads a loopback peer with no `Origin` as native. Both are
+  fenced by default: `W5100Device::checkDestination` (127/8, 0/8, 169.254/16,
+  224/4, 240/4 refused as `SOCK_CLOSED` + `TIMEOUT`; no privileged or
+  POM2-owned local port) and `SlirpOptions::allowHostLoopback`. One opt-in
+  drives both — settings key **`uthernet_allow_loopback`** (default false;
+  **`uthernet_slirp_restricted`** additionally locks slirp to its virtual
+  services). Opting one card out only moves the escape to the other.
+  → [DEV § Uthernet II](DEV.md#uthernet-ii-w5100)
+- **`--ai-control` honours the configured token** — `ai_control_token`, or
+  `$POM2_AI_CONTROL_TOKEN`; with neither set it runs the way the panel does,
+  token-less on loopback behind the DNS-rebinding `Host` fence, and logs that
+  it did. The fence applies in **both** branches (setting a token used to
+  disable it), no CORS header is emitted anywhere, the compare is
+  constant-time, five failures in five seconds arm a 429.
+  → [DEV § AI control server](DEV.md#ai-control-server-aicontrolserver)
+- **A Disk II only grows IWM hooks on an IWM machine** — `$C0nE`/`$C0nF`
+  (mode register) and the `$C0nC` write handshake exist because the //c and
+  //c+ put an IWM behind those switches; a real Disk II controller has no mode
+  register. `DiskIICard::setIwmHost(bool)` gates them and `SlotCardFactory`
+  sets it from `profileConfig(...).noPhysicalSlots`. It **defaults to true**,
+  so a hand-built card in a test keeps the old behaviour (`iicplus_boot35`
+  relies on that); only the factory path narrows it.
+- **`make probes` builds the 24 eyeball tools** that are deliberately not
+  ctest tests (`EXCLUDE_FROM_ALL`; they assert nothing reproducible and some
+  need untracked media). Run it before concluding a capability is missing —
+  the 2026-09-07 sweep said "no built binary can boot an HDV" while
+  `hdv_boot_dump` compiled fine. Probes write under `pom2test::probeOutDir()`
+  (`tests/ProbeOutDir.h`: `--out` → `$POM2_PROBE_OUT` →
+  `$TMPDIR/pom2_probes`), never the cwd.
 - **Docs in English** — English is the reference language for all Markdown docs (README, CLAUDE, DEV, TODO, CHANGELOG, `docs/`). Write new docs and edits in English; the historical snapshots under `docs/archive/` are unmaintained and may still be French.
 
 ## Table of contents
@@ -207,7 +240,10 @@ $C070        Paddle reset latch (mirrored $C070-$C07F)
 $C071/3/5/7  RamWorks III aux-bank select (write `data & 0x7F`)
 $C078-$C07D  //c IOUDIS mirrors of $C07E/F (even = SET, odd = CLR;
              //c-class writes only)
-$C07E/$C07F  IOUDIS SET/CLR (writes effective on //c/c+ only)
+$C07E/$C07F  IOUDIS SET/CLR (writes effective on //c/c+ only). The
+             RDIOUDIS *read* at $C07E is likewise //c-class only
+             (MAME's c000_iic_r has the case; a plain //e's c000_r
+             does not) and carries the floating bus in bits 0-6
 $C0A8-$C0AB  SSC ACIA (slot 2)
 $C0C0        ThunderClock+ uPD1990AC bit-bang (slot 4)
 $C0E0-$C0EF  Disk II soft switches (slot 6 — $C0EC=Q6L, $C0ED=Q6H)
@@ -234,6 +270,13 @@ $C700-$C7FF  Slot 7 ROM — `chatmauve` is the fresh-install default on
 $D000-$F7FF  Applesoft BASIC ROM
 $F800-$FFFF  Monitor ROM + 6502 vectors ($FFFA-$FFFF)
 ```
+
+**An unclaimed slot read returns the floating bus, not `$FF`** — `$C080-$C0FF`,
+`$C100-$C7FF` and `$C800-$CFFF` all end in MAME's `read_floatingbus()`.
+`Memory` installs the source (`SlotBus::setFloatingBusSource`); a **standalone**
+`SlotBus` with no source keeps `$FF`, which is what several harnesses rely on.
+`$C800` is **first**-one-wins and only a populated slot claims it, released at
+`$CFFF`.
 
 In IIe mode the same map applies but most of `$0000-$BFFF` can route to aux 64 KB under paging switches — see table at top of `Memory.h`.
 

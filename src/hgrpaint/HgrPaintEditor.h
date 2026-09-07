@@ -372,6 +372,16 @@ private:
     void floodFill(int x, int y, HgrColor c);
     void beginStroke(bool batch = false);   // batch=true coalesces the host pokes
     void commitStroke();
+    // Close a stroke a clipboard op would otherwise NEST inside. `dragging`
+    // alone is the wrong test: a Select rubber-band sets it and opens NO
+    // stroke bracket, so Ctrl+C/X (and the Copy/Cut buttons) cancelled the
+    // drag mid-way — the mouse-release handler then never recorded the final
+    // corner and the selection froze where the chord was pressed. Gate on the
+    // bracket itself; with none open there is nothing to flush.
+    void flushOpenStroke()
+    {
+        if (dragging && strokeNest_ > 0) { commitStroke(); dragging = false; }
+    }
     void applyOps(const std::vector<ByteEdit>& ops, bool forward);
     void doUndo();
     void doRedo();

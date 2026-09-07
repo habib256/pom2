@@ -62,6 +62,15 @@ struct RomFetchEntry {
     /// this is a runtime one (cmake/Pom2Architecture.cmake).
     std::uint32_t expectedCrc;
     const char*   crcLabel;
+    /// Lowercase hex SHA-256 of the dump, or nullptr when POM2 has no
+    /// reference for it. CRC32 is an ERROR detector: a 32-bit non-
+    /// cryptographic checksum anyone can collide on purpose, so a mirror (or
+    /// anything between it and here) could serve a chosen file that matches
+    /// both the size and the CRC. SHA-256 is what makes the gate mean
+    /// "this is the dump POM2 vouches for" rather than "this is not
+    /// corrupted". Computed from the copies that ship in the repository's
+    /// roms/ — the same dumps RetroBIOS serves. Verified before install.
+    const char*   expectedSha256;
 };
 
 /// Human-facing home of the collection. The panel quotes this; tests pin it.
@@ -72,6 +81,28 @@ constexpr const char* kRetroBiosRawPrefix =
     "https://raw.githubusercontent.com/Abdess/retrobios/main/";
 
 const std::vector<RomFetchEntry>& romFetchCatalog();
+
+/// Lowercase hex SHA-256 of `n` bytes at `data`. Exposed so the fetch test
+/// can prove the catalog's digests describe the dumps that ship in roms/.
+std::string sha256Hex(const std::uint8_t* data, std::size_t n);
+
+/// The exact argv (after argv[0]) POM2 hands `curl` for one download.
+/// Exposed so the test can pin the hardening flags: a `-fsSL` that silently
+/// followed an HTTPS→HTTP redirect, or a download with no size ceiling, is
+/// not something a comment can keep true.
+std::vector<std::string> curlDownloadArgs(const std::string& url,
+                                          const std::string& outPath);
+
+/// Largest total DECOMPRESSED size POM2 will unpack out of a fetched zip.
+constexpr std::size_t kMaxUnpackedZipBytes = 64u * 1024u * 1024u;
+
+/// Sum the uncompressed sizes in a zip's central directory. Returns false
+/// (with `err` set) when the archive is malformed or would expand past
+/// `kMaxUnpackedZipBytes` — the zip-bomb gate, applied BEFORE `unzip` runs,
+/// because afterwards the disk is already full.
+bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
+                              std::uintmax_t& totalOut,
+                              std::string& err);
 
 /// First writable `roms/` among the live search roots, else
 /// `userDataDir()/roms` (created). Downloads land here so an installed

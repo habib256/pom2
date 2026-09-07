@@ -166,6 +166,7 @@ int main(int argc, char** argv)
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -343,6 +344,94 @@ void testFindOnPath()
     assert(ChildProcess::findOnPath("pom2-no-such-helper-xyz").empty());
 }
 
+// ── 7b. A writable PATH entry cannot shadow /bin or /usr/bin ─────────────
+//
+// PATH used to be searched FIRST and every entry in it trusted, so anything
+// that could prepend a directory — a stale `~/.profile`, a compromised
+// launcher, a group-writable /usr/local/bin on Homebrew macOS — chose the
+// `curl`, `unzip` and `gs` POM2 executes. `gs` is the one that matters:
+// PostScriptRender passes `-dSAFER` precisely so a GUEST-authored PostScript
+// job cannot touch the host filesystem, and a substituted binary ignores it.
+//
+// Two rules now: the absolute system directories are searched before PATH,
+// and every candidate directory — wherever it came from — is skipped when
+// the group or the world can write to it.
+void testFindOnPathIgnoresWritableDirs()
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path evil = fs::temp_directory_path() /
+                          ("pom2_path_shadow_" + std::to_string(::getpid()));
+    fs::remove_all(evil, ec);
+    fs::create_directories(evil, ec);
+    assert(!ec);
+    // World-writable, the shape the finder must refuse.
+    ::chmod(evil.c_str(), 0777);
+
+    const fs::path fake = evil / "sh";
+    {
+        std::FILE* f = std::fopen(fake.c_str(), "w");
+        assert(f);
+        std::fputs("#!/bin/sh\nexit 0\n", f);
+        std::fclose(f);
+    }
+    ::chmod(fake.c_str(), 0755);
+
+    const std::string oldPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+    ::setenv("PATH", (evil.string() + ":" + oldPath).c_str(), 1);
+
+    const std::string found = ChildProcess::findOnPath("sh");
+    ::setenv("PATH", oldPath.c_str(), 1);
+
+    assert(found != fake.string() &&
+           "a world-writable PATH entry shadowed the system sh");
+    assert(found.rfind("/bin/", 0) == 0 || found.rfind("/usr/bin/", 0) == 0);
+
+    fs::remove_all(evil, ec);
+}
+
+// ── 7c. The child does not inherit GS_OPTIONS / DYLD_* / LD_PRELOAD ──────
+//
+// `execv()` hands the child POM2's whole environment. Ghostscript reads
+// GS_OPTIONS as extra COMMAND LINE arguments, so a `-dNOSAFER` sitting in the
+// launching shell's environment cancelled the `-dSAFER` PostScriptRender
+// passes explicitly — the flag that keeps a guest-authored PostScript job off
+// the host filesystem. `execve` with a filtered environment is the fix; the
+// rest of the environment (PATH, HOME, locale) still has to arrive, or the
+// helpers break in ways nobody can diagnose.
+void testChildEnvironmentIsScrubbed()
+{
+    ::setenv("GS_OPTIONS", "-dNOSAFER", 1);
+    ::setenv("GS_LIB", "/tmp/evil", 1);
+    ::setenv("LD_PRELOAD", "/tmp/evil.so", 1);
+    ::setenv("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib", 1);
+    ::setenv("POM2_CHILD_ENV_KEEP", "kept", 1);
+
+    ChildProcess p;
+    std::string err;
+    // Exit 0 only when all four are gone AND the ordinary one survived.
+    assert(p.start("/bin/sh",
+                   { "-c",
+                     "[ -z \"$GS_OPTIONS\" ] && [ -z \"$GS_LIB\" ] && "
+                     "[ -z \"$LD_PRELOAD\" ] && "
+                     "[ -z \"$DYLD_INSERT_LIBRARIES\" ] && "
+                     "[ \"$POM2_CHILD_ENV_KEEP\" = kept ]" },
+                   "", err));
+    bool ended = false;
+    for (int i = 0; i < 300 && !ended; ++i) {
+        if (!p.isRunning()) ended = true; else sleepMs(10);
+    }
+    assert(ended);
+    assert(p.lastExitCode() == 0 &&
+           "the helper inherited a loader / Ghostscript override");
+
+    ::unsetenv("GS_OPTIONS");
+    ::unsetenv("GS_LIB");
+    ::unsetenv("LD_PRELOAD");
+    ::unsetenv("DYLD_INSERT_LIBRARIES");
+    ::unsetenv("POM2_CHILD_ENV_KEEP");
+}
+
 // ── 8. The child inherits NO descriptor beyond stdio ─────────────────────
 //
 // This is trap 2 above, at its root. fork() dups the whole descriptor table
@@ -508,6 +597,8 @@ int main()
     testStartFailures();
     testRestartReplaces();
     testFindOnPath();
+    testFindOnPathIgnoresWritableDirs();
+    testChildEnvironmentIsScrubbed();
     testChildDoesNotInheritListeners();
     testStopDetachedDoesNotWait();
     testDrainDetachedKillsTheGroup();

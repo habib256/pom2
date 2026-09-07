@@ -68,3 +68,10 @@ imgui.ini
 /build-universal-deps/
 /dist/
 /squashfs-root/
+
+# Crash debris from an interrupted atomic write-back: `tempSiblingPath` names
+# every temporary `<target>.<pid>-<n>.pom2tmp`, and a process killed between
+# the write and the rename leaves one behind (the pid in the name means the
+# next run never reuses it). `sweepStaleTempSiblings` clears them, but never
+# from a directory POM2 has no reason to open.
+*.pom2tmp

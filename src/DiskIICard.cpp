@@ -296,6 +296,8 @@ void DiskIICard::commitInFlightWrite()
 {
     if (active == MODE_IDLE || !writeMode || !writeBackEnabled) return;
     if (writePosition <= 0) return;
+    // MAME's write gate — see `writingInhibited()`.
+    if (writingInhibited()) { writePosition = 0; writeLineActive = false; return; }
     DiskImage& img = images[activeDrive];
     if (!img.isLoaded()) return;
     // Same call, same anchors as the drive-swap splice in selectDrive():
@@ -1026,7 +1028,7 @@ void DiskIICard::advanceCycles(int cycles)
                 // to eliminate.
                 DiskImage& img = images[activeDrive];
                 if (writeMode && writeBackEnabled && img.isLoaded()
-                    && writePosition > 0) {
+                    && writePosition > 0 && !writingInhibited()) {
                     img.writeFlux(headQuarterTrack[activeDrive],
                                   writeStartTime,
                                   static_cast<int64_t>(lssCycle),
@@ -1116,6 +1118,39 @@ void DiskIICard::lssStart()
     }
 }
 
+// Read-amplifier noise: what the LSS shifts in when nothing on the surface
+// is modulating the head. Two callers — an empty drive, and a LOADED disk
+// whose current quarter-track carries no flux at all (a WOZ TMAP $FF entry,
+// a track past 34, an unformatted half-track under a nibble scanner). Both
+// used to differ: the empty drive got this, the blank track got kFluxNever
+// and PULSE that never fired, so `LDA $C08C,X / BPL` spun forever on the
+// same wire that the empty-drive fix already rescued. MAME reaches the same
+// place from the other end — `floppy_image_device::cache_weakness_setup`
+// flags a cell buffer of one entry or less as weak and serves hash-drawn
+// blips (floppy.cpp:1176-1215).
+void DiskIICard::advanceNoise(uint64_t extraCycles)
+{
+    // One pseudo-random byte per 8 bit cells (4 us each → 64 LSS cycles),
+    // high bit set as on every byte the LSS ever hands the CPU. Derived
+    // from the cycle cursor by hash rather than from a PRNG member: no
+    // hidden generator state to serialise, so REWIND reproduces the byte
+    // exactly (RewindBuffer captures with includeSlots=true and restores
+    // this cursor). A FILE save-state does NOT — it captures with
+    // includeSlots=false, so no slot section is written and the cursor keeps
+    // its free-running value across a load. Nothing here makes that worse
+    // (the rest of the LSS timing is equally unrestored), but do not read
+    // the hash as a promise of save-state determinism.
+    const uint64_t target = cpuCycleTotal * 2 + extraCycles;
+    if (target > lssCycle) {
+        uint64_t h = (target / 64) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+        h *= 0xBF58476D1CE4E5B9ull;
+        h ^= h >> 32;
+        lssData = static_cast<uint8_t>(static_cast<uint8_t>(h) | 0x80);
+    }
+    lssCycle = target;
+}
+
 // MAME `wozfdc_device::lss_sync(extra_cycles)` — verbatim port. The LSS
 // runs at 2× CPU clock; one PROM lookup per LSS cycle. We catch up from
 // the persistent `lssCycle` counter to a target derived from the CPU
@@ -1142,27 +1177,9 @@ void DiskIICard::lssSync(uint64_t extraCycles)
         //
         // Real hardware leaves the read amplifier on noise, so the latch
         // keeps shifting garbage, bit 7 comes up, and RWTS times out into
-        // an I/O error. Model that: one pseudo-random byte per 8 bit cells
-        // (4 us each → 64 LSS cycles), high bit set as on every byte the
-        // LSS ever hands the CPU. Derived from the cycle cursor by hash
-        // rather than from a PRNG member: no hidden generator state to
-        // serialise, so REWIND reproduces the byte exactly (RewindBuffer
-        // captures with includeSlots=true and restores this cursor). A FILE
-        // save-state does NOT — it captures with includeSlots=false, so no
-        // slot section is written and the cursor keeps its free-running value
-        // across a load. Nothing here makes that worse (the rest of the LSS
-        // timing is equally unrestored), but do not read the hash as a promise
-        // of save-state determinism.
+        // an I/O error. Model that — see `advanceNoise` above.
         // Pinned by tests/diskii_empty_drive_test.cpp.
-        const uint64_t target = cpuCycleTotal * 2 + extraCycles;
-        if (target > lssCycle) {
-            uint64_t h = (target / 64) * 0x9E3779B97F4A7C15ull;
-            h ^= h >> 29;
-            h *= 0xBF58476D1CE4E5B9ull;
-            h ^= h >> 32;
-            lssData = static_cast<uint8_t>(static_cast<uint8_t>(h) | 0x80);
-        }
-        lssCycle = target;
+        advanceNoise(extraCycles);
         return;
     }
 
@@ -1209,6 +1226,21 @@ void DiskIICard::lssSync(uint64_t extraCycles)
     int64_t nextFluxDown = (nextFlux != DiskImage::kFluxNever)
                               ? nextFlux + 1
                               : DiskImage::kFluxNever;
+
+    // A loaded disk whose current quarter-track carries NO flux at all —
+    // `getNextTransition` answers kFluxNever only for that. PULSE would then
+    // never fire, the sequencer would shift in nothing but zeros, bit 7 of
+    // `lssData` would never come up, and `LDA $C08C,X / BPL -3` would spin
+    // forever: the exact hang the empty-drive path above was fixed for, one
+    // step further in (WOZ TMAP $FF, tracks past 34, half-tracks a nibble
+    // scanner walks onto). The head is over a spinning surface either way, so
+    // it gets the same read-amplifier noise. READ side only: a blank track is
+    // precisely what a format writes to, and the write walker below is happy
+    // with no transitions to cross.
+    if (nextFlux == DiskImage::kFluxNever && !writeMode) {
+        advanceNoise(extraCycles);
+        return;
+    }
 
     // DIAGNOSTIC (POM2_TRACE_LSS=path): sampled LSS state to see whether
     // lssCycle / nextFlux / qt advance during a stuck read. Every 80th
@@ -1273,7 +1305,7 @@ void DiskIICard::lssSync(uint64_t extraCycles)
                     }
                 } else if (writePosition >= 30) {
                     const int64_t now = static_cast<int64_t>(lssCycle);
-                    if (writeBackEnabled) {
+                    if (writeBackEnabled && !writingInhibited()) {
                         // Pass the drive's revolution anchor — MAME's
                         // write_flux maps the window through the same
                         // find_position(m_revolution_start_time) the
@@ -1386,7 +1418,7 @@ void DiskIICard::selectDrive(int newDrive)
         // Flush in-flight writes to OLD drive (mon_w(true) → commit_image).
         DiskImage& oldImg = images[oldDrive];
         if (writeMode && oldImg.isLoaded() && writeBackEnabled
-            && writePosition > 0) {
+            && writePosition > 0 && !writingInhibited()) {
             // Anchored on the OLD drive's revolution start (read before
             // it's reset to kNeverRev below) — same anchor its reads used.
             oldImg.writeFlux(headQuarterTrack[oldDrive],
@@ -1513,7 +1545,7 @@ void DiskIICard::control(int offset)
                 // events into the track on Q7 falling edge.
                 DiskImage& img = images[activeDrive];
                 if (img.isLoaded() && writeBackEnabled
-                    && writePosition > 0) {
+                    && writePosition > 0 && !writingInhibited()) {
                     // Same revolution anchor as the read path (MAME
                     // write_flux → find_position, floppy.cpp ~:1050-1125).
                     img.writeFlux(headQuarterTrack[activeDrive],
@@ -1688,13 +1720,20 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         //   alt firmware probes this; without it the boot loop at $E51B
         //   (BEQ on `Y EOR status & $1F`) never falls through and the
         //   Monitor hangs before clearing the text page.
-        if (low4 == 0xE && wasQ6) {
+        if (iwmHost_ && low4 == 0xE && wasQ6) {
             DiskImage& img = images[activeDrive];
             const uint8_t wpt = (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
             return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
         }
         // IWM write-handshake read hook (MAME `iwm.cpp:107-110`, case
         // 0x80): read $C0nC with Q7 high + Q6 low → return m_whd.
+        //
+        // `wozfdc_device::read` ends EVERY even offset with `lss_sync(1);
+        // return data_reg` (wozfdc.cpp:206-212) — the extra sequencer cycle
+        // the FDC gets between the CPU's address and its data phase. This
+        // hook returned before it, so a write-mode $C0nC read left the LSS
+        // one cycle behind where MAME puts it, on every machine. The sync
+        // runs first now; only the returned BYTE is the IWM's.
         // POM2 doesn't run an IWM bit-shift timer in parallel with
         // the CPU, so we model whd at its idle resting value (0xBF):
         // bit 7 ("not-underrun" — 1 = ready) high, bit 6 ("write
@@ -1703,7 +1742,8 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         // software with bit-cell-accurate timing requirements; the
         // //c+ alt firmware's `$C8A6: BIT $C0EC / BPL` ready loop and
         // its `$C960` companion both pass with bit-6-clear.
-        if (low4 == 0xC && writeMode) {
+        if (iwmHost_ && low4 == 0xC && writeMode) {
+            lssSync(1);
             return iwmWhd;
         }
         if (!(low4 & 1)) {
@@ -1766,12 +1806,12 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     // `useBitLss = false` until a WOZ image or P6 PROM is in flight —
     // and the //c+ alt firmware probes $C0EE *before* the user clicks
     // a disk in the library.
-    if (low4 == 0xE && wasQ6Legacy) {
+    if (iwmHost_ && low4 == 0xE && wasQ6Legacy) {
         DiskImage& img = images[activeDrive];
         const uint8_t wpt = (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
         return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
     }
-    if (low4 == 0xC && writeMode) {
+    if (iwmHost_ && low4 == 0xC && writeMode) {
         return iwmWhd;
     }
     DiskImage& img = images[activeDrive];
@@ -1815,7 +1855,7 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
         // Q6 was already high latch the mode register. Real wozfdc has
         // no such register so the //c+ alt-firmware probe at $E512-$E522
         // (in bank 1) spins forever without this.
-        if (low4 == 0xF && wasQ6) {
+        if (iwmHost_ && low4 == 0xF && wasQ6) {
             iwmMode = v;
         }
         writeLatch = v;
@@ -1832,7 +1872,7 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
     handleSwitchAccess(low4);
     // IWM mode_w shadow (matches the bit-LSS branch above). Required
     // for the //c+ alt-firmware probe before any disk is mounted.
-    if (low4 == 0xF && wasQ6LegacyW) {
+    if (iwmHost_ && low4 == 0xF && wasQ6LegacyW) {
         iwmMode = v;
     }
     writeLatch = v;

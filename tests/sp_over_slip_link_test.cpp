@@ -513,6 +513,51 @@ void testCleanShutdown()
     link.stop();                   // idempotent
 }
 
+// ── Status reads are safe against a concurrent stop() ────────────────────
+//
+// `isConnected()` / `describe()` / `lastError()` dereference the transport,
+// and they are called from threads that do not own it: FujiNetCard asks
+// isConnected() on every guest SmartPort access (CPU thread) and the panel
+// asks all three every frame (UI thread). `stop()` destroys the transport, and
+// it used to do so while those three took no lock at all — a use-after-free
+// that was survivable only by accident, because the panel's stop happened to
+// run under the emulator's stateMutex. Moving that stop off stateMutex
+// (NetworkCoordinator) removed the accident.
+//
+// This hammers the window on purpose: a reader thread spinning on the three
+// methods while the main thread starts and stops the link. It is a probability
+// test, not a proof — but it is the shape a sanitiser build needs to see the
+// race at all, and under ASan/TSan it fails outright on the unlocked version.
+void testStatusReadsAreSafeAgainstStop()
+{
+    SpOverSlipLink link;
+    std::atomic<bool> stopReader{ false };
+    std::atomic<uint64_t> reads{ 0 };
+
+    std::thread reader([&] {
+        while (!stopReader.load()) {
+            (void)link.isConnected();
+            (void)link.describe();
+            (void)link.lastError();
+            ++reads;
+        }
+    });
+
+    for (int cycle = 0; cycle < 12; ++cycle) {
+        const uint16_t port = startLink(link);
+        (void)port;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        link.stop();
+    }
+
+    stopReader = true;
+    reader.join();
+    assert(reads.load() > 0);
+    assert(!link.isConnected());
+
+    std::printf("  status reads survive a concurrent stop()\n");
+}
+
 // ── A peer that leaves while the guest is idle must be noticed ───────────
 //
 // The worker owns peer lifetime (fujinet_plan.md §6.4), but for a while it
@@ -746,6 +791,7 @@ int main()
     testNoPeer();
     testGuestResetNotifiesDevices();
     testCleanShutdown();
+    testStatusReadsAreSafeAgainstStop();
     testIdlePeerDeathIsNoticed();
     testStopResetsTheFramer();
     testControlListFraming();

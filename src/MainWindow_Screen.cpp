@@ -130,16 +130,13 @@ void MainWindow::uploadScreenTexture()
     // OE-CPU demod (and the OE-GPU mixed-frame CPU demod band) track the
     // CRT-Settings sliders exactly like the GPU shader — hue / sharpness /
     // PAL / textSharp used to be GPU-only and silently dead on the CPU path.
-    {
-        Apple2Display::OeDemodParams dp;
-        if (ntscFx) {
-            const pom2::NtscParams& np = ntscFx->getParams();
-            dp.hue       = np.hue;
-            dp.sharpness = np.sharpness;
-            dp.palMode   = np.palMode;
-            dp.textSharp = np.textSharp;
-        }
-        display->setOeDemodParams(dp);
+    Apple2Display::OeDemodParams dp;
+    if (ntscFx) {
+        const pom2::NtscParams& np = ntscFx->getParams();
+        dp.hue       = np.hue;
+        dp.sharpness = np.sharpness;
+        dp.palMode   = np.palMode;
+        dp.textSharp = np.textSharp;
     }
 
     // demodMutex covers render + demod + upload: the AI control server's
@@ -157,6 +154,13 @@ void MainWindow::uploadScreenTexture()
         // updated, producing tearing).
         auto st = controller->lockState();
         demodLk.lock();
+        // Published UNDER demodMutex, not before it: the AI control server's
+        // /screen handler runs the identical OE-CPU demod on its own thread
+        // and reads these knobs while it walks the scanlines, so an unlocked
+        // write could change hue / textSharp between two bands of the SAME
+        // captured frame. Still ahead of render(), which is what the
+        // ordering above is about.
+        display->setOeDemodParams(dp);
         display->render(st.memory());
     }
     display->finishPendingCpuDemod();
@@ -280,16 +284,37 @@ void MainWindow::drawScreenImage()
     // re-polling Memory::getDisplayState() here raced the CPU worker (it may
     // have advanced past the rendered frame between the two), flashing one
     // LUT-fallback frame on a text↔graphics switch.
-    const auto displayState = display->lastRenderState();
-    const bool oeGpuMode = display->getHiResMode()
-                         == Apple2Display::HiResMode::ColorCompositeOE;
-    const bool oeCpuMode = display->getHiResMode()
-                         == Apple2Display::HiResMode::ColorCompositeOECpu;
+    //
+    // Every one of these is written by Apple2Display::render(), and the AI
+    // control server's /screen handler runs render() on ITS OWN thread. Read
+    // one at a time outside the lock they had no consistency at all: the
+    // branch below could take `lastRenderState()` from the UI's frame and
+    // `signalProduced()` / `mixedCompositeUsesFramebuffer()` from the
+    // capture's, and present a signal texture the flags said was not there.
+    // One acquisition, all four values, then work with the locals.
+    Memory::DisplayState displayState{};
+    bool signalReady    = false;
+    bool mixedFbPresent = false;
+    Apple2Display::HiResMode hiResMode = Apple2Display::HiResMode::ColorNTSC;
+    {
+        std::lock_guard<std::mutex> demodLk(display->demodMutex());
+        displayState   = display->lastRenderState();
+        signalReady    = display->signalProduced();
+        mixedFbPresent = display->mixedCompositeUsesFramebuffer();
+        hiResMode      = display->getHiResMode();
+    }
+    // The framebuffer dimensions come from the TEXTURE we just uploaded, not
+    // from a fresh display->width() — the capture thread can flip 40/80
+    // columns between the upload and here, and the CRT stack would then be
+    // told its source is 560 wide while `screenTexture` holds 280.
+    const int fbW = screenTextureWidth;
+    const int fbH = screenTextureHeight;
+    const bool oeGpuMode = hiResMode == Apple2Display::HiResMode::ColorCompositeOE;
+    const bool oeCpuMode = hiResMode == Apple2Display::HiResMode::ColorCompositeOECpu;
     const bool oeMode    = oeGpuMode;
     const bool oeFamily  = oeGpuMode || oeCpuMode;
     const bool wantSharpText = ntscFx && ntscFx->getParams().textSharp
                             && displayState.textMode;
-    const bool mixedFbPresent = display->mixedCompositeUsesFramebuffer();
 
     // Compute the on-screen target size up-front so the CRT effect pass can
     // render at native output resolution. That is what lets the scanline /
@@ -323,7 +348,7 @@ void MainWindow::drawScreenImage()
     const int dstW = std::max(1, static_cast<int>(size.x + 0.5f));
     const int dstH = std::max(1, static_cast<int>(size.y + 0.5f));
 
-    if (oeMode && display->signalProduced() && !wantSharpText && !mixedFbPresent) {
+    if (oeMode && signalReady && !wantSharpText && !mixedFbPresent) {
         if (!ntscFx) ntscFx = std::make_unique<pom2::NtscPostProcessor>();
         if (!ntscFx->available() && !ntscFx->initialize()) {
             // initialize() already logged the failure. Stop trying so
@@ -403,7 +428,7 @@ void MainWindow::drawScreenImage()
             crtP.sharpness = 0.5f;
             crtFx->setParams(crtP);
             const unsigned int out = crtFx->process(
-                presentTex, display->width(), display->height(), dstW, dstH);
+                presentTex, fbW, fbH, dstW, dstH);
             if (out != 0) presentTex = out;
         }
     }
@@ -422,7 +447,7 @@ void MainWindow::drawScreenImage()
             // ignored by the effect stack).
             if (ntscFx) crtFx->setParams(ntscFx->getParams());
             const unsigned int out = crtFx->process(
-                presentTex, display->width(), display->height(), dstW, dstH);
+                presentTex, fbW, fbH, dstW, dstH);
             if (out != 0) presentTex = out;
         }
     }
@@ -438,8 +463,8 @@ void MainWindow::drawScreenImage()
         if (!voxel3d_) voxel3d_ = std::make_unique<pom2::Voxel3DRenderer>();
         // One voxel per live Apple II pixel (280 or 560 × 192) so the cube grid
         // captures the full image — half-res sampling visibly lost detail.
-        voxel3d_->gridW = std::max(1, display->width());
-        voxel3d_->gridH = std::max(1, display->height());
+        voxel3d_->gridW = std::max(1, fbW);
+        voxel3d_->gridH = std::max(1, fbH);
 #if defined(__EMSCRIPTEN__)
         // Perf guard: halve the 560-wide DHGR/80-col geometry on the browser so
         // the cube count stays near the comfortable HGR 280×192 (~54k); the FBO

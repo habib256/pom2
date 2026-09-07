@@ -39,6 +39,9 @@ constexpr std::size_t kVolDirEntriesKN   = 13;       // entries in blocks 3, 4, 
 constexpr std::size_t kVolDirTotalSlots  = kVolDirEntriesK0 + 3 * kVolDirEntriesKN;  // 51
 constexpr std::size_t kEntryLength       = 39;
 constexpr std::size_t kSaplingMaxBytes   = 131072;   // 256 blocks × 512
+// A tree file: one master index of 256 index blocks of 256 data blocks.
+// 32 MB is also ProDOS's own file ceiling (eof is 24-bit).
+constexpr std::size_t kTreeMaxBytes      = 256 * kSaplingMaxBytes;
 constexpr std::size_t kBootBlocks        = 2;
 constexpr std::size_t kVolDirBlocks      = 4;
 constexpr std::size_t kBitmapBlock       = 6;
@@ -49,6 +52,7 @@ constexpr std::size_t kMaxVolumeBlocks   = 65535; // ProDOS total_blocks is 16-b
 
 constexpr std::uint8_t kStorageSeedling     = 0x1;
 constexpr std::uint8_t kStorageSapling      = 0x2;
+constexpr std::uint8_t kStorageTree         = 0x3;
 constexpr std::uint8_t kStorageSubdirEntry  = 0xD;
 constexpr std::uint8_t kStorageSubdirHeader = 0xE;
 constexpr std::uint8_t kStorageVolDir       = 0xF;
@@ -129,6 +133,19 @@ std::uint8_t fileTypeFromExtension(const std::string& ext)
     return 0x06;
 }
 
+/// Windows DOS-device names: `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`,
+/// `LPT1`-`LPT9` are reserved in EVERY directory and with ANY extension —
+/// `AUX.txt` opens the serial port, not a file. `stem` is the part of a name
+/// before its first dot; the caller upper-cases it.
+bool isDosDeviceStem(const std::string& stem)
+{
+    static const char* kDosDevices[] = { "CON", "PRN", "AUX", "NUL" };
+    for (const char* d : kDosDevices)
+        if (stem == d) return true;
+    return stem.size() == 4 && stem[3] >= '1' && stem[3] <= '9' &&
+           (stem.compare(0, 3, "COM") == 0 || stem.compare(0, 3, "LPT") == 0);
+}
+
 std::string sanitiseProDOSName(const std::string& hostName)
 {
     fs::path p(hostName);
@@ -165,6 +182,19 @@ std::string sanitiseProDOSName(const std::string& hostName)
     // ProDOS names must start with a letter.
     if (out.empty() || !(out[0] >= 'A' && out[0] <= 'Z')) {
         out = "A" + out;
+    }
+    // Steer clear of the DOS device names HERE, not only on the way back.
+    // `isHostSafeProDOSName` refuses them on decode — rightly: writing to
+    // `AUX` on Windows opens a serial port. But the host file `aux.txt` was
+    // put into the volume as `AUX` regardless, so the guest saw it, edited
+    // it, and the write-back silently skipped it (counted, `ok == true`,
+    // nothing said). A name the write-back cannot honour must never enter
+    // the volume in the first place: `AUX` → `AUXX`, which round-trips.
+    {
+        std::string stem = out.substr(0, out.find('.'));
+        if (isDosDeviceStem(stem)) {
+            out.insert(stem.size(), "X");
+        }
     }
     if (out.size() > 15) out.resize(15);
     return out;
@@ -874,7 +904,56 @@ struct DecodeWalk {
     const fs::file_time_type*         newerThan   = nullptr;
     /// Newest mtime this walk actually wrote — see completedAt.
     fs::file_time_type                newest{};
+    /// The served root, resolved through symlinks ONCE at the start of the
+    /// walk. Every path this decode is about to create or write is checked
+    /// back against it — see `destStaysInsideRoot`.
+    fs::path                          rootReal;
 };
+
+/// Record one entry the guest wrote and the host cannot take. Bounded: a
+/// corrupt volume can present thousands, and the error line is for a human.
+void noteUnsaved(ProDOSDecodeResult& r, const std::string& name)
+{
+    ++r.filesUnsaved;
+    if (r.unsavedNames.size() < 4) r.unsavedNames.push_back(name);
+}
+
+/// Is `dest` — a path the decode is about to create or write — still inside
+/// the served root once every symlink on the way has been followed?
+///
+/// The name check (`isHostSafeProDOSName`) proves the last COMPONENT carries
+/// no separator and is not "..". It says nothing about what the components
+/// ahead of it resolve to, and the guest can arrange those: it creates the
+/// directory `LINK` in the volume, the decode calls `create_directories` on
+/// `root/LINK` — which SUCCEEDS silently when `root/LINK` is already a
+/// symlink to somewhere else on the host, because create_directories is
+/// happy with an existing directory and follows the link to find it. Every
+/// file the walk then writes under that name lands outside the jail. The
+/// scan side deliberately hides symlinks, so the volume never even shows the
+/// user the thing their guest is writing through.
+///
+/// `weakly_canonical` resolves the components that exist (the link included)
+/// and leaves the rest lexical, which is exactly the question being asked.
+/// The `dest` itself must additionally not BE a symlink: a link inside the
+/// root pointing out of it is the file-level version of the same escape, and
+/// `writeFileAtomic`'s temp+rename would replace the link rather than follow
+/// it — but only after `prepareTempPath` had already opened the sibling.
+bool destStaysInsideRoot(const DecodeWalk& w, const fs::path& dest)
+{
+    std::error_code ec;
+    if (fs::is_symlink(fs::symlink_status(dest, ec)) && !ec) return false;
+    const fs::path real = fs::weakly_canonical(dest, ec);
+    if (ec || real.empty()) return false;
+    if (w.rootReal.empty()) return false;
+    // Component-wise containment: a plain string prefix would accept
+    // `/served-evil` for the root `/served`.
+    auto rit = w.rootReal.begin();
+    auto dit = real.begin();
+    for (; rit != w.rootReal.end(); ++rit, ++dit) {
+        if (dit == real.end() || *dit != *rit) return false;
+    }
+    return true;
+}
 
 // Reserve `name` as a host filename inside one decoded directory, returning
 // the name actually to use.
@@ -994,6 +1073,7 @@ void decodeOneDir(DecodeWalk& w,
             const std::uint16_t keyPtr = rd16(e + 0x11);
             if (keyPtr == 0 || keyPtr >= totalBlocks) {
                 ++r.filesSkipped;
+                if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
 
@@ -1008,6 +1088,8 @@ void decodeOneDir(DecodeWalk& w,
                         "decode: skipping unsafe subdir name under " + hostFolder);
                     ++r.filesSkipped;
                     ++r.dirsSkipped;
+                    // See the file branch below for the legal/illegal split.
+                    if (isProDOSLegalName(name)) noteUnsaved(r, name);
                     continue;
                 }
                 // Refuse before touching the host filesystem: an entry whose
@@ -1033,6 +1115,15 @@ void decodeOneDir(DecodeWalk& w,
                 }
                 const fs::path subDest =
                     fs::path(hostFolder) / reserveHostName(usedHostNames, name);
+                if (!destStaysInsideRoot(w, subDest)) {
+                    pom2::log().warn("ProDOSVol",
+                        "decode: refusing subdir " + subDest.string() +
+                        " — it resolves outside the served folder");
+                    ++r.filesSkipped;
+                    ++r.dirsSkipped;
+                    noteUnsaved(r, name);
+                    continue;
+                }
                 std::error_code ec;
                 fs::create_directories(subDest, ec);
                 if (ec) {
@@ -1049,23 +1140,65 @@ void decodeOneDir(DecodeWalk& w,
                 continue;
             }
 
-            if (storage != kStorageSeedling && storage != kStorageSapling) {
-                ++r.filesSkipped;                                    // tree / weird
+            if (storage != kStorageSeedling && storage != kStorageSapling &&
+                storage != kStorageTree) {
+                ++r.filesSkipped;                                    // weird
+                if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
 
             const std::uint8_t  fileType = e[0x10];
             const std::uint32_t eof      = rd24(e + 0x15);
 
-            if (eof > kSaplingMaxBytes) {
+            // The BUILD side only ever emits seedlings and saplings, so a
+            // tree file is one the GUEST grew — and it can, since the volume
+            // carries free slack: ProDOS promotes a sapling past 128 KB by
+            // itself. The decode used to skip those and report success, which
+            // turned "your file is over 128 KB" into "your file is gone".
+            // One more level of indirection is all a tree is.
+            const std::size_t sizeCeiling =
+                (storage == kStorageTree) ? kTreeMaxBytes : kSaplingMaxBytes;
+            if (eof > sizeCeiling) {
                 pom2::log().warn("ProDOSVol",
                     "skipping oversize file in decode: " + name);
                 ++r.filesSkipped;
+                if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
 
             std::vector<std::uint8_t> data;
             data.reserve(eof);
+
+            // Read one index block: 256 entries, low bytes at 0..255 and high
+            // bytes at 256..511. Shared by the sapling (data blocks) and the
+            // tree (a master index of index blocks).
+            auto indexEntry = [&](std::size_t block, std::size_t i) -> std::uint16_t {
+                const std::uint8_t* idx = blockPtr(block);
+                return static_cast<std::uint16_t>(idx[i]) |
+                       static_cast<std::uint16_t>(idx[256 + i]) << 8;
+            };
+            // Append up to `remaining` bytes of the data blocks listed in the
+            // index block `block`, starting at its entry 0.
+            auto appendFromIndex = [&](std::size_t block, std::size_t& remaining) {
+                for (std::size_t i = 0; i < 256 && remaining > 0; ++i) {
+                    const std::uint16_t db = indexEntry(block, i);
+                    const std::size_t take =
+                        std::min<std::size_t>(remaining, kBlockBytes);
+                    if (db == 0) {
+                        // Sparse hole: ProDOS reads an unallocated index entry
+                        // back as a zero-filled block. Zero-fill and CONTINUE
+                        // — the file's EOF terminates the read, not the hole.
+                        data.insert(data.end(), take, 0u);
+                    } else if (db >= totalBlocks) {
+                        return false;   // genuinely out-of-range pointer
+                    } else {
+                        const std::uint8_t* d = blockPtr(db);
+                        data.insert(data.end(), d, d + take);
+                    }
+                    remaining -= take;
+                }
+                return true;
+            };
 
             if (storage == kStorageSeedling) {
                 if (eof > kBlockBytes) {
@@ -1078,32 +1211,36 @@ void decodeOneDir(DecodeWalk& w,
                 const std::uint8_t* d = blockPtr(keyPtr);
                 const std::size_t   take = std::min<std::size_t>(eof, kBlockBytes);
                 data.insert(data.end(), d, d + take);
-            } else {
-                // Sapling: keyPtr → index block. Bytes 0..255 hold low bytes
-                // of data block #s; bytes 256..511 hold the high bytes.
-                const std::uint8_t* idx = blockPtr(keyPtr);
+            } else if (storage == kStorageSapling) {
+                // Sapling: keyPtr → index block listing the data blocks.
                 std::size_t remaining = eof;
-                for (std::size_t i = 0; i < 256 && remaining > 0; ++i) {
-                    const std::uint16_t db =
-                        static_cast<std::uint16_t>(idx[i]) |
-                        static_cast<std::uint16_t>(idx[256 + i]) << 8;
-                    const std::size_t take = std::min<std::size_t>(remaining, kBlockBytes);
-                    if (db == 0) {
-                        // Sparse hole: ProDOS reads an unallocated index entry
-                        // back as a zero-filled block. Zero-fill and CONTINUE
-                        // — the file's EOF terminates the read, not the hole.
-                        data.insert(data.end(), take, 0u);
-                    } else if (db >= totalBlocks) {
-                        break;   // genuinely out-of-range pointer → stop
-                    } else {
-                        const std::uint8_t* d = blockPtr(db);
-                        data.insert(data.end(), d, d + take);
-                    }
-                    remaining -= take;
-                }
+                (void)appendFromIndex(keyPtr, remaining);
                 if (data.size() < eof) {
                     pom2::log().warn("ProDOSVol",
                         "sapling file truncated on decode: " + name);
+                }
+            } else {
+                // Tree: keyPtr → MASTER index block, whose 256 entries are
+                // themselves index blocks, each listing 256 data blocks.
+                // 256 × 256 × 512 = 32 MB, the ProDOS file ceiling.
+                std::size_t remaining = eof;
+                for (std::size_t i = 0; i < 256 && remaining > 0; ++i) {
+                    const std::uint16_t ib = indexEntry(keyPtr, i);
+                    if (ib == 0) {
+                        // A whole sparse sub-index: 256 zero blocks, or what
+                        // is left of the file, whichever is shorter.
+                        const std::size_t take =
+                            std::min<std::size_t>(remaining, 256 * kBlockBytes);
+                        data.insert(data.end(), take, 0u);
+                        remaining -= take;
+                        continue;
+                    }
+                    if (ib >= totalBlocks) break;   // out-of-range → stop
+                    if (!appendFromIndex(ib, remaining)) break;
+                }
+                if (data.size() < eof) {
+                    pom2::log().warn("ProDOSVol",
+                        "tree file truncated on decode: " + name);
                 }
             }
 
@@ -1117,6 +1254,14 @@ void decodeOneDir(DecodeWalk& w,
                 pom2::log().warn("ProDOSVol",
                     "decode: skipping unsafe file name under " + hostFolder);
                 ++r.filesSkipped;
+                // Only a name ProDOS itself could hold counts as LOST DATA.
+                // `AUX` or `.git` is a real file the guest has and the host
+                // refuses — the user must be told, and the save must fail.
+                // `../PWNED` or a name with a NUL is not a file any ProDOS
+                // wrote: it is a crafted or corrupt entry, and failing every
+                // future save of the volume over it would hand a hostile
+                // image a way to jam the write-back for good.
+                if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
             // Append a type-derived extension ONLY when the ProDOS name has
@@ -1129,6 +1274,14 @@ void decodeOneDir(DecodeWalk& w,
                 fs::path(hostFolder) /
                 reserveHostName(usedHostNames,
                                 reuseExistingSpelling(name + typeExt));
+            if (!destStaysInsideRoot(w, dest)) {
+                pom2::log().warn("ProDOSVol",
+                    "decode: refusing " + dest.string() +
+                    " — it resolves outside the served folder");
+                ++r.filesSkipped;
+                noteUnsaved(r, name);
+                continue;
+            }
             // The volume is a snapshot taken at MOUNT time; a host file the
             // user edited since then is NEWER than that snapshot, and
             // rewriting it here would silently revert the user's edit to
@@ -1168,11 +1321,13 @@ void decodeOneDir(DecodeWalk& w,
 
 }  // namespace
 
-bool isHostSafeProDOSName(const std::string& name)
+bool isProDOSLegalName(const std::string& name)
 {
-    // A decoded entry name becomes a single host path component, so it must
-    // not be empty, "." / "..", over-length, or contain anything outside the
-    // ProDOS-legal set (which excludes '/', '\\', NUL → blocks traversal).
+    // What ProDOS itself can hold in a directory entry: 1..15 characters of
+    // [A-Za-z0-9.], never "." or "..". (The real filesystem is stricter still
+    // — a leading letter, no dots — but this is the widest set a well-formed
+    // entry can present, and it is the line between "a file the guest really
+    // has" and "bytes no ProDOS wrote".)
     if (name.empty() || name.size() > 15) return false;
     if (name == "." || name == "..")     return false;
     for (unsigned char c : name) {
@@ -1180,6 +1335,21 @@ bool isHostSafeProDOSName(const std::string& name)
                         (c >= '0' && c <= '9') || c == '.';
         if (!ok) return false;
     }
+    return true;
+}
+
+bool isHostSafeProDOSName(const std::string& name)
+{
+    // A decoded entry name becomes a single host path component, so it must
+    // not be empty, "." / "..", over-length, or contain anything outside the
+    // ProDOS-legal set (which excludes '/', '\\', NUL → blocks traversal).
+    if (!isProDOSLegalName(name)) return false;
+    // A LEADING dot is refused too. A ProDOS name must start with a letter,
+    // so nothing legitimate is lost — but the guest writes these bytes, and
+    // `.bashrc` / `.git` / `.DS_Store` planted in the served folder are files
+    // the host acts on and the next scan hides (buildVolumeFromFolder's own
+    // filter skips dotfiles, so the user never sees what was left behind).
+    if (name.front() == '.') return false;
     // Windows DOS-device names. `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`,
     // `LPT1`-`LPT9` are reserved in EVERY directory and with ANY extension:
     // `AUX.txt` opens the serial port, not a file. They are also perfectly
@@ -1192,13 +1362,9 @@ bool isHostSafeProDOSName(const std::string& name)
     std::string stem = name.substr(0, name.find('.'));
     for (char& c : stem)
         c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    static const char* kDosDevices[] = { "CON", "PRN", "AUX", "NUL" };
-    for (const char* d : kDosDevices)
-        if (stem == d) return false;
-    if (stem.size() == 4 && stem[3] >= '1' && stem[3] <= '9' &&
-        (stem.compare(0, 3, "COM") == 0 || stem.compare(0, 3, "LPT") == 0))
-        return false;
-    return true;
+    // `sanitiseProDOSName` keeps these out of the volume on the way in, so a
+    // name that reaches here is one the guest minted itself.
+    return !isDosDeviceStem(stem);
 }
 
 ProDOSDecodeResult decodeVolumeToFolder(
@@ -1227,7 +1393,15 @@ ProDOSDecodeResult decodeVolumeToFolder(
     }
 
     DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, r, false,
-                     preserveNewerThan, {} };
+                     preserveNewerThan, {}, {} };
+    // Resolved ONCE, before anything is written: every destination is checked
+    // back against this. `create_directories` above has just made sure the
+    // root exists, so this canonicalises a real directory.
+    walk.rootReal = fs::weakly_canonical(hostFolder, ec);
+    if (ec || walk.rootReal.empty()) {
+        r.error = "cannot resolve host folder '" + hostFolder + "'";
+        return r;
+    }
     decodeOneDir(walk, /*firstBlock=*/2, hostFolder, /*depth=*/0);
 
     // The stamp the caller must adopt: no earlier than now, and no earlier
@@ -1241,6 +1415,29 @@ ProDOSDecodeResult decodeVolumeToFolder(
         r.error = "volume directory graph exceeded the decode bounds; "
                   "host folder holds a partial tree";
         pom2::log().warn("ProDOSVol", "decode: " + r.error);
+    }
+
+    // A save that lost a file is a FAILED save. Reporting `ok` here — which
+    // is what this did — told the caller everything was written, so the
+    // blocks were marked clean and the guest's file was gone with one warn
+    // line in the log as its only trace. Failing instead keeps the volume
+    // dirty (the caller restores the flags and retries later), puts the
+    // reason in front of the user, and names the entries so they can be
+    // renamed inside the guest. The files that DID decode are already on
+    // disk — this is a partial success reported honestly, not a rollback.
+    if (r.filesUnsaved > 0) {
+        std::string names;
+        for (const auto& n : r.unsavedNames) {
+            if (!names.empty()) names += ", ";
+            names += n;
+        }
+        if (r.filesUnsaved > r.unsavedNames.size()) names += ", …";
+        r.error = std::to_string(r.filesUnsaved) +
+                  " file(s) could not be written to '" + hostFolder +
+                  "': " + names +
+                  " (name not usable on the host, or outside the folder)";
+        pom2::log().warn("ProDOSVol", "decode: " + r.error);
+        return r;                      // ok stays false
     }
     r.ok = true;
     return r;

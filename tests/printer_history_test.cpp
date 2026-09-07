@@ -557,6 +557,70 @@ void testOversizedEncodedPageIsRejectedBeforeDecode()
     std::printf("  ok: oversized encoded page is refused before decode\n");
 }
 
+// ── 16. A bad or missing index does not let the next print overwrite ─────
+// Two paths refuse to sweep — a Bad index and a Missing one — and both leave
+// `p000001.png…` on disk with nothing describing them. The file counter used
+// to come ONLY from the index, so it stayed at 1: the next print reused
+// p000001, destroyed the oldest printout, and committed a fresh index naming
+// that one file. The following open() then read a PARSED index, found every
+// other PNG unreferenced, and swept them all. The deletion was deferred by
+// exactly one print, which is why nothing caught it.
+// (Bug hunt 3 R1.)
+void testCounterResumesWithoutAnIndex()
+{
+    for (const bool badRatherThanMissing : { true, false }) {
+        const fs::path dir = scratch(badRatherThanMissing ? "resume_bad"
+                                                          : "resume_missing");
+        std::string err;
+        std::string first, second;
+        {
+            PrinterHistory h;
+            assert(h.open(dir.string(), err));
+            assert(h.addPage(makePage(16, 16, 1), 0, 0, 8.0, 11.0, err));
+            assert(h.addPage(makePage(16, 16, 2), 0, 0, 8.0, 11.0, err));
+            h.flushPending();
+            second = h.pages()[0].file;      // newest first
+            first  = h.pages()[1].file;
+        }
+        assert(first == "p000001.png" && second == "p000002.png");
+
+        if (badRatherThanMissing)
+            std::ofstream(dir / "index.txt", std::ios::trunc) << "not-an-index\n";
+        else
+            fs::remove(dir / "index.txt");
+
+        {
+            PrinterHistory h;
+            assert(h.open(dir.string(), err));
+            assert(h.size() == 0);           // no index → no rows
+            // Both printouts are still on disk: an unreadable index is not
+            // permission to delete.
+            assert(fs::exists(dir / first));
+            assert(fs::exists(dir / second));
+            // ...and the next print must land BESIDE them, not on top.
+            assert(h.addPage(makePage(16, 16, 3), 0, 0, 8.0, 11.0, err));
+            h.flushPending();
+            assert(h.size() == 1);
+            assert(h.pages()[0].file != first);
+            assert(h.pages()[0].file != second);
+            assert(fs::exists(dir / first));
+            assert(fs::exists(dir / second));
+        }
+
+        {   // The index is good again, so the orphan sweep runs — and the two
+            // older printouts ARE unreferenced now, so they go. What must not
+            // happen is the older one being overwritten and then presented as
+            // the new page, which is what the missing counter produced.
+            PrinterHistory h;
+            assert(h.open(dir.string(), err));
+            assert(h.size() == 1);
+            assert(h.pages()[0].file == "p000003.png");
+            assert(fs::exists(dir / "p000003.png"));
+        }
+    }
+    std::printf("  ok: a bad/missing index resumes the file counter from disk\n");
+}
+
 } // namespace
 
 int main()
@@ -576,6 +640,7 @@ int main()
     testCounterBeyondSixDigitsAndOrphanCleanup();
     testRepeatedIndexRowsAreBounded();
     testOversizedEncodedPageIsRejectedBeforeDecode();
+    testCounterResumesWithoutAnIndex();
 
     std::puts("printer_history: OK");
     return 0;

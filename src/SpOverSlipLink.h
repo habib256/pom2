@@ -235,6 +235,26 @@ private:
     /// and only that mutex keeps the two apart (see stop()).
     std::unique_ptr<SpTransport> transport_;
 
+    /// Guards the transport POINTER for the status readers, and nothing else.
+    ///
+    /// `isConnected()` / `describe()` / `lastError()` dereferenced `transport_`
+    /// with no lock at all while `stop()` reset it under `callMtx_` — a
+    /// use-after-free reachable from the CPU thread (FujiNetCard asks
+    /// isConnected() on every guest SmartPort access) and from the UI thread
+    /// every frame.
+    ///
+    /// A SECOND mutex rather than `callMtx_`, and that is the point: callMtx_
+    /// is held for a whole request/response exchange, so a status reader
+    /// taking it would park the UI thread — and through the emulator's
+    /// stateMutex the CPU worker with it — for a full call budget behind a
+    /// silent peer. The three methods this guards call only `isOpen()` /
+    /// `describe()` / `lastError()`, which are documented never to block, so
+    /// this mutex is never held across a syscall. `stop()` takes callMtx_
+    /// first (excluding transact) and this one second (excluding the readers)
+    /// before destroying the transport; lock order is callMtx_ → transportMtx_
+    /// and never the reverse.
+    mutable std::mutex           transportMtx_;
+
     std::thread                worker_;
     std::atomic<bool>          running_{false};
     std::atomic<bool>          stopFlag_{false};

@@ -847,6 +847,30 @@ int main()
         assert(disk35Settings.getString("disk35_path_1").empty() &&
                "an ejected on-board 3.5\" must not come back next launch");
 
+        // ...and "Eject all" is an eject like any other. It ran the on-board
+        // pair AFTER `settings.save()` and appended no keys of its own, so
+        // `disk35_path_1` still named the image that had just left the drive
+        // and the next launch mounted it again — Eject All undone by a
+        // restart, for the one pair of drives that is not a slot card.
+        // (Bug hunt 3 R13.)
+        assert(disk35Storage.mountDisk35(
+            disk35Controller, disk35Settings, 0, disk35Path).ok);
+        assert(disk35Storage.setDisk35WriteBack(
+            disk35Controller, disk35Settings, 0, true).ok);
+        assert(disk35Settings.getString("disk35_path_1") == disk35Path);
+        const auto ejectedAll35 = disk35Storage.ejectAllMedia(
+            disk35Controller, disk35Settings);
+        assert(ejectedAll35.ok());
+        assert(ejectedAll35.changed);
+        assert(!disk35Storage.captureDisk35(
+            disk35Controller).drives[0].loaded);
+        assert(disk35Settings.getString("disk35_path_1").empty() &&
+               "eject-all left the on-board 3.5\" path in the settings");
+        // The write-back flag is a per-DRIVE preference, not the medium's:
+        // like `ejectDisk35`, eject-all persists it as it stands rather than
+        // clearing it, so the next disk in that bay keeps the user's choice.
+        assert(disk35Settings.getBool("disk35_writeback_1"));
+
         // Exercise the complete WOZ -> writable PO transaction on a SYNTHETIC
         // 800K WOZ2. It used to copy `disks_3.5/The Oregon Trail 800K.woz`;
         // that disk is commercial and left the repository on 2026-09-05

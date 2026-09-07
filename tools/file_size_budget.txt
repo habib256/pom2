@@ -76,11 +76,31 @@
 # Memory.cpp's snapshot trailer and DiskImage.cpp's WOZ writer are the two
 # obvious seams.
 #
+# 2026-09-07 (bug hunt #3): FIVE CEILINGS RAISED AGAIN and one file joined the
+# list. Same shape as the morning entry — every line is a fix or its rationale:
+#
+#   src/Apple2Display.cpp        2382 -> 2395 (+13)  idle-override gate on the
+#       published frame index, not the cycle counter.
+#   src/DiskImage.cpp            2914 -> 2994 (+80)  weak-bit noise on long
+#       flux gaps (MAME amplifier-freakout), the LSS-cell arithmetic note.
+#       SIX LINES FROM THE 3000 HARD CAP: the next change to this file must
+#       be a split (the WOZ writer and the flux view are the seams).
+#   src/M6502.cpp                2185 -> 2204 (+19)  one epilogue in step()
+#       plus the POM2_UNLIKELY macro that keeps debugHook_ off the hot path.
+#   src/Memory.cpp               2545 -> 2570 (+25)  RDIOUDIS //c-only with
+#       the floating bus, $C060 bus bits, the slot-bus floating source.
+#   src/hgrpaint/HgrPaintEditor.cpp 2647 -> 2653 (+6) nesting-exact endBatch,
+#       flushOpenStroke gated on the bracket.
+#   src/StorageCoordinator.cpp   (new) 2018   crossed the watch line with the
+#       ejectAllMedia three-phase walk and the disk35 key persistence;
+#       recorded at its exact size.
+#
 # Regenerate with: tools/check_file_sizes.sh --update
 
-src/Apple2Display.cpp                    2382
-src/DiskImage.cpp                        2914
+src/Apple2Display.cpp                    2395
+src/DiskImage.cpp                        2994
 src/ImageWriter.cpp                      2531
-src/M6502.cpp                            2185
-src/Memory.cpp                           2545
-src/hgrpaint/HgrPaintEditor.cpp          2647
+src/M6502.cpp                            2204
+src/Memory.cpp                           2570
+src/StorageCoordinator.cpp               2018
+src/hgrpaint/HgrPaintEditor.cpp          2653
