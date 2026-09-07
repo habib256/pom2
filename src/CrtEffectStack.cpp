@@ -425,8 +425,8 @@ void CrtEffectStack::destroyGL()
     if (bwTex)     glDeleteTextures(1, &bwTex);
     if (vbo)       glDeleteBuffers(1, &vbo);
     if (vao)       glDeleteVertexArrays(1, &vao);
-    if (bwProgram) glDeleteProgram(bwProgram);
-    if (program)   glDeleteProgram(program);
+    if (bwProgram) pom2::deleteShaderProgram(bwProgram);
+    if (program)   pom2::deleteShaderProgram(program);
     fbo[0] = fbo[1] = 0;
     outputTex[0] = outputTex[1] = 0;
     bwFbo = bwTex = 0;
@@ -590,7 +590,7 @@ unsigned int CrtEffectStack::applyBandwidth(unsigned int srcTex,
             // Delete the program too: zeroing the handle only made it
             // unreachable — the compiled program stayed resident in the
             // driver for the rest of the session.
-            glDeleteProgram(bwProgram);
+            pom2::deleteShaderProgram(bwProgram);
             bwFbo = 0; bwTex = 0; bwProgram = 0;
             pom2::log().warn("CRT", "analog-bandwidth FBO incomplete — knob disabled");
             return 0;
