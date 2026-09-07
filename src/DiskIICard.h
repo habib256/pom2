@@ -316,6 +316,16 @@ public:
         pushIwmFloppy();
     }
 
+    /// Machine-class flag for the IWM-only $C0nE/$C0nF register hooks (mode
+    /// register + write handshake). A real wozfdc has neither, so on a II/II+/
+    /// //e a `STA $C08F,X` must not latch guest data and a `$C0nE` read must
+    /// fall through to the plain Disk II path. Defaults to ON (the //c and //c+
+    /// boot through these hooks and the standalone tests build the card by
+    /// hand); `SlotCardFactory` turns it off for every profile with physical
+    /// slots. Bug hunt #3 M10.
+    void setIwmHost(bool on) { iwmHost_ = on; }
+    bool iwmHost() const { return iwmHost_; }
+
     /// User opt-in for write-back. When true, eject (and explicit save)
     /// rewrites the source file with any modified sectors. Default off
     /// to avoid silently mutating the user's image file. The toggle is
@@ -400,6 +410,7 @@ private:
     // mode reads are atypical for the standard Disk II boot), so
     // returning whd there is a no-op for them.
     uint8_t iwmMode = 0;
+    bool    iwmHost_ = true;   // see setIwmHost()
     uint8_t iwmWhd  = 0xBF;
     bool writeBackEnabled = false;     // forwarded to DiskImage on toggle
     uint8_t writeLatch = 0xFF;         // latched data nibble for next bit-cell flush
@@ -612,16 +623,11 @@ private:
     // $C0nE under Q6 gets `wpt | iwmMode` — and `iwmMode` is whatever the
     // guest last wrote through `STA $C08F,X`.
     //
-    // NOT gated (2026-09-07 audit), because the card cannot tell: it is
-    // handed a CPU, a sound sink, ROMs and an optional `IWMDevice*`, and
-    // none of those is a machine-class signal. `setIWM` looked like one and
-    // is not — the composition root binds it to slot 6 on EVERY profile
-    // (`MainWindow_SlotConfig.cpp`), while `iicplus_boot35_test` boots a real
-    // //c+ through these hooks without binding it at all. Gating on the
-    // pointer therefore both keeps the //e wrong and breaks a //c+. The fix
-    // is a machine-class flag pushed in at construction — a one-line change
-    // in `SlotCardFactory` (which already receives `SystemProfile`) plus a
-    // setter here — and belongs with whoever owns that file.
+    // Gated on `iwmHost_` (2026-09-07): the card cannot tell the machine class
+    // by itself (`setIWM` is bound on every profile and `iicplus_boot35_test`
+    // boots a //c+ through these hooks without binding it), so the flag is
+    // pushed in by `SlotCardFactory`, which knows the profile, and defaults
+    // to on for hand-built cards.
 
 public:
     /// Debug-only: dump the last N $C0EC reads with their cycle stamp +

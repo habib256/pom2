@@ -103,6 +103,10 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         if (!boot13.empty()) (void)card->loadBootRom13(boot13);
         const std::string lss13 = locate_("roms/diskii_p6_13.rom");
         if (!lss13.empty()) (void)card->loadLssRom13(lss13);
+        // The IWM-only $C0nE/$C0nF hooks exist for the //c and //c+ (the
+        // profiles with no physical slots); a real wozfdc on a II/II+/IIe has
+        // neither register. Bug hunt #3 M10.
+        card->setIwmHost(profileConfig(request.profile).noPhysicalSlots);
         result.card = std::move(card);
         return result;
     }

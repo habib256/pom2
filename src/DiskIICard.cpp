@@ -1720,7 +1720,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         //   alt firmware probes this; without it the boot loop at $E51B
         //   (BEQ on `Y EOR status & $1F`) never falls through and the
         //   Monitor hangs before clearing the text page.
-        if (low4 == 0xE && wasQ6) {
+        if (iwmHost_ && low4 == 0xE && wasQ6) {
             DiskImage& img = images[activeDrive];
             const uint8_t wpt = (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
             return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
@@ -1742,7 +1742,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         // software with bit-cell-accurate timing requirements; the
         // //c+ alt firmware's `$C8A6: BIT $C0EC / BPL` ready loop and
         // its `$C960` companion both pass with bit-6-clear.
-        if (low4 == 0xC && writeMode) {
+        if (iwmHost_ && low4 == 0xC && writeMode) {
             lssSync(1);
             return iwmWhd;
         }
@@ -1806,12 +1806,12 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     // `useBitLss = false` until a WOZ image or P6 PROM is in flight —
     // and the //c+ alt firmware probes $C0EE *before* the user clicks
     // a disk in the library.
-    if (low4 == 0xE && wasQ6Legacy) {
+    if (iwmHost_ && low4 == 0xE && wasQ6Legacy) {
         DiskImage& img = images[activeDrive];
         const uint8_t wpt = (!img.isLoaded() || img.isWriteProtected()) ? 0x80 : 0x00;
         return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
     }
-    if (low4 == 0xC && writeMode) {
+    if (iwmHost_ && low4 == 0xC && writeMode) {
         return iwmWhd;
     }
     DiskImage& img = images[activeDrive];
@@ -1855,7 +1855,7 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
         // Q6 was already high latch the mode register. Real wozfdc has
         // no such register so the //c+ alt-firmware probe at $E512-$E522
         // (in bank 1) spins forever without this.
-        if (low4 == 0xF && wasQ6) {
+        if (iwmHost_ && low4 == 0xF && wasQ6) {
             iwmMode = v;
         }
         writeLatch = v;
@@ -1872,7 +1872,7 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
     handleSwitchAccess(low4);
     // IWM mode_w shadow (matches the bit-LSS branch above). Required
     // for the //c+ alt-firmware probe before any disk is mounted.
-    if (low4 == 0xF && wasQ6LegacyW) {
+    if (iwmHost_ && low4 == 0xF && wasQ6LegacyW) {
         iwmMode = v;
     }
     writeLatch = v;
