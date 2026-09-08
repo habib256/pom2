@@ -1,4 +1,4 @@
-// Six SmartPort units behind the //c's rear port — 2026-09-08.
+// Six — and eight — SmartPort units behind the //c's rear port — 2026-09-08.
 //
 // On a //c there is no slot: the built-in slot-5 SmartPort card's units are
 // served to the machine's own firmware over the disk port, as intelligent
@@ -170,13 +170,25 @@ int main()
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch, ec);
     std::vector<std::string> hdvs;
-    for (int n = 3; n <= 6; ++n) {
+    for (int n = 3; n <= 8; ++n) {
         const std::string po = makeVolume(n, scratch);
         if (po.empty()) return 1;
         hdvs.push_back(po);
     }
 
-    const Outcome o = boot(rom, disk525, disk35, hdvs, 6, scratch);
+    // Eight — the card's ceiling: two 3.5", six HDV. What the //c ROM and
+    // ProDOS 2.4.3 make of a chain that long is the measurement.
+    {
+        const Outcome o = boot(rom, disk525, disk35, hdvs, 8, scratch);
+        std::printf("  //c, eight units: ProDOS $%02X, DEVCNT=%d, DEVLST: %s (bus transactions %d)\n",
+                    o.kernelVersion, o.devcnt, describe(o.devlst).c_str(), o.busTransactions);
+        const int n = cardDevices(o.devlst);
+        if (n != 8) fail("the //c lists " + std::to_string(n) + " SmartPort devices with eight units, expected 8");
+        else std::printf("  ok: eight SmartPort units on the //c's rear port, eight ProDOS devices\n");
+    }
+
+    const std::vector<std::string> six(hdvs.begin(), hdvs.begin() + 4);
+    const Outcome o = boot(rom, disk525, disk35, six, 6, scratch);
     std::printf("  //c, six units: ProDOS $%02X, DEVCNT=%d, DEVLST: %s (bus transactions %d)\n",
                 o.kernelVersion, o.devcnt, describe(o.devlst).c_str(), o.busTransactions);
     const int n = cardDevices(o.devlst);

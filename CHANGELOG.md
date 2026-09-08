@@ -43,7 +43,9 @@ own firmware over the disk port, as UniDisks on the SmartPort bus, and the
 bus responder took four. It takes eight now, so the card's unit count (2 to
 8, this morning's change) reaches the //c whole. Measured with the real
 32 KB //c ROM and ProDOS 8 2.4.3 booted from the internal 5.25": six units
-(two 3.5", four HDV) come up as S5, S2 and S4, two drives each. The bus
+(two 3.5", four HDV) come up as S5, S2 and S4, two drives each — and all
+eight, the card's ceiling, as S5, S2, S4 and S1, eleven ProDOS devices
+with the internal 5.25" pair and /RAM. The bus
 snapshot's id table grew from four to eight entries; a blob from before
 still loads. Pinned by `iic_smartport_six_units`. To do it: Devices →
 SmartPort Configuration on the //c profile, *units* = 6, HDV in each bay,
