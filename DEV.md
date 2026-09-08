@@ -42,9 +42,11 @@ every documented opcode on both cores already matched registers, flags,
 memory and cycles). `setCpuMode` maps them through `UnoffZp5` / `UnoffZpX6`
 / `UnoffInd6` / `UnoffInd8` / `UnoffIndY5` / `UnoffAbs6` / `UnoffAbs7` /
 `UnoffAbsY`; `$9B` TAS is genuinely 5 and `$BB` must not be re-clobbered by
-the `$xB` block. Pinned in `cpu_cycle_count`. Open question, not a bug:
-the corpus says 65C02 `$5C` is 4 cycles and POM2 charges 8, which is MAME
-`ow65c02.lst`'s count and the WDC datasheet's — no Apple II software runs it.
+the `$xB` block. Pinned in `cpu_cycle_count`. Settled the same day: the Tom Harte corpus
+says 65C02 `$5C` is 4 cycles, but the WDC W65C02S datasheet's opcode matrix
+(Table 5-2) lists it as 3 bytes, **8** cycles and MAME's `ow65c02.lst`
+counts the same — POM2 keeps 8, and the corpus is the outlier there. No
+Apple II software runs it either way.
 
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
 TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
@@ -371,6 +373,19 @@ $B000-$DFFF windows = 6502 $D000-$FFFF Language Card RAM.
 
 ## Memory
 
+**The paste hand-over happens on the `$C000` read** *(2026-09-08, bug hunt
+#6)*. It used to happen in `Keyboard::clearStrobe`, i.e. inside the `$C010`
+access: the next queued byte re-armed the strobe in the same access, so the
+//e's own "wait for the key to come back up" idiom (`BIT $C010` / `LDA $C010
+: BMI -`) read AKD high forever and consumed one queued byte per poll — a
+ten-character paste delivered one and dropped nine. `Keyboard::readLatch()`
+promotes on the `$C000-$C00F` read instead, lock-free unless the strobe is
+clear AND a byte is waiting (`pasteArmed_`, the second half of the mirror).
+`Memory::accessCycle()` was added the same day: `cycleCounter` plus the
+in-flight instruction's elapsed cycles — the stamp `pushVideoEventLocked`
+uses — for a card that keeps its own cycle-stamped log of the same accesses
+(the Chat Mauve latch ring). Pinned in `paste_smoke`.
+
 ### What lives outside Memory now
 
 `Memory` is still the bus, the paging and the RAM, but three concerns that
@@ -666,6 +681,20 @@ Pinned: `dhgr_render_smoke_test`, `video7_parity_smoke_test`,
 
 ### Le Chat Mauve (`LeChatMauveCard`)
 
+**Three corrections from bug hunt #6** *(2026-09-08)*. The latch ring was
+stamped with `getCycleCounter()` (the instruction start) while the video
+events it is compared against carry the data cycle; a frame whose first
+event was the `$C05F` edge itself seeded `renderBeamRacing` with the
+POST-clock latch and `forEachBeamSegment` clocked it a second time — the top
+band came out in the next mode. `clockFifo` stamps with
+`Memory::accessCycle()` now (pinned by case 5 of `chatmauve_latch_split`,
+which drives the stores through a real `M6502`). The RVB Graph's `$C0F3` is
+whole-screen monochrome green, not green text (`tintTextGreen` remaps every
+row in that mode). And the card answers the floating bus, not `$FF`, on
+`$C0F0-$C0FF` and `$C700-$C7FF` — it drives nothing there, and as the
+fresh-install slot-7 default it was hiding the bus for everyone. Pinned in
+`le_chat_mauve`.
+
 The French RGB adapters and their US cousin, as ONE card with a **variant**
 (`chatmauve_variant` = `feline` | `iic` | `eve` | `video7`; //c-class
 profiles default to `iic`, the others to `feline`). The research — manuals,
@@ -802,10 +831,15 @@ which the mixed 80-col path (and the Chat Mauve legacy tail) still paints
 through at full width before pixel-doubling — so a MonoGreen/MonoAmber
 per-line page split re-merged the whole row's phosphor and ghosted the left
 segment's dots into the right one. It is bounded per segment now. All three
-pinned by `display_beam_regressions` (each fails without its fix). Known and
-left: in all three composite pipelines the mixed-mode text band is painted
-once from the end-of-frame state, so a mid-line page split inside rows
-160-191 draws from one page only.
+pinned by `display_beam_regressions` (each fails without its fix). The last
+leak went the same day: `patchMixedTextBand` painted the 32-row band once
+from the end-of-frame state, so a mid-line page split *inside* rows 160-191
+drew both halves from one page under the three composite pipelines. It now
+takes the frame's events and, when one lands inside the band, paints the
+band per beam segment through `renderInternalSegment` with `force560_` set
+(frame80 is where the composite output lives); a segment that is not mixed
+text is painted by the RGB painter rather than the demod, which is the one
+remaining divergence and a visible-but-correct one. Pinned there too.
 
 `Memory` logs display soft-switch edges (`$C050-$C057`, `$C05E/$C05F`,
 IIe `$C00C/$C00D` 80COL, `$C000/$C001` 80STORE, `$C00E/$C00F` ALTCHAR)
@@ -1826,6 +1860,17 @@ Persisted: `floppy_sound_volume`, `floppy_sound_muted`. Pinned:
 
 ## TransWarp (Applied Engineering)
 
+**The ROM is probed through `findResource`** *(2026-09-08, bug hunt #6)*.
+`TranswarpCard::loadRomFromDisk` walked a private cwd ladder (`""`, `../`,
+`../../`), the last one in the tree: a dump in the per-user data dir — where
+`RomFetch` writes and where the ROM Status panel resolves — read "present"
+in the panel and missing to the card, and an installed bundle found nothing
+at all. It now probes `findFirstResource` over both spellings `RomCatalog`
+advertises; the catalogue in turn gained the ThunderClock name `ClockCard`
+prefers (`Thunderware_REV_1.3_ROM_U9.bin`), which the panel used to call
+"missing" while the card was using it. Pinned in `transwarp_card` (panel and
+card must agree) and `rom_fetch`.
+
 Catalog `transwarp`. Port of MAME `bus/a2bus/transwarp.cpp` (R. Belmont), a
 3.58 MHz accelerator for the II / II+ / //e. Full notes in
 `src/TranswarpCard.h`; the parts worth having in the map:
@@ -2643,6 +2688,14 @@ block addressing, `.2mg` data-offset ≠ 64). Multi-partition images
 
 ### CffaCard (CFFA 2.0 — MAME-faithful IDE)
 
+**The taskfile steps across a multi-sector transfer** *(2026-09-08)*.
+`AtaBlockDevice::nextSector` is MAME `ata_hle_device_base::next_sector()`:
+after every sector of a READ/WRITE the address registers move on (LBA28 with
+the carry into the device/head nibble; CHS through the latched 16 × 63
+geometry) and the sector count counts down to 0. IDENTIFY does not step
+(`advanceRegs_`, derived from the phase on a snapshot restore so the blob
+layout is unchanged). Pinned in `ata_block_device`.
+
 `CffaCard.{h,cpp}` + `AtaBlockDevice.{h,cpp}`. **Real 4 KB firmware
 dump executed over an emulated ATA chip**, image stored as raw LBA.
 Ported from MAME `bus/a2bus/a2cffa.cpp`.
@@ -3107,6 +3160,23 @@ over-read) and the 16 MiB MEX cap (→ `RestoreResult{false,…}` so the
 HTTP path still returns 400).
 
 ### Rewind / time-travel
+
+**The slot-card snapshot contract is pinned for every card** *(2026-09-08,
+bug hunt #6, TODO G5-2)*. `card_snapshot_contract` loops the catalog and
+asserts, per card: blob → fresh card → blob is a fixed point; a foreign or
+junk blob leaves the card untouched (a 20 × 20 cross matrix); a truncated or
+oversized blob never misparses; and the restored card answers the next 600
+bus accesses byte-for-byte like the original, IRQ line included. It found
+three: `LironCard`'s own emuCycles counter — the only clock its IWM sees —
+was not in the blob, so a rewind restored an IWM whose clock then jumped the
+whole rewind depth forward (9.1 ms of a 20 ms frame under `stateMutex`, the
+head position thrown away by the plausibility gate); `PhasorCard` rejected
+its own blob whenever the mode byte held one of the five un-named values the
+address decode can latch (a range check now, `mode <= PH_EchoPlus`);
+`IWMDevice::loadSnapshotState` fired its devsel callbacks after restoring
+`revStart35_`, and the controller's retarget re-anchored it to `now_`, so a
+rewind mid-read resumed at the wrong angular position (the anchor is put
+back after the callbacks).
 
 `RewindBuffer.{h,cpp}` (storage) + `Rewind_ImGui.{h,cpp}` (UI) +
 `EmulationController` transport — the MicroM8-style rewind: continuous
@@ -3797,6 +3867,15 @@ short-circuit.
 
 ### Super Serial Card (slot 2) + telnet bridge
 
+**BINARY is honoured once agreed** *(2026-09-08, bug hunt #6)*. Since the
+2026-09-07 "answer option requests" change POM2 replied `WILL BINARY` /
+`DO BINARY` and then kept applying RFC 854's NVT translation — NULs eaten,
+LF → CR, CR LF collapsed — which corrupted exactly the 8-bit transfers the
+clean TDR path exists for (XMODEM, ADTPro). `telnetBinaryRx_` /
+`telnetBinaryTx_` record what was agreed per direction; the RX path skips
+`normalizeLineEndings` and the TX drain stops escaping (IAC IAC still
+doubled, RFC 856). Pinned by `testTelnetBinaryHonoured` in `ssc_acia`.
+
 6551 ACIA at `$C0A8-$C0AB` (data/status/cmd/ctrl). Status bit 4 =
 TDRE (always 1), bit 3 = RDRF (RX queue), bits 5/6 = DCD/DSR (TCP
 state). Unconnected `$C0A8` returns 0.
@@ -3904,6 +3983,19 @@ load path validates the $08/$28/$58/$70 ProDOS signature at
 offsets 0/2/4/6 and falls back to the synth ROM if absent.
 
 ### //c on-board IWM vs the slot-6 Disk II
+
+**The hub releases a deselected 3.5" drive** *(2026-09-08, bug hunt #6)*.
+MAME's `recalc_active_device` ends with an unconditional `set_floppy(...)`,
+nullptr included; POM2 splits the two form factors across `setFloppy` /
+`setSony35` and `SmartPortHub::recalcActiveDevice` only ever *set* a Sony on
+the 3.5" branch, so after the MIG routed to a 5.25" drive (or to nothing)
+`IWMDevice::sony_` still pointed at the last Sony and `flushWrite` spliced
+the next burst into that disk's cell stream — `DiskIICard::pushIwmFloppy`
+only rebinds on a real drive change or head move, so it never closed the
+window. `IWMDevice::releaseSony35()` flushes the burst in flight to the
+drive it belongs to, then detaches, leaving `disk_` (DiskIICard's) alone.
+Pinned by `iwm_stale_sony`: the same burst changes 1 513 cells of a selected
+drive and none of a deselected one.
 
 `MemoryProfile_IIcClass.cpp` (`ioReadIWM` / `ioWriteIWM`) mirrors
 `$C0E0-$C0EF` into the on-board IWM — but **only on the //c+**
@@ -4539,6 +4631,19 @@ the test's header. → [printer plan 2 § 5.2](docs/printer_plan_2.md#52-the-mem
 
 ### FujiNet (SP-over-SLIP relay)
 
+**The built-in `N:` is inside the loopback perimeter** *(2026-09-08, bug
+hunt #6)*. `FujiNetNetDevice` opened a host socket at a guest-chosen address
+with no destination check: `N:HTTP://127.0.0.1:6503/mem?...` reached POM2's
+own AI control server, which reads a loopback peer with no Origin as native
+— the third door onto the escape CLAUDE.md fences for the W5100 and slirp.
+`destinationAllowed` applies the W5100's policy on the RESOLVED address
+(so `localhost`, `127.1` and a hostname pointing at 127/8 are all caught),
+under the same `uthernet_allow_loopback` opt-in (`makeFujiNetCard` takes
+it). And the devicespec was spliced raw into the request line and the
+`Host:` header, so a CR/LF in it wrote guest-chosen headers and pipelined a
+second request, `Host:` included; `parseSpec` refuses control bytes and
+spaces. Pinned in `fujinet_net_device`.
+
 [FujiNet](https://fujinet.online/) is an ESP32 peripheral whose headline
 feature is the **`N:` network device**: a deported TCP/IP stack the guest
 drives with simple commands, so an Apple II gets HTTP(S), TNFS, FTP, SSH,
@@ -5058,6 +5163,13 @@ Pinned by `uthernet_cs8900_smoke`.
 
 ### Uthernet II (W5100)
 
+**MACRAW / IPRAW receive raises RECV** *(2026-09-08, bug hunt #6)*. Only
+the TCP/UDP paths set `Sn_IR` RECV, and the common `IR` is derived from
+`Sn_IR`, so the whole interrupt path was dead for the raw modes: a guest IP
+stack that reads RSR and gates on the bit discarded the frame it had just
+staged. Datasheet § 5.2.3 makes RECV mode-independent. Pinned in
+`uthernet2_w5100`.
+
 `UthernetIICard.h/.cpp` (card, catalog key `uthernet2`) +
 `W5100Device.h/.cpp` (chip). **MAME has no W5100 device** — its Apple II
 Ethernet support stops at the Uthernet I — so the reference is AppleWin
@@ -5514,6 +5626,13 @@ other; a dump that agreed only with itself would be a screenshot with extra
 steps.
 
 ### ImageWriter II printer (host-side)
+
+**The DMP eats `ESC g`'s graphics body** *(2026-09-08)*. A head drops a
+command it has no hardware for after collecting its parameters
+(`modelIgnoresEsc`), which for `ESC g nnn` left the nnn×8 data bytes
+streaming on as text. `printCharInternal`'s ignore gate now sets the bit
+image up with `swallow` for that one command, exactly as `kEscPGates` does
+on the Epson head. Pinned by `testDmpSwallowsEscGBody`.
 
 **Two escape-sequence corrections** *(2026-09-08, bug hunt #5)*. `ESC V` /
 `ESC U` raise `msb_` so their pattern byte survives parameter collection and
@@ -7056,6 +7175,15 @@ entries (Mouse needs both mouse ROMs, CFFA needs
 `cffa20ee02/eec02.bin`).
 
 ### Slot Configuration + Internal Disks & Media
+
+**Slot 3 is not a boot slot on a //e** *(2026-09-08, bug hunt #6)*. The
+shipped default map fills 1, 2, 4, 5, 6, 7 and leaves only slot 3 free, so
+`SlotProvisioningCoordinator`'s auto-plug for `POM2 game.hdv`, a dropped
+800 K `.po` or `--prodos-folder` landed there — where, with SLOTC3ROM off,
+`$C300` is the internal 80-column firmware and `bootFromSlot(3)` fails its
+Appendix-C signature check and cold-boots, blaming the image. `findFreeSlot`
+skips slot 3 on //e-class profiles (a II+ keeps it) and the provisioning
+reports "no free slot" instead. Pinned in `slot_provisioning_coordinator`.
 
 **Two windows, because they run opposite interaction models** —
 `MainWindow_Slots.cpp` holds both. *Slot Configuration* (Machine →,

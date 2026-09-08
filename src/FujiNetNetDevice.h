@@ -139,6 +139,18 @@ public:
     void setFetchDeadlineMs(int ms) { deadlineMs_ = ms; }
     int  fetchDeadlineMs() const    { return deadlineMs_; }
 
+    /// Let the guest reach 127.0.0.0/8 through the built-in `N:`.
+    ///
+    /// OFF by default, for exactly the reason W5100Device::setAllowLoopback
+    /// is: an `N:` OPEN is a HOST socket at a GUEST-CHOSEN address, so
+    /// `N:HTTP://127.0.0.1:6503/mem?...` reached POM2's own AI control
+    /// server, which reads a loopback peer with no Origin as native. This is
+    /// the third door onto the same escape (CLAUDE.md's loopback perimeter);
+    /// it takes the same `uthernet_allow_loopback` opt-in, because closing
+    /// two of three doors moves the escape rather than shutting it.
+    void setAllowLoopback(bool allow) { allowLoopback_ = allow; }
+    bool allowLoopback() const        { return allowLoopback_; }
+
 private:
     /// A fetch in flight, shared with the worker that performs it.
     ///
@@ -162,7 +174,7 @@ private:
     /// The whole fetch. Static, and it touches nothing but its own `Fetch`:
     /// the device may be gone by the time it finishes.
     static void fetchInto(Fetch& out, std::string host, uint16_t port,
-                          std::string path, int deadlineMs);
+                          std::string path, int deadlineMs, bool allowLoopback);
 
     /// Publish a finished fetch into the readable state. Called by every
     /// accessor, which is what makes "the answer arrived" visible to a guest
@@ -173,6 +185,7 @@ private:
     void pump() const { const_cast<FujiNetNetDevice*>(this)->harvest(); }
 
     int                  deadlineMs_ = 12000;
+    bool                 allowLoopback_ = false;
     bool                 open_   = false;
     uint8_t              error_  = 1;      ///< 1 = SUCCESS in the firmware's table
     std::vector<uint8_t> body_;

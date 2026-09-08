@@ -123,9 +123,12 @@ void SmartPortHub::recalcActiveDevice()
 
     if (iwm_) {
         if (active35_) iwm_->setSony35(active35_);
-        // No `setSony35(nullptr)` on the 5.25" branch — DiskIICard
-        // owns IWM.setFloppy(DiskImage*) and will overwrite sony_ on
-        // its next seekPhaseW.
+        // MAME's set_floppy(nullptr) equivalent. NOT `setSony35(nullptr)`:
+        // that would also clear `disk_`, which DiskIICard owns. Leaving the
+        // stale Sony attached let a 5.25"-era write burst land on the last
+        // 3.5" disk (DiskIICard::pushIwmFloppy only fires on a real drive
+        // change or head move, so it did not close the window).
+        else           iwm_->releaseSony35();
     }
 
     if (active35_) {

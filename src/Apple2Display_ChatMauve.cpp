@@ -249,7 +249,17 @@ void Apple2Display::renderDhgrCol280(Memory& mem, const Memory::DisplayState& st
 void Apple2Display::tintTextGreen(const Memory::DisplayState& state, int scanY0, int scanY1)
 {
     int lo = 0, hi = 0;
-    if (state.textMode) {
+    // The RVB Graph's $C0F3 is whole-screen "monochrome green", not green
+    // text (plan § 3.6: -16143 = colours + green text, -16141 = monochrome
+    // green). hgrMode()/dhgrModeFor() already answer Mono there, so the
+    // graphics rows are white dots on black and the same white→green remap
+    // finishes the job; without this the mode came out green text over a
+    // WHITE picture.
+    if (chatMauve &&
+        chatMauve->variant() == LeChatMauveCard::Variant::RvbGraph &&
+        chatMauve->rvbMode() == 3) {
+        if (!bandScanlines(scanY0, scanY1, 0, kHeight, &lo, &hi)) return;
+    } else if (state.textMode) {
         if (!bandScanlines(scanY0, scanY1, 0, kHeight, &lo, &hi)) return;
     } else if (state.mixedMode) {
         if (!bandScanlines(scanY0, scanY1, 160, kHeight, &lo, &hi)) return;

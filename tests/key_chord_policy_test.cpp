@@ -71,9 +71,13 @@ void testLayoutLetter()
     check(letterFromKeyName(",", 77 /* GLFW_KEY_M */) == 0,
           "a punctuation key is not the US letter at its position");
     check(letterFromKeyName(";", 77) == 0, "…for any punctuation");
+    check(letterFromKeyName("\xd1\x81", kKeyA + 2) == 'C',
+          "a non-Latin cap falls back to the US position — Ctrl-C must reach Applesoft");
     // A multi-byte cap (non-Latin layout) is not a Ctrl-letter either.
-    check(letterFromKeyName("\xD0\xB9", kKeyA) == 0,
-          "a multi-byte key name yields no Ctrl-letter");
+    // A multi-byte cap (a non-Latin layout) is NOT "no letter": the key
+    // falls back to its US position, or Ctrl-C could never break Applesoft.
+    check(letterFromKeyName("\xD0\xB9", kKeyA) != 0,
+          "a multi-byte key name falls back to the US position");
 
     // The fallback survives for the case it was written for: GLFW has no
     // name at all (non-printable key, or the browser, where the entry point
@@ -121,14 +125,19 @@ void testCtrlLetter()
 
 void testAltAppleKeys()
 {
-    check(altDrivesAppleKeys(0, /*enabled=*/true, /*windows=*/false),
+    check(altDrivesAppleKeys(0, /*enabled=*/true, /*windows=*/false, false),
           "Alt drives Open/Solid Apple by default");
-    check(!altDrivesAppleKeys(0, /*enabled=*/false, false),
+    check(!altDrivesAppleKeys(0, /*enabled=*/false, false, false),
           "keyboard_alt_apple_keys=false takes the wire away "
           "(macOS French Option types { } [ ] | and was pressing fire)");
-    check(!altDrivesAppleKeys(kModControl | kModAlt, true, /*windows=*/true),
+    check(altDrivesAppleKeys(kModControl | kModAlt, true, /*windows=*/true,
+                             /*isRightAlt=*/false),
+          "Windows Ctrl + LEFT Alt is not AltGr — Open-Apple + Ctrl must still work");
+    check(!altDrivesAppleKeys(kModControl | kModAlt, true, /*windows=*/true,
+                              /*isRightAlt=*/true),
           "Windows AltGr never presses Solid-Apple");
-    check(altDrivesAppleKeys(kModControl | kModAlt, true, /*windows=*/false),
+    check(altDrivesAppleKeys(kModControl | kModAlt, true, /*windows=*/false,
+                             /*isRightAlt=*/true),
           "…but the same modifiers elsewhere still do");
 }
 

@@ -813,5 +813,58 @@ int main()
     std::printf("Le Chat Mauve smoke: OK (FIFO, LCM HGR, BW560, lo-res grays, bit7 invert, "
                 "Eve $C0B0-$C0BF + CPREG auto-write + TXT16 + TXTGREEN + table IX-1, "
                 "AN3-off per variant, RVB Graph $C0F0-3, snapshot v4, NTSC fallback)\n");
+    // ── RVB Graph $C0F3 is WHOLE-SCREEN monochrome green ────────────────────
+    // -16141 (plan § 3.6) turns the picture green, not just the text: the
+    // graphics rows were already white (hgrMode → Mono) and only the text
+    // band was remapped, so the mode came out green text over a white
+    // picture.
+    {
+        Memory mem;
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::RvbGraph);
+        LeChatMauveCard* raw = card.get();
+        raw->setMemory(&mem);
+        mem.slotBus().plug(7, std::move(card));
+        Apple2Display display;
+        display.setChatMauveCard(raw);
+        display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+        for (uint32_t a = 0x2000; a < 0x4000; ++a) mem.memWrite(static_cast<uint16_t>(a), 0x7F);
+        for (uint16_t a = 0x0400; a < 0x0800; ++a) mem.memWrite(a, 0xC1);   // inverse-ish glyph
+        (void)mem.memRead(0xC050); (void)mem.memRead(0xC053); (void)mem.memRead(0xC057);
+        (void)mem.memRead(0xC0F3);
+        assert(raw->rvbMode() == 3);
+        display.render(mem);
+        const uint32_t gfx = *pixelAt(display, 20, 50);
+        const uint32_t txt = *pixelAt(display, 20, 170);
+        // Find a lit pixel on each row rather than trusting one x.
+        auto litOn = [&](int y) {
+            for (int x = 0; x < display.width(); ++x) {
+                const uint32_t p = *pixelAt(display, x, y);
+                if ((p & 0x00FFFFFF) != 0) return p;
+            }
+            return uint32_t{0};
+        };
+        (void)gfx; (void)txt;
+        const uint32_t gLit = litOn(50), tLit = litOn(170);
+        assert(gLit != 0 && tLit != 0);
+        assert(gLit == tLit && "monochrome green must tint the picture, not only the text");
+        assert(((gLit >> 8) & 0xFF) > (gLit & 0xFF) && "…and green it is");
+        std::printf("  RVB Graph $C0F3 monochrome green covers the picture OK\n");
+    }
+
+    // ── The card drives nothing on $C0Fx / $C7xx: the floating bus stays ───
+    {
+        Memory mem;
+        const uint8_t devBefore = mem.memRead(0xC0F5);
+        const uint8_t romBefore = mem.memRead(0xC740);
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Feline);
+        card->setMemory(&mem);
+        mem.slotBus().plug(7, std::move(card));
+        assert(mem.memRead(0xC0F5) == devBefore &&
+               "an address the card does not decode must read the floating bus");
+        assert(mem.memRead(0xC740) == romBefore &&
+               "no slot EPROM: $C700-$C7FF stays the floating bus");
+        std::printf("  Chat Mauve leaves the floating bus alone OK\n");
+    }
+
     return 0;
 }

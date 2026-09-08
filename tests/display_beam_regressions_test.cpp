@@ -219,11 +219,61 @@ void testPerLinePageSplitDoesNotGhostAcrossSegments()
     std::puts("  per-line page split keeps its phosphor per segment: OK");
 }
 
+// ── 4. A page split INSIDE the mixed text band, under the composite demod ─
+// The band used to be painted once from the end-of-frame state, so a
+// per-line PAGE1 (cycle 5) / PAGE2 (cycle 44) split in rows 160-191 drew
+// both halves from one page — under the three composite pipelines only.
+// References are frames with the same event SHAPE but one page throughout,
+// so all three go through the per-segment painter.
+void testPageSplitInsideMixedTextBand()
+{
+    auto shot = [](uint16_t leftPage, uint16_t rightPage) {
+        Memory mem;
+        mem.setIIEMode(true);
+        for (uint16_t a = 0x0400; a < 0x0800; ++a) mem.memWrite(a, static_cast<uint8_t>(0xC1 + (a & 0x0F)));
+        for (uint16_t a = 0x0800; a < 0x0C00; ++a) mem.memWrite(a, static_cast<uint8_t>(0xB0 + (a & 0x07)));
+        fillHgr(mem, 0x2000, 0x2A);
+        mem.memRead(CLR_TEXT); mem.memRead(SET_MIXED); mem.memRead(SET_HIRES);
+        mem.memRead(SET_PAGE1);
+        Apple2Display d;
+        d.setAuxMemory(mem.auxData());
+        d.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+        const uint64_t base = 17030ull * 2;
+        mem.setCycleCounter(base);
+        mem.beginVideoEventFrame();
+        for (int y = 160; y < 192; ++y) {
+            mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 5);
+            mem.memRead(leftPage);
+            mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 44);
+            mem.memRead(rightPage);
+        }
+        d.render(mem);
+        assert(d.width() == 560);
+        return rows(d, 160, 192);
+    };
+    const auto p1    = shot(SET_PAGE1, SET_PAGE1);
+    const auto p2    = shot(SET_PAGE2, SET_PAGE2);
+    const auto split = shot(SET_PAGE1, SET_PAGE2);
+    assert(p1 != p2 && "the two text pages must differ visibly");
+    int dl = 0, dr = 0;
+    for (int y = 0; y < 32; ++y)
+        for (int x = 0; x < 560; ++x) {
+            const size_t k = static_cast<size_t>(y) * 560 + x;
+            const uint32_t want = (x < 280) ? p1[k] : p2[k];
+            if (split[k] != want) { if (x < 280) ++dl; else ++dr; }
+        }
+    assert(dl == 0 && "left half of the band must be page 1");
+    assert(dr == 0 && "right half of the band must be page 2 — it was painted "
+                      "from the end-of-frame page");
+    std::puts("  page split inside the mixed text band: OK");
+}
+
 } // namespace
 
 int main()
 {
     std::puts("display_beam_regressions");
+    testPageSplitInsideMixedTextBand();
     testMixedClearedInVblRepaintsTextBand();
     testEightyToFortyColumnSplitIsOneFrame();
     testPerLinePageSplitDoesNotGhostAcrossSegments();

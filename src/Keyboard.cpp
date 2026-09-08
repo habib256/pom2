@@ -33,6 +33,7 @@ void Keyboard::queueKey(uint8_t apple2Key)
         // delivered in order AFTER it, instead of clobbering the currently
         // latched paste byte and jumping the FIFO.
         pasteQueue_.push_back(b);
+        publish();
     } else {
         // No paste in flight: behave like the hardware latch — newest key
         // wins (fast typing overwrites an unread key, as on real hardware).
@@ -48,17 +49,30 @@ void Keyboard::clearStrobe()
     // Apple II hardware leaves the key byte in the latch and only releases
     // the strobe — KEYIN re-polls $C000 until a fresh key arrives.
     keyReady_ = false;
-    // Paste-queue drain: if the user has a paste in flight, the moment
-    // the strobe is cleared we promote the next byte into the latch and
-    // re-arm the strobe. The CPU's $C000-poll loop will see the next char
-    // on its very next iteration — no timing tricks, the ROM clocks the
-    // paste out at exactly the rate it can consume.
-    if (!pasteQueue_.empty()) {
+    // The next paste byte is NOT promoted here. $C010 is an acknowledgement,
+    // and a program is free to read it more than once per key ("is the key
+    // back up?"): re-arming inside the clear made every one of those polls
+    // consume a queued byte. readLatch() does the hand-over instead, on the
+    // $C000 read — the ROM still clocks the paste out at exactly the rate it
+    // can consume, one byte per poll that finds the strobe clear.
+    publish();
+}
+
+uint8_t Keyboard::readLatch()
+{
+    const uint8_t v = mirror_.load(std::memory_order_relaxed);
+    // Strobe still set (the guest has not acked yet) or nothing queued: the
+    // overwhelmingly common case, and it stays off the mutex.
+    if ((v & 0x80) != 0 || !pasteArmed_.load(std::memory_order_relaxed))
+        return v;
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (!keyReady_ && !pasteQueue_.empty()) {
         lastKey_  = pasteQueue_.front() & 0x7F;
         keyReady_ = true;
         pasteQueue_.pop_front();
+        publish();
     }
-    publish();
+    return mirror_.load(std::memory_order_relaxed);
 }
 
 std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldToUpper)
@@ -117,6 +131,7 @@ std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldT
         }
         ++queued;
     }
+    publish();
     return queued;
 }
 
@@ -138,6 +153,7 @@ std::size_t Keyboard::pasteRawKeys(const char* data, std::size_t length)
         }
         ++queued;
     }
+    publish();
     return queued;
 }
 

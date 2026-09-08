@@ -1249,10 +1249,14 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
             recordVideoEvent(VideoEventKind::EightyCol, low == 0x0D);
             slots.broadcastVideoSwitch(addr);
         }
-        if (isWrite && iieMode) {
-            iieHandleSoftSwitch(addr);
+        if (isWrite) {
+            if (iieMode) iieHandleSoftSwitch(addr);
+            return kbLatch;   // store: the return value is unused
         }
-        return kbLatch;
+        // A READ of $C000-$C00F is the guest asking for a key, and that is
+        // where a draining host paste hands its next byte over (Keyboard.h) —
+        // never on the $C010 strobe clear, which a program may poll.
+        return keyboard_.readLatch();
     }
     // Keyboard strobe clear.
     //
@@ -1921,6 +1925,12 @@ uint8_t Memory::languageCardSwitchAccess(uint16_t addr, bool isWrite)
     // The card itself does not drive the data lines for $C08x — the byte
     // the CPU reads is whatever the video DMA last latched onto the bus.
     return floatingBus();
+}
+
+uint64_t Memory::accessCycle() const
+{
+    return cycleCounter +
+        (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0);
 }
 
 uint8_t Memory::floatingBus() const

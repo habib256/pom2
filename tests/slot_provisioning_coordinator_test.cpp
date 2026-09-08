@@ -155,5 +155,34 @@ int main()
         fullController, pom2::SystemProfile::AppleIIe);
     assert(!target && !target.error.empty());
 
+    // The shipped default map fills 1,2,4,5,6,7 and leaves ONLY slot 3 free.
+    // On a //e-class machine slot 3 is not a slot the guest can boot from —
+    // $C300 is the internal 80-column firmware with SLOTC3ROM off — so the
+    // auto-plug used to land there, fail the boot signature and blame the
+    // image. A II+ has a real slot 3 and may still use it.
+    {
+        pom2::StorageCoordinator s3Storage;
+        pom2::SlotProvisioningCoordinator s3Provision(factory, s3Storage);
+        EmulationController s3Controller;
+        {
+            auto state = s3Controller.lockState();
+            for (int slot : {1, 2, 4, 5, 6, 7})
+                state.memory().slotBus().plug(slot, std::make_unique<OccupiedCard>());
+        }
+        auto t = s3Provision.ensureHdvBootTarget(
+            s3Controller, settings, pom2::SystemProfile::AppleIIePAL);
+        assert(!t && !t.error.empty() && "a //e must not auto-plug into slot 3");
+        t = s3Provision.ensureSmartPortBootTarget(
+            s3Controller, pom2::SystemProfile::AppleIIePAL);
+        assert(!t && !t.error.empty());
+        {
+            auto state = s3Controller.lockState();
+            assert(!state.memory().slotBus().isPlugged(3) && "nothing was plugged");
+        }
+        t = s3Provision.ensureHdvBootTarget(
+            s3Controller, settings, pom2::SystemProfile::AppleIIPlus);
+        assert(t && t.added && t.slot == 3 && "a II+ has a real slot 3");
+    }
+
     return 0;
 }

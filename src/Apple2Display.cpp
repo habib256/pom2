@@ -386,7 +386,8 @@ Apple2Display::RasterPos Apple2Display::frameCycleToPos(uint64_t emuCycle,
 }
 
 void Apple2Display::patchMixedTextBand(Memory& mem,
-                                       const Memory::DisplayState& state)
+                                       const Memory::DisplayState& state,
+                                       const std::vector<Memory::VideoEvent>& events)
 {
     // `state` is the PUBLISHED frame's state, handed down by render() — the
     // same one that chose this path. Polling `mem.getDisplayState()` here
@@ -395,6 +396,35 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
     // closed skipped the band entirely (the demod's graphics rows stayed
     // under the text), and a page flip drew it from the wrong page.
     if (!state.mixedMode || state.textMode) return;
+
+    // A switch thrown INSIDE the band beam-races the band. The graphics rows
+    // above it were already replayed per segment into the composite signal;
+    // the band used to be painted once from the end-of-frame state, so a
+    // DIX-style per-line page split inside rows 160-191 drew both halves
+    // from one page — and only under the three composite pipelines, the
+    // LUT/RGBA ones got it right, so the picture changed with the display
+    // mode. Paint the band per segment, in the 560 domain frame80 lives in.
+    bool bandSplit = false;
+    for (const auto& e : events)
+        if (e.scanline >= kMixedTextFirstScanline && e.scanline < kHeight) {
+            bandSplit = true;
+            break;
+        }
+    if (bandSplit) {
+        Memory::DisplayState beamStart = mem.getDisplayStateAtFrameStart();
+        applyIdleSwitchOverride(beamStart, mem);
+        force560_ = true;
+        forEachBeamSegment(beamStart, events, mem.videoStandard(), 0b11,
+            [&](const Memory::DisplayState& st, int y0, int y1, int col0, int col1,
+                uint8_t) {
+                if (y1 <= kMixedTextFirstScanline) return;
+                renderInternalSegment(mem, st, std::max(y0, kMixedTextFirstScanline),
+                                      y1, col0, col1);
+            });
+        force560_ = false;
+        setUseFrame80(true);
+        return;
+    }
 
     if (mem.isIIE() && state.eightyCol)
         renderText80(mem, state, 20, 24);
@@ -621,7 +651,7 @@ void Apple2Display::render(Memory& mem)
     // rows [0, 160) in mixed mode, so the patch survives it.
     if (oeCpu && signalProducedFlag && (!state.textMode || oeDemodsText)) {
         if (endsMixedGfx) {
-            patchMixedTextBand(mem, state);
+            patchMixedTextBand(mem, state, events);
             scheduleCpuDemodInto80(kMixedTextFirstScanline);
         } else {
             scheduleCpuDemodInto80(kSignalHeight);
@@ -630,7 +660,7 @@ void Apple2Display::render(Memory& mem)
 
     if ((endsMixedGfx && hiResMode == HiResMode::ColorCompositeOE)
         && signalProducedFlag) {
-        patchMixedTextBand(mem, state);
+        patchMixedTextBand(mem, state, events);
         scheduleCpuDemodInto80(kMixedTextFirstScanline);
         mixedCompositeUsesFb_ = true;
     }
@@ -678,7 +708,7 @@ void Apple2Display::render(Memory& mem)
         // soft-switch state, so route the UI to frame80.
         setUseFrame80(true);
         if (mixedGfx)
-            patchMixedTextBand(mem, state);
+            patchMixedTextBand(mem, state, events);
     }
 }
 

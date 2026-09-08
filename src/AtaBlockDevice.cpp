@@ -164,6 +164,35 @@ void AtaBlockDevice::fillIdentify()
     wordIdx_ = 0;
 }
 
+void AtaBlockDevice::nextSector()
+{
+    // The register file is the driver's view of the head. It used to stand
+    // still through a multi-sector transfer: after a 3-sector READ from LBA 5
+    // the registers still said 5 and the count still said 3, where real
+    // silicon (and MAME) leave 8 and 0. No POM2-supported driver reads them
+    // back today, which is why it never bit; a conformance gap all the same.
+    --sectorCount_;                                   // 0 wraps: 256 → 255 … → 0
+    if (devHead_ & 0x40) {                            // LBA28
+        const uint32_t lba = currentLba() + 1;
+        lba0_    = static_cast<uint8_t>(lba);
+        lba1_    = static_cast<uint8_t>(lba >> 8);
+        lba2_    = static_cast<uint8_t>(lba >> 16);
+        devHead_ = static_cast<uint8_t>((devHead_ & 0xF0) | ((lba >> 24) & 0x0F));
+        return;
+    }
+    uint8_t  sector = lba0_;                          // CHS, 1-based sectors
+    uint8_t  head   = devHead_ & 0x0F;
+    uint16_t cyl    = static_cast<uint16_t>(lba1_ | (lba2_ << 8));
+    if (++sector > numSectors_) {
+        sector = 1;
+        if (++head >= numHeads_) { head = 0; ++cyl; }
+    }
+    lba0_    = sector;
+    lba1_    = static_cast<uint8_t>(cyl);
+    lba2_    = static_cast<uint8_t>(cyl >> 8);
+    devHead_ = static_cast<uint8_t>((devHead_ & 0xF0) | head);
+}
+
 void AtaBlockDevice::startCommand(uint8_t cmd)
 {
     // A command written while the host has the OTHER device selected is not
@@ -175,6 +204,8 @@ void AtaBlockDevice::startCommand(uint8_t cmd)
 
     error_  = 0x00;
     status_ = kStDRDY | kStDSC; // BSY would pulse on real silicon; we settle instantly
+    advanceRegs_ = (cmd == kCmdRead || cmd == kCmdReadMulti ||
+                    cmd == kCmdWrite || cmd == kCmdWriteMulti);
 
     if (ataTraceOn()) {
         std::fprintf(stderr,
@@ -286,6 +317,7 @@ uint16_t AtaBlockDevice::cs0_r(uint8_t reg)
             const uint16_t w = wordBuf_[wordIdx_++];
             if (wordIdx_ >= 256) {
                 // Sector complete.
+                if (advanceRegs_) nextSector();
                 if (sectorsLeft_ > 0) --sectorsLeft_;
                 if (sectorsLeft_ > 0) {
                     ++lba_;
@@ -323,6 +355,7 @@ void AtaBlockDevice::cs0_w(uint8_t reg, uint16_t val)
                     sectorsLeft_ = 0;
                     return;
                 }
+                if (advanceRegs_) nextSector();
                 if (sectorsLeft_ > 0) --sectorsLeft_;
                 if (sectorsLeft_ > 0) {
                     ++lba_;                    // DRQ stays set for the next sector
@@ -407,6 +440,10 @@ size_t AtaBlockDevice::loadSnapshotState(const uint8_t* data, size_t len)
     const uint8_t ph = data[p++];
     phase_ = (ph == 1) ? Phase::PioIn : (ph == 2) ? Phase::PioOut
                                                   : Phase::Idle;
+    // Not in the blob (the layout is fixed): a transfer in flight after a
+    // restore is a READ/WRITE unless it is the one-sector IDENTIFY, which the
+    // CFFA firmware re-issues from scratch anyway.
+    advanceRegs_ = (phase_ != Phase::Idle);
     lba_ = 0;
     for (int i = 0; i < 4; ++i)
         lba_ |= static_cast<uint32_t>(data[p++]) << (8 * i);

@@ -474,7 +474,8 @@ private:
     /// Repaint the bottom text band of a mixed frame over a demodulated
     /// picture. `state` MUST be the published frame's state (render()'s
     /// `state` local), never `mem.getDisplayState()` — see the definition.
-    void patchMixedTextBand(Memory& mem, const Memory::DisplayState& state);
+    void patchMixedTextBand(Memory& mem, const Memory::DisplayState& state,
+                            const std::vector<Memory::VideoEvent>& events);
     // Frame counter — drives the FLASH attribute animation for screen
     // bytes in the $40-$7F range (the Apple II Monitor's blinking cursor
     // and inverse-blinking spaces). Wraps freely; only the parity of

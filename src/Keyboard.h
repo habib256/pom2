@@ -73,6 +73,15 @@ public:
     // Hot path: the $C000 read. `key | (strobe ? 0x80 : 0)`, lock-free.
     uint8_t latchMirror() const { return mirror_.load(std::memory_order_relaxed); }
 
+    // The $C000 READ — the guest LOOKING for a key, and where a draining host
+    // paste hands over its next byte. It cannot be done in clearStrobe(): that
+    // re-armed the strobe inside the same $C010 access, so the //e's own "wait
+    // for the key to come back up" idiom (BIT $C010 / LDA $C010 : BMI -) read
+    // AKD high forever and ate one queued byte per poll — a ten-character
+    // paste delivered one and dropped nine. Lock-free when there is nothing to
+    // promote; the mutex is taken only for the hand-over itself.
+    uint8_t readLatch();
+
     // The last latched character, low 7 bits, taken under the lock — the
     // value the IIe $C011/$C012/$C019 status reads fold into bit 0-6.
     uint8_t lastKey7() const {
@@ -102,6 +111,7 @@ public:
     void cancelPaste() {
         std::lock_guard<std::mutex> lk(mtx_);
         pasteQueue_.clear();
+        publish();
     }
 
     // Reset (construction / soft reset): abandon any in-flight paste and
@@ -119,12 +129,17 @@ private:
     void publish() {
         mirror_.store(static_cast<uint8_t>(lastKey_ | (keyReady_ ? 0x80 : 0x00)),
                       std::memory_order_relaxed);
+        // Second half of the mirror: "a paste byte is waiting". Read lock-free
+        // by readLatch(), so the $C000 poll of an idle machine — the ][+ banner
+        // loop — never touches the mutex.
+        pasteArmed_.store(!pasteQueue_.empty(), std::memory_order_relaxed);
     }
 
     mutable std::mutex   mtx_;
     uint8_t              lastKey_  = 0;
     bool                 keyReady_ = false;
     std::atomic<uint8_t> mirror_{ 0 };
+    std::atomic<bool>    pasteArmed_{ false };
     std::deque<uint8_t>  pasteQueue_;
 };
 

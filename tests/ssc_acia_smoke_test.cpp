@@ -443,6 +443,31 @@ void testTelnetLineEndingNormalisation()
     std::printf("  ok: telnet CR/NUL/LF normalisation\n");
 }
 
+// RFC 856 BINARY, once AGREED, switches the NVT line-ending rules off for
+// that direction. POM2 answered DO/WILL BINARY (since 2026-09-07) and kept
+// translating — NULs eaten, LF → CR, CR LF collapsed — so the 8-bit-clean
+// transfers the TDR path exists for (XMODEM, ADTPro) were corrupted.
+void testTelnetBinaryHonoured()
+{
+    SuperSerialCard ssc(2);
+    ssc.resetTelnet();
+    auto rx = [&](std::vector<uint8_t> in) {
+        const size_t m = ssc.processTransportTextRx(in.data(), in.size());
+        in.resize(m);
+        return in;
+    };
+    // Without negotiation: NVT rules apply (NUL dropped, LF → CR, CR LF → CR).
+    assert((rx({0x01, 0x00, 0x0A, 0x0D, 0x00, 0x0D, 0x0A, 0xFF, 0xFF, 0x7E}) ==
+            std::vector<uint8_t>{0x01, 0x0D, 0x0D, 0x0D, 0xFF, 0x7E}));
+    // The peer negotiates BINARY both ways; we agree.
+    ssc.resetTelnet();
+    assert(rx({0xFF, 0xFD, 0x00, 0xFF, 0xFB, 0x00}).empty());
+    // From here the payload is byte-exact except the IAC IAC un-doubling.
+    assert((rx({0x01, 0x00, 0x0A, 0x0D, 0x00, 0x0D, 0x0A, 0xFF, 0xFF, 0x7E}) ==
+            std::vector<uint8_t>{0x01, 0x00, 0x0A, 0x0D, 0x00, 0x0D, 0x0A, 0xFF, 0x7E}));
+    std::printf("  telnet BINARY honoured after negotiation OK\n");
+}
+
 void testTelnetIacFsm()
 {
     // processTelnetRx — persistent IAC state machine. Pins: variable-length
@@ -789,6 +814,7 @@ int main()
     testRxIrqGatedByCommand();
     testCommandRegWriteClearsPendingRxIrq();
     testTelnetLineEndingNormalisation();
+    testTelnetBinaryHonoured();
     testTelnetIacFsm();
     testTelnetTxEscaping();
     testStatusReadDcdDsr();

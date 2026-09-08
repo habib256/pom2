@@ -792,6 +792,14 @@ public:
         if (cycleCounter >= vblNextEventCycle_) advanceCyclesVideo();
     }
     uint64_t getCycleCounter() const { return cycleCounter; }
+    /// The cycle the IN-FLIGHT bus access lands on — `cycleCounter` plus the
+    /// current instruction's elapsed cycles. This is the stamp
+    /// pushVideoEventLocked puts on every VideoEvent, so a card keeping its
+    /// own cycle-stamped log of the SAME accesses (LeChatMauveCard's latch
+    /// ring, compared against a VideoEvent's emuCycle) has to read the clock
+    /// here: getCycleCounter() is the instruction START and makes the card's
+    /// edge look older than the event that recorded it.
+    uint64_t accessCycle() const;   // out of line: needs a complete M6502
     /// Set the clock. Deliberately NOT invalidating the beam-race event log:
     /// the display tests use this as a plain "put the beam here" primitive and
     /// push events around it. A restore that MOVES the clock has to invalidate

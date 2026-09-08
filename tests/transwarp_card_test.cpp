@@ -26,6 +26,7 @@
 #include "Memory.h"
 #include "SlotBus.h"
 #include "TranswarpCard.h"
+#include "ResourcePaths.h"
 
 #include <cassert>
 #include <cmath>
@@ -213,6 +214,17 @@ void testRomShadow()
     TranswarpCard* tw = plug(mem, 4);
     assert(!tw->hasRom() && !tw->shadowActive() &&
            "no dump plugged yet — the card still accelerates");
+    // The card probes through findResource, like the ROM Status panel: a
+    // dump the panel calls present must be one the card loads (it used to
+    // walk a private cwd ladder and miss the per-user data dir entirely).
+    {
+        const bool panelSees = !pom2::findFirstResource(
+            { TranswarpCard::kRomPath, "roms/ae transwarp rom v1.4.bin" }).empty();
+        const std::string err = tw->loadRomFromDisk();
+        assert((err.empty() == panelSees) && "ROM Status and the card must agree");
+        if (panelSees) assert(tw->hasRom());
+        else           assert(!tw->hasRom());
+    }
     assert(mem.memRead(0xF000) == 0xA5);
 
     std::vector<uint8_t> warp(TranswarpCard::kRomSize, 0x5A);

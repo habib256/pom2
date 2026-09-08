@@ -1665,8 +1665,31 @@ static void testEpsonCharsetKeepsPerforationSkip()
     std::printf("  Epson ESC R keeps ESC N's skip: OK\n");
 }
 
+// ── DMP: ESC g has no hardware, its graphics body must still be eaten ────
+// The head drops a command it lacks after collecting its parameters; for
+// ESC g that left the nnn×8 data bytes streaming on as text. Same rule as
+// the ESC/P gates: consume the body, print nothing.
+static void testDmpSwallowsEscGBody()
+{
+    ImageWriter dmp(144, ImageWriter::PaperSize::Letter);
+    dmp.setModel(pom2::IwModel::AppleDMP);
+    const uint8_t escG[] = { 0x1B, 'g', '0', '0', '1' };
+    dmp.printBytes(escG, sizeof escG);
+    const double x = dmp.status().headX, y = dmp.status().headY;
+    const uint8_t body[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    dmp.printBytes(body, sizeof body);
+    assert(dmp.status().headX == x && dmp.status().headY == y &&
+           "ESC g's data bytes printed as text on the DMP");
+    // ...and the byte AFTER the body is text again.
+    const uint8_t a[] = { 'A' };
+    dmp.printBytes(a, sizeof a);
+    assert(dmp.status().headX > x);
+    std::printf("  DMP eats ESC g's graphics body: OK\n");
+}
+
 int main()
 {
+    testDmpSwallowsEscGBody();
     testRepeatRestoresEighthBitSwitch();
     testEpsonCharsetKeepsPerforationSkip();
     std::printf("ImageWriter smoke test\n");

@@ -289,6 +289,16 @@ void LironCard::appendSnapshotState(std::vector<uint8_t>& out) const
             out.push_back(static_cast<uint8_t>(mech.size() >> (8 * k)));
         out.insert(out.end(), mech.begin(), mech.end());
     }
+    // Last tail: the card's OWN emuCycles counter. It is the only clock the
+    // IWM ever sees (`iwm_.tick(cycles_)` on every access and every
+    // advanceCycles), and it used to survive a rewind untouched: the FSM's
+    // `now_` went back with the blob while the card clock stayed in the
+    // future, so the very next access handed `sync()` the whole rewind depth
+    // to close. The plausibility gate then snapped the timeline forward and
+    // threw away the head position this blob exists to preserve — measured at
+    // 9.1 ms of a 20 ms PAL frame, under `stateMutex`, for a 10 s scrub.
+    for (int k = 0; k < 8; ++k)
+        out.push_back(static_cast<uint8_t>(cycles_ >> (8 * k)));
 }
 
 void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -324,6 +334,15 @@ void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         if (mechLen)
             drives_[static_cast<std::size_t>(d)].loadSnapshotState(data + i, mechLen);
         i += mechLen;
+    }
+    // Card clock (see appendSnapshotState). Absent in an older blob, which
+    // then keeps the live counter — the pre-2026-09-08 behaviour.
+    if (i + 8 <= len) {
+        uint64_t c = 0;
+        for (int k = 0; k < 8; ++k)
+            c |= static_cast<uint64_t>(data[i + k]) << (8 * k);
+        cycles_ = c;
+        i += 8;
     }
     retargetIwm();
 }

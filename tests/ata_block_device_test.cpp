@@ -369,5 +369,40 @@ int main() {
     }
 
     std::printf("ata_block_device_test: OK\n");
+    // ── The taskfile steps across a multi-sector transfer (MAME next_sector) ──
+    // A driver that reads the registers back after a READ must see where the
+    // head stopped: LBA + count, count 0. They used to stand still.
+    {
+        AtaBlockDevice a;
+        const uint32_t blocks = 100;
+        assert(a.backing().loadFromBytes(makeImage(blocks), "ata-adv", ""));
+        // LBA28: 3 sectors from 5 → registers say 8, count 0.
+        a.cs0_w(2, 3);
+        a.cs0_w(3, 5); a.cs0_w(4, 0); a.cs0_w(5, 0);
+        a.cs0_w(6, 0xE0);
+        a.cs0_w(7, AtaBlockDevice::kCmdRead);
+        uint8_t buf[512];
+        for (int i = 0; i < 3; ++i) readSector(a, buf);
+        assert((a.cs0_r(3) & 0xFF) == 8 && (a.cs0_r(4) & 0xFF) == 0);
+        assert((a.cs0_r(2) & 0xFF) == 0 && "sector count must count down to 0");
+        assert((a.cs0_r(6) & 0x0F) == 0);
+        // CHS through the default 16 × 63 geometry: sector 63 of head 0 is
+        // the last of its track, so the second sector is head 1, sector 1,
+        // and the registers end on head 1, sector 2.
+        a.cs0_w(2, 2);
+        a.cs0_w(3, 63); a.cs0_w(4, 0); a.cs0_w(5, 0);
+        a.cs0_w(6, 0xA0);
+        a.cs0_w(7, AtaBlockDevice::kCmdRead);
+        for (int i = 0; i < 2; ++i) readSector(a, buf);
+        assert((a.cs0_r(3) & 0xFF) == 2 && (a.cs0_r(6) & 0x0F) == 1);
+        assert((a.cs0_r(2) & 0xFF) == 0);
+        // IDENTIFY is not a sector operation: it leaves the address alone.
+        a.cs0_w(3, 0x11); a.cs0_w(2, 0x22);
+        a.cs0_w(7, AtaBlockDevice::kCmdIdentify);
+        readSector(a, buf);
+        assert((a.cs0_r(3) & 0xFF) == 0x11 && (a.cs0_r(2) & 0xFF) == 0x22);
+        std::printf("ata: taskfile advances across a multi-sector transfer OK\n");
+    }
+
     return 0;
 }

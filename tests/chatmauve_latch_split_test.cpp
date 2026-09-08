@@ -40,6 +40,8 @@
 #include "Apple2Display.h"
 #include "LeChatMauveCard.h"
 #include "Memory.h"
+#include "M6502.h"
+#include "CpuClock.h"
 
 #include <cassert>
 #include <cstdint>
@@ -191,6 +193,57 @@ int main()
         auto plain = r.frame();
         for (int y : { 0, kSplitRow, 191 })
             assert(rowEqual(plain, col140, y) && "no clock → no split");
+    }
+
+    // 5. The latch ring is stamped with the SAME clock as the video events.
+    //    With a CPU driving the stores, an event is stamped at its data cycle
+    //    (instruction start + elapsed) while the card used to stamp its ring
+    //    at the instruction start. A frame whose FIRST event is the $C05F
+    //    edge then seeded the replay with the POST-clock latch and clocked
+    //    it a second time: the top band came out in the next mode. Park the
+    //    latch at BW560 before the frame (as case 2 does), keep 80COL on so
+    //    the data line is 1, and clock twice from a $C05F that is the first
+    //    event of its frame: top band BW560, bottom band COL140.
+    {
+        Rig r;
+        M6502 cpu(&r.mem);
+        r.mem.setCpu(&cpu);
+        uint64_t c = 1;
+        r.mem.setCycleCounter(c++);
+        r.mem.memWrite(IIE_80COL_OFF, 0);
+        for (int k = 0; k < 2; ++k) {
+            r.mem.setCycleCounter(c++); r.mem.memRead(DHIRES_OFF);
+            r.mem.setCycleCounter(c++); r.mem.memRead(DHIRES_ON);
+        }
+        r.mem.setCycleCounter(c++);
+        r.mem.memWrite(IIE_80COL_ON, 0);
+        assert(r.card->currentMode() == LeChatMauveCard::RenderMode::BW560);
+        // $0300: STA $C05E / STA $C05F / STA $C05E / STA $C05F / STA $C05E
+        const uint8_t code[] = { 0x8D, 0x5E, 0xC0, 0x8D, 0x5F, 0xC0, 0x8D, 0x5E, 0xC0,
+                                 0x8D, 0x5F, 0xC0, 0x8D, 0x5E, 0xC0 };
+        for (size_t i = 0; i < sizeof code; ++i)
+            r.mem.memWrite(static_cast<uint16_t>(0x0300 + i), code[i]);
+        cpu.setProgramCounter(0x0300);
+        // Event scanlines are the absolute cycle modulo the frame length, so
+        // put the frame boundary on a frame multiple: the $C05E lands in the
+        // previous frame's last cycles, the $C05F at scanline kSplitRow of
+        // this one — and is this frame's FIRST event.
+        const uint64_t frameCycles = 65ull *
+            static_cast<uint64_t>(pom2VideoTiming(r.mem.videoStandard()).scanlinesPerFrame);
+        const uint64_t base = 2 * frameCycles;
+        r.mem.setCycleCounter(base - 4);
+        (void)cpu.run(1);                            // STA $C05E — before the frame
+        r.mem.setCycleCounter(base);
+        r.mem.beginVideoEventFrame();
+        r.mem.setCycleCounter(base + static_cast<uint64_t>(kSplitRow) * 65);
+        for (int i = 0; i < 4; ++i) (void)cpu.run(1);
+        assert(r.card->currentMode() == LeChatMauveCard::RenderMode::COL140);
+        auto split = r.frame();
+        for (int y : { 0, 40, kSplitRow - 1 })
+            assert(rowEqual(split, bw560, y) &&
+                   "top band must be the PRE-clock latch (BW560), not double-clocked");
+        for (int y : { kSplitRow + 1, 130, 191 })
+            assert(rowEqual(split, col140, y) && "bottom band must be COL140");
     }
 
     // 4. TEXT40 ⇄ Chat Mauve HGR split — the DIX raster shape.

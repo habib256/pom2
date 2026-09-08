@@ -110,6 +110,15 @@ public:
     /// the active floppy to one of the two Sony 3.5" drives. Passing
     /// nullptr returns the IWM to the 5.25" path.
     void setSony35(class Sony35Drive* drive);
+    /// Detach the 3.5" drive WITHOUT touching the 5.25" binding.
+    /// MAME ends `recalc_active_device` with an unconditional
+    /// `m_iwm->set_floppy(m_cur_floppy)`, nullptr included; POM2 splits the
+    /// two form factors across two setters, so the hub had no way to say
+    /// "no 3.5" drive is selected" — `setSony35(nullptr)` would also drop
+    /// `disk_`, which DiskIICard owns. Without this the IWM kept the LAST
+    /// Sony attached while the hub routed to a 5.25" drive (or to nothing),
+    /// and `flushWrite` spliced the burst into that drive's cells.
+    void releaseSony35();
     Sony35Drive* getSony35() const { return sony_; }
 
     /// Advance the internal state machine up to the current CPU cycle

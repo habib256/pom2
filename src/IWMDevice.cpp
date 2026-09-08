@@ -193,6 +193,18 @@ void IWMDevice::setFloppy(DiskImage* disk, int qt)
     // motor wiring exclusively.
 }
 
+void IWMDevice::releaseSony35()
+{
+    if (!sony_) return;
+    sync(now_);
+    // The burst in flight belongs to the drive we are LEAVING — same order as
+    // MAME's set_floppy, which does write_end() before rebinding.
+    flushWrite();
+    // No motor stop here: MAME's `mac_floppy_device::mon_w` is a no-op, so
+    // upstream does not stop a Sony on release either.
+    sony_ = nullptr;
+}
+
 void IWMDevice::setSony35(Sony35Drive* drive)
 {
     if (sony_ == drive && !disk_) return;
@@ -1167,6 +1179,16 @@ bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n)
     // pushes the restored phases / SEL / drive-select down the wire.
     if (phasesCb_) phasesCb_(phases_);
     if (devselCb_) devselCb_(devsel_);
+    // ...and then put the revolution anchor back, because those callbacks
+    // reach a controller that answers by pointing the IWM at a drive
+    // (`LironCard::onDevsel` -> `retargetIwm`, `SmartPortHub::retarget`), and
+    // `setSony35` treats that as a LIVE wiring event: it re-anchors
+    // `revStart35_` to `now_`. Right when a drive is really being attached;
+    // wrong here, because this is the one field of the blob that says where
+    // the 3.5" surface was under the head. Losing it put the track back at
+    // cell 0, so a rewind mid-read resumed at the wrong angular position and
+    // the firmware decoded a torn sector.
+    revStart35_ = revV;
     return true;
 }
 
