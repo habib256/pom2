@@ -205,8 +205,31 @@ void testExtractDhgrPlanesStaysInsideThePair()
 
 }  // namespace
 
+// Bug hunt #11: the sprite editor's flood used artifact-colour connectivity,
+// so a full-width shape's first and last pixel columns never joined the
+// region — a fill (or erase) left a 1-px frame down both sides.
+static void testFloodFillMonoReachesTheEdgeColumns()
+{
+    using namespace hgrpaint;
+    const int wPx = 21, hRows = 10;
+    std::vector<uint8_t> page(kHiresSize, 0);
+    for (int y = 2; y < 8; ++y)
+        for (int x = 0; x < wPx; ++x) plotPage(page.data(), x, y, HgrColor::White);
+    const int cleared = hgrsprite::floodFillMono(page.data(), wPx, hRows, 10, 4, /*set=*/false);
+    assert(cleared == wPx * 6 && "the erase must cover the whole solid block");
+    for (int y = 2; y < 8; ++y) {
+        assert(!pixelOn(page.data(), 0, y) && "column 0 survived the erase");
+        assert(!pixelOn(page.data(), wPx - 1, y) && "the last column survived the erase");
+    }
+    const int lit = hgrsprite::floodFillMono(page.data(), wPx, hRows, 10, 4, /*set=*/true);
+    assert(lit == wPx * hRows && "an all-black sprite fills completely, edges included");
+    assert(pixelOn(page.data(), 0, 0) && pixelOn(page.data(), wPx - 1, hRows - 1));
+    std::printf("  floodFillMono reaches both edge columns: OK\n");
+}
+
 int main()
 {
+    testFloodFillMonoReachesTheEdgeColumns();
     std::printf("hgr_sprite_blit_smoke\n");
     testExtractStampRoundTrip();
     testStampClipsAtThePageEdges();

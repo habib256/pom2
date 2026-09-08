@@ -5501,6 +5501,19 @@ set_tests_properties(woz35_load PROPERTIES TIMEOUT 30)
 # found a heap over-read (the export sized its rows from the un-clipped shape
 # width while the rasteriser clips at the 140-pixel DHGR line).
 # Pure: no ImGui, no GL, no emulator.
+# ─── Paint editor model: fill pattern, block-aware clip rotation (bug hunt #11)
+add_executable(test_hgr_paint_fill_pattern
+    hgr_paint_fill_pattern_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrConvert.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/Cam16.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/DhgrNtsc8Palette.cpp
+)
+target_include_directories(test_hgr_paint_fill_pattern PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint)
+add_test(NAME hgr_paint_fill_pattern COMMAND test_hgr_paint_fill_pattern)
+
 add_executable(test_hgr_sprite_blit
     hgr_sprite_blit_test.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrsprite/HgrSpriteBlit.cpp
@@ -6853,6 +6866,22 @@ pom2_add_headless_test(test_storage_coordinator
     SOURCES storage_coordinator_test.cpp
     LINK_LIBRARIES pom2_core_test
     COMPILE_DEFINITIONS POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# The lock rule, measured (bug hunt #11): a contender thread samples
+# lockState() latency while each of the three formerly-locked write-backs runs.
+pom2_add_headless_test(test_storage_lock_budget
+    NAME storage_lock_budget TIMEOUT 120
+    SOURCES storage_lock_budget_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(storage_lock_budget PROPERTIES RUN_SERIAL TRUE LABELS slow)
+
+# Controller run-control races (bug hunt #11): dead worker reaped, Step
+# retirement vs Run, Stop cancels queued steps, bootFromSlot un-suspends audio.
+pom2_add_headless_test(test_controller_mode_races
+    NAME controller_mode_races TIMEOUT 300
+    SOURCES controller_mode_races_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(controller_mode_races PROPERTIES RUN_SERIAL TRUE LABELS slow)
 
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20

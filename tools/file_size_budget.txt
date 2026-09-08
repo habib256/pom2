@@ -187,10 +187,16 @@
 #     the phosphor), the zero-decay rule, the lowercase fold removed.
 #   src/ImageWriter.cpp          2720 -> 2764 (+44)  ESC p consumed, ESC ! masks
 #     italic/proportional, ESC ( keeps its chain past 32 stops, A-8 feeds once.
+# 2026-09-08 (bug hunt #11): one ceiling raised for the lock rule.
+#   src/StorageCoordinator.cpp   2169 -> 2290 (+121)  flushOutgoingBay(): the
+#     outgoing medium's write-back moves off stateMutex before a mount
+#     replaces it (three call sites), and the SmartPort panel's ejects run
+#     through ejectMediaBay after the critical section. A split of the
+#     bay-flush helpers into their own TU is owed (TODO § Arch).
 src/Apple2Display.cpp                    2491
 src/DiskImage.cpp                        3096
 src/ImageWriter.cpp                      2764
 src/M6502.cpp                            2300
 src/Memory.cpp                           2616
-src/StorageCoordinator.cpp               2169
+src/StorageCoordinator.cpp               2290
 src/hgrpaint/HgrPaintEditor.cpp          2653

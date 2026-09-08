@@ -61,6 +61,7 @@
 #ifndef POM2_SERIAL_PORT_H
 #define POM2_SERIAL_PORT_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -109,7 +110,19 @@ public:
     void close();
 
     /// Write everything or fail. false = the device went away.
-    bool writeAll(const uint8_t* p, std::size_t n);
+    /// Write everything or fail. false = the device went away, or the whole
+    /// write did not fit in `timeoutMs`.
+    ///
+    /// `timeoutMs` bounds the CALL, not each stall: the poll used to be
+    /// re-armed for a fresh 1000 ms every time the device buffer made room,
+    /// so a peer draining a trickle held the caller — the CPU thread, under
+    /// the emulator's stateMutex — for as long as it liked (measured: 44 s
+    /// for one write against a peer taking 8 KB every 700 ms). `abort`, when
+    /// given, is re-read on every slice so a stop lands inside a slice
+    /// instead of at the end of the budget (readSome already works this way).
+    /// Bug hunt #11.
+    bool writeAll(const uint8_t* p, std::size_t n, int timeoutMs = 1000,
+                  const std::atomic<bool>* abort = nullptr);
 
     /// Read up to `n` bytes, waiting at most `timeoutMs` for the first.
     ///   > 0  bytes read

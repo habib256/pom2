@@ -383,6 +383,60 @@ std::string synthVolumeName(const std::vector<std::uint8_t>& bytes)
     return std::string(reinterpret_cast<const char*>(&bytes[kHeader + 1]), len);
 }
 
+/// Write the medium currently in `slot`/`bay` back to its file BEFORE a mount
+/// replaces it — with NO lock held.
+///
+/// `MountableMediaCard::adoptBay` and `mountBay` both flush the image they are
+/// about to destroy (`Block512Backing::adoptImage`/`loadImage` start with
+/// `saveDirty()`), and that flush ran inside the caller's phase-2 critical
+/// section: 179 ms of `stateMutex` for a dirty 32 MiB HDV, with the CPU worker
+/// and the paint thread both stopped — exactly the freeze the two-phase mount
+/// exists to prevent (CLAUDE.md's standing rule). Phase 1 only ever moved the
+/// INCOMING read off the lock; the OUTGOING write stayed on it.
+///
+/// Same three steps as `ejectMediaBay`, and the same refusal on failure: a
+/// mount must not destroy a dirty medium it could not save. That is also what
+/// the inline path did — `adoptImage`/`loadImage` return false when their
+/// `saveDirty()` fails — so the behaviour is unchanged, only the lock is.
+bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
+                      std::string& error)
+{
+    error.clear();
+    Block512Backing::PendingWriteBack pending;
+    bool twoPhase = false;
+    {
+        auto state = controller.lockState();
+        auto* media = dynamic_cast<MountableMediaCard*>(
+            state.memory().slotBus().peripheral(slot));
+        if (!media || bay < 0 || bay >= media->bayCount()) return true;
+        std::string prepareError;
+        twoPhase = media->prepareEjectBay(bay, pending, prepareError);
+        if (!twoPhase && !prepareError.empty()) {
+            error = prepareError;
+            return false;
+        }
+    }
+    if (!twoPhase || !pending.valid) return true;
+
+    const std::vector<std::uint32_t> captured = pending.dirtyIndices;
+    std::string commitError;
+    if (Block512Backing::commitWriteBack(std::move(pending), commitError))
+        return true;
+    // Put the captured dirty set back so the still-mounted medium is dirty
+    // again and a retry re-captures it, then refuse the mount.
+    {
+        auto state = controller.lockState();
+        if (auto* media = dynamic_cast<MountableMediaCard*>(
+                state.memory().slotBus().peripheral(slot)))
+            media->restoreBayDirty(bay, captured);
+    }
+    error = "unsaved changes in slot " + std::to_string(slot) + " bay " +
+            std::to_string(bay + 1) + " could not be written: " +
+            (commitError.empty() ? std::string("write-back failed")
+                                 : commitError);
+    return false;
+}
+
 StorageCoordinator::MediaCommandResult commandError(std::string error)
 {
     StorageCoordinator::MediaCommandResult result;
@@ -755,6 +809,11 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
     // under stateMutex before — 25.8 ms with the machine and the window both
     // stopped, against a 20 ms PAL frame.
     sweepMountDirDebris(path);
+    // Still phase 1, still unlocked: the OUTGOING medium's write-back. See
+    // flushOutgoingBay — the adopt below does it otherwise, under the lock.
+    if (std::string flushError;
+        !flushOutgoingBay(controller, slot, bay, flushError))
+        return commandError(std::move(flushError));
     Block512Backing::PreparedImage prepared;
     std::string prepareError;
     const bool preparedOk =
@@ -1185,6 +1244,29 @@ StorageCoordinator::mountDisk35(
     }
 
     sweepMountDirDebris(path);
+    // `mountSmartPortUnitAs` below runs under the lock and starts by flushing
+    // whatever the bay holds (a dirty 32 MiB HDV unit = 115 ms of stateMutex).
+    // Do that write here, with no lock held; the one under the lock then finds
+    // nothing dirty and is a no-op. See flushOutgoingBay.
+    {
+        int smartPortSlot = -1;
+        {
+            auto state = controller.lockState();
+            const auto cards = topology(state.memory().slotBus());
+            if (cards.primarySmartPort)
+                smartPortSlot = cards.primarySmartPort->getSlot();
+        }
+        if (smartPortSlot >= 0) {
+            if (std::string flushError;
+                !flushOutgoingBay(controller, smartPortSlot, drive,
+                                  flushError)) {
+                result.usesSmartPort = true;
+                result.bootSlot = smartPortSlot;
+                result.error = std::move(flushError);
+                return result;
+            }
+        }
+    }
     std::vector<SettingUpdate> updates;
     {
         auto state = controller.lockState();
@@ -1394,6 +1476,31 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
 
     // Phase 1, NO lock — this is the 32 MiB case, the largest single stall the
     // tree had (25.8 ms under the lock before v0.8.5 split it).
+    //
+    // Including the OUTGOING medium's write-back: resolve the bay this mount
+    // is going to overwrite, then flush it here instead of inside the adopt.
+    // See flushOutgoingBay.
+    {
+        int targetSlot = -1;
+        int targetBay  = 0;
+        {
+            auto state = controller.lockState();
+            const auto cards = topology(state.memory().slotBus());
+            if (!smartPortOnly && cards.preferredBlock())
+                targetSlot = cards.preferredBlock()->getSlot();
+            else if (cards.primarySmartPort)
+                targetSlot = cards.primarySmartPort->getSlot();
+        }
+        if (targetSlot >= 0) {
+            if (std::string flushError;
+                !flushOutgoingBay(controller, targetSlot, targetBay,
+                                  flushError)) {
+                result.bootSlot = targetSlot;
+                result.error = std::move(flushError);
+                return result;
+            }
+        }
+    }
     Block512Backing::PreparedImage prepared;
     std::string prepareError;
     const bool preparedOk =
@@ -2016,6 +2123,7 @@ StorageCoordinator::applySmartPortPanel(
         std::string    base;
     };
     std::vector<PendingMount> pendingMounts;
+    std::vector<std::size_t>  pendingEjects;
     // Set by anything that changes what is IN a bay — a type swap, a clear,
     // an eject. The rewind ring cannot span a media change (CLAUDE.md, and
     // `invalidateRewindForMediaChange` above): SmartPortCard/SmartPortUnit
@@ -2120,13 +2228,16 @@ StorageCoordinator::applySmartPortPanel(
                     {unitIndex, unit, action.mountPath, base});
             }
             if (action.eject) {
-                const bool ok = unit->eject();
-                if (ok) { rememberString(base + "_path", ""); mediaChanged = true; }
-                status.message = "SmartPort unit " +
-                    std::to_string(unitIndex) +
-                    (ok ? ": ejected" : ": eject failed: " +
-                                           unit->lastError());
-                status.visibleSeconds = 4.0;
+                // Deferred, like the mounts below: `unit->eject()` writes the
+                // whole image back — 155 ms of stateMutex for a dirty 32 MiB
+                // HDV unit, the CPU worker and the paint thread both stopped
+                // (CLAUDE.md). `ejectMediaBay` is the three-phase form of the
+                // same operation (2 ms under the lock, measured on the same
+                // image) and it re-resolves the card by slot, so it is safe
+                // to run once this critical section has been released. It
+                // persists `_path`/`_type`/`_writeback` itself and clears the
+                // rewind ring, so nothing is remembered here.
+                pendingEjects.push_back(unitIndex);
             }
         }
     }
@@ -2134,6 +2245,16 @@ StorageCoordinator::applySmartPortPanel(
     // Outside the scope above, and before the mounts, because the state lock
     // is non-recursive: a type swap or an eject just changed what is in a bay.
     if (mediaChanged) invalidateRewindForMediaChange(controller);
+
+    // The deferred ejects, with no lock held. Same non-recursive-lock reason
+    // as the mounts below.
+    for (std::size_t unitIndex : pendingEjects) {
+        const auto ejected = ejectMediaBay(controller, settings, slot,
+                                           static_cast<int>(unitIndex));
+        status.message = "SmartPort unit " + std::to_string(unitIndex) +
+            (ejected.ok ? ": ejected" : ": eject failed: " + ejected.error);
+        status.visibleSeconds = 4.0;
+    }
 
     // Two phases, both outside the scope above: the read runs with no lock
     // held, the swap takes stateMutex on its own. The unit pointers stay valid

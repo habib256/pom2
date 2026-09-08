@@ -175,36 +175,16 @@ void HgrSpriteEditor::floodFill(int x, int y, HgrColor c)
 {
     const int W = wpx(), H = hRows_;
     if (x < 0 || x >= W || y < 0 || y >= H) return;
-    const HgrColor seed = hgrpaint::colorAt(scratch.data(), x, y);
-    if (seed == c) return;
+    // RAW BITS, not artifact colour — the same rule the transforms follow. The
+    // flood used colorAt() for connectivity, which calls a lit pixel with a
+    // dark horizontal neighbour "Violet"/"Green": the shape's own edge columns
+    // (column 0, whose left neighbour is off the page; column wpx()-1, whose
+    // right neighbour is the blank byte PAST the sprite) never joined the
+    // region, so a fill stopped one pixel short on each side (bug hunt #11).
+    // The pure flood lives in HgrSpriteBlit so hgr_sprite_blit pins it.
     auto before = snapshotRegion();
-    std::vector<uint8_t> seen(static_cast<size_t>(W) * H, 0);
-    std::vector<std::pair<int,int>> st, region;
-    st.emplace_back(x, y);
-    seen[static_cast<size_t>(y) * W + x] = 1;
-    while (!st.empty()) {
-        const auto p = st.back(); st.pop_back();
-        region.push_back(p);
-        const int nb[4][2] = {{p.first-1,p.second},{p.first+1,p.second},
-                              {p.first,p.second-1},{p.first,p.second+1}};
-        for (auto& n : nb) {
-            const int nx = n[0], ny = n[1];
-            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-            const size_t idx = static_cast<size_t>(ny) * W + nx;
-            if (seen[idx]) continue;
-            if (hgrpaint::colorAt(scratch.data(), nx, ny) != seed) continue;
-            seen[idx] = 1;
-            st.emplace_back(nx, ny);
-        }
-    }
-    // Sprites are a monochrome bit shape (see the transform paths' note): a fill
-    // lights raw bits like the pencil, never a chromatic parity pattern. Map any
-    // non-Black colour to White so a chromatic selection can't drive plotPage's
-    // parity-snap — which shifts even-column pixels one column left and would
-    // miss/double them. Today callers only pass White/Black; this keeps it safe
-    // if that ever changes.
-    const HgrColor stampC = (c == HgrColor::Black) ? HgrColor::Black : HgrColor::White;
-    for (auto& p : region) hgrpaint::plotPage(scratch.data(), p.first, p.second, stampC);
+    if (hgrsprite::floodFillMono(scratch.data(), W, H, x, y, c != HgrColor::Black) == 0)
+        return;
     commitRegionDiff(before);
     status = "Filled";
 }

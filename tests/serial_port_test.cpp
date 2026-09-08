@@ -52,6 +52,8 @@
 #include "SerialPort.h"
 
 #include <cassert>
+#include <thread>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -306,8 +308,48 @@ void testOpenFailureIsExplained()
 
 } // namespace
 
+// ── 9. A write is bounded by ONE deadline, and a stop lands inside it ─────
+// Bug hunt #11: writeAll re-armed a fresh 1000 ms poll on every stall, so
+// against a peer that drains a trickle the bound was per-stall — 44 s
+// measured for one call — and shutdown() could not interrupt it. This runs
+// on the CPU thread under stateMutex through the FujiNet serial transport.
+void testWriteDeadlineBoundsTheWholeCall()
+{
+    std::string slave;
+    const int master = openPtyPair(slave);
+    (void)master;                                   // nobody reads it
+    SerialPort p;
+    assert(p.open(slave, 115200));
+    const std::vector<uint8_t> big(64 * 1024, 0xAA);
+    using clock = std::chrono::steady_clock;
+    {
+        const auto t0 = clock::now();
+        const bool ok = p.writeAll(big.data(), big.size(), 250);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
+        assert(!ok && "a 64 KB write nobody drains cannot succeed");
+        if (ms > 600) std::printf("  write against a stuck peer took %lld ms\n", (long long)ms);
+        assert(ms <= 600 && "the 250 ms budget bounds the whole call");
+    }
+    {
+        std::atomic<bool> stop{false};
+        std::thread stopper([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            stop.store(true);
+        });
+        const auto t0 = clock::now();
+        const bool ok = p.writeAll(big.data(), big.size(), 5000, &stop);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
+        stopper.join();
+        assert(!ok);
+        if (ms > 600) std::printf("  stop landed after %lld ms\n", (long long)ms);
+        assert(ms <= 600 && "a stop must land inside a write in flight");
+    }
+    std::puts("  ok: write deadline bounds the call, stop lands inside it");
+}
+
 int main()
 {
+    testWriteDeadlineBoundsTheWholeCall();
     testModemLinesLowAfterOpen();
     testHupclClearedAndRawFlagsSet();
     testBinaryRoundTrip();

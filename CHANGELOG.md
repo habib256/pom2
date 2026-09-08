@@ -5,6 +5,77 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #11: the controller, the paint editor, the coordinators, the relay
+
+Four Opus hunters on the seams between the machine and its host.
+
+**The FujiNet serial transport could park the CPU thread for as long as the
+board liked.** `SerialPort::writeAll` re-armed a fresh 1000 ms poll on
+every stall, so its bound was per-stall, not per-call: a USB-CDC board
+taking 8 KB every 700 ms held one `WRITE_BLOCK` — on the CPU thread, under
+`stateMutex` — for 44 s measured, and the panel's Stop could not land
+inside it. The transport had declared `setWriteDeadlineMs` a no-op "because
+a device buffer cannot park"; a tty output queue drains at the line rate.
+One deadline per call now, sliced like `readSome` so a stop lands inside a
+slice; the Windows half, which had no write timeout at all before the first
+read, programs one. Pinned in `serial_port`.
+
+**Declined on evidence.** The same hunter argued the CS8900A's RX drain was
+internally inconsistent — the RxStatus/RxLength words advance the
+PacketPage pointer on the even byte, the payload on the odd — and proposed
+making both advance on the odd byte. That asymmetry is the datasheet's:
+in 8-bit mode the host reads RxStatus and RxLength high byte first, then
+the payload low-then-high, which is what `uthernet_cs8900_smoke` drains,
+what DEV records, and what the IP65 driver does. Left as is.
+
+**`ctest -R storage_coordinator` wiped the developer's own `state.cfg`.** One
+of the seven `Settings` objects in that test was not read-only, and every
+coordinator command ends in `settings.save()` — which writes the real
+per-user config and replaces the whole file. Every run of the suite since
+the host-folder case was added replaced the developer's profile, slot map,
+volumes and mounted media with the two keys that block happens to set. The
+test now runs in a sandboxed `HOME` / `XDG_CONFIG_HOME` with a sentinel
+config that must come back byte-identical. (This session's config was
+recovered from the pre-migration copy in `~/.config/POM2`.)
+
+**Three mount paths wrote the OUTGOING medium under `stateMutex`.** The
+two-phase mount moved the incoming read off the lock; the flush of the
+image being replaced (`adoptImage` / `loadImage` begin with `saveDirty()`)
+stayed inside phase 2 — 180 ms of lock for a dirty 32 MiB HDV on "Mount"
+over a dirty image, 155 ms for the SmartPort panel's eject, 115 ms for a
+3.5" mount over a dirty unit, with the CPU worker and the paint thread
+both stopped. `flushOutgoingBay` does the write unlocked with the same
+three-phase shape and the same refusal as `ejectMediaBay`, and the panel
+eject goes through `ejectMediaBay` after the critical section. Measured
+after: 2-3 ms. Pinned by `storage_lock_budget` (a contender thread samples
+the lock while an 8 MiB dirty image is replaced: 34-39 ms before, under
+1 ms after, floor 20 ms).
+
+**The controller, four.** A CPU worker that died inside the exception
+barrier stayed `joinable()`, so the next Play short-circuited after
+clearing the parked flag for a thread that could never set it again — and
+the next Stop (quit, profile switch, Slot-Config Apply) spun on the UI
+thread for ever, the window wedged, every unflushed disk write lost; the
+corpse is reaped and a replacement spawned. The worker retired a single
+step with a plain store that overwrote a Run pressed right after it (seven
+lost clicks in four thousand), leaving a frozen machine with the audio bus
+still live; a compare-exchange loses that race instead. Queued single-steps
+survived Stop, a profile switch and a cold boot, so one Step press later
+ran a `--step 20000` backlog on a different machine; a Stop cancels them.
+And "Boot" from a paused machine resumed it with the audio bus still
+suspended — dead silence for the session. Pinned in
+`controller_mode_races`. TSan over the UI, transport, media and AI-server
+shapes against the worker: zero warnings.
+
+**The paint editors, four.** The HGR fill was the one tool that ignored
+the MacPaint pattern the panel offered; the sprite editor's fill classified
+the shape's first and last columns by artifact colour and never reached
+them; rotating a lo-res selection rotated canvas pixels instead of 7×4
+blocks and dropped a source column; and SymX/SymY were offered for a fill
+that cannot mirror. Pinned in `hgr_paint_fill_pattern` and
+`hgr_sprite_blit`; the plotters, exporters, undo banks, hostile files and
+the importer's diffusion were probed clean under ASan and UBSan.
+
 ## 2026-09-08 — Bug hunt #10: the picture, the printers, the tape deck, the host
 
 Four Opus hunters on the last untouched runtime: video modes and character

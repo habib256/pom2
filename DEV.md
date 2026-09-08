@@ -2164,6 +2164,20 @@ follows `romLoaded_` / `expansionRomLoaded_` now. Pinned in
 
 ## Storage
 
+**The outgoing medium is written off the lock too** *(2026-09-08, bug hunt
+#11)*. `StorageCoordinator::flushOutgoingBay` runs before a mount replaces a
+bay: phase 1 takes the lock and captures the dirty payload
+(`prepareEjectBay`), phase 2 commits unlocked, phase 3 on failure puts the
+dirty set back (`restoreBayDirty`) and the mount is refused — the same
+shape and the same refusal `ejectMediaBay` has. `mountMediaBay`, `mountHdv`
+and the SmartPort branch of `mountDisk35` use it; `applySmartPortPanel`
+queues its ejects and runs them through `ejectMediaBay` after its critical
+section. Before, `adoptImage` / `loadImage`'s own `saveDirty()` of the
+image being replaced ran inside phase 2 (115-180 ms of `stateMutex` for a
+dirty 32 MiB image). Left open: the Liron and SmartPort 3.5" units still
+flush 800 KB under the lock on eject (4.8 ms measured) because they do not
+implement `prepareFlushBay`. Pinned by `storage_lock_budget`.
+
 ### Read / write matrix by format
 
 Every media format POM2 mounts, and whether it can be written back.
@@ -5165,6 +5179,15 @@ Panel: View ▸ FujiNet. Design notes and the remaining phases:
 [docs/fujinet_plan.md](docs/fujinet_plan.md).
 
 
+**The serial transport's write is bounded** *(2026-09-08, bug hunt #11)*.
+`SerialPort::writeAll(p, n, timeoutMs, abort)` takes one deadline for the
+whole call and a stop latch it re-reads every 25 ms slice; it used to arm a
+fresh 1000 ms poll per stall (44 s measured for one write against a peer
+draining 8 KB every 700 ms, on the CPU thread under `stateMutex`) and the
+Windows half had no write timeout before the first read. `SpSerialTransport`
+now honours `setWriteDeadlineMs` like the TCP transport. Pinned in
+`serial_port`.
+
 ### Network backends
 
 `NetworkBackend.h` — the host-side transport that carries raw Ethernet
@@ -7379,6 +7402,14 @@ scorer now carries row 0 (pinned byte-identical to `renderHiRes` in
 - **Session**: mode/page/zoom/NTSC/aspect/pipeline/dir persisted
   (`hgr_paint_*` settings keys).
 
+**Bug hunt #11 (2026-09-08).** `hgrpaint::fillRegion` takes the fill
+pattern (the HGR fill was the one tool ignoring it); `hgrsprite::floodFillMono`
+floods a sprite by raw bits — `colorAt` called the edge columns
+Violet/Green and a fill never reached them; `hgrpaint::rotateClipCW` is
+block-aware for GR/DLGR clips (stored at canvas-pixel resolution, one
+sample per 7×4 block); SymX/SymY are offered for the brush tools only.
+Pinned in `hgr_paint_fill_pattern` and `hgr_sprite_blit`.
+
 ## Host control center (Slot Configuration + Floppy Emu)
 
 Two host-side facilities above the slot bus — neither is a bus
@@ -7941,6 +7972,16 @@ bumps the CPU to ~60×, which collapses wall-clock gaps to zero
 across an audio-buffer tick). Canonical example:
 `FloppySoundDevice::drainCommands` uses the cycle stamp passed by
 `DiskIICard::seekPhaseW`.
+
+**Run-control fixes** *(2026-09-08, bug hunt #11)*. `workerAlive_` tells a
+live worker from a dead-but-joinable one, so `start()` after the barrier
+caught a throw reaps the corpse and spawns a replacement instead of
+clearing `workerParked_` for a thread that never sets it again (the next
+`stop()` spun for ever). The worker retires its Step with a
+`compare_exchange` so a Run pressed right after a single step is not
+overwritten; `setMode(Stopped)` cancels `stepsPending`; every resume in
+`bootFromSlot` un-suspends the audio bus like `setMode` does. Pinned by
+`controller_mode_races`.
 
 ### Debugger (`Debugger.h/.cpp`, `Debugger_ImGui.*`)
 

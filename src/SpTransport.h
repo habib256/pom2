@@ -108,8 +108,10 @@ public:
     /// `$C0xx` access. The session layer sets this from its own budget before
     /// every write so the two halves share one bound.
     ///
-    /// A no-op for transports whose write cannot park (the serial port's
-    /// writes go to a device buffer, not to a peer that may stop draining).
+    /// Every transport honours it: a tty output queue drains at the line
+    /// rate, so a board that stops taking bytes parks the writer exactly the
+    /// way a TCP peer that stops reading does (bug hunt #11 — the serial
+    /// transport used to call this a no-op).
     virtual void setWriteDeadlineMs(int /*ms*/) {}
 
     /// Read up to `n` bytes, waiting at most `timeoutMs` for the first one.
@@ -245,8 +247,14 @@ public:
     void        dropPeer() override;
     void        shutdown() override;
     std::string describe() const override;
+    /// NOT a no-op: a tty output queue drains at the line rate, so a board
+    /// that stops taking bytes parks the writer exactly the way a TCP peer
+    /// that stops reading does. Bug hunt #11.
+    void        setWriteDeadlineMs(int ms) override
+    { if (ms > 0) writeDeadlineMs_.store(ms); }
 
 private:
+    std::atomic<int>   writeDeadlineMs_{1000};
     std::atomic<int>   baud_;
     mutable std::mutex mtx_;          ///< guards port_ — HELD ACROSS I/O
     /// Guards the panel-facing strings. Short-held by construction: the UI

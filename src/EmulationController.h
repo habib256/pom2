@@ -511,6 +511,11 @@ private:
     // branch re-checks `mode` between 4096-cycle chunks, so the worker
     // parks within ~one chunk of a Stopped request.
     std::atomic<bool> workerParked_{false};
+    // True between the moment start() spawns the worker and the moment its
+    // body returns. A thread that DIED inside the exception barrier is still
+    // `joinable()`, so `worker.joinable()` alone cannot tell "already running"
+    // from "already dead" — see start().
+    std::atomic<bool> workerAlive_{false};
     // Frame index the scrub currently sits on, kNoFrame when not scrubbing.
     // Written from the UI thread (the rewind transport), read anywhere.
     std::atomic<size_t> scrubIndex_{pom2::RewindBuffer::kNoFrame};

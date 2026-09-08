@@ -29,6 +29,7 @@
 #include "ProDOSHardDiskCard.h"
 #include "ProDOSVolume.h"
 #include "MediaWritePolicy.h"
+#include "ResourcePaths.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
@@ -37,6 +38,7 @@
 #include "Woz35Fixture.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -65,6 +67,35 @@ std::string writeImage(const std::string& name, std::size_t bytes,
 
 int main()
 {
+    // The whole run lives in a sandboxed HOME (and XDG_CONFIG_HOME, which
+    // userConfigDir() prefers on Linux): this test drives coordinator
+    // commands that persist, and a Settings that is not read-only saves to
+    // the REAL per-user state.cfg — which is exactly what happened until
+    // 2026-09-08. A sentinel config is written first and compared at the
+    // end, so any future non-read-only Settings here fails the test instead
+    // of wiping a developer's profile.
+    const std::filesystem::path sandboxHome =
+        std::filesystem::temp_directory_path() / "pom2_storage_coordinator_home";
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(sandboxHome, ec);
+        std::filesystem::create_directories(sandboxHome, ec);
+#ifndef _WIN32
+        ::setenv("HOME", sandboxHome.string().c_str(), 1);
+        ::setenv("XDG_CONFIG_HOME", (sandboxHome / "config").string().c_str(), 1);
+#endif
+    }
+    const std::filesystem::path sentinelCfg = pom2::userConfigDir() / "state.cfg";
+    const std::string sentinel =
+        "system_profile=iie-pal\nslot_2_card=mockingboard\nmaster_volume=0.8\n"
+        "disk_path_slot6=/x/y.dsk\n";
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(sentinelCfg.parent_path(), ec);
+        std::ofstream f(sentinelCfg, std::ios::binary | std::ios::trunc);
+        f << sentinel;
+    }
+
     EmulationController controller;
     pom2::StorageCoordinator storage;
 
@@ -1171,7 +1202,15 @@ int main()
             note << "one";
         }
         EmulationController folderController;
+        // Read-only, like every other Settings in this file: the host-folder
+        // commands below persist, and Settings::save() writes the REAL
+        // per-user state.cfg. Without this, `ctest -R storage_coordinator`
+        // replaced the developer's whole config with the two keys this block
+        // happens to set (hdv_path + hdv_writeback) — profile, slot map,
+        // volumes and mounted media all gone, silently, on every run (bug
+        // hunt #11).
         pom2::Settings folderSettings;
+        folderSettings.setReadOnly(true);
         pom2::StorageCoordinator folderStorage;
         {
             auto state = folderController.lockState();
@@ -1296,6 +1335,17 @@ int main()
         assert(h && h->isWriteBackEnabled() == policy && "an HDV with no key did not follow the policy");
         auto* c = dynamic_cast<pom2::CffaCard*>(bus.peripheral(7));
         assert(c && c->isWriteBackEnabled() == policy && "a CFFA with no key did not follow the policy");
+    }
+
+    // The sentinel config must be byte-identical: nothing in this run may have
+    // saved to the user's config directory.
+    {
+        std::ifstream f(sentinelCfg, std::ios::binary);
+        const std::string after((std::istreambuf_iterator<char>(f)), {});
+        if (after != sentinel) {
+            std::cout << "FAIL: the test wrote the per-user state.cfg:\n" << after << "\n";
+            assert(false && "a coordinator command persisted into the user's config");
+        }
     }
 
     std::cout << "storage coordinator: OK\n";

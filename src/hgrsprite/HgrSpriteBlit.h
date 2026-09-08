@@ -85,6 +85,16 @@ void magnifyColor2x(const hgrpaint::HgrColor* cells, int wBytes, int hRows,
 // end of the pair.)
 int dhgrExportRowBytes(int shapePxWide);
 
+/// Bounded 4-connected flood over RAW BITS of a monochrome sprite page: from
+/// (x, y), every pixel whose lit state equals the seed's becomes `set`.
+/// Returns the number of pixels stamped. Raw bits, not `hgrpaint::colorAt`:
+/// a sprite is a monochrome shape, and colorAt() calls a lit pixel whose
+/// horizontal neighbour is dark "Violet"/"Green" — column 0's left neighbour
+/// is off the page and column wPx-1's right neighbour is the blank byte past
+/// the sprite, so a colour-connected flood never reached either edge column
+/// (bug hunt #11).
+int floodFillMono(uint8_t* page, int wPx, int hRows, int x, int y, bool set);
+
 // Slice a page-relative 16 KB DHGR pair ([aux 8 KB][main 8 KB], both on the
 // HIRES row interleave) into two row-major byte tables of `nPer` bytes per row
 // for rows [0,hRows). `auxOut`/`mainOut` must each hold nPer*hRows bytes —

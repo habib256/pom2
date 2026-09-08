@@ -25,6 +25,7 @@
 #include "HgrPaintModel.h"
 
 #include <utility>
+#include <algorithm>
 #include <vector>
 
 namespace hgrpaint {
@@ -164,7 +165,8 @@ int setBytePalette(uint8_t* page, int byteCol, int y, int msb)
     return off;
 }
 
-int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& render)
+int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& render,
+               const std::function<bool(int, int)>& pattern)
 {
     if (x < 0 || x > 279 || y < 0 || y > 191 || !render) return 0;
 
@@ -207,6 +209,11 @@ int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& rend
                          : (c == HgrColor::Green  || c == HgrColor::Orange) ? 1
                          : -1;   // White: parity-agnostic, light every pixel
         for (auto& p : region) {
+            // Pattern gap: leave the pixel black. The tool panel shows the
+            // MacPaint pattern strip for the Fill tool in EVERY mode, and the
+            // three 16-colour fills have always sampled it — only the 280-HGR
+            // fill ignored it, so picking a pattern here silently filled solid.
+            if (pattern && !pattern(p.first, p.second)) continue;
             if (parity < 0)                  plotPage(page, p.first, p.second, c);   // White
             else if ((p.first & 1) == parity) plotPage(page, p.first, p.second, c);
         }
@@ -335,6 +342,50 @@ int dlgrBlockColorAt(const uint8_t* pair, int bx, int by)
     int v = (by & 1) ? (pair[off] >> 4) : (pair[off] & 0x0F);
     if (!(bx & 1)) v = ((v << 1) | (v >> 3)) & 0x0F;   // undo the aux rotation
     return v;
+}
+
+void rotateClipCW(int& w, int& h, bool sixteen, bool blockMode,
+                  std::vector<HgrColor>& px, std::vector<int8_t>& idx)
+{
+    if (w <= 0 || h <= 0) return;
+    auto at = [&](int x, int y) { return static_cast<size_t>(y) * w + x; };
+
+    if (blockMode && sixteen) {
+        // Rotate the BLOCK grid and re-expand it at the block pitch (see the
+        // header): sample each block's centre, transpose the grid, expand.
+        const int bw = (w + 6) / 7, bh = (h + 3) / 4;
+        std::vector<int8_t> blk(static_cast<size_t>(bw) * bh, 0);
+        for (int by = 0; by < bh; ++by)
+            for (int bx = 0; bx < bw; ++bx)
+                blk[static_cast<size_t>(by) * bw + bx] =
+                    idx[at(std::min(bx * 7 + 3, w - 1), std::min(by * 4 + 1, h - 1))];
+        const int rw = bh * 7, rh = bw * 4;
+        std::vector<int8_t> out(static_cast<size_t>(rw) * rh, 0);
+        for (int ry = 0; ry < bw; ++ry)          // rotated block row = old column
+            for (int rx = 0; rx < bh; ++rx) {    // rotated block col = old row
+                const int8_t v = blk[static_cast<size_t>(bh - 1 - rx) * bw + ry];
+                for (int yy = 0; yy < 4; ++yy)
+                    for (int xx = 0; xx < 7; ++xx)
+                        out[static_cast<size_t>(ry * 4 + yy) * rw + rx * 7 + xx] = v;
+            }
+        w = rw; h = rh; idx = std::move(out);
+        return;
+    }
+
+    // Per-pixel clip: (x,y) -> (h-1-y, x), dims swap.
+    const int rw = h, rh = w;
+    std::vector<int8_t>   oi;
+    std::vector<HgrColor> op;
+    if (sixteen) oi.assign(static_cast<size_t>(rw) * rh, 0);
+    else         op.assign(static_cast<size_t>(rw) * rh, HgrColor::Black);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const size_t d = static_cast<size_t>(x) * rw + (h - 1 - y);
+            if (sixteen) oi[d] = idx[at(x, y)];
+            else         op[d] = px[at(x, y)];
+        }
+    w = rw; h = rh;
+    if (sixteen) idx = std::move(oi); else px = std::move(op);
 }
 
 } // namespace hgrpaint

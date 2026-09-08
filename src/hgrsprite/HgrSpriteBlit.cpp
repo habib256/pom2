@@ -126,4 +126,36 @@ void extractDhgrPlanes(const uint8_t* pair, int nPer, int hRows,
     }
 }
 
+int floodFillMono(uint8_t* page, int wPx, int hRows, int x, int y, bool set)
+{
+    if (x < 0 || x >= wPx || y < 0 || y >= hRows) return 0;
+    const bool seedOn = hgrpaint::pixelOn(page, x, y);
+    if (seedOn == set) return 0;
+    std::vector<uint8_t> seen(static_cast<size_t>(wPx) * hRows, 0);
+    std::vector<std::pair<int,int>> st, region;
+    st.emplace_back(x, y);
+    seen[static_cast<size_t>(y) * wPx + x] = 1;
+    while (!st.empty()) {
+        const auto p = st.back(); st.pop_back();
+        region.push_back(p);
+        const int nb[4][2] = {{p.first-1,p.second},{p.first+1,p.second},
+                              {p.first,p.second-1},{p.first,p.second+1}};
+        for (auto& n : nb) {
+            const int nx = n[0], ny = n[1];
+            if (nx < 0 || nx >= wPx || ny < 0 || ny >= hRows) continue;
+            const size_t i = static_cast<size_t>(ny) * wPx + nx;
+            if (seen[i]) continue;
+            if (hgrpaint::pixelOn(page, nx, ny) != seedOn) continue;
+            seen[i] = 1;
+            st.emplace_back(nx, ny);
+        }
+    }
+    // Raw bits like the pencil: White lights, Black clears, never a
+    // chromatic parity pattern (see the editor's transform paths).
+    for (auto& p : region)
+        hgrpaint::plotPage(page, p.first, p.second,
+                           set ? hgrpaint::HgrColor::White : hgrpaint::HgrColor::Black);
+    return static_cast<int>(region.size());
+}
+
 } // namespace hgrsprite

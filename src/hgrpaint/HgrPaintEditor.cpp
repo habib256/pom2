@@ -574,7 +574,10 @@ void hgrpaint::HgrPaintEditor::floodFill(int x, int y, HgrColor c)
     hgrpaint::fillRegion(shadow.data(), x, y, c,
                          [this](const uint8_t* page8k, uint32_t* out) {
                              if (host) host->renderHgrPage(page8k, out, /*mono=*/false);
-                         });
+                         },
+                         // The MacPaint pattern the tool panel offers for Fill,
+                         // sampled in page coordinates like applyPlotPat.
+                         [this](int px, int py) { return patternOn(px, py); });
     for (int off = 0; off < static_cast<int>(shadow.size()); ++off) {
         if (shadow[off] == before[off]) continue;
         emitShadowEdit(off, before[off]);
@@ -996,8 +999,11 @@ void hgrpaint::HgrPaintEditor::renderToolPanel()
     }
 
     // Mirror symmetry — brush/shape plots repeat about the enabled axes
-    // (region ops — paste, text, fill — deliberately don't).
-    if (usesThickness || tool == Tool::Fill) {
+    // (region ops — paste, text, fill — deliberately don't). Fill never routes
+    // through applyPlot, so it cannot mirror: offering the toggles there was a
+    // UI lie — a mirrored fill left the mirrored quadrant untouched (bug hunt
+    // #11). Brush tools only.
+    if (usesThickness) {
         ImGui::Checkbox("SymX", &mirrorX);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror drawing about the vertical axis");
         ImGui::SameLine();
@@ -1043,18 +1049,10 @@ void hgrpaint::HgrPaintEditor::renderToolPanel()
             }
             ImGui::SameLine();
             if (ImGui::Button("Rot")) {
-                // Rotate the clip 90° clockwise: (x,y) → (h-1-y, x), dims swap.
-                Clip r;
-                r.w = clip.h; r.h = clip.w; r.sixteen = clip.sixteen;
-                if (clip.sixteen) r.idx.assign(static_cast<size_t>(r.w) * r.h, 0);
-                else              r.px.assign(static_cast<size_t>(r.w) * r.h, HgrColor::Black);
-                for (int y = 0; y < clip.h; ++y)
-                    for (int x = 0; x < clip.w; ++x) {
-                        const size_t d = static_cast<size_t>(x) * r.w + (clip.h - 1 - y);
-                        if (clip.sixteen) r.idx[d] = clip.idx[at(x, y)];
-                        else              r.px [d] = clip.px [at(x, y)];
-                    }
-                clip = std::move(r);
+                // Block-aware for GR / DLGR (a sample is a 7x4 block there);
+                // the plain transpose for HGR / DHGR. See HgrPaintModel.h.
+                hgrpaint::rotateClipCW(clip.w, clip.h, clip.sixteen,
+                                       grMode || dlgrMode, clip.px, clip.idx);
             }
         }
     }

@@ -20,6 +20,8 @@
 
 #include "SerialPort.h"
 
+#include <chrono>
+
 #include <algorithm>
 
 #if POM2_HAS_SERIAL
@@ -60,7 +62,8 @@ bool SerialPort::open(const std::string&, int)
 bool SerialPort::isOpen() const { return false; }
 bool SerialPort::isHealthy() { return false; }
 void SerialPort::close() {}
-bool SerialPort::writeAll(const uint8_t*, std::size_t) { return false; }
+bool SerialPort::writeAll(const uint8_t*, std::size_t, int,
+                          const std::atomic<bool>*) { return false; }
 int  SerialPort::readSome(uint8_t*, std::size_t, int) { return -1; }
 bool SerialPort::setDtr(bool) { return false; }
 bool SerialPort::setRts(bool) { return false; }
@@ -289,24 +292,38 @@ void SerialPort::close()
     path_.clear();
 }
 
-bool SerialPort::writeAll(const uint8_t* p, std::size_t n)
+bool SerialPort::writeAll(const uint8_t* p, std::size_t n, int timeoutMs,
+                          const std::atomic<bool>* abort)
 {
     if (fd_ < 0) return false;
+    // ONE deadline for the whole call. The old code armed a fresh 1000 ms
+    // poll on every stall, so the bound was per-stall and not per-call: a
+    // peer that keeps making a little room re-arms it forever, and this runs
+    // on the CPU thread under the emulator's stateMutex. Measured 44 s for a
+    // single writeAll against a peer draining 8 KB every 700 ms (bug hunt
+    // #11). Sliced like readSome so `abort` lands inside a slice.
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs > 0 ? timeoutMs : 1);
+    constexpr int kSliceMs = 25;
     std::size_t sent = 0;
     while (sent < n) {
+        if (abort && abort->load()) { setError(path_ + ": write aborted"); return false; }
         const ssize_t w = ::write(fd_, p + sent, n - sent);
         if (w > 0) { sent += static_cast<std::size_t>(w); continue; }
         if (w < 0 && (errno == EINTR)) continue;
         if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             // The device's output buffer is full. Wait for room rather than
-            // spinning; a USB CDC endpoint drains in microseconds, so this
-            // is rare and short.
+            // spinning — but only up to the call's deadline.
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) { setError(path_ + ": write timed out"); return false; }
+            const int left = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
             pollfd pfd{};
             pfd.fd     = fd_;
             pfd.events = POLLOUT;
-            const int r = ::poll(&pfd, 1, 1000);
+            const int r = ::poll(&pfd, 1, left > kSliceMs ? kSliceMs : (left > 0 ? left : 1));
             if (r > 0) continue;
-            if (r == 0) { setError(path_ + ": write timed out"); return false; }
+            if (r == 0) continue;            // slice expired; the deadline decides
             if (errno == EINTR) continue;
             setError(path_ + ": poll(out): " + std::strerror(errno));
             return false;
@@ -551,11 +568,23 @@ void SerialPort::close()
     path_.clear();
 }
 
-bool SerialPort::writeAll(const uint8_t* p, std::size_t n)
+bool SerialPort::writeAll(const uint8_t* p, std::size_t n, int timeoutMs,
+                          const std::atomic<bool>* abort)
 {
     if (!isOpen()) return false;
+    // Same one-deadline-per-call rule as the POSIX half. WriteTotalTimeout*
+    // is only ever programmed by readSome, so before the first read a write
+    // here had no timeout at all (bug hunt #11).
+    COMMTIMEOUTS to{};
+    if (GetCommTimeouts(H(handle_), &to)) {
+        to.WriteTotalTimeoutMultiplier = 0;
+        to.WriteTotalTimeoutConstant   =
+            static_cast<DWORD>(timeoutMs > 0 ? timeoutMs : 1);
+        SetCommTimeouts(H(handle_), &to);
+    }
     std::size_t sent = 0;
     while (sent < n) {
+        if (abort && abort->load()) { setError(path_ + ": write aborted"); return false; }
         DWORD wrote = 0;
         if (!WriteFile(H(handle_), p + sent,
                        static_cast<DWORD>(n - sent), &wrote, nullptr)) {

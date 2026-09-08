@@ -108,7 +108,24 @@ int setBytePalette(uint8_t* page, int byteCol, int y, int msb);
 // through every chromatic region via those off sub-pixels. Recolour = clear the
 // whole region first, then stamp c's parity pattern, so an old colour's bits
 // can't combine with the new ones into white (green $2A | violet $55 = $7F).
-int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& render);
+// `pattern` (optional) is the editor's MacPaint 8x8 fill pattern, sampled in
+// PAGE coordinates: a pixel whose pattern bit is clear stays black instead of
+// taking `c`, exactly like the pattern-gated brush (applyPlotPat). Default-
+// constructed = solid, so existing callers are unchanged (bug hunt #11: the
+// HGR fill was the one tool that ignored the pattern the panel offered).
+int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& render,
+               const std::function<bool(int, int)>& pattern = {});
+
+// Rotate a selection clip 90 degrees clockwise, in place. `blockMode` says the
+// clip is a lo-res (GR / DLGR) one stored at CANVAS-PIXEL resolution: one
+// sample is a block 7 canvas px wide and 4 rows tall, so the rotation has to
+// happen on the block grid and be re-expanded at the block pitch — swapping w
+// and h in sample space turned every 7x4 block into a 4x7 one and paste's
+// /7,/4 re-quantisation dropped a whole source column (bug hunt #11). HGR /
+// DHGR clips carry one sample per drawable pixel and take the plain transpose:
+// (x, y) -> (h-1-y, x), dims swapped.
+void rotateClipCW(int& w, int& h, bool sixteen, bool blockMode,
+                  std::vector<HgrColor>& px, std::vector<int8_t>& idx);
 
 // ── Apple II lo-res (GR) block model ─────────────────────────────────────────
 // GR is 40 columns × 48 block-rows of 16-colour blocks stored in the TEXT page

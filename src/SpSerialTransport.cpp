@@ -124,7 +124,10 @@ bool SpSerialTransport::writeAll(const uint8_t* p, std::size_t n)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     if (!port_.isOpen()) return false;
-    if (port_.writeAll(p, n)) return true;
+    // The session layer's whole-call budget, and the same stop latch
+    // readSome() honours — shutdown() has to land inside a write in flight,
+    // not after it.
+    if (port_.writeAll(p, n, writeDeadlineMs_.load(), &stopping_)) return true;
     std::lock_guard<std::mutex> st(statusMtx_);
     lastError_ = port_.lastError();
     return false;

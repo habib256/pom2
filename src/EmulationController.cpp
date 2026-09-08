@@ -602,7 +602,24 @@ void EmulationController::start()
     mode.store(Mode::Running);
     wakeCv.notify_all();
 #ifndef __EMSCRIPTEN__
-    if (worker.joinable()) return;
+    // A worker that DIED — the exception barrier below caught a throw out of
+    // workerLoop (a rewind capture's bad_alloc is the documented live case) —
+    // is still `joinable()`, so the bare short-circuit treated it as running.
+    // start() had by then already cleared `workerParked_` for a thread that
+    // can never set it again, and the next stop() — quit, profile switch,
+    // Slot-Config Apply — spun on that flag FOR EVER on the UI thread: the
+    // window wedged with no way out but killing the process, which loses
+    // every unflushed disk write. Reap the corpse and spawn a replacement
+    // instead. The barrier unwinds out of the chunk loop with `stateMtx`
+    // released and the CPU at an instruction boundary, so the machine state
+    // is coherent and the user's Play means Play.
+    if (worker.joinable()) {
+        if (workerAlive_.load()) return;
+        worker.join();
+        pom2::log().warn("Emul",
+            "CPU worker had died (see the barrier's error above) — restarting it");
+    }
+    workerAlive_.store(true);
     // Guarded: an exception escaping workerLoop() would call std::terminate()
     // and take the process with it, silently. workerLoop() captures rewind
     // frames — multi-MB vector growth against a 256 MiB budget — so bad_alloc
@@ -613,6 +630,10 @@ void EmulationController::start()
         pom2::runGuarded("Emulation", [this] { workerLoop(); });
         mode.store(Mode::Stopped);
         workerParked_.store(true);
+        // Published LAST: start() reads it to tell a live worker from a dead
+        // but still-joinable one, and must not reap a thread whose exit
+        // bookkeeping has not landed yet.
+        workerAlive_.store(false);
         wakeCv.notify_all();
     });
 #endif
@@ -893,6 +914,13 @@ bool EmulationController::bootFromSlot(int slot)
         mem.setIicSmartPortArmed(false);
         processor.hardReset();
         workerParked_.store(false);
+        // Same invariant setMode() and start() carry, and the same line the
+        // not-bootable branch below already had: the bus is silenced whenever
+        // the machine is not Running, and this path resumes it by storing the
+        // mode directly. Booting from a PAUSED machine (toolbar Pause, a
+        // debugger breakpoint, `rewindEndPaused`) therefore ran the whole
+        // session mute — every Boot button in the Library reaches here.
+        if (audioDev) audioDev->setSuspended(false);
         mode.store(Mode::Running);
         wakeCv.notify_all();
         return true;
@@ -947,6 +975,7 @@ bool EmulationController::bootFromSlot(int slot)
     processor.hardReset();
     processor.setProgramCounter(cnxx);
     workerParked_.store(false);  // same setter-thread invariant as setMode()
+    if (audioDev) audioDev->setSuspended(false);   // ditto for the bus
     mode.store(Mode::Running);
     wakeCv.notify_all();
     pom2::log().info("Emul",
@@ -999,6 +1028,16 @@ void EmulationController::setMode(Mode m)
     // next syncDebugHook, which costs a predictable branch per instruction on
     // a machine that is stopped anyway.
     if (m == Mode::Stopped && debugger_) debugger_->clearTransient();
+    // A Stop also CANCELS the queued single-steps. `stepsPending` is a plain
+    // counter that no reset verb ever cleared, so a `--step 20000` (or a burst
+    // of Step clicks) interrupted by Stop — the toolbar, a profile switch, a
+    // slot rebuild, a snapshot load, `coldBoot`, all of which call `stop()` —
+    // left its remainder queued for the rest of the session. The user's next
+    // single Step press then ran the whole stale backlog in one go. Cancelling
+    // at the one funnel every Stop path goes through costs one relaxed store;
+    // the worker retires its OWN Step by storing `mode` directly, so it does
+    // not come through here and cannot cancel a step it is mid-way through.
+    if (m == Mode::Stopped) stepsPending.store(0);
     // Silence the host bus unless the CPU is actually running. The audio
     // device keeps calling its sources ~200×/s regardless of `mode`, so a
     // paused machine used to keep the AY generators and the floppy motor
@@ -1541,13 +1580,28 @@ void EmulationController::workerLoop()
                 stepsPending.fetch_sub(1);
             }
             if (stepsPending.load() <= 0) {
-                mode.store(Mode::Stopped);
-                // A requestStep() on the UI/CLI thread can race the store
-                // above: it may have re-armed Mode::Step and queued a step
-                // between our load and this store, which we'd then clobber to
-                // Stopped — permanently losing that step. Recover by checking
-                // the queue once more and re-arming Step if work appeared.
-                if (stepsPending.load() > 0) mode.store(Mode::Step);
+                // Retire ONLY the Step we were dispatched on. A plain store
+                // also overwrote a Running that the UI set between the
+                // dispatch above and here (toolbar Play / Machine > Run
+                // pressed right after a single step): the machine went back
+                // to Stopped with nobody to un-stop it, and — because the
+                // store bypasses setMode() — with the audio bus left
+                // UN-suspended, so the AY/floppy drone kept playing over a
+                // frozen machine. compare_exchange makes the retirement lose
+                // the race instead of winning it.
+                Mode expect = Mode::Step;
+                if (mode.compare_exchange_strong(expect, Mode::Stopped)) {
+                    // A requestStep() on the UI/CLI thread can race the CAS
+                    // above: it may have queued a step between our load and
+                    // it, which we'd then have left stranded in a Stopped
+                    // machine. Recover by checking the queue once more and
+                    // re-arming Step — again only if nothing else has since
+                    // claimed the mode.
+                    if (stepsPending.load() > 0) {
+                        Mode idle = Mode::Stopped;
+                        mode.compare_exchange_strong(idle, Mode::Step);
+                    }
+                }
             }
             continue;
         }
