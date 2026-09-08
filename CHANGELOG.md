@@ -43,9 +43,14 @@ each other. Every `uses:` in the three workflows is pinned to a commit SHA
 in the CI Linux job refuses a moving tag, an undigested base image or a
 `version: latest`. `build_dist.sh`, advertised in the README and run by
 nothing, is rehearsed by a `dist` job that uploads and gates nothing. The
-one landmine left is the bionic builder image, owned by another repository:
-`mirror-builder-image.yml` copies it into pom2's own GHCR namespace on
-demand, and the `linux` job repins to the copy once it has run.
+bionic builder image, owned by another repository, is mirrored into pom2's
+own GHCR namespace by `mirror-builder-image.yml`, and the `linux` job pulls
+the copy — the first rehearsal proved the pull.
+
+That first rehearsal also found what it was for: `build_dist.sh` built only
+`pom2_imgui` while the install rules had grown `libpom2_core` (the exported
+SDK) and `pom2_headless`, so `cmake --install` died on a library that was
+never built. It builds the default target now.
 
 ## 2026-09-08 — `pom2_playtest --ssc PORT`: the Super Serial Card for A2 File Cmd's VDrive bench
 

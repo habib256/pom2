@@ -78,7 +78,12 @@ cmake -S . -B "$BUILD_DIR" \
       >/dev/null
 
 log "Building POM2"
-cmake --build "$BUILD_DIR" --target pom2_imgui -j"$JOBS"
+# The default target, not just pom2_imgui: the install() rules also carry
+# libpom2_core (the exported POM2::core SDK) and pom2_headless, and
+# `cmake --install` below fails on a library that was never built. Found by
+# the release rehearsal's `dist` job on 2026-09-08 — the day this script
+# first ran in any workflow.
+cmake --build "$BUILD_DIR" -j"$JOBS"
 
 if [ "$RUN_TESTS" = 1 ]; then
     log "Running ctest"
