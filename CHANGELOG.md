@@ -21,6 +21,11 @@ paint editors are marked frozen where they are billed, Floppy Emu names its
 four modes, and `ae_transwarp_1.4.bin` is described as a name POM2 looks for
 with no public dump known.
 
+The Slot Config picker also tags every card with its scope bucket from the
+TODO's ruling — `[L1 · LLE · core]`, `[frozen]` — next to the emulation
+level it already showed, so the promise is visible before the report is
+filed.
+
 One line of code: the first-run ][+ fallback probed only `roms/apple2.rom`,
 so a user holding `apple2p.rom` alone got NO ROM while the README promised a
 ][+; the probe now walks the ][+ profile's own list.

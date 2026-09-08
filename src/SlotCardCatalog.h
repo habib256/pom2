@@ -31,15 +31,34 @@
 
 namespace pom2 {
 
+/// TODO.md's scope ruling, per card: what the project promises about it.
+/// Shown in the Slot Config picker next to the LLE/HLE level, so a user
+/// knows before filing the report whether a card is one the project stands
+/// behind, one it fixes on report, or one it ships as is.
+enum class CardScope { Core, Supported, Frozen };
+
+inline constexpr const char* cardScopeWord(CardScope s)
+{
+    switch (s) {
+        case CardScope::Core:      return "core";
+        case CardScope::Frozen:    return "frozen";
+        case CardScope::Supported: break;
+    }
+    return "supported";
+}
+
 struct CardType {
     const char* key;
     const char* label;
+    /// Defaults to Supported — the ruling's largest bucket. Core and Frozen
+    /// are named explicitly below, from TODO.md § The scope ruling.
+    CardScope   scope = CardScope::Supported;
 };
 
 // Card types the user can pick for any slot. Index 0 is the empty slot.
 inline constexpr CardType kCardTypes[] = {
     { "",             "(empty)"           },
-    { "diskii",       "Disk II"           },
+    { "diskii",       "Disk II",           CardScope::Core },
     { "hdv",          "ProDOS HDV"        },
     // CFFA 2.0 — MAME-faithful IDE/CompactFlash card: real firmware over an
     // emulated ATA chip (vs the synthetic "hdv"). Needs roms/cffa20ee02.bin
@@ -48,7 +67,7 @@ inline constexpr CardType kCardTypes[] = {
     // SmartPort 3.5" — Apple Disk 3.5 Controller card (the "Liron" /
     // 670-0186). Brings 2× ProDOS block units (3.5" 800K or HDV) to a //e
     // or II+ via the standard ProDOS block-device protocol, no IWM.
-    { "smartport35",  "SmartPort 3.5\""   },
+    { "smartport35",  "SmartPort 3.5\"",   CardScope::Core },
     // The same controller as silicon: the real 4 KB Liron EPROM executing
     // over a real IWM, its 3.5" drives answered as intelligent UniDisks on
     // the SmartPort bus (SmartPortBusDevice). Needs roms/liron.rom; slot
@@ -71,7 +90,7 @@ inline constexpr CardType kCardTypes[] = {
     // the TCP/IP. Needs a host Ethernet transport to see traffic, which
     // in practice means a libslirp-enabled build; the card still plugs
     // and probes without one. MAME `bus/a2bus/uthernet.cpp` port.
-    { "uthernet",     "Uthernet I (CS8900A)" },
+    { "uthernet",     "Uthernet I (CS8900A)", CardScope::Frozen },
     // Uthernet II (a2RetroSystems) — WIZnet W5100 hardware TCP/IP stack.
     // Its four TCP/UDP sockets map onto host BSD sockets, so IRC / telnet
     // / FTP clients work with no libslirp and no privileges; only its
@@ -92,12 +111,12 @@ inline constexpr CardType kCardTypes[] = {
     // needed (the card has none; the CP/M boot disk finds it by toggling
     // slot ROM windows). MAME a2bus/a2softcard.cpp port.
     { "softcard",     "SoftCard Z80 (CP/M)" },
-    { "chatmauve",    "Le Chat Mauve"     },
+    { "chatmauve",    "Le Chat Mauve",     CardScope::Core },
     { "mouse",        "Mouse Interface"   },
     // AppleWin-style HLE variant — only needs the slot EPROM (no MCU mask
     // ROM). Different code path from "mouse" (no MC68705 emulation).
     { "mouseaw",      "Mouse (AppleWin HLE)" },
-    { "mockingboard", "Mockingboard A/C"  },
+    { "mockingboard", "Mockingboard A/C",  CardScope::Core },
     // Mockingboard "C" Sound II — A/C base + SSI263A speech synth at
     // $C(s)40-$C(s)44. Drives speech in Ultima IV/V, Wasteland, Bard's
     // Tale, Crime Wave, Hudson Hawk, etc. (any title that targets the
@@ -126,7 +145,7 @@ inline constexpr CardType kCardTypes[] = {
     // its own 65C02 + 8530 SCC run inside the card. ROM-gated on the 64 KiB
     // 341-0358-A dump; the host handshake at $C0nX is not yet established,
     // so the guest's AppleTalk stack will not complete a transaction.
-    { "workstation",  "Apple II Workstation Card (LocalTalk) — boots, host link WIP" },
+    { "workstation",  "Apple II Workstation Card (LocalTalk) — boots, does not netboot", CardScope::Frozen },
     // 4play (Lukazi, 2016) — four DIGITAL joysticks, one byte each at
     // $C0nX. The Apple game port is analogue and carries two paddles; this
     // is how an Apple II gets four players.
@@ -140,6 +159,13 @@ inline constexpr CardType kCardTypes[] = {
 };
 
 /// Human-readable label for a card key (falls back to the key itself).
+inline CardScope cardScopeForKey(std::string_view key)
+{
+    for (const auto& c : kCardTypes)
+        if (key == c.key) return c.scope;
+    return CardScope::Supported;
+}
+
 inline const char* cardLabelForKey(std::string_view key)
 {
     for (const auto& ct : kCardTypes)

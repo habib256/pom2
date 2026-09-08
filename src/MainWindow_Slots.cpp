@@ -361,11 +361,17 @@ void MainWindow::renderSlotConfigPanel()
                     if (std::string(id) == e.id) return &e;
                 return nullptr;
             };
+            // ...and with its scope bucket from TODO.md's ruling (core /
+            // supported / frozen), so a user choosing a card knows what the
+            // project promises about it before filing the report.
             auto levelTag = [&](const std::string& key) -> std::string {
+                if (key.empty()) return {};
+                const char* scope = pom2::cardScopeWord(pom2::cardScopeForKey(key));
                 const auto* e = absEntryFor(key);
-                if (!e) return {};
+                if (!e) return std::string("  [") + scope + "]";
                 return std::string("  [") + pom2::levelBadge(e->level) + " · " +
-                       (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + "]";
+                       (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + " · " +
+                       scope + "]";
             };
 
             std::string preview = "(empty)";
