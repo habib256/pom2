@@ -1120,6 +1120,11 @@ void W5100Device::receiveOnePacketMacRaw(size_t i, const uint8_t* data, int size
     ringWrite16(i, static_cast<uint16_t>(size + 2));
     ringWriteData(i, data, static_cast<size_t>(size));
     bytesReceived_ += static_cast<uint64_t>(size);
+    // RECV is not a TCP/UDP flag — datasheet §5.2.3 raises it whenever data
+    // lands in the RX ring, whatever the socket's mode. Only the socket paths
+    // set it, so the common IR (derived from Sn_IR) stayed 0 and a raw-mode
+    // guest that gates on the bit dropped every frame it had just staged.
+    raiseSocketIrq(i, kW5100SnIrRecv);
 }
 
 // `Uthernet2.cpp:682-701`
@@ -1134,6 +1139,7 @@ void W5100Device::receiveOnePacketIpRaw(size_t i, const uint8_t* payload,
     ringWrite16(i, static_cast<uint16_t>(len));
     ringWriteData(i, payload, len);
     bytesReceived_ += static_cast<uint64_t>(len);
+    raiseSocketIrq(i, kW5100SnIrRecv);   // §5.2.3, as above
 }
 
 // ── Transmit ──────────────────────────────────────────────────────────

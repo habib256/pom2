@@ -95,10 +95,16 @@ inline char letterFromKeyName(const char* name, int key)
             const char c = name[0];
             if (c >= 'a' && c <= 'z') return static_cast<char>(c - 'a' + 'A');
             if (c >= 'A' && c <= 'Z') return c;
+            // A single ASCII character that is not a letter is a punctuation
+            // cap — AZERTY's ',' sits where QWERTY has M, and answering 'M'
+            // there typed a RETURN nobody pressed.
+            return 0;
         }
-        // A name exists and is not a single ASCII letter — a punctuation
-        // key, or a multi-byte cap on a non-Latin layout. Not a Ctrl-letter.
-        return 0;
+        // Multi-byte: a non-Latin cap (Cyrillic, Greek, Hebrew). The layout
+        // prints no ASCII letter here, but Ctrl-C still has to break Applesoft
+        // (and Ctrl+Shift+P still has to open the palette), so fall through
+        // to the US position — which is what the key is physically engraved
+        // with underneath. "No ASCII letter" is not "no name".
     }
     if (key >= kKeyA && key <= kKeyZ)
         return static_cast<char>('A' + (key - kKeyA));
@@ -149,10 +155,15 @@ inline bool chordMayFire(int mods, bool rightAltHeld, bool hostIsWindows)
 ///
 /// Even with the setting on, a Windows AltGr press is refused: it is a
 /// text-entry modifier there, not the Solid-Apple key.
-inline bool altDrivesAppleKeys(int mods, bool settingEnabled, bool hostIsWindows)
+inline bool altDrivesAppleKeys(int mods, bool settingEnabled, bool hostIsWindows,
+                               bool isRightAlt)
 {
     if (!settingEnabled) return false;
-    if (hostIsWindows && (mods & kModControl) != 0) return false;
+    // AltGr is the RIGHT Alt, reported as CONTROL|ALT. The LEFT Alt with Ctrl
+    // held is not AltGr on any layout, and refusing it there took Open-Apple
+    // away from every Ctrl chord the firmware reads at $C061 — Open-Apple +
+    // Ctrl + Reset is the //e cold boot.
+    if (hostIsWindows && isRightAlt && (mods & kModControl) != 0) return false;
     return true;
 }
 

@@ -41,7 +41,8 @@ namespace pom2 {
 /// serves as both the command surface and the transport) plus POM2's built-in
 /// `N:` network device. The transport is created OFF — the caller arms it
 /// (setTcpMode / setSerialMode) and calls start().
-std::unique_ptr<FujiNetCard> makeFujiNetCard(int slot = FujiNetCard::kDefaultSlot);
+std::unique_ptr<FujiNetCard> makeFujiNetCard(int slot = FujiNetCard::kDefaultSlot,
+                                             bool allowLoopback = false);
 
 } // namespace pom2
 

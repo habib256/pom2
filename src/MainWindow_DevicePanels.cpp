@@ -892,7 +892,8 @@ bool MainWindow::plugFujiNetUnlocked(const pom2::StateAccess& st,
                                      bool startNow)
 {
     auto& bus = st.memory().slotBus();
-    auto card = pom2::makeFujiNetCard(slot);
+    auto card = pom2::makeFujiNetCard(
+        slot, settings->getBool("uthernet_allow_loopback", false));
     card->setMemory(&st.memory());
     card->setCpu(&st.cpu());
     auto& link = card->transportLink();

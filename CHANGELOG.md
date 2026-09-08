@@ -5,6 +5,85 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #6: six more hunters on the ground the first six had not walked
+
+Same method as #5 — six Opus hunters, a probe before any claim, a minimal
+diff plus a pin — on six other areas: the 3.5"/SmartPort stack, the input
+chain, the snapshot contract of every card, the video cards, the network
+stack, and the coordinators. Seventeen confirmed defects.
+
+**Two doors in the loopback perimeter, and a telnet regression.** The
+built-in FujiNet `N:` device opened host sockets at a guest-chosen address
+with no fence at all: `N:HTTP://127.0.0.1:6503/mem?...` reached POM2's own
+AI control server, which reads a loopback peer with no Origin as native.
+It now applies the same destination policy as the W5100 — on the resolved
+address, so `localhost` and `127.1` are caught too — under the same
+`uthernet_allow_loopback` opt-in. And the devicespec was spliced raw into
+the request line and the `Host:` header, so a CR/LF in it wrote headers of
+the guest's own and pipelined a second request; control bytes and spaces
+are refused. The SSC's telnet bridge answered `DO/WILL BINARY` (since
+2026-09-07) and kept applying the NVT translation anyway — NULs eaten,
+LF→CR — corrupting exactly the 8-bit transfers the clean path exists for;
+BINARY is honoured per direction now. The W5100's MACRAW/IPRAW receive
+never raised `Sn_IR` RECV, so a raw-mode guest IP stack discarded every
+frame it had just staged.
+
+**A `$C010` release-poll ate the whole paste queue.** The next paste byte
+was promoted on the strobe *clear*, which re-armed AKD inside the same
+`$C010` access; the //e's own "wait for the key to come back up" idiom
+spun and consumed one queued byte per iteration — a ten-character paste
+delivered one and dropped nine. The hand-over moved to the `$C000` read,
+lock-free when nothing is queued. On Windows the AltGr rule (CONTROL|ALT
+→ not an Apple key) fired for the *left* Alt too, taking Open-Apple away
+from every Ctrl chord; and a non-Latin layout (Cyrillic, Greek, Hebrew)
+got no Ctrl-letter at all — Ctrl-C could not break Applesoft — because a
+multi-byte key name was treated as "no letter" rather than "no ASCII
+letter" and never fell back to the US position.
+
+**Three cards failed their snapshot contract.** `LironCard`'s own emuCycles
+counter — the only clock its IWM sees — was not in its blob, so every
+rewind restored an IWM whose clock then jumped the whole rewind depth
+forward (9.1 ms of a 20 ms frame under `stateMutex`, and the head position
+thrown away). `PhasorCard` rejected its *own* blob whenever the mode byte
+held one of the five un-named values the address decode can latch,
+silently keeping its live state through every rewind frame.
+`IWMDevice::loadSnapshotState` fired its devsel callbacks *after*
+restoring the 3.5" revolution anchor, and the controller's retarget
+re-anchored it to `now_`: a rewind mid-read resumed at the wrong angular
+position. All three now hold, and the new `card_snapshot_contract` test
+asserts the four properties for every card in the catalog (TODO G5-2).
+
+**The IWM kept writing into a 3.5" drive the hub had deselected.** MAME's
+`recalc_active_device` ends with `set_floppy(nullptr)` when the routing
+resolves to a 5.25" drive or to nothing; POM2's hub only ever *set* a Sony
+and never released it, so a //c+ write burst issued after the MIG routed
+elsewhere was spliced into the last 3.5" disk's cell stream. The hub calls
+`releaseSony35()` now, which flushes the burst in flight to the drive it
+belongs to first.
+
+**Video cards.** The Chat Mauve's latch ring was stamped with the
+instruction *start* while the video-event log stamps the *data* cycle, so a
+frame whose first event was the `$C05F` edge seeded the replay with the
+post-clock latch and clocked it twice; both use `Memory::accessCycle()`
+now. The RVB Graph's `$C0F3` (whole-screen monochrome green) greened only
+the text band over a white picture. And the card answered `$FF` on
+`$C0F0-$C0FF` and `$C700-$C7FF` where it drives nothing — on the
+fresh-install default map, that hid the floating bus in slot 7.
+
+**Coordinators.** The boot-storage auto-plug landed in slot 3 on a //e —
+the only free slot on the shipped map, and the one whose `$C300` page is
+the internal 80-column firmware — so `POM2 game.hdv` on a fresh install
+failed the boot signature and blamed the image; slot 3 is refused on
+//e-class machines. `TranswarpCard` probed its ROM through a private cwd
+ladder instead of `findResource`, so a dump in the per-user data dir read
+"present" in ROM Status and missing to the card; and the catalogue lacked
+the ThunderClock name the card prefers, the same lie the other way round.
+
+Pinned in `fujinet_net_device`, `ssc_acia`, `uthernet2_w5100`, `paste_smoke`,
+`key_chord_policy`, `card_snapshot_contract` (new), `chatmauve_latch_split`,
+`le_chat_mauve`, `slot_provisioning_coordinator`, `rom_fetch`,
+`transwarp_card`, `iwm_device`.
+
 ## 2026-09-08 — The four leftovers of bug hunt #5
 
 The hunters' "known, not fixed" list, closed. **The composite mixed-mode

@@ -21,15 +21,17 @@
 
 namespace pom2 {
 
-std::unique_ptr<FujiNetCard> makeFujiNetCard(int slot)
+std::unique_ptr<FujiNetCard> makeFujiNetCard(int slot, bool allowLoopback)
 {
     auto link = std::make_unique<SpOverSlipLink>();
     // The card takes ownership of the link through the FujiNetLink interface,
     // so grab the transport reference BEFORE the move — afterwards `link` is
     // empty even though the object it pointed at is very much alive.
     SpOverSlipLink& transport = *link;
+    auto net = std::make_unique<FujiNetNetDevice>();
+    net->setAllowLoopback(allowLoopback);
     return std::make_unique<FujiNetCard>(slot, std::move(link), transport,
-                                         std::make_unique<FujiNetNetDevice>());
+                                         std::move(net));
 }
 
 } // namespace pom2

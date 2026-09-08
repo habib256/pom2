@@ -204,6 +204,8 @@ public:
     /// device-select window (any access decodes, like the Apple soft
     /// switches). Other variants keep the base no-op.
     uint8_t deviceSelectRead (uint8_t low4) override;
+    /// No slot EPROM: $Cn00-$CnFF must keep reading the floating bus.
+    uint8_t slotRomRead(uint8_t /*low8*/) override { return openBus(); }
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     /// RVB Graph mode register: 0 colour + white text, 1 colour + green
     /// text, 2 mono white, 3 mono green ($C0F0-$C0F3 at slot 7).

@@ -173,6 +173,7 @@ int main()
         if (!stub.start()) { std::printf("FAIL: cannot start the HTTP stub\n"); return 1; }
 
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         const std::string spec = "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/index.html";
         check(openAndSettle(net, spec), "opens N:HTTP://host:port/path");
         check(net.isOpen(), "reports itself open");
@@ -206,6 +207,7 @@ int main()
         if (!stub.start()) { std::printf("FAIL: cannot start the HTTP stub\n"); return 1; }
 
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         check(openAndSettle(net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "opens a larger document");
         check(net.available() == 1300, "buffers the whole body");
@@ -232,6 +234,7 @@ int main()
     // ── Specs it must refuse rather than mangle ───────────────────────────
     {
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         check(!net.open("N:HTTPS://example.invalid/"),
               "refuses https (no TLS here) instead of pretending");
         check(!net.open("N:FTP://example.invalid/"), "refuses an unknown scheme");
@@ -253,6 +256,7 @@ int main()
         if (!stub.start()) { std::printf("FAIL: cannot start the HTTP stub\n"); return 1; }
 
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(600);
         const auto t0 = std::chrono::steady_clock::now();
         const bool ok = openAndSettle(
@@ -275,6 +279,7 @@ int main()
     // is 75 s of frozen emulator, so the connect now gets an explicit wait.
     {
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(800);
         const auto t0 = std::chrono::steady_clock::now();
         const bool ok = openAndSettle(net, "N:HTTP://192.0.2.1/");
@@ -298,6 +303,7 @@ int main()
     // that was the full connect budget, every time.
     {
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(4000);
         const auto t0 = std::chrono::steady_clock::now();
         const bool started = net.open("N:HTTP://192.0.2.1/");
@@ -334,6 +340,7 @@ int main()
         const auto t0 = std::chrono::steady_clock::now();
         {
             pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
             net.setFetchDeadlineMs(1000);
             check(net.open("N:HTTP://192.0.2.1/"), "start a fetch, then destroy it");
         }
@@ -352,6 +359,7 @@ int main()
     // socket opened against something the guest did not ask for.
     {
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         check(!net.open("N:HTTP://host:0/"),      "refuses port 0");
         check(!net.open("N:HTTP://host:99999/"),  "refuses a port above 65535");
         check(!net.open("N:HTTP:///path"),        "refuses a spec with no host");
@@ -373,6 +381,7 @@ int main()
         stub.body = "HTTP/1.0 200 OK\nContent-Type: text/plain\n\nhello";
         if (!stub.start()) { std::printf("FAIL: stub bind\n"); return 2; }
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(4000);
         check(openAndSettle(net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "an LF-only reply still opens");
@@ -396,6 +405,7 @@ int main()
         stub.body = "HTTP/1.0 200 OK\r\n\r\n" + std::string(600u * 1024u, 'x');
         if (!stub.start()) { std::printf("FAIL: stub bind\n"); return 2; }
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(10000);
         check(!openAndSettle(net,
                   "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
@@ -418,6 +428,7 @@ int main()
         probe.stop();
 
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(2000);
         check(!openAndSettle(net,
                   "N:HTTP://127.0.0.1:" + std::to_string(deadPort) + "/"),
@@ -428,6 +439,7 @@ int main()
     {
         // RFC 2606 reserves `.invalid` so it can never resolve.
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(2000);
         const auto t0 = std::chrono::steady_clock::now();
         check(!openAndSettle(net, "N:HTTP://pom2-no-such-host.invalid/x"),
@@ -448,6 +460,7 @@ int main()
         stub.body = "abcdef";
         if (!stub.start()) { std::printf("FAIL: stub bind\n"); return 2; }
         pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);    // the stub lives on loopback
         net.setFetchDeadlineMs(4000);
         check(openAndSettle(net, "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/"),
               "fetch for the close() case");
@@ -459,6 +472,42 @@ int main()
         net.status(st);
         check(st[2] == 0, "and STATUS stops claiming a connection");
         stub.stop();
+    }
+
+    // ── The loopback perimeter: the built-in N: is the third host-socket door ─
+    // `N:HTTP://127.0.0.1:6503/mem?...` reached POM2's own AI control server,
+    // which reads a loopback peer with no Origin as native. Without the
+    // `uthernet_allow_loopback` opt-in a loopback destination is refused on
+    // the RESOLVED address, and no request ever reaches the stub.
+    {
+        HttpStub stub;
+        stub.body = "HOST-ONLY-SECRET";
+        if (!stub.start()) { std::printf("FAIL: cannot start the HTTP stub\n"); return 1; }
+        pom2::FujiNetNetDevice net;                 // default: no loopback
+        const std::string spec = "N:HTTP://127.0.0.1:" + std::to_string(stub.port) + "/x";
+        check(!openAndSettle(net, spec), "refuses a loopback destination by default");
+        check(net.available() == 0,      "nothing of the body is readable");
+        check(stub.seenRequest.empty(),  "and the stub never saw a request");
+        net.setAllowLoopback(true);
+        check(openAndSettle(net, spec),  "the opt-in lets it through");
+        net.close();
+        stub.stop();
+    }
+
+    // ── No request splitting: CR/LF/space in the devicespec is refused ──────
+    // Both halves of the spec used to be spliced raw into the request line
+    // and the Host: header, so a guest could write headers of its own and
+    // pipeline a second request, Host: included.
+    {
+        pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);
+        check(!net.open("N:HTTP://127.0.0.1:1/a HTTP/1.0\r\nX-Injected: yes\r\n\r\nGET /admin"),
+              "a CR/LF in the path is refused outright");
+        check(!net.open("N:HTTP://127.0.0.1\r\nHost: evil:1/a"),
+              "a CR/LF in the host is refused outright");
+        check(!net.open("N:HTTP://127.0.0.1:1/a b"),
+              "a space in the path is refused outright");
+        check(net.lastError() == pom2::kNetErrGeneral, "and reported as GENERAL");
     }
 
     if (failures) { std::printf("fujinet_net_device: %d failure(s)\n", failures); return 2; }

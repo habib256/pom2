@@ -381,7 +381,10 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // peer, and finding one is asynchronous, so plugging always succeeds
         // — a machine with this card and no FujiNet running behaves like a
         // machine with an empty drive, not a broken one.
-        auto card = pom2::makeFujiNetCard(s);
+        // Same key as the Uthernet II's fence: the built-in N: is the third
+        // host-socket door out of the guest, so it opens and closes with them.
+        auto card = pom2::makeFujiNetCard(
+            s, settings->getBool("uthernet_allow_loopback", false));
         card->setMemory(&st.memory());
         card->setCpu(&st.cpu());
 

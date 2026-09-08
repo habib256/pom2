@@ -26,19 +26,29 @@
 #include "SlotCardFactory.h"
 #include "SmartPortCard.h"
 #include "StorageCoordinator.h"
+#include "SystemProfile.h"
 
 #include <utility>
 
 namespace pom2 {
 namespace {
 
-int findFreeSlot(const SlotBus& bus, int preferred)
+int findFreeSlot(const SlotBus& bus, int preferred, bool iieClass)
 {
     if (preferred >= 1 && preferred < SlotBus::kSlotCount &&
         !bus.isPlugged(preferred)) {
         return preferred;
     }
     for (int slot = SlotBus::kSlotCount - 1; slot >= 1; --slot) {
+        // Slot 3 is not a free slot on a //e-class machine: with SLOTC3ROM
+        // off (the reset default) the motherboard owns $C300-$C3FF and the
+        // card has no $Cn00 page the guest can reach, so bootFromSlot(N)
+        // fails its Appx-C signature check. Slot Config already warns about
+        // this for a hand-plugged card (MainWindow_Slots.cpp) — and on the
+        // shipped default map slot 3 is the ONLY free one, so every
+        // `POM2 game.hdv` on a fresh install auto-plugged into a dead slot
+        // and then blamed the image. Refusing is the honest answer.
+        if (slot == 3 && iieClass) continue;
         if (!bus.isPlugged(slot)) return slot;
     }
     return -1;
@@ -90,7 +100,7 @@ SlotProvisioningCoordinator::ensureHdvBootTarget(
         return result;
     }
 
-    const int slot = findFreeSlot(bus, 7);
+    const int slot = findFreeSlot(bus, 7, profileConfig(profile).iieMode);
     if (slot < 0) {
         result.error = "no free slot for an HDV card";
         return result;
@@ -136,7 +146,7 @@ SlotProvisioningCoordinator::ensureSmartPortBootTarget(
         return result;
     }
 
-    const int slot = findFreeSlot(bus, 5);
+    const int slot = findFreeSlot(bus, 5, profileConfig(profile).iieMode);
     if (slot < 0) {
         result.error = "no free slot for a SmartPort card";
         return result;

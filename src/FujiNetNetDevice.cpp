@@ -45,7 +45,7 @@ namespace pom2 {
 FujiNetNetDevice::~FujiNetNetDevice() = default;
 
 void FujiNetNetDevice::fetchInto(Fetch& out, std::string, uint16_t,
-                                 std::string, int)
+                                 std::string, int, bool)
 {
     std::lock_guard<std::mutex> lk(out.mtx);
     out.error = kNetErrGeneral;
@@ -132,6 +132,16 @@ bool parseSpec(const std::string& spec, std::string& host, uint16_t& port,
         port = static_cast<uint16_t>(p);
         hostport = hostport.substr(0, colon);
     }
+    // The devicespec is RAW GUEST BYTES and both halves are spliced straight
+    // into a request line and a Host: header. A CR or LF anywhere in them
+    // ended the line early: the guest got to write headers of its own and to
+    // pipeline a whole second request, Host: included — which is how a fence
+    // keyed on the parsed host gets walked past. Nothing that could be a
+    // legal URL carries a control byte or a space, so refusing them costs
+    // the guest nothing.
+    for (const std::string* part : { &hostport, &path })
+        for (const unsigned char c : *part)
+            if (c <= 0x20 || c == 0x7F) return false;
     // Host names are case-insensitive; lower-casing keeps the Host: header
     // conventional rather than SHOUTING at the server.
     for (char& c : hostport) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -176,6 +186,25 @@ constexpr std::size_t kMaxBody = 512u * 1024u;
 using SteadyPoint = std::chrono::steady_clock::time_point;
 
 /// Milliseconds left before `deadline`, never negative.
+/// Destination policy, the same one W5100Device::checkDestination applies and
+/// for the same reason — see the loopback-perimeter rule in CLAUDE.md. The
+/// test is on the RESOLVED address, not on how the guest spelled it, so
+/// `localhost`, `127.1` and a hostname whose A record points at 127/8 are all
+/// caught by the one check. RFC 1918 stays allowed: a LAN peer is what a
+/// period network client is for.
+bool destinationAllowed(const addrinfo* a, bool allowLoopback)
+{
+    if (!a || a->ai_family != AF_INET || !a->ai_addr) return false;
+    uint8_t o[4];
+    std::memcpy(o, &reinterpret_cast<const sockaddr_in*>(a->ai_addr)->sin_addr, 4);
+    if (o[0] == 0)                  return false;   // 0/8 — connect() reaches 127.0.0.1
+    if (o[0] == 127)                return allowLoopback;
+    if (o[0] == 169 && o[1] == 254) return false;   // link-local + metadata neighbours
+    if ((o[0] & 0xF0) == 0xE0)      return false;   // 224/4 multicast
+    if ((o[0] & 0xF0) == 0xF0)      return false;   // 240/4 reserved, incl. broadcast
+    return true;
+}
+
 int msLeft(SteadyPoint deadline)
 {
     const auto now = std::chrono::steady_clock::now();
@@ -189,7 +218,8 @@ int msLeft(SteadyPoint deadline)
 FujiNetNetDevice::~FujiNetNetDevice() { close(); }
 
 void FujiNetNetDevice::fetchInto(Fetch& out, std::string host, uint16_t port,
-                                 std::string path, int deadlineMs)
+                                 std::string path, int deadlineMs,
+                                 bool allowLoopback)
 {
     /// Publish a verdict into the shared block. `done` is set by the caller
     /// of fetchInto, AFTER this has run, so a harvest can never see half a
@@ -216,6 +246,12 @@ void FujiNetNetDevice::fetchInto(Fetch& out, std::string host, uint16_t port,
     socket_t fd = kInvalidSocket;
     for (addrinfo* a = res; a; a = a->ai_next) {
         if (out.cancel.load()) break;
+        if (!destinationAllowed(a, allowLoopback)) {
+            log().warn("FujiNet", "built-in N: refusing \"" + host +
+                                  "\" — it resolves onto the host's own "
+                                  "loopback or a reserved range");
+            continue;
+        }
         const int budget = std::min(kConnectTimeoutMs, msLeft(deadline));
         if (connectBounded(a, budget, fd)) break;
     }
@@ -361,9 +397,10 @@ bool FujiNetNetDevice::open(const std::string& devicespec)
     auto f = std::make_shared<Fetch>();
     fetch_ = f;
     const int budget = deadlineMs_;
-    std::thread([f, host, port, path, budget] {
+    const bool allowLoopback = allowLoopback_;
+    std::thread([f, host, port, path, budget, allowLoopback] {
         pom2::runGuarded("FujiNetN", [&] {
-            fetchInto(*f, host, port, path, budget);
+            fetchInto(*f, host, port, path, budget, allowLoopback);
         });
         // Outside runGuarded on purpose: an exception that escaped the fetch
         // must still end it, or a guest polls STATUS for ever.

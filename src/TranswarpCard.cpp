@@ -23,6 +23,7 @@
 #include "CpuClock.h"
 #include "Logger.h"
 #include "Memory.h"
+#include "ResourcePaths.h"
 
 #include <cstring>
 #include <fstream>
@@ -42,17 +43,6 @@ constexpr int microsToCycles(int us)
 {
     return static_cast<int>((static_cast<long long>(us) * POM2_CPU_CLOCK_HZ
                              + 500000) / 1000000);
-}
-
-std::string probeRom(const char* leaf)
-{
-    static const char* kBases[] = { "", "../", "../../" };
-    for (const char* b : kBases) {
-        std::string p = std::string(b) + leaf;
-        std::ifstream f(p, std::ios::binary);
-        if (f.good()) return p;
-    }
-    return {};
 }
 
 } // namespace
@@ -209,7 +199,14 @@ bool TranswarpCard::setRom(std::vector<uint8_t> bytes)
 
 std::string TranswarpCard::loadRomFromDisk()
 {
-    const std::string path = probeRom(kRomPath);
+    // findResource, not a cwd ladder: it is the probe every other ROM
+    // consumer uses, and the only one that looks in the per-user data dir —
+    // where RomFetch writes and where the ROM Status panel resolves. A dump
+    // there read as "present" in the panel and missing here, and inside an
+    // installed bundle the cwd ladder found nothing at all. Both spellings,
+    // because RomCatalog advertises both. (SlotCardCatalog.h says why.)
+    const std::string path = pom2::findFirstResource(
+        { kRomPath, "roms/ae transwarp rom v1.4.bin" });
     if (path.empty())
         return std::string("no ") + kRomPath
              + " — the card accelerates but will not shadow $F000-$FFFF "

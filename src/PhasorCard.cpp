@@ -292,9 +292,17 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (blobVer != 1 && blobVer != 2) return;
     const std::size_t viaBytes = (blobVer >= 2)
         ? pom2::Via6522::kSnapshotBytes : pom2::Via6522::kSnapshotBytesV1;
+    // Range, not a whitelist of the three NAMED modes. `applyModeSwitch`
+    // builds this byte out of the ADDRESS low three bits ($C0(8+s)X, bit 3 =
+    // clear-then-OR), so every value 0-7 is a state the guest can latch — one
+    // READ of $C0n1 leaves it at 1. Rejecting the un-named values threw away
+    // the WHOLE blob (both 6522s, all four AYs, the timers and the IRQ line)
+    // and left the card sitting on its live state through every rewind frame,
+    // silently. The AY routing already treats anything that is not
+    // PH_Phasor / PH_Mockingboard as the Echo+-style broadcast, so an
+    // intermediate value restores to exactly the machine that captured it.
     const uint8_t mode = r.u8();
-    if (mode != PH_Mockingboard && mode != PH_Phasor && mode != PH_EchoPlus)
-        return;
+    if (mode > PH_EchoPlus) return;   // 0-7 is all applyModeSwitch can latch
     const uint8_t present = r.u8();
     std::size_t required = 6 +
         ((present & 0x01) ? viaBytes : 0) +

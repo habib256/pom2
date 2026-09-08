@@ -6666,6 +6666,18 @@ pom2_add_headless_test(test_printer_coordinator
     SOURCES printer_coordinator_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# ─── Slot-card snapshot contract, every card in the catalog (TODO G5-2) ──
+# ─── The IWM releases a 3.5" drive the hub has deselected ────────────────
+pom2_add_headless_test(test_iwm_stale_sony
+    NAME iwm_stale_sony TIMEOUT 30
+    SOURCES iwm_stale_sony_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_card_snapshot_contract
+    NAME card_snapshot_contract TIMEOUT 60
+    SOURCES card_snapshot_contract_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_storage_coordinator
     NAME storage_coordinator TIMEOUT 20
     SOURCES storage_coordinator_test.cpp

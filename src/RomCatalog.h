@@ -149,7 +149,12 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
 
         { "Other cards", "ThunderClock+ slot ROM (Thunderware)",
           { "roms/thunderclock_u9_v1.3.bin", "roms/thunderclock_u9.bin",
-            "roms/thunderclock.rom" }, 0, 0, "",
+            "roms/thunderclock.rom",
+            // ClockCard::tryLoadDump probes this fourth name too — the
+            // upstream markadev filename. Missing here, the panel called a
+            // dump the card was actually USING "missing", which is the one
+            // thing this table exists not to do.
+            "roms/Thunderware_REV_1.3_ROM_U9.bin" }, 0, 0, "",
           "The clock card runs its synthetic ROM — ProDOS still reads the "
           "date, but the real firmware entry points are absent." },
     };

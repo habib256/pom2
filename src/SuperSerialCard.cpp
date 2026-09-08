@@ -182,6 +182,15 @@ void SuperSerialCard::answerTelnetOption(uint8_t command, uint8_t option)
         (command == kWont && answer == kDont))
         return;
 
+    // Record what we just agreed to. `WILL BINARY` is our OWN direction
+    // (guest→peer); `DO BINARY` is theirs (peer→guest).
+    if (option == kOptBinary) {
+        if (answer == kWill) telnetBinaryTx_ = true;
+        if (answer == kDo)   telnetBinaryRx_ = true;
+        if (answer == kWont) telnetBinaryTx_ = false;
+        if (answer == kDont) telnetBinaryRx_ = false;
+    }
+
     std::lock_guard<std::mutex> lk(bufferMtx);
     // Straight into the raw reply queue, not txBuf: these bytes are telnet
     // PROTOCOL and must reach the wire unescaped, whereas everything in txBuf
@@ -291,6 +300,9 @@ void SuperSerialCard::setTransport(std::unique_ptr<pom2::SuperSerialTransport> t
 size_t SuperSerialCard::processTransportTextRx(uint8_t* data, size_t n)
 {
     n = processTelnetRx(data, n);
+    // IAC unescaping always applies (RFC 856 keeps IAC doubling); the NVT
+    // line-ending rules do NOT once BINARY is agreed for this direction.
+    if (telnetBinaryRx_) { telnetPrevCR_ = false; return n; }
     return normalizeLineEndings(data, n, telnetPrevCR_);
 }
 
@@ -342,8 +354,12 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
         while (taken < take && !txBuf.empty()) {
             const uint8_t b = txBuf.front();
             txBuf.pop_front();
-            if (raw) out.push_back(b);
-            else     appendTelnetTxEscaped(out, b);
+            if (raw || telnetBinaryTx_) {
+                out.push_back(b);
+                if (!raw && b == 0xFF) out.push_back(0xFF);   // IAC IAC survives BINARY
+            } else {
+                appendTelnetTxEscaped(out, b);
+            }
             ++taken;
         }
         sendBudget_ -= static_cast<double>(taken);
@@ -353,8 +369,12 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
         while (!txBuf.empty()) {
             const uint8_t b = txBuf.front();
             txBuf.pop_front();
-            if (raw) out.push_back(b);
-            else     appendTelnetTxEscaped(out, b);
+            if (raw || telnetBinaryTx_) {
+                out.push_back(b);
+                if (!raw && b == 0xFF) out.push_back(0xFF);   // IAC IAC survives BINARY
+            } else {
+                appendTelnetTxEscaped(out, b);
+            }
             ++taken;
         }
     }

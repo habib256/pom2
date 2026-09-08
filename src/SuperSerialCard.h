@@ -218,6 +218,8 @@ public:
         telnetState_   = TelnetState::Text;
         telnetPrevCR_  = false;
         telnetCommand_ = 0;
+        telnetBinaryRx_ = false;
+        telnetBinaryTx_ = false;
         std::lock_guard<std::mutex> lk(bufferMtx);
         telnetReply_.clear();   // a new peer negotiates from scratch
     }
@@ -313,6 +315,15 @@ private:
     /// The WILL/WONT/DO/DONT byte whose option byte has not arrived yet —
     /// persistent because a recv() chunk can end between the two.
     uint8_t telnetCommand_ = 0;
+    /// RFC 856 BINARY, agreed per DIRECTION. Answering WILL/DO BINARY and
+    /// then still applying RFC 854's NVT translation is the one combination
+    /// that is always wrong: the peer stops escaping because we said it
+    /// could, and we went on eating its NULs and rewriting its LFs — a
+    /// regression the 2026-09-07 "answer option requests" change introduced,
+    /// and one that hits exactly the 8-bit transfers (XMODEM, ADTPro) the
+    /// clean TDR path exists for.
+    bool telnetBinaryRx_ = false;   ///< peer→guest is 8-bit clean
+    bool telnetBinaryTx_ = false;   ///< guest→peer is 8-bit clean
     /// Telnet PROTOCOL bytes owed to the peer (option answers). Kept apart
     /// from txBuf because guest data is IAC-escaped on the way out and these
     /// must not be; drained ahead of it, under `bufferMtx`.

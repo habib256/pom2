@@ -509,6 +509,14 @@ void testMacRaw()
         assert(readAt(card, static_cast<uint16_t>(rxBase + 2 + i)) == frame[i]);
     }
 
+    // RECV is mode-independent (datasheet §5.2.3): the raw paths never raised
+    // it, so the common IR stayed 0 and a guest IP stack that gates on the
+    // bit discarded the frame it had just staged.
+    assert((readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnIr)) &
+            pom2::kW5100SnIrRecv) != 0 && "MACRAW receive must raise Sn_IR RECV");
+    assert((readAt(card, pom2::kW5100Ir) & 0x01) != 0 &&
+           "and the common IR must reflect socket 0");
+
     std::printf("  MACRAW OK (%zu-byte frame round-tripped)\n", frame.size());
 }
 

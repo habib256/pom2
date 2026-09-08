@@ -155,11 +155,20 @@
 # DiskImage.cpp crossed 3000. R4's debt grows by these 225 lines and is not
 # forgiven: the DOS/ProDOS sniff pair and the WOZ writer are the two seams a
 # split of DiskImage.cpp would cut along.
+#
+# 2026-09-08 (later): bug hunt #6, six more Opus hunters, and the four
+# leftovers of #5. Same shape as the block above: confirmed defects with
+# their why-comments, no feature code, no split.
+#   src/Apple2Display.cpp        2432 -> 2462 (+30)  patchMixedTextBand walks
+#     the beam segments inside rows 160-191 (the composite text band).
+#   src/ImageWriter.cpp          2706 -> 2720 (+14)  the DMP eats ESC g's body.
+#   src/Memory.cpp               2594 -> 2604 (+10)  accessCycle() (the clock
+#     the video-event log stamps with) and the $C000 paste hand-over.
 
-src/Apple2Display.cpp                    2432
+src/Apple2Display.cpp                    2462
 src/DiskImage.cpp                        3078
-src/ImageWriter.cpp                      2706
+src/ImageWriter.cpp                      2720
 src/M6502.cpp                            2273
-src/Memory.cpp                           2594
+src/Memory.cpp                           2604
 src/StorageCoordinator.cpp               2167
 src/hgrpaint/HgrPaintEditor.cpp          2653

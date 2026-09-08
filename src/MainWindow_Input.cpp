@@ -182,7 +182,8 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
                     settings->getBool("keyboard_alt_apple_keys", true);
         }
         const bool drive = pom2::keychord::altDrivesAppleKeys(
-            mods, altAppleKeysEnabled_, pom2::keychord::kHostIsWindows);
+            mods, altAppleKeysEnabled_, pom2::keychord::kHostIsWindows,
+            key == GLFW_KEY_RIGHT_ALT);
         const bool down = drive && (action != GLFW_RELEASE);
         if (key == GLFW_KEY_LEFT_ALT) appleKeys_.hostOpen  = down;
         else                          appleKeys_.hostSolid = down;

@@ -110,7 +110,12 @@ uint8_t LeChatMauveCard::deviceSelectRead(uint8_t low4)
     // RVB Graph mode strobes — POKE −16144…−16141 in the sources, i.e. any
     // access decodes the address, read or write.
     if (variant_ == Variant::RvbGraph && low4 <= 3) rvbMode_ = low4;
-    return 0xFF;
+    // Nothing on this board DRIVES the data bus in $C0(8+n)X — the strobes
+    // are address decodes, and the other four variants decode nothing here
+    // at all. A card that answers $FF where it holds no driver hides the
+    // floating bus (CLAUDE.md § Memory map), and `chatmauve` is the
+    // fresh-install slot-7 default, so this covered $C0F0-$C0FF by default.
+    return openBus();
 }
 
 void LeChatMauveCard::deviceSelectWrite(uint8_t low4, uint8_t)
@@ -224,11 +229,15 @@ void LeChatMauveCard::clockFifo(bool dataBit)
             " does not have it (falls back to COL140). Extasie/Arlequin need"
             " the Féline — Slot Config → model.");
     }
-    // Timestamped history for the beam-raced replay. Without a Memory
-    // there is no clock to stamp with — the ring stays empty and
-    // latchBefore() degrades to the current value.
+    // Timestamped history for the beam-raced replay, on the SAME clock the
+    // video-event log uses (Memory::accessCycle): latchBefore() is compared
+    // against a VideoEvent's emuCycle, and an instruction-START stamp is a
+    // few cycles too early — a frame whose first event IS this $C05F then
+    // got the POST-clock latch as its seed and forEachBeamSegment clocked
+    // it a second time. Without a Memory there is no clock to stamp with —
+    // the ring stays empty and latchBefore() degrades to the current value.
     if (mem_) {
-        latchRing_[latchRingHead_] = { mem_->getCycleCounter(), before, fifo };
+        latchRing_[latchRingHead_] = { mem_->accessCycle(), before, fifo };
         latchRingHead_ = (latchRingHead_ + 1) % kLatchRing;
         if (latchRingSize_ < kLatchRing) ++latchRingSize_;
     }

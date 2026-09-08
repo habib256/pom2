@@ -45,8 +45,31 @@ bool keyReady(Memory& mem) { return (mem.memRead(0xC000) & 0x80) != 0; }
 
 } // namespace
 
+// A $C010 release-poll must not eat the queue — the //e's own "wait for the
+// key to come back up" idiom (BIT $C010 / LDA $C010 : BMI -). Promoting the
+// next paste byte on the strobe CLEAR re-armed AKD inside the same access,
+// so the poll spun and consumed one queued byte per iteration: a ten-character
+// paste delivered one and dropped nine.
+static void testReleasePollDoesNotEatTheQueue()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    assert(mem.pasteText("ABCDEFGHIJ") == 10);
+    std::string out;
+    for (int guard = 0; guard < 64 && (mem.memRead(0xC000) & 0x80); ++guard) {
+        out.push_back(static_cast<char>(mem.memRead(0xC000) & 0x7F));
+        (void)mem.memRead(0xC010);                          // BIT $C010 — the ack
+        int spin = 0;
+        while ((mem.memRead(0xC010) & 0x80) && ++spin < 8) {}   // LDA $C010 : BMI -
+        assert(spin < 8 && "AKD must fall after the ack");
+    }
+    assert(out == "ABCDEFGHIJ" && "the release poll ate the paste queue");
+    std::printf("paste_smoke: $C010 release poll keeps the queue OK\n");
+}
+
 int main()
 {
+    testReleasePollDoesNotEatTheQueue();
     // ── Empty paste is a no-op ───────────────────────────────────────────
     {
         Memory mem;

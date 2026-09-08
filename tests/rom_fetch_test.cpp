@@ -56,6 +56,11 @@ std::set<std::string> knownDests()
     for (const auto& e : pom2::romCatalog()) {
         for (const char* c : e.candidates) s.insert(c);
     }
+    // The panel and the card must agree on what counts as present: ClockCard
+    // probes the upstream markadev filename too, and a dump under that name
+    // used to read "missing" in ROM Status while the card was using it.
+    assert(s.count("roms/Thunderware_REV_1.3_ROM_U9.bin") == 1);
+    assert(s.count("roms/ae transwarp rom v1.4.bin") == 1);
     return s;
 }
 
