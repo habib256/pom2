@@ -1996,6 +1996,21 @@ Do not re-litigate without re-reading the original comment.
   `bench/pom2.py`) mount a second floppy in drive 2 at boot, so the physical
   DOS 3.3 code paths are testable without `/disk`.
 
+- 🟡 **`pom2_playtest --preset iie_unenh` : le //e NON enhanced (6502 NMOS,
+  pas de MouseText) pour la version 6502 d'A2 File Cmd** *(demande du
+  2026-09-08)*. Un utilisateur sur un IIe non enhanced n'avait qu'un ecran
+  vide ; A2 File Cmd a maintenant une construction `ARCH=6502` (cible cc65
+  `apple2`, `A2FILECMD-6502.po/.dsk/.2mg`, branche `iie-6502`) que le banc
+  ne peut faire tourner que sur le preset `iie` (65C02) : un `stz` ou un
+  `bra` oublie y passerait inapercu. POM2 a deja le profil « Apple //e
+  Unenhanced PAL » dans l'interface (`apple2e_unenh.rom`, 6502 NMOS) ; il
+  manque le preset dans `pom2_playtest` (pomadventure,
+  `SCOSWAMP.MORE/TOOLS/pom2_playtest.cpp`) : le ROM non enhanced, le CPU en
+  mode NMOS (les opcodes 65C02 doivent se comporter comme sur un vrai 6502,
+  pas etre executes), MACHID et `$FBC0 = $EA` comme sur la machine. Avec
+  lui, `A2FC_IMG=A2FILECMD-6502 A2FC_BUILD=build-6502 python3 bench/run.py`
+  sous ce preset prouverait la version 6502. *½ jour.*
+
 ## Out of scope
 
 Things we will not do unless explicitly requested + clear ROI.
