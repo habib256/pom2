@@ -5,6 +5,19 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — TransWarp: the multiplier is sampled per chunk, not per frame
+
+The accelerator's slow windows — the 20 µs at 1 MHz around a slot access,
+a whole PREAD around the paddles — were right in aggregate and wrong in
+place: the frame's cycle budget was fixed from one read of the multiplier
+at the frame's start, so a window opening later left the whole frame at
+3.5×, and a window already open from the first cycle was read before the
+first access. Both frame loops now budget in base cycles and re-read the
+multiplier at every 4096-cycle chunk, off the bus hot path. Measured by
+`transwarp_chunk_sampling`: a window open from cycle 0 ran the frame at
+59 658 CPU cycles, it runs 19 975 now (17 045 plus the first chunk); a
+window opening a third of the way in, 59 657 before, ~22 000 after.
+
 ## 2026-09-09 — A crackle detector in the Audio panel, and the printer sound cleared
 
 The crackling reported under A2 File Cmd was attributed by ear first to

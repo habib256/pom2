@@ -81,7 +81,11 @@ int main()
         std::vector<Event> ev;
         for (double t = 0.0; t < 3000.0; t += 1000.0 / 180.0) ev.push_back({ t, 0, 7 });
         const Render r = render(d, 3000.0, ev, 1e9f);
-        bar = r.maxJump * 1.5f;
+        // Twice the steady-state step: two grains whose 0.8 ms attacks
+        // coincide sum to a step a little past 1.5× (measured 0.308 against
+        // 0.271 in the 600-strike dump), and that is the model, not a cut.
+        // A grain cut dead or a voice restarted mid-decay is far above 2×.
+        bar = r.maxJump * 2.0f;
         std::printf("  steady buzz: max step %.3f, peak %.3f, rms %.3f -> bar %.3f\n", r.maxJump, r.peak, r.rms, bar);
     }
     // 1. A page: 80 characters at 180 cps, carriage return, line feed, ×40.

@@ -6993,6 +6993,13 @@ pom2_add_headless_test(test_hdv_free_bay
     SOURCES hdv_free_bay_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# The TransWarp multiplier is sampled per chunk: a slow window opening
+# mid-frame slows the rest of the frame, not the next one.
+pom2_add_headless_test(test_transwarp_chunk_sampling
+    NAME transwarp_chunk_sampling TIMEOUT 60
+    SOURCES transwarp_chunk_sampling_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20
     SOURCES audio_coordinator_test.cpp

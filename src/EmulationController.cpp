@@ -22,6 +22,7 @@
 #include "ThreadGuard.h"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -676,7 +677,8 @@ void EmulationController::tickFrame()
     // display. The threaded path doesn't need this — workerLoop sleeps to
     // an absolute deadline.
     refreshAcceleratorClock();
-    int64_t budget = scaledFrameBudget();          // int64: see workerLoop note
+    // Base cycles; the multiplier is sampled per chunk — see workerLoop.
+    int64_t budget = cyclesPerFrame.load();
     // WASM ONLY. The browser is the only caller that drives this off a
     // display refresh; every other caller is a HEADLESS TEST, where "one
     // call = one full frame budget" is the contract. Scaling there would
@@ -705,11 +707,15 @@ void EmulationController::tickFrame()
         lastTickWall_ = now;
     }
 #endif
-    for (int64_t done = 0; done < budget; ) {
-        const int chunk = static_cast<int>(std::min<int64_t>(kLockChunkCycles, budget - done));
+    for (double doneBase = 0.0; doneBase < static_cast<double>(budget); ) {
         std::lock_guard<std::mutex> lk(stateMtx);
+        const double mul = std::max(1e-3, mem.slotBus().cpuSpeedMultiplier());
+        const double remainCpu =
+            std::ceil((static_cast<double>(budget) - doneBase) * mul);
+        const int chunk = static_cast<int>(std::min<double>(
+            static_cast<double>(kLockChunkCycles), std::max(1.0, remainCpu)));
         const int actually = runCpuSlice(chunk);
-        done += (actually > 0 ? actually : chunk);
+        doneBase += static_cast<double>(actually > 0 ? actually : chunk) / mul;
     }
     if (iwmDev) {
         std::lock_guard<std::mutex> lk(stateMtx);
@@ -1644,9 +1650,16 @@ void EmulationController::workerLoop()
         // cycle at this rate is exact in aggregate. Returns 1.0 (and
         // touches nothing) on any machine without such a card.
         refreshAcceleratorClock();
-        const int64_t budget = scaledFrameBudget();
+        // The frame is budgeted in BASE cycles (the 1 MHz clock's) and the
+        // accelerator's multiplier is sampled per 4096-cycle chunk, not per
+        // frame (2026-09-09): a TransWarp's slow window that opens mid-frame
+        // — a program that starts hammering a slot — used to leave the whole
+        // frame at 3.5× because the multiplier had been read at the frame's
+        // start; the chunks after it run at 1× now. Four to fifteen samples a
+        // frame, off the bus hot path (TranswarpCard.h § Sampling).
+        const int64_t baseBudget = cyclesPerFrame.load();
         bool interrupted = false;
-        for (int64_t done = 0; done < budget; ) {
+        for (double doneBase = 0.0; doneBase < static_cast<double>(baseBudget); ) {
             // Re-check the mode between chunks so a stop()/park request
             // (profile switch, rewind scrub, shutdown) interrupts the frame
             // within ~one chunk instead of after the full budget — under a
@@ -1659,10 +1672,16 @@ void EmulationController::workerLoop()
                 interrupted = true;
                 break;
             }
-            const int chunk = static_cast<int>(std::min<int64_t>(kLockChunkCycles, budget - done));
             std::lock_guard<std::mutex> lk(stateMtx);
+            // Under the lock: the multiplier is card state the CPU thread
+            // writes, and the UI may replug the bus between chunks.
+            const double mul = std::max(1e-3, mem.slotBus().cpuSpeedMultiplier());
+            const double remainCpu =
+                std::ceil((static_cast<double>(baseBudget) - doneBase) * mul);
+            const int chunk = static_cast<int>(std::min<double>(
+                static_cast<double>(kLockChunkCycles), std::max(1.0, remainCpu)));
             const int actually = runCpuSlice(chunk);
-            done += (actually > 0 ? actually : chunk);
+            doneBase += static_cast<double>(actually > 0 ? actually : chunk) / mul;
             // No mem.advanceCycles here — see Step branch above.
         }
         if (interrupted) {

@@ -89,16 +89,21 @@
 //
 // ─── Sampling ────────────────────────────────────────────────────────────
 //
-// `cpuSpeedMultiplier()` is read once per emulated frame, but the slowdown
-// windows are ~20 cycles inside a ~17000-cycle frame. That is not an
-// approximation in aggregate: sampling a duty cycle at a rate uncorrelated
-// with it is an unbiased estimator of it. Guest code hammering a slot in a
-// tight loop keeps the window permanently open and is sampled at 1× every
-// frame (right); code touching a slot once a frame is sampled at 1× on
-// ~0.1 % of frames (right); anything in between converges to the true
-// average speed over a handful of frames. What it does NOT reproduce is
-// WHERE inside a frame the slow cycles fall — which would matter to a
-// beam-raced effect, and does not matter to anything else.
+// `cpuSpeedMultiplier()` is read once per 4096-cycle CHUNK of the frame
+// (2026-09-09; once per frame before), and the slowdown windows are ~20
+// cycles. Sampling a duty cycle at a rate uncorrelated with it is an
+// unbiased estimator of it: guest code hammering a slot in a tight loop
+// keeps the window permanently open and is sampled at 1× every chunk;
+// code touching a slot once a frame is sampled at 1× on a fraction of
+// chunks; anything in between converges to the true average over a few
+// frames. What per-chunk sampling adds is WHERE in a frame the slow cycles
+// fall, to a quarter of a 1 MHz frame: a program that starts hammering a
+// slot mid-frame used to get the whole frame at 3.5× because the frame's
+// budget had been fixed at its start (`transwarp_chunk_sampling` measures
+// 59 657 CPU cycles before, ~22 000 after, for a window opening a third of
+// the way in — and 59 658 before for a window open from the first cycle).
+// Finer than a chunk would put a branch on the bus hot path, which
+// docs/PERFORMANCE.md forbids.
 //
 // ─── ROM shadow ──────────────────────────────────────────────────────────
 //

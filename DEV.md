@@ -1973,6 +1973,22 @@ stamp — a rewind — as the first step of a new timeline (a click, not a
 
 ## TransWarp (Applied Engineering)
 
+**Sampled per chunk** *(2026-09-09)*. Both frame loops
+(`EmulationController::workerLoop` and `tickFrame`) budget the frame in
+BASE cycles and re-read `SlotBus::cpuSpeedMultiplier()` under the lock at
+every 4096-cycle chunk: `chunk = min(4096, ceil(remainingBase × m))`,
+`doneBase += ran / m`. Before, `scaledFrameBudget()` fixed the whole
+frame's CPU-cycle budget from the multiplier read at its start, so a slow
+window that opened later — a program starting to hammer a stock-speed slot,
+or the window already open from the first cycle but read before the first
+access — got the entire frame at 3.5×. `transwarp_chunk_sampling`: no
+window 59 659 CPU cycles (unchanged), window from cycle 0 19 975 (was
+59 658; the first chunk still runs at 3.5×), window a third of the way in
+~22 000 (was 59 657). `scaledFrameBudget()` stays for the callers that
+want the frame's nominal size; the device-clock fan-out
+(`refreshAcceleratorClock`) is still per frame, which is fine — it is the
+pitch the audio devices resample at, not the count of cycles run.
+
 **The ROM is probed through `findResource`** *(2026-09-08, bug hunt #6)*.
 `TranswarpCard::loadRomFromDisk` walked a private cwd ladder (`""`, `../`,
 `../../`), the last one in the tree: a dump in the per-user data dir — where
