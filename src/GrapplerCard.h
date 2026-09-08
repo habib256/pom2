@@ -96,9 +96,15 @@ public:
     /// the ROM bank (MAME `write_cnxx`, grappler.cpp:586-591).
     void    slotRomWrite    (uint8_t low8, uint8_t v) override;
     uint8_t expansionRomRead(uint16_t offset) override;
-    /// MAME `grappler.cpp:64` `take_c800() const override { return true; }`
-    /// — the Grappler+ serves its banked 2 KB firmware from /IOSTB.
-    bool takesC800() const override { return true; }
+    /// Only a card that can actually SERVE the shared /IOSTB window may
+    /// latch it (MAME `a2bus.h:145` take_c800 + `apple2e.cpp:2977`). MAME's
+    /// Grappler+ (`grappler.cpp:64`) always has its ROM region, so `true`
+    /// is unconditional there; POM2 supports a ROM-LESS Grappler
+    /// (SlotCardFactory's documented "PR#n still works" fallback) whose
+    /// `expansionRomRead` answers $FF for the whole of $C800-$CFFF, and
+    /// claiming first-one-wins with nothing to serve starved the card that
+    /// does have an expansion ROM (bug hunt #9).
+    bool takesC800() const override { return romLoaded_; }
     void    onReset() override;
 
     /// Rewind/snapshot hooks — the ROM bank / ACK latch / IRQ-enable

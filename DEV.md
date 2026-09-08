@@ -1959,6 +1959,18 @@ defaults to 0: **slot 6 ships at stock speed** — that is the Disk II, the one
 slot AE did not trust at 3.5×. Pinned by `transwarp_card`, which drives the
 card through a real `Memory` + `SlotBus` because the snoop hooks live there.
 
+**A restore reconciles the `$F000` window** *(2026-09-08, bug hunt #9)*.
+`Memory::restoreMainRam` skips every byte `writable[]` calls ROM, so
+`$F000-$FFFF` is never part of a snapshot or rewind restore — it still
+holds whichever ROM the last engage/release left there. `loadSnapshotState`
+used to *derive* `shadowing_` from the blob's `readA2Rom_`, which desynced
+the card from the machine: a rewind across a `$C072` came back with the
+card's ROM live and the card believing it was the Apple's, and the next
+`engageShadow()` captured the card's own ROM as `displaced_` — Applesoft and
+the Monitor gone for the session. The loader now reads the recorded flag and
+calls `engageShadow()` / `releaseShadow()` on the difference, so the window
+and the flag agree. Pinned in `transwarp_card`.
+
 ## Slot bus & IRQ aggregation
 
 `SlotBus` + `SlotPeripheral`, 8 slots. Memory routes 4 windows:
@@ -2107,6 +2119,18 @@ approaching its budget before it crosses. `write` used to read `47 of 47`.
 
 `slot_rom_asm` tests the assembler itself, because a card test can only assert
 its flag is clear — which a `finish()` of `return true` would also satisfy.
+
+**Only a card that can serve `$C800` claims it — with its ROM loaded**
+*(2026-09-08, bug hunt #9)*. `GrapplerCard` and `ClockCard` answered
+`takesC800()` true unconditionally, as their MAME devices do, but both have
+a supported ROM-less mode (the factory's "PR#n still works" Grappler
+fallback; the synthetic or 256-byte ThunderClock ROM) whose
+`expansionRomRead` serves `$FF` for the whole window. On the fresh-install
+map a `PR#1` before the real owner's first access latched `$C800-$CFFF` to
+slot 1 and the Liron / SmartPort / SSC / CFFA firmware read `$FF`. The claim
+follows `romLoaded_` / `expansionRomLoaded_` now. Pinned in
+`grappler_card_smoke` and `clock_card_smoke` (the latter through a
+`makeForTest(..., probeDump=false)` seam, since the tree ships the EPROM).
 
 ## Storage
 
@@ -2383,6 +2407,14 @@ a name being unlikely is not the same as a path being safe. `replaceFileAtomic`
 also **follows** a symlinked target rather than replacing the link. Never `trunc` the user's own file: an ENOSPC /
 removable-media / network-share failure part-way through would leave the
 ONLY copy of the disk truncated, since the rest of it lives in RAM.
+
+**The last fixed temp name went on 2026-09-08 (bug hunt #9)**:
+`SnapshotWriter`'s file-backed constructor derived `<path>.tmp`, so two
+POM2 instances saving a snapshot to one path (a second window, a headless
+run, two `/snapshot/save` calls) opened the same temp with trunc — the
+first `finish()` renamed the *other* instance's bytes over the target and
+reported success, the second failed. It uses `tempSiblingPath` now, so its
+debris is swept with everyone else's. Pinned in `snapshot_io_smoke`.
 
 `replaceFileAtomic` is where **durability** lives, not just atomicity
 (2026-08-14). A rename is atomic for a *reader*; it promises nothing about a
@@ -7970,6 +8002,23 @@ so it sees main RAM only, the same view the Disasm panel and MemoryViewer
 already show. On a //e running from aux, or under a Language Card bank, it can
 misread. Both failure directions are benign: a missed JSR becomes a single
 step, and a phantom JSR arms a transient that never fires.
+
+**Two run-control fixes** *(2026-09-08, bug hunt #9)*. **Step Over decodes
+the CPU's own view**: `debugStepOver` decided "is this a JSR" from
+`peekMainRam`, the flat main-bank mirror, while the CPU is very often
+fetching from Language-Card RAM (ProDOS, Pascal, most //e code), aux under
+RAMRD or a RamWorks bank. It failed both ways — a real JSR in LC RAM was
+stepped *into*, and a `$20` that only exists in the ROM mirror armed a
+transient at an address never reached, so Step Over became an unbounded
+Run. It reads `peekCpuView` now, the same side-effect-free view the Disasm
+panel lists from. **Every reset verb drops the latched hit**: `hit_`
+survived `hardReset` / `softReset` / `coldBoot` / `bootFromSlot`, so the
+next Run consumed it through `debugResume()`'s one-instruction amnesty at
+the *post-reset* pc — "break at the entry, then hit Reset" skipped that
+breakpoint, and missed it outright when the entry runs once. The four
+verbs call `clearForTimeJump()`, which is what a rewind already did for the
+same reason. Pinned in `debugger` (`testStepOverDecodesTheCpuView`,
+`testResetClearsTheLatchedStop`).
 
 ### Thread exception barrier (`ThreadGuard.h`)
 

@@ -5,6 +5,57 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #9: the debugger, the 3.5" stack, the containers, the cards
+
+Four more Opus hunters on the parts no round had reached.
+
+**The debugger, twice.** Step Over decided "is this a JSR" from the
+main-bank mirror while the CPU fetches from Language-Card RAM, aux or a
+RamWorks bank most of the time: a real JSR in LC RAM was stepped *into*,
+and a `$20` that only exists in the ROM mirror armed a one-shot at an
+address never reached, so Step Over became an unbounded Run. It decodes the
+CPU's own view now, the one the Disasm panel already lists. And every reset
+verb left the previous stop latched, so the next Run spent it as the
+one-instruction amnesty at the *post-reset* pc — "break at the entry, then
+hit Reset", the commonest debugging move there is, skipped that breakpoint
+and missed it for good when the entry runs once. All four verbs drop the
+latched hit the way a rewind does. Pinned in `debugger`. Ruled out by the
+same hunter: write watchpoints over the whole address space under eight
+paging states never move a byte, soft-switch watchpoints access the switch
+exactly once, the paddle RC model round-trips all 256 values through the
+Monitor's own PREAD with zero error, and the disassembler agrees with the
+core's PC advance on all 256 opcodes.
+
+**The containers held, but the snapshot file did not.** The image parsers
+survived 42 000 WOZ1/WOZ2/FLUX/MacBinary mutants under ASan and UBSan, 16
+container shapes round-trip byte for byte through write-back, disk-full
+mid-commit keeps the original and the dirty flag, and the Floppy Emu
+sandbox drops every escape tried. The one defect: `SnapshotWriter` was the
+last write path in the tree with a fixed `<path>.tmp`, so two POM2
+instances saving to one path opened the same temp with trunc — the first
+`finish()` published the *other* machine's state and reported success, the
+second failed. It commits through `tempSiblingPath` like everything else.
+Pinned in `snapshot_io_smoke`.
+
+**The cards, two.** A rewind or snapshot restore desynced the TransWarp's
+`$F000` ROM shadow from the machine: the restore never touches the ROM
+window (`restoreMainRam` skips what `writable[]` calls ROM), but the card
+*derived* "am I shadowing" from a flag instead of looking, so a rewind
+across a `$C072` came back with the card's speed-corrected Monitor live
+while the card believed the Apple's was — and the next engage captured the
+card's own ROM as the displaced Apple ROM, taking Applesoft and the Monitor
+away for the session. The loader swaps on the difference now. And a
+Grappler+ or ThunderClock with no expansion EPROM still claimed the shared
+`$C800` window and then served `$FF` on it, starving the card that really
+had firmware there (on the fresh-install map: slot 1's ROM-less Grappler
+against a Liron or SmartPort at the first `PR#1`); the claim follows the
+loaded ROM. Pinned in `transwarp_card`, `grappler_card_smoke`,
+`clock_card_smoke`. The Z80 core's corners beyond zexall (HALT, IM 0/1/2,
+R, block I/O ports, the DD prefix), the SoftCard translation and DMA
+handoff, CP/M 2.2 booting, the foreign bus, the uPD1990AC, the DS1216E and
+seven card snapshot loaders under 3 000 corrupt blobs each were all probed
+and found correct.
+
 ## 2026-09-08 — Bug hunt #8: the rewind ring, the 6522, the MMU and the wire
 
 Four Opus hunters on the runtime the first seven rounds had not reached:

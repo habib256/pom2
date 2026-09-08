@@ -107,16 +107,18 @@ std::tm hostLocalTime()
 
 ClockCard::ClockCard(int slotNum) : ClockCard(slotNum, &hostLocalTime) {}
 
-ClockCard::ClockCard(int slotNum, TimeFn fn) : slot(slotNum), timeFn(fn)
+ClockCard::ClockCard(int slotNum, TimeFn fn, bool probeDump)
+    : slot(slotNum), timeFn(fn)
 {
     buildRom();
-    tryLoadDump();
+    if (probeDump) tryLoadDump();
     onReset();
 }
 
-std::unique_ptr<ClockCard> ClockCard::makeForTest(int slotNum, TimeFn fn)
+std::unique_ptr<ClockCard> ClockCard::makeForTest(int slotNum, TimeFn fn,
+                                                  bool probeDump)
 {
-    return std::unique_ptr<ClockCard>(new ClockCard(slotNum, fn));
+    return std::unique_ptr<ClockCard>(new ClockCard(slotNum, fn, probeDump));
 }
 
 void ClockCard::onReset()

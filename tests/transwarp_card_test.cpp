@@ -325,6 +325,58 @@ void testSnapshotRoundTrip()
     std::printf("  ok: snapshot round-trips, and rejects a foreign blob\n");
 }
 
+// ── A restore reconciles the $F000 window with what the blob says ────────
+// (bug hunt #9.) `Memory::restoreMainRam` skips every byte `writable[]` says
+// is ROM, so $F000-$FFFF is NOT part of a snapshot or rewind restore: it
+// still holds whichever ROM the last engage/release left there. Deriving
+// `shadowing_` from a flag desynced the card from the machine — a rewind
+// across a `$C072` came back with the CARD's ROM live and the card believing
+// it was the Apple's, and the next engage then captured the card's own ROM
+// as the "displaced" Apple ROM: Applesoft + the Monitor gone for the
+// session, `$C072` unable to bring them back.
+void testRestoreReconcilesTheShadowWindow()
+{
+    Memory mem;
+    std::vector<uint8_t> apple(0x1000, 0xA1);
+    mem.loadRomBytes(apple.data(), apple.size(), 0xF000);
+    TranswarpCard* tw = plug(mem, 4);
+    std::vector<uint8_t> warp(TranswarpCard::kRomSize, 0x7C);
+    assert(tw->setRom(warp));
+    assert(tw->shadowActive() && mem.memRead(0xF000) == 0x7C);
+
+    std::vector<uint8_t> blobShadow;
+    tw->appendSnapshotState(blobShadow);            // taken while shadowing
+
+    mem.memWrite(0xC072, 0);                         // release: Apple ROM live
+    assert(!tw->shadowActive() && mem.memRead(0xF000) == 0xA1);
+    std::vector<uint8_t> blobReleased;
+    tw->appendSnapshotState(blobReleased);           // taken while released
+
+    // Re-engage (a reset does), then rewind to the released state: the
+    // Apple's ROM must be live again, not merely believed to be.
+    tw->onReset();
+    assert(tw->shadowActive() && mem.memRead(0xF000) == 0x7C);
+    tw->loadSnapshotState(blobReleased.data(), blobReleased.size());
+    assert(!tw->shadowActive());
+    assert(mem.memRead(0xF000) == 0xA1 &&
+           "restore left the card's ROM live while the card believes it released");
+    // And the Apple ROM survives the next engage/release pair — the old
+    // code captured the card's ROM as the displaced copy here.
+    tw->onReset();
+    mem.memWrite(0xC072, 0);
+    assert(mem.memRead(0xF000) == 0xA1 &&
+           "the Apple's $F000-$FFFF ROM was destroyed by the desync");
+
+    // The reverse: released now, rewind to the shadowing state.
+    assert(!tw->shadowActive());
+    tw->loadSnapshotState(blobShadow.data(), blobShadow.size());
+    assert(tw->shadowActive() && mem.memRead(0xF000) == 0x7C &&
+           "restore left the Apple's ROM live while the card believes it shadows");
+    mem.memWrite(0xC072, 0);
+    assert(mem.memRead(0xF000) == 0xA1);
+    std::printf("  ok: a restore reconciles the $F000 window with the blob\n");
+}
+
 } // namespace
 
 int main()
@@ -338,6 +390,7 @@ int main()
     testRomShadow();
     testBusAggregationAndAbsence();
     testSnapshotRoundTrip();
+    testRestoreReconcilesTheShadowWindow();
     std::printf("OK transwarp_card\n");
     return 0;
 }

@@ -733,7 +733,16 @@ void EmulationController::hardReset()
     // — minutes later, with no visible cause. Disarm it and re-sync, because
     // `armed()` counts the transient: dropping it may be what detaches the
     // hook and puts the CPU back on its fast loop.
-    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
+    //
+    // clearForTimeJump, not clearTransient: a reset is a jump in the timeline
+    // for run-control state, and the LATCHED HIT is the piece that bit. It
+    // survived every reset, so the next Run consumed it in runCpuSlice via
+    // debugResume() — which grants a one-instruction amnesty at the POST-RESET
+    // pc. A breakpoint on the reset/boot entry point (break there, then hit
+    // Reset — the commonest move there is) was therefore skipped, and missed
+    // outright when that instruction is only reached once. Same set of state
+    // a rewind drops, and for the same reason (Debugger.h; bug hunt #9).
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
     processor.hardReset();
     pom2::log().info("Emul", "Hard reset");
 }
@@ -764,8 +773,9 @@ void EmulationController::softReset()
     // and Ctrl-Reset restarts the machine from $FFFC. Leaving it armed made a
     // one-shot breakpoint fire minutes later with no visible cause — and
     // `armed()` counts the transient, so dropping it is also what lets
-    // syncDebugHook put the CPU back on its undebugged loop.
-    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
+    // syncDebugHook put the CPU back on its undebugged loop. clearForTimeJump
+    // drops the latched hit too — see hardReset().
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
     processor.softReset();
     pom2::log().info("Emul", "Soft reset (Ctrl-Reset)");
 }
@@ -782,8 +792,9 @@ void EmulationController::coldBoot()
     if (hub)    hub->reset();
     if (tape)   tape->resetCpuSide();
     // As in hardReset(): the transient names an address in a program that no
-    // longer exists — here its RAM has literally been wiped.
-    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
+    // longer exists — here its RAM has literally been wiped. The latched hit
+    // goes with it (clearForTimeJump) — see hardReset().
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
     processor.hardReset();
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
@@ -819,8 +830,8 @@ bool EmulationController::bootFromSlot(int slot)
     // so the first $C020 toggle after it recorded a wrapped, huge pulse.
     if (tape)   tape->resetCpuSide();
     // Any step-over / run-to-cursor transient belongs to the machine that
-    // just went away — see hardReset().
-    if (debugger_) { debugger_->clearTransient(); syncDebugHook(); }
+    // just went away, and so does the latched hit — see hardReset().
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
     // Card-has-boot-entry sanity check. Apple II Ref Manual Appx C
@@ -1293,14 +1304,18 @@ void EmulationController::debugStepOver()
         // Everything else — including JMP, which does not come back — is an
         // ordinary single step, because there is nothing to step over.
         //
-        // peekMainRam, not memRead: a debugger must never perturb the machine
-        // it is inspecting, and memRead on a $C0xx address FLIPS SOFT
-        // SWITCHES. It reads main RAM only, which is the same view the
-        // Disasm panel and MemoryViewer already show — so on a //e running
-        // code out of aux, or under a Language Card bank, this can misread
-        // the opcode. The failure is benign in both directions: a missed JSR
-        // becomes a single step, and a phantom JSR arms a transient that
-        // simply never fires, leaving the user to press Stop.
+        // peekCpuView, not memRead and not peekMainRam. Not memRead because a
+        // debugger must never perturb the machine it inspects and memRead on a
+        // $C0xx address FLIPS SOFT SWITCHES; not peekMainRam because that is
+        // the flat MAIN-BANK mirror, and the CPU is very often fetching from
+        // somewhere else — Language-Card RAM (ProDOS, Pascal, most //e code),
+        // aux under RAMRD, a RamWorks bank. Deciding "is this a JSR" from the
+        // mirror failed BOTH ways: a real JSR in LC RAM stepped INTO the call,
+        // and a $20 that only exists in the ROM mirror armed a transient at an
+        // address the machine never reaches, so Step Over became an unbounded
+        // Run (bug hunt #9). peekCpuView resolves the same paging memRead
+        // resolves with no side effect (Memory.h), and it is the view the
+        // Disasm panel already lists from (snapshotCpuView) — the two agree.
         //
         // KNOWN LIMIT (bug hunt #4, item #27): the transient goes at pc + 3,
         // which assumes the callee returns to the byte after the JSR. A great
@@ -1315,7 +1330,7 @@ void EmulationController::debugStepOver()
         // `Debugger` an `M6502*` and testing SP inside `onInstruction`, on the
         // per-instruction path the performance contract guards. Deliberately
         // deferred; documented here rather than half-done.
-        if (mem.peekMainRam(pc) == 0x20) {
+        if (mem.peekCpuView(pc) == 0x20) {
             resumeAt = static_cast<uint16_t>(pc + 3);
             over     = true;
             debugger_->setTransient(resumeAt, pom2::Debugger::Reason::StepOver);

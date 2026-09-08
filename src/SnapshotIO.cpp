@@ -140,13 +140,20 @@ SnapshotWriter::SnapshotWriter(const std::string& path,
                                std::uint32_t machineId)
     : out(nullptr)
     , targetPath_(path)
-    , tempPath_(path + ".tmp")
+    // Unique per process AND per call — `<path>.tmp` was the name EVERY POM2
+    // instance derived, so two of them saving a snapshot to one path (a
+    // second window, a headless run, two /snapshot/save calls) opened the
+    // same temp with trunc: whoever renamed first published the OTHER one's
+    // bytes and still reported success, and the loser's finish() failed. Same
+    // rule, and the same swept `.pom2tmp` suffix, as every other write-back
+    // in the tree (bug hunt #9).
+    , tempPath_(pom2::tempSiblingPath(path).string())
     , fileBacked_(true)
     , machineId_(machineId)
 {
     // Clear the temp path BEFORE opening it. Callers vet the target — the
     // AI control server refuses a path outside the working directory, refuses
-    // a symlink and demands a .pom2snap extension — but `path + ".tmp"` is
+    // a symlink and demands a .pom2snap extension — but the temp name is
     // derived here and inherits none of that, and trunc follows symlinks.
     // See prepareTempPath().
     std::error_code ec;

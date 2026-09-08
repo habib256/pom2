@@ -140,9 +140,13 @@ void testRomLoadGate()
 {
     GrapplerCard card(1);
 
-    // Missing file is rejected, stub stays in place.
+    // Missing file is rejected, stub stays in place. A ROM-less card
+    // serves $FF on $C800-$CFFF, so it must not claim the /IOSTB window
+    // either — claiming first-one-wins with nothing to serve starved the
+    // card that does have an expansion ROM (bug hunt #9).
     assert(!card.loadRom("/this/path/does/not/exist.bin"));
     assert(!card.isRomLoaded());
+    assert(!card.takesC800() && "a ROM-less Grappler+ must not latch $C800");
 
     // Wrong-size payload is also rejected so a truncated dump doesn't
     // silently break software detection.
@@ -166,6 +170,7 @@ void testRomLoadGate()
     }
     assert(card.loadRom(good));
     assert(card.isRomLoaded());
+    assert(card.takesC800() && "with its EPROM the Grappler+ drives /IOSTB");
     // Slot ROM now mirrors the file bytes (page 0 of the dump).
     assert(card.slotRomRead(0x00) == 0x00);
     assert(card.slotRomRead(0x10) == 0x00);

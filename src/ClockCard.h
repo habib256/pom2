@@ -171,16 +171,23 @@ public:
     /// Test-only factory: build a ClockCard that reads time through
     /// `fn` instead of the host clock. Returns a unique_ptr so the
     /// caller can transfer it to a SlotBus.
-    static std::unique_ptr<ClockCard> makeForTest(int slot, TimeFn fn);
+    /// `probeDump=false` skips the roms/ probe so a test can build the
+    /// dump-less (synthetic ROM, empty expansion window) card on a tree
+    /// that ships the EPROM.
+    static std::unique_ptr<ClockCard> makeForTest(int slot, TimeFn fn,
+                                                  bool probeDump = true);
 
     // ─── Expansion ROM ($C800-$CFFF) ────────────────────────────────────
     // Populated only when a 2 KB Thunderware U9 dump is loaded — the synth
     // ROM and the 256 B variant leave it empty (open bus).
     uint8_t expansionRomRead(uint16_t offset) override;
     /// MAME `a2thunderclock.cpp:73` `take_c800() const override { return true; }`
-    /// — the ThunderClock+ drives /IOSTB. Without this the bus would let a
-    /// ROM-less card in a lower slot latch $C800 and starve this one.
-    bool takesC800() const override { return true; }
+    /// — the ThunderClock+ drives /IOSTB, but only when the 2 KB Thunderware
+    /// EPROM is actually loaded. With the synthetic ROM, or with the 256-byte
+    /// slot-ROM-only dump `tryLoadDump` also accepts, `expansionRomRead`
+    /// answers $FF for the whole window — latching it then starved whichever
+    /// card really serves $C800 (bug hunt #9; same rule as the Grappler+).
+    bool takesC800() const override { return expansionRomLoaded_; }
 
     /// Was the slot ROM sourced from a real Thunderware U9 dump (vs the
     /// synthetic ProDOS-signature stub)? Surfaced for the UI's About /
@@ -309,7 +316,7 @@ private:
     /// selected.
     void commitTimeSetFromShiftReg();
 
-    ClockCard(int slot, TimeFn fn);
+    ClockCard(int slot, TimeFn fn, bool probeDump = true);
 };
 
 #endif // POM2_CLOCK_CARD_H

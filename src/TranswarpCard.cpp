@@ -324,16 +324,39 @@ void TranswarpCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (slowCycles_ < 0) slowCycles_ = 0;
     if (slowCycles_ > microsToCycles(kJoySlowMicros))
         slowCycles_ = microsToCycles(kJoySlowMicros);
-    // Memory came back with whatever was at $F000 when the snapshot was
-    // taken, so track that rather than swapping: if the card was shadowing
-    // then, the restored ROM mirror already IS the card's.
-    shadowing_ = !readA2Rom_ && hasRom();
+    // WHAT THE WRITER RECORDED, not a value derived from `readA2Rom_`.
+    bool wantShadow = !readA2Rom_ && hasRom();
+    std::array<uint8_t, kRomSize> blobDisplaced{};
+    bool haveBlobDisplaced = false;
     if (version >= 2 && r.has(1)) {
-        const bool hadDisplaced = r.u8() != 0;
-        if (hadDisplaced && r.has(kRomSize)) {
-            std::memcpy(displaced_.data(), r.p + r.pos, kRomSize);
+        wantShadow = r.u8() != 0;
+        if (wantShadow && r.has(kRomSize)) {
+            std::memcpy(blobDisplaced.data(), r.p + r.pos, kRomSize);
             r.pos += kRomSize;
+            haveBlobDisplaced = true;
         }
+    }
+    // RECONCILE THE PHYSICAL WINDOW, don't just believe a flag. A snapshot
+    // or rewind restore goes through `Memory::restoreMainRam`, which skips
+    // every byte `writable[]` says is ROM — so $F000-$FFFF is NOT part of
+    // the restore and still holds whichever of the two ROMs the last
+    // engage/release left there. Deriving `shadowing_` therefore desynced
+    // the card from the machine: a rewind across a `$C072` release came back
+    // with the CARD's ROM live and the card believing it was the Apple's,
+    // and the next `engageShadow()` then captured the CARD's ROM as
+    // `displaced_` — Applesoft + the Monitor gone for the session, with
+    // `$C072` unable to put them back (bug hunt #9). `shadowing_` is only
+    // ever moved by engage/release, so it is an accurate description of the
+    // live window; swapping on the difference is what makes the two agree.
+    if (!memory_ || !hasRom()) {
+        // Nothing to swap with (a card with no Memory, or no dump): keep the
+        // recorded flag so the blob still round-trips, and take its copy of
+        // the displaced bytes since nothing else can supply them.
+        shadowing_ = wantShadow && hasRom();
+        if (haveBlobDisplaced) displaced_ = blobDisplaced;
+    } else if (wantShadow != shadowing_) {
+        if (wantShadow) engageShadow();   // captures the live Apple ROM
+        else            releaseShadow();  // puts the live copy back
     }
 }
 

@@ -23,6 +23,7 @@
 #include "ClockCard.h"
 
 #include <cassert>
+#include <filesystem>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -568,8 +569,39 @@ void testResetStopsTpAndIrq()
 
 }  // namespace
 
+// ── /IOSTB is claimed only with the 2 KB EPROM ────────────────────────────
+// (bug hunt #9.) `takesC800()` answered true unconditionally, but the
+// synthetic ROM and the 256-byte slot-ROM-only dump both leave the
+// expansion window empty ($FF), so a dump-less ThunderClock in a lower slot
+// latched $C800-$CFFF first-one-wins and starved the card that really
+// serves it. The window claim must follow the EPROM.
+void testC800ClaimFollowsTheEprom()
+{
+    // In the tree, with the shipped dump: the claim matches what the window
+    // actually serves.
+    {
+        auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+        bool serves = false;
+        for (int i = 0; i < 0x800 && !serves; ++i)
+            serves = card->expansionRomRead(static_cast<uint16_t>(i)) != 0xFF;
+        assert(card->takesC800() == serves &&
+               "the /IOSTB claim must match whether the window serves bytes");
+    }
+    // Without a dump: synthetic ROM, empty window, no claim.
+    {
+        auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42,
+                                           /*probeDump=*/false);
+        assert(!card->romFromDump());
+        assert(card->expansionRomRead(0) == 0xFF);
+        assert(!card->takesC800() &&
+               "a ThunderClock with no EPROM must not latch $C800");
+    }
+    std::printf("  ok: the $C800 claim follows the EPROM\n");
+}
+
 int main()
 {
+    testC800ClaimFollowsTheEprom();
     testSignature();
     std::printf("ProDOS detection signature: OK\n");
 

@@ -201,5 +201,37 @@ int main()
     fs::remove(tmp);
     std::printf("SnapshotIO smoke: OK (round-trip + malformed-file hardening"
                 " + machine identity)\n");
+    // ── Two writers on one path publish their OWN bytes ──────────────────
+    // (bug hunt #9.) The temp name was a fixed `<path>.tmp`, the one every
+    // POM2 instance derives, so two writers opened the same temp with trunc:
+    // whoever renamed first published the other's bytes and still reported
+    // success, and the loser's finish() failed. tempSiblingPath is unique per
+    // process and per call.
+    {
+        const fs::path both = fs::temp_directory_path() / "pom2_snapshot_two_writers.snap";
+        std::error_code ec;
+        fs::remove(both, ec);
+        const std::vector<uint8_t> aBytes(92, 0x41), bBytes(40000, 0x42);
+        pom2::SnapshotWriter a(both.string(), 1);
+        pom2::SnapshotWriter b(both.string(), 2);
+        assert(a.good() && b.good());
+        a.writeSection("AAAAAAAA", aBytes.data(), aBytes.size());
+        b.writeSection("BBBBBBBB", bBytes.data(), bBytes.size());
+        auto firstSection = [&]() {
+            pom2::SnapshotReader r(both.string());
+            std::string nm; uint32_t ln = 0;
+            if (!r.good() || !r.nextSection(nm, ln)) return std::string("<bad>");
+            return nm;
+        };
+        assert(a.finish() && "the first writer's commit failed");
+        assert(firstSection() == "AAAAAAAA" &&
+               "the first writer published the OTHER writer's snapshot");
+        assert(b.finish() && "the second writer's commit failed — its temp was taken");
+        assert(firstSection() == "BBBBBBBB");
+        assert(!fs::exists(both.string() + ".tmp"));
+        fs::remove(both, ec);
+        std::printf("  two writers on one path each publish their own bytes: OK\n");
+    }
+
     return 0;
 }

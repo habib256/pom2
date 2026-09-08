@@ -986,6 +986,133 @@ void testLatchedHitDoesNotWedgeAResume()
 
 }  // namespace
 
+// ── Step Over decodes the CPU's own view, not the main-bank mirror ───────
+// (bug hunt #9.) `debugStepOver` decided "is this a JSR" from peekMainRam —
+// the flat main-bank mirror — while the CPU is very often fetching from
+// Language-Card RAM, aux under RAMRD or a RamWorks bank. It failed both ways:
+// a real JSR in LC RAM stepped INTO the call, and a $20 that only exists in
+// the ROM mirror armed a transient at an address the machine never reaches,
+// so Step Over became an unbounded Run.
+void testStepOverDecodesTheCpuView()
+{
+    // A. JSR in LC RAM, LDA # in the ROM mirror: must be stepped OVER.
+    {
+        EmulationController ctrl;
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            Memory& mem = ctrl.memory();
+            const uint8_t rom[] = { 0xA9, 0x00, 0xEA };
+            mem.loadRomBytes(rom, 3, 0xD000);
+            (void)mem.memRead(0xC083); (void)mem.memRead(0xC083);   // LC RAM, write-enabled
+            mem.memWrite(0xD000, 0x20); mem.memWrite(0xD001, 0x00); mem.memWrite(0xD002, 0xD1);
+            mem.memWrite(0xD003, 0xEA);
+            mem.memWrite(0xD100, 0x60);
+            ctrl.cpu().setProgramCounter(0xD000);
+            assert(mem.peekCpuView(0xD000) == 0x20 && mem.peekMainRam(0xD000) == 0xA9);
+        }
+        ctrl.debugStepOver();
+        assert(ctrl.debugger().hasTransient() &&
+               "a JSR the CPU fetches from LC RAM was stepped INTO");
+        assert(ctrl.getMode() == EmulationController::Mode::Running);
+        ctrl.setMode(EmulationController::Mode::Stopped);
+    }
+    // B. JMP self-loop in LC RAM, JSR in the ROM mirror: a single step, and
+    //    the machine must be stopped again after it.
+    {
+        EmulationController ctrl;
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            Memory& mem = ctrl.memory();
+            const uint8_t rom[] = { 0x20, 0x00, 0xD1 };
+            mem.loadRomBytes(rom, 3, 0xD000);
+            (void)mem.memRead(0xC083); (void)mem.memRead(0xC083);
+            mem.memWrite(0xD000, 0x4C); mem.memWrite(0xD001, 0x00); mem.memWrite(0xD002, 0xD0);
+            ctrl.cpu().setProgramCounter(0xD000);
+            assert(mem.peekCpuView(0xD000) == 0x4C && mem.peekMainRam(0xD000) == 0x20);
+        }
+        ctrl.debugStepOver();
+        assert(!ctrl.debugger().hasTransient() &&
+               "a $20 that exists only in the ROM mirror armed a transient");
+        ctrl.tickFrame();
+        assert(ctrl.getMode() == EmulationController::Mode::Stopped &&
+               "Step Over on a non-JSR ran the machine away");
+    }
+    // C. JSR in AUX under RAMRD.
+    {
+        EmulationController ctrl;
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            Memory& mem = ctrl.memory();
+            mem.setIIEMode(true);
+            mem.memWrite(0xC005, 0);      // RAMWRT
+            mem.memWrite(0xC003, 0);      // RAMRD
+            mem.memWrite(0x3000, 0x20); mem.memWrite(0x3001, 0x00); mem.memWrite(0x3002, 0x31);
+            mem.memWrite(0x3100, 0x60);
+            ctrl.cpu().setProgramCounter(0x3000);
+            assert(mem.peekCpuView(0x3000) == 0x20 && mem.peekMainRam(0x3000) != 0x20);
+        }
+        ctrl.debugStepOver();
+        assert(ctrl.debugger().hasTransient() && "a JSR in aux was stepped INTO");
+        ctrl.setMode(EmulationController::Mode::Stopped);
+    }
+    std::printf("  ok: Step Over decodes the CPU view (LC RAM, aux)\n");
+}
+
+// ── A reset drops the latched stop, so a breakpoint on the entry fires ───
+// (bug hunt #9.) `Debugger::hit_` survived every reset verb, so the next Run
+// consumed it through debugResume() — a one-instruction amnesty at the
+// POST-RESET pc. "Break at the entry, then hit Reset" skipped that
+// breakpoint, and missed it outright when the entry runs once.
+void testResetClearsTheLatchedStop()
+{
+    auto arm = [](EmulationController& ctrl) {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        Memory& mem = ctrl.memory();
+        const uint8_t vec[2] = { 0x00, 0x09 };
+        mem.loadRomBytes(vec, 2, 0xFFFC);
+        for (int i = 0; i < 8; ++i) mem.memWrite(0x0900 + i, 0xEA);
+        mem.memWrite(0x0908, 0x4C); mem.memWrite(0x0909, 0x00); mem.memWrite(0x090A, 0x0A);
+        mem.memWrite(0x0A00, 0x4C); mem.memWrite(0x0A01, 0x00); mem.memWrite(0x0A02, 0x0A);
+        mem.memWrite(0x0800, 0xEA);
+        mem.memWrite(0x0801, 0x4C); mem.memWrite(0x0802, 0x00); mem.memWrite(0x0803, 0x08);
+        ctrl.cpu().setProgramCounter(0x0800);
+        ctrl.debugger().addBreakpoint(0x0800);
+        ctrl.debugger().addBreakpoint(0x0900);
+        ctrl.syncDebugHook();
+    };
+    struct Verb { const char* name; void (*fn)(EmulationController&); };
+    const Verb verbs[] = {
+        { "hardReset",    [](EmulationController& c) { c.hardReset(); } },
+        { "softReset",    [](EmulationController& c) { c.softReset(); } },
+        { "coldBoot",     [](EmulationController& c) { c.coldBoot(); } },
+        { "bootFromSlot", [](EmulationController& c) { (void)c.bootFromSlot(6); } },
+    };
+    for (const Verb& v : verbs) {
+        EmulationController ctrl;
+        arm(ctrl);
+        ctrl.setMode(EmulationController::Mode::Running);
+        ctrl.tickFrame();
+        assert(ctrl.debugger().stopRequested() && ctrl.debugger().lastHit().pc == 0x0800);
+        v.fn(ctrl);
+        if (ctrl.debugger().stopRequested()) {
+            std::printf("  %s left the previous stop latched\n", v.name);
+            assert(false && "a reset must drop the latched hit");
+        }
+        arm(ctrl);
+        ctrl.cpu().setProgramCounter(0x0900);   // where the reset vector points
+        ctrl.setMode(EmulationController::Mode::Running);
+        ctrl.tickFrame();
+        if (ctrl.getMode() != EmulationController::Mode::Stopped ||
+            ctrl.debugger().lastHit().pc != 0x0900 ||
+            ctrl.debugger().lastHit().reason != pom2::Debugger::Reason::Breakpoint) {
+            std::printf("  %s: the breakpoint on the reset entry was skipped (pc=$%04X)\n",
+                        v.name, ctrl.cpu().getProgramCounter());
+            assert(false && "the post-reset amnesty ate the entry breakpoint");
+        }
+    }
+    std::printf("  ok: every reset verb drops the latched stop\n");
+}
+
 int main()
 {
     testBreakpointBookkeeping();
@@ -1006,6 +1133,8 @@ int main()
     testTimeJumpClearsDebuggerTransients();
     testLatchedHitDoesNotWedgeAResume();
     testBootFromSlotResetsTheCassetteCpuSide();
+    testResetClearsTheLatchedStop();
+    testStepOverDecodesTheCpuView();
     std::printf("debugger: all assertions passed\n");
     return 0;
 }
