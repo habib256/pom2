@@ -293,6 +293,7 @@ set(SOURCES
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
     src/StorageCoordinator_Notch.cpp
+    src/StorageCoordinator_HdvBays.cpp
     src/MC6821.cpp
     src/MemoryViewer_ImGui.cpp
     src/Mockingboard.cpp
@@ -535,6 +536,7 @@ set(POM2_FRONTEND_SOURCES
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
     src/StorageCoordinator_Notch.cpp
+    src/StorageCoordinator_HdvBays.cpp
     src/CassetteDeck_ImGui.cpp
     src/CliDispatcher.cpp
     src/CliRunner.cpp
@@ -1273,6 +1275,7 @@ set(POM2_CORE_SOURCES
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
     src/StorageCoordinator_Notch.cpp
+    src/StorageCoordinator_HdvBays.cpp
     src/MC6821.cpp
     src/Mockingboard.cpp
     src/MouseCard.cpp

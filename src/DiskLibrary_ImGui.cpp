@@ -338,13 +338,19 @@ void DiskLibrary_ImGui::onHdvCtx(const std::string& path, int mountedMask, Resul
     if (ImGui::MenuItem("Mount + boot")) {
         r.requestHdvMountAndBoot = path;
     }
-    if (ImGui::MenuItem("Mount only (no boot)")) {
+    // "Mount only" ADDS the volume — into the first free bay of the SmartPort
+    // card (or the empty dedicated card) — it does not replace unit 0; with
+    // every unit taken the host says so and mounts nothing.
+    if (ImGui::MenuItem("Mount only (no boot) — into the next free unit")) {
         r.requestHdvMountOnly = path;
     }
-    if (mountedMask & 0x1) {
+    if (mountedMask) {
         ImGui::Separator();
+        // The bit set is this image's index in CurrentlyMounted::hdvs.
+        int idx = 0;
+        while (idx < 8 && !(mountedMask & (1 << idx))) ++idx;
         if (ImGui::MenuItem("Eject")) {
-            r.requestHdvEject = true;
+            r.requestHdvEject = idx;
         }
     }
 }
@@ -412,8 +418,13 @@ void DiskLibrary_ImGui::renderMountedHeader(const CurrentlyMounted& mounted,
         "3.5\" D1", [&] { r.request35EjectDrive = 0; });
     row("d352", mounted.disk35External, mounted.disk35ExternalProtected,
         "3.5\" D2", [&] { r.request35EjectDrive = 1; });
-    row("hdv", mounted.hdv, mounted.hdvProtected,
-        "HDV", [&] { r.requestHdvEject = true; });
+    for (size_t i = 0; i < mounted.hdvs.size(); ++i) {
+        const auto& h = mounted.hdvs[i];
+        std::snprintf(id, sizeof id, "hdv%zu", i);
+        std::snprintf(label, sizeof label, "HDV S%d U%d", h.slot, h.bay + 1);
+        row(id, h.path, h.protectedNow, label,
+            [&, i] { r.requestHdvEject = static_cast<int>(i); });
+    }
     if (!any) ImGui::TextDisabled("(no disk mounted)");
     ImGui::Separator();
 }
@@ -689,7 +700,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     // them. Disabled unless something is actually mounted on any path.
     const bool anyMounted =
         !mounted.diskII.empty()        || !mounted.disk35Internal.empty() ||
-        !mounted.disk35External.empty() || !mounted.hdv.empty();
+        !mounted.disk35External.empty() || !mounted.hdvs.empty();
     ImGui::BeginDisabled(!anyMounted);
     if (ImGui::Button(ICON_FA_EJECT " Eject All"))
         r.requestEjectAllDisks = true;
@@ -764,7 +775,8 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
         std::snprintf(tabLabel, sizeof(tabLabel),
                       ICON_FA_HARD_DRIVE  " HDV   (%zu)", hdv_.size());
         if (ImGui::BeginTabItem(tabLabel)) {
-            std::vector<std::string> marksHdv = { mounted.hdv };
+            std::vector<std::string> marksHdv;
+            for (const auto& h : mounted.hdvs) marksHdv.push_back(h.path);
             renderTab(hdv_, marksHdv,
                       "  (drop .hdv / .2mg into hdv/)",
                       &DiskLibrary_ImGui::onHdvLeft,
@@ -782,7 +794,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
             std::vector<std::string> marksEmu = mounted.diskII;
             marksEmu.push_back(mounted.disk35Internal);
             marksEmu.push_back(mounted.disk35External);
-            marksEmu.push_back(mounted.hdv);
+            for (const auto& h : mounted.hdvs) marksEmu.push_back(h.path);
             renderTab(floppyEmu_, marksEmu,
                       "  (the Floppy Emu's SD card — drop any image into floppyemu/)",
                       &DiskLibrary_ImGui::onFloppyEmuLeft,

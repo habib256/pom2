@@ -79,10 +79,18 @@ public:
         std::vector<DiskIICardInfo> diskIICards;
         std::string              disk35Internal;
         std::string              disk35External;
-        std::string              hdv;
         bool                     disk35InternalProtected = false;
         bool                     disk35ExternalProtected = false;
-        bool                     hdvProtected            = false;
+        /// Every mounted hard-disk volume: the dedicated block card's, and
+        /// each SmartPort bay of HDV kind that holds an image (2026-09-08 —
+        /// one card answers for up to eight). `slot`/`bay` address an eject.
+        struct HdvEntry {
+            int         slot = 0;
+            int         bay  = 0;
+            std::string path;
+            bool        protectedNow = false;
+        };
+        std::vector<HdvEntry>    hdvs;
     };
 
     struct Result {
@@ -106,8 +114,10 @@ public:
         int         request35EjectDrive  = -1;
         // ProDOS HDV / 2IMG.
         std::string requestHdvMountAndBoot;
+        /// "Mount only": ADDS the volume into the first free bay.
         std::string requestHdvMountOnly;
-        bool        requestHdvEject      = false;
+        /// Index into CurrentlyMounted::hdvs; -1 = no eject.
+        int         requestHdvEject      = -1;
         // Floppy Emu SD card (floppyemu/). The host routes these through the
         // same insert-and-boot path a positional CLI disk takes, so the file
         // decides the drive — a library click is file-driven, unlike the OLED

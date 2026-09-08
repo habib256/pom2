@@ -284,6 +284,16 @@ public:
     /// `smartPortOnly` is true/no block card exists, to SmartPort unit 0.
     /// The SmartPort unit-type replacement follows the same flush-before-
     /// destroy rule as the 3.5-inch command.
+    /// An HDV mounted from the library ADDS a volume (2026-09-08): the
+    /// dedicated block card while it is empty, else the SmartPort card's
+    /// first free bay among the units it answers for (an empty bay is given
+    /// the HDV type first). Fails, mounting nothing, when every unit holds
+    /// an image — the message says how many and what to do. Defined in
+    /// StorageCoordinator_HdvBays.cpp.
+    RoutedMediaCommandResult mountHdvIntoFreeBay(EmulationController& controller,
+                                                 Settings& settings,
+                                                 const std::string& path) const;
+
     RoutedMediaCommandResult mountHdv(
         EmulationController& controller, Settings& settings,
         const std::string& path, bool smartPortOnly) const;

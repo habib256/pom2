@@ -5,6 +5,22 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — The Disk Library adds an HDV instead of replacing it, and ejects any of them
+
+Two reports on the library's "Mounted" header. Ejecting a hard disk left
+it there: the handler knew the dedicated block card only, and on the
+fresh-install map an HDV lives on the SmartPort card's unit 0, which it
+never touched. And "Mount only" on a second HDV replaced the first, because
+every library mount went to unit 0. The header now lists every mounted
+hard-disk volume — the block card's and each SmartPort bay of HDV kind,
+labelled by slot and unit — with an eject button per row that ejects that
+bay; the HDV tab marks them all. "Mount only" goes through
+`mountHdvIntoFreeBay`: the dedicated card while it is empty, else the first
+free bay among the units the card answers for (an empty bay is given the
+HDV type first), and with every unit taken it refuses, mounting nothing,
+saying how many are in use and where to raise the count. "Mount + boot"
+still targets the boot unit. Pinned by `hdv_free_bay`.
+
 ## 2026-09-08 — The disk sounds crackled under a file manager
 
 Reported on A2 File Cmd, where nothing but the drive sounds plays. A

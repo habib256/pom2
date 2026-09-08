@@ -354,17 +354,21 @@ void MainWindow::renderDiskLibraryWindow()
                 mounted.disk35ExternalProtected = u1->isFileWriteProtected();
             }
         }
+        // Every hard-disk volume: the dedicated block card's, then each
+        // SmartPort card's bays of HDV kind (up to eight per card), so the
+        // header lists them all and the HDV tab marks them all.
         if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded()) {
-            mounted.hdv = dev->getImagePath();
-            mounted.hdvProtected = dev->isWriteProtected();
-        } else if (primarySmartPortCard()) {
-            // SmartPort-routed HDV — show as mounted in the Library so the
-            // `* ` marker matches reality regardless of which path holds it.
-            const pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0);
-            if (u && u->isLoaded() &&
-                u->kindKey() == pom2::SmartPortHdvUnit::kKindKey) {
-                mounted.hdv = u->path();
-                mounted.hdvProtected = u->isFileWriteProtected();
+            mounted.hdvs.push_back({ dev->getSlot(), 0, dev->getImagePath(),
+                                     dev->isWriteProtected() });
+        }
+        for (int s = 1; s < SlotBus::kSlotCount; ++s) {
+            auto* sp = dynamic_cast<pom2::SmartPortCard*>(
+                controller->memory().slotBus().peripheral(s));
+            if (!sp) continue;
+            for (int b = 0; b < sp->unitCount(); ++b) {
+                const pom2::SmartPortUnit* u = sp->unit(static_cast<std::size_t>(b));
+                if (u && u->isLoaded() && u->kindKey() == pom2::SmartPortHdvUnit::kKindKey)
+                    mounted.hdvs.push_back({ s, b, u->path(), u->isFileWriteProtected() });
             }
         }
     }
@@ -535,13 +539,14 @@ void MainWindow::renderDiskLibraryWindow()
         tapeStatusUntil = lastFrameTime + 4.0;
     }
     if (!r.requestHdvMountOnly.empty()) {
-        int bootSlot = 0;
-        std::string err;
-        if (routeMountHdv(r.requestHdvMountOnly, bootSlot, err)) {
-            tapeStatusMessage = "Library: HDV mounted: " + r.requestHdvMountOnly;
-        } else {
-            tapeStatusMessage = "Library: HDV mount failed: " + err;
-        }
+        // ADDS the volume into the first free bay (2026-09-08); the old
+        // route replaced whatever unit 0 held.
+        const auto m = storageCoordinator_->mountHdvIntoFreeBay(
+            *controller, *settings, r.requestHdvMountOnly);
+        tapeStatusMessage = m.ok
+            ? "Library: HDV mounted in slot " + std::to_string(m.bootSlot) + ": " +
+              r.requestHdvMountOnly
+            : "Library: HDV mount failed: " + m.error;
         tapeStatusUntil = lastFrameTime + 4.0;
     }
 
@@ -663,24 +668,25 @@ void MainWindow::renderDiskLibraryWindow()
                   : ": " + n.error);
         tapeStatusUntil = lastFrameTime + 4.0;
     }
-    if (r.requestHdvEject) {
-        if (pom2::ProDOSBlockCard* dev = hdvDevice()) {
-            // Through the coordinator, like every other eject on this panel:
-            // `ejectImage()` under the lock ran the save-on-eject rewrite of
-            // a volume up to 32 MiB with the machine and the window frozen
-            // behind it, and cleared no settings key, so the image came back
-            // on the next launch.
-            const auto e = storageCoordinator_->ejectMediaBay(
-                *controller, *settings, dev->getSlot(), 0);
-            if (e.ok) {
-                hdvPath.clear();
-                hdvStatus = "no image mounted";
-            }
-            tapeStatusMessage = e.ok
-                ? "Library: HDV ejected"
-                : "Library: HDV eject failed: " + e.error;
-            tapeStatusUntil   = lastFrameTime + 3.0;
+    if (r.requestHdvEject >= 0 &&
+        static_cast<size_t>(r.requestHdvEject) < mounted.hdvs.size()) {
+        // Whichever card and bay holds it — the dedicated card, or any of a
+        // SmartPort card's HDV units; the old handler knew the dedicated card
+        // only, so an HDV on a SmartPort unit could not be ejected from here
+        // and stayed in the header. Through the coordinator, like every
+        // other eject on this panel (unlocked write-back, settings key).
+        const auto& h = mounted.hdvs[static_cast<size_t>(r.requestHdvEject)];
+        const auto e = storageCoordinator_->ejectMediaBay(
+            *controller, *settings, h.slot, h.bay);
+        if (e.ok && hdvDevice() && hdvDevice()->getSlot() == h.slot && h.bay == 0) {
+            hdvPath.clear();
+            hdvStatus = "no image mounted";
         }
+        tapeStatusMessage = e.ok
+            ? "Library: HDV ejected (slot " + std::to_string(h.slot) + ", unit " +
+              std::to_string(h.bay + 1) + ")"
+            : "Library: HDV eject failed: " + e.error;
+        tapeStatusUntil   = lastFrameTime + 3.0;
     }
 }
 

@@ -1256,6 +1256,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Notch.cpp
+    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_HdvBays.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     # StorageCoordinator mixes the pure capture/persist half tested here with
     # mount/eject calls that go through EmulationController, so the whole
@@ -6936,6 +6937,13 @@ pom2_add_headless_test(test_iic_smartport_six_units
     LINK_LIBRARIES pom2_core_test)
 set_tests_properties(iic_smartport_six_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# An HDV mounted from the library adds a volume into the first free bay and
+# refuses, mounting nothing, when the card's units are all taken.
+pom2_add_headless_test(test_hdv_free_bay
+    NAME hdv_free_bay TIMEOUT 60
+    SOURCES hdv_free_bay_test.cpp
+    LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20

@@ -7168,6 +7168,18 @@ where a disk goes in). Eject reuses the per-tab requests
 lock is the notch (`toggleNotchPath`), its state fed by the host from the
 mounted leaf's `isFileWriteProtected()` — live truth, no stat per frame.
 
+**Every hard-disk volume, and "Mount only" adds** *(2026-09-08)*.
+`CurrentlyMounted::hdvs` lists the dedicated block card's image and every
+SmartPort bay of HDV kind that holds one (slot, bay, path, notch); the
+header draws one row each with an eject that goes to `ejectMediaBay(slot,
+bay)`, and the HDV tab marks them all. The library's "Mount only" calls
+`StorageCoordinator::mountHdvIntoFreeBay` (its own TU): the dedicated card
+while empty, else the first free bay among the card's `unitCount()` — an
+empty bay is given the HDV type through `setMediaBayType` first — and a
+refusal with nothing mounted when all are taken. "Mount + boot" keeps the
+old route (unit 0 / the dedicated card: that is what the slot ROM boots).
+Pinned by `hdv_free_bay`.
+
 **No sort selector.** It offered Name / Size / Date, and the latter two forced a
 flat list — you cannot group by folder and order by size at once, so they
 quietly fought the tree. The header row is worth more as space for search.
