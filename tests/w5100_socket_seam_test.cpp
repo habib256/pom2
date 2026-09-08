@@ -314,7 +314,10 @@ void testLoopbackDatagramIsRefused()
     device.writeValueAt(socketReg(0, kW5100SnTxWr1), 0x01);
     device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
 
-    assert(fake->lastSocket->sentBytes.empty());
+    // NOT fake->lastSocket->sentBytes: the refusal closed (freed) the socket
+    // on that SEND, so the pointer dangles — ASan caught the read nightly.
+    assert(fake->sendAttempts == 0 &&
+           "a loopback datagram must never reach a host socket");
     assert(device.socketInfo(0).status == kW5100SnSrClosed);
     assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
 

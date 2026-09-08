@@ -85,6 +85,12 @@ public:
                          uint32_t address, uint16_t port,
                          W5100SendMode mode) override
     {
+        // Same rule as connect(): the FACTORY keeps the tally, because the
+        // device may close (and free) this socket on the very SEND a test
+        // then asks about — the loopback refusal does exactly that, and
+        // `fake->lastSocket->sentBytes` was a read of freed memory (ASan,
+        // nightly 2026-09-08).
+        if (factorySendTally) ++*factorySendTally;
         ++sendCount;
         lastSendAddress = address;
         lastSendPort = port;
@@ -111,6 +117,7 @@ public:
     int bindCount = 0;
     int connectCount = 0;
     int* factoryConnectTally = nullptr;
+    int* factorySendTally = nullptr;
     int pollConnectCount = 0;
     int receiveCount = 0;
     int sendCount = 0;
@@ -127,6 +134,7 @@ public:
         socket->connectResult = nextConnectResult;
         socket->pollConnectResult = nextPollConnectResult;
         socket->factoryConnectTally = &connectAttempts;
+        socket->factorySendTally    = &sendAttempts;
         lastSocket = socket.get();
         return socket;
     }
@@ -143,6 +151,9 @@ public:
     FakeW5100HostSocket* lastSocket = nullptr;
     /// Every connect() any socket this factory made has attempted.
     int connectAttempts = 0;
+    /// Sends attempted on any socket this factory opened — survives the
+    /// socket the way connectAttempts does.
+    int sendAttempts = 0;
     W5100SocketKind lastKind = W5100SocketKind::Tcp;
     std::string lastHostname;
     int lastResolveWaitMs = 0;

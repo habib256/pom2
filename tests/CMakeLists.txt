@@ -647,7 +647,10 @@ endif()
 add_test(NAME iicplus_boot35
          COMMAND test_iicplus_boot35
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(iicplus_boot35 PROPERTIES TIMEOUT 60 LABELS slow)
+# 240, not 60: the test boots TWICE since 2026-09-08 (a write-protected and a
+# writable copy), and one instrumented boot already took 51 s on the coverage
+# runner — the nightly coverage leg timed it out at 60.
+set_tests_properties(iicplus_boot35 PROPERTIES TIMEOUT 240 LABELS slow)
 
 
 # ─── The 3.5" GCR read path, end to end, no firmware ──────────────────────
