@@ -2003,6 +2003,27 @@ Do not re-litigate without re-reading the original comment.
   `bench/pom2.py`) mount a second floppy in drive 2 at boot, so the physical
   DOS 3.3 code paths are testable without `/disk`.
 
+- 🟡 **`pom2_playtest --ssc PORT` : la Super Serial Card en slot 2, son pont
+  TCP en mode brut, pour le banc VDrive d'A2 File Cmd** *(demande du
+  2026-09-08)*. A2 File Cmd 0.6.7 embarque un pilote VSDrive a la Ammonoid
+  (`src/vsdrive.s` : le protocole du VDrive d'ADTPro sur un 6551 a
+  115 200 bauds, deux volumes ProDOS installes dans `DEVADR`/`DEVLST` le
+  temps de la session). POM2 a deja tout ce qu'il faut — `SuperSerialCard`,
+  son pont TCP `127.0.0.1:port`, le mode brut, la signature Pascal
+  `$Cn05/$07/$0B/$0C` que le pilote cherche — mais `pom2_playtest`
+  (pomadventure, `SCOSWAMP.MORE/TOOLS/pom2_playtest.cpp`) ne branche pas la
+  carte. Il faudrait : `--ssc PORT` qui plugge la SSC en slot 2 (ou 1 sur
+  un //c : son port 2) et lance le listener **en mode brut** (pas de
+  negociation telnet : le pilote n'en parle pas, un `$FF` dans un bloc
+  doit passer tel quel) ; et que le 6551 accepte la valeur de controle
+  `$10` (horloge externe x16 = 115 200) sans la rejeter. Cote A2 File Cmd
+  tout est pret : `bench/vsdrive_server.py IMAGE.po --port PORT` se
+  connecte au pont et sert l'image ; `bench/vdrive.py` attend le drapeau
+  (`Pom2(..., ssc=port)` dans `bench/pom2.py`) pour verifier que les deux
+  volumes paraissent dans la liste, qu'un fichier se copie vers et depuis
+  l'image, et qu'un hote absent donne une erreur d'E/S propre. A defaut de
+  ce banc, le pilote n'aura ete relu qu'a la main. *½ jour.*
+
 ## Out of scope
 
 Things we will not do unless explicitly requested + clear ROI.
