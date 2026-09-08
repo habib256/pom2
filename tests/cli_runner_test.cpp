@@ -159,6 +159,52 @@ void testFirstFailureShortCircuits()
           "and the machine is not started into zero RAM");
 }
 
+// `--load D000:` on a language card that powers up reading ROM and write
+// protected stored nothing, logged "wrote N bytes", and let `--run D000`
+// jump into whatever is there. It must refuse (and short-circuit) unless
+// the bytes read back; with the LC banked in read/write it succeeds.
+void testLoadAboveCfffMustReadBack()
+{
+    const fs::path blob = fs::temp_directory_path() / "pom2_cli_lc.bin";
+    {
+        std::ofstream f(blob, std::ios::binary | std::ios::trunc);
+        const unsigned char b[] = { 0xAA, 0xBB, 0xCC, 0xDD };
+        f.write(reinterpret_cast<const char*>(b), sizeof b);
+    }
+    {
+        EmulationController ctrl;
+        { auto st = ctrl.lockState(); st.cpu().setProgramCounter(0x1234); }
+        std::vector<pom2::CliAction> acts;
+        acts.push_back(loadAction(0xD000, blob));
+        pom2::CliAction run{};
+        run.kind = pom2::CliAction::Kind::Run;
+        run.addressI = 0xD000;
+        acts.push_back(run);
+        pom2::runDeferredActions(acts, ctrl);
+        auto st = ctrl.lockState();
+        check(st.memory().memRead(0xD000) != 0xAA,
+              "the byte did not land — the LC is ROM/write-protected at power-on");
+        check(st.cpu().getProgramCounter() == 0x1234,
+              "--run after a refused --load D000 never jumps");
+    }
+    {
+        EmulationController ctrl;
+        {
+            auto st = ctrl.lockState();
+            (void)st.memory().memRead(0xC083);        // LC: read RAM, write RAM
+            (void)st.memory().memRead(0xC083);
+        }
+        std::vector<pom2::CliAction> acts;
+        acts.push_back(loadAction(0xD000, blob));
+        pom2::runDeferredActions(acts, ctrl);
+        auto st = ctrl.lockState();
+        check(st.memory().memRead(0xD000) == 0xAA && st.memory().memRead(0xD003) == 0xDD,
+              "with the LC banked in read/write the same --load lands");
+    }
+    std::error_code ec;
+    fs::remove(blob, ec);
+}
+
 // A clean sequence still runs to the end — the short-circuit must not turn
 // into "the first action is the only action".
 void testHealthySequenceStillRuns()
@@ -204,6 +250,7 @@ int main()
     testLoadRefusesTheIoPage();
     testLoadBypassesAuxPaging();
     testFirstFailureShortCircuits();
+    testLoadAboveCfffMustReadBack();
     testHealthySequenceStillRuns();
     testResolveSaveTapePath();
 

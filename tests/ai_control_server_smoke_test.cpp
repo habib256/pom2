@@ -35,6 +35,7 @@
 // once, so the contract gets pinned line-by-line.
 
 #include "AiControlServer.h"
+#include "DiskIICard.h"
 #include "Apple2Display.h"
 #include "EmulationController.h"
 #include "Memory.h"
@@ -286,6 +287,46 @@ void testMemoryRoundtrip(EmulationController& ctrl, pom2::AiControlServer& /*srv
     assert(r.status == 200);
     assert(contains(r.body, "\"data\":\"AB\""));
 
+    // The two halves of the endpoint must agree on where a byte goes. The
+    // POST used to go through the CPU bus, which under RAMWRT lands in AUX,
+    // while the GET reads the raw main array: a 200 that had written nothing
+    // the guest's main-bank code could see. `bank=aux` names the other one.
+    {
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            ctrl.memory().setIIEMode(true);
+            ctrl.memory().memWrite(0xC005, 0);          // RAMWRT on
+            ctrl.memory().auxDataMutable()[0x0300] = 0x11;
+        }
+        const std::string cdBody = "{\"data\":\"CD\"}";
+        char cdReq[512];
+        std::snprintf(cdReq, sizeof(cdReq),
+            "POST /mem?addr=0x0300 HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "Content-Length: %zu\r\n\r\n%s", cdBody.size(), cdBody.c_str());
+        r = oneShot(kTestPort, cdReq);
+        assert(r.status == 200 && contains(r.body, "\"bank\":\"main\""));
+        r = oneShot(kTestPort,
+            "GET /mem?addr=0x0300&len=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+        assert(contains(r.body, "\"data\":\"CD\"") && "POST under RAMWRT must still land in main");
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            assert(ctrl.memory().auxData()[0x0300] == 0x11 && "…and leave aux alone");
+        }
+        const std::string efBody = "{\"data\":\"EF\"}";
+        char efReq[512];
+        std::snprintf(efReq, sizeof(efReq),
+            "POST /mem?addr=0x0300&bank=aux HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "Content-Length: %zu\r\n\r\n%s", efBody.size(), efBody.c_str());
+        r = oneShot(kTestPort, efReq);
+        assert(r.status == 200 && contains(r.body, "\"bank\":\"aux\""));
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            assert(ctrl.memory().auxData()[0x0300] == 0xEF);
+            assert(ctrl.memory().data()[0x0300] == 0xCD);
+            ctrl.memory().memWrite(0xC004, 0);          // RAMWRT off again
+        }
+    }
+
     // The endpoint is a RAM editor.  It must not claim success for writes
     // which Memory::memWrite rejects because $D000-$FFFF is ROM by default.
     const std::string romBody = "{\"data\":\"00\"}";
@@ -300,6 +341,46 @@ void testMemoryRoundtrip(EmulationController& ctrl, pom2::AiControlServer& /*srv
     assert(r.status == 400);
 
     std::puts("  memory roundtrip: OK");
+}
+
+// `\uXXXX` is the ONLY legal JSON spelling of a control character (RFC 8259
+// § 7) and what `json.dumps` emits for every non-ASCII byte; it used to be
+// left undecoded, so `{"raw":"\u0003"}` typed u,0,0,0,3 at the machine.
+void testJsonUnicodeEscapes(EmulationController& /*ctrl*/, pom2::AiControlServer& /*srv*/)
+{
+    auto post = [](const char* path, const std::string& body) {
+        char req[768];
+        std::snprintf(req, sizeof(req),
+            "POST %s HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: %zu\r\n\r\n%s",
+            path, body.size(), body.c_str());
+        return oneShot(kTestPort, req);
+    };
+    HttpResponse r = post("/keyboard", "{\"raw\":\"\\u0003\"}");
+    assert(r.status == 200 && contains(r.body, "\"queued\":1"));
+    r = post("/keyboard", "{\"text\":\"A\\u000DB\"}");
+    assert(r.status == 200 && contains(r.body, "\"queued\":3"));
+    // The escape must not smuggle a `..` past the path checks.
+    r = post("/disk", "{\"path\":\"\\u002E\\u002E/etc/passwd\"}");
+    assert(r.status != 200);
+    std::puts("  JSON \\uXXXX escapes: OK");
+}
+
+// A bay with nothing in it is not an eject: it used to answer 200 and then
+// clear the rewind ring — a request that moved no medium destroyed the
+// user's whole time-travel history.
+void testEjectEmptyBay(EmulationController& ctrl, pom2::AiControlServer& srv, Apple2Display& display)
+{
+    DiskIICard card(6);
+    srv.attach(&ctrl, &display, &card, nullptr);
+    const std::string body = "{\"drive\":0}";
+    char req[512];
+    std::snprintf(req, sizeof(req),
+        "POST /eject HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: %zu\r\n\r\n%s",
+        body.size(), body.c_str());
+    const HttpResponse r = oneShot(kTestPort, req);
+    assert(r.status == 400 && contains(r.body, "holds no medium"));
+    srv.attach(&ctrl, &display, nullptr, nullptr);
+    std::puts("  eject of an empty bay is refused: OK");
 }
 
 void testReset(EmulationController& /*ctrl*/, pom2::AiControlServer& /*srv*/)
@@ -787,6 +868,8 @@ int main()
     testStatusEndpoint   (ctrl, srv);
     testAuth             (ctrl, srv);
     testMemoryRoundtrip  (ctrl, srv);
+    testJsonUnicodeEscapes(ctrl, srv);
+    testEjectEmptyBay    (ctrl, srv, display);
     testReset            (ctrl, srv);
     testSpeed            (ctrl, srv);
     testSnapshotPathSafety(ctrl, srv);

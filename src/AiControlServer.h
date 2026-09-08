@@ -34,7 +34,7 @@
 //   GET  /cpu                 → CPU register dump
 //   POST /cpu                 → body {"pc":?, "a":?, "x":?, "y":?} — set regs
 //   GET  /mem?addr=N&len=N    → {"addr":N,"data":"FFEE..."} (hex, len ≤ 4096)
-//   POST /mem?addr=N          → body {"data":"FFEE..."} — bulk write (RAM)
+//   POST /mem?addr=N&bank=main|aux → body {"data":"FFEE..."} — bulk write (RAM)
 //   POST /keyboard            → body {"text":"..."} or {"raw":"..."} — paste
 //   POST /disk                → body {"slot":6,"drive":0,"path":"..."} — insert
 //   POST /eject               → body {"slot":6,"drive":0} — eject

@@ -5,6 +5,29 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #7: the agents, the CLI runner and the debugger's listing
+
+Four more hunters, on the runtime the earlier rounds had only parsed.
+First lot, the AI control endpoints and the Phase-C runner:
+
+**`POST /mem` wrote through the CPU bus.** Under RAMWRT — any 80-column
+program — the byte landed in AUX, the reply said `written:1`, and the
+`GET` twin (which reads the raw main array) handed the old byte back. The
+same defect `--load` had; the store bypasses the bus now and `bank=aux`
+names the other bank, in both directions. **`\uXXXX` was not decoded** —
+the only legal JSON spelling of a control character (RFC 8259 § 7) and
+what `json.dumps` emits for every non-ASCII byte — so `{"raw":"\u0003"}`
+typed `u0003` at the machine and an accented `/disk` path became
+`cafu00e9.dsk`; surrogate pairs included. **`/eject` on an empty bay
+answered 200** and then cleared the rewind ring — a request that moved no
+medium destroyed the time-travel history; 400 now. **`--load D000:`
+reported "wrote N bytes" on a language card that powers up reading ROM and
+write-protected**, having stored nothing, and `--run D000` then jumped into
+Applesoft; the bytes are read back and the load refused (bank the card in
+with `$C083` first). **The disassembler gave `BRK` one byte** where both
+cores consume two (the signature byte), so every listing desynced after a
+`$00`. Pinned in `ai_control_server_smoke`, `cli_runner`, `disasm_cmos`.
+
 ## 2026-09-08 — The mouse that jumped past the pointer (A2FILECMD)
 
 The AppleWin HLE mouse card's closed-loop cursor drive computed every

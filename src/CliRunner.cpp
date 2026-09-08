@@ -115,6 +115,8 @@ bool runLoad(const CliAction& a, EmulationController& emu)
         pom2::log().error("CLI", why);
         return false;
     }
+    bool     landed = true;
+    uint16_t lostAt = 0;
     {
         auto st = emu.lockState();
         for (size_t i = 0; i < bytes.size(); ++i) {
@@ -124,9 +126,32 @@ bool runLoad(const CliAction& a, EmulationController& emu)
             // wrong bank depending on what the guest happened to have set.
             // Above $CFFF the bus write is the right one: it is the language
             // card's own paging, which is what a --load at $D000 means.
-            if (addr < 0xC000) st.memory().writeRamUnchecked(addr, bytes[i]);
-            else               st.memory().memWrite(addr, bytes[i]);
+            if (addr < 0xC000) { st.memory().writeRamUnchecked(addr, bytes[i]); continue; }
+            st.memory().memWrite(addr, bytes[i]);
+            // …but the language card powers up reading ROM and WRITE
+            // PROTECTED, so at Phase-C time every byte of a `--load D000:`
+            // evaporated while the log line below still said "wrote N bytes"
+            // — and a following `--run D000` then jumped into Applesoft, or
+            // into a BRK storm on a machine with no ROM. Read it back and
+            // refuse rather than lie. (A guest that left the LC at $C081 —
+            // write RAM, read ROM — trips this too; the answer there is
+            // $C083, and a false refusal beats a silent one.)
+            if (st.memory().memRead(addr) != bytes[i]) {
+                landed = false;
+                lostAt = addr;
+                break;
+            }
         }
+    }
+    if (!landed) {
+        char why[176];
+        std::snprintf(why, sizeof(why),
+                      "--load refused: the byte at $%04X does not read back — "
+                      "the language card is not mapped as readable RAM there "
+                      "(bank it in with $C083 before loading)",
+                      static_cast<unsigned>(lostAt));
+        pom2::log().error("CLI", why);
+        return false;
     }
     char buf[128];
     std::snprintf(buf, sizeof(buf),

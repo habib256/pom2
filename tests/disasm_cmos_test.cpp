@@ -40,6 +40,13 @@ int main()
 
     int len = 0;
 
+    // BRK is TWO bytes on both cores (the signature byte); one byte desynced
+    // every line after a $00 in a listing.
+    put(0x0300, {0x00, 0x42, 0xEA});
+    assert(dis(0x0300, true,  len) == "BRK" && len == 2);
+    assert(dis(0x0300, false, len) == "BRK" && len == 2);
+    assert(dis(0x0302, true,  len) == "NOP" && len == 1);
+
     // BRA $0312: rel, 2 bytes, target = 0x0302 + 0x10.
     put(0x0300, {0x80, 0x10});
     assert(dis(0x0300, true, len) == "BRA $0312" && len == 2);

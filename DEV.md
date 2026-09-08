@@ -4174,6 +4174,17 @@ deterministic clock. Pinned by `no_slot_clock_smoke`
 
 ### AI control server (`AiControlServer`)
 
+**Three more from bug hunt #7** *(2026-09-08)*. `POST /mem` stores with
+`writeRamUnchecked` (or into `auxDataMutable()` with `bank=aux`), never
+through `memWrite`: the bus routes to AUX under 80STORE/RAMWRT, so a poke
+under an 80-column program landed in the wrong bank and the `GET` twin —
+raw main array — read the old byte back behind a 200. `jsonParseValueAt`
+decodes `\uXXXX` (surrogate pairs too, lone halves → U+FFFD, output UTF-8):
+it is the only legal spelling of a control byte and what `json.dumps` emits
+for non-ASCII, and the paste queue was being typed `u0003`. `/eject` on a
+bay with no medium answers 400 instead of "ejected" — the old 200 also
+cleared the rewind ring. Pinned in `ai_control_server_smoke`.
+
 **Four corrections from bug hunt #5** *(2026-09-08)*. `Host: localhost`
 (any case, with or without port, with or without the trailing dot) passes
 the rebinding fence: RFC 6761 § 6.3 forbids a resolver from ever sending it
@@ -7553,6 +7564,13 @@ wins). Aliases: `apple2`, `apple2plus`, `iie-u` / `iieunenhanced` /
 `chatmauve`. `cpu_mode_override` = `auto|nmos|65c02`.
 
 ## CLI (CliDispatcher)
+
+**`--load` above `$CFFF` must read back** *(2026-09-08, bug hunt #7)*. The
+language card powers up reading ROM and write-protected, so at Phase-C
+time a `--load D000:` evaporated while the log said "wrote N bytes", and
+the following `--run D000` jumped into Applesoft. `runLoad` reads each byte
+back and refuses (short-circuiting the rest, as `runDeferredActions`
+intends) with a message naming `$C083`. Pinned in `cli_runner`.
 
 `CliDispatcher` (parser, no `EmulationController` dep) + `CliRunner`
 (Phase-C runner — split out so parser is unit-testable). Three

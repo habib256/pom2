@@ -30,7 +30,8 @@ enum AddrMode {
     AM_ACC,   // accumulator, rendered "INC A"
     AM_IZP,   // (zp)        — 2 bytes
     AM_IAX,   // (abs,X)     — 3 bytes  (JMP)
-    AM_ZPR    // zp,rel      — 3 bytes  (BBR/BBS): "$zz,$tttt"
+    AM_ZPR,   // zp,rel      — 3 bytes  (BBR/BBS): "$zz,$tttt"
+    AM_BRK    // BRK         — 2 bytes: the $00 opcode + its signature byte
 };
 
 struct OpcodeInfo {
@@ -47,7 +48,7 @@ struct OpcodeInfo {
 // through a cracked loader desynced from the PC by 1-2 bytes per illegal.
 // Only the true KIL/jam column ($x2 odd rows) stays AM_IMP.
 constexpr OpcodeInfo opcodeInfo[256] = {
-    {"BRK",AM_IMP}, {"ORA",AM_IZX}, {"???",AM_IMP}, {"???",AM_IZX},  // 00-03
+    {"BRK",AM_BRK}, {"ORA",AM_IZX}, {"???",AM_IMP}, {"???",AM_IZX},  // 00-03
     {"???",AM_ZP},  {"ORA",AM_ZP},  {"ASL",AM_ZP},  {"???",AM_ZP},   // 04-07
     {"PHP",AM_IMP}, {"ORA",AM_IMM}, {"ASL",AM_IMP}, {"???",AM_IMM},  // 08-0B
     {"???",AM_ABS}, {"ORA",AM_ABS}, {"ASL",AM_ABS}, {"???",AM_ABS},  // 0C-0F
@@ -257,6 +258,16 @@ std::string disassemble6502(const uint8_t* mem, uint16_t pc, int& instrLen, bool
     case AM_IAX:
         instrLen = 3;
         std::snprintf(buf, sizeof(buf), "%s ($%04X,X)", info.mnemonic, lo | (hi << 8));
+        break;
+    case AM_BRK:
+        // BRK eats TWO bytes on both cores: the opcode plus the "signature"
+        // byte the CPU skips (M6502::BRK's extra `programCounter++`, and the
+        // pushed return address proves it). Listing it as one desynced every
+        // following line of a walk over a page of $00 — the same trap this
+        // file's header names for BBR/BBS, one opcode over. The operand is
+        // not rendered: it is data, and the byte column already shows it.
+        instrLen = 2;
+        std::snprintf(buf, sizeof(buf), "%s", info.mnemonic);
         break;
     case AM_ZPR: {
         // BBR/BBS: zp byte (lo) + relative byte (hi). 3 bytes total; target

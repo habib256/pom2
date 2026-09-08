@@ -175,6 +175,46 @@ std::string queryParam(const std::string& q, const std::string& key)
     return {};
 }
 
+/// Read the four hex digits of a `\uXXXX` escape starting at `at`.
+bool jsonHex4(const std::string& s, size_t at, uint32_t& cp)
+{
+    if (at + 4 > s.size()) return false;
+    uint32_t v = 0;
+    for (int k = 0; k < 4; ++k) {
+        const char c = s[at + k];
+        uint32_t d;
+        if      (c >= '0' && c <= '9') d = static_cast<uint32_t>(c - '0');
+        else if (c >= 'a' && c <= 'f') d = static_cast<uint32_t>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') d = static_cast<uint32_t>(c - 'A' + 10);
+        else return false;
+        v = (v << 4) | d;
+    }
+    cp = v;
+    return true;
+}
+
+/// Append one code point as UTF-8 — the encoding the host filesystem and the
+/// Apple paste queue both take bytes in.
+void jsonAppendUtf8(std::string& out, uint32_t cp)
+{
+    if (cp < 0x80) { out.push_back(static_cast<char>(cp)); return; }
+    if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        return;
+    }
+    if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        return;
+    }
+    out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+}
+
 /// Minimal extractor for `"key":<literal>` and `"key":"<quoted>"` shapes.
 /// POM2's API surface uses flat one-level JSON only — no nested objects or
 /// arrays — so a hand-rolled scanner is enough and avoids dragging in a
@@ -200,6 +240,42 @@ std::string jsonParseValueAt(const std::string& body, size_t pos)
                     case '"': out.push_back('"');  break;
                     case '\\': out.push_back('\\'); break;
                     case '/':  out.push_back('/');  break;
+                    case 'u': {
+                        // NOT a nicety: RFC 8259 § 7 forbids a raw control
+                        // byte inside a JSON string, so `\u0003` is the ONLY
+                        // legal spelling of Ctrl-C for /keyboard — and
+                        // `json.dumps` (ensure_ascii, its default) spells
+                        // every non-ASCII byte that way too, which is how an
+                        // accented /disk path arrived as `cafu00e9.dsk`.
+                        // Without this arm the default below dropped the
+                        // backslash and the machine was typed "u0003".
+                        uint32_t cp = 0;
+                        if (!jsonHex4(body, pos + 2, cp)) {
+                            out.push_back(body[pos + 1]);   // malformed — as before
+                            break;
+                        }
+                        size_t next = pos + 6;
+                        // A code point above the BMP arrives as a surrogate
+                        // PAIR; decoding the halves separately yields two
+                        // invalid sequences instead of one character.
+                        if (cp >= 0xD800 && cp <= 0xDBFF && next + 1 < n &&
+                            body[next] == '\\' && body[next + 1] == 'u') {
+                            uint32_t lo = 0;
+                            if (jsonHex4(body, next + 2, lo) &&
+                                lo >= 0xDC00 && lo <= 0xDFFF) {
+                                cp = 0x10000u + ((cp - 0xD800u) << 10) +
+                                     (lo - 0xDC00u);
+                                next += 6;
+                            }
+                        }
+                        // A lone half is not a character; U+FFFD keeps the
+                        // string well-formed instead of emitting a byte
+                        // sequence no filesystem call can use.
+                        if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+                        jsonAppendUtf8(out, cp);
+                        pos = next;
+                        continue;                      // pos already advanced
+                    }
                     default:   out.push_back(body[pos + 1]); break;
                 }
                 pos += 2;
@@ -1139,21 +1215,35 @@ void AiControlServer::handleMemSet(socket_t fd, const Request& req)
         sendJsonError(fd, 400, "write targets I/O or ROM; RAM ends at $BFFF");
         return;
     }
+    // The same `bank` param the GET twin takes. Without it there was no way
+    // to address aux at all, and — worse — the two halves of the endpoint
+    // disagreed about where a byte had gone (see the store below).
+    const bool useAux = (queryParam(req.query, "bank") == "aux");
     size_t written = 0;
     {
         auto st = ctrl_->lockState();
         Memory& mem = st.memory();
+        uint8_t* const aux = useAux ? mem.auxDataMutable() : nullptr;
         for (size_t i = 0; i < bytes.size(); ++i) {
-            // memWrite respects ROM protection and routes through soft-
-            // switches; that's exactly what we want for "drive the Apple
-            // II as a peer" — agents should not be able to overwrite the
-            // monitor ROM by accident.
-            mem.memWrite(static_cast<uint16_t>(addr + i), bytes[i]);
+            const uint16_t a = static_cast<uint16_t>(addr + i);
+            // NOT memWrite(): that is the CPU BUS, and below $C000 it routes
+            // to AUX whenever the guest happens to hold 80STORE/RAMWRT. An
+            // agent poking a loader into $0300 while the guest had RAMWRT set
+            // landed it in aux, was told `written:3`, and then read the OLD
+            // bytes back through the GET twin — which reads the raw main
+            // array. A silent failure behind a 200, and no way to say which
+            // bank you meant. Same defect and same fix as `--load` in
+            // CliRunner.cpp. The $C000 refusal above means every address here
+            // is plain RAM, so the unchecked store is the honest one.
+            if (aux) aux[a] = bytes[i];
+            else     mem.writeRamUnchecked(a, bytes[i]);
             ++written;
         }
     }
     std::ostringstream oss;
-    oss << "{\"addr\":" << addr << ",\"written\":" << written << "}";
+    oss << "{\"addr\":" << addr
+        << ",\"bank\":\"" << (useAux ? "aux" : "main") << "\""
+        << ",\"written\":" << written << "}";
     sendJsonOk(fd, oss.str());
 }
 
@@ -1391,6 +1481,7 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
     bool noCard = false;
     bool wrongSlot = false;
     bool ejected = false;
+    bool wasEmpty = false;
     int  boundSlot = -1;
     std::string errMsg;
     // Two-phase, like the insert path above: `ejectDisk` re-encodes the dirty
@@ -1412,6 +1503,11 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
             // flushed) the slot-5 primary while confirming slot 6.
             boundSlot = card->getSlot();
             if (slot != -1 && slot != boundSlot) wrongSlot = true;
+            // A bay with nothing in it is not an eject. It used to answer
+            // 200 "ejected" — and then clear the rewind ring at the bottom
+            // of this handler, so a request that moved no medium at all
+            // destroyed the user's whole time-travel history.
+            else if (!card->isDiskLoaded(static_cast<int>(drive))) wasEmpty = true;
             else {
                 pending = card->takeEjectWriteBack(static_cast<int>(drive));
                 ejected = true;
@@ -1437,6 +1533,11 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
     if (wrongSlot) {
         sendJsonError(fd, 400, "Disk II endpoints drive the primary card, "
                       "which is in slot " + std::to_string(boundSlot));
+        return;
+    }
+    if (wasEmpty) {
+        sendJsonError(fd, 400, "drive " + std::to_string(drive) + " in slot " +
+                      std::to_string(boundSlot) + " holds no medium");
         return;
     }
     if (changed) {
