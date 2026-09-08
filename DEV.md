@@ -1868,6 +1868,24 @@ why those banks stay zero even with a music driver running.
 
 ### Floppy mechanical sounds
 
+**No crackle** *(2026-09-08, A2 File Cmd report: "crackling, and only the
+disk sounds play")*. Three discontinuities in the rendered stream, measured
+by `floppy_sound_crackle` (a frame-to-frame jump above twice the samples'
+own largest internal step): (1) every transition of the step voice — a seek
+class switch, seek → landing click, a click retriggered mid-decay, click →
+seek — reset the cursor to frame 0 with the old voice cut mid-wave, up to
+0.047 full-scale; a file manager's scattered block reads did it twice per
+burst, 7 times in two seconds. The outgoing voice now moves to a fade slot
+(`retireStepVoice`, a 96-frame linear ramp) while the new one starts, and a
+freshly started seek loop ramps in over the same window — a crossfade.
+(2) `applyLoopCrossfade` blended the tail toward frame `window-1` and then
+wrapped to frame 0, which only moved the wrap discontinuity; it now drops
+the head so the loop runs `[window, n)` and the wrap lands on the frame
+that naturally follows the blended tail — the spinning motor's 5 Hz tick
+went from 0.0098 to 0.0032, the sample's own step. (3) A loop-clean sample
+therefore starts mid-wave, hence the attack ramp in (1). Before: 2 and 7
+jumps in the seek and file-manager scenarios; after: none in four.
+
 `FloppySoundDevice`. Port of MAME `imagedev/floppy.cpp::
 floppy_sound_device`. 20 source WAVs (10 × 5.25" + 10 × 3.5") in
 `roms/floppy_samples/`, BSD-3-Clause.

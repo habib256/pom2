@@ -1656,6 +1656,33 @@ add_test(NAME floppy_sound_smoke
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(floppy_sound_smoke PROPERTIES TIMEOUT 10)
 
+# The floppy sounds must not crackle (A2 File Cmd report, 2026-09-08): loop
+# wraps, retriggered clicks and seek-sample switches, measured as output
+# discontinuities against the samples' own largest internal step.
+add_executable(test_floppy_sound_crackle
+    floppy_sound_crackle_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
+)
+target_include_directories(test_floppy_sound_crackle PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_floppy_sound_crackle PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_floppy_sound_crackle PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_floppy_sound_crackle PRIVATE winmm)
+endif()
+add_test(NAME floppy_sound_crackle COMMAND test_floppy_sound_crackle
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(floppy_sound_crackle PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+
 
 # ─── AudioDevice + dual FloppySoundDevice mixer smoke test ───────────────
 # Pins (a) two FloppySoundDevice instances coexisting with different

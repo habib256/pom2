@@ -262,6 +262,29 @@ private:
     uint64_t seekTimeoutFrame_ = 0;
     bool     anyStepSeen_ = false;
 
+    // The step voice that was just replaced, fading out (2026-09-08). Every
+    // transition of the step voice — a seek class switch, seek → landing
+    // click, a click retriggered mid-decay, click → seek — used to reset the
+    // cursor to frame 0 of the new sample with the old one cut mid-wave: a
+    // hard discontinuity, up to 0.047 full-scale, the "crackle" a file
+    // manager's scattered block reads produced twice per burst (pinned by
+    // `floppy_sound_crackle`). The outgoing voice now keeps playing for
+    // kFadeFrames with a linear ramp to zero while the new one starts.
+    int      fadeIdx_    = -1;
+    double   fadePos_    = 0.0;
+    double   fadePitch_  = 1.0;
+    bool     fadeLoop_   = false;
+    int      fadeLeft_   = 0;       // frames of ramp remaining
+    /// The new seek loop's attack: a loop-clean sample starts at its old
+    /// frame `window`, mid-wave, so a fresh loop voice ramps in over the
+    /// same kFadeFrames the retired one ramps out — a crossfade.
+    int      attackLeft_ = 0;
+    static constexpr int kFadeFrames = 96;   // ~2.2 ms at 44.1 kHz
+
+    /// Move the live step voice into the fade slot (if it is playing) so the
+    /// caller can start a new one without a cut. Audio thread only.
+    void retireStepVoice();
+
     // Click (insert / eject).
     double clickPos_ = 0.0;
     bool   clickActive_ = false;

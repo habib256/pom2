@@ -5,6 +5,21 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — The disk sounds crackled under a file manager
+
+Reported on A2 File Cmd, where nothing but the drive sounds plays. A
+probe that counts frame-to-frame jumps larger than anything inside the
+MAME samples found the mechanism: every change of the step voice — a seek
+class switch, the landing click, a click retriggered while the previous
+one decayed, click back to seek — cut the old sample mid-wave and started
+the new one at frame 0, up to 0.047 full-scale; a file manager's bursts of
+block reads separated by thinking time did it twice per burst. The
+replaced voice fades out over 2 ms while the new one starts, a new seek
+loop fades in, and the motor loops are made loop-clean the right way round
+(the old crossfade had only moved the wrap tick). Pinned by
+`floppy_sound_crackle`: seek scenario 2 → 0 discontinuities, file-manager
+scenario 7 → 0, motor wrap tick 3× smaller.
+
 ## 2026-09-08 — Six HDVs on a //c: the rear-port chain takes eight units
 
 The //c has no slot: the built-in SmartPort card's units reach the machine's

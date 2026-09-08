@@ -40,6 +40,14 @@ namespace {
 // N = ~3 ms at the sample's native rate (44.1 kHz → 132 frames). Short
 // enough that the boundary isn't audibly amplitude-modulated, long
 // enough to mask the 1–3 % step jumps.
+// Make a recording loop-clean: fold its first `window` frames into its last
+// `window` frames, then DROP the head, so the loop runs [window, n) and the
+// wrap lands on frame `window` — the frame that naturally follows the
+// blended tail's end (≈ frame window-1). The previous form blended the tail
+// toward frame window-1 and then wrapped to frame 0, which only moved the
+// discontinuity: 525_spin_loaded still ticked once per 200 ms revolution
+// (measured 0.0098 full-scale at the wrap, 3× the sample's own largest
+// step), which is what a spinning motor sounded like under a file manager.
 void applyLoopCrossfade(std::vector<float>& data)
 {
     if (data.size() < 8) return;
@@ -50,6 +58,7 @@ void applyLoopCrossfade(std::vector<float>& data)
         const size_t k = n - window + i;
         data[k] = data[k] * (1.0f - alpha) + data[i] * alpha;
     }
+    data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(window));
 }
 }  // namespace
 
@@ -344,10 +353,13 @@ void FloppySoundDevice::drainCommands()
                     && samples_[seekIdx].nominalMs > 0.0) {
                     audioInSeek_   = true;
                     if (stepSampleIdx_ != seekIdx) {
-                        // Sample switched (e.g. step rate accelerated) —
-                        // reset cursor so the new sample starts cleanly.
+                        // Sample switched (e.g. step rate accelerated, or
+                        // a click was playing) — the old voice fades out
+                        // while the new sample starts from its head.
+                        retireStepVoice();
                         stepSampleIdx_ = seekIdx;
                         stepPos_       = 0.0;
+                        attackLeft_    = kFadeFrames;
                     }
                     stepPitch_ = samples_[seekIdx].nominalMs / gapMs;
                     // Belt-and-braces: never let pitch produce a non-
@@ -360,11 +372,14 @@ void FloppySoundDevice::drainCommands()
                 }
                 // Fall through to single-step on out-of-range rate.
             }
-            // Single step click.
+            // Single step click. Whatever was playing — a seek loop, or the
+            // previous click still decaying — fades out under it.
+            retireStepVoice();
             audioInSeek_   = false;
             stepSampleIdx_ = STEP_1_1;
             stepPos_       = 0.0;
             stepPitch_     = 1.0;
+            attackLeft_    = 0;          // a one-shot carries its own attack
             break;
         }
         case CmdKind::Click: {
@@ -376,6 +391,19 @@ void FloppySoundDevice::drainCommands()
     }
     // Keep the capacity, drop the contents (no free on the audio thread).
     cmdScratch_.clear();
+}
+
+void FloppySoundDevice::retireStepVoice()
+{
+    if (stepSampleIdx_ < 0) return;
+    const Sample& s = samples_[stepSampleIdx_];
+    const bool loop = audioInSeek_ && stepSampleIdx_ >= SEEK_2MS && stepSampleIdx_ <= SEEK_20MS;
+    if (!loop && stepPos_ >= static_cast<double>(s.data.size())) return;   // already silent
+    fadeIdx_   = stepSampleIdx_;
+    fadePos_   = stepPos_;
+    fadePitch_ = stepPitch_;
+    fadeLoop_  = loop;
+    fadeLeft_  = kFadeFrames;
 }
 
 void FloppySoundDevice::mixOneShot(int sampleIdx, double& pos, double pitch,
@@ -504,17 +532,58 @@ void FloppySoundDevice::fillAudioBuffer(float* output, int frameCount)
     const uint64_t nowEnd = nowStart + static_cast<uint64_t>(frameCount);
     if (audioInSeek_ && nowEnd >= seekTimeoutFrame_) {
         // Seek window ended mid-buffer — terminate seek and fire a final
-        // step click for the "landing" sound.
+        // step click for the "landing" sound; the loop fades out under it.
+        retireStepVoice();
         audioInSeek_   = false;
         stepSampleIdx_ = STEP_1_1;
         stepPos_       = 0.0;
         stepPitch_     = 1.0;
     }
+    // The retired voice: its own sample, its own cursor, a linear ramp to
+    // silence over kFadeFrames, then gone.
+    if (fadeIdx_ >= 0 && fadeLeft_ > 0) {
+        const int n = std::min(frameCount, fadeLeft_);
+        // Ramp applied per frame: render into a scratch window, then scale.
+        float tmp[512];
+        int done = 0;
+        while (done < n) {
+            const int chunk = std::min(n - done, 512);
+            std::fill(tmp, tmp + chunk, 0.0f);
+            if (fadeLoop_) mixLoop(fadeIdx_, fadePos_, fadePitch_, tmp, chunk, gain * 0.9f);
+            else           mixOneShot(fadeIdx_, fadePos_, fadePitch_, tmp, chunk, gain * 0.9f);
+            for (int i = 0; i < chunk; ++i) {
+                const float ramp = static_cast<float>(fadeLeft_ - i) / static_cast<float>(kFadeFrames);
+                output[done + i] += tmp[i] * ramp;
+            }
+            fadeLeft_ -= chunk;
+            done += chunk;
+        }
+        if (fadeLeft_ <= 0) fadeIdx_ = -1;
+    }
     if (stepSampleIdx_ >= 0) {
         const Sample& s = samples_[stepSampleIdx_];
         if (audioInSeek_ && stepSampleIdx_ >= SEEK_2MS && stepSampleIdx_ <= SEEK_20MS) {
             // Seek samples are also looped — mid-seek they keep ticking.
-            mixLoop(stepSampleIdx_, stepPos_, stepPitch_, output, frameCount, gain * 0.9f);
+            // A loop that has just started ramps in (see attackLeft_).
+            if (attackLeft_ > 0) {
+                float tmp[512];
+                int done = 0;
+                while (done < frameCount) {
+                    const int chunk = std::min(frameCount - done, 512);
+                    std::fill(tmp, tmp + chunk, 0.0f);
+                    mixLoop(stepSampleIdx_, stepPos_, stepPitch_, tmp, chunk, gain * 0.9f);
+                    for (int i = 0; i < chunk; ++i) {
+                        const float ramp = attackLeft_ > 0
+                            ? static_cast<float>(kFadeFrames - attackLeft_) / static_cast<float>(kFadeFrames)
+                            : 1.0f;
+                        output[done + i] += tmp[i] * ramp;
+                        if (attackLeft_ > 0) --attackLeft_;
+                    }
+                    done += chunk;
+                }
+            } else {
+                mixLoop(stepSampleIdx_, stepPos_, stepPitch_, output, frameCount, gain * 0.9f);
+            }
         } else if (stepPos_ < static_cast<double>(s.data.size())) {
             mixOneShot(stepSampleIdx_, stepPos_, stepPitch_,
                        output, frameCount, gain * 0.9f);
