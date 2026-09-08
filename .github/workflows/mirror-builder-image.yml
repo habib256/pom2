@@ -1,0 +1,54 @@
+# Mirror the bionic builder image into THIS repository's GHCR namespace.
+#
+# The flagship Linux package (release.yml `linux`) is built inside
+# ghcr.io/habib256/pom1-bionic-builder — an image owned by ANOTHER repository.
+# It is digest-pinned, so it cannot change under us, but it can VANISH from
+# our point of view: GHCR scopes access per package, and a permission change
+# over in pom1 turns our `docker pull` into a 403 with the tag already pushed
+# (release.yml's own comment warns of it). A copy that lives with pom2 is a
+# dependency pom2 controls. Run this by hand ("Run workflow"), read the digest
+# it prints, and pin release.yml's BUILDER_IMAGE to it. Re-run only when the
+# builder image is deliberately rebuilt — the copy is meant to be boring.
+name: Mirror the bionic builder image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Image to mirror (repository@sha256:… or repository:tag)'
+        required: true
+        default: 'ghcr.io/habib256/pom1-bionic-builder@sha256:c44b786517f041f779b082b813e84a17b141db3983fc0b28f2c3e4deedeb4cca'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull, retag, push
+        env:
+          SOURCE: ${{ github.event.inputs.source }}
+          TARGET: ghcr.io/${{ github.repository_owner }}/pom2-bionic-builder
+        run: |
+          set -eu
+          docker pull "$SOURCE"
+          STAMP=$(date -u +%Y%m%d)
+          docker tag "$SOURCE" "$TARGET:bionic-$STAMP"
+          docker tag "$SOURCE" "$TARGET:latest"
+          docker push "$TARGET:bionic-$STAMP"
+          docker push "$TARGET:latest"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$TARGET:bionic-$STAMP" | sed 's/.*@//')
+          echo "Mirrored $SOURCE"
+          echo "  → $TARGET:bionic-$STAMP"
+          echo "  → $TARGET@$DIGEST"
+          echo "Pin release.yml:  BUILDER_IMAGE: $TARGET@$DIGEST"
+          echo "## Builder image mirrored" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "BUILDER_IMAGE: $TARGET@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

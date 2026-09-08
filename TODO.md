@@ -276,39 +276,41 @@ moving tag broke the v0.9.0 build — and it touches a file only a release runs,
 so **the fix has never been executed**. That is not a hypothetical; it is the
 same shape as the ratchet that returned 0.*
 
-- 🔴 **A scheduled release rehearsal.** `grep stage_data|build_dist|
-  package_macos|package_windows|build_appimage .github/workflows/ci.yml` → zero
-  hits; `release.yml` has seven. Eleven packaging paths run **only** on a tag.
-  Add `schedule:` to `release.yml`; the `publish` job is already gated on
-  `github.ref_type == 'tag'`, so nothing publishes. Generalisation worth
-  keeping: *every path that only runs at release needs a scheduled dry run.*
-  *~½ d.*
-- 🔴 **Pin the moving dependencies.** Each is a release-day landmine, and the
-  publish job requires **exactly seven artifacts** (`release.yml:883`), so one
-  dead job kills the whole Release:
-  * `emsdk version: latest` (`ci.yml:404`, `release.yml:801`) — a wholly
-    unpinned compiler;
-  * `debian:bookworm` floating (`release.yml:416,538`, `pi400.yml:76`) — base
-    for two of four Linux packages, plus unversioned `apt-get` inside them;
-  * every `actions/*` pinned by moving major tag, with `checkout@v4` in ci.yml
-    against `@v5` in release.yml — drift already visible;
-  * the cross-repo GHCR image `habib256/pom1-bionic-builder` (digest-pinned,
-    but a permission change in **another repo** breaks the flagship package —
-    the workflow's own comment warns of the 403).
-  Already good and worth not disturbing: the imgui commit assertion, the
-  sha256-checked AppImage tools, GLFW's tag+hash, the vcpkg baseline, the Tom
-  Harte per-file manifest. *~2-3 h.*
-- 🟠 **`build_dist.sh` (.deb + tarball) runs in no workflow and is advertised at
-  README:500.** Add it to the rehearsal or delete the claim. `stage_data.sh
-  --self-test` is likewise called by nothing outside `bundle_manifest`. *~3 h.*
-- 🟠 **`bundle_manifest` is thinner than it reads.** It verifies the manifest
-  parses and every listed path exists, and negative-tests **only `DENY[0]`**
-  (`stage_data.sh:174-186`). It never plants a `denyglob` hit, never tests the
-  `wasm`-only rejection path, never cross-checks that CMake's `install()` rules
-  and the WASM `--preload-file` list — which parse the same manifest
-  independently — agree with the shell script, and never runs against a real
-  `.app` / `.zip` / AppImage. Given G1, this is the guard that must actually
-  hold. *~3 h.*
+- ✅ **A scheduled release rehearsal** *(2026-09-08)*. `release.yml` runs
+  every Monday 04:41 UTC from `main`: all seven packages, the quality gate,
+  `build_dist.sh`, thrown away — `publish` stays gated on
+  `github.ref_type == 'tag'`. The concurrency group carries the event name
+  so a rehearsal and a tag run never cancel each other. v0.9.1's first run
+  is why: the quality gate had outgrown its 90-minute budget and nothing
+  had run it between tags. Generalisation kept: *every path that only runs
+  at release needs a scheduled dry run.*
+- ✅ **Pin the moving dependencies** *(2026-09-08)*. Every `uses:` in the
+  three workflows is a 40-hex commit SHA with the version it was in a
+  trailing comment (`checkout` v5.1.0, `cache` v4.3.0, `upload-artifact` /
+  `download-artifact` v5.0.0, `upload-pages-artifact` v3.0.1,
+  `deploy-pages` v4.0.5, `setup-emsdk` v14); emsdk was already `6.0.9`,
+  `debian:bookworm-20260824` already dated + digest. Guarded by
+  `tools/check_workflow_pins.sh` in the CI Linux job, falsifiable (unpin one
+  and it fails). Still open, below: the cross-repo builder image.
+- 🟠 **The bionic builder image lives in another repository.**
+  `ghcr.io/habib256/pom1-bionic-builder` is digest-pinned but scoped per
+  package: a permission change in pom1 turns the flagship Linux job into a
+  403. `mirror-builder-image.yml` (dispatch-only) copies it into
+  `ghcr.io/habib256/pom2-bionic-builder` and prints the digest; **run it
+  once, then repin `release.yml`'s `BUILDER_IMAGE` to the copy**. *~15 min
+  plus a rehearsal run to prove the pull.*
+- ✅ **`build_dist.sh` runs in a workflow** *(2026-09-08)*: the `dist` job of
+  `release.yml`, on every run, uploads nothing and gates nothing — it checks
+  the tarball and the `.deb` exist and that the tarball carries `roms/`.
+- 🟠 **`bundle_manifest` is thinner than it reads** — re-read 2026-09-08:
+  the self-test *does* plant a deny leak (top-level and five deep), a
+  differently-cased `denyglob` file and a matching directory, and proves
+  `stage()` prunes both. What it still never does: exercise the `wasm`-only
+  rejection path, cross-check that CMake's `install()` rules and the emcc
+  `--preload-file` list — which parse the same manifest independently —
+  agree with the shell script, or run against a real `.app` / `.zip` /
+  AppImage (the per-job `--verify` in release.yml does that last one on
+  every staged tree). *~2 h for the first two.*
 - 🟡 **Version strings.** The single-source-of-truth claim **holds for compiled
   code** and the release even asserts tag == `PROJECT_VERSION`. It does not
   hold outside code: README carries **12** hardcoded `v0.9.0` strings including

@@ -50,7 +50,7 @@ jobs:
     name: Linux build + ctest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Cheap, and first: TODO.md's standing rule is "do not grow the
       # god-objects" (target < 3000 lines). It had no mechanism, and
@@ -60,6 +60,12 @@ jobs:
       # when someone should be asked whether the code belongs in a new TU.
       - name: File-size ratchet
         run: tools/check_file_sizes.sh
+
+      # Every action and container image in .github/workflows is pinned to a
+      # commit SHA / a digest (G4: a dependency that moves between two tags is
+      # a release-day landmine). Falsifiable: unpin one and this fails.
+      - name: Workflow pins
+        run: tools/check_workflow_pins.sh
 
       - name: Install build dependencies
         run: |
@@ -86,7 +92,7 @@ jobs:
       # SHA-256-pinned vectors that only change when a manifest does, so a
       # normal run restores it and opens no socket.
       - name: Tom Harte ProcessorTests corpus
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: build/tests/tomharte
           key: tomharte-${{ hashFiles('tests/tomharte_6502.manifest', 'tests/tomharte_wdc65c02.manifest') }}
@@ -143,7 +149,7 @@ jobs:
       # this is the CI build itself, for bisecting a regression or handing
       # someone the exact binary a run produced.
       - name: Upload the Linux build
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-linux-x86_64-ci
           path: build/POM2
@@ -197,7 +203,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Fetch Dear ImGui (pinned)
         run: tools/fetch_imgui_pinned.sh
@@ -264,7 +270,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Fetch Dear ImGui (pinned)
         shell: bash
@@ -336,7 +342,7 @@ jobs:
             filter: '(rewind_transport|ui_worker_contention|audio_source_teardown|ai_control_server_smoke|sp_over_slip_link|printer_history|thread_guard|fujinet_net_device|child_process)'
             targets: '--target test_rewind_transport test_ui_worker_contention test_audio_source_teardown test_ai_control_server test_sp_over_slip_link test_printer_history test_thread_guard test_fujinet_net_device test_child_process'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install build dependencies
         run: |
@@ -362,7 +368,7 @@ jobs:
       # key carries the sanitizer flavour so the two legs never share objects
       # compiled with different instrumentation.
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.ccache
           key: ccache-san-${{ matrix.name }}-${{ github.sha }}
@@ -439,7 +445,7 @@ jobs:
     name: WASM verification build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Fetch Dear ImGui (pinned)
         run: |
@@ -452,7 +458,7 @@ jobs:
           test "$(git -C imgui rev-parse HEAD)" = "$IMGUI_COMMIT"
 
       - name: Set up Emscripten SDK
-        uses: mymindstorm/setup-emsdk@v14
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           # Pinned to the same version release.yml publishes with: a CI job
           # that passes on a different toolchain than the release build is not
@@ -472,7 +478,7 @@ jobs:
           ls -lh wasm/POM2.wasm wasm/POM2.js wasm/index.html
 
       - name: Upload the WASM bundle
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-wasm-bundle
           path: |
@@ -511,7 +517,7 @@ jobs:
 
       - name: Upload the Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: _site
 
@@ -536,7 +542,7 @@ jobs:
     name: Line coverage (floor)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install build dependencies
         run: |
@@ -585,4 +591,4 @@ jobs:
       cancel-in-progress: false
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

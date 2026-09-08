@@ -5,6 +5,23 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — G4: a release that can be rehearsed
+
+Eleven packaging paths ran only on a tag, and v0.9.1's first run showed
+what that costs: the quality gate had outgrown its 90-minute budget and
+nobody could know before the tag was pushed. `release.yml` now runs every
+Monday from `main` — all seven packages, the gate, `build_dist.sh` — and
+throws the result away, `publish` being gated on the tag; its concurrency
+group carries the event name so a rehearsal and a tag run never cancel
+each other. Every `uses:` in the three workflows is pinned to a commit SHA
+(the version it was in a trailing comment), and `tools/check_workflow_pins.sh`
+in the CI Linux job refuses a moving tag, an undigested base image or a
+`version: latest`. `build_dist.sh`, advertised in the README and run by
+nothing, is rehearsed by a `dist` job that uploads and gates nothing. The
+one landmine left is the bionic builder image, owned by another repository:
+`mirror-builder-image.yml` copies it into pom2's own GHCR namespace on
+demand, and the `linux` job repins to the copy once it has run.
+
 ## 2026-09-08 — `pom2_playtest --ssc PORT`: the Super Serial Card for A2 File Cmd's VDrive bench
 
 A2 File Cmd ships a VSDrive driver (ADTPro's VDrive protocol on a 6551 at

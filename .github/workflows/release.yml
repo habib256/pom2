@@ -44,6 +44,17 @@
 # Triggers: push a version tag to cut a release; "Run workflow" for a dry run
 # (artifacts only, no Release). Both tag conventions fire, matching POM1: the
 # `v`-prefixed form (v0.8) and the bare numeric form (0.8).
+#
+# And a WEEKLY REHEARSAL (since 2026-09-08): every packaging path here runs
+# only at release time, so a landmine — a base image gone, an action retired,
+# a job outgrowing its timeout — was found on release day with the tag already
+# pushed. v0.9.1's first run died exactly that way: the quality gate had
+# outgrown its 90-minute budget, unseen, because nothing ran it between tags.
+# The schedule builds all seven packages from `main` and throws them away;
+# `publish` is gated on `github.ref_type == 'tag'`, so a rehearsal can never
+# create a Release. Generalisation: every path that only runs at release needs
+# a scheduled dry run. Not the top of the hour — GitHub queues cron runs and
+# :00 is the busiest slot.
 name: Release packages
 
 on:
@@ -52,6 +63,15 @@ on:
       - 'v[0-9]*'        # v0.8
       - '[0-9]*'         # 0.8
   workflow_dispatch:
+  schedule:
+    - cron: '41 4 * * 1'   # Mondays 04:41 UTC — the rehearsal
+
+# One group per event AND ref, as ci.yml: a scheduled rehearsal and a tag run
+# must never cancel each other, and a second push of the same tag supersedes
+# the first.
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Read-only by DEFAULT, write only where it is used. `contents: write` was set
 # here at the top and inherited by every job — including five that only compile
@@ -75,7 +95,7 @@ jobs:
     outputs:
       pom2_version: ${{ steps.v.outputs.pom2_version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - id: v
         env:
@@ -115,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install build dependencies
         run: |
@@ -180,7 +200,7 @@ jobs:
       # not per owner.
       BUILDER_IMAGE: ghcr.io/habib256/pom1-bionic-builder@sha256:c44b786517f041f779b082b813e84a17b141db3983fc0b28f2c3e4deedeb4cca
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Log in to GHCR (pull the builder image)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -291,7 +311,7 @@ jobs:
           bin/pom2_headless --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-linux-AppImage
           path: dist/*.AppImage
@@ -311,7 +331,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install build dependencies
         run: |
@@ -393,7 +413,7 @@ jobs:
           bin/pom2_headless --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-linux-arm64-AppImage
           path: dist/*.AppImage
@@ -425,7 +445,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Build POM2 + AppImage in a bookworm arm64 container (GLES)
         env:
@@ -519,7 +539,7 @@ jobs:
           bin/pom2_headless --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-raspberry-arm64-AppImage
           path: dist/*.AppImage
@@ -546,7 +566,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Build -mcpu=cortex-a72 + PGO + LTO in a bookworm arm64 container
         env:
@@ -619,7 +639,7 @@ jobs:
           bin/pom2_headless --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-pi400-arm64-AppImage
           path: dist/*-pi400-aarch64.AppImage
@@ -642,7 +662,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Fetch Dear ImGui (pinned commit)
         run: tools/fetch_imgui_pinned.sh
@@ -693,7 +713,7 @@ jobs:
           # The .dmg is already built, but do not leave a capture in the .app.
           rm -f boot.ppm
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-macOS-dmg
           path: dist/*.dmg
@@ -705,7 +725,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Fetch Dear ImGui (pinned commit)
         shell: bash
@@ -796,7 +816,7 @@ jobs:
           ./pom2_headless.exe --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-Windows-zip
           path: dist/*.zip
@@ -816,14 +836,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Pinned, not `latest`. The WASM bundle published with a tag has to be
       # reproducible from that tag, and `latest` silently re-toolchains it: a
       # new Emscripten can change the generated JS glue, the pthread shape and
       # the .data packer. Bump this deliberately, in its own commit.
       - name: Install Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           version: 6.0.9
           actions-cache-folder: emsdk-cache
@@ -862,11 +882,45 @@ jobs:
       # bundle it builds on every push to main, so nothing here has to be
       # committed back (the freshness guard that used to sit below went with
       # the committed wasm/ copy, 2026-08-23).
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-web-wasm
           path: dist/*-web-wasm.zip
           if-no-files-found: error
+
+  # --------------------------------------------- build_dist.sh rehearsal ----
+  # README advertises `./build_dist.sh` (relocatable tarball + .deb) and no
+  # workflow ever ran it, so it could rot unnoticed. Rehearsed here on every
+  # run; it uploads nothing and `publish` does not depend on it, so a
+  # regression in it can neither block nor pollute a Release — it just goes
+  # red where someone will see it. `--tests` is not passed: the suite already
+  # ran in `quality`, and this job is about the packaging script.
+  dist:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev dpkg-dev
+
+      - name: Fetch Dear ImGui (pinned commit)
+        run: tools/fetch_imgui_pinned.sh
+
+      - name: build_dist.sh
+        run: ./build_dist.sh
+
+      - name: The two advertised outputs exist and carry the payload
+        run: |
+          set -eu
+          ls -la DIST/
+          test -n "$(ls DIST/POM2-v*-linux-*.tar.gz 2>/dev/null)" || { echo "::error::no tarball"; exit 1; }
+          test -n "$(ls DIST/POM2-v*-linux-*.deb 2>/dev/null)"    || { echo "::error::no .deb"; exit 1; }
+          tar tzf DIST/POM2-v*-linux-*.tar.gz | grep -q 'share/POM2/roms/' || { echo "::error::tarball carries no roms/"; exit 1; }
 
   # ------------------------------------------------ attach to the Release ----
   publish:
@@ -878,7 +932,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           path: artifacts
 

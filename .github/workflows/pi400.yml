@@ -60,7 +60,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Build identity
         id: id
@@ -195,7 +195,7 @@ jobs:
             echo 'Then on the Pi: `sudo packaging/raspberry/pi_tuning.sh` — see `packaging/raspberry/README.md`.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: POM2-pi400-aarch64
           path: |
