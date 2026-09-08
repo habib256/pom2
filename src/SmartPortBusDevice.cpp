@@ -64,6 +64,15 @@ bool decodeContents(const uint8_t* p, std::size_t avail, uint8_t oddCount,
                     uint8_t& checksum)
 {
     body.clear();
+    // The odd section is the remainder of a 7-byte grouping, so 0..6 — and
+    // the high-bits marker only carries six of them (bit 6 down to bit 1).
+    // A header claiming more is not a packet this bus can carry, and taking
+    // it at its word shifted `high` by up to 127 places: undefined behaviour
+    // on the int promotion, reachable from any guest that writes a header
+    // byte of its own to $C0nD. Refuse the frame; the sender's retry loop
+    // handles a rejected packet, which is the right recovery for a garbled
+    // one anyway (bug hunt #9).
+    if (oddCount > 6) return false;
     std::size_t i = 0;
     if (oddCount) {
         if (i >= avail) return false;

@@ -921,7 +921,18 @@ bool Sony35Drive::senseValue(uint8_t reg, uint64_t nowCycles) const
         case 0xD:                                       // MFM mode active
             return false;                               // GCR only
         case 0xE:                                       // /READY — 0 = ready
-            return !(image_ && image_->isLoaded() && motorOn_);
+            // A medium in the bay is READY. It does NOT also require the
+            // spindle to be turning: the //c+ firmware's own probe strobes
+            // MotorOff (register 6) and then waits on /READY before it will
+            // re-enable the drive, so gating this on `motorOn_` deadlocked
+            // that wait — the machine could not boot a 3.5" whose medium is
+            // not write-protected, because the write-protected branch of the
+            // ROM's $E974 gate skips the whole transfer, and every boot that
+            // worked only worked through that branch. Ticking "write-back"
+            // (what makes the medium writable) blanked the screen for good.
+            // Deliberate divergence from MAME, whose m_ready follows mon_w
+            // (bug hunt #9).
+            return !(image_ && image_->isLoaded());
         case 0xF:                                       // 1.4M "new interface"
             return false;                               // 800K drive
         default:

@@ -56,6 +56,24 @@ handoff, CP/M 2.2 booting, the foreign bus, the uPD1990AC, the DS1216E and
 seven card snapshot loaders under 3 000 corrupt blobs each were all probed
 and found correct.
 
+**The 3.5" stack, and the biggest one of the round: the //c+ could not
+boot a 3.5" it was allowed to write.** The Sony drive's /READY line waited
+for the spindle, but the //c+ firmware strobes MotorOff and then polls
+/READY before it re-enables the drive, so a blank screen forever — and only
+a *write-protected* medium escaped, through the ROM's `$E974` branch that
+skips the transfer. Every 3.5" boot that ever worked in POM2 worked through
+that branch; ticking "Write-back (save on eject)", the setting that makes
+the medium writable so you can save, was precisely what stopped it booting.
+A medium in the bay is ready now (a deliberate divergence from MAME, whose
+register-`$9` polarity is also the inverse of the ROM's). And the SmartPort
+bus decoder shifted a marker by up to 127 places on a header claiming more
+than six odd bytes: undefined behaviour reachable from any guest poking
+`$C0nD`; such a frame is refused. Pinned in `iicplus_boot35` (which boots a
+writable copy too and checks it wrote) and `smartport_bus_device`. Full-track
+GCR write-back across all five zones and both sides, bus WRITE through the
+real Liron ROM, block bounds, 1200 hostile 3.5" images and 60 000 hostile
+IWM/Sony snapshots were all probed clean.
+
 ## 2026-09-08 — Bug hunt #8: the rewind ring, the 6522, the MMU and the wire
 
 Four Opus hunters on the runtime the first seven rounds had not reached:

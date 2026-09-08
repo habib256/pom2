@@ -128,6 +128,43 @@ int main()
     r = transact(d, frame(1, 0x00, {0x01, 0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}));
     assert(replyStatus(r) == 0x11 && "no unit was assigned number 1");
 
+    // A header claiming more than six odd bytes is not a packet this bus can
+    // carry (the odd section is the remainder of a 7-byte grouping, and the
+    // high-bits marker holds six bits). Decoding it shifted the marker by up
+    // to 127 places — undefined behaviour reachable from any guest that
+    // writes its own header byte to $C0nD (bug hunt #9). The frame must be
+    // refused outright: not parsed, not answered, and the device still
+    // serves the next well-formed transaction.
+    {
+        const bool parsedBefore = d.progress().packetParsed;
+        std::vector<uint8_t> bad = { 0xFF, 0xFF, 0xC3,
+                                     0x82, 0x80, 0x80, 0x80, 0x80,
+                                     0xFF,      // odd count = $7F
+                                     0x80 };    // group count = 0
+        for (int i = 0; i < 1 + 127; ++i) bad.push_back(0xAA);
+        bad.push_back(0xAA); bad.push_back(0xAA); bad.push_back(0xC8);
+        pom2::SmartPortBusDevice fresh;
+        fresh.setUnit(0, &u0); fresh.setUnit(1, &u1); fresh.setUnitCount(2);
+        fresh.reset();
+        assert(replyStatus(transact(fresh, frame(2, 0x00, {0x05, 0x02}))) == 0x00);
+        fresh.reqChanged(true);
+        for (uint8_t b : bad) fresh.hostWrote(b);
+        fresh.hostWrote(0x00);
+        fresh.reqChanged(false);
+        fresh.reqChanged(true);
+        uint8_t rb;
+        assert(!fresh.hostReads(rb) && "an oversized odd count was answered");
+        fresh.reqChanged(false);
+        // `packetParsed` is sticky across a device's life; `bodyBytes` is
+        // per frame — a refused frame decodes nothing.
+        assert(fresh.progress().bodyBytes == 0 &&
+               "an oversized odd count was decoded instead of refused");
+        (void)parsedBefore;
+        // Still alive: a well-formed READ afterwards is served.
+        auto ok = transact(fresh, frame(2, 0x00, {0x01, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}));
+        assert(replyStatus(ok) == 0x00 && "the device did not recover from the refused frame");
+    }
+
     // A garbled frame: same READ, checksum off by one bit → ack, but NO reply.
     d.reqChanged(true);
     for (uint8_t b : frame(2, 0x00, {0x01, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}, true))

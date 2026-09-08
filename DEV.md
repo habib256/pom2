@@ -3764,6 +3764,21 @@ the selected one (the firmware sets the register address up before enabling a
 drive); and `devsel` must not pick the drive on a Liron, because SEL is head
 select there.
 
+**/READY does not wait for the spindle** *(2026-09-08, bug hunt #9)*.
+`Sony35Drive` sense register `$E` answered "ready" only with `motorOn_`,
+but the //c+ firmware's probe strobes MotorOff (write register 6) and then
+polls /READY before it re-enables the drive: 12.7 M polls, never ready, a
+blank screen. Nobody saw it because the ROM's `$E974` gate reads register
+`$9` first and a **write-protected** medium takes the branch that skips the
+whole transfer — every 3.5" boot that worked, worked through that branch,
+and ticking "Write-back (save on eject)", which is what makes the medium
+writable, was exactly what stopped it booting. A medium in the bay is
+READY. Deliberate divergence from MAME, whose `m_ready` follows `mon_w` and
+whose register `$9` polarity is the inverse of the //c+ ROM's (confirmed
+against the ROM at `$E997`: 0 = write protected). Pinned by
+`iicplus_boot35`, which now boots both a write-protected and a writable
+copy and checks the writable boot actually wrote.
+
 ### The SmartPort bus (SmartPortBusDevice)
 
 The exchange between a Liron-class controller and a UniDisk 3.5 is a byte
@@ -3813,6 +3828,15 @@ Backing is a `SmartPortBusUnit` (media / block count / write-protect /
 read / write) — `LironCard` adapts its `Disk35Image`s, `SmartPortCard` its
 `SmartPortUnit`s. Two units per chain by default; INIT answers "last device"
 on the second.
+
+**An oversized odd count is refused** *(2026-09-08, bug hunt #9)*. The odd
+section is the remainder of a 7-byte grouping (0..6) and its high-bits
+marker carries six bits; a header claiming up to 127 shifted the marker by
+that many places — undefined behaviour on the `int` promotion, reachable
+from any guest that writes its own header byte to `$C0nD`. `decodeContents`
+refuses such a frame (not parsed, not answered, the sender's retry loop
+recovers). Pinned in `smartport_bus_device`; found by a 3000 × 3000 bus fuzz
+under ASan + UBSan that is otherwise clean.
 
 ### The //c external 3.5" port (IIcExternalSmartPort)
 

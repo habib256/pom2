@@ -56,6 +56,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -78,7 +79,12 @@ std::string scrapeTextPage(const uint8_t* ram)
 
 }  // namespace
 
-int main()
+// `writable`: mount a scratch copy with write-back ON, which is what makes
+// the medium NOT write-protected. Bug hunt #9: /READY was gated on the
+// spindle, but the //c+ firmware strobes MotorOff and then waits on /READY
+// before it re-enables the drive — and only the write-protected branch of
+// its $E974 gate skipped that wait. Ticking "write-back" blanked the screen.
+int bootOnce(bool writable)
 {
     const std::string rom  = pom2::findResource("roms/apple2cp.rom");
     const std::string disk =
@@ -126,8 +132,23 @@ int main()
         std::printf("FAIL iicplus_boot35: cannot load %s\n", rom.c_str());
         return 1;
     }
-    if (!imgInt.loadFile(disk)) {
-        std::printf("FAIL iicplus_boot35: cannot load %s\n", disk.c_str());
+    std::string mounted = disk;
+    if (writable) {
+        const std::filesystem::path scratch =
+            std::filesystem::temp_directory_path() / "pom2_iicplus_boot35_rw.2mg";
+        std::error_code ec;
+        std::filesystem::copy_file(disk, scratch,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) { std::printf("FAIL iicplus_boot35: cannot copy the image\n"); return 1; }
+        mounted = scratch.string();
+        imgInt.setWriteBackEnabled(true);
+    }
+    if (!imgInt.loadFile(mounted)) {
+        std::printf("FAIL iicplus_boot35: cannot load %s\n", mounted.c_str());
+        return 1;
+    }
+    if (writable && imgInt.isWriteProtected()) {
+        std::printf("FAIL iicplus_boot35: the scratch copy is still write-protected\n");
         return 1;
     }
     drvInt.notifyMediaChange();
@@ -175,6 +196,9 @@ int main()
     if (maxTrack == 0)
         fail("the head never left track 0 — the firmware read no catalogue, "
              "so at best it read the boot block");
+    if (writable && !imgInt.hasUnsavedChanges())
+        fail("the boot off a writable medium wrote nothing — the write path "
+             "never ran");
 
     if (failures) {
         std::printf("--- text page ---\n%s---\n", screen.c_str());
@@ -184,8 +208,15 @@ int main()
                     iwm.status(), hub.active35Selected() ? 1 : 0);
         return 1;
     }
-    std::printf("iicplus_boot35: OK — ProDOS 8 booted from the internal Sony "
-                "3.5\" at %ld cycles, head reached track %d\n",
-                bootCycle, maxTrack);
+    std::printf("iicplus_boot35 (%s): OK — ProDOS 8 booted from the internal "
+                "Sony 3.5\" at %ld cycles, head reached track %d\n",
+                writable ? "writable" : "write-protected", bootCycle, maxTrack);
     return 0;
+}
+
+int main()
+{
+    const int wp = bootOnce(false);
+    if (wp != 0) return wp;
+    return bootOnce(true);
 }
