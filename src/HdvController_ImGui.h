@@ -41,7 +41,8 @@ public:
         bool        imageLoaded = false;
         std::string imagePath;
         size_t      blockCount  = 0;
-        bool        writeBackEnabled  = true;
+        bool        writeBackEnabled  = true;    // process default, not a UI toggle
+        bool        writeProtected    = false;   // the image's own lock: 2IMG flag or the notch
         bool        hasUnsavedChanges = false;
         bool        supportsWriteBack = false;
         bool        isSynthVolume     = false;

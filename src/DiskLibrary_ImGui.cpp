@@ -177,6 +177,15 @@ void DiskLibrary_ImGui::rescanInto(
             if (e.displayName.empty()) e.displayName = name;
             e.fullPath    = de.path().string();
             e.sizeBytes   = sz;
+            // The notch: no write bit for anyone → the loaders mount it
+            // write-protected (MediaNotch.h). One status() per file, at scan.
+            {
+                const auto perms = de.status(ec).permissions();
+                e.readOnly = !ec && (perms & (fs::perms::owner_write |
+                                              fs::perms::group_write |
+                                              fs::perms::others_write))
+                                        == fs::perms::none;
+            }
             // mtime → time_t via filesystem's clock cast.
             const auto ftime = de.last_write_time(ec);
             if (!ec) {
@@ -268,20 +277,6 @@ void DiskLibrary_ImGui::on525Ctx(const std::string& path, int mountedMask, Resul
         }
         if (card.drive1 == path || card.drive2 == path) {
             ImGui::Separator();
-            // The write-protect opt-out, reachable from the library too
-            // (2026-09-08): media write by default, and a user who wants
-            // one disk kept pristine should not have to open the drive
-            // panel to say so. The flag is the card's, so it covers both
-            // drives — the label says which.
-            const bool protect = !card.writeBackEnabled;
-            if (ImGui::MenuItem("Write-protected (do not save changes)",
-                                nullptr, protect)) {
-                r.request525WriteBackSlot = card.slot;
-                r.request525WriteBackNew  = protect;   // flip
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Applies to both drives of the slot %d card",
-                                  card.slot);
             if (ImGui::MenuItem("Eject this image")) r.request525EjectPath = path;
         }
     };
@@ -326,23 +321,6 @@ void DiskLibrary_ImGui::on35Ctx(const std::string& path, int mountedMask, Result
     }
     if (mountedMask & 0x3) {
         ImGui::Separator();
-        // Per-drive write-protect for the drive(s) holding this image.
-        const CurrentlyMounted* m = mounted_;
-        for (int d = 0; d < 2; ++d) {
-            if (!(mountedMask & (1 << d))) continue;
-            const bool writeBack = !m ? true
-                : (d == 0 ? m->disk35InternalWriteBack
-                          : m->disk35ExternalWriteBack);
-            const bool protect = !writeBack;
-            char label[64];
-            std::snprintf(label, sizeof(label),
-                          "Drive %d: write-protected (do not save changes)",
-                          d + 1);
-            if (ImGui::MenuItem(label, nullptr, protect)) {
-                r.request35WriteBackDrive = d;
-                r.request35WriteBackNew   = protect;   // flip
-            }
-        }
         if ((mountedMask & 0x1) && ImGui::MenuItem("Eject from drive 1")) {
             r.request35EjectDrive = 0;
         }
@@ -365,12 +343,6 @@ void DiskLibrary_ImGui::onHdvCtx(const std::string& path, int mountedMask, Resul
     }
     if (mountedMask & 0x1) {
         ImGui::Separator();
-        const bool protect = mounted_ ? !mounted_->hdvWriteBack : false;
-        if (ImGui::MenuItem("Write-protected (do not save changes)",
-                            nullptr, protect)) {
-            r.requestHdvWriteBackToggle = true;
-            r.requestHdvWriteBackNew    = protect;   // flip
-        }
         if (ImGui::MenuItem("Eject")) {
             r.requestHdvEject = true;
         }
@@ -391,6 +363,13 @@ void DiskLibrary_ImGui::onFloppyEmuCtx(const std::string& path,
     if (ImGui::MenuItem("Insert only (no boot)")) {
         r.requestFloppyEmuMountOnly = path;
     }
+}
+
+void DiskLibrary_ImGui::noteNotch(const std::string& path, bool protect)
+{
+    for (auto* list : { &disk525_, &disk35_, &hdv_, &floppyEmu_ })
+        for (auto& e : *list)
+            if (e.fullPath == path) e.readOnly = protect;
 }
 
 bool DiskLibrary_ImGui::isFavourite(const std::string& path) const
@@ -441,6 +420,18 @@ void DiskLibrary_ImGui::renderRow(
                                 : "Add to favourites")) {
             r.toggleFavourite = e.fullPath;
         }
+        // The notch, on THIS disk (MediaNotch.h): a sticker over the sleeve's
+        // notch, a 3.5" tab, a 2IMG lock — the protection is the disk's, so
+        // it is offered on every image, mounted or not, and it travels with
+        // the file. Ticked = the host file has no write bit.
+        if (ImGui::MenuItem("Write-protected", nullptr, e.readOnly)) {
+            r.toggleNotchPath    = e.fullPath;
+            r.toggleNotchProtect = !e.readOnly;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", e.readOnly
+                ? "Protected: the image file is read-only. Untick to let it be written."
+                : "Writable: saves land in the file. Tick to protect it (read-only bit).");
         ImGui::Separator();
         (this->*ctx.onContextMenu)(e.fullPath, mountedMask, r);
         ImGui::EndPopup();
@@ -461,6 +452,10 @@ void DiskLibrary_ImGui::renderRow(
             ImGui::ColorConvertU32ToFloat4(pom2::palette().accent));
         ImGui::TextUnformatted(ICON_FA_STAR " ");
         ImGui::PopStyleColor();
+        ImGui::SameLine(0.0f, 0.0f);
+    }
+    if (e.readOnly) {   // the notch — see the context menu
+        ImGui::TextDisabled(ICON_FA_LOCK " ");
         ImGui::SameLine(0.0f, 0.0f);
     }
     ImGui::TextUnformatted(nameOverride ? nameOverride : e.displayName.c_str());

@@ -91,6 +91,8 @@ public:
     const std::string& path()      const override { return backing_.path(); }
     const std::string& lastError() const override { return backing_.lastError(); }
 
+    bool     isFileWriteProtected() const override { return backing_.isWriteProtected(); }
+    void     setHostWriteProtected(bool on) override { backing_.setHostWriteProtected(on); }
     bool     isWriteBackEnabled() const override { return backing_.isWriteBackEnabled(); }
     void     setWriteBackEnabled(bool on) override { backing_.setWriteBackEnabled(on); }
     bool     saveDirty() override { return backing_.saveDirty(); }

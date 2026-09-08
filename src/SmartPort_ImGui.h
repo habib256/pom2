@@ -49,7 +49,8 @@ public:
         std::string lastError;
         uint32_t    blockCount       = 0;
         bool        loaded           = false;
-        bool        writeProtected   = false;
+        bool        writeProtected   = false;   // what the guest sees (medium + process default)
+        bool        fileWriteProtected = false; // the medium's own: 2IMG lock / WOZ / the notch
         bool        writeBackEnabled = true;
     };
 

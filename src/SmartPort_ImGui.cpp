@@ -152,15 +152,17 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
         }
         if (!u.loaded) ImGui::EndDisabled();
 
-        // ── Write-protect toggle ───────────────────────────────────────
-        // Writable by default (2026-09-08); the tick is the visible opt-out.
-        bool protect = !u.writeBackEnabled;
-        if (!typeAllowsMount) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
+        // ── Write-protect toggle — the notch on the medium (MediaNotch.h) ──
+        // The mounted file's own protection; flipping it changes the file's
+        // read-only bit, so it travels with the image. The host applies it
+        // through setMediaNotch before the panel's other actions.
+        bool protect = u.fileWriteProtected;
+        if (!typeAllowsMount || !u.loaded) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("Write-protected (the notch on this medium)", &protect)) {
             a.writeBackChanged = true;
             a.writeBackOn      = !protect;
         }
-        if (!typeAllowsMount) ImGui::EndDisabled();
+        if (!typeAllowsMount || !u.loaded) ImGui::EndDisabled();
         if (u.loaded) {
             ImGui::SameLine();
             if (u.writeProtected)

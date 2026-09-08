@@ -907,23 +907,18 @@ void MainWindow::renderMediaPanel()
                     ImGui::EndDisabled();
 
                     if (info.supportsWriteBack) {
-                        // Writable by default (2026-09-08): the tick is the
-                        // user's visible opt-out, inverted onto the
-                        // write-back plumbing underneath.
-                        bool protect = !info.writeBackEnabled;
-                        ImGui::BeginDisabled(!typeAllows);
-                        if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
-                            // Same reason as the type combo above: the
-                            // coordinator's guarded setter, not a second copy
-                            // of the key rules.
-                            const auto r =
-                                storageCoordinator_->setMediaBayWriteBack(
-                                    *controller, *settings, s, b, !protect);
-                            if (!r.ok) {
-                                tapeStatusMessage = "Slot " +
-                                    std::to_string(s) + ": " + r.error;
-                                tapeStatusUntil = lastFrameTime + 4.0;
-                            }
+                        // The notch (MediaNotch.h): the mounted file's own
+                        // read-only bit, so the protection travels with the
+                        // image rather than staying on the bay.
+                        bool protect = info.writeProtected;
+                        ImGui::BeginDisabled(!typeAllows || !info.loaded);
+                        if (ImGui::Checkbox("Write-protected (the notch on this medium)", &protect)) {
+                            const auto r = storageCoordinator_->setMediaNotch(
+                                *controller, info.path, protect);
+                            tapeStatusMessage = "Slot " + std::to_string(s) +
+                                (r.ok ? (protect ? ": WRITE-PROTECTED" : ": WRITABLE")
+                                      : ": " + r.error);
+                            tapeStatusUntil = lastFrameTime + 4.0;
                         }
                         ImGui::EndDisabled();
 

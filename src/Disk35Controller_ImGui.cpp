@@ -116,14 +116,17 @@ void renderDriveBlock(int                                       driveIdx,
                     : drv.convertTargetPath.c_str());
     }
 
-    // ── Write-protect checkbox — mirrors Disk II ───────────────────────
-    // Writable by default (2026-09-08); the tick is the user's visible
-    // opt-out and the drive then reports write-protect to the firmware.
-    bool protect = !drv.writeBackEnabled;
-    if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
+    // ── Write-protect checkbox — the notch on the disk (MediaNotch.h) ──
+    // A 3.5" has a sliding tab; the tick is the mounted file's own
+    // protection and flipping it changes the file's read-only bit, so the
+    // disk stays protected in any drive. Host: setMediaNotch(path, protect).
+    bool protect = drv.fileWriteProtected;
+    ImGui::BeginDisabled(!drv.diskLoaded);
+    if (ImGui::Checkbox("Write-protected (the tab on this disk)", &protect)) {
         r.requestWriteBackToggle[driveIdx] = true;
         r.newWriteBack[driveIdx]           = !protect;
     }
+    ImGui::EndDisabled();
     if (drv.diskLoaded && !drv.isWoz) {
         ImGui::SameLine();
         if (drv.writeProtected)

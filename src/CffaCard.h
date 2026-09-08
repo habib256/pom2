@@ -90,6 +90,7 @@ public:
     size_t getBlockCount()    const override { return ata_.backing().blockCount(); }
     bool isWriteProtected()   const override { return ata_.backing().isWriteProtected(); }
     bool isWriteBackEnabled() const override { return ata_.backing().isWriteBackEnabled(); }
+    void setHostWriteProtected(bool on) override { ata_.backing().setHostWriteProtected(on); }
     void setWriteBackEnabled(bool on) override { ata_.backing().setWriteBackEnabled(on); }
     bool canWriteBack()       const override { return ata_.backing().canWriteBack(); }
     bool hasUnsavedChanges()  const override { return ata_.backing().hasUnsavedChanges(); }

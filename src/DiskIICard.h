@@ -298,6 +298,12 @@ public:
     /// PHYSICAL write-protect of the medium (WOZ INFO+2 / 2IMG WP flag) —
     /// distinct from the write-back opt-in. The UI needs both to tell the
     /// user *why* the guest is seeing a write-protected disk.
+    /// The notch on the disk in `drive` (MediaNotch.h): the file's read-only
+    /// bit, re-applied here after the user flipped it. Per DRIVE — it is the
+    /// disk's property, unlike the card-wide write-back flag below.
+    void setDriveHostWriteProtected(int drive, bool on) {
+        if (validDrive(drive)) images[drive].setHostWriteProtected(on);
+    }
     bool isFileWriteProtected(int drive = 0) const {
         return validDrive(drive) && images[drive].isFileWriteProtected();
     }

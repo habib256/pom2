@@ -714,19 +714,32 @@ MainWindow::MainWindow(bool forceIIPlus)
         // medium with write-back off as write-protected. Persisting only the
         // paths meant a user who had opted in got the disk back read-only on
         // every launch — and lost the session's writes at the next eject.
-        controller->disk35Internal().setWriteBackEnabled(
-            settings->getBool("disk35_writeback_1", pom2::mediaWritableByDefault()));
-        controller->disk35External().setWriteBackEnabled(
-            settings->getBool("disk35_writeback_2", pom2::mediaWritableByDefault()));
+        const bool wb1 = settings->getBool("disk35_writeback_1", pom2::mediaWritableByDefault());
+        const bool wb2 = settings->getBool("disk35_writeback_2", pom2::mediaWritableByDefault());
+        controller->disk35Internal().setWriteBackEnabled(wb1);
+        controller->disk35External().setWriteBackEnabled(wb2);
+        // A legacy `disk35_writeback_N = false` is the pre-notch per-drive
+        // opt-out: it becomes the tab on that disk (MediaNotch.h), once, and
+        // the flag reverts to the default — same rule as
+        // StorageCoordinator::restoreMediaFromSettings.
+        auto migrate = [&](bool wb, const std::string& p) -> bool {
+            std::vector<std::string> warnings;
+            const bool keep = pom2::StorageCoordinator::migrateLegacyWriteBack(
+                wb, { p }, warnings);
+            for (const auto& w : warnings) pom2::log().warn("Sony35", w);
+            return keep;
+        };
         const std::string p1 = settings->getString("disk35_path_1", "");
         if (!p1.empty() && fs::is_regular_file(p1, ec) &&
             controller->mount35(0, p1)) {
             pom2::log().info("Sony35", "Internal re-mounted from settings: " + p1);
+            controller->disk35Internal().setWriteBackEnabled(migrate(wb1, p1));
         }
         const std::string p2 = settings->getString("disk35_path_2", "");
         if (!p2.empty() && fs::is_regular_file(p2, ec) &&
             controller->mount35(1, p2)) {
             pom2::log().info("Sony35", "External re-mounted from settings: " + p2);
+            controller->disk35External().setWriteBackEnabled(migrate(wb2, p2));
         }
     }
 

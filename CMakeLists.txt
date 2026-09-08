@@ -292,6 +292,7 @@ set(SOURCES
     src/SlotProvisioningCoordinator.cpp
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
+    src/StorageCoordinator_Notch.cpp
     src/MC6821.cpp
     src/MemoryViewer_ImGui.cpp
     src/Mockingboard.cpp
@@ -463,6 +464,7 @@ set(POM2_FOUNDATION_SOURCES
 
 set(POM2_FOUNDATION_HEADERS
     src/MediaWritePolicy.h
+    src/MediaNotch.h
     src/AudioSource.h
     src/ByteIO.h
     src/CharRomDump.h
@@ -532,6 +534,7 @@ set(POM2_FRONTEND_SOURCES
     src/SlotProvisioningCoordinator.cpp
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
+    src/StorageCoordinator_Notch.cpp
     src/CassetteDeck_ImGui.cpp
     src/CliDispatcher.cpp
     src/CliRunner.cpp
@@ -1269,6 +1272,7 @@ set(POM2_CORE_SOURCES
     src/SlotProvisioningCoordinator.cpp
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
+    src/StorageCoordinator_Notch.cpp
     src/MC6821.cpp
     src/Mockingboard.cpp
     src/MouseCard.cpp

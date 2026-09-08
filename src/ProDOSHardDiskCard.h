@@ -117,6 +117,7 @@ public:
     /// User opt-in for persisting RAM writes back to the host .hdv/.2mg file.
     /// Default off — the in-session volume is fully writable either way.
     bool isWriteBackEnabled() const override { return backing_.isWriteBackEnabled(); }
+    void setHostWriteProtected(bool on) override { backing_.setHostWriteProtected(on); }
     void setWriteBackEnabled(bool on) override { backing_.setWriteBackEnabled(on); }
     bool canWriteBack()       const override { return backing_.canWriteBack(); }
     bool hasUnsavedChanges()  const override { return backing_.hasUnsavedChanges(); }

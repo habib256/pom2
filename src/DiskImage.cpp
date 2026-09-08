@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskImage.h"
+#include "MediaNotch.h"
 
 #include "Block512Backing.h"
 #include "AtomicFileReplace.h"
@@ -146,8 +147,7 @@ inline uint8_t decode4and4(const uint8_t* p)
 // write time, exactly like the notch on a real sleeve.
 bool hostFileIsReadOnly(const std::string& path)
 {
-    std::ofstream probe(path, std::ios::in | std::ios::out | std::ios::binary);
-    return !probe;
+    return pom2::mediaFileIsReadOnly(path);   // MediaNotch.h — one probe everywhere
 }
 
 }  // namespace
@@ -584,6 +584,7 @@ bool DiskImage::loadNibFromBuffer(const uint8_t* data, std::size_t len,
     twoImgHeaderRaw.clear();
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
+    hostReadOnly_      = false;
     sectorOrder = SectorOrder::Dos33;     // not meaningful for .nib
     dirty.fill(false);
     anyDirty    = false;
@@ -630,6 +631,7 @@ bool DiskImage::loadSectorImageFromBuffer(const uint8_t* data, std::size_t len,
     twoImgHeaderRaw.clear();
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
+    hostReadOnly_      = false;
     // Non-WOZ images always use the standard 4 µs bit cell — clear any
     // WOZ2 INFO value left by a previous image in this (reused) drive slot.
     optimalBitTiming = 32;
@@ -789,8 +791,8 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath)
 
     // Host-filesystem write protection, folded in last so no per-format
     // loader can clear it (they all reset `fileWriteProtected` on entry).
-    if (ok && !fileWriteProtected && hostFileIsReadOnly(imgPath)) {
-        fileWriteProtected = true;
+    hostReadOnly_ = ok && hostFileIsReadOnly(imgPath);
+    if (hostReadOnly_ && !fileWriteProtected) {
         pom2::log().info("Disk II",
             "Image file is not writable on disk — mounting "
             "write-protected: " + imgPath);
@@ -848,8 +850,8 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath, SectorOrder order)
     path.clear();
     const bool ok = loadSectorImageFromBuffer(buf.data(), buf.size(),
                                               order, /*volume=*/254, imgPath);
-    if (ok && hostFileIsReadOnly(imgPath)) {
-        fileWriteProtected = true;
+    hostReadOnly_ = ok && hostFileIsReadOnly(imgPath);
+    if (hostReadOnly_) {
         pom2::log().info("Disk II",
             "Image file is not writable on disk — mounting "
             "write-protected: " + imgPath);
@@ -998,6 +1000,7 @@ bool DiskImage::loadWoz(const std::string& imgPath)
     // Walk chunks starting at offset 12.
     int      diskType = 1;
     fileWriteProtected = false;
+    hostReadOnly_      = false;
     // Re-arm the 4 µs default before parsing INFO: this DiskImage object is
     // reused across disk swaps, so a WOZ1 (or truncated-INFO WOZ2) loaded
     // after a non-standard-timing WOZ2 must not inherit the old cell width.
@@ -1395,7 +1398,7 @@ bool DiskImage::loadWoz(const std::string& imgPath)
         + (populatedFluxSlots > 0
               ? " (" + std::to_string(populatedFluxSlots) + " FLUX)"
               : "")
-        + (fileWriteProtected ? ", file-WP" : "")
+        + (isFileWriteProtected() ? ", file-WP" : "")
         + ")");
     return true;
 }
@@ -1410,6 +1413,7 @@ void DiskImage::eject()
     twoImgHeaderRaw.clear();
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
+    hostReadOnly_      = false;
     optimalBitTiming = 32;   // WOZ2 INFO value must not leak into the next image
     path.clear();
     // Half-framed nibble / destination slot from the ejected medium must not
@@ -1429,7 +1433,7 @@ void DiskImage::eject()
 void DiskImage::writeNibbleAt(int track, int index, uint8_t value)
 {
     if (!loaded || track < 0 || track >= kTracks) return;
-    if (fileWriteProtected) return;   // physical WP inhibits the write current
+    if (isFileWriteProtected()) return;   // physical WP inhibits the write current
     const int n = ((index % kNibblesPerTrack) + kNibblesPerTrack) % kNibblesPerTrack;
     if (tracks[track][n] != value) {
         tracks[track][n] = value;
@@ -1891,7 +1895,7 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
     // otherwise the user's source file is corrupted on the next saveDirty().
     // (The write-back TOGGLE is still honoured separately via saveDirty(); a
     // non-fileWriteProtected image can still splice in-memory for unit tests.)
-    if (fileWriteProtected) return;
+    if (isFileWriteProtected()) return;
     if (wozFormat) {
         // WOZ canonical storage = bitStream[qt]. The flux→bit-cell
         // conversion is the same cell-window logic as the non-WOZ path
@@ -2626,7 +2630,7 @@ bool reportUnsplicableWoz(const std::vector<int>& qts, std::string& lastError)
 
 bool DiskImage::saveDirty()
 {
-    if (!loaded || !anyDirty || !writeBackEnabled || fileWriteProtected) {
+    if (!loaded || !anyDirty || !writeBackEnabled || isFileWriteProtected()) {
         return true;   // nothing to save, save disabled, or medium WP — no error
     }
 

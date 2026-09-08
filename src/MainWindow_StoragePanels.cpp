@@ -215,17 +215,16 @@ void MainWindow::renderDiskPanelWindow()
             diskTurboWhileMotor = result.turboNewValue;
         }
         if (result.writeBackToggleChanged) {
-            // Persists disk_writeback_slotN with the change — the bare setter
-            // did not, so the toggle did not survive a restart, and since
-            // isWriteProtected() is `fileWriteProtected || !writeBack` the
-            // guest then saw a write-protected disk again.
-            (void)storageCoordinator_->setDiskIIWriteBack(
-                *controller, *settings, card->getSlot(),
-                result.writeBackNewValue);
+            // The notch: the file's read-only bit, then the mounted image
+            // (MediaNotch.h). It travels with the disk, so nothing to
+            // persist here — and no per-card key to forget at restart.
+            const bool protect = !result.writeBackNewValue;
+            const auto n = storageCoordinator_->setMediaNotch(
+                *controller, snap.diskPath, protect);
             tapeStatusMessage = "slot " + std::to_string(card->getSlot()) +
-                (result.writeBackNewValue
-                    ? ": write-back ENABLED (saves on eject)"
-                    : ": write-back disabled");
+                (n.ok ? (protect ? ": disk WRITE-PROTECTED"
+                                 : ": disk WRITABLE (saves on eject)")
+                      : ": " + n.error);
             tapeStatusUntil = lastFrameTime + 4.0;
         }
         if (result.requestEject) {
@@ -325,7 +324,6 @@ void MainWindow::renderDiskLibraryWindow()
                 info.drive2 = c->getDiskPath(1);
                 mounted.diskII.push_back(info.drive2);
             }
-            info.writeBackEnabled = c->isWriteBackEnabled();
             mounted.diskIICards.push_back(info);
         }
         // 3.5" mount sources: the //c+ on-board hub OR a slot-plugged
@@ -351,26 +349,16 @@ void MainWindow::renderDiskLibraryWindow()
             }
         }
         if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded()) {
-            mounted.hdv          = dev->getImagePath();
-            mounted.hdvWriteBack = dev->isWriteBackEnabled();
+            mounted.hdv = dev->getImagePath();
         } else if (primarySmartPortCard()) {
             // SmartPort-routed HDV — show as mounted in the Library so the
             // `* ` marker matches reality regardless of which path holds it.
             const pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0);
             if (u && u->isLoaded() &&
                 u->kindKey() == pom2::SmartPortHdvUnit::kKindKey) {
-                mounted.hdv          = u->path();
-                mounted.hdvWriteBack = u->isWriteBackEnabled();
+                mounted.hdv = u->path();
             }
         }
-    }
-    // The 3.5" write-back flags come from the coordinator's routed snapshot
-    // (its own lock acquisition, hence outside the block above): it already
-    // knows whether the on-board pair or a SmartPort card owns the drives.
-    {
-        const auto d35 = storageCoordinator_->captureDisk35(*controller);
-        mounted.disk35InternalWriteBack = d35.drives[0].writeBackEnabled;
-        mounted.disk35ExternalWriteBack = d35.drives[1].writeBackEnabled;
     }
 
     // Favourites + recents are host state (persisted to state.cfg); the panel
@@ -653,45 +641,19 @@ void MainWindow::renderDiskLibraryWindow()
             : ("Library: 3.5\" eject failed: " + e.error);
         tapeStatusUntil   = lastFrameTime + 3.0;
     }
-    // ── Write-protect toggles (right-click on a mounted image) ────────
-    // Same setters as the media panels' checkboxes, so the change is applied
-    // under the machine lock and persisted to the *_writeback key.
-    if (r.request525WriteBackSlot >= 0) {
-        (void)storageCoordinator_->setDiskIIWriteBack(
-            *controller, *settings, r.request525WriteBackSlot,
-            r.request525WriteBackNew);
-        tapeStatusMessage = "Library: slot " +
-            std::to_string(r.request525WriteBackSlot) +
-            (r.request525WriteBackNew ? " 5.25\" WRITABLE (saves on eject)"
-                                      : " 5.25\" WRITE-PROTECTED");
+    // ── The notch (right-click on any image) ──────────────────────────
+    // The disk's own write-protect (MediaNotch.h): the file's read-only bit,
+    // plus every mounted copy of it. Nothing to persist; the file carries it.
+    if (!r.toggleNotchPath.empty()) {
+        const auto n = storageCoordinator_->setMediaNotch(
+            *controller, r.toggleNotchPath, r.toggleNotchProtect);
+        if (n.ok) diskLibrary->noteNotch(r.toggleNotchPath, r.toggleNotchProtect);
+        const std::string name =
+            std::filesystem::path(r.toggleNotchPath).filename().string();
+        tapeStatusMessage = "Library: " + name +
+            (n.ok ? (r.toggleNotchProtect ? " WRITE-PROTECTED" : " WRITABLE")
+                  : ": " + n.error);
         tapeStatusUntil = lastFrameTime + 4.0;
-    }
-    if (r.request35WriteBackDrive >= 0) {
-        (void)storageCoordinator_->setDisk35WriteBack(
-            *controller, *settings, r.request35WriteBackDrive,
-            r.request35WriteBackNew);
-        tapeStatusMessage = std::string("Library: 3.5\" drive ") +
-            (r.request35WriteBackDrive == 0 ? "1" : "2") +
-            (r.request35WriteBackNew ? " WRITABLE (saves on eject)"
-                                     : " WRITE-PROTECTED");
-        tapeStatusUntil = lastFrameTime + 4.0;
-    }
-    if (r.requestHdvWriteBackToggle) {
-        // Whichever card holds the HDV — the dedicated block card or
-        // SmartPort unit 0 — mirroring how `mounted.hdv` was resolved above.
-        int slot = -1;
-        if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded())
-            slot = dev->getSlot();
-        else if (primarySmartPortCard())
-            slot = primarySmartPortCard()->getSlot();
-        if (slot >= 0) {
-            (void)storageCoordinator_->setMediaBayWriteBack(
-                *controller, *settings, slot, 0, r.requestHdvWriteBackNew);
-            tapeStatusMessage = r.requestHdvWriteBackNew
-                ? "Library: HDV WRITABLE (saves on eject)"
-                : "Library: HDV WRITE-PROTECTED";
-            tapeStatusUntil = lastFrameTime + 4.0;
-        }
     }
     if (r.requestHdvEject) {
         if (pom2::ProDOSBlockCard* dev = hdvDevice()) {
@@ -734,9 +696,23 @@ void MainWindow::renderSmartPortPanelWindow()
                       "SmartPort Configuration");
     }
 
-    const auto r = smartPortPanel->render(title, show(pom2::PanelId::SmartPort), snap);
+    auto r = smartPortPanel->render(title, show(pom2::PanelId::SmartPort), snap);
 
     if (!snap.plugged) return;
+
+    // Notch toggles first, unlocked (they chmod the file), and taken out of
+    // the request so applySmartPortPanel's write-back branch — kept for the
+    // AI server — does not also flip the process flag.
+    for (std::size_t i = 0; i < r.units.size() && i < snap.units.size(); ++i) {
+        if (!r.units[i].writeBackChanged) continue;
+        r.units[i].writeBackChanged = false;
+        const bool protect = !r.units[i].writeBackOn;
+        const auto n = storageCoordinator_->setMediaNotch(
+            *controller, snap.units[i].path, protect);
+        tapeStatusMessage = "SmartPort unit " + std::to_string(i + 1) +
+            (n.ok ? (protect ? ": WRITE-PROTECTED" : ": WRITABLE") : ": " + n.error);
+        tapeStatusUntil = lastFrameTime + 4.0;
+    }
 
     // Re-resolves the card under the lock, applies the whole frame's request
     // in one critical section, and saves settings after unlocking. Unit-type
@@ -1113,6 +1089,7 @@ void MainWindow::renderHdvPanelWindow()
         snap.imagePath         = primaryHdvCard()->getImagePath();
         snap.blockCount        = primaryHdvCard()->getBlockCount();
         snap.writeBackEnabled  = primaryHdvCard()->isWriteBackEnabled();
+        snap.writeProtected    = primaryHdvCard()->isWriteProtected();
         snap.hasUnsavedChanges = primaryHdvCard()->hasUnsavedChanges();
         snap.supportsWriteBack = primaryHdvCard()->canWriteBack();
         snap.isSynthVolume     = primaryHdvCard()->isSynthVolumeMounted();
@@ -1163,14 +1140,14 @@ void MainWindow::renderHdvPanelWindow()
     auto result = hdvPanel->render(hdvTitle, show(pom2::PanelId::Hdv), snap);
 
     if (result.writeBackToggleChanged && primaryHdvCard()) {
-        // Persists the hdv_writeback key with the change; the bare setter did
-        // not, so the toggle was forgotten at the next launch.
-        (void)storageCoordinator_->setMediaBayWriteBack(
-            *controller, *settings, primaryHdvCard()->getSlot(), 0,
-            result.writeBackNewValue);
-        tapeStatusMessage = result.writeBackNewValue
-            ? "HDV: write-back ENABLED (saves on eject)"
-            : "HDV: write-back disabled";
+        // The notch on the image file (MediaNotch.h) — travels with it.
+        const bool protect = !result.writeBackNewValue;
+        const auto n = storageCoordinator_->setMediaNotch(
+            *controller, snap.imagePath, protect);
+        tapeStatusMessage = n.ok
+            ? (protect ? "HDV: image WRITE-PROTECTED"
+                       : "HDV: image WRITABLE (saves on eject)")
+            : "HDV: " + n.error;
         tapeStatusUntil   = lastFrameTime + 4.0;
     }
     if (result.requestEject && primaryHdvCard()) {
@@ -1602,6 +1579,7 @@ void MainWindow::renderDisk35PanelWindow()
         dst.lastError         = src.lastError;
         dst.hasUnsavedChanges = src.hasUnsavedChanges;
         dst.writeBackEnabled  = src.writeBackEnabled;
+        dst.fileWriteProtected = src.fileWriteProtected;
         dst.isWoz             = src.isWoz;
     }
 
@@ -1706,13 +1684,15 @@ void MainWindow::renderDisk35PanelWindow()
         // branch here never wrote a settings key at all, so that toggle was
         // forgotten every launch.
         if (result.requestWriteBackToggle[d]) {
-            (void)storageCoordinator_->setDisk35WriteBack(
-                *controller, *settings, d, result.newWriteBack[d]);
+            // The tab on the disk (MediaNotch.h): the file's read-only bit.
+            const bool protect = !result.newWriteBack[d];
+            const auto n = storageCoordinator_->setMediaNotch(
+                *controller, snap.drives[d].diskPath, protect);
             tapeStatusMessage = std::string("3.5\" drive ")
                 + (d == 0 ? "1" : "2")
-                + (result.newWriteBack[d]
-                    ? ": write-back ENABLED (saves on eject)"
-                    : ": write-back disabled");
+                + (n.ok ? (protect ? ": disk WRITE-PROTECTED"
+                                   : ": disk WRITABLE (saves on eject)")
+                        : ": " + n.error);
             tapeStatusUntil = lastFrameTime + 4.0;
         }
     }

@@ -1255,6 +1255,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Notch.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     # StorageCoordinator mixes the pure capture/persist half tested here with
     # mount/eject calls that go through EmulationController, so the whole
@@ -6882,6 +6883,13 @@ pom2_add_headless_test(test_controller_mode_races
     SOURCES controller_mode_races_test.cpp
     LINK_LIBRARIES pom2_core_test)
 set_tests_properties(controller_mode_races PROPERTIES RUN_SERIAL TRUE LABELS slow)
+
+# The notch is on the disk (MediaNotch.h): per disk, follows the disk, live
+# through setMediaNotch, and the legacy per-card key migrates to it once.
+pom2_add_headless_test(test_media_notch
+    NAME media_notch TIMEOUT 60
+    SOURCES media_notch_test.cpp
+    LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20

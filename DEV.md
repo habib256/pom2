@@ -2290,7 +2290,52 @@ Write-back via `saveDirty()` (`.dsk`/`.do`/`.po`/`.nib` + `.2mg`
 envelopes + `.woz`), on by default; `setWriteBackEnabled(false)` is the
 user's write-protect (pinned by `media_write_default`).
 
-#### Two-phase media mount (`MediaMount.h/.cpp`)
+#### The notch — write-protect is the disk's (`MediaNotch.h`)
+
+*(2026-09-08)* A 5.25" is write-enabled by a notch in its sleeve and
+protected by a sticker over it; a 3.5" has a tab. Either way the protection
+is a property of the **disk** and follows it into any drive. POM2's first
+"write-protect" tick (the same morning) was the drive's / the card's
+`writeBackEnabled` flag inverted — the user pointed out that two disks in
+one Disk II card could not carry two protections, and that a protected disk
+became writable in the next drive. Both wrong on the real thing.
+
+The model now: the notch is the image file's **host read-only bit**. Every
+loader already mounted a read-only file as protected (`DiskImage` and
+`Disk35Image` probe with an `ofstream` open for read+write,
+`Block512Backing::readImageFile` records `hostWritable`); that probe is
+`pom2::mediaFileIsReadOnly` now, and `pom2::setMediaNotch(path, protect)`
+sets or clears the write bits (`std::filesystem::permissions`; on Windows
+that is the read-only attribute) and verifies the probe agrees. Each leaf
+keeps the bit apart from its header flag (`hostReadOnly_` next to
+`fileWriteProtected` / `wpHeader_`) so clearing the notch cannot un-protect
+a WOZ or a locked 2IMG, and exposes `setHostWriteProtected(bool)` —
+`DiskIICard::setDriveHostWriteProtected(drive, …)` per DRIVE, `Disk35Image`,
+`Block512Backing` through `ProDOSBlockCard` / `SmartPortUnit` — so a flip on
+a mounted disk takes effect without a remount.
+
+`StorageCoordinator::setMediaNotch(controller, path, protect)` is the one
+entry point: phase 1 the file, unlocked (that is the whole persistence — no
+`state.cfg` key); phase 2 every mounted copy of that path under the lock —
+any Disk II drive, the on-board 3.5" pair, block cards, SmartPort units. A
+string compare, deliberately: `fs::equivalent` is a stat per leaf under
+`stateMutex`. The five panel ticks, the Slot Config rows and the Disk
+Library all call it; the checkbox is disabled on an empty drive because a
+notch belongs to a disk.
+
+The per-card / per-drive `writeBackEnabled` flags survive as the **process
+default** only (`MediaWritePolicy.h`, how the suite runs protected) and are
+no longer a user setting. A legacy `*_writeback = false` key — the
+2026-09-08-morning opt-out — is migrated once in `restoreMediaFromSettings`
+(and the on-board 3.5" restore in `MainWindow.cpp`): the disk that key was
+protecting gets the notch, the flag reverts, the key is rewritten `true` at
+the next save; if the host refuses the chmod the old flag is kept for the
+session and a warning says so. Under a protected default there is nothing
+to migrate. Pinned by `media_notch`: per disk in one card, follows the disk
+across drives, live through the coordinator on all three media classes,
+legacy key → notch.
+
+### Two-phase media mount (`MediaMount.h/.cpp`)
 
 `stateMutex` is taken by the CPU worker for every 4096-cycle chunk **and** by
 the UI thread to paint every frame. Anything slow held inside it therefore
@@ -7044,17 +7089,15 @@ row is already a full-span selectable; an overlapping hit target inside it is a
 reliable source of mis-clicks, and on a panel whose left-click cold-boots the
 machine that matters.
 
-**Write-protect is in the right-click menu too** *(2026-09-08)*. A mounted
-image's context menu carries the same "Write-protected (do not save
-changes)" opt-out the drive panels show, ticked from the live flag: per
-Disk II card for a 5.25" (the flag is the card's, so the tooltip says both
-drives), per drive for a 3.5" (from `captureDisk35`, so it follows the
-SmartPort routing), per bay for an HDV (dedicated block card or SmartPort
-unit 0, whichever `mounted.hdv` came from). The item is only offered for an
-image that is mounted — the flag belongs to the drive holding it, not to
-the file — and the host applies it through `setDiskIIWriteBack` /
-`setDisk35WriteBack` / `setMediaBayWriteBack`, so it persists like the
-panel checkboxes do.
+**The notch is in the right-click menu** *(2026-09-08)*. Every image's
+context menu — mounted or not — carries "Write-protected", ticked from the
+scan's per-file permission (`Entry::readOnly`, one `status()` per file at
+rescan), and a lock glyph prefixes a protected row. The host applies a
+toggle through `StorageCoordinator::setMediaNotch` and then calls
+`noteNotch` so the row flips without re-statting a thousand files. A first
+cut that day offered the toggle only on a MOUNTED image, per drive / per
+card, and was withdrawn the same afternoon: on the real hardware the
+protection is the disk's (see § The notch under Storage).
 
 **No sort selector.** It offered Name / Size / Date, and the latter two forced a
 flat list — you cannot group by folder and order by size at once, so they

@@ -69,13 +69,18 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
                     r.writeBackNewValue      = wb;
                 }
             } else {
-                bool protect = !snap.writeBackEnabled;
-                if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
+                // The notch (MediaNotch.h): the image file's own read-only
+                // bit, so the protection travels with the image. Host:
+                // setMediaNotch(imagePath, protect).
+                bool protect = snap.writeProtected;
+                ImGui::BeginDisabled(!snap.imageLoaded);
+                if (ImGui::Checkbox("Write-protected (the lock on this image)", &protect)) {
                     r.writeBackToggleChanged = true;
                     r.writeBackNewValue      = !protect;
                 }
+                ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (snap.writeBackEnabled)
+                if (!snap.writeProtected && snap.writeBackEnabled)
                     ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
                 else
                     ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),

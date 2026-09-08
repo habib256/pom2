@@ -76,6 +76,9 @@ public:
     virtual bool isWriteProtected()   const = 0;
     virtual bool isWriteBackEnabled() const = 0;
     virtual void setWriteBackEnabled(bool on) = 0;
+    /// Re-apply the notch (MediaNotch.h) on the mounted image after the
+    /// user flipped the file's read-only bit. Default: no file, no notch.
+    virtual void setHostWriteProtected(bool /*on*/) {}
     virtual bool canWriteBack()       const = 0;
     virtual bool hasUnsavedChanges()  const = 0;
 

@@ -302,14 +302,20 @@ public:
     /// splice into `bitStream[qt]` and serialise back through
     /// saveDirty() (zeroing CRC32 per Applesauce WOZ spec).
     bool isWriteProtected() const {
-        return fileWriteProtected || !writeBackEnabled;
+        return fileWriteProtected || hostReadOnly_ || !writeBackEnabled;
     }
     /// PHYSICAL write-protect of the medium (WOZ INFO+2 / 2IMG WP flag),
     /// independent of the write-back toggle. On real hardware this signal
     /// inhibits the write current, so a WP disk can never be mutated — the
     /// write functions and saveDirty() honour it regardless of writeBackEnabled.
-    bool isFileWriteProtected() const { return fileWriteProtected; }
+    bool isFileWriteProtected() const { return fileWriteProtected || hostReadOnly_; }
     void setWriteBackEnabled(bool on) { writeBackEnabled = on; }
+    /// The notch (MediaNotch.h): the host file's read-only bit, probed at
+    /// load and re-applied here when the user flips it on a mounted disk.
+    /// Kept apart from `fileWriteProtected` so clearing the notch cannot
+    /// un-protect a WOZ / 2IMG whose header says protected.
+    void setHostWriteProtected(bool on) { hostReadOnly_ = on; }
+    bool isHostWriteProtected() const   { return hostReadOnly_; }
 
 private:
     bool loadFileUnchecked(const std::string& path);
@@ -361,6 +367,7 @@ private:
     /// `isWriteProtected()` so the per-file flag survives once the WOZ
     /// blanket gate is lifted. Stays false for non-WOZ formats.
     bool fileWriteProtected = false;
+    bool hostReadOnly_      = false;   // the notch — see setHostWriteProtected
     /// WOZ INFO write-protect, also forced for images containing FLUX tracks
     /// until their delta-stream write encoder exists.
     /// WOZ INFO byte +39 — `optimal_bit_timing`. Measured in 125 ns units.

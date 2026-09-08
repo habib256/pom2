@@ -57,6 +57,8 @@ public:
     const std::string& path()      const override { return img_.path(); }
     const std::string& lastError() const override { return lastError_; }
 
+    bool     isFileWriteProtected() const override { return img_.isFileWriteProtected(); }
+    void     setHostWriteProtected(bool on) override { img_.setHostWriteProtected(on); }
     bool     isWriteBackEnabled() const override { return img_.isWriteBackEnabled(); }
     void     setWriteBackEnabled(bool on) override { img_.setWriteBackEnabled(on); }
     bool     saveDirty() override { return img_.saveDirty(); }

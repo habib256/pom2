@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "Block512Backing.h"
+#include "MediaNotch.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
 #include "PersistentFs.h"
@@ -86,10 +87,7 @@ bool Block512Backing::readImageFile(const std::string& path, PreparedImage& out,
     // failed at flush time ("Cannot open … for write", log-only) — silent data
     // loss. Surfacing it as WP makes the guest see the error at write time,
     // like a locked floppy.
-    {
-        std::ofstream probe(path, std::ios::in | std::ios::out | std::ios::binary);
-        out.hostWritable = static_cast<bool>(probe);
-    }
+    out.hostWritable = !pom2::mediaFileIsReadOnly(path);   // MediaNotch.h
 
     out.path  = path;
     out.valid = true;
@@ -239,8 +237,8 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     // at flush time ("Cannot open … for write", log-only) — silent data
     // loss. Probe writability once at load and surface it as WP so the
     // guest sees the error at write time, like a locked floppy.
-    if (!wpHeader_ && !prepared.hostWritable) {
-        wpHeader_ = true;
+    hostReadOnly_ = !prepared.hostWritable;
+    if (!wpHeader_ && hostReadOnly_) {
         pom2::log().info("HDV",
             "Image file is not writable on disk — mounting "
             "write-protected: " + path);
@@ -280,6 +278,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     mountTime_    = std::filesystem::file_time_type::clock::now();
     supportsWriteBack_ = synth_;
     wpHeader_   = false;
+    hostReadOnly_ = false;
     dirtyBlocks_.assign(blockCount(), false);
     anyDirty_ = false;
     path_     = label;
@@ -302,6 +301,7 @@ void Block512Backing::eject()
     synth_  = false;
     supportsWriteBack_ = false;
     wpHeader_ = false;
+    hostReadOnly_ = false;
     anyDirty_ = false;
 }
 
@@ -356,7 +356,7 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
 {
     PendingWriteBack out;
     if (!loaded_ || !anyDirty_ || !writeBack_
-        || wpHeader_ || !supportsWriteBack_) {
+        || isWriteProtected() || !supportsWriteBack_) {
         return out;                      // valid = false → nothing to commit
     }
 
@@ -554,7 +554,7 @@ bool Block512Backing::readBlock(uint32_t blk, uint8_t* dst512) const
 
 bool Block512Backing::writeBlock(uint32_t blk, const uint8_t* src512)
 {
-    if (wpHeader_) return false;
+    if (isWriteProtected()) return false;
     const size_t base = static_cast<size_t>(blk) * kBlockBytes;
     if (base + kBlockBytes > image_.size()) return false;
     bumpActivity();
@@ -580,7 +580,7 @@ uint8_t Block512Backing::readByte(size_t absolute) const
 
 void Block512Backing::writeByte(size_t absolute, uint8_t v)
 {
-    if (!loaded_ || wpHeader_) return;
+    if (!loaded_ || isWriteProtected()) return;
     bumpActivity();
     if (absolute < image_.size() && image_[absolute] != v) {
         image_[absolute] = v;

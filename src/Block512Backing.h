@@ -220,11 +220,14 @@ public:
     const std::string& hostFolder() const { return hostFolder_; }
     const std::string& lastError() const { return lastError_; }
 
-    bool isWriteProtected()   const { return wpHeader_; }
+    bool isWriteProtected()   const { return wpHeader_ || hostReadOnly_; }
+    /// The notch (MediaNotch.h) on a mounted image — see Disk35Image.
+    void setHostWriteProtected(bool on) { hostReadOnly_ = on; }
+    bool isHostWriteProtected() const   { return hostReadOnly_; }
     bool isSynthVolume()      const { return synth_; }
     bool isWriteBackEnabled() const { return writeBack_; }
     void setWriteBackEnabled(bool on) { writeBack_ = on; }
-    bool canWriteBack()       const { return supportsWriteBack_ && !wpHeader_; }
+    bool canWriteBack()       const { return supportsWriteBack_ && !isWriteProtected(); }
     bool hasUnsavedChanges()  const { return anyDirty_; }
 
     /// Block-level access (ATA path). Returns false when blk is out of range.
@@ -265,7 +268,8 @@ private:
     std::vector<bool> dirtyBlocks_;
     bool    anyDirty_          = false;
     bool    writeBack_         = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
-    bool    wpHeader_          = false;
+    bool    wpHeader_          = false;   // 2IMG lock flag
+    bool    hostReadOnly_      = false;   // the notch — host file read-only
     bool    supportsWriteBack_ = false;
     bool    synth_             = false;
     /// Synth volumes: when the host-folder snapshot was taken (see

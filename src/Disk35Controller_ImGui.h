@@ -63,7 +63,8 @@ public:
         /// Where "Convert to writable .po" would write, already de-duplicated
         /// against existing files. Empty when the drive holds no WOZ.
         std::string convertTargetPath;
-        bool        writeBackEnabled   = true;   // writable by default; write-protect is the opt-out
+        bool        writeBackEnabled   = true;   // process default (MediaWritePolicy.h), not a UI toggle
+        bool        fileWriteProtected = false;  // the disk's own protection: tab / 2IMG lock / WOZ
         bool        hasUnsavedChanges  = false;   // a sector has been written
         std::string diskPath;
         std::string lastError;        // last failed mount, if any

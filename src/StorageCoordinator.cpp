@@ -16,6 +16,7 @@
 
 #include "StorageCoordinator.h"
 #include "MediaWritePolicy.h"
+#include "MediaNotch.h"
 
 #include "AtomicFileReplace.h"
 #include "CffaCard.h"
@@ -305,6 +306,7 @@ void copyDisk35ImageState(
     target.lastError = image.lastError();
     target.hasUnsavedChanges = image.hasUnsavedChanges();
     target.writeBackEnabled = image.isWriteBackEnabled();
+    target.fileWriteProtected = image.isFileWriteProtected();
     target.isWoz = image.kind() == Disk35Image::ImageKind::Woz35;
 }
 
@@ -1753,10 +1755,11 @@ StorageCoordinator::restoreMediaFromSettings(
     for (auto* card : cards.diskIICards) {
         if (!card) continue;
         const bool isPrimary = card == cards.primaryDiskII;
-        card->setWriteBackEnabled(settings.getBool(   // absent key = writable
+        const bool legacyWriteBack = settings.getBool(   // absent key = writable
             "disk_writeback_slot" + std::to_string(card->getSlot()),
             isPrimary ? settings.getBool("disk_writeback", pom2::mediaWritableByDefault())
-                      : pom2::mediaWritableByDefault()));
+                      : pom2::mediaWritableByDefault());
+        card->setWriteBackEnabled(legacyWriteBack);
         for (std::size_t drive = 0; drive < kDiskIIDriveCount; ++drive) {
             const std::string path = settings.getString(
                 diskIIPathSettingKey(card->getSlot(), drive),
@@ -1771,6 +1774,17 @@ StorageCoordinator::restoreMediaFromSettings(
                     card->getLastError(static_cast<int>(drive)));
             }
         }
+        {
+            std::vector<std::string> paths;
+            for (int d = 0; d < DiskIICard::kDriveCount; ++d)
+                if (card->isDiskLoaded(d)) paths.push_back(card->getDiskPath(d));
+            const bool wb = migrateLegacyWriteBack(legacyWriteBack, paths, result.warnings);
+            card->setWriteBackEnabled(wb);
+            for (int d = 0; d < DiskIICard::kDriveCount; ++d)
+                if (card->isDiskLoaded(d))
+                    card->setDriveHostWriteProtected(
+                        d, pom2::mediaFileIsReadOnly(card->getDiskPath(d)));
+        }
     }
 
     if (cards.primaryHdv) {
@@ -1782,8 +1796,12 @@ StorageCoordinator::restoreMediaFromSettings(
                 "HDV slot " + std::to_string(cards.primaryHdv->getSlot()) +
                 ": " + cards.primaryHdv->getLastError());
         }
-        cards.primaryHdv->setWriteBackEnabled(
-            settings.getBool("hdv_writeback", pom2::mediaWritableByDefault()));
+        const bool legacy = settings.getBool("hdv_writeback", pom2::mediaWritableByDefault());
+        cards.primaryHdv->setWriteBackEnabled(migrateLegacyWriteBack(
+            legacy, { cards.primaryHdv->getImagePath() }, result.warnings));
+        if (cards.primaryHdv->isImageLoaded())
+            cards.primaryHdv->setHostWriteProtected(
+                pom2::mediaFileIsReadOnly(cards.primaryHdv->getImagePath()));
     }
 
     for (auto* block : cards.blockCards) {
@@ -1799,8 +1817,11 @@ StorageCoordinator::restoreMediaFromSettings(
                 "CFFA slot " + std::to_string(card->getSlot()) + ": " +
                 card->getLastError());
         }
-        card->setWriteBackEnabled(
-            settings.getBool(key + "_writeback", pom2::mediaWritableByDefault()));
+        const bool legacy = settings.getBool(key + "_writeback", pom2::mediaWritableByDefault());
+        card->setWriteBackEnabled(migrateLegacyWriteBack(
+            legacy, { card->getImagePath() }, result.warnings));
+        if (card->isImageLoaded())
+            card->setHostWriteProtected(pom2::mediaFileIsReadOnly(card->getImagePath()));
     }
 
     for (auto* card : cards.smartPortCards) {
@@ -1821,8 +1842,9 @@ StorageCoordinator::restoreMediaFromSettings(
                     ": unknown media type '" + kind + "'");
                 continue;
             }
-            unit->setWriteBackEnabled(
-                settings.getBool(base + "_writeback", pom2::mediaWritableByDefault()));
+            const bool legacyWriteBack =
+                settings.getBool(base + "_writeback", pom2::mediaWritableByDefault());
+            unit->setWriteBackEnabled(legacyWriteBack);
 
             const std::string path =
                 settings.getString(base + "_path", "");
@@ -1850,6 +1872,10 @@ StorageCoordinator::restoreMediaFromSettings(
                     " bay " + std::to_string(bay + 1) +
                     ": persisted path not found: " + path);
             }
+            unit->setWriteBackEnabled(migrateLegacyWriteBack(
+                legacyWriteBack, { unit->path() }, result.warnings));
+            if (unit->isLoaded())
+                unit->setHostWriteProtected(pom2::mediaFileIsReadOnly(unit->path()));
             card->setUnit(bay, std::move(unit));
         }
     }
@@ -1861,7 +1887,9 @@ StorageCoordinator::restoreMediaFromSettings(
         if (!media) continue;
         for (int bay = 0; bay < media->bayCount(); ++bay) {
             const std::string base = genericBayKey(slot, bay);
-            media->setBayWriteBack(bay, settings.getBool(base + "_writeback", pom2::mediaWritableByDefault()));
+            const bool legacyWriteBack =
+                settings.getBool(base + "_writeback", pom2::mediaWritableByDefault());
+            media->setBayWriteBack(bay, legacyWriteBack);
             const std::string path = settings.getString(base + "_path", "");
             if (path.empty()) continue;
             std::string resolved;
@@ -1884,6 +1912,9 @@ StorageCoordinator::restoreMediaFromSettings(
                 result.warnings.push_back(
                     "slot " + std::to_string(slot) + " bay " +
                     std::to_string(bay + 1) + ": " + err);
+            } else {
+                media->setBayWriteBack(bay, migrateLegacyWriteBack(
+                    legacyWriteBack, { resolved }, result.warnings));
             }
         }
     }
@@ -2099,6 +2130,7 @@ StorageCoordinator::captureSmartPortPanel(
         unitSnapshot.blockCount = unit->blockCount();
         unitSnapshot.loaded = unit->isLoaded();
         unitSnapshot.writeProtected = unit->isWriteProtected();
+        unitSnapshot.fileWriteProtected = unit->isFileWriteProtected();
         unitSnapshot.writeBackEnabled = unit->isWriteBackEnabled();
     }
     return snapshot;

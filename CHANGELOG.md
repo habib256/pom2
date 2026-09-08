@@ -5,15 +5,30 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
-## 2026-09-08 — Write-protect from the Disk Library's right-click menu
+## 2026-09-08 — Write-protect is the notch on the disk, not a switch on the drive
 
-Media write by default made the write-protect tick the user's visible
-opt-out, and it lived only in the drive panels. The Disk Library — the one
-window most sessions mount from — now offers it in the context menu of any
-mounted image: "Write-protected (do not save changes)", ticked from the
-live flag, per Disk II card for a 5.25" (both drives, the tooltip says so),
-per drive for a 3.5", per bay for an HDV. Same coordinator setters as the
-panels, so the choice persists. → [DEV § Disk Library](DEV.md#disk-library-tree-favourites-recents)
+The morning's "media write by default" left write-protect as the user's
+opt-out, and put that opt-out where the plumbing had it: a `writeBackEnabled`
+flag per Disk II *card* (both drives), per 3.5" drive, per HDV bay. A first
+cut of a Disk Library context-menu toggle followed the same shape and was
+withdrawn within the hour: on the real machine you cut a notch in the
+sleeve to write-enable a 5.25" and put a sticker over it to protect it — the
+protection is the **disk's**, two disks in one drive pair carry two of them,
+and a protected disk stays protected in the next drive. Per card, the model
+could express none of that.
+
+The notch is now the image file's host read-only bit (`MediaNotch.h`), which
+every loader already mounted as protected. The tick in each media panel, the
+Slot Config rows and the Disk Library's right-click menu — offered on every
+image, mounted or not, with a lock glyph on protected rows — sets or clears
+that bit through `StorageCoordinator::setMediaNotch`: the file first,
+unlocked, then every mounted copy under the lock, per drive. Nothing lands
+in `state.cfg`; the disk carries it, into any drive and any emulator. A WOZ
+or a locked 2IMG stays protected whatever the bit says. The per-card and
+per-drive flags are no longer a setting — they remain the process default
+(`POM2_MEDIA_WRITE_DEFAULT`), and a legacy `*_writeback = false` key is
+migrated once at restore into the notch on the disk it protected. Pinned by
+`media_notch`. → [DEV § The notch](DEV.md#the-notch--write-protect-is-the-disks-medianotchh)
 
 ## 2026-09-08 — v0.9.1's first release run timed out in its own test gate
 

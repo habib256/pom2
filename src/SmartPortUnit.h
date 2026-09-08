@@ -158,6 +158,13 @@ public:
     virtual bool isWriteBackEnabled() const = 0;
     virtual void setWriteBackEnabled(bool on) = 0;
 
+    /// The medium's own protection (2IMG lock, WOZ, or the notch — the host
+    /// file's read-only bit, MediaNotch.h), without the write-back default
+    /// folded in. `setHostWriteProtected` re-applies a flipped notch on a
+    /// mounted image. Units with no file behind them ignore both.
+    virtual bool isFileWriteProtected() const { return isWriteProtected(); }
+    virtual void setHostWriteProtected(bool /*on*/) {}
+
     /// Persist dirty blocks now. No-op when write-back is off or
     /// nothing is dirty. Returns false on I/O failure.
     virtual bool saveDirty() = 0;

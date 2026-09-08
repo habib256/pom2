@@ -25,6 +25,7 @@
 //     `ap_dsk35.cpp` for ProDOS .2mg loads.
 
 #include "Disk35Image.h"
+#include "MediaNotch.h"
 
 #include "Block512Backing.h"
 
@@ -115,11 +116,8 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
     // with write-back on, a chmod-read-only image accepted a session of
     // writes and lost them at flush. Probe once; OR-ed into both branches'
     // header/extension-derived flag below.
-    const bool hostReadOnly = [&imgPath]() {
-        std::ofstream probe(imgPath,
-            std::ios::in | std::ios::out | std::ios::binary);
-        return !probe;
-    }();
+    const bool hostReadOnly = pom2::mediaFileIsReadOnly(imgPath);   // MediaNotch.h
+    hostReadOnly_ = hostReadOnly;
     const std::size_t n = buf.size();
 
     // Detect 2IMG-wrapped 800K. Same header layout as 5.25"; we just
@@ -161,7 +159,7 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
                        buf.begin() + dataOff + dataLen);
         // Flags-word semantics live in TwoImg.h (shared with DiskImage
         // and Block512Backing).
-        fileWriteProtected_ = pom2::twoImgWriteProtected(flags) || hostReadOnly;
+        fileWriteProtected_ = pom2::twoImgWriteProtected(flags);
         kind_   = ImageKind::TwoImg800k;
         loaded_ = true;
         dirty_  = false;
@@ -219,7 +217,7 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
         // explanation why. Nothing is loosened by dropping it — writes
         // still require that opt-in, which is off by default, plus a
         // host file that is actually writable.
-        fileWriteProtected_ = hostReadOnly;
+        fileWriteProtected_ = false;
         kind_   = ImageKind::Raw800k;
         loaded_ = true;
         dirty_  = false;
@@ -238,6 +236,7 @@ void Disk35Image::eject()
     loaded_              = false;
     dirty_               = false;
     fileWriteProtected_  = false;
+    hostReadOnly_        = false;
     kind_                = ImageKind::Unknown;
     blocks_.clear();
     twoImgHeaderRaw_.clear();

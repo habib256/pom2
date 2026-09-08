@@ -169,6 +169,9 @@ public:
         std::string lastError;
         bool hasUnsavedChanges = false;
         bool writeBackEnabled = true;
+        /// The disk's own protection (tab / 2IMG lock / WOZ), without the
+        /// process default folded in — what the panel's notch tick shows.
+        bool fileWriteProtected = false;
         bool isWoz = false;
         std::string convertTargetPath;
     };
@@ -254,6 +257,25 @@ public:
     MediaCommandResult setDisk35WriteBack(
         EmulationController& controller, Settings& settings, int drive,
         bool enabled) const;
+
+    /// The notch (MediaNotch.h): write-protect as a property of the DISK.
+    /// Phase 1, unlocked, sets or clears the image file's read-only bit;
+    /// phase 2, under the lock, re-applies it to every mounted medium whose
+    /// path is `path` — any Disk II drive, either 3.5" drive (on-board or
+    /// SmartPort), any block card or SmartPort unit. Nothing to persist:
+    /// the file carries it. Fails, with nothing changed, when the host
+    /// refuses the permission change.
+    MediaCommandResult setMediaNotch(EmulationController& controller,
+                                     const std::string& path,
+                                     bool protect) const;
+    /// A legacy `*_writeback = false` key (the pre-notch per-drive opt-out)
+    /// becomes the notch on the disk(s) it protected, once; returns the
+    /// flag to keep — the default when every file took the notch, the old
+    /// `false` when the host refused (with a warning). No-op under a
+    /// protected process default. Shared with the on-board 3.5" restore.
+    static bool migrateLegacyWriteBack(bool keyValue,
+                                       const std::vector<std::string>& paths,
+                                       std::vector<std::string>& warnings);
     RoutedMediaCommandResult convertDisk35WozToPo(
         EmulationController& controller, Settings& settings,
         int drive) const;

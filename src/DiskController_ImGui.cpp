@@ -172,16 +172,23 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "(active)");
     }
 
-    // Write-protect is the user's visible opt-OUT (2026-09-08): media are
-    // writable by default, and ticking this makes the drive report
-    // write-protect — DOS sees the error before scrambling the in-memory
-    // nibble buffer — so nothing reaches the .dsk/.do/.po/.nib file. The
-    // plumbing underneath is still "write-back enabled", inverted here.
-    bool protect = !snap.writeBackEnabled;
-    if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
-        r.writeBackToggleChanged = true;
+    // The notch (MediaNotch.h, 2026-09-08): write-protect is a property of
+    // the DISK, not of the drive — a sticker over the sleeve's notch — so the
+    // tick shows the mounted file's own protection and flipping it changes
+    // that file's read-only bit; the disk stays protected in any drive, in
+    // any emulator. A WOZ or 2IMG whose header says protected shows ticked
+    // and cannot be unticked here (that flag is in the image, not on the
+    // sleeve). The host applies it through StorageCoordinator::setMediaNotch.
+    bool protect = snap.fileWriteProtected;
+    ImGui::BeginDisabled(!snap.diskLoaded);
+    if (ImGui::Checkbox("Write-protected (the notch on this disk)", &protect)) {
+        r.writeBackToggleChanged = true;   // host: setMediaNotch(diskPath, protect)
         r.writeBackNewValue      = !protect;
     }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Sets the image file's read-only bit — the "
+                          "protection travels with the disk, not the drive.");
     if (snap.hasUnsavedChanges) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "(unsaved)");

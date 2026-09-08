@@ -170,10 +170,17 @@ public:
     bool exportRawTo(const std::string& outPath, std::string& errOut) const;
 
     bool isWriteProtected() const {
-        return fileWriteProtected_ || !writeBackEnabled_;
+        return fileWriteProtected_ || hostReadOnly_ || !writeBackEnabled_;
     }
+    /// The medium's own protection: the 2IMG lock flag, a WOZ (always), or
+    /// the notch — the host file's read-only bit (MediaNotch.h).
+    bool isFileWriteProtected() const { return fileWriteProtected_ || hostReadOnly_; }
     void setWriteBackEnabled(bool on) { writeBackEnabled_ = on; }
     bool isWriteBackEnabled() const   { return writeBackEnabled_; }
+    /// Re-apply the notch on a mounted image (the user flipped it in the
+    /// UI; the file's bit has already been changed, unlocked).
+    void setHostWriteProtected(bool on) { hostReadOnly_ = on; }
+    bool isHostWriteProtected() const   { return hostReadOnly_; }
 
 private:
     bool loadFileUnchecked(const std::string& path);
@@ -183,7 +190,8 @@ private:
     bool         loaded_              = false;
     bool         dirty_               = false;
     bool         writeBackEnabled_    = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
-    bool         fileWriteProtected_  = false;
+    bool         fileWriteProtected_  = false;   // header / format says so
+    bool         hostReadOnly_        = false;   // the notch (MediaNotch.h)
     ImageKind    kind_                = ImageKind::Unknown;
     std::string  path_;
     std::string  lastError_;
