@@ -766,8 +766,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     // against a 0.7 % wrong clock, and the ThunderClock's bit-bang half
     // period is measured in CPU cycles.
     {
-        const double cpuHz = static_cast<double>(
-            pom2VideoTiming(controller->getVideoStandard()).cpuClockHz);
+        const double cpuHz = controller->emulatedCpuClockHz();
         for (int s = 1; s < SlotBus::kSlotCount; ++s) {
             if (auto* card = st.memory().slotBus().peripheral(s))
                 card->setCpuClock(cpuHz);

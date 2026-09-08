@@ -1399,6 +1399,16 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
     if (cfg.iieMode) display->setAuxMemory(st.memory().auxData());
     else             display->setAuxMemory(nullptr);
 
+    // 6b. CPU mode BEFORE the rebuild, not after it. plugSlotsFromSettings
+    //     asks the LIVE CPU whether it is a 65C02
+    //     (MainWindow_SlotConfig.cpp) and SlotCardFactory picks the CFFA's
+    //     firmware from that answer — the card ships an NMOS build and a
+    //     65C02 build. Applied at step 9 it was still the OUTGOING machine's
+    //     core, so //e → ][+ (menu, or `--preset ii+`) put cffa20eec02.bin —
+    //     which opens with INC A / LDA (zp) / BRA — on an NMOS 6502, where
+    //     those decode as KIL and froze the machine at the first PR#7.
+    st.cpu().setCpuMode(resolveCpuMode(cfg.defaultCpu));
+
     // 7. Re-plug slot cards. plugSlotsFromSettings honours user's
     //    persisted slot config; the profile choice doesn't override that
     //    (e.g. a user who put SSC in slot 4 keeps it across profile
@@ -1448,11 +1458,10 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
             controller->memory().slotBus(), mediaSnapshot);
     }
 
-    // 9. CPU mode (profile default with optional user override).
+    // 9. Read back the CPU mode set at step 6b, for the log below.
     bool cpuIsCmos = false;
     {
         auto st = controller->lockState();
-        st.cpu().setCpuMode(resolveCpuMode(cfg.defaultCpu));
         // Capture it here rather than re-reading unlocked for the log
         // below, which is outside this scope.
         cpuIsCmos = (st.cpu().getCpuMode() == M6502::CpuMode::CMOS);

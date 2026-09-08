@@ -28,6 +28,71 @@ with `$C083` first). **The disassembler gave `BRK` one byte** where both
 cores consume two (the signature byte), so every listing desynced after a
 `$00`. Pinned in `ai_control_server_smoke`, `cli_runner`, `disasm_cmos`.
 
+Second lot, the machine profiles as machines. **A profile switch picked the
+CFFA firmware from the outgoing machine's CPU**: `applyProfile` re-plugged
+the cards at step 7 and set the CPU mode at step 9, and the factory chooses
+the CFFA's 65C02 or NMOS build from the *live* core — so //e → ][+ (menu or
+`--preset ii+`) put the 65C02 build, which opens with `INC A` / `LDA (zp)` /
+`BRA`, on an NMOS 6502 where those are KIL; the machine froze at the first
+`PR#7`. The CPU mode is set before the rebuild now. **The //c+ handed every
+emuCycles device the 1× clock** while its soldered accelerator runs the
+machine at 4× (68180 cycles per frame): a 4 kHz speaker tone rendered at
+1 kHz while producing four seconds of audio per second; the controller
+scales the standard's clock by the profile's budget and exposes
+`emulatedCpuClockHz()`, which the slot-plug path uses too. And **the
+toolbar's "1×" un-soldered the //c+'s accelerator** — its buckets came from
+the video standard, so a stock //c+ read as "4×" and clicking 1× dropped it
+to 1 MHz for the session; 1× is the profile's stock budget now. Pinned by the
+new `device_clock_fanout` and in `slot_card_factory`. Left open, and
+recorded: the //c+'s video frame is still 17030 CPU cycles, so its beam
+sweeps 4× per UI frame — decoupling the beam from `cycleCounter` is its own
+job.
+
+
+Third lot, the editors and the paper. **The sprite editor's PNG export
+read past its render buffer**: it cropped the rendered page to the
+*unclipped* sprite size, so a ×2 sprite wider than 20 bytes stitched the
+next scanline into its right edge and one taller than 96 rows read past
+the end of the buffer (ASan). Clipped to the page. **The print history
+refused to reopen a long tractor form**: its decompression-bomb caps were a
+flat 8192 px per side, below what the head itself puts on paper, so a
+57" sheet at the default 144 dpi was archived, indexed, and then "invalid
+or too large" for good; the caps are sized from `ImageWriter`'s own paper
+limits. **The image importer held every non-HGR grid square**: the GR
+block is 7 canvas px wide and 4 tall, the 140-model DHGR pixel 2 wide and 1
+tall, but the converters handed the resampler its 1.0 default, so a 4:3
+photo fit + letterboxed at 2.33:1 on GR (the 560-dot path was off by 7/4
+the other way). And **the paint host saved through a fixed `.pom2tmp`
+sibling**, the one name every POM2 instance derives, so two instances
+saving the same picture truncated each other's temp; `tempSiblingPath`
+now, like every other write-back. Pinned in `printer_history` and
+`dhgr_convert`; the sprite clip has no headless seam (the editor renders
+through ImGui) and is not pinned.
+
+Fourth lot, the Disk II — and the biggest one: **POM2 could not format a
+disk.** With the shipped `roms/diskii_p6.rom`, i.e. the released default,
+`INIT HELLO,D2` answered `I/O ERROR` on every image, and nothing past
+track 0 was ever written. `find_position` is `(t − anchor) mod period`, and
+where MAME's period is a constant 200 ms POM2's non-WOZ period is the
+track's *padded* cell count, which every sync run written moves (2 cells
+per `$FF`). The anchor was set once, at motor-on; tens of revolutions
+later a period shift of ΔP dragged every angular position by
+revolutions × ΔP — measured at ~42 nibbles of jump across a 66-nibble gap
+during INIT, which dropped sector 0's data field on top of the address
+field it had just written. RWTS retried track 0 forever. `lssSync` now
+rolls the anchor forward by whole periods before reducing against it. The
+second half: DOS drops Q7 for ~50 CPU cycles between a sector's address
+and data fields, and a burst re-armed 1.6 nibble-times later re-derived
+its angle from a cell-width map the previous burst had just rewritten,
+landing 2 nibbles early; a burst that resumes within 8 nibble-times now
+carries the nibble cursor forward instead. The legacy 32-cycle gate (no P6
+ROM) formatted fine, which is why no boot or SAVE test ever saw it: only
+INIT writes a whole track. Pinned by the new `diskii_format_smoke` (boot,
+INIT a blank image, CATALOG, SAVE/LOAD round-trip) and a resumed-burst
+case in `disk_writeflux_framing`. Ruled out by the same hunter: 13-sector
+`.d13` write-back, `.dsk`/`.nib` untouched-sector identity, `seekPhaseW`
+against MAME, drive-2 select, `.nib` truncation, Floppy Emu path checks.
+
 ## 2026-09-08 — The mouse that jumped past the pointer (A2FILECMD)
 
 The AppleWin HLE mouse card's closed-loop cursor drive computed every

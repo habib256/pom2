@@ -41,6 +41,7 @@
 #include "hgrpaint/HgrPaintModel.h"
 #include "hgrpaint/ImportCommon.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cmath>
@@ -238,6 +239,62 @@ int main()
             if (white) assert(lit >= 560L * 192 * 95 / 100);   // ≈ all on
             else       assert(lit == 0);                       // exactly off
         }
+    }
+
+    // ── Import aspect (bug hunt #7) ──────────────────────────────────────────
+    // A GR block is 7 canvas px wide and 4 tall, a 140-model DHGR pixel is 2
+    // wide and 1 tall. The converters handed the resampler its 1.0 default,
+    // which called both grids square: a 4:3 photo fit + letterboxed as if the
+    // 40x48 grid were 40x48 canvas px and came out 2.33:1. An all-white 4:3
+    // source must fill the full height and ~4/3 of it in width on both.
+    {
+        const int SW = 400, SH = 300;
+        std::vector<uint8_t> src(static_cast<size_t>(SW) * SH * 4, 255);
+        ImportOptions opt;
+        opt.dither = false;
+
+        std::vector<uint8_t> gr(0x400, 0);
+        imageToGrPage(src.data(), SW, SH, opt, gr.data());
+        int litRows = 0, litCols = 0;
+        for (int r = 0; r < 24; ++r) {
+            const int base = 0x80 * (r % 8) + 0x28 * (r / 8);
+            int cols = 0;
+            bool top = false, bot = false;
+            for (int c = 0; c < 40; ++c) {
+                const uint8_t v = gr[static_cast<size_t>(base + c)];
+                if (v & 0x0F) { top = true; ++cols; }
+                if (v & 0xF0) bot = true;
+            }
+            litRows += (top ? 1 : 0) + (bot ? 1 : 0);
+            litCols = std::max(litCols, cols);
+        }
+        // 192 px tall x 4/3 = 256 px wide = 36.6 blocks of 7 px.
+        if (litRows != 48 || litCols < 35 || litCols > 38) {
+            std::fprintf(stderr, "FAIL: a 4:3 image imported to GR lit %d rows "
+                                 "x %d cols (want 48 x ~37)\n", litRows, litCols);
+            return 1;
+        }
+
+        std::vector<uint8_t> pair(kDhgrPairSize, 0);
+        imageToDhgrPage(src.data(), SW, SH, opt, pair.data());
+        int rows = 0, cols = 0;
+        for (int y = 0; y < 192; ++y) {
+            const int rowBase = hgrRowAddress(y) - kHiresBase;
+            uint32_t px[560];
+            dhgrDecodeScanlineRgb(pair.data() + rowBase,
+                                  pair.data() + kHiresSize + rowBase, px);
+            int lit = 0;
+            for (int x = 0; x < 560; ++x) if (px[x] & 0xFFFFFF) ++lit;
+            if (lit) ++rows;
+            cols = std::max(cols, lit);
+        }
+        // 192 px tall x 4/3 = 256 HGR px = 128 of 140 DHGR pixels = 512 dots.
+        if (rows != 192 || cols < 496 || cols > 528) {
+            std::fprintf(stderr, "FAIL: a 4:3 image imported to DHGR lit %d "
+                                 "rows x %d dots (want 192 x ~512)\n", rows, cols);
+            return 1;
+        }
+        std::printf("  import keeps a 4:3 source at 4:3 on GR and DHGR: OK\n");
     }
 
     std::printf("dhgr_convert: OK\n");

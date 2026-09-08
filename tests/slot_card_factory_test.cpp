@@ -68,6 +68,28 @@ int main()
     assert(embeddedDisk.status.find("embedded") != std::string::npos);
 
     const auto missingCffa = missing.create(request("cffa"));
+    // The CFFA ships two firmware builds and the factory picks by the CPU it
+    // is told about. applyProfile used to ask AFTER re-plugging, i.e. the
+    // outgoing machine's core — a //e → ][+ switch built the 65C02 firmware
+    // (INC A / LDA (zp) / BRA = KIL on NMOS) onto a 6502. The pin here is
+    // the choice itself; the ordering lives in applyProfile step 6b.
+    {
+        auto nmos = request("cffa", 7); nmos.cpuIsCmos = false;
+        auto cmos = request("cffa", 7); cmos.cpuIsCmos = true;
+        std::vector<std::string> probed;
+        pom2::SlotCardFactory recorder([&](std::string_view resource) {
+            probed.emplace_back(resource);
+            return std::string();
+        });
+        (void)recorder.create(nmos);
+        (void)recorder.create(cmos);
+        const auto has = [&](const char* leaf) {
+            for (const auto& p : probed) if (p.find(leaf) != std::string::npos) return true;
+            return false;
+        };
+        assert(has("cffa20ee02.bin") && has("cffa20eec02.bin") &&
+               "the CPU flag must select between the two CFFA firmware builds");
+    }
     assert(!missingCffa);
     assert(missingCffa.warningCategory == "CFFA");
 

@@ -20,6 +20,7 @@
 #include "PrinterHistory.h"
 
 #include "AtomicFileReplace.h"
+#include "ImageWriter.h"
 #include "Logger.h"
 #include "ThreadGuard.h"
 
@@ -53,8 +54,17 @@ constexpr const char* kIndexMagic = "pom2-printer-history\t1";
 // long paper while refusing compressed image bombs before stb allocates the
 // decoded raster (which is then copied into the caller's RGBA vector).
 constexpr uintmax_t kMaxPagePngBytes = 64u * 1024u * 1024u;
-constexpr int kMaxPageDimension = 8192;
-constexpr uint64_t kMaxPagePixels = 16u * 1024u * 1024u;
+// Sized from what the HEAD can put on paper, not from a round number: the
+// caps are a decompression-bomb guard and have to sit ABOVE POM2's own
+// output. A tractor form runs to kMaxPaperLengthIn, so at the DEFAULT
+// 144 dpi any sheet past 56.9" already blew a flat 8192 — addPage archived
+// the PNG and committed the index row, and loadRgba then refused to reopen
+// the user's own printout, for good.
+constexpr int kMaxPageDimension =
+    static_cast<int>(ImageWriter::kMaxPaperLengthIn * ImageWriter::kMaxDpi) + 1;
+constexpr uint64_t kMaxPagePixels =
+    static_cast<uint64_t>(ImageWriter::kMaxPaperWidthIn * ImageWriter::kMaxDpi + 1) *
+    static_cast<uint64_t>(ImageWriter::kMaxPaperLengthIn * ImageWriter::kMaxDpi + 1);
 
 /// Sheets ejected within this many seconds of each other belong to the same
 /// print job. A multi-page document ejects its sheets seconds apart; a new

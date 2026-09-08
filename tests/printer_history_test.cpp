@@ -133,6 +133,36 @@ void testPersistsAcrossSessions()
     std::printf("  ok: a stored page reloads with its metadata and raster\n");
 }
 
+// ── 1b. A long tractor form reopens ───────────────────────────────────────
+// Bug hunt #7: the decompression-bomb caps in loadRgba were a flat 8192 px
+// per side, below what the head itself puts on paper (kMaxPaperLengthIn at
+// kMaxDpi). addPage archived a 57" printout at the default 144 dpi, the row
+// went into the index, and the panel then refused to reopen it for good.
+void testTractorFormReopens()
+{
+    const fs::path dir = scratch("tractor");
+    std::string err;
+    PrinterHistory h;
+    assert(h.open(dir.string(), err));
+
+    const int tall = 8300;                                   // 57.6" at 144 dpi
+    assert(tall <= ImageWriter::kMaxPaperLengthIn * ImageWriter::kMaxDpi);
+    const auto page = makePage(64, tall, 5);
+    assert(h.addPage(page, 0, 0, 8.5, tall / 144.0, err));
+    h.flushPending();
+    assert(h.size() == 1);
+
+    std::vector<uint8_t> rgba;
+    int w = 0, h2 = 0;
+    if (!h.loadRgba(h.pages()[0], rgba, w, h2, err)) {
+        std::fprintf(stderr, "FAIL: a %d px tractor form the head printed "
+                             "cannot be reopened: %s\n", tall, err.c_str());
+        assert(false);
+    }
+    assert(w == 64 && h2 == tall);
+    std::printf("  ok: a long tractor form reopens from the history\n");
+}
+
 // ── 2. Pages of one document share a job ─────────────────────────────────
 void testPagesGroupIntoJobs()
 {
@@ -626,6 +656,7 @@ void testCounterResumesWithoutAnIndex()
 int main()
 {
     testPersistsAcrossSessions();
+    testTractorFormReopens();
     testPagesGroupIntoJobs();
     testTrimsToCap();
     testBadIndexIsIgnored();

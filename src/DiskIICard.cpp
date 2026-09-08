@@ -1220,7 +1220,30 @@ void DiskIICard::lssSync(uint64_t extraCycles)
     //
     // Pinned by `tests/diskii_lss_smoke_test.cpp::testFullSectorReadback`
     // (added with this fix).
-    const int64_t revStart = revolutionStartLssCycle[activeDrive];
+    // Roll the revolution anchor forward to the CURRENT revolution before
+    // anyone reduces against it. `find_position` is `(t - anchor) mod
+    // period`, and POM2's period is NOT MAME's fixed `m_rev_time`: a non-WOZ
+    // track's period is its PADDED cell count (`expandTrackBits` adds 2 cells
+    // per sync $FF), so every write that lays a new sync run down moves it.
+    // With the anchor left where motor-on put it, `t - anchor` is tens of
+    // revolutions by then and a period that shifts by dP drags every later
+    // angular position by revolutions x dP — measured at ~42 nibbles of jump
+    // across a 66-nibble gap during a DOS 3.3 INIT, which dropped the data
+    // field on top of the address field it had just written and made
+    // formatting a disk impossible (bug hunt #7). Re-anchoring by WHOLE
+    // periods leaves the angle untouched while the period holds, and keeps
+    // `t - anchor` inside one revolution so a later period change cannot act
+    // on it retroactively. Read back by the write flushes below and by
+    // `control()` case 0xE, which pick the corrected anchor up.
+    int64_t revStart = revolutionStartLssCycle[activeDrive];
+    {
+        const int per = img.trackPeriod(qt);
+        if (revStart >= 0 && per > 0
+            && static_cast<int64_t>(lssCycle) - revStart >= per) {
+            revStart += ((static_cast<int64_t>(lssCycle) - revStart) / per) * per;
+            revolutionStartLssCycle[activeDrive] = revStart;
+        }
+    }
     int64_t nextFlux = img.getNextTransition(qt,
                           static_cast<int64_t>(lssCycle), revStart);
     int64_t nextFluxDown = (nextFlux != DiskImage::kFluxNever)

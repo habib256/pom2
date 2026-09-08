@@ -575,7 +575,15 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
         std::vector<uint32_t> full(static_cast<size_t>(hgrpaint::kHiresWidth) *
                                    hgrpaint::kHiresHeight, 0);
         host->renderHgrPage(pg.data(), full.data(), false, false);
-        const int W = wB * 7, H = hR;
+        // Clip to the page the host just rendered. `stamp` above already
+        // dropped every byte past column kByteCols / row kRows (byteAddr
+        // returns -1), and renderHgrPage's contract is exactly
+        // kHiresWidth x kHiresHeight — so cropping to the UNCLIPPED sprite
+        // size walked off the end of `full`: a ×2 sprite wider than 20 bytes
+        // stitched the next scanline into its right edge, and one taller than
+        // 96 rows read past the buffer outright (ASan, bug hunt #7).
+        const int W = std::min(wB * 7, hgrpaint::kHiresWidth);
+        const int H = std::min(hR, hgrpaint::kHiresHeight);
         std::vector<uint32_t> rgba(static_cast<size_t>(W) * H, 0);
         for (int y = 0; y < H; ++y)
             for (int x = 0; x < W; ++x)

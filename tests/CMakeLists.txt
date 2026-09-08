@@ -2437,6 +2437,39 @@ endif()
 add_test(NAME dos33_save_smoke COMMAND test_dos33_save)
 set_tests_properties(dos33_save_smoke PROPERTIES TIMEOUT 60)
 
+# ─── DOS 3.3 INIT smoke test ────────────────────────────────────────────
+# Can POM2 format a disk? Nothing but INIT writes a whole track, and with the
+# shipped P6 ROM it could not (bug hunt #7: the revolution anchor a burst is
+# reduced against drifted by revolutions x the period change every sync run
+# made). Boots the master, INITs a blank image in drive 2, CATALOGs it and
+# round-trips a SAVE / LOAD through it.
+add_executable(test_diskii_format
+    diskii_format_smoke_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_format PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_format PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_format PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_format PRIVATE winmm)
+endif()
+
+add_test(NAME diskii_format_smoke COMMAND test_diskii_format)
+set_tests_properties(diskii_format_smoke PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+
 
 # ─── ProDOS 2.4.3 SAVE / LOAD round-trip smoke test ──────────────────────
 # Same regression gate as dos33_save but driving a ProDOS .po image
@@ -6672,6 +6705,12 @@ pom2_add_headless_test(test_printer_coordinator
 
 # ─── Slot-card snapshot contract, every card in the catalog (TODO G5-2) ──
 # ─── The IWM releases a 3.5" drive the hub has deselected ────────────────
+# ─── The device clock is the machine's, not the standard's ────────────────
+pom2_add_headless_test(test_device_clock_fanout
+    NAME device_clock_fanout TIMEOUT 20
+    SOURCES device_clock_fanout_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_iwm_stale_sony
     NAME iwm_stale_sony TIMEOUT 30
     SOURCES iwm_stale_sony_test.cpp

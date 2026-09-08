@@ -318,7 +318,11 @@ void imageToGrPage(const uint8_t* rgba, int srcW, int srcH,
 
     std::vector<LinRgb> tlin;
     int ox0, oy0, ow, oh;
-    resampleToLinearRgb(rgba, srcW, srcH, W, H, opt, tlin, ox0, oy0, ow, oh);
+    // A GR block is 7 canvas px wide and 4 tall, so one target pixel is 7/4 as
+    // wide as it is high. The resampler's 1.0 default called the 40x48 grid
+    // square and let a 4:3 photo out at 2.33 instead of 1.33 (bug hunt #7).
+    resampleToLinearRgb(rgba, srcW, srcH, W, H, opt, tlin, ox0, oy0, ow, oh,
+                        7.0 / 4.0);
 
     const KernelSpec& ker = kernelSpec(opt.kernel);
     const float cw = opt.chromaWeight;
@@ -385,7 +389,9 @@ void imageToDhgrPage(const uint8_t* rgba, int srcW, int srcH,
 
     std::vector<LinRgb> tlin;
     int ox0, oy0, ow, oh;
-    resampleToLinearRgb(rgba, srcW, srcH, W, H, opt, tlin, ox0, oy0, ow, oh);
+    // A 140-model DHGR pixel is 4 of 560 dots = 2 HGR px wide, one scanline
+    // high: pixelAspect 2.0, not the square default (which gave 2.67).
+    resampleToLinearRgb(rgba, srcW, srcH, W, H, opt, tlin, ox0, oy0, ow, oh, 2.0);
 
     const KernelSpec& ker = kernelSpec(opt.kernel);
     const float cw = opt.chromaWeight;
@@ -450,7 +456,11 @@ void imageToDlgrPage(const uint8_t* rgba, int srcW, int srcH,
 
     std::vector<LinRgb> tlin;
     int ox0, oy0, ow, oh;
-    resampleToLinearRgb(rgba, srcW, srcH, W, H, opt, tlin, ox0, oy0, ow, oh, 0.5);
+    // 7 dots wide in the 560-dot space = 3.5 HGR px, 4 px tall → 7/8. The old
+    // 0.5 was measured against GR's 1.0, which was itself wrong; both are
+    // relative to the 280-mode pixel, as HGR and the 560-dot path are.
+    resampleToLinearRgb(rgba, srcW, srcH, W, H, opt, tlin, ox0, oy0, ow, oh,
+                        7.0 / 8.0);
 
     const KernelSpec& ker = kernelSpec(opt.kernel);
     const float cw = opt.chromaWeight;

@@ -165,8 +165,13 @@
 #   src/Memory.cpp               2594 -> 2604 (+10)  accessCycle() (the clock
 #     the video-event log stamps with) and the $C000 paste hand-over.
 
+# 2026-09-08 (later still): bug hunt #7, the Disk II half. Two why-comments
+# and the `resumes` branch in writeFlux; no feature code, no split.
+#   src/DiskImage.cpp            3078 -> 3096 (+18)  a burst re-armed within 8
+#     nibble-times carries its cursor forward (DOS INIT's Q7 drop between
+#     the address and data fields).
 src/Apple2Display.cpp                    2462
-src/DiskImage.cpp                        3078
+src/DiskImage.cpp                        3096
 src/ImageWriter.cpp                      2720
 src/M6502.cpp                            2273
 src/Memory.cpp                           2604

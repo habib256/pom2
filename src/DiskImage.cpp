@@ -2049,6 +2049,17 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
     // per transition.
     WriteFraming& fr = writeFraming[track];
     const bool continues = (fr.nextCycle == startLssCycle && fr.nibbleIdx >= 0);
+    // A burst that re-arms within a few nibble-times of the last one is the
+    // SAME pass of the head over the surface — DOS 3.3's format loop drops
+    // Q7 for ~50 CPU cycles between a sector's address field and its data
+    // field. Re-deriving the angle there walks a `computeCellWidths` map the
+    // burst that just ended rewrote (data nibbles became 10-cell sync $FFs),
+    // so the head appeared to jump backwards by ~2 nibbles. Carry the nibble
+    // cursor forward and step it by the nibble-times that elapsed instead,
+    // which is what the head actually does (bug hunt #7).
+    const bool resumes = !continues && fr.nibbleIdx >= 0
+        && startLssCycle > fr.nextCycle
+        && (startLssCycle - fr.nextCycle) <= 8 * 8 * cyc;   // <= 8 nibbles
     if (!continues) fr.origin = startLssCycle;
 
     const int64_t firstCell64 = (startLssCycle - fr.origin) / cyc;
@@ -2105,7 +2116,12 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
     // A window that doesn't continue the previous one starts a new burst:
     // re-anchor on the nibble the head is over — that lookup is ANGULAR, so
     // it uses the revolution-relative cell index, not the write-clock one.
-    if (!continues) {
+    if (resumes) {
+        const int64_t gapCells = (startLssCycle - fr.nextCycle) / cyc;
+        fr.nibbleIdx = static_cast<int>(
+            (fr.nibbleIdx + gapCells / 8) % kNibblesPerTrack);
+        fr.acc = 0; fr.accBits = 0; fr.nextCell = firstCell; fr.heldValid = false;
+    } else if (!continues) {
         const int angularCell = static_cast<int>(startMod / cyc);
         uint8_t cellWidth[kNibblesPerTrack];
         computeCellWidths(track, cellWidth);
@@ -2183,9 +2199,11 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
     fr.nextCycle = endLssCycle;
     if (kTraceWf) {
         std::fprintf(stderr,
-            "[WF] t%02d %s start=%lld end=%lld n=%d cells[%d,%d) "
-            "anchor=%d -> nib=%d accBits=%d\n",
-            track, continues ? "cont" : "NEW ",
+            "[WF] t%02d %s per=%d rev=%lld mod=%lld start=%lld end=%lld n=%d "
+            "cells[%d,%d) anchor=%d -> nib=%d accBits=%d\n",
+            track, continues ? "cont" : (resumes ? "res " : "NEW "),
+            period, static_cast<long long>(revolutionStart),
+            static_cast<long long>(startMod),
             (long long)startLssCycle, (long long)endLssCycle, count,
             from, to, anchorDbg, fr.nibbleIdx, fr.accBits);
     }

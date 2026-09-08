@@ -324,6 +324,11 @@ public:
     int  getCyclesPerFrame() const { return cyclesPerFrame.load(); }
     /// The budget turbo will fall back to. Read by tests and diagnostics.
     int  getBaseCyclesPerFrame() const { return baseCyclesPerFrame_.load(); }
+    /// The clock the machine ACTUALLY runs at. Every emuCycles consumer must
+    /// be tuned to this and not to `pom2VideoTiming(...).cpuClockHz`: the
+    /// //c+ has a 4× accelerator soldered on, and a card plugged outside a
+    /// profile switch has to be handed the same number.
+    double emulatedCpuClockHz() const { return cpuClockHz_.load(); }
 
     /// Disk turbo (~60× while a drive streams). The override COMPOSES with
     /// the base instead of replacing it: the UI used to stash
@@ -473,6 +478,7 @@ private:
     std::atomic<Mode> mode{Mode::Stopped};
     /// EFFECTIVE budget the worker reads every frame.
     std::atomic<int>  cyclesPerFrame{17045};
+    std::atomic<double> cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
     /// Budget to fall back to when the turbo override lifts. Kept in step
     /// with `cyclesPerFrame` by setCyclesPerFrame; see setTurboOverride.
     std::atomic<int>  baseCyclesPerFrame_{17045};

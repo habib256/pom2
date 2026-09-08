@@ -29,28 +29,42 @@
 void EmulationController::setVideoStandard(VideoStandard s)
 {
     videoStandard_.store(s);
-    frameIntervalUs.store(1'000'000 / pom2VideoTiming(s).refreshHz);
-    // Geometry propagates to Memory so pushVideoEventLocked stamps the right
-    // scanline. Called from applyProfile with the worker stopped, so the
-    // plain Memory member is set without a concurrent reader.
+    const VideoTiming& vt = pom2VideoTiming(s);
+    frameIntervalUs.store(1'000'000 / vt.refreshHz);
+    // The standard's nominal clock is NOT what the machine runs at when the
+    // profile solders an accelerator on: the //c+ carries
+    // defaultCyclesPerFrame = 68180 and burns 4 090 908 cycles per emulated
+    // second. Handing 1 022 727 to the emuCycles consumers made each of them
+    // read a //c+ cycle stamp as four times the time it is — a 4 kHz speaker
+    // tone rendered at 1 kHz while producing four seconds of audio per
+    // second of wall clock. Scale by the profile's own budget, which
+    // applyProfile has already committed (step 10 sets it before calling
+    // here). On every 1× machine the ratio is exactly 1 (17045/17045,
+    // 20313/20313) so not one constant moves; an accelerator only ever
+    // speeds up, hence the one-sided test.
+    const int base = baseCyclesPerFrame_.load();
+    const double hz = static_cast<double>(vt.cpuClockHz) *
+        (base > vt.cyclesPerFrame
+             ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
+    cpuClockHz_.store(hz);
     mem.setVideoStandard(s);
     // Retune the 1-bit speaker's cycle→sample reconstruction to the standard's
     // actual CPU clock (PAL ≈ 1.0156 MHz vs NTSC ≈ 1.0227 MHz). Without this
     // the audio path assumed NTSC under PAL and starved the reconstructor,
     // glitching continuous speaker music. (AY/SSI263 device clocks stay at the
     // NTSC nominal by design — their 0.7 % delta is an inaudible pitch approx.)
-    if (spk) spk->setCpuClock(static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+    if (spk) spk->setCpuClock(hz);
     // Same starvation applies to the cassette's realtime pulse monitor (its
     // tape-FILE timebase intentionally stays NTSC-nominal — format spec).
-    if (tape) tape->setCpuClock(static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+    if (tape) tape->setCpuClock(hz);
     // The floppy sound banks classify head-step cadence from emuCycles deltas
     // (drainCommands), so they divide by the same clock. 0.7 % is not audible
     // on its own, but leaving one cycle-stamped consumer on the compile-time
     // NTSC constant is how the speaker/cassette bugs started.
     if (floppy525) floppy525->setCpuClock(
-        static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+        hz);
     if (floppy35) floppy35->setCpuClock(
-        static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+        hz);
     // The Mockingboard's emuCycles replay cursor (audio thread) needs the
     // same retune: it maps a queued AY register write's CPU-cycle stamp to
     // a sample offset inside the buffer, so a cursor left at the NTSC rate
@@ -62,7 +76,7 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // tests that link the controller without them.
     for (int slot = 1; slot <= 7; ++slot) {
         if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
-            card->setCpuClock(static_cast<double>(pom2VideoTiming(s).cpuClockHz));
+            card->setCpuClock(hz);
     }
 }
 

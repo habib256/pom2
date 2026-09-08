@@ -61,7 +61,11 @@ bool publishBytes(const std::string& path, const uint8_t* data, size_t size,
                   std::string& err)
 {
     namespace fs = std::filesystem;
-    const fs::path target(path), tmp(path + ".pom2tmp");
+    // Unique per process AND per call. A fixed "<target>.pom2tmp" is the name
+    // EVERY POM2 picks, and prepareTempPath lets a plain file there through on
+    // purpose — so two instances saving one picture truncated each other's
+    // temp and the later rename published the splice. See tempSiblingPath().
+    const fs::path target(path), tmp = pom2::tempSiblingPath(target);
     std::error_code permEc;
     const auto perms = fs::status(target, permEc).permissions();
     const bool havePerms = !permEc;
@@ -465,7 +469,7 @@ bool Pom2HgrPaintHost::savePng(const std::string& path, const uint32_t* rgba,
     // rgba is top-down RGBA8, exactly what stbi_write_png expects with
     // stride = w*4.
     namespace fs = std::filesystem;
-    const fs::path tmp(path + ".pom2tmp");
+    const fs::path tmp = pom2::tempSiblingPath(fs::path(path));   // see publishBytes
     // Same rule as publishBytes: clear the temp name before writing through it.
     std::error_code tmpEc;
     if (!pom2::prepareTempPath(tmp, tmpEc)) {

@@ -241,7 +241,11 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
     // standard (1× = 17045 @60 Hz NTSC, 20313 @50 Hz PAL) so "1×" is the
     // machine's real clock on both.
     const VideoTiming& vt = pom2VideoTiming(snap.videoStandard);
-    const int kSpeed1x  = vt.cyclesPerFrame;
+    // 1× is the MACHINE's stock speed, not the video standard's nominal: the
+    // //c+ ships a 4× accelerator soldered on and its profile carries
+    // defaultCyclesPerFrame = 68180. Bucketed off `vt`, a stock //c+ read as
+    // "4×" and picking "1× (1.02 MHz)" un-soldered it for the session.
+    const int kSpeed1x  = pom2::profileConfig(snap.activeProfile).defaultCyclesPerFrame;
     const int kSpeed2x  = kSpeed1x * 2;
     const int kSpeed4x  = kSpeed1x * 4;
     static constexpr int kSpeedMax = 1'000'000;

@@ -2592,6 +2592,25 @@ at LSS-cycle `cellIdx*8 + 4`. `getNextTransition` verbatim MAME
 `writeFlux(track, start, end, count, transitions)` splices flux
 window back into nibble buffer.
 
+**The revolution anchor is rolled forward before every reduction**
+*(2026-09-08, bug hunt #7)*. `find_position` is `(t − anchor) mod period`;
+MAME's period is a constant `m_rev_time`, POM2's non-WOZ period is the
+track's PADDED cell count (`expandTrackBits` adds 2 cells per sync `$FF`),
+so every write that lays a sync run down changes it. The anchor used to be
+set once at motor-on / drive-select; tens of revolutions later a period
+change ΔP moved every angular position by revolutions × ΔP — ~42 nibbles
+across a 66-nibble gap during a DOS 3.3 INIT, which put sector 0's data
+field on top of its address field and made formatting impossible (the
+legacy 32-cycle gate has no such anchor and formatted fine). `lssSync`
+now advances `revolutionStartLssCycle` by whole periods so `t − anchor`
+stays inside one revolution; the flushes and `control()` case `$E` read
+the corrected value. Companion rule in `writeFlux`: a burst re-armed within
+8 nibble-times of the last one (`resumes`) is the same pass of the head —
+DOS drops Q7 for ~50 CPU cycles between address and data fields — and
+carries the nibble cursor forward instead of re-deriving the angle from a
+cell-width map the previous burst just rewrote. Pinned by
+`diskii_format_smoke` and `disk_writeflux_framing`.
+
 **A surface with no flux must still make noise** *(2026-09-07)*. A track
 with no events at all — a WOZ whose TMAP marks the quarter-track `$FF`, a
 35-track image seeked past 34, the gap between half-tracks a nibble scanner
@@ -7433,6 +7452,21 @@ Settings: `floppyemu_mode`, `floppyemu_sd_root`, `show_floppy_emu`.
 Pinned: `floppy_emu_smoke_test`.
 
 ## Profile switching internals
+
+**Step 6b: the CPU mode is set before the slot rebuild** *(2026-09-08, bug
+hunt #7)*. `plugSlotsFromSettings` asks the live CPU whether it is a 65C02
+and `SlotCardFactory` picks the CFFA's firmware from the answer (the card
+ships `cffa20ee02.bin` for a 6502 and `cffa20eec02.bin` for a 65C02, which
+differ in 1979 of 4096 bytes). Set at the old step 9, the answer was the
+OUTGOING machine's, so //e → ][+ built the 65C02 firmware onto an NMOS core —
+KIL at the first `PR#7`. `setVideoStandard` (step 10) also computes
+`emulatedCpuClockHz()` = the standard's clock × `baseCyclesPerFrame /
+cyclesPerFrame` (4× on the //c+, exactly 1 everywhere else) and hands THAT
+to the speaker, cassette, floppy sounds and every slot card; the Slot
+Config re-plug reads the same value, and the toolbar's 1× bucket is the
+profile's stock budget. Pinned by `device_clock_fanout` and
+`slot_card_factory`. Left open: the //c+'s video frame is still 17030 CPU
+cycles, so its beam sweeps 4× per UI frame.
 
 `SystemProfile.h/.cpp`. Pinned: `system_profile_smoke_test`.
 

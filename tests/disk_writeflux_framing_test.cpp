@@ -194,12 +194,109 @@ int writeAndCheck(const fs::path& img, int track, int startNib, int chunk,
     return rc;
 }
 
+// Bug hunt #7: a burst that re-arms a couple of cells after the last one
+// ended is the same pass of the head (DOS 3.3's format loop drops Q7 for ~50
+// CPU cycles between a sector's address field and its data field). The old
+// code re-derived its angle from the revolution anchor and the cell-width map
+// the first burst had just rewritten: the anchor sits `revs` revolutions back,
+// the first burst changed the track's padded period, and `(t - anchor) mod
+// period` moved by revs x dP -- so the second burst landed tens of nibbles
+// away from where the head was and erased the field before it. Returns 0 when
+// the second burst's first nibble lands exactly after the first burst's last.
+int resumeAndCheck(const fs::path& img, int track, int startNib, int revs)
+{
+    DiskImage disk;
+    if (!disk.loadFile(img.string())) {
+        std::fprintf(stderr, "resume: load failed: %s\n",
+                     disk.getLastError().c_str());
+        return 1;
+    }
+    disk.setWriteBackEnabled(true);
+    const int qt = track * 4;
+
+    std::vector<uint8_t> before(DiskImage::kNibblesPerTrack);
+    for (int i = 0; i < DiskImage::kNibblesPerTrack; ++i)
+        before[static_cast<size_t>(i)] = disk.nibbleAt(track, i);
+    std::vector<int> w;
+    cellWidths(before, w);
+    int64_t cell0 = 0;
+    for (int i = 0; i < startNib; ++i) cell0 += w[static_cast<size_t>(i)];
+    const int64_t periodBefore = disk.trackPeriod(qt);
+
+    auto burst = [&](const std::vector<uint8_t>& payload, int64_t startCycle,
+                     int64_t& endCycle) {
+        std::vector<int> pw;
+        cellWidths(payload, pw);
+        std::vector<int64_t> tr;
+        int64_t cell = 0;
+        for (size_t n = 0; n < payload.size(); ++n) {
+            for (int b = 0; b < 8; ++b)
+                if (payload[n] & (0x80 >> b))
+                    tr.push_back(startCycle + (cell + b) * kCyc);
+            cell += pw[n];
+        }
+        endCycle = startCycle + cell * kCyc;
+        disk.writeFlux(qt, startCycle, endCycle, static_cast<int>(tr.size()),
+                       tr.data(), /*anchor*/ 0);
+    };
+
+    // Burst 1: an address-field-sized stretch, `revs` revolutions after the
+    // anchor. Burst 2: a data field, re-armed two cells after burst 1 ended.
+    std::vector<uint8_t> first;
+    for (int i = 0; i < 8; ++i) first.push_back(0xFF);
+    first.push_back(0xD5); first.push_back(0xAA); first.push_back(0x96);
+    for (int i = 0; i < 8; ++i) first.push_back(static_cast<uint8_t>(0xAA + 2 * i));
+    first.push_back(0xDE); first.push_back(0xAA); first.push_back(0xEB);
+    const std::vector<uint8_t> second = dataField();
+
+    int64_t end1 = 0, end2 = 0;
+    burst(first, revs * periodBefore + cell0 * kCyc, end1);
+    const int64_t periodAfter = disk.trackPeriod(qt);
+    burst(second, end1 + 2 * kCyc, end2);
+
+    const int n1 = static_cast<int>(first.size());
+    for (size_t n = 0; n < second.size(); ++n) {
+        const int idx = (startNib + n1 + static_cast<int>(n))
+                        % DiskImage::kNibblesPerTrack;
+        const uint8_t got = disk.nibbleAt(track, idx);
+        if (got != second[n]) {
+            std::fprintf(stderr,
+                "resume FAIL (start %d, %d revs, period %lld -> %lld): nibble "
+                "%zu of the resumed burst read back $%02X at slot %d, wrote "
+                "$%02X -- the burst was re-anchored instead of carried on\n",
+                startNib, revs, static_cast<long long>(periodBefore),
+                static_cast<long long>(periodAfter), n, got, idx, second[n]);
+            return 4;
+        }
+    }
+    for (int n = 0; n < n1; ++n) {
+        const int idx = (startNib + n) % DiskImage::kNibblesPerTrack;
+        if (disk.nibbleAt(track, idx) != first[static_cast<size_t>(n)]) {
+            std::fprintf(stderr,
+                "resume FAIL (start %d, %d revs): the resumed burst erased "
+                "nibble %d of the field written just before it\n",
+                startNib, revs, n);
+            return 5;
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main()
 {
     const fs::path img = writeScratchDsk();
     int rc = 0;
+
+    for (int startNib : {400, 1200, 3000}) {
+        for (int revs : {0, 3, 20}) {
+            if (const int r = resumeAndCheck(img, 17, startNib, revs); r != 0) {
+                rc = r;
+                goto done;
+            }
+        }
+    }
 
     // Several start positions (inside a gap, inside a data field, and one
     // that wraps the end of the track buffer), both a chunked and a
