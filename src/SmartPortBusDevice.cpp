@@ -585,7 +585,10 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     const std::size_t replyLen = get16(data + i); i += 2;
     if (replyLen > 1024 || !need(replyLen)) return 0;
     reply_.assign(data + i, data + i + replyLen); i += replyLen;
-    if (!need(2 + 1 + 1 + 1 + 4 + 1 + kMaxUnits)) { busReset(); return 0; }
+    // The id table used to be four entries (kMaxUnits was 4 until
+    // 2026-09-08); a blob from then carries four, so read what is there,
+    // up to kMaxUnits, and leave the rest unassigned.
+    if (!need(2 + 1 + 1 + 1 + 4 + 1)) { busReset(); return 0; }
     replyPos_ = get16(data + i); i += 2;
     if (replyPos_ > reply_.size()) replyPos_ = reply_.size();
     const uint8_t flags = data[i++];
@@ -603,7 +606,10 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     i += 4;
     assigned_ = data[i++];
     if (assigned_ > kMaxUnits) assigned_ = kMaxUnits;
-    for (int k = 0; k < kMaxUnits; ++k) ids_[static_cast<std::size_t>(k)] = data[i++];
+    ids_.fill(0);
+    for (int k = 0; k < kMaxUnits && i < n; ++k) ids_[static_cast<std::size_t>(k)] = data[i++];
+    if (assigned_ > 0 && ids_[static_cast<std::size_t>(assigned_ - 1)] == 0)
+        assigned_ = 0;                          // a truncated table: renumber at the next INIT
     return i;
 }
 

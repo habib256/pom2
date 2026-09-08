@@ -6901,6 +6901,15 @@ pom2_add_headless_test(test_smartport_eight_units
 set_tests_properties(smartport_eight_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# Six SmartPort units behind the //c's rear port: the bus responder grew
+# from four to eight, and the //c firmware + ProDOS 2.4.3 enumerate them.
+pom2_add_headless_test(test_iic_smartport_six_units
+    NAME iic_smartport_six_units TIMEOUT 240
+    SOURCES iic_smartport_six_units_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(iic_smartport_six_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20
     SOURCES audio_coordinator_test.cpp

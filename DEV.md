@@ -3955,6 +3955,16 @@ under ASan + UBSan that is otherwise clean.
 
 ### The //c external 3.5" port (IIcExternalSmartPort)
 
+**Eight units on the chain** *(2026-09-08)*. `SmartPortBusDevice::kMaxUnits`
+is 8 (four before), so the slot-5 card's `unitCount()` reaches the //c's
+firmware whole. Measured, not assumed: with the card at six (two 3.5", four
+HDV) the 32 KB //c ROM's INIT scan numbers all six and ProDOS 8 2.4.3, booted
+from the internal 5.25", lists S5 D1/D2, S2 D1/D2 and S4 D1/D2 next to
+S6 and /RAM — pinned by `iic_smartport_six_units` (and two at the default).
+The bus blob's id table grew from four entries to eight; the loader reads
+whatever the blob carries, up to eight, so a snapshot from before still
+loads with its four.
+
 On a //c one IWM drives the internal 5.25" and the rear connector; the enable
 line picks the drive. POM2 keeps the 5.25" on `DiskIICard` (its LSS is the
 write authority everywhere, and a second controller on those soft switches

@@ -5,6 +5,19 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Six HDVs on a //c: the rear-port chain takes eight units
+
+The //c has no slot: the built-in SmartPort card's units reach the machine's
+own firmware over the disk port, as UniDisks on the SmartPort bus, and the
+bus responder took four. It takes eight now, so the card's unit count (2 to
+8, this morning's change) reaches the //c whole. Measured with the real
+32 KB //c ROM and ProDOS 8 2.4.3 booted from the internal 5.25": six units
+(two 3.5", four HDV) come up as S5, S2 and S4, two drives each. The bus
+snapshot's id table grew from four to eight entries; a blob from before
+still loads. Pinned by `iic_smartport_six_units`. To do it: Devices →
+SmartPort Configuration on the //c profile, *units* = 6, HDV in each bay,
+mount, reset.
+
 ## 2026-09-08 — G1: what we are allowed to ship, all but one decision
 
 `THIRD-PARTY.md` at the root lists everything POM2 carries from elsewhere —
