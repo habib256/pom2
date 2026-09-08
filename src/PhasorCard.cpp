@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <deque>
 
 namespace {
 
@@ -125,6 +126,27 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     //
     // As on the Mockingboard, `right == nullptr` renders the mono
     // fold-down, which reproduces the old `/12` summed render exactly.
+    // Audio-thread replay state (see PhasorCard.h, the stamped queue).
+    uint8_t  liveRegs[4][kAyNumRegs] = {};
+    bool     regsPrimed = false;
+    uint64_t audioCursor = 0;
+    double   cursorFrac = 0.0;
+    std::deque<PhasorCard::AyRegEvent> pending;
+    uint32_t lastSeenQueueGen = 0;
+    void applyEvent(const PhasorCard::AyRegEvent& e)
+    {
+        if (e.chip >= 4) return;
+        if (e.reg == PhasorCard::kRegAyReset) {
+            std::memset(liveRegs[e.chip], 0, 14);
+            chip[e.chip].resetGenerators();
+            return;
+        }
+        if (e.reg < kAyNumRegs) {
+            liveRegs[e.chip][e.reg] = e.val;
+            if (e.reg == 13) chip[e.chip].envRetrigger = true;
+        }
+    }
+
     void fillAudioBuffer(float* output, int frameCount) override
     {
         render(output, nullptr, frameCount);
@@ -149,14 +171,19 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         const bool  isMuted = muted.load(std::memory_order_relaxed);
         const float vol     = volume.load(std::memory_order_relaxed);
 
-        // Snapshot all 4 chips' register banks + reset/env-write counts
-        // + the current clock scale under the parent mutex. ~88 bytes
-        // of memcpy plus 9 ints — brief enough that CPU-thread VIA
-        // contention is bounded.
+        // Snapshot the 4 register banks + counters + the clock scale AND
+        // drain the cycle-stamped event queue under the parent mutex. The
+        // banks the renderer reads are the audio thread's own `liveRegs`,
+        // advanced by the stamped events as the cursor crosses them; the
+        // snapshot only seeds them on the first fill and after a timeline
+        // break (MockingboardCard::AudioSrc::render, same design).
         uint8_t  regSnap[4][kAyNumRegs];
         uint32_t resetCountSnap[4];
         uint32_t envWriteCountSnap[4];
         int      clockScaleSnap = 1;
+        uint64_t latestEventCycle = 0;
+        uint64_t cpuNowSnap       = 0;
+        bool     timelineBroke    = false;
         {
             std::lock_guard<std::mutex> lk(parent->mtx_);
             for (int ci = 0; ci < 4; ++ci) {
@@ -166,24 +193,61 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 envWriteCountSnap[ci] = parent->ayEnvWriteCount_[ci];
             }
             clockScaleSnap = parent->clockScale();
+            cpuNowSnap = parent->lastSyncCycle_;
+            if (parent->ayQueueGen_ != lastSeenQueueGen) {
+                lastSeenQueueGen = parent->ayQueueGen_;
+                pending.clear();
+                timelineBroke = true;
+            }
+            pending.insert(pending.end(),
+                           parent->ayEvents_.begin(), parent->ayEvents_.end());
+            parent->ayEvents_.clear();
+            latestEventCycle = parent->latestAyEventCycle_.load(
+                std::memory_order_relaxed);
         }
+
+        if (!regsPrimed || timelineBroke) {
+            std::memcpy(liveRegs, regSnap, sizeof(liveRegs));
+            regsPrimed = true;
+            if (timelineBroke) {
+                // Full generator reset (tone, noise LFSR, envelope), as on
+                // /RESET — MAME ay8910_reset_ym, MockingboardCard alike.
+                for (int ci = 0; ci < 4; ++ci) chip[ci].resetGenerators();
+                audioCursor = 0;
+                cursorFrac  = 0.0;
+            }
+        }
+        const double cyclesPerSample =
+            cpuClockHz.load(std::memory_order_relaxed) / static_cast<double>(sr);
+        // Jitter buffer: the cursor trails the producer by two 20 ms bursts
+        // and is re-anchored when it starves or catches up.
+        const uint64_t burst = static_cast<uint64_t>(
+            cpuClockHz.load(std::memory_order_relaxed) / 50.0);
+        const uint64_t targetLag = 2 * burst;
+        const uint64_t producerNow =
+            (cpuNowSnap > latestEventCycle) ? cpuNowSnap : latestEventCycle;
+        if (producerNow > targetLag) {
+            const uint64_t desired = producerNow - targetLag;
+            const bool starved =
+                producerNow > audioCursor &&
+                (producerNow - audioCursor) > 5 * burst;
+            const bool caughtUp = audioCursor + burst / 2 > producerNow;
+            if (starved || caughtUp) {
+                audioCursor = desired;
+                cursorFrac  = 0.0;
+            }
+        }
+        while (!pending.empty() && pending.front().cycle <= audioCursor) {
+            applyEvent(pending.front());
+            pending.pop_front();
+        }
+        size_t nextEvent = 0;
+        // The counters are consumed by the stamped stream now (a /RESET is
+        // an event, an R13 store sets envRetrigger in applyEvent); keep them
+        // current so a later timeline break does not replay stale ones.
         for (int ci = 0; ci < 4; ++ci) {
-            if (chip[ci].lastSeenResetCount != resetCountSnap[ci]) {
-                chip[ci].lastSeenResetCount = resetCountSnap[ci];
-                // Full generator reset, not just the noise LFSR: tone
-                // counters/flip-flops and the envelope state machine must
-                // also re-seed on /RESET (MAME ay8910_reset_ym), exactly as
-                // MockingboardCard does via resetGenerators(). Re-seeding
-                // only the noise half left a finished envelope holding at
-                // step 0 across the strobe, so the next envelope note came
-                // out silent where the same driver on a Mockingboard (and
-                // on MAME) plays the 15→0 ramp.
-                chip[ci].resetGenerators();
-            }
-            if (chip[ci].lastSeenEnvWriteCount != envWriteCountSnap[ci]) {
-                chip[ci].lastSeenEnvWriteCount = envWriteCountSnap[ci];
-                chip[ci].envRetrigger = true;
-            }
+            chip[ci].lastSeenResetCount    = resetCountSnap[ci];
+            chip[ci].lastSeenEnvWriteCount = envWriteCountSnap[ci];
         }
 
         if (isMuted) {
@@ -211,6 +275,16 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         dcR.setRate(sr);
 
         for (int i = 0; i < frameCount; ++i) {
+            // The cursor walks the emulated clock one output sample at a
+            // time; every stamped event it crosses is applied first.
+            cursorFrac += cyclesPerSample;
+            const uint64_t whole = static_cast<uint64_t>(cursorFrac);
+            audioCursor += whole;
+            cursorFrac  -= static_cast<double>(whole);
+            while (nextEvent < pending.size() &&
+                   pending[nextEvent].cycle <= audioCursor) {
+                applyEvent(pending[nextEvent++]);
+            }
             // Index 0 = left (VIA0's pair, ay_[0..1]), 1 = right (VIA1's
             // pair, ay_[2..3]).
             float side[2] = { 0.0f, 0.0f };
@@ -222,7 +296,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 // which folded every harmonic above Nyquist back into the
                 // audible band.
                 side[ci >> 1] += pom2::ay::renderChipSample(
-                    chip[ci], regSnap[ci], ticksPerSample, invTicksPerSample);
+                    chip[ci], liveRegs[ci], ticksPerSample, invTicksPerSample);
             }
             // 2 chips x 3 channels x peak 1.0 = 6.0 per side. Headroom-safe
             // and strictly LINEAR — see the matching note in
@@ -237,6 +311,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             if (right) { left[i] = l; right[i] = r; }
             else       { left[i] = 0.5f * (l + r); }
         }
+        pending.erase(pending.begin(),
+                      pending.begin() + static_cast<std::ptrdiff_t>(nextEvent));
     }
 };
 
@@ -282,6 +358,7 @@ void PhasorCard::appendSnapshotState(std::vector<uint8_t>& out) const
 void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     std::lock_guard<std::mutex> lk(mtx_);
+    invalidateAyTimeline();   // the CPU-side banks change out of band here
     pom2::byteio::Reader r(data, len);
     if (!r.has(6)) return;
     if (r.u8() != 'P' || r.u8() != 'H' || r.u8() != 'S') return;
@@ -355,6 +432,7 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 void PhasorCard::onReset()
 {
     std::lock_guard<std::mutex> lk(mtx_);
+    invalidateAyTimeline();   // the CPU-side banks change out of band here
     via_[0]->reset();
     via_[1]->reset();
     for (int i = 0; i < 4; ++i) ay_[i]->reset();
@@ -443,6 +521,11 @@ void PhasorCard::syncToCpuCycle()
 void PhasorCard::syncToCpuCycleAt(uint64_t now)
 {
     if (now <= lastSyncCycle_) {
+        // A large backwards jump is the cycle counter rolled back under us
+        // (rewind, setCycleCounter): the stamped stream no longer describes
+        // the machine. Same threshold as MockingboardCard.
+        constexpr uint64_t kTimelineBreakCycles = 1024;
+        if (lastSyncCycle_ - now > kTimelineBreakCycles) invalidateAyTimeline();
         // Defensive rewind (mirrors MockingboardCard::syncToCpuCycleAt):
         // the end-of-step batch path passes (getCycleCountNow() - cycles),
         // which can be < lastSyncCycle_ if a mid-instruction MMIO access
@@ -594,9 +677,11 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     if ((pb & pom2::Ay3_8910::kPbBitReset) == 0) {
         ay_[ayBase]->reset();
         ++ayResetCount_[ayBase];
+        queueAyEvent(ayBase, kRegAyReset, 0);
         if (mode_ != PH_Mockingboard) {
             ay_[ayBase + 1]->reset();
             ++ayResetCount_[ayBase + 1];
+            queueAyEvent(ayBase + 1, kRegAyReset, 0);
         }
         return;
     }
@@ -625,9 +710,12 @@ void PhasorCard::onViaPortBChange(int viaIdx)
             // audio thread restarts the envelope on the next fill, even
             // when the shape value is unchanged (real AY behaviour:
             // set_shape runs on every R13 store).
-            if ((ay_[chipIdx]->latchedAddr & 0x0F) == 13) {
+            const uint8_t reg = static_cast<uint8_t>(ay_[chipIdx]->latchedAddr & 0x0F);
+            if (reg == 13) {
                 ++ayEnvWriteCount_[chipIdx];
             }
+            // The stamped event the audio thread replays at this cycle.
+            queueAyEvent(chipIdx, reg, ay_[chipIdx]->regs[reg]);
         } else if (res == pom2::Ay3_8910::ApplyResult::Read) {
             // Same AY read-bus latch as the Mockingboard: the chip drives
             // the selected register onto the bus and the card latches it
@@ -648,6 +736,23 @@ void PhasorCard::onViaPortBChange(int viaIdx)
 }
 
 // ─── Cycle pacing + IRQ ──────────────────────────────────────────────────
+
+void PhasorCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
+{
+    // Overflow (audio device stalled or absent): break the timeline rather
+    // than evict — an evicted write diverges the two banks for good.
+    if (ayEvents_.size() >= kMaxAyEvents) invalidateAyTimeline();
+    ayEvents_.push_back(AyRegEvent{ lastSyncCycle_,
+                                    static_cast<uint8_t>(chip), reg, val });
+    latestAyEventCycle_.store(lastSyncCycle_, std::memory_order_relaxed);
+}
+
+void PhasorCard::invalidateAyTimeline()
+{
+    ayEvents_.clear();
+    latestAyEventCycle_.store(0, std::memory_order_relaxed);
+    ++ayQueueGen_;
+}
 
 void PhasorCard::advanceCycles(int cycles)
 {

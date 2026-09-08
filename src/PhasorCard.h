@@ -115,7 +115,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <atomic>
+#include <deque>
 #include <mutex>
+#include <vector>
 #include <string_view>
 
 class M6502;
@@ -222,6 +225,31 @@ private:
     uint32_t ayEnvWriteCount_[4] = {0, 0, 0, 0};
 
     mutable std::mutex mtx_;
+
+    // ── emuCycles-stamped AY register-write queue (2026-09-09) ─────────
+    // The Mockingboard's design, verbatim, for four chips: every accepted
+    // AY store (and every /RESET strobe) is stamped with the CPU cycle it
+    // happened at and replayed by the audio thread at that cycle, instead
+    // of the audio thread taking a snapshot of the register banks per
+    // buffer — which quantised every beam-raced register change to the
+    // buffer (5-10 ms), the one thing that kept the card *Partial* in the
+    // MAME parity dashboard. See MockingboardCard for the timeline rules
+    // (jitter buffer, re-anchor, breaks on rewind / reset / overflow).
+    static constexpr uint8_t kRegAyReset = 0xFF;
+    struct AyRegEvent {
+        uint64_t cycle;
+        uint8_t  chip;
+        uint8_t  reg;
+        uint8_t  val;
+    };
+    std::deque<AyRegEvent> ayEvents_;                 // guarded by mtx_
+    std::atomic<uint64_t>  latestAyEventCycle_{0};
+    static constexpr size_t kMaxAyEvents = 16384;
+    uint32_t ayQueueGen_ = 0;
+    /// Queue one cycle-stamped AY event. Caller holds mtx_.
+    void queueAyEvent(int chip, uint8_t reg, uint8_t val);
+    /// Declare the stamped stream discontinuous. Caller holds mtx_.
+    void invalidateAyTimeline();
 
     // MAME-parity slot-ROM VIA select: bit 0 = VIA1, bit 1 = VIA2, 0 =
     // undecoded. See the comment block above the definition for the

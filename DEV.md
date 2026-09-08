@@ -1783,6 +1783,21 @@ just left. Pinned by `card_snapshot_state`.
 
 ### Phasor (Applied Engineering)
 
+**The cycle-stamped queue** *(2026-09-09)*. The audio thread used to take a
+snapshot of the four register banks per buffer, so a register change
+landed wherever the buffer boundary fell — 5-10 ms of jitter, and the one
+thing that kept the card *Partial* in the parity dashboard. It carries the
+Mockingboard's queue now (`AyRegEvent`, `queueAyEvent` on every accepted
+store and every /RESET strobe, `invalidateAyTimeline` on reset, snapshot
+load, a backwards jump over 1024 cycles and queue overflow) and the same
+replay cursor: `liveRegs[4]` seeded from the snapshot on the first fill and
+after a break, advanced by the stamped events as the cursor walks the
+emulated clock one output sample at a time, trailing the producer by two
+20 ms bursts. `phasor_timeline` toggles channel A's volume every 1000
+cycles and measures the rendered frequency: 27 Hz before (the writes
+collapsing onto buffer edges), 510 Hz for 511.4 written after, in
+Mockingboard-compat and Phasor-native modes alike.
+
 `PhasorCard` (`PhasorCard.h/.cpp`) — dual-mode successor to the
 Mockingboard. 2× 6522 VIA + 4× AY-3-8913 PSG (12 voices). Same VIA +
 AY hardware as Mockingboard (verbatim from `Via6522.h` + `Ay3_8910.h`,

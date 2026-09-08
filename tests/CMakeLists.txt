@@ -1657,6 +1657,15 @@ add_test(NAME floppy_sound_smoke
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(floppy_sound_smoke PROPERTIES TIMEOUT 10)
 
+# The printer sound must not crackle (A2 File Cmd report, 2026-09-09).
+add_executable(test_printer_sound_crackle
+    printer_sound_crackle_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterSoundDevice.cpp
+)
+target_include_directories(test_printer_sound_crackle PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME printer_sound_crackle COMMAND test_printer_sound_crackle)
+set_tests_properties(printer_sound_crackle PROPERTIES TIMEOUT 60)
+
 # The floppy sounds must not crackle (A2 File Cmd report, 2026-09-08): loop
 # wraps, retriggered clicks and seek-sample switches, measured as output
 # discontinuities against the samples' own largest internal step.
@@ -2739,6 +2748,22 @@ add_test(NAME iie_c8xx_smoke COMMAND test_iie_c8xx)
 
 
 # ─── HDV boot dump (diagnostic, not a CTest target) ─────────────────────
+# Probe: does A2 File Cmd's VDrive driver spam the //c's printer port (the
+# "crackling from the printer sound" report)? Counts each SSC's TX bytes.
+add_executable(iic_a2fc_printer_port_probe EXCLUDE_FROM_ALL
+    iic_a2fc_printer_port_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(iic_a2fc_printer_port_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(iic_a2fc_printer_port_probe PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+
 add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     hdv_boot_dump.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -4647,6 +4672,29 @@ if(WIN32)
 endif()
 
 add_test(NAME phasor_card_smoke COMMAND test_phasor_card)
+
+# The Phasor replays its AY writes at their cycle stamp (MAME parity: Partial -> Verbatim).
+add_executable(test_phasor_timeline
+    phasor_timeline_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_phasor_timeline PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_phasor_timeline PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_phasor_timeline PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_phasor_timeline PRIVATE winmm)
+endif()
+
+add_test(NAME phasor_timeline COMMAND test_phasor_timeline)
+set_tests_properties(phasor_timeline PROPERTIES TIMEOUT 60)
+
 set_tests_properties(phasor_card_smoke PROPERTIES TIMEOUT 5)
 
 
@@ -7399,6 +7447,7 @@ set(POM2_PROBE_TARGETS
     disasm_smoke
     dix_menu_raster_probe
     dix_return_crash_probe
+    iic_a2fc_printer_port_probe
     hdv_boot_dump
     hero_probe
     iic_dump

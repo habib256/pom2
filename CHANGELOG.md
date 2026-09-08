@@ -5,6 +5,18 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — The Phasor replays its AY writes at their cycle stamp
+
+The last *Partial* in the MAME parity dashboard: the Phasor's audio thread
+took a snapshot of its four register banks per buffer, so a beam-raced
+register change landed wherever the buffer boundary fell. It carries the
+Mockingboard's cycle-stamped queue now — every AY store and /RESET strobe
+replayed at its `emuCycles` stamp by a cursor walking the emulated clock
+one output sample at a time, with the same timeline breaks on reset,
+rewind and overflow. The pin writes a 511 Hz volume square wave from the
+CPU and measures what comes out: 27 Hz before, 510 Hz after, in both
+modes. → [DEV § Phasor](DEV.md#phasor-applied-engineering)
+
 ## 2026-09-08 — The Disk Library adds an HDV instead of replacing it, and ejects any of them
 
 Two reports on the library's "Mounted" header. Ejecting a hard disk left
