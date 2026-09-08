@@ -325,6 +325,7 @@ void MainWindow::renderDiskLibraryWindow()
                 info.drive2 = c->getDiskPath(1);
                 mounted.diskII.push_back(info.drive2);
             }
+            info.writeBackEnabled = c->isWriteBackEnabled();
             mounted.diskIICards.push_back(info);
         }
         // 3.5" mount sources: the //c+ on-board hub OR a slot-plugged
@@ -350,16 +351,26 @@ void MainWindow::renderDiskLibraryWindow()
             }
         }
         if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded()) {
-            mounted.hdv = dev->getImagePath();
+            mounted.hdv          = dev->getImagePath();
+            mounted.hdvWriteBack = dev->isWriteBackEnabled();
         } else if (primarySmartPortCard()) {
             // SmartPort-routed HDV — show as mounted in the Library so the
             // `* ` marker matches reality regardless of which path holds it.
             const pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0);
             if (u && u->isLoaded() &&
                 u->kindKey() == pom2::SmartPortHdvUnit::kKindKey) {
-                mounted.hdv = u->path();
+                mounted.hdv          = u->path();
+                mounted.hdvWriteBack = u->isWriteBackEnabled();
             }
         }
+    }
+    // The 3.5" write-back flags come from the coordinator's routed snapshot
+    // (its own lock acquisition, hence outside the block above): it already
+    // knows whether the on-board pair or a SmartPort card owns the drives.
+    {
+        const auto d35 = storageCoordinator_->captureDisk35(*controller);
+        mounted.disk35InternalWriteBack = d35.drives[0].writeBackEnabled;
+        mounted.disk35ExternalWriteBack = d35.drives[1].writeBackEnabled;
     }
 
     // Favourites + recents are host state (persisted to state.cfg); the panel
@@ -641,6 +652,46 @@ void MainWindow::renderDiskLibraryWindow()
                std::string(r.request35EjectDrive == 0 ? "1" : "2") + " ejected")
             : ("Library: 3.5\" eject failed: " + e.error);
         tapeStatusUntil   = lastFrameTime + 3.0;
+    }
+    // ── Write-protect toggles (right-click on a mounted image) ────────
+    // Same setters as the media panels' checkboxes, so the change is applied
+    // under the machine lock and persisted to the *_writeback key.
+    if (r.request525WriteBackSlot >= 0) {
+        (void)storageCoordinator_->setDiskIIWriteBack(
+            *controller, *settings, r.request525WriteBackSlot,
+            r.request525WriteBackNew);
+        tapeStatusMessage = "Library: slot " +
+            std::to_string(r.request525WriteBackSlot) +
+            (r.request525WriteBackNew ? " 5.25\" WRITABLE (saves on eject)"
+                                      : " 5.25\" WRITE-PROTECTED");
+        tapeStatusUntil = lastFrameTime + 4.0;
+    }
+    if (r.request35WriteBackDrive >= 0) {
+        (void)storageCoordinator_->setDisk35WriteBack(
+            *controller, *settings, r.request35WriteBackDrive,
+            r.request35WriteBackNew);
+        tapeStatusMessage = std::string("Library: 3.5\" drive ") +
+            (r.request35WriteBackDrive == 0 ? "1" : "2") +
+            (r.request35WriteBackNew ? " WRITABLE (saves on eject)"
+                                     : " WRITE-PROTECTED");
+        tapeStatusUntil = lastFrameTime + 4.0;
+    }
+    if (r.requestHdvWriteBackToggle) {
+        // Whichever card holds the HDV — the dedicated block card or
+        // SmartPort unit 0 — mirroring how `mounted.hdv` was resolved above.
+        int slot = -1;
+        if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded())
+            slot = dev->getSlot();
+        else if (primarySmartPortCard())
+            slot = primarySmartPortCard()->getSlot();
+        if (slot >= 0) {
+            (void)storageCoordinator_->setMediaBayWriteBack(
+                *controller, *settings, slot, 0, r.requestHdvWriteBackNew);
+            tapeStatusMessage = r.requestHdvWriteBackNew
+                ? "Library: HDV WRITABLE (saves on eject)"
+                : "Library: HDV WRITE-PROTECTED";
+            tapeStatusUntil = lastFrameTime + 4.0;
+        }
     }
     if (r.requestHdvEject) {
         if (pom2::ProDOSBlockCard* dev = hdvDevice()) {

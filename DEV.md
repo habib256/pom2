@@ -7044,6 +7044,18 @@ row is already a full-span selectable; an overlapping hit target inside it is a
 reliable source of mis-clicks, and on a panel whose left-click cold-boots the
 machine that matters.
 
+**Write-protect is in the right-click menu too** *(2026-09-08)*. A mounted
+image's context menu carries the same "Write-protected (do not save
+changes)" opt-out the drive panels show, ticked from the live flag: per
+Disk II card for a 5.25" (the flag is the card's, so the tooltip says both
+drives), per drive for a 3.5" (from `captureDisk35`, so it follows the
+SmartPort routing), per bay for an HDV (dedicated block card or SmartPort
+unit 0, whichever `mounted.hdv` came from). The item is only offered for an
+image that is mounted — the flag belongs to the drive holding it, not to
+the file — and the host applies it through `setDiskIIWriteBack` /
+`setDisk35WriteBack` / `setMediaBayWriteBack`, so it persists like the
+panel checkboxes do.
+
 **No sort selector.** It offered Name / Size / Date, and the latter two forced a
 flat list — you cannot group by folder and order by size at once, so they
 quietly fought the tree. The header row is worth more as space for search.

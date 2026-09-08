@@ -5,6 +5,16 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Write-protect from the Disk Library's right-click menu
+
+Media write by default made the write-protect tick the user's visible
+opt-out, and it lived only in the drive panels. The Disk Library — the one
+window most sessions mount from — now offers it in the context menu of any
+mounted image: "Write-protected (do not save changes)", ticked from the
+live flag, per Disk II card for a 5.25" (both drives, the tooltip says so),
+per drive for a 3.5", per bay for an HDV. Same coordinator setters as the
+panels, so the choice persists. → [DEV § Disk Library](DEV.md#disk-library-tree-favourites-recents)
+
 ## 2026-09-08 — v0.9.1's first release run timed out in its own test gate
 
 The tag was pushed after the push CI and a dispatched nightly were both

@@ -71,11 +71,20 @@ public:
             int         slot = 6;
             std::string drive1;   // empty = no disk in drive 1
             std::string drive2;   // empty = no disk in drive 2
+            // The card's write-back flag (one per Disk II card, both
+            // drives). Shown in the right-click menu of a mounted image as
+            // "Write-protected", the same opt-out every media panel offers.
+            bool        writeBackEnabled = true;
         };
         std::vector<DiskIICardInfo> diskIICards;
         std::string              disk35Internal;
         std::string              disk35External;
         std::string              hdv;
+        // Write-back flags of the three paths above (per 3.5" drive, per
+        // HDV bay) — writable by default, write-protect is the opt-out.
+        bool                     disk35InternalWriteBack = true;
+        bool                     disk35ExternalWriteBack = true;
+        bool                     hdvWriteBack            = true;
     };
 
     struct Result {
@@ -109,6 +118,16 @@ public:
         std::string requestFloppyEmuMountOnly;
         // Eject every loaded image at once (header-row "Eject All" button).
         bool        requestEjectAllDisks = false;
+        // Write-protect toggles from the right-click menu of a MOUNTED image
+        // (the flag belongs to the drive holding it, not to the file). The
+        // host routes them through the same StorageCoordinator setters the
+        // media panels use, so the change persists.
+        int         request525WriteBackSlot  = -1;     // -1 = no change
+        bool        request525WriteBackNew   = true;
+        int         request35WriteBackDrive  = -1;     // -1 = no change
+        bool        request35WriteBackNew    = true;
+        bool        requestHdvWriteBackToggle = false;
+        bool        requestHdvWriteBackNew    = true;
         // Path whose favourite state the user flipped (right-click menu).
         // Empty = no change. The host owns the set and persists it.
         std::string toggleFavourite;
