@@ -2919,6 +2919,24 @@ apple2ee -sl7 cffa2 -hard1 <img>` (romset `~/mame_roms/cffa2/`).
 
 ### SmartPortCard (//e Liron-class)
 
+**Eight bays, a configurable unit count** *(2026-09-08, after A2retroNET —
+the A2Pico firmware that presents up to eight 32 MB volumes as one
+SmartPort controller)*. `kMaxUnits` is 8; `unitCount()` (2, 4, 6 or 8,
+`setUnitCount`, default 2, persisted as `smartport_slotN_units`) is what
+the card **answers for**: STATUS unit 0's device count, the SmartPort unit
+range the $CE00 engine accepts, `bayCount()` for the media rows. Units 0/1
+stay ProDOS's drive 1/2 of the slot; units 2+ only exist for the guest
+through the SmartPort STATUS enumeration, which ProDOS 8 2.4+ performs on
+a `$Cn07 = $00` card (the real Liron dump's identity, so `roms/liron.rom`
+must be present — the `$01` block-device stub is never enumerated past
+drive 2) and remaps onto empty slots: with eight units in slot 5, ProDOS
+2.4 lists S5 D1/D2, S2 D1/D2, S4 D1/D2, S1 D1/D2. Snapshot v3 carries
+eight per-unit records; a v1/v2 blob's two still load and the other bays
+are reset. The panel draws `unitCount` rows and offers the count next to
+the slot. Pinned by `smartport_eight_units` (boots A2DeskTop's 800K image
+off unit 0 with seven synthesised volumes behind it, reads DEVLST off the
+main bank as the boot runs: eight devices at 8, two at the default).
+
 `SmartPortCard.{h,cpp}`. Slot-plugged Apple "Disk 3.5 Controller
 Card" (Liron / 670-0186) for //e / II+ / II / //c. Default slot 5.
 **Block-level, no IWM** (same synthetic-block divergence as HDV).
@@ -7507,8 +7525,9 @@ MediaBayInfo`, `mountBay/ejectBay/setBayWriteBack`, plus
 - `ProDOSBlockCard` implements as a single fixed bay → both
   HDV-class cards (`ProDOSHardDiskCard`, `CffaCard`) gain a bay
   free.
-- `SmartPortCard` implements directly over its 2 units, advertising
-  per-bay type (`""` empty / `"35"` 3.5" / `"hdv"` HDV).
+- `SmartPortCard` implements directly over its bays (`unitCount()` of the
+  eight, see § SmartPortCard), advertising per-bay type (`""` empty /
+  `"35"` 3.5" / `"hdv"` HDV).
 
 `SlotCardCatalog.h` is the single list of user-assignable card types
 (`kCardTypes`, index 0 = empty) + ROM-presence probes

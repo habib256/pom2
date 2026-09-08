@@ -201,10 +201,14 @@
 #     restore sites, and re-probes the host bit on each restored medium.
 #   src/DiskImage.cpp            3096 -> 3100 (+4)   `hostReadOnly_` reset in
 #     the four buffer loaders (a from-buffer image has no host file).
+# 2026-09-08 (eight SmartPort units): one ceiling raised for the wiring —
+# the panel's unit-count command applied and persisted, the count in the
+# panel snapshot, the restore of `smartport_slotN_units`; no feature code.
+#   src/StorageCoordinator.cpp   2322 -> 2337 (+15)
 src/Apple2Display.cpp                    2491
 src/DiskImage.cpp                        3100
 src/ImageWriter.cpp                      2764
 src/M6502.cpp                            2300
 src/Memory.cpp                           2616
-src/StorageCoordinator.cpp               2322
+src/StorageCoordinator.cpp               2337
 src/hgrpaint/HgrPaintEditor.cpp          2653

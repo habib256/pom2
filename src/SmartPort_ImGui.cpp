@@ -16,6 +16,8 @@
 
 #include "SmartPort_ImGui.h"
 
+#include <algorithm>
+
 #include "IconsFontAwesome6.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortHdvUnit.h"
@@ -83,13 +85,37 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
         return r;
     }
 
-    ImGui::Text("Card: slot %d  (Liron-class, %zu units max)",
-                snap.slot, snap.units.size());
+    ImGui::Text("Card: slot %d  (Liron-class)", snap.slot);
+    ImGui::SameLine();
+    // How many units the card presents, the way A2retroNET's `number=`
+    // does: ProDOS sees units 0/1 as drive 1/2 of this slot and, from
+    // ProDOS 8 2.4 on, remaps units 2+ onto empty slots. Two by default so
+    // an existing configuration is unchanged.
+    {
+        static const int   kCounts[] = { 2, 4, 6, 8 };
+        static const char* kLabels[] = { "2", "4", "6", "8" };
+        int cur = 0;
+        for (int i = 0; i < 4; ++i) if (kCounts[i] == snap.unitCount) cur = i;
+        ImGui::SetNextItemWidth(70.0f);
+        if (ImGui::BeginCombo("units", kLabels[cur])) {
+            for (int i = 0; i < 4; ++i) {
+                if (ImGui::Selectable(kLabels[i], i == cur) && i != cur)
+                    r.setUnitCount = kCounts[i];
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Units the card answers for. 0/1 are drive 1/2 of slot %d;\n"
+                              "ProDOS 8 2.4+ shows units 2-7 under other, empty slots.",
+                              snap.slot);
+    }
     ImGui::TextDisabled(
         "ProDOS sees unit 0 / 1 as drive 1 / 2 of slot %d.", snap.slot);
     ImGui::Separator();
 
-    for (size_t k = 0; k < snap.units.size(); ++k) {
+    const size_t shown = std::min<size_t>(
+        static_cast<size_t>(std::max(snap.unitCount, 2)), snap.units.size());
+    for (size_t k = 0; k < shown; ++k) {
         const UnitSnapshot& u = snap.units[k];
         UnitAction&         a = r.units[k];
         ImGui::PushID(static_cast<int>(k));

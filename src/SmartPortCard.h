@@ -95,13 +95,21 @@ public:
     /// ProDOS-8's direct slot driver (drive 1 + drive 2). Real Liron =
     /// 2 as well; raising this to 4 needs the SmartPort extended-call
     /// protocol in the ROM driver (not wired today).
-    static constexpr size_t kMaxUnits      = 2;
+    /// Eight bays, the way a modern SmartPort controller (A2retroNET on an
+    /// A2Pico, 2026-09-08) presents them: units 1-2 are ProDOS's drive 1/2
+    /// of the slot, units 3+ are enumerated through the SmartPort STATUS
+    /// call and remapped by ProDOS 8 2.4+ onto empty slots. How many the
+    /// card ANSWERS FOR is `unitCount()` (2, 4, 6 or 8 — A2retroNET's
+    /// `number=`), default 2, so a saved config sees exactly what it did.
+    static constexpr size_t kMaxUnits      = 8;
 
     /// Snapshot blob version. v1 = transfer state (+ an optional v1.1 call
     /// engine tail); v2 appends one media-identity hash per unit so a primed
     /// write block is never flushed into a disk that was swapped in after
-    /// the capture. Older blobs still load.
-    static constexpr uint8_t kSnapVersion  = 2;
+    /// the capture. Older blobs still load. v3 (2026-09-08) carries
+    /// kMaxUnits per-unit records instead of two; a v1/v2 blob's two still
+    /// load and the other bays are reset.
+    static constexpr uint8_t kSnapVersion  = 3;
 
     /// `slot` is baked into the slot ROM (signature byte, driver
     /// address, soft-switch trampolines). All units start empty;
@@ -121,6 +129,13 @@ public:
     /// port (SlotPeripheral::smartPortBusUnit). On the 32 KB //c this card's
     /// $C500 page is never punched in: the machine's own firmware speaks to
     /// these over the IWM, enumerates them and boots from them.
+    /// The number of units the card answers for — STATUS unit 0's device
+    /// count, the SmartPort unit range, the media rows. 2, 4, 6 or 8; any
+    /// other value is rounded to the next even number in that range. Bays
+    /// beyond it keep their media but are invisible to the guest.
+    void setUnitCount(int n);
+    int  unitCount() const { return unitCount_; }
+
     int                    smartPortBusUnitCount() const override;
     pom2::SmartPortBusUnit* smartPortBusUnit(int index) override;
 
@@ -186,7 +201,7 @@ public:
     // (empty / 3.5" / HDV). Lets the Slot Manager drive each unit
     // generically. NOTE: persistence (smartport_slotN_unitK_*) is the
     // host's (MainWindow's) job — these only touch in-memory unit state.
-    int  bayCount() const override { return static_cast<int>(kMaxUnits); }
+    int  bayCount() const override { return unitCount_; }
     MediaBayInfo bayInfo(int bay) const override;
     bool mountBay(int bay, const std::string& path, std::string& errOut) override;
     bool adoptBay(int bay, Block512Backing::PreparedImage&& prepared,
@@ -241,6 +256,7 @@ private:
     // ($C0n0) latches `activeUnit_` for $C0n3 (data) / $C0n4 (status)
     // — block setup ($C0n1/2) writes to the active unit's register pair.
     size_t   activeUnit_                 = 0;
+    int      unitCount_                  = 2;      // see setUnitCount
     std::array<uint16_t, kMaxUnits> selectedBlock_{};
     std::array<size_t,   kMaxUnits> streamOffset_{};
     std::array<std::array<uint8_t, kBlockBytes>, kMaxUnits> readCache_{};

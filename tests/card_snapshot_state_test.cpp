@@ -154,9 +154,14 @@ void testSmartPortCallEngine()
     // rather than letting the live one leak through.
     pom2::SmartPortCard c(5);
     c.setUnit(0, std::make_unique<pom2::SmartPortHdvUnit>());
+    // A v1 blob is two units and no tail; since v3 (2026-09-08, eight
+    // bays) the live blob carries kMaxUnits records, so the v1 shape is
+    // reconstructed: version byte 1, the first two records, nothing after.
     constexpr size_t kV1Bytes = 4 + 2 * (6 + 512);
     assert(blob.size() > kV1Bytes);
-    c.loadSnapshotState(blob.data(), kV1Bytes);
+    std::vector<uint8_t> v1(blob.begin(), blob.begin() + kV1Bytes);
+    v1[2] = 1;
+    c.loadSnapshotState(v1.data(), v1.size());
     std::vector<uint8_t> blob3;
     c.appendSnapshotState(blob3);
     assert(blob3.size() == blob.size());   // tail re-emitted, zeroed
@@ -340,8 +345,8 @@ void testSmartPortMediaIdentity()
     // kMaxUnits * 8 bytes.
     constexpr size_t kPerUnit  = 6 + 512;
     constexpr size_t kPrimedAt = 4 + 4;                 // unit 0's primed byte
-    constexpr size_t kIdentity = 2 * 8;
-    assert(blob.size() > kIdentity + 4 + 2 * kPerUnit);
+    constexpr size_t kIdentity = pom2::SmartPortCard::kMaxUnits * 8;
+    assert(blob.size() > kIdentity + 4 + pom2::SmartPortCard::kMaxUnits * kPerUnit);
     blob[kPrimedAt] = 1;                                // pretend a block is primed
     blob[4 + 6] = 0x5A;                                 // and carries a payload
 

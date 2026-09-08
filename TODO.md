@@ -601,7 +601,9 @@ Phasor *(the missing cycle-stamped queue is now a **stated limit**, not an owed
 fix)* · Floppy mechanical sounds · Disk II drive 2, `.d13`, `.nib`/`.nib2`,
 2MG, MacBinary, skew sniffing · CFFA 2.0 *(**CHD closed as won't-do**)* ·
 ProDOS HDV card *(its write-back is core; its device model is not)* · ProDOS
-host folder · IWM + Sony 3.5" + SmartPort hub · Liron card *(the fidelity
+host folder · IWM + Sony 3.5" + SmartPort hub · **the SmartPort card's units
+3-8** *(2026-09-08, A2retroNET's shape: enumerated by ProDOS 8 2.4+, pinned
+`smartport_eight_units`; units 1-2 stay core)* · Liron card *(the fidelity
 alternative to the core `smartport35`)* · //c-class on-board SmartPort + the
 `$C500` stub + `IIcExternalSmartPort` · Super Serial Card + telnet *(the "real
 SSC ROM" move is closed as won't-do)* · Uthernet II *(**`LISTEN` closed as

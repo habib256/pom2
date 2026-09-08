@@ -6891,6 +6891,16 @@ pom2_add_headless_test(test_media_notch
     SOURCES media_notch_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# Eight SmartPort units enumerated by ProDOS 8 2.4+ (A2retroNET's shape),
+# and two by default. Boots A2DeskTop's 800K image off unit 0 with seven
+# synthesised volumes behind it and reads DEVLST.
+pom2_add_headless_test(test_smartport_eight_units
+    NAME smartport_eight_units TIMEOUT 120
+    SOURCES smartport_eight_units_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(smartport_eight_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 pom2_add_headless_test(test_audio_coordinator
     NAME audio_coordinator TIMEOUT 20
     SOURCES audio_coordinator_test.cpp

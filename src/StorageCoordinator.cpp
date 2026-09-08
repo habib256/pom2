@@ -1828,6 +1828,7 @@ StorageCoordinator::restoreMediaFromSettings(
         if (!card) continue;
         const std::string slotKey =
             "smartport_slot" + std::to_string(card->getSlot());
+        card->setUnitCount(settings.getInt(slotKey + "_units", 2));
         for (std::size_t bay = 0; bay < SmartPortCard::kMaxUnits; ++bay) {
             const std::string base =
                 slotKey + "_unit" + std::to_string(bay);
@@ -2118,6 +2119,9 @@ StorageCoordinator::captureSmartPortPanel(
 
     snapshot.plugged = true;
     snapshot.slot = card->getSlot();
+    snapshot.unitCount = card->unitCount();
+    static_assert(SmartPort_ImGui::kMaxUnits == SmartPortCard::kMaxUnits,
+                  "the SmartPort panel mirrors the card's bay count");
     for (std::size_t unitIndex = 0;
          unitIndex < snapshot.units.size(); ++unitIndex) {
         const SmartPortUnit* unit = card->unit(unitIndex);
@@ -2171,6 +2175,17 @@ StorageCoordinator::applySmartPortPanel(
         auto& bus = state.memory().slotBus();
         auto* card = smartPortAt(bus, slot);
         if (!card) return status;
+
+        // The unit count (2/4/6/8) — A2retroNET's `number=`. Persisted per
+        // slot; the guest sees the change at its next SmartPort STATUS.
+        if (command.setUnitCount) {
+            card->setUnitCount(command.setUnitCount);
+            settingUpdates.push_back(
+                {slotKey + "_units", std::to_string(card->unitCount()), false, false});
+            status.message = "SmartPort: " + std::to_string(card->unitCount()) +
+                             " units (ProDOS 8 2.4+ remaps units 2+ onto empty slots)";
+            status.visibleSeconds = 4.0;
+        }
 
         for (std::size_t unitIndex = 0;
              unitIndex < command.units.size(); ++unitIndex) {

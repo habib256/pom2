@@ -194,10 +194,14 @@ void SmartPortCard::appendSnapshotState(std::vector<uint8_t>& out) const
 void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     constexpr size_t kPerUnit = 6 + kBlockBytes;
-    constexpr size_t kBase = 4 + kMaxUnits * kPerUnit;
-    if (len < kBase || data[0] != 'S' || data[1] != 'P') return;
+    if (len < 3 || data[0] != 'S' || data[1] != 'P') return;
     const uint8_t version = data[2];
     if (version < 1 || version > kSnapVersion) return;
+    // v1/v2 carried two units; v3 carries kMaxUnits. Units the blob does not
+    // cover are reset below, not left with the live card's state.
+    const size_t nUnits = version >= 3 ? kMaxUnits : 2;
+    const size_t kBase = 4 + nUnits * kPerUnit;
+    if (len < kBase) return;
     // An absent tail is the original v1 layout. Once any tail byte exists,
     // require its full fixed header and declared result before touching the
     // live call engine or unit state.
@@ -211,12 +215,17 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         if (rn > len - (kBase + kTailHeader)) return;
         if (version >= 2) {
             identOff = kBase + kTailHeader + rn;
-            if (len - identOff < kMaxUnits * 8) return;
+            if (len - identOff < nUnits * 8) return;
         }
     }
     activeUnit_ = std::min<size_t>(data[3], kMaxUnits - 1);
+    for (size_t u = nUnits; u < kMaxUnits; ++u) {
+        selectedBlock_[u] = 0; streamOffset_[u] = 0;
+        writeBufPrimed_[u] = false; ioError_[u] = false;
+        writeBuf_[u].fill(0);
+    }
     const uint8_t* p = data + 4;
-    for (size_t u = 0; u < kMaxUnits; ++u) {
+    for (size_t u = 0; u < nUnits; ++u) {
         selectedBlock_[u] = static_cast<uint16_t>(p[0] | (p[1] << 8));
         streamOffset_[u]  = static_cast<size_t>(p[2] | (p[3] << 8)) % kBlockBytes;
         writeBufPrimed_[u] = p[4] != 0;
@@ -309,7 +318,15 @@ uint8_t SmartPortCard::slotRomRead(uint8_t low8)
 
 int SmartPortCard::smartPortBusUnitCount() const
 {
-    return static_cast<int>(kMaxUnits);
+    return unitCount_;
+}
+
+void SmartPortCard::setUnitCount(int n)
+{
+    if (n < 2) n = 2;
+    if (n > static_cast<int>(kMaxUnits)) n = static_cast<int>(kMaxUnits);
+    if (n & 1) ++n;                      // ProDOS drives come in pairs
+    unitCount_ = n;
 }
 
 pom2::SmartPortBusUnit* SmartPortCard::smartPortBusUnit(int index)
@@ -962,7 +979,7 @@ uint8_t SmartPortCard::spExecute()
                      spCollect_[5], spCollect_[6]);
 
     auto unitFor = [&](uint8_t n) -> SmartPortUnit* {
-        if (n == 0 || n > kMaxUnits) return nullptr;
+        if (n == 0 || n > static_cast<uint8_t>(unitCount_)) return nullptr;
         return units_[n - 1].get();
     };
 
@@ -973,7 +990,7 @@ uint8_t SmartPortCard::spExecute()
             if (unitNo == 0) {
                 if (code != 0x00) return fail(0x21);   // bad status code
                 // Controller status: device count + 7 reserved bytes.
-                spResult_ = { static_cast<uint8_t>(kMaxUnits),
+                spResult_ = { static_cast<uint8_t>(unitCount_),
                               0, 0, 0, 0, 0, 0, 0 };
                 return ok();
             }

@@ -192,7 +192,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | TNFS media (fetch a disk image from a TNFS server into a local cache) | `TnfsClient.*`, `TnfsMedia.*` | [§ FujiNet](DEV.md#fujinet-sp-over-slip-relay) |
 | IWM (//c, //c+, Mac, IIgs) | `IWMDevice.*` | [§ IWM](DEV.md#iwm-c-on-board) |
 | SmartPort 3.5" //c+ on-board (`.po`/`.2mg`/`.woz`) | `Disk35Image.*`, `Sony35Drive.*`, `Sony35Gcr.*`, `SmartPortHub.*` | [§ SmartPort 3.5"](DEV.md#smartport-35-stack) |
-| SmartPort slot card (Liron-class) | `SmartPortCard.*`, `SmartPort*Unit.*` | [§ SmartPortCard](DEV.md#smartportcard-e-liron-class) |
+| SmartPort slot card (Liron-class), 2 to 8 units | `SmartPortCard.*`, `SmartPort*Unit.*` | [§ SmartPortCard](DEV.md#smartportcard-e-liron-class) |
 | Liron card at silicon level — real EPROM + IWM, boots its 3.5" over the SmartPort **bus** — catalog `liron` | `LironCard.h/.cpp` | [§ SmartPort 3.5"](DEV.md#smartport-35-stack) |
 | SmartPort bus responder — an HLE UniDisk 3.5 answering INIT / STATUS / READ / WRITE at the byte level of the wire | `SmartPortBusDevice.h/.cpp` | [§ SmartPort bus](DEV.md#the-smartport-bus-smartportbusdevice) |
 | //c / //c+ external 3.5" port — bus responder behind `$C0E0-$C0EF` (own IWM register tracker on the //c, riding the shared IWM on the //c+), units from the slot-5 card; the Disk II keeps the 5.25" | `IIcExternalSmartPort.*`, `SmartPortBusPort.h` | [§ //c external port](DEV.md#the-c-external-35-port-iicexternalsmartport) |

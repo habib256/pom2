@@ -5,6 +5,20 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — The SmartPort card grows to eight units, the A2retroNET way
+
+A2retroNET, the A2Pico firmware, presents up to eight 32 MB volumes as one
+SmartPort controller and lets the user pick how many (2/4/6/8). POM2's
+SmartPort card had two bays. It has eight now, with the same configurable
+count (default 2, so nothing changes for a saved configuration): STATUS
+unit 0 reports it, the SmartPort engine serves units up to it, the media
+rows and the panel show that many. ProDOS 8 2.4 enumerates the extra units
+through the SmartPort STATUS call — which needs the card's real Liron
+identity (`$Cn07 = $00`, so `roms/liron.rom`, shipped) — and remaps them
+onto empty slots: eight units in slot 5 come up as S5, S2, S4 and S1, two
+drives each. The card's snapshot is v3 (eight records; v1/v2 blobs still
+load). Pinned by `smartport_eight_units`.
+
 ## 2026-09-08 — G3: the words made true
 
 The README billed the Workstation Card four paragraphs past what it does;

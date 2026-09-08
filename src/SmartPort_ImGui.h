@@ -54,10 +54,16 @@ public:
         bool        writeBackEnabled = true;
     };
 
+    /// Mirrors SmartPortCard::kMaxUnits (static_assert in StorageCoordinator).
+    static constexpr size_t kMaxUnits = 8;
+
     struct CardSnapshot {
         int  slot     = 0;
         bool plugged  = false;
-        std::array<UnitSnapshot, 2> units{};
+        /// How many units the card answers for (2/4/6/8); only those rows
+        /// are drawn. `units` always holds kMaxUnits entries.
+        int  unitCount = 2;
+        std::array<UnitSnapshot, kMaxUnits> units{};
     };
 
     // ── Output: actions the user requested this frame ──────────────────
@@ -75,7 +81,9 @@ public:
     };
 
     struct Result {
-        std::array<UnitAction, 2> units{};
+        std::array<UnitAction, kMaxUnits> units{};
+        /// 0 = unchanged; else the new unit count the user picked (2/4/6/8).
+        int setUnitCount = 0;
     };
 
     /// Render the panel. `open` is the host's bool toggle.
@@ -85,7 +93,7 @@ public:
 private:
     // Per-unit mount-dialog state. ImGui input box buffers can't live
     // on the stack across frames, so we keep them here.
-    std::array<char, 256> pathBufs_[2] = {};
+    std::array<char, 256> pathBufs_[kMaxUnits] = {};
 };
 
 } // namespace pom2
