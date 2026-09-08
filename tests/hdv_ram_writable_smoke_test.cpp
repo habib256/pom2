@@ -34,6 +34,7 @@
 //   2. 2MG header WP flag set: status bit6=WP; the write is dropped and the
 //      block reads back unchanged (real write-protect still honoured).
 
+#include "MediaWritePolicy.h"
 #include "ProDOSHardDiskCard.h"
 
 #include <cassert>
@@ -104,8 +105,10 @@ int main()
 
         ProDOSHardDiskCard card;
         assert(card.loadImage(p.string()));
-        // Default: write-back OFF, no medium WP flag.
-        assert(!card.isWriteBackEnabled());
+        // Default follows MediaWritePolicy (writable in the product,
+        // protected under the suite's environment); no medium WP flag.
+        assert(card.isWriteBackEnabled() == pom2::mediaWritableByDefault());
+        card.setWriteBackEnabled(false);             // the user's write-protect
         assert(!card.isWriteProtected());
 
         // ProDOS-visible status ($Cn03): loaded (bit7=0) AND not WP (bit6=0).

@@ -37,6 +37,7 @@
 
 #include "Disk35Image.h"
 #include "SmartPort35Unit.h"
+#include "MediaWritePolicy.h"
 #include "SmartPortCard.h"
 #include "SmartPortHdvUnit.h"
 
@@ -184,14 +185,21 @@ bool testStatusByte()
     if ((readReg(card, 0x4) & 0x80) != 0) {
         std::printf("FAIL: mounted d1 status bit7 still set\n"); return false;
     }
-    // Default write-protected (writeBackEnabled is off) → bit6 set.
-    if ((readReg(card, 0x4) & 0x40) == 0) {
-        std::printf("FAIL: WP bit not set on default-mounted d1\n"); return false;
+    // A fresh mount follows the policy default (MediaWritePolicy.h: writable
+    // in the product, protected under the suite's environment) → bit6 = !policy.
+    const bool wpDefault = ((readReg(card, 0x4) & 0x40) != 0);
+    if (wpDefault == pom2::mediaWritableByDefault()) {
+        std::printf("FAIL: default-mounted d1 WP bit does not follow the policy\n"); return false;
     }
-    // Enable write-back → bit6 clears.
+    // The user's write-protect → bit6 set.
+    u0raw->setWriteBackEnabled(false);
+    if ((readReg(card, 0x4) & 0x40) == 0) {
+        std::printf("FAIL: WP bit not set after write-protecting d1\n"); return false;
+    }
+    // Lift it → bit6 clears again.
     u0raw->setWriteBackEnabled(true);
     if ((readReg(card, 0x4) & 0x40) != 0) {
-        std::printf("FAIL: WP bit still set after enabling write-back\n");
+        std::printf("FAIL: WP bit still set after lifting the write-protect\n");
         return false;
     }
     std::printf("OK : status byte (no-disk / WP)\n");

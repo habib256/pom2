@@ -301,9 +301,18 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
                 rejectSpacedValue(i, "--ai-control", looksLikePort))
                 return std::nullopt;
             if (eq != std::string::npos) {
-                const int p = std::atoi(a.c_str() + eq + 1);
-                if (p <= 0 || p > 65535) {
-                    pom2::log().error("CLI", "--ai-control port out of range");
+                // parseIntPositive, not atoi — the rule the rest of the parser
+                // already applies (see --fujinet-slot). atoi has no error
+                // channel: it stops at the first non-digit, so
+                // `--ai-control=8080junk` armed 8080, and its out-of-range
+                // result is a WRAPPED int, so `--ai-control=4294967376` came
+                // back as a perfectly valid 80 and the control server bound
+                // there. A port is either a port or a typo (bug hunt #10).
+                int p = 0;
+                if (!parseIntPositive(a.substr(eq + 1), p) ||
+                    p <= 0 || p > 65535) {
+                    pom2::log().error("CLI", "--ai-control port out of range: " +
+                                                 a.substr(eq + 1));
                     return std::nullopt;
                 }
                 plan.aiControlPort = p;
@@ -326,8 +335,11 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
                 rejectSpacedValue(i, "--fujinet", looksLikePort))
                 return std::nullopt;
             if (eq != std::string::npos) {
-                const int p = std::atoi(a.c_str() + eq + 1);
-                if (p <= 0 || p > 65535) {
+                // Same as --ai-control above: atoi truncated `--fujinet=1985x`
+                // to 1985 and wrapped `--fujinet=4294968021` to 725.
+                int p = 0;
+                if (!parseIntPositive(a.substr(eq + 1), p) ||
+                    p <= 0 || p > 65535) {
                     pom2::log().error("CLI", "--fujinet: port out of range: " +
                                                  a.substr(eq + 1));
                     return std::nullopt;

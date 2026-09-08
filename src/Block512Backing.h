@@ -32,6 +32,8 @@
 #ifndef POM2_BLOCK512_BACKING_H
 #define POM2_BLOCK512_BACKING_H
 
+#include "MediaWritePolicy.h"
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -262,7 +264,7 @@ private:
     size_t  dataLength_ = 0;
     std::vector<bool> dirtyBlocks_;
     bool    anyDirty_          = false;
-    bool    writeBack_         = false;
+    bool    writeBack_         = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
     bool    wpHeader_          = false;
     bool    supportsWriteBack_ = false;
     bool    synth_             = false;

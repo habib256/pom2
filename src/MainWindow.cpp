@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "MainWindow.h"
+#include "MediaWritePolicy.h"
 
 // Named because this file uses them DIRECTLY. All of them also arrive
 // transitively through MainWindow.h today, which is precisely why they are
@@ -714,9 +715,9 @@ MainWindow::MainWindow(bool forceIIPlus)
         // paths meant a user who had opted in got the disk back read-only on
         // every launch — and lost the session's writes at the next eject.
         controller->disk35Internal().setWriteBackEnabled(
-            settings->getBool("disk35_writeback_1", false));
+            settings->getBool("disk35_writeback_1", pom2::mediaWritableByDefault()));
         controller->disk35External().setWriteBackEnabled(
-            settings->getBool("disk35_writeback_2", false));
+            settings->getBool("disk35_writeback_2", pom2::mediaWritableByDefault()));
         const std::string p1 = settings->getString("disk35_path_1", "");
         if (!p1.empty() && fs::is_regular_file(p1, ec) &&
             controller->mount35(0, p1)) {

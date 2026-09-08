@@ -228,9 +228,11 @@ int main()
         pom2::Disk35Image d;
         assert(d.loadFile(img.string()));
         assert(d.kind() == pom2::Disk35Image::ImageKind::Raw800k);
-        // Still write-protected until the user opts in — that gate is the
-        // one that must survive; only the extension rule went away.
-        assert(d.isWriteProtected() && "opt-in must still be required");
+        // The user's write-protect is the gate that must survive — only the
+        // extension rule went away. (The default itself is MediaWritePolicy's
+        // and is pinned by media_write_default; the suite runs protected.)
+        d.setWriteBackEnabled(false);
+        assert(d.isWriteProtected() && "the write-protect must still hold");
         d.setWriteBackEnabled(true);
         assert(!d.isWriteProtected() && "extension must not force WP");
         assert(d.writeBlock(11, block.data()));

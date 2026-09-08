@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1687,8 +1688,92 @@ static void testDmpSwallowsEscGBody()
     std::printf("  DMP eats ESC g's graphics body: OK\n");
 }
 
+// ── Bug hunt #10: ESC/P proportional, master select, tab rack, A-8 ──────
+static void testEscPProportionalIsConsumed()
+{
+    auto run = [](pom2::IwModel m, bool escP) {
+        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+        iw.setModel(m);
+        if (escP) { const uint8_t s[] = { 0x1B, 'p', 0x01 }; iw.printBytes(s, 3); }
+        feed(iw, "X");
+        return std::make_pair(inkPixels(iw.currentPage()), iw.status());
+    };
+    for (pom2::IwModel m : { pom2::IwModel::EpsonFX80, pom2::IwModel::EpsonRX80 }) {
+        const auto lone = run(m, false), withP = run(m, true);
+        assert(withP.first == lone.first &&
+               "ESC p's parameter byte printed as a glyph");
+        assert(withP.second.headX == lone.second.headX &&
+               "ESC p's parameter byte advanced the head");
+        const bool prop = withP.second.styleText.find("proportional") != std::string::npos;
+        assert(prop == (m == pom2::IwModel::EpsonFX80) &&
+               "proportional must engage on the FX-80 and not on the RX-80");
+    }
+    std::printf("  ESC p is consumed, proportional follows the head's capability: OK\n");
+}
+
+static void testEscPMasterSelectMask()
+{
+    auto style = [](std::initializer_list<uint8_t> bytes, pom2::IwModel m = pom2::IwModel::EpsonFX80) {
+        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+        iw.setModel(m);
+        std::vector<uint8_t> v(bytes);
+        iw.printBytes(v.data(), v.size());
+        return iw.status().styleText;
+    };
+    assert(style({ 0x1B, '4', 0x1B, '!', 0x00 }).find("italic") == std::string::npos &&
+           "ESC ! 0 must clear an ESC 4 italic");
+    assert(style({ 0x1B, '!', 0x40 }).find("italic") != std::string::npos &&
+           "ESC ! $40 must italicise");
+    assert(style({ 0x1B, '!', 0x02 }).find("proportional") != std::string::npos &&
+           "ESC ! $02 must select proportional on the FX-80");
+    assert(style({ 0x1B, '!', 0x02 }, pom2::IwModel::EpsonRX80).find("proportional") == std::string::npos &&
+           "the RX-80 has no proportional to select");
+    std::printf("  ESC ! masks italic and proportional: OK\n");
+}
+
+static void testTabRackOverflowStaysInsideTheCommand()
+{
+    ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+    std::string s = "\x1b(";
+    for (int i = 1; i <= 36; ++i) {
+        char buf[8]; std::snprintf(buf, sizeof buf, "%03d", i * 2);
+        s += buf; s += (i < 36) ? ',' : '.';
+    }
+    feedN(iw, s);
+    assert(inkPixels(iw.currentPage()) == 0 &&
+           "the stops past the 32nd printed into the document as text");
+    assert(iw.status().headX == iw.status().headX && iw.status().headX < 0.3 &&
+           "the head must still be at the left margin");
+    std::printf("  a 36-stop ESC ( stays inside the command: OK\n");
+}
+
+static void testLfAfterCrSwitchDoesNotStack()
+{
+    ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+    // Open B-6 (what any driver printing high-ASCII does), then close A-8
+    // through ESC D — the documented "line feed after CR".
+    const uint8_t open[]  = { 0x1B, 'Z', 0x00, 0x20 };
+    const uint8_t setA8[] = { 0x1B, 'D', 0x80, 0x00 };
+    iw.printBytes(open, sizeof open);
+    iw.printBytes(setA8, sizeof setA8);
+    const double y0 = iw.status().headY;
+    const double line = iw.status().lineSpacing;
+    iw.printChar(0x0D);                     // one bare CR
+    const double dy = iw.status().headY - y0;
+    assert(std::fabs(dy - line) < 1e-6 &&
+           "a bare CR with A-8 closed fed two lines");
+    iw.printChar(0x0D); iw.printChar(0x0A);  // CR + LF: the DIP double-space
+    assert(std::fabs((iw.status().headY - y0) - 3 * line) < 1e-6 &&
+           "a guest LF after the switch's own feed is a real second feed");
+    std::printf("  A-8 line feed does not stack with AutoFeed: OK\n");
+}
+
 int main()
 {
+    testEscPProportionalIsConsumed();
+    testEscPMasterSelectMask();
+    testTabRackOverflowStaysInsideTheCommand();
+    testLfAfterCrSwitchDoesNotStack();
     testDmpSwallowsEscGBody();
     testRepeatRestoresEighthBitSwitch();
     testEpsonCharsetKeepsPerforationSkip();

@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "StorageCoordinator.h"
+#include "MediaWritePolicy.h"
 
 #include "AtomicFileReplace.h"
 #include "CffaCard.h"
@@ -1645,9 +1646,10 @@ StorageCoordinator::restoreMediaFromSettings(
     for (auto* card : cards.diskIICards) {
         if (!card) continue;
         const bool isPrimary = card == cards.primaryDiskII;
-        card->setWriteBackEnabled(settings.getBool(
+        card->setWriteBackEnabled(settings.getBool(   // absent key = writable
             "disk_writeback_slot" + std::to_string(card->getSlot()),
-            isPrimary ? settings.getBool("disk_writeback", false) : false));
+            isPrimary ? settings.getBool("disk_writeback", pom2::mediaWritableByDefault())
+                      : pom2::mediaWritableByDefault()));
         for (std::size_t drive = 0; drive < kDiskIIDriveCount; ++drive) {
             const std::string path = settings.getString(
                 diskIIPathSettingKey(card->getSlot(), drive),
@@ -1674,7 +1676,7 @@ StorageCoordinator::restoreMediaFromSettings(
                 ": " + cards.primaryHdv->getLastError());
         }
         cards.primaryHdv->setWriteBackEnabled(
-            settings.getBool("hdv_writeback", false));
+            settings.getBool("hdv_writeback", pom2::mediaWritableByDefault()));
     }
 
     for (auto* block : cards.blockCards) {
@@ -1691,7 +1693,7 @@ StorageCoordinator::restoreMediaFromSettings(
                 card->getLastError());
         }
         card->setWriteBackEnabled(
-            settings.getBool(key + "_writeback", false));
+            settings.getBool(key + "_writeback", pom2::mediaWritableByDefault()));
     }
 
     for (auto* card : cards.smartPortCards) {
@@ -1713,7 +1715,7 @@ StorageCoordinator::restoreMediaFromSettings(
                 continue;
             }
             unit->setWriteBackEnabled(
-                settings.getBool(base + "_writeback", false));
+                settings.getBool(base + "_writeback", pom2::mediaWritableByDefault()));
 
             const std::string path =
                 settings.getString(base + "_path", "");
@@ -1752,7 +1754,7 @@ StorageCoordinator::restoreMediaFromSettings(
         if (!media) continue;
         for (int bay = 0; bay < media->bayCount(); ++bay) {
             const std::string base = genericBayKey(slot, bay);
-            media->setBayWriteBack(bay, settings.getBool(base + "_writeback", false));
+            media->setBayWriteBack(bay, settings.getBool(base + "_writeback", pom2::mediaWritableByDefault()));
             const std::string path = settings.getString(base + "_path", "");
             if (path.empty()) continue;
             std::string resolved;
@@ -2075,7 +2077,7 @@ StorageCoordinator::applySmartPortPanel(
                     mediaChanged = true;
                     rememberString(base + "_type", "");
                     rememberString(base + "_path", "");
-                    rememberBool(base + "_writeback", false);
+                    rememberBool(base + "_writeback", pom2::mediaWritableByDefault());    // writable by default
                     status.message = "SmartPort unit " +
                         std::to_string(unitIndex) + ": cleared";
                 } else {
@@ -2085,7 +2087,7 @@ StorageCoordinator::applySmartPortPanel(
                         mediaChanged = true;
                         rememberString(base + "_type", action.setType);
                         rememberString(base + "_path", "");
-                        rememberBool(base + "_writeback", false);
+                        rememberBool(base + "_writeback", pom2::mediaWritableByDefault());    // writable by default
                         status.message = "SmartPort unit " +
                             std::to_string(unitIndex) + ": type = " +
                             action.setType;

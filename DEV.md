@@ -1400,6 +1400,22 @@ cmake --build build_asan -j8 --target test_fuzz_disk_image test_fuzz_snapshot
 (cd build_asan && ctest -R fuzz_)
 ```
 
+**Bug hunt #10 (2026-09-08), three.** *Text wears the phosphor*: `renderText`
+and `renderText80` hard-coded white, so green/amber sessions showed a white
+text screen and MIXED frames green-over-white; `textLitColor()` gives the
+crisp painters the mode's tint (no persistence history — `staticTextFrameUnchanged`
+skips static text repaints, which a decaying history would contradict).
+22 `display_golden_hash` entries moved, all green/amber text. *No lowercase
+fold*: `lookupCsbitsGlyph` mapped a-z onto A-Z on a ROM without lowercase,
+drawing 'A' at `$E1` where a 2513 shows the glyph at `$21` (the Videx
+manual's "80-BF == C0-FF" rule that `videx_lowercase_char_rom` already
+asserted one layer down); the renderer draws what the dump holds. *Zero
+persistence has no history*: `effectivePhosphorDecay` returned 1.0 at frame
+delta 0 for every phosphor, MonoWhite included, so the paint editor's
+never-clocked canvas and a paused machine could only ever light pixels up;
+a decay of 0 now decays. Pinned by `mono_text_phosphor`,
+`phosphor_decay_zero`, `videx_lowercase_char_rom`.
+
 ## Audio
 
 `AudioDevice`: miniaudio **interleaved stereo** float32
@@ -1891,6 +1907,20 @@ Owned by `EmulationController` (audio shutdown drains thread).
 Persisted: `floppy_sound_volume`, `floppy_sound_muted`. Pinned:
 `floppy_sound_smoke_test`.
 
+**Bug hunt #10 (2026-09-08), four.** `EmulationController::refreshAcceleratorClock`
+re-derives `emulatedCpuClockHz()` from the plugged accelerator card every
+frame (the multiplier is runtime state: `$C074`, DSW windows, plug/unplug),
+so a TransWarp's 3.5× reaches the speaker, the deck, both floppy banks and
+every card — it had multiplied the frame budget only, and the speaker read
+accelerated stamps as 3.5× the time. `AudioCoordinator::restore` puts the
+browser attenuation in the DEFAULT rather than the restored value, so
+restore→persist no longer divides the floppy volume by four per WASM
+session. `FloppySoundDevice` retires the spin-up one-shot before choosing
+what to mix (no 5.3 ms hole at the handover) and treats a backwards cycle
+stamp — a rewind — as the first step of a new timeline (a click, not a
+100 ms seek buzz). Pinned in `device_clock_fanout`, `audio_coordinator`,
+`floppy_sound_smoke`.
+
 ## TransWarp (Applied Engineering)
 
 **The ROM is probed through `findResource`** *(2026-09-08, bug hunt #6)*.
@@ -2163,8 +2193,10 @@ durable path (§ Write-back commit), never an in-place `trunc`.
 | `.aci` cassette | `CassetteDevice` | ✅ | ✅ | `cassette_wav_tail_smoke` |
 
 **Write-protect is the union of four independent sources**, and any one
-of them alone makes a medium read-only: the user's `writeBackEnabled`
-opt-in (off by default), the 2IMG header's write-protect flag, the host
+of them alone makes a medium read-only: the user's write-protect (the
+`writeBackEnabled` plumbing inverted — **media are writable by default
+since 2026-09-08**, the tick is the opt-out, visible and editable in every
+media panel), the 2IMG header's write-protect flag, the host
 file being read-only on disk, and a per-format "physically WP" rule (the
 two ❌ rows above). `isWriteProtected()` folds them together, so nothing
 can be written by accident and nothing is silently dropped.
@@ -2241,7 +2273,8 @@ volume — the only pin the write-side skew has; the DOS 3.3 master and its
 ProDOS-order twin boot to the prompt under both extensions.
 
 Write-back via `saveDirty()` (`.dsk`/`.do`/`.po`/`.nib` + `.2mg`
-envelopes + `.woz`) opt-in via `setWriteBackEnabled(true)`.
+envelopes + `.woz`), on by default; `setWriteBackEnabled(false)` is the
+user's write-protect (pinned by `media_write_default`).
 
 #### Two-phase media mount (`MediaMount.h/.cpp`)
 
@@ -2288,8 +2321,8 @@ road — see *Eject and flush are three-phase* below):
    knowing whether the old medium could be written — losing the user's changes
    when it cannot — or handing the dirty image back for the caller to commit,
    which loses them if the caller drops it. Latency is worth less than the only
-   copy of somebody's disk. Rare in practice: write-back is opt-in, so the
-   default clean medium takes the fully unlocked path.
+   copy of somebody's disk. A clean medium takes the fully unlocked path;
+   since media write by default (2026-09-08) a dirty one is the common case.
 2. **Same-file re-insert degrades to the inline cost.** Phase 1 reads *before*
    phase 2 flushes, so re-inserting a file the guest has written to would
    install pre-flush bytes and roll the writes back. `installDisk` detects the
@@ -2724,7 +2757,9 @@ window. Note `disk_write_controller_smoke` exercises the **legacy**
 path — the shipped app bundles `roms/diskii_p6.rom` and always runs the
 LSS/flux one.
 
-**Write-back opt-in plumbing.** `disk_writeback[_slotN]` has to be
+**Write-back plumbing** (an opt-in until 2026-09-08, an opt-out since —
+an absent key now restores a WRITABLE drive, pinned in
+`storage_coordinator`). `disk_writeback[_slotN]` has to be
 re-applied by `plugSlotsFromSettings`' `plugDiskII` (like `plugHdv` /
 `plugCffa` do) *and* carried through `applyProfile`'s media snapshot as
 `{path, writeBack}`, because `applyProfile` rebuilds every card and the
@@ -3049,7 +3084,7 @@ transitions edge-only.
 
 ### ProDOS host folder
 
-`prodos_folder/`. `ProDOSVolume` synthesises a ProDOS volume (guest-writable in RAM; persisting back to the folder is the write-back opt-in).
+`prodos_folder/`. `ProDOSVolume` synthesises a ProDOS volume (guest-writable in RAM; persisting back to the folder stays an **opt-in** — the one medium that did not turn writable by default on 2026-09-08, because syncing a guest DELETE into someone's real directory is a different hazard from touching an image file).
 Blocks 0-1 boot (zeroed), 2-5 vol-dir key + 3 ext (51 entries max),
 block 6 bitmap (4096 blocks = 2 MB cap), 7+ data + sapling indexes.
 
@@ -6309,6 +6344,16 @@ DOS 3.3 boot where `PR#1` + `PRINT` land bytes in the spool on all three
 through the *card's* synthetic `PR#n` ROM, which only checks TDRE and is
 blind to DCD.
 
+**Bug hunt #10 (2026-09-08), four ESC/P and switch fixes.** `ESC p n` had no
+case (the parameter printed as a glyph, proportional never engaged —
+`kEscPProportional` was dead data); `ESC ! n` now clears and sets italic
+(bit 6) and proportional (bit 1) too, gated on the head's capability; `ESC (
+nnn,` keeps following its chain once the 32-stop rack is full instead of
+printing the remaining stops as text; and a bare CR feeds exactly once when
+soft switch A-8 is closed — A-8 and the AutoFeed detector are the same
+switch modelled twice and they stacked (reachable: B-6 opened by `ESC Z`,
+then `ESC D $80`). Pinned in `imagewriter_smoke`.
+
 ### Mouse Card
 
 **The absolute cursor sync waits for its push to be drained** *(2026-09-08,
@@ -7560,6 +7605,13 @@ CRC-32 (IEEE, reflected) is implemented locally: POM2 links no zlib,
 and the WOZ path only ever writes the "not computed" sentinel, so
 there was nothing to borrow.
 
+**Bug hunt #10 (2026-09-08).** `RomFetchEntry::altPresentSize`: a local file of
+that size counts as present even though a download must match
+`expectedSize`. The II+ entry declares RetroBIOS's 12 KB six-chip image
+while roms/ ships a working 20 KB MAME pack, so the planner listed
+`apple2p.rom` as missing on every launch and "Download missing ROMs"
+overwrote a good dump with a different one (`rom_fetch`).
+
 ### Floppy Emu (BMOW)
 
 `FloppyEmuDevice.{h,cpp}` + `FloppyEmu_ImGui.{h,cpp}` — model of the
@@ -7863,6 +7915,15 @@ Pinned: `cli_kiosk_test` — a **parser-only** smoke test (links against just
 `DiskImage.cpp`): it asserts `parseCli` captures the positional disk +
 `--kiosk` flag and `classifyDiskForSlot` picks the slot; it does not drive
 the full-screen window.
+
+**Bug hunt #10 (2026-09-08).** `--ai-control=` and `--fujinet=` parse their
+port with `parseIntPositive` like every other numeric flag: `atoi` armed
+8080 for `8080junk` and wrapped `4294967376` to a valid 80 (pinned in
+`cli_kiosk`). `profileUsesLowerRomHalf()` (SystemProfile.h) is the one
+spelling of the //c-vs-//e 32 KB slicing; File > Reload ROM and the Welcome
+panel's reload used the //e slicing on a //c and rebooted into bank 1 with
+`$C028` dead (`iic_rom_bank_slice`, whose source scan refuses a
+`loadAppleIIRom(` call that leaves the half unsaid).
 
 ## Clock & threading
 

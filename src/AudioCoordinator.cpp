@@ -358,19 +358,26 @@ void AudioCoordinator::restore(Settings& settings,
                                FloppySoundDevice& floppy35,
                                PrinterSoundDevice& printer)
 {
-    const float volume525 = settings.getFloat("floppy_sound_volume", 0.6f);
-    const bool muted525 = settings.getBool("floppy_sound_muted", false);
-    const float volume35 = settings.getFloat("floppy_sound_volume_35", volume525);
-
 #ifdef __EMSCRIPTEN__
     constexpr float kDiskGain = 0.25f;
 #else
     constexpr float kDiskGain = 1.0f;
 #endif
+    // The browser attenuation belongs in the DEFAULT, not in the value that
+    // goes back to disk: persist() writes getVolume() straight back to the
+    // same key, so folding the gain in here made restore->persist a 4x
+    // DIVIDER and the drive sounds faded out over a handful of browser
+    // sessions (0.6 -> 0.15 -> 0.0375 -> ...). A first-run browser session
+    // still gets the quieter level; a user's own choice now round-trips
+    // (bug hunt #10).
+    const float volume525 =
+        settings.getFloat("floppy_sound_volume", 0.6f * kDiskGain);
+    const bool muted525 = settings.getBool("floppy_sound_muted", false);
+    const float volume35 = settings.getFloat("floppy_sound_volume_35", volume525);
 
-    floppy525.setVolume(volume525 * kDiskGain);
+    floppy525.setVolume(volume525);
     floppy525.setMuted(muted525);
-    floppy35.setVolume(volume35 * kDiskGain);
+    floppy35.setVolume(volume35);
     floppy35.setMuted(settings.getBool("floppy_sound_muted_35", muted525));
 
     device_.setMasterVolume(settings.getFloat("master_volume", 1.0f));

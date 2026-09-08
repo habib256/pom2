@@ -122,6 +122,16 @@ SystemProfile profileFromKey(std::string_view key);
 /// Forward — get the persistence key for a profile.
 std::string_view profileKey(SystemProfile p);
 
+/// Which half of a 32 KB main-ROM dump is the firmware POM2 must map at
+/// reset — `Memory::loadAppleIIRom(path, pickLower16KFor32K)`. A //c-class
+/// dump is TWO firmware banks with bank 0 (the cold-reset entry) in the
+/// LOWER half; a //e "system + video" dump puts its 16 KB firmware in the
+/// UPPER half. Same file size, opposite slicing, and nothing in the bytes
+/// says which — so the answer is a property of the PROFILE and belongs here
+/// rather than being re-spelled at each `loadAppleIIRom` call site (bug hunt
+/// #10: Reload ROM used the //e slicing on a //c and rebooted into bank 1).
+bool profileUsesLowerRomHalf(SystemProfile p);
+
 /// Should `slot_N_card` be persisted for `slot` holding `cardKey` under
 /// this profile? False for profile-forced slots: built-in cards, and —
 /// except for the user-pluggable "chatmauve" rear-connector adapter — the

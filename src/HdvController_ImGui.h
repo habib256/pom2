@@ -41,7 +41,7 @@ public:
         bool        imageLoaded = false;
         std::string imagePath;
         size_t      blockCount  = 0;
-        bool        writeBackEnabled  = false;
+        bool        writeBackEnabled  = true;
         bool        hasUnsavedChanges = false;
         bool        supportsWriteBack = false;
         bool        isSynthVolume     = false;

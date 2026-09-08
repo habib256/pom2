@@ -1984,6 +1984,16 @@ Do not re-litigate without re-reading the original comment.
   track upstream renames (recent: `wozfdc.cpp`
   `bus/a2bus → machine`).
 
+## Reported against A2 File Cmd (a2retrocmd)
+
+- 🟠 **A floppy inserted through the AI-control `/disk` endpoint is unreadable until first written, and there is no way to mount a second floppy at boot.** The CLI takes one floppy (`--disk` + `--boot 6`, drive 1) and nothing for drive 2; `/disk` inserts mid-session but a `.DSK`/`.PO` is nibblized lazily, so the emulated Disk II returns nothing for it until something writes to it — A2FC's `READ_BLOCK` on a freshly inserted DOS 3.3 disk fails, its VTOC is never read, and it never shows up as a `/DOS 3.3` volume. **Consequence:** A2FC's *physical*-disk code paths (a real DOS 3.3 disk in a drive, and the volume-list row that only a real disk produces) are untestable in the headless bench; a 42-column overflow in exactly that row shipped in A2FC 0.6 unseen and was found by a user. *Unblock: nibblize on insert (or expose the write-path nibblizer to `/disk`), or a `--disk2` boot flag. Repro: boot `A2FILECMD.po`, `/disk` a DOS 3.3 `.DSK` into drive 2, press `/` in A2FC — the disk is absent.*
+  **Request from A2 File Cmd (2026-09-08): please take this next.** It is the
+  one thing keeping A2FC's physical-disk code (a real DOS 3.3 floppy in a
+  drive: catalog, extraction, and the volume-list row) out of its headless
+  bench, and it already let a display bug ship in 0.6. Nibblizing on `/disk`
+  insert is enough — no CLI change needed — and would let A2FC add the
+  missing checks the same day.
+
 ## Out of scope
 
 Things we will not do unless explicitly requested + clear ROI.

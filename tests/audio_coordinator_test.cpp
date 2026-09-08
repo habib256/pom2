@@ -198,6 +198,25 @@ int main()
         assert(tape.isMuted() && "cassette_muted must round-trip");
         assert(tape.isAutoRewindEnabled());
         assert(near(tape.pan.load(), 0.5f));
+
+        // Bug hunt #10: restore() folded the browser attenuation (kDiskGain,
+        // 0.25 on WASM) into the value it handed the device and persist()
+        // wrote getVolume() straight back, so restore->persist was a 4x
+        // divider — the drive sounds faded out over a handful of browser
+        // sessions. On a native build kDiskGain is 1, so this passes before
+        // and after the fix here; it fails on the Emscripten build without
+        // it, and guards any future platform gain.
+        cfg.setFloat("floppy_sound_volume", 0.42f);
+        for (int round = 0; round < 3; ++round) {
+            audio.restore(cfg, speaker, tape, fs525, fs35, printer);
+            audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+            assert(near(cfg.getFloat("floppy_sound_volume", 0.0f), 0.42f) &&
+                   "a restore/persist round trip must not scale the volume");
+            assert(near(fs525.getVolume(), 0.42f));
+        }
+        // Put the drive bank back where the assertions below expect it.
+        cfg.setFloat("floppy_sound_volume", 0.22f);
+        audio.restore(cfg, speaker, tape, fs525, fs35, printer);
         assert(near(fs525.getVolume(), 0.22f) && fs525.isMuted());
         assert(near(fs525.pan.load(), -0.25f));
         assert(near(fs35.getVolume(), 0.66f) && !fs35.isMuted());

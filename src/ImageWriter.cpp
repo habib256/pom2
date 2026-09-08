@@ -1645,7 +1645,17 @@ bool ImageWriter::processCommandChar(uint8_t ch)
             return true;
         case 0x0d:                              // CR
             curX_ = leftMargin_;
-            if (switcha_ & kSwitchALfAfterCr) lineFeed();
+            // A-8 and the AutoFeed detector are the SAME switch modelled
+            // twice, and they used to STACK: a guest that opened B-6 (which
+            // is what any driver printing high-ASCII or MouseText does) could
+            // then reach bit 7 of switch A with `ESC D`, and every bare CR
+            // fed TWO lines. The hardware feeds exactly once when A-8 is
+            // closed. `crJustFed_` is deliberately NOT set on that path: with
+            // the switch genuinely closed, a guest LF right after is a real
+            // second feed — the classic DIP-switch double-space — and
+            // swallowing it would hide the setting the user chose (bug hunt
+            // #10).
+            if (switcha_ & kSwitchALfAfterCr) { lineFeed(); return true; }
             if (!autoFeedActive()) return true;
             lineFeed();
             crJustFed_ = true;    // an LF right after this one is the
@@ -1985,13 +1995,18 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     case 0x28: {                                // ESC ( nnn,  set tabs
         spacesToZeros(3);
         const double stop = tabStop();
-        if (params_[3] == ',' && numHorizTabs_ < 32) {
-            horiztabs_[numHorizTabs_++] = stop;
+        if (numHorizTabs_ < 32) horiztabs_[numHorizTabs_++] = stop;
+        // A FULL RACK DROPS THE STOP, IT DOES NOT ABANDON THE COMMAND. The
+        // continuation used to be conditional on there being room, so the
+        // 33rd `nnn,` ended the sequence and every remaining "034,035,036."
+        // printed into the document as text. The rack holds 32 stops; the
+        // sequence is however long the guest makes it. Same shape as ESC )
+        // below, which always follows its own chain (bug hunt #10).
+        if (params_[3] == ',') {
             numParam_    = 0;
             neededParam_ = 4;                   // another stop follows
             return true;
         }
-        if (numHorizTabs_ < 32) horiztabs_[numHorizTabs_++] = stop;
         break;
     }
     case 0x29: {                                // ESC ) nnn,  delete tabs
@@ -2175,6 +2190,13 @@ bool ImageWriter::processEpsonChar(uint8_t ch)
         // them is the whole point of listing an unimplemented command.
         case 0x51:   // ESC Q n  right margin, column n
         case 0x6C:   // ESC l n  left margin, column n
+        // ESC p n — proportional spacing. It had NO case at all: the ESC and
+        // the 'p' were dropped by `default` and `n` fell through to the text
+        // path, so `ESC p CHR$(1)` printed a stray glyph and proportional
+        // never engaged. `kEscPProportional` — the whole difference between
+        // the FX-80 profile and the RX-80's `kEscPFX80 & ~kEscPProportional`
+        // — was dead data with nothing reading it (bug hunt #10).
+        case 0x70:   // ESC p n  proportional spacing
         case 0x49: case 0x55: case 0x69: case 0x73:   // consumed, no effect
             epsonNeed_ = 1;
             return true;
@@ -2257,6 +2279,7 @@ void ImageWriter::execEpsonEscape()
         { 0x59, kEscPGraphicsLYZ },    // ESC Y
         { 0x5A, kEscPGraphicsLYZ },    // ESC Z
         { 0x2A, kEscPGraphicsStar },   // ESC *
+        { 0x70, kEscPProportional },   // ESC p — RX-80 and MX-80 have none
     };
     for (const auto& g : kEscPGates) {
         if (g.cmd != escCmd_) continue;
@@ -2285,8 +2308,14 @@ void ImageWriter::execEpsonEscape()
         // A bitmask that sets several styles at once (App. A): bit 0 elite,
         // bit 2 condensed, bit 3 emphasized, bit 4 double-strike, bit 5
         // double width, bit 7 underline.
+        // Bit 6 (italic) and bit 1 (proportional) are part of the mask the
+        // FX-80 manual gives, and neither was set OR cleared here: `ESC ! 0`
+        // — the reset every ESC/P driver sends before a run of plain text —
+        // left an `ESC 4` italic switched on for the rest of the job, and
+        // `ESC ! $40` never italicised anything (bug hunt #10).
         style_ &= ~(kStyleCondensed | kStyleBold | kStyleDoubleStrike |
-                    kStyleDoubleWidth | kStyleUnderline);
+                    kStyleDoubleWidth | kStyleUnderline | kStyleItalics |
+                    kStyleProp);
         cpi_ = (p0 & 0x01) ? 12.0 : 10.0;
         printRes_    = (p0 & 0x01) ? 2 : 1;
         definedUnit_ = (p0 & 0x01) ? 96 : 80;
@@ -2295,6 +2324,12 @@ void ImageWriter::execEpsonEscape()
         if (p0 & 0x10) style_ |= kStyleDoubleStrike;
         if (p0 & 0x20) style_ |= kStyleDoubleWidth;
         if (p0 & 0x80) style_ |= kStyleUnderline;
+        // Gated on the head actually having them, like every other ESC/P
+        // capability: an RX-80 has no proportional mode to select.
+        if ((p0 & 0x02) && modelHasEscP(kEscPProportional))
+            style_ |= kStyleProp;
+        if ((p0 & 0x40) && modelHasEscP(kEscPItalics))
+            style_ |= kStyleItalics;
         updateMetrics();
         break;
     }
@@ -2379,6 +2414,15 @@ void ImageWriter::execEpsonEscape()
     case 0x57:                                     // ESC W n  expanded
         if (p0 & 0x01) style_ |=  kStyleDoubleWidth;
         else           style_ &= ~kStyleDoubleWidth;
+        updateMetrics();
+        break;
+    case 0x70:                                     // ESC p n  proportional
+        // The Epson bank is monospaced, so the ADVANCE is unchanged — what
+        // this buys is that the parameter byte stops printing as text and
+        // that the state the status line (and any future proportional bank)
+        // reads is the state the guest asked for.
+        if (p0 & 0x01) style_ |=  kStyleProp;
+        else           style_ &= ~kStyleProp;
         updateMetrics();
         break;
 

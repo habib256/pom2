@@ -33,11 +33,13 @@
 //
 // ROM-gated on both files; SKIPs cleanly without either.
 
+#include "Apple2Display.h"
 #include "Memory.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 #include <fstream>
 #include <string>
 
@@ -101,6 +103,27 @@ int main()
         assert(sameGlyph(special, lower) &&
                "on a stock ROM the 'a' slot repeats the special char at $A1");
         std::printf("  ok: the stock 2 KB generator reports no lowercase\n");
+
+        // And the RENDERER draws what the ROM holds (bug hunt #10): it used
+        // to fold a-z onto A-Z, drawing 'A' at $E1 where the 2513 shows the
+        // glyph at $21 — the rule this very test asserts one layer down.
+        Apple2Display d;
+        d.setAuxMemory(mem.auxData());
+        d.setHiResMode(Apple2Display::HiResMode::MonoWhite);
+        mem.writeRamUnchecked(0x0400, 0xA1);
+        mem.writeRamUnchecked(0x0401, 0xC1);
+        mem.writeRamUnchecked(0x0402, 0xE1);
+        mem.memRead(0xC051); mem.memRead(0xC054); mem.memRead(0xC056);
+        for (int i = 0; i < 2; ++i) { mem.setCycleCounter(0); mem.beginVideoEventFrame(); d.render(mem); }
+        auto cell = [&](int col) {
+            std::vector<uint32_t> px;
+            for (int y = 0; y < 8; ++y)
+                for (int x = col * 7; x < col * 7 + 7; ++x) px.push_back(d.pixels()[y * d.width() + x] & 0xFFFFFF);
+            return px;
+        };
+        assert(cell(2) == cell(0) && "$E1 must render as the glyph the ROM holds at $A1");
+        assert(cell(2) != cell(1) && "$E1 must not be folded onto the 'A' at $C1");
+        std::printf("  ok: the renderer draws the ROM's own glyph at $E1\n");
     }
 
     // ─── The Videx chip: 2 KB, and lowercase ─────────────────────────────

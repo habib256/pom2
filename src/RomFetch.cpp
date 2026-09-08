@@ -72,7 +72,11 @@ const std::vector<RomFetchEntry>& catalogStorage()
           // The RetroBIOS zip is the SIX-chip 12 KB image; the copy that
           // ships in roms/ is a different 20 KB dump, so there is no digest
           // to vouch for here. CRC-less and SHA-less: size is the only gate.
-          nullptr },
+          nullptr,
+          // …and that gate must not be applied to the LOCAL file: the 20 KB
+          // dump we ship is a legitimate II+ firmware (loadAppleIIRom skips
+          // its 4 KB pad), so accept it as present.
+          20480u },
         { "roms/apple2e.rom", "Apple //e Enhanced", 32768,
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e.rom",
           nullptr, nullptr, 0u, nullptr,
@@ -589,7 +593,8 @@ std::vector<const RomFetchEntry*> romsToFetch()
         std::vector<std::uint8_t> have;
         std::string err;
         if (!readAll(resolved, have, err)) { out.push_back(&e); continue; }
-        if (e.expectedSize && have.size() != e.expectedSize) {
+        if (e.expectedSize && have.size() != e.expectedSize &&
+            !(e.altPresentSize && have.size() == e.altPresentSize)) {
             out.push_back(&e);
             continue;
         }

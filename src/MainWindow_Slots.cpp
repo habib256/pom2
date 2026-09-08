@@ -907,15 +907,18 @@ void MainWindow::renderMediaPanel()
                     ImGui::EndDisabled();
 
                     if (info.supportsWriteBack) {
-                        bool wb = info.writeBackEnabled;
+                        // Writable by default (2026-09-08): the tick is the
+                        // user's visible opt-out, inverted onto the
+                        // write-back plumbing underneath.
+                        bool protect = !info.writeBackEnabled;
                         ImGui::BeginDisabled(!typeAllows);
-                        if (ImGui::Checkbox("Write-back (save on eject)", &wb)) {
+                        if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
                             // Same reason as the type combo above: the
                             // coordinator's guarded setter, not a second copy
                             // of the key rules.
                             const auto r =
                                 storageCoordinator_->setMediaBayWriteBack(
-                                    *controller, *settings, s, b, wb);
+                                    *controller, *settings, s, b, !protect);
                             if (!r.ok) {
                                 tapeStatusMessage = "Slot " +
                                     std::to_string(s) + ": " + r.error;
@@ -940,21 +943,22 @@ void MainWindow::renderMediaPanel()
                             ImGui::TextColored(
                                 ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
                                 info.hasUnsavedChanges
-                                    ? "Write-back off — this volume has "
+                                    ? "WRITE-PROTECTED — this volume has "
                                       "already been written to, and none of "
                                       "it will reach the file"
-                                    : "Write-back off — nothing written here "
+                                    : "WRITE-PROTECTED — nothing written here "
                                       "will reach the file");
                             if (ImGui::IsItemHovered())
                                 ImGui::SetTooltip(
-                                    "Off by default so running a program "
-                                    "never silently rewrites your image.\n"
                                     "A block device still reports itself "
                                     "writable to ProDOS, so the guest's save "
                                     "appears to succeed —\nthe blocks live "
                                     "in memory and are dropped on eject or "
-                                    "quit.\nTick Write-back above to let "
-                                    "them be saved.");
+                                    "quit.\nUntick Write-protected above to "
+                                    "let them be saved.");
+                        } else if (info.loaded) {
+                            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
+                                               "WRITABLE — saved on eject and on quit");
                         }
                     }
 
@@ -1343,10 +1347,7 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
     //    bank 1 upper) where the //e 32 KB layout uses "char ROM lower,
     //    firmware upper" — same file size, opposite slicing. Tell the
     //    loader which way to slice based on the active profile.
-    const bool pickLowerHalf =
-        (p == pom2::SystemProfile::AppleIIc ||
-         p == pom2::SystemProfile::AppleIIcPlus ||
-         p == pom2::SystemProfile::AppleIIcPAL);
+    const bool pickLowerHalf = pom2::profileUsesLowerRomHalf(p);
     newRomPath = firstExistingPath(cfg.romProbeOrder);
     if (!newRomPath.empty()
         && st.memory().loadAppleIIRom(newRomPath.c_str(), pickLowerHalf)) {

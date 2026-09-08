@@ -257,7 +257,7 @@ int main()
         ProDOSHardDiskCard card;
         assert(card.loadImage(p.string()));
         assert(card.canWriteBack());
-        // Don't call setWriteBackEnabled(true).
+        card.setWriteBackEnabled(false);             // the user's write-protect
         assert(!card.isWriteProtected());            // R/W in session
 
         uint8_t pattern[kBlock];

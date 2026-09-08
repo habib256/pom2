@@ -40,6 +40,7 @@
 #ifndef POM2_DISK35_IMAGE_H
 #define POM2_DISK35_IMAGE_H
 
+#include "MediaWritePolicy.h"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -181,7 +182,7 @@ private:
 
     bool         loaded_              = false;
     bool         dirty_               = false;
-    bool         writeBackEnabled_    = false;
+    bool         writeBackEnabled_    = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
     bool         fileWriteProtected_  = false;
     ImageKind    kind_                = ImageKind::Unknown;
     std::string  path_;

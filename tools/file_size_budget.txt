@@ -176,10 +176,21 @@
 #     NMOS un-fixed-address read on indexed stores and page-crossing loads.
 #   src/Memory.cpp               2604 -> 2616 (+12)  INTC8ROM latches on a $C3xx
 #     WRITE under INTCXROM too (the write path returned before the case).
-src/Apple2Display.cpp                    2462
+# 2026-09-08 (media write by default): one ceiling raised for the policy
+# change — the absent-key default of every `*_writeback` reader now comes
+# from MediaWritePolicy.h; no feature code, no split.
+#   src/StorageCoordinator.cpp   2167 -> 2169 (+2)  the Disk II default reads
+#     the policy for the primary and the non-primary card alike.
+# 2026-09-08 (bug hunt #10): two ceilings raised. Why-comments and the
+# smallest code that fixes each defect; no feature code, no split.
+#   src/Apple2Display.cpp        2462 -> 2491 (+29)  textLitColor() (text wears
+#     the phosphor), the zero-decay rule, the lowercase fold removed.
+#   src/ImageWriter.cpp          2720 -> 2764 (+44)  ESC p consumed, ESC ! masks
+#     italic/proportional, ESC ( keeps its chain past 32 stops, A-8 feeds once.
+src/Apple2Display.cpp                    2491
 src/DiskImage.cpp                        3096
-src/ImageWriter.cpp                      2720
+src/ImageWriter.cpp                      2764
 src/M6502.cpp                            2300
 src/Memory.cpp                           2616
-src/StorageCoordinator.cpp               2167
+src/StorageCoordinator.cpp               2169
 src/hgrpaint/HgrPaintEditor.cpp          2653

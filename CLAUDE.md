@@ -55,6 +55,18 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   `EmulationController`'s `WriteBackQueue` and only retires the medium when the
   sink reports the file landed. `StorageCoordinator::ejectAllMedia`, the Liron
   `flushAll` and the host-folder mount all use it.
+- **Media write by default; the write-protect is the user's visible opt-out**
+  *(2026-09-08)*. Every disk image — 5.25", 3.5", HDV, CFFA, SmartPort unit
+  — comes up writable, and each media panel plus the Slot Config media rows
+  show a "Write-protected" tick with a WRITABLE / WRITE-PROTECTED status
+  next to it. An absent `*_writeback` settings key means writable. The one
+  opt-in left is the ProDOS host folder sync (a real directory, a different
+  hazard). The default lives in `MediaWritePolicy.h`;
+  `POM2_MEDIA_WRITE_DEFAULT=protected` flips it for a process, and **ctest
+  sets it for every test** because dozens of tests boot the tracked images
+  and the cards commit dirty media in their destructors — a test or probe
+  that boots a tracked image must copy it first if it wants writes. Pinned
+  by `media_write_default` and `storage_coordinator`.
 - **A rewind may never cross an irreversible write** — the rewind ring never
   captures block-device (up to 32 MiB), 3.5" (800 KB) or writable-WOZ media, so
   rolling RAM back over a ProDOS SAVE would cross-link the volume. Instead every

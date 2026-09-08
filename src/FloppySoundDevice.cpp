@@ -313,13 +313,21 @@ void FloppySoundDevice::drainCommands()
                     // value, the same fan-out the speaker and cassette get.
                     gapMs = static_cast<double>(dc) * 1000.0 /
                             cpuClockHz_.load(std::memory_order_relaxed);
-                } else {
-                    // c.emuCycles == lastStepCycle_ (multiple events
-                    // queued at the same emulated cycle — edge case) or
-                    // backwards (defensive). Treat as a 0-cycle burst;
-                    // the floor below clamps to 1 ms → SEEK_2MS @ pitch
-                    // 2.0, the fastest seek class.
+                } else if (c.emuCycles == lastStepCycle_) {
+                    // Two events at the same emulated cycle — a real burst.
+                    // The floor below clamps to 1 ms → SEEK_2MS @ pitch 2.0,
+                    // the fastest seek class.
                     gapMs = 0.0;
+                } else {
+                    // BACKWARDS. Only a time jump does that — a rewind or a
+                    // snapshot restore, and `noteTimeJump` re-bases the
+                    // speaker and the deck but not this device (the drive
+                    // keeps spinning across one, so it must not be reset).
+                    // Reading the stamp difference as a 0-cycle burst turned
+                    // the first isolated head move after every rewind into a
+                    // 100 ms SEEK_2MS buzz (bug hunt #10). It is the first
+                    // step of a new timeline: no measurable gap, one click.
+                    gapMs = 1e9;
                 }
             }
             anyStepSeen_   = true;
@@ -465,13 +473,18 @@ void FloppySoundDevice::fillAudioBuffer(float* output, int frameCount)
     // faster mechanism.
     const double motorPitch =
         static_cast<double>(motorPitch_.load(std::memory_order_relaxed));
+    // Retire the spin-up BEFORE the choice, not inside its arm: retiring it
+    // inside `if (startIdx_ >= 0)` consumed the whole buffer on the handover
+    // — the one-shot no longer played and the `else if` was not reached — so
+    // a motor that is running produced 5.3 ms of pure silence at every
+    // spin-up (measured: RMS 0.006 -> 0.000 -> 0.006 across three 256-frame
+    // buffers), a tick in the middle of a continuous whirr (bug hunt #10).
+    if (startIdx_ >= 0 &&
+        startPos_ >= static_cast<double>(samples_[startIdx_].data.size())) {
+        startIdx_ = -1;
+    }
     if (startIdx_ >= 0) {
-        const size_t startLen = samples_[startIdx_].data.size();
-        if (startPos_ >= static_cast<double>(startLen)) {
-            startIdx_ = -1;
-        } else {
-            mixOneShot(startIdx_, startPos_, motorPitch, output, frameCount, gain);
-        }
+        mixOneShot(startIdx_, startPos_, motorPitch, output, frameCount, gain);
     } else if (spinLoopIdx_ >= 0 && audioMotorOn_) {
         mixLoop(spinLoopIdx_, spinLoopPos_, motorPitch, output, frameCount, gain);
     }

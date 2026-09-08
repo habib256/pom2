@@ -57,13 +57,30 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
                     snap.blockCount,
                     (snap.blockCount * 512.0) / (1024.0 * 1024.0));
         if (snap.supportsWriteBack) {
-            bool wb = snap.writeBackEnabled;
-            const char* lbl = snap.isSynthVolume
-                ? "Sync to host folder (on eject)"
-                : "Write-back (save on eject)";
-            if (ImGui::Checkbox(lbl, &wb)) {
-                r.writeBackToggleChanged = true;
-                r.writeBackNewValue      = wb;
+            // Two polarities on purpose. A disk image is writable by default
+            // (2026-09-08) and the tick is the user's visible opt-OUT; a host
+            // FOLDER stays an opt-in, because syncing a guest DELETE back
+            // into someone's real directory is a different hazard from
+            // touching an image file.
+            if (snap.isSynthVolume) {
+                bool wb = snap.writeBackEnabled;
+                if (ImGui::Checkbox("Sync to host folder (on eject)", &wb)) {
+                    r.writeBackToggleChanged = true;
+                    r.writeBackNewValue      = wb;
+                }
+            } else {
+                bool protect = !snap.writeBackEnabled;
+                if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
+                    r.writeBackToggleChanged = true;
+                    r.writeBackNewValue      = !protect;
+                }
+                ImGui::SameLine();
+                if (snap.writeBackEnabled)
+                    ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
+                else
+                    ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
+                                       "WRITE-PROTECTED — the guest's saves "
+                                       "stay in memory");
             }
             if (snap.hasUnsavedChanges) {
                 ImGui::SameLine();

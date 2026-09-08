@@ -58,7 +58,7 @@ public:
         std::string lastError;
         bool        turboWhileMotor = true;   // user toggle, persisted by host
         bool        turboActive     = false;  // currently boosting?
-        bool        writeBackEnabled = false; // user opt-in for save-on-eject
+        bool        writeBackEnabled = true; // writable by default; write-protect is the opt-out
         bool        hasUnsavedChanges = false;// track has been written
         /// Physical write-protect of the medium (WOZ INFO+2 / 2IMG flag).
         /// With `writeBackEnabled` this tells the panel WHY the guest sees

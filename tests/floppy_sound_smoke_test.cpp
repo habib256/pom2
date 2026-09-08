@@ -167,6 +167,61 @@ void testStepAndSeek(const std::string& dir)
     std::puts("OK rapid_steps_enter_seek");
 }
 
+// Bug hunt #10: the spin-up one-shot was retired INSIDE its own arm, so on
+// the buffer where it ended nothing played — 5.3 ms of silence in the middle
+// of a running motor, a tick at every spin-up.
+void testMotorHandoverHasNoHole(const std::string& dir)
+{
+    FloppySoundDevice fs;
+    assert(fs.loadSamples(dir));
+    fs.setSampleRate(44100);
+    fs.setVolume(1.0f);
+    fs.motor(true, true);
+    std::vector<float> buf(256, 0.0f);
+    int firstAudible = -1;
+    for (int i = 0; i < 400; ++i) {
+        buf.assign(256, 0.0f);
+        fs.fillAudioBuffer(buf.data(), 256);
+        const bool silent = bufferEnergy(buf) == 0.0f;
+        if (!silent && firstAudible < 0) firstAudible = i;
+        if (firstAudible >= 0 && silent) {
+            std::printf("FAIL: buffer %d is silent while the motor runs (first audible %d)\n",
+                        i, firstAudible);
+            assert(false && "a hole in the motor at the spin-up handover");
+        }
+    }
+    assert(firstAudible >= 0);
+    std::puts("OK motor_handover_has_no_hole");
+}
+
+// Bug hunt #10: a backwards cycle stamp — a rewind or a snapshot restore —
+// was read as a 0-cycle burst, so the first isolated head move after every
+// rewind became a 100 ms SEEK_2MS buzz instead of a click.
+void testStepAfterTimeJumpIsAClick(const std::string& dir)
+{
+    FloppySoundDevice fs;
+    assert(fs.loadSamples(dir));
+    fs.setSampleRate(44100);
+    fs.setVolume(1.0f);
+    std::vector<float> buf(256, 0.0f);
+    fs.fillAudioBuffer(buf.data(), 256);
+    fs.step(0, 10'000'000);                 // isolated step
+    buf.assign(256, 0.0f);
+    fs.fillAudioBuffer(buf.data(), 256);
+    assert(!fs.audioInSeek());
+    fs.step(1, 6'000'000);                  // the clock rolled BACK: a rewind
+    buf.assign(256, 0.0f);
+    fs.fillAudioBuffer(buf.data(), 256);
+    assert(!fs.audioInSeek() &&
+           "the first step after a time jump must be a click, not a seek burst");
+    // Two events at the SAME cycle are still a burst.
+    fs.step(2, 6'000'000);
+    buf.assign(256, 0.0f);
+    fs.fillAudioBuffer(buf.data(), 256);
+    assert(fs.audioInSeek());
+    std::puts("OK step_after_time_jump_is_a_click");
+}
+
 void testMuteSilencesOutput(const std::string& dir)
 {
     FloppySoundDevice fs;
@@ -452,6 +507,8 @@ int main()
     testLoadSamples35 (dir);
     testMotorAudible  (dir);
     testStepAndSeek   (dir);
+    testMotorHandoverHasNoHole(dir);
+    testStepAfterTimeJumpIsAClick(dir);
     testMuteSilencesOutput(dir);
     testRapidMotorTogglePreservesLoop(dir);
     testRapidStepsNoHang(dir);

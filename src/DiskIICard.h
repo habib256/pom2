@@ -70,6 +70,7 @@
 #define POM2_DISK_II_CARD_H
 
 #include "DiskImage.h"
+#include "MediaWritePolicy.h"
 #include "SlotPeripheral.h"
 
 #include <array>
@@ -412,7 +413,10 @@ private:
     uint8_t iwmMode = 0;
     bool    iwmHost_ = true;   // see setIwmHost()
     uint8_t iwmWhd  = 0xBF;
-    bool writeBackEnabled = false;     // forwarded to DiskImage on toggle
+    // Writable by default (2026-09-08): a peripheral writes unless the user
+    // protects it, and the protection is visible and editable in every media
+    // panel. Forwarded to DiskImage on toggle.
+    bool writeBackEnabled = pom2::mediaWritableByDefault();
     uint8_t writeLatch = 0xFF;         // latched data nibble for next bit-cell flush
 
     // Head stepper. phaseOn[i] = magnet i currently energized. The phase

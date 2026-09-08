@@ -36,6 +36,7 @@
 
 #include <cstdint>
 #include "Block512Backing.h"
+#include "MediaWritePolicy.h"
 
 #include <string>
 #include <utility>
@@ -57,7 +58,7 @@ struct MediaBayInfo
     /// than a flicker. False on cards that expose no activity signal.
     bool        busy             = false;
     bool        writeProtected   = false;
-    bool        writeBackEnabled  = false;
+    bool        writeBackEnabled  = pom2::mediaWritableByDefault();
     bool        supportsWriteBack = true;
     /// Guest writes are held in memory and not yet on disk. With write-back
     /// OFF they are DROPPED at eject, which is the one thing a user needs

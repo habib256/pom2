@@ -26,6 +26,9 @@
 #include "CpuClock.h"
 #include "EmulationController.h"
 #include "SystemProfile.h"
+#include "TranswarpCard.h"
+
+#include <memory>
 
 #include <cassert>
 #include <cmath>
@@ -49,6 +52,26 @@ int main()
         assert(near(ctrl.emulatedCpuClockHz(), 4.0 * 1022727.0) &&
                "the //c+ must hand its devices the 4x clock it actually runs at");
     }
+    // Bug hunt #10: a plugged TransWarp multiplied the frame's cycle budget
+    // by 3.5 but every emuCycles consumer kept the stock clock — a 1 kHz tone
+    // rendered at 298 Hz and two thirds of the toggles were purged. The //c+
+    // defect of bug hunt #7, arriving through a slot. The clock the devices
+    // are told must be the clock the frame actually burns.
+    {
+        EmulationController ctrl;
+        ctrl.setVideoStandard(VideoStandard::NTSC);
+        {
+            auto st = ctrl.lockState();
+            st.memory().slotBus().plug(2, std::make_unique<pom2::TranswarpCard>(2));
+        }
+        ctrl.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 3; ++i) ctrl.tickFrame();
+        assert(near(ctrl.emulatedCpuClockHz(), 3.5 * 1022727.0) &&
+               "a plugged TransWarp must hand its 3.5x clock to every device");
+        assert(ctrl.scaledFrameBudget() == static_cast<int64_t>(3.5 * 17045) &&
+               "the budget and the audio clock must agree");
+    }
+
     // The toolbar's 1x bucket = the profile's stock budget: 68180 on the //c+,
     // the video standard's own cyclesPerFrame everywhere else.
     for (const pom2::SystemProfile p : pom2::allProfiles()) {

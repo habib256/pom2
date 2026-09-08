@@ -5,6 +5,83 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #10: the picture, the printers, the tape deck, the host
+
+Four Opus hunters on the last untouched runtime: video modes and character
+generators, the printers, the host audio side and the tape, the CLI / ROM /
+resource plumbing.
+
+**The picture, three.** Text was painted white on the green and amber
+pipelines — every text screen, every boot, white on a "green monitor", and
+a MIXED frame green above white; the golden table had recorded the defect
+as one hash for the three mono text modes. Text wears the phosphor now
+(22 goldens re-recorded, the green/amber text ones and no others). The
+renderer folded a-z onto A-Z on a II/II+, drawing 'A' where the 2513
+generator shows the glyph at `$21` — the rule the Videx test already
+asserted at the ROM level; the renderer draws what the dump holds. And a
+zero-persistence phosphor froze the picture whenever the emulated frame
+index stood still, so an erased MonoWhite dot stayed lit in the paint
+editor's canvas and on a paused machine; a phosphor with no persistence
+has no history to keep. Pinned by `mono_text_phosphor`,
+`phosphor_decay_zero` and a render case in `videx_lowercase_char_rom`.
+The floating bus, the video-event stamps for reads and writes, 128 display
+states × 16 384 ordered pairs of stale pixels, the beam replay at every
+column, lo-res colour phase, ALTCHAR and flash were probed and hold.
+
+**The printers, four.** ESC/P `ESC p n` had no case, so its parameter
+printed as a glyph and proportional never engaged; `ESC ! n` ignored
+italic and proportional, leaving an `ESC 4` italic on for the rest of the
+job; `ESC ( nnn,` abandoned the command once the 32-stop rack was full and
+sprayed "034,035,036." into the document; and a bare CR fed two lines when
+soft switch A-8 was closed, because A-8 and the AutoFeed detector are the
+same switch modelled twice. Pinned in `imagewriter_smoke`; 40 000 fuzzed
+escape streams across eleven heads ran clean under ASan and UBSan.
+
+**The tape deck and the audio host, four.** A plugged TransWarp
+accelerated the machine 3.5× but no cycle→sample consumer was told — the
+speaker rendered a 1 kHz tone at 298 Hz and purged two thirds of the
+toggles — the //c+ defect of round #7 arriving through a slot; the clock is
+re-derived from the accelerator every frame. The browser build divided the
+floppy-sound volume by four on every session (the attenuation was folded
+into the restored value and persisted back). The spin-up one-shot was
+retired inside its own arm, leaving 5.3 ms of silence in a running motor
+at every spin-up. And the first head move after a rewind was a 100 ms
+seek buzz, a backwards cycle stamp read as a zero-cycle burst. Pinned in
+`device_clock_fanout`, `audio_coordinator`, `floppy_sound_smoke`. The
+Monitor's own cassette WRITE/READ round-trips through `.aci` and `.wav`
+byte-exact; 20 000 hostile tape files and a 5 s three-thread TSan run over
+the whole host audio side were clean.
+
+**The host, three.** `--ai-control=` and `--fujinet=` parsed their port
+with `atoi`, so `8080junk` armed 8080 and `4294967376` wrapped to a valid
+80 — the control server bound to a port nobody typed. The "Download missing
+ROMs" planner called the shipped, working 20 KB II+ dump missing on every
+launch (the catalogue declares RetroBIOS's 12 KB image) and overwrote it
+on request. And File > Reload ROM sliced a //c 32 KB dump the //e way,
+rebooting into firmware bank 1 with `$C028` dead; the slicing is a
+property of the profile now. Pinned in `cli_kiosk`, `rom_fetch` and the
+new `iic_rom_bank_slice`, whose source scan refuses any main-ROM load that
+leaves the half unsaid.
+
+## 2026-09-08 — Media write by default; the write-protect is yours to see and flip
+
+Every medium used to come up write-protected behind a "Write-back (save on
+eject)" opt-in most people never found: a DOS `SAVE` answered `I/O ERROR`,
+a ProDOS save "succeeded" into RAM and vanished on quit, a game's high
+scores never landed. The policy is now the one a real machine has: a
+disk in a drive writes, unless its notch is covered. Every 5.25", 3.5",
+HDV, CFFA and SmartPort image comes up writable, an absent `*_writeback`
+settings key restores a writable drive, and every media panel plus the
+Slot Config media rows show a **Write-protected** tick with a WRITABLE /
+WRITE-PROTECTED status beside it — the plumbing underneath is unchanged,
+the tick is the inverse of the old opt-in. A WOZ/2IMG write-protect flag
+or a read-only file still wins whatever the tick says. The one opt-in
+left is the ProDOS host folder sync, because syncing a guest `DELETE`
+into a real directory is a different hazard from touching an image file.
+Pinned by the new `media_write_default` (every storage leaf and card) and
+in `storage_coordinator` (absent keys → writable). Users who had
+explicitly ticked write-back off keep their setting.
+
 ## 2026-09-08 — Bug hunt #9: the debugger, the 3.5" stack, the containers, the cards
 
 Four more Opus hunters on the parts no round had reached.

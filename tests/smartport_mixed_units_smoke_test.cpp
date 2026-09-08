@@ -176,7 +176,9 @@ bool testMixedStatus()
     // honoured. This test used to pin the opposite for the HDV unit ("WP
     // bit stays clear either way"), which made two bays of the same card
     // answer the same toggle differently, and let a write-back-off HDV take
-    // a session of writes into RAM and drop them at eject.
+    // a session of writes into RAM and drop them at eject. Media are
+    // writable by default since 2026-09-08, so protect the HDV explicitly.
+    uraw->setWriteBackEnabled(false);
     if ((readReg(card, 0x4) & 0x40) == 0) {
         std::printf("FAIL: HDV WP bit clear with write-back off\n");
         return false;

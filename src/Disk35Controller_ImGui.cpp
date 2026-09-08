@@ -116,11 +116,20 @@ void renderDriveBlock(int                                       driveIdx,
                     : drv.convertTargetPath.c_str());
     }
 
-    // ── Write-back checkbox — mirrors Disk II ──────────────────────────
-    bool writeBack = drv.writeBackEnabled;
-    if (ImGui::Checkbox("Write-back (save on eject)", &writeBack)) {
+    // ── Write-protect checkbox — mirrors Disk II ───────────────────────
+    // Writable by default (2026-09-08); the tick is the user's visible
+    // opt-out and the drive then reports write-protect to the firmware.
+    bool protect = !drv.writeBackEnabled;
+    if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
         r.requestWriteBackToggle[driveIdx] = true;
-        r.newWriteBack[driveIdx]           = writeBack;
+        r.newWriteBack[driveIdx]           = !protect;
+    }
+    if (drv.diskLoaded && !drv.isWoz) {
+        ImGui::SameLine();
+        if (drv.writeProtected)
+            ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f), "WRITE-PROTECTED");
+        else
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
     }
     if (drv.hasUnsavedChanges) {
         ImGui::SameLine();

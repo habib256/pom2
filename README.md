@@ -389,6 +389,8 @@ The output is **stereo**, wired the way the hardware is: a Mockingboard puts AY1
 
 ## 💾 Storage — disks, SmartPort, CFFA
 
+Every mounted image is **writable by default** — DOS SAVE, ProDOS saves and a game's high-score table land in the file on eject and on quit. Each media panel (and the Slot Config media rows) shows a **Write-protected** tick next to a WRITABLE / WRITE-PROTECTED status; tick it to keep an image pristine. A WOZ/2IMG write-protect flag or a read-only file is honoured whatever the tick says. To make every medium come up protected instead (a kiosk, a shared master set), run with `POM2_MEDIA_WRITE_DEFAULT=protected`.
+
 Supported images: `.dsk` `.do` `.d13` `.po` `.nib` `.2mg` `.woz` `.hdv`. Detection is **content-driven** — MacBinary wrappers, DOS/ProDOS sector skew and WOZ/2IMG write-protect flags are all handled. WOZ playback runs the genuine Disk II **P6 LSS sequencer** (`diskii_p6.rom` optional — the embedded 341-0028-A default is used when absent). ProDOS block devices back the HDV / CFFA 2.0 / SmartPort paths.
 
 Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler) and 32 KB system+video ROMs each get their own layout; any other dump between 2 KB and 64 KB is loaded best-effort at the top of the address space, so its reset vectors land at `$FFFA-$FFFF`. Anything outside that range is rejected (`Memory::loadAppleIIRom`).

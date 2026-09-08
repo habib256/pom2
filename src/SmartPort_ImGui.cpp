@@ -152,14 +152,22 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
         }
         if (!u.loaded) ImGui::EndDisabled();
 
-        // ── Write-back toggle ──────────────────────────────────────────
-        bool wb = u.writeBackEnabled;
+        // ── Write-protect toggle ───────────────────────────────────────
+        // Writable by default (2026-09-08); the tick is the visible opt-out.
+        bool protect = !u.writeBackEnabled;
         if (!typeAllowsMount) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Write-back (save on eject)", &wb)) {
+        if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
             a.writeBackChanged = true;
-            a.writeBackOn      = wb;
+            a.writeBackOn      = !protect;
         }
         if (!typeAllowsMount) ImGui::EndDisabled();
+        if (u.loaded) {
+            ImGui::SameLine();
+            if (u.writeProtected)
+                ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f), "WRITE-PROTECTED");
+            else
+                ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
+        }
 
         if (!u.lastError.empty()) {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),

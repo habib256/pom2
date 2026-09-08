@@ -21,6 +21,7 @@
 // files are skipped, missing ones are queued, and the source URL is the
 // one the panel quotes.
 
+#include "ResourcePaths.h"
 #include "RomFetch.h"
 #include "RomCatalog.h"
 #include "CharRomCatalog.h"
@@ -104,6 +105,25 @@ int main()
             expect(e.zipMember != nullptr,
                    std::string(e.destRel ? e.destRel : "?") +
                    " concat list needs a first zipMember");
+        }
+    }
+
+    // Bug hunt #10: the planner re-verified LOCAL files against the
+    // catalogue's download size, and the II+ entry declares the 12 KB
+    // RetroBIOS image while roms/ ships a working 20 KB dump — so on a
+    // complete tree "Download missing ROMs" listed apple2p.rom every launch
+    // and overwrote a good dump with a different one.
+    {
+        const auto plan = pom2::romsToFetch();
+        for (const auto* e : plan) {
+            const std::string resolved = pom2::findResource(e->destRel);
+            expect(resolved.empty(),
+                   std::string("a ROM the tree ships is planned for download: ") + e->destRel);
+        }
+        if (!pom2::findResource("roms/apple2p.rom").empty()) {
+            bool listed = false;
+            for (const auto* e : plan) if (std::string(e->destRel) == "roms/apple2p.rom") listed = true;
+            expect(!listed, "the shipped 20 KB II+ dump counts as present");
         }
     }
 

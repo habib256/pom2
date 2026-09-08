@@ -1068,15 +1068,15 @@ static GlyphLookup lookupCsbitsGlyph(uint8_t screenByte,
 
     uint8_t mapped = screenByte;
 
-    // Lowercase fallback: map a-z to A-Z by clearing bit 5, as the IIe
-    // firmware does. Gated on what the ROM CONTAINS, not its size — the
-    // Videx LOWER CASE CHIP is 2 KB and HAS lowercase (see CharRomDump.h).
-    if (!charRomLower) {
-        const uint8_t ascii = mapped & 0x7F;
-        if (ascii >= 0x61 && ascii <= 0x7A) {
-            mapped = static_cast<uint8_t>((mapped & 0x80) | (ascii - 0x20));
-        }
-    }
+    // NO lowercase fold. A stock 2513 generator has 64 glyphs and the screen
+    // code's low 6 bits address it, so $E1 ('a') shows the glyph at $21 ('!'),
+    // NOT the 'A' at $C1 — the Videx manual's own rule, "characters 80-BF are
+    // identical to characters C0-FF", and exactly what the 2 KB dump holds
+    // (videx_lowercase_char_rom asserts $E1 == $A1 at the ROM level). Folding
+    // a-z onto A-Z here overrode the dump and drew letters where real hardware,
+    // MAME and AppleWin all draw punctuation. `charRomLower` is now unused:
+    // whatever the dump has at the code IS what the screen shows.
+    (void)charRomLower;
 
     // Code-range routing (mirrors MAME's IIe `get_text_character`):
     //
@@ -1166,6 +1166,75 @@ static std::array<uint8_t, 8> glyphRows7(uint8_t screenByte,
     return rows;
 }
 
+namespace {
+
+// Phosphor for the monochrome modes. RGB is the fully-lit colour
+// (luminance 1.0); decay is the per-frame multiplier on the history buffer
+// (0.0 = no afterglow, 1.0 = freeze). Selected by an explicit switch on the
+// mode (phosphorFor), NOT by indexing a table with the HiResMode enum's
+// integer value — the old table forced every new enumerator to be appended
+// at the end to stay aligned (a fragile, silent coupling). Non-mono modes
+// return the white reference tint as a harmless default; only the mono
+// paths actually consult it. This is the seed of the Phase-2 "tint" effect
+// layer: phosphor becomes an axis independent of the colour decoder.
+// (Lives above the lo-res painters since 2026-07-12 — their mono branches
+// consult it too.)
+struct Phosphor { uint8_t r, g, b; float decay; };
+inline constexpr Phosphor kPhosphorWhite = { 0xFF, 0xFF, 0xFF, 0.00f };
+inline constexpr Phosphor kPhosphorGreen = { 0x33, 0xFF, 0x33, 0.85f }; // P31 (CIE x=0.280, y=0.595)
+inline constexpr Phosphor kPhosphorAmber = { 0xFF, 0xB0, 0x00, 0.96f }; // long persistence
+
+inline Phosphor phosphorFor(Apple2Display::HiResMode m)
+{
+    switch (m) {
+        case Apple2Display::HiResMode::MonoGreen: return kPhosphorGreen;
+        case Apple2Display::HiResMode::MonoAmber: return kPhosphorAmber;
+        default:                                  return kPhosphorWhite;
+    }
+}
+
+// Why: phosphor decay is a property of the EMULATED frame, not of the host's
+// render() call. The UI paints at the monitor's refresh (120/144 Hz panels
+// exist) and repaints the same emulated frame while the machine is paused or
+// stepping — so multiplying by the raw per-frame factor once per render() made
+// a paused lo-res/DLGR/DHGR screen fade to black in ~2 s and ran the afterglow
+// 2-2.4x too fast on a fast panel. renderHiRes already did this inline; the
+// three other mono painters now share the same rule. delta 0 = no decay.
+inline float effectivePhosphorDecay(const Phosphor& p, uint32_t emuFrameDelta)
+{
+    // A phosphor with NO persistence has no history to preserve: freezing
+    // `prev` while emulated time stands still turns max(target, prev) into
+    // "pixels can only ever light up". That is what the paint editor's
+    // never-clocked canvas and a paused machine both look like, so an erased
+    // MonoWhite dot stayed lit forever.
+    if (p.decay <= 0.0f) return 0.0f;
+    return emuFrameDelta == 0 ? 1.0f
+         : emuFrameDelta == 1 ? p.decay
+         : std::pow(p.decay, static_cast<float>(emuFrameDelta));
+}
+
+// Lit/unlit colours for the crisp text painters. On a monochrome pipeline the
+// glyphs must wear the SAME phosphor tint the graphics painters apply, or a
+// green/amber session shows a white text screen (and a MIXED frame shows green
+// graphics above white text). Tint only, no persistence history: text is
+// repaint-skipped by staticTextFrameUnchanged, which a decaying history would
+// contradict.
+inline uint32_t textLitColor(Apple2Display::HiResMode m)
+{
+    switch (m) {
+        case Apple2Display::HiResMode::MonoGreen:
+        case Apple2Display::HiResMode::MonoAmber:
+        case Apple2Display::HiResMode::MonoWhite: {
+            const Phosphor p = phosphorFor(m);
+            return (uint32_t(0xFF) << 24) | (uint32_t(p.b) << 16)
+                 | (uint32_t(p.g) << 8) | uint32_t(p.r);
+        }
+        default: return 0xFFFFFFFFu;
+    }
+}
+
+} // namespace
+
 void Apple2Display::renderText(Memory& mem, const Memory::DisplayState& state,
                                int firstRow, int lastRow, int col0, int col1,
                                int clipY0, int clipY1)
@@ -1195,6 +1264,7 @@ void Apple2Display::renderText(Memory& mem, const Memory::DisplayState& state,
     // mousetext glyphs, used when ALTCHAR=on).
     const bool useCharRom  = mem.charRomActiveSize() >= 2048;
     const bool altCharSet  = state.altChar;
+    const uint32_t litColor = textLitColor(hiResMode);
 
     for (int row = firstRow; row < lastRow; ++row) {
         const uint16_t rowAddr = textRowAddress(row, videoTextPage2(state));
@@ -1210,7 +1280,7 @@ void Apple2Display::renderText(Memory& mem, const Memory::DisplayState& state,
                 if (y < clipY0 || y >= clipY1) continue;   // beam-split clip
                 for (int gx = 0; gx < 7; ++gx)
                     frame[y * kWidth + (cellX + gx)] =
-                        ((rows[gy] >> gx) & 1u) ? 0xFFFFFFFFu : 0xFF000000u;
+                        ((rows[gy] >> gx) & 1u) ? litColor : 0xFF000000u;
             }
         }
     }
@@ -1337,48 +1407,6 @@ const uint32_t Apple2Display::kChatMauveLoResPalette[16] = {
     0xFFFFFFFF, // 15 White
 };
 
-namespace {
-
-// Phosphor for the monochrome modes. RGB is the fully-lit colour
-// (luminance 1.0); decay is the per-frame multiplier on the history buffer
-// (0.0 = no afterglow, 1.0 = freeze). Selected by an explicit switch on the
-// mode (phosphorFor), NOT by indexing a table with the HiResMode enum's
-// integer value — the old table forced every new enumerator to be appended
-// at the end to stay aligned (a fragile, silent coupling). Non-mono modes
-// return the white reference tint as a harmless default; only the mono
-// paths actually consult it. This is the seed of the Phase-2 "tint" effect
-// layer: phosphor becomes an axis independent of the colour decoder.
-// (Lives above the lo-res painters since 2026-07-12 — their mono branches
-// consult it too.)
-struct Phosphor { uint8_t r, g, b; float decay; };
-inline constexpr Phosphor kPhosphorWhite = { 0xFF, 0xFF, 0xFF, 0.00f };
-inline constexpr Phosphor kPhosphorGreen = { 0x33, 0xFF, 0x33, 0.85f }; // P31 (CIE x=0.280, y=0.595)
-inline constexpr Phosphor kPhosphorAmber = { 0xFF, 0xB0, 0x00, 0.96f }; // long persistence
-
-inline Phosphor phosphorFor(Apple2Display::HiResMode m)
-{
-    switch (m) {
-        case Apple2Display::HiResMode::MonoGreen: return kPhosphorGreen;
-        case Apple2Display::HiResMode::MonoAmber: return kPhosphorAmber;
-        default:                                  return kPhosphorWhite;
-    }
-}
-
-// Why: phosphor decay is a property of the EMULATED frame, not of the host's
-// render() call. The UI paints at the monitor's refresh (120/144 Hz panels
-// exist) and repaints the same emulated frame while the machine is paused or
-// stepping — so multiplying by the raw per-frame factor once per render() made
-// a paused lo-res/DLGR/DHGR screen fade to black in ~2 s and ran the afterglow
-// 2-2.4x too fast on a fast panel. renderHiRes already did this inline; the
-// three other mono painters now share the same rule. delta 0 = no decay.
-inline float effectivePhosphorDecay(const Phosphor& p, uint32_t emuFrameDelta)
-{
-    return emuFrameDelta == 0 ? 1.0f
-         : emuFrameDelta == 1 ? p.decay
-         : std::pow(p.decay, static_cast<float>(emuFrameDelta));
-}
-
-} // namespace
 
 void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
                                 int firstRow, int lastRow, int col0, int col1,
@@ -1827,6 +1855,7 @@ void Apple2Display::renderText80(Memory& mem, const Memory::DisplayState& state,
     const bool flashPhase = (frameCounter / kFlashHalfPeriodFrames) & 1u;
 
     const bool useCharRom = mem.charRomActiveSize() >= 2048;
+    const uint32_t litColor = textLitColor(hiResMode);
 
     for (int row = firstRow; row < lastRow; ++row) {
         // 80STORE + PAGE2 already routes writes to aux at the memory
@@ -1849,7 +1878,7 @@ void Apple2Display::renderText80(Memory& mem, const Memory::DisplayState& state,
                     if (y < clipY0 || y >= clipY1) continue;   // beam-split clip
                     for (int gx = 0; gx < 7; ++gx)
                         frame80[y * kWidth80 + (cellX + gx)] =
-                            ((rows[gy] >> gx) & 1u) ? 0xFFFFFFFFu : 0xFF000000u;
+                            ((rows[gy] >> gx) & 1u) ? litColor : 0xFF000000u;
                 }
             }
         }

@@ -47,6 +47,7 @@
 #ifndef POM2_DISK_IMAGE_H
 #define POM2_DISK_IMAGE_H
 
+#include "MediaWritePolicy.h"
 #include <array>
 #include <cstdint>
 #include <string>
@@ -376,7 +377,7 @@ private:
     uint8_t optimalBitTiming = 32;
     std::string path;
     std::string lastError;
-    bool writeBackEnabled = false;
+    bool writeBackEnabled = pom2::mediaWritableByDefault();   // see MediaWritePolicy.h
     bool anyDirty = false;
 
     // 35 × 6656 = ~228 KB. Heap allocation would also work but a flat

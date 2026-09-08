@@ -80,6 +80,32 @@ void EmulationController::setVideoStandard(VideoStandard s)
     }
 }
 
+void EmulationController::refreshAcceleratorClock()
+{
+    // Same derivation as setVideoStandard, times what the ACCELERATOR CARD
+    // adds. Without this a plugged TransWarp multiplied the frame's cycle
+    // budget (scaledFrameBudget) but every emuCycles consumer kept the stock
+    // clock: the speaker read a 3.5x cycle stamp as 3.5x the time it is, so a
+    // 1 kHz tone came out at 298 Hz and two thirds of the toggles were
+    // purged as "the producer ran ahead". Exactly the //c+ defect of bug
+    // hunt #7, arriving through a slot instead of through the profile.
+    const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
+    const int base = baseCyclesPerFrame_.load();
+    double hz = static_cast<double>(vt.cpuClockHz) *
+        (base > vt.cyclesPerFrame
+             ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
+    hz *= mem.slotBus().cpuSpeedMultiplier();
+    if (hz == cpuClockHz_.load()) return;   // the no-accelerator fast path
+    cpuClockHz_.store(hz);
+    if (spk)       spk->setCpuClock(hz);
+    if (tape)      tape->setCpuClock(hz);
+    if (floppy525) floppy525->setCpuClock(hz);
+    if (floppy35)  floppy35->setCpuClock(hz);
+    for (int slot = 1; slot <= 7; ++slot)
+        if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
+            card->setCpuClock(hz);
+}
+
 EmulationController::EmulationController()
     : processor(&mem), writeBackQueue_(*this)
 {
@@ -628,6 +654,7 @@ void EmulationController::tickFrame()
     // own frame interval, so the emulated clock tracks real time on any
     // display. The threaded path doesn't need this — workerLoop sleeps to
     // an absolute deadline.
+    refreshAcceleratorClock();
     int64_t budget = scaledFrameBudget();          // int64: see workerLoop note
     // WASM ONLY. The browser is the only caller that drives this off a
     // display refresh; every other caller is a HEADLESS TEST, where "one
@@ -1562,6 +1589,7 @@ void EmulationController::workerLoop()
         // frame — see TranswarpCard.h on why sampling a sub-frame duty
         // cycle at this rate is exact in aggregate. Returns 1.0 (and
         // touches nothing) on any machine without such a card.
+        refreshAcceleratorClock();
         const int64_t budget = scaledFrameBudget();
         bool interrupted = false;
         for (int64_t done = 0; done < budget; ) {

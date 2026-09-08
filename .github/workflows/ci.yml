@@ -34,9 +34,15 @@ on:
     # GitHub queues cron runs and the top of the hour is the busiest slot.
     - cron: '17 3 * * *'
 
-# A newer push to the same ref cancels the older in-flight run.
+# A newer push to the same ref cancels the older in-flight run. The event
+# name is part of the group on purpose: the 03:17 UTC scheduled run used to
+# share `ci-<ref>` with the push runs and CANCELLED whichever push run was
+# still building when it fired (seen 2026-09-08: the Linux, macOS and
+# coverage jobs of a push run killed 15 minutes in, by the nightly on the
+# same commit). A schedule run and a push run are not competing for the
+# same answer, so they must not supersede each other.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

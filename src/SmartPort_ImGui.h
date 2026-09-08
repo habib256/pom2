@@ -50,7 +50,7 @@ public:
         uint32_t    blockCount       = 0;
         bool        loaded           = false;
         bool        writeProtected   = false;
-        bool        writeBackEnabled = false;
+        bool        writeBackEnabled = true;
     };
 
     struct CardSnapshot {

@@ -101,7 +101,7 @@ public:
         int slot = -1;
         bool loaded = false;
         std::string path;
-        bool writeBackEnabled = false;
+        bool writeBackEnabled = true;
     };
 
     static constexpr std::size_t kDiskIIDriveCount = 2;
@@ -115,7 +115,7 @@ public:
     struct DiskIISnapshot {
         int slot = -1;
         std::array<DiskIIDriveSnapshot, kDiskIIDriveCount> drives{};
-        bool writeBackEnabled = false;
+        bool writeBackEnabled = true;
     };
 
     struct RebuildSnapshot {
@@ -168,7 +168,7 @@ public:
         std::string path;
         std::string lastError;
         bool hasUnsavedChanges = false;
-        bool writeBackEnabled = false;
+        bool writeBackEnabled = true;
         bool isWoz = false;
         std::string convertTargetPath;
     };

@@ -107,18 +107,17 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
                                   "sleeve.");
         } else if (!snap.writeBackEnabled) {
             ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
-                               "Read-only: write-back is off — the guest "
-                               "will see a write-protected disk");
+                               "WRITE-PROTECTED by you — the guest sees a "
+                               "write-protected disk, nothing reaches the file");
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Off by default so running a program "
-                                  "never silently rewrites your image "
-                                  "file.\nThe drive reports write-protect "
-                                  "rather than accepting writes and "
-                                  "discarding them on eject.\nTick "
-                                  "\"Write-back\" below to let this disk be "
-                                  "saved.");
+                ImGui::SetTooltip("The drive reports write-protect rather "
+                                  "than accepting writes and discarding them "
+                                  "on eject.\nUntick \"Write-protected\" "
+                                  "below to let this disk be saved.");
         } else {
-            ImGui::TextDisabled("Writable — changes are saved on eject.");
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
+                               "WRITABLE — changes are saved to the file on "
+                               "eject and on quit.");
         }
     } else {
         ImGui::TextDisabled("No disk inserted.");
@@ -173,14 +172,15 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "(active)");
     }
 
-    // Write-back opt-in. OFF by default — turning it on lets the
-    // emulator save modified sectors back to the source .dsk/.do/.po/
-    // .nib file when the disk is ejected. Off → DOS sees a write-
-    // protect error before scrambling the in-memory nibble buffer.
-    bool writeBack = snap.writeBackEnabled;
-    if (ImGui::Checkbox("Write-back (save on eject)", &writeBack)) {
+    // Write-protect is the user's visible opt-OUT (2026-09-08): media are
+    // writable by default, and ticking this makes the drive report
+    // write-protect — DOS sees the error before scrambling the in-memory
+    // nibble buffer — so nothing reaches the .dsk/.do/.po/.nib file. The
+    // plumbing underneath is still "write-back enabled", inverted here.
+    bool protect = !snap.writeBackEnabled;
+    if (ImGui::Checkbox("Write-protected (do not save changes)", &protect)) {
         r.writeBackToggleChanged = true;
-        r.writeBackNewValue      = writeBack;
+        r.writeBackNewValue      = !protect;
     }
     if (snap.hasUnsavedChanges) {
         ImGui::SameLine();

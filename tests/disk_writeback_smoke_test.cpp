@@ -25,6 +25,7 @@
 //   - $C0nD write-protect probe: tracks the opt-in toggle.
 
 #include "DiskImage.h"
+#include "MediaWritePolicy.h"
 
 #include <cassert>
 #include <cstdint>
@@ -134,7 +135,9 @@ int main()
         DiskImage img;
         assert(img.loadFile(p.string()));
         assert(img.isNib());
-        assert(img.isWriteProtected());      // opt-in default off
+        assert(img.isWriteProtected() != pom2::mediaWritableByDefault());   // follows the policy
+        img.setWriteBackEnabled(false);      // the user protects it…
+        assert(img.isWriteProtected());      // …and the guest is told no
 
         // Verify a sample of bytes loaded verbatim.
         assert(img.nibbleAt(0, 0)    == 0x00);

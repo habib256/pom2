@@ -28,6 +28,7 @@
 #include "RewindBuffer.h"
 #include "ProDOSHardDiskCard.h"
 #include "ProDOSVolume.h"
+#include "MediaWritePolicy.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
@@ -931,6 +932,13 @@ int main()
         // came back write-protected on the next launch and dropped the next
         // session's writes at eject.
         assert(disk35Settings.getString("disk35_path_1") == disk35Path);
+        // The mount persists the drive's write-back as whatever the policy
+        // default is (MediaWritePolicy.h — writable in the product, protected
+        // under the suite's environment), and the toggle round-trips.
+        const bool policy = pom2::mediaWritableByDefault();
+        assert(disk35Settings.getBool("disk35_writeback_1", !policy) == policy);
+        assert(disk35Storage.setDisk35WriteBack(
+            disk35Controller, disk35Settings, 0, false).ok);
         assert(!disk35Settings.getBool("disk35_writeback_1", true));
         assert(disk35Storage.setDisk35WriteBack(
             disk35Controller, disk35Settings, 0, true).ok);
@@ -1260,6 +1268,35 @@ int main()
     std::filesystem::remove(invalidDiskPath, removeError);
     std::filesystem::remove(invalidBlockPath, removeError);
     std::filesystem::remove(disk35Path, removeError);
+
+    // Absent settings keys restore the POLICY default (MediaWritePolicy.h:
+    // writable in the product, so a user who never touched the write-protect
+    // gets a drive that saves; protected under the suite's environment), on
+    // every card the settings phase rebuilds. media_write_default pins the
+    // product value itself.
+    {
+        const bool policy = pom2::mediaWritableByDefault();
+        EmulationController freshController;
+        pom2::StorageCoordinator freshStorage;
+        pom2::Settings noKeys;
+        auto state = freshController.lockState();
+        auto& bus = state.memory().slotBus();
+        bus.clear();
+        bus.plug(4, std::make_unique<DiskIICard>(4));
+        bus.plug(6, std::make_unique<DiskIICard>(6));
+        bus.plug(5, std::make_unique<ProDOSHardDiskCard>(5));
+        bus.plug(7, std::make_unique<pom2::CffaCard>(7));
+        assert(freshStorage.restoreMediaFromSettings(bus, noKeys).ok());
+        for (int s : {4, 6}) {
+            auto* d = dynamic_cast<DiskIICard*>(bus.peripheral(s));
+            assert(d && d->isWriteBackEnabled() == policy &&
+                   "a Disk II with no settings key did not follow the policy default");
+        }
+        auto* h = dynamic_cast<ProDOSHardDiskCard*>(bus.peripheral(5));
+        assert(h && h->isWriteBackEnabled() == policy && "an HDV with no key did not follow the policy");
+        auto* c = dynamic_cast<pom2::CffaCard*>(bus.peripheral(7));
+        assert(c && c->isWriteBackEnabled() == policy && "a CFFA with no key did not follow the policy");
+    }
 
     std::cout << "storage coordinator: OK\n";
     return 0;

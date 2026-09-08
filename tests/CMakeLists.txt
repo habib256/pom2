@@ -279,6 +279,26 @@ set_tests_properties(tomharte_6502 tomharte_65c02 PROPERTIES
 # IIe → IIc → IIc+ → II → II+) and verifies Memory+CPU state stays
 # consistent. Doesn't exercise the GUI applyProfile path (needs
 # ImGui+GLFW) but locks the core invariants.
+# ─── //c 32 KB ROM slicing follows the profile (bug hunt #10) ────────────
+add_executable(test_iic_rom_bank_slice
+    iic_rom_bank_slice_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_iic_rom_bank_slice PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_iic_rom_bank_slice PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_iic_rom_bank_slice PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_iic_rom_bank_slice PRIVATE winmm)
+endif()
+add_test(NAME iic_rom_bank_slice COMMAND test_iic_rom_bank_slice)
+
 add_executable(test_system_profile
     system_profile_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
@@ -402,6 +422,11 @@ set_tests_properties(transwarp_card PROPERTIES TIMEOUT 10)
 
 add_executable(test_videx_lowercase_char_rom
     videx_lowercase_char_rom_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_videx_lowercase_char_rom
@@ -1323,6 +1348,38 @@ set_tests_properties(hdv_mass_storage_smoke PROPERTIES TIMEOUT 10)
 # comment chunk), 2MG WP flag honoured even with user opt-in, and opt-in
 # default off (writes to a non-write-back card silently dropped, file
 # untouched on eject).
+# ─── Media write by default (policy, 2026-09-08) ────────────────────────
+# A peripheral writes unless the user protects it, and the protection is a
+# visible, editable toggle in every media panel. Pins the default at every
+# storage leaf the panels reach.
+add_executable(test_media_write_default
+    media_write_default_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+)
+target_include_directories(test_media_write_default PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_media_write_default PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_media_write_default PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_media_write_default PRIVATE winmm)
+endif()
+add_test(NAME media_write_default COMMAND test_media_write_default)
+
 add_executable(test_hdv_writeback
     hdv_writeback_smoke_test.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5459,6 +5516,51 @@ set_tests_properties(hgr_sprite_blit PROPERTIES TIMEOUT 10)
 # solid-field conversions land the trivial optimum, (3) ICM refinement is
 # monotone on the frozen-target cost. Gate for imageToDhgrPage560 and any
 # Apple2VideoDecode LUT change.
+# ─── Phosphor on text, zero-persistence erase (bug hunt #10) ─────────────
+add_executable(test_mono_text_phosphor
+    mono_text_phosphor_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_mono_text_phosphor PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_mono_text_phosphor PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_mono_text_phosphor PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_mono_text_phosphor PRIVATE winmm)
+endif()
+add_test(NAME mono_text_phosphor COMMAND test_mono_text_phosphor)
+
+add_executable(test_phosphor_decay_zero
+    phosphor_decay_zero_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_phosphor_decay_zero PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_phosphor_decay_zero PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_phosphor_decay_zero PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_phosphor_decay_zero PRIVATE winmm)
+endif()
+add_test(NAME phosphor_decay_zero COMMAND test_phosphor_decay_zero)
+
 add_executable(test_dhgr_convert
     dhgr_convert_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
@@ -7147,6 +7249,16 @@ set_tests_properties(mockingboard_t1_irq_phase PROPERTIES TIMEOUT 5)
 get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
 if(_pom2_all_tests)
     set_tests_properties(${_pom2_all_tests} PROPERTIES SKIP_RETURN_CODE 77)
+    # Media are writable by default in the product (MediaWritePolicy.h), but
+    # dozens of tests boot the TRACKED images under disks_5.4/, disks_3.5/
+    # and hdv/, and the Disk II / SmartPort units commit dirty media in their
+    # destructors — the first writable full run rewrote a tracked 2MG with a
+    # ProDOS boot's block updates. The suite therefore runs write-protected;
+    # `media_write_default` clears the variable and pins the real default.
+    foreach(_pom2_t IN LISTS _pom2_all_tests)
+        set_property(TEST ${_pom2_t} APPEND PROPERTY ENVIRONMENT
+                     "POM2_MEDIA_WRITE_DEFAULT=protected")
+    endforeach()
     list(LENGTH _pom2_all_tests _pom2_test_count)
     message(STATUS "POM2: ${_pom2_test_count} ctest entries registered "
                    "(SKIP_RETURN_CODE 77 applied to all)")

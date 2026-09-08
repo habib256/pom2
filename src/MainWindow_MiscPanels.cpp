@@ -712,7 +712,10 @@ void MainWindow::renderWelcomePanelWindow()
             bool ok = false;
             if (readable) {
                 auto st = controller->lockState();
-                ok = st.memory().loadAppleIIRom(newRom.c_str());
+                // See MainWindow_Chrome.cpp: the //c-vs-//e 32 KB slicing is a
+                // property of the profile, never of the file.
+                ok = st.memory().loadAppleIIRom(
+                    newRom.c_str(), pom2::profileUsesLowerRomHalf(activeProfile));
                 if (ok) romPath = newRom;
             } else {
                 romStatus = "cannot read " + newRom;

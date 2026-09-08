@@ -401,7 +401,13 @@ void MainWindow::renderMenuBar()
                 // blocks. Nothing here scales with a disk image's size, which
                 // is the case the rule exists for.
                 auto st = controller->lockState();
-                ok = st.memory().loadAppleIIRom(romPath.c_str());
+                // A //c-class 32 KB dump is two firmware BANKS, bank 0 in the
+                // lower half; a //e 32 KB dump keeps its firmware in the upper
+                // half. Reload ROM used the //e slicing unconditionally, so on
+                // //c / //c+ / //c PAL it made bank 1 the active ROM, killed
+                // the $C028 toggle, and then hardReset() into it (bug hunt #10).
+                ok = st.memory().loadAppleIIRom(
+                    romPath.c_str(), pom2::profileUsesLowerRomHalf(activeProfile));
                 if (!ok) err = st.memory().getLastError();
             }
             // hardReset() re-acquires stateMutex internally, so it MUST run

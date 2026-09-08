@@ -71,6 +71,16 @@ struct RomFetchEntry {
     /// corrupted". Computed from the copies that ship in the repository's
     /// roms/ — the same dumps RetroBIOS serves. Verified before install.
     const char*   expectedSha256;
+    /// A LOCAL file of this size also counts as "already present", even
+    /// though a fresh download must still match `expectedSize`. 0 = none.
+    /// The II+ firmware is the case that needs it: RetroBIOS serves the
+    /// six-chip 12 KB image while the dump POM2 ships in roms/ is a 20 KB
+    /// MAME pack (4 KB pad + the $C000-$FFFF firmware), and both boot.
+    /// Without this the "present is not the same as CORRECT" re-check in
+    /// romsToFetch() called the shipped, working ROM missing on every launch
+    /// — so "Download missing ROMs" was never done, and clicking it
+    /// overwrote a good dump with a different one (bug hunt #10).
+    std::size_t   altPresentSize;
 };
 
 /// Human-facing home of the collection. The panel quotes this; tests pin it.

@@ -330,6 +330,16 @@ public:
     /// profile switch has to be handed the same number.
     double emulatedCpuClockHz() const { return cpuClockHz_.load(); }
 
+    /// Re-derive `emulatedCpuClockHz()` from the plugged ACCELERATOR card and
+    /// fan it back out. `setVideoStandard` folds in the accelerator the
+    /// PROFILE solders on (the //c+'s 4x), but a TransWarp is a card: it is
+    /// plugged and unplugged at runtime and the guest switches it at $C074,
+    /// so its multiplier cannot be folded in once. Called on the frame
+    /// boundary where `scaledFrameBudget()` already samples it; a no-op (one
+    /// double compare) when nothing moved, which is every machine without an
+    /// accelerator (bug hunt #10).
+    void refreshAcceleratorClock();
+
     /// Disk turbo (~60× while a drive streams). The override COMPOSES with
     /// the base instead of replacing it: the UI used to stash
     /// `getCyclesPerFrame()` in a MainWindow member before writing 1 M, and

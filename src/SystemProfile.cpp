@@ -415,4 +415,11 @@ std::string_view profileNameForMachineId(std::uint32_t id)
     return {};
 }
 
+bool profileUsesLowerRomHalf(SystemProfile p)
+{
+    return p == SystemProfile::AppleIIc ||
+           p == SystemProfile::AppleIIcPlus ||
+           p == SystemProfile::AppleIIcPAL;
+}
+
 }  // namespace pom2

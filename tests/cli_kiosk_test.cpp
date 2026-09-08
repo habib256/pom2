@@ -92,6 +92,23 @@ void testFujiNetSlotExplicitness()
     assert(!parse({"POM2", "--fujinet", "--fujinet-slot", "0"}, help).has_value());
 }
 
+// Bug hunt #10: `--ai-control=` and `--fujinet=` parsed their port with
+// atoi, so `8080junk` armed 8080 and `4294967376` wrapped to a perfectly
+// valid 80 — the control server bound to a port the user never typed.
+void testPortValueRejectsGarbageAndOverflow()
+{
+    bool help = false;
+    for (const char* bad : { "--ai-control=8080junk", "--ai-control=4294967376",
+                             "--ai-control=99999", "--fujinet=1985x",
+                             "--fujinet=4294968021" }) {
+        assert(!parse({ "POM2", bad }, help).has_value() &&
+               "a port that is not a port was accepted");
+    }
+    auto ok = parse({ "POM2", "--ai-control=6503", "--fujinet=1985" }, help);
+    assert(ok && ok->aiControlPort == 6503 && ok->fujiNetPort == 1985);
+    std::printf("  ok: --ai-control= / --fujinet= refuse garbage and overflow\n");
+}
+
 void testPositionalDisk()
 {
     bool help = false;
@@ -427,6 +444,7 @@ int main()
     testTwoPositionalsRejected();
     std::printf("parseCli rejects two positionals: OK\n");
     testUnknownFlagStillRejected();
+    testPortValueRejectsGarbageAndOverflow();
     std::printf("parseCli rejects unknown flag: OK\n");
     testNoArgsCleanPlan();
     std::printf("parseCli no-args clean plan: OK\n");

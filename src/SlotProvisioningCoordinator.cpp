@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "SlotProvisioningCoordinator.h"
+#include "MediaWritePolicy.h"
 
 #include "CffaCard.h"
 #include "EmulationController.h"
@@ -117,7 +118,7 @@ SlotProvisioningCoordinator::ensureHdvBootTarget(
             ? "HDV card construction failed" : std::move(made.warning);
         return result;
     }
-    card->setWriteBackEnabled(settings.getBool("hdv_writeback", false));
+    card->setWriteBackEnabled(settings.getBool("hdv_writeback", pom2::mediaWritableByDefault()));
     bus.plug(slot, std::move(made.card));
     storage_.markAutoProvisionedHdv(slot);
 

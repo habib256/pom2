@@ -225,9 +225,11 @@ bool testWoz1Parse() {
     if (!img.isWoz()) {
         std::printf("FAIL: isWoz() false after .woz load\n"); return false;
     }
-    // WOZ images are write-protected until the user opts in via
-    // setWriteBackEnabled. Buildable WOZ1 fixtures don't set
-    // INFO.write_protected, so flipping the gate must lift WP.
+    // A WOZ honours the user's write-protect (media are writable by default
+    // since 2026-09-08, so protect it explicitly here). Buildable WOZ1
+    // fixtures don't set INFO.write_protected, so flipping the gate back
+    // must lift WP.
+    img.setWriteBackEnabled(false);
     if (!img.isWriteProtected()) {
         std::printf("FAIL: WOZ should be WP when writeBackEnabled=false\n"); return false;
     }
