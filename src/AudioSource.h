@@ -62,6 +62,20 @@ public:
     /// (not AudioDevice) so it survives source list reshuffles and
     /// avoids a parallel-vector lookup on the audio thread.
     std::atomic<float> lastBufferPeak{0.0f};
+    /// Discontinuities this source produced, per second (2026-09-09): the
+    /// count of frame-to-frame jumps larger than kClickThreshold in its own
+    /// output, published once a second by AudioDevice::mixSources and shown
+    /// next to the meter in the Audio panel. A "crackle" report is a source
+    /// with a number here; a 1-bit speaker legitimately has one (every
+    /// toggle is a step), a sampled or synthesised source should read 0.
+    /// Measured per source so the user can name the culprit instead of
+    /// guessing it by ear — which is how a report blamed the printer for
+    /// what was not the printer.
+    std::atomic<float> clicksPerSecond{0.0f};
+    static constexpr float kClickThreshold = 0.10f;
+    // Audio-thread scratch for the tally above (mixSources only).
+    float    traceLastL_ = 0.0f, traceLastR_ = 0.0f;
+    uint32_t traceJumps_ = 0, traceFrames_ = 0;
 
     /// Stereo placement for the MONO path, -1 = hard left, 0 = centre,
     /// +1 = hard right. A balance law, not a constant-power one: the

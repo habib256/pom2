@@ -86,7 +86,7 @@ void MainWindow::renderAudioMixerWindow()
     // per chip from the card's wiring — see AudioDevice.h.
     auto channelRow = [labelColW](const char* label, float& vol, bool& mute,
                          float peak, const char* idSuffix, bool dim,
-                         AudioSource* panSrc = nullptr) {
+                         AudioSource* panSrc = nullptr, float clicksArg = -1.0f) {
         const ImGuiStyle& st = ImGui::GetStyle();
         const float em     = ImGui::GetFontSize();
         const float avail  = ImGui::GetContentRegionAvail().x;
@@ -128,6 +128,26 @@ void MainWindow::renderAudioMixerWindow()
         ImGui::SameLine();
         const std::string muteId = std::string("Mute##") + idSuffix;
         ImGui::Checkbox(muteId.c_str(), &mute);
+        // Discontinuities per second in THIS source's own output — the
+        // crackle detector (AudioSource::clicksPerSecond). A sampled or
+        // synthesised source should read nothing here; the 1-bit speaker
+        // legitimately steps on every toggle. Shown only when non-zero so
+        // a clean mixer stays quiet.
+        {
+            const float clicks = clicksArg >= 0.0f ? clicksArg
+                : (panSrc ? panSrc->clicksPerSecond.load(std::memory_order_relaxed) : 0.0f);
+            if (clicks > 0.5f) {
+                ImGui::SameLine();
+                const ImVec4 c = clicks > 20.0f ? ImVec4(0.90f, 0.20f, 0.20f, 1.0f)
+                                                : ImVec4(0.90f, 0.75f, 0.20f, 1.0f);
+                ImGui::TextColored(c, "%.0f clicks/s", static_cast<double>(clicks));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Frame-to-frame jumps above %.2f full-scale in this\n"
+                                      "source's own output, per second. A crackle you hear\n"
+                                      "comes from the row that shows a number here.",
+                                      static_cast<double>(AudioSource::kClickThreshold));
+            }
+        }
         // Stereo placement for a mono source. Centre (0) is unity on
         // both channels, so leaving it alone reproduces the pre-stereo
         // mix exactly.
@@ -246,7 +266,8 @@ void MainWindow::renderAudioMixerWindow()
         const std::string id = std::string(idTag) + std::to_string(card.slot);
         float vol = card.volume;
         bool mute = card.muted;
-        channelRow(lbl.c_str(), vol, mute, card.peak, id.c_str(), false);
+        channelRow(lbl.c_str(), vol, mute, card.peak, id.c_str(), false,
+                   nullptr, card.clicks);
         if (vol != card.volume || mute != card.muted) {
             // Re-resolves the card under the lock before writing — the row was
             // drawn from a snapshot, and the slot can have been rebuilt since.

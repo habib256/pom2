@@ -80,6 +80,7 @@ public:
         float volume = 1.0f;
         bool muted = false;
         float peak = 0.0f;
+        float clicks = 0.0f;   ///< AudioSource::clicksPerSecond, the crackle detector
     };
 
     struct MixerCardCommand {

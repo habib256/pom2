@@ -5,6 +5,20 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — A crackle detector in the Audio panel, and the printer sound cleared
+
+The crackling reported under A2 File Cmd was attributed by ear first to
+the disk sounds, then to the printer. The floppy voices had a real defect
+and it is fixed; the printer sound, measured the same way
+(`printer_sound_crackle`: a page of text, a 600-strike screen dump, five
+seconds idle), stays within its own steady-state step and is digital
+silence when idle — and on the //c, A2 File Cmd's serial driver sends
+nothing to either port (`iic_a2fc_printer_port_probe`). Rather than guess a
+third time, the mixer now measures: every source's own output is scanned
+for jumps above 0.10 full-scale and the rate is shown as "N clicks/s" next
+to that source's meter in the Audio panel, cards included. The row with a
+number is the culprit. → [DEV § The crackle detector](DEV.md#the-crackle-detector-2026-09-09)
+
 ## 2026-09-09 — The Phasor replays its AY writes at their cycle stamp
 
 The last *Partial* in the MAME parity dashboard: the Phasor's audio thread

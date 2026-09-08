@@ -194,6 +194,8 @@ AudioCoordinator::captureMixerCards() const
         if (source) {
             snapshot.peak =
                 source->lastBufferPeak.load(std::memory_order_relaxed);
+            snapshot.clicks =
+                source->clicksPerSecond.load(std::memory_order_relaxed);
         }
         snapshots.push_back(snapshot);
     }

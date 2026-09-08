@@ -166,6 +166,32 @@ void AudioDevice::mixSources(float* output, int frameCount)
                 output[2 * i + 1] += s * gR;
             }
         }
+        // The per-source discontinuity tally (AudioSource::clicksPerSecond):
+        // this source's own output, before it is summed into the bus, so a
+        // click is attributed to the source that made it.
+        {
+            float lastL = src->traceLastL_, lastR = src->traceLastR_;
+            uint32_t jumps = 0;
+            for (int i = 0; i < frameCount; ++i) {
+                const float l = tmpBuf[i];
+                const float r = tmpBufR[i];
+                if (std::fabs(l - lastL) > AudioSource::kClickThreshold ||
+                    std::fabs(r - lastR) > AudioSource::kClickThreshold)
+                    ++jumps;
+                lastL = l; lastR = r;
+            }
+            src->traceLastL_ = lastL; src->traceLastR_ = lastR;
+            src->traceJumps_ += jumps;
+            src->traceFrames_ += static_cast<uint32_t>(frameCount);
+            const uint32_t sr = actualSampleRate > 0 ? actualSampleRate : 44100;
+            if (src->traceFrames_ >= sr) {
+                src->clicksPerSecond.store(
+                    static_cast<float>(src->traceJumps_) * static_cast<float>(sr) /
+                        static_cast<float>(src->traceFrames_),
+                    std::memory_order_relaxed);
+                src->traceJumps_ = 0; src->traceFrames_ = 0;
+            }
+        }
         const float prevSrc =
             src->lastBufferPeak.load(std::memory_order_relaxed);
         const float decayedSrc =

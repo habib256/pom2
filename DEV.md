@@ -1422,6 +1422,20 @@ a decay of 0 now decays. Pinned by `mono_text_phosphor`,
 (`kChannels = 2`). **OS-negotiated sample rate** (often 48 kHz on Apple
 Silicon) — cycle-driven sources MUST query `getActualSampleRate()`.
 
+### The crackle detector (2026-09-09)
+
+`AudioSource::clicksPerSecond`: `AudioDevice::mixSources` counts, in each
+source's OWN output before it is summed into the bus, the frame-to-frame
+jumps larger than `kClickThreshold` (0.10 full-scale, the previous buffer's
+last frame included), and publishes the rate once a second. The Audio
+panel prints it next to the meter of any row that has one — a sampled or
+synthesised source should read nothing, the 1-bit speaker legitimately
+steps on every toggle. It exists because a "crackling" report was
+attributed by ear to the disk sounds, then to the printer; the probes
+(`floppy_sound_crackle`, `printer_sound_crackle`) fixed a real defect in
+the floppy voices and cleared the printer, and the number now names the
+source instead of the ear.
+
 ### Stereo bus (2026-08-01)
 
 The bus went stereo because the AY cards are stereo in hardware, and the
