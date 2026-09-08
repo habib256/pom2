@@ -5,6 +5,16 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — The Disk Library lists what is mounted, NeoST-style
+
+NeoST's media pages open with one row per drive — an eject button, then
+"A: name". The Disk Library now does the same above its tabs: every
+loaded medium (each Disk II drive per card, the two 3.5" drives, the HDV)
+as an eject button, a lock button that flips the notch (open lock =
+writable, closed = write-protected, tooltip says which way a click goes),
+and "S6 D1: name" with the full path on hover. The two things one does to
+a disk that is in a drive, without opening its panel.
+
 ## 2026-09-08 — Write-protect is the notch on the disk, not a switch on the drive
 
 The morning's "media write by default" left write-protect as the user's

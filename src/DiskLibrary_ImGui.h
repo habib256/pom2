@@ -71,11 +71,18 @@ public:
             int         slot = 6;
             std::string drive1;   // empty = no disk in drive 1
             std::string drive2;   // empty = no disk in drive 2
+            // The notch on each mounted disk (its own protection: host
+            // read-only bit, 2IMG lock, WOZ) — for the header's lock button.
+            bool        drive1Protected = false;
+            bool        drive2Protected = false;
         };
         std::vector<DiskIICardInfo> diskIICards;
         std::string              disk35Internal;
         std::string              disk35External;
         std::string              hdv;
+        bool                     disk35InternalProtected = false;
+        bool                     disk35ExternalProtected = false;
+        bool                     hdvProtected            = false;
     };
 
     struct Result {
@@ -149,6 +156,12 @@ public:
     /// The host applied a notch toggle it got from `Result`: update the
     /// cached row (a rescan would re-stat ~1000 files for one bit).
     void noteNotch(const std::string& path, bool protect);
+
+private:
+    /// The "Mounted" block at the top of the window (the NeoST media page's
+    /// shape): one row per loaded medium — an eject button, a lock button
+    /// for the notch, then "S6 D1: name". See renderMountedHeader.
+    void renderMountedHeader(const CurrentlyMounted& mounted, Result& r);
 
 private:
     // ── Filesystem cache ──────────────────────────────────────────────

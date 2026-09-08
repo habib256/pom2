@@ -365,6 +365,59 @@ void DiskLibrary_ImGui::onFloppyEmuCtx(const std::string& path,
     }
 }
 
+// One row per loaded medium, the way NeoST's media pages list their drives
+// (an eject button, then "A: name"), plus the notch as a second button —
+// the two things you do to a disk that is IN a drive without opening a
+// panel: take it out, or flip its write-protect. Nothing is drawn for an
+// empty drive: the library below is where a disk goes in.
+void DiskLibrary_ImGui::renderMountedHeader(const CurrentlyMounted& mounted,
+                                            Result& r)
+{
+    namespace fs = std::filesystem;
+    bool any = false;
+    // Eject button, lock button, label. `id` keeps the buttons apart.
+    auto row = [&](const char* id, const std::string& path, bool protectedNow,
+                   const char* label, auto&& onEject) {
+        if (path.empty()) return;
+        any = true;
+        ImGui::PushID(id);
+        if (ImGui::SmallButton(ICON_FA_EJECT)) onEject();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eject");
+        ImGui::SameLine(0.0f, 4.0f);
+        if (ImGui::SmallButton(protectedNow ? ICON_FA_LOCK : ICON_FA_LOCK_OPEN)) {
+            r.toggleNotchPath    = path;
+            r.toggleNotchProtect = !protectedNow;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", protectedNow
+                ? "Write-protected — click to write-enable this disk"
+                : "Writable — click to write-protect this disk (the notch)");
+        ImGui::SameLine();
+        ImGui::Text("%s: %s", label, fs::path(path).filename().string().c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+        ImGui::PopID();
+    };
+    char label[32], id[32];
+    for (const auto& card : mounted.diskIICards) {
+        std::snprintf(id, sizeof id, "d%d1", card.slot);
+        std::snprintf(label, sizeof label, "S%d D1", card.slot);
+        row(id, card.drive1, card.drive1Protected, label,
+            [&] { r.request525EjectPath = card.drive1; });
+        std::snprintf(id, sizeof id, "d%d2", card.slot);
+        std::snprintf(label, sizeof label, "S%d D2", card.slot);
+        row(id, card.drive2, card.drive2Protected, label,
+            [&] { r.request525EjectPath = card.drive2; });
+    }
+    row("d351", mounted.disk35Internal, mounted.disk35InternalProtected,
+        "3.5\" D1", [&] { r.request35EjectDrive = 0; });
+    row("d352", mounted.disk35External, mounted.disk35ExternalProtected,
+        "3.5\" D2", [&] { r.request35EjectDrive = 1; });
+    row("hdv", mounted.hdv, mounted.hdvProtected,
+        "HDV", [&] { r.requestHdvEject = true; });
+    if (!any) ImGui::TextDisabled("(no disk mounted)");
+    ImGui::Separator();
+}
+
 void DiskLibrary_ImGui::noteNotch(const std::string& path, bool protect)
 {
     for (auto* list : { &disk525_, &disk35_, &hdv_, &floppyEmu_ })
@@ -678,6 +731,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     }
 
     ImGui::Separator();
+    renderMountedHeader(mounted, r);
     ImGui::TextDisabled(
         "left-click = insert + boot      right-click = more options "
         "(incl. favourites)");

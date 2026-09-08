@@ -7099,6 +7099,15 @@ cut that day offered the toggle only on a MOUNTED image, per drive / per
 card, and was withdrawn the same afternoon: on the real hardware the
 protection is the disk's (see § The notch under Storage).
 
+**A "Mounted" block heads the window** *(2026-09-08)*, the shape of
+NeoST's media pages: one row per loaded medium — a small eject button, a
+small lock button, then "S6 D1: name" (Disk II drives per card, the two
+3.5" drives, the HDV; an empty drive draws nothing, the tree below is
+where a disk goes in). Eject reuses the per-tab requests
+(`request525EjectPath`, `request35EjectDrive`, `requestHdvEject`); the
+lock is the notch (`toggleNotchPath`), its state fed by the host from the
+mounted leaf's `isFileWriteProtected()` — live truth, no stat per frame.
+
 **No sort selector.** It offered Name / Size / Date, and the latter two forced a
 flat list — you cannot group by folder and order by size at once, so they
 quietly fought the tree. The header row is worth more as space for search.

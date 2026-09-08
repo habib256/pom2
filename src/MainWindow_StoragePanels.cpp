@@ -318,10 +318,12 @@ void MainWindow::renderDiskLibraryWindow()
             info.slot = c->getSlot();
             if (c->isDiskLoaded(0)) {
                 info.drive1 = c->getDiskPath(0);
+                info.drive1Protected = c->isFileWriteProtected(0);
                 mounted.diskII.push_back(info.drive1);
             }
             if (c->isDiskLoaded(1)) {
                 info.drive2 = c->getDiskPath(1);
+                info.drive2Protected = c->isFileWriteProtected(1);
                 mounted.diskII.push_back(info.drive2);
             }
             mounted.diskIICards.push_back(info);
@@ -332,8 +334,10 @@ void MainWindow::renderDiskLibraryWindow()
         // user sees the `* ` cue regardless of which path is active.
         mounted.disk35Internal = controller->disk35Internal().isLoaded()
             ? controller->disk35Internal().path() : std::string();
+        mounted.disk35InternalProtected = controller->disk35Internal().isFileWriteProtected();
         mounted.disk35External = controller->disk35External().isLoaded()
             ? controller->disk35External().path() : std::string();
+        mounted.disk35ExternalProtected = controller->disk35External().isFileWriteProtected();
         if (primarySmartPortCard()) {
             const pom2::SmartPortUnit* u0 = primarySmartPortCard()->unit(0);
             const pom2::SmartPortUnit* u1 = primarySmartPortCard()->unit(1);
@@ -341,15 +345,18 @@ void MainWindow::renderDiskLibraryWindow()
                 u0->kindKey() == pom2::SmartPort35Unit::kKindKey &&
                 mounted.disk35Internal.empty()) {
                 mounted.disk35Internal = u0->path();
+                mounted.disk35InternalProtected = u0->isFileWriteProtected();
             }
             if (u1 && u1->isLoaded() &&
                 u1->kindKey() == pom2::SmartPort35Unit::kKindKey &&
                 mounted.disk35External.empty()) {
                 mounted.disk35External = u1->path();
+                mounted.disk35ExternalProtected = u1->isFileWriteProtected();
             }
         }
         if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded()) {
             mounted.hdv = dev->getImagePath();
+            mounted.hdvProtected = dev->isWriteProtected();
         } else if (primarySmartPortCard()) {
             // SmartPort-routed HDV — show as mounted in the Library so the
             // `* ` marker matches reality regardless of which path holds it.
@@ -357,6 +364,7 @@ void MainWindow::renderDiskLibraryWindow()
             if (u && u->isLoaded() &&
                 u->kindKey() == pom2::SmartPortHdvUnit::kKindKey) {
                 mounted.hdv = u->path();
+                mounted.hdvProtected = u->isFileWriteProtected();
             }
         }
     }
