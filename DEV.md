@@ -42,9 +42,11 @@ every documented opcode on both cores already matched registers, flags,
 memory and cycles). `setCpuMode` maps them through `UnoffZp5` / `UnoffZpX6`
 / `UnoffInd6` / `UnoffInd8` / `UnoffIndY5` / `UnoffAbs6` / `UnoffAbs7` /
 `UnoffAbsY`; `$9B` TAS is genuinely 5 and `$BB` must not be re-clobbered by
-the `$xB` block. Pinned in `cpu_cycle_count`. Open question, not a bug:
-the corpus says 65C02 `$5C` is 4 cycles and POM2 charges 8, which is MAME
-`ow65c02.lst`'s count and the WDC datasheet's — no Apple II software runs it.
+the `$xB` block. Pinned in `cpu_cycle_count`. Settled the same day: the Tom Harte corpus
+says 65C02 `$5C` is 4 cycles, but the WDC W65C02S datasheet's opcode matrix
+(Table 5-2) lists it as 3 bytes, **8** cycles and MAME's `ow65c02.lst`
+counts the same — POM2 keeps 8, and the corpus is the outlier there. No
+Apple II software runs it either way.
 
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
 TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
@@ -802,10 +804,15 @@ which the mixed 80-col path (and the Chat Mauve legacy tail) still paints
 through at full width before pixel-doubling — so a MonoGreen/MonoAmber
 per-line page split re-merged the whole row's phosphor and ghosted the left
 segment's dots into the right one. It is bounded per segment now. All three
-pinned by `display_beam_regressions` (each fails without its fix). Known and
-left: in all three composite pipelines the mixed-mode text band is painted
-once from the end-of-frame state, so a mid-line page split inside rows
-160-191 draws from one page only.
+pinned by `display_beam_regressions` (each fails without its fix). The last
+leak went the same day: `patchMixedTextBand` painted the 32-row band once
+from the end-of-frame state, so a mid-line page split *inside* rows 160-191
+drew both halves from one page under the three composite pipelines. It now
+takes the frame's events and, when one lands inside the band, paints the
+band per beam segment through `renderInternalSegment` with `force560_` set
+(frame80 is where the composite output lives); a segment that is not mixed
+text is painted by the RGB painter rather than the demod, which is the one
+remaining divergence and a visible-but-correct one. Pinned there too.
 
 `Memory` logs display soft-switch edges (`$C050-$C057`, `$C05E/$C05F`,
 IIe `$C00C/$C00D` 80COL, `$C000/$C001` 80STORE, `$C00E/$C00F` ALTCHAR)
@@ -2642,6 +2649,14 @@ block addressing, `.2mg` data-offset ≠ 64). Multi-partition images
 (CFFA3000-style) not supported — 1 image = 1 unit = 1 volume.
 
 ### CffaCard (CFFA 2.0 — MAME-faithful IDE)
+
+**The taskfile steps across a multi-sector transfer** *(2026-09-08)*.
+`AtaBlockDevice::nextSector` is MAME `ata_hle_device_base::next_sector()`:
+after every sector of a READ/WRITE the address registers move on (LBA28 with
+the carry into the device/head nibble; CHS through the latched 16 × 63
+geometry) and the sector count counts down to 0. IDENTIFY does not step
+(`advanceRegs_`, derived from the phase on a snapshot restore so the blob
+layout is unchanged). Pinned in `ata_block_device`.
 
 `CffaCard.{h,cpp}` + `AtaBlockDevice.{h,cpp}`. **Real 4 KB firmware
 dump executed over an emulated ATA chip**, image stored as raw LBA.
@@ -5514,6 +5529,13 @@ other; a dump that agreed only with itself would be a screenshot with extra
 steps.
 
 ### ImageWriter II printer (host-side)
+
+**The DMP eats `ESC g`'s graphics body** *(2026-09-08)*. A head drops a
+command it has no hardware for after collecting its parameters
+(`modelIgnoresEsc`), which for `ESC g nnn` left the nnn×8 data bytes
+streaming on as text. `printCharInternal`'s ignore gate now sets the bit
+image up with `swallow` for that one command, exactly as `kEscPGates` does
+on the Epson head. Pinned by `testDmpSwallowsEscGBody`.
 
 **Two escape-sequence corrections** *(2026-09-08, bug hunt #5)*. `ESC V` /
 `ESC U` raise `msb_` so their pattern byte survives parameter collection and

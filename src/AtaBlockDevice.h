@@ -129,6 +129,12 @@ private:
     bool flushBufferToSector();  // wordBuf_ → backing block at lba_
     void fillIdentify();
     uint32_t currentLba() const;
+    /// MAME `ata_hle_device_base::next_sector()`: after every sector of a
+    /// READ/WRITE the address registers step to the next sector (LBA28 with
+    /// its carry into the device/head nibble, or CHS through the latched
+    /// geometry) and the sector count counts down, so a driver that reads
+    /// them back after a multi-sector transfer sees where the head stopped.
+    void nextSector();
 
     Block512Backing backing_;
 
@@ -146,6 +152,7 @@ private:
     Phase    phase_       = Phase::Idle;
     uint32_t lba_         = 0;   // LBA latched at command start
     uint16_t sectorsLeft_ = 0;   // sectors remaining in the current transfer
+    bool     advanceRegs_ = false; // READ/WRITE step the taskfile; IDENTIFY does not
     size_t   wordIdx_     = 0;   // current word within wordBuf_ (0..256)
     std::array<uint16_t, 256> wordBuf_{}; // one 512-byte sector as 256 LE words
 

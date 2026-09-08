@@ -1724,7 +1724,21 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     // return that skips that leaves the parser still armed — every following
     // byte is then eaten as a parameter and the rest of the job prints
     // nothing at all. (Which is exactly what happened first time round.)
-    if (modelIgnoresEsc(escCmd_)) { escCmd_ = 0; return true; }
+    if (modelIgnoresEsc(escCmd_)) {
+        // Graphics is the case that matters, exactly as on the ESC/P head
+        // (kEscPGates): the count has been parsed, and dropping ESC g while
+        // its nnn×8 DATA bytes still stream printed them as text — a screen
+        // of $FF glyphs and stray CRs on a DMP fed an ImageWriter job. The
+        // body is consumed and paints nothing.
+        if (escCmd_ == 0x67) {
+            spacesToZeros(3);
+            setupBitImage(static_cast<uint8_t>(printRes_ & ~8),
+                          static_cast<uint32_t>(param3()) * 8u);
+            bitGraph_.swallow = true;
+        }
+        escCmd_ = 0;
+        return true;
+    }
 
     switch (escCmd_) {
     case 0x61: {                                // ESC a n  select quality

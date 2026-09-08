@@ -5,6 +5,26 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — The four leftovers of bug hunt #5
+
+The hunters' "known, not fixed" list, closed. **The composite mixed-mode
+text band beam-races** now: a switch thrown inside rows 160-191 used to be
+painted once from the end-of-frame state under the three composite
+pipelines (the LUT/RGBA ones were right), so a DIX-style per-line page
+split inside the band drew both halves from one page and the picture
+changed with the display mode; `patchMixedTextBand` walks the segments and
+paints each with its own state, in the 560 domain. **The DMP eats
+`ESC g`'s body**: the head has no such command and dropped it after its
+count, leaving the nnn×8 graphics bytes to print as text — the same gate
+the ESC/P head already had. **The ATA taskfile steps across a
+multi-sector transfer** (MAME `next_sector`): LBA28 with its carry into
+the device/head nibble, CHS through the latched geometry, the count down
+to 0 — no POM2-supported driver reads them back, which is why it never
+bit. **65C02 `$5C` stays at 8 cycles**: the WDC W65C02S datasheet's opcode
+matrix says 3 bytes, 8 cycles, and MAME's `ow65c02.lst` agrees; the Tom
+Harte corpus's 4 is the outlier — recorded as settled, not open. Pinned in
+`display_beam_regressions`, `imagewriter_smoke`, `ata_block_device`.
+
 ## 2026-09-08 — Bug hunt #5: six Opus hunters, every finding confirmed by a probe
 
 Six hunters in parallel — CPU cores and MMU, the video pipeline, the audio
