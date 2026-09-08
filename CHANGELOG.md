@@ -5,6 +5,24 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — v0.9.1's first release run timed out in its own test gate
+
+The tag was pushed after the push CI and a dispatched nightly were both
+green; eight of the nine release jobs — every packager — finished green,
+and the ninth, the `quality` gate that publication waits on, was cancelled
+by its 90-minute budget while *still compiling* at `--parallel 1`. The
+suite has 263 binaries now, and that morning's runners were slow (the CI
+job's two-wide build of the same tree took 59 minutes). The `-j1` guarded
+against RAM exhaustion on the big translation units; the nightly sanitizer
+job builds the same tree at `--parallel 4` on the same runner class with
+heavier objects and has never run out. The gate builds four-wide with a
+180-minute budget and runs ctest at the runner's width, like `ci.yml`.
+
+The v0.9.1 tag was moved onto this fix (and bug hunt #11 below, which had
+landed on `main` meanwhile and is now in the release notes) — the same
+ruling as v0.9.0's: no Release object existed and no asset was published,
+so the tag had no consumers.
+
 ## 2026-09-08 — Bug hunt #11: the controller, the paint editor, the coordinators, the relay
 
 Four Opus hunters on the seams between the machine and its host.

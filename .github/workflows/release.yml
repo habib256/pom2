@@ -99,12 +99,21 @@ jobs:
   # --------------------------------------------------------- quality gate ----
   # Release publication must not rely on a separate, concurrently-running CI
   # workflow: that workflow can fail after packages have already been attached.
-  # Keep an explicit test gate in this dependency graph. Parallelism is capped
-  # because POM2's large C++ translation units can exhaust RAM at `-j$(nproc)`.
+  # Keep an explicit test gate in this dependency graph.
+  #
+  # `--parallel 4` and a 180-minute budget since v0.9.1: the first v0.9.1 run
+  # was cancelled by the 90-minute timeout while still compiling at
+  # `--parallel 1` — the suite had grown to 263 binaries and the runners were
+  # slow that morning (the CI job's `--parallel 2` build of the same tree took
+  # 59 minutes). The old `-j1` guarded against RAM exhaustion on the large
+  # translation units; the nightly sanitizer job has since built the same tree
+  # at `--parallel 4` on the same 4-core / 16 GB runner without trouble, and
+  # ASan objects are the heavier ones. ctest runs at the runner's real width
+  # for the reason given in ci.yml (a narrow run hides a timeout regression).
   quality:
     needs: version
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
 
@@ -127,11 +136,11 @@ jobs:
             -eq "$(grep -Evc '^[[:space:]]*(#|$)' tests/tomharte_6502.manifest)"
           test "$(find build-quality/tests/tomharte/wdc65c02 -name '*.json' | wc -l)" \
             -eq "$(grep -Evc '^[[:space:]]*(#|$)' tests/tomharte_wdc65c02.manifest)"
-          cmake --build build-quality --parallel 1
+          cmake --build build-quality --parallel 4
 
       - name: Run complete test suite
         working-directory: build-quality
-        run: ctest --output-on-failure --parallel 1
+        run: ctest --output-on-failure --parallel $(nproc)
 
   # ---------------------------------------------------------------- Linux ----
   # Built INSIDE the pinned bionic (glibc 2.27) image so the AppImage runs on
