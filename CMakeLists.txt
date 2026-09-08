@@ -462,6 +462,7 @@ set(POM2_FOUNDATION_SOURCES
 )
 
 set(POM2_FOUNDATION_HEADERS
+    src/MediaWritePolicy.h
     src/AudioSource.h
     src/ByteIO.h
     src/CharRomDump.h
