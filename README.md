@@ -599,7 +599,10 @@ the profiling recipe.
 
 ## 📄 License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0 — see [LICENSE](LICENSE). What POM2 carries from elsewhere — the
+MAME and AppleWin ports, Dear ImGui, the fonts, the sound samples, the
+photographs and every ROM dump, each with its licence and its status — is
+listed in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 <div align="center">
 

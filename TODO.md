@@ -126,43 +126,31 @@ months.**
   (`2018-01-23 - ProDOS8.2mg`, `Bad.Apple.hdv`, `Mouseapps Apple2.hdv`, 96 MB)
   went the same way on the same day, so `hdv/` now holds only the author's own
   projects. **910 files, 382 MB** in the manifest.
-- 🔴 **The web demo now boots a file that no longer exists.**
-  `floppyemu/Total Replay v6.1.hdv` (~150 commercial titles) was removed on
-  2026-09-05, and `wasm/shell.html:84` still defaults to it — so the next push
-  to `main` deploys a demo whose boot disk 404s. **Deliberately left for a
-  product decision**, because it is not just a path: the shell also selects a
-  **//c profile** to suit Total Replay, and the obvious free replacement (DIX,
-  GPLv3) wants //e PAL with a Mockingboard. Cheapest shape that needs no
-  manifest or parser change: copy the chosen disk into `floppyemu/` (which
-  `bundle.manifest:64` already bundles as the browser-only extra — `disks_3.5`
-  is on the `deny` list, so a per-file `wasm` entry would need new parser
-  support), then repoint the two knobs in `shell.html`. *~2 h once the disk is
-  chosen.*
-- 🔴 **42 Apple firmware dumps in every package, while the UI says the
-  opposite.** `bundle.manifest:31` ships `apple2*.rom`, fifteen character
-  generators, `disk2.rom`, the mouse MCUs, `341-0358-A.bin`, `liron.rom` — and
-  `MainWindow_MiscPanels.cpp:655` tells the user *"Apple II firmware is
-  copyrighted, so POM2 does not ship it."* (Re-verified 2026-09-07: that is the
-  **only** such string left in `src/`. `RomStatus_ImGui.cpp` carries no
-  "ships no ROMs" text; the earlier entry naming it was wrong.) README § Download sells the bundled ROMs as a feature. **Shipping
-  them and claiming not to is the worst of the three available positions.**
-  **Decided 2026-09-05: keep the dumps, fix the words.** The ROMs stay in
-  `roms/` and in every package, and so does Apple's system software on disk
-  (the DOS 3.x masters, `AppleShare IIe Workstation.po`, Apple Présente //c) —
-  it is the same legal class and the same established emulator practice. What
-  changes is the tree stops contradicting itself: `MainWindow_MiscPanels.cpp:655`
-  and the README say the same true thing.
-  *~4 h.* This is now a [G3](#g3--make-the-words-true-) job, not a G1 one.
-  Third-party EPROMs sit in the same tree with no permission on record
-  (`cffa20ee02.bin`, `grappler_plus.bin`, `thunderclock_u9_v1.3.bin`, the Videx
-  chip).
-- 🟠 **No attribution file exists.** `find . -iname '*LICENSE*'` returns exactly
-  `./LICENSE`. Missing: DejaVu's Bitstream Vera notice, Font Awesome Free's
-  SIL OFL 1.1 + CC-BY-4.0, and a root `THIRD-PARTY.md` for MAME (GPL-2+ code,
-  BSD-3 samples), AppleWin (GPL-2+), Dear ImGui (MIT), GLFW (zlib) and the two
-  `pic/` photographs, which have no recorded provenance at all. Inbound code
-  licensing is otherwise **clean** — every port is GPL-2.0-or-later, which
-  upgrades to POM2's GPL-3.0 without friction. *~3 h.*
+- ✅ **The web demo boots a disk that exists and is freely licensed**
+  *(2026-09-08)*. `wasm/shell.html` defaults to `iie-pal` +
+  `floppyemu/DIX.po` — DIX, the French Touch anthology (GPLv3, sources
+  published), POM2's own priority benchmark — on the fresh-install slot map
+  it wants (Mockingboard in slot 2, SmartPort 3.5" in slot 5). The 800 KB
+  copy lives in `floppyemu/`, which `bundle.manifest` already bundles as
+  the browser-only extra; nothing else changed. Total Replay's deleted path
+  had been the default for three days.
+- ✅ **The bundled-firmware words** — done under G3 (2026-09-08): README and
+  the Welcome panel say the packages ship the dumps, and `THIRD-PARTY.md`
+  lists every one with its rights holder and the "no permission on record"
+  status of the third-party EPROMs (CFFA, Grappler+, ThunderClock, Videx).
+- ✅ **Attribution** *(2026-09-08)*: `THIRD-PARTY.md` at the root — the code
+  ports (MAME, AppleWin, OpenEmulator, apple2js), the bundled libraries
+  (Dear ImGui, IconFontCppHeaders, miniaudio, stb_image_write, GLFW,
+  libslirp, the Emscripten runtime), the fonts, the samples, the test-time
+  corpora, the photographs, the dumps. `fonts/` ships `LICENSE-DejaVu.txt`
+  and `LICENSE-FontAwesome.txt` (the folder is bundled whole). README
+  § License points at it.
+- 🟠 **The two shipped photographs have no recorded provenance.**
+  `pic/Apple_II_plus.jpg` (About panel, README) and
+  `pic/Keyboard_AppleIIe.jpeg` (the keyboard panel). `THIRD-PARTY.md` says
+  so and treats them as all-rights-reserved until the author states their
+  origin and terms — one sentence each from the author closes this. *~5 min
+  of the author's memory.*
 
 ### G2 · The three defects that reach a user's data ✅ (2026-09-06)
 
@@ -506,13 +494,13 @@ Keep this in the repo and walk it. Every line is falsifiable.
 ## Legal — all must be YES before tagging
 - [ ] No commercial disk images in the work tree (done 2026-09-05) AND none
       reachable in git history, or the history risk accepted in writing
-- [ ] The web demo boots a disk that exists and is freely licensed
-- [ ] The web demo's boot disk is freely licensed; provenance recorded
-- [ ] The bundled-firmware decision is made, and README + RomStatus_ImGui +
-      MainWindow_MiscPanels + packaging/roms_README.txt all agree with it
-- [ ] THIRD-PARTY.md exists (MAME, AppleWin, Dear ImGui, GLFW, DejaVu,
-      Font Awesome, the two pic/ photos)
-- [ ] fonts/ ships its two license files
+- [x] The web demo boots a disk that exists and is freely licensed (DIX, 2026-09-08)
+- [x] The web demo's boot disk is freely licensed; provenance recorded (GPLv3, THIRD-PARTY.md)
+- [x] The bundled-firmware decision is made, and README + RomStatus_ImGui +
+      MainWindow_MiscPanels + packaging/roms_README.txt all agree with it (2026-09-08)
+- [x] THIRD-PARTY.md exists (MAME, AppleWin, Dear ImGui, GLFW, DejaVu,
+      Font Awesome, the two pic/ photos — the photos' provenance still owed)
+- [x] fonts/ ships its two license files
 
 ## Version
 - [ ] CMakeLists.txt project(... VERSION 1.0 ...)
@@ -522,9 +510,9 @@ Keep this in the repo and walk it. Every line is falsifiable.
 - [ ] grep -c 'v0\.9' README.md == 0
 
 ## Build repeatability
-- [ ] Release rehearsal green within the last 7 days
-- [ ] emsdk pinned; debian:bookworm pinned by digest; actions/* pinned by SHA
-- [ ] ghcr.io/habib256/pom1-bionic-builder digest still pullable from this repo
+- [x] Release rehearsal green within the last 7 days (weekly schedule + 2026-09-08 run 34259321160)
+- [x] emsdk pinned; debian:bookworm pinned by digest; actions/* pinned by SHA (tools/check_workflow_pins.sh)
+- [x] ghcr.io/habib256/pom2-bionic-builder (pom2's own mirror) pulled by the rehearsal
 - [ ] ./build_dist.sh (.deb + tarball) builds — the path CI never touches
 - [ ] packaging/stage_data.sh --self-test passes
 
@@ -863,12 +851,10 @@ of the finding.
   synthetic ROM still does not program the ACIA control register from the baud
   DIPs, and should not: it would invent a DIP→divisor mapping and rate-limit
   every `PR#n`. These stay open only as *stated limits*.
-- 🟠 **The two `roms/*.zip` archives are git-tracked.** `AE Serial Pro 2.0.bin_.zip`
-  and `AE Serial Pro PAL.zip` are in the index, and the manifest comment that
-  called them untracked was corrected on 2026-09-07. They cannot reach a
-  package (`denyglob *.zip`, now enforced by all three parsers), so this is a
-  repo-hygiene question rather than a payload one — **untracking them is the
-  maintainer's call**.
+- ✅ **The two `roms/*.zip` archives are untracked** *(2026-09-08)*: nothing
+  in `src/` or `tests/` read them, the `denyglob` kept them out of every
+  package, and they were 100 % dead weight in the tree; they stay in the
+  history like everything else.
 - 🟠 **Six file-size ceilings were raised by the two hunt rounds, and the owed
   splits are still owed** *(2026-09-07)*. `Apple2Display.cpp` 2294 → 2382,
   `DiskImage.cpp` 2835 → 2914, `ImageWriter.cpp` 2501 → 2531, `M6502.cpp`

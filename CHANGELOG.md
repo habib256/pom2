@@ -5,6 +5,21 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — G1: what we are allowed to ship, all but one decision
+
+`THIRD-PARTY.md` at the root lists everything POM2 carries from elsewhere —
+the MAME, AppleWin, OpenEmulator and apple2js ports, Dear ImGui and the
+other bundled libraries, the two fonts, the floppy samples, the test-time
+corpora, the two shipped photographs and every ROM dump with its rights
+holder and its status — and `fonts/` ships the DejaVu and Font Awesome
+licence texts. The browser demo, which had booted a deleted file for three
+days (Total Replay's commercial titles left the tree on 2026-09-05), boots
+DIX on the PAL //e: the French Touch anthology is GPLv3 and the project's
+own benchmark. The two dead `roms/*.zip` archives are untracked. Left open,
+and they are the author's to answer: the provenance of the two photographs,
+and whether the commercial images still in the git history get rewritten
+out or the risk is accepted in writing.
+
 ## 2026-09-08 — The SmartPort card grows to eight units, the A2retroNET way
 
 A2retroNET, the A2Pico firmware, presents up to eight 32 MB volumes as one

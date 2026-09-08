@@ -69,19 +69,24 @@
     }, 250);
   };
 
-  // Default WASM experience: //c profile auto-booting Total Replay from
-  // the bundled floppyemu/. Both knobs are URL-overridable so a deeplink
-  // can pick a different profile or disk without rebuilding. The disk path
-  // must resolve inside POM2.data — only roms/, fonts/, pic/ and floppyemu/
-  // ship by default; disks_3.5/ is bundled only when built with --with-data
+  // Default WASM experience (since 2026-09-08): the PAL //e Enhanced
+  // auto-booting DIX — the French Touch demo anthology, GPLv3, POM2's
+  // priority benchmark — from the bundled floppyemu/. It replaced Total
+  // Replay (commercial titles, removed from the tree 2026-09-05; the shell
+  // kept pointing at the deleted file, so the demo 404'd on boot). DIX wants
+  // a PAL //e with a Mockingboard, which is the fresh-install slot map.
+  // Both knobs are URL-overridable so a deeplink can pick a different
+  // profile or disk without rebuilding. The disk path must resolve inside
+  // POM2.data — only roms/, fonts/, pic/ and floppyemu/ ship by default;
+  // disks_3.5/ is bundled only when built with --with-data
   // (-DPOM2_WASM_BUNDLE_DISKS=ON):
   //   ?preset=iie&disk=disks_3.5/A2DeskTop-1.5-en_800k.2mg   (needs --with-data)
   //   ?preset=ii+        (no auto-boot — drops to the BASIC prompt)
   //   ?nodisk=1          (keep the preset, skip the disk arg)
   const _qs = new URLSearchParams(window.location.search);
-  const _preset = _qs.get('preset') || 'iic';
+  const _preset = _qs.get('preset') || 'iie-pal';
   const _disk   = _qs.get('nodisk') === '1' ? null
-                 : (_qs.get('disk') || 'floppyemu/Total Replay v6.1.hdv');
+                 : (_qs.get('disk') || 'floppyemu/DIX.po');
   const _args = ['--preset', _preset];
   if (_disk) _args.push(_disk);
 

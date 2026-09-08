@@ -8357,10 +8357,12 @@ Pinned by **`bundle_manifest`** (`--self-test`): stage into a temp dir, verify,
 then plant a deny-listed folder and require the verifier to *reject* it — a
 guard that always passes is worse than none, because it reads as a guarantee.
 
-**Why `floppyemu` is `wasm`-only**: it is 33 MB and `wasm/shell.html` boots
-`floppyemu/Total Replay v6.1.hdv` by default, so it *is* the live demo's boot
-disk. Desktop users mount their own media, so charging every download 33 MB
-for one HDV would be a poor trade.
+**Why `floppyemu` is `wasm`-only**: `wasm/shell.html` boots
+`floppyemu/DIX.po` by default (since 2026-09-08 — DIX, GPLv3, on the PAL //e
+with the fresh-install slot map; it replaced Total Replay, whose commercial
+titles left the tree on 2026-09-05 and whose deleted file the shell kept
+booting, so the live demo 404'd for three days), so the folder *is* the live
+demo's boot disk. Desktop users mount their own media.
 
 **Boot smoke.** `pom2_headless --frames 300 --screenshot out.ppm` runs N frames
 inline through `tickFrame()` (no worker thread, no sleeps, deterministic),

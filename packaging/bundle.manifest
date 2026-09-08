@@ -54,11 +54,10 @@ file pic/Apple_II_plus.jpg
 file pic/Keyboard_AppleIIe.jpeg
 
 # ─── Browser-only extras ────────────────────────────────────────────────────
-# floppyemu/ is 33 MB, and `wasm/shell.html` boots
-# `floppyemu/Total Replay v6.1.hdv` by default — it IS the live demo's boot
-# disk, so the browser bundle cannot drop it. Desktop users mount their own
-# media, so paying 33 MB per download to ship one HDV would be a poor trade:
-# hence `wasm`, not `dir`.
+# floppyemu/ holds the browser demo's boot disk — `wasm/shell.html` boots
+# `floppyemu/DIX.po` (the French Touch anthology, GPLv3, 800 KB) by default
+# since 2026-09-08 — so the browser bundle cannot drop it. Desktop users mount
+# their own media, hence `wasm`, not `dir`.
 wasm floppyemu
 
 # ─── Never packaged ─────────────────────────────────────────────────────────
