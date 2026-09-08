@@ -115,11 +115,13 @@ inline constexpr CardType kCardTypes[] = {
     // + TMS5220, not the SSI263. The SSI263-based product line was the
     // Cricket. Pairs with a Mockingboard A/C in another slot.
     { "echoplus",     "Cricket / Echo (SSI263)" },
-    // Echo+ (real) — Street Electronics ECHO+ as actually shipped:
-    // 2× AY-3-8913 PSGs + TMS5220 speech chip. Scaffolded stub — chip
-    // models silent in v1; the register decode is enough for software
-    // detection. See markadev/AppleII-RevEng/Street-Electronics-Corp-ECHO+.
-    { "echoplus_tms", "Echo+ (TMS5220 + 2×AY) — silent, detect-only" },
+    // Echo+ (real) — Street Electronics ECHO+ as actually shipped: 2× AY-3-8913
+    // + TMS5220. The TMS5220 LPC decoder does not exist, so the card cannot
+    // make a sound; it is a detect-only stub. HIDDEN from the picker since
+    // 2026-09-08 (TODO § scope ruling, P3-2 closed as "hide"): a card the
+    // picker offers is a card the README has to defend. The class stays, and a
+    // `slot_N_card = echoplus_tms` key in state.cfg still plugs it
+    // (MainWindow_SlotConfig.cpp dispatches on the string, not on this list).
     // Apple II Workstation Card — LocalTalk/AppleTalk, and a coprocessor:
     // its own 65C02 + 8530 SCC run inside the card. ROM-gated on the 64 KiB
     // 341-0358-A dump; the host handshake at $C0nX is not yet established,

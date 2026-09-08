@@ -222,52 +222,41 @@ again. Details and rationale in CHANGELOG.md.*
 file, and it is the difference between a project that under-promises and one
 that cannot be trusted about anything.*
 
-- 🔴 **The Workstation Card is billed four paragraphs past what it does.**
-  README § Expansion Cards describes acquiring a LocalTalk node and reaching
-  the AppleShare menu — all true, and all of it one step short of the thing the
-  card exists for: **there is no network on the other end**, and `lapACK` does
-  not move the node. The card picker is already honest ("boots, host link
-  WIP"); the README is not. Rewrite to *"boots, self-tests and is identified by
-  period software; it does not netboot."* *~30 min.*
-- 🔴 **`echoplus_tms` is listed twice in README as a card.** It cannot make a
-  sound — the TMS5220 LPC decoder does not exist. **This closes the standing
-  P3-2 question ("ship or hide") as: hide.** Remove it from the README table
-  and from the picker, or gate it behind a developer filter. *~1 h.*
-- 🔴 **Uthernet I is credited to "Linux and macOS" and is in neither package.**
-  `package_macos_release.sh:44` sets `-DPOM2_ENABLE_SLIRP=OFF`, and
-  `build_in_bionic.sh` installs no `libslirp-dev` — bionic has none, libslirp
-  was split out of QEMU in 2019. So the feature exists **only in the three ARM
-  AppImages**, which are the least-downloaded packages. Either restate the
-  claim or enable it (macOS needs a universal-2 libslirp recipe, `~1 d`).
-  README:269 also lists the card with no platform caveat at all. *~3 h for the
-  words.*
-- 🟠 **README under-claims in two places, which is the same defect inverted.**
-  § Known Limitations still says the //c+ on-board 3.5" boot does not reach a
-  bootable disk — closed 2026-09-01, pinned `iicplus_boot35`. And **`liron` is
-  absent from the card table entirely**, a card with real firmware, a real IWM
-  and two pins. *~30 min.*
+- ✅ **The Workstation Card** *(2026-09-08)*: README § Expansion Cards now
+  says it boots, self-tests, is identified by CardCat and reaches the
+  AppleShare Workstation menu — and **does not netboot**, there being no
+  network on the other end; frozen there.
+- ✅ **`echoplus_tms`** *(2026-09-08)*: out of the README table and out of
+  the picker (`SlotCardCatalog.h`); the class and the `slot_N_card` key
+  still work, so nobody's saved config breaks. P3-2 closed as "hide".
+- ✅ **Uthernet I** *(2026-09-08)*: README (headline bullet, hardware table,
+  card table, *Ethernet, per platform*) now says where it is — the three
+  ARM AppImages — and where it is not (the .dmg, the x86_64 AppImage,
+  Windows), with the source-build route for the rest. Frozen.
+- ✅ **The ROM contradiction** *(2026-09-08)*: the Welcome panel's "Apple II
+  firmware is copyrighted, so POM2 does not ship it" is gone; it and README
+  § ROMs and media say the same true thing — the packages ship Apple's
+  dumps and the third-party EPROMs, as established emulators do.
+- ✅ **The two under-claims** — re-read 2026-09-08: § Known Limitations
+  already tells the //c+ 3.5" boot story as it is, and `liron` has its row
+  in the card table. Nothing to do.
 - 🟠 **Tag the card picker with its scope bucket**, next to the LLE/HLE level it
   already shows. Five of 24 catalog keys are frozen under the ruling. A user
   choosing a card deserves to know that before filing the report. Same
   hand-kept catalog, one more word. *~2 h.*
-- 🟡 **Demote what is billed above its verification.** The 3D voxel view (one
-  math test, no other pin) has a hardware-table row plus a video bullet; the
-  HGR paint + sprite editors have two bullets, two panels and a Tools group for
-  ~2 700 lines **no test can reach by construction** and that are duplicated
-  verbatim into POM1. Keep both features; drop the billing and say they are
-  frozen. Name Floppy Emu's four supported modes rather than listing it flat.
-  *~1 h.*
-- 🟡 **Fix the fresh-install `][+` fallback, which is dead code.**
-  `MainWindow.cpp:811-812` sets `defaultProfile = iiePresent ? "iie-pal" : ""`,
-  and an empty string means `applyProfile` never runs — so
-  `cfgAppleIIPlus`'s `roms/apple2p.rom` probe is **never reached on a first
-  run**. A user holding only `apple2p.rom`, `apple2o.rom`, `apple2c-32Kv0.rom`
-  or `apple2e_unenh.rom` gets "NO ROM", while README:233 promises the fallback.
-  The rest of the first-run path is in good shape: Welcome opens, nothing
-  crashes, the boot refusal points at Help ▸ Welcome. *~2 h.*
-- 🟢 Dead README cross-reference (`§ Disk images` does not exist; it is
-  `### 💿 ROMs and media`), and `roms/ae_transwarp_1.4.bin` is advertised while
-  the dashboard records it as undumped. *~1 h.*
+- ✅ **Demoted** *(2026-09-08)*: the 3D voxel view and the two paint editors
+  keep their bullets and say they are frozen; Floppy Emu names its four
+  modes. The headline keeps the voxel view — it is what the project looks
+  like, and it works.
+- ✅ **The fresh-install `][+` fallback** *(2026-09-08)*: the first-run probe
+  knew only `roms/apple2.rom`; it now walks the ][+ profile's own
+  `romProbeOrder` (`apple2p.rom`, then `apple2.rom`) through the same three
+  roots, so a user holding `apple2p.rom` alone boots a ][+ as README says.
+  (`apple2o.rom` / `apple2c-32Kv0.rom` / `apple2e_unenh.rom` alone still
+  give NO ROM: the fallback is the ][+, as promised, not "any machine".)
+- ✅ **The dead cross-reference and the TransWarp ROM** *(2026-09-08)*:
+  `§ Disk images` → `§ 💿 ROMs and media`; `ae_transwarp_1.4.bin` is now
+  described as a name POM2 looks for with no public dump known.
 
 ### G4 · A release that can be rehearsed 🔴
 
@@ -292,13 +281,12 @@ same shape as the ratchet that returned 0.*
   `debian:bookworm-20260824` already dated + digest. Guarded by
   `tools/check_workflow_pins.sh` in the CI Linux job, falsifiable (unpin one
   and it fails). Still open, below: the cross-repo builder image.
-- 🟠 **The bionic builder image lives in another repository.**
-  `ghcr.io/habib256/pom1-bionic-builder` is digest-pinned but scoped per
-  package: a permission change in pom1 turns the flagship Linux job into a
-  403. `mirror-builder-image.yml` (dispatch-only) copies it into
-  `ghcr.io/habib256/pom2-bionic-builder` and prints the digest; **run it
-  once, then repin `release.yml`'s `BUILDER_IMAGE` to the copy**. *~15 min
-  plus a rehearsal run to prove the pull.*
+- ✅ **The bionic builder image is pom2's own** *(2026-09-08)*.
+  `mirror-builder-image.yml` (dispatch-only) copied
+  `pom1-bionic-builder` into `ghcr.io/habib256/pom2-bionic-builder` (same
+  manifest digest) and `release.yml`'s `linux` job pulls that; a permission
+  change in pom1 can no longer 403 the flagship package. Re-run the mirror
+  to refresh, then repin.
 - ✅ **`build_dist.sh` runs in a workflow** *(2026-09-08)*: the `dist` job of
   `release.yml`, on every run, uploads nothing and gates nothing — it checks
   the tarball and the `.deb` exist and that the tarball carries `roms/`.

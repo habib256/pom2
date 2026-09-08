@@ -1747,8 +1747,11 @@ register banks.
 
 `EchoPlusTMS5220Card` (`EchoPlusTMS5220Card.h/.cpp`) — Street Electronics
 ECHO+ **as actually shipped**: 2× AY-3-8913 PSGs + TMS5220 LPC speech
-chip. Distinct from the SSI263-based `EchoPlusCard` above. Catalog
-key `"echoplus_tms"`, default slot 2.
+chip. Distinct from the SSI263-based `EchoPlusCard` above. Settings
+key `"echoplus_tms"`, default slot 2 — **hidden from the Slot Config
+picker since 2026-09-08** (the TMS5220 decoder does not exist, so the card
+is silent; TODO's scope ruling closed P3-2 as "hide"). A `slot_N_card`
+key still plugs it.
 
 **v1 scaffold — chip cores deferred.** The card registers on the slot
 bus with a stub register decode at $Cs00-$Cs0F so software that probes

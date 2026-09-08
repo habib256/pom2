@@ -661,9 +661,10 @@ void MainWindow::renderWelcomePanelWindow()
         ImGui::TextWrapped("No Apple II ROM is loaded yet.");
         ImGui::PopStyleColor();
         ImGui::TextWrapped(
-            "Apple II firmware is copyrighted, so POM2 does not ship it. "
-            "Drop your firmware dump into a \"roms/\" folder next to POM2, "
-            "then use File → Reload ROM (or relaunch).");
+            "POM2 ships Apple's firmware dumps in its roms/ folder, but this "
+            "copy has none where it looks. Put a \"roms/\" folder with the "
+            "dump next to POM2 (README § ROMs and media), then use "
+            "File → Reload ROM (or relaunch).");
         ImGui::Spacing();
 
         // Which file the *active* profile wants, and where POM2 looks.

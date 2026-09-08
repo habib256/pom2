@@ -32,7 +32,7 @@ Built with Dear ImGui & OpenGL — fast, lightweight, cross-platform.
 - ⏪ **Rewind time.** A snapshot ring buffer records the machine as it runs; scrub backwards through your last seconds of execution and resume from any point. Same serializer feeds the AI-control HTTP `/snapshot` endpoints, so they can never drift.
 - 📺 **CRT you can dial in.** OpenEmulator-style composite NTSC shader *and* AppleWin's CPU IIR-LUT NTSC, plus mono phosphor with an adjustable **phosphor curve** (luminance γ) and **persistence** (temporal glow), barrel distortion, hue/BCS — the full *Display → CRT Settings* panel.
 - 💾 **Disks that sound right.** Cycle-stamped mechanical floppy samples: the Disk II head step and the Sony 3.5" drive whir, timed off the CPU clock — disk-turbo collapses wall-clock gaps but the nibble stream stays cycle-correct via an event-driven LSS.
-- 🌐 **Online, from 1984.** The **Uthernet II**'s W5100 is a hardware TCP/IP stack, so POM2 runs it straight on host sockets — point a period IRC, telnet or FTP client at the real internet with no extra dependency and no privileges, on Linux, macOS **and Windows**. The **Uthernet I** (CS8900A) is there too for IP65 / Contiki, bridged by optional libslirp (Linux/macOS).
+- 🌐 **Online, from 1984.** The **Uthernet II**'s W5100 is a hardware TCP/IP stack, so POM2 runs it straight on host sockets — point a period IRC, telnet or FTP client at the real internet with no extra dependency and no privileges, on Linux, macOS **and Windows**. The **Uthernet I** (CS8900A) is there too for IP65 / Contiki, bridged by libslirp — in the three ARM Linux packages only.
 - 🎵 **A whole sound-card era.** Speaker, cassette, Mockingboard A/C, Mockingboard C **Sound II** with SSI263 speech, the Applied Engineering **Phasor** (2×VIA / 4×AY), and the Cricket / Echo SSI263 line.
 - 🔬 **MAME is the source of truth.** Every hardware port cites the MAME file + line range in a comment and is pinned with a smoke test under `tests/`. CPU → audio/UI events carry a CPU-cycle stamp, never wall-clock.
 - 🌐 **Runs in your browser.** The full emulator builds to WebAssembly — [play it now](https://habib256.github.io/pom2/wasm/), no install.
@@ -71,7 +71,7 @@ to add.
 
 Every package carries the emulator's ROM set, its fonts and its artwork, so it
 boots with nothing else installed. None of them carries a disk library — bring
-your own images (§ Disk images).
+your own images (§ 💿 ROMs and media).
 
 **🐧 Linux / 🍓 Raspberry Pi**
 
@@ -164,8 +164,11 @@ The browser build preloads `roms/`, `fonts/`, the About and //e keyboard photos,
 
 ### 💿 ROMs and media
 
-Release packages (and the repo) ship the full `roms/` tree; `floppyemu/` is
-created on first run. The media folders are a convention POM2 reads when
+Release packages (and the repo) ship the full `roms/` tree — Apple's own
+firmware dumps for every profile, the character generators, the Disk II
+boot PROM, the mouse MCUs, the Liron and Workstation Card EPROMs, plus a
+few third-party card EPROMs — the way established Apple II emulators do, so
+a package boots as downloaded. `floppyemu/` is created on first run. The media folders are a convention POM2 reads when
 present — create the ones you use, no package ships them:
 
 ```text
@@ -260,8 +263,8 @@ force 1 bank.
 | ⏪ **Rewind** | MicroM8-style snapshot ring buffer; scrub back and resume. Shares its serializer with the AI-control `/snapshot` endpoints. |
 | 🔊 **Audio** | Speaker · cassette · Mockingboard A/C · Mockingboard C **Sound II** (SSI263 speech) · Applied Engineering **Phasor** (2×VIA / 4×AY) · Cricket / Echo SSI263 · Echo+ TMS5220 scaffold · cycle-stamped Disk II + Sony 3.5" mechanical sounds. |
 | 💾 **Storage** | `.dsk` `.do` `.d13` `.po` `.nib` `.2mg` `.woz` `.hdv` · DOS 3.x · ProDOS · SmartPort · CFFA 2.0. WOZ uses the real Disk II P6 LSS sequencer; detection is content-driven (MacBinary, DOS/ProDOS skew, WOZ/2IMG write-protect handled). |
-| 🌐 **Ethernet** | **Uthernet II** (WIZnet W5100 hardware TCP/IP — runs on host sockets, so period IRC / telnet / FTP clients work with no extra dependency and no root; Linux, macOS and Windows) · **Uthernet I** (CS8900A NIC, raw frames, bridged to the host by optional libslirp user-mode NAT — Linux and macOS only, see below). |
-| 🔌 **Peripherals** | Super Serial (+ telnet bridge) · parallel printer with host spool · Orange Micro Grappler+ · **Apple ImageWriter II** printer with a rendered paper tray (colour ribbon, bit-image graphics, PNG + multi-page PDF export) · ProDOS Clock / ThunderClock+ · Mouse Card (MAME + AppleWin HLE) · joystick / paddles · Floppy Emu (BMOW) · on-board //c devices. |
+| 🌐 **Ethernet** | **Uthernet II** (WIZnet W5100 hardware TCP/IP — runs on host sockets, so period IRC / telnet / FTP clients work with no extra dependency and no root; Linux, macOS and Windows) · **Uthernet I** (CS8900A NIC, raw frames, bridged to the host by libslirp user-mode NAT — shipped in the aarch64, Raspberry Pi and Pi 400 AppImages only, see below). |
+| 🔌 **Peripherals** | Super Serial (+ telnet bridge) · parallel printer with host spool · Orange Micro Grappler+ · **Apple ImageWriter II** printer with a rendered paper tray (colour ribbon, bit-image graphics, PNG + multi-page PDF export) · ProDOS Clock / ThunderClock+ · Mouse Card (MAME + AppleWin HLE) · joystick / paddles · Floppy Emu (BMOW — its Disk II 5.25", dumb 3.5", UniDisk 3.5" and SmartPort HD modes; the two IIgs daisy-chain modes are out of scope) · on-board //c devices. |
 | 🛠️ **Tools** | Disk Library · Slot Configuration · screenshots · memory viewer · snapshots · kiosk mode · CLI · AI-control HTTP server. |
 
 ---
@@ -280,7 +283,7 @@ Assign cards, mount media, eject or boot from `Machine → Slot Configuration`. 
 | `ssc` | Super Serial Card | `mockingboard_c` | Mockingboard C Sound II + SSI263 |
 | `printer` | Parallel printer (host spool) | `phasor` | Applied Engineering Phasor |
 | `grappler` | Orange Micro Grappler+ | `echoplus` | Cricket / Echo SSI263 |
-| `uthernet` | Uthernet I (CS8900A NIC) | `echoplus_tms` | Echo+ TMS5220 + 2×AY scaffold |
+| `uthernet` | Uthernet I (CS8900A NIC) — ARM Linux packages only, see *Ethernet, per platform* | | |
 | `uthernet2` | Uthernet II (W5100 TCP/IP) | `softcard` | Microsoft SoftCard Z80 (CP/M) |
 | `fujinet` | FujiNet relay (SP over SLIP) | `workstation` | Apple II Workstation Card (LocalTalk) |
 | `4play` | 4play — 4 digital joysticks (Lukazi) | `transwarp` | TransWarp accelerator (Applied Engineering) |
@@ -292,33 +295,25 @@ the half-speed DIP switch). There is no register to read and nothing to
 configure to make it work: it watches the bus, and software that needs real
 1 MHz timing asks for it by writing `$C074`. The shipped DIP defaults leave
 **slot 6 at stock speed** — that is the Disk II, the one slot AE did not
-trust at full speed. Optional ROM: `roms/ae_transwarp_1.4.bin` (AE's
-speed-corrected Monitor, overlaid on `$F000-$FFFF`); the card accelerates
-without it.
+trust at full speed. POM2 also looks for `roms/ae_transwarp_1.4.bin` (AE's speed-corrected
+Monitor, overlaid on `$F000-$FFFF`) — **no public dump of it is known**, so
+that name is where one would go, not a file any package ships; the card
+accelerates without it.
 
 **Apple II Workstation Card.** The board that put a IIe on LocalTalk, and the
 only card here that is a **computer of its own**: a 65C02, 28 KB of RAM, a
 Zilog 8530 SCC and 64 KB of banked ROM, all running inside the card while your
 Apple II gets on with its own program. POM2 runs Apple's real 341-0358-A
-firmware on it — it completes the card's power-on self-test, including a
-255-byte loopback check of the SCC, and configures the chip for LocalTalk at
-230.4 kbit/s. Needs `roms/341-0358-A.bin` (64 KiB); without it the slot stays
-empty rather than presenting a card that cannot work.
-
-It gets further than "configured": with SDLC framing in place — modelled from
-the Zilog manual, since MAME does not emulate it — the card's firmware
-**acquires a LocalTalk node address and starts transmitting**. `0B 0B 81` is
-LLAP's node-address enquiry; once it holds node `$0B` it broadcasts AppleTalk
-datagrams. And if you boot **CardCat** on the emulated //e, it names the card
-in slot 4, which is the check that matters: real 1980s-descended software
-identifying it by its firmware signature.
-
-And the software agrees: **AppleShare's own IIe Workstation disk boots, passes
-the card's power-up diagnostics and reaches its menu**. Its driver reaches the
-card at `$Cn14` and the two CPUs complete their handshake — which they do by
-rewriting each other's code in a shared page, an arrangement worth seeing
-once. Note the card runs a second 6502 at the Apple II's own rate, so it
-roughly doubles the emulation work while plugged.
+firmware on it: the card **boots, passes its power-on self-test** (including a
+255-byte loopback check of the SCC), configures the chip for LocalTalk and is
+**identified by period software** — CardCat names it in its slot, and
+AppleShare's own IIe Workstation disk passes the card's diagnostics and
+reaches its menu. **It does not netboot**: there is no LocalTalk network on
+the other end of the SCC, so the node it acquires talks to nobody and no
+AppleShare volume ever mounts. That is where the card stops, and it is frozen
+there. Needs `roms/341-0358-A.bin` (64 KiB); without it the slot stays empty.
+Note the card runs a second 6502 at the Apple II's own rate, so it roughly
+doubles the emulation work while plugged.
 
 **FujiNet.** POM2 does not emulate a [FujiNet](https://fujinet.online/) — it **relays** to a real one. Put the `fujinet` card in **slot 7** (the //e scans it before the Disk II in slot 6, so the machine boots straight into FujiNet's CONFIG) and point it at either:
 
@@ -329,7 +324,7 @@ Because every Apple II FujiNet function is a SmartPort unit, that one connection
 
 On Linux, a serial FujiNet needs your user in the `dialout` group (`sudo usermod -aG dialout $USER`, then log out and back in).
 
-**Ethernet, per platform.** The **Uthernet II** needs nothing installed: its W5100 is a hardware TCP/IP stack that POM2 runs on host sockets, so TCP and UDP work out of the box on **Linux, macOS and Windows**. The **Uthernet I** is a plain NIC — its guest software (IP65, Contiki, ADTPro-ethernet) carries its own stack and hands the card raw frames — so it needs the optional **libslirp** user-mode NAT backend, available on **Linux and macOS only**. The Uthernet II's own raw modes (MACRAW / IPRAW) go through the same backend and have the same limitation.
+**Ethernet, per platform.** The **Uthernet II** needs nothing installed: its W5100 is a hardware TCP/IP stack that POM2 runs on host sockets, so TCP and UDP work out of the box on **Linux, macOS and Windows**. The **Uthernet I** is a plain NIC — its guest software (IP65, Contiki, ADTPro-ethernet) carries its own stack and hands the card raw frames — so it needs the **libslirp** user-mode NAT backend, and that backend is built into **three of the seven packages only: the aarch64, Raspberry Pi and Pi 400 AppImages**. The macOS `.dmg` and the x86_64 AppImage are built without it (the bionic base that gives the x86_64 package its glibc floor has no libslirp), and Windows has no transport at all — on those, the card can be plugged but sees no network. A source build on Linux or macOS with `libslirp-dev` installed enables it (`-DPOM2_ENABLE_SLIRP=ON`). The Uthernet II's own raw modes (MACRAW / IPRAW) go through the same backend and have the same limits; its TCP and UDP do not. The Uthernet I is frozen at this: the Uthernet II covers the need everywhere with no dependency.
 
 ---
 
@@ -373,9 +368,11 @@ POM2's renderer is **event-driven, not frame-snapshot**. Soft-switch writes carr
 - **AppleWin NTSC** — the alternative CPU-side IIR-LUT colour path (`AppleWinNtsc`).
 - **Mono phosphor** — adjustable **phosphor curve** (`ntsc_phosphor_gamma`, luminance half of the CRT model) and **persistence** (temporal half), tunable in *View → CRT Settings*.
 - **RGB cards** — Le Chat Mauve (Féline · Adaptateur //c · Eve with its `$C0B0-$C0BF` switches) and the Video-7 AppleColor, one card with a variant setting (`chatmauve_variant`), for IIe-class machines.
-- **3D voxel view** — lift the whole framebuffer into an orbiting voxel scene.
+- **3D voxel view** — lift the whole framebuffer into an orbiting voxel scene. *Frozen: it works, has one math test, and gets no further work.*
 - **HGR/DHGR Paint editor** (*Tools → HGR Paint Editor*) — MacPaint-style painting straight into live video RAM (HGR, GR lo-res, and DHGR on IIe-class machines), rendered through the real NTSC pipeline. Imports PNG/JPG with ii-pix-style CAM16-UCS perceptual dithering; loads/saves raw pages (8 KB HGR, 1 KB GR, 16 KB A2FC DHGR) and PNG exports.
 - **HGR Sprite Editor** (*Tools → HGR Sprite Editor*) — draw hi-res sprites over live video RAM and export them as ca65 `.byte` tables.
+
+  *Both editors are frozen: shipped as they are, fixed on report, no new features — the code is shared verbatim with POM1 and no automated test reaches it.*
 
 ---
 

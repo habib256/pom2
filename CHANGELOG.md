@@ -5,6 +5,26 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — G3: the words made true
+
+The README billed the Workstation Card four paragraphs past what it does;
+it now says the card boots, self-tests, is named by CardCat and reaches the
+AppleShare Workstation menu, and does not netboot — no network on the other
+end. `echoplus_tms`, a silent TMS5220 stub, leaves the README table and the
+Slot Config picker (the settings key still plugs it). The Uthernet I was
+credited to "Linux and macOS" and shipped in neither of those packages: the
+README now says where libslirp is built in (the aarch64, Raspberry Pi and
+Pi 400 AppImages) and where it is not. The Welcome panel told a user with no
+ROM that "POM2 does not ship it" while every package carries 42 Apple dumps;
+panel and README now say the same true thing. The 3D voxel view and the two
+paint editors are marked frozen where they are billed, Floppy Emu names its
+four modes, and `ae_transwarp_1.4.bin` is described as a name POM2 looks for
+with no public dump known.
+
+One line of code: the first-run ][+ fallback probed only `roms/apple2.rom`,
+so a user holding `apple2p.rom` alone got NO ROM while the README promised a
+][+; the probe now walks the ][+ profile's own list.
+
 ## 2026-09-08 — G4: a release that can be rehearsed
 
 Eleven packaging paths ran only on a tag, and v0.9.1's first run showed

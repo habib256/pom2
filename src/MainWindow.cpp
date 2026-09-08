@@ -223,9 +223,17 @@ MainWindow::MainWindow(bool forceIIPlus)
     static const char* iieRomCandidates[]   = { "roms/apple2e.rom",
                                                 "../roms/apple2e.rom",
                                                 "../../roms/apple2e.rom" };
-    static const char* romCandidates[]      = { "roms/apple2.rom",
-                                                "../roms/apple2.rom",
-                                                "../../roms/apple2.rom" };
+    // The ][+ fallback probes what the ][+ PROFILE probes — apple2p.rom
+    // first, then the generic apple2.rom — through the same three roots. The
+    // hand-kept list here knew only the generic name, so a user holding
+    // apple2p.rom alone got "NO ROM" on a first run while README promised
+    // the fallback; applyProfile (which does use the profile's list) never
+    // runs on a first run because the auto-probed profile IS the saved one.
+    std::vector<std::string> romCandidates;
+    for (const auto& probe :
+         pom2::profileConfig(pom2::SystemProfile::AppleIIPlus).romProbeOrder)
+        for (const char* root : { "", "../", "../../" })
+            romCandidates.push_back(std::string(root) + std::string(probe));
     // Char ROM probing. Prefer the 4 KB IIe Enhanced variant (mousetext
     // + lowercase) when running in IIe mode; fall back to the 2 KB II/II+
     // ROM otherwise. Both formats are normalised to AppleWin-style
@@ -248,7 +256,7 @@ MainWindow::MainWindow(bool forceIIPlus)
         }
     }
     if (!iiePresent) {
-        for (const char* p : romCandidates) {
+        for (const std::string& p : romCandidates) {
             std::string r = pom2::findResource(p);
             if (!r.empty()) { romPath = r; break; }
         }

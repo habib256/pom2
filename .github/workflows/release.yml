@@ -193,12 +193,15 @@ jobs:
       # build-bionic-image workflow), then re-pin the digest it prints in BOTH
       # repositories.
       #
-      # PREREQUISITE: the GHCR package must be reachable from this repository —
-      # either public, or with `pom2` added under the package's
-      # "Manage Actions access". Otherwise `docker pull` 403s here even though
-      # the token has packages: read, because GHCR scopes access per package,
-      # not per owner.
-      BUILDER_IMAGE: ghcr.io/habib256/pom1-bionic-builder@sha256:c44b786517f041f779b082b813e84a17b141db3983fc0b28f2c3e4deedeb4cca
+      # The package is linked to this repository (it was pushed by a workflow
+      # here with GITHUB_TOKEN), so `packages: read` on the job token is enough
+      # to pull it. GHCR scopes access per package, not per owner — which is
+      # why the cross-repo original was a landmine.
+      # pom2's OWN copy of the builder image (mirror-builder-image.yml, run
+      # 2026-09-08 from pom1-bionic-builder, same manifest digest): a package
+      # this repository owns cannot be revoked by a permission change in
+      # another one. Re-run the mirror workflow to refresh it, then repin here.
+      BUILDER_IMAGE: ghcr.io/habib256/pom2-bionic-builder@sha256:c44b786517f041f779b082b813e84a17b141db3983fc0b28f2c3e4deedeb4cca
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
