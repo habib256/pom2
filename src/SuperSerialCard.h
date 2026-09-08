@@ -133,6 +133,21 @@ public:
     void setRawMode(bool raw) { rawMode_ = raw; }
     bool rawMode()   const    { return rawMode_; }
 
+    /// The cable's modem-control lines. By default the TCP peer IS the
+    /// carrier: a connect/disconnect toggles DCD and DSR and, with DTR
+    /// asserted, raises the 6551's DCD/DSR interrupt (MAME parity) — a
+    /// terminal program sees NO CARRIER when the far end hangs up. A
+    /// null-modem or USB-serial cable has those pins strapped active (or
+    /// not wired), so a VDrive / VSDrive host going away is only silence:
+    /// the driver's read times out and reports an I/O error. With the
+    /// lines tied, a peer edge changes no status bit and raises no IRQ —
+    /// which matters, because a block driver that owns no interrupt
+    /// handler dies of ProDOS's "RESTART SYSTEM - $01" (unclaimed
+    /// interrupt) the moment the peer closes. Host configuration, like
+    /// raw mode; not machine state.
+    void setModemLinesTied(bool tied) { modemLinesTied_ = tied; }
+    bool modemLinesTied() const       { return modemLinesTied_; }
+
     /// Inject bytes as if they had just arrived on the TCP socket. The
     /// path matches the worker thread's: SR_OVERRUN on ring overflow,
     /// RX IRQ raise gated by `rxIrqEnable_`, echo-mode loopback into the
@@ -516,6 +531,7 @@ private:
     // ring; the spool intentionally survives onReset() — it is host-side
     // paper trail, not machine state (same rule as PrinterCard's spool).
     bool printerTap_ = false;
+    std::atomic<bool> modemLinesTied_{false};   // see setModemLinesTied
     std::vector<uint8_t> printerSpool_;
     // Absolute offset of printerSpool_[0] in the ever-spooled byte stream —
     // lets the 1 MiB cap trim the consumed prefix without breaking the

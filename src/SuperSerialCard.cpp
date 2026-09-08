@@ -618,7 +618,9 @@ void SuperSerialCard::onConnectionEdge(bool nowConnected)
     // arm DTR before watching for IRQ-driven connect/disconnect notices;
     // a plain `IN#2 / PR#2` listing run leaves DTR low and won't be
     // woken by us.
-    if (dtrAsserted_) {
+    // A cable with DCD/DSR strapped shows the guest no edge at all
+    // (setModemLinesTied): the peer going away is silence, not NO CARRIER.
+    if (dtrAsserted_ && !modemLinesTied_.load(std::memory_order_relaxed)) {
         raiseIrqSource(IRQ_DCD | IRQ_DSR);
     }
 }
@@ -757,7 +759,9 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 // therefore hangs the guest on `PR#1` and no byte ever
                 // reaches the spool. deviceAttached() is what the pins
                 // answer to: a telnet peer OR a tapped printer.
-                if (!deviceAttached()) s |= (SR_DCD | SR_DSR);
+                if (!deviceAttached() &&
+                    !modemLinesTied_.load(std::memory_order_relaxed))
+                    s |= (SR_DCD | SR_DSR);
                 if (irqState_ != 0) s |= SR_IRQ;
                 // MAME `mos6551.cpp:237-250`: status read clears
                 // `m_irq_state` and re-evaluates the line. Without this,

@@ -4155,6 +4155,17 @@ state is answered (`WONT` / `DONT`, RFC 1143 § 7) while a cold one stays
 silent. Pinned in `ssc_acia_smoke`.
 
 
+**Tied modem lines** *(2026-09-08)*. `setModemLinesTied(true)` models a
+null-modem / USB-serial cable with DCD and DSR strapped: the status pins
+read active whatever the peer does and a connect/disconnect raises no
+DCD/DSR interrupt. The default stays the modem (MAME parity: with DTR
+asserted, a peer edge toggles the bits and interrupts). It exists for A2
+File Cmd's VDrive bench: the harness `pom2_playtest --ssc PORT` (in
+pomadventure) plugs the card raw and tied, and without it the bench's
+"host gone" case killed ProDOS with `RESTART SYSTEM - $01` — the driver
+owns no interrupt handler, and the peer closing was a carrier drop. Pinned
+in `ssc_acia_smoke`.
+
 ### ProDOS clock card (slot 4)
 
 ThunderClock+ compatible. **ProDOS does NOT route through slot ROM**

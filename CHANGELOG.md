@@ -5,6 +5,42 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — `pom2_playtest --ssc PORT`: the Super Serial Card for A2 File Cmd's VDrive bench
+
+A2 File Cmd ships a VSDrive driver (ADTPro's VDrive protocol on a 6551 at
+115 200 bauds, two ProDOS volumes served over the line) and a bench for it
+that needed the headless harness to plug the card. `pom2_playtest` (in
+pomadventure) grew `--ssc PORT`: a `SuperSerialCard` in slot 2 with its TCP
+bridge listening on 127.0.0.1:PORT in raw mode — no telnet negotiation, a
+`$FF` in a block passes as is — the Mockingboard yielding the slot on the
+//e preset. Nothing was missing on POM2's side: the Pascal signature the
+driver scans for, the 6551 command-register probe (two values read back,
+DTR dropped by the programmed reset) and control `$10` (16× external clock,
+paced as unconstrained) all answered as the driver expects. Exit codes: 2
+for an unknown flag, probed by the benches before anything else; 3 for a
+missing disk.
+
+The bench then found its first defect, and it was the driver's, not the
+emulator's: the driver lives in language-card bank 2 (cc65's LC image) and
+stored the 512 bytes through `(P_BUF)` from there, while ProDOS's general
+buffer GBUF sits at `$DC00` in **bank 1** — the store never reached it,
+and the remote volume showed up under the floppy's name with the floppy's
+block count. The XOR the driver checks on every block had passed, which is
+what said the bytes crossed the bridge intact. The buffer accesses now
+bounce through page 3 (bank 1 read/write for one byte, back to bank 2),
+and the volume, its files and a copy onto it all came through.
+
+The bench's last case — the host goes away, the volume list must come back
+with a clean I/O error — then killed ProDOS with `RESTART SYSTEM - $01`,
+an unclaimed interrupt. That one is the emulator's cable, not the driver:
+POM2's SSC treats the TCP peer as the carrier (MAME parity — with DTR
+asserted, a peer edge toggles DCD/DSR and interrupts, which is what a
+terminal program wants), while a VDrive cable is a USB-serial or null-modem
+lead with those pins strapped, on which a host going away is only silence.
+`SuperSerialCard::setModemLinesTied(true)` models that cable — no bit moves,
+no interrupt — and the harness ties the lines on its `--ssc` card. Pinned
+in `ssc_acia_smoke`; the bench's six checks pass.
+
 ## 2026-09-08 — The Disk Library lists what is mounted, NeoST-style
 
 NeoST's media pages open with one row per drive — an eject button, then

@@ -584,6 +584,38 @@ void testStatusReadDcdDsr()
     std::printf("  ok: status DCD/DSR mirror connection state\n");
 }
 
+// The cable's modem lines. Default = the modem: with DTR asserted, a peer
+// edge toggles DCD/DSR and interrupts (MAME parity). Tied = a null-modem /
+// USB-serial cable: no bit moves, no interrupt — A2 File Cmd's VDrive
+// driver (command $0B, no interrupt handler) died of ProDOS's "RESTART
+// SYSTEM - $01" when its host closed the socket.
+void testTiedModemLinesSilenceThePeerEdge()
+{
+    {
+        SuperSerialCard ssc(2);
+        ssc.deviceSelectWrite(kCommandAddr, 0x0B);   // DTR on, RX IRQ off
+        ssc.onTransportConnected();
+        (void)ssc.deviceSelectRead(kStatusAddr);     // the connect edge, seen
+        ssc.onTransportDisconnected();
+        assert((ssc.irqState() & 0x03) != 0 && "a modem drop interrupts");
+        const uint8_t s = ssc.deviceSelectRead(kStatusAddr);
+        assert((s & (SR_DCD | SR_DSR)) == (SR_DCD | SR_DSR));
+    }
+    {
+        SuperSerialCard ssc(2);
+        ssc.setModemLinesTied(true);
+        ssc.deviceSelectWrite(kCommandAddr, 0x0B);
+        ssc.onTransportConnected();
+        (void)ssc.deviceSelectRead(kStatusAddr);
+        assert(ssc.irqState() == 0);
+        ssc.onTransportDisconnected();
+        assert(ssc.irqState() == 0 && "a tied cable must raise no DCD/DSR interrupt");
+        const uint8_t s = ssc.deviceSelectRead(kStatusAddr);
+        assert((s & (SR_DCD | SR_DSR)) == 0 && "tied lines read active with no peer");
+    }
+    std::printf("  ok: tied modem lines: a peer edge moves no bit and raises no IRQ\n");
+}
+
 }  // namespace
 
 void testRawModeFlag()
@@ -874,6 +906,7 @@ int main()
     testTelnetIacFsm();
     testTelnetTxEscaping();
     testStatusReadDcdDsr();
+    testTiedModemLinesSilenceThePeerEdge();
     testRawModeFlag();
     testPascalIdBlock();
     testPrinterTapSpool();
