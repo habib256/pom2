@@ -1278,6 +1278,16 @@ void W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
                                data.end());
     } else if (sent.status == W5100IoStatus::WouldBlock) {
         if (isTcp) s.pendingTx = data;
+    } else if (sent.status == W5100IoStatus::Discarded) {
+        // ONE DATAGRAM, not the socket — the mirror of the arm
+        // receiveOnePacketFromSocket already has. sendto() reports
+        // ENETUNREACH / EHOSTUNREACH / ECONNREFUSED (host off the network,
+        // an ICMP report from an earlier datagram) through the same channel
+        // as a genuine fault, and a datagram socket has no connection to
+        // lose: the real chip answers an undeliverable datagram with nothing
+        // at all, never with SOCK_CLOSED. Tearing the socket down here meant
+        // a guest that lost one datagram had to notice and re-OPEN, which no
+        // period UDP client does (bug hunt #8).
     } else {
         clearSocket(i);
     }

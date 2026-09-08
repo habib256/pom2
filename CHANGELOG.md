@@ -5,6 +5,71 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — Bug hunt #8: the rewind ring, the 6522, the MMU and the wire
+
+Four Opus hunters on the runtime the first seven rounds had not reached:
+memory paging and the CPU core, snapshots and the rewind ring, the sound
+chips, serial and network.
+
+**A media write that landed *during* a scrub was never noticed.** The ring
+checks `mediaWriteEpoch()` on the way into a scrub and at every capture,
+but nothing captures while the worker is parked — so an eject or flush of a
+dirty HDV / 3.5" / WOZ from the UI thread, a printed page, or the deferred
+3.5" write-back thread committing between two drags of the timeline slider
+left the next seek free to roll RAM back behind a file that kept the write:
+the exact ProDOS cross-link the "a rewind may never cross an irreversible
+write" rule exists to prevent. Seek, seek-to-cycle and resume consult the
+epoch now. **Un-ticking and re-ticking Record spliced two timelines into
+one**: the earlier fix restarted the delta base but left the frames from
+before the pause in the deque, so ten frames around a five-minute pause read
+as "20 frames · 300 s" and one slider notch teleported the machine five
+minutes back; re-enabling drops the ring. **And every capture re-grew the
+whole snapshot blob under `stateMutex`**: a move-assign handed the scratch
+buffer away and left it at capacity 0, 10.5 MB first-touched per frame with
+128 RamWorks banks; a swap keeps both hot (2.5 → 1.9 ms per capture).
+Pinned in `rewind_transport`, `rewind_roundtrip`, `rewind_delta`. Ruled out
+by the same hunter, exhaustively: every prefix truncation and every
+single-byte corruption of a full snapshot is refused with no hybrid state;
+26 card configurations restore their IRQ line, DMA and `$C800` claims
+byte-for-byte; settings escaping round-trips 3200 hostile keys.
+
+**The 6522, twice.** An ACR write in the two cycles before a T1 underflow
+threw the interrupt 65536 cycles into the future: the re-arm MAME does on
+the switch to continuous mode round-trips the counter through a uint16,
+which is the identity everywhere except at 0 and 1, where it wraps to
+$FFFE / $FFFF — a dropped music tick or a raster frame three PAL frames
+late, once per ~period/2 ACR writes for any driver that re-writes ACR while
+T1 free-runs. Only a stopped T1 is re-armed now, which is what the W65C22
+does. And a batched `advance(n)` that ended exactly on a continuous-mode
+underflow counted one period too many (floor+1 instead of a ceiling),
+swallowing a period and inverting PB7 — `advance(n)` no longer equalled
+n × `advance(1)`, the identity the lazy sync and disk turbo rest on. Pinned
+in `via_t2_timing` and `via_t1_continuous_period`; the AY-3-8910 core, its
+read-back masks, the Mockingboard event ring, the Sound II speech IRQ path,
+the speaker reconstruction and the Phasor decode were probed against MAME
+and found exact.
+
+**Serial and network, four.** A short SCC snapshot blob read 80 bytes past
+its buffer: `restoreSnapshot` budgeted both channels up front and reserved
+nothing for the variable-length SDLC frame, so a truncated `.p2s` or rewind
+blob whose channel-A frame ran to the last byte had channel B read off the
+end (ASan) before the length check could refuse it. One bad-FCS SDLC frame
+poisoned a receive-FIFO slot for the rest of the session — the CRC bit was
+OR'd in and nothing cleared it, so every third clean LocalTalk byte after
+one corrupt frame reported a CRC error and re-locked the FIFO. Telnet BINARY
+never turned back off: the anti-loop guard returned before the state
+update, so a `DONT` / `WONT BINARY` after the option was on left the guest's
+CR going out bare and every ENTER arriving as CR LF, and the WONT / DONT
+answer RFC 1143 requires was never sent. And one undeliverable UDP datagram
+destroyed the guest's socket: `sendto()`'s ENETUNREACH / ECONNREFUSED went
+down the same path as a genuine fault and closed it, where the real W5100
+answers with nothing at all, so a period NTP / TFTP-style client went silent
+for good. Pinned in `scc8530_smoke` (the over-read against a guard page),
+`ssc_acia_smoke`, `w5100_socket_seam`. The loopback fence held against
+every alias tried (`0.0.0.0`, `127.x`, link-local, multicast, class E,
+broadcast), the W5100 and CS8900A survived 1.5 M fuzzed register operations
+under ASan + UBSan, and the telnet transport ran clean under TSan.
+
 ## 2026-09-08 — Bug hunt #7: the agents, the CLI runner and the debugger's listing
 
 Four more hunters, on the runtime the earlier rounds had only parsed.

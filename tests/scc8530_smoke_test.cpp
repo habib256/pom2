@@ -51,6 +51,11 @@
 #include "Scc8530Device.h"
 
 #include <cassert>
+#include <cstring>
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <utility>
@@ -742,6 +747,78 @@ void testSdlcReceive()
     std::printf("  ok: frames need SDLC and an enabled receiver\n");
 }
 
+// Bug hunt #8: one bad-FCS frame poisoned a receive-FIFO slot for the rest
+// of the session. `receiveFrame` OR'd RR1_CRC_FRAMING_ERROR into the slot
+// and nothing ever cleared it — not the next character, not Error Reset —
+// so on the Workstation Card's 3-deep FIFO every third clean byte after one
+// corrupt LocalTalk frame reported a CRC error and re-locked the FIFO.
+void testSdlcCrcErrorDoesNotPoisonTheSlot()
+{
+    Scc8530Device scc;
+    writeReg(scc, A, 4, 0x20);
+    writeReg(scc, A, 3, 0xC1);
+    const uint8_t one[] = { 0xAA };
+    scc.receiveFrame(A, one, 1, /*crcError=*/true);
+    assert(scc.dataRead(A) == 0xAA);
+    assert((scc.peekRr(A, 1) & 0x40) != 0 && "the bad frame reports CRC");
+    scc.controlWrite(A, 0x30);              // WR0 Error Reset
+    assert(scc.rxFifoCount(A) == 0);
+
+    for (uint8_t b : { uint8_t{0x11}, uint8_t{0x22}, uint8_t{0x33}, uint8_t{0x44} }) {
+        scc.receiveByte(A, b);
+        assert(scc.dataRead(A) == b);
+        if ((scc.peekRr(A, 1) & 0x40) != 0 || scc.rxFifoCount(A) != 0) {
+            std::printf("  clean byte $%02X reports RR1=$%02X fifo=%d: the slot "
+                        "kept the CRC error of a frame long gone\n",
+                        b, scc.peekRr(A, 1), scc.rxFifoCount(A));
+            assert(false && "a bad FCS poisoned the FIFO slot");
+        }
+    }
+    std::printf("  ok: a bad FCS does not outlive its own character\n");
+}
+
+// Bug hunt #8 (ASan): `restoreSnapshot` took one up-front budget of
+// 2 x kPerChannel that reserved nothing for either channel's variable-length
+// SDLC frame, so a blob whose channel-A frame ran to the last byte let
+// channel B read its whole fixed part off the end of the buffer before the
+// frame-length check could refuse it. Reached from any truncated .p2s or
+// rewind blob through WorkstationCard::loadSnapshotState. The blob is placed
+// against a PROT_NONE guard page so the over-read is a crash, not a silent
+// read, on every POSIX runner.
+void testSnapshotShortBlobIsRefused()
+{
+    Scc8530Device scc;
+    std::vector<uint8_t> blob;
+    scc.appendSnapshot(blob);
+    // Header 5 + global 15 + channel A's fixed part, whose last two bytes are
+    // its frame length; the frame runs to the end of the blob, so channel B
+    // has nothing left.
+    const size_t lenAt = 5 + 15 + 78;
+    assert(blob.size() > lenAt + 2);
+    const size_t frameLen = blob.size() - (lenAt + 2);
+    blob[lenAt]     = static_cast<uint8_t>(frameLen & 0xFF);
+    blob[lenAt + 1] = static_cast<uint8_t>(frameLen >> 8);
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+    const long pageL = sysconf(_SC_PAGESIZE);
+    const size_t page = pageL > 0 ? static_cast<size_t>(pageL) : 4096;
+    void* region = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    assert(region != MAP_FAILED);
+    assert(mprotect(static_cast<uint8_t*>(region) + page, page, PROT_NONE) == 0);
+    uint8_t* at = static_cast<uint8_t*>(region) + page - blob.size();
+    std::memcpy(at, blob.data(), blob.size());
+    Scc8530Device victim;
+    assert(!victim.restoreSnapshot(at, blob.size()) &&
+           "a blob with no room for channel B was accepted");
+    munmap(region, 2 * page);
+#else
+    Scc8530Device victim;
+    assert(!victim.restoreSnapshot(blob.data(), blob.size()));
+#endif
+    std::printf("  ok: a short snapshot blob is refused without reading past it\n");
+}
+
 void testSnapshotRoundTrip()
 {
     Scc8530Device scc;
@@ -813,6 +890,8 @@ int main()
     testWr9Resets();
     testSdlcFraming();
     testSdlcReceive();
+    testSnapshotShortBlobIsRefused();
+    testSdlcCrcErrorDoesNotPoisonTheSlot();
     testSnapshotRoundTrip();
     std::printf("OK scc8530_smoke\n");
     return 0;

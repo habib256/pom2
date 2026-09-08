@@ -321,6 +321,54 @@ void testLoopbackDatagramIsRefused()
     std::printf("  loopback datagram refused: OK\n");
 }
 
+// ── Case 5b: a discarded datagram is one datagram, not the socket ─────────
+//
+// Bug hunt #8. sendto() reports ENETUNREACH / EHOSTUNREACH / ECONNREFUSED
+// (host off the network, an ICMP report from an earlier datagram) through the
+// same channel as a genuine fault, and the device answered every non-EAGAIN
+// error with clearSocket: Sn_SR to CLOSED, fd gone. A real W5100 answers an
+// undeliverable datagram with nothing at all, so a period UDP client that
+// loops SEND/RECV never re-OPENs and goes silent for good. The receive path
+// has classified this as Discarded since SocketCompat.h trap 7; the send path
+// does now too. A genuine fault still tears the socket down.
+void testDiscardedDatagramKeepsTheSocket()
+{
+    for (const bool genuine : { false, true }) {
+        W5100Device device;
+        auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+        auto* fake = factory.get();
+        device.setSocketFactory(std::move(factory));
+        device.reset(true);
+
+        device.writeValueAt(socketReg(0, kW5100SnMr), kW5100SnMrUdp);
+        device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrOpen);
+        assert(device.socketInfo(0).status == kW5100SnSrUdp);
+        fake->lastSocket->sendResult =
+            W5100SendResult{genuine ? W5100IoStatus::Failed : W5100IoStatus::Discarded, 0};
+
+        // Destination 10.0.2.2:123, one byte staged, SEND.
+        const uint8_t ip[4] = { 10, 0, 2, 2 };
+        for (int b = 0; b < 4; ++b)
+            device.writeValueAt(socketReg(0, static_cast<uint8_t>(kW5100SnDipr0 + b)), ip[b]);
+        device.writeValueAt(socketReg(0, kW5100SnDport0), 0x00);
+        device.writeValueAt(socketReg(0, kW5100SnDport1), 0x7B);
+        device.writeValueAt(kW5100TxBase, 0x2F);
+        device.writeValueAt(socketReg(0, kW5100SnTxWr0), 0x00);
+        device.writeValueAt(socketReg(0, kW5100SnTxWr1), 0x01);
+        device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+
+        if (genuine) {
+            assert(device.socketInfo(0).status == kW5100SnSrClosed &&
+                   "a genuine socket fault must still close the socket");
+        } else {
+            assert(device.socketInfo(0).status == kW5100SnSrUdp &&
+                   "one undeliverable datagram destroyed the guest's UDP socket");
+            assert(device.socketInfo(0).hasHostSocket);
+        }
+    }
+    std::printf("  discarded datagram keeps the socket, a fault closes it: OK\n");
+}
+
 // ── Case 6: the guest may not claim any local port it likes ───────────────
 //
 // Sn_PORT is claimed on the HOST, on every interface. A privileged port would
@@ -520,6 +568,7 @@ int main()
     testMaskedTxPointersSendOnlyTheStagedBytes();
     testLoopbackDestinationIsRefused();
     testLoopbackDatagramIsRefused();
+    testDiscardedDatagramKeepsTheSocket();
     testLocalPortPolicy();
     testListenWarnsOncePerSocket();
     testVirtualDnsNamesAreValidated();

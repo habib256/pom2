@@ -1481,7 +1481,16 @@ port-A input latching on a CA1 edge (ACR.0) are modelled** as of 2026-09-07 —
 *ignoring DDRB* (`6522via.cpp:605-630`), forced low by a T1C-H write
 (`:934`) and high on a one-shot underflow (`:544-549`); the continuous-mode
 toggle handles a lazy sync that crossed several periods at once, which is
-POM2's own problem and not MAME's. `latchPortAOnCa1()` (`Via6522.h:504`,
+POM2's own problem and not MAME's — and since 2026-09-08 (bug hunt #8) that
+collapse counts underflows with a **ceiling**, not floor+1: a slice ending
+exactly on an underflow swallowed a whole period and inverted PB7, breaking
+`advance(n) == n × advance(1)`, the identity the lazy sync and the batched
+disk-turbo path rest on (pinned in `via_t1_continuous_period`). Same pass:
+**an ACR write leaves a running T1 alone**. MAME's re-arm on the switch to
+continuous round-trips the counter through a uint16, which is the identity
+except in the two cycles before an underflow, where 0/1 wrap to $FFFE/$FFFF
+and the pending interrupt moves 65536 cycles out; only a *stopped* T1 is
+re-armed now, which is also the W65C22's own behaviour (`via_t2_timing`). `latchPortAOnCa1()` (`Via6522.h:504`,
 `6522via.cpp:1107-1110`) runs *before* IFR.CA1 is raised, and `latchedPortA()`
 is what a read returns. The **complete** not-modelled list lives at
 `Via6522.h:30-44` and is now honest about what is missing and why: the SR
@@ -3339,6 +3348,21 @@ not exist yet, because the bump is at the leaf. **Non-WOZ Disk II nibble writes
 deliberately do not bump**: those *are* captured, and a rewind is expected to
 undo them. Every coordinator mount/eject clears the ring for the same reason —
 a host-side media swap makes the recorded timeline a different machine.
+**Since 2026-09-08 (bug hunt #8) the seek and the resume consult the epoch
+too**: `rewindBeginScrub` looked on the way in and `capture` on the way
+out, but nothing captures while the worker is parked, so a UI-thread eject
+or flush, a printed page or the deferred 3.5" write-back thread landing
+*between two slider drags* was invisible and the next `rewindSeek` rolled
+RAM back behind a file that kept the write. `rewindSeek`,
+`rewindSeekToCycle` and `rewindEndAndResume` all call `noteMediaWrite()`
+first (pinned: `rewind_transport` case 11). Two more from the same pass:
+**re-enabling Record drops the ring** — restarting only the delta base
+left the old frames in the deque with no hole marker, so the panel's span
+read across the pause and one slider notch jumped its whole length
+(`rewind_roundtrip`); and `capture` **swaps** the scratch and the running
+blob instead of move-assigning, which had left the scratch at capacity 0
+and re-grew the whole blob under `stateMutex` every frame — 2.5 → 1.9 ms
+per capture at 128 RamWorks banks (`rewind_delta`).
 
 **What else the 2026-09-07 pass added to the snapshot.** Sixteen fields were
 restoring CPU + RAM against devices left on the abandoned timeline:
@@ -3945,6 +3969,17 @@ against MAME `bus/a2bus/a2ssc.cpp`:
 **Declined**: BREAK and the RTS line-condition modes. Both are conditions of
 a physical line — a TCP stream cannot carry a break or a modem-control
 transition, and inventing one would be a POM2 protocol, not a 6551.
+
+**BINARY turns back off** *(2026-09-08, bug hunt #8)*. The "never answer a
+refusal we already agree with" guard in `answerTelnetOption` returned
+*before* the state update, so a `DONT` / `WONT BINARY` from the peer after
+the option had been enabled left `telnetBinaryTx_` / `telnetBinaryRx_` set
+for the life of the connection: the guest's CR went out bare instead of
+`CR NUL`, and every ENTER from the terminal reached the guest as CR plus a
+spurious LF. The update runs first, and a refusal that actually changes
+state is answered (`WONT` / `DONT`, RFC 1143 § 7) while a cold one stays
+silent. Pinned in `ssc_acia_smoke`.
+
 
 ### ProDOS clock card (slot 4)
 
@@ -4659,6 +4694,22 @@ flat test mode and shims the I/O page by decoding effective addresses around
 each step — deliberately not a card emulation, and documented as disposable in
 the test's header. → [printer plan 2 § 5.2](docs/printer_plan_2.md#52-the-memory-map-the-dump-implies)
 
+**Two receive-side fixes** *(2026-09-08, bug hunt #8)*. A bad-FCS SDLC frame
+OR'd `RR1_CRC_FRAMING_ERROR` into its FIFO slot's error byte and nothing
+ever cleared it — not the next character, not Error Reset — so on the
+Workstation Card's 3-deep FIFO every third clean byte after one corrupt
+LocalTalk frame reported a CRC error and re-locked the FIFO. MAME rewrites
+framing/parity per byte in `rcv_complete`; POM2's byte seam now clears CRC
+along with OVERRUN when a character lands in the slot. And
+`restoreSnapshot` took one up-front budget of 2 × the fixed per-channel
+size that reserved nothing for the variable-length SDLC `txFrame`, so a
+blob whose channel-A frame ran to the last byte let channel B read its
+80-byte fixed part off the end (ASan; reachable from any truncated `.p2s`
+through `WorkstationCard::loadSnapshotState`). The budget is per channel
+now. Both pinned in `scc8530_smoke`, the second against a `PROT_NONE`
+guard page so the over-read is a crash on every POSIX runner.
+
+
 ### FujiNet (SP-over-SLIP relay)
 
 **The built-in `N:` is inside the loopback perimeter** *(2026-09-08, bug
@@ -5364,6 +5415,20 @@ the no-backend claim above).
 TCP/UDP paths compile out and those modes stay `CLOSED` (same treatment
 `SuperSerialCard` gives its telnet listener). The register model, the
 rings and MACRAW/IPRAW are unaffected.
+
+**A discarded datagram is one datagram, not the socket** *(2026-09-08, bug
+hunt #8)*. `sendto()` reports `ENETUNREACH` / `EHOSTUNREACH` /
+`ECONNREFUSED` (host off the network, an ICMP report from an earlier
+datagram) through the same channel as a genuine fault, and the SEND
+command answered every non-EAGAIN error with `clearSocket` — `Sn_SR` to
+`SOCK_CLOSED`, fd gone. A real W5100 answers an undeliverable datagram with
+nothing at all, so a period UDP client that loops SEND/RECV never re-OPENs
+and goes silent for good. `W5100HostSocket::send` now classifies those
+errnos as `Discarded` on a UDP socket (the receive path has since
+SocketCompat.h trap 7) and the device keeps the socket; `Failed` still
+tears it down. Pinned in `w5100_socket_seam` at the device level; the host
+errno half is unpinned because no unprivileged probe could raise one.
+
 
 ### Printer card (parallel, synthetic)
 

@@ -468,6 +468,61 @@ void testTelnetBinaryHonoured()
     std::printf("  telnet BINARY honoured after negotiation OK\n");
 }
 
+// Bug hunt #8: BINARY never turned back off. The "never answer a refusal we
+// already agree with" guard returned BEFORE the state update, so a DONT /
+// WONT BINARY from the peer after the option had been enabled left both
+// flags set for the life of the connection: the guest's CR went out bare
+// instead of CR NUL, and every ENTER from the terminal reached the guest as
+// CR followed by a spurious LF. RFC 1143 §7 also requires the WONT / DONT
+// answer for a refusal that actually changes state.
+void testTelnetBinaryTurnsBackOff()
+{
+    SuperSerialCard ssc(2);
+    ssc.resetTelnet();
+    ssc.deviceSelectWrite(kCommandAddr, 0x01);   // DTR on
+    auto rx = [&](std::vector<uint8_t> in) {
+        const size_t m = ssc.processTransportTextRx(in.data(), in.size());
+        in.resize(m);
+        return in;
+    };
+    auto guestCr = [&]() {
+        std::vector<uint8_t> out;
+        (void)ssc.drainTransportTx(out);         // flush whatever is queued
+        out.clear();
+        ssc.deviceSelectWrite(kRdrAddr, 0x0D);   // guest transmits CR
+        (void)ssc.drainTransportTx(out);
+        return out;
+    };
+
+    // Peer: DO BINARY (we WILL) and WILL BINARY (we DO).
+    assert(rx({0xFF, 0xFD, 0x00, 0xFF, 0xFB, 0x00}).empty());
+    (void)ssc.pendingTelnetReply();
+    assert((guestCr() == std::vector<uint8_t>{0x0D}) && "BINARY: bare CR");
+
+    // Peer turns our direction off: DONT BINARY → we answer WONT and go back
+    // to NVT CR NUL.
+    assert(rx({0xFF, 0xFE, 0x00}).empty());
+    assert((ssc.pendingTelnetReply() == std::vector<uint8_t>{0xFF, 0xFC, 0x00}) &&
+           "no IAC WONT BINARY answer to DONT BINARY");
+    assert((guestCr() == std::vector<uint8_t>{0x0D, 0x00}) &&
+           "NVT CR NUL not restored after DONT BINARY");
+
+    // Peer turns its direction off: WONT BINARY → we answer DONT and the RX
+    // side collapses CR LF again.
+    assert(rx({0xFF, 0xFC, 0x00}).empty());
+    assert((ssc.pendingTelnetReply() == std::vector<uint8_t>{0xFF, 0xFE, 0x00}) &&
+           "no IAC DONT BINARY answer to WONT BINARY");
+    assert((rx({'A', 0x0D, 0x0A, 'B'}) == std::vector<uint8_t>{'A', 0x0D, 'B'}) &&
+           "NVT CR LF collapse not restored after WONT BINARY");
+
+    // Control: a cold refusal of an option that is already off stays silent
+    // (the option loop RFC 854 warns about).
+    ssc.resetTelnet();
+    assert(rx({0xFF, 0xFE, 0x00, 0xFF, 0xFC, 0x00}).empty());
+    assert(ssc.pendingTelnetReply().empty());
+    std::printf("  ok: telnet BINARY turns back off (WONT/DONT answered)\n");
+}
+
 void testTelnetIacFsm()
 {
     // processTelnetRx — persistent IAC state machine. Pins: variable-length
@@ -815,6 +870,7 @@ int main()
     testCommandRegWriteClearsPendingRxIrq();
     testTelnetLineEndingNormalisation();
     testTelnetBinaryHonoured();
+    testTelnetBinaryTurnsBackOff();
     testTelnetIacFsm();
     testTelnetTxEscaping();
     testStatusReadDcdDsr();

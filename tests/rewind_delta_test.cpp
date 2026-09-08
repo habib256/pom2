@@ -383,6 +383,24 @@ int main()
         }
     }
 
+    // ── The serialize scratch stays hot between captures ─────────────────
+    // (bug hunt #8.) `capture` used to move-assign the scratch into the
+    // running blob, which freed the old blob and left the scratch at capacity
+    // 0 — the next capture re-grew and first-touched the whole blob (10.5 MB
+    // with 128 RamWorks banks) under stateMutex, every frame. Swap keeps both
+    // buffers' capacity.
+    {
+        pom2::RewindBuffer rb(100);
+        rb.setEnabled(true);
+        for (int k = 0; k < 3; ++k) {
+            setState(cpu, mem, tagOf(k), cycOf(k));
+            rb.capture(cpu, mem);
+        }
+        assert(rb.scratchCapacity() >= rb.infoAt(0).bytes &&
+               "the capture scratch was handed away — the next capture "
+               "re-grows the whole blob under the lock");
+    }
+
     std::printf("Rewind delta codec: OK (keyframe/delta exact + evict + truncate + "
                 "budget + chunked-scan round-trip + bounded eviction)\n");
     return 0;

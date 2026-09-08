@@ -448,11 +448,21 @@ struct Via6522
             // continuous — no more IRQs until the next T1CH write. Same
             // +2 pre-bias protocol as the T1CH/T2CH cases: the fire then
             // lands at counter1 + IFR_DELAY(3).
-            const int32_t counter1 =
-                (t1FireArmed ? t1Counter - 2 : t1Counter) & 0xFFFF;
+            //
+            // Only a STOPPED T1 is re-armed. For a RUNNING one the round trip
+            // through MAME's uint16 `get_counter1_value()` (`counter -
+            // IFR_DELAY`, then `+ IFR_DELAY` again) is the identity everywhere
+            // EXCEPT the two cycles before an underflow, where `0`/`1` wrap to
+            // `0xFFFE`/`0xFFFF` and shove the pending interrupt 65536 cycles
+            // (64 ms) into the future — a dropped music tick or a lost raster
+            // frame, once per ~period/2 ACR writes (bug hunt #8). Leaving a
+            // live counter alone is also what the silicon does: an ACR write
+            // does not reload T1 (W65C22 datasheet), and AppleWin's SY6522
+            // stores the byte and nothing else. MAME shares the wrap; hardware
+            // does not.
             acr = v;
-            if (t1Continuous()) {
-                t1Counter   = counter1 + 2;
+            if (t1Continuous() && !t1FireArmed) {
+                t1Counter   = (t1Counter & 0xFFFF) + 2;
                 t1FireArmed = true;
             }
             break;
@@ -559,7 +569,14 @@ struct Via6522
                 // terminates for any latch value.
                 const int64_t period  = static_cast<int64_t>(t1Latch) + 2;
                 const int64_t deficit = -static_cast<int64_t>(t1Counter);   // > 0
-                const int64_t periods = deficit / period + 1;
+                // CEILING, not floor+1. When the slice ends exactly ON an
+                // underflow (`deficit % period == 0`) floor+1 counted one
+                // period too many: it swallowed a whole period (the next T1
+                // interrupt landed one period late) and flipped the PB7
+                // square wave's phase, so `advance(n)` stopped agreeing with
+                // n x `advance(1)` — the invariant the lazy sync and the
+                // batched disk-turbo path both depend on (bug hunt #8).
+                const int64_t periods = (deficit + period - 1) / period;
                 t1Counter = static_cast<int32_t>(
                     static_cast<int64_t>(t1Counter) + periods * period);
                 // MAME toggles PB7 once per underflow, but only

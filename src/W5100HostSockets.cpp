@@ -191,9 +191,18 @@ public:
             return out;
         }
         const int e = lastSocketError();
-        out.status = (errWouldBlock(e) || errInterrupted(e))
-                         ? W5100IoStatus::WouldBlock
-                         : W5100IoStatus::Failed;
+        if (errWouldBlock(e) || errInterrupted(e)) {
+            out.status = W5100IoStatus::WouldBlock;
+        } else if (kind_ == W5100SocketKind::Udp && errDatagramDiscard(e)) {
+            // The classification the RECEIVE path has had since SocketCompat.h
+            // trap 7, applied to the other direction. On a datagram socket
+            // these errnos describe the datagram (no route right now, an ICMP
+            // port-unreachable from a previous one), not the socket
+            // (bug hunt #8).
+            out.status = W5100IoStatus::Discarded;
+        } else {
+            out.status = W5100IoStatus::Failed;
+        }
         return out;
     }
 

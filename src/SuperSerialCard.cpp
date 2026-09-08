@@ -175,21 +175,37 @@ void SuperSerialCard::answerTelnetOption(uint8_t command, uint8_t option)
     default: return;
     }
 
-    // Never answer a REFUSAL we already agree with — DONT/WONT are the state
-    // both ends are already in, and echoing them starts an option loop that
-    // RFC 854 §"option negotiation" specifically warns about.
-    if ((command == kDont && answer == kWont) ||
-        (command == kWont && answer == kDont))
-        return;
-
     // Record what we just agreed to. `WILL BINARY` is our OWN direction
     // (guest→peer); `DO BINARY` is theirs (peer→guest).
+    //
+    // BEFORE the loop guard below, not after: the guard RETURNS, and with the
+    // update behind it a `DONT BINARY` / `WONT BINARY` that switches an
+    // ENABLED option back off never reached this block. The flags stayed set
+    // for the rest of the session, so the TX side kept omitting the RFC 854
+    // CR NUL and the RX side kept handing the guest the LF of every CR LF
+    // (bug hunt #8).
+    const bool wasEnabled =
+        (option == kOptBinary) &&
+        ((command == kDont && telnetBinaryTx_) ||
+         (command == kWont && telnetBinaryRx_));
     if (option == kOptBinary) {
         if (answer == kWill) telnetBinaryTx_ = true;
         if (answer == kDo)   telnetBinaryRx_ = true;
         if (answer == kWont) telnetBinaryTx_ = false;
         if (answer == kDont) telnetBinaryRx_ = false;
     }
+
+    // Never answer a REFUSAL we already agree with — DONT/WONT for an option
+    // that is already OFF is the state both ends are in, and echoing it starts
+    // the option loop RFC 854 §"option negotiation" warns about. A DONT/WONT
+    // that actually turned an option off is a state CHANGE, and RFC 1143 §7
+    // ("Q Method", state YES + DONT → send WONT, go to NO) requires the
+    // answer for it. SGA is not tracked because nothing in this card behaves
+    // differently under it.
+    if (!wasEnabled &&
+        ((command == kDont && answer == kWont) ||
+         (command == kWont && answer == kDont)))
+        return;
 
     std::lock_guard<std::mutex> lk(bufferMtx);
     // Straight into the raw reply queue, not txBuf: these bytes are telnet

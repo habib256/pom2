@@ -189,6 +189,42 @@ int main()
         assert(v.read(pom2::Via6522::VIA_ORA) == 0x44);
     }
 
+    // ── advance(n) == n × advance(1) ─────────────────────────────────────
+    // Bug hunt #8: the continuous-mode reload collapse counted underflows
+    // with floor+1, so a slice that ended exactly ON an underflow swallowed a
+    // whole period (the next interrupt a period late) and inverted PB7. The
+    // lazy sync and the batched disk-turbo path both rest on this identity.
+    {
+        struct Case { uint8_t acr; int latch; int total; };
+        const Case cases[] = {
+            {0xC0, 36, 15618},    // 15618 = 411 x 38, exactly on an underflow
+            {0xC0, 335, 26623},   // 26623 = 79 x 337
+            {0x40, 100, 1020},    // 1020 = 10 x 102
+            {0x40, 7, 900},       // 900 = 100 x 9
+            {0xC0, 50, 1234},     // not a multiple: the common case
+        };
+        for (const Case& c : cases) {
+            pom2::Via6522 single, batch;
+            for (pom2::Via6522* v : {&single, &batch}) {
+                v->write(pom2::Via6522::VIA_ACR, c.acr);
+                v->write(pom2::Via6522::VIA_T1LL, static_cast<uint8_t>(c.latch & 0xFF));
+                v->write(pom2::Via6522::VIA_T1CH, static_cast<uint8_t>(c.latch >> 8));
+            }
+            for (int i = 0; i < c.total; ++i) single.advance(1);
+            batch.advance(c.total);
+            if (single.t1Counter != batch.t1Counter || single.t1Pb7 != batch.t1Pb7 ||
+                single.t1FireArmed != batch.t1FireArmed || single.ifr != batch.ifr) {
+                std::printf("  acr=$%02X latch=%d total=%d: single t1=%d pb7=%d "
+                            "armed=%d ifr=%02X / batch t1=%d pb7=%d armed=%d ifr=%02X\n",
+                            c.acr, c.latch, c.total, single.t1Counter, single.t1Pb7,
+                            single.t1FireArmed, single.ifr, batch.t1Counter,
+                            batch.t1Pb7, batch.t1FireArmed, batch.ifr);
+                assert(false && "advance(n) diverged from n x advance(1)");
+            }
+        }
+        std::printf("  advance(n) == n x advance(1) on exact-multiple slices: OK\n");
+    }
+
     std::printf("via_t1_continuous_period OK (PB7 + PA latch pinned)\n");
     return 0;
 }

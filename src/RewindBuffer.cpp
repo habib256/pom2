@@ -155,8 +155,16 @@ void RewindBuffer::setEnabled(bool on)
     // KEYFRAME rather than a delta against a base from before the pause —
     // see the header for what that splice did to the timeline.
     if (on && !was) {
-        sinceKeyframe_ = 0;
-        prevBlob_.clear();
+        // DROP the old frames, don't just restart the delta chain. Resetting
+        // the base fixed the corruption half of the splice; the frames from
+        // before the pause stayed in the deque, and the ring has no way to
+        // say "there is a hole here": the panel reads `newest - oldest` as
+        // the span (10 recorded frames over a 5-minute pause read as
+        // "20 frames · 300.3 s") and one notch left on the timeline slider
+        // teleported the machine back by the whole length of the pause. A
+        // new timeline is a new timeline — clear() also does the two
+        // assignments this replaces (bug hunt #8).
+        clear();
     }
 }
 
@@ -228,7 +236,15 @@ void RewindBuffer::capture(M6502& cpu, Memory& mem)
 
     totalBytes_ += f.data.size();
     frames_.push_back(std::move(f));
-    prevBlob_ = std::move(captureScratch_);   // running full state for next delta
+    // SWAP, not move-assign: a move-assign hands captureScratch_'s buffer to
+    // prevBlob_ and frees prevBlob_'s, so captureScratch_ starts the NEXT
+    // capture at capacity 0 and the serializer re-grows and first-touches the
+    // whole blob (10.5 MB with ramworks_banks = 128) every frame, under
+    // stateMutex — the defect MachineSnapshot.cpp fixes one level down for
+    // mexScratch, re-introduced here. Measured: 2.5 -> 1.9 ms per capture at
+    // 128 banks (bug hunt #8). Swapping keeps both buffers' capacity hot; the
+    // writer clears the sink anyway, so the stale bytes are never read.
+    std::swap(prevBlob_, captureScratch_);    // running full state for next delta
     evictToCap();
 }
 

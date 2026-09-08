@@ -80,7 +80,11 @@ public:
     /// used to pass and the resumed frame was stored as a delta against a base
     /// minutes old, spliced straight onto the stale tail: the timeline claimed
     /// a contiguous history, and scrubbing one frame left across the join
-    /// teleported the machine back to the pause.
+    /// teleported the machine back to the pause. Since 2026-09-08 re-enabling
+    /// DROPS the ring outright: restarting only the delta base left the old
+    /// frames in the deque with no hole marker, so the panel's span read
+    /// `newest - oldest` across the pause and one slider notch still jumped
+    /// the length of it.
     void setEnabled(bool on);
     bool enabled() const     { return enabled_.load(); }
 
@@ -123,6 +127,10 @@ public:
     size_t size()  const { return frames_.size(); }
     bool   empty() const { return frames_.empty(); }
     size_t bytes() const { return totalBytes_; }   ///< total payload held
+    /// Capacity of the serialize scratch between captures — a test seam. It
+    /// must stay hot: a capture that starts it at 0 re-grows the whole blob
+    /// under stateMutex every frame.
+    size_t scratchCapacity() const { return captureScratch_.capacity(); }
     size_t keyframeCount() const;
 
     FrameInfo infoAt(size_t index) const;

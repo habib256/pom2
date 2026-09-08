@@ -306,8 +306,45 @@ int main()
         assert(ringSize(e) == 0 && "the ring was not dropped at the scrub");
     }
 
+    // ── (11) A media write DURING a scrub is caught at the seek ───────────
+    // (bug hunt #8.) `rewindBeginScrub` checks the epoch on the way in and
+    // `capture` on the way out, but while the worker is parked nothing
+    // captures. A UI-thread eject or flush of a dirty HDV / 3.5" / WOZ, a
+    // printed page, or the deferred 3.5" write-back thread can all bump the
+    // epoch between two drags of the timeline slider; the next seek then
+    // rolled RAM back behind a file that keeps the write.
+    {
+        EmulationController e;
+        {
+            std::lock_guard<std::mutex> lk(e.stateMutex());
+            Memory& mem = e.memory();
+            mem.memWrite(0x0800, 0x4C);
+            mem.memWrite(0x0801, 0x00);
+            mem.memWrite(0x0802, 0x08);
+            e.cpu().setProgramCounter(0x0800);
+        }
+        e.rewind().setEnabled(true);
+        e.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 20; ++i) e.tickFrame();
+        assert(ringSize(e) >= 15);
+        assert(e.rewindBeginScrub());
+        const uint64_t live = liveCycle(e);
+
+        pom2::noteMediaWrite();               // lands mid-scrub
+
+        assert(e.rewindSeek(0) == pom2::RewindBuffer::kNoFrame &&
+               "a seek rolled the machine back across a media write that "
+               "landed during the scrub");
+        assert(ringSize(e) == 0 && "the ring was not dropped at the seek");
+        assert(liveCycle(e) == live && "the live machine moved");
+        e.rewindEndAndResume(0);
+        assert(liveCycle(e) >= live && "resume rolled the machine back");
+        assert(e.getMode() == EmulationController::Mode::Running);
+    }
+
     std::printf("Rewind transport: OK (park + frozen + seek + seekToCycle + "
                 "resume + bare-resume + tickFrame + media-write clear + "
-                "empty-ring scrub + scrub-time media epoch)\n");
+                "empty-ring scrub + scrub-time media epoch + mid-scrub "
+                "media epoch)\n");
     return 0;
 }

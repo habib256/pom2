@@ -179,8 +179,41 @@ void testOraAccessClearsCa1()
 }
 }  // namespace
 
+// Bug hunt #8: an ACR write in the two cycles before a T1 underflow used to
+// throw the interrupt 65536 cycles into the future. The re-arm un-biased a
+// RUNNING counter by 2 and masked to 16 bits, so counters 0 and 1 wrapped to
+// $FFFE / $FFFF and the fire landed 64 ms late — once per ~period/2 ACR
+// writes for any driver that re-writes ACR while T1 free-runs. Whatever cycle
+// the ACR write lands on, and whether T1 started one-shot or continuous, the
+// first IFR.T1 must still latch at N+3.
+void testAcrWriteNeverMovesALiveT1()
+{
+    const int N = 100;
+    for (const uint8_t start : {uint8_t{0x00}, uint8_t{0x40}}) {
+        for (int k = 1; k <= N + 6; ++k) {
+            Via6522 via;
+            via.write(ACR, start);
+            via.write(T1LL, N & 0xFF);
+            via.write(T1CH, (N >> 8) & 0xFF);
+            int fired = -1;
+            for (int c = 1; c <= N + 8; ++c) {
+                if (c == k) via.write(ACR, 0x40);
+                via.advance(1);
+                if (via.ifr & IFR_T1) { fired = c; break; }
+            }
+            if (fired != N + 3) {
+                std::printf("  ACR<-$40 at cycle %d (start ACR=$%02X): IFR.T1 "
+                            "at %d, want %d\n", k, start, fired, N + 3);
+                assert(false && "an ACR write moved a live T1's underflow");
+            }
+        }
+    }
+    std::printf("OK acr write never moves a live T1\n");
+}
+
 int main()
 {
+    testAcrWriteNeverMovesALiveT1();
     for (int n : {0, 1, 10, 100, 1000, 7479, 0x3FFF}) {
         const int c = t2FireCycle(n);
         std::printf("  T2=%d → IFR.T2 at cycle %d (MAME N+IFR_DELAY = %d)\n",

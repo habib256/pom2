@@ -1027,6 +1027,14 @@ bool EmulationController::rewindBeginScrub()
 size_t EmulationController::rewindSeek(size_t index)
 {
     std::lock_guard<std::mutex> lk(stateMtx);
+    // A rewind may never CROSS an irreversible write (CLAUDE.md). The ring's
+    // capture point cannot see one that lands DURING a scrub, because nothing
+    // is capturing while the worker is parked, and `rewindBeginScrub` only
+    // looked on the way IN. A UI-thread eject or flush, a printed page, or the
+    // deferred 3.5" write-back thread can all bump the epoch between two drags
+    // of the timeline slider — and the seek then rolled RAM back behind a file
+    // that keeps the write (bug hunt #8).
+    noteMediaWrite();
     if (rewind_.empty()) return pom2::RewindBuffer::kNoFrame;
     const size_t clamped = std::min(index, rewind_.size() - 1);
     if (!rewind_.restore(clamped, processor, mem))
@@ -1039,6 +1047,7 @@ size_t EmulationController::rewindSeek(size_t index)
 size_t EmulationController::rewindSeekToCycle(uint64_t cycle)
 {
     std::lock_guard<std::mutex> lk(stateMtx);
+    noteMediaWrite();   // same mid-scrub epoch check as rewindSeek
     const size_t got = rewind_.restoreToCycle(cycle, processor, mem);
     if (got != pom2::RewindBuffer::kNoFrame) {
         scrubIndex_.store(got);
@@ -1051,6 +1060,10 @@ void EmulationController::rewindEndAndResume(size_t index)
 {
     {
         std::lock_guard<std::mutex> lk(stateMtx);
+        // Same mid-scrub epoch check as rewindSeek: a write that landed while
+        // the user was scrubbing drops the ring here, so "resume here" resumes
+        // the LIVE machine instead of rolling it back across the write.
+        noteMediaWrite();
         if (index < rewind_.size()) {
             // Make the live machine exactly the cursor frame, then drop the
             // abandoned future so new captures append from here.

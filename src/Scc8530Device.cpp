@@ -959,10 +959,22 @@ void Scc8530Device::receiveData(int index, uint8_t data)
     if (c.rxFifoWp + 1 == c.rxFifoRp ||
         ((c.rxFifoWp + 1 == Channel::kRxFifoSz) && (c.rxFifoRp == 0))) {
         // Overrun: store the character but do not step the FIFO.
-        c.rxError[c.rxFifoWp] |= RR1_RX_OVERRUN_ERROR;
+        c.rxError[c.rxFifoWp] =
+            static_cast<uint8_t>((c.rxError[c.rxFifoWp] & ~RR1_CRC_FRAMING_ERROR) |
+                                 RR1_RX_OVERRUN_ERROR);
         c.rxData[c.rxFifoWp] = data;
     } else {
-        c.rxError[c.rxFifoWp] &= static_cast<uint8_t>(~RR1_RX_OVERRUN_ERROR);
+        // CRC/framing goes out with OVERRUN, and for the same reason: the
+        // slot's error byte describes the character now IN it. MAME rewrites
+        // framing/parity for every byte in rcv_complete; POM2's byte-level
+        // seam does not, so `receiveFrame`'s `|= RR1_CRC_FRAMING_ERROR` on a
+        // bad-FCS SDLC frame was a one-way latch — nothing else in the file
+        // ever clears rxError[], Error Reset included. One corrupt LocalTalk
+        // frame therefore made every kRxFifoSz'th clean byte after it report
+        // a CRC error and re-lock the FIFO, for the rest of the session
+        // (bug hunt #8).
+        c.rxError[c.rxFifoWp] &= static_cast<uint8_t>(
+            ~(RR1_RX_OVERRUN_ERROR | RR1_CRC_FRAMING_ERROR));
         c.rxData[c.rxFifoWp] = data;
         c.rxEof[c.rxFifoWp] = false;
         c.rxFifoWp++;
@@ -1583,7 +1595,7 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
     // 16-bit SDLC frame length and that many bytes, checked as they come.
     constexpr std::size_t kPerChannel =
         17 + 6 + 3 + 2 + 3 + 6 + 2 + 16 + 1 + 2 + 8 + 4 + 8 + 2;
-    if (!r.has(3 + 6 + 6 + 2 * kPerChannel)) return false;
+    if (!r.has(3 + 6 + 6)) return false;
 
     wr9_        = r.u8();
     wr0PtrBits_ = r.u8();
@@ -1592,6 +1604,15 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
     for (int& v : intSource_)     v = r.u8();
 
     for (Channel& c : ch_) {
+        // The budget is per channel and taken HERE, not once up front. Each
+        // channel's fixed part is followed by a variable-length SDLC frame
+        // that the up-front sum could not account for, so a blob whose
+        // channel-A frame ran to the last byte left channel B reading its
+        // whole 80-byte fixed part (and its 2 length bytes) off the end of
+        // the buffer — byteio::Reader's u8/u16/u32/u64 are unchecked by
+        // contract — before the frame-length check could refuse the blob
+        // (bug hunt #8, ASan).
+        if (!r.has(kPerChannel)) return false;
         c.rr0 = r.u8(); c.rr1 = r.u8(); c.rr2 = r.u8(); c.rr3 = r.u8();
         c.rr10 = r.u8();
         c.wr0 = r.u8(); c.wr1 = r.u8(); c.wr2 = r.u8(); c.wr3 = r.u8();

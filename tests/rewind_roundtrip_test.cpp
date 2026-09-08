@@ -324,7 +324,40 @@ int main()
         checkState(cpu, mem, 7, 500);
     }
 
+    // ── Re-enabling Record starts an EMPTY timeline ───────────────────────
+    // (bug hunt #8.) The splice fix above restarted only the delta base; the
+    // frames from before the pause stayed in the deque. Ten frames, a
+    // five-minute pause, ten more: the panel read "20 frames · 300 s" and one
+    // slider notch across the join jumped the machine five minutes back.
+    {
+        pom2::RewindBuffer rb;
+        rb.setEnabled(true);
+        rb.setKeyframeInterval(4);
+        const uint64_t frame = 20313;
+        for (uint8_t i = 0; i < 10; ++i) {
+            setState(cpu, mem, static_cast<uint8_t>(20 + i), (i + 1) * frame);
+            rb.capture(cpu, mem);
+        }
+        rb.setEnabled(false);
+        const uint64_t resumeAt = 10 * frame + 300ull * 50 * frame;   // 300 s later
+        rb.setEnabled(true);
+        for (uint8_t i = 0; i < 10; ++i) {
+            setState(cpu, mem, static_cast<uint8_t>(40 + i), resumeAt + i * frame);
+            rb.capture(cpu, mem);
+        }
+        assert(rb.size() == 10 &&
+               "frames from before the Record pause survived into the new "
+               "timeline");
+        for (size_t i = 1; i < rb.size(); ++i)
+            assert(rb.infoAt(i).cycle - rb.infoAt(i - 1).cycle <= frame &&
+                   "the ring presents two timelines as one history");
+        assert(rb.infoAt(0).keyframe);
+        scramble(cpu, mem);
+        assert(rb.restore(0, cpu, mem));
+        checkState(cpu, mem, 40, resumeAt);
+    }
+
     std::printf("Rewind ring buffer: OK (round-trip + eviction + seek + "
-                "abandoned-future drop)\n");
+                "abandoned-future drop + record re-enable)\n");
     return 0;
 }
