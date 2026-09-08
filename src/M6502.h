@@ -376,6 +376,9 @@ private :
     /// once before this fix). The reset-arm of $C070 paddle latch
     /// similarly fires twice for `INC $C070`, etc.
     void rmwSecondBusCycle(uint16_t addr, uint8_t origValue);
+    /// NMOS indexed-access dummy READ at the un-fixed address (low byte
+    /// indexed, high byte not yet corrected). See the definition.
+    void nmosIndexDummyRead(uint16_t base, uint16_t indexed, bool always);
 
     struct OpcodeEntry {
         void (M6502::*addrMode)();

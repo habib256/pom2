@@ -70,6 +70,22 @@ every alias tried (`0.0.0.0`, `127.x`, link-local, multicast, class E,
 broadcast), the W5100 and CS8900A survived 1.5 M fuzzed register operations
 under ASan + UBSan, and the telnet transport ran clean under TSan.
 
+**The MMU and the core, two.** A **write** to `$C3xx` with INTCXROM on
+never latched INTC8ROM: the write path's INTCXROM branch returned before
+the `$C3xx` case the read path has, so `STA $C3xx` followed by CLRCXROM
+and a jump into `$C800-$CFFF` executed the slot bus instead of the
+internal 80-column firmware — the only read/write asymmetry in the whole
+`$C100-$CFFF` window. And **NMOS indexed accesses never issued their
+dummy read**: a 6502 reads the un-fixed address (low byte indexed, high
+byte not yet corrected) on every indexed store and on a page-crossing
+indexed load, and on an Apple II that address is often a soft switch —
+`STA $C030,X` clicks the speaker twice on a ][ / ][+ / unenhanced //e, and
+POM2 clicked once; the cycle count was right, so no timing test could see
+it. The 65C02 re-reads the operand byte instead and is untouched. Pinned in
+`iie_c8xx_smoke` and the new `cpu_nmos_index_dummy_read`; the full Tom
+Harte corpus (151 documented + 105 undocumented NMOS opcodes, 254 WDC
+65C02) still passes, and `pom2_bench` measures no cost.
+
 ## 2026-09-08 — Bug hunt #7: the agents, the CLI runner and the debugger's listing
 
 Four more hunters, on the runtime the earlier rounds had only parsed.

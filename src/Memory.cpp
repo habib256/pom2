@@ -2552,6 +2552,18 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
              (addr >= 0xC800 && addr <= 0xC8FF))) {
             noSlotClock_->interceptWrite(addr);
         }
+        // INTC8ROM latches on ANY $C3xx ACCESS while SLOTC3ROM=off, and the
+        // write half of that access has to latch it too: the flip-flop is
+        // clocked by the address decode, not by R/W (UTAIIe 5-28; the read
+        // side says the same and does it). This branch used to return
+        // before reaching the $C3xx case below, so `STA $C3xx` with INTCXROM
+        // on left INTC8ROM clear — and a later CLRCXROM + JMP into
+        // $C800-$CFFF then executed the slot bus instead of the internal
+        // 80-column firmware (bug hunt #8).
+        if (addr >= 0xC300 && addr <= 0xC3FF &&
+            !(iieMemMode & MF_SLOTC3ROM)) {
+            intC8Rom = true;
+        }
         // //c-class internal ROM is read-only: writes are absorbed,
         // except the //c+ MIG windows ($CC00/$CE00 in bank 1) which the
         // profile dispatches (drive enable/disable, IWM reset, MIG RAM —

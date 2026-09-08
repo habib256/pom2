@@ -171,10 +171,27 @@ void testWritePathMirrorsReadSide()
            "CFFF WRITE must clear INTC8ROM (address decides, not direction)");
 }
 
+// Bug hunt #8: the WRITE path's INTCXROM branch returned before the $C3xx
+// case, so `STA $C3xx` with INTCXROM on left INTC8ROM clear where the read
+// path (and the flip-flop, UTAIIe 5-28) latch it. The only read/write
+// asymmetry in the whole $C100-$CFFF window.
+void testWriteToC3xxUnderIntcxromArmsIntC8Rom()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    poison(mem);
+    mem.memWrite(0xC007, 0);          // INTCXROM on
+    mem.memWrite(0xC3AB, 0x00);       // a WRITE, not a read
+    mem.memWrite(0xC006, 0);          // INTCXROM off
+    assert(mem.memRead(0xC800) == 0x42 &&
+           "C3xx WRITE under INTCXROM=on must arm INTC8ROM like the read");
+}
+
 }  // namespace
 
 int main()
 {
+    testWriteToC3xxUnderIntcxromArmsIntC8Rom();
     testInitiallyOffSoSlotBusOwns();
     testC3xxAutoEnablesIntC8Rom();
     testCfffClearsIntC8Rom();

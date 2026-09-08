@@ -371,6 +371,20 @@ behaves identically). The 44K master is the correct II+ image. The boot
 also exercises the LC heavily: 56K/60K CBIOS lives in the Z80's
 $B000-$DFFF windows = 6502 $D000-$FFFF Language Card RAM.
 
+**NMOS indexed dummy read** *(2026-09-08, bug hunt #8)*. A 6502 adds the
+index to the low byte first and performs a real bus READ at that un-fixed
+address before correcting the high byte: on every `STA abs,X/Y`,
+`STA (zp),Y` and RMW `abs,X`, and on a page-crossing `LDA abs,X/Y` /
+`(zp),Y` (SingleStepTests/65x02 `6502/v1` bus traces). POM2 counted the
+cycle but never issued the read, so `STA $C030,X` clicked the speaker once
+instead of twice on a ][ / ][+ / unenhanced //e and a page-crossing
+`LDA $C0F0,X` never touched `$C030` on its way past. `M6502::
+nmosIndexDummyRead` is the indexed twin of `rmwSecondBusCycle`; the 65C02
+re-reads the last operand byte instead and emits nothing. Measured at no
+cost on `pom2_bench` (][+, 6000 frames: 0.465 s before and after). Pinned
+by `cpu_nmos_index_dummy_read` with the speaker toggle counter as the bus
+witness; the full Tom Harte NMOS + CMOS corpus still passes.
+
 ## Memory
 
 **The paste hand-over happens on the `$C000` read** *(2026-09-08, bug hunt
@@ -563,6 +577,16 @@ silently clobber ROM. Replacements: `writeRamUnchecked(addr, val)`
 (`assert(addr < 0xC000)`, bypass IIe paging → main bank) for
 targeted RAM pokes; `loadFlatTestImage(src, len)` (asserts
 `testMode == true`) for Klaus 64 KB bulk loads.
+
+**INTC8ROM latches on a `$C3xx` WRITE under INTCXROM too** *(2026-09-08,
+bug hunt #8)*. The flip-flop is clocked by the address decode, not by R/W
+(UTAIIe 5-28), and the read path did it in every INTCXROM state — but
+`memWriteSlow`'s INTCXROM branch returned before the `$C3xx` case, so
+`STA $C3xx` with INTCXROM on left INTC8ROM clear and a later CLRCXROM +
+JMP into `$C800-$CFFF` ran the slot bus instead of the internal 80-column
+firmware. It was the only read/write asymmetry in the whole `$C100-$CFFF`
+window (INTC8ROM and the `$C800` owner compared over every INTCXROM ×
+SLOTC3ROM state). Pinned in `iie_c8xx_smoke`.
 
 ## Display
 

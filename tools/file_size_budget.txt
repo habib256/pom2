@@ -170,10 +170,16 @@
 #   src/DiskImage.cpp            3078 -> 3096 (+18)  a burst re-armed within 8
 #     nibble-times carries its cursor forward (DOS INIT's Q7 drop between
 #     the address and data fields).
+# 2026-09-08 (bug hunt #8): two ceilings raised for the CPU/MMU lot. A
+# why-comment and one 8-line function each; no feature code, no split.
+#   src/M6502.cpp                2273 -> 2300 (+27)  nmosIndexDummyRead(): the
+#     NMOS un-fixed-address read on indexed stores and page-crossing loads.
+#   src/Memory.cpp               2604 -> 2616 (+12)  INTC8ROM latches on a $C3xx
+#     WRITE under INTCXROM too (the write path returned before the case).
 src/Apple2Display.cpp                    2462
 src/DiskImage.cpp                        3096
 src/ImageWriter.cpp                      2720
-src/M6502.cpp                            2273
-src/Memory.cpp                           2604
+src/M6502.cpp                            2300
+src/Memory.cpp                           2616
 src/StorageCoordinator.cpp               2167
 src/hgrpaint/HgrPaintEditor.cpp          2653

@@ -189,6 +189,26 @@ void M6502::Abs(void)
     cycles += 2;
 }
 
+// NMOS indexed-access dummy READ. A 6502 adds the index to the LOW byte
+// first and performs a real bus READ at that un-fixed address before it
+// corrects the high byte (SingleStepTests/65x02 `6502/v1` bus traces:
+// 9d/99/91/fe do it on EVERY access, bd/b9/b1 only when the page is
+// crossed). Same class of hidden bus cycle as the RMW double-write that
+// `rmwSecondBusCycle` already models, and it matters for the same reason:
+// on an Apple II the un-fixed address can be a soft switch, so
+// `STA $C030,X` clicks the speaker TWICE on a ][ / ][+ / unenhanced //e and
+// a page-crossing `LDA $C0F0,X` touches $C030 on its way (bug hunt #8).
+// The 65C02 re-reads the last operand byte instead — never the data
+// address — so nothing is emitted there. Cycle counts were already right,
+// which is why no timing test could see it.
+void M6502::nmosIndexDummyRead(uint16_t base, uint16_t indexed, bool always)
+{
+    if (cpuMode == CpuMode::CMOS) return;
+    if (!always && (base & 0xFF00) == (indexed & 0xFF00)) return;
+    (void)memory->memRead(static_cast<uint16_t>((base & 0xFF00) |
+                                                (indexed & 0x00FF)));
+}
+
 void M6502::AbsX(void)
 {
     uint16_t base = memory->memRead(programCounter++);
@@ -197,6 +217,7 @@ void M6502::AbsX(void)
     cycles += 2;
     if ((base & 0xFF00) != (op & 0xFF00))
         cycles++;
+    nmosIndexDummyRead(base, op, /*always=*/false);
 }
 
 void M6502::AbsY(void)
@@ -207,6 +228,7 @@ void M6502::AbsY(void)
     cycles += 2;
     if ((base & 0xFF00) != (op & 0xFF00))
         cycles++;
+    nmosIndexDummyRead(base, op, /*always=*/false);
 }
 
 void M6502::Ind(void)
@@ -277,6 +299,7 @@ void M6502::IndZeroY(void)
     cycles += 3;
     if ((base & 0xFF00) != (op & 0xFF00))
         cycles++;
+    nmosIndexDummyRead(base, op, /*always=*/false);
 }
 
 void M6502::Rel(void)
@@ -295,6 +318,7 @@ void M6502::WAbsX(void)
     base |= (uint16_t)memory->memRead(programCounter++) << 8;
     op = base + xRegister;
     cycles += 3;
+    nmosIndexDummyRead(base, op, /*always=*/true);
 }
 
 // abs,X for the 65C02 RMW shift/rotate ops (ASL/LSR/ROL/ROR). On the 65C02
@@ -313,6 +337,7 @@ void M6502::RmwAbsX(void)
     } else {
         cycles += 3;
     }
+    nmosIndexDummyRead(base, op, /*always=*/true);
 }
 
 void M6502::WAbsY(void)
@@ -321,6 +346,7 @@ void M6502::WAbsY(void)
     base |= (uint16_t)memory->memRead(programCounter++) << 8;
     op = base + yRegister;
     cycles += 3;
+    nmosIndexDummyRead(base, op, /*always=*/true);
 }
 
 void M6502::WIndZeroY(void)
@@ -330,6 +356,7 @@ void M6502::WIndZeroY(void)
     base |= (uint16_t)memory->memRead((uint8_t)((zp + 1) & 0xFF)) << 8;
     op = base + yRegister;
     cycles += 4;
+    nmosIndexDummyRead(base, op, /*always=*/true);
 }
 
 void M6502::setStatusRegisterNZ(uint8_t val)

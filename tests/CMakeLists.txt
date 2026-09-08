@@ -3826,6 +3826,28 @@ set_tests_properties(decimal_sbc_cmos PROPERTIES TIMEOUT 5)
 # ─── 6502 cycle-count test ────────────────────────────────────────────────
 # Pins per-instruction CYCLE counts (Klaus/cmos pin results, not timing).
 # Guards the RMW dummy-cycle accounting (INC/DEC abs were 5, must be 6).
+# ─── NMOS indexed dummy read (bug hunt #8) ───────────────────────────────
+# `STA $C030,X` clicks the speaker twice on an NMOS 6502: the un-fixed
+# address is read before the high byte is corrected. Cycle-neutral, so the
+# speaker toggle counter is the bus witness.
+add_executable(test_cpu_nmos_index_dummy_read
+    cpu_nmos_index_dummy_read_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_cpu_nmos_index_dummy_read PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_cpu_nmos_index_dummy_read PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_cpu_nmos_index_dummy_read PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_cpu_nmos_index_dummy_read PRIVATE winmm)
+endif()
+add_test(NAME cpu_nmos_index_dummy_read COMMAND test_cpu_nmos_index_dummy_read)
+
 add_executable(test_cpu_cycle_count
     cpu_cycle_count_test.cpp
     ${POM2_TEST_CORE_SOURCES}
