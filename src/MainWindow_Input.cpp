@@ -43,6 +43,7 @@
 #include "Memory.h"
 #include "MouseCoordinator.h"
 #include "MouseGrab.h"
+#include "MouseSync.h"
 #include "FourPlayCard.h"
 #include "PaddleInputs.h"
 #include "Pom2Theme.h"
@@ -539,25 +540,27 @@ void MainWindow::onMouseMove(double x, double y)
     if (mouseInventory.appleWinPlugged &&
         pom2::mousegrab::allowAbsoluteSync(grabCtx)) {
         const auto& s = mouseInventory.appleWin;
-        const bool mouseOn = s.mouseOn();
-        const int rangeX = s.iMaxX - s.iMinX;
-        const int rangeY = s.iMaxY - s.iMinY;
-        if (mouseOn && rangeX > 0 && rangeY > 0) {
-            const double fracX = std::clamp(
-                (x - double(screenRectMin.x)) / double(widgetW), 0.0, 1.0);
-            const double fracY = std::clamp(
-                (y - double(screenRectMin.y)) / double(widgetH), 0.0, 1.0);
-            const int targetX = s.iMinX + int(fracX * rangeX + 0.5);
-            const int targetY = s.iMinY + int(fracY * rangeY + 0.5);
-            int dx = targetX - s.iX;
-            int dy = targetY - s.iY;
-            if (dx >  127) dx =  127;
-            if (dx < -127) dx = -127;
-            if (dy >  127) dy =  127;
-            if (dy < -127) dy = -127;
-            mouseAppleX = static_cast<uint8_t>(mouseAppleX + dx);
-            mouseAppleY = static_cast<uint8_t>(mouseAppleY + dy);
+        // The policy — and the rule that fixed the A2FILECMD jump — lives in
+        // MouseSync.h: a correction is computed against the card's position
+        // only once the previous push has been drained by the CPU thread;
+        // computing it against a stale iX/iY stacked two corrections for one
+        // move and the cursor overshot the pointer on every fast event.
+        pom2::mousesync::CardState cs;
+        cs.iX = s.iX;       cs.iY = s.iY;
+        cs.iMinX = s.iMinX; cs.iMaxX = s.iMaxX;
+        cs.iMinY = s.iMinY; cs.iMaxY = s.iMaxY;
+        cs.mouseOn = s.mouseOn();
+        cs.hostDrained = s.hostDrained;
+        pom2::mousesync::Delta d;
+        const auto decision = pom2::mousesync::absoluteDelta(
+            (x - double(screenRectMin.x)) / double(widgetW),
+            (y - double(screenRectMin.y)) / double(widgetH), cs, d);
+        if (decision == pom2::mousesync::Decision::Push) {
+            mouseAppleX = static_cast<uint8_t>(mouseAppleX + d.dx);
+            mouseAppleY = static_cast<uint8_t>(mouseAppleY + d.dy);
             pushMouse(mouseAppleX, mouseAppleY, mouseButtonHeld);
+        }
+        if (decision != pom2::mousesync::Decision::NotApplicable) {
             // Drop relative sub-pixel residue so a later fallback (mouse
             // turned off mid-session) doesn't replay stale fractional
             // motion accumulated before sync was active.

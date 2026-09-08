@@ -67,10 +67,10 @@ struct Rig {
     Apple2Display disp;
     LeChatMauveCard* card = nullptr;   // owned by the bus
 
-    Rig()
+    explicit Rig(LeChatMauveCard::Variant variant = LeChatMauveCard::Variant::Feline)
     {
         mem.setIIEMode(true);
-        auto c = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Feline);
+        auto c = std::make_unique<LeChatMauveCard>(7, variant);
         card = c.get();
         card->setMemory(&mem);         // timestamps the latch ring
         mem.slotBus().plug(7, std::move(c));
@@ -200,24 +200,30 @@ int main()
     //    (instruction start + elapsed) while the card used to stamp its ring
     //    at the instruction start. A frame whose FIRST event is the $C05F
     //    edge then seeded the replay with the POST-clock latch and clocked
-    //    it a second time: the top band came out in the next mode. Park the
-    //    latch at BW560 before the frame (as case 2 does), keep 80COL on so
-    //    the data line is 1, and clock twice from a $C05F that is the first
-    //    event of its frame: top band BW560, bottom band COL140.
+    //    it a second time: the top band came out in the next mode. On a
+    //    Video-7, parked at 10 (Chunky160) before the frame, with 80COL on
+    //    (data 1), two edges from a $C05F that is the first event of its
+    //    frame clock 10 → 01 → 11: top band Chunky160, bottom band COL140.
+    //    (Chunky160 is the one intermediate value that paints unlike BW560
+    //    on this RAM, so the double clock — a Mixed top band — is visible.)
     {
-        Rig r;
+        const auto v7 = LeChatMauveCard::Variant::Video7;
+        std::vector<uint32_t> col140v7, chunkyv7;
+        { Rig ref(v7); col140v7 = ref.frame(); }
+        { Rig ref(v7); ref.card->overrideMode(LeChatMauveCard::RenderMode::Chunky160); chunkyv7 = ref.frame(); }
+        assert(!rowEqual(col140v7, chunkyv7, 40) && "the two modes must differ visibly");
+        Rig r(v7);
         M6502 cpu(&r.mem);
         r.mem.setCpu(&cpu);
+        // Park at 10: one edge with the data line low, then 80COL back on.
         uint64_t c = 1;
         r.mem.setCycleCounter(c++);
         r.mem.memWrite(IIE_80COL_OFF, 0);
-        for (int k = 0; k < 2; ++k) {
-            r.mem.setCycleCounter(c++); r.mem.memRead(DHIRES_OFF);
-            r.mem.setCycleCounter(c++); r.mem.memRead(DHIRES_ON);
-        }
+        r.mem.setCycleCounter(c++); r.mem.memRead(DHIRES_OFF);
+        r.mem.setCycleCounter(c++); r.mem.memRead(DHIRES_ON);
         r.mem.setCycleCounter(c++);
         r.mem.memWrite(IIE_80COL_ON, 0);
-        assert(r.card->currentMode() == LeChatMauveCard::RenderMode::BW560);
+        assert(r.card->currentMode() == LeChatMauveCard::RenderMode::Chunky160);
         // $0300: STA $C05E / STA $C05F / STA $C05E / STA $C05F / STA $C05E
         const uint8_t code[] = { 0x8D, 0x5E, 0xC0, 0x8D, 0x5F, 0xC0, 0x8D, 0x5E, 0xC0,
                                  0x8D, 0x5F, 0xC0, 0x8D, 0x5E, 0xC0 };
@@ -240,10 +246,10 @@ int main()
         assert(r.card->currentMode() == LeChatMauveCard::RenderMode::COL140);
         auto split = r.frame();
         for (int y : { 0, 40, kSplitRow - 1 })
-            assert(rowEqual(split, bw560, y) &&
-                   "top band must be the PRE-clock latch (BW560), not double-clocked");
+            assert(rowEqual(split, chunkyv7, y) &&
+                   "top band must be the PRE-clock latch (Chunky160), not double-clocked");
         for (int y : { kSplitRow + 1, 130, 191 })
-            assert(rowEqual(split, col140, y) && "bottom band must be COL140");
+            assert(rowEqual(split, col140v7, y) && "bottom band must be COL140");
     }
 
     // 4. TEXT40 ⇄ Chat Mauve HGR split — the DIX raster shape.

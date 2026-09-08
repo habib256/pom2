@@ -132,6 +132,10 @@ MouseCardAppleWin::DebugSnapshot MouseCardAppleWin::debugSnapshot() const
     s.buffPos   = nBuffPos;
     s.dataLen   = nDataLen;
     s.lastCmd   = byBuff[0];
+    // Drained = nothing pending between the shadow and the position. Before
+    // the first tick primes the trackers there is nothing to drain either.
+    s.hostDrained = !hostPrimed ||
+                    hostGen.load(std::memory_order_relaxed) == lastHostGen_;
     return s;
 }
 

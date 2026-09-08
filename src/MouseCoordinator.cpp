@@ -43,6 +43,7 @@ void copyAppleWin(MouseCoordinator::AppleWinSnapshot& out,
     out.byState = in.byState;
     out.by6821A = in.by6821A;
     out.by6821B = in.by6821B;
+    out.hostDrained = in.hostDrained;
     out.buffPos = in.buffPos;
     out.dataLen = in.dataLen;
     out.lastCmd = in.lastCmd;

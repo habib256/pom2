@@ -150,6 +150,11 @@ public:
         int     buffPos;
         int     dataLen;
         uint8_t lastCmd;       // byBuff[0]
+        /// True when the last setHostMouse() has been drained by the CPU
+        /// thread — i.e. iX/iY already reflect it. The UI's closed-loop
+        /// cursor sync (MouseSync.h) must not compute a new correction
+        /// against a position that has a push still in flight.
+        bool    hostDrained;
     };
     DebugSnapshot debugSnapshot() const;
 

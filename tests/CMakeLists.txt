@@ -4186,6 +4186,10 @@ set_tests_properties(mouse_card_applewin_smoke PROPERTIES TIMEOUT 5)
 # release-always-passes-through, capture bypassing the widget-rect gate on
 # motion, and absolute sync being off while captured. Header-only and
 # GLFW-free, so it links nothing but itself.
+add_executable(test_mouse_sync_policy mouse_sync_policy_test.cpp)
+target_include_directories(test_mouse_sync_policy PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME mouse_sync_policy COMMAND test_mouse_sync_policy)
+
 add_executable(test_mouse_grab_policy mouse_grab_policy_test.cpp)
 target_include_directories(test_mouse_grab_policy PRIVATE ${CMAKE_SOURCE_DIR}/src)
 

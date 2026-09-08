@@ -5,6 +5,29 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-08 — The mouse that jumped past the pointer (A2FILECMD)
+
+The AppleWin HLE mouse card's closed-loop cursor drive computed every
+correction against the `iX/iY` of the snapshot the UI had just taken —
+which is the position BEFORE the previous push has been drained whenever
+pointer events arrive faster than the CPU thread consumes them (two events
+inside one 4096-cycle chunk is routine on a 120 Hz panel). Event 1 pushed
+`T1 − iX0`; event 2, seeing the same stale `iX0`, pushed `T2 − iX0` on top:
+the card moved by `T1 + T2 − 2·iX0`, overshot by `T1 − iX0`, and the next
+event pulled it back. On screen, in A2FILECMD: a cursor that follows the
+host pointer and keeps jumping past it. The card now reports whether its
+last push has been drained (`hostDrained` in its snapshot), and the policy —
+`MouseSync.h`, GLFW-free like `MouseGrab.h` — pushes a correction only
+then; an event that lands with a push in flight is skipped, and the next one
+catches up (the target is absolute). Pinned by `mouse_sync_policy`, a model
+of the loop where the card drains every other event: the position must walk
+to the target monotonically and never pass it.
+
+Also: the `chatmauve_latch_split` pin for yesterday's latch-clock fix ran on
+a Féline, whose intermediate latch value paints like BW560 and hid the
+double clock; it runs on a Video-7 now, whose four latch values are four
+different pictures, and fails against the pre-fix card.
+
 ## 2026-09-08 — Bug hunt #6: six more hunters on the ground the first six had not walked
 
 Same method as #5 — six Opus hunters, a probe before any claim, a minimal

@@ -6136,6 +6136,19 @@ blind to DCD.
 
 ### Mouse Card
 
+**The absolute cursor sync waits for its push to be drained** *(2026-09-08,
+A2FILECMD)*. The UI's closed-loop drive projects the host pointer onto the
+firmware clamp window and pushes `target − iX`; the card applies it on the
+CPU thread, once per host generation (`pollHostInput`). Computing the next
+correction against the snapshot's `iX` while a push was still in flight
+stacked two corrections for one move and the cursor overshot on every fast
+event — the "follows the pointer but jumps" A2FILECMD report. The card's
+`DebugSnapshot` carries `hostDrained` (`hostGen == lastHostGen_`), the
+coordinator copies it, and `pom2::mousesync::absoluteDelta` (`MouseSync.h`,
+GLFW-free) answers Push / Skip / NotApplicable — Skip while a push is in
+flight, so the loop is a proper sample-and-hold. Pinned by
+`mouse_sync_policy`.
+
 Verbatim port of MAME `bus/a2bus/mouse.cpp`. Pieces:
 - **M68705P3** MCU (Apple 341-0269, 2 KB mask ROM). Paced at 2× CPU
   clock from `advanceCycles()` via fractional accumulator.

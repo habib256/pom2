@@ -488,6 +488,7 @@ set(POM2_FRONTEND_HEADERS
     src/Mat4.h
     src/MouseCoordinator.h
     src/MouseGrab.h
+    src/MouseSync.h
     src/NetworkCoordinator.h
     src/PaintCardBatcher.h
     src/PanelCatalog.h

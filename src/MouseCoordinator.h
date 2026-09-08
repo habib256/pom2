@@ -50,6 +50,7 @@ public:
         int buffPos = 0;
         int dataLen = 0;
         std::uint8_t lastCmd = 0;
+        bool hostDrained = true;
 
         bool mouseOn() const noexcept { return (byMode & 0x01) != 0; }
     };
