@@ -41,6 +41,14 @@ lead with those pins strapped, on which a host going away is only silence.
 no interrupt — and the harness ties the lines on its `--ssc` card. Pinned
 in `ssc_acia_smoke`; the bench's six checks pass.
 
+**And the network twin.** `pom2_playtest --uthernet` plugs an Uthernet II
+(W5100, hardware TCP/IP over host sockets — no Ethernet backend) in slot 3
+of the //e preset with the loopback fence lowered, since this rig's server
+lives on 127.0.0.1; the //c has no slot and refuses it. A2 File Cmd's bench
+takes it as `Pom2(uthernet=True)`; the driver that speaks the VDrive
+protocol over a W5100 socket, the listening mode of its server and the
+matching bench are written up in that project's TODO.
+
 ## 2026-09-08 — The Disk Library lists what is mounted, NeoST-style
 
 NeoST's media pages open with one row per drive — an eject button, then
