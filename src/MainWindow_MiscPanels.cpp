@@ -805,6 +805,10 @@ void MainWindow::renderAboutDialog()
         ImGui::Text("Apple II / II+ / //e / //c / //c+ emulator");
         ImGui::Text("MOS 6502 / 65C02 / Rockwell / WDC, Dear ImGui frontend");
         ImGui::Spacing();
+        // The author, as the packaging already names him (Info.plist,
+        // the Pi scripts): the About box is the one place a user looks.
+        ImGui::Text("(c) 2026 Arnaud Verhille (habib256) - GPL-3.0");
+        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
