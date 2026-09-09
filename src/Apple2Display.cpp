@@ -1513,8 +1513,19 @@ void Apple2Display::renderLoResDouble(Memory& mem,
     // 4-bit pattern at the 14.318 MHz dot clock — one 560-wide dot per sample,
     // pattern indexed at the ABSOLUTE sample position (same rule as
     // fillCompositeSignal's paintLoResDouble; the pattern generator is locked
-    // to the subcarrier, not restarted per 7-dot half-cell). Aux pattern is
-    // the rotl4'd nibble. Phosphor history in persistenceL80 (560-wide).
+    // to the subcarrier, not restarted per 7-dot half-cell).
+    //
+    // The phases are MAME `lores_update<Double>`'s word builder, verbatim
+    // (apple2video.cpp:709-712):
+    //     aux  = (NIBBLE(vaux) * 0x111) & 0x007f    → dot absX = aNib[absX & 3]
+    //     main = (NIBBLE(vram) * 0x0880) & 0x3f80   → dot absX = mNib[(absX+1) & 3]
+    // (the odd-column `>>2` / `0x2220` variants are the same two rules
+    // re-aligned to the absolute 4-sample grid, since 14 ≡ 2 mod 4).
+    // The `rotl4` that the COLOUR path applies to the aux nibble is the
+    // colour that stream demodulates to — MAME's own square filter turns
+    // aNib[absX&3] into rotl4(aNib,1) — so applying it to the BIT STREAM as
+    // well rotated every DLGR hue by a further 90° and shifted the mono
+    // picture one 560-dot column right.
     const bool monochrome = (hiResMode == HiResMode::MonoWhite ||
                              hiResMode == HiResMode::MonoGreen ||
                              hiResMode == HiResMode::MonoAmber);
@@ -1540,12 +1551,13 @@ void Apple2Display::renderLoResDouble(Memory& mem,
                 uint32_t* row = frame80.data()
                               + static_cast<size_t>(y) * kWidth80 + x0;
                 if (monochrome) {
-                    const uint8_t auxPat  = rotl4(aNib);
                     uint8_t* histRow = persistenceL80.data()
                                      + static_cast<size_t>(y) * kWidth80 + x0;
                     for (int dx = 0; dx < 14; ++dx) {
-                        const uint8_t pat = (dx < 7) ? auxPat : mNib;
-                        const int bit = (pat >> ((x0 + dx) & 3)) & 1;
+                        const int absX = x0 + dx;
+                        const int bit = (dx < 7)
+                            ? ((aNib >> ( absX      & 3)) & 1)
+                            : ((mNib >> ((absX + 1) & 3)) & 1);
                         const int target = bit ? 255 : 0;
                         const int prev = static_cast<int>(
                             static_cast<float>(histRow[dx]) * effDecay);
@@ -2373,13 +2385,13 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
         }
     };
 
-    // DLGR: aux nibble (rotl4) on even 7-dot half, main on odd — MAME
-    // lores_update<Double>; mirrors renderLoResDouble().
+    // DLGR: aux nibble on the even 7-dot half, main on the odd — MAME
+    // lores_update<Double>; mirrors renderLoResDouble(). NOT the rotl4'd
+    // aux nibble: that rotation is the COLOUR the raw stream demodulates
+    // to (MAME's square filter maps aNib[absX&3] onto rotl4(aNib,1)), so
+    // pre-rotating the bit stream applied it twice.
     auto paintLoResDouble = [&](int firstBlockRow, int lastBlockRow, int col0, int col1,
                                 int clipY0, int clipY1) {
-        auto rotl4 = [](uint8_t n) -> uint8_t {
-            return static_cast<uint8_t>(((n << 1) | (n >> 3)) & 0x0F);
-        };
         for (int blockRow = firstBlockRow; blockRow < lastBlockRow; ++blockRow) {
             const int  textRow   = blockRow / 2;
             const bool upperHalf = (blockRow % 2 == 0);
@@ -2393,8 +2405,6 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
                 const uint8_t aNib = upperHalf
                     ? static_cast<uint8_t>(ab & 0x0Fu)
                     : static_cast<uint8_t>((ab >> 4) & 0x0Fu);
-                const uint8_t auxPat  = rotl4(aNib);
-                const uint8_t mainPat = mNib;
                 for (int dy = 0; dy < 4; ++dy) {
                     const int y = blockRow * 4 + dy;
                     if (y < clipY0 || y >= clipY1) continue;
@@ -2409,12 +2419,16 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
                     // Indexing by `dx & 3` rotated the hue by (2·col) mod 4
                     // per column (14 ≡ 2 mod 4), making a uniform DLGR fill
                     // demodulate to alternating colours.
+                    // Aux runs at the absolute phase, main one sample later
+                    // (MAME's 0x0880 / 0x2220 main mask starts the nibble at
+                    // dot 7 of the cell, i.e. absolute phase 3).
                     for (int dx = 0; dx < 7; ++dx) {
-                        const uint8_t bit = (auxPat >> ((col * 14 + dx) & 3)) & 1u;
+                        const uint8_t bit = (aNib >> ((col * 14 + dx) & 3)) & 1u;
                         dst[dx] = bit ? 0xFFu : 0x00u;
                     }
                     for (int dx = 0; dx < 7; ++dx) {
-                        const uint8_t bit = (mainPat >> ((col * 14 + 7 + dx) & 3)) & 1u;
+                        const uint8_t bit =
+                            (mNib >> ((col * 14 + 7 + dx + 1) & 3)) & 1u;
                         dst[7 + dx] = bit ? 0xFFu : 0x00u;
                     }
                 }
@@ -2448,6 +2462,14 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             // so a block straddling a beam split is painted by both bands,
             // each within its own scanlines (same policy as bandRows).
             const bool isDlgr   = mem.isIIE() && state.eightyCol && state.dhgr;
+            // MAME's `is_80_column` term is Double for lores_update, exactly
+            // as it is `true` for dhgr_update — the demod's colour reference
+            // advances one 14.318 MHz sample in every 80-column mode
+            // (apple2video.cpp:738 `render_line(..., monochrome, Double)`).
+            // It used to be left at 0 here, which cancelled the pre-rotated
+            // aux nibble paintLoResDouble emitted and hid both errors; with
+            // the stream corrected to MAME's, the term has to be real.
+            signalPhaseOffset_ = isDlgr ? 1 : 0;
             const int  blockEnd = state.mixedMode ? 40 : 48;  // block-rows
             if (bandScanlines(scanY0, scanY1, 0, blockEnd * 4, &lo, &hi)) {
                 const int brLo = lo / 4;

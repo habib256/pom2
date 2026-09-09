@@ -390,11 +390,16 @@ public:
                    int64_t        bitPeriodTicks);
 
 private:
-    /// Decode `cells_` (which holds `track`'s stream) for any complete
-    /// sectors and write changed blocks to the attached image. Called after
-    /// each writeFlux splice. Returns the number of sectors that
+    /// Decode `cells_` (which holds the `(track, head)` stream) for any
+    /// complete sectors and write changed blocks to the attached image.
+    /// Called after each writeFlux splice. Returns the number of sectors that
     /// actually got written back.
-    int decodeAndCommit(int track) const;
+    ///
+    /// `head` is the side the write was LATCHED on (`writeStart`), and it
+    /// filters the decode the way `track` does: a sector whose address field
+    /// names the other side of the platter was not written by this head and
+    /// must not be committed to that side's blocks.
+    int decodeAndCommit(int track, int head) const;
 };
 
 }  // namespace pom2

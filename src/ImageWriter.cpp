@@ -504,6 +504,23 @@ void ImageWriter::resetPrinterHard()
 
 void ImageWriter::clearAll()
 {
+    // WIPE THE PLATEN FIRST. `resetPrinterHard()` goes through
+    // `resetPrinter()`, which deliberately EJECTS whatever is still on the
+    // sheet rather than discarding it (see the comment there) — and that
+    // eject lands in `pages_`, i.e. in the very tray this function was asked
+    // to empty. So "Clear all" left one sheet behind whenever the head had
+    // printed anything since the last form feed, while the panel reported
+    // "Paper tray emptied". Worse, the eject also advanced `sheetsEjected_`,
+    // which is what `MainWindow::archiveNewPrinterPages()` keys off, so the
+    // sheet the user had just asked POM2 to forget was copied into the
+    // DURABLE print history on the next frame.
+    //
+    // Clearing the raster here makes `currentPageBlank()` true, so the reset
+    // below finds nothing to eject: no stray sheet, no odometer bump, and
+    // `sheetsEjected()` stays monotonic (resetting it would make the
+    // archiver's `ejected <= archived` test skip real pages later).
+    std::fill(current_.pix.begin(), current_.pix.end(), uint8_t{0});
+    ++revision_;
     pages_.clear();
     droppedPages_ = 0;
     bytesIn_      = 0;
@@ -2247,7 +2264,21 @@ bool ImageWriter::processEpsonChar(uint8_t ch)
         }
         lineFeed();
         return true;
-    case 0x0C: formFeed();                            return true;   // FF
+    case 0x0C:                                                        // FF
+        // `newPage(true, …)`, NOT `formFeed()`. `formFeed()` is the FRONT
+        // PANEL button and carries the panel's rule — "don't eject a sheet
+        // nothing was printed on". A form feed in the DATA STREAM is paper
+        // motion the guest asked for, and the C. Itoh head at :1642 ejects
+        // unconditionally for exactly that reason (pinned by
+        // imagewriter_smoke's `ESC R 999 <FF>` case, which asserts all 999
+        // sheets come out of a page that never had ink on it). Routing this
+        // head's FF through the panel entry point made the same byte mean
+        // two different things depending on which model was fitted: `"A" FF
+        // FF "B" FF` is three sheets on an ImageWriter II and two on an
+        // FX-80, so an ESC/P job's page count silently disagreed with the
+        // PDF export and the print history.
+        newPage(true, true);
+        return true;
     case 0x08: curX_ = std::max(leftMargin_, curX_ - 1.0 / actcpi_);  // BS
                return true;
     case 0x0E: style_ |= kStyleDoubleWidth; updateMetrics(); return true; // SO
@@ -2609,7 +2640,10 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
         lineFeed();
         return true;
     case 0x0C:                                               // FF
-        formFeed();
+        // Same rule as the other two heads: a form feed in the data stream
+        // is paper motion, so it ejects; `formFeed()` is the panel button
+        // and its "not if the sheet is blank" rule belongs there only.
+        newPage(true, true);
         return true;
     case 0x00: case 0x7F:
         return true;                    // NUL / DEL: never printed

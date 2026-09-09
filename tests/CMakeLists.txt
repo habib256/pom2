@@ -1678,6 +1678,26 @@ add_test(NAME printer_grain_pileup COMMAND test_printer_grain_pileup
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(printer_grain_pileup PROPERTIES TIMEOUT 30)
 
+# ─── Paper tray ownership (bug hunt #15) ─────────────────────────────────
+# Who may put a sheet in the tray. "Clear all" must empty it (it used to eject
+# the platen's sheet back into the stack it had just cleared, and the odometer
+# bump then archived that sheet to the durable print history); and a form feed
+# in the BYTE STREAM ejects on every head, while the front-panel button keeps a
+# blank sheet on the platen — the ESC/P and Diablo parsers used to route the
+# guest's $0C through the panel's rule.
+add_executable(test_printer_paper_tray
+    printer_paper_tray_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
+)
+target_include_directories(test_printer_paper_tray PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_printer_paper_tray PRIVATE Threads::Threads m)
+endif()
+add_test(NAME printer_paper_tray COMMAND test_printer_paper_tray
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(printer_paper_tray PROPERTIES TIMEOUT 20)
+
 # The printer sound must not crackle (A2 File Cmd report, 2026-09-09).
 add_executable(test_printer_sound_crackle
     printer_sound_crackle_test.cpp
@@ -3634,6 +3654,36 @@ endif()
 
 add_test(NAME text_oecpu_crisp COMMAND test_text_oecpu_crisp)
 set_tests_properties(text_oecpu_crisp PROPERTIES TIMEOUT 5)
+
+# ─── Double lo-res dot phase vs MAME lores_update<Double> ─────────────────
+# Pins the DLGR bit stream (composite signal + MonoWhite framebuffer) against
+# MAME's own word builder, and the is_80_column demod phase term that goes
+# with it. Fails on the pre-fix tree at (y=0,x=7).
+# (Bug hunt #15, 2026-09-09.)
+add_executable(test_dlgr_mame_phase
+    dlgr_mame_phase_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_dlgr_mame_phase PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_dlgr_mame_phase PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_dlgr_mame_phase PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_dlgr_mame_phase PRIVATE winmm)
+endif()
+
+add_test(NAME dlgr_mame_phase COMMAND test_dlgr_mame_phase)
+set_tests_properties(dlgr_mame_phase PROPERTIES TIMEOUT 10)
 
 # Double Lo-Res (DLGR) — 80-col lo-res, aux+main with rotl4 on the aux nibble.
 add_executable(test_dlgr_render
@@ -7109,6 +7159,21 @@ pom2_add_headless_test(test_storage_coordinator
     LINK_LIBRARIES pom2_core_test
     COMPILE_DEFINITIONS POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# A persisted media path that no longer resolves is warned about by EVERY
+# card kind (bug hunt #15): the Disk II, HDV and CFFA restore branches used
+# to skip the mount silently, and persistSessionSettings then erased the key.
+pom2_add_headless_test(test_storage_restore_missing_path
+    NAME storage_restore_missing_path TIMEOUT 20
+    SOURCES storage_restore_missing_path_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Log lines cannot be forged or turned into terminal escapes by an untrusted
+# string (a path out of state.cfg, a filename off the host FS) — bug hunt #15.
+add_executable(test_log_escape_sanitize log_escape_sanitize_test.cpp)
+target_include_directories(test_log_escape_sanitize PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME log_escape_sanitize COMMAND test_log_escape_sanitize)
+set_tests_properties(log_escape_sanitize PROPERTIES TIMEOUT 10)
+
 # The lock rule, measured (bug hunt #11): a contender thread samples
 # lockState() latency while each of the three formerly-locked write-backs runs.
 pom2_add_headless_test(test_storage_lock_budget
@@ -7793,6 +7858,61 @@ if(WIN32)
 endif()
 add_test(NAME hdv_driver_result COMMAND test_hdv_driver_result)
 set_tests_properties(hdv_driver_result PROPERTIES TIMEOUT 10)
+
+# ─── A SmartPort call must report its OWN outcome (hunt #15) ─────────────────────────
+# `SmartPortCard` has two front doors on the same units. The ProDOS driver
+# ($Cn0A) latches failures in the legacy `ioError_` word, which only a
+# $C0n0/1/2 register write clears; the $CE00 SmartPort handler writes none of
+# those and ends with `LDA $C0nF` on every path. One legitimately failing
+# ProDOS read therefore made every later SmartPort READ/STATUS return
+# carry-set + $27 with the payload already delivered.
+add_executable(test_smartport_call_error_isolation
+    smartport_call_error_isolation_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+)
+target_include_directories(test_smartport_call_error_isolation
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_smartport_call_error_isolation PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_smartport_call_error_isolation PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_smartport_call_error_isolation PRIVATE winmm)
+endif()
+add_test(NAME smartport_call_error_isolation
+         COMMAND test_smartport_call_error_isolation)
+set_tests_properties(smartport_call_error_isolation PROPERTIES TIMEOUT 10)
+
+# ─── The 3.5" guest-write path: writeFlux -> decodeAndCommit ──────────────
+# Nothing exercised it before. It commits by what the CELLS say, and it
+# filtered on the track but not on the latched head — so a sector whose side
+# byte disagreed with the head landed on the far side of the platter (11
+# blocks at track 20).
+add_executable(test_sony35_write_head
+    sony35_write_head_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+)
+target_include_directories(test_sony35_write_head PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_sony35_write_head PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+add_test(NAME sony35_write_head COMMAND test_sony35_write_head)
+set_tests_properties(sony35_write_head PROPERTIES TIMEOUT 15)
 
 set(POM2_PROBE_TARGETS
     artifact_probe

@@ -379,7 +379,7 @@ namespace {
 
 }  // namespace
 
-int Sony35Drive::decodeAndCommit(int track) const
+int Sony35Drive::decodeAndCommit(int track, int head) const
 {
     // The GCR walk itself lives in `Sony35Gcr` — shared with the WOZ loader
     // in `Disk35Image`, which has to turn the same cells into the same
@@ -389,12 +389,23 @@ int Sony35Drive::decodeAndCommit(int track) const
     if (!image_ || !image_->isLoaded()) return 0;
     if (cells_.empty()) return 0;
     if (track < 0 || track >= 80) return 0;
+    if (head  < 0 || head  >  1)  return 0;
 
     const auto nib = sony35::nibblesFromCells(cells_);
 
     int written = 0;
     sony35::decodeSectors(nib, /*expectTrack=*/track,
-        [&](int tr, int head, int sec, const uint8_t* data) {
+        [&](int tr, int sideByte, int sec, const uint8_t* data) {
+            // Same argument as `expectTrack` (Sony35Gcr.h): the head is where
+            // this drive physically IS, and a sector whose address field
+            // claims the OTHER side cannot have been written by it. Without
+            // this test a garbled side byte committed the far side's blocks —
+            // 11 of them at track 20 — over data the guest could not reach,
+            // while the side actually under the head kept its old contents.
+            // `ensureCacheFor(track, head)` stamps every address field in
+            // `cells_` with `head`, so for well-formed data this is a no-op,
+            // exactly like the track filter.
+            if (sideByte != head) return;
             const int blkIdx = sony35::blockIndexFor(tr, head, sec);
             if (blkIdx < 0 ||
                 blkIdx >= static_cast<int>(Disk35Image::kBlockCount)) return;
@@ -532,7 +543,7 @@ void Sony35Drive::writeFlux(int64_t startTick, int64_t endTick,
     writeCursorCell_ = static_cast<int>((cellStart + span % n) % n);
 
     rebuildTransitionsFromCells();
-    decodeAndCommit(trk);
+    decodeAndCommit(trk, head);
 }
 
 void Sony35Drive::ensureCache() const

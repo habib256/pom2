@@ -101,22 +101,22 @@ int main()
     // Scanline 0, column 0: samples 0..6 = aux half, 7..13 = main half.
     //
     // Exact-sample pin (rotl4 + absolute phase together). Aux nibble 1 is
-    // emitted as rotl4(1,1) = 2; both halves are phase-locked to the
-    // ABSOLUTE sample counter: sample x = (pattern >> (x & 3)) & 1.
-    // NOTE: the value sequences of the two halves coincide here — nibble 2
-    // from x=0 and nibble 1 from x=7 (7 ≡ 3 mod 4) are the same bit train —
-    // but at different absolute subcarrier phases, i.e. different hues.
-    // A naive sig[i] != sig[7+i] comparison is therefore NOT a valid pin;
-    // only the absolute-phase sample identities below are.
+    // emitted RAW (MAME lores_update<Double>: aux = (nib*0x111)&0x7f, so
+    // dot absX = aNib[absX & 3]; main = (nib*0x0880)&0x3f80, so dot absX =
+    // mNib[(absX+1) & 3]). The rotl4 that the COLOUR path applies to the aux
+    // nibble is the hue that raw stream demodulates to — pre-rotating the bit
+    // stream applied it twice (bug hunt #15, `dlgr_mame_phase`).
+    // NOTE: a naive sig[i] != sig[7+i] comparison is NOT a valid pin; only
+    // the absolute-phase sample identities below are.
     for (int x = 0; x < 7; ++x) {
-        const bool want = ((0x2u >> (x & 3)) & 1) != 0;   // aux: rotl4(1) = 2
+        const bool want = ((0x1u >> (x & 3)) & 1) != 0;   // aux: raw nibble 1
         assert((sig[x] != 0) == want &&
-               "DLGR aux half: rotl4 nibble at absolute phase");
+               "DLGR aux half: raw nibble at absolute phase");
     }
     for (int x = 7; x < 14; ++x) {
-        const bool want = ((0x1u >> (x & 3)) & 1) != 0;   // main: nibble 1
+        const bool want = ((0x1u >> ((x + 1) & 3)) & 1) != 0;   // main: nibble 1, one sample later
         assert((sig[x] != 0) == want &&
-               "DLGR main half: nibble at absolute phase");
+               "DLGR main half: nibble at absolute phase + 1");
     }
 
     // ── Phase pin: the nibble pattern is locked to the ABSOLUTE 14.318 MHz
@@ -146,12 +146,14 @@ int main()
         d.render(uni);
         assert(d.signalProduced());
         const uint8_t* s = d.signal();
-        const uint8_t auxPat = 0x02;   // rotl4(1, 1)
+        const uint8_t auxPat = 0x01;   // raw aux nibble (MAME word builder)
         const uint8_t mainPat = 0x01;
         for (int y = 0; y < 192; y += 37) {            // sample a few lines
             for (int x = 0; x < 560; ++x) {
-                const uint8_t pat = (x % 14) < 7 ? auxPat : mainPat;
-                const uint8_t want = ((pat >> (x & 3)) & 1u) ? 0xFFu : 0x00u;
+                const bool aux = (x % 14) < 7;
+                const uint8_t pat = aux ? auxPat : mainPat;
+                const int phase = aux ? (x & 3) : ((x + 1) & 3);   // main: one sample later
+                const uint8_t want = ((pat >> phase) & 1u) ? 0xFFu : 0x00u;
                 assert(s[y * 560 + x] == want
                        && "DLGR signal must emit the nibble at absolute beam phase");
             }

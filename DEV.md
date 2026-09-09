@@ -865,9 +865,43 @@ check (see `docs/test_corpus.md` § 5).
 ### DLGR (IIe, `eightyCol && !hiRes && dhgr && !textMode`)
 
 `renderLoResDouble` — 80 cells, aux nibble `rotl4(NIBBLE(aux),1)` +
-main nibble, 560-wide frame80. Mixed = DLGR top 40 block-rows + 80-col
-text bottom 4 rows. Pinned: `dlgr_render_smoke`, goldens
-`iie/dlgr` + `iie/dlgrmixed` in `display_golden_hash_test`.
+main nibble for the RGB block painter, 560-wide frame80. Mixed = DLGR top
+40 block-rows + 80-col text bottom 4 rows. Pinned: `dlgr_render_smoke`,
+goldens `iie/dlgr` + `iie/dlgrmixed` in `display_golden_hash_test`.
+
+**The DLGR bit stream is MAME's word builder, and the rotation belongs
+to the colour path only** *(2026-09-09, bug hunt #15)*. MAME
+`lores_update<Double>` serialises `aux = (nib*0x111)&0x7f` → dot absX =
+`aNib[absX & 3]` and `main = (nib*0x0880)&0x3f80` → dot absX =
+`mNib[(absX+1) & 3]`, then demodulates with `is_80_column = true` — the
+`+1` that turns `aNib[absX&3]` into the block colour `rotl4(aNib,1)`.
+POM2 baked the `rotl4` into the *bit stream* (mono painter and
+`fillCompositeSignal`) and left `signalPhaseOffset_` at 0, so the
+rotation was applied twice in the signal domain and cancelled against the
+missing term: colours came out right by accident while the mono dots and
+the composite signal sat one 560-dot column right of MAME's with 39 dots
+per line wrong at the half-cell seams (281/560 differing before, 0
+after; a full random-VRAM frame went from 50.1 % of samples wrong to 0).
+The stream is raw now and the lo-res branch of `paintSignalBand` sets
+the phase term for DLGR, as the DHGR branch always did. The RGB block
+painter was and stays correct. Pinned by `dlgr_mame_phase` (signal and
+MonoWhite frame dot-for-dot against MAME's builder, the phase term, and
+the block colours as a regression guard); `dlgr_render_smoke` moved to
+the same phases and the eight DLGR mono/signal goldens were re-recorded
+(the `ntsc`/`medium`/`4bit`/`chatmauve` DLGR goldens are unchanged).
+Cleared in the same sweep, against reference painters written from
+MAME's `apple2video.cpp` and AppleWin's `NTSC.cpp`: HGR half-dot delay
+and fringe, the artefact LUT and 4-phase rotation in all three composite
+modes, the DHGR sliding window, 40-col lo-res, the mono phosphor rule,
+all 256 text codes × ALTCHAR × flash on the real //e dump, the FLASH
+cadence, the 80-col cell layout, the Video-7/Eve fg-bg and chunky
+modes, the Chat Mauve COL140 grid, `AppleWinNtsc` line by line, and the
+`use_page_2` routing. Observed, not changed: the II/II+ FLASH range
+blinks in antiphase with MAME's (and with POM2's own //e); the shipped
+Videx dump *does* carry the bit-7 range marker, so `CharRomDump.h`'s
+"never sets bit 7" sentence and its offset branch are stale; 80-column
+TEXT under the CPU demods keeps phase 0 where MAME uses the 80-column
+term (no colour oracle: MAME renders text monochrome).
 
 ### Beam-racing (mid-scanline soft switches)
 
@@ -1132,7 +1166,8 @@ into a 1-bit 14.318 MHz luminance waveform — 560 samples × 192
 lines, one byte per sample (`signalBuf`). HGR reuses the existing
 `buildBitStream()` so the per-byte half-dot delay is preserved.
 Lo-res emits `(nibble >> (absX & 3)) & 1` at every sample; DLGR
-interleaves aux (rotl4 nibble) and main halves like `renderLoResDouble`.
+interleaves the raw aux nibble at `absX & 3` and the main nibble at
+`(absX+1) & 3` like `renderLoResDouble` (MAME's word builder — see § DLGR).
 The shader's NTSC demodulator recovers the 16 colours from the same
 spectral mechanism a real CRT uses (no palette lookup).
 
@@ -2576,6 +2611,18 @@ to migrate. Pinned by `media_notch`: per disk in one card, follows the disk
 across drives, live through the coordinator on all three media classes,
 legacy key → notch.
 
+**A persisted path that no longer resolves is said out loud by every card
+kind** *(2026-09-09, bug hunt #15)*. `restoreMediaFromSettings` gates each
+mount on `is_regular_file`; the SmartPort-unit and generic-bay loops warned
+"persisted path not found" when it failed, the Disk II, HDV and CFFA
+branches warned only when the *mount* failed — unreachable behind the gate
+— and `persistSessionSettings` then wrote `""` over the key at quit, so the
+disk was gone for good with nothing said. The commonest cause is a
+relative path saved from one working directory and reloaded from another.
+All five branches warn now (`storage_restore_missing_path`). Still open:
+the SmartPort/generic loops probe `../` and `../../` and the other three
+do not — same key, different behaviour by card.
+
 ### Two-phase media mount (`MediaMount.h/.cpp`)
 
 `stateMutex` is taken by the CPU worker for every 4096-cycle chunk **and** by
@@ -3239,6 +3286,21 @@ $C0nD read   WRITE push-page count (2 → 512 bytes expected on $C0n3)
 $C0nE write  SmartPort BEGIN · read = EXECUTE (returns error code)
 $C0nF read   post-stream error re-poll ($27 after a failed WRITE commit)
 ```
+
+**`$C0nF` reports this call's outcome and nothing else** *(2026-09-09, bug
+hunt #15)*. The card has two front doors on the same units: the ProDOS
+driver (`$Cn0A`) latches failures in the legacy `ioError_[unit]`, which
+only a `$C0n0/1/2` register write clears, and the `$CE00` SmartPort
+handler writes none of those and ends with `LDA $C0nF` on *every* path.
+One legitimately failing ProDOS read (a volume scanner past the end,
+`ONLINE` on an empty bay) armed the latch for the session, and the next
+SmartPort READ or STATUS came back carry-set + `$27` with the payload
+already delivered. The re-poll is gated on `spPushPages_`, non-zero only
+in the WRITE branch — the one branch that arms a stream, and it clears
+`ioError_` for its own unit first. Pinned by
+`smartport_call_error_isolation` (real 6502 through the firmware). Noted,
+not fixed: the DIB advertises subtype `$80` (extended calls) while
+`$40-$45` return `$01`, and FORMAT/INIT skip the parameter-count check.
 
 **SmartPort-protocol dispatch ($Cn0D, 2026-07-12).** Real SmartPort call
 convention — `JSR $Cn0D / DFB cmd / DW paramList`, error in A + carry,
@@ -4372,7 +4434,19 @@ on a double-sided 3.5"; TRKS entries give startBlock/blockCount/bitCount)
 and runs each track through `Sony35Gcr` — the **same** decoder
 `Sony35Drive::decodeAndCommit` uses when the guest writes a track, moved
 out of `Sony35Drive.cpp` so there is one copy of MAME's tables and
-checksum walk rather than two.
+checksum walk rather than two. **`decodeAndCommit` filters on the latched
+head as well as the track** *(2026-09-09, bug hunt #15)*: it committed by
+what the cells said, and a sector whose side byte disagreed with the head
+`writeStart()` had latched landed on the far side of the platter — eleven
+blocks at track 20 over data the guest could not reach, while the side
+under the head kept its old contents. Low reachability (the wrong side
+byte must still pass both checksums), but this is the only path by which
+the guest changes an 800K image through the IWM, and nothing exercised
+`writeFlux → decodeAndCommit` before `sony35_write_head`. The codec
+itself was cleared term for term against MAME's `ap_dsk35.cpp` — all 80
+tracks × 2 sides × every sector round-trip byte-exact, the interleave
+verified on the wire, a bad checksum and a bit slip each losing exactly
+one sector.
 
 Three things that decide whether it works:
 
@@ -6365,6 +6439,37 @@ steps.
 
 ### ImageWriter II printer (host-side)
 
+**Who may put a sheet in the tray** *(2026-09-09, bug hunt #15)*. Two
+rules, both pinned by `printer_paper_tray`. (1) `clearAll()` cleared
+`pages_` and *then* power-cycled through `resetPrinter()`, which
+deliberately *ejects* whatever is still on the platen rather than
+discarding it — so the sheet landed back in the tray the panel had just
+reported empty, and the `sheetsEjected_` bump had
+`MainWindow::archiveNewPrinterPages` copy the page the user asked POM2 to
+forget into the durable print history on the next frame. The platen is
+wiped before the reset now, so it finds nothing to eject; the odometer
+stays monotonic on purpose (rewinding it would make the archiver skip real
+pages later). (2) A form feed in the *data stream* is paper motion the
+guest asked for and ejects unconditionally — the C. Itoh head does, and
+`imagewriter_smoke`'s `ESC R 999 <FF>` case pins it — while `formFeed()`
+is the front-panel button with the panel's own "not if the sheet is
+blank" rule. The ESC/P and Diablo 630 parsers routed the guest's `$0C`
+through the button, so `"A" FF FF "B" FF` was three sheets on an
+ImageWriter II and two on an FX-80, and an Epson job's page count
+disagreed with its PDF and its history. Cleared with numbers in the same
+pass: pitch and graphics-density arithmetic at all six pitches, the page
+geometry (66 / 88 / 30 lines, perforation skip), `ESC L`/`ESC F`, bit-image
+desync, the 7/8-bit switch and international tables, the colour ribbon,
+`ESC V`, the screen dump (13 731 bytes, 384 contiguous rows, both bit
+orders), the PDF xref structure parsed by hand, the print history under a
+hand-edited index, the Ghostscript delegation under `-dSAFER` (no shell,
+scrubbed environment, 20 s kill), the Grappler+ register decode against
+the shipped dump, and a 16 MB escape-heavy fuzz over eleven heads. Noted,
+not fixed (TODO): `findPostScriptInterpreter` returns nothing on a stock
+Apple Silicon Homebrew because `/opt/homebrew/bin` is group-writable and
+`ChildProcess::findOnPath` refuses such directories — deliberate, but the
+user sees "install Ghostscript" with Ghostscript installed.
+
 **The DMP eats `ESC g`'s graphics body** *(2026-09-08)*. A head drops a
 command it has no hardware for after collecting its parameters
 (`modelIgnoresEsc`), which for `ESC g nnn` left the nnn×8 data bytes
@@ -7945,6 +8050,23 @@ Violet/Green and a fill never reached them; `hgrpaint::rotateClipCW` is
 block-aware for GR/DLGR clips (stored at canvas-pixel resolution, one
 sample per 7×4 block); SymX/SymY are offered for the brush tools only.
 Pinned in `hgr_paint_fill_pattern` and `hgr_sprite_blit`.
+
+## Logging (`Logger.h`)
+
+One `fprintf` to stderr under a mutex, and **every message is sanitised
+first** *(2026-09-09, bug hunt #15)*. The messages are built by
+concatenation and what is concatenated in is routinely not ours — a disk
+path out of `state.cfg`, a filename off the host filesystem, a `tnfs://`
+path — and a POSIX filename is any byte but `/` and NUL. `Settings`
+round-trips control bytes faithfully (422 hostile cases, 0 failures), so
+`a.dsk\n[ERROR] ROM: apple2e.rom checksum FAILED` reached the terminal as
+two lines, the second a forged report about a subsystem that never spoke,
+and `\x1b[2J` / `\x1b]0;…\x07` cleared the screen and rewrote the window
+title. `pom2::sanitizeLogText` passes printable ASCII and every byte
+≥ 0x80 (UTF-8 byte-identical), turns C0 controls and DEL into visible
+`\n` / `\r` / `\t` / `\xNN`, and caps a line at 8 KiB with a marker;
+central because there are ~450 call sites and no POM2 message legitimately
+carries a newline. Pinned by `log_escape_sanitize`.
 
 ## Host control center (Slot Configuration + Floppy Emu)
 

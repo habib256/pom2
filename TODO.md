@@ -1614,6 +1614,39 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   of the server loop it provokes (2026-09-07 — the loop was paying an
   unbuffered log line and a socket/close per iteration on the CPU worker,
   under `stateMutex`). *1 d.*
+- 🟡 **Bug hunt #15's display residue** *(2026-09-09; read, not fixed)*:
+  the II/II+ FLASH range blinks in antiphase with MAME's model::II (and
+  with POM2's own //e cursor) — cosmetic; `CharRomDump.h` and DEV say the
+  Videx dump "never sets bit 7" while the shipped file marks all of
+  $40-$7F, so that sentence and the offset branch are stale; 80-column
+  TEXT under the OE/AppleWin CPU demods uses phase 0 where MAME's
+  `is_80_column` term would apply (no colour oracle, and the term is
+  per-frame on a beam-raced split). *2 h.*
+- 🟡 **Bug hunt #15's SmartPort residue** *(2026-09-09; read, not fixed)*:
+  the card's DIB advertises subtype `$80` (extended calls supported) while
+  `$40-$45` return `$01`; `FORMAT` and `INIT` skip the parameter-count
+  check; WOZ 2.1 FLUX tracks, 400K and DiskCopy 4.2 images are refused
+  with a clear message rather than supported. *½ day.*
+- 🟡 **Ghostscript unreachable on a stock Apple Silicon Homebrew**
+  *(2026-09-09, bug hunt #15)*: `ChildProcess::findOnPath` refuses
+  group-writable directories and Homebrew ships `/opt/homebrew/bin` as
+  `drwxrwxr-x root:admin`, so `findPostScriptInterpreter()` returns nothing
+  with `gs` installed and the panel says "install Ghostscript". The refusal
+  is deliberate; at least say why, or accept a root-owned admin-group
+  directory. Smaller printer residue: `status().headX` can read one dot past
+  the right margin; the "Reset printer" tooltip says "discarded" where the
+  sheet is ejected; `setPaperDimensions` re-snaps both axes and leaves the
+  size combo stale; the carriage is the paper width (82 columns on Letter)
+  where a real ImageWriter II has an 8.0 in / 80-column carriage;
+  `kStyleDoubleStrike` is a silent no-op; unassigned control codes print
+  CP437 art. *½ day.*
+- 🟡 **Bug hunt #15's host residue** *(2026-09-09; read, not fixed)*:
+  `SettingsList` packs with `0x1F` and escapes nothing, so a path holding
+  that byte splits into two `library_recents` entries (any escape scheme
+  added now mis-reads existing values; cost is one dead recent entry);
+  `restoreMediaFromSettings` probes `../` and `../../` for SmartPort and
+  generic bays but not for the Disk II, HDV and CFFA; `PanelCatalog` has no
+  uniqueness check on `command`/`settingsKey` (none collide today).
 - 🟡 **Bug hunt #14's CPU residue** *(2026-09-09; read, not fixed)*: `WAI`
   charges 3 cycles and falls through (a `waiting` latch parallel to
   `halted` would fix it: wake on the line regardless of I, vector only if

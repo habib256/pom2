@@ -21,6 +21,7 @@
 #ifndef POM2_LOGGER_H
 #define POM2_LOGGER_H
 
+#include <cstddef>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -29,14 +30,67 @@ namespace pom2 {
 
 enum class LogLevel { Debug = 0, Info = 1, Warn = 2, Error = 3 };
 
+/// The longest message a single log line may carry, before the tail is
+/// dropped. No POM2 message comes near it; a value read out of `state.cfg`
+/// or a name read off a filesystem has no bound at all, and a megabyte of it
+/// scrolling past is a log the user cannot read.
+inline constexpr std::size_t kLogMaxMessageBytes = 8192;
+
+/// Make an ARBITRARY string safe to hand to a terminal.
+///
+/// Every log message here is built by concatenation, and what is concatenated
+/// in is routinely NOT ours: a disk path out of `state.cfg`, a filename off
+/// the host filesystem, a path out of a `tnfs://` URL. On POSIX a filename is
+/// any byte but '/' and NUL, so all of these are legal names:
+///
+///   "\x1b[2J\x1b[31mPWNED.dsk"                    — clears the screen, recolours it
+///   "\x1b]0;owned\x07b.dsk"                       — rewrites the window title
+///   "a.dsk\n[ERROR] ROM: apple2e.rom checksum FAILED"  — forges a whole log line
+///
+/// The third is the one that costs: it produces a message the user will
+/// report as POM2's, about a subsystem that never spoke. So printable ASCII
+/// and any byte >= 0x80 (UTF-8 — the messages are full of it) pass through,
+/// and every C0 control plus DEL becomes a visible escape. One line in, one
+/// line out.
+inline std::string sanitizeLogText(const std::string& in)
+{
+    std::string out;
+    out.reserve(in.size());
+    const std::size_t n = in.size() < kLogMaxMessageBytes
+                        ? in.size() : kLogMaxMessageBytes;
+    for (std::size_t i = 0; i < n; ++i) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        if (c >= 0x20 && c != 0x7F) { out += static_cast<char>(c); continue; }
+        switch (c) {
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: {
+                static const char hex[] = "0123456789ABCDEF";
+                out += "\\x";
+                out += hex[(c >> 4) & 0xF];
+                out += hex[c & 0xF];
+                break;
+            }
+        }
+    }
+    if (in.size() > n) out += "\\...(truncated)";
+    return out;
+}
+
 class Logger
 {
 public:
     void log(LogLevel level, const char* tag, const std::string& msg) {
         static const char* names[] = { "DEBUG", "INFO", "WARN", "ERROR" };
+        // Sanitised OUTSIDE the lock: it is pure string work, and the mutex
+        // exists only to keep two threads' fprintf from interleaving.
+        const std::string safeTag = sanitizeLogText(tag ? tag : "");
+        const std::string safeMsg = sanitizeLogText(msg);
         std::lock_guard<std::mutex> lk(mtx);
         std::fprintf(stderr, "[%s] %s: %s\n",
-                     names[static_cast<int>(level)], tag, msg.c_str());
+                     names[static_cast<int>(level)], safeTag.c_str(),
+                     safeMsg.c_str());
     }
     void debug(const char* tag, const std::string& m) { log(LogLevel::Debug, tag, m); }
     void info (const char* tag, const std::string& m) { log(LogLevel::Info,  tag, m); }

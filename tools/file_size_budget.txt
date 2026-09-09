@@ -226,10 +226,20 @@
 # store-form siblings (UnoffAbsSt, UnoffInd6R) and the why next to them. The
 # opcode-table shape and the dispatch are untouched.
 #   src/M6502.cpp                2300 -> 2346 (+46)
-src/Apple2Display.cpp                    2500
+# 2026-09-09 (bug hunt #15): one ceiling raised for three warnings — the
+# Disk II, HDV and CFFA restore branches now say "persisted path not found"
+# like the SmartPort and generic-bay loops always did, with the why once.
+#   src/StorageCoordinator.cpp   2337 -> 2357 (+20)
+#   src/Apple2Display.cpp        2500 -> 2522 (+22)  the DLGR bit stream is
+#     MAME's word builder verbatim (raw aux nibble, main one sample later)
+#     and the is_80_column phase term, with the why at the three sites.
+#   src/ImageWriter.cpp          2764 -> 2798 (+34)  the paper-tray rules said
+#     once at each of the three sites: Clear all wipes the platen before the
+#     power cycle, and a data-stream form feed ejects on every head.
+src/Apple2Display.cpp                    2522
 src/DiskImage.cpp                        3109
-src/ImageWriter.cpp                      2764
+src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
 src/Memory.cpp                           2644
-src/StorageCoordinator.cpp               2337
+src/StorageCoordinator.cpp               2357
 src/hgrpaint/HgrPaintEditor.cpp          2653

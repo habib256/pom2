@@ -711,8 +711,15 @@ int main()
                 {
                     auto state = mediaController.lockState();
                     auto& bus = state.memory().slotBus();
-                    assert(mediaStorage.restoreMediaFromSettings(
-                        bus, commandSettings).ok());
+                    // `hdv_path` in commandSettings names a file that does
+                    // not exist ("configured-command.hdv"); since bug hunt
+                    // #15 every card kind says so instead of skipping the
+                    // mount silently, so the only warnings allowed here are
+                    // those.
+                    const auto restored = mediaStorage.restoreMediaFromSettings(
+                        bus, commandSettings);
+                    for (const auto& w : restored.warnings)
+                        assert(w.find("persisted path not found") != std::string::npos);
                     auto* card = dynamic_cast<pom2::LironCard*>(bus.peripheral(1));
                     assert(card);
                     const auto info = card->bayInfo(0);

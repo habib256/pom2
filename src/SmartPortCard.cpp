@@ -398,7 +398,23 @@ uint8_t SmartPortCard::deviceSelectRead(uint8_t low4)
         case 0xD: return spPushPages_;        // WRITE data pages (0 or 2)
         case 0xE: return spExecute();         // EXECUTE → error code
         case 0xF:                             // post-stream error re-poll
-            return (activeUnit_ < kMaxUnits && ioError_[activeUnit_])
+            // Only a stream THIS call armed may be reported here. `ioError_`
+            // is the legacy $C0n3 latch, shared with the ProDOS driver path,
+            // and the only things that clear it are the $C0n0/$C0n1/$C0n2
+            // register writes — which a SmartPort call never makes. So a
+            // ProDOS-path transfer that legitimately failed (a volume scanner
+            // reading past the end of the volume, ProDOS ONLINE on an empty
+            // bay) left the latch set, and the $CE00 handler — which ends with
+            // `LDA $C0nF` on EVERY successful path, not just after a write
+            // stream — turned the next SmartPort READ/STATUS into carry-set +
+            // $27 with the payload already delivered in the caller's buffer.
+            // `spPushPages_` is non-zero only in the WRITE BLOCK branch, the
+            // only branch that arms a stream, and that branch sets
+            // `activeUnit_` and clears `ioError_` for its own unit first — so
+            // gating on it makes this register report exactly this call's
+            // outcome and nothing else.
+            return (spPushPages_ != 0 && activeUnit_ < kMaxUnits &&
+                    ioError_[activeUnit_])
                  ? uint8_t{0x27} : uint8_t{0x00};
         default:  return 0xFF;
     }

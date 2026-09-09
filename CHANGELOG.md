@@ -5,6 +5,62 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — Bug hunt #15: the painters, the 3.5" codec, the printer, the host layer
+
+Four Opus hunters, working on private copies of the sources this time so
+the round before could finish its build. Same contract.
+
+**Double lo-res was one dot to the right in mono and in the composite
+signal.** The colour rotation that belongs to the demodulator was baked
+into the bit stream, and the 80-column phase term the demodulator needed
+was left at zero; the two errors cancelled in colour and showed in
+monochrome and in the OE/AppleWin signal (half the samples of a random
+frame wrong against MAME's word builder). The stream is MAME's now and
+the phase term real; eight DLGR goldens re-recorded with the why
+(`dlgr_mame_phase`). Everything else in the painters — HGR, DHGR, lo-res,
+all 256 text codes, the FLASH cadence, the Video-7 and Chat Mauve modes,
+the AppleWin NTSC tables — was verified dot for dot against MAME's and
+AppleWin's algorithms.
+
+**A SmartPort call reported the previous ProDOS transfer's error.** The
+card's ProDOS driver latches a failed transfer in a word that only a
+register write clears, and the SmartPort handler never writes one but
+polls the latch at the end of every call — so one legitimately failing
+ProDOS read (a volume scanner, ONLINE on an empty bay) turned every later
+SmartPort READ or STATUS into an I/O error with the data already
+delivered. The poll is gated on a write stream this call armed
+(`smartport_call_error_isolation`). And a 3.5" flux write committed
+sectors by what the cells said without checking the side, so a garbled
+side byte landed eleven blocks on the far side of the platter
+(`sony35_write_head`, the first test of that path). The GCR codec was
+verified term for term against MAME across every sector of an 800K image.
+
+**"Clear all" archived the sheet it was asked to forget, and two heads
+lost pages on form feed.** The paper-tray clear power-cycled the printer
+after emptying the tray, and the power cycle ejects the platen's sheet —
+back into the tray, with the odometer bump that archives it to the
+durable print history. The platen is wiped first now. And a form feed in
+the data stream went through the front-panel button's "not if blank" rule
+on the ESC/P and Diablo heads, so an Epson job's page count disagreed
+with its PDF; it ejects on every head, as the ImageWriter head always did
+(`printer_paper_tray`). Pitches, page geometry, bit-image parsing, the
+screen dump, the PDF xref table, the history index, the Ghostscript
+sandbox and the Grappler+ decode were cleared with numbers.
+
+**A filename could forge a log line or clear the terminal.** The logger
+printed its message verbatim and the message routinely carries a path out
+of `state.cfg` or a name off the host filesystem — any byte but `/` and
+NUL — so a disk named `a.dsk` followed by a newline and `[ERROR] ROM: …`
+produced a forged report, and an escape sequence cleared the screen or
+rewrote the window title. Every line is sanitised now (control bytes
+shown as `\xNN`, 8 KiB cap), pinned by `log_escape_sanitize`. And a
+persisted media path that no longer resolved was dropped without a word
+by the Disk II, HDV and CFFA restore branches — then erased from the
+config at quit — where the SmartPort ones always warned; all five warn
+(`storage_restore_missing_path`). The settings parser (422 hostile
+cases), fifty CLI invocations, the slot plan under hostile settings and
+the coordinators were cleared with probes.
+
 ## 2026-09-09 — Bug hunt #14: the CPU cores, the block stack, the I/O cards, the network
 
 Four Opus hunters on the lots no round had reached. Same contract.

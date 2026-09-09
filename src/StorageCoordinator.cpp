@@ -1766,8 +1766,22 @@ StorageCoordinator::restoreMediaFromSettings(
                 drive == 0 && isPrimary
                     ? settings.getString("disk_path", "") : std::string());
             std::error_code ec;
-            if (!path.empty() && std::filesystem::is_regular_file(path, ec) &&
-                !card->insertDisk(static_cast<int>(drive), path)) {
+            // A persisted path that no longer names a file is NOT a silent
+            // non-event: the mount vanishes here and persistSessionSettings
+            // writes "" over the key at quit, so the disk is gone for good —
+            // and the commonest cause is a RELATIVE path saved from one
+            // working directory and reloaded from another (`POM2
+            // disks_5.4/x.dsk` launched from the repo, relaunched from the
+            // desktop). The SmartPort and generic-bay loops below have always
+            // said so; these three did not, which is the difference between a
+            // user who moves the file back and a user who reports nothing.
+            if (!path.empty() && !std::filesystem::is_regular_file(path, ec)) {
+                result.warnings.push_back(
+                    "Disk II slot " + std::to_string(card->getSlot()) +
+                    " drive " + std::to_string(drive + 1) +
+                    ": persisted path not found: " + path);
+            } else if (!path.empty() &&
+                       !card->insertDisk(static_cast<int>(drive), path)) {
                 result.warnings.push_back(
                     "Disk II slot " + std::to_string(card->getSlot()) +
                     " drive " + std::to_string(drive + 1) + ": " +
@@ -1790,8 +1804,11 @@ StorageCoordinator::restoreMediaFromSettings(
     if (cards.primaryHdv) {
         const std::string path = settings.getString("hdv_path", "");
         std::error_code ec;
-        if (!path.empty() && std::filesystem::is_regular_file(path, ec) &&
-            !cards.primaryHdv->loadImage(path)) {
+        if (!path.empty() && !std::filesystem::is_regular_file(path, ec)) {
+            result.warnings.push_back(
+                "HDV slot " + std::to_string(cards.primaryHdv->getSlot()) +
+                ": persisted path not found: " + path);
+        } else if (!path.empty() && !cards.primaryHdv->loadImage(path)) {
             result.warnings.push_back(
                 "HDV slot " + std::to_string(cards.primaryHdv->getSlot()) +
                 ": " + cards.primaryHdv->getLastError());
@@ -1811,8 +1828,11 @@ StorageCoordinator::restoreMediaFromSettings(
             "cffa_slot" + std::to_string(card->getSlot());
         const std::string path = settings.getString(key + "_path", "");
         std::error_code ec;
-        if (!path.empty() && std::filesystem::is_regular_file(path, ec) &&
-            !card->loadImage(path)) {
+        if (!path.empty() && !std::filesystem::is_regular_file(path, ec)) {
+            result.warnings.push_back(
+                "CFFA slot " + std::to_string(card->getSlot()) +
+                ": persisted path not found: " + path);
+        } else if (!path.empty() && !card->loadImage(path)) {
             result.warnings.push_back(
                 "CFFA slot " + std::to_string(card->getSlot()) + ": " +
                 card->getLastError());

@@ -277,9 +277,19 @@ int main()
         advanceOneEmulatedFrame(mem);
         disp.render(mem);
         assert(disp.width() == Apple2Display::kWidth80);
+        // The mono bit stream is MAME lores_update<Double>'s word builder
+        // (bug hunt #15, `dlgr_mame_phase`): an aux half emits the STORED
+        // nibble — rotr4(5) = $A — at the absolute phase, a main half emits
+        // its nibble one sample later. Both give the same 0101 train here,
+        // which is grey 5's LGR train shifted by one dot: the rotation the
+        // colour path applies is what the raw stream demodulates to, not a
+        // second rotation of the dots.
         for (int y = 0; y < 192; ++y)
             for (int x = 0; x < 560; ++x) {
-                const uint32_t want = ((5 >> (x & 3)) & 1) ? 0xFFFFFF : 0x000000;
+                const bool aux = ((x / 7) & 1) == 0;
+                const int bit = aux ? ((0xA >> (x & 3)) & 1)
+                                    : ((5 >> ((x + 1) & 3)) & 1);
+                const uint32_t want = bit ? 0xFFFFFF : 0x000000;
                 assert((disp.pixels()[y * 560 + x] & 0xFFFFFF) == want);
             }
     }
