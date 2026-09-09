@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🍏 POM2 v0.9.1 — Apple II Emulator
+# 🍏 POM2 v0.9.2 — Apple II Emulator
 
 ### *Nine machines from 1977 to 1988, beam-raced to the scanline — then tilted into 3D and rewound through time.*
 
@@ -60,13 +60,13 @@ to add.
 
 | Package | For | Notes |
 | --- | --- | --- |
-| `POM2-v0.9.1-x86_64.AppImage` | Linux (Intel/AMD) | Runs on Mint 19+, Debian 12, Ubuntu 20.04+ (glibc **2.27** floor) |
-| `POM2-v0.9.1-aarch64.AppImage` | Linux on ARM64 (desktop/server) | Desktop OpenGL, glibc **2.39** — Ubuntu 24.04+, Fedora 40+, Debian trixie |
-| `POM2-v0.9.1-raspberry-aarch64.AppImage` | Raspberry Pi 3 → 5 | OpenGL **ES 3.0**, Raspberry Pi OS bookworm (glibc **2.36**). **Take this one on a Pi** |
-| `POM2-v0.9.1-pi400-aarch64.AppImage` | Raspberry Pi 4 / Pi 400 only | Same, plus `-mcpu=cortex-a72` + PGO/LTO (**≈ −39 %** CPU). Will **not** start on an older core |
-| `POM2-macOS-v0.9.1.dmg` | macOS 10.15+ | **Universal 2** — Apple Silicon *and* Intel in one file |
-| `POM2-Windows-v0.9.1.zip` | Windows 10/11 x64 | One `POM2.exe`, no DLL beside it |
-| `POM2-v0.9.1-web-wasm.zip` | any static web host | The browser build — unzip, serve the folder, open `index.html` |
+| `POM2-v0.9.2-x86_64.AppImage` | Linux (Intel/AMD) | Runs on Mint 19+, Debian 12, Ubuntu 20.04+ (glibc **2.27** floor) |
+| `POM2-v0.9.2-aarch64.AppImage` | Linux on ARM64 (desktop/server) | Desktop OpenGL, glibc **2.39** — Ubuntu 24.04+, Fedora 40+, Debian trixie |
+| `POM2-v0.9.2-raspberry-aarch64.AppImage` | Raspberry Pi 3 → 5 | OpenGL **ES 3.0**, Raspberry Pi OS bookworm (glibc **2.36**). **Take this one on a Pi** |
+| `POM2-v0.9.2-pi400-aarch64.AppImage` | Raspberry Pi 4 / Pi 400 only | Same, plus `-mcpu=cortex-a72` + PGO/LTO (**≈ −39 %** CPU). Will **not** start on an older core |
+| `POM2-macOS-v0.9.2.dmg` | macOS 10.15+ | **Universal 2** — Apple Silicon *and* Intel in one file |
+| `POM2-Windows-v0.9.2.zip` | Windows 10/11 x64 | One `POM2.exe`, no DLL beside it |
+| `POM2-v0.9.2-web-wasm.zip` | any static web host | The browser build — unzip, serve the folder, open `index.html` |
 | `SHA256SUMS.txt` | everyone | `sha256sum -c SHA256SUMS.txt` to verify what you downloaded |
 
 Every package carries the emulator's ROM set, its fonts and its artwork, so it
@@ -76,12 +76,12 @@ your own images (§ 💿 ROMs and media).
 **🐧 Linux / 🍓 Raspberry Pi**
 
 ```bash
-chmod +x POM2-v0.9.1-x86_64.AppImage
-./POM2-v0.9.1-x86_64.AppImage
+chmod +x POM2-v0.9.2-x86_64.AppImage
+./POM2-v0.9.2-x86_64.AppImage
 ```
 
 If your distro no longer ships `libfuse2`, either install it or run the image
-without it: `./POM2-v0.9.1-x86_64.AppImage --appimage-extract-and-run`.
+without it: `./POM2-v0.9.2-x86_64.AppImage --appimage-extract-and-run`.
 On a **Pi 4 or Pi 400**, take `-pi400-aarch64` rather than `-raspberry-`: it is
 the same build compiled for that exact core with two profile-guided passes and
 LTO, worth roughly **40 %** on the emulation core. It will not start on a
@@ -467,7 +467,7 @@ workflow builds every platform natively, attaches the artifacts (plus a
 body (falling back to auto-generated notes when it is absent):
 
 ```bash
-git tag v0.9.1 && git push origin v0.9.1  # `0.9.0` without the v works too
+git tag v0.9.2 && git push origin v0.9.2  # `0.9.0` without the v works too
 ```
 
 Use **Run workflow** on the Actions tab for a dry run: same builds, artifacts

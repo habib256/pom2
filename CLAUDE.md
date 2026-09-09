@@ -413,7 +413,7 @@ and a cache hit opens no socket, so a second run works offline.
 
 ## Version string locations
 
-Current release: **v0.9.1**. **Single source of truth = `CMakeLists.txt`
+Current release: **v0.9.2**. **Single source of truth = `CMakeLists.txt`
 `project(pom2_imgui VERSION x.y.z ...)`.** A `configure_file` expands it into
 `build/generated/Version.h` (from `src/Version.h.in`); all C++ pulls the
 version from there (`POM2_VERSION` / `POM2_VERSION_STRING` macros + `pom2::

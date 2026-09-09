@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # link exists to prevent. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(pom2_imgui VERSION 0.9.1 LANGUAGES CXX)
+project(pom2_imgui VERSION 0.9.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
