@@ -1812,6 +1812,26 @@ cycles and measures the rendered frequency: 27 Hz before (the writes
 collapsing onto buffer edges), 510 Hz for 511.4 written after, in
 Mockingboard-compat and Phasor-native modes alike.
 
+Two things the port had missed, found by bug hunt #12 *(2026-09-09)*.
+**The AY clock scale is a timeline quantity.** `clockScale()` (1 in
+MB-compat / EchoPlus, 2 in Phasor-native) was read per fill at CPU-now,
+while the cursor deliberately trails the producer by two 20 ms bursts, so
+a `$C0(8+s)D` mode switch retuned the ~40 ms of stamped writes it had not
+reached yet: 27.8 ms of a 1997 Hz tone came out at 3996 Hz *before* the
+switch's own cycle. `applyModeSwitch` now syncs (nothing else on that path
+advances `lastSyncCycle_`, and a stamp in the past is applied by the
+front-drain on the next fill, which is the bug again) and stamps a
+`kRegClockScale` pseudo-register; the audio thread carries
+`liveClockScale`, advanced by `applyEvent`, and re-derives its per-sample
+tick rate mid-buffer (`phasor_mode_scale_timeline`). **/RESET is stamped
+on the falling edge only** — `onViaPortBChange` runs on every port
+change, holding PB2 low across a run of writes is legal, and an un-gated
+push queued one idempotent reset per write: 20 000 writes with /RESET low
+pushed 20 001 events, overflowed `kMaxAyEvents` and broke the timeline
+(`ayResetHeld_[4]`, the Mockingboard's gate verbatim). The render loop
+also bounds `pending` the way the Mockingboard's does, dropping by
+*applying* so the register bank stays coherent.
+
 `PhasorCard` (`PhasorCard.h/.cpp`) — dual-mode successor to the
 Mockingboard. 2× 6522 VIA + 4× AY-3-8913 PSG (12 voices). Same VIA +
 AY hardware as Mockingboard (verbatim from `Via6522.h` + `Ay3_8910.h`,
@@ -1985,9 +2005,21 @@ access — got the entire frame at 3.5×. `transwarp_chunk_sampling`: no
 window 59 659 CPU cycles (unchanged), window from cycle 0 19 975 (was
 59 658; the first chunk still runs at 3.5×), window a third of the way in
 ~22 000 (was 59 657). `scaledFrameBudget()` stays for the callers that
-want the frame's nominal size; the device-clock fan-out
-(`refreshAcceleratorClock`) is still per frame, which is fine — it is the
-pitch the audio devices resample at, not the count of cycles run.
+want the frame's nominal size. **The device-clock fan-out runs at the
+same granularity** *(2026-09-09, bug hunt #12)*: `refreshAcceleratorClock`
+was still sampled once before the frame's first chunk, so for any frame
+in which a slow window opened or closed every emuCycles consumer — the
+speaker and cassette queues, both floppy-sound voices, every card's
+replay cursor — converted a whole frame of stamps with a clock 2.6-2.9×
+wrong (a window opening a third of the way in burnt 22 901 CPU cycles
+while the devices were told 3 579 544 Hz; the frame in which one closed
+burnt 49 417 while they were told 1 022 727). That is the shape of the
+//c+ and bug-hunt-#10 clicks re-entering through the frame edge, and RWTS
+polling `$C0EC` opens one such window per disk read. Both chunk loops now
+hand the multiplier they already sampled to `applyAcceleratorClock(mul)`;
+one `double` compare per chunk, nothing on a machine without an
+accelerator. Pinned by `accelerator_clock_chunk` (after a frame,
+`emulatedCpuClockHz() == 1 022 727 × cpuSpeedMultiplier()`).
 
 **The ROM is probed through `findResource`** *(2026-09-08, bug hunt #6)*.
 `TranswarpCard::loadRomFromDisk` walked a private cwd ladder (`""`, `../`,
@@ -2882,6 +2914,34 @@ window. Note `disk_write_controller_smoke` exercises the **legacy**
 path — the shipped app bundles `roms/diskii_p6.rom` and always runs the
 LSS/flux one.
 
+**Every flush site re-bases the burst, and a stepper pulse is a flush
+site** *(2026-09-09, bug hunt #12)*. A burst is spliced as
+`[writeStartTime, lssCycle)` onto `headQuarterTrack[activeDrive]` **at
+flush time**. Two sites broke that contract. `commitInFlightWrite()` —
+the flush behind `flushPendingWrites`, which `StorageCoordinator::flushAll`
+runs mid-session (the WASM heartbeat) and an insert/eject on the *other*
+drive runs too — spliced and zeroed `writePosition` but left
+`writeStartTime` where it was, so a burst that continued was flushed
+again as the old window plus the new transitions: `writeFlux` saw a start
+that no longer matched `writeFraming.nextCycle`, re-anchored as a new
+burst on the old start's angle and dropped the half-assembled nibble (25
+of 47 nibbles wrong in the probe). And `control()`'s phase branch moved the
+head through `seekPhaseW` without committing, so the transitions laid on
+one track were spliced onto the track the head had just arrived at — a
+write to track 0 mutating track 1. Both now commit first (the stepper
+before `phaseOn` changes, so `writingInhibited()` still sees the pre-step
+magnets), and every site re-bases. MAME has the same shape (`write_flux`
+targets the floppy's current cylinder and `seek_phase_w` never flushes);
+this is a deliberate improvement consistent with `commitInFlightWrite`'s
+own contract. Pinned by `diskii_write_burst` (real LSS through
+`diskii_p6.rom`). In the same pass `DiskImage::writeNibbleAt` learnt to
+refuse a WOZ: its surface is the bit stream, and the nibble path's
+`invalidateWholeTrack` cleared `bitStream[qt]`, which `expandTrackBits`
+refuses to rebuild for a WOZ — the quarter-track was left with zero cells
+for the rest of the session (`woz_nibble_write`; `woz_writeback_smoke`
+used to reach its unsplicable-track rig through that very defect and now
+goes through `loadMediaSnapshot`).
+
 **Write-back plumbing** (an opt-in until 2026-09-08, an opt-out since —
 an absent key now restores a WRITABLE drive, pinned in
 `storage_coordinator`). `disk_writeback[_slotN]` has to be
@@ -2999,6 +3059,13 @@ are reset. The panel draws `unitCount` rows and offers the count next to
 the slot. Pinned by `smartport_eight_units` (boots A2DeskTop's 800K image
 off unit 0 with seven synthesised volumes behind it, reads DEVLST off the
 main bank as the boot runs: eight devices at 8, two at the default).
+The legacy streaming registers obey the same count since 2026-09-09 (bug
+hunt #12): `$C0n0` unit-select folded on `kMaxUnits`, so `LDA #3 / STA
+$C0n0` reached — and `$C0n3` committed 512-byte blocks to — a bay outside
+`unitCount()`, outside `bayCount()`, invisible in the Slot Manager; it
+folds on `unitCount()` now, which is the pre-2026-09-08 semantics
+(`smartport_unit_visibility`, with the positive control that raising the
+count to 4 makes bay 3 reachable again).
 
 `SmartPortCard.{h,cpp}`. Slot-plugged Apple "Disk 3.5 Controller
 Card" (Liron / 670-0186) for //e / II+ / II / //c. Default slot 5.
@@ -4026,9 +4093,20 @@ from the internal 5.25", lists S5 D1/D2, S2 D1/D2 and S4 D1/D2 next to
 S6 and /RAM; at eight, the card's ceiling, S1 D1/D2 join them — eleven
 ProDOS devices in all. Pinned by `iic_smartport_six_units` (eight, six, and
 two at the default).
-The bus blob's id table grew from four entries to eight; the loader reads
-whatever the blob carries, up to eight, so a snapshot from before still
-loads with its four.
+The bus blob's id table grew from four entries to eight on 2026-09-08,
+and the first loader for it read "up to eight ids while bytes remain" —
+a rule that cannot see the end of a four-entry table. The section is
+documented as self-delimiting and both owners (`LironCard`,
+`IIcExternalSmartPort`) hand it the whole remainder of *their* blob, so on
+every pre-2026-09-08 snapshot it swallowed four bytes of the owner's tail,
+filed them as host-assigned chain numbers in `ids_[4..7]` — a WRITE to a
+device the host never named was then *served*, landing on bay 7 — and
+returned an offset four bytes too far for the owner's own sections.
+Since 2026-09-09 (bug hunt #12) the blob states its own table length:
+magic `SPB2` carries `kMaxUnits` before the ids, `SPB1` is read as exactly
+four, and a table longer than this build's `kMaxUnits` renumbers at the
+next INIT rather than answering for half a chain. Pinned by
+`smartport_bus_blob_compat`.
 
 On a //c one IWM drives the internal 5.25" and the rear connector; the enable
 line picks the drive. POM2 keeps the 5.25" on `DiskIICard` (its LSS is the

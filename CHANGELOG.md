@@ -5,6 +5,87 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — Bug hunt #12: the core — Disk II writes, the SmartPort, the timers
+
+Four Opus hunters on the emulation core, the standing contract (a defect
+confirmed by a probe, a fix confirmed by the probe, a pin that fails
+without it).
+
+**Two Disk II write bursts landed on the wrong medium.** Every flush site
+splices `[writeStartTime, now)` onto the quarter-track the head is over
+*at flush time*. `commitInFlightWrite` — the flush behind
+`flushPendingWrites`, which the WASM heartbeat and an insert or eject on
+the other drive run mid-session — never re-based `writeStartTime`, so a
+burst that continued was spliced twice: `writeFlux` re-anchored the second
+window as a new burst and dropped the half-assembled nibble, 25 of 47
+nibbles wrong. And a stepper pulse moved the head without committing, so a
+write to track 0 was spliced onto track 1 once the head got there. Both
+commit first, every site re-bases (`diskii_write_burst`). A nibble write
+on a WOZ blanked its quarter-track for the session — the nibble path
+invalidated a bit stream `expandTrackBits` refuses to rebuild for a WOZ;
+`writeNibbleAt` refuses a WOZ now (`woz_nibble_write`). The TODO's WOZ1
+`TRK+6650` splice item is cleared: `bit_count` is the one field either
+loader reads and a write leaves it alone.
+
+**A pre-2026-09-08 SmartPort bus blob ate four bytes of its owner's
+tail.** The id table went from four entries to eight and the loader read
+"up to eight while bytes remain" — on every older snapshot it swallowed
+four bytes of the Liron's or the //c port's own state, filed them as
+chain numbers, served a WRITE to a device the host never named (a block
+of guest data on bay 7) and mis-read everything behind. The blob now
+states its table length (`SPB2`; `SPB1` is exactly four)
+(`smartport_bus_blob_compat`). And `$C0n0` unit-select folded on
+`kMaxUnits`, so `LDA #3 / STA $C0n0` read and committed blocks on a bay
+past `unitCount()` — invisible in the Slot Manager; it folds on the count
+the card answers for (`smartport_unit_visibility`).
+
+**The accelerator clock fan-out was a frame behind the chunk loop.** The
+budget went chunk-granular the day before; `refreshAcceleratorClock`
+stayed frame-granular, so for any frame in which a TransWarp slow window
+opened or closed every emuCycles consumer converted a frame of stamps with
+a clock 2.6-2.9× wrong — the //c+ and bug-hunt-#10 clicks re-entering
+through the frame edge, once per RWTS disk read. Both loops hand the
+multiplier they already sampled to `applyAcceleratorClock`
+(`accelerator_clock_chunk`).
+
+**The Phasor's clock scale was applied 40 ms early, and /RESET flooded
+its queue.** The AY clock scale was read at CPU-now per fill while the
+cursor trails by two bursts, so a mode switch retuned the not-yet-rendered
+backlog an octave up before its own cycle (1997 Hz → 3996 Hz for 27.8 ms);
+it is a stamped pseudo-register now (`phasor_mode_scale_timeline`). And
+the /RESET strobe was stamped on every port write while held low instead
+of on the falling edge, 20 000 events for one reset, enough to break the
+timeline; gated like the Mockingboard's.
+
+**Cleared, with probes.** The 6522's `advance(n)` against `n × advance(1)`
+over four ACR modes, nine latches and nine batch sizes (0 mismatches); T2
+one-shot fires once at `latch + 3`; the ACR-near-underflow re-arm; the
+`.nib` / `.dsk` / `.po` round trips (0 bytes changed); the motor-off flush;
+the WOZ cell grid; the 2IMG-NIB width; the IWM write-window table (the
+`half {16} / window {36}` asymmetry is MAME's own, `iwm.cpp:303-329`); the
+Sony seek at track 79; the //c+ external chain numbering; a bus
+transaction across a mid-transaction eject; the v1/v2 SmartPort card blob
+into the v3 card; a 3.5" write-back after an eject. Noted, not changed:
+`Ssi263` has no `setCpuClock` (phoneme durations run 3.5× fast under a
+TransWarp), and the continuous-mode T1 read-back passes `$FF` for one
+cycle where a real 6522 may show `$00` — no oracle in the tree settles it.
+
+## 2026-09-09 — The A2 File Cmd bench gets the 1983 //e and the Chat Mauve
+
+`pom2_playtest` (pom2adventure) grew `--preset iie_unenh` — the 16 KB
+342-0135/0134 firmware, the 2 KB character ROM, a NMOS 6502 — so A2 File
+Cmd's `ARCH=6502` build is proved on the machine it is for (its 65C02
+build shows its own "needs an enhanced Apple IIe" refusal there, `$FBC0 =
+$EA`); and `--chatmauve [variant]`, the RGB card in slot 7 with the display
+on its pipeline, so the headless bench sees what the GUI sees. The image
+viewer defect reported "as soon as the card is plugged" does not reproduce
+in the core: with the reporter's own settings, in both viewing orders, at
+real speed with a render every 16 ms, and from the GUI process's own
+`/screen.ppm`, ALIEN and both DHGR pages are clean and pixel-identical
+between GUI and bench. A2FC's switch sequence is right; what is left is
+the GL/CRT stage after `Apple2Display::render`. → TODO § Reported against
+A2 File Cmd.
+
 ## 2026-09-09 — TransWarp: the multiplier is sampled per chunk, not per frame
 
 The accelerator's slow windows — the 20 µs at 1 MHz around a slot access,

@@ -946,7 +946,7 @@ port can be high-level (`ImageWriter`) and a POM2-original can be low-level
 | 6b | Mockingboard "C" Sound II      | POM2 + AppleWin  | AppleWin `source/Mockingboard.cpp` + `source/SSI263.{h,cpp}`             | — (SSI263 at `$Cs40-$Cs44`, A/!R → VIA1.CA1)                                              |
 | 7  | FloppySoundDevice              | Verbatim         | `floppy.cpp:1532-1620`, `:2925-3020`                                     | —                                                                                        |
 | 8  | SlotBus + IRQ wire-OR          | POM2-original    | MAME slot bus pattern; open-bus rules from `apple2e.cpp:2883-3155`       | 🟢 unclaimed `$C080`/`$CnXX`/`$C800` reads return the floating bus, and `$C800` is first-one-wins, populated slots only (2026-09-07) — a bare `SlotBus` with no source installed keeps `$FF` |
-| 9  | DiskImage                      | Partial-verbatim | `woz_dsk.cpp`, `flopimg.cpp:2017-2106`                                   | 🟡 WOZ1 splice TRK+6650; 🟢 .nib2/.app, half-tracked NIB (88)                           |
+| 9  | DiskImage                      | Partial-verbatim | `woz_dsk.cpp`, `flopimg.cpp:2017-2106`                                   | 🟢 WOZ1 splice TRK+6650 (2026-09-09: `bit_count` is the one TRK field either loader reads, and a write leaves it as is); 🟢 .nib2/.app, half-tracked NIB (88)                           |
 | 10 | DiskIICard                     | Partial-verbatim | `machine/wozfdc.cpp:264-291`, P6 PROM 341-0028-A                         | 🟢 sub-instruction RAII vs per-cycle                    |
 | 11 | IWMDevice                      | Verbatim         | `machine/iwm.cpp:1-543`                                                  | 🟢 **window sizes are MAME's own again** (2026-09-01): the state machine runs on the controller's 7.16 MHz clock (`POM2_IWM_TICKS_PER_CPU_CYCLE`), not whole CPU cycles, so 28/14/36/18 are used verbatim and a window edge lands inside a 14.17-tick Sony cell. That plus a flux-query off-by-one is what unblocked the 800K read path — pinned by `sony35_iwm_read_path`. 🟢 Q3 fast clock (Mac/IIgs only) still unmodelled, and no longer load-bearing |
 | 12 | SmartPortCard (//e Liron)      | POM2-original (real EPROM → L2) | SmartPort spec + Apple Tech Note; real Liron firmware `roms/liron.rom` (BMOW 4 KB) + real `$Cn0D` dispatch, pinned `liron_smartport_dispatch` | 🟢 multi-partition ProDOS (CFFA3000)                                                     |
@@ -1202,11 +1202,13 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   copiers) therefore lands its sectors at the wrong file offset. `$D5`
   is not a legal GCR data byte so a spurious prologue match can't
   happen, which is why this has never bitten in practice. *~1 h.*
-- 🟡 **WOZ1 splice point (TRK+6650)** — `DiskImage::writeFlux` splices
-  bit-cells but the full `set_write_splice` handling (TRK +6650
-  splice_point/nibble/bit_count fields, parsed at `DiskImage.cpp:867-869`)
-  is ignored; IWM call site wired (`IWMDevice.cpp:412`, see the comment
-  at `IWMDevice.cpp:56-61`; the stub is `DiskImage.h:283`). Applesauce re-master parity. *1 d.*
+- 🟢 **WOZ1 splice point (TRK+6650)** — cleared by bug hunt #12
+  (2026-09-09): `bit_count` (TRK+6648) is unchanged by a write and is the
+  only TRK field POM2's loader and MAME's `as_dsk.cpp` read; the
+  `splice_point` / `splice_nibble` / `splice_bit_count` fields are
+  informational for a re-master and never a data defect. The write path's
+  real defects were elsewhere (`woz_nibble_write`, `diskii_write_burst`).
+  Applesauce re-master parity stays out of scope.
 - 🟡 **SmartPort ProDOS multi-partition** — 1 image = 1 unit = 1
   volume today; multi-volume CFFA3000-style not supported.
 - 🟢 **UI "Force DOS / Force ProDOS"** — backend ready
@@ -1983,7 +1985,7 @@ Do not re-litigate without re-reading the original comment.
   `bench/pom2.py`) mount a second floppy in drive 2 at boot, so the physical
   DOS 3.3 code paths are testable without `/disk`.
 
-- 🟡 **`pom2_playtest --preset iie_unenh` : le //e NON enhanced (6502 NMOS,
+- 🟢 **`pom2_playtest --preset iie_unenh` : le //e NON enhanced (6502 NMOS,
   pas de MouseText) pour la version 6502 d'A2 File Cmd** *(demande du
   2026-09-08)*. Un utilisateur sur un IIe non enhanced n'avait qu'un ecran
   vide ; A2 File Cmd a maintenant une construction `ARCH=6502` (cible cc65
@@ -1997,6 +1999,70 @@ Do not re-litigate without re-reading the original comment.
   pas etre executes), MACHID et `$FBC0 = $EA` comme sur la machine. Avec
   lui, `A2FC_IMG=A2FILECMD-6502 A2FC_BUILD=build-6502 python3 bench/run.py`
   sous ce preset prouverait la version 6502. *½ jour.*
+
+  **Done 2026-09-09** (`pom2_playtest.cpp`, pom2adventure; alias `iie-u`):
+  the 16 KB 342-0135/0134 firmware (`apple2e_unenh.rom`), the 2 KB
+  character ROM, `M6502::CpuMode::NMOS`, profile label "Apple //e
+  Unenhanced (headless)". Measured: `A2FILECMD-6502.po` boots to its two
+  panels on it; `A2FILECMD.po` (the 65C02 build) shows its own "A2 FILE
+  CMD NEEDS AN ENHANCED APPLE IIE" refusal with `$FBC0 = $EA`, exactly as
+  the 1983 machine does.
+
+- 🟢 **`pom2_playtest --chatmauve [variante]` : la carte RGB en slot 7, pour
+  que le banc d'A2 File Cmd voie ce que voit l'interface** *(demande du
+  2026-09-09)*. Un utilisateur, puis l'auteur, rapportent que **la
+  visionneuse d'images d'A2 File Cmd va mal des que Le Chat Mauve est
+  branche** : une page DHGR brute ne s'affiche pas, et une page HGR (ALIEN
+  de POM1, `IMGHGR/` du `.2mg`) sort avec des points blancs disperses et une
+  ligne pointillee. Sans la carte, tout est propre -- verifie des deux
+  cotes. Or `pom2_playtest` ne branche jamais de carte video, donc le banc
+  headless ne peut ni voir le defaut ni prouver une correction : c'est le
+  seul cas ou l'interface montre autre chose que le banc.
+
+  Ce que j'ai deja etabli, cote A2 File Cmd, pour que le travail parte de
+  faits et non d'impressions :
+  - les neuf fichiers d'`IMGHGR/` sont identiques a l'amont (`pom1`,
+    empreintes de blobs git) ;
+  - A2FC charge ALIEN en `$2000-$3FFF` **octet pour octet comme le fichier**
+    (relecture de la memoire par `/mem` : zero difference) ;
+  - le rendu headless (`Apple2Display` sans carte) est parfait ;
+  - donc memes octets, meme mode, deux rendus differents : ce qui reste est
+    la carte ou ce qu'A2FC lui fait.
+
+  Ce qu'A2FC fait, pour reference (`src/memory_swap.c`, `enter_graphics`) :
+  80COL on, puis `$C05E`/`$C05F` deux fois -- deux fronts d'horloge avec la
+  donnee a 1, soit `11` = COL140 d'apres l'en-tete de `LeChatMauveCard.h` --,
+  puis `$C05E` pour laisser AN3 bas (DHGR). En HGR simple (`show_hgr` dans
+  `src/a2fc.c`), il pose 80COL off puis `$C05F` : un front d'horloge avec la
+  donnee a 0, et AN3 haut, ce qui doit donner `hgrMode(an3On=true)` =
+  `LcmColor`. Si l'une de ces deux sequences n'est pas ce que la carte
+  attend, dites-le : je corrige A2FC. Si c'est le peintre qui a un defaut,
+  il est chez vous.
+
+  Le drapeau suffirait : `--chatmauve` (variante par defaut Feline, ou
+  `--chatmauve video7|eve|iic|rvbgraph`), la carte plugee en slot 7 comme la
+  carte fraiche. Le banc capture alors `screen.ppm` et compare pixel a pixel,
+  exactement comme `bench/run.py` le fait deja pour la mire DHGR. *2 heures.*
+
+  **Flag done 2026-09-09; the defect does not reproduce in the core.**
+  `--chatmauve [feline|iic|eve|video7|rvbgraph]` plugs the card in slot 7
+  (the //c preset defaults to the adapter), gives it `Memory` for the
+  Eve's CPREG shadow and puts the display on the RGB pipeline, as
+  `MainWindow_SlotConfig.cpp` does. With the reporter's own `state.cfg`
+  (Féline, `hi_res_mode=ChatMauveRGB`, //e Enhanced NTSC) the bench
+  rendered ALIEN and both DHGR pages clean — in both orders (DHGR then HGR
+  leaves the latch at `11` and A2FC's `show_hgr` still lands `LcmColor`),
+  at 12× and at real speed with a render every 16 ms (the GUI's cadence),
+  and the GUI process's *own* `/screen.ppm` of ALIEN with the card is
+  pixel-identical to the bench's (1762 white pixels, 560×192). So A2FC's
+  switch sequence is right and the card's painter is right. What the
+  headless capture cannot see is the stage after `Apple2Display::render`
+  — the GL upload and `CrtEffectStack` (the reporter runs it with
+  persistence 0.4, scanlines 0.25, barrel) on a framebuffer the card
+  widens from 280 to 560 — which is where scattered white dots and a
+  dotted line would have to come from. Next data point is the reporter's:
+  with the card plugged, turn `crt_effects_enabled` off and look again; a
+  window screenshot settles it.
 
 ## Out of scope
 

@@ -340,6 +340,15 @@ public:
     /// accelerator (bug hunt #10).
     void refreshAcceleratorClock();
 
+    /// Same derivation, from a multiplier the caller has ALREADY sampled.
+    /// The chunk loops read `cpuSpeedMultiplier()` once per 4096-cycle chunk
+    /// under `stateMtx` to size the chunk; handing that same value here keeps
+    /// the clock the devices are told and the speed the frame is actually run
+    /// at on the SAME granularity. Returns immediately (one double compare)
+    /// when nothing moved, which is every chunk on every machine without an
+    /// accelerator and all but the two transition chunks with one.
+    void applyAcceleratorClock(double mul);
+
     /// Disk turbo (~60× while a drive streams). The override COMPOSES with
     /// the base instead of replacing it: the UI used to stash
     /// `getCyclesPerFrame()` in a MainWindow member before writing 1 M, and

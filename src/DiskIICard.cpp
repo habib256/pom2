@@ -297,7 +297,12 @@ void DiskIICard::commitInFlightWrite()
     if (active == MODE_IDLE || !writeMode || !writeBackEnabled) return;
     if (writePosition <= 0) return;
     // MAME's write gate — see `writingInhibited()`.
-    if (writingInhibited()) { writePosition = 0; writeLineActive = false; return; }
+    if (writingInhibited()) {
+        writePosition = 0; writeLineActive = false;
+        // Re-base for the same reason the committed path below does.
+        writeStartTime = static_cast<int64_t>(lssCycle);
+        return;
+    }
     DiskImage& img = images[activeDrive];
     if (!img.isLoaded()) return;
     // Same call, same anchors as the drive-swap splice in selectDrive():
@@ -310,6 +315,20 @@ void DiskIICard::commitInFlightWrite()
     ++writeFlushCount;
     writePosition   = 0;
     writeLineActive = false;
+    // RE-BASE the window. Every other flush site does (`lssSync`'s
+    // 30-transition pre-emptive flush, the motor-off flush in
+    // advanceCycles, selectDrive's swap splice); this one did not, so a
+    // burst that CONTINUED after the commit was flushed again as
+    // [old writeStartTime, now) — the already-committed window re-spliced
+    // with only the new transitions in it. DiskImage::writeFlux saw a
+    // start that no longer matched `writeFraming.nextCycle`, treated it as
+    // a NEW burst, re-anchored on the angular position of the OLD start and
+    // dropped the half-assembled nibble: two nibbles lost and the whole
+    // rest of the burst shifted one slot early. Reachable from
+    // StorageCoordinator::flushAll (the WASM session heartbeat runs it
+    // mid-session) and from an insert/eject on the other drive while this
+    // one is writing.
+    writeStartTime  = static_cast<int64_t>(lssCycle);
 }
 
 // Flush every drive's pending write-back without ejecting. The eject and
@@ -1497,6 +1516,18 @@ void DiskIICard::control(int offset)
     if (offset < 8) {
         const int  phase = offset >> 1;
         const bool on    = (offset & 1) != 0;
+        // A stepper pulse can move the head. The transitions already in
+        // `writeBuffer` were laid down on the quarter-track the head is over
+        // RIGHT NOW, but every flush site (Q7L, the 30-transition
+        // pre-emptive flush, the motor-off flush) reads
+        // `headQuarterTrack[activeDrive]` at flush time — so a step taken
+        // mid-burst spliced them onto the track the head has just ARRIVED
+        // at, corrupting nibbles on a track the guest never wrote. Commit
+        // first, BEFORE `phaseOn` changes (so `writingInhibited()` still
+        // sees the pre-step magnets) and before the head moves. This is the
+        // same rule selectDrive / insertDisk / eject already follow; the
+        // stepper was the one path that abandoned a burst silently.
+        if (active && writeMode && writePosition > 0) commitInFlightWrite();
         phaseOn[phase]   = on;
         int mask = 0;
         for (int i = 0; i < 4; ++i) if (phaseOn[i]) mask |= (1 << i);

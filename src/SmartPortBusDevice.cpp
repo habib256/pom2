@@ -538,7 +538,17 @@ void SmartPortBusDevice::buildReply(uint8_t status, const uint8_t* contents,
 }
 
 namespace {
-constexpr uint8_t kBusBlobMagic[4] = { 'S', 'P', 'B', '1' };
+// 'SPB1' ended in a FIXED FOUR-entry id table (kMaxUnits was 4 until
+// 2026-09-08). The section is documented as self-delimiting and every owner
+// hands the loader the whole remainder of ITS blob (LironCard.cpp:319,
+// IIcExternalSmartPort.cpp:208), so a loader that reads "up to kMaxUnits ids
+// while bytes remain" cannot stop at the end of an old one: it swallowed four
+// bytes of the owner's tail, put them in ids_[4..7] and returned an offset
+// four bytes too far. 'SPB2' carries the table's LENGTH, so both shapes are
+// delimited by the blob itself.
+constexpr uint8_t kBusBlobMagic  [4] = { 'S', 'P', 'B', '2' };
+constexpr uint8_t kBusBlobMagicV1[4] = { 'S', 'P', 'B', '1' };
+constexpr int     kBusBlobV1Ids      = 4;
 void put16(std::vector<uint8_t>& o, std::size_t v)
 { o.push_back(static_cast<uint8_t>(v)); o.push_back(static_cast<uint8_t>(v >> 8)); }
 std::size_t get16(const uint8_t* p) { return p[0] | (static_cast<std::size_t>(p[1]) << 8); }
@@ -566,6 +576,7 @@ void SmartPortBusDevice::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(static_cast<uint8_t>(pendingBlock_ >> 16));
     out.push_back(static_cast<uint8_t>(pendingBlock_ >> 24));
     out.push_back(static_cast<uint8_t>(assigned_));
+    out.push_back(static_cast<uint8_t>(kMaxUnits));   // id-table length
     for (int i = 0; i < kMaxUnits; ++i) out.push_back(ids_[static_cast<std::size_t>(i)]);
 }
 
@@ -573,7 +584,9 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
 {
     // Magic first, reset second: a foreign blob must not abort a live bus
     // transaction (see LironCard::loadSnapshotState).
-    if (!data || n < 4 || std::memcmp(data, kBusBlobMagic, 4) != 0) return 0;
+    if (!data || n < 4) return 0;
+    const bool v1 = std::memcmp(data, kBusBlobMagicV1, 4) == 0;
+    if (!v1 && std::memcmp(data, kBusBlobMagic, 4) != 0) return 0;
     busReset();
     std::size_t i = 4;
     auto need = [&](std::size_t k) { return i + k <= n; };
@@ -585,10 +598,10 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     const std::size_t replyLen = get16(data + i); i += 2;
     if (replyLen > 1024 || !need(replyLen)) return 0;
     reply_.assign(data + i, data + i + replyLen); i += replyLen;
-    // The id table used to be four entries (kMaxUnits was 4 until
-    // 2026-09-08); a blob from then carries four, so read what is there,
-    // up to kMaxUnits, and leave the rest unassigned.
-    if (!need(2 + 1 + 1 + 1 + 4 + 1)) { busReset(); return 0; }
+    // A v1 blob's id table is four entries; a v2 blob states its own length.
+    // Either way the count is known BEFORE the table is read, so the section
+    // ends where it ends and the owner's tail starts where it should.
+    if (!need(2 + 1 + 1 + 1 + 4 + 1 + (v1 ? 0 : 1))) { busReset(); return 0; }
     replyPos_ = get16(data + i); i += 2;
     if (replyPos_ > reply_.size()) replyPos_ = reply_.size();
     const uint8_t flags = data[i++];
@@ -606,8 +619,17 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     i += 4;
     assigned_ = data[i++];
     if (assigned_ > kMaxUnits) assigned_ = kMaxUnits;
+    const int stored = v1 ? kBusBlobV1Ids : static_cast<int>(data[i++]);
+    if (stored < 0 || !need(static_cast<std::size_t>(stored))) { busReset(); return 0; }
     ids_.fill(0);
-    for (int k = 0; k < kMaxUnits && i < n; ++k) ids_[static_cast<std::size_t>(k)] = data[i++];
+    for (int k = 0; k < stored; ++k) {
+        const uint8_t id = data[i++];
+        if (k < kMaxUnits) ids_[static_cast<std::size_t>(k)] = id;
+    }
+    // A blob written by a build with MORE units than this one: the chain the
+    // host numbered no longer fits, so renumber at the next INIT rather than
+    // answer for half of it.
+    if (stored > kMaxUnits) { ids_.fill(0); assigned_ = 0; }
     if (assigned_ > 0 && ids_[static_cast<std::size_t>(assigned_ - 1)] == 0)
         assigned_ = 0;                          // a truncated table: renumber at the next INIT
     return i;

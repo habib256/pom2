@@ -387,10 +387,12 @@ bool testWozUnsplicableQuarterTrackRefusesSave()
     // Same rule as `reportUndecodable` for the sector formats — refuse, keep
     // the changes, let the user retry. (Bug hunt 2026-09-06 #7.)
     //
-    // Reached here through the legacy nibble gate: `writeNibbleAt` on a WOZ
-    // takes the non-WOZ branch, whose `invalidateWholeTrack` clears
-    // `bitStream[qt]` for a quarter-track `writeFlux` had already marked
-    // dirty.
+    // Reached here through `loadMediaSnapshot` — the rewind media codec —
+    // whose `invalidateAllBitStreams()` clears `bitStream[qt]` for a
+    // quarter-track `writeFlux` had already marked dirty, and which
+    // `expandTrackBits` refuses to rebuild for a WOZ. (`writeNibbleAt` used
+    // to be the way in; it now refuses on a WOZ, because a nibble write to a
+    // bit-cell medium blanked the whole quarter-track — hunt 12.)
     std::vector<uint8_t> bitData = {0xD5, 0xAA, 0x96, 0xEB};
     while (bitData.size() < 6646) bitData.push_back(0xFF);
     const std::string path =
@@ -411,7 +413,8 @@ bool testWozUnsplicableQuarterTrackRefusesSave()
     const auto pristine = readWholeFile(path);
 
     // Drop the bit stream QT0's dirty flag refers to.
-    img.writeNibbleAt(0, 0, static_cast<uint8_t>(img.nibbleAt(0, 0) ^ 0xFF));
+    std::vector<uint8_t> snap(DiskImage::kMediaSnapshotBytes, 0xFF);
+    img.loadMediaSnapshot(snap.data(), snap.size());
 
     if (img.saveDirty()) {
         std::printf("FAIL: save reported success with an unsplicable QT\n");

@@ -90,12 +90,37 @@ void EmulationController::refreshAcceleratorClock()
     // 1 kHz tone came out at 298 Hz and two thirds of the toggles were
     // purged as "the producer ran ahead". Exactly the //c+ defect of bug
     // hunt #7, arriving through a slot instead of through the profile.
+    applyAcceleratorClock(mem.slotBus().cpuSpeedMultiplier());
+}
+
+// The body of the above, taking the multiplier the caller already sampled.
+//
+// The frame's cycle BUDGET has been chunk-granular since 2026-09-09 (the
+// multiplier is re-read every 4096 cycles), while this fan-out stayed
+// frame-granular — sampled once, before the frame's first chunk. The two
+// then disagree for the whole of any frame in which a slow window opens or
+// closes: measured on the `transwarp_chunk_sampling` fixture, a window
+// opening a third of the way in burns 22 901 CPU cycles while every
+// emuCycles consumer was told 3 579 544 Hz (the cycles are worth 1 374 096
+// Hz — 2.61x out), and the frame in which a window CLOSES burns 49 417
+// cycles while they were told 1 022 727 Hz (2.9x the other way). That is a
+// frame of stamps the SpeakerDevice queue and the Mockingboard/Phasor
+// replay cursor read as 2.6-2.9x the time they represent: the cursor
+// starves or runs up onto the producer, trips its re-anchor and drops the
+// backlog — a click per DOS disk read, which is exactly the shape of the
+// //c+ and bug-hunt-#10 defects this function was written to remove.
+//
+// Sampling it where the chunk loop already samples the multiplier costs one
+// double compare per chunk (four to fifteen per frame) and nothing at all on
+// a machine with no accelerator, since `mul` is then permanently 1.0.
+void EmulationController::applyAcceleratorClock(double mul)
+{
     const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
     const int base = baseCyclesPerFrame_.load();
     double hz = static_cast<double>(vt.cpuClockHz) *
         (base > vt.cyclesPerFrame
              ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
-    hz *= mem.slotBus().cpuSpeedMultiplier();
+    hz *= mul;
     if (hz == cpuClockHz_.load()) return;   // the no-accelerator fast path
     cpuClockHz_.store(hz);
     if (spk)       spk->setCpuClock(hz);
@@ -710,6 +735,10 @@ void EmulationController::tickFrame()
     for (double doneBase = 0.0; doneBase < static_cast<double>(budget); ) {
         std::lock_guard<std::mutex> lk(stateMtx);
         const double mul = std::max(1e-3, mem.slotBus().cpuSpeedMultiplier());
+        // Keep the clock the emuCycles consumers are told on the SAME
+        // granularity as the speed the chunk is actually run at — see
+        // applyAcceleratorClock. One double compare when nothing moved.
+        applyAcceleratorClock(mul);
         const double remainCpu =
             std::ceil((static_cast<double>(budget) - doneBase) * mul);
         const int chunk = static_cast<int>(std::min<double>(
@@ -1676,6 +1705,10 @@ void EmulationController::workerLoop()
             // Under the lock: the multiplier is card state the CPU thread
             // writes, and the UI may replug the bus between chunks.
             const double mul = std::max(1e-3, mem.slotBus().cpuSpeedMultiplier());
+            // Keep the clock the emuCycles consumers are told on the SAME
+            // granularity as the speed the chunk is actually run at — see
+            // applyAcceleratorClock. One double compare when nothing moved.
+            applyAcceleratorClock(mul);
             const double remainCpu =
                 std::ceil((static_cast<double>(baseBudget) - doneBase) * mul);
             const int chunk = static_cast<int>(std::min<double>(

@@ -1434,6 +1434,15 @@ void DiskImage::writeNibbleAt(int track, int index, uint8_t value)
 {
     if (!loaded || track < 0 || track >= kTracks) return;
     if (isFileWriteProtected()) return;   // physical WP inhibits the write current
+    // A WOZ's surface is `bitStream[qt]` / `wozRaw`, NOT the nibble buffer —
+    // writes to one go through writeFlux. Letting a nibble write through
+    // here did two wrong things at once: it dirtied a buffer saveDirty's WOZ
+    // branch never reads (so `hasUnsavedChanges()` went true with nothing to
+    // save), and `invalidateWholeTrack` cleared `bitStream[track*4]` while
+    // `expandTrackBits` refuses to rebuild it for a WOZ — the quarter-track
+    // was left with ZERO bit cells and zero flux events, i.e. the track
+    // vanished from the medium for the rest of the session.
+    if (wozFormat) return;
     const int n = ((index % kNibblesPerTrack) + kNibblesPerTrack) % kNibblesPerTrack;
     if (tracks[track][n] != value) {
         tracks[track][n] = value;

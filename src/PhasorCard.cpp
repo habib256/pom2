@@ -133,8 +133,19 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     double   cursorFrac = 0.0;
     std::deque<PhasorCard::AyRegEvent> pending;
     uint32_t lastSeenQueueGen = 0;
+    /// The AY clock scale AT THE CURSOR — advanced by the stamped
+    /// kRegClockScale events, not read from the card at CPU-now. Set true by
+    /// applyEvent when it moves so the render loop re-derives its per-sample
+    /// tick rate mid-buffer.
+    int  liveClockScale  = 1;
+    bool clockScaleDirty = false;
     void applyEvent(const PhasorCard::AyRegEvent& e)
     {
+        if (e.reg == PhasorCard::kRegClockScale) {
+            const int s = (e.val >= 1) ? e.val : 1;
+            if (s != liveClockScale) { liveClockScale = s; clockScaleDirty = true; }
+            return;
+        }
         if (e.chip >= 4) return;
         if (e.reg == PhasorCard::kRegAyReset) {
             std::memset(liveRegs[e.chip], 0, 14);
@@ -216,6 +227,9 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 audioCursor = 0;
                 cursorFrac  = 0.0;
             }
+            // A break (or the first fill) re-anchors on the CPU-side truth,
+            // which is where the live mode is too.
+            liveClockScale = clockScaleSnap;
         }
         const double cyclesPerSample =
             cpuClockHz.load(std::memory_order_relaxed) / static_cast<double>(sr);
@@ -265,12 +279,21 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         // phase-0 line, so a PAL machine clocks these chips at 1 015 625 Hz.
         // Synthesising PAL music at the NTSC rate put every note 0.699 %
         // sharp = 12.05 cents.
-        const double scale = static_cast<double>(clockScaleSnap);
-        const float ticksPerSample = static_cast<float>(
-            cpuClockHz.load(std::memory_order_relaxed) / 8.0 * scale
-            / static_cast<double>(sr));
-        const float invTicksPerSample =
-            (ticksPerSample > 0.0f) ? (1.0f / ticksPerSample) : 0.0f;
+        // ...and the scale is the one AT THE CURSOR (advanced by the stamped
+        // kRegClockScale events), not `clockScale()` at CPU-now, which is up
+        // to two bursts (~40 ms) ahead of what is being rendered.
+        float ticksPerSample    = 0.0f;
+        float invTicksPerSample = 0.0f;
+        const auto deriveTicks = [&]() {
+            ticksPerSample = static_cast<float>(
+                cpuClockHz.load(std::memory_order_relaxed) / 8.0
+                * static_cast<double>(liveClockScale)
+                / static_cast<double>(sr));
+            invTicksPerSample =
+                (ticksPerSample > 0.0f) ? (1.0f / ticksPerSample) : 0.0f;
+            clockScaleDirty = false;
+        };
+        deriveTicks();
         dcL.setRate(sr);
         dcR.setRate(sr);
 
@@ -285,6 +308,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                    pending[nextEvent].cycle <= audioCursor) {
                 applyEvent(pending[nextEvent++]);
             }
+            if (clockScaleDirty) deriveTicks();
             // Index 0 = left (VIA0's pair, ay_[0..1]), 1 = right (VIA1's
             // pair, ay_[2..3]).
             float side[2] = { 0.0f, 0.0f };
@@ -313,6 +337,16 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         }
         pending.erase(pending.begin(),
                       pending.begin() + static_cast<std::ptrdiff_t>(nextEvent));
+        // Bound the jitter buffer the way MockingboardCard::AudioSrc does:
+        // if this thread ever stops consuming (device closed, starvation)
+        // the CPU side would otherwise grow it without limit. Drop by
+        // APPLYING, so the register bank stays coherent with the CPU side.
+        if (pending.size() > kMaxAyEvents) {
+            const size_t drop = pending.size() - kMaxAyEvents;
+            for (size_t k = 0; k < drop; ++k) applyEvent(pending[k]);
+            pending.erase(pending.begin(),
+                          pending.begin() + static_cast<std::ptrdiff_t>(drop));
+        }
     }
 };
 
@@ -359,6 +393,7 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     invalidateAyTimeline();   // the CPU-side banks change out of band here
+    ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     pom2::byteio::Reader r(data, len);
     if (!r.has(6)) return;
     if (r.u8() != 'P' || r.u8() != 'H' || r.u8() != 'S') return;
@@ -433,6 +468,7 @@ void PhasorCard::onReset()
 {
     std::lock_guard<std::mutex> lk(mtx_);
     invalidateAyTimeline();   // the CPU-side banks change out of band here
+    ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     via_[0]->reset();
     via_[1]->reset();
     for (int i = 0; i < 4; ++i) ay_[i]->reset();
@@ -641,10 +677,21 @@ void PhasorCard::deviceSelectWrite(uint8_t low4, uint8_t /*v*/)
 void PhasorCard::applyModeSwitch(uint8_t offset)
 {
     std::lock_guard<std::mutex> lk(mtx_);
+    // The mode carries the AY CLOCK SCALE, and the scale is a timeline
+    // quantity: stamp it like a register write so the audio thread applies
+    // it where it happened instead of two bursts (~40 ms) early. Sync first
+    // — nothing else on this path advances `lastSyncCycle_`, and an event
+    // stamped in the past is applied by the render loop's front-drain on the
+    // very next fill, which is the bug all over again.
+    syncToCpuCycle();
+    const int before = clockScale();
     uint8_t m = static_cast<uint8_t>(mode_);
     if (offset & 0x8) m &= ~0x7;      // bit 3 clears mode bits 2:0
     m |= (offset & 0x7);              // OR in low 3 bits
     mode_ = static_cast<Mode>(m);
+    const int after = clockScale();
+    if (after != before)
+        queueAyEvent(0, kRegClockScale, static_cast<uint8_t>(after));
 }
 
 // ─── AY routing ──────────────────────────────────────────────────────────
@@ -675,16 +722,31 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     // secondary chip with stale register/LFSR/envelope state whenever native
     // software pulses /RESET without re-asserting the per-chip select bits.
     if ((pb & pom2::Ay3_8910::kPbBitReset) == 0) {
+        // Stamp only the FALLING edge, exactly as MockingboardCard's
+        // ResetOnly branch does with `ayResetHeld_`. `onViaPortBChange` runs
+        // on every port-A/B output change and holding /RESET low across a
+        // run of writes is legal, so an un-gated push queued one idempotent
+        // reset per write: 16384 of them break the timeline (queueAyEvent's
+        // overflow guard) and take the whole live backlog with them.
+        // `ayResetCount_` stays per-strobe — it is UI telemetry.
         ay_[ayBase]->reset();
         ++ayResetCount_[ayBase];
-        queueAyEvent(ayBase, kRegAyReset, 0);
+        if (!ayResetHeld_[ayBase]) {
+            ayResetHeld_[ayBase] = true;
+            queueAyEvent(ayBase, kRegAyReset, 0);
+        }
         if (mode_ != PH_Mockingboard) {
             ay_[ayBase + 1]->reset();
             ++ayResetCount_[ayBase + 1];
-            queueAyEvent(ayBase + 1, kRegAyReset, 0);
+            if (!ayResetHeld_[ayBase + 1]) {
+                ayResetHeld_[ayBase + 1] = true;
+                queueAyEvent(ayBase + 1, kRegAyReset, 0);
+            }
         }
         return;
     }
+    // PB2 is high again: the next falling edge may arm.
+    ayResetHeld_[ayBase] = ayResetHeld_[ayBase + 1] = false;
 
     // Decide which of the two AYs in the pair receive this strobe.
     // bit0 = primary, bit1 = secondary.

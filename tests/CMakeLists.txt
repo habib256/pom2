@@ -7444,6 +7444,102 @@ endforeach()
 # dependency (the GL ones) drops out instead of failing configuration. Keep
 # this LAST: nothing here registers a test, so the two directory-wide test
 # sweeps above still cover everything.
+
+# ═══ Bug hunt #12 (2026-09-09) — core: Disk II writes, SmartPort, timing ═══
+
+# ── The accelerator clock fan-out runs at chunk granularity ──────────────
+# The frame's budget has been chunk-granular since 2026-09-09 while
+# refreshAcceleratorClock() stayed frame-granular; a TransWarp slow window
+# opening or closing mid-frame then left every emuCycles consumer 2.6x (and
+# 2.9x the other way) off for a whole frame.
+pom2_add_headless_test(test_accelerator_clock_chunk
+    NAME accelerator_clock_chunk TIMEOUT 30
+    SOURCES accelerator_clock_chunk_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ── The Phasor's AY clock scale is a timeline quantity ───────────────────
+# A $C0(8+s)D mode switch must not retune the ~40 ms of stamped writes the
+# render cursor has not reached yet (1997 Hz coming out at 3996 Hz, one
+# octave, 40 ms early).
+pom2_add_headless_test(test_phasor_mode_scale_timeline
+    NAME phasor_mode_scale_timeline TIMEOUT 30
+    SOURCES phasor_mode_scale_timeline_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ── The SmartPort bus blob is self-delimiting — including the old one ────
+# The id table was four entries until 2026-09-08 and eight after, and both
+# owners hand the loader the remainder of THEIR blob. A loader that cannot see
+# where the table ends eats the owner's tail and invents chain numbers.
+add_executable(test_smartport_bus_blob_compat
+    smartport_bus_blob_compat_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+)
+target_include_directories(test_smartport_bus_blob_compat PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME smartport_bus_blob_compat COMMAND test_smartport_bus_blob_compat)
+set_tests_properties(smartport_bus_blob_compat PROPERTIES TIMEOUT 10)
+
+# ── A SmartPort bay past unitCount() is invisible to the guest ───────────
+# The card has eight bays but answers for `unitCount()` of them. The SmartPort
+# call engine enforced that; $C0n0 unit-select did not — it folded on
+# kMaxUnits, so a guest reached (and wrote) a bay outside bayCount().
+add_executable(test_smartport_unit_visibility
+    smartport_unit_visibility_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+)
+target_include_directories(test_smartport_unit_visibility PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_smartport_unit_visibility PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+add_test(NAME smartport_unit_visibility COMMAND test_smartport_unit_visibility
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(smartport_unit_visibility PROPERTIES TIMEOUT 10)
+
+# ── Disk II write-burst boundaries ───────────────────────────────────────
+# Pins the two flush boundaries that mis-filed a write burst:
+# commitInFlightWrite() re-bases writeStartTime (so a mid-burst
+# flushPendingWrites / insert / eject is transparent on the medium), and a
+# stepper pulse commits the burst BEFORE the head moves (so a write to one
+# track cannot land on its neighbour). Drives the real LSS through
+# roms/diskii_p6.rom; skips (77) without it.
+add_executable(test_diskii_write_burst
+    diskii_write_burst_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+)
+target_include_directories(test_diskii_write_burst PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME diskii_write_burst COMMAND test_diskii_write_burst
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(diskii_write_burst PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+
+# ── A nibble write must not destroy a WOZ quarter-track ──────────────────
+# writeNibbleAt took the non-WOZ branch on a WOZ image: its
+# invalidateWholeTrack cleared bitStream[qt], which expandTrackBits refuses
+# to rebuild for a WOZ, so the quarter-track was left with zero bit cells and
+# zero flux events — the track vanished from the medium. Pure DiskImage unit
+# test, synthetic WOZ1, no ROMs needed.
+add_executable(test_woz_nibble_write
+    woz_nibble_write_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+)
+target_include_directories(test_woz_nibble_write PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME woz_nibble_write COMMAND test_woz_nibble_write)
+set_tests_properties(woz_nibble_write PROPERTIES TIMEOUT 10)
+
 set(POM2_PROBE_TARGETS
     artifact_probe
     c2plus_boot_probe

@@ -205,8 +205,13 @@
 # the panel's unit-count command applied and persisted, the count in the
 # panel snapshot, the restore of `smartport_slotN_units`; no feature code.
 #   src/StorageCoordinator.cpp   2322 -> 2337 (+15)
+# 2026-09-09 (bug hunt #12): one ceiling raised for a one-line guard and
+# its comment — `writeNibbleAt` refuses a WOZ, whose surface is the bit
+# stream (a nibble write blanked the quarter-track). The split owed on
+# DiskImage.cpp (the WOZ writer) is not forgiven by these nine lines.
+#   src/DiskImage.cpp            3100 -> 3109 (+9)
 src/Apple2Display.cpp                    2491
-src/DiskImage.cpp                        3100
+src/DiskImage.cpp                        3109
 src/ImageWriter.cpp                      2764
 src/M6502.cpp                            2300
 src/Memory.cpp                           2616

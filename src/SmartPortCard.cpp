@@ -428,9 +428,16 @@ void SmartPortCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     switch (low4) {
         case 0x0: {                             // drive / unit select
-            // Modulo (not a bitmask) so the mapping stays correct if kMaxUnits
-            // is ever raised to a non-power-of-two for extended SmartPort.
-            const size_t u = static_cast<size_t>(v) % kMaxUnits;
+            // Modulo (not a bitmask) so the mapping stays correct if the unit
+            // count is odd. Modulo the count the card ANSWERS FOR, not
+            // kMaxUnits: bays past `unitCount_` hold media but are documented
+            // "invisible to the guest", and the SmartPort call engine's own
+            // `unitFor` already refuses them with $28. Folding on kMaxUnits
+            // (8 since 2026-09-08, 2 before) let `LDA #3 / STA $C0n0` read and
+            // COMMIT 512-byte blocks on a bay outside the count — outside
+            // `bayCount()` too, so the Slot Manager could not even show it.
+            const size_t live = static_cast<size_t>(unitCount_ > 0 ? unitCount_ : 1);
+            const size_t u = static_cast<size_t>(v) % live;
             activeUnit_ = u;
             // A unit-select starts a fresh transfer: drop any half-streamed
             // write buffer / stale read cache / error so the next op is clean.

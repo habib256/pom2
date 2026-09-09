@@ -223,6 +223,13 @@ private:
     // can restart the envelope even when the same value is re-stored —
     // real AY-3-8913 behaviour (set_shape runs on every R13 store).
     uint32_t ayEnvWriteCount_[4] = {0, 0, 0, 0};
+    /// PB2 (/RESET) held low, per VIA pair. `onViaPortBChange` runs on every
+    /// port-A/B output change, and holding /RESET low across a run of writes
+    /// is legal, so an un-gated push queued one idempotent reset event per
+    /// write — the flood MockingboardCard::ayResetHeld_ exists to stop
+    /// (`Mockingboard.cpp`, the ResetOnly branch). Only the FALLING edge is
+    /// stamped.
+    bool ayResetHeld_[4] = {false, false, false, false};
 
     mutable std::mutex mtx_;
 
@@ -236,6 +243,15 @@ private:
     // MAME parity dashboard. See MockingboardCard for the timeline rules
     // (jitter buffer, re-anchor, breaks on rewind / reset / overflow).
     static constexpr uint8_t kRegAyReset = 0xFF;
+    /// Pseudo-register carrying the AY CLOCK SCALE (1 in MB-compat /
+    /// EchoPlus, 2 in Phasor-native). The scale is a property of the
+    /// TIMELINE, not of "now": the render cursor deliberately trails the
+    /// producer by two 20 ms bursts, so reading `clockScale()` per fill
+    /// re-tuned the ~40 ms of not-yet-rendered backlog an octave up the
+    /// instant the guest touched $C0(8+s)D — 27.8 ms of a 1997 Hz tone came
+    /// out at 3996 Hz BEFORE the switch's own cycle was reached. Stamped
+    /// like every other AY event, it lands where it happened.
+    static constexpr uint8_t kRegClockScale = 0xFE;
     struct AyRegEvent {
         uint64_t cycle;
         uint8_t  chip;
