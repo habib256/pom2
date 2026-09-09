@@ -172,7 +172,36 @@ float cubicWeight(float x)
 vec3 sampleSrc(vec2 uv)
 {
     uv = clamp(uv, 0.0, 1.0);
-    float mag = max(uOutSize.x / uSrcSize.x, uOutSize.y / uSrcSize.y);
+    vec2 mag2 = uOutSize / uSrcSize;
+
+    // ── Horizontal MINIFICATION: box-average the covered source columns ──
+    // Neither branch below low-passes, and both are wrong when one output
+    // pixel covers more than one source column. That happens on every
+    // 560-wide mode (DHGR, 80-col, Chat Mauve, the OE demod output) whenever
+    // the screen widget is narrower than 560 physical pixels — MainWindow
+    // derives the target from the 280-dot geometry (`size.x = 280*s`), so
+    // magX = s/2 and any s < 2 minifies horizontally while magY = s still
+    // magnifies. `max(magX, magY)` hides that: at s = 1.5 the shortcut is
+    // skipped and the Catmull-Rom path runs, but Catmull-Rom is a
+    // RECONSTRUCTION filter, not a decimation one, so it aliases too. A flat
+    // 1-on/1-off 560-dot grid — which must present as a flat mid-grey —
+    // came out swinging the full 0..255 (307x230: min 0, max 255), i.e.
+    // scattered white dots and dotted lines, and single-dot vertical detail
+    // simply dropped out. The vertical axis never minifies (dstH >= 192 in
+    // all three aspect modes), so this stays horizontal-only and costs
+    // nothing on every path that magnifies.
+    if (mag2.x < 0.995) {
+        const int kBox = 8;
+        float foot = (1.0 / mag2.x) / uSrcSize.x;   // uv covered by one out px
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < kBox; ++i) {
+            float o = ((float(i) + 0.5) / float(kBox) - 0.5) * foot;
+            acc += texture(uSrc, vec2(clamp(uv.x + o, 0.0, 1.0), uv.y)).rgb;
+        }
+        return acc / float(kBox);
+    }
+
+    float mag = max(mag2.x, mag2.y);
     if (mag <= 1.25)
         return texture(uSrc, uv).rgb;
 
@@ -733,7 +762,19 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     if (uSaturation  >= 0) glUniform1f(uSaturation,  params.saturation);
     if (uHue         >= 0) glUniform1f(uHue,         params.hue);
     if (uSharpness   >= 0) glUniform1f(uSharpness,   params.sharpness);
-    if (uPersistence >= 0) glUniform1f(uPersistence, params.persistence);
+    // Persistence needs a PREVIOUS OUTPUT to decay. On a firstFrame there is
+    // none — outputTex[readIdx] was just allocated and holds undefined bytes —
+    // so the bind above hands the shader `glassSrc` instead, and that is the
+    // RAW source: un-warped, un-glassed, full brightness. `max(rgb, prev*p)`
+    // then re-lights everything the glass pass darkened, most visibly the
+    // black border OUTSIDE the barrel-warped picture (edgeMask = 0 there, yet
+    // the corner came back at 0.4 x white = 102/255 at the shipped
+    // persistence). One flash would be tolerable; a window drag makes EVERY
+    // frame a firstFrame, so the halo is a permanent bright frame around the
+    // tube for as long as the drag lasts. There is no history: switch the
+    // blend off for exactly that frame — max(rgb, -0.5/256) == rgb.
+    if (uPersistence >= 0)
+        glUniform1f(uPersistence, firstFrame ? 0.0f : params.persistence);
     if (uScanlines   >= 0) glUniform1f(uScanlines,   params.scanlines);
     if (uBarrel      >= 0) glUniform1f(uBarrel,      params.barrel);
     if (uShadowMask  >= 0) glUniform1i(uShadowMask,  static_cast<int>(params.shadowMask));

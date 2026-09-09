@@ -2064,6 +2064,17 @@ Do not re-litigate without re-reading the original comment.
   with the card plugged, turn `crt_effects_enabled` off and look again; a
   window screenshot settles it.
 
+  **Found 2026-09-09 (bug hunt #13, the GL stage driven offscreen).** The
+  CRT glass pass never low-passed on horizontal *minification*: the screen
+  target is sized from the 280-dot geometry, so a 560-wide frame — which
+  is what the card makes of an HGR page — is point-sampled at 2:1 whenever
+  the screen widget is narrower than 560 physical pixels (a docked panel,
+  a short window). A 1-on/1-off dot grid swung the full 0..255: scattered
+  white dots, dotted lines, single-dot detail dropping out, in 560-wide
+  modes only. Fixed (box filter on minification, `crt_glass_resample`).
+  It matches the report's signature exactly *if* the panel was small; at
+  the default window size the picture was already clean.
+
   *Retour A2FC 2026-09-09 :* `--chatmauve` et `--preset iie_unenh` sont pris
   (`bench/chatmauve.py`, `A2FC_PRESET=iie_unenh` ; toute la suite 6502 passe sur
   le IIe de 1983). Avec la carte, les cinq variantes rendent ALIEN a l'identique

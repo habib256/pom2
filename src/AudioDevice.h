@@ -98,6 +98,21 @@ public:
                         masterPeakR_.load(std::memory_order_relaxed));
     }
 
+    /// Discontinuities per second in the POST-CLAMP bus, the master half of
+    /// AudioSource::clicksPerSecond. The per-source tally measures each
+    /// source's own output BEFORE the sum, the pan law and the master gain,
+    /// so by construction it cannot see a crackle the MIXER made: hard
+    /// clipping when the sources sum past full scale (measured: three 0.9
+    /// tones clip 36 % of frames while every source row reads 0.0), a
+    /// source appearing or vanishing mid-stream (a card plug, a profile
+    /// rebuild), a pan flip, or the suspend cut. Without this the Audio
+    /// panel's advice — "the crackle comes from the row that shows a
+    /// number" — has no row to point at for any of them.
+    float getMasterClicksPerSecond() const
+    {
+        return masterClicks_.load(std::memory_order_relaxed);
+    }
+
     /// Silence the whole bus without touching any source's state or the
     /// user's mixer settings. The emulated machine can be halted (toolbar
     /// pause, a debugger breakpoint, a profile switch, a rewind scrub) while
@@ -139,6 +154,12 @@ private:
     std::atomic<bool>  suspended_{false};
     std::atomic<float> masterPeakL_{0.0f};
     std::atomic<float> masterPeakR_{0.0f};
+    // Master discontinuity tally — same shape and same publish period as
+    // AudioSource's, but measured on the clamped bus. Scratch is audio-
+    // thread-only (mixSources holds sourcesMutex for the whole callback).
+    std::atomic<float> masterClicks_{0.0f};
+    float    masterTraceLastL_ = 0.0f, masterTraceLastR_ = 0.0f;
+    uint32_t masterTraceJumps_ = 0, masterTraceFrames_ = 0;
 
     struct MaDeviceDeleter { void operator()(ma_device* d) const noexcept; };
     std::unique_ptr<ma_device, MaDeviceDeleter> device;

@@ -87,8 +87,20 @@ uint8_t Memory::peekCpuView(uint16_t addr) const
 
 uint8_t Memory::peekCpuWriteTarget(uint16_t addr) const
 {
-    if (flatBus_ || addr >= 0xC000) return peekCpuView(addr);
-    return (iieMode && iieWriteToAux(addr)) ? aux[addr] : mem[addr];
+    if (flatBus_) return peekCpuView(addr);
+    if (addr < 0xC000)
+        return (iieMode && iieWriteToAux(addr)) ? aux[addr] : mem[addr];
+    // $D000-$FFFF is NOT "the language card writes where it reads". The card
+    // has two independent latches, and their power-on combination — every
+    // reset leaves `lcWriteEnable` set with ROM still mapped for reads
+    // (Sather fig. 5.13) — is exactly the case where they disagree: the read
+    // view is Monitor/Applesoft ROM while the write lands in LC RAM. Handing
+    // the ROM byte back as "the byte this write replaces" made the Memory
+    // Viewer's UNDO push a ROM opcode into Language-Card RAM. Resolve the RAM
+    // cell whenever writes are enabled; when they are not, the write is
+    // dropped and so is its undo, so the read view is the right answer.
+    if (addr >= 0xD000 && lcWriteEnable) return languageCardRamPeek(addr);
+    return peekCpuView(addr);
 }
 
 void Memory::snapshotCpuView(uint8_t* out) const

@@ -26,6 +26,7 @@ src/ChildProcess.cpp
 src/CliDispatcher.cpp
 src/CliRunner.cpp
 src/ClockCard.cpp
+src/CrtEffectStack.cpp
 src/Cs8900aDevice.cpp
 src/Debugger.cpp
 src/Disassembler6502.cpp
@@ -63,6 +64,7 @@ src/Mockingboard.cpp
 src/MouseCard.cpp
 src/MouseCardAppleWin.cpp
 src/NoSlotClock.cpp
+src/OpenGLShader.cpp
 src/PanelRegistry.cpp
 src/PhasorCard.cpp
 src/PostScriptRender.cpp

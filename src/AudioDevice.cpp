@@ -209,6 +209,11 @@ void AudioDevice::mixSources(float* output, int frameCount)
     const bool mono = monoDownmix_.load(std::memory_order_relaxed);
     float masterPkL = 0.0f;
     float masterPkR = 0.0f;
+    // Master discontinuity tally, folded into the loop that already touches
+    // every frame (see AudioDevice.h). Measured POST-clamp, so it counts the
+    // steps the OS actually heard — the ones no per-source row can show.
+    float    mLastL = masterTraceLastL_, mLastR = masterTraceLastR_;
+    uint32_t mJumps = 0;
     for (int i = 0; i < frameCount; ++i) {
         float l = output[2 * i];
         float r = output[2 * i + 1];
@@ -231,6 +236,23 @@ void AudioDevice::mixSources(float* output, int frameCount)
         const float ar = std::fabs(cr);
         if (al > masterPkL) masterPkL = al;
         if (ar > masterPkR) masterPkR = ar;
+        if (std::fabs(cl - mLastL) > AudioSource::kClickThreshold ||
+            std::fabs(cr - mLastR) > AudioSource::kClickThreshold)
+            ++mJumps;
+        mLastL = cl; mLastR = cr;
+    }
+    masterTraceLastL_ = mLastL; masterTraceLastR_ = mLastR;
+    masterTraceJumps_ += mJumps;
+    masterTraceFrames_ += static_cast<uint32_t>(frameCount);
+    {
+        const uint32_t sr = actualSampleRate > 0 ? actualSampleRate : 44100;
+        if (masterTraceFrames_ >= sr) {
+            masterClicks_.store(
+                static_cast<float>(masterTraceJumps_) * static_cast<float>(sr) /
+                    static_cast<float>(masterTraceFrames_),
+                std::memory_order_relaxed);
+            masterTraceJumps_ = 0; masterTraceFrames_ = 0;
+        }
     }
     const float prevL = masterPeakL_.load(std::memory_order_relaxed);
     const float prevR = masterPeakR_.load(std::memory_order_relaxed);

@@ -185,8 +185,11 @@ void MainWindow::renderAudioMixerWindow()
     AudioDevice& dev = controller->audio();
     float masterVol = dev.getMasterVolume();
     bool  masterMute = dev.isMasterMuted();
+    // The master row carries its own clicks/s: the per-source tally is
+    // pre-sum and pre-gain, so clipping and every mixer-side cut (a card
+    // plugged, a pan flip, the suspend) show up ONLY here.
     channelRow("Master", masterVol, masterMute, dev.getMasterPeak(),
-               "master", false);
+               "master", false, nullptr, dev.getMasterClicksPerSecond());
     if (masterVol != dev.getMasterVolume()) dev.setMasterVolume(masterVol);
     if (masterMute != dev.isMasterMuted()) dev.setMasterMuted(masterMute);
     // The bus is stereo, so the master needs a meter per channel — the

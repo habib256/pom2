@@ -1657,6 +1657,27 @@ add_test(NAME floppy_sound_smoke
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(floppy_sound_smoke PROPERTIES TIMEOUT 10)
 
+# ─── Printer grain scheduler: a burst must THIN, not STACK ───────────────
+# Bug hunt #13. `schedule()` clamped its cursor onto the kMaxAheadSeconds cap
+# while the drop gate was strictly greater, so once a burst reached the cap
+# every later grain was placed on the identical frame and their attacks
+# summed. One carriageReturn(8.0) parked the cursor there (its spacing is the
+# 0.53 s sweep) and the line that followed it inside one ImageWriter tick
+# produced a 0.26 full-scale single-frame step at the default volume — 2.6x
+# AudioSource::kClickThreshold, the bar the Audio panel's own crackle
+# detector uses.
+add_executable(test_printer_grain_pileup
+    printer_grain_pileup_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterSoundDevice.cpp
+)
+target_include_directories(test_printer_grain_pileup PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_printer_grain_pileup PRIVATE Threads::Threads m)
+endif()
+add_test(NAME printer_grain_pileup COMMAND test_printer_grain_pileup
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(printer_grain_pileup PROPERTIES TIMEOUT 30)
+
 # The printer sound must not crackle (A2 File Cmd report, 2026-09-09).
 add_executable(test_printer_sound_crackle
     printer_sound_crackle_test.cpp
@@ -2844,6 +2865,37 @@ endif()
 
 add_test(NAME iie_memory_smoke COMMAND test_iie_memory)
 set_tests_properties(iie_memory_smoke PROPERTIES TIMEOUT 5)
+
+# ─── Paging latches the snapshot / the CPU view used to get wrong ─────────
+# Bug hunt #13 (2026-09-09). Two pins:
+#   * the $C800-$CFFE expansion-window OWNER now travels in Memory's MEX blob
+#     (tenth byte of the paging/IOU section, 0 = unclaimed) — `intC8Rom` was
+#     already there, its slot-side partner was in no section at all, so a
+#     rewind whose PC sat in a card's expansion ROM came back on the floating
+#     bus;
+#   * `peekCpuWriteTarget` resolves the LANGUAGE CARD's write target, which is
+#     RAM whenever write-enable is set even while reads see ROM — the power-on
+#     latch pair. The Memory Viewer's undo record used to hold the ROM byte and
+#     pushed it into LC RAM.
+add_executable(test_mem_paging_latch_snapshot
+    mem_paging_latch_snapshot_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_mem_paging_latch_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_mem_paging_latch_snapshot PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_mem_paging_latch_snapshot PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_mem_paging_latch_snapshot PRIVATE winmm)
+endif()
+
+add_test(NAME mem_paging_latch_snapshot COMMAND test_mem_paging_latch_snapshot)
+set_tests_properties(mem_paging_latch_snapshot PROPERTIES TIMEOUT 5)
 
 # ─── Input I/O (keyboard / paddles / buttons) ────────────────────────────
 # The behaviour-preserving safety net for the Memory god-object split
@@ -5406,6 +5458,36 @@ endif()
 # + shadow-mask test (optional PPM source via argv[1]) → /tmp/crt_barrel_*.ppm.
 # Used to confirm the analytic-AA fix kills barrel moiré. No CI hash (the GL
 # path is FP/driver-dependent); inspect the PPMs by eye.
+# ── CRT glass pass: resampling + first-frame persistence (GL) ─────────────
+# The first ctest that links CrtEffectStack.cpp (only the two EXCLUDE_FROM_ALL
+# diagnostics did before), so tools/coverage_linked_sources.txt gains a source
+# — it may grow, and this grows it.
+#
+# Needs a real GL 3.2 context. Exits 77 (ctest SKIP) where none can be made,
+# which is what CI gets; run it locally / on any machine with a GPU.
+# Same link shape as oe_signal_view / crt_barrel_view below. (Bug hunt #13, 2026-09-09.)
+add_executable(test_crt_glass_resample
+    crt_glass_resample_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/CrtEffectStack.cpp
+    ${CMAKE_SOURCE_DIR}/src/OpenGLShader.cpp
+)
+target_include_directories(test_crt_glass_resample PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(APPLE)
+    target_compile_definitions(test_crt_glass_resample PRIVATE GL_SILENCE_DEPRECATION)
+endif()
+target_link_libraries(test_crt_glass_resample PRIVATE ${GLFW_TARGET} ${OPENGL_LIBRARIES})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_crt_glass_resample PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(WIN32)
+    target_link_libraries(test_crt_glass_resample PRIVATE winmm)
+endif()
+
+add_test(NAME crt_glass_resample COMMAND test_crt_glass_resample)
+set_tests_properties(crt_glass_resample PROPERTIES
+    TIMEOUT 20
+    SKIP_RETURN_CODE 77)
+
 add_executable(crt_barrel_view EXCLUDE_FROM_ALL
     crt_barrel_view.cpp
     ${CMAKE_SOURCE_DIR}/src/CrtEffectStack.cpp
@@ -7572,6 +7654,22 @@ add_executable(test_woz_nibble_write
 target_include_directories(test_woz_nibble_write PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME woz_nibble_write COMMAND test_woz_nibble_write)
 set_tests_properties(woz_nibble_write PROPERTIES TIMEOUT 10)
+
+# ─── Snapshot loaders never half-apply (bug hunt #13, 2026-09-09) ────────
+# The objects BELOW a card — nested in a card blob or in Memory's MEX
+# trailer — are outside card_snapshot_contract's catalog sweep. Pins the two
+# rules they broke: no live state a snapshot cannot carry (a SmartPort INIT
+# to device 0), and "refused ⇒ nothing changed" (the bus device's rx_ and the
+# SCC's device-wide header).
+add_executable(test_snapshot_partial_apply
+    snapshot_partial_apply_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Scc8530Device.cpp
+)
+target_include_directories(test_snapshot_partial_apply
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME snapshot_partial_apply COMMAND test_snapshot_partial_apply)
+set_tests_properties(snapshot_partial_apply PROPERTIES TIMEOUT 10)
 
 set(POM2_PROBE_TARGETS
     artifact_probe

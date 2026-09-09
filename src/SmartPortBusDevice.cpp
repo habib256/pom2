@@ -391,7 +391,19 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
         // $CE34 on a Liron). The count the host keeps is what it later
         // checks every unit number against ($CCD1). The number itself is
         // the host's: a //c+ starts at 2, its MIG drive being device 1.
-        if (assigned_ < unitCount_)
+        // Never take chain number 0. Zero is the HOST's own number on this
+        // wire (see `buildReply`'s header and `unitFor`, which documents
+        // that `ids_[i] == 0` means "never assigned" and refuses to match
+        // it), so recording it burns a chain slot on a number no packet can
+        // ever address — the unit is unreachable until the next bus reset.
+        // It is also the one live state this card's snapshot cannot carry:
+        // `loadSnapshotState` reads `ids_[assigned_ - 1] == 0` as a
+        // truncated id table and renumbers from scratch, so a rewind across
+        // such an INIT came back with `assigned_ == 0` and answered the
+        // host's next scan differently from the chain that was captured
+        // (bug hunt #13). A real host never sends it; a guest driving the
+        // bus by hand can.
+        if (header[0] != 0 && assigned_ < unitCount_)
             ids_[static_cast<std::size_t>(assigned_++)] = header[0];
         const uint8_t status = (assigned_ >= unitCount_) ? 0xFF : 0x00;
         buildReply(status, nullptr, 0, false);
@@ -594,9 +606,16 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     const std::size_t rxLen = get16(data + i); i += 2;
     if (rxLen > 1024 || !need(rxLen)) return 0;
     rx_.assign(data + i, data + i + rxLen); i += rxLen;
-    if (!need(2)) return 0;
+    // busReset() again on every later failure, not a bare `return 0`. The
+    // header promises "state is left reset" on a malformed blob, and the
+    // two vector assigns above have already happened by the time the reply
+    // framing can fail: a blob truncated right after the rx_ payload left
+    // the device holding the FILE's half-received frame on top of an
+    // otherwise reset chain, so the next host byte was appended to a packet
+    // from another timeline (bug hunt #13).
+    if (!need(2)) { busReset(); return 0; }
     const std::size_t replyLen = get16(data + i); i += 2;
-    if (replyLen > 1024 || !need(replyLen)) return 0;
+    if (replyLen > 1024 || !need(replyLen)) { busReset(); return 0; }
     reply_.assign(data + i, data + i + replyLen); i += replyLen;
     // A v1 blob's id table is four entries; a v2 blob states its own length.
     // Either way the count is known BEFORE the table is read, so the section

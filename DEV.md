@@ -1315,6 +1315,38 @@ Inspect via the offscreen diagnostic `tests/crt_barrel_view`
 source) to `/tmp/crt_barrel_{on,off}.ppm`. No CI hash — the GL path is
 FP/driver-dependent, so it's eyeballed, not pinned.
 
+**Two defects in the glass pass, and one in the 3D tap** *(2026-09-09,
+bug hunt #13 — the first hunt to drive the real GL stage offscreen)*.
+(1) `sampleSrc` never low-passed on horizontal *minification*. MainWindow
+sizes the target from the 280-dot geometry, so a 560-wide frame — DHGR,
+80-col, Le Chat Mauve, the OE demod output — is minified by s/2 whenever
+the screen widget is narrower than 560 physical pixels, while the vertical
+axis still magnifies; `max(magX, magY)` hid that, the `mag <= 1.25`
+shortcut point-sampled a 2:1 decimation and the Catmull-Rom branch, a
+reconstruction filter, aliased too. A flat 1-on/1-off 560-dot grid, which
+must present as mid-grey, swung the full 0..255 in a 307×230 widget: the
+"scattered white dots and a dotted line" of the Chat Mauve report, in
+560-wide modes only, 280-wide clean. The pass box-averages eight taps
+across the covered source footprint when `outW/srcW < 0.995`; horizontal
+only (`dstH >= 192` in every aspect mode), free on every magnifying path,
+`crt_barrel_view` byte-identical. (2) On a `firstFrame` — every output
+resize, i.e. every frame of a window drag — the ping-pong history is
+undefined, so the pass bound the raw source as `uPrev` and
+`max(rgb, prev × persistence)` re-lit everything the glass darkened,
+the black border outside the barrel warp included (0.4 × white in the
+corners). Persistence is 0 on exactly that frame. Both pinned by
+`crt_glass_resample` (a real GL 3.2 context, exit 77 where none can be
+made — which is what CI gets). (3) The voxel grid was sized from the
+framebuffer (280 wide for 40-col HGR) while its tap under OE-GPU is the
+demod output, always 560 wide, so the grid read the odd columns only;
+`MainWindow_Screen.cpp` now carries the tap's own size. No pin: that file
+links into POM2 alone. Cleared, with the same rig: persistence across a
+280↔560 source flip (the ping-pong is at output resolution, decay is
+exactly 0.4ⁿ), `prevFbo` save/restore on every path, the OE `signalBuf`
+upload and `applyBandwidth` across a width flip, barrel/scanline sampling
+at the texture edge, `GL_UNPACK_ROW_LENGTH` (ImGui restores it), and the
+card unplugged mid-session under `hi_res_mode=ChatMauveRGB`.
+
 ### AppleWin NTSC (`ColorAppleWin`)
 
 **Faithful port** of AppleWin's CPU-side NTSC composite simulation
@@ -1465,6 +1497,33 @@ attributed by ear to the disk sounds, then to the printer; the probes
 (`floppy_sound_crackle`, `printer_sound_crackle`) fixed a real defect in
 the floppy voices and cleared the printer, and the number now names the
 source instead of the ear.
+
+**It named the printer after all, and the mixer got a row of its own**
+*(2026-09-09, bug hunt #13)*. `PrinterSoundDevice::schedule` clamps its
+grain cursor onto the `kMaxAheadSeconds` cap while the drop gate was a
+strict `>`, so once a burst reached the cap every later grain landed on
+the *same* audio frame and their attacks summed instead of thinning. One
+`carriageReturn(8.0)` is enough to park the cursor there (its spacing is
+the 0.53 s sweep, past the 0.2 s cap), and `ImageWriter::tick` drains a
+whole line inside one UI frame, so the 47 characters after a CR attacked
+together: a 0.44 full-scale step at the default volume, 4× the crackle
+bar, once per line printed. `printer_sound_crackle` could not see it (180
+cps, a 250 ms gap after the CR); `printer_grain_pileup` prints a line in
+one tick. The gate is `>=` now, so the cursor is strictly increasing. And
+the per-source tally is pre-sum, pre-pan, pre-gain by construction, so it
+cannot show a crackle the *mixer* makes — three 0.9 tones clipped 36 % of
+the frames while every row read 0.0; a pan flip, a source removed
+mid-stream or the suspend cut step 0.25-0.30 with no row to point at.
+`AudioDevice::getMasterClicksPerSecond` counts on the clamped bus inside
+the loop that already touches every frame and the Master row prints it.
+Cleared with numbers in the same pass: the floppy voices at the //c's own
+parameters (48 kHz, `motorPitch 1.4`, PAL, gain 1.0 — zero jumps in every
+scenario), the speaker across turbo, pause, a 2 s rewind and a mid-tone
+rate change, and the loop crossfade, which does shorten every looping
+sample by 132 frames (2.99 ms, −5 % on the 2 ms seek cadence — subaudible,
+left alone). Recorded, not fixed: `AudioDevice::initAudio` runs only from
+the constructor, so a lost or changed OS playback device leaves the
+session silent.
 
 ### Stereo bus (2026-08-01)
 
@@ -3719,10 +3778,45 @@ restoring CPU + RAM against devices left on the abandoned timeline:
   inside the blanking interval re-armed the edge and fired one spurious IRQ —
   the frame sync a //c PAL French Touch demo races against), and
   `iicCardWindow_`, the partner latch of the already-saved
-  `iicSmartPortArmed_`.
+  `iicSmartPortArmed_`. **A tenth byte since 2026-09-09 (bug hunt #13): the
+  `$C800-$CFFE` expansion-window OWNER**, `SlotBus::activeExpansionSlot`
+  — the slot-side partner of `intC8Rom`, which no section carried (SLOTn is
+  per-card state, not the bus latch). A restore whose PC sat inside a
+  card's expansion ROM — a SmartPort/Liron driver, the SSC firmware; seven
+  cards take the window — fetched the floating bus across the whole 2 KB.
+  `SlotBus::restoreExpansionOwner` validates: a blob naming an empty slot
+  or a card whose `takesC800()` is false restores as unclaimed. Older
+  blobs stop before the byte and keep the live owner. Pinned by
+  `mem_paging_latch_snapshot`. (`SlotBus::reset()` deliberately keeps the
+  owner where MAME's `machine_reset` unclaims it — a behaviour decision
+  left as is, flagged.)
 * **SmartPort identity**: `SmartPortCard` restored a primed 512-byte write
   block with no media identity, so swapping a bay and rewinding committed the
   old block to the new disk.
+* **Below the cards** *(2026-09-09, bug hunt #13)* — the objects nested in a
+  card blob or in the MEX trailer are outside `card_snapshot_contract`'s
+  catalog sweep, and two broke its rules. `SmartPortBusDevice` recorded an
+  INIT addressed to device **0** — the host's own number, which `unitFor`
+  documents as "never assigned" and refuses — so the live chain held a
+  state its own blob reads back as a truncated id table: after a rewind
+  the chain handed out a number it had refused before and answered the
+  host's scan `$00` where it had said `$FF`. INIT ignores destination 0
+  now. The same loader `assign`ed `rx_` before the reply framing could
+  fail with a bare `return 0`, leaving the file's half-received frame on
+  an otherwise reset chain; and `Scc8530Device::restoreSnapshot` wrote its
+  device-wide header into the members before the per-channel budget could
+  refuse the blob (160 of 180 truncations left the hybrid — latent, since
+  `WorkstationCard` resets the chip on `false`, but the header promised
+  otherwise). Both decode into locals and commit only when the whole blob
+  parses. Pinned by `snapshot_partial_apply`. Cleared in the same pass:
+  every nested self-delimiting section reports its exact length, every
+  `kSnapshotBytes` matches its writer, a 100 KB MEX round-trips on a //c+
+  with MIG + external port + No-Slot Clock, a rewind across a DOS 3.3 boot
+  and across a Disk II write burst replays byte-identically at 1 M cycles,
+  and the media-epoch rule, the SoftCard DMA, the Uthernet sockets and
+  `SnapshotIO`'s bounds all hold. Residual, by design: an `IWM2` blob two
+  bytes short of its phase tail reads as the pre-tail layout, because
+  tail-less `IWM2` blobs really shipped between two commits.
 * Four cards now **identify the blob before resetting themselves** (they used
   to `reset()` first, so a foreign blob wiped them mid-transaction, which
   contradicts the contract in `MachineSnapshot.cpp`), and five restores clamp
@@ -6078,6 +6172,12 @@ gaps. `ImageWriter` consumes its queue on its own wall-clock pacing
 (`tick(double dt)` at the head's cps), so a job fired in at any speed still
 prints at 180 cps and these events are already in real time.
 
+**The grain cursor is strictly increasing** *(2026-09-09, bug hunt #13)*:
+`schedule()` drops a grain once the cursor sits *on* the `kMaxAheadSeconds`
+cap (`>=`), not only past it. With `>` the clamp parked the cursor on the
+cap and every later grain shared its frame — a line's worth of attacks
+summed after each carriage return. → [§ The crackle detector](#the-crackle-detector-2026-09-09).
+
 ### Screen dump (`PrinterScreenDump`)
 
 "Print what is on screen", as the dot-matrix bit-image stream a period driver
@@ -8429,7 +8529,18 @@ RAMRD or a RamWorks bank. It failed both ways — a real JSR in LC RAM was
 stepped *into*, and a `$20` that only exists in the ROM mirror armed a
 transient at an address never reached, so Step Over became an unbounded
 Run. It reads `peekCpuView` now, the same side-effect-free view the Disasm
-panel lists from. **Every reset verb drops the latched hit**: `hit_`
+panel lists from. **`peekCpuWriteTarget` resolves the language card
+through its write latch** *(2026-09-09, bug hunt #13)*: it used to return
+`peekCpuView(addr)` above `$C000` on the claim that the card "writes where
+it reads", but the card has two independent latches and their power-on
+pair is exactly the disagreeing one — every reset leaves writes enabled
+with ROM still mapped for reads (Sather fig. 5.13, MAME
+`apple2e.cpp:1227-1232`). The Memory Viewer's undo record is built from
+this function, so undoing an edit at `$D000-$FFFF` wrote a ROM byte into
+Language-Card RAM. The RAM half of the decode is one function now,
+`Memory::languageCardRamPeek` (bank at `$D000`, the shared 8 KB, main vs
+the ALTZP trio), used by both the read path and the write target;
+`pom2_bench` within ±0.8 %, hashes identical. Same pin. **Every reset verb drops the latched hit**: `hit_`
 survived `hardReset` / `softReset` / `coldBoot` / `bootFromSlot`, so the
 next Run consumed it through `debugResume()`'s one-instruction amnesty at
 the *post-reset* pc — "break at the entry, then hit Reset" skipped that

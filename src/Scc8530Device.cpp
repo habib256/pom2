@@ -1597,13 +1597,25 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
         17 + 6 + 3 + 2 + 3 + 6 + 2 + 16 + 1 + 2 + 8 + 4 + 8 + 2;
     if (!r.has(3 + 6 + 6)) return false;
 
-    wr9_        = r.u8();
-    wr0PtrBits_ = r.u8();
-    const bool intState = r.u8() != 0;
-    for (uint8_t& v : intState_)  v = r.u8();
-    for (int& v : intSource_)     v = r.u8();
+    // Decode into LOCALS and commit at the end. This function's contract —
+    // and the one `WorkstationCard::loadSnapshotState` relies on — is
+    // "false ⇒ nothing changed", but the device-wide header used to be
+    // written straight into the members before the per-channel budget below
+    // could refuse the blob: a blob whose channel-A SDLC frame ran off the
+    // end left wr9_, the WR0 pointer bits and both interrupt vectors from
+    // the FILE next to two channels from the LIVE session (bug hunt #13).
+    // The channels themselves already decode in order, so they get a
+    // scratch pair for the same reason.
+    const uint8_t wr9v        = r.u8();
+    const uint8_t wr0PtrBitsV = r.u8();
+    const bool    intState    = r.u8() != 0;
+    uint8_t intStateV[6]  = {0};
+    int     intSourceV[6] = {0};
+    for (uint8_t& v : intStateV)  v = r.u8();
+    for (int& v : intSourceV)     v = r.u8();
 
-    for (Channel& c : ch_) {
+    Channel chV[2] = { ch_[0], ch_[1] };
+    for (Channel& c : chV) {
         // The budget is per channel and taken HERE, not once up front. Each
         // channel's fixed part is followed by a variable-length SDLC frame
         // that the up-front sum could not account for, so a blob whose
@@ -1655,6 +1667,13 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
                                                           : kMaxTxFrameBytes));
         r.pos += frameLen;
     }
+
+    // Everything parsed — commit.
+    wr9_        = wr9v;
+    wr0PtrBits_ = wr0PtrBitsV;
+    for (int i = 0; i < 6; ++i) { intState_[i] = intStateV[i]; intSource_[i] = intSourceV[i]; }
+    ch_[0] = chV[0];
+    ch_[1] = chV[1];
 
     // Republish the interrupt line: the owner's /IRQ has to agree with the
     // restored state, and it only ever hears about edges.

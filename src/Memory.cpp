@@ -951,6 +951,22 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         //    the other left the pair inconsistent.
         sect.push_back(vblWasActive   ? 1 : 0);
         sect.push_back(iicCardWindow_ ? 1 : 0);
+        // Appended 2026-09-09, same grow-at-the-end rule: the $C800-$CFFE
+        // expansion-window OWNER (`SlotBus::activeExpansionSlot`). It is the
+        // slot-side partner of `intC8Rom` five bytes up — that flag says the
+        // MOTHERBOARD holds the window, this byte says WHICH CARD holds it
+        // otherwise. Seven cards take it (ClockCard, GrapplerCard, LironCard,
+        // WorkstationCard, CffaCard, SmartPortCard, SuperSerialCard) and no
+        // section carried it, so a restore whose PC sat inside a card's
+        // expansion ROM — a SmartPort/Liron driver, the SSC firmware — fetched
+        // the FLOATING BUS for the whole 2 KB window instead of the card's
+        // ROM. Encoded 0 = unclaimed, 1-7 = slot (the latch is never anything
+        // else). Older blobs stop before this byte and keep the live owner,
+        // exactly as they keep the live IOUDIS.
+        {
+            const int owner = slots.getActiveExpansionSlot();
+            sect.push_back(static_cast<uint8_t>(owner >= 1 && owner <= 7 ? owner : 0));
+        }
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
@@ -1177,6 +1193,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
                 vblWasActive   = p[7] != 0;
                 iicCardWindow_ = p[8] != 0;
             }
+            // The $C800 expansion-window owner (see appendSnapshotState).
+            // Validated inside SlotBus: a blob naming an empty slot or a
+            // card that does not drive /IOSTB restores as unclaimed.
+            if (k >= 10) slots.restoreExpansionOwner(static_cast<int>(p[9]));
             return true;
         })) return false;
     // No-Slot Clock (see appendSnapshotState). A blob written by a build
@@ -2057,6 +2077,14 @@ uint8_t Memory::languageCardRead(uint16_t addr) const
             return out;
         return mem[addr];
     }
+    return languageCardRamPeek(addr);
+}
+
+// The RAM half of the language card's address decode, on its own so the read
+// path and `peekCpuWriteTarget` cannot drift: which 4 KB bank at $D000, and
+// main vs the ALTZP aux trio. It is what `languageCardWrite` writes into.
+uint8_t Memory::languageCardRamPeek(uint16_t addr) const
+{
     const bool useAux = iieMode && (iieMemMode & MF_ALTZP);
     if (addr < 0xE000) {
         const uint16_t off = static_cast<uint16_t>(addr - 0xD000);

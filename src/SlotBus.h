@@ -116,6 +116,19 @@ public:
     void deactivateExpansion() { activeExpansionSlot = -1; }
     int  getActiveExpansionSlot() const { return activeExpansionSlot; }
 
+    /// Snapshot / rewind restore of the $C800 window owner (Memory's MEX
+    /// blob carries it — it is the slot-side partner of `intC8Rom`). `slot`
+    /// is 1..7, or anything else for "unclaimed". Validated on the way in:
+    /// a blob naming an empty slot, or a card that does not drive /IOSTB,
+    /// restores as unclaimed rather than pointing `expansionRomRead` at a
+    /// card that cannot serve the window.
+    void restoreExpansionOwner(int slot) {
+        activeExpansionSlot =
+            (slot >= 1 && slot <= 7 && slots[static_cast<size_t>(slot)] &&
+             slots[static_cast<size_t>(slot)]->takesC800())
+                ? slot : -1;
+    }
+
     /// CPU pacing — forwarded from Memory::advanceCycles().
     void advanceCycles(int cycles);
     /// True when at least one card is plugged — lets Memory::advanceCycles()

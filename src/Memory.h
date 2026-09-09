@@ -1128,6 +1128,10 @@ private:
     uint8_t softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal);
     uint8_t languageCardSwitchAccess(uint16_t addr, bool isWrite);
     uint8_t languageCardRead(uint16_t addr) const;
+    /// The RAM cell `languageCardWrite` would touch — bank 1/2 at $D000, the
+    /// shared 8 KB at $E000, main or the ALTZP aux trio. Shared by
+    /// `languageCardRead`'s RAM half and `peekCpuWriteTarget`.
+    uint8_t languageCardRamPeek(uint16_t addr) const;
     void    languageCardWrite(uint16_t addr, uint8_t value);
 
     /// "Floating bus" — the byte the video DMA is currently fetching.

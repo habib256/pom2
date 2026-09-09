@@ -159,8 +159,20 @@ void PrinterSoundDevice::schedule(double durSeconds, double freqHz, double q,
     // The cursor never goes backwards past the clock, and never runs more
     // than kMaxAheadSeconds in front of it. A burst denser than the printer
     // can voice therefore THINS — this early return is that thinning.
+    //
+    // The test is `>=`, not `>`, and that is load-bearing (bug hunt #13).
+    // The clamp below pins the cursor EXACTLY on `maxAhead` once a burst
+    // outruns the clock; with a strict `>` the pinned cursor still passed
+    // this gate, so every further grain was scheduled on the identical
+    // frame and the burst STACKED instead of thinning. A single
+    // `carriageReturn(8.0)` was enough — its spacing is the sweep's own
+    // length (0.53 s), far past the 0.2 s cap — and the 47 characters that
+    // followed it inside one ImageWriter tick all attacked together: a
+    // 0.44 full-scale step at the default volume 0.35, four times the
+    // crackle bar. With `>=` the cursor is strictly increasing, so no two
+    // grains can ever share a start frame.
     uint64_t start = std::max(now, nextGrainFrame_);
-    if (start > maxAhead) return;
+    if (start >= maxAhead) return;
     nextGrainFrame_ = std::min(start + static_cast<uint64_t>(spacingSeconds * fs),
                                maxAhead);
 

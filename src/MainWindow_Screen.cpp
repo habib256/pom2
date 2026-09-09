@@ -306,6 +306,17 @@ void MainWindow::drawScreenImage()
     // non-OE-GPU modes the colour image already lives in `screenTexture`; the
     // OE-GPU branch below redirects it to the demod output.
     unsigned int voxelSrcTex = screenTexture;
+    // ...and ITS dimensions, which are NOT always the framebuffer's. The voxel
+    // shader maps cell (cx,cy) to uv = (cx+0.5)/gridW, so the grid has to be
+    // the pixel size of the texture it is handed or it samples a subset of the
+    // columns. In the OE-GPU branch below the tap becomes the demod output,
+    // which is ALWAYS 560 wide (Apple2Display::kSignalWidth) even while
+    // `screenTexture` holds the 280-wide LUT fallback for a 40-col HGR /
+    // lo-res frame — grid 280 over a 560-wide texture reads only the odd
+    // columns and throws half the picture away, the exact "half-res sampling
+    // visibly lost detail" the grid sizing exists to avoid. 0 = "same as the
+    // framebuffer".
+    int voxelSrcW = 0, voxelSrcH = 0;
     // Sharp-text override: when the user wants legible text under the
     // composite mode, skip the shader for TEXT scanlines and let the
     // crisp RGB framebuffer go straight to ImGui. Full-screen text uses
@@ -412,6 +423,8 @@ void MainWindow::drawScreenImage()
             if (demod != 0) {
                 presentTex = demod;
                 voxelSrcTex = demod;   // colour image, pre-CRT-glass (3D tap)
+                voxelSrcW   = ntscFx->outputWidth();
+                voxelSrcH   = ntscFx->outputHeight();
                 // CRT glass only when the master toggle is on (top of the CRT
                 // Settings window); otherwise present the raw demod output.
                 if (crtEffectsEnabled) {
@@ -495,8 +508,8 @@ void MainWindow::drawScreenImage()
         if (!voxel3d_) voxel3d_ = std::make_unique<pom2::Voxel3DRenderer>();
         // One voxel per live Apple II pixel (280 or 560 × 192) so the cube grid
         // captures the full image — half-res sampling visibly lost detail.
-        voxel3d_->gridW = std::max(1, fbW);
-        voxel3d_->gridH = std::max(1, fbH);
+        voxel3d_->gridW = std::max(1, voxelSrcW > 0 ? voxelSrcW : fbW);
+        voxel3d_->gridH = std::max(1, voxelSrcH > 0 ? voxelSrcH : fbH);
 #if defined(__EMSCRIPTEN__)
         // Perf guard: halve the 560-wide DHGR/80-col geometry on the browser so
         // the cube count stays near the comfortable HGR 280×192 (~54k); the FBO

@@ -77,13 +77,13 @@ void advance(Memory& mem, uint64_t cycles)
 }
 
 // The paging/IOU section of appendSnapshotState:
-//   [len=9][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
-//          [vblWasActive][iicCardWindow_]
+//   [len=10][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
+//           [vblWasActive][iicCardWindow_][c800Owner]
 // The payload has grown twice already, so its length is READ rather than
 // assumed. It is also no longer the tail: three more optional length-prefixed
 // sections follow it (the No-Slot Clock and the two on-board Sony 3.5"
 // mechanisms), each empty on a bare Memory with none of them wired.
-constexpr size_t kIouSectionLen  = 9;
+constexpr size_t kIouSectionLen  = 10;   // the $C800 owner joined on 2026-09-09
 constexpr size_t kEmptyTailCount = 3;
 
 uint8_t iouByte(Memory& mem, size_t index)

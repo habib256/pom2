@@ -5,6 +5,68 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — Bug hunt #13: the GL stage, the audio bus, the paging, the snapshots
+
+Four Opus hunters on the seams the core hunts do not reach. Same contract.
+
+**The crackle was the printer — a line's worth of grains on one frame.**
+The printer sound's grain cursor is clamped onto its 0.2 s lead cap, and
+the drop gate was a strict `>`: once a burst reached the cap, every later
+grain was scheduled on the identical audio frame and their attacks summed
+instead of thinning. One carriage return parks the cursor there (its
+spacing is the 0.53 s sweep), and the ImageWriter drains a whole line
+inside one UI frame, so each printed line ended in a 0.44 full-scale step
+at the default volume — four times the crackle bar the Audio panel uses.
+The gate is `>=` (`printer_grain_pileup`; the earlier probe printed at 180
+cps with a gap after the CR and could not see it). The mixer got its own
+clicks/s on the Master row: the per-source tally is pre-sum and pre-gain,
+so clipping, a pan flip, a source vanishing or the suspend cut had no row
+to point at. The floppy voices, the speaker across turbo/pause/rewind and
+a rate change, and the loop crossfade were cleared with numbers at the
+//c's own parameters.
+
+**Two snapshot loaders below the cards.** The SmartPort bus responder
+recorded an INIT addressed to device 0 — the host's own number, which its
+own lookup refuses — so a rewind changed how the chain answered the
+host's scan; and both it and the Z8530 applied part of a truncated blob
+before refusing it, against the contract "refused means nothing changed".
+Pinned by `snapshot_partial_apply`. Cleared with probes: every nested
+section's length, every fixed blob size, a 100 KB Memory trailer on a
+//c+, and a rewind across a DOS 3.3 boot and a Disk II write burst that
+replays byte-identically after a million cycles.
+
+**Two paging latches the snapshot and the debugger got wrong.** The
+owner of the `$C800` expansion window was in no snapshot section, so a
+restore (or a rewind) whose PC sat inside a card's expansion ROM — a
+SmartPort or Liron driver, the SSC firmware — fetched the floating bus
+across the whole 2 KB; Memory's paging trailer carries it now, validated
+against the slot that would serve it. And the debugger's write-target
+peek returned ROM above `$C000` on the claim that the language card
+"writes where it reads" — its power-on latch pair is exactly the
+disagreeing one, so undoing a Memory Viewer edit at `$D000-$FFFF` wrote a
+ROM byte into Language-Card RAM. Pinned by `mem_paging_latch_snapshot`.
+Cleared, with 32 768 three-access sequences against a reference port of
+MAME's `lc_update`, 64 aux-routing combinations at 12 boundaries, the
+`$C3xx`/`$CFFF` window rules, RamWorks bank select and its views, every
+IIe status bit, the //c ROMBANK and IOUDIS decodes and their snapshots,
+the three reset classes' wipe regions, and the II/II+ subset.
+
+**The CRT glass pass aliased every 560-wide frame shown in a narrow
+panel.** The screen target is sized from the 280-dot geometry, so DHGR,
+80-col, Le Chat Mauve and the OE demod output are minified horizontally
+whenever the widget is narrower than 560 physical pixels — and the pass
+had no decimation filter (`max(magX, magY)` hid the minification; the
+bicubic branch reconstructs, it does not low-pass). A flat dot grid swung
+the full 0..255: scattered white dots and dotted lines, the Chat Mauve
+report's signature, 560-wide modes only. Box-filtered on minification
+now. On every output resize the pass also blended the raw source as its
+"previous frame" and re-lit the border outside the barrel at 0.4 × white
+for as long as a window drag lasted; persistence is off on that one frame.
+Both pinned by `crt_glass_resample` (a real GL context; skips where none).
+The 3D voxel grid under the OE-GPU pipeline was sized from a 280-wide
+framebuffer while sampling the 560-wide demod, reading the odd columns
+only; fixed, unpinned (the file links into POM2 alone).
+
 ## 2026-09-09 — Bug hunt #12: the core — Disk II writes, the SmartPort, the timers
 
 Four Opus hunters on the emulation core, the standing contract (a defect

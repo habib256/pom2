@@ -214,10 +214,17 @@
 #     that it blanked the mixed text band (`mixedBandLeftBlack_`), and the
 #     three patch gates read that instead of the frame's final state; the
 #     dead whole-frame `mixedGfx` walk went away with it.
+# 2026-09-09 (bug hunt #13): two ceilings raised for the snapshot trailer
+# and one helper split — the $C800 expansion-window OWNER joins Memory's
+# paging/IOU flip-flop section (a tenth byte, with the why next to it), and
+# the language card's RAM decode is one function for the read path and the
+# debugger's write target. The seam the debt names, Memory.cpp's snapshot
+# trailer, is still the split owed.
+#   src/Memory.cpp               2616 -> 2644 (+28)
 src/Apple2Display.cpp                    2500
 src/DiskImage.cpp                        3109
 src/ImageWriter.cpp                      2764
 src/M6502.cpp                            2300
-src/Memory.cpp                           2616
+src/Memory.cpp                           2644
 src/StorageCoordinator.cpp               2337
 src/hgrpaint/HgrPaintEditor.cpp          2653

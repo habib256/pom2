@@ -185,13 +185,13 @@ int main()
             old.appendSnapshotState(shortBlob);
             // Rebuild the blob the way a pre-2026-09-06 build wrote it: the
             // IOU section carried 4 bytes and was the LAST thing in the
-            // trailer. Today it carries 9 (AN0/AN1/AN2 + vblWasActive +
-            // iicCardWindow_) and is followed by three more optional
+            // trailer. Today it carries 10 (AN0/AN1/AN2 + vblWasActive +
+            // iicCardWindow_ + the $C800 owner) and is followed by three more optional
             // length-prefixed sections — the No-Slot Clock and the two
             // on-board Sony 3.5" mechanisms — each an empty (zero-length)
             // section on a bare Memory with none of them wired.
             constexpr size_t kEmptyTail = 3 * 4;   // three zero length prefixes
-            constexpr size_t kIouNow    = 9;
+            constexpr size_t kIouNow    = 10;
             constexpr size_t kIouLegacy = 4;
             CHECK(shortBlob.size() > kEmptyTail + kIouNow + 4,
                   "blob long enough to truncate");
