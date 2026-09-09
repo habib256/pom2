@@ -57,6 +57,19 @@ the /RESET strobe was stamped on every port write while held low instead
 of on the falling edge, 20 000 events for one reset, enough to break the
 timeline; gated like the Mockingboard's.
 
+**The mixed-mode text band vanished across a beam split that ends in
+graphics.** The signal builder blanks scanlines 160-191 for every mixed
+graphics band and a patch composites crisp text over the demodulated
+picture afterwards; whether the patch ran was decided by the frame's
+*final* state, false as soon as the guest left mixed mode inside the band
+(`$C052` at scanline 170, the French Touch raster shape). The LUT and mono
+pipelines painted text rows 20-21; the three composite pipelines, the
+fresh-install default among them, showed ten black scanlines. The builder
+now records what it blanked and the patch gates read that
+(`mixed_band_beam_split`); a detector for scanlines lit by the LUT
+pipeline and black in a composite one went from 50 scenarios to none, no
+golden moved, DIX's screens are byte-identical.
+
 **Cleared, with probes.** The 6522's `advance(n)` against `n × advance(1)`
 over four ACR modes, nine latches and nine batch sizes (0 mismatches); T2
 one-shot fires once at `latch + 3`; the ACR-near-underflow re-arm; the
@@ -65,7 +78,11 @@ the WOZ cell grid; the 2IMG-NIB width; the IWM write-window table (the
 `half {16} / window {36}` asymmetry is MAME's own, `iwm.cpp:303-329`); the
 Sony seek at track 79; the //c+ external chain numbering; a bus
 transaction across a mid-transaction eject; the v1/v2 SmartPort card blob
-into the v3 card; a 3.5" write-back after an eject. Noted, not changed:
+into the v3 card; a 3.5" write-back after an eject; the beam segmentation
+against an independent mosaic oracle (872 scenarios), the floating bus at
+every visible position on both video standards, the live per-frame
+publication under PAL, the AN3 latch replay, and the page-flip
+classification against DIX's own menu. Noted, not changed:
 `Ssi263` has no `setCpuClock` (phoneme durations run 3.5× fast under a
 TransWarp), and the continuous-mode T1 read-back passes `$FF` for one
 cycle where a real 6522 may show `$00` — no oracle in the tree settles it.

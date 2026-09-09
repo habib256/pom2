@@ -3311,6 +3311,39 @@ set_tests_properties(video_event_publish PROPERTIES TIMEOUT 5)
 # Double-buffer page-flip heuristic: a lone-direction PAGE2 flip applies
 # frame-wide (no tear against mid-redraw RAM); two-direction frames keep the
 # exact beam-raced replay.
+# ─── Mixed-mode text band across a beam split ─────────────────────────────
+# fillCompositeSignal blanks scanlines [160,192) for every band that is
+# mixed GRAPHICS and lets patchMixedTextBand composite crisp text over the
+# demodulated picture. The gate for that patch used to be the frame's FINAL
+# soft-switch state, so a frame that left mixed mode inside the band ($C052
+# at scanline 170 — the French Touch raster shape) showed ten black
+# scanlines in the three composite pipelines while the LUT/mono ones painted
+# text rows 20-21. (Bug hunt #12, 2026-09-09.)
+add_executable(test_mixed_band_beam_split
+    mixed_band_beam_split_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_mixed_band_beam_split PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_mixed_band_beam_split PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_mixed_band_beam_split PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_mixed_band_beam_split PRIVATE winmm)
+endif()
+
+add_test(NAME mixed_band_beam_split COMMAND test_mixed_band_beam_split)
+set_tests_properties(mixed_band_beam_split PROPERTIES TIMEOUT 10)
+
 add_executable(test_drol_pageflip_render
     drol_pageflip_render_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp

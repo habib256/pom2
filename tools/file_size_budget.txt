@@ -210,7 +210,11 @@
 # stream (a nibble write blanked the quarter-track). The split owed on
 # DiskImage.cpp (the WOZ writer) is not forgiven by these nine lines.
 #   src/DiskImage.cpp            3100 -> 3109 (+9)
-src/Apple2Display.cpp                    2491
+#   src/Apple2Display.cpp        2491 -> 2500 (+9)   the signal builder records
+#     that it blanked the mixed text band (`mixedBandLeftBlack_`), and the
+#     three patch gates read that instead of the frame's final state; the
+#     dead whole-frame `mixedGfx` walk went away with it.
+src/Apple2Display.cpp                    2500
 src/DiskImage.cpp                        3109
 src/ImageWriter.cpp                      2764
 src/M6502.cpp                            2300

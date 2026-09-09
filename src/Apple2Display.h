@@ -309,6 +309,13 @@ private:
     bool signalProducedFlag = false;
     int  signalPhaseOffset_ = 0;
     bool mixedCompositeUsesFb_ = false;
+    // Set by fillCompositeSignal for every band that is mixed GRAPHICS and
+    // reaches into scanlines [160,192): those rows are deliberately left
+    // black in signalBuf for patchMixedTextBand to fill after demod. It is
+    // the exact gate for that patch — the frame's final state is not (a
+    // frame that leaves mixed mode inside the band ends non-mixed and still
+    // has blanked rows).
+    bool mixedBandLeftBlack_ = false;
     OeDemodParams oeDemod_{};
     Memory::DisplayState lastRenderState_{};
 

@@ -395,8 +395,6 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
     // already advanced past: a guest that flipped to TEXT after the frame
     // closed skipped the band entirely (the demod's graphics rows stayed
     // under the text), and a page flip drew it from the wrong page.
-    if (!state.mixedMode || state.textMode) return;
-
     // A switch thrown INSIDE the band beam-races the band. The graphics rows
     // above it were already replayed per segment into the composite signal;
     // the band used to be painted once from the end-of-frame state, so a
@@ -404,12 +402,18 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
     // from one page — and only under the three composite pipelines, the
     // LUT/RGBA ones got it right, so the picture changed with the display
     // mode. Paint the band per segment, in the 560 domain frame80 lives in.
+    //
+    // This test comes FIRST, and the frame's end state is only consulted
+    // when there is no split: a frame that leaves mixed mode inside the
+    // band ends non-mixed, and returning on that left the rows the signal
+    // builder blanked (see `mixedBandLeftBlack_`) with nobody to paint them.
     bool bandSplit = false;
     for (const auto& e : events)
         if (e.scanline >= kMixedTextFirstScanline && e.scanline < kHeight) {
             bandSplit = true;
             break;
         }
+    if (!bandSplit && (!state.mixedMode || state.textMode)) return;
     if (bandSplit) {
         Memory::DisplayState beamStart = mem.getDisplayStateAtFrameStart();
         applyIdleSwitchOverride(beamStart, mem);
@@ -567,25 +571,22 @@ void Apple2Display::render(Memory& mem)
         applyIdleSwitchOverride(state, mem);
     }
     lastRenderState_ = state;   // published-frame snapshot for present-path decisions
-    // Any graphics band anywhere in the frame keeps the composite/demod
-    // path alive, even when the frame ENDS in text (mixed-mode splits).
-    bool mixedGfx = state.mixedMode && !state.textMode;
-    if (!events.empty()) {
-        Memory::DisplayState walk = mem.getDisplayStateAtFrameStart();
-        applyIdleSwitchOverride(walk, mem);
-        if (walk.mixedMode && !walk.textMode) mixedGfx = true;
-        for (const auto& e : events) {
-            if (e.scanline >= kHeight) continue;   // VBL: not on this picture
-            applyVideoEvent(walk, e.kind, e.value);
-            if (walk.mixedMode && !walk.textMode) mixedGfx = true;
-        }
-    }
-    // The 32-row text band is ours to keep ONLY when the frame ends in mixed
-    // graphics — that is the sole case patchMixedTextBand paints (it returns
-    // early otherwise). Gating the short demod on `mixedGfx`, true as soon as
-    // ANY band was mixed graphics, left rows 160-191 written by nobody, i.e.
-    // holding the previous frame, on every frame that LEFT mixed mode.
-    const bool endsMixedGfx = state.mixedMode && !state.textMode;
+    // Whether the 32-row text band needs patching is NOT a property of the
+    // frame's final state, and it is not "any band was mixed graphics"
+    // either. It is exactly: did fillCompositeSignal leave scanlines
+    // [160,192) black for some band? It leaves them black for every band
+    // that is mixed GRAPHICS and reaches into them (crisp mono text is
+    // composited after demod), and paints them for every band that does
+    // not. So the signal builder records the answer itself, in
+    // `mixedBandLeftBlack_`, and the three patch gates below read it.
+    //
+    // Gating on the FINAL state instead lost the band whenever the guest
+    // left mixed mode INSIDE it — `$C052` at scanline 170 on a French
+    // Touch-style raster split: the LUT/mono pipelines painted text rows 20
+    // and 21 (scanlines 160-169) and the three composite pipelines showed
+    // 10 black scanlines, because the patch that fills them never ran.
+    // Gating on "any band was mixed graphics" is the opposite error (it
+    // repaints a band that was fully demodulated); this is neither.
 
     // Both ColorCompositeOE and ColorAppleWin consume the same 14.318 MHz
     // composite bitstream. ColorCompositeOE hands it to MainWindow's GLSL
@@ -634,6 +635,8 @@ void Apple2Display::render(Memory& mem)
     // composite signal — also publishes no key, and needs no statement to say
     // so: nextTextFrameKey_ stays invalid.
 
+    // fillCompositeSignal sets this; with no signal there are no black rows.
+    mixedBandLeftBlack_ = false;
     signalProducedFlag = needSignal ? fillCompositeSignal(mem, events) : false;
 
     if (cpuDemodGfx && !signalProducedFlag) {
@@ -650,7 +653,7 @@ void Apple2Display::render(Memory& mem)
     // lock); the deferred demod is per-row and only rewrites the graphics
     // rows [0, 160) in mixed mode, so the patch survives it.
     if (oeCpu && signalProducedFlag && (!state.textMode || oeDemodsText)) {
-        if (endsMixedGfx) {
+        if (mixedBandLeftBlack_) {
             patchMixedTextBand(mem, state, events);
             scheduleCpuDemodInto80(kMixedTextFirstScanline);
         } else {
@@ -658,7 +661,7 @@ void Apple2Display::render(Memory& mem)
         }
     }
 
-    if ((endsMixedGfx && hiResMode == HiResMode::ColorCompositeOE)
+    if ((mixedBandLeftBlack_ && hiResMode == HiResMode::ColorCompositeOE)
         && signalProducedFlag) {
         patchMixedTextBand(mem, state, events);
         scheduleCpuDemodInto80(kMixedTextFirstScanline);
@@ -707,7 +710,7 @@ void Apple2Display::render(Memory& mem)
         // The output IS native 560-wide regardless of the Apple II's
         // soft-switch state, so route the UI to frame80.
         setUseFrame80(true);
-        if (mixedGfx)
+        if (mixedBandLeftBlack_)
             patchMixedTextBand(mem, state, events);
     }
 }
@@ -2453,7 +2456,11 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
                 else        paintLoRes40(brLo, brHi, col0, col1, lo, hi);
             }
             // Mixed-mode text band stays black — crisp mono text is composited
-            // after demod (patchMixedTextBand), same as HGR mixed.
+            // after demod (patchMixedTextBand), same as HGR mixed. Say so, so
+            // render() can gate the patch on the rows actually blanked rather
+            // than on the frame's final soft-switch state.
+            if (state.mixedMode && scanY1 > kMixedTextFirstScanline)
+                mixedBandLeftBlack_ = true;
             return;
         }
         // Hi-res — DHGR variant when on IIe with 80COL + DHIRES, else HGR.
@@ -2467,6 +2474,8 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             if (isDhgr) paintDhgr(lo, hi, col0, col1); else paintHgr(lo, hi, col0, col1);
         }
         // Mixed-mode text band: see lo-res note above — left black here.
+        if (state.mixedMode && scanY1 > kMixedTextFirstScanline)
+            mixedBandLeftBlack_ = true;
     };
 
     if (!beamRace) {

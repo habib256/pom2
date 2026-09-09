@@ -865,6 +865,36 @@ band per beam segment through `renderInternalSegment` with `force560_` set
 text is painted by the RGB painter rather than the demod, which is the one
 remaining divergence and a visible-but-correct one. Pinned there too.
 
+**The band's gate is what the signal builder blanked, not the frame's end
+state** *(2026-09-09, bug hunt #12)*. `fillCompositeSignal` leaves
+scanlines [160,192) black in `signalBuf` for every band that is mixed
+*graphics* (crisp mono text is composited after demod), and the
+`endsMixedGfx` gate above decided whether `patchMixedTextBand` then
+filled them. That is false for a frame that leaves mixed mode *inside*
+the band — `$C052` at scanline 170, the French Touch raster shape — so
+the rows the builder blanked were painted by nobody: text rows 20-21 on
+the LUT/mono pipelines, ten black scanlines on the three composite ones
+(OE-GPU is the fresh-install default). Neither "the frame ends mixed
+graphics" (this bug) nor "any band was mixed graphics" (repaints a fully
+demodulated band, a visible seam) is the right test; the builder now
+records the answer itself in `mixedBandLeftBlack_` at both mixed-band
+exits of `paintSignalBand`, the three patch gates read it, and
+`patchMixedTextBand` evaluates its `bandSplit` before consulting the end
+state so the per-segment path is reachable. A dropped-scanline detector
+(a line the LUT pipeline lights and a composite one leaves black) found
+50 scenarios before and none after; the goldens are static frames, where
+the two gates coincide, and DIX's boot and menu PPMs are byte-identical.
+Pinned by `mixed_band_beam_split` (HGR at five split lines, lo-res, DHGR,
+the OE-GPU routing flag, two controls). Cleared in the same pass, with
+probes kept under the hunt's scratch: the beam segmentation against an
+independent mosaic oracle (872 scenarios), the floating bus against the
+scanner address at every visible position on both standards (14
+configurations), the live per-frame publication under PAL and NTSC, the
+AN3 latch replay, the page-flip classification against DIX's own menu
+(the one shape it would flatten — a flip restored in the *next* frame's
+VBL — DIX does not write). `state.an3` is a dead field, written and never
+read.
+
 `Memory` logs display soft-switch edges (`$C050-$C057`, `$C05E/$C05F`,
 IIe `$C00C/$C00D` 80COL, `$C000/$C001` 80STORE, `$C00E/$C00F` ALTCHAR)
 with CPU-cycle timestamps. `Apple2Display::render()` replays events per
