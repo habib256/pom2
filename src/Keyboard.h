@@ -104,6 +104,28 @@ public:
     // and byte-exact injection.
     std::size_t pasteRawKeys(const char* data, std::size_t length);
 
+    // A byte stream from a TERMINAL — the SSC's telnet keyboard bridge
+    // (`setKeyboardSink`), which hands over one byte per call. Same FIFO,
+    // cap, 7-bit mask and ][/][+ case-fold as pasteText, and two differences
+    // that are the whole reason it exists:
+    //
+    //   * control bytes are NOT dropped. pasteText's filter is a CLIPBOARD
+    //     policy — a pasted .txt has no business typing $01..$1F at the
+    //     guest. A terminal is the opposite case: Ctrl-C is how you break an
+    //     Applesoft program, $08 is the Apple II's own left-arrow/backspace,
+    //     $1B is ESC, $04 is the DOS command prefix. Through pasteText every
+    //     one of them vanished, so a telnet session could type but never
+    //     correct, interrupt or escape.
+    //
+    //   * the CR/LF collapse state is a MEMBER, not a per-call local. The
+    //     caller delivers one byte at a time, so a CR LF pair straddles two
+    //     calls; with a local, the LF of every ENTER became a second CR. That
+    //     is invisible while the card's own NVT filter is running, and
+    //     immediate once the peer negotiates telnet BINARY — which turns that
+    //     filter off (`telnetBinaryRx_`) and leaves the LF in the stream.
+    std::size_t pasteKeyStream(const char* data, std::size_t length,
+                               bool foldToUpper);
+
     std::size_t pendingPasteSize() const {
         std::lock_guard<std::mutex> lk(mtx_);
         return pasteQueue_.size();
@@ -120,11 +142,18 @@ public:
         std::lock_guard<std::mutex> lk(mtx_);
         lastKey_  = 0;
         keyReady_ = false;
+        streamPrevCR_ = false;
         pasteQueue_.clear();
         publish();
     }
 
 private:
+    // Shared body of pasteText / pasteKeyStream. `mtx_` held by the caller.
+    std::size_t pushChars(const char* data, std::size_t length,
+                          bool foldToUpper, bool dropControls, bool& prevCR);
+    // One byte into the latch (if free) or the FIFO. `mtx_` held.
+    void pushOne(uint8_t b);
+
     // mtx_ held by the caller.
     void publish() {
         mirror_.store(static_cast<uint8_t>(lastKey_ | (keyReady_ ? 0x80 : 0x00)),
@@ -138,6 +167,8 @@ private:
     mutable std::mutex   mtx_;
     uint8_t              lastKey_  = 0;
     bool                 keyReady_ = false;
+    // pasteKeyStream's persistent "saw a CR" state — see its declaration.
+    bool                 streamPrevCR_ = false;
     std::atomic<uint8_t> mirror_{ 0 };
     std::atomic<bool>    pasteArmed_{ false };
     std::deque<uint8_t>  pasteQueue_;

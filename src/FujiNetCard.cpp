@@ -452,6 +452,19 @@ void FujiNetCard::handleSmartPortCall()
         const auto r = link().status(unit, code);
         if (!r.ok()) { finish(statusFor(r, connected)); return; }
         const std::size_t n = r.data.size();
+        // A STATUS LIST IS NOT UNBOUNDED. Every sibling command caps what the
+        // peer may put in guest RAM — kSpReadBlock copies exactly 512,
+        // kSpRead clamps to the guest's own `count` — but STATUS has no count
+        // in its parameter list, so `n` was whatever the relay sent. The link
+        // layer accepts a 70 KB frame (SlipFramer::kMaxFrameBytes), and
+        // rangeIsSafe only refuses the I/O page, so one 3-byte STATUS request
+        // with payload=$0300 could have the peer overwrite $0300-$BFFF —
+        // 48 896 bytes — where the guest expects 25 (a DIB) or 4 (general
+        // status). The transferred count reported back in Y/X is 16 bits
+        // besides, so anything past 65535 was misreported as well.
+        // 512 is the SmartPort block, the ceiling every other command here
+        // already uses, and far above any real STATUS list.
+        if (n > kBlockBytes) { finish(kSpIoError); return; }
         if (!writeGuestBlock(payload, r.data.data(), n)) { finish(kSpIoError); return; }
         finish(kSpOk, static_cast<uint8_t>(n & 0xFF),
                       static_cast<uint8_t>(n >> 8));

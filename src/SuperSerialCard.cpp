@@ -401,6 +401,21 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
 void SuperSerialCard::onTransportConnected()
 {
     resetTelnet();   // fresh IAC + CR state per connection
+    {
+        // ...and a fresh RECEIVER, for the same reason. A real 6551 has a
+        // one-byte RDR, so bytes a peer sent and the guest never read are
+        // gone the moment the carrier drops; POM2's 4 KB host-side ring kept
+        // them, and the NEXT telnet client was answered with the previous
+        // one's unread typing (`p4_ssc_hostile` S1: connect, send "OLD",
+        // hang up, reconnect — the guest reads "OLD" from the new session).
+        // The TX ring is deliberately NOT cleared: those are bytes the GUEST
+        // wrote and has already been told went out (TDRE pinned high), and
+        // dropping them would lose a PR#2 listing that was mid-flight.
+        std::lock_guard<std::mutex> lk(bufferMtx);
+        rxBuf.clear();
+        statusErrors_ &= static_cast<uint8_t>(~SR_OVERRUN);
+        clearIrqSource(IRQ_RDRF);
+    }
     connected = true;
     onConnectionEdge(true);
 }
@@ -476,6 +491,7 @@ void SuperSerialCard::onReset()
     std::lock_guard<std::mutex> lk(bufferMtx);
     txBuf.clear();
     rxBuf.clear();
+    rdrLatch_     = 0;
     statusErrors_ = 0;
     sendBudget_   = 0.0;
     lastDrainTime_ = std::chrono::steady_clock::now();
@@ -694,15 +710,23 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
         switch (reg) {
             case 0x0: {  // RDR (data register)
                 std::lock_guard<std::mutex> lk(bufferMtx);
-                uint8_t b = 0;
                 if (!rxBuf.empty()) {
                     // The receiver's shift register is `wordLength_` bits
                     // wide: at 7 data bits the eighth bit is the parity bit
                     // and never reaches the guest's RDR. (The TRANSMIT side
                     // deliberately stays 8-bit clean — see the TDR write.)
-                    b = static_cast<uint8_t>(rxBuf.front() & receiveDataMask());
+                    rdrLatch_ = static_cast<uint8_t>(rxBuf.front() & receiveDataMask());
                     rxBuf.pop_front();
                 }
+                // RDR IS A LATCH, not a tap on the queue. MAME
+                // `mos6551.cpp::read_rdr` clears the status bits and then
+                // `return m_rdr;` — the register keeps the last byte the
+                // receiver assembled, so a driver that reads $C0n8 twice (or
+                // reads it without first checking RDRF, which the SSC's own
+                // Pascal firmware protocol allows once a status read has said
+                // a byte is there) gets that byte again. POM2 handed back $00
+                // on the second read, which reads as "the peer sent a NUL".
+                const uint8_t b = rdrLatch_;
                 // MAME `mos6551.cpp:231-236`: read of RDR clears
                 // PARITY_ERROR / FRAMING_ERROR / OVERRUN / RDRF. RDRF
                 // here is computed from `rxBuf.empty()` at read time so

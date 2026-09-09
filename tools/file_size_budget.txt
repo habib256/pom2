@@ -221,10 +221,15 @@
 # debugger's write target. The seam the debt names, Memory.cpp's snapshot
 # trailer, is still the split owed.
 #   src/Memory.cpp               2616 -> 2644 (+28)
+# 2026-09-09 (bug hunt #14): one ceiling raised for the undocumented READ
+# opcodes' bus access — two addressing-mode placeholders split from their
+# store-form siblings (UnoffAbsSt, UnoffInd6R) and the why next to them. The
+# opcode-table shape and the dispatch are untouched.
+#   src/M6502.cpp                2300 -> 2346 (+46)
 src/Apple2Display.cpp                    2500
 src/DiskImage.cpp                        3109
 src/ImageWriter.cpp                      2764
-src/M6502.cpp                            2300
+src/M6502.cpp                            2346
 src/Memory.cpp                           2644
 src/StorageCoordinator.cpp               2337
 src/hgrpaint/HgrPaintEditor.cpp          2653

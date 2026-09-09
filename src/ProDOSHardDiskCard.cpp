@@ -100,8 +100,11 @@ bool ProDOSHardDiskCard::ejectImage()
     // Save-on-eject policy lives here (the card owns the user-facing eject):
     // flush dirty blocks first when write-back is on and the medium allows it,
     // then drop the image. backing_.saveDirty() is itself a guarded no-op.
+    // `isMediumLocked()`, not `isWriteProtected()`: a notch flipped on the
+    // mounted image must not make the eject drop blocks the guest already
+    // wrote (Block512Backing::isMediumLocked).
     if (backing_.isLoaded() && backing_.hasUnsavedChanges() &&
-        backing_.isWriteBackEnabled() && !backing_.isWriteProtected()) {
+        backing_.isWriteBackEnabled() && !backing_.isMediumLocked()) {
         if (!backing_.saveDirty()) {
             pom2::log().warn("HDV", "Save-on-eject failed: " + backing_.lastError());
             return false;
@@ -378,6 +381,18 @@ void ProDOSHardDiskCard::buildRom()
              0xC8 })                  // INY
      .branch(0xD0, "readPage2")
      .emit({ 0xC6, 0x45,              // DEC $45
+             // ProDOS 8 Technical Reference § 6.3 (Calling a Device Driver):
+             // "the driver returns with the carry flag clear and with the
+             // accumulator containing zero". READ was the one arm of this
+             // ROM that did not — it fell out of the loop with A = the LAST
+             // BYTE OF THE BLOCK and only cleared the carry, so a caller
+             // that reads the accumulator on a successful READ_BLOCK gets a
+             // byte of user data where an error code belongs (the probe
+             // that found it read $2B — "write protected" — off a perfectly
+             // healthy block). WRITE and STATUS in this same page already
+             // load #$00, as does SmartPortCard's read arm; the region has
+             // five spare bytes.
+             0xA9, 0x00,              // LDA #$00
              0x18,                    // CLC
              0x60 });                 // RTS
 

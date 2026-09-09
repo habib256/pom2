@@ -75,7 +75,7 @@ public:
     {
         pom2::Block512Backing& b = ata_.backing();
         if (!(b.isLoaded() && b.hasUnsavedChanges() &&
-              b.isWriteBackEnabled() && !b.isWriteProtected()))
+              b.isWriteBackEnabled() && !b.isMediumLocked()))
             return true;
         out = b.takeWriteBack();
         return true;

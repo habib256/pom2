@@ -365,18 +365,29 @@ void ClockCard::programTpTimer(uint8_t mode)
 
 void ClockCard::setTpRate(int hz)
 {
-    tpRateHz_      = hz;
-    tpAccumCycles_ = 0;
+    tpRateHz_   = hz;
+    tpAccumQ8_  = 0;
     if (hz <= 0) {
-        tpHalfPeriodCycles_ = 0;
-        tpLevel_            = false;
+        tpHalfPeriodQ8_ = 0;
+        tpLevel_        = false;
         return;
     }
     // The chip toggles TP at 2× the labelled rate, so a half-period (one
-    // toggle) is CPU_HZ / (2·hz) emulated cycles, rounded to nearest. A
-    // full period (one rising edge) is the IRQ-worthy event → `hz` IRQs/s.
-    tpHalfPeriodCycles_ = static_cast<int>(
-        (cpuClockHz_ + hz) / (2.0 * hz));
+    // toggle) is CPU_HZ / (2·hz) emulated cycles. A full period (one rising
+    // edge) is the IRQ-worthy event → `hz` IRQs/s.
+    //
+    // Held in 1/256ths of a cycle: the exact value is fractional (249.69 at
+    // 2048 Hz) and rounding it to a whole cycle biased every toggle the same
+    // way, so 2048 Hz came out at 2045.45. See the field's comment.
+    tpHalfPeriodQ8_ = tpHalfPeriodQ8For(hz);
+}
+
+int ClockCard::tpHalfPeriodQ8For(int hz) const
+{
+    if (hz <= 0) return 0;
+    const double q8 = cpuClockHz_ * 256.0 / (2.0 * hz);
+    // Never zero: a 0 period would make advanceCycles' `while` never end.
+    return q8 < 1.0 ? 1 : static_cast<int>(q8 + 0.5);
 }
 
 void ClockCard::setCpuClock(double hz)
@@ -389,9 +400,8 @@ void ClockCard::setCpuClock(double hz)
     // TIME_READ the armed timer kept its stale NTSC-derived period —
     // exactly contradicting this function's contract.
     if (tpRateHz_ > 0) {
-        tpHalfPeriodCycles_ = static_cast<int>(
-            (cpuClockHz_ + tpRateHz_) / (2.0 * tpRateHz_));
-        if (tpAccumCycles_ > tpHalfPeriodCycles_) tpAccumCycles_ = 0;
+        tpHalfPeriodQ8_ = tpHalfPeriodQ8For(tpRateHz_);
+        if (tpAccumQ8_ > tpHalfPeriodQ8_) tpAccumQ8_ = 0;
     }
 }
 
@@ -409,10 +419,15 @@ void ClockCard::clearIrqRequest()
 
 void ClockCard::advanceCycles(int cycles)
 {
-    if (cycles <= 0 || tpHalfPeriodCycles_ <= 0) return;
-    tpAccumCycles_ += cycles;
-    while (tpAccumCycles_ >= tpHalfPeriodCycles_) {
-        tpAccumCycles_ -= tpHalfPeriodCycles_;
+    if (cycles <= 0 || tpHalfPeriodQ8_ <= 0) return;
+    // int64 for the running sum only: `cycles` can be a whole emulated second
+    // in a test harness, and 1022727 × 256 already needs 28 bits before the
+    // accumulator is added. The residue left after the loop is < one
+    // half-period (≤ ~4.1 M in Q8, at 32 Hz), so the int32 member is safe.
+    long long acc = static_cast<long long>(tpAccumQ8_) +
+                    static_cast<long long>(cycles) * 256;
+    while (acc >= tpHalfPeriodQ8_) {
+        acc -= tpHalfPeriodQ8_;
         const bool rising = !tpLevel_;     // level is about to go 0 → 1
         tpLevel_ = !tpLevel_;
         // The ThunderClock+ clocks its interrupt-request FF on the TP
@@ -425,6 +440,7 @@ void ClockCard::advanceCycles(int cycles)
             assertIrq(true);
         }
     }
+    tpAccumQ8_ = static_cast<int>(acc);
 }
 
 void ClockCard::buildRom()
@@ -543,8 +559,8 @@ void ClockCard::appendSnapshotState(std::vector<uint8_t>& out) const
     for (int i = 0; i < 8; ++i)
         out.push_back(static_cast<uint8_t>(off >> (8 * i)));
     put32(tpRateHz_);
-    put32(tpHalfPeriodCycles_);
-    put32(tpAccumCycles_);
+    put32(tpHalfPeriodQ8_);
+    put32(tpAccumQ8_);
     out.push_back(tpLevel_ ? 1 : 0);
     out.push_back(irqEnabled_ ? 1 : 0);
     out.push_back(irqPending_ ? 1 : 0);
@@ -568,9 +584,9 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     uint64_t off = 0;
     for (int i = 0; i < 8; ++i) off |= static_cast<uint64_t>(data[p++]) << (8 * i);
     userOffsetSeconds   = static_cast<std::time_t>(off);
-    tpRateHz_           = get32();
-    tpHalfPeriodCycles_ = get32();
-    tpAccumCycles_      = get32();
+    tpRateHz_       = get32();
+    tpHalfPeriodQ8_ = get32();
+    tpAccumQ8_      = get32();
     // Untrusted blob: advanceCycles loops `while (accum >= half)`, so a
     // crafted accum near INT_MAX with half == 1 would spin ~2^31 times.
     // Clamp both to the sane range this card can actually produce.
@@ -586,7 +602,7 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // it for REGISTER_HOLD and the TP modes) — unreachable from the shipped
     // ThunderClock+ firmware, which never writes code 7 at all.
     testMode_ = (lastMode == kModeTest);
-    if (tpHalfPeriodCycles_ < 0) tpHalfPeriodCycles_ = 0;
+    if (tpHalfPeriodQ8_ < 0) tpHalfPeriodQ8_ = 0;
     // The half-period is DERIVED (rate + the machine's CPU clock), not
     // independent state — `setCpuClock` re-derives it for exactly this
     // reason. Taking the blob's value verbatim imported the period of the
@@ -595,15 +611,10 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // switch) left the ThunderClock ticking ~0.7 % off for the session, and
     // a corrupt blob could pair a live 1024 Hz rate with a 1-cycle period.
     // Same derivation as setTpRate/setCpuClock.
-    if (tpRateHz_ > 0) {
-        tpHalfPeriodCycles_ = static_cast<int>(
-            (cpuClockHz_ + tpRateHz_) / (2.0 * tpRateHz_));
-    } else {
-        tpHalfPeriodCycles_ = 0;
-    }
-    if (tpAccumCycles_ < 0 ||
-        (tpHalfPeriodCycles_ > 0 && tpAccumCycles_ > tpHalfPeriodCycles_))
-        tpAccumCycles_ = 0;
+    tpHalfPeriodQ8_ = tpHalfPeriodQ8For(tpRateHz_);
+    if (tpAccumQ8_ < 0 ||
+        (tpHalfPeriodQ8_ > 0 && tpAccumQ8_ > tpHalfPeriodQ8_))
+        tpAccumQ8_ = 0;
     tpLevel_            = data[p++] != 0;
     irqEnabled_         = data[p++] != 0;
     irqPending_         = data[p++] != 0;

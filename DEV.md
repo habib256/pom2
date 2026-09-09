@@ -48,6 +48,43 @@ says 65C02 `$5C` is 4 cycles, but the WDC W65C02S datasheet's opcode matrix
 counts the same — POM2 keeps 8, and the corpus is the outlier there. No
 Apple II software runs it either way.
 
+**The undocumented READ forms touch the bus** *(2026-09-09, bug hunt #14)*.
+"Length- and cycle-correct NOP" is the *result*; the bus cycle is not,
+and on an Apple II the effective address can be a soft switch. The
+`Unoff*` placeholders only advanced the PC and charged cycles, so on the
+Unenhanced //e — the machine that runs the French Touch corpus and A2
+File Cmd's 6502 build — `NOP $C030` ($0C) did not click the speaker,
+`LAX $C0EC` ($AF) did not advance the Disk II latch and `NOP $C083,X`
+did not touch the language card; `$DC`/`$FC` read on the 65C02 too
+(W65C02S table 5-2, MAME `nop_c_aba`), so the hole was on both cores.
+The read forms — `$0C`, the six `NOP abs,X`, `LAX abs`/`abs,Y`, `LAS`,
+`LAX (zp),Y` and `LAX (zp,X)` — now fetch their operand and read the EA,
+the indexed ones emitting the NMOS page-cross dummy read their documented
+siblings emit; `$8F SAX abs` and `$A3 LAX (zp,X)` got their own
+placeholders (`UnoffAbsSt`, `UnoffInd6R`) because they shared a slot with
+the opposite bus direction. Cycle counts do not move (asserted per case).
+Deliberately still silent, asserted in the pin: the store forms (SAX/AHX,
+TAS/SHY/SHX) and the RMW forms (SLO/RLA/SRE/RRA/DCP/ISC) — their bus cycle
+is a *write* whose value comes from semantics POM2 does not model, and a
+wrong byte in RAM is worse than none. Pinned by `cpu_undoc_bus_access`
+(speaker-toggle witness, as `cpu_nmos_index_dummy_read`). Cleared in the
+same pass: all 256 opcodes × both cores for cycles (with and without a
+page cross) and lengths against hand-entered MOS and W65C02S tables, the
+`$C0xx` bus traces (RMW double write NMOS / double read CMOS, the indexed
+dummy reads, `JMP ($xxFF)` on both), IRQ/NMI/BRK/reset timing and flags,
+decimal mode on both, the Z80's interrupt layer (HALT+IM1/NMI/IM2, RETN,
+the EI shadow, R) and the SoftCard's translation and DMA hand-over.
+Reported, not changed: `$CB`/`$DB` are WAI/STP on POM2's CMOS table
+where every 65C02 Apple shipped (Rockwell/GTE/NCR) executes a 1-cycle NOP
+— a stray `$DB` halts POM2 and not a real //e (an explicit project
+choice, the table is the WDC variant); `WAI` charges 3 cycles and falls
+through instead of waiting; `getCycleCountNow()` over-reads by the last
+instruction's cycles between steps (harmless to its mid-instruction
+callers, ≤14 cycles once for the Mockingboard/Phasor reset anchors);
+and `EmulationController::runCpuSlice`'s DMA-release tail runs without
+the stop check and hit reconciliation, so a breakpoint hit there is
+consumed as the next chunk's amnesty (needs a SoftCard actively DMA-ing).
+
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
 TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
 WDC WAI/STP (PC parks, IRQ wakes). Klaus Dormann clean.
@@ -2510,6 +2547,23 @@ string compare, deliberately: `fs::equivalent` is a stat per leaf under
 Library all call it; the checkbox is disabled on an empty drive because a
 notch belongs to a disk.
 
+**A notch flipped on a mounted block image never strands what the guest
+already wrote** *(2026-09-09, bug hunt #14)*. `Block512Backing::takeWriteBack`
+gated the flush on `isWriteProtected()`, which carries the notch, so a
+disk protected *after* a guest write reported a successful save with the
+block still only in RAM, and the four save-on-eject guards
+(`ProDOSHardDiskCard` / `CffaCard`, eject and detach) skipped the flush
+and dropped it — silently. The refusal was never necessary: the commit
+writes a temp sibling and renames, which a chmod-read-only file accepts
+(`syncFileContents` opens `O_RDONLY` for exactly this reason), and a
+medium protected at mount holds no dirty block at all because writes are
+refused from the first access. The flush is gated on
+`isMediumLocked()` — the 2IMG header's locked bit alone — while
+`writeBlock`/`writeByte` keep refusing under the notch. Pinned by
+`block512_notch_flush`. The same shape exists in `Disk35Image` and
+`DiskImage`, which also gate write-back on a combined protect and are
+reachable by `setMediaNotch`; not yet probed (TODO).
+
 The per-card / per-drive `writeBackEnabled` flags survive as the **process
 default** only (`MediaWritePolicy.h`, how the suite runs protected) and are
 no longer a user setting. A legacy `*_writeback = false` key — the
@@ -3056,6 +3110,14 @@ off 2  read    next byte of selected 512 B block (auto-incr, wraps)
 off 2  write   next byte INTO block         (write-back-gated)
 off 3  read    status: bit7 = no image, bit6 = WP
 ```
+
+The ROM's READ arm returns `A = 0` on success since 2026-09-09 (bug hunt
+#14): ProDOS 8 TRM § 6.3 wants carry clear *and* the accumulator zero,
+and READ fell out of its 512-byte loop into `CLC / RTS` with A holding
+the last byte of the block — user data where an error code belongs (the
+probe read `$2B`, this ROM's own "write protected" code, off a healthy
+block). WRITE and STATUS already loaded `#$00`; the region had five spare
+bytes. `hdv_driver_result` pins the full (carry, A) contract of every arm.
 
 `deviceSelectRead/Write` move bytes via host `memcpy` — no GCR, no
 flux. `$Cn07=$01` (plain ProDOS block, not SmartPort `$3C`); JSR
@@ -4382,6 +4444,36 @@ short-circuit.
 
 ### Super Serial Card (slot 2) + telnet bridge
 
+**The keyboard bridge is a terminal, not a clipboard** *(2026-09-09, bug
+hunt #14)*. The `setKeyboardSink` wiring in `MainWindow_SlotConfig.cpp`
+and `pom2_headless.cpp` handed each telnet byte to `Memory::pasteText`,
+whose filter — `b < 0x20 && b != CR && b != HT → drop` — is a clipboard
+policy. A telnet user could type but never interrupt, correct or escape:
+Ctrl-C, `$08` (the Apple's own left-arrow), ESC, `$04` (the DOS command
+prefix) and Ctrl-X all vanished, while the ACIA path (`IN#2`) always saw
+them. And `pasteText`'s CR/LF collapse state was a per-call local with the
+sink called one byte at a time, invisible while the card's NVT filter ran
+and immediate once the peer negotiated BINARY: every ENTER arrived as two
+carriage returns, so each line ran twice. `Keyboard::pasteKeyStream` /
+`Memory::pasteKeyStream` is the terminal entry point — same FIFO, cap,
+7-bit mask and ][/][+ case-fold, no control filter, the CR state a member
+cleared by `reset()`, so a CR LF split across two `recv()` chunks
+collapses too. Two more from the same probe: a new client was answered
+with the previous one's unread typing (a real 6551 has a one-byte RDR, and
+the 4 KB host ring survived the carrier drop — `onTransportConnected`
+clears it, the TX ring deliberately not, those bytes are the guest's and
+TDRE already said they went out); and the RDR was a tap on the queue, not
+a latch — MAME's `read_rdr` returns `m_rdr` unconditionally, POM2 handed
+`$00` to a second read, "the peer sent a NUL" (`rdrLatch_`, zeroed by a
+hardware reset only). Pinned by `ssc_keyboard_bridge` (five cases plus the
+negative control that the clipboard paste keeps its filter). Recorded,
+not changed: POM2 ships SW2-6 (interrupts) on where MAME's DIP default is
+off — a shipped-default policy, documented at `irqSwitchOn_`; the receiver
+accepts bytes with DTR de-asserted, which `testEchoRequiresDtr` pins
+deliberately for the `IN#2` console; and the RDR read clears `IRQ_RDRF`
+where MAME's `read_rdr` does not call `update_irq()` — the safer superset,
+only the in-code comment attributing it to MAME is wrong.
+
 **BINARY is honoured once agreed** *(2026-09-08, bug hunt #6)*. Since the
 2026-09-07 "answer option requests" change POM2 replied `WILL BINARY` /
 `DO BINARY` and then kept applying RFC 854's NVT translation — NULs eaten,
@@ -4501,7 +4593,17 @@ Rates decode latched C0/C1/C2 on STB rising edge: dividers 512/128/
 plus 64 Hz for REGISTER_HOLD. Interval timers (1/10/30/60 s, modes
 8-15) need uPD4990A 4-bit serial, unreachable on parallel uPD1990AC —
 not modelled. Pinned: `clock_card_smoke` (TP rates, IRQ enable, bit-5
-flag, reset).
+flag, reset). **The half-period is held in 1/256ths of a cycle** since
+2026-09-09 (bug hunt #14): the exact value is fractional — 249.69 cycles
+at 2048 Hz on NTSC — and rounding it to a whole 250 subtracted every
+toggle was a systematic bias, 2045.45 Hz for a nominal 2048 (−0.12 %,
+4.5 s/hour for a guest using TP as its timebase; the chip's TP comes off
+its own 32.768 kHz crystal, so it is a real-time reference, the same class
+as the 0.7 % PAL error `setCpuClock` exists to fix). `tpHalfPeriodQ8For`
+is the one derivation for `setTpRate`, `setCpuClock` and the snapshot
+loader; the two int32 snapshot slots keep their size and position. The
+pin's tolerance went from ±3 % to one pulse per emulated second, on NTSC
+and PAL.
 
 **MODE_SHIFT lax-gating divergence**: POM2 shifts on **every** CLK
 rising edge regardless of mode (MAME `upd1990a.cpp:312-327` gates on
@@ -5300,7 +5402,18 @@ sites: **`callMtx_` → `transportMtx_`, never the reverse.** In the same pass
 `transact()`'s write deadline stopped being a flat 2 s *on top of* the read
 timeout and became the same budget (`setWriteDeadlineMs`,
 `SpTcpTransport.cpp:232`) — a wedged peer could otherwise hold `stateMutex`
-for the sum of the two.
+for the sum of the two. **It became the same budget in name only until
+2026-09-09** (bug hunt #14): the read deadline was armed *after*
+`writeAll()` returned, so the read half got a fresh `budgetMs` on top of
+whatever the write had spent — 7 s on the TCP transport at the panel's 5 s
+maximum, 10 s on the serial one, of the CPU thread inside one `$C0n2`
+access under `stateMutex`. The deadline is taken before the write now.
+In the same pass `FujiNetCard`'s `STATUS` learnt a ceiling: every sibling
+command caps what the peer may put in guest RAM (`READ_BLOCK` exactly 512,
+`READ` clamped to the guest's count) but a STATUS list has no count in its
+parameter list, so one 3-byte request with `payload=$0300` let the relay
+overwrite `$0300-$BFFF` — 48 896 bytes where the guest expects 25. A reply
+over 512 bytes is an I/O error.
 
 **The SP listener authenticates nobody, and that is recorded rather than
 fixed.** The first process to connect to `127.0.0.1:1985` *is* the SmartPort
@@ -5635,6 +5748,38 @@ them from `uthernet_allow_loopback` and `uthernet_slirp_restricted`; the
 first key is shared with `W5100Device::setAllowLoopback`, because it is one
 user decision about one perimeter. Nothing else changes: the LAN, the
 internet and the virtual DHCP/DNS services at 10.0.2.2-3 keep working.
+
+**`disable_host_loopback` was only half of that fence** *(2026-09-09, bug
+hunt #14)*. libslirp's flag refuses the *alias* route — a connection to
+the virtual gateway `10.0.2.2` that `sotranslate_out` would re-open on
+loopback. A frame naming `127.0.0.1` (or `0.0.0.0`, which `connect()`
+resolves to loopback) *directly* is an ordinary foreign destination and
+slirp dials it, flag or no flag: measured on libslirp 4.9.3 with the
+shipped defaults, a hand-built SYN and a UDP datagram to `127.0.0.1:port`
+both reached a host listener; only `restricted` stopped them. Three raw
+guest paths land in `transmit()` — the CS8900A's TX buffer, the W5100's
+MACRAW (a whole guest-built frame) and IPRAW (guest-chosen `Sn_DIPR`, and
+that path never called `checkDestination`) — so `SlirpBackend::transmit`
+now drops any IPv4 frame whose destination is 127/8, 0/8 or 169.254/16
+while `allowHostLoopback` is false, and says so once. Deliberately
+narrower than `W5100Device::checkDestination`: 224/4 and
+255.255.255.255 must stay, or the guest's DHCP DISCOVER never reaches
+slirp's own server (probed: `yiaddr = 10.0.2.15` still offered). Pinned by
+`slirp_loopback_fence` (four cases including the opt-in; exit 77 without
+libslirp). The same policy now lives in three files — `W5100Device`,
+`FujiNetNetDevice`, the backend — which is a drift risk recorded in TODO.
+
+**A CS8900A reset clears the decoded multicast hash mask** *(same hunt)*.
+The Logical Address Filter at PacketPage `$0150-$0157` is zeroed by the
+reset's `std::fill`, but `shouldAccept` tests `hashMask_`, the decoded
+copy, which was only rebuilt from a LAF byte write; a driver that resets
+and wants no groups never writes the LAF, so the previous driver's groups
+stayed live behind a register reading zero — the `recvControl_` defect of
+2026-09-07, one member over. `uthernet_cs8900_smoke` gained the case.
+Recorded, not fixed (needs a ruling, since it looks like a faithful port
+of MAME/VICE's `should_accept`): the multicast I/G bit is tested as
+`buffer[0] & 0x80` where 802.3 puts it in bit 0, so a real multicast MAC
+is admitted through the hash filter instead of `MulticastA`.
 
 ### Uthernet I (CS8900A)
 

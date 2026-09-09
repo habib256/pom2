@@ -66,6 +66,7 @@ public:
     static constexpr size_t kMaxQueued = 4096;
 
     SlirpBackend(const std::string& hostname, const SlirpOptions& options)
+        : allowHostLoopback_(options.allowHostLoopback)
     {
         SlirpConfig cfg;
         std::memset(&cfg, 0, sizeof(cfg));
@@ -141,8 +142,50 @@ public:
             ++framesDropped_;
             return;
         }
+        // `cfg.disable_host_loopback` is NOT the whole fence, which is what
+        // this drop is here for. libslirp's flag only refuses the ALIAS route
+        // — a connection addressed to the virtual gateway 10.0.2.2, which
+        // `sotranslate_out` would otherwise re-open on 127.0.0.1. A frame that
+        // names 127.0.0.1 (or 0.0.0.0, which connect() resolves to loopback)
+        // DIRECTLY is a plain foreign destination to slirp and it dials it,
+        // flag or no flag. Measured, 2026-09-09, libslirp 4.9.3: with
+        // allowHostLoopback=false a hand-built SYN to 127.0.0.1:<port> and a
+        // UDP datagram to the same address both reached a host listener.
+        //
+        // Every raw guest path lands here — the CS8900A's TX buffer, the
+        // W5100's MACRAW (a whole guest-built frame) and IPRAW (guest-chosen
+        // Sn_DIPR, no checkDestination on that path) — so this is the one
+        // place that closes all three. The block list is deliberately NARROWER
+        // than W5100Device::checkDestination: 224/4 and 255.255.255.255 must
+        // stay, or the guest's DHCP DISCOVER never reaches slirp's own server.
+        if (!allowHostLoopback_ && framesNamesHostLoopback(frame, len)) {
+            ++framesDropped_;
+            if (!loopbackWarned_) {
+                loopbackWarned_ = true;
+                log().warn("Slirp",
+                    "guest frame addressed to the host's loopback refused — "
+                    "set uthernet_allow_loopback to opt in (said once)");
+            }
+            return;
+        }
         slirp_input(slirp_, frame, len);
         ++framesSent_;
+    }
+
+    /// True when `frame` is IPv4 with a destination the guest may not name.
+    /// 127/8 is the host's own services (POM2's AI control server among
+    /// them); 0/8 is "this network", and connect(0.0.0.0) reaches 127.0.0.1;
+    /// 169.254/16 is link-local, including the cloud metadata neighbours.
+    static bool framesNamesHostLoopback(const uint8_t* frame, int len)
+    {
+        constexpr int kEthHeader = 14;
+        if (len < kEthHeader + 20) return false;
+        if (frame[12] != 0x08 || frame[13] != 0x00) return false;   // not IPv4
+        if ((frame[kEthHeader] >> 4) != 4) return false;
+        const uint8_t* d = frame + kEthHeader + 16;                 // dst IP
+        if (d[0] == 127 || d[0] == 0) return true;
+        if (d[0] == 169 && d[1] == 254) return true;
+        return false;
     }
 
     int receive(uint8_t* buf, int cap) override
@@ -324,6 +367,8 @@ private:
     }
 
     Slirp*                           slirp_ = nullptr;
+    bool                             allowHostLoopback_ = false;
+    bool                             loopbackWarned_    = false;
     std::string                      name_  = "libslirp (down)";
     std::deque<std::vector<uint8_t>> rxQueue_;
     std::vector<pollfd>              pollFds_;

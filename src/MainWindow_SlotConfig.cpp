@@ -238,13 +238,17 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     auto plugSsc = [&](int s) {
         auto card = std::make_unique<SuperSerialCard>(s);
         SuperSerialCard* raw = card.get();
-        // Use pasteText (not queueKey) — pasteText respects the paste
-        // queue, so a stream of bytes from telnet doesn't clobber earlier
-        // characters that BASIC hasn't picked up yet.
+        // pasteKeyStream, not queueKey and not pasteText. queueKey is
+        // newest-wins, so a burst from telnet would clobber characters BASIC
+        // has not picked up yet. pasteText has the FIFO but applies the
+        // CLIPBOARD filter, which ate every control byte a terminal exists to
+        // send — Ctrl-C, $08 (the Apple's own backspace), ESC — and reset its
+        // CR state on every one-byte call, so under negotiated telnet BINARY
+        // each ENTER arrived as two carriage returns.
         raw->setKeyboardSink(
             [&mem = st.memory()](uint8_t b) {
                 const char buf[1] = { static_cast<char>(b) };
-                mem.pasteText(buf, 1);
+                mem.pasteKeyStream(buf, 1);
             });
         // IRQ routing is auto-wired by SlotBus's installed router (see
         // Memory::setCpu) — no per-card setup needed.

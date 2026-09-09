@@ -355,8 +355,11 @@ bool Block512Backing::saveDirty()
 Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
 {
     PendingWriteBack out;
+    // `isMediumLocked()`, not `isWriteProtected()`: the notch can be flipped
+    // on a MOUNTED image and must not strand blocks the guest already wrote.
+    // See the comment on Block512Backing::isMediumLocked.
     if (!loaded_ || !anyDirty_ || !writeBack_
-        || isWriteProtected() || !supportsWriteBack_) {
+        || isMediumLocked() || !supportsWriteBack_) {
         return out;                      // valid = false → nothing to commit
     }
 

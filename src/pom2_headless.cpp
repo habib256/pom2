@@ -339,10 +339,13 @@ int main(int argc, char** argv)
     // port on a shared CI runner), and nothing in capture mode talks to it.
     if (!captureMode) {
         auto ssc = std::make_unique<SuperSerialCard>(SuperSerialCard::kDefaultSlot);
+        // pasteKeyStream, not pasteText — the clipboard filter drops the
+        // control bytes a terminal has to be able to send (see
+        // MainWindow_SlotConfig.cpp's copy of this sink).
         ssc->setKeyboardSink(
             [&mem = controller.memory()](uint8_t b) {
                 const char buf[1] = { static_cast<char>(b) };
-                mem.pasteText(buf, 1);
+                mem.pasteKeyStream(buf, 1);
             });
         // The card cannot build its own transport — see SuperSerialCard.
         ssc->setTransport(pom2::makeSuperSerialTcpTransport(

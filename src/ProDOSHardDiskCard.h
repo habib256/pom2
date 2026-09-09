@@ -97,7 +97,7 @@ public:
     bool detachImage(pom2::Block512Backing::PendingWriteBack& out) override
     {
         if (!(backing_.isLoaded() && backing_.hasUnsavedChanges() &&
-              backing_.isWriteBackEnabled() && !backing_.isWriteProtected()))
+              backing_.isWriteBackEnabled() && !backing_.isMediumLocked()))
             return true;                 // nothing to write: out stays invalid
         out = backing_.takeWriteBack();
         return true;

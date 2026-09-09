@@ -1423,7 +1423,8 @@ void M6502::setCpuMode(CpuMode mode)
         const auto ind6 = OpcodeEntry{&M6502::UnoffInd6, nullptr};
         for (int opc : {0x03,0x13,0x23,0x33,0x43,0x53,0x63,0x73,
                        0xC3,0xD3,0xE3,0xF3}) opcodeTable[opc] = ind8;
-        for (int opc : {0x83,0x93,0xA3})      opcodeTable[opc] = ind6;
+        for (int opc : {0x83,0x93})           opcodeTable[opc] = ind6;   // SAX/AHX: store
+        opcodeTable[0xA3] = OpcodeEntry{&M6502::UnoffInd6R, nullptr};    // LAX (zp,X): reads
         opcodeTable[0xB3] = OpcodeEntry{&M6502::UnoffIndY5, nullptr};
         // $x7 / $xF columns (mapped to u2/u3 by the Rockwell loop above):
         // only SAX/LAX ($87/$97/$A7/$B7, $8F/$AF/$BF) are cheap reads — the
@@ -1438,8 +1439,11 @@ void M6502::setCpuMode(CpuMode mode)
             opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs6, nullptr}; // abs   (6)
         for (int opc : {0x1F,0x3F,0x5F,0x7F,0xDF,0xFF})
             opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs7, nullptr}; // abs,X (7)
-        for (int opc : {0x8F,0xAF})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs4, nullptr}; // abs   (4)
+        // $AF LAX abs READS its effective address, $8F SAX abs WRITES it —
+        // same 4 cycles, different bus cycle, and on an Apple II that address
+        // can be a soft switch (see UnoffAbs4).
+        opcodeTable[0xAF] = OpcodeEntry{&M6502::UnoffAbs4,  nullptr}; // LAX abs (4)
+        opcodeTable[0x8F] = OpcodeEntry{&M6502::UnoffAbsSt, nullptr}; // SAX abs (4)
         for (int opc : {0xBB,0xBF})
             opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbsY, nullptr}; // abs,Y (4+p)
     }
@@ -1492,10 +1496,44 @@ void M6502::UnoffZpX(void)   // 2 bytes, 4 cycles: NOP zp,X ($54/$D4/$F4)
     programCounter++;
     cycles += 3;
 }
-void M6502::UnoffAbs4(void)  // 3 bytes, 4 cycles: NOP abs ($0C, NMOS TOP)
+// An undocumented opcode whose addressing mode ends in a data READ really
+// does perform that read on silicon — the "NOP" is only in the RESULT. On an
+// Apple II the effective address can be a soft switch, so `NOP $C030` ($0C)
+// clicks the speaker, `LAX $C0EC` ($AF) advances the Disk II data latch and
+// `NOP $C083,X` touches the Language Card, exactly like their documented
+// siblings. POM2 modelled these as length- and cycle-correct NOPs that never
+// touched the bus at all, which is a bigger hole than the missing indexed
+// dummy read fixed in bug hunt #8 (that one lost a SECOND access; this one
+// loses the only one). Same rule, same witness: cycle counts do not move, the
+// soft-switch side effect does. The STORE forms ($8F/$83/$93 SAX/AHX, $9B/$9C/
+// $9E/$9F TAS/SHY/SHX/AHX) and the RMW forms ($x3/$x7/$xB/$xF SLO/RLA/SRE/RRA/
+// DCP/ISC) still emit nothing: their bus cycle is a WRITE whose value comes
+// from semantics POM2 deliberately does not model, and writing a wrong byte
+// into RAM would be worse than writing none. MAME `om6502.lst` nop_aba /
+// nop_abx / lax_*, `ow65c02.lst` nop_c_aba ($DC/$FC).
+void M6502::UnoffAbs4(void)  // 3 bytes, 4 cycles: NOP abs ($0C/$AF, $DC/$FC on CMOS)
+{
+    uint16_t ea = memory->memRead(programCounter++);
+    ea |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
+    (void)memory->memRead(ea);
+    cycles += 3;
+}
+// $8F (SAX abs) shares the 3-byte/4-cycle shape but WRITES A&X at the
+// effective address instead of reading it — no access, see above.
+void M6502::UnoffAbsSt(void) // 3 bytes, 4 cycles: SAX abs ($8F, NMOS)
 {
     programCounter += 2;
     cycles += 3;
+}
+// $A3 (LAX (zp,X)) — the one 6-cycle (zp,X) undoc that READS. Its siblings
+// $83/$93 (SAX/AHX) write, and keep the access-free UnoffInd6.
+void M6502::UnoffInd6R(void) // 2 bytes, 6 cycles: LAX (zp,X) ($A3, NMOS)
+{
+    const uint8_t zp = static_cast<uint8_t>(memory->memRead(programCounter++) + xRegister);
+    uint16_t ea = memory->memRead(zp);
+    ea |= static_cast<uint16_t>(memory->memRead(static_cast<uint8_t>(zp + 1))) << 8;
+    (void)memory->memRead(ea);
+    cycles += 5;
 }
 // The undocumented NMOS opcodes are modelled as length-correct NOPs, but a
 // NOP that costs the WRONG number of cycles is still a raster bug: the
@@ -1518,6 +1556,8 @@ void M6502::UnoffAbsY(void)
     const uint16_t ea = static_cast<uint16_t>(base + yRegister);
     cycles += 3;
     if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
+    nmosIndexDummyRead(base, ea, /*always=*/false);
+    (void)memory->memRead(ea);          // LAS/LAX abs,Y really read — see UnoffAbs4
 }
 void M6502::UnoffIndY5(void)
 {
@@ -1527,6 +1567,8 @@ void M6502::UnoffIndY5(void)
     const uint16_t ea = static_cast<uint16_t>(base + yRegister);
     cycles += 4;
     if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
+    nmosIndexDummyRead(base, ea, /*always=*/false);
+    (void)memory->memRead(ea);          // LAX (zp),Y really reads — see UnoffAbs4
 }
 void M6502::UnoffAbsX(void)  // 3 bytes, 4+p cycles: NOP abs,X (NMOS TOP)
 {
@@ -1540,6 +1582,8 @@ void M6502::UnoffAbsX(void)  // 3 bytes, 4+p cycles: NOP abs,X (NMOS TOP)
     const uint16_t ea = static_cast<uint16_t>(base + xRegister);
     cycles += 3;
     if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
+    nmosIndexDummyRead(base, ea, /*always=*/false);
+    (void)memory->memRead(ea);          // NOP abs,X really reads — see UnoffAbs4
 }
 void M6502::Unoff5C(void)    // 3 bytes, 8 cycles: the 65C02 oddball $5C
 {
@@ -1966,6 +2010,8 @@ void M6502::executeOpcode(void)
              entry.addrMode == &M6502::UnoffImm  ||
              entry.addrMode == &M6502::UnoffZpX  ||
              entry.addrMode == &M6502::UnoffAbs4 ||
+             entry.addrMode == &M6502::UnoffAbsSt ||
+             entry.addrMode == &M6502::UnoffInd6R ||
              entry.addrMode == &M6502::UnoffAbsX ||
              entry.addrMode == &M6502::Unoff5C   ||
              entry.addrMode == &M6502::Hang)) {

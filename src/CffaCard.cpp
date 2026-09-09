@@ -105,8 +105,11 @@ bool CffaCard::ejectImage()
 {
     // Save-on-eject when the user opted into write-back and the medium allows.
     Block512Backing& b = ata_.backing();
+    // `isMediumLocked()`, not `isWriteProtected()`: a notch flipped on the
+    // mounted image must not make the eject drop blocks the guest already
+    // wrote (Block512Backing::isMediumLocked).
     if (b.isLoaded() && b.hasUnsavedChanges() &&
-        b.isWriteBackEnabled() && !b.isWriteProtected()) {
+        b.isWriteBackEnabled() && !b.isMediumLocked()) {
         if (!b.saveDirty()) {
             lastError_ = b.lastError();
             pom2::log().warn("CFFA", "Save-on-eject failed: " + b.lastError());

@@ -370,6 +370,11 @@ private:
     // ACIA register state.
     uint8_t cmdReg     = 0x00;
     uint8_t ctlReg     = 0x00;
+    /// The 6551's receive data register itself. POM2's `rxBuf` is the host
+    /// ring feeding it; THIS is the byte the guest last pulled out, and it
+    /// survives the pull — MAME `mos6551.cpp::read_rdr` returns `m_rdr`
+    /// unconditionally. Reset to $00 by a hardware reset only.
+    uint8_t rdrLatch_  = 0x00;
     // The two DIP banks the 74LS259 presents at $C0n1 / $C0n2, laid out as
     // MAME's `a2ssc.cpp` INPUT_PORTS does — that layout being the one the
     // Apple firmware and every SSC utility decode:

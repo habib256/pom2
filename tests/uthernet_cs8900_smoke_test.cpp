@@ -788,6 +788,54 @@ void testResetClearsTheDecodedFilter()
     std::printf("  reset re-decodes the RX filter\n");
 }
 
+// Reset must clear the DECODED MULTICAST HASH MASK too, not just the RX
+// filter next door. The Logical Address Filter lives at PacketPage
+// $0150-$0157 and `reset()` zeroes the whole PacketPage, so the guest reads
+// back "no groups"; but `shouldAccept` tests `hashMask_`, the decoded copy,
+// which is only ever rebuilt from a LAF BYTE WRITE. A driver that resets the
+// chip and wants no multicast at all never writes the LAF — so the previous
+// driver's groups stayed live behind a register reading zero.
+//
+// Measured on the tree before the fix: LAF $0150 reads $0000 after the reset
+// and the frame is still accepted (queuedFrames() == 1).
+void testResetClearsTheMulticastHashMask()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+
+    // Every hash bucket open, hash filter armed.
+    for (uint16_t a = 0x0150; a < 0x0158; a += 2) writePpWord(card, a, 0xFFFF);
+    enableTxRx(card);
+    writePpWord(card, kPpCcRxCtl, 0x0545);   // HashA | RxOK | IA | reg #5
+
+    // A stranger's unicast address matches only through the hash filter.
+    const std::array<uint8_t, 6> stranger = { 0x02, 0x99, 0x88, 0x77, 0x66, 0x55 };
+    const auto before = makeFrame(stranger, kOurMac, 64, 0x11);
+    raw->transmit(before.data(), static_cast<int>(before.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(readPpWord(card, 0x0150) == 0xFFFF);
+    assert(card.chip().queuedFrames() == 1);
+
+    // Reset, then reprogram ONLY the two control registers — the LAF is left
+    // at the zero the reset put there, which is what a driver wanting no
+    // groups does.
+    card.onReset();
+    enableTxRx(card);
+    writePpWord(card, kPpCcRxCtl, 0x0545);
+    assert(readPpWord(card, 0x0150) == 0x0000);
+
+    const auto after = makeFrame(stranger, kOurMac, 64, 0x22);
+    raw->transmit(after.data(), static_cast<int>(after.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 0 &&
+           "the decoded hash mask survived reset while the LAF reads 0");
+
+    std::printf("  reset clears the multicast hash mask\n");
+}
+
 } // namespace
 
 int main()
@@ -810,6 +858,7 @@ int main()
     testBufEventAndRxMissClearOnRead();
     testTxOkWithoutBackend();
     testResetClearsTheDecodedFilter();
+    testResetClearsTheMulticastHashMask();
     std::printf("PASS\n");
     return 0;
 }

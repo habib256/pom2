@@ -1614,6 +1614,40 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   of the server loop it provokes (2026-09-07 — the loop was paying an
   unbuffered log line and a socket/close per iteration on the CPU worker,
   under `stateMutex`). *1 d.*
+- 🟡 **Bug hunt #14's CPU residue** *(2026-09-09; read, not fixed)*: `WAI`
+  charges 3 cycles and falls through (a `waiting` latch parallel to
+  `halted` would fix it: wake on the line regardless of I, vector only if
+  I=0); `$CB`/`$DB` are WAI/STP on the CMOS table where the Rockwell/GTE
+  parts in every shipped Apple execute a 1-cycle NOP — a ruling, not a
+  bug; `runCpuSlice`'s DMA-release tail skips the stop check and the
+  breakpoint reconciliation. *½ day.* **Bug hunt #14's I/O residue**: the
+  SSC ships SW2-6 (interrupts) on where MAME's DIP default is off, and its
+  RDR read clears `IRQ_RDRF` where MAME's `read_rdr` does not — the
+  in-code comment attributing that to MAME is wrong.
+- 🟡 **The notch on a mounted 5.25" or 3.5" image** *(2026-09-09, bug hunt
+  #14)*: `Block512Backing` no longer strands blocks written before the
+  notch was flipped (`block512_notch_flush`); `Disk35Image` and `DiskImage`
+  gate their write-back on the same combined protect and are reachable by
+  `setMediaNotch` on a mounted disk — same shape, not yet probed. *2 h.*
+- 🟡 **Bug hunt #14's network residue** *(2026-09-09; read, not fixed)*:
+  the loopback policy now lives in three files (`W5100Device::checkDestination`,
+  `FujiNetNetDevice`, `SlirpBackend::transmit`) and the W5100's IPRAW path
+  still bypasses `checkDestination` device-side (the backend catches it);
+  the CS8900A tests the multicast I/G bit as `buffer[0] & 0x80` where 802.3
+  puts it in bit 0 (looks like a faithful MAME/VICE port — needs a ruling),
+  leaves `packetPagePtr_` stale on reset, never uses `RxOKA`, does not
+  decode `CRCerrorA`/`RuntA`/`ExtradataA`, stamps `$0004` over PacketPage
+  `$0400` on an implied skip with an empty queue, ignores `LineCTL.SerRxOn`
+  (frames are buffered with the receiver off), reads `$0400-$0FFF` as 0,
+  and omits `framesMissed_`/`rxMissReported_` from its snapshot while saving
+  the register they baseline; `FujiNetCard::rangeIsSafe` guards `$C000-$C0FF`
+  only, so a relay write to `$C100-$C7FF` reaches `slotRomWrite`;
+  `SpOverSlipLink::notifyGuestReset` makes one round trip per unit (32) on
+  the CPU thread on every reset with no aggregate bound; `SlirpBackend::
+  receive` returns 0 on an oversized front frame and ends the drain for that
+  tick; W5100 `Sn_DHAR`/`Sn_MSSR` writes are dropped; `ChildProcess::stop`
+  ends in a blocking `waitpid` and the env scrub misses `LD_LIBRARY_PATH`.
+  *1 d for the lot.*
 - 🧊 **Uthernet I on WASM** — the CS8900A model is browser-safe but has
   no transport there (no raw sockets, and libslirp isn't in the
   Emscripten build). A websocket-proxied backend would fix both cards'

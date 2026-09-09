@@ -100,7 +100,10 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   server, which reads a loopback peer with no `Origin` as native. Both are
   fenced by default: `W5100Device::checkDestination` (127/8, 0/8, 169.254/16,
   224/4, 240/4 refused as `SOCK_CLOSED` + `TIMEOUT`; no privileged or
-  POM2-owned local port) and `SlirpOptions::allowHostLoopback`. One opt-in
+  POM2-owned local port) and `SlirpOptions::allowHostLoopback` — which
+  since 2026-09-09 also drops, in `SlirpBackend::transmit`, any guest frame
+  naming 127/8, 0/8 or 169.254/16 directly, because libslirp's own
+  `disable_host_loopback` only refuses the `10.0.2.2` alias route. One opt-in
   drives both — settings key **`uthernet_allow_loopback`** (default false;
   **`uthernet_slirp_restricted`** additionally locks slirp to its virtual
   services). Opting one card out only moves the escape to the other.

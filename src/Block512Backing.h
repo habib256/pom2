@@ -221,6 +221,27 @@ public:
     const std::string& lastError() const { return lastError_; }
 
     bool isWriteProtected()   const { return wpHeader_ || hostReadOnly_; }
+    /// The medium's OWN lock: the 2IMG header's locked bit, and nothing
+    /// else. Distinct from `isWriteProtected()`, which also carries the
+    /// NOTCH — the host file's read-only bit, which
+    /// `StorageCoordinator::setMediaNotch` can flip while the image is
+    /// mounted. That is the difference that matters to the write-back:
+    ///
+    ///   guest writes block 2 → dirty → user ticks "Write-protected" →
+    ///   `takeWriteBack()` refuses (`isWriteProtected()`), `saveDirty()`
+    ///   returns SUCCESS with `hasUnsavedChanges()` still true, the card's
+    ///   eject guard (`!isWriteProtected()`) skips the flush, and `eject()`
+    ///   drops the only copy of the write. Silently.
+    ///
+    /// There was never a reason to refuse: the commit writes a temp sibling
+    /// and renames it, which a chmod-read-only file accepts (the rename
+    /// needs the DIRECTORY, and `syncFileContents` opens O_RDONLY for
+    /// exactly this reason — see AtomicFileReplace.h). And a medium that
+    /// was already protected at mount can hold no dirty block at all:
+    /// `writeBlock`/`writeByte` refuse from the first access. So gating the
+    /// FLUSH on the header lock alone changes exactly one case — the one
+    /// above — and leaves "a locked disk mounts read-only" untouched.
+    bool isMediumLocked()     const { return wpHeader_; }
     /// The notch (MediaNotch.h) on a mounted image — see Disk35Image.
     void setHostWriteProtected(bool on) { hostReadOnly_ = on; }
     bool isHostWriteProtected() const   { return hostReadOnly_; }

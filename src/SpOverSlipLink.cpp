@@ -575,6 +575,18 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
     const int budgetMs = timeoutMs_.load();
     t->setWriteDeadlineMs(budgetMs);
 
+    // ARMED BEFORE THE WRITE, and that is the whole point of "one budget".
+    // Started after writeAll returned, the read half got a FRESH budgetMs on
+    // top of whatever the write had just spent, so a peer that accepts the
+    // connection and stops reading cost `write + read` — with the panel's 5 s
+    // maximum that is the TCP transport's 2 s write cap plus 5 s of read =
+    // 7000 ms of the CPU thread inside one `$C0n2` access, holding
+    // stateMutex, which is exactly the number the comment on
+    // SpTransport::setWriteDeadlineMs says was eliminated. On the serial
+    // transport, which does not cap its write deadline at 2 s, it was 10 s.
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(budgetMs);
+
     if (!t->writeAll(txBuf_.data(), txBuf_.size())) {
         peerLostLocked();          // callMtx_ is ours right now
         return out;
@@ -582,8 +594,6 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
 
     // Wait for OUR response. The deadline covers the whole exchange, not each
     // read, so a peer dribbling bytes cannot extend the stall indefinitely.
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(budgetMs);
 
     uint8_t buf[1024];
     unsigned truncated = 0;                  // reported once, when we leave

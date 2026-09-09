@@ -674,6 +674,15 @@ public:
         return keyboard_.pasteRawKeys(data, length);
     }
 
+    /// A byte stream from a TERMINAL — the SSC's telnet keyboard bridge.
+    /// Same FIFO/cap/case-fold as pasteText, but control bytes survive
+    /// (Ctrl-C, $08 backspace, ESC) and the CR/LF collapse state persists
+    /// across calls, because the caller delivers one byte at a time. See
+    /// `pom2::Keyboard::pasteKeyStream`.
+    size_t pasteKeyStream(const char* data, size_t length) {
+        return keyboard_.pasteKeyStream(data, length, /*foldToUpper=*/!iieMode);
+    }
+
     /// How many bytes are still waiting in the paste queue. UI shows this
     /// in the Edit menu so the user knows the paste is
     /// in flight.

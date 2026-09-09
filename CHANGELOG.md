@@ -5,6 +5,71 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — Bug hunt #14: the CPU cores, the block stack, the I/O cards, the network
+
+Four Opus hunters on the lots no round had reached. Same contract.
+
+**The undocumented 6502 read opcodes never touched the bus.** They were
+length- and cycle-correct NOPs whose one bus cycle was missing, so on the
+Unenhanced //e `NOP $C030` did not click the speaker and `LAX $C0EC` did
+not advance the Disk II latch; the read forms read their effective
+address now, the store and read-modify-write forms stay silent on purpose
+(`cpu_undoc_bus_access`). Every opcode of both cores was swept for cycles
+and lengths, the `$C0xx` bus traces, the interrupt and reset sequences,
+decimal mode, the Z80's interrupt layer and the SoftCard's DMA — all
+clean.
+
+**The telnet console could type but never interrupt, correct or escape.**
+The Super Serial Card's keyboard bridge fed the clipboard paste, whose
+filter drops every control byte — Ctrl-C, the Apple's own backspace, ESC,
+the DOS command prefix — and whose CR/LF state reset on every one-byte
+call, so under negotiated BINARY each ENTER arrived twice. A terminal
+entry point now, with the CR state kept across calls. Also: a new telnet
+client was answered with the previous one's unread typing (the host ring
+outlived the carrier where a real 6551 holds one byte), and the ACIA's
+data register was a tap on the queue rather than a latch, so a second
+read returned a NUL where MAME returns the last byte
+(`ssc_keyboard_bridge`). The ThunderClock+'s TP output ran 0.12 % slow at
+2048 Hz because its half-period was rounded to a whole cycle; it is held
+in 1/256ths now, within 10 ppm on NTSC and PAL. Cleared against the
+fetched oracles: the PREAD round trip at nine values (exact), the
+keyboard strobe and paste cadence, the uPD1990AC read format and the
+midnight straddle, the DS1216E key match, and the AppleWin mouse firmware
+line by line.
+
+**Protecting a mounted hard-disk image threw away the guest's last
+writes.** Write-protect is the notch on the disk and the panels flip it on
+a mounted image; the block backing's flush was gated on the same test, so
+a disk protected after a guest write reported a successful save with the
+block still only in RAM, and the eject dropped it. The commit writes a
+sibling and renames, which a read-only file accepts, so the flush is gated
+on the 2IMG header lock alone while new writes stay refused
+(`block512_notch_flush`). The HDV slot ROM's READ also returned the block's
+last byte in the accumulator where ProDOS wants zero (`hdv_driver_result`).
+Cleared with probes: the 2IMG envelope across a write-back, the flags
+word, the block-count edges, every arm of the block protocol, a ProDOS
+volume validator over the host folder's structures, host-folder round
+trips and guest mutations, the ATA task file, and the TNFS cache.
+
+**The libslirp half of the loopback perimeter did not hold.** libslirp's
+`disable_host_loopback` refuses the alias route through `10.0.2.2` and
+nothing else; a guest frame naming `127.0.0.1` directly was an ordinary
+destination and slirp dialled it — measured with the shipped defaults, a
+SYN and a UDP datagram both reached a host listener, through any of the
+three raw paths (the CS8900A, the W5100's MACRAW and IPRAW, the last of
+which never checked its destination). The backend drops 127/8, 0/8 and
+169.254/16 destinations itself unless `uthernet_allow_loopback` opts in,
+narrower than the W5100's fence so DHCP keeps working
+(`slirp_loopback_fence`). Also: a CS8900A reset left the decoded multicast
+hash mask live behind a register reading zero; a FujiNet `STATUS` reply
+had no size cap, so one request could let the relay overwrite `$0300-$BFFF`;
+and the SmartPort-over-SLIP call's "one budget" armed its read deadline
+after the write, 7 to 10 s of the CPU thread under `stateMutex` on a peer
+that stops reading. The W5100 ring wrap (5 KB both ways, both `TX_WR`
+conventions), the AI control server's parser and locks, SLIP framing and
+the child-process supervision were cleared with probes; twelve smaller
+findings are filed in TODO § Network.
+
 ## 2026-09-09 — Bug hunt #13: the GL stage, the audio bus, the paging, the snapshots
 
 Four Opus hunters on the seams the core hunts do not reach. Same contract.

@@ -388,6 +388,36 @@ void testTpRatesProduceExpectedPulseCounts()
     }
 }
 
+// ...and the SAME counts to within ONE pulse per emulated second, on both
+// video standards.
+//
+// The ±3 % tolerance above hid a systematic quantisation error. The TP
+// half-period is `cpuClockHz / (2·rate)` — 249.69 cycles at 2048 Hz on an
+// NTSC machine — and it used to be rounded to a whole 250 and subtracted at
+// every toggle, so the residue was thrown away 4096 times a second instead of
+// carried: measured **2045 pulses** against a nominal 2048 (-0.12 %, 4.5
+// s/hour of drift). The chip's TP comes off its own 32.768 kHz crystal, so it
+// is a real-time reference and that is the same defect class as the 0.7 % PAL
+// error `setCpuClock` exists to fix. The accumulator is now Q8 (1/256 cycle).
+void testTpRatesAreExactToOnePulse()
+{
+    struct { uint8_t mode; int rateHz; } cases[] = {
+        { 0x00,   64 },   // REGISTER_HOLD also programs 64 Hz
+        { 0x04,   64 }, { 0x05,  256 }, { 0x06, 2048 },
+    };
+    // NTSC and PAL: 20313 cycles/frame × 50 Hz = 1015650 Hz.
+    for (int cpuHz : { 1022727, 1015650 }) {
+        for (const auto& c : cases) {
+            auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+            card->setCpuClock(static_cast<double>(cpuHz));
+            armTpInterrupts(*card, c.mode);
+            assert(card->tpRateHz() == c.rateHz);
+            const int pulses = countIrqPulses(*card, cpuHz);
+            assert(pulses >= c.rateHz - 1 && pulses <= c.rateHz + 1);
+        }
+    }
+}
+
 // Mode code 7 on the PARALLEL C0/C1/C2 field is MODE_TEST, not TP 4096 Hz.
 //
 // MAME `upd1990a.cpp:198-205` `stb_w`: `if (is_serial_mode()) m_c =
@@ -624,6 +654,8 @@ int main()
     std::printf("MODE_SHIFT lax: CLK shifts in any mode (ProDOS compat): OK\n");
 
     testTpRatesProduceExpectedPulseCounts();
+
+    testTpRatesAreExactToOnePulse();
     std::printf("TP rates 64/256/2048 Hz → IRQ pulse counts: OK\n");
 
     testModeSevenIsTestNotTp4096();

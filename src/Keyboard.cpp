@@ -75,11 +75,23 @@ uint8_t Keyboard::readLatch()
     return mirror_.load(std::memory_order_relaxed);
 }
 
-std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldToUpper)
+void Keyboard::pushOne(uint8_t b)
 {
-    if (!data || length == 0) return 0;
-    std::lock_guard<std::mutex> lk(mtx_);
+    // First byte goes straight into the latch if it's empty; rest go into
+    // the queue and drain via readLatch().
+    if (!keyReady_ && pasteQueue_.empty()) {
+        lastKey_  = b;
+        keyReady_ = true;
+        publish();
+    } else {
+        pasteQueue_.push_back(b);
+    }
+}
 
+std::size_t Keyboard::pushChars(const char* data, std::size_t length,
+                                bool foldToUpper, bool dropControls,
+                                bool& prevWasCR)
+{
     // Cap against the LIVE queue size, not just this call, so repeated pastes
     // can't grow pasteQueue_ without bound (a memory DoS via the AI-control or
     // clipboard paths).
@@ -87,7 +99,6 @@ std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldT
     const std::size_t room = (inFlight >= kPasteMaxChars) ? 0u : (kPasteMaxChars - inFlight);
 
     std::size_t queued = 0;
-    bool   prevWasCR = false;
     for (std::size_t i = 0; i < length && queued < room; ++i) {
         uint8_t b = static_cast<uint8_t>(data[i]);
 
@@ -113,26 +124,41 @@ std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldT
         b &= 0x7F;
         // Drop unprintable controls except CR and HT. Apple II keyboard
         // ROM doesn't emit anything below $20 outside those two anyway.
-        if (b < 0x20 && b != 0x0D && b != 0x09) continue;
+        // CLIPBOARD policy only: a TERMINAL byte stream (pasteKeyStream)
+        // must keep Ctrl-C, $08 and ESC — see Keyboard.h.
+        if (dropControls && b < 0x20 && b != 0x0D && b != 0x09) continue;
         // The ][ / ][+ keyboard has no lowercase; fold a-z → A-Z so pasted
         // BASIC/Monitor input is accepted (a real II keyboard can't emit
         // $61-$7A). IIe-class keyboards do have lowercase, so leave them —
         // the caller passes foldToUpper = !iieMode.
         if (foldToUpper && b >= 'a' && b <= 'z') b = static_cast<uint8_t>(b - 'a' + 'A');
 
-        // First byte goes straight into the latch if it's empty; rest go
-        // into the queue and drain via clearStrobe().
-        if (!keyReady_ && pasteQueue_.empty()) {
-            lastKey_  = b;
-            keyReady_ = true;
-            publish();
-        } else {
-            pasteQueue_.push_back(b);
-        }
+        pushOne(b);
         ++queued;
     }
     publish();
     return queued;
+}
+
+std::size_t Keyboard::pasteText(const char* data, std::size_t length, bool foldToUpper)
+{
+    if (!data || length == 0) return 0;
+    std::lock_guard<std::mutex> lk(mtx_);
+    // A clipboard paste is one self-contained block: its CR state starts and
+    // ends here.
+    bool prevWasCR = false;
+    return pushChars(data, length, foldToUpper, /*dropControls=*/true, prevWasCR);
+}
+
+std::size_t Keyboard::pasteKeyStream(const char* data, std::size_t length,
+                                     bool foldToUpper)
+{
+    if (!data || length == 0) return 0;
+    std::lock_guard<std::mutex> lk(mtx_);
+    // The CR state is a MEMBER here: the caller is a byte-at-a-time terminal
+    // sink, so CR LF straddles two calls.
+    return pushChars(data, length, foldToUpper, /*dropControls=*/false,
+                     streamPrevCR_);
 }
 
 std::size_t Keyboard::pasteRawKeys(const char* data, std::size_t length)
@@ -143,14 +169,7 @@ std::size_t Keyboard::pasteRawKeys(const char* data, std::size_t length)
     const std::size_t room = (inFlight >= kPasteMaxChars) ? 0u : (kPasteMaxChars - inFlight);
     std::size_t queued = 0;
     for (std::size_t i = 0; i < length && queued < room; ++i) {
-        const uint8_t b = static_cast<uint8_t>(data[i]) & 0x7F;
-        if (!keyReady_ && pasteQueue_.empty()) {
-            lastKey_  = b;
-            keyReady_ = true;
-            publish();
-        } else {
-            pasteQueue_.push_back(b);
-        }
+        pushOne(static_cast<uint8_t>(data[i]) & 0x7F);
         ++queued;
     }
     publish();

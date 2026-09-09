@@ -249,11 +249,26 @@ private:
     // We track the labelled rate plus the CPU cycles per toggle, and drive
     // the toggle from `advanceCycles()`. A TP rising edge is the IRQ-worthy
     // event, so the slot IRQ fires `tpRateHz_` times per second while
-    // enabled. tpHalfPeriodCycles_ == 0 means the timer is stopped.
+    // enabled. tpHalfPeriodQ8_ == 0 means the timer is stopped.
+    //
+    // Both are in 1/256ths of a CPU cycle (Q8), not whole cycles. The exact
+    // half-period is `cpuClockHz_ / (2·rate)`, which is fractional: 249.69
+    // cycles at 2048 Hz on an NTSC machine. Rounding that to a whole 250 and
+    // subtracting it every toggle is a SYSTEMATIC error, not a dithered one —
+    // measured 2045.45 Hz against a nominal 2048 (-0.12 %, 4.5 s/hour for a
+    // guest using TP as its timebase). The chip's TP derives from its own
+    // 32.768 kHz crystal, so it is a real-time reference and that drift is
+    // the same defect class as the 0.7 % PAL error `setCpuClock` exists to
+    // fix. In Q8 the residue is carried and the rate lands within 10 ppm.
+    /// Exact half-period for `hz`, in 1/256ths of a CPU cycle, at the
+    /// machine's current clock. One place so setTpRate, setCpuClock and the
+    /// snapshot loader cannot drift apart.
+    int  tpHalfPeriodQ8For(int hz) const;
+
     double cpuClockHz_       = static_cast<double>(POM2_CPU_CLOCK_HZ);
     int  tpRateHz_           = 0;
-    int  tpHalfPeriodCycles_ = 0;
-    int  tpAccumCycles_      = 0;
+    int  tpHalfPeriodQ8_     = 0;
+    int  tpAccumQ8_          = 0;
     bool tpLevel_            = false;     // current TP output level
 
     // MAME `upd1990a.cpp:216-218` `m_testmode`. Mode code 7 on the PARALLEL

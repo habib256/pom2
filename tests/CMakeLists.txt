@@ -4047,6 +4047,33 @@ if(WIN32)
 endif()
 add_test(NAME cpu_nmos_index_dummy_read COMMAND test_cpu_nmos_index_dummy_read)
 
+# ─── Undocumented READ opcodes touch the bus (bug hunt #14) ──────────────
+# `NOP $C030` ($0C), `LAX $C0EC` ($AF), `NOP $C083,X` ($1C/$3C/$5C/$7C/$DC/
+# $FC), LAS/LAX abs,Y and LAX (zp),Y|(zp,X) all perform a real read at their
+# effective address on silicon. POM2 modelled them as NOPs that never touched
+# the bus, so the soft switch never fired. Cycle-neutral, so the speaker
+# toggle counter is the bus witness — same shape as cpu_nmos_index_dummy_read
+# above, and every case asserts its cycle count so the pin guards the timing
+# the fix must not move. The store/RMW forms stay silent on purpose and that
+# boundary is asserted too.
+add_executable(test_cpu_undoc_bus_access
+    cpu_undoc_bus_access_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_cpu_undoc_bus_access PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_cpu_undoc_bus_access PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_cpu_undoc_bus_access PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_cpu_undoc_bus_access PRIVATE winmm)
+endif()
+add_test(NAME cpu_undoc_bus_access COMMAND test_cpu_undoc_bus_access)
+set_tests_properties(cpu_undoc_bus_access PROPERTIES TIMEOUT 10)
 add_executable(test_cpu_cycle_count
     cpu_cycle_count_test.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5275,6 +5302,29 @@ endif()
 add_test(NAME ssc_acia_smoke COMMAND test_ssc_acia)
 set_tests_properties(ssc_acia_smoke PROPERTIES TIMEOUT 5)
 
+# ─── The telnet keyboard bridge is a terminal, not a clipboard (hunt #14) ─
+# Control bytes reach $C000 (Ctrl-C, $08, ESC), ENTER is one CR even under
+# negotiated BINARY and across a split CR LF, a new client does not inherit
+# the previous one's unread RX, and the ACIA's RDR is a latch. The sixth
+# case is the negative control: the clipboard paste keeps its filter.
+add_executable(test_ssc_keyboard_bridge
+    ssc_keyboard_bridge_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialTcpTransport.cpp
+    ${POM2_TEST_CORE_SOURCES})
+target_include_directories(test_ssc_keyboard_bridge PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ssc_keyboard_bridge PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ssc_keyboard_bridge PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ssc_keyboard_bridge PRIVATE winmm ws2_32)
+endif()
+add_test(NAME ssc_keyboard_bridge COMMAND test_ssc_keyboard_bridge)
+set_tests_properties(ssc_keyboard_bridge PROPERTIES TIMEOUT 5)
 
 # ─── AI Control HTTP server smoke test ────────────────────────────────────
 # Pins the HTTP/1.1 contract the AiControlServer offers to external AI
@@ -7670,6 +7720,79 @@ target_include_directories(test_snapshot_partial_apply
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME snapshot_partial_apply COMMAND test_snapshot_partial_apply)
 set_tests_properties(snapshot_partial_apply PROPERTIES TIMEOUT 10)
+
+# ─── The libslirp half of the loopback perimeter (bug hunt #14, 2026-09-09) ─
+# `cfg.disable_host_loopback` only refuses the ALIAS route (10.0.2.2); a
+# guest frame naming 127.0.0.1 directly was dialled by slirp with the shipped
+# defaults. The backend drops 127/8, 0/8 and 169.254/16 destinations itself
+# unless `uthernet_allow_loopback` opts in. Skips (77) without libslirp.
+add_executable(test_slirp_loopback_fence
+    slirp_loopback_fence_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlirpNetworkBackend.cpp)
+target_include_directories(test_slirp_loopback_fence PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(POM2_SLIRP_TARGET)
+    target_link_libraries(test_slirp_loopback_fence PRIVATE ${POM2_SLIRP_TARGET})
+    target_compile_definitions(test_slirp_loopback_fence PRIVATE POM2_HAVE_SLIRP)
+endif()
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_slirp_loopback_fence PRIVATE Threads::Threads)
+endif()
+add_test(NAME slirp_loopback_fence COMMAND test_slirp_loopback_fence)
+set_tests_properties(slirp_loopback_fence PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+
+# ─── The notch must never strand blocks the guest already wrote (hunt #14) ─
+# Write-protect is the notch on the disk (CLAUDE.md), and the media panels
+# flip it on a MOUNTED image. `takeWriteBack()` gated on `isWriteProtected()`,
+# which includes that notch, so a disk protected AFTER a guest write reported
+# a successful save and then ejected the write away. See the file header.
+add_executable(test_block512_notch_flush
+    block512_notch_flush_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+)
+target_include_directories(test_block512_notch_flush
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_block512_notch_flush PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_block512_notch_flush PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_block512_notch_flush PRIVATE winmm)
+endif()
+add_test(NAME block512_notch_flush COMMAND test_block512_notch_flush)
+set_tests_properties(block512_notch_flush PROPERTIES TIMEOUT 10)
+
+# ─── HDV slot-ROM driver: the full (carry, A) contract of every arm ───────
+# ProDOS 8 TRM § 6.3 requires A = 0 on a successful driver call. READ fell out
+# of its 512-byte loop into `CLC / RTS` with A = the last byte of the block.
+# See the file header.
+add_executable(test_hdv_driver_result
+    hdv_driver_result_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+)
+target_include_directories(test_hdv_driver_result PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_hdv_driver_result PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_hdv_driver_result PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_hdv_driver_result PRIVATE winmm ws2_32)
+endif()
+add_test(NAME hdv_driver_result COMMAND test_hdv_driver_result)
+set_tests_properties(hdv_driver_result PROPERTIES TIMEOUT 10)
 
 set(POM2_PROBE_TARGETS
     artifact_probe

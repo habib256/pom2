@@ -290,6 +290,16 @@ void Cs8900aDevice::reset()
     // promiscuous by one driver stayed promiscuous for the next one.
     decodeReceiveControl(ppRead16(kPpCcRxCtl));
 
+    // ...and the multicast hash mask is the SAME defect one member over. The
+    // Logical Address Filter lives at PacketPage $0150-$0157, which the
+    // `std::fill` above has just zeroed, but `hashMask_` is the DECODED copy
+    // `shouldAccept` actually tests and it is only ever rebuilt from a LAF
+    // BYTE WRITE (see kPpLogAddrFilter in writeRegister). So a reset left the
+    // guest reading "no multicast groups" from $0150 while the chip went on
+    // accepting every group the previous driver had programmed — and a driver
+    // that wants none never writes the LAF at all, so nothing ever cleared it.
+    hashMask_.fill(0);
+
     // Spec says the MAC is undefined after reset; real hardware keeps the
     // last programmed address, and so do we.
     for (int i = 0; i < 6; ++i)
