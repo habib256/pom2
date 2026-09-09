@@ -322,6 +322,18 @@ private:
         /// SDLC (datasheet, not MAME): the frame being assembled on
         /// transmit, payload only. Emptied when the frame closes or aborts.
         std::vector<uint8_t> txFrame;
+
+        /// SDLC (datasheet, not MAME): the tail of the frame being RECEIVED
+        /// that the FIFO could not take yet. On the wire the bytes arrive one
+        /// per character time and the driver drains between them; POM2's seam
+        /// hands `receiveFrame` a whole frame at once and the 3-slot FIFO
+        /// signals full at two. Without this the tail vanished in SILENCE —
+        /// the overrun bit lands on the slot the write pointer never left, so
+        /// nothing reached RR1, and End Of Frame was marked on that same
+        /// unreadable slot, so RR1 D7 never came up at all. A 3-byte LLAP
+        /// control frame arrived as two bytes and no end of frame.
+        std::vector<uint8_t> rxPending;
+        bool rxPendingCrc = false;
     };
 
     // ─── Device-level state ──────────────────────────────────────────────
@@ -355,6 +367,9 @@ private:
     void registerWrite(int index, uint8_t reg, uint8_t data); ///< z80scc.cpp:2288
     void receiveData(int index, uint8_t data);        ///< z80scc.cpp:2566
     void rxFifoRpStep(int index);                     ///< z80scc.cpp:2423
+    /// SDLC (datasheet, not MAME): move as much of `rxPending` into the
+    /// receive FIFO as there is room for. Runs whenever a slot frees.
+    void pumpRxPending(int index);
     void txFifoRpStep(int index);                     ///< z80scc.cpp:2440
     void checkDmaRequest(int index);                  ///< z80scc.cpp:3015
     void checkReceiveInterrupt(int index);            ///< z80scc.cpp:3038

@@ -1614,6 +1614,26 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   of the server loop it provokes (2026-09-07 — the loop was paying an
   unbuffered log line and a socket/close per iteration on the CPU worker,
   under `stateMutex`). *1 d.*
+- 🟡 **Bug hunt #17's cassette and Workstation residue** *(2026-09-09;
+  read, not fixed)*: 24-bit PCM WAV is refused (three lines in the sample
+  decoder); a rewind across a live cassette capture keeps
+  `recordedDurations` since cassette output never bumps the media epoch
+  (a design call — the printer's output does); `--save-tape out.mp3`
+  writes ACI bytes into a `.mp3` (`resolveSaveTapePath` appends only for
+  no extension, `cli_runner` pins the resolver); nothing is wired to the
+  Workstation Card's SCC (`frameCb_`/`receiveFrame` have no owner — two
+  SCCs back to back is the end-to-end shape); the AppleShare disk never
+  reaches the card at all (zero `$Cn00` accesses over 120 M instructions,
+  byte-identical to a run with no card), so "boots, does not netboot" is
+  the ProDOS/SmartPort boot of that image, upstream of the card. *1 d.*
+- 🟡 **Bug hunt #17's //c residue** *(2026-09-09; read, not fixed)*:
+  `$C015`/`$C017` on a //c are the IOU mouse X0/Y0 IRQ flags (MAME
+  `c000_iic_r:2297-2304`), not RDCXROM/RDC3ROM — POM2 has no //c IOU mouse
+  model, the built-in mouse rides the slot-4 HLE through the `$C400`
+  punch; `$C040/$C042/$C043` (RDXYMSK/RDX0EDGE/RDY0EDGE) writes are
+  decoded and discarded (three bools would enter the 10-byte IOU snapshot
+  section pinned by `iwm_mig_snapshot`); `SmartPortHub::sel35_` is in no
+  snapshot where MAME saves `m_35sel` (a `MIG1` → `MIG2` bump). *½ day.*
 - 🟠 **Bug hunt #16's speech residue** *(2026-09-09; read, not fixed —
   each a design change, not a patch)*: (1) the SSI263 duration formula
   `ms = ((16-rate)*4096/1023)*(4-dur)` is a mis-citation — it exists once in

@@ -109,6 +109,7 @@ void WorkstationCard::onReset()
     latch_.fill(0);
     romBase_    = 0x8000;        // the half whose vectors the card boots from
     timerAcc_   = 0;
+    cpuDebt_    = 0;
     timerFlag_  = false;
     sccInt_     = false;
     sccAcc_     = 0;
@@ -233,8 +234,21 @@ void WorkstationCard::advanceCycles(int cycles)
         const int slice = remaining < kSliceCycles ? remaining : kSliceCycles;
         remaining -= slice;
 
-        if (!cardCpu_->isHalted())
-            cardCpu_->run(slice);
+        if (!cardCpu_->isHalted()) {
+            // `run(n)` finishes the instruction it is inside, so it returns
+            // n..n+6; the surplus is DEBT against the next slice, not free
+            // card time. Dropping it made the card's clock a function of the
+            // caller's granularity — and the caller is `M6502::step()`, one
+            // call per host instruction. See `cpuDebt_` in the header.
+            const int want = slice - cpuDebt_;
+            if (want > 0) {
+                const int ran = cardCpu_->run(want);
+                cpuDebt_ = ran > want ? ran - want : 0;
+            } else {
+                cpuDebt_ -= slice;
+                if (cpuDebt_ < 0) cpuDebt_ = 0;
+            }
+        }
 
         // The firmware halts itself at $C174 when its self-test fails.
         // Record that rather than spinning: `postPassed()` is what asks.
@@ -391,6 +405,10 @@ void WorkstationCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // inside one advanceCycles.
     timerAcc_   = static_cast<int>(r.u32());
     if (timerAcc_ < 0 || timerAcc_ >= kTimerPeriodCycles) timerAcc_ = 0;
+    // Not in the blob: it is at most one instruction of card time and the
+    // format is frozen at v2. Restarting it at zero is exact to within the
+    // instruction the snapshot was taken in the middle of.
+    cpuDebt_    = 0;
     timerFlag_  = r.u8() != 0;
     entropy_    = r.u8();
     postFailed_ = r.u8() != 0;

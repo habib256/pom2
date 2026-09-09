@@ -680,6 +680,7 @@ void hgrpaint::HgrPaintEditor::copySelection(bool cut)
     clip.w = x1 - x0 + 1;
     clip.h = y1 - y0 + 1;
     clip.sixteen = sixteenMode();
+    clip.blockMode = grMode || dlgrMode;   // 7x4 block replicas, not pixels
     clip.px.clear();
     clip.idx.clear();
     if (clip.sixteen) {
@@ -1049,10 +1050,14 @@ void hgrpaint::HgrPaintEditor::renderToolPanel()
             }
             ImGui::SameLine();
             if (ImGui::Button("Rot")) {
-                // Block-aware for GR / DLGR (a sample is a 7x4 block there);
-                // the plain transpose for HGR / DHGR. See HgrPaintModel.h.
+                // Block-aware for a GR / DLGR clip (a sample is a 7x4 block
+                // there); the plain transpose for HGR / DHGR. The flag comes
+                // from the CLIP, not the current mode: clipUsableHere() already
+                // refuses a clip of the other geometry, and reading the mode
+                // here rotated a GR clip as per-pixel (and a DHGR one as
+                // blocks) whenever the two disagreed. See HgrPaintModel.h.
                 hgrpaint::rotateClipCW(clip.w, clip.h, clip.sixteen,
-                                       grMode || dlgrMode, clip.px, clip.idx);
+                                       clip.blockMode, clip.px, clip.idx);
             }
         }
     }

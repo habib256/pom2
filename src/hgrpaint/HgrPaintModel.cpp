@@ -178,6 +178,31 @@ int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& rend
     auto rgb = [&](int px, int py) { return col[static_cast<size_t>(py) * W + px] & 0x00FFFFFFu; };
     const uint32_t seed = rgb(x, y);
 
+    // The two dot columns at each END of a line have no NTSC context: the
+    // sliding window decodes x = 0/1 with a zero left word and x = W-1 with a
+    // zero `wordNext`, so the renderer gives them a colour of their own
+    // whatever the byte holds. Measured on solid fields (row 96, ColorNTSC):
+    //   Violet  interior $FF28E6, x=279 $000000
+    //   Green   interior $00D719, x=0   $000000
+    //   Blue    interior $FF9019, x=0 and x=279 $7F480C
+    //   Orange  interior $006FE6, x=0 $000000, x=1 $003773, x=279 $006993
+    // A flood that only compares perceived colour therefore stops short of the
+    // canvas edge and leaves the OLD picture behind there on every recolour: a
+    // solid Violet page refilled Green came out 26688 green dots instead of
+    // 26880, with column 279 dark (192 page bytes wrong out of 7680), and a
+    // Green page refilled Violet lost column 0 the same way.
+    //
+    // In that boundary band decide membership from the HGR dither instead of
+    // from the render: the artifact pattern has period 2, so an edge column
+    // continues the field iff its lit state matches the column two positions
+    // INWARD. A real feature drawn on the edge (a border line, a lone dot)
+    // breaks that match, so it is still excluded and survives the fill.
+    auto edgeContinuesField = [&](int px, int py) {
+        if (px <= 1)      return pixelOn(page, px, py) == pixelOn(page, px + 2, py);
+        if (px == W - 1)  return pixelOn(page, px, py) == pixelOn(page, px - 2, py);
+        return false;
+    };
+
     // 4-connected flood over equal perceived colour.
     std::vector<uint8_t> seen(static_cast<size_t>(W) * H, 0);
     std::vector<std::pair<int,int>> stack, region;
@@ -193,7 +218,7 @@ int fillRegion(uint8_t* page, int x, int y, HgrColor c, const RenderPageFn& rend
             if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
             const size_t idx = static_cast<size_t>(ny) * W + nx;
             if (seen[idx]) continue;
-            if (rgb(nx, ny) != seed) continue;
+            if (rgb(nx, ny) != seed && !edgeContinuesField(nx, ny)) continue;
             seen[idx] = 1;
             stack.emplace_back(nx, ny);
         }

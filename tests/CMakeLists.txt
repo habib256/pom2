@@ -7995,6 +7995,131 @@ target_include_directories(test_ay_noise_reset PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME ay_noise_reset_state COMMAND test_ay_noise_reset)
 set_tests_properties(ay_noise_reset_state PROPERTIES TIMEOUT 5)
 
+# ─── The //c+ MIG and the hub agree, and the //c answers its status reads ─
+# Bug hunt #17: `$C028` -> bank 0 cleared only the hub's copy of "internal
+# 3.5" selected" while the snapshot serialised the profile's; a restored MIG
+# blob never reached the hub (the internal Sony unreachable after a rewind);
+# and RDDHIRES ($C079-$C07F odd) / RDVBLMSK ($C041) answered the floating bus
+# on a //c where MAME's c000_iic_r answers the latch. ROM-optional.
+add_executable(test_iic_mig_hub_sync
+    iic_mig_hub_sync_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_iic_mig_hub_sync PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_iic_mig_hub_sync PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_iic_mig_hub_sync PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_iic_mig_hub_sync PRIVATE winmm)
+endif()
+add_test(NAME iic_mig_hub_sync
+         COMMAND test_iic_mig_hub_sync
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(iic_mig_hub_sync PROPERTIES TIMEOUT 30)
+
+# ─── HGR paint fill at the canvas edge columns (bug hunt #17) ─────────────
+# fillRegion floods by PERCEIVED colour, and the NTSC sliding window has no
+# context at x = 0/1 and x = 279, so those columns decode as a colour of their
+# own and the flood used to stop one column short — 192 of the 7680 visible
+# page bytes left holding the old picture on every chromatic recolour. Drives
+# the model through the REAL Apple2Display painter.
+add_executable(test_hgr_paint_fill_edge
+    hgr_paint_fill_edge_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_hgr_paint_fill_edge PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_hgr_paint_fill_edge PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_hgr_paint_fill_edge PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_hgr_paint_fill_edge PRIVATE winmm)
+endif()
+add_test(NAME hgr_paint_fill_edge COMMAND test_hgr_paint_fill_edge)
+set_tests_properties(hgr_paint_fill_edge PROPERTIES TIMEOUT 60)
+
+# ─── Cassette hostile input + //c I/O fence (bug hunt #17) ───────────────
+# WAVE_FORMAT_EXTENSIBLE, a `data` chunk longer than the file, a DC-biased
+# rip, the auto-started capture's phase, and $C060/$C068 reaching the deck on
+# a //c (the 40/80-column switch there). Round trips through the real ROM.
+add_executable(test_cassette_hostile
+    cassette_hostile_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_cassette_hostile PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_cassette_hostile PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_cassette_hostile PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_cassette_hostile PRIVATE winmm)
+endif()
+add_test(NAME cassette_hostile COMMAND test_cassette_hostile
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(cassette_hostile PROPERTIES TIMEOUT 30)
+
+# ─── Bug hunt #17: the SDLC seams a LocalTalk frame crosses ───────────────
+# WR0 Send Abort left the one-byte transmit buffer loaded, so the first byte
+# of the retransmission was discarded and the aborted frame's stale byte
+# opened the next one; and `receiveFrame` shoved a whole frame into a FIFO
+# that signals full at two bytes, losing everything past it with neither the
+# overrun bit nor End Of Frame reaching RR1. Device-only, no ROM needed.
+
+add_executable(test_scc8530_sdlc_recovery
+    scc8530_sdlc_recovery_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Scc8530Device.cpp
+)
+target_include_directories(test_scc8530_sdlc_recovery
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME scc8530_sdlc_recovery COMMAND test_scc8530_sdlc_recovery)
+set_tests_properties(scc8530_sdlc_recovery PROPERTIES TIMEOUT 10)
+
+
+# ─── Bug hunt #17: the card's 65C02 ran at the caller's granularity ───────
+# `M6502::run(n)` overshoots to the end of the instruction and the surplus
+# was dropped, so the card's clock depended on the slice size — and the slot
+# bus is fanned out from M6502::step(), one host instruction (2-7 cycles) at
+# a time, where the card ran +22 % fast against its own SCC. The pin is the
+# invariant: the same firmware must cost the same Apple II cycles at every
+# granularity. ROM-gated: SKIPs cleanly.
+
+add_executable(test_workstation_card_pacing
+    workstation_card_pacing_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/WorkstationCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Scc8530Device.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_workstation_card_pacing
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_workstation_card_pacing PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+add_test(NAME workstation_card_pacing
+         COMMAND test_workstation_card_pacing
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(workstation_card_pacing PROPERTIES
+    TIMEOUT 30 SKIP_RETURN_CODE 77)
+
 set(POM2_PROBE_TARGETS
     artifact_probe
     c2plus_boot_probe

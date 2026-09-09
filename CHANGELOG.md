@@ -5,6 +5,55 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — Bug hunt #17: the cassette, the Workstation Card, the paint editors, the //c
+
+Four Opus hunters on private copies. Same contract.
+
+**The cassette round trip through the real ROM works; five loader and
+deck defects around it did not.** Monitor WRITE on one machine and READ on
+a fresh one now round-trip through `.aci` and `.wav` at four sample
+rates, 8 and 16 bit, NTSC and PAL. Fixed: extensible-format WAVs (what
+ffmpeg, Audacity and Windows emit) were refused; a `data` chunk longer
+than the file — every truncated or piped recording — killed the whole
+tape; a rip riding on a DC bias decoded as silence; a capture started by
+the first `$C020` toggle saved its waveform 180° out of phase with real
+hardware; and a `$C060` read on a //c, where that address is the
+40/80-column switch, started the transport (`cassette_hostile`).
+
+**The Workstation Card's 65C02 ran at the caller's pace, and its SCC lost
+the tail of every frame.** The card discarded the cycles its CPU
+overshot per call, and the slot bus calls it once per host instruction,
+so the card ran 22 % fast on a running machine and 3.5 % in the tests
+(`workstation_card_pacing`). Its Z8530's Send Abort left a stale byte in
+the transmit buffer, and a received frame was pushed into a FIFO that
+holds two bytes — a three-byte LocalTalk control frame arrived as two,
+with neither the overrun bit nor End-Of-Frame set (`scc8530_sdlc_recovery`).
+Nothing is wired to that SCC yet, and the AppleShare disk never reaches
+the card at all; both are filed in TODO.
+
+**The paint editor's fill stopped one column short of the canvas edge.**
+The flood compares rendered colours, and the NTSC window has no context
+at the first two and the last column, so a solid page recoloured with
+the fill kept 192 bytes of the old picture at the edge; the boundary band
+now follows the HGR dither instead (`hgr_paint_fill_edge`). The clipboard
+also took its block geometry from the current mode rather than from the
+clip, so a GR clip pasted into DHGR and a DHGR clip rotated in GR lost
+27 of 28 samples; the clip remembers how it was copied. The converter's
+error diffusion, its fast search, CAM16, the glyph table, the sprite
+shifts and every plot/colour round trip were cleared with numbers.
+
+**A //c+ rewind lost its internal 3.5" drive, and two //c status reads
+were the floating bus.** "Internal 3.5" selected" lived twice — in the
+profile the snapshot serialises and in the hub that routes the IWM — and
+the ROM bank switch cleared only the hub's copy while a restore reached
+only the profile's, so a snapshot or rewind taken with the internal Sony
+selected came back with no drive. Both copies follow both events now
+(`iic_mig_hub_sync`). The same pin covers RDDHIRES and RDVBLMSK, which
+MAME's //c answers and POM2 left on the floating bus: a program reading
+its frame-interrupt mask back got a coin flip. The bank toggle, the VBL
+latch and cadence, IOUDIS, the MIG windows, the 16 KB stub arming and the
+//c+ accelerator default were cleared with probes.
+
 ## 2026-09-09 — Bug hunt #16: speech and the PSG, the debugger, Disk II reads, the tooling
 
 Four Opus hunters on private copies. Same contract.

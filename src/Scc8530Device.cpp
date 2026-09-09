@@ -238,6 +238,8 @@ void Scc8530Device::channelReset(int index)
     c.txFifoWp = c.txFifoRp = 0;
     for (bool& e : c.rxEof) e = false;
     c.txFrame.clear();       // SDLC (datasheet, not MAME)
+    c.rxPending.clear();     // SDLC (datasheet, not MAME)
+    c.rxPendingCrc = false;
 
     c.wr0  = 0x00;
     c.wr1 &= 0x24;
@@ -668,6 +670,7 @@ void Scc8530Device::doWr0(int index, uint8_t data)
             c.rxEof[c.rxFifoRp] = false;
             rxFifoRpStep(index);
         }
+        pumpRxPending(index);   // SDLC: a slot just freed
         break;
 
     case WR0_SEND_ABORT:
@@ -675,6 +678,17 @@ void Scc8530Device::doWr0(int index, uint8_t data)
         // '1' bits. The frame in flight is destroyed, not delivered.
         c.txFrame.clear();
         c.txHalfBits = 0;
+        // ...and the TRANSMIT BUFFER is part of the transmitter. RR0 D2 is
+        // the definition of "there is room in the transmit buffer", and the
+        // abort left it CLEAR with the aborted frame's next byte still in
+        // the one slot: `dataWrite` then discarded the byte the driver wrote
+        // for the RETRANSMISSION (on a 1-slot FIFO its `full` test is
+        // exactly !TBE) and loaded the stale one instead. A LocalTalk frame
+        // resent after a collision therefore opened with a byte from the
+        // frame that collided, and lost its own first byte. Emptying the
+        // slot is what "flush the transmitter" means.
+        c.txFifoRp = c.txFifoWp = 0;
+        c.rr0 |= RR0_TX_BUFFER_EMPTY;
         c.rr0 |= RR0_TX_UNDERRUN;
         c.rr1 |= RR1_ALL_SENT;
         break;
@@ -880,6 +894,11 @@ uint8_t Scc8530Device::dataRead(int channel)
             }
         }
         checkDmaRequest(index);
+        // SDLC (datasheet, not MAME): the reader just made room, so hand the
+        // receiver the next byte of the frame still arriving. A no-op outside
+        // SDLC, and a no-op while the special-condition lock above kept the
+        // slot.
+        pumpRxPending(index);
     }
     // else: MAME logs "Attempt to read out character from empty FIFO"
     return data;
@@ -1430,6 +1449,9 @@ void Scc8530Device::receiveFrame(int channel, const uint8_t* data,
     if (!(c.wr3 & WR3_RX_ENABLE)) return;   // receiver off: no flag is seen
     if (!sdlcMode(index)) return;           // and no frames outside SDLC
     if (!data || len == 0) return;
+    // Still handing the driver the previous frame: the receiver has not kept
+    // up, and on the wire this frame would be missed entirely.
+    if (!c.rxPending.empty()) return;
 
     // Address search (WR3 D2): in SDLC the receiver only opens for frames
     // addressed to WR6 or to the $FF broadcast, and stays in hunt otherwise.
@@ -1449,16 +1471,33 @@ void Scc8530Device::receiveFrame(int channel, const uint8_t* data,
         }
     }
 
-    for (std::size_t i = 0; i < len; ++i) {
+    c.rxPending.assign(data, data + len);
+    c.rxPendingCrc = crcError;
+    pumpRxPending(index);
+}
+
+/// SDLC (datasheet, not MAME). The FIFO signals full one slot early (MAME's
+/// `receive_data`, z80scc.cpp:2566: `wp + 1 == rp`), so three slots hold TWO
+/// bytes — while an LLAP control frame is three bytes and a data frame up to
+/// 603. Feeding the tail as the reader drains is what the wire does; what
+/// this replaced shoved the whole frame in at once and lost everything past
+/// the second byte with no bit set anywhere to say so.
+void Scc8530Device::pumpRxPending(int index)
+{
+    Channel& c = ch_[index];
+    while (!c.rxPending.empty()) {
+        const int next = (c.rxFifoWp + 1 >= Channel::kRxFifoSz) ? 0 : c.rxFifoWp + 1;
+        if (next == c.rxFifoRp) return;         // no room: wait for the reader
         const int slot = c.rxFifoWp;
-        receiveData(index, data[i]);
-        if (i + 1 == len) {
-            // The last byte carries End Of Frame, and the FCS verdict with
-            // it. `receiveData` may have refused to step the pointer on an
-            // overrun, in which case the flag still belongs to that slot.
+        const uint8_t b = c.rxPending.front();
+        c.rxPending.erase(c.rxPending.begin());
+        receiveData(index, b);
+        if (c.rxPending.empty()) {
+            // The last byte carries End Of Frame and the FCS verdict with it.
             c.rxEof[slot] = true;
-            if (crcError)
+            if (c.rxPendingCrc)
                 c.rxError[slot] |= RR1_CRC_FRAMING_ERROR;
+            c.rxPendingCrc = false;
         }
     }
 }
@@ -1524,7 +1563,7 @@ int Scc8530Device::rxFifoCount(int channel) const
 
 namespace {
 constexpr uint32_t kSnapMagic   = 0x53434331u;  // "SCC1"
-constexpr uint8_t  kSnapVersion = 2;
+constexpr uint8_t  kSnapVersion = 3;   // +3: the pending SDLC receive frame
 } // namespace
 
 void Scc8530Device::appendSnapshot(std::vector<uint8_t>& out) const
@@ -1577,6 +1616,11 @@ void Scc8530Device::appendSnapshot(std::vector<uint8_t>& out) const
         byteio::putU64(out, c.brgAcc);
         byteio::putU16(out, static_cast<uint16_t>(c.txFrame.size()));
         for (uint8_t v : c.txFrame) byteio::putU8(out, v);
+        // The v3 tail sits AFTER the variable-length transmit frame, so every
+        // fixed offset above it stays where it was.
+        byteio::putU8 (out, c.rxPendingCrc ? 1 : 0);
+        byteio::putU16(out, static_cast<uint16_t>(c.rxPending.size()));
+        for (uint8_t v : c.rxPending) byteio::putU8(out, v);
     }
 }
 
@@ -1666,6 +1710,16 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
                              (frameLen < kMaxTxFrameBytes ? frameLen
                                                           : kMaxTxFrameBytes));
         r.pos += frameLen;
+
+        if (!r.has(3)) return false;
+        c.rxPendingCrc = r.u8() != 0;
+        const std::size_t pendLen = r.u16();
+        if (!r.has(pendLen)) return false;
+        c.rxPending.assign(data + r.pos,
+                           data + r.pos +
+                               (pendLen < kMaxTxFrameBytes ? pendLen
+                                                           : kMaxTxFrameBytes));
+        r.pos += pendLen;
     }
 
     // Everything parsed — commit.

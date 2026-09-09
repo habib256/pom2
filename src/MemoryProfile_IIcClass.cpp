@@ -58,6 +58,14 @@ bool IIcClassProfile::romBankToggle()
     // an alt bank but no MIG, so it must not poke MIG/hub state.
     if (isPlus_ && !romBank_) {
         migPage_ = 0;
+        // MAME clears the STATE, not just the wire: `m_intdrive = false;
+        // m_35sel = false;` are the same variables recalc_active_device()
+        // reads. POM2 keeps a private copy of intdrive (it is what
+        // appendSnapshotState serialises) next to the hub's, and only the
+        // hub's was being cleared here — so after any $C028 →bank-0 edge
+        // the profile still claimed "internal 3.5-inch drive selected" while the hub
+        // routed to nothing, and the snapshot recorded that stale claim.
+        migIntDrive_ = false;
         if (hub_) {
             hub_->setMigIntDrive(false);
             hub_->setMig35Sel(false);
@@ -342,6 +350,22 @@ size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
         romBank_     = data[kMigBlobBytes]     != 0;
         migIntDrive_ = data[kMigBlobBytes + 1] != 0;
         migHdSel_    = data[kMigBlobBytes + 2] != 0;
+        // …and PUSH them into the hub. SmartPortHub has no snapshot section
+        // of its own: it is pure derived state (MAME recomputes the same
+        // thing in recalc_active_device after a state load). Restoring the
+        // profile's copy alone left the two halves disagreeing — the hub
+        // kept whatever the live machine had, and because
+        // SmartPortHub::setMigIntDrive early-returns on an unchanged value,
+        // the guest's next MIG write could never resync it. A //c+ snapshot
+        // or rewind taken with the internal 3.5" selected came back with
+        // hub.active35() == nullptr and the drive unreachable.
+        // Order matters: intdrive first (it re-runs recalcActiveDevice and
+        // republishes the active drive), head-select second (MAME does the
+        // ss_w at the END of recalc_active_device, apple2e.cpp:804).
+        if (hub_) {
+            hub_->setMigIntDrive(migIntDrive_);
+            hub_->setMigHdSel(migHdSel_);
+        }
         size_t used = kMigBlobBytes + kMigBlobTail;
         if (extPort_ && n > used)
             used += extPort_->loadSnapshotState(data + used, n - used);

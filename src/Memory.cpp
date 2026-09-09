@@ -1518,6 +1518,24 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // scanner byte, not a hard 0). Writes don't drive the bus.
     if (low == 0x40) return isWrite ? 0 : floatingBus();
 
+    // RDVBLMSK ($C041) — //c-class ONLY. MAME `c000_iic_r`
+    // (`apple2e.cpp:2312-2313`): `(m_vblmask ? 0x80 : 0x00) | uFloatingBus7`.
+    // The plain-//e `c000_r` has no case for it and drops out to the
+    // floating bus, which is what POM2 returned on EVERY machine: a //c
+    // program that arms its 50/60 Hz frame interrupt with $C05B and then
+    // reads $C041 back to confirm got bit 7 of the video scanner byte — a
+    // coin flip, and one that reads "disarmed" on any scanner byte below
+    // $80. POM2 already tracks the mask (`vblIrqMask`, set by the real IOU
+    // decode above and already in the snapshot), so answering costs no new
+    // state. $C040/$C042/$C043 (RDXYMSK / RDX0EDGE / RDY0EDGE) are the
+    // other three of MAME's quad; POM2 has no //c IOU mouse model to back
+    // them (the //c mouse is served by the slot-4 AppleWin HLE through the
+    // $C400 punch), so they stay on the floating bus.
+    if (low == 0x41 && !isWrite && iicProfile_) {
+        return static_cast<uint8_t>((vblIrqMask ? 0x80 : 0x00) |
+                                    (floatingBus() & 0x7F));
+    }
+
     // Display soft switches. They don't drive the data bus either: a READ
     // flips the mode AND returns the floating bus (video scanner byte) —
     // MAME `apple2.cpp do_io` returns `read_floatingbus()` for $C050-$C057.
@@ -1651,7 +1669,16 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // a bare comparator byte with bits 0-6 clamped to 0, so the $C060 half
     // of the mirrored pair disagreed with its own $C068 twin below.
     if (low == 0x60) {
-        const uint8_t bit7 = cassette
+        // //c-class: NOT a cassette comparator. The //c has no cassette port
+        // at all; $C060 there reads the 40/80-column switch (Apple //c Tech
+        // Ref 2e), which POM2 does not model and which reads back low (80
+        // columns). The $C02x fence above already kept the //c out of the
+        // cassette OUTPUT path — this half was missing, so a //c firmware
+        // read of the column switch called into the deck: with a tape loaded
+        // and PLAY armed, it consumed the arm and STARTED the tape rolling
+        // (readTapeInput's armed→active transition), and it kept re-stamping
+        // the leader-rewind clock. Same byte on the bus, no deck side effect.
+        const uint8_t bit7 = (cassette && !iicProfile_)
             ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
             : uint8_t{0};
         return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));
@@ -1683,7 +1710,10 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
                     // tape-read loop polling $C068 never saw the
                     // comparator flip and entropy loops keyed on N were
                     // deterministic.
-                    return cassette
+                    // Fenced off the //c the same way the literal $C060
+                    // branch above is — the mirror must not be the back
+                    // door into a deck the machine does not have.
+                    return (cassette && !iicProfile_)
                         ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
                         : uint8_t{0};
                 default: return 0;  // unreachable: mirrored ∈ $60-$67
@@ -1759,6 +1789,26 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         // !dhires — which POM2 does not answer yet.)
         if (!isWrite && iicProfile_ && low >= 0x78 && (low & 1) == 0) {
             return static_cast<uint8_t>((ioudis ? 0x80 : 0x00) |
+                                        (floatingBus() & 0x7F));
+        }
+        // RDDHIRES — the ODD half of the same //c-only decode. MAME
+        // `c000_iic_r` (`apple2e.cpp:2341-2343`, `case 0x79: case 0x7b:
+        // case 0x7d: case 0x7f:`) returns
+        // `(m_video->get_dhires() ? 0x00 : 0x80) | uFloatingBus7` — bit 7
+        // is the INVERSE of DHGR, because the bit the IOU latches is AN3
+        // and AN3 high means double hi-res OFF. POM2 answered with the raw
+        // floating bus on every machine, so `LDA $C07F / BMI notDoubleHires`
+        // decided on bit 7 of the video scanner byte: with the parked
+        // scanner used by the probe it read $6D — "DHGR is on" — while DHGR
+        // was in fact off, and under a live scanner it flips frame to frame.
+        // A //e must keep falling through (no IOU: `c000_r` has no case).
+        if (!isWrite && iicProfile_ && low >= 0x79 && (low & 1) == 1) {
+            bool dh;
+            {
+                std::lock_guard<std::mutex> lk(stateMutex);
+                dh = display.dhgr;
+            }
+            return static_cast<uint8_t>((dh ? 0x00 : 0x80) |
                                         (floatingBus() & 0x7F));
         }
         return isWrite ? 0 : floatingBus();

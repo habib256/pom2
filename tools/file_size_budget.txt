@@ -242,10 +242,19 @@
 # to it. Still the same seam owed: DiskImage.cpp's flux/WOZ half is a TU of
 # its own waiting to happen.
 #   src/DiskImage.cpp            3109 -> 3154 (+45)
+# 2026-09-09 (bug hunt #17): one ceiling raised for two //c status reads
+# MAME's c000_iic_r answers and POM2 dropped on the floating bus — RDVBLMSK
+# ($C041) and RDDHIRES ($C079-$C07F odd) — with the why next to them.
+#   src/Memory.cpp               2644 -> 2682 (+38)
+#   src/Memory.cpp               2682 -> 2694 (+12)  the cassette input is
+#     fenced on a //c the way $C020 already was ($C060 is the 40/80-column
+#     switch there and used to start the transport).
+#   src/hgrpaint/HgrPaintEditor.cpp 2653 -> 2656 (+3) the clip records the
+#     block geometry it was copied with (bug hunt #17).
 src/Apple2Display.cpp                    2522
 src/DiskImage.cpp                        3154
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
-src/Memory.cpp                           2644
+src/Memory.cpp                           2694
 src/StorageCoordinator.cpp               2357
-src/hgrpaint/HgrPaintEditor.cpp          2653
+src/hgrpaint/HgrPaintEditor.cpp          2656

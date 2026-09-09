@@ -1650,6 +1650,35 @@ sinc (cutoff sr/4) → 0.995-pole DC blocker. Auto catch-up if drain >
 (`fonts/fa-solid-900.ttf`), falls back to `?` if missing.
 Auto-rewind 500 ms is opt-in, default off.
 
+**The round trip through the real ROM works, and five loader/deck
+defects were fixed** *(2026-09-09, bug hunt #17)*. Monitor `WRITE` on one
+machine, `READ` on a fresh one: 16/16 bytes back through `.aci` and
+`.wav`, at 11025/22050/44100/48000 Hz, 8- and 16-bit, NTSC and PAL (the
+durations are CPU cycles end to end, so the 0.7 % PAL pitch error only
+shows on a cross-machine exchange). The header measures 652 cycles per
+half (784 Hz for a nominal 770), well inside `RDBIT`'s 720-2244 window.
+Fixed: `WAVE_FORMAT_EXTENSIBLE` (tag `$FFFE`, what ffmpeg/Audacity/Windows
+emit for float32, >2 channels or any channel mask) was refused outright —
+the real tag is the SubFormat GUID's first two bytes; a `data` chunk
+longer than the file (a truncated recording, or any WAV streamed to a pipe
+whose size field is a placeholder) killed the whole tape with "missing
+format or data chunks" — it is clamped to what is there; the
+zero-crossing detector compared against a hard 0.0, so a line-in rip
+riding on the card's DC bias decoded as one silent transition — a linear
+pre-pass sets the threshold at the mean, clamped to ±0.9 × peak; a
+capture auto-started *inside* `toggleOutput()` (the default, no REC)
+recorded its baseline level pre-toggle and every segment after it
+inverted by alternation — invisible to `READ`, which is edge-driven, but
+the saved file was 180° out of phase with real hardware and with POM2's
+own `--rec` path; and `$C060`/`$C068` reached the deck on a //c, where
+that address is the 40/80-column switch — a read consumed the PLAY arm
+and started the transport (fenced like `$C020`, byte unchanged). Pinned
+by `cassette_hostile`. Noted, not fixed: 24-bit PCM is refused with an
+accurate message; a rewind across a live capture keeps
+`recordedDurations` (cassette output never bumps the media epoch — a
+design call, documented in the header); `--save-tape out.mp3` writes ACI
+bytes into a `.mp3`.
+
 ### Mockingboard
 
 **Port B is read from the pins, like port A** *(2026-09-08, bug hunt #5)*.
@@ -5188,6 +5217,27 @@ card** — a 65C02 of its own, 28 KB of RAM, a Zilog 8530 SCC, an interval
 timer, and 64 KB of ROM banked into a 32 KB window. The Apple II never
 executes that firmware; it reaches the card through a shared RAM page.
 
+**The card's clock no longer depends on the caller's slice** *(2026-09-09,
+bug hunt #17)*. `M6502::run(n)` finishes the instruction it is in and
+returns n..n+6 cycles; `advanceCycles` discarded the surplus, a fixed cost
+*per call* — and the caller is `M6502::step()` → `Memory::advanceCycles`
+→ `SlotBus`, once per host instruction with that instruction's 2-7 cycles,
+not the 4096-cycle chunks the pins handed it. Card cycles per host cycle:
++3.5 % at grain 4096, +22 % at a realistic 2-7 mix, +66 % at grain 3;
+LocalTalk node acquisition cost 49.9 % fewer host cycles at the running
+machine's grain than in the tests. `cpuDebt_` carries the overshoot into
+the next slice; the pin `workstation_card_pacing` asserts the invariant
+(the same firmware costs the same Apple II cycles at every grain, spread
+< 1 %). Recorded, not fixed: nothing is wired to the card's SCC — only
+`setIntCallback`; `frameCb_`/`receiveFrame` have no owner, so the card
+sends its LLAP frames into the void and can never receive one (two SCCs
+back to back is the end-to-end shape). And the AppleShare disk never
+reaches the card: booted off a SmartPort 3.5" for 120 M instructions with
+the card in slot 4 or 7, zero `$Cn00`/`$C800`/`$C0nX` accesses, the PC
+pinned in `$CFxx-$D0xx`, byte-identical to the run with no card — so
+"boots, does not netboot" is upstream, in the ProDOS/SmartPort boot of
+that image, not in the card.
+
 There is **no MAME oracle**: MAME has no Workstation Card at all. Every line
 of the map in `WorkstationCard.h` was read out of the 341-0358-A dump with a
 disassembler and then confirmed by *running* the firmware — the derivation is
@@ -5300,7 +5350,27 @@ Port of MAME `src/devices/machine/z80scc.{h,cpp}` at commit
 `588eeb33707f8d392701716c41b0420a48c41f28` (2026-08-29). The 8530 is the
 two-channel USART behind the Macintosh and IIgs serial ports and behind the
 **Apple II Workstation Card**, which is why it landed: the card's firmware
-drives it at `$7500-$7503` in the card's own address space
+drives it at `$7500-$7503` in the card's own address space. **Two SDLC
+seams a LocalTalk frame crosses were wrong** *(2026-09-09, bug hunt #17)*:
+WR0 Send Abort flushed the frame and the shift register but not the
+one-byte transmit buffer, so RR0 TBE stayed 0 with the aborted frame's
+next byte in the slot, and on a 1-slot FIFO `dataWrite`'s `full` test *is*
+`!TBE` — the first byte of the retransmission (LocalTalk aborts on
+collision) was discarded and the stale byte opened the next frame; and
+`receiveFrame` pushed a whole frame into a 3-slot FIFO that signals full
+one slot early (MAME `receive_data`, `wp+1 == rp`), so anything past two
+bytes was lost, and the overrun bit and End-Of-Frame both landed on the
+slot the write pointer never leaves — a 3-byte LLAP control frame arrived
+as 2 bytes with RR1 = `$07`, no error, no EOF; a 603-byte data frame lost
+601. `Channel::rxPending` holds the tail and `pumpRxPending()` feeds it as
+the reader drains, putting EOF and the FCS verdict on the byte that really
+closes the frame; SCC snapshot v3, fields appended after the
+variable-length tx frame. Pinned by `scc8530_sdlc_recovery`. Cleared
+verbatim against MAME: the BRG zero-count gating, `update_extint`'s latch
+advance, `data_write`'s TBE/`tx_int_disarm` order, the WR0 pointer
+protocol, RR3 A-only, RR2 status modification, the baud rate (WR12/13 = 6
+→ exactly 230 400), the foreign-bus dummy accesses (a no-op on the CMOS
+core), and the card CPU across a host reset.
 ([printer plan 2 § 5.1](docs/printer_plan_2.md#51-the-341-0358-a-dump)).
 
 **Variant fold.** MAME's `z80scc_device` covers eight parts behind an
@@ -8133,6 +8203,37 @@ block-aware for GR/DLGR clips (stored at canvas-pixel resolution, one
 sample per 7×4 block); SymX/SymY are offered for the brush tools only.
 Pinned in `hgr_paint_fill_pattern` and `hgr_sprite_blit`.
 
+**Bug hunt #17 (2026-09-09).** `fillRegion` floods over equal *rendered*
+colour, and the NTSC sliding window has no context at x = 0/1 (zero left
+word) and x = 279 (zero `wordNext`), so those columns decode as a colour
+of their own and the flood stopped one column short: a solid Violet page
+refilled Green came out 26 688 green dots instead of 26 880 — column 279
+dark, 192 of the 7 680 visible page bytes still holding the old picture,
+on eight of the sixteen chromatic refill pairs. In the boundary band only,
+membership is now decided from the HGR dither: an edge column continues
+the field iff its lit state matches the column two positions inward, so a
+border or a lone dot drawn *on* the edge still survives (the obvious
+"inherit the neighbour's colour" fix would have eaten a white border on
+column 279). Pinned by `hgr_paint_fill_edge`, which drives the model
+through the real painter. And the clipboard's block geometry was read
+from the *current* mode rather than the clip's: GR, DLGR and DHGR are all
+`sixteen`, so a GR clip (7×4 block replicas) pasted into DHGR (per-pixel
+samples) and back, and the Rot button rotated with the current mode's
+rule — a DHGR clip rotated in GR became 336×80 with 27/28 of its samples
+gone. `Clip::blockMode` is recorded at copy time, required to match in
+`clipUsableHere()`, and passed to `rotateClipCW`; compile-verified only,
+since the editor is constructed inside an ImGui TU. Cleared with numbers:
+the plot/colour round trip through the painter for every colour × parity,
+the DHGR straddle, DLGR, the GR screen holes, flood termination, the
+converter's error diffusion (it cannot leak across the palette bit — the
+search enumerates all 256 patterns with the palette bit outermost) and
+its fast branch-and-bound path (bit-identical to exhaustive), `pixelAspect`,
+degenerate images, CAM16's white (J′ = 100.0000 exactly), the ImageWriter
+glyph rows (none exceeds `$7F`), the sprite shifts, the ASM round trip, and
+an ASan/UBSan sweep with hostile arguments. Noted, not changed: the
+importers ignore alpha; there is no `HgrRle` module in the tree (A2FC's
+`.RLE` pages are decoded by A2FC itself).
+
 ## Logging (`Logger.h`)
 
 One `fprintf` to stderr under a mutex, and **every message is sanitised
@@ -8518,7 +8619,35 @@ drives a MIG gate-array + IWM. POM2 models the minimum for cold boot:
   3.5"-side decodes → `SmartPortHub::setMig35Sel`/`setMigIntDrive`;
   hub's `recalc_active_device` (verbatim MAME `apple2e.cpp:724-770`).
   MAME `:1917-1922` resets `migPage + m_intdrive + m_35sel` on
-  ROMSWITCH → bank 0; POM2 mirrors. `migWrite(0x40)` calls
+  ROMSWITCH → bank 0; POM2 mirrors — **in both copies since 2026-09-09
+  (bug hunt #17)**: "internal 3.5" selected" lives twice, as
+  `IIcClassProfile::migIntDrive_` (what the snapshot serialises) and as
+  `SmartPortHub::intDrive_` (what routes the IWM), and `romBankToggle()`
+  cleared only the hub's, so a snapshot taken after a bank-0 switch still
+  said `intDrive=1`; and a restored MIG blob stopped at the profile's copy
+  (the hub has no section — derived state) while `setMigIntDrive`
+  early-returns on an unchanged value, so a //c+ snapshot or rewind taken
+  with the internal Sony selected came back with `hub.active35() ==
+  nullptr` — drive unreachable. The bank-0 edge clears the profile's copy
+  and the restore pushes `migIntDrive_` then `migHdSel_` into the hub.
+  Pinned by `iic_mig_hub_sync`, which also pins two //c status reads
+  MAME's `c000_iic_r` answers and POM2 left on the floating bus:
+  RDDHIRES at `$C079/$C07B/$C07D/$C07F` (bit 7 = AN3 latched *inverted*,
+  `$ED` where POM2 read `$6D`) and RDVBLMSK at `$C041` (a //c program
+  arming its frame IRQ and reading the mask back got a coin flip).
+  Residual, recorded in TODO: `$C015`/`$C017` on a //c are the IOU mouse
+  X0/Y0 interrupt flags, not RDCXROM/RDC3ROM; `$C040/$C042/$C043`
+  (RDXYMSK/RDX0EDGE/RDY0EDGE) writes are discarded because three more
+  bools would enter the IOU snapshot section whose length is hard-pinned
+  at ten; `SmartPortHub::sel35_` is in no snapshot (MAME saves
+  `m_35sel`), so a restore re-selects an internal 3.5" but loses an
+  external one — needs a `MIG1` → `MIG2` bump. Cleared: the `$C02x` bank
+  toggle on read and write across the whole range, the 16 KB ROM's
+  inertness, `$C019`'s latch, the VBL raise at scanline 192 under 262 and
+  312, the `$C070-$C07F` ack, IOUDIS, the MIG windows byte for byte, the
+  16 KB `$C500` stub arming across reset and snapshot, and the //c+ 4×
+  default (the frame budget scales the whole emuCycles-stamped machine,
+  so the 3.5" boot is timing-safe: ProDOS at 6.29 M cycles). `migWrite(0x40)` calls
   `iwmDevice->reset()` so alt firmware's per-boot IWM reset clears
   stale state.
 

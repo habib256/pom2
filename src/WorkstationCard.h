@@ -320,6 +320,17 @@ private:
     /// not tuning.
     static constexpr int kSliceCycles = 24;
     int  timerAcc_   = 0;
+    /// Card-CPU cycles already run against a FUTURE slice. `M6502::run(n)`
+    /// finishes the instruction it is in, so it returns n..n+6 and the
+    /// overshoot used to be thrown away: the card's 65C02 then ran at
+    /// whatever rate the CALLER's granularity produced. `SlotBus` is fanned
+    /// out from `M6502::step()`, one call per host instruction with THAT
+    /// instruction's 2-7 cycles, so on a real machine the card ran +22 %
+    /// fast against its own SCC and interval timer (+3.5 % at the 4096-cycle
+    /// granularity the pins used, +65 % at a grain of 3). Carrying the debt
+    /// makes the rate the same at every granularity. Bounded by the longest
+    /// 65C02 instruction, so it is not snapshot state.
+    int  cpuDebt_    = 0;
     bool timerFlag_  = false;
     /// Free-running counter behind $7200, the LocalTalk backoff entropy.
     uint8_t entropy_ = 0;

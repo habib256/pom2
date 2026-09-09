@@ -103,6 +103,15 @@ private:
     struct Clip {
         int w = 0, h = 0;
         bool sixteen = false;
+        // True when the samples are BLOCK replicas: GR / DLGR copy one index per
+        // canvas pixel but a block is 7 px wide and 4 rows tall, so any geometry
+        // op has to work on the block grid (rotateClipCW's `blockMode`). DHGR
+        // clips carry one sample per drawable pixel and must NOT. All three
+        // modes are `sixteen`, so the flag cannot be derived from that, and the
+        // clip outlives the mode that made it: taking `blockMode` from the
+        // CURRENT mode ran the wrong branch on a clip copied in the other one
+        // (bug hunt #17).
+        bool blockMode = false;
         std::vector<HgrColor> px;    // HGR logical colours (sixteen == false)
         std::vector<int8_t> idx;     // 16-colour indices  (sixteen == true)
     };
@@ -349,7 +358,12 @@ private:
     void applyIdxPlot(int x, int y, int colorIndex);
     // True when the clipboard content can paste into the current mode.
     bool clipUsableHere() const {
-        return clip.w > 0 && clip.sixteen == sixteenMode();
+        // Same colour space AND the same sample geometry: a GR/DLGR clip's
+        // samples are 7x4 block replicas and a DHGR clip's are single pixels,
+        // and all three modes are `sixteen`, so matching only on that let a
+        // block clip paste (and rotate) as a per-pixel one (bug hunt #17).
+        return clip.w > 0 && clip.sixteen == sixteenMode() &&
+               clip.blockMode == (grMode || dlgrMode);
     }
     // GR (lo-res) variants: map the 280×192 canvas pixel to a 40×48 block. In GR
     // mode applyPlot routes here; HgrColor::Black erases (colour 0), anything else

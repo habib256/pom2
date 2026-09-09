@@ -132,12 +132,38 @@ std::string lowerExtension(const std::string& path)
 
 struct PcmDurationDecoder {
     uint32_t sampleRate = 0;
+    // Comparator threshold. Zero is the ideal-signal answer and stays the
+    // default for the streamed (mp3/ogg/flac) path, which cannot pre-measure
+    // the file. A caller that HAS the whole waveform in hand (loadWavTape,
+    // pcmToDurations) sets the DC average here: a line-in capture of a real
+    // tape rides on the sound card's DC bias, and when that bias exceeds the
+    // signal amplitude a sign-only detector sees zero zero-crossings — the
+    // tape "loads" with one transition and plays silence, with loadTape
+    // returning true and no error to show for it.
+    float threshold = 0.0f;
     bool foundSignal = false;
     bool initialLevel = false;
     bool currentLevel = false;
     uint64_t heldSamples = 0;
     std::vector<uint32_t> durations;
 };
+
+/// Mean of the samples, clamped so it can never sit outside the band the
+/// signal actually occupies (a threshold at or beyond the peak would turn a
+/// valid waveform into one flat segment). Returns 0 for an empty span.
+float pcmDcThreshold(const std::vector<float>& mono)
+{
+    if (mono.empty()) return 0.0f;
+    long double sum = 0.0L;
+    float peak = 0.0f;
+    for (float v : mono) {
+        sum += v;
+        peak = std::max(peak, std::fabs(v));
+    }
+    const float mean = static_cast<float>(sum / static_cast<long double>(mono.size()));
+    const float limit = peak * 0.9f;
+    return std::max(-limit, std::min(limit, mean));
+}
 
 bool emitPcmDuration(PcmDurationDecoder& d, std::string& error,
                      size_t maxTransitions)
@@ -159,7 +185,7 @@ bool consumePcm(PcmDurationDecoder& d, const float* samples, size_t count,
                 std::string& error, size_t maxTransitions)
 {
     for (size_t i = 0; i < count; ++i) {
-        const float sample = samples[i];
+        const float sample = samples[i] - d.threshold;
         if (!d.foundSignal) {
             if (sample == 0.0f) continue;
             d.foundSignal = true;
@@ -585,6 +611,19 @@ uint8_t CassetteDevice::toggleOutput()
                 queueAudioSegment(clamped, outputLevel);
             }
         }
+    } else if (recordedDurations.empty()) {
+        // No time has elapsed since the recording baseline, so this toggle
+        // has no segment to emit — and that is the NORMAL case, because
+        // beginRecordingIfNeeded() above sets the baseline to `currentCycle`
+        // when the capture auto-starts on the very first $C020 access.
+        // `recordedInitialLevel` names the level of durations[0]; leaving it
+        // at the PRE-toggle value made that first (and by alternation every
+        // following) segment the inverse of what the line really did, so an
+        // auto-started capture came out 180° out of phase with the same
+        // waveform captured after REC (armRecording, which sets the baseline
+        // before any toggle and is correct). Roll the baseline level forward
+        // with the flip instead.
+        recordedInitialLevel = !outputLevel;
     }
 
     lastOutputToggleCycle = currentCycle;
@@ -854,18 +893,42 @@ bool CassetteDevice::loadWavTape(const std::string& path)
         const uint8_t* chunk = bytes.data() + offset;
         const uint32_t chunkSize = readLe32(chunk + 4);
         offset += 8;
-        if (chunkSize > bytes.size() - offset) break;
-        if (std::memcmp(chunk, "fmt ", 4) == 0 && chunkSize >= 16) {
+        const size_t avail = bytes.size() - offset;
+        const bool isData = std::memcmp(chunk, "data", 4) == 0;
+        // A `data` header claiming more bytes than the file holds is the
+        // normal shape of BOTH a truncated recording and every WAV a writer
+        // streamed to a pipe (it never seeks back to patch the placeholder
+        // size). Refusing the whole tape there threw away a perfectly
+        // readable waveform and blamed it on a "missing data chunk"; decode
+        // what is actually present instead. Any OTHER over-long chunk is
+        // still a stop: we cannot know where the next header begins.
+        if (chunkSize > avail && !isData) break;
+        const uint32_t usable =
+            static_cast<uint32_t>(std::min<size_t>(chunkSize, avail));
+        if (std::memcmp(chunk, "fmt ", 4) == 0 && usable >= 16) {
             audioFormat   = readLe16(bytes.data() + offset + 0);
             channels      = readLe16(bytes.data() + offset + 2);
             sampleRate    = readLe32(bytes.data() + offset + 4);
             bitsPerSample = readLe16(bytes.data() + offset + 14);
-        } else if (std::memcmp(chunk, "data", 4) == 0) {
+            // WAVE_FORMAT_EXTENSIBLE ($FFFE) is what ffmpeg, Audacity and
+            // every Windows capture app emit for float32, for >2 channels
+            // and whenever a channel mask is written — the real encoding
+            // lives in the first two bytes of the 16-byte SubFormat GUID
+            // (RFC/Microsoft "WAVEFORMATEXTENSIBLE", fmt chunk ≥ 40 bytes).
+            // Reading only wFormatTag rejected those files outright.
+            static const uint8_t kGuidTail[14] = {
+                0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00,
+                0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 };
+            if (audioFormat == 0xFFFE && usable >= 40 &&
+                std::memcmp(bytes.data() + offset + 26, kGuidTail, 14) == 0) {
+                audioFormat = readLe16(bytes.data() + offset + 24);
+            }
+        } else if (isData) {
             dataChunk = bytes.data() + offset;
-            dataSize  = chunkSize;
+            dataSize  = usable;
         }
-        const size_t padded = static_cast<size_t>(chunkSize) + (chunkSize & 1u);
-        if (padded > bytes.size() - offset) break;
+        const size_t padded = static_cast<size_t>(usable) + (usable & 1u);
+        if (padded > avail) break;
         offset += padded;
     }
     if (!dataChunk || channels == 0 || sampleRate == 0) {
@@ -890,11 +953,7 @@ bool CassetteDevice::loadWavTape(const std::string& path)
     }
 
     const size_t frames = dataSize / (bytesPerSample * channels);
-    PcmDurationDecoder decoded;
-    decoded.sampleRate = sampleRate;
-    decoded.durations.reserve(std::min<size_t>(frames / 16,
-                                               kMaxRecordedTransitions));
-    for (size_t f = 0; f < frames; ++f) {
+    const auto frameSample = [&](size_t f) -> float {
         float mixed = 0.0f;
         for (uint16_t ch = 0; ch < channels; ++ch) {
             const uint8_t* p = dataChunk + (f * channels + ch) * bytesPerSample;
@@ -904,7 +963,35 @@ bool CassetteDevice::loadWavTape(const std::string& path)
             else if (audioFormat == 3 && bitsPerSample == 32) std::memcpy(&v, p, 4);
             mixed += v;
         }
-        const float mono = mixed / static_cast<float>(channels);
+        return mixed / static_cast<float>(channels);
+    };
+
+    PcmDurationDecoder decoded;
+    decoded.sampleRate = sampleRate;
+    // DC pass. Cheap (one linear scan, no allocation) and it is what lets a
+    // real line-in rip decode: the sound card's bias moves the whole
+    // waveform off zero, and past |bias| > amplitude a sign-only comparator
+    // finds no crossings at all. See pcmDcThreshold — the value is clamped
+    // inside the signal's own band, so a clean file keeps threshold ≈ 0 and
+    // decodes exactly as before.
+    {
+        long double sum = 0.0L;
+        float peak = 0.0f;
+        for (size_t f = 0; f < frames; ++f) {
+            const float v = frameSample(f);
+            sum += v;
+            peak = std::max(peak, std::fabs(v));
+        }
+        if (frames > 0) {
+            const float mean = static_cast<float>(sum / static_cast<long double>(frames));
+            const float limit = peak * 0.9f;
+            decoded.threshold = std::max(-limit, std::min(limit, mean));
+        }
+    }
+    decoded.durations.reserve(std::min<size_t>(frames / 16,
+                                               kMaxRecordedTransitions));
+    for (size_t f = 0; f < frames; ++f) {
+        const float mono = frameSample(f);
         if (!consumePcm(decoded, &mono, 1, lastError,
                         kMaxRecordedTransitions)) return false;
     }
@@ -924,6 +1011,7 @@ bool CassetteDevice::pcmToDurations(const std::vector<float>& mono,
     if (sampleRate == 0) { outErr = "Audio file has an invalid sample rate"; return false; }
     PcmDurationDecoder decoded;
     decoded.sampleRate = sampleRate;
+    decoded.threshold  = pcmDcThreshold(mono);
     if (!consumePcm(decoded, mono.data(), mono.size(), outErr,
                     kMaxRecordedTransitions) ||
         !finishPcm(decoded, outErr, kMaxRecordedTransitions)) return false;
