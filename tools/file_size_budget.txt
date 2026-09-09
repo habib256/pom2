@@ -236,8 +236,14 @@
 #   src/ImageWriter.cpp          2764 -> 2798 (+34)  the paper-tray rules said
 #     once at each of the three sites: Clear all wipes the platen before the
 #     power cycle, and a data-stream form feed ejects on every head.
+# 2026-09-09 (bug hunt #16): one ceiling raised for the weak-zone model —
+# MAME's 4 us / 50 % pulse train across the whole erased stretch, hashed per
+# revolution, replacing the single blip per revolution — with the why next
+# to it. Still the same seam owed: DiskImage.cpp's flux/WOZ half is a TU of
+# its own waiting to happen.
+#   src/DiskImage.cpp            3109 -> 3154 (+45)
 src/Apple2Display.cpp                    2522
-src/DiskImage.cpp                        3109
+src/DiskImage.cpp                        3154
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
 src/Memory.cpp                           2644

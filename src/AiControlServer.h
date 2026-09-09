@@ -33,8 +33,18 @@
 //   POST /reset               → body {"kind":"soft|hard|cold"} (default hard)
 //   GET  /cpu                 → CPU register dump
 //   POST /cpu                 → body {"pc":?, "a":?, "x":?, "y":?} — set regs
-//   GET  /mem?addr=N&len=N    → {"addr":N,"data":"FFEE..."} (hex, len ≤ 4096)
-//   POST /mem?addr=N&bank=main|aux → body {"data":"FFEE..."} — bulk write (RAM)
+//   GET  /mem?addr=N&len=N[&bank=main|aux|cpu]
+//                             → {"addr":N,"bank":"…","data":"FFEE…"} (hex, len ≤ 4096)
+//                             main = the raw main 64 KiB array (default),
+//                             aux  = the //e aux / active RamWorks bank,
+//                             cpu  = what the 6502 would fetch right now
+//                                    (ALTZP/RAMRD/80STORE/Language Card
+//                                    resolved) — the view the Debugger panel
+//                                    and the Memory viewer show.
+//                             An unknown bank is a 400, never a silent "main".
+//   POST /mem?addr=N[&bank=main|aux] → body {"data":"FFEE…"} — bulk write (RAM
+//                             below $C000 only; a write is bank-explicit, so
+//                             `cpu` is refused with a 400)
 //   POST /keyboard            → body {"text":"..."} or {"raw":"..."} — paste
 //   POST /disk                → body {"slot":6,"drive":0,"path":"..."} — insert
 //   POST /eject               → body {"slot":6,"drive":0} — eject

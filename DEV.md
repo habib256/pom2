@@ -1811,6 +1811,36 @@ phoneme speech synth, shared chip model used by both
 `MockingboardCard` `Variant::SoundII` (chip at `$Cs40-$Cs44`,
 A/!R wired to VIA1.CA1).
 
+**Every phoneme played the sound two codes higher** *(2026-09-09, bug
+hunt #16)*. `Ssi263PhonemeData.cpp`'s table is AppleWin's
+`g_nPhonemeInfo[62]` byte for byte, and AppleWin indexes it by **code −
+2** (`SSI263::Play`: code 0 is PA, the pause; code 1 maps onto entry 0 —
+"missing this sample"; everything else `-= 2`). `fillAudio` indexed it by
+the raw code, so all 63 speaking codes rendered the wrong entry, `$00` —
+the pause a driver emits between words — rendered `$02`'s PCM at RMS
+0.19, and `$3E`/`$3F` fell off the table and were silent. `phonemePcmIndex`
+is the map now (`ssi263_phoneme_map`). The same pin covers **FILFREQ's
+decode**: the chip decodes it on A2 alone, so registers 5-7 alias it
+(AppleWin's `default:` under `SSI_FILFREQ`), and POM2 dropped those writes
+— a Sound II driver writing the `$FF` silence sentinel to `$Cs45-$Cs47`
+was ignored. And the shared PSG synth seeded `noiseOut` to 0 while MAME
+reads `m_rng & 1` with `m_rng` seeded to 1: the noise output stayed LOW
+for up to 477 µs after every /RESET strobe, which music drivers issue on
+every silence, so a drum hit fired right after lost the front of its
+attack (`ay_noise_reset_state`). The rest of the AY was diffed against a
+MAME-verbatim reference and agrees: all 16 envelope shapes, the LFSR's
+first 1 024 outputs and its 131 071 period, tone at period 0, all 64 R7
+mixer values, the read masks byte for byte, the volume table within 1 dB,
+the band-limiting budget, the stereo fold-down. Open, with the numbers in
+TODO: the "AppleWin parity" duration formula `(16-rate)*4096/1023*(4-dur)`
+is a mis-citation (it lives in a `LOG_SSI263B` debug line; AppleWin's real
+duration is the PCM length, and DUR scales it as 1/(DUR+1)); the power-on
+state differs from AppleWin's observed `$C0`/silence (a detection routine
+that powers up with a single CTL=0 and waits for the IRQ hangs); the
+`EchoPlusTMS5220Card` address map is wrong against MAME's own
+`a2bus_echoplus_device`; the Phasor carries no SSI263 where the real card
+has two.
+
 **No MAME reference**: MAME does NOT implement the SSI263 (verified
 2026-05-27 — no `ssi263*` file in `src/devices/sound`). The canonical
 reference is AppleWin `source/SSI263.cpp`. POM2's chip emulation is
@@ -3072,11 +3102,40 @@ write must not be fed invented transitions.
 `DiskImage.cpp:1701`) the real head's AGC hunts and produces bits that differ
 per revolution — which is exactly what a weak-bit copy protection measures.
 POM2 answered deterministically, so those protections passed or failed the
-same way for ever. `getNextTransition` now draws **one hash-seeded blip per
-zone per revolution** inside such a gap (`:1799-1806`, span
-`kWeakBlipSpanLss = 100` ≈ 50 µs). An ordinary GCR surface never reaches the
-threshold — 24 LSS cycles at the standard 4 µs cell — so normal tracks stay
-byte-repeatable, which `diskii_lss_smoke` pins alongside the weak-zone angles.
+same way for ever. `getNextTransition` now serves **MAME's pulse train**
+inside such a gap *(2026-09-09, bug hunt #16 — the first cut drew one
+hash-seeded blip per zone per revolution, which is not what the oracle
+does)*: MAME walks the zone in fixed 4 µs intervals (8 LSS cycles,
+candidate in the middle of each) and returns the first whose hash bit 0 is
+set — a ~50 % density train for the zone's whole length, re-drawn per
+revolution. The single blip left 2 of every 4 revolutions with no
+transition at all, and an erased stretch read back as one constant `$80`
+across 4 900 nibble slots, byte-identical on every pass — the opposite of
+a weak bit (33 distinct bytes and 98.9 % of samples differing between two
+revolutions after). The revolution term is `base / period`, not
+`fullRevs`, because `DiskIICard::lssSync` re-bases the anchor every
+revolution and pins `fullRevs` at 0. Still deterministic in (revolution,
+zone, interval), so a rewind re-reads the same surface. An ordinary GCR
+surface never reaches the threshold — 24 LSS cycles at the standard 4 µs
+cell — so normal tracks stay byte-repeatable, which `diskii_lss_smoke` pins
+alongside the weak-zone angles; `diskii_track_reach_weak` pins the train.
+The same pin covers **the head's reach**: `kQuarterTrackMax` ported MAME's
+stepper clamp with the *image's* track count (35 → quarter-track 136)
+where MAME clamps to the *drive's* range (42 tracks for the 5.25" SD
+drive), while `loadWoz` fills all 160 TMAP slots — every quarter-track
+above 136 was loaded and unreachable, and a seek to track 35+ silently
+re-read track 34's address fields. The clamp is `kQuarterTracks - 4`
+(track 39); past a 35-track `.dsk`'s data the expander yields an empty
+stream and the position reads as amplifier noise, which is what the
+surface holds. Cleared with the same probes: all 560 sectors of the DOS
+3.3 master and ProDOS 2.4.3 decode through the phase magnets on both LSS
+gates and both skews, the sector-order sniffs, the `.nib`/CNib2/`.2mg`/
+MacBinary loaders, every WOZ INFO/TMAP/TRKS/CRC/META/FLUX rule, the
+nibblizer's gap and sync layout against Beneath Apple DOS, the cog table,
+the spin-down coast and the empty drive 2. Noted, not changed: `.nib`
+bytes get flat 8-cell timing (no self-sync slip); half-tracks on non-WOZ
+images snap to the lower whole track (AppleWin's rule, not MAME's); a WOZ
+CRC mismatch is refused where AppleWin warns.
 
 **Write framing (non-WOZ).** A nibble store has no angular length, so
 the flux the head lays down is FRAMED back into nibbles exactly as the
@@ -4887,6 +4946,29 @@ deterministic clock. Pinned by `no_slot_clock_smoke`
 
 ### AI control server (`AiControlServer`)
 
+**`GET /mem` takes `bank=cpu`, and an unknown bank is a 400** *(2026-09-09,
+bug hunt #16)*. The read served `auxData()` for exactly `bank=aux` and the
+raw main array for anything else — `bank=lc`, `AUX`, a typo — behind a 200
+naming `main`; and the raw array holds the ROM image at `$D000-$FFFF`, so
+Language-Card RAM, where a //e spends most of its life, had no reachable
+spelling while the Debugger panel and the Memory viewer both listed it
+from `snapshotCpuView`. `bank=cpu` is that view (`peekCpuView`, paging and
+the LC latches resolved, no side effect); `main` and `aux` are byte-for-byte
+unchanged; the POST twin refuses `cpu` because a write is bank-explicit by
+design (bug hunt #7) and refuses any other unknown bank too. Pinned by
+`ai_control_mem_bank`. Cleared in the same pass: the disassembler's
+lengths against the core's PC advance for all 256 opcodes on both cores,
+watchpoints under RMW double accesses and dummy reads (MAME-faithful),
+breakpoints at JMP/IRQ/RTI/BRK targets and on operand bytes, the
+memory-viewer write path across thirteen paging states, `/reset` against
+the reset table, `/speed` bounds, `/disk` and `/eject` committing an
+in-flight burst, the snapshot endpoints' gating, and the rewind scrub.
+Noted, not fixed: `POST /screen.ppm` is answered; `POST /cpu` masks an
+out-of-range `pc`/`p` silently where `/speed` refuses; write watches are
+short-circuited under `flatBus_` while read watches are not; a watchpoint
+during a Step reports `pc=$0000`; a step-over transient survives an
+unrelated stop; `/status`'s `disks` lists the Disk II only.
+
 **Three more from bug hunt #7** *(2026-09-08)*. `POST /mem` stores with
 `writeRamUnchecked` (or into `auxDataMutable()` with `bank=aux`), never
 through `memWrite`: the bus routes to AUX under 80STORE/RAMWRT, so a poke
@@ -4971,7 +5053,7 @@ for the exact JSON shapes):
 |---|---|---|
 | `/status` | GET | profile, cpu_mode, mode, cycles_per_frame, CPU regs, mounted disks |
 | `/cpu` | GET / POST | register dump / set `pc`,`a`,`x`,`y` |
-| `/mem?addr=N&len=N` | GET / POST | hex read (len ≤ 4096) / bulk RAM write |
+| `/mem?addr=N&len=N[&bank=main\|aux\|cpu]` | GET / POST | hex read (len ≤ 4096; `cpu` = the 6502's view) / bulk RAM write (`main`\|`aux` only) |
 | `/reset` | POST | `{"kind":"soft\|hard\|cold"}` — the three verbs in [CLAUDE § Reset](CLAUDE.md#reset-architecture) |
 | `/keyboard` | POST | `{"text":…}` / `{"raw":…}` → the paste queue |
 | `/disk`, `/eject` | POST | insert / eject by `{slot, drive, path}`; the endpoints drive the **primary** (lowest-slot) Disk II — `slot` may be omitted, and when given must match that card's real slot (validated and echoed back; a hard-coded "6" used to touch the slot-5 primary while confirming slot 6) |
@@ -8958,6 +9040,41 @@ turned every push touching `src/` red until someone re-committed 38 MB of
 binaries (`POM2.wasm`: 39 commits, packfile 383 MiB). Both the guard and the
 committed copy are gone; `wasm/` keeps only `shell.html` and `serve.py`, and
 the staged outputs are `.gitignore`d.
+
+**Four things the packaging audit found** *(2026-09-09, bug hunt #16)*.
+(1) Every AppImage, `.deb` and tarball shipped the developer SDK —
+`libpom2_core.a` (55 MB as this tree builds it), `include/pom2/` and the
+CMake package — because a `COMPONENT` only names a subset for
+`--install --component`, it does not keep it out of a plain
+`cmake --install`, and every packager runs the plain form; nothing looked,
+since `--verify` is pointed at `usr/share/POM2`. The four rules carry
+`EXCLUDE_FROM_ALL` now and `sdk_component_excluded` reads the generated
+`cmake_install.cmake` back. (2) The three manifest parsers disagreed on a
+`bar.zip/` *directory* inside `roms/`: `install(DIRECTORY)`'s regex and
+`stage()`'s `find -iname` prune it, but emcc's `--exclude-file` is fnmatch
+on file paths and never sees a folder, so `roms/weird.ZIP/inside.bin`
+shipped in `POM2.data` — the one package never run through `--verify`.
+The WASM link emits the directory form (`<glob>/*`) as well, and
+`bundle_manifest --self-test` asserts both spellings are present. (3)
+`tools/check_workflow_pins.sh` passed a tree with four unpinned
+dependencies: its image regex was anchored at line start, so an image
+that is a key's *value* (`image:`, `BUILDER_IMAGE:` — the shape
+`release.yml` actually uses) was never inspected, it globbed `*.yml` only,
+and a composite `action.yml`'s own `uses:` lines were never scanned. It
+scans every workflow and action in both spellings now and matches images
+anywhere on a line. (4) `stage_data.sh --self-test` planted two files in
+the source tree's `roms/` before arming its cleanup, so a failing or
+interrupted self-test left debris in the repository. And in
+`tests/CMakeLists.txt` the two directory-wide sweeps (SKIP_RETURN_CODE 77,
+`POM2_MEDIA_WRITE_DEFAULT=protected`, the TIMEOUT floor) sat above the
+last sixteen `add_test` calls appended since 2026-09-07, which therefore
+ran with media writable and their own timeouts; the sweeps are the last
+thing in the file under a banner, and `test_property_sweep` reads the
+generated `CTestTestfile.cmake` back so the next append cannot miss them.
+Noted, not fixed: `POM2_CORE_SOURCES` lists three files twice;
+`coverage.sh --update` lowers the floor unconditionally despite its
+header; `check_file_sizes.sh` never sees `.hpp`/`.cc`/`.inl` or anything
+outside `src/` and `tests/`.
 
 ## WebAssembly (browser build)
 

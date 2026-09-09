@@ -129,7 +129,15 @@ struct ChipSynthState {
 
     uint16_t noiseCounter    = 0;
     uint32_t noiseLfsr       = 1;      // MAME ay8910.cpp:1309 reset seed
-    uint8_t  noiseOut        = 0;
+    // MAME reads the AY-3-8910's noise output as `m_rng & 1`
+    // (`ay8910.h:284 noise_output()`, non-expanded branch — `m_noise_out`
+    // is the AY8930-only path), and `ay8910_reset_ym` seeds `m_rng = 1`.
+    // So the noise output is HIGH from the very first base tick after a
+    // reset. Seeding this cache to 0 held the noise channel LOW for the
+    // first 2*NP-1 base ticks after every /RESET strobe (up to 61 ticks =
+    // 477 us at NP=31), clipping the attack of a drum hit fired straight
+    // after the reset a music driver issues at init.
+    uint8_t  noiseOut        = 1;
     uint8_t  noisePrescale   = 0;
 
     // Envelope state machine — verbatim port of MAME `ay8910.h:243-259`
@@ -167,7 +175,7 @@ struct ChipSynthState {
     {
         noiseLfsr     = 1;
         noisePrescale = 0;
-        noiseOut      = 0;
+        noiseOut      = 1;          // = m_rng & 1 with m_rng seeded to 1
         noiseCounter  = 0;
         for (int ch = 0; ch < 3; ++ch) {
             toneCounter[ch] = 0;

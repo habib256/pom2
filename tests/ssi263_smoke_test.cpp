@@ -371,13 +371,23 @@ void testSnapshotClampsPlaybackCursor()
     assert(pd::kPhonemeInfo[shortest].length > 0);
     assert(pd::kPhonemeInfo[longest].length > pd::kPhonemeInfo[shortest].length);
 
+    // A PCM table index is NOT a phoneme code: AppleWin indexes
+    // `g_nPhonemeInfo[]` by code MINUS TWO (`SSI263::Play`), so the code
+    // that plays entry `e` is `e + 2` (see `ssi263_phoneme_map`). Feeding
+    // the raw index as the DURPHON code used to pick a phoneme two
+    // entries away and the "deep cursor onto a short phoneme" premise
+    // silently stopped holding.
+    const int shortCode = shortest + 2;
+    const int longCode  = longest  + 2;
+    assert(shortCode <= 0x3F && longCode <= 0x3F);
+
     // Live chip, mid-way through the LONGEST phoneme.
     Ssi263 live;
     live.reset();
     live.write(Ssi263::REG_CTTRAMP, 0x0F);       // powered up, amp 15
     live.write(Ssi263::REG_RATEINF, 0x00);
     live.write(Ssi263::REG_DURPHON,
-               static_cast<uint8_t>(0x80 | (longest & 0x3F)));
+               static_cast<uint8_t>(0x80 | (longCode & 0x3F)));
     std::vector<float> scratch(pd::kPhonemeInfo[longest].length / 2, 0.0f);
     live.fillAudio(scratch.data(), static_cast<int>(scratch.size()), 22050);
     std::vector<uint8_t> blob;
@@ -393,10 +403,10 @@ void testSnapshotClampsPlaybackCursor()
 
     // Re-point the cursor's PHONEME at the shortest one, offset untouched:
     // the exact mismatch a rewind can hand back.
-    blob[14] = static_cast<uint8_t>(shortest);
+    blob[14] = static_cast<uint8_t>(shortCode);
     blob[15] = blob[16] = blob[17] = 0;
     // Also point DURPHON at it so the restored chip is otherwise coherent.
-    blob[0] = static_cast<uint8_t>(0x80 | (shortest & 0x3F));
+    blob[0] = static_cast<uint8_t>(0x80 | (shortCode & 0x3F));
 
     Ssi263 restored;
     restored.reset();
@@ -412,7 +422,7 @@ void testSnapshotClampsPlaybackCursor()
     ref.write(Ssi263::REG_CTTRAMP, 0x0F);
     ref.write(Ssi263::REG_RATEINF, 0x00);
     ref.write(Ssi263::REG_DURPHON,
-              static_cast<uint8_t>(0x80 | (shortest & 0x3F)));
+              static_cast<uint8_t>(0x80 | (shortCode & 0x3F)));
     std::vector<float> want(N, 0.0f);
     ref.fillAudio(want.data(), N, 22050);
 

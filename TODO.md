@@ -1614,6 +1614,38 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   of the server loop it provokes (2026-09-07 — the loop was paying an
   unbuffered log line and a socket/close per iteration on the CPU worker,
   under `stateMutex`). *1 d.*
+- 🟠 **Bug hunt #16's speech residue** *(2026-09-09; read, not fixed —
+  each a design change, not a patch)*: (1) the SSI263 duration formula
+  `ms = ((16-rate)*4096/1023)*(4-dur)` is a mis-citation — it exists once in
+  AppleWin inside `#if LOG_SSI263B`, a debug line; the real duration is the
+  PCM length (40 / 120 / 153 ms) and `UpdateAccurateLength` scales by
+  1/(DUR+1), the inverse of `(4−DUR)`; at rate 15 / dur 3 POM2 plays 88 of
+  2 656 samples. (2) Power-on state: AppleWin observed `$C0` (mode 11) and
+  FILFREQ silence; POM2 resets to mode 00 = IRQ disabled, so a detection
+  routine that powers up with one CTL=0 and waits for the phoneme IRQ
+  (mb-audit, Willy Byte) hangs — `ssi263_smoke::testResetState` encodes the
+  current values, so this is a ruling; AppleWin also latches `enableInts`
+  on the CTL edge and repeats a finished phoneme with an IRQ each time.
+  (3) `EchoPlusTMS5220Card` contradicts MAME's `a2bus_echoplus_device`:
+  the TMS5220 is at `$C0n0` (idle `$7F`) and the two AYs sit behind a VIA1
+  with PB3/PB4 as chip selects — a card rewrite. (4) The Phasor carries no
+  SSI263 where the real card has two (`$Cn40`/`$Cn20`). *2-3 d for the lot.*
+- 🟡 **Bug hunt #16's tooling residue** *(2026-09-09; read, not fixed)*:
+  `POM2_CORE_SOURCES` lists three files twice; `coverage.sh --update`
+  lowers the floor unconditionally although its header says the floor may
+  only rise; `check_file_sizes.sh` is blind to `.hpp`/`.cc`/`.inl` and to
+  anything outside `src/` + `tests/`. *1 h.*
+- 🟡 **Bug hunt #16's Disk II read residue** *(2026-09-09; read, not
+  fixed)*: `.nib` bytes get flat 8-cell timing with no self-sync slip;
+  half-tracks on non-WOZ images snap to the lower whole track (AppleWin's
+  rule; MAME reads the neighbour's flux mix); a WOZ CRC32 mismatch is
+  refused where AppleSauce/AppleWin warn and load. *2 h.*
+- 🟡 **Bug hunt #16's debugger residue** *(2026-09-09; read, not fixed)*:
+  `POST /screen.ppm` is answered (no method check); `POST /cpu` masks an
+  out-of-range `pc`/`p` silently; write watches are short-circuited under
+  `flatBus_` while read watches are not; a watchpoint hit during a Step
+  reports `pc=$0000`; a step-over transient survives an unrelated stop
+  (MAME drops temporaries); `/status`'s `disks` is Disk-II-only. *2 h.*
 - 🟡 **Bug hunt #15's display residue** *(2026-09-09; read, not fixed)*:
   the II/II+ FLASH range blinks in antiphase with MAME's model::II (and
   with POM2's own //e cursor) — cosmetic; `CharRomDump.h` and DEV say the

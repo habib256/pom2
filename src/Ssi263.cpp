@@ -34,6 +34,33 @@ inline float ampToGain(uint8_t amp4)
     return static_cast<float>(amp4 & 0x0F) / 15.0f;
 }
 
+// SSI263 phoneme CODE ($00-$3F) → index into the 62-entry PCM table.
+//
+// The blob in `Ssi263PhonemeData.cpp` is AppleWin's `g_nPhonemeInfo[62]`
+// byte for byte, and AppleWin indexes it by code MINUS TWO
+// (`SSI263.cpp SSI263::Play`):
+//
+//     if (nPhoneme == 1) nPhoneme = 2;   // "Missing this sample, so map to phoneme-2"
+//     if (nPhoneme == 0) bPause = true;  // PA — silence
+//     else               nPhoneme -= 2;  // "Missing phoneme-1"
+//
+// So code $00 is the PA pause (SILENCE — it is what a speech driver emits
+// between words), code $01 folds onto entry 0, and codes $02..$3F are
+// entries 0..61. Indexing the table by the raw code played every phoneme
+// as the sound two codes higher, turned every pause into an audible
+// vowel, and left codes $3E/$3F silent because they fell off the end of
+// the 62-entry table.
+//
+// Returns -1 for "render silence".
+constexpr int kPhonemePause = -1;
+inline int phonemePcmIndex(int code)
+{
+    code &= 0x3F;
+    if (code == 0) return kPhonemePause;
+    if (code == 1) return 0;
+    return code - 2;
+}
+
 } // namespace
 
 void Ssi263::reset()
@@ -58,8 +85,8 @@ uint8_t Ssi263::peekRegister(uint8_t reg) const
     case REG_INFLECT: return inflect_;
     case REG_RATEINF: return rateInf_;
     case REG_CTTRAMP: return cttrAmp_;
-    case REG_FILFREQ: return filFreq_;
-    default:          return 0xFF;
+    case REG_FILFREQ:
+    default:          return filFreq_;   // A2 alone decodes FILFREQ: 4..7
     }
 }
 
@@ -149,8 +176,17 @@ bool Ssi263::write(uint8_t reg, uint8_t val)
         }
         break;
     }
-    case REG_FILFREQ: filFreq_ = val; break;
-    default: break;
+    case REG_FILFREQ:
+    default:
+        // AppleWin `SSI263.cpp`: `case SSI_FILFREQ: // RegAddr.b2=1 (b1 &
+        // b0 are: don't care)` followed by `default:` — the chip decodes
+        // FILFREQ on A2 alone, so register addresses 4, 5, 6 and 7 all
+        // land on it. Dropping 5-7 meant a Sound II driver writing the
+        // $FF silence sentinel through `$Cs45`/`$Cs46`/`$Cs47` (which
+        // `MockingboardCard::slotRomWrite` forwards as `low8 & 0x07`) was
+        // ignored and the chip kept talking.
+        filFreq_ = val;
+        break;
     }
     return aRequestCleared;
 }
@@ -197,7 +233,11 @@ void Ssi263::fillAudio(float* output, int frameCount, uint32_t sampleRate)
     const uint8_t amp = amplitude();
     if (amp == 0)                 return;
 
-    const int   ph = playbackPhoneme_ & 0x3F;
+    // Phoneme CODE → PCM table index (AppleWin `Play()`; see the mapper).
+    // `kPhonemePause` ($00, the PA phoneme) renders nothing, which is
+    // exactly what summing a silent buffer does.
+    const int   ph = phonemePcmIndex(playbackPhoneme_);
+    if (ph == kPhonemePause)      return;
     if (static_cast<size_t>(ph) >= ssi263_data::kNumPhonemes) return;
     const auto& info = ssi263_data::kPhonemeInfo[ph];
     if (info.length == 0)         return;

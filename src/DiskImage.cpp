@@ -1733,34 +1733,49 @@ namespace {
 // revolution instead of silence —
 //
 //     m_cache_weak_start = m_cache_start_time + 16 µs;
-//     blip = m_cache_weak_start + hash32(hash32(revolution_count) ^ 0x4242
-//                                        ^ weak_start_ticks) % 50000 ns;
+//     interval = (from_when - weak_start) / 4 µs;
+//     for(;;) {
+//         weak_time = weak_start + interval*4 µs + 2 µs;
+//         if (weak_time >= next real transition) break;
+//         if (weak_time > from_when && (hash32(...) & 1)) return weak_time;
+//         ++interval;
+//     }
 //
-// — which is what makes a weak-bit protection read differently on two
+// — a ~50 %-density pulse train at 4 µs spacing for the WHOLE length of the
+// zone, which is what makes a weak-bit protection read differently on two
 // passes over the same surface. Without it the "unreliable" bytes those
 // protections check came back identical every revolution, so the check
 // either always passed or always failed instead of being a coin toss.
 //
 // POM2's flux timeline is LSS cycles (500 ns each, 2 MHz), so 16 µs is 32
-// cycles and MAME's 50 µs blip window is 100. A normal GCR surface never
-// gets here: the widest legal run is a sync $FF's two pad cells, 3 cells =
+// cycles and MAME's 4 µs interval is 8 (fixed — MAME uses wall time here,
+// not the image's optimal_bit_timing). A normal GCR surface never gets
+// here: the widest legal run is a sync $FF's two pad cells, 3 cells =
 // 24 LSS cycles at the standard 4 µs cell.
-constexpr int64_t kWeakGapLss      = 32;    // 16 µs — m_amplifier_freakout_time
-constexpr int64_t kWeakBlipSpanLss = 100;   // 50 µs — MAME's `% 50000` ns
+constexpr int64_t kWeakGapLss  = 32;   // 16 µs — m_amplifier_freakout_time
+/// MAME walks the weak zone in FIXED 4 µs steps regardless of the image's
+/// optimal_bit_timing (`attotime::from_usec(4)` / `as_ticks(250000)`), and
+/// places each candidate in the MIDDLE of its interval
+/// (`from_ticks(index*2+1, 500000)` = index·4 µs + 2 µs). 4 µs = 8 LSS
+/// cycles here, so the midpoint offset is 4.
+constexpr int64_t kWeakCellLss = 8;    // 4 µs
+constexpr int64_t kWeakHalfLss = 4;    // 2 µs
 
-/// MAME's `hash32(hash32(rev) ^ 0x4242 ^ weak_start)`, reduced to the blip
-/// window. Deterministic in (revolution, angular position), so a rewind
-/// re-reads the same surface the same way while two consecutive revolutions
-/// differ — which is the whole point.
-inline int64_t weakBlipOffset(int64_t revolution, int64_t weakStart)
+/// MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
+/// + interval_index)`, of which only bit 0 is used ("50 % chance of a
+/// transition in this 4 µs interval"). Deterministic in (revolution,
+/// zone, interval), so a rewind re-reads the same surface the same way
+/// while two consecutive revolutions differ — which is the whole point.
+inline uint64_t weakHash(int64_t revolution, int64_t zone, int64_t interval)
 {
     uint64_t h = static_cast<uint64_t>(revolution) * 0x9E3779B97F4A7C15ull;
     h ^= 0x4242ull;
-    h += static_cast<uint64_t>(weakStart) * 0xC2B2AE3D27D4EB4Full;
+    h += static_cast<uint64_t>(zone) * 0xC2B2AE3D27D4EB4Full;
     h ^= h >> 29;
+    h += static_cast<uint64_t>(interval) * 0x9E3779B97F4A7C15ull;
     h *= 0xBF58476D1CE4E5B9ull;
     h ^= h >> 32;
-    return static_cast<int64_t>(h % static_cast<uint64_t>(kWeakBlipSpanLss));
+    return h;
 }
 
 }  // namespace
@@ -1845,12 +1860,42 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
     const int64_t prevPos = (idx == 0) ? (int64_t{f[n - 1]} - period)
                                        : int64_t{f[idx - 1]};
 
-    // Weak zone — see the comment block above this function.
+    // Weak zone — see the comment block above this function. MAME does NOT
+    // serve one blip and then go quiet: `get_next_transition` walks the zone
+    // in 4 µs intervals from `from_when` and returns the first one whose
+    // hash bit is set, i.e. a ~50 %-density pulse train for as long as the
+    // zone lasts. Serving a single blip per revolution (and none at all
+    // whenever the caller asked after it had passed — measured: 2 of every 4
+    // revolutions on a one-event track) left the sequencer shifting zeros,
+    // so `lssData` bit 7 never came up and `LDA $C08C,X / BPL -3` starved
+    // over a long unformatted stretch that DOES have flux either side of it
+    // (the kFluxNever / `advanceNoise` rescue only covers a track with NO
+    // flux at all).
     if (nextPos - prevPos >= kWeakGapLss) {
         const int64_t base      = origin + fullRevs * period;
         const int64_t weakStart = base + prevPos + kWeakGapLss;
-        const int64_t blip = weakStart + weakBlipOffset(fullRevs, weakStart);
-        if (blip >= fromLssCycle && blip < base + nextPos) return blip;
+        const int64_t endTime   = base + nextPos;
+        // MAME's first hash input is `m_revolution_count`, which advances
+        // once per revolution. `fullRevs` cannot serve: `DiskIICard::lssSync`
+        // re-bases the drive's anchor forward by whole periods every
+        // revolution (so a period change cannot act retroactively), which
+        // pins `fullRevs` at 0 — the zone would then hash identically on
+        // every pass and the "unreliable" bytes would be perfectly
+        // repeatable, i.e. not weak at all. `base` is the absolute LSS
+        // cycle this revolution started at under BOTH anchoring modes, so
+        // `base / period` is the revolution counter.
+        const int64_t revIndex = base / period;
+        int64_t interval = (fromLssCycle < weakStart)
+                             ? int64_t{0}
+                             : (fromLssCycle - weakStart) / kWeakCellLss;
+        int64_t weakTime = weakStart + interval * kWeakCellLss + kWeakHalfLss;
+        while (weakTime < endTime) {
+            if (weakTime > fromLssCycle
+                && (weakHash(revIndex, prevPos, interval) & 1ull))
+                return weakTime;
+            weakTime += kWeakCellLss;
+            ++interval;
+        }
     }
     return origin + fullRevs * period + nextPos;
 }

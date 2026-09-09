@@ -31,7 +31,22 @@ namespace {
 // hardware varies with the LSS state, but DOS 3.3 / ProDOS only need
 // average-rate accuracy because they re-sync on every D5-AA prologue.
 constexpr int kCyclesPerNibble  = 32;
-constexpr int kQuarterTrackMax  = (DiskImage::kTracks - 1) * 4;  // 136
+// MAME `floppy_image_device::seek_phase_w` clamps the head to
+// `(m_tracks-1)*4`, where `m_tracks` is the DRIVE's mechanical range —
+// 42 for the 5.25" SD drive the Disk II daisy-chains
+// (`imagedev/floppy.cpp`, floppy_525_sd::setup_characteristics) — NOT the
+// 35 tracks a .dsk file happens to carry. POM2 substituted the IMAGE
+// count and parked the head at quarter-track 136 (track 34), while
+// `loadWoz` populates all 160 TMAP slots (up to track 39.75): every
+// quarter-track above 136 was loaded and then unreachable, and a seek to
+// track 35+ silently kept re-reading TRACK 34's address fields instead.
+// Cap instead at the top whole track POM2's quarter-track storage can
+// hold — kQuarterTracks / 4 = 40 tracks — which is the same
+// `(tracks-1)*4` form with the drive's range in it. Past a 35-track
+// .dsk's data `expandTrackBits` yields an empty stream, so those
+// positions read as unformatted read-amplifier noise (`advanceNoise`),
+// which is what that part of the surface actually holds.
+constexpr int kQuarterTrackMax  = DiskImage::kQuarterTracks - 4;  // 156 = track 39
 
 // Default contents of the Apple Disk II P6 PROM (341-0028-A, 16-sector
 // variant) — MAME-layout, indexed by the scrambled 8-bit address scheme

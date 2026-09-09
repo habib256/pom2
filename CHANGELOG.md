@@ -5,6 +5,59 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-09 — Bug hunt #16: speech and the PSG, the debugger, Disk II reads, the tooling
+
+Four Opus hunters on private copies. Same contract.
+
+**Every SSI263 phoneme played the sound two codes higher.** The phoneme
+table is AppleWin's byte for byte, and AppleWin indexes it by code minus
+two with code zero as the pause; POM2 indexed it by the raw code, so all
+63 speaking codes rendered the wrong sound, the pause between words was
+audible and the last two codes were silent — on the Echo+ and the
+Mockingboard Sound II alike (`ssi263_phoneme_map`). The chip's filter
+register is decoded on one address line, so registers 5-7 alias it;
+POM2 dropped those writes, including the silence sentinel. And the shared
+PSG synth's noise output sat low for up to 477 µs after every /RESET
+where MAME's starts high, clipping the attack of a drum hit fired right
+after (`ay_noise_reset_state`). The rest of the AY — envelopes, LFSR,
+mixer, masks, volume table — was diffed against a MAME-verbatim reference
+and agrees. Four speech-model divergences are filed in TODO with numbers.
+
+**Every package shipped the developer SDK, and sixteen tests ran outside
+the sweeps.** A `COMPONENT` does not keep an install rule out of a plain
+`cmake --install`, which every packager runs, so each AppImage, `.deb` and
+tarball carried 55 MB of `libpom2_core.a` and headers; the four rules are
+`EXCLUDE_FROM_ALL` (`sdk_component_excluded`). The two directory-wide
+ctest sweeps — skip code, protected media, timeout floor — sat above the
+sixteen tests appended since 2026-09-07, which ran with media writable;
+they are last in the file now and `test_property_sweep` reads the
+generated test list back. Also: the WASM bundle shipped a `foo.zip/`
+folder the two other parsers prune; the workflow-pin checker missed an
+image given as a key's value, `.yaml` workflows and composite actions;
+the manifest self-test left debris in `roms/` on failure.
+
+**The Disk II head stopped at track 34, and an erased stretch read as a
+constant byte.** The stepper clamp was ported with the image's 35-track
+count where MAME clamps to the drive's mechanical range, while the WOZ
+loader fills all 40 tracks — a seek to track 35 and beyond silently
+re-read track 34 under the wrong number. And the weak-zone model served
+one hash-drawn blip per revolution where MAME serves a 4 µs pulse train at
+50 % density for the zone's whole length: an erased stretch came back as
+one byte, identical on every pass, the opposite of the coin toss a
+weak-bit protection measures. Both fixed (`diskii_track_reach_weak`); all
+560 sectors of DOS 3.3 and ProDOS decode through the phase magnets on
+both LSS gates, and every loader and WOZ rule was cleared with probes.
+
+**The control server's `/mem` could not read Language-Card RAM and
+guessed on an unknown bank.** The read served the raw main array, which
+holds the ROM image above `$D000`, for every `bank` value but `aux` — so
+an agent's view of `$D000` disagreed with the Debugger panel's with
+nothing said, and a typo in the bank name was answered from `main` behind
+a 200. `bank=cpu` reads the 6502's own view now and an unknown bank is a
+400; a write stays bank-explicit (`ai_control_mem_bank`). The
+disassembler, watchpoints, breakpoints, the memory-viewer write path and
+the other endpoints were cleared with probes.
+
 ## 2026-09-09 — Bug hunt #15: the painters, the 3.5" codec, the printer, the host layer
 
 Four Opus hunters, working on private copies of the sources this time so

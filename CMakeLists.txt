@@ -1085,6 +1085,17 @@ if(EMSCRIPTEN)
             endif()
         endforeach()
         list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_ci_glob}")
+        # …and the DIRECTORY form. emcc's --exclude-file is fnmatch against the
+        # full path of each FILE the packager walked, so `*.[zZ][iI][pP]` only
+        # ever sees a file whose own name ends in .zip — a `weird.ZIP/` FOLDER
+        # inside roms/ walked straight through and its contents shipped in
+        # POM2.data. Both the other consumers prune it (install(DIRECTORY)'s
+        # EXCLUDE'd REGEX applies to directories, and stage()'s `find -depth
+        # -iname` has no -type f), and packaging/bundle.manifest states the
+        # rule outright: "a `Foo.ZIP` file or a `bar.zip/` folder are the same
+        # leak as `foo.zip`". Measured 2026-09-09: roms/weird.ZIP/inside.bin
+        # SHIPPED in the browser bundle and was pruned by the other two.
+        list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_ci_glob}/*")
     endforeach()
     # Same for the deny list: a preloaded `dir` is the working tree, so a
     # denied folder that ended up inside roms/ would be downloaded by every
@@ -1385,18 +1396,34 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+# EXCLUDE_FROM_ALL on all four: a COMPONENT alone only says which subset
+# `--install --component pom2_core_sdk` delivers — it does NOT keep the subset
+# out of a plain `cmake --install`, which installs every component. Every
+# packager runs the plain form (packaging/linux/build_appimage.sh:70,
+# build_dist.sh:99 and :142, packaging/raspberry/build_in_bookworm_pi.sh:254,
+# and CPack for the .deb/.tar.gz), so until 2026-09-09 the AppImages, the .deb
+# and the tarball all shipped usr/lib/libpom2_core.a — 55 MB as this tree
+# builds it — plus usr/include/pom2/ and usr/lib/cmake/pom2_core/. Nothing
+# noticed: `stage_data.sh --verify` is pointed at usr/share/POM2 and never
+# looks at usr/lib, and the AppImage verify step greps usr/lib for graphics
+# drivers only. EXCLUDE_FROM_ALL keeps the developer SDK on the
+# `--component pom2_core_sdk` path it was written for — which is the path
+# tests/pom2_core_sdk_consumer_test.cmake:16 already takes.
 install(TARGETS pom2_core
         EXPORT pom2_coreTargets
         COMPONENT pom2_core_sdk
+        EXCLUDE_FROM_ALL
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/pom2
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        COMPONENT pom2_core_sdk)
+        COMPONENT pom2_core_sdk
+        EXCLUDE_FROM_ALL)
 install(EXPORT pom2_coreTargets
         FILE pom2_coreTargets.cmake
         NAMESPACE POM2::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_core
-        COMPONENT pom2_core_sdk)
+        COMPONENT pom2_core_sdk
+        EXCLUDE_FROM_ALL)
 
 configure_package_config_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/pom2_coreConfig.cmake.in
@@ -1410,7 +1437,8 @@ install(FILES
             ${CMAKE_CURRENT_BINARY_DIR}/pom2_coreConfig.cmake
             ${CMAKE_CURRENT_BINARY_DIR}/pom2_coreConfigVersion.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_core
-        COMPONENT pom2_core_sdk)
+        COMPONENT pom2_core_sdk
+        EXCLUDE_FROM_ALL)
 
 add_library(pom2_core_test STATIC ${POM2_CORE_SOURCES})
 target_include_directories(pom2_core_test PUBLIC

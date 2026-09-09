@@ -248,8 +248,16 @@ case "${1:-}" in
             # And staging must PRUNE both, not merely report them afterwards.
             SRC_UP="$REPO_ROOT/$FIRST_DIR/.pom2-selftest-$UPPER_LEAF"
             SRC_DIR="$REPO_ROOT/$FIRST_DIR/.pom2-selftest-$DIR_LEAF"
-            : > "$SRC_UP"; mkdir -p "$SRC_DIR"
             TMP2="$(mktemp -d)"
+            # These two are planted in the SOURCE TREE — stage() copies the
+            # working tree, so there is no other way to prove it prunes them.
+            # Arm the cleanup BEFORE creating them: stage() reports a missing
+            # asset through die(), which exits, and the trap set at the top of
+            # this branch removed only $TMP — so a failing or interrupted
+            # self-test left `roms/.pom2-selftest-*` behind in the repository.
+            # The `bundle_manifest` ctest runs this with cwd = the source tree.
+            trap 'rm -rf "$TMP" "$TMP2" "$SRC_UP" "$SRC_DIR"' EXIT
+            : > "$SRC_UP"; mkdir -p "$SRC_DIR"
             stage "$TMP2" >/dev/null
             rm -f "$SRC_UP"; rm -rf "$SRC_DIR"
             if [ -e "$TMP2/$FIRST_DIR/.pom2-selftest-$UPPER_LEAF" ] \
@@ -259,6 +267,24 @@ case "${1:-}" in
             fi
             rm -rf "$TMP2"
             log "OK: stage() prunes denyglob matches, files and directories"
+
+        # THE THIRD PARSER. stage() and CMake's install() rules both prune a
+        # `bar.zip/` DIRECTORY (proved just above, and by install(DIRECTORY)'s
+        # EXCLUDE'd REGEX, which CMake applies to directories as well as to
+        # files). emcc does NOT: --exclude-file is fnmatch against the full
+        # path of each FILE the packager walked, so `*.[zZ][iI][pP]` never sees
+        # a folder. Measured 2026-09-09: roms/weird.ZIP/inside.bin SHIPPED in
+        # POM2.data while both other consumers dropped it. The manifest calls
+        # the two shapes the same leak, so all three consumers have to spell
+        # it — and nothing else checks the WASM leg, which is never run through
+        # --verify, only size-bounded at 60 MB.
+        if [ -f "$REPO_ROOT/CMakeLists.txt" ]; then
+            grep -q -- 'exclude-file ${_pom2_ci_glob}"' "$REPO_ROOT/CMakeLists.txt" \
+                || die "self-test: CMakeLists.txt emits no FILE form of the denyglob --exclude-file patterns"
+            grep -q -- 'exclude-file ${_pom2_ci_glob}/\*"' "$REPO_ROOT/CMakeLists.txt" \
+                || die "self-test: CMakeLists.txt emits no DIRECTORY form of the denyglob --exclude-file patterns -- a 'foo.zip/' folder inside roms/ would ship in POM2.data"
+            log "OK: the WASM leg excludes denyglob matches as files AND as directories"
+        fi
         fi
 
         # A payload dir holding nothing but its README must FAIL: that is a

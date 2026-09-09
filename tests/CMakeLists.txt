@@ -7614,49 +7614,6 @@ add_test(NAME mockingboard_t1_irq_phase COMMAND test_mockingboard_t1_irq_phase)
 set_tests_properties(mockingboard_t1_irq_phase PROPERTIES TIMEOUT 5)
 
 
-# ─── Skip semantics, applied to every test above ──────────────────────────
-# A test that cannot find its fixture must report SKIPPED, not PASSED. Before
-# this, only the two Tom Harte suites carried SKIP_RETURN_CODE and ~57 other
-# call sites did `printf("SKIP …"); return 0;` — so a missing ROM or disk image
-# produced a green "Passed 0.00 sec" line for a binary that had verified
-# nothing. That is exactly the failure mode TODO.md's honesty gate is about,
-# and it is the reason five fixture-path regressions went unnoticed for months.
-#
-# The convention is now uniform: 77 means "skipped", every other non-zero value
-# means "failed". Applied here as a directory-wide sweep rather than test by
-# test so a NEW add_test() cannot forget it.
-get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
-if(_pom2_all_tests)
-    set_tests_properties(${_pom2_all_tests} PROPERTIES SKIP_RETURN_CODE 77)
-    # Media are writable by default in the product (MediaWritePolicy.h), but
-    # dozens of tests boot the TRACKED images under disks_5.4/, disks_3.5/
-    # and hdv/, and the Disk II / SmartPort units commit dirty media in their
-    # destructors — the first writable full run rewrote a tracked 2MG with a
-    # ProDOS boot's block updates. The suite therefore runs write-protected;
-    # `media_write_default` clears the variable and pins the real default.
-    foreach(_pom2_t IN LISTS _pom2_all_tests)
-        set_property(TEST ${_pom2_t} APPEND PROPERTY ENVIRONMENT
-                     "POM2_MEDIA_WRITE_DEFAULT=protected")
-    endforeach()
-    list(LENGTH _pom2_all_tests _pom2_test_count)
-    message(STATUS "POM2: ${_pom2_test_count} ctest entries registered "
-                   "(SKIP_RETURN_CODE 77 applied to all)")
-endif()
-
-# TIMEOUT floor + scale, applied LAST so it really covers every test (see the
-# note where POM2_TEST_TIMEOUT_FLOOR is defined).
-get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
-foreach(_pom2_t IN LISTS _pom2_all_tests)
-    get_test_property(${_pom2_t} TIMEOUT _pom2_to)
-    if(NOT _pom2_to MATCHES "^[0-9]+$")
-        set(_pom2_to 0)                       # no TIMEOUT set — take the floor
-    endif()
-    if(_pom2_to LESS ${POM2_TEST_TIMEOUT_FLOOR})
-        set(_pom2_to ${POM2_TEST_TIMEOUT_FLOOR})
-    endif()
-    math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
-    set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
-endforeach()
 
 # ─── `make probes` — one command that builds every EXCLUDE_FROM_ALL tool ──
 # The probes are deliberately not ctest tests (see the header of this file):
@@ -7914,6 +7871,130 @@ endif()
 add_test(NAME sony35_write_head COMMAND test_sony35_write_head)
 set_tests_properties(sony35_write_head PROPERTIES TIMEOUT 15)
 
+# ─── AI control server: the /mem bank parameter (bug hunt #16) ────────────
+# `bank` used to be `bank == "aux"` with no else-branch, so every other value
+# was served from the main bank behind a 200 — and `main` is the RAW array, so
+# Language-Card RAM had no reachable spelling at all while the Debugger panel
+# and the Memory viewer showed it at the same address. Adds `bank=cpu`
+# (peekCpuView) and makes an unknown bank a 400. Same link line as
+# test_ai_control_server: the endpoint needs the whole controller graph.
+add_executable(test_ai_control_mem_bank
+    ai_control_mem_bank_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
+    ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_ai_control_mem_bank PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})     # miniaudio.h location for FloppySoundDevice
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ai_control_mem_bank PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ai_control_mem_bank PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ai_control_mem_bank PRIVATE winmm ws2_32)
+endif()
+add_test(NAME ai_control_mem_bank COMMAND test_ai_control_mem_bank)
+set_tests_properties(ai_control_mem_bank PROPERTIES TIMEOUT 15)
+
+# ─── Disk II head reach + weak-zone MAME parity (bug hunt #16) ───────────
+# Two READ-path pins:
+#   1. the head must reach every whole track the WOZ quarter-track map can
+#      carry (40), not stop at the 35-track .dsk count — MAME
+#      `floppy_image_device::seek_phase_w` clamps to (drive tracks - 1) * 4;
+#   2. an erased stretch must read as a weak zone: many distinct bytes and
+#      a DIFFERENT pattern on each revolution (MAME's 4 µs / 50 % pulse
+#      train), while staying deterministic for rewind.
+# Builds its own WOZ1 fixtures in the temp dir, needs no ROM and no media.
+add_executable(test_diskii_track_reach_weak
+    diskii_track_reach_weak_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+)
+target_include_directories(test_diskii_track_reach_weak
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_track_reach_weak PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_track_reach_weak PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_track_reach_weak PRIVATE winmm)
+endif()
+
+add_test(NAME diskii_track_reach_weak COMMAND test_diskii_track_reach_weak)
+set_tests_properties(diskii_track_reach_weak PROPERTIES TIMEOUT 20)
+
+# ─── Two ctest entries that check the build's own contracts (hunt #16) ────
+# sdk_component_excluded: the developer SDK (libpom2_core.a, headers, the
+# CMake package) must stay off a plain `cmake --install` — every packager
+# runs the plain form, and until 2026-09-09 every AppImage, .deb and tarball
+# shipped 55 MB of it. test_property_sweep: reads the GENERATED
+# CTestTestfile back and fails on any entry the directory-wide sweeps at the
+# end of this file missed (a test registered after them).
+add_test(NAME sdk_component_excluded
+         COMMAND ${CMAKE_COMMAND}
+                 -DINSTALLFILE=${CMAKE_BINARY_DIR}/cmake_install.cmake
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckSdkComponentExcluded.cmake)
+add_test(NAME test_property_sweep
+         COMMAND ${CMAKE_COMMAND}
+                 -DCTESTFILE=${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake
+                 -DFLOOR=${POM2_TEST_TIMEOUT_FLOOR}
+                 -DSCALE=${POM2_TEST_TIMEOUT_SCALE}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckTestProperties.cmake)
+
+# ─── SSI263 phoneme map / FILFREQ decode (bug hunt #16) ──────────────────
+# Pins the phoneme CODE -> PCM table INDEX mapping (AppleWin indexes
+# g_nPhonemeInfo[] by code-2, and code $00 is the PA pause = silence) and
+# the SSI263's A2-only FILFREQ decode (registers 4..7 all land on FILFREQ).
+add_executable(test_ssi263_phoneme_map
+    ssi263_phoneme_map_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
+)
+target_include_directories(test_ssi263_phoneme_map PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME ssi263_phoneme_map COMMAND test_ssi263_phoneme_map)
+set_tests_properties(ssi263_phoneme_map PROPERTIES TIMEOUT 20)
+
+# ─── AY-3-8910 noise reset state (bug hunt #16) ──────────────────────────
+# Pins the noise generator's output on the first base tick after a reset
+# against MAME's `noise_output() = m_rng & 1` with `m_rng` seeded to 1.
+# Header-only synth core, so no extra sources.
+add_executable(test_ay_noise_reset ay_noise_reset_state_test.cpp)
+target_include_directories(test_ay_noise_reset PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME ay_noise_reset_state COMMAND test_ay_noise_reset)
+set_tests_properties(ay_noise_reset_state PROPERTIES TIMEOUT 5)
+
 set(POM2_PROBE_TARGETS
     artifact_probe
     c2plus_boot_probe
@@ -7953,3 +8034,56 @@ if(_pom2_probe_present)
     message(STATUS "POM2: ${_pom2_probe_count} probe targets available "
                    "via `make probes`")
 endif()
+
+# ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
+# A directory-wide sweep is only directory-wide if nothing is added after it.
+# Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries
+# registered below the sweeps: eight with a TIMEOUT under the floor, ten with
+# no SKIP_RETURN_CODE, all running with media WRITABLE) tests appended at the
+# bottom of this file silently missed them. `test_property_sweep` reads the
+# generated CTestTestfile back and fails on the first entry these did not
+# reach, so the next append cannot repeat it — but the rule stands: add tests
+# ABOVE this banner.
+# ─── Skip semantics, applied to every test above ──────────────────────────
+# A test that cannot find its fixture must report SKIPPED, not PASSED. Before
+# this, only the two Tom Harte suites carried SKIP_RETURN_CODE and ~57 other
+# call sites did `printf("SKIP …"); return 0;` — so a missing ROM or disk image
+# produced a green "Passed 0.00 sec" line for a binary that had verified
+# nothing. That is exactly the failure mode TODO.md's honesty gate is about,
+# and it is the reason five fixture-path regressions went unnoticed for months.
+#
+# The convention is now uniform: 77 means "skipped", every other non-zero value
+# means "failed". Applied here as a directory-wide sweep rather than test by
+# test so a NEW add_test() cannot forget it.
+get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
+if(_pom2_all_tests)
+    set_tests_properties(${_pom2_all_tests} PROPERTIES SKIP_RETURN_CODE 77)
+    # Media are writable by default in the product (MediaWritePolicy.h), but
+    # dozens of tests boot the TRACKED images under disks_5.4/, disks_3.5/
+    # and hdv/, and the Disk II / SmartPort units commit dirty media in their
+    # destructors — the first writable full run rewrote a tracked 2MG with a
+    # ProDOS boot's block updates. The suite therefore runs write-protected;
+    # `media_write_default` clears the variable and pins the real default.
+    foreach(_pom2_t IN LISTS _pom2_all_tests)
+        set_property(TEST ${_pom2_t} APPEND PROPERTY ENVIRONMENT
+                     "POM2_MEDIA_WRITE_DEFAULT=protected")
+    endforeach()
+    list(LENGTH _pom2_all_tests _pom2_test_count)
+    message(STATUS "POM2: ${_pom2_test_count} ctest entries registered "
+                   "(SKIP_RETURN_CODE 77 applied to all)")
+endif()
+
+# TIMEOUT floor + scale, applied LAST so it really covers every test (see the
+# note where POM2_TEST_TIMEOUT_FLOOR is defined).
+get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_pom2_t IN LISTS _pom2_all_tests)
+    get_test_property(${_pom2_t} TIMEOUT _pom2_to)
+    if(NOT _pom2_to MATCHES "^[0-9]+$")
+        set(_pom2_to 0)                       # no TIMEOUT set — take the floor
+    endif()
+    if(_pom2_to LESS ${POM2_TEST_TIMEOUT_FLOOR})
+        set(_pom2_to ${POM2_TEST_TIMEOUT_FLOOR})
+    endif()
+    math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
+    set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
+endforeach()

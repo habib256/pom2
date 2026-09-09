@@ -1171,9 +1171,36 @@ void AiControlServer::handleMemGet(socket_t fd, const Request& req)
     long addr = -1, len = -1;
     try { addr = std::stol(queryParam(req.query, "addr"), nullptr, 0); } catch (...) {}
     try { len  = std::stol(queryParam(req.query, "len"),  nullptr, 0); } catch (...) {}
-    // Optional `bank` query param: "main" (default) or "aux" — //e aux 64KB.
+    // `bank`: "main" (default, the raw main 64 KiB array), "aux" (the //e aux
+    // bank — the ACTIVE RamWorks bank), or "cpu" (what the 6502 would fetch
+    // right now, paging resolved).
+    //
+    // Two defects behind one parameter, both silent behind a 200:
+    //
+    //   * Anything that was not exactly "aux" fell through to main, so
+    //     `bank=lc`, `bank=AUX` or a typo answered with another bank's bytes.
+    //     Every sibling endpoint rejects an unknown value (`/speed`'s preset,
+    //     `/reset`'s kind); this one guessed.
+    //   * `main` is the raw array, so $D000-$FFFF is ALWAYS the ROM image and
+    //     Language-Card RAM was unreachable — there was no parameter value
+    //     that could reach it. A //e spends most of its life running out of
+    //     LC RAM (ProDOS, Pascal, Applesoft extensions), and the Debugger
+    //     panel and the Memory viewer both show it there (snapshotCpuView),
+    //     so the agent's view and the GUI's view of the same address
+    //     disagreed with nothing to say so. `bank=cpu` is that view:
+    //     `peekCpuView` resolves ALTZP / RAMRD / 80STORE / the LC latches
+    //     with no side effect — it is what the two panels already list from.
     const std::string bank = queryParam(req.query, "bank");
-    const bool useAux = (bank == "aux");
+    enum class Bank { Main, Aux, Cpu };
+    Bank which = Bank::Main;
+    if      (bank.empty() || bank == "main") which = Bank::Main;
+    else if (bank == "aux")                  which = Bank::Aux;
+    else if (bank == "cpu")                  which = Bank::Cpu;
+    else {
+        sendJsonError(fd, 400,
+            "bank must be main|aux|cpu (received \"" + bank + "\")");
+        return;
+    }
     if (addr < 0 || addr >= 0x10000) { sendJsonError(fd, 400, "addr out of range"); return; }
     if (len  < 0 || len  > 4096)     { sendJsonError(fd, 400, "len must be 0..4096"); return; }
     if (addr + len > 0x10000) len = 0x10000 - addr;
@@ -1181,14 +1208,23 @@ void AiControlServer::handleMemGet(socket_t fd, const Request& req)
     std::vector<uint8_t> buf(static_cast<size_t>(len));
     {
         auto st = ctrl_->lockState();
-        const uint8_t* mem = useAux ? st.memory().auxData()
-                                    : st.memory().data();
-        std::memcpy(buf.data(), mem + addr, static_cast<size_t>(len));
+        if (which == Bank::Cpu) {
+            Memory& m = st.memory();
+            for (long i = 0; i < len; ++i)
+                buf[static_cast<size_t>(i)] =
+                    m.peekCpuView(static_cast<uint16_t>(addr + i));
+        } else {
+            const uint8_t* mem = (which == Bank::Aux) ? st.memory().auxData()
+                                                      : st.memory().data();
+            std::memcpy(buf.data(), mem + addr, static_cast<size_t>(len));
+        }
     }
+    const char* bankName = which == Bank::Aux ? "aux"
+                         : which == Bank::Cpu ? "cpu" : "main";
     std::ostringstream oss;
     oss << "{\"addr\":" << addr
         << ",\"len\":" << len
-        << ",\"bank\":\"" << (useAux ? "aux" : "main") << "\""
+        << ",\"bank\":\"" << bankName << "\""
         << ",\"data\":\"" << bytesToHex(buf.data(), buf.size()) << "\"}";
     sendJsonOk(fd, oss.str());
 }
@@ -1218,7 +1254,21 @@ void AiControlServer::handleMemSet(socket_t fd, const Request& req)
     // The same `bank` param the GET twin takes. Without it there was no way
     // to address aux at all, and — worse — the two halves of the endpoint
     // disagreed about where a byte had gone (see the store below).
-    const bool useAux = (queryParam(req.query, "bank") == "aux");
+    // Same validation as the GET twin: an unknown value used to be served as
+    // `main`, so a poke meant for aux landed in main behind a 200 naming the
+    // bank it did NOT write. `cpu` is deliberately NOT accepted here — the
+    // $C000 refusal above means every address is plain RAM, and the whole
+    // point of this endpoint (bug hunt #7) is that a write is bank-EXPLICIT
+    // rather than routed through whatever paging the guest happens to hold.
+    const std::string wbank = queryParam(req.query, "bank");
+    if (!(wbank.empty() || wbank == "main" || wbank == "aux")) {
+        sendJsonError(fd, 400,
+            "bank must be main|aux for a write (received \"" + wbank +
+            "\"); a write is bank-explicit, never routed through the guest's "
+            "paging");
+        return;
+    }
+    const bool useAux = (wbank == "aux");
     size_t written = 0;
     {
         auto st = ctrl_->lockState();
