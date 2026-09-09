@@ -2064,6 +2064,22 @@ Do not re-litigate without re-reading the original comment.
   with the card plugged, turn `crt_effects_enabled` off and look again; a
   window screenshot settles it.
 
+  *Retour A2FC 2026-09-09 :* `--chatmauve` et `--preset iie_unenh` sont pris
+  (`bench/chatmauve.py`, `A2FC_PRESET=iie_unenh` ; toute la suite 6502 passe sur
+  le IIe de 1983). Avec la carte, les cinq variantes rendent ALIEN a l'identique
+  de BASIC et la mire DHGR en seize couleurs, en 0.6.8 comme en 0.7 -- le defaut
+  vu dans l'interface (`DHGR.RAW: not an image`, puis une HGR corrompue) n'est
+  sorti que dans l'interface, une fois sur trois, en 0.6.8 ; jamais en
+  headless, avec ou sans carte. `--chatmauve rvbgraph` refuse de demarrer sur
+  le preset `iie` (code 3 ?), sans message dans le journal.
+
+  **Answered 2026-09-09.** The RVB Graph's settings token is `rvb`
+  (`LeChatMauveCard::variantKey`), so `rvbgraph` was read as the disk
+  positional and the real disk made the parser exit — the bench now takes
+  both spellings. The one-in-three GUI-only failure with the same bytes in
+  RAM and a clean headless render, card or no card, points at the stage
+  after `Apple2Display::render` or at the GUI's timing, not at A2FC.
+
 ## Out of scope
 
 Things we will not do unless explicitly requested + clear ROI.
