@@ -533,6 +533,7 @@ void MainWindow::renderMouseInspectorWindow()
                     mouseSubAppleX, mouseSubAppleY);
         const char* cardName =
             mouseInventory.appleWinPlugged ? "AppleWin HLE (mouseaw)" :
+            mouseInventory.iicPlugged ? "Apple //c IOU (native firmware)" :
             mouseInventory.mamePlugged     ? "MAME-faithful (mouse)" :
                                              "(no card plugged)";
         ImGui::Text("Active card   : %s", cardName);
@@ -577,6 +578,8 @@ void MainWindow::renderMouseInspectorWindow()
                         s.lastCmd, cmdName, s.buffPos, s.dataLen);
             ImGui::Text("PIA latches   : A=0x%02X  B=0x%02X", s.by6821A, s.by6821B);
         }
+    } else if (mouseInventory.iicPlugged) {
+        ImGui::TextWrapped("Native //c IOU mouse: system ROM, edge detection and hardware interrupts.");
     } else if (mouseInventory.mamePlugged) {
         if (ImGui::CollapsingHeader("MAME-faithful — card state",
                                     ImGuiTreeNodeFlags_DefaultOpen)) {

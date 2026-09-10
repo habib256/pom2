@@ -26,6 +26,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 
 namespace pom2 {
 
@@ -247,6 +248,10 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     synth_      = false;
     hostFolder_.clear();
     dirtyBlocks_.assign(blockCount(), false);
+    blockVersions_.assign(blockCount(), 0);
+    ++mountGeneration_;
+    persistenceError_.clear();
+    nextWriteBack_ = {};
     anyDirty_ = false;
     path_     = path;
     loaded_   = true;
@@ -280,6 +285,10 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     wpHeader_   = false;
     hostReadOnly_ = false;
     dirtyBlocks_.assign(blockCount(), false);
+    blockVersions_.assign(blockCount(), 0);
+    ++mountGeneration_;
+    persistenceError_.clear();
+    nextWriteBack_ = {};
     anyDirty_ = false;
     path_     = label;
     loaded_   = true;
@@ -290,6 +299,10 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
 
 void Block512Backing::eject()
 {
+    ++mountGeneration_;
+    blockVersions_.clear();
+    persistenceError_.clear();
+    nextWriteBack_ = {};
     image_.clear();
     headerBytes_.clear();
     dirtyBlocks_.clear();
@@ -322,6 +335,14 @@ bool Block512Backing::saveDirty()
     std::string error;
     std::filesystem::file_time_type stamp{};
     const bool ok = commitWriteBack(std::move(pending), error, &stamp);
+    collectWriteBack();
+    if (ok) {
+        persistenceError_.clear();
+        // The ordered explicit commit supersedes the older background
+        // result even if that worker has not published its return value yet.
+        backgroundGeneration_ = 0;
+        backgroundVersions_.clear();
+    }
     // The medium is STILL MOUNTED here (this is the flush path, not the eject
     // path), and the write-back just rewrote host files. Re-stamp the volume
     // so those files are not "host-newer" on the next flush — otherwise the
@@ -363,6 +384,11 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
         return out;                      // valid = false → nothing to commit
     }
 
+    if (writeBackExecutor_) {
+        out.commitTicket = std::make_shared<CommitTicket>();
+        out.commitTicket->barrier = writeBackExecutor_->reserve(commitTail_);
+        commitTail_ = out.commitTicket->barrier;
+    }
     out.valid      = true;
     out.synth      = synth_;
     out.path       = path_;
@@ -419,6 +445,13 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
                                       std::filesystem::file_time_type* newMountTime)
 {
     if (!pending.valid) return true;
+    // No machine state is accessed here. Serialize full read/modify/rename
+    // transactions in capture order, including the final eject/quit flush.
+    struct Complete {
+        std::shared_ptr<CommitBarrier> barrier;
+        ~Complete() { if (barrier) barrier->complete(); }
+    } complete{pending.commitTicket ? pending.commitTicket->barrier : nullptr};
+    if (complete.barrier) complete.barrier->wait();
 
     if (pending.synth) {
         pom2::ProDOSDecodeResult r = pom2::decodeVolumeToFolder(
@@ -442,6 +475,14 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         markPersistentStateDirty();
         return true;
     }
+
+    // Two mounted backings can name the same file (even via different
+    // paths). Serialize complete host-image transactions, not just rename:
+    // otherwise two workers can each read the old file and lose the other's
+    // disjoint blocks, or collide on the sibling temporary. This mutex is
+    // never used by guest reads/writes or capture; only off-machine file I/O.
+    static std::mutex imageCommitMutex;
+    std::lock_guard<std::mutex> commitLock(imageCommitMutex);
 
     // Rewrite a complete sibling copy, preserving the 2IMG envelope and any
     // trailer.  An in-place series of 512-byte writes could leave the user's
@@ -540,6 +581,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
 
 void Block512Backing::markDirty(uint32_t blk)
 {
+    if (blk < blockVersions_.size()) ++blockVersions_[blk];
     if (blk < dirtyBlocks_.size() && !dirtyBlocks_[blk]) {
         dirtyBlocks_[blk] = true;
         anyDirty_ = true;

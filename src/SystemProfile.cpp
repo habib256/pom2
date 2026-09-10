@@ -169,12 +169,8 @@ const ProfileConfig& cfgAppleIIc()
             BuiltInSlot{"ssc",    "built-in printer port (serial)"}, // sl1
             BuiltInSlot{"ssc",    "built-in modem port (serial)"},   // sl2
             std::nullopt,                                // sl3 (AUX 80-col label)
-            // sl4: AppleWin-style HLE mouse — the real //c on-board mouse
-            // shares the same firmware-visible API as the slot card but the
-            // MAME-fidelity M68705 emulation isn't a meaningful target here
-            // (no replaceable MCU on the //c), so the lighter HLE variant
-            // is the right built-in default.
-            BuiltInSlot{"mouseaw",  "built-in mouse"},   // sl4
+            // IOU hardware; mouse firmware comes from the system ROM.
+            BuiltInSlot{"iicmouse",  "built-in mouse"},   // sl4
             BuiltInSlot{"smartport35", "built-in SmartPort"}, // sl5
             BuiltInSlot{"diskii", "built-in Disk II"},   // sl6
             std::nullopt,                                // sl7
@@ -226,7 +222,7 @@ const ProfileConfig& cfgAppleIIcPlus()
             BuiltInSlot{"ssc",         "built-in printer port (serial)"}, // sl1
             BuiltInSlot{"ssc",         "built-in modem port (serial)"},   // sl2
             std::nullopt,                                          // sl3 (AUX)
-            BuiltInSlot{"mouseaw",     "built-in mouse"},          // sl4
+            BuiltInSlot{"iicmouse",     "IOU mouse (firmware port 7)"},          // sl4
             BuiltInSlot{"smartport35", "built-in SmartPort 3.5\""}, // sl5
             BuiltInSlot{"diskii",      "built-in Disk II (IWM)"},  // sl6
             std::nullopt,                                          // sl7

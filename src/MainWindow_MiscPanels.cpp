@@ -273,6 +273,7 @@ void MainWindow::renderAbstractionPanel()
 
     // ── Input, clocks, printing ─────────────────────────────────────────
     const auto mouseInventory = mouseCoordinator_->capture();
+    row("iicmouse", mouseInventory.iicPlugged ? Live::Active : Live::NotApplicable);
     row("mouse",   mouseInventory.mamePlugged     ? Live::Active : Live::NotPlugged);
     row("mouseaw", mouseInventory.appleWinPlugged ? Live::Active : Live::NotPlugged);
     degradable("clock", plugged("clock"),
@@ -343,7 +344,7 @@ void MainWindow::renderAbstractionPanel()
     auto have = [](const char* rel) {
         return !pom2::findResource(rel).empty();
     };
-    {
+    if (!mouseInventory.iicPlugged) {
         Panel::ToggleState t;
         t.id           = pom2::AbsToggle::MouseCard;
         t.title        = "Mouse Card";

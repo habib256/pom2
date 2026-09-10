@@ -505,6 +505,7 @@ add_executable(test_workstation_card_cardcat
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -713,6 +714,7 @@ add_executable(test_iic_external_smartport
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -960,6 +962,11 @@ set_tests_properties(rewind_delta PROPERTIES TIMEOUT 5)
 add_executable(test_rewind_transport
     rewind_transport_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
@@ -994,6 +1001,11 @@ set_tests_properties(rewind_transport PROPERTIES TIMEOUT 20)
 add_executable(test_ui_worker_contention
     ui_worker_contention_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
@@ -1202,6 +1214,7 @@ add_executable(test_ata_block_device
     ata_block_device_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_ata_block_device PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -1223,6 +1236,7 @@ add_executable(test_cffa_card
     ${CMAKE_SOURCE_DIR}/src/CffaCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_cffa_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -1252,6 +1266,7 @@ add_executable(test_storage_rebuild_persist
     storage_rebuild_persist_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator.cpp
@@ -1263,6 +1278,11 @@ add_executable(test_storage_rebuild_persist
     # controller comes along even for a settings round-trip. That coupling is
     # itself part of why the file had no tests.
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
@@ -1299,6 +1319,7 @@ add_executable(test_hdv_card
     hdv_card_smoke_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
@@ -1328,6 +1349,7 @@ add_executable(test_hdv_mass_storage
     hdv_mass_storage_smoke_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
@@ -1368,6 +1390,7 @@ add_executable(test_media_write_default
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
@@ -1389,6 +1412,7 @@ add_executable(test_hdv_writeback
     hdv_writeback_smoke_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
@@ -1418,6 +1442,7 @@ add_executable(test_hdv_ram_writable
     hdv_ram_writable_smoke_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
@@ -1515,6 +1540,7 @@ set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_prodos_synth_failed_flush
     prodos_synth_failed_flush_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_prodos_synth_failed_flush
@@ -1965,6 +1991,7 @@ set_tests_properties(two_phase_mount PROPERTIES TIMEOUT 30)
 add_executable(test_two_phase_block_mount
     two_phase_block_mount_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_two_phase_block_mount PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2261,6 +2288,7 @@ add_executable(test_smartport_card
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
@@ -2286,6 +2314,7 @@ add_executable(test_iic_onboard_smartport
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -2314,6 +2343,7 @@ add_executable(test_iic_dual_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -2336,6 +2366,7 @@ add_executable(test_smartport_mixed_units
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
@@ -2362,6 +2393,7 @@ add_executable(test_slot_multi_card
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
@@ -2404,6 +2436,7 @@ add_executable(test_total_replay_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2432,6 +2465,7 @@ add_executable(render_total_replay_modes EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2750,6 +2784,7 @@ add_executable(copy2plus_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2821,6 +2856,7 @@ add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2842,6 +2878,7 @@ add_executable(cffa_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/CffaCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3532,6 +3569,7 @@ add_executable(test_extasie_mouse_probe
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
@@ -4237,6 +4275,7 @@ add_executable(test_smartport_write_dispatch
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_smartport_write_dispatch PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4265,6 +4304,7 @@ add_executable(test_smartport_unidisk_entry
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_smartport_unidisk_entry PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4291,6 +4331,7 @@ add_executable(test_smartport_io_error
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_smartport_io_error PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4317,6 +4358,7 @@ add_executable(test_smartport_rom_layout
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
 )
@@ -4344,6 +4386,7 @@ add_executable(test_liron_smartport_dispatch
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
 )
@@ -4491,6 +4534,7 @@ add_executable(test_mouse_card_applewin
     mouse_card_applewin_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_mouse_card_applewin PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4634,6 +4678,7 @@ add_executable(test_slot_config
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
@@ -4989,6 +5034,11 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
@@ -5388,6 +5438,7 @@ set_tests_properties(ssc_keyboard_bridge PROPERTIES TIMEOUT 5)
 # test exercises the full path including the worker thread.
 add_executable(test_ai_control_server
     ai_control_server_smoke_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
@@ -5405,12 +5456,18 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5655,6 +5712,7 @@ add_executable(test_hdv_status_driver
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_hdv_status_driver PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -5688,12 +5746,18 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5982,6 +6046,11 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
@@ -6338,6 +6407,7 @@ add_executable(test_card_snapshot_state
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
@@ -6667,6 +6737,7 @@ add_executable(dix_return_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -6903,6 +6974,11 @@ add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
@@ -7020,6 +7096,7 @@ add_executable(test_fuzz_disk_image
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_fuzz_disk_image PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7032,6 +7109,7 @@ add_executable(test_fuzz_snapshot
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/TranswarpCard.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
@@ -7480,6 +7558,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
@@ -7514,6 +7593,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
@@ -7548,6 +7628,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
@@ -7678,6 +7759,7 @@ add_executable(test_smartport_unit_visibility
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
@@ -7771,6 +7853,7 @@ add_executable(test_block512_notch_flush
     block512_notch_flush_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
@@ -7799,6 +7882,7 @@ add_executable(test_hdv_driver_result
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_hdv_driver_result PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7831,6 +7915,7 @@ add_executable(test_smartport_call_error_isolation
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_smartport_call_error_isolation
@@ -7861,6 +7946,7 @@ add_executable(test_sony35_write_head
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_sony35_write_head PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7891,12 +7977,18 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -8158,6 +8250,27 @@ if(_pom2_probe_present)
     list(LENGTH _pom2_probe_present _pom2_probe_count)
     message(STATUS "POM2: ${_pom2_probe_count} probe targets available "
                    "via `make probes`")
+endif()
+
+if(TARGET pom2_core_test)
+pom2_add_headless_test(test_iic_mouse_firmware
+    NAME iic_mouse_firmware TIMEOUT 15 PORTABLE
+    SOURCES iic_mouse_firmware_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+endif()
+
+if(TARGET pom2_core_test)
+pom2_add_headless_test(test_iic_mouse_lle
+    NAME iic_mouse_lle TIMEOUT 15 PORTABLE
+    SOURCES iic_mouse_lle_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+endif()
+
+if(TARGET pom2_core_test)
+pom2_add_headless_test(test_block_autosave
+    NAME block_autosave TIMEOUT 20 PORTABLE
+    SOURCES block_autosave_test.cpp
+    LINK_LIBRARIES pom2_core_test)
 endif()
 
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════

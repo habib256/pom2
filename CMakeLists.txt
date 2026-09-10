@@ -236,6 +236,8 @@ set(SOURCES
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EmulationController.cpp
+    src/EmulationController_Storage.cpp
+    src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
     src/HdvController_ImGui.cpp
@@ -299,6 +301,7 @@ set(SOURCES
     src/Mockingboard.cpp
     src/MouseCard.cpp
     src/MouseCardAppleWin.cpp
+    src/IIcMouse.cpp
     src/NoSlotClock.cpp
     src/GrapplerCard.cpp
     src/NtscPostProcessor.cpp
@@ -314,6 +317,7 @@ set(SOURCES
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
     src/Block512Backing.cpp
+    src/Block512Backing_WriteBack.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
     src/ResourcePaths.cpp
@@ -427,6 +431,7 @@ set(POM2_DEVICES_SOURCES
     src/Mockingboard.cpp
     src/MouseCard.cpp
     src/MouseCardAppleWin.cpp
+    src/IIcMouse.cpp
     src/PhasorCard.cpp
     src/PrinterCard.cpp
     src/ProDOSHardDiskCard.cpp
@@ -629,6 +634,7 @@ set(POM2_MEDIA_HEADERS
 set(POM2_MEDIA_SOURCES
     src/AtaBlockDevice.cpp
     src/Block512Backing.cpp
+    src/Block512Backing_WriteBack.cpp
     src/Disk35Image.cpp
     src/DiskImage.cpp
     src/ProDOSVolume.cpp
@@ -671,6 +677,8 @@ set(POM2_RUNTIME_SOURCES
     src/AudioDevice.cpp
     src/CharRomCatalog.cpp
     src/EmulationController.cpp
+    src/EmulationController_Storage.cpp
+    src/BlockWriteBackExecutor.cpp
     src/FloppySoundDevice.cpp
     src/FujiNetCardFactory.cpp
     src/FujiNetNetDevice.cpp
@@ -740,6 +748,7 @@ set(HEADERS
     src/EchoPlusCard.h
     src/EchoPlusTMS5220Card.h
     src/EmulationController.h
+    src/BlockWriteBackExecutor.h
     src/FloppySoundDevice.h
     src/FloppySoundSink.h
     src/HdvController_ImGui.h
@@ -759,6 +768,7 @@ set(HEADERS
     src/Mockingboard.h
     src/MouseCard.h
     src/MouseCardAppleWin.h
+    src/IIcMouse.h
     src/NtscPostProcessor.h
     src/Voxel3DRenderer.h
     src/Mat4.h
@@ -1262,6 +1272,8 @@ set(POM2_CORE_SOURCES
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EmulationController.cpp
+    src/EmulationController_Storage.cpp
+    src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
     src/IWMDevice.cpp
@@ -1291,6 +1303,7 @@ set(POM2_CORE_SOURCES
     src/Mockingboard.cpp
     src/MouseCard.cpp
     src/MouseCardAppleWin.cpp
+    src/IIcMouse.cpp
     src/NoSlotClock.cpp
     src/GrapplerCard.cpp
     src/PhasorCard.cpp
@@ -1300,6 +1313,7 @@ set(POM2_CORE_SOURCES
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
     src/Block512Backing.cpp
+    src/Block512Backing_WriteBack.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
     src/ResourcePaths.cpp
@@ -1492,6 +1506,11 @@ add_executable(pom2_headless
     src/DiskImage.cpp
     src/DiskIICard.cpp
     src/EmulationController.cpp
+    src/EmulationController_Storage.cpp
+    src/BlockWriteBackExecutor.cpp
+    src/Block512Backing.cpp
+    src/Block512Backing_WriteBack.cpp
+    src/ProDOSVolume.cpp
     src/IIcExternalSmartPort.cpp
     src/SmartPortBusDevice.cpp
     src/Debugger.cpp

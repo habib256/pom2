@@ -134,7 +134,8 @@ void testMemoryTrailerCarriesIwm()
     // configuration carries — IWM (4-byte length + payload), profile
     // (4 + 0, no //c profile here), the paging/IOU flags (4 + 10), the
     // No-Slot Clock (4 + 0, none wired here) and the two on-board Sony 3.5"
-    // mechanisms (4 + 0 each, no SmartPortHub here).
+    // mechanisms (4 + 0 each, no SmartPortHub here), then the native //c
+    // mouse (4 + 0, no mouse here).
     //
     // The IOU section is 10 bytes since 2026-09-09: intC8Rom, ioudis,
     // vblIrqMask, vblIrqPending, then AN0/AN1/AN2 (AN2 selects the live 4 KB
@@ -148,7 +149,7 @@ void testMemoryTrailerCarriesIwm()
     std::vector<uint8_t> iwmBlob;
     iwm.appendSnapshotState(iwmBlob);
     const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 10)
-                            + (4 + 0) + (4 + 0) + (4 + 0);
+                            + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0);
     pom2::IWMDevice iwm3;
     Memory mem3;
     mem3.setIWM(&iwm3);

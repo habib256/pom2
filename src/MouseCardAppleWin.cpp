@@ -106,6 +106,14 @@ bool MouseCardAppleWin::loadRom(const std::string& slotRomPath)
         return false;
     }
     slotRomLoaded = true;
+    // Identify the 341-0270-C calibration loop before adapting any bytes.
+    constexpr uint8_t calibration[] = {
+        0xAD, 0x19, 0xC0, 0x30, 0xFB,
+        0xAD, 0x19, 0xC0, 0x10, 0xFB,
+        0xAD, 0x19, 0xC0, 0x30, 0xFB, 0xA9, 0x7F,
+    };
+    hasVblCalibration_ = std::memcmp(slotRom.data() + 0x226, calibration,
+                                     sizeof(calibration)) == 0;
     pom2::log().info("MouseAW",
         "Loaded slot ROM " + slotRomPath + " (2048 bytes)");
     return true;
@@ -156,6 +164,21 @@ uint8_t MouseCardAppleWin::slotRomRead(uint8_t low8)
     // AppleWin SetSlotRom: bank = (m_by6821B << 7) & 0x0700. POM2 reads
     // the bank on demand instead of memcpy'ing into peripheral ROM.
     const uint16_t bank = static_cast<uint16_t>((by6821B << 7) & 0x0700);
+    // The //c's forced-INTCXROM punch runs this IIe EPROM in place of
+    // its IOU mouse firmware. INITMOUSE's bank-2 $Cn26-$Cn34 loop polls
+    // VBLBAR, but //c $C019 is a latched VBLINT (MAME apple2e.cpp,
+    // c000_iic_r case 0x19). It hangs at $Cn2B with interrupts disabled:
+    // 816Paint and DeskTop never finish mouse initialisation.
+    // Skip only that calibration wait with JMP $Cn35. The MCU is HLE'd
+    // and its frame period comes from setVblCycles, so no beam measurement
+    // is needed. Keep the remaining INIT command, the original ROM bytes,
+    // and the real //c VBLINT semantics intact. This is a firmware adapter
+    // for the existing //c HLE substitute, not a physical mouse-card quirk.
+    if (iicHost_ && hasVblCalibration_ && bank == 0x200) {
+        if (low8 == 0x26) return 0x4C;
+        if (low8 == 0x27) return 0x35;
+        if (low8 == 0x28) return static_cast<uint8_t>(0xC0 + slot_);
+    }
     return slotRom[static_cast<size_t>(low8) | bank];
 }
 

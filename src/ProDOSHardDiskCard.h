@@ -131,6 +131,9 @@ public:
     /// Persist all dirty 512-byte blocks back to the source file (.hdv/.2mg)
     /// preserving the 2MG container header verbatim, OR for synth volumes,
     /// decode the modified volume back to the host folder.
+    std::vector<pom2::Block512Backing*> blockBackings() override { return {&backing_}; }
+    const pom2::Block512Backing* blockBacking() const override { return &backing_; }
+    pom2::Block512Backing* blockBacking() override { return &backing_; }
     bool saveDirty() override { return backing_.saveDirty(); }
 
     /// Direct backing access for ProDOS volume management features (host-folder

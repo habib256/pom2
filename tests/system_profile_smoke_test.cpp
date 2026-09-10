@@ -501,7 +501,7 @@ void testBuiltInSlots()
                && cfg.builtInSlots[2]->cardKey == "ssc");
         assert(!cfg.builtInSlots[3].has_value());
         assert(cfg.builtInSlots[4].has_value()
-               && cfg.builtInSlots[4]->cardKey == "mouseaw");
+               && cfg.builtInSlots[4]->cardKey == "iicmouse");
         assert(cfg.builtInSlots[5].has_value()
                && cfg.builtInSlots[5]->cardKey == "smartport35");
         assert(cfg.builtInSlots[6].has_value()
@@ -518,7 +518,7 @@ void testBuiltInSlots()
         assert(cfg.builtInSlots[2].has_value()
                && cfg.builtInSlots[2]->cardKey == "ssc");
         assert(cfg.builtInSlots[4].has_value()
-               && cfg.builtInSlots[4]->cardKey == "mouseaw");
+               && cfg.builtInSlots[4]->cardKey == "iicmouse");
         assert(cfg.builtInSlots[5].has_value()
                && cfg.builtInSlots[5]->cardKey == "smartport35");
         assert(cfg.builtInSlots[6].has_value()

@@ -32,6 +32,7 @@
 #include "EmulationController.h"
 #include "Memory.h"
 #include "MouseCardAppleWin.h"
+#include "IIcMouse.h"
 #include "SlotBus.h"
 
 #include <memory>
@@ -197,6 +198,22 @@ int main()
     assert(contains(r.body, "\"btn\":1"));
     r = postMouse("{\"reset\":1}");
     assert(contains(r.body, "\"x\":0") && contains(r.body, "\"y\":0"));
+
+    // The actual //c default is now the IOU, with no EPROM/PIA card.
+    {
+        auto st = ctrl.lockState();
+        st.memory().slotBus().plug(4, std::make_unique<IIcMouse>());
+    }
+    r = postMouse("{\"dx\":2,\"dy\":4,\"btn\":1}");
+    assert(r.status == 200 && contains(r.body, "\"slot\":4"));
+    {
+        auto st = ctrl.lockState();
+        auto* native = dynamic_cast<IIcMouse*>(st.memory().slotBus().peripheral(4));
+        uint8_t out;
+        assert(native && !native->hostDrained());
+        assert(native->iicMouseAccess(0x63, false, false, 0x15, out));
+        assert(out == 0x15); // active-low button reached the hardware input
+    }
 
     srv.stop();
     std::printf("OK ai_mouse_hle_probe\n");

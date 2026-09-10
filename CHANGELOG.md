@@ -5,6 +5,52 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-10 — Background persistence for hard-disk images
+
+HDV, CFFA and SmartPort HDV/2MG images now save dirty blocks in the
+background during a session, including while paused. Previously a guest
+write/read round-trip could succeed while the host file stayed unchanged
+until eject or quit. Writes are batched at roughly one-second intervals;
+file I/O runs outside the machine lock. Per-block versions preserve edits
+made during a commit, and ordered transactions prevent an older autosave
+from overwriting an eject or explicit flush. Failures remain dirty, appear
+in media panels and retry after five seconds.
+
+`POST /disk/sync` waits for the block-image writes captured by the request
+to reach the host file; failures return HTTP 500. `GET /status` adds
+`block_storage` with each image's slot, zero-based bay, path, persistence
+state, pending flag and error. Host-folder sync and floppy policies retain
+their separate behavior. `block_autosave` covers mounted-file persistence,
+concurrent writes, commit ordering, failure/retry, disabled write-back and
+paused HDV/CFFA/SmartPort; `ai_control_server_smoke` checks actual file bytes
+on HTTP success and failure reporting.
+
+## 2026-09-10 — Native //c IOU mouse
+
+The //c family now runs its original mouse firmware over an IOU edge/IRQ
+model ported from MAME. No mouse-card EPROM or firmware patch is used on
+this default path. The //c+ firmware lives at port 7, unlike the //c's port
+4; host input, API responses and the inspector follow that distinction.
+Mouse masks, direction inputs, axis latches and acknowledgement are wired
+through the motherboard switches; VBL remains independent. Snapshots retain
+queued input edges and chip state. `iic_mouse_lle` exercises native ROMs,
+motion/buttons, reset and restore. The earlier calibration bypass remains
+available only in the explicit AppleWin Mouse HLE implementation.
+
+## 2026-09-10 — 816Paint mouse initialisation on //c
+
+816Paint's standard HGR editor and DeskTop could hang at `$C42B` on //c.
+The on-board mouse substitute executes the AppleMouse II EPROM, whose
+INITMOUSE calibration polls the IIe's live `$C019` VBLBAR signal. On //c
+that address is a latched VBLINT flag, so the wait never finishes.
+The //c-family mouse firmware adapter now skips that calibration wait;
+its HLE MCU already receives the profile's frame period. IIe firmware and
+the //c interrupt register retain their original behaviour. The ROM file
+is not modified. `iic_mouse_firmware` executes INITMOUSE/READMOUSE through
+the production factory on IIe, //c ROM 0/255, //c+ and //c PAL, including
+motion, buttons, reset and a pending VBL interrupt. Also verified with the
+actual 816Paint HGR executable from a copy of A2DeskTop-GIST.
+
 ## 2026-09-09 — Bug hunt #17: the cassette, the Workstation Card, the paint editors, the //c
 
 Four Opus hunters on private copies. Same contract.

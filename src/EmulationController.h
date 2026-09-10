@@ -152,6 +152,17 @@ public:
     /// after that).
     void drainDeferredWriteBacks() { writeBackQueue_.drain(); }
 
+    struct BlockPersistence {
+        int slot = 0, bay = 0;
+        std::string path, state, error;
+        bool pending = false;
+    };
+    // These host entry points acquire stateMutex themselves. Synchronization
+    // waits for captured writes outside it; the CPU continues to run.
+    void pollBlockWriteBacks();
+    bool syncBlockMedia(std::string& error);
+    std::vector<BlockPersistence> blockPersistence();
+
     // ─── Cassette transport (forwarded to CassetteDevice under stateMtx) ──
     /// Load / save a tape file. Both do their file work with `stateMtx`
     /// RELEASED (a compressed tape is decoded in full — see the TapeOffBus

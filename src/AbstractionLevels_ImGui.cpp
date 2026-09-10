@@ -303,6 +303,10 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "an MC6821 PIA and quadrature edge generation",
       "Only the PAL16R4 chip-select sequencer is skipped (firmware-invisible).",
       "MouseCard.*" },
+    { "iicmouse", "Input & clocks", "Apple //c IOU mouse", AbsLevel::L1,
+      "Unmodified system ROM over IOU axis/edge/IRQ registers",
+      "MAME input sampling: one X0/Y0 transition per 65 CPU cycles; no MCU or ROM patch.",
+      "IIcMouse.*, Memory.cpp" },
     { "mouseaw", "Input & clocks", "Mouse Card — AppleWin HLE", AbsLevel::H1,
       "Same slot EPROM, but the MCU is a C++ command-byte state machine; the "
       "position is copied from the host delta",

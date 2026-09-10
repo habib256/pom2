@@ -2156,6 +2156,10 @@ StorageCoordinator::captureSmartPortPanel(
         unitSnapshot.writeProtected = unit->isWriteProtected();
         unitSnapshot.fileWriteProtected = unit->isFileWriteProtected();
         unitSnapshot.writeBackEnabled = unit->isWriteBackEnabled();
+        if (auto* b = unit->blockBacking()) {
+            unitSnapshot.persistenceState = b->persistenceState();
+            unitSnapshot.persistenceError = b->persistenceError();
+        }
     }
     return snapshot;
 }

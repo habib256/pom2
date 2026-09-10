@@ -19,6 +19,7 @@
 #include "EmulationController.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "IIcMouse.h"
 #include "SlotBus.h"
 
 namespace pom2 {
@@ -57,11 +58,15 @@ MouseCoordinator::Snapshot MouseCoordinator::capture() const
     auto state = controller_.lockState();
     auto& bus = state.memory().slotBus();
 
+    IIcMouse* iic = nullptr;
     MouseCard* mame = nullptr;
     MouseCardAppleWin* appleWin = nullptr;
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
         auto* peripheral = bus.peripheral(slot);
-        if (auto* mameCard = dynamic_cast<MouseCard*>(peripheral)) {
+        if (auto* native = dynamic_cast<IIcMouse*>(peripheral)) {
+            snapshot.iicPlugged = true;
+            iic = native;
+        } else if (auto* mameCard = dynamic_cast<MouseCard*>(peripheral)) {
             snapshot.mamePlugged = true;
             mame = mameCard;
         } else if (auto* appleWinCard =
@@ -71,7 +76,10 @@ MouseCoordinator::Snapshot MouseCoordinator::capture() const
         }
     }
 
-    if (appleWin) {
+    if (iic) {
+        snapshot.kind = Kind::IIc;
+        snapshot.slot = iic->getSlot();
+    } else if (appleWin) {
         snapshot.kind = Kind::AppleWin;
         snapshot.slot = appleWin->getSlot();
         copyAppleWin(snapshot.appleWin, appleWin->debugSnapshot());
@@ -115,7 +123,10 @@ int MouseCoordinator::routeHost(std::uint8_t rawX, std::uint8_t rawY,
     auto& bus = state.memory().slotBus();
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
         auto* peripheral = bus.peripheral(slot);
-        if (auto* mameCard = dynamic_cast<MouseCard*>(peripheral)) {
+        if (auto* native = dynamic_cast<IIcMouse*>(peripheral)) {
+            native->setHostMouse(rawX, rawY, button);
+            ++routed;
+        } else if (auto* mameCard = dynamic_cast<MouseCard*>(peripheral)) {
             mameCard->setHostMouse(rawX, rawY, button);
             ++routed;
         } else if (auto* appleWinCard =

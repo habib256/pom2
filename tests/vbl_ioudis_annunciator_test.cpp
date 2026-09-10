@@ -80,11 +80,11 @@ void advance(Memory& mem, uint64_t cycles)
 //   [len=10][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
 //           [vblWasActive][iicCardWindow_][c800Owner]
 // The payload has grown twice already, so its length is READ rather than
-// assumed. It is also no longer the tail: three more optional length-prefixed
+// assumed. It is also no longer the tail: four more optional length-prefixed
 // sections follow it (the No-Slot Clock and the two on-board Sony 3.5"
-// mechanisms), each empty on a bare Memory with none of them wired.
+// mechanisms, then the native //c mouse), each empty on a bare Memory.
 constexpr size_t kIouSectionLen  = 10;   // the $C800 owner joined on 2026-09-09
-constexpr size_t kEmptyTailCount = 3;
+constexpr size_t kEmptyTailCount = 4;
 
 uint8_t iouByte(Memory& mem, size_t index)
 {

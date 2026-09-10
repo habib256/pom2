@@ -999,6 +999,14 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
+    // Native //c IOU mouse: part of the motherboard, so file snapshots
+    // carry it even though its scheduler/IRQ owner is registered in slot 4.
+    {
+        std::vector<uint8_t> sect;
+        if (iicProfile_) if (auto* p = slots.peripheral(4)) p->saveIicMouseState(sect);
+        putU32(static_cast<uint32_t>(sect.size()));
+        putBytes(sect.data(), sect.size());
+    }
 }
 
 void Memory::resetVideoEventLogForClockJump()
@@ -1215,6 +1223,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             })) return false;
     }
 
+    if (!readSection([&](const uint8_t* p, size_t k) {
+            auto* mouse = iicProfile_ ? slots.peripheral(4) : nullptr;
+            return !mouse || mouse->loadIicMouseState(p, k);
+        })) return false;
     return true;
 }
 
@@ -1318,6 +1330,15 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
                 (kbLatch & 0x7F) | (wasReady ? 0x80 : 0x00));
         }
         return kbLatch & 0x7F;
+    }
+    // //c mouse IOU overrides the IIe status aliases and paddle inputs.
+    // Keyboard writes above retain their strobe-clear side effect.
+    if (iicProfile_ && (low == 0x15 || low == 0x17 || (low >= 0x40 && low <= 0x6F))) {
+        if (auto* mouse = slots.peripheral(4)) {
+            uint8_t value;
+            const uint8_t bus = low < 0x20 ? (kbLatch & 0x7F) : floatingBus();
+            if (mouse->iicMouseAccess(low, isWrite, ioudis, bus, value)) return value;
+        }
     }
     // IIe Language Card status reads RDBNK2/RDLCRAM (only reachable in
     // iieMode: II+ $C01x is the strobe mirror handled above). Low 7 bits
@@ -1451,9 +1472,8 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         } else if (low == 0x5B) {       // EnVBL
             vblIrqMask = true;
         }
-        // DisXY/EnbXY and the X0/Y0 edge selects have no POM2 mouse-model
-        // consumer yet (the MouseCard keeps its own state machine); the
-        // access is swallowed exactly like MAME's tracked-bool cases.
+        // The native IOU owner handles XY and edge selects above. With
+        // an explicit AppleWin HLE substitute there is no IOU consumer.
         return isWrite ? 0 : floatingBus();
     }
 
@@ -1528,9 +1548,8 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // $80. POM2 already tracks the mask (`vblIrqMask`, set by the real IOU
     // decode above and already in the snapshot), so answering costs no new
     // state. $C040/$C042/$C043 (RDXYMSK / RDX0EDGE / RDY0EDGE) are the
-    // other three of MAME's quad; POM2 has no //c IOU mouse model to back
-    // them (the //c mouse is served by the slot-4 AppleWin HLE through the
-    // $C400 punch), so they stay on the floating bus.
+    // other three of MAME's quad. The native IOU intercepts them above;
+    // with an explicit AppleWin HLE substitute they stay on the floating bus.
     if (low == 0x41 && !isWrite && iicProfile_) {
         return static_cast<uint8_t>((vblIrqMask ? 0x80 : 0x00) |
                                     (floatingBus() & 0x7F));
@@ -2369,9 +2388,9 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             //   sl5 SmartPort: host-served stub, armed by bootFromSlot only.
             //   sl4 AppleWin HLE mouse: PR#4 needs the EPROM at $C400 to
             //     reach the slot card's PIA at $C0C0. The //c's internal
-            //     mouse firmware talks to on-board IOU hardware POM2
-            //     doesn't model, so without this punch the //c sees a
-            //     dead mouse. No autostart probe at $C400, so unarmed.
+            //     mouse firmware talks to the native IIcMouse IOU device.
+            //     Only an explicit AppleWin HLE substitute needs this punch;
+            //     IIcMouse exposes no card ROM. No autostart probe, so unarmed.
             if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
                 const int slot = (addr >> 8) & 0x07;
                 const bool armOk = (slot != 5) ||

@@ -30,6 +30,7 @@
 #include "Mockingboard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "IIcMouse.h"
 #include "PhasorCard.h"
 #include "PrinterCard.h"
 #include "ProDOSHardDiskCard.h"
@@ -80,6 +81,7 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const SoftCardZ80*>(&peripheral)) return "softcard";
     if (dynamic_cast<const LeChatMauveCard*>(&peripheral)) return "chatmauve";
     if (dynamic_cast<const MouseCard*>(&peripheral)) return "mouse";
+    if (dynamic_cast<const IIcMouse*>(&peripheral)) return "iicmouse";
     if (dynamic_cast<const MouseCardAppleWin*>(&peripheral)) return "mouseaw";
     if (const auto* card = dynamic_cast<const MockingboardCard*>(&peripheral)) {
         return card->getVariant() == MockingboardCard::Variant::SoundII

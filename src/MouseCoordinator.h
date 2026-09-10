@@ -34,6 +34,7 @@ public:
         None,
         Mame,
         AppleWin,
+        IIc,
     };
 
     struct AppleWinSnapshot {
@@ -70,12 +71,13 @@ public:
         int slot = -1;
         bool mamePlugged = false;
         bool appleWinPlugged = false;
+        bool iicPlugged = false;
         AppleWinSnapshot appleWin;
         ScreenHolesSnapshot holes;
 
         bool plugged() const noexcept
         {
-            return mamePlugged || appleWinPlugged;
+            return mamePlugged || appleWinPlugged || iicPlugged;
         }
         bool appleWinActive() const noexcept { return kind == Kind::AppleWin; }
     };

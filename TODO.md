@@ -1003,6 +1003,13 @@ Grouped by subsystem. Severity encoded by 🔴/🟠/🟡/🟢/🧊 at the head o
 
 ### [Display] HGR / DHGR / 80-col
 
+- [ ] **VidHD on Apple IIe — SHR display support.** Model the VidHD card's
+  display registers and video-memory observation so IIe software can display
+  Super Hi-Res images. This is a display extension: VidHD does not add a
+  65816 processor or the IIgs Toolbox and does not turn a IIe into a IIgs.
+  Displaying an SHR image alone does not enable execution of IIgs
+  applications. Reference: [VidHD Manual 1.2](https://www.callapple.org/docs/vidhd/VidHD_Manual_1.2.pdf).
+
 - 🟢 **Golden coverage gaps** (from the 2026-07-12 audit; mostly closed
   2026-07-12 wave 4, table 112 → 164 pins — flash-on phase, PAGE2/80STORE,
   rev-0 HGR+AN3, IIe 80COL+HIRES+MIXED without DHGR, Chat Mauve sub-modes
@@ -1626,14 +1633,11 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   reaches the card at all (zero `$Cn00` accesses over 120 M instructions,
   byte-identical to a run with no card), so "boots, does not netboot" is
   the ProDOS/SmartPort boot of that image, upstream of the card. *1 d.*
-- 🟡 **Bug hunt #17's //c residue** *(2026-09-09; read, not fixed)*:
-  `$C015`/`$C017` on a //c are the IOU mouse X0/Y0 IRQ flags (MAME
-  `c000_iic_r:2297-2304`), not RDCXROM/RDC3ROM — POM2 has no //c IOU mouse
-  model, the built-in mouse rides the slot-4 HLE through the `$C400`
-  punch; `$C040/$C042/$C043` (RDXYMSK/RDX0EDGE/RDY0EDGE) writes are
-  decoded and discarded (three bools would enter the 10-byte IOU snapshot
-  section pinned by `iwm_mig_snapshot`); `SmartPortHub::sel35_` is in no
-  snapshot where MAME saves `m_35sel` (a `MIG1` → `MIG2` bump). *½ day.*
+- 🟡 **Bug hunt #17's //c residue** *(updated 2026-09-10)*:
+  `SmartPortHub::sel35_` is in no snapshot where MAME saves `m_35sel`
+  (a `MIG1` → `MIG2` bump). The mouse IOU gap is now closed: native
+  axis/edge/IRQ registers and motherboard snapshots, with unmodified //c
+  firmware (`iic_mouse_lle`).
 - 🟠 **Bug hunt #16's speech residue** *(2026-09-09; read, not fixed —
   each a design change, not a patch)*: (1) the SSI263 duration formula
   `ms = ((16-rate)*4096/1023)*(4-dur)` is a mis-citation — it exists once in

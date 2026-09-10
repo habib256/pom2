@@ -197,6 +197,11 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
                 ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
         }
 
+        if (u.loaded && !u.persistenceState.empty())
+            ImGui::Text("Host file: %s", u.persistenceState.c_str());
+        if (!u.persistenceError.empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                               "Save failed: %s", u.persistenceError.c_str());
         if (!u.lastError.empty()) {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
                                "%s", u.lastError.c_str());

@@ -65,6 +65,7 @@ struct MediaBayInfo
     /// warning about before pulling a bay — so the status bar's eject menu
     /// asks for it. Cards whose backing cannot report it leave it false.
     bool        hasUnsavedChanges = false;
+    std::string persistenceState, persistenceError;
     // True when the user may CHOOSE the media kind for this bay (SmartPort
     // units: empty / 3.5" / HDV). Block cards have a fixed kind → false.
     bool        supportsTypeSelect = false;

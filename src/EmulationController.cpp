@@ -669,6 +669,7 @@ void EmulationController::start()
 
 void EmulationController::tickFrame()
 {
+    pollBlockWriteBacks();
     const Mode m = mode.load();
     if (m == Mode::Stopped) {
         return;
@@ -1578,6 +1579,7 @@ void EmulationController::workerLoop()
     };
 
     while (!exitRequested.load()) {
+        pollBlockWriteBacks();
         const Mode m = mode.load();
         if (m != Mode::Stopped) workerParked_.store(false);
 

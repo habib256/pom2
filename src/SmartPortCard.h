@@ -145,6 +145,13 @@ public:
     const SmartPortUnit* unit(size_t idx) const
     { return idx < kMaxUnits ? units_[idx].get() : nullptr; }
 
+    std::vector<pom2::Block512Backing*> blockBackings() override
+    {
+        std::vector<pom2::Block512Backing*> result;
+        for (auto& u : units_) result.push_back(u ? u->blockBacking() : nullptr);
+        return result;
+    }
+
     /// Currently selected unit (set by $C0n0 writes; resets to 0 on
     /// reset). The ProDOS driver re-latches it on every dispatch.
     size_t activeUnit() const { return activeUnit_; }

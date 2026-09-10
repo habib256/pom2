@@ -42,6 +42,9 @@
 #include "MouseCard.h"
 #include "SlotBus.h"
 #include "SnapshotIO.h"
+#include "ProDOSHardDiskCard.h"
+#include <fstream>
+#include <array>
 
 #include <memory>
 
@@ -196,6 +199,59 @@ void testStatusEndpoint(EmulationController& ctrl, pom2::AiControlServer& srv)
     assert(contains(r.body, "\"cpu\""));
     assert(contains(r.body, "\"profile\":\"Test Profile\""));
     std::puts("  status: OK");
+}
+
+void testDiskSync(EmulationController& ctrl, pom2::AiControlServer& srv)
+{
+    namespace fs = std::filesystem;
+    srv.setAuthToken("");
+    const auto path = fs::temp_directory_path() /
+        ("pom2-api-sync-" + std::to_string(kTestPort) + ".hdv");
+    { std::ofstream f(path, std::ios::binary); std::string zero(2048, '\0'); f.write(zero.data(), zero.size()); }
+    auto card = std::make_unique<ProDOSHardDiskCard>(5);
+    card->setWriteBackEnabled(true);
+    assert(card->loadImage(path.string()));
+    std::array<uint8_t, 512> bytes; bytes.fill(0xA5);
+    assert(card->backing().writeBlock(1, bytes.data()));
+    {
+        auto st = ctrl.lockState();
+        st.memory().slotBus().plug(5, std::move(card));
+    }
+    auto status = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(contains(status.body, "\"block_storage\""));
+    assert(contains(status.body, "\"state\":\"pending\""));
+    auto sync = [&] { return oneShot(kTestPort,
+        "POST /disk/sync HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n"); };
+    auto r = oneShot(kTestPort,
+        "GET /disk/sync HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 405);
+    r = sync();
+    assert(r.status == 200 && contains(r.body, "\"scope\":\"block_images\""));
+    // HTTP success must mean the host file is updated already, while mounted.
+    { std::ifstream f(path, std::ios::binary); f.seekg(512); assert(f.get() == 0xA5); }
+    status = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(contains(status.body, "\"state\":\"saved\""));
+    {
+        auto st = ctrl.lockState();
+        auto* b = st.memory().slotBus().peripheral(5)->blockBackings()[0];
+        bytes.fill(0xB6); assert(b->writeBlock(1, bytes.data()));
+    }
+    const auto hidden = path.string() + ".hidden";
+    fs::rename(path, hidden);
+    r = sync();
+    assert(r.status == 500 && contains(r.body, "\"ok\":false"));
+    status = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(contains(status.body, "\"state\":\"error\""));
+    assert(contains(status.body, "\"pending\":true"));
+    fs::rename(hidden, path);
+    assert(sync().status == 200);
+    { std::ifstream f(path, std::ios::binary); f.seekg(512); assert(f.get() == 0xB6); }
+    { auto st = ctrl.lockState(); st.memory().slotBus().unplug(5); }
+    fs::remove(path);
+    std::puts("  disk sync: host persistence and errors OK");
 }
 
 void testAuth(EmulationController& /*ctrl*/, pom2::AiControlServer& srv)
@@ -866,6 +922,7 @@ int main()
     assert(started && "AiControlServer failed to bind its ephemeral test port");
 
     testStatusEndpoint   (ctrl, srv);
+    testDiskSync         (ctrl, srv);
     testAuth             (ctrl, srv);
     testMemoryRoundtrip  (ctrl, srv);
     testJsonUnicodeEscapes(ctrl, srv);

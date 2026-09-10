@@ -94,6 +94,11 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
         } else {
             ImGui::TextDisabled("(read-only — 2MG WP flag set)");
         }
+        if (!snap.persistenceState.empty())
+            ImGui::Text("Host file: %s", snap.persistenceState.c_str());
+        if (!snap.persistenceError.empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                               "Save failed: %s", snap.persistenceError.c_str());
     } else {
         ImGui::TextDisabled("No image mounted.");
     }

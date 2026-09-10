@@ -37,6 +37,8 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -167,7 +169,20 @@ public:
     /// phase 2 can write it with `stateMutex` released. Carries the decoded
     /// facts (offset, dirty block numbers and their bytes) so phase 2 needs
     /// nothing from the object — by then the medium may already be gone.
+    class CommitBarrier {
+    public:
+        virtual ~CommitBarrier() = default;
+        virtual void wait() = 0;
+        virtual void complete() = 0;
+    };
+    struct CommitTicket {
+        std::shared_ptr<CommitBarrier> barrier;
+        ~CommitTicket() { if (barrier) barrier->complete(); }
+    };
     struct PendingWriteBack {
+        // Preserve capture order even when an eject overtakes an autosave
+        // worker. Abandoning a payload releases its successor without reordering.
+        std::shared_ptr<CommitTicket> commitTicket;
         bool                  valid      = false;  ///< false → phase 2 no-ops
         bool                  synth      = false;
         std::string           path;               ///< file case
@@ -194,6 +209,29 @@ public:
     /// clear instead silently dropped exactly those writes. A failed commit
     /// calls `restoreDirty(pending.dirtyIndices)` so a retry re-captures.
     PendingWriteBack takeWriteBack();
+
+    struct WriteBackResult { bool ok = true; std::string error; };
+    // Called under the machine lock; copies bytes and starts file work on a
+    // separate thread. The worker owns no card/memory pointers. A forced
+    // capture is a barrier for the writes present when it is requested.
+    class WriteBackOperation {
+    public:
+        virtual ~WriteBackOperation() = default;
+        virtual bool ready() const = 0;
+        virtual WriteBackResult wait() = 0;
+    };
+    class WriteBackExecutor {
+    public:
+        virtual ~WriteBackExecutor() = default;
+        virtual std::shared_ptr<CommitBarrier> reserve(std::shared_ptr<CommitBarrier>) = 0;
+        virtual std::shared_ptr<WriteBackOperation> submit(
+            PendingWriteBack, std::shared_ptr<WriteBackOperation> previous) = 0;
+    };
+    void setWriteBackExecutor(std::shared_ptr<WriteBackExecutor> executor)
+    { writeBackExecutor_ = std::move(executor); }
+    std::shared_ptr<WriteBackOperation> pollWriteBack(bool force = false);
+    const char* persistenceState() const;
+    const std::string& persistenceError() const { return persistenceError_; }
 
     /// Phase 2, to be called WITHOUT the lock: perform the deferred write.
     /// Static because the backing it came from may no longer exist.
@@ -276,6 +314,15 @@ public:
     }
 
 private:
+    void collectWriteBack();
+    std::shared_ptr<WriteBackExecutor> writeBackExecutor_;
+    std::shared_ptr<CommitBarrier> commitTail_;
+    std::shared_ptr<WriteBackOperation> backgroundWrite_;
+    std::vector<std::pair<uint32_t, uint64_t>> backgroundVersions_;
+    std::vector<uint64_t> blockVersions_;
+    uint64_t mountGeneration_ = 0, backgroundGeneration_ = 0;
+    std::chrono::steady_clock::time_point nextWriteBack_{};
+    std::string persistenceError_;
     void markDirty(uint32_t blk);
     void bumpActivity() const
     {

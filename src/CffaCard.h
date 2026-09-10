@@ -84,6 +84,9 @@ public:
     { ata_.backing().restoreDirty(indices); }
     bool saveDirty() override;
 
+    std::vector<pom2::Block512Backing*> blockBackings() override { return {&ata_.backing()}; }
+    const pom2::Block512Backing* blockBacking() const override { return &ata_.backing(); }
+    pom2::Block512Backing* blockBacking() override { return &ata_.backing(); }
     bool isImageLoaded()      const override { return ata_.backing().isLoaded(); }
     const std::string& getImagePath() const override { return ata_.backing().path(); }
     const std::string& getLastError() const override { return lastError_; }

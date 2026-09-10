@@ -168,6 +168,7 @@ inline CardScope cardScopeForKey(std::string_view key)
 
 inline const char* cardLabelForKey(std::string_view key)
 {
+    if (key == "iicmouse") return "Apple //c IOU mouse (LLE)";
     for (const auto& ct : kCardTypes)
         if (key == ct.key) return ct.label;
     // Caller passed a key not in the catalog — return something printable.

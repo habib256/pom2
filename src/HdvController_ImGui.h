@@ -45,6 +45,7 @@ public:
         bool        writeProtected    = false;   // the image's own lock: 2IMG flag or the notch
         bool        hasUnsavedChanges = false;
         bool        supportsWriteBack = false;
+        std::string persistenceState, persistenceError;
         bool        isSynthVolume     = false;
         std::vector<LibraryEntry> library;
     };

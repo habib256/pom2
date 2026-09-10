@@ -46,6 +46,8 @@ namespace pom2 {
 class SmartPortUnit
 {
 public:
+    virtual Block512Backing* blockBacking() { return nullptr; }
+    virtual const Block512Backing* blockBacking() const { return nullptr; }
     static constexpr size_t kBlockBytes = 512;
 
     virtual ~SmartPortUnit() = default;

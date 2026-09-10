@@ -95,6 +95,8 @@ public:
     void     setHostWriteProtected(bool on) override { backing_.setHostWriteProtected(on); }
     bool     isWriteBackEnabled() const override { return backing_.isWriteBackEnabled(); }
     void     setWriteBackEnabled(bool on) override { backing_.setWriteBackEnabled(on); }
+    const Block512Backing* blockBacking() const override { return &backing_; }
+    Block512Backing* blockBacking() override { return &backing_; }
     bool     saveDirty() override { return backing_.saveDirty(); }
     bool     hasUnsavedChanges() const override { return backing_.hasUnsavedChanges(); }
 

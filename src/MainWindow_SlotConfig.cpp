@@ -665,7 +665,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "softcard")    plugSoftCard(s);
         else if (kind == "chatmauve")   plugChatMauve(s);
         else if (kind == "mouse")       plugMouse(s);
-        else if (kind == "mouseaw") {
+        else if (kind == "mouseaw" || kind == "iicmouse") {
             // The factory owns the fallback: if the AppleWin HLE slot EPROM
             // is missing or will not load, it builds the MC68705 "mouse" card
             // instead and reports `fallback` with the reason, rather than
@@ -674,7 +674,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             // (17030 NTSC / 20280 PAL), not the worker's cyclesPerFrame
             // budget — which is why the Request carries the profile.
             auto made = slotCardFactory_->create(
-                { "mouseaw", s, cpuIsCmosForSlots, activeProfile });
+                { kind, s, cpuIsCmosForSlots, activeProfile });
             mouseRomStatus = made.status;
             if (!made.warning.empty())
                 pom2::log().warn(made.warningCategory.c_str(), made.warning);

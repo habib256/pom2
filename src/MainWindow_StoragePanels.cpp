@@ -1107,6 +1107,8 @@ void MainWindow::renderHdvPanelWindow()
         snap.hasUnsavedChanges = primaryHdvCard()->hasUnsavedChanges();
         snap.supportsWriteBack = primaryHdvCard()->canWriteBack();
         snap.isSynthVolume     = primaryHdvCard()->isSynthVolumeMounted();
+        snap.persistenceState  = primaryHdvCard()->backing().persistenceState();
+        snap.persistenceError  = primaryHdvCard()->backing().persistenceError();
     }
 
     // Library scan — hdv/ for .hdv and .2mg, sorted alphabetically so the

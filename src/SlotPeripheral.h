@@ -43,13 +43,15 @@
 #include <string_view>
 #include <vector>
 
-namespace pom2 { class SmartPortBusUnit; }
+namespace pom2 { class SmartPortBusUnit; class Block512Backing; }
 
 class SlotBus;
 
 class SlotPeripheral
 {
 public:
+    // Host persistence service; vector indices are media bay numbers.
+    virtual std::vector<pom2::Block512Backing*> blockBackings() { return {}; }
     virtual ~SlotPeripheral() = default;
 
     /// Short human-readable name (e.g. "Disk II", "Language Card", "80col").
@@ -96,6 +98,14 @@ public:
     virtual void onPlug()   {}
     virtual void onUnplug() {}
     virtual void onReset()  {}
+
+    /// Motherboard //c IOU mouse decode. A lifecycle owner in slot 4 may
+    /// implement it without supplying any slot firmware or PIA registers.
+    virtual bool iicMouseAccess(uint8_t, bool, bool, uint8_t, uint8_t&) { return false; }
+    // On-board IOU state belongs in Memory's file snapshots as well as
+    // rewind. Ordinary expansion cards leave these hooks empty.
+    virtual void saveIicMouseState(std::vector<uint8_t>&) const {}
+    virtual bool loadIicMouseState(const uint8_t*, size_t) { return true; }
 
     /// Rewind / snapshot hooks. `appendSnapshotState` serializes the card's
     /// volatile runtime state — NOT its ROMs or mounted media — by appending

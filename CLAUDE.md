@@ -77,6 +77,14 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   the disk it protected gets the notch and the flag reverts. The one opt-in
   left is the ProDOS host folder sync (a real directory, a different hazard).
   Pinned by `media_notch`, `media_write_default` and `storage_coordinator`.
+- **HDV/CFFA/SmartPort block images autosave** *(2026-09-10)*. The controller
+  injects `BlockWriteBackExecutor` and polls even when paused; media captures
+  immutable batches, the runtime commits off `stateMutex`. Per-block versions
+  and ordered commit tickets protect concurrent writes and ejects. Errors stay
+  dirty and retry. `POST /disk/sync` waits outside the lock; `/status` reports
+  `block_storage`. Host-folder and floppy policies are separate. → DEV §
+  Background block-image persistence; tests `block_autosave`,
+  `ai_control_server_smoke`.
 - **A rewind may never cross an irreversible write** — the rewind ring never
   captures block-device (up to 32 MiB), 3.5" (800 KB) or writable-WOZ media, so
   rolling RAM back over a ProDOS SAVE would cross-link the volume. Instead every

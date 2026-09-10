@@ -83,6 +83,10 @@ public:
     bool loadRom(const std::string& slotRomPath);
     bool isReady() const { return slotRomLoaded; }
 
+    /// The //c uses this card as an on-board firmware substitute. Its
+    /// $C019 is VBLINT, so the IIe EPROM's VBLBAR calibration cannot run.
+    void setIicHost(bool enabled) { iicHost_ = enabled; }
+
     /// Host-mouse position update — same signature as MouseCard so the UI
     /// layer in MainWindow can drive either variant. `rawX`/`rawY` are
     /// running 8-bit counters (the screen-hole closed-loop in MainWindow
@@ -190,7 +194,7 @@ public:
     // //c-class punches the forced INTCXROM mask for this card's $Cn00
     // firmware so PR#4 runs the AppleWin EPROM (which drives our PIA at
     // $C0C0) instead of the //c's on-board mouse firmware (which would
-    // poke IOU hardware POM2 doesn't model — making the mouse a no-op).
+    // poke the native IIcMouse IOU hardware, absent in this HLE variant).
     bool    exposesIicOnboardRom() const override { return slotRomLoaded; }
 
 private:
@@ -198,6 +202,8 @@ private:
     MC6821   pia;
     std::array<uint8_t, 0x800> slotRom{};
     bool     slotRomLoaded = false;
+    bool     iicHost_ = false;
+    bool     hasVblCalibration_ = false;
 
     // ── PIA Port A/B latch shadows (AppleWin m_by6821A / m_by6821B). ──
     uint8_t  by6821A = 0;

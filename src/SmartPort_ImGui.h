@@ -47,6 +47,7 @@ public:
         std::string kindLabel;
         std::string path;
         std::string lastError;
+        std::string persistenceState, persistenceError;
         uint32_t    blockCount       = 0;
         bool        loaded           = false;
         bool        writeProtected   = false;   // what the guest sees (medium + process default)

@@ -60,6 +60,8 @@ public:
                                     const std::string& hostFolder) = 0;
     virtual bool ejectImage() = 0;
     virtual bool saveDirty() = 0;
+    virtual Block512Backing* blockBacking() { return nullptr; }
+    virtual const Block512Backing* blockBacking() const { return nullptr; }
 
     /// Two-phase eject, phases 1 and 3 (see MountableMediaCard). Default is
     /// "not supported" rather than pure virtual so an implementor that has no
@@ -104,6 +106,10 @@ public:
         info.writeBackEnabled  = isWriteBackEnabled();
         info.hasUnsavedChanges = hasUnsavedChanges();
         info.supportsWriteBack = canWriteBack();
+        if (auto* backing = blockBacking()) {
+            info.persistenceState = backing->persistenceState();
+            info.persistenceError = backing->persistenceError();
+        }
         return info;
     }
 

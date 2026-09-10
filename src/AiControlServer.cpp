@@ -31,6 +31,7 @@
 #include "SocketUtil.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "IIcMouse.h"
 #include "SlotBus.h"
 #include "SnapshotIO.h"
 #include "SystemProfile.h"
@@ -1019,6 +1020,13 @@ void AiControlServer::handleClient(socket_t fd)
     }
     noteAuthSuccess();
 
+    if (req.path == "/disk/sync") {
+        if (req.method != "POST") { sendJsonError(fd, 405, "POST only"); return; }
+        std::string error;
+        if (!ctrl_->syncBlockMedia(error)) { sendJsonError(fd, 500, error); return; }
+        sendJsonOk(fd, "{\"scope\":\"block_images\"}");
+        return;
+    }
     if (req.path == "/status")               return handleStatus(fd, req);
     if (req.path == "/reset")                return handleReset(fd, req);
     if (req.path == "/cpu") {
@@ -1111,7 +1119,18 @@ void AiControlServer::handleStatus(socket_t fd, const Request& /*req*/)
             << "\"cycles\":" << cycles
         << "},"
         << "\"disks\":" << disks
-        << "}";
+        << ",\"block_storage\":[";
+    bool first = true;
+    for (const auto& disk : ctrl_->blockPersistence()) {
+        if (!first) oss << ",";
+        first = false;
+        oss << "{\"slot\":" << disk.slot << ",\"bay\":" << disk.bay
+            << ",\"path\":\"" << jsonEscape(disk.path)
+            << "\",\"state\":\"" << disk.state
+            << "\",\"pending\":" << (disk.pending ? "true" : "false")
+            << ",\"error\":\"" << jsonEscape(disk.error) << "\"}";
+    }
+    oss << "]}";
     sendJsonOk(fd, oss.str());
 }
 
@@ -1349,17 +1368,13 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
     {
         auto st = ctrl_->lockState();
         SlotBus& bus = st.memory().slotBus();
-        // Two interchangeable mouse cards exist: the MAME-LLE MouseCard
-        // (MC68705 mask ROM) and the AppleWin-HLE MouseCardAppleWin — a
-        // SIBLING class, not a subclass, and the default built-in mouse on
-        // every //c profile, so probing for MouseCard alone left /mouse
-        // returning 503 on the //c family. The HLE variant is identified
-        // by its name tag + static_cast rather than dynamic_cast so this
-        // TU doesn't pull MouseCardAppleWin.o's typeinfo into headless
-        // binaries (its setHostMouse/getSlot are header-inline).
+        // Native //c IOU plus the two expansion-card implementations.
+        // The IOU uses slot 4 only as its scheduler owner; the //c+ ROM
+        // exposes its API and screen holes as firmware port 7.
+        IIcMouse* mouseIic = dynamic_cast<IIcMouse*>(bus.peripheral(4));
         MouseCard*         mouseLle = nullptr;
         MouseCardAppleWin* mouseHle = nullptr;
-        for (int s = 1; s <= 7 && !mouseLle && !mouseHle; ++s) {
+        for (int s = 1; s <= 7 && !mouseLle && !mouseHle && !mouseIic; ++s) {
             SlotPeripheral* p = bus.peripheral(s);
             if (!p) continue;
             mouseLle = dynamic_cast<MouseCard*>(p);
@@ -1370,9 +1385,9 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
         // send timeout, and the emulated machine — CPU worker and the UI
         // thread's next frame both — would wait behind it for as long as the
         // client takes to read. Note it and answer once the lock is gone.
-        noCard = (!mouseLle && !mouseHle);
+        noCard = (!mouseLle && !mouseHle && !mouseIic);
         if (!noCard) {
-            slot = mouseLle ? mouseLle->getSlot() : mouseHle->getSlot();
+            slot = mouseIic ? mouseIic->getSlot() : mouseLle ? mouseLle->getSlot() : mouseHle->getSlot();
 
             if (rst) { mouseAccumX_ = 0; mouseAccumY_ = 0; }
 
@@ -1382,7 +1397,8 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
             else if (haveDy) mouseAccumY_ = static_cast<uint8_t>(mouseAccumY_ + clamp127(dy));
             if (haveBtn)     mouseBtn_ = (btn != 0);
 
-            if (mouseLle) mouseLle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
+            if (mouseIic) mouseIic->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
+            else if (mouseLle) mouseLle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
             else          mouseHle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
             outX = mouseAccumX_; outY = mouseAccumY_; outBtn = mouseBtn_;
         }

@@ -19,6 +19,7 @@
 #include "EmulationController.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "IIcMouse.h"
 #include "MouseCoordinator.h"
 #include "PrinterCard.h"
 #include "SlotBus.h"
@@ -84,6 +85,25 @@ int main()
     assert(none.kind == pom2::MouseCoordinator::Kind::None);
     assert(none.slot == -1);
     assert(mouse.routeHost(0, 0, false) == 0);
+
+    {
+        auto state = controller.lockState();
+        state.memory().slotBus().plug(4, std::make_unique<IIcMouse>());
+    }
+    const auto native = mouse.capture();
+    assert(native.kind == pom2::MouseCoordinator::Kind::IIc);
+    assert(native.iicPlugged && native.plugged() && native.slot == 4);
+    assert(!native.appleWinActive() && !native.mamePlugged);
+    assert(mouse.routeHost(10, 20, true) == 1);
+    {
+        auto state = controller.lockState();
+        auto* device = dynamic_cast<IIcMouse*>(state.memory().slotBus().peripheral(4));
+        uint8_t out;
+        assert(device->iicMouseAccess(0x63, false, false, 0x55, out));
+        assert(out == 0x55);
+        (void)state.memory().slotBus().unplug(4);
+    }
+    assert(!mouse.capture().plugged());
 
     std::cout << "mouse coordinator: OK\n";
     return 0;

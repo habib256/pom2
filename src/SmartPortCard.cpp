@@ -1129,6 +1129,10 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
     info.writeProtected    = u->isWriteProtected();
     info.writeBackEnabled  = u->isWriteBackEnabled();
     info.hasUnsavedChanges = u->hasUnsavedChanges();
+    if (auto* b = u->blockBacking()) {
+        info.persistenceState = b->persistenceState();
+        info.persistenceError = b->persistenceError();
+    }
     info.supportsWriteBack = true;
     info.supportsTypeSelect = true;
     return info;

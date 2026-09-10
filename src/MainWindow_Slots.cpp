@@ -272,7 +272,7 @@ void MainWindow::renderSlotConfigPanel()
             if (profileCfg.builtInSlots[s].has_value()) {
                 const auto& bis = *profileCfg.builtInSlots[s];
                 draft[s] = bis.cardKey;
-                const char* cardName = bis.cardKey.c_str();
+                const char* cardName = pom2::cardLabelForKey(bis.cardKey);
                 for (const auto& ct : kCardTypes) {
                     if (ct.key == bis.cardKey) { cardName = ct.label; break; }
                 }
@@ -963,6 +963,11 @@ void MainWindow::renderMediaPanel()
                         }
                     }
 
+                    if (info.loaded && !info.persistenceState.empty())
+                        ImGui::Text("Host file: %s", info.persistenceState.c_str());
+                    if (!info.persistenceError.empty())
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                                           "Save failed: %s", info.persistenceError.c_str());
                     if (!info.lastError.empty())
                         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
                                            "Error: %s", info.lastError.c_str());

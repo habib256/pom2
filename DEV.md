@@ -2682,6 +2682,47 @@ All five branches warn now (`storage_restore_missing_path`). Still open:
 the SmartPort/generic loops probe `../` and `../../` and the other three
 do not — same key, different behaviour by card.
 
+### Background block-image persistence
+
+`EmulationController_Storage.cpp` polls every worker iteration, including
+Stopped mode, and from `tickFrame` in the browser. Cards expose their block
+backings through `SlotPeripheral::blockBackings`; vector indices remain bay
+numbers, including empty SmartPort units. HDV, CFFA and SmartPort HDV/2MG
+share the same policy: a batch starts about one second after pending data
+is observed, with five seconds between failed automatic attempts. Existing
+write protection and the process write-back default still apply. Synthesized
+host-folder volumes retain their explicit synchronization policy.
+
+`Block512Backing_WriteBack.cpp` captures bytes under the machine lock but
+keeps dirty flags until success. Each changed block has a version; completion
+clears only versions it actually committed. Mount generations keep an old
+completion from affecting a replacement image. `BlockWriteBackExecutor`
+is an injected runtime transport: desktop file work uses a separate thread
+with an exception barrier and no borrowed machine pointers. In browser
+builds the virtual filesystem write is inline; the existing IDBFS heartbeat
+still handles IndexedDB durability.
+
+Every captured payload has an ordered commit ticket, including the existing
+explicit flush/eject paths. The full file read/modify/atomic-replace operation
+waits for earlier captures outside the lock on the asynchronous paths. A
+cancelled capture releases its ticket without letting successors overtake
+its predecessors. Host-image transactions also share an I/O-only mutex,
+so two mounts of the same image cannot lose disjoint block edits or collide
+on the temporary file. An eject captures the still-dirty data too, so a failed
+autosave cannot make it lose the only copy. Dirty state and failure details
+remain visible in Slot Config and the HDV/SmartPort panels.
+
+`POST /disk/sync` (no body required) captures all mounted block **image**
+writes and waits outside `stateMutex`. HTTP 200 means those captures reached
+the host files; newer guest writes may already be pending. HTTP 500 includes
+the failing path/reason, and failed bytes remain retryable. `GET /status`
+adds `block_storage`: `{slot, bay, path, state, pending, error}` with zero-based
+bays and states `saved`, `pending`, `saving`, `error`, `disabled` or `manual`
+(host folder). This API does not flush floppy or synthesized folder volumes.
+Tests: `block_autosave` and `ai_control_server_smoke` inspect host bytes while
+images remain mounted, exercise error recovery, and verify the CPU state
+lock remains available during a blocked synchronization.
+
 ### Two-phase media mount (`MediaMount.h/.cpp`)
 
 `stateMutex` is taken by the CPU worker for every 4096-cycle chunk **and** by
@@ -4996,7 +5037,8 @@ Noted, not fixed: `POST /screen.ppm` is answered; `POST /cpu` masks an
 out-of-range `pc`/`p` silently where `/speed` refuses; write watches are
 short-circuited under `flatBus_` while read watches are not; a watchpoint
 during a Step reports `pc=$0000`; a step-over transient survives an
-unrelated stop; `/status`'s `disks` lists the Disk II only.
+unrelated stop. `/status`'s `disks` lists the Disk II only; block images
+now have a separate `block_storage` array (2026-09-10).
 
 **Three more from bug hunt #7** *(2026-09-08)*. `POST /mem` stores with
 `writeRamUnchecked` (or into `auxDataMutable()` with `bank=aux`), never
@@ -5080,7 +5122,8 @@ for the exact JSON shapes):
 
 | Route | Verb(s) | Does |
 |---|---|---|
-| `/status` | GET | profile, cpu_mode, mode, cycles_per_frame, CPU regs, mounted disks |
+| `/status` | GET | profile, cpu_mode, mode, cycles_per_frame, CPU regs, Disk II disks, block-image persistence (`block_storage`) |
+| `/disk/sync` | POST | flush mounted HDV/CFFA/SmartPort block images; waits for host-file commits, HTTP 500 on failure; no body required |
 | `/cpu` | GET / POST | register dump / set `pc`,`a`,`x`,`y` |
 | `/mem?addr=N&len=N[&bank=main\|aux\|cpu]` | GET / POST | hex read (len ≤ 4096; `cpu` = the 6502's view) / bulk RAM write (`main`\|`aux` only) |
 | `/reset` | POST | `{"kind":"soft\|hard\|cold"}` — the three verbs in [CLAUDE § Reset](CLAUDE.md#reset-architecture) |
@@ -7304,6 +7347,38 @@ Pinned: `mouse_card_smoke`, `mouse_card_quadrature_smoke`, and
 `InitMouse/SetMouse/ReadMouse` from a stub, asserts identical host
 ramp moves X and Y equally (caught X==Y==800 for a +800 px ramp).
 
+#### Native //c IOU mouse — `IIcMouse` (`iicmouse`)
+
+The //c family defaults to the motherboard IOU implementation. The original
+system ROM executes unchanged; no AppleMouse II EPROM, 68705, PIA or ROM
+patch is involved. The software entry table and screen holes are at port 4
+on //c and port 7 on //c+. POM2 registers the IOU at scheduler slot 4 for
+lifecycle and IRQ ownership on both machines; that internal owner supplies
+no `$C400` ROM and no `$C0C0` device registers. Thus the //c+'s original
+`$C400` disk firmware remains visible and its RGB adapter can keep slot 7.
+
+`Memory` forwards the native IOU switches: `$C015/$C017` release the shared
+mouse IRQ while retaining X/Y latches, `$C048` clears both latches,
+`$C040/$C042/$C043` read enable/edge selection, and `$C063/$C066/$C067`
+(with their `$+8` aliases) expose button and direction. `$C058/$C059` and
+`$C05C-$C05F` affect the mouse only with IOUDIS clear. VBL retains its
+independent mask, latch and CPU IRQ source.
+
+Input sampling follows MAME `apple2e.cpp::update_iic_mouse` and
+`apple2_interrupt`: one queued X0/Y0 transition per 65 CPU cycles, with
+opposite Y direction polarity and selectable interrupt edges. This is a
+register/edge model (LLE/L1), not a transistor-level model. The native ROM
+counts the selected edge once per complete two-transition period. Host
+input never writes guest cursor coordinates. Memory's snapshot trailer
+includes the IOU latches, queued transitions, sampling phase and IRQ level;
+host position/button stay live across restore.
+
+Pinned by `iic_mouse_lle` (16 KB //c, 32 KB //c, //c+ and PAL), including
+original ROM bytes, input, IRQ acknowledgement, reset and snapshot replay.
+`MouseCoordinator` and `/mouse` route to the native circuit and report its
+actual firmware port. 816Paint HGR also boots and draws on a test copy of
+A2DeskTop-GIST using this path.
+
 #### AppleWin HLE variant — `MouseCardAppleWin` (card key `mouseaw`)
 
 Alternative implementation, verbatim from AppleWin
@@ -7312,6 +7387,20 @@ same `setHostMouse(rawX,rawY,button)` UI plumbing, **same slot
 EPROM** (`mouse_341-0270-c.bin`) — but **no MCU mask ROM**: the
 68705P3 side is a C++ command-byte state machine. Plug as
 `"mouseaw"`; mutually exclusive with MAME `"mouse"`.
+
+When explicitly constructing `mouseaw` on //c-class profiles,
+`SlotCardFactory` enables `setIicHost`: this card
+already substitutes for the on-board IOU firmware through the `$C400`
+ROM window. The 341-0270-C INITMOUSE calibration at EPROM `$0226` waits
+for the IIe's live VBLBAR signal. The //c's `$C019` is instead latched
+VBLINT, so 816Paint and DeskTop hung at `$C42B`. For that identified
+instruction sequence only, bank-2 reads expose `JMP $Cn35` over the first
+three bytes, skipping the wait and retaining the rest of INITMOUSE.
+The HLE MCU uses `setVblCycles` and needs no beam calibration. The original
+ROM array/file and the motherboard's VBLINT semantics are preserved.
+`iic_mouse_firmware` exercises the production factory and real firmware
+on IIe, //c ROM 0/255, //c+ and PAL, with mouse input and VBLINT pending
+across INITMOUSE.
 
 Protocol (mirrored from AppleWin `OnCommand`/`OnWrite` — opcodes are
 high nibble of first command byte):
@@ -8635,11 +8724,9 @@ drives a MIG gate-array + IWM. POM2 models the minimum for cold boot:
   RDDHIRES at `$C079/$C07B/$C07D/$C07F` (bit 7 = AN3 latched *inverted*,
   `$ED` where POM2 read `$6D`) and RDVBLMSK at `$C041` (a //c program
   arming its frame IRQ and reading the mask back got a coin flip).
-  Residual, recorded in TODO: `$C015`/`$C017` on a //c are the IOU mouse
-  X0/Y0 interrupt flags, not RDCXROM/RDC3ROM; `$C040/$C042/$C043`
-  (RDXYMSK/RDX0EDGE/RDY0EDGE) writes are discarded because three more
-  bools would enter the IOU snapshot section whose length is hard-pinned
-  at ten; `SmartPortHub::sel35_` is in no snapshot (MAME saves
+  The mouse-register gap was closed on 2026-09-10 by the native IOU
+  model (`iic_mouse_lle`), including its own snapshot section. Residual,
+  recorded in TODO: `SmartPortHub::sel35_` is in no snapshot (MAME saves
   `m_35sel`), so a restore re-selects an internal 3.5" but loses an
   external one — needs a `MIG1` → `MIG2` bump. Cleared: the `$C02x` bank
   toggle on read and write across the whole range, the 16 KB ROM's

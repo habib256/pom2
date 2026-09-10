@@ -127,7 +127,7 @@ int main()
         pom2::SystemProfile::AppleIIc);
     assert(iic[1] == "ssc" && iic[2] == "ssc");
     assert(iic[3].empty());
-    assert(iic[4] == "mouseaw");
+    assert(iic[4] == "iicmouse");
     assert(iic[5] == "smartport35");
     assert(iic[6] == "diskii");
     assert(iic[7] == "chatmauve");

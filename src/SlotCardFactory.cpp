@@ -23,6 +23,7 @@
 #include "LironCard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "IIcMouse.h"
 #include "ProDOSHardDiskCard.h"
 #include "ResourcePaths.h"
 #include "WorkstationCard.h"
@@ -220,11 +221,20 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
 
     if (request.key == "mouse") return createMouse(request);
 
+    if (request.key == "iicmouse") {
+        if (!profileConfig(request.profile).noPhysicalSlots || request.slot != 4) return result;
+        result.card = std::make_unique<IIcMouse>(
+            request.profile == SystemProfile::AppleIIcPlus ? 7 : 4);
+        result.status = "native //c IOU mouse (system ROM)";
+        return result;
+    }
+
     if (request.key == "mouseaw") {
         const std::string slotRom = locate_("roms/mouse_341-0270-c.bin");
         if (!slotRom.empty()) {
             auto card = std::make_unique<MouseCardAppleWin>(request.slot);
             if (card->loadRom(slotRom)) {
+                card->setIicHost(profileConfig(request.profile).noPhysicalSlots);
                 const auto& timing = pom2VideoTiming(
                     profileConfig(request.profile).videoStandard);
                 card->setVblCycles(
