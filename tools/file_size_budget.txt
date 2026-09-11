@@ -251,6 +251,14 @@
 #     switch there and used to start the transport).
 #   src/hgrpaint/HgrPaintEditor.cpp 2653 -> 2656 (+3) the clip records the
 #     block geometry it was copied with (bug hunt #17).
+# 2026-09-10 (native //c IOU mouse, 93d3d28): one ceiling raised, after the
+# fact — the ratchet reported it and the commit did not raise it. The //c
+# mouse is part of the motherboard, so Memory owns two seams of it: the IOU
+# soft switches ($C015/$C017 status aliases, $C040-$C06F) routed to the
+# slot-4 IIcMouse before the //e decode, and its state carried in the file
+# snapshot as a length-prefixed section. The snapshot trailer is still the
+# split owed on this file (see bug hunt #13).
+#   src/Memory.cpp               2694 -> 2713 (+19)
 # 2026-09-11 (chains of eight + the HDV card's drive 2): one ceiling raised
 # for the wiring only. The feature code lives in its own TU
 # (StorageCoordinator_Chains.cpp: the Liron's unit count command and restore,
@@ -263,6 +271,6 @@ src/Apple2Display.cpp                    2522
 src/DiskImage.cpp                        3154
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
-src/Memory.cpp                           2694
+src/Memory.cpp                           2713
 src/StorageCoordinator.cpp               2372
 src/hgrpaint/HgrPaintEditor.cpp          2656
