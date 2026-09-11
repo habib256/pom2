@@ -122,6 +122,14 @@ void appendDiskIIDriveSettingUpdates(
     }
 }
 
+/// The ProDOS HD card's keys: `hdv_path` / `hdv_writeback` for drive 1, as
+/// they always were, and a `_drive2` suffix for drive 2 (2026-09-11) — the
+/// Disk II's convention (`diskIIPathSettingKey`).
+std::string hdvDriveKey(const char* base, int drive)
+{
+    return drive == 1 ? std::string(base) + "_drive2" : std::string(base);
+}
+
 /// A MountableMediaCard with no keyspace of its own (today: `LironCard`).
 /// The SmartPort, CFFA and HDV cards keep theirs — those keys are on disk in
 /// every user's settings — and this generic one only covers what they do
@@ -139,6 +147,13 @@ MountableMediaCard* genericMediaCard(SlotPeripheral* peripheral)
 std::string genericBayKey(int slot, int bay)
 {
     return "media_slot" + std::to_string(slot) + "_bay" + std::to_string(bay);
+}
+
+/// The chain length of a generic card whose count is a user choice (the
+/// Liron). Same keyspace as its bays, so a card never answers under two names.
+std::string genericBayCountKey(int slot)
+{
+    return "media_slot" + std::to_string(slot) + "_bays";
 }
 
 bool appendMediaBaySettingUpdates(
@@ -172,13 +187,17 @@ bool appendMediaBaySettingUpdates(
     if (auto* card = dynamic_cast<ProDOSHardDiskCard*>(&peripheral)) {
         // Session-only auto-provisioned cards and synthetic host-folder
         // volumes must not overwrite the user's configured HDV.
+        if (bay < 0 || bay >= ProDOSHardDiskCard::kDrives) return false;
+        const auto& backing = card->backing(bay);
         if (slot == autoHdvSlot ||
-            card->getImagePath().rfind("[host folder] ", 0) == 0) {
+            backing.path().rfind("[host folder] ", 0) == 0) {
             return false;
         }
-        appendStringSetting(updates, "hdv_path", card->getImagePath());
+        appendStringSetting(updates, hdvDriveKey("hdv_path", bay),
+                            backing.isLoaded() ? backing.path() : std::string());
         appendBoolSetting(
-            updates, "hdv_writeback", card->isWriteBackEnabled());
+            updates, hdvDriveKey("hdv_writeback", bay),
+            backing.isWriteBackEnabled());
         return true;
     }
     if (auto* media = genericMediaCard(&peripheral)) {
@@ -550,6 +569,14 @@ StorageCoordinator::captureRebuildSnapshot(const SlotBus& bus) const
         if (medium.loaded) medium.path = cards.primaryHdv->getImagePath();
         medium.writeBackEnabled = cards.primaryHdv->isWriteBackEnabled();
         snapshot.primaryHdv = std::move(medium);
+
+        const auto& drive2 = cards.primaryHdv->backing(1);
+        SlotMediumSnapshot second;
+        second.slot = cards.primaryHdv->getSlot();
+        second.loaded = drive2.isLoaded();
+        if (second.loaded) second.path = drive2.path();
+        second.writeBackEnabled = drive2.isWriteBackEnabled();
+        snapshot.primaryHdvDrive2 = std::move(second);
     }
 
     snapshot.cffa.reserve(cards.blockCards.size());
@@ -608,6 +635,15 @@ void StorageCoordinator::persistRebuildSettings(
         settings.setBool("hdv_writeback",
                          snapshot.primaryHdv->writeBackEnabled);
     }
+    if (snapshot.primaryHdvDrive2 &&
+        snapshot.primaryHdvDrive2->slot != autoHdvSlot_) {
+        const auto& medium = *snapshot.primaryHdvDrive2;
+        const bool persistable = medium.loaded &&
+            medium.path.rfind("[host folder] ", 0) == std::string::npos;
+        settings.setString("hdv_path_drive2",
+                           persistable ? medium.path : std::string());
+        settings.setBool("hdv_writeback_drive2", medium.writeBackEnabled);
+    }
 
     for (const auto& medium : snapshot.cffa) {
         const std::string key =
@@ -648,6 +684,7 @@ void StorageCoordinator::persistSessionSettings(
                          snapshot.primaryHdv->writeBackEnabled);
     } else {
         settings.setString("hdv_path", "");
+        settings.setString("hdv_path_drive2", "");
     }
 }
 
@@ -1185,6 +1222,41 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
     invalidateRewindForMediaChange(controller);
     applySettingUpdates(settings, updates);
     if (!updates.empty()) (void)settings.save();
+    return result;
+}
+
+StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayCount(
+    EmulationController& controller, Settings& settings, int slot,
+    int count) const
+{
+    MediaCommandResult result;
+    {
+        auto state = controller.lockState();
+        auto* media = dynamic_cast<MountableMediaCard*>(
+            state.memory().slotBus().peripheral(slot));
+        if (!media)
+            return commandError("slot " + std::to_string(slot) +
+                                " has no mountable media");
+        const auto choices = media->bayCountChoices();
+        if (std::find(choices.begin(), choices.end(), count) == choices.end())
+            return commandError("slot " + std::to_string(slot) +
+                                " cannot carry " + std::to_string(count) +
+                                " units");
+        // A shrink never ejects on its own: the medium would have to be
+        // flushed (a whole-file rewrite, not under this lock) and the user
+        // did not ask for its bay to go. Name the bay to empty instead — by
+        // the number the media panel shows it under ("Unit 0" is drive 1).
+        for (int bay = count; bay < media->bayCount(); ++bay)
+            if (media->bayInfo(bay).loaded)
+                return commandError("eject unit " + std::to_string(bay) +
+                                    " of slot " + std::to_string(slot) +
+                                    " before shrinking the chain to " +
+                                    std::to_string(count));
+        media->setBayCount(count);
+        result.ok = true;
+    }
+    settings.setInt(genericBayCountKey(slot), count);
+    (void)settings.save();
     return result;
 }
 
@@ -1819,6 +1891,27 @@ StorageCoordinator::restoreMediaFromSettings(
         if (cards.primaryHdv->isImageLoaded())
             cards.primaryHdv->setHostWriteProtected(
                 pom2::mediaFileIsReadOnly(cards.primaryHdv->getImagePath()));
+
+        // Drive 2, under its `_drive2` keys — the same rules, its own disk.
+        auto& hdv = *cards.primaryHdv;
+        const std::string path2 = settings.getString("hdv_path_drive2", "");
+        std::error_code ec2;
+        if (!path2.empty() && !std::filesystem::is_regular_file(path2, ec2)) {
+            result.warnings.push_back(
+                "HDV slot " + std::to_string(hdv.getSlot()) +
+                " drive 2: persisted path not found: " + path2);
+        } else if (!path2.empty() && !hdv.loadDrive(1, path2)) {
+            result.warnings.push_back(
+                "HDV slot " + std::to_string(hdv.getSlot()) + " drive 2: " +
+                hdv.getLastError());
+        }
+        const bool legacy2 = settings.getBool("hdv_writeback_drive2",
+                                              pom2::mediaWritableByDefault());
+        hdv.setBayWriteBack(1, migrateLegacyWriteBack(
+            legacy2, { hdv.backing(1).path() }, result.warnings));
+        if (hdv.backing(1).isLoaded())
+            hdv.setDriveHostWriteProtected(
+                1, pom2::mediaFileIsReadOnly(hdv.backing(1).path()));
     }
 
     for (auto* block : cards.blockCards) {
@@ -1848,7 +1941,8 @@ StorageCoordinator::restoreMediaFromSettings(
         if (!card) continue;
         const std::string slotKey =
             "smartport_slot" + std::to_string(card->getSlot());
-        card->setUnitCount(settings.getInt(slotKey + "_units", 2));
+        card->setUnitCount(settings.getInt(slotKey + "_units",
+                                           SmartPortCard::kDefaultUnits));
         for (std::size_t bay = 0; bay < SmartPortCard::kMaxUnits; ++bay) {
             const std::string base =
                 slotKey + "_unit" + std::to_string(bay);
@@ -1906,6 +2000,11 @@ StorageCoordinator::restoreMediaFromSettings(
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
         auto* media = genericMediaCard(bus.peripheral(slot));
         if (!media) continue;
+        // The chain length first: it decides how many bays there are to
+        // restore. A card that does not offer the choice keeps its own.
+        if (!media->bayCountChoices().empty())
+            media->setBayCount(settings.getInt(genericBayCountKey(slot),
+                                               media->bayCount()));
         for (int bay = 0; bay < media->bayCount(); ++bay) {
             const std::string base = genericBayKey(slot, bay);
             const bool legacyWriteBack =
@@ -1983,6 +2082,19 @@ void StorageCoordinator::restoreRebuildSnapshot(
         if (!restored && rebuilt.primaryHdv->isImageLoaded())
             (void)rebuilt.primaryHdv->ejectImage();
         rebuilt.primaryHdv->setWriteBackEnabled(medium.writeBackEnabled);
+    }
+    if (rebuilt.primaryHdv && snapshot.primaryHdvDrive2) {
+        const auto& medium = *snapshot.primaryHdvDrive2;
+        auto& hdv = *rebuilt.primaryHdv;
+        bool restored = false;
+        if (medium.loaded && !medium.path.empty()) {
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(medium.path, ec))
+                restored = hdv.loadDrive(1, medium.path);
+        }
+        if (!restored && hdv.backing(1).isLoaded())
+            (void)hdv.ejectDrive(1);
+        hdv.setBayWriteBack(1, medium.writeBackEnabled);
     }
 
     for (const auto& medium : snapshot.cffa) {

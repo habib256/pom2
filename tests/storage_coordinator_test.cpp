@@ -516,6 +516,49 @@ int main()
         assert(command.ok);
         assert(commandSettings.getBool("hdv_writeback"));
 
+        // ── The ProDOS HD card's drive 2 (2026-09-11) ─────────────────
+        // Its own `_drive2` keys, written with the mount and cleared with
+        // the eject, never touching drive 1's `hdv_path`; and a slot rebuild
+        // brings it back through the rebuild snapshot.
+        {
+            const std::string hdv2Path =
+                writeImage("pom2_storage_hdv_drive2.hdv", 8u * 512u, 0x00);
+            command = mediaStorage.mountMediaBay(
+                mediaController, commandSettings, 3, 1, hdv2Path);
+            assert(command.ok);
+            assert(commandSettings.getString("hdv_path_drive2") == hdv2Path);
+            assert(commandSettings.getString("hdv_path") == hdvPath &&
+                   "drive 2's mount must not rewrite drive 1's key");
+            {
+                auto state = mediaController.lockState();
+                auto& bus = state.memory().slotBus();
+                const auto snap = mediaStorage.captureRebuildSnapshot(bus);
+                assert(snap.primaryHdvDrive2 && snap.primaryHdvDrive2->loaded);
+                (void)bus.unplug(3);
+                bus.plug(3, std::make_unique<ProDOSHardDiskCard>(3));
+                mediaStorage.restoreRebuildSnapshot(bus, snap);
+                auto* card = dynamic_cast<ProDOSHardDiskCard*>(bus.peripheral(3));
+                assert(card);
+                assert(card->bayInfo(0).loaded && card->bayInfo(0).path == hdvPath);
+                assert(card->bayInfo(1).loaded && card->bayInfo(1).path == hdv2Path &&
+                       "drive 2 came back across a slot rebuild");
+            }
+            command = mediaStorage.ejectMediaBay(
+                mediaController, commandSettings, 3, 1);
+            assert(command.ok);
+            assert(commandSettings.getString("hdv_path_drive2").empty());
+            assert(commandSettings.getString("hdv_path") == hdvPath);
+            {
+                auto state = mediaController.lockState();
+                auto* card = dynamic_cast<ProDOSHardDiskCard*>(
+                    state.memory().slotBus().peripheral(3));
+                assert(card && card->isImageLoaded() && !card->bayInfo(1).loaded);
+                // The rebuild above made a fresh card: put drive 1's opt-in
+                // back the way this suite set it.
+                card->setWriteBackEnabled(true);
+            }
+        }
+
         command = mediaStorage.mountMediaBay(
             mediaController, commandSettings, 7, 0, cffaPath);
         assert(command.ok);
@@ -730,6 +773,83 @@ int main()
                     (void)bus.unplug(1);
                 }
                 commandSettings.setString("media_slot1_bay0_path", "");
+
+                // ── The chain length (2026-09-11) ───────────────────────
+                // A Liron carries 2, 4, 6 or 8 units. The count persists in
+                // the generic keyspace, is restored BEFORE the bays (it
+                // decides how many there are), and is never shrunk over a
+                // loaded bay — that would hide a medium the guest cannot
+                // reach and the panels no longer list.
+                {
+                    {
+                        auto state = mediaController.lockState();
+                        state.memory().slotBus().plug(
+                            1, std::make_unique<pom2::LironCard>(1));
+                    }
+                    {
+                        auto state = mediaController.lockState();
+                        auto* card = dynamic_cast<pom2::LironCard*>(
+                            state.memory().slotBus().peripheral(1));
+                        assert(card && card->bayCount() == 8 &&
+                               "a fresh Liron carries the whole chain");
+                    }
+                    command = mediaStorage.setMediaBayCount(
+                        mediaController, commandSettings, 1, 5);
+                    assert(!command.ok && "5 is not one of the card's choices");
+                    command = mediaStorage.setMediaBayCount(
+                        mediaController, commandSettings, 1, 2);
+                    assert(command.ok);
+                    assert(commandSettings.getInt("media_slot1_bays") == 2);
+                    command = mediaStorage.mountMediaBay(
+                        mediaController, commandSettings, 1, 7, lironPath);
+                    assert(!command.ok && "bay 7 does not exist on a two-unit chain");
+                    command = mediaStorage.setMediaBayCount(
+                        mediaController, commandSettings, 1, 8);
+                    assert(command.ok);
+                    assert(commandSettings.getInt("media_slot1_bays") == 8);
+                    command = mediaStorage.mountMediaBay(
+                        mediaController, commandSettings, 1, 7, lironPath);
+                    assert(command.ok && "bay 7 exists on an eight-unit chain");
+                    assert(commandSettings.getString("media_slot1_bay7_path") ==
+                           lironPath);
+                    command = mediaStorage.setMediaBayCount(
+                        mediaController, commandSettings, 1, 2);
+                    assert(!command.ok && "no shrink over a loaded bay");
+                    assert(command.error.find("unit 7") != std::string::npos);
+                    assert(commandSettings.getInt("media_slot1_bays") == 8);
+                    {
+                        auto state = mediaController.lockState();
+                        auto& bus = state.memory().slotBus();
+                        (void)bus.unplug(1);
+                        bus.plug(1, std::make_unique<pom2::LironCard>(1));
+                        const auto restored = mediaStorage.restoreMediaFromSettings(
+                            bus, commandSettings);
+                        for (const auto& w : restored.warnings)
+                            assert(w.find("persisted path not found") != std::string::npos);
+                        auto* card = dynamic_cast<pom2::LironCard*>(bus.peripheral(1));
+                        assert(card);
+                        assert(card->bayCount() == 8 &&
+                               "the chain length came back from settings");
+                        const auto info = card->bayInfo(7);
+                        assert(info.loaded && info.path == lironPath &&
+                               "unit 7's medium came back behind it");
+                    }
+                    command = mediaStorage.ejectMediaBay(
+                        mediaController, commandSettings, 1, 7);
+                    assert(command.ok);
+                    assert(commandSettings.getString("media_slot1_bay7_path").empty());
+                    command = mediaStorage.setMediaBayCount(
+                        mediaController, commandSettings, 1, 2);
+                    assert(command.ok);
+                    assert(commandSettings.getInt("media_slot1_bays") == 2);
+                    {
+                        auto state = mediaController.lockState();
+                        auto& bus = state.memory().slotBus();
+                        auto* card = dynamic_cast<pom2::LironCard*>(bus.peripheral(1));
+                        assert(card && card->bayCount() == 2);
+                        (void)bus.unplug(1);
+                    }
+                }
 
                 // ── flushAll reaches a generic media bay (bug hunt #1) ──
                 // `flushAll` walked Disk II / block / SmartPort cards only,

@@ -100,8 +100,10 @@ public:
     /// of the slot, units 3+ are enumerated through the SmartPort STATUS
     /// call and remapped by ProDOS 8 2.4+ onto empty slots. How many the
     /// card ANSWERS FOR is `unitCount()` (2, 4, 6 or 8 — A2retroNET's
-    /// `number=`), default 2, so a saved config sees exactly what it did.
+    /// `number=`). It starts at the ceiling since 2026-09-11 (`kDefaultUnits`),
+    /// like the Liron: a count saved as `smartport_slotN_units` still wins.
     static constexpr size_t kMaxUnits      = 8;
+    static constexpr int    kDefaultUnits  = static_cast<int>(kMaxUnits);
 
     /// Snapshot blob version. v1 = transfer state (+ an optional v1.1 call
     /// engine tail); v2 appends one media-identity hash per unit so a primed
@@ -263,7 +265,7 @@ private:
     // ($C0n0) latches `activeUnit_` for $C0n3 (data) / $C0n4 (status)
     // — block setup ($C0n1/2) writes to the active unit's register pair.
     size_t   activeUnit_                 = 0;
-    int      unitCount_                  = 2;      // see setUnitCount
+    int      unitCount_                  = kDefaultUnits;   // see setUnitCount
     std::array<uint16_t, kMaxUnits> selectedBlock_{};
     std::array<size_t,   kMaxUnits> streamOffset_{};
     std::array<std::array<uint8_t, kBlockBytes>, kMaxUnits> readCache_{};

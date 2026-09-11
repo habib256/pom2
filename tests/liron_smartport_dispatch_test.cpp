@@ -136,6 +136,10 @@ int main()
         pom2::SmartPort35Unit* uraw = unit.get();
 
         auto card = std::make_unique<pom2::SmartPortCard>(kSlot);
+        // Eight by default since 2026-09-11; this test's geometry is the
+        // two-unit card (unit 2 empty → $28, STATUS unit 0 counts 2).
+        assert(card->unitCount() == pom2::SmartPortCard::kDefaultUnits);
+        card->setUnitCount(2);
         if (useLiron) assert(card->loadLironRom(lironRom));
         card->setUnit(0, std::move(unit));   // SmartPort unit 1
         // bay 1 left EMPTY (no unit object)  → SmartPort unit 2 = $28

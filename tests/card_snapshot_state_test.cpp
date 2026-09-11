@@ -108,7 +108,7 @@ void testProDosHdvStreamCursor()
 
     std::vector<uint8_t> blob;
     a.appendSnapshotState(blob);
-    assert(blob.size() == 8);
+    assert(blob.size() == 9);         // 'HDV2' + block + cursor + drive
 
     ProDOSHardDiskCard b(7);
     b.loadSnapshotState(blob.data(), blob.size());

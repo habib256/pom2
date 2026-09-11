@@ -63,7 +63,7 @@ int main()
     int rc = 0;
     {
         pom2::SmartPortCard card(5);
-        card.setUnitCount(2);                       // the default
+        card.setUnitCount(2);                       // a two-unit card
         card.setBayType(3, std::string(pom2::SmartPort35Unit::kKindKey));
         std::string err;
         if (!card.mountBay(3, hidden, err)) {

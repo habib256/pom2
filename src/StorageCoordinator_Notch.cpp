@@ -63,6 +63,12 @@ StorageCoordinator::setMediaNotch(EmulationController& controller,
         if (cards.primaryHdv && cards.primaryHdv->isImageLoaded() &&
             cards.primaryHdv->getImagePath() == path)
             cards.primaryHdv->setHostWriteProtected(protect);
+        // Drive 2 of every ProDOS HD card: `blockCards` above only speaks
+        // the single-image API, which is drive 1.
+        for (auto* block : cards.blockCards)
+            if (auto* hdv = dynamic_cast<ProDOSHardDiskCard*>(block))
+                if (hdv->backing(1).isLoaded() && hdv->backing(1).path() == path)
+                    hdv->setDriveHostWriteProtected(1, protect);
         for (auto* card : cards.smartPortCards) {
             if (!card) continue;
             for (std::size_t u = 0; u < SmartPortCard::kMaxUnits; ++u) {

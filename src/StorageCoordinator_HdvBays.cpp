@@ -29,14 +29,23 @@ StorageCoordinator::mountHdvIntoFreeBay(EmulationController& controller,
     RoutedMediaCommandResult result;
     int  slot = -1, bay = 0;
     bool needsType = false;
+    bool blockTarget = false;
     int  busyUnits = 0, unitCount = 0;
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
-        // The dedicated block card first, and only while it is empty: it is
-        // the boot device on a machine that has one.
-        if (auto* block = cards.preferredBlock(); block && !block->isImageLoaded()) {
+        // The dedicated block card first, and only while it has a free
+        // drive: drive 1 is the boot device on a machine that has one, and
+        // a ProDOS HD card has a drive 2 behind it (2026-09-11).
+        int freeBlockBay = -1;
+        auto* block = cards.preferredBlock();
+        if (block)
+            for (int b = 0; b < block->bayCount() && freeBlockBay < 0; ++b)
+                if (!block->bayInfo(b).loaded) freeBlockBay = b;
+        if (freeBlockBay >= 0) {
             slot = block->getSlot();
+            bay  = freeBlockBay;
+            blockTarget = true;
         } else if (auto* sp = cards.primarySmartPort) {
             unitCount = sp->unitCount();
             for (int b = 0; b < unitCount; ++b) {
@@ -67,7 +76,7 @@ StorageCoordinator::mountHdvIntoFreeBay(EmulationController& controller,
     if (!m.ok) { result.error = m.error; return result; }
     result.ok = true;
     result.bootSlot = slot;
-    result.usesSmartPort = (bay > 0) || needsType || unitCount > 0;
+    result.usesSmartPort = !blockTarget && ((bay > 0) || needsType || unitCount > 0);
     return result;
 }
 

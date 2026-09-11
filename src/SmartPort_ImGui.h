@@ -63,7 +63,7 @@ public:
         bool plugged  = false;
         /// How many units the card answers for (2/4/6/8); only those rows
         /// are drawn. `units` always holds kMaxUnits entries.
-        int  unitCount = 2;
+        int  unitCount = 8;
         std::array<UnitSnapshot, kMaxUnits> units{};
     };
 

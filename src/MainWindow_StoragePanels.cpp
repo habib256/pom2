@@ -357,9 +357,14 @@ void MainWindow::renderDiskLibraryWindow()
         // Every hard-disk volume: the dedicated block card's, then each
         // SmartPort card's bays of HDV kind (up to eight per card), so the
         // header lists them all and the HDV tab marks them all.
-        if (pom2::ProDOSBlockCard* dev = hdvDevice(); dev && dev->isImageLoaded()) {
-            mounted.hdvs.push_back({ dev->getSlot(), 0, dev->getImagePath(),
-                                     dev->isWriteProtected() });
+        // Every bay of it: a ProDOS HD card has a drive 2 (2026-09-11).
+        if (pom2::ProDOSBlockCard* dev = hdvDevice()) {
+            for (int b = 0; b < dev->bayCount(); ++b) {
+                const pom2::MediaBayInfo info = dev->bayInfo(b);
+                if (info.loaded)
+                    mounted.hdvs.push_back({ dev->getSlot(), b, info.path,
+                                             info.writeProtected });
+            }
         }
         for (int s = 1; s < SlotBus::kSlotCount; ++s) {
             auto* sp = dynamic_cast<pom2::SmartPortCard*>(

@@ -123,6 +123,8 @@ public:
         std::vector<DiskIISnapshot> diskII;
         /// The legacy HDV policy has one primary synthetic HDV target.
         std::optional<SlotMediumSnapshot> primaryHdv;
+        /// Its drive 2 (2026-09-11), persisted under the `_drive2` keys.
+        std::optional<SlotMediumSnapshot> primaryHdvDrive2;
         /// CFFA is multi-instance and therefore restored by slot.
         std::vector<SlotMediumSnapshot> cffa;
     };
@@ -243,6 +245,14 @@ public:
     MediaCommandResult setMediaBayType(EmulationController& controller,
                                        Settings& settings, int slot, int bay,
                                        const std::string& kind) const;
+    /// Chain length of a card that lets the user pick it
+    /// (`MountableMediaCard::bayCountChoices` — the Liron's 2/4/6/8 units).
+    /// Refuses to shrink over a loaded bay rather than hiding a medium the
+    /// guest can no longer reach; persisted as `media_slot<N>_bays`. The
+    /// guest sees the new chain at its next INIT scan, i.e. the next boot.
+    MediaCommandResult setMediaBayCount(EmulationController& controller,
+                                        Settings& settings, int slot,
+                                        int count) const;
 
     /// Authoritative 3.5-inch routing. If a SmartPort card exists its two
     /// units own the drives; otherwise commands target the controller's

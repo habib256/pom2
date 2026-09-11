@@ -89,8 +89,8 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
     ImGui::SameLine();
     // How many units the card presents, the way A2retroNET's `number=`
     // does: ProDOS sees units 0/1 as drive 1/2 of this slot and, from
-    // ProDOS 8 2.4 on, remaps units 2+ onto empty slots. Two by default so
-    // an existing configuration is unchanged.
+    // ProDOS 8 2.4 on, remaps units 2+ onto empty slots. Eight by default
+    // (2026-09-11); a count the user saved still wins.
     {
         static const int   kCounts[] = { 2, 4, 6, 8 };
         static const char* kLabels[] = { "2", "4", "6", "8" };

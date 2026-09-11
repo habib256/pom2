@@ -87,7 +87,8 @@ int main()
             card2 = c.get();
             st.memory().slotBus().plug(5, std::move(c));
         }
-        assert(card2->unitCount() == 2);
+        assert(card2->unitCount() == 8);   // the ceiling, by default (2026-09-11)
+        card2->setUnitCount(2);
         assert(storage.mountHdvIntoFreeBay(c2, settings, imgs[0]).ok);
         assert(storage.mountHdvIntoFreeBay(c2, settings, imgs[1]).ok);
         assert(!storage.mountHdvIntoFreeBay(c2, settings, imgs[2]).ok);

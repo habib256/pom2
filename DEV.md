@@ -3284,8 +3284,33 @@ off 0  write   block LO byte               (resets stream offset)
 off 1  write   block HI byte               (resets stream offset)
 off 2  read    next byte of selected 512 B block (auto-incr, wraps)
 off 2  write   next byte INTO block         (write-back-gated)
-off 3  read    status: bit7 = no image, bit6 = WP
+off 3  read    status: bit7 = no image, bit6 = WP  (of the latched drive)
+off 6  write   drive select: bit 7 = drive 2 (ProDOS's $43, verbatim)
 ```
+
+**Two drives** *(2026-09-11)*. The card had one image; it has drive 1 and
+drive 2 now, the AppleWin HDD card's shape — and the ceiling of a plain
+`$Cn07=$01` block device, because ProDOS names a unit by slot and one
+drive bit, and ProDOS 8 2.4 remaps units 3+ onto other slots only for a
+SmartPort card (`SmartPortCard`, up to eight HDV units, is where eight
+hard disks live). `$CnFF` now points at an 8-byte entry at `$CnEB` —
+`LDA $43 / STA $C0n6 / JMP dispatch`, in the free bytes above the halt
+loop, because the dispatch region is exactly full — and the boot path goes
+through it too. `$CnFE` is `$17`: bits 5-4 = one extra volume, which is
+what makes ProDOS install `S<n>,D2` (measured: at `$07` it lists D1 only).
+Drive 2 is therefore in DEVLST from boot, empty until mounted, and a disk
+mounted there later needs no reboot. Every hardware path reads the latched
+drive (`cur()`); the snapshot blob is `HDV2` (+ the drive byte; `HDV1`
+loads as drive 1). Host side: the single-image `ProDOSBlockCard` API still
+means **drive 1** — `hdv_path`, the HDV panel, the host folder, the CLI
+auto-plug and the AI server all keep their meaning — except `saveDirty`,
+`isBusy` and `tickActivityDecay`, which are card-wide; drive 2 is bay 1 of
+the bay interface (Internal Disks & Media, the status bar, eject-all,
+`blockBackings()` for the background autosave) and persists as
+`hdv_path_drive2` / `hdv_writeback_drive2`, through the rebuild snapshot
+too (`primaryHdvDrive2`). The Disk Library's mount-only adds into drive 2
+when drive 1 is taken. Pinned by `hdv_two_drives` (the ROM driver on both
+drives, and ProDOS listing S5,D1 + S5,D2) and `storage_coordinator`.
 
 The ROM's READ arm returns `A = 0` on success since 2026-09-09 (bug hunt
 #14): ProDOS 8 TRM § 6.3 wants carry clear *and* the accumulator zero,
@@ -3372,7 +3397,8 @@ apple2ee -sl7 cffa2 -hard1 <img>` (romset `~/mame_roms/cffa2/`).
 **Eight bays, a configurable unit count** *(2026-09-08, after A2retroNET —
 the A2Pico firmware that presents up to eight 32 MB volumes as one
 SmartPort controller)*. `kMaxUnits` is 8; `unitCount()` (2, 4, 6 or 8,
-`setUnitCount`, default 2, persisted as `smartport_slotN_units`) is what
+`setUnitCount`, default **8** since 2026-09-11 — `kDefaultUnits`, the
+ceiling, like the Liron's; 2 before — persisted as `smartport_slotN_units`) is what
 the card **answers for**: STATUS unit 0's device count, the SmartPort unit
 range the $CE00 engine accepts, `bayCount()` for the media rows. Units 0/1
 stay ProDOS's drive 1/2 of the slot; units 2+ only exist for the guest
@@ -3385,7 +3411,7 @@ eight per-unit records; a v1/v2 blob's two still load and the other bays
 are reset. The panel draws `unitCount` rows and offers the count next to
 the slot. Pinned by `smartport_eight_units` (boots A2DeskTop's 800K image
 off unit 0 with seven synthesised volumes behind it, reads DEVLST off the
-main bank as the boot runs: eight devices at 8, two at the default).
+main bank as the boot runs: eight devices at 8, two at 2).
 The legacy streaming registers obey the same count since 2026-09-09 (bug
 hunt #12): `$C0n0` unit-select folded on `kMaxUnits`, so `LDA #3 / STA
 $C0n0` reached — and `$C0n3` committed 512-byte blocks to — a bay outside
@@ -4380,6 +4406,29 @@ Sony mechanisms under the IWM are bypassed while the responder is live
 (`busLive()`: enabled and a bay holds media); with it off, or nothing
 mounted, the card is a Liron with an empty port and the firmware says so.
 
+**Eight units on the chain** *(2026-09-11)*. The card had two fixed bays; it
+carries 2, 4, 6 or 8 now (`LironCard::setUnitCount`, same pair rule as
+`SmartPortCard::setUnitCount`), all of them `Disk35Image`s served by the bus
+responder — the ceiling is `SmartPortBusDevice::kMaxUnits`, the one the //c's
+rear port reached on 2026-09-08, since it is the same firmware and the same
+responder. Measured with `roms/apple2e.rom`, the real EPROM and ProDOS 8
+2.4 booted off unit 0: the firmware's INIT scan numbers all eight, and ProDOS
+lists S5, S2, S4 and S1, two drives each; six give S5/S2/S4, two S5
+alone. A fresh card answers for all **eight** — the whole chain, as the
+//c's rear port can carry it; a count saved in `media_slotN_bays` wins,
+and 2 is the setting for a ProDOS older than 2.4, which does not remap
+units 3-8 anyway. Only bays 0-1 have a Sony mechanism behind the IWM
+(`kDrives`) — the dumb-drive path, reached with the responder off, never had
+more. `bayCount()` IS the unit count, so every generic walk (restore, flush,
+eject-all, the status-bar chips, the media panel) sees the chain the guest
+sees; `mountBay` refuses a bay past it, and
+`StorageCoordinator::setMediaBayCount` refuses to shrink over a loaded bay.
+The count persists as `media_slotN_bays` (restored before the bays) and is
+configuration, not state — the snapshot does not carry it, as the SmartPort
+card's does not. UI: *Internal Disks & Media*, the `units` combo beside the
+card's name; the guest sees a change at its next boot. Pinned by
+`liron_eight_units` (eight, six, two) and `storage_coordinator`.
+
 Two card-side bugs the real firmware exposed, both worth knowing when wiring
 any IWM card: the phase lines must reach EVERY drive on the chain, not only
 the selected one (the firmware sets the register address up before enabling a
@@ -4469,7 +4518,7 @@ HDV) the 32 KB //c ROM's INIT scan numbers all six and ProDOS 8 2.4.3, booted
 from the internal 5.25", lists S5 D1/D2, S2 D1/D2 and S4 D1/D2 next to
 S6 and /RAM; at eight, the card's ceiling, S1 D1/D2 join them — eleven
 ProDOS devices in all. Pinned by `iic_smartport_six_units` (eight, six, and
-two at the default).
+two at 2).
 The bus blob's id table grew from four entries to eight on 2026-09-08,
 and the first loader for it read "up to eight ids while bytes remain" —
 a rule that cannot see the end of a four-entry table. The section is
@@ -4547,7 +4596,9 @@ must never be spliced with the next transaction.
 not a SmartPort, CFFA or HDV card — those keep their own keys, which are on
 disk in every user's settings — and persists its bays under
 `media_slotN_bayK_path` / `_writeback`, restored with the same cwd anchors
-as the SmartPort units.
+as the SmartPort units. A card whose chain length is a user choice
+(`MountableMediaCard::bayCountChoices`, the Liron's 2/4/6/8) adds
+`media_slotN_bays`, applied before its bays are restored.
 
 **The 16 KB //c (ROM 255)** has no SmartPort firmware: its `$C500` is not a
 disk page (`FF 20 4D CE …`), so nothing on that machine can speak to an

@@ -133,7 +133,8 @@ void testHdvAtSlot(int slot)
     // while the driver has always implemented command $02, so every
     // capability-inspecting utility presented the volume as unwritable.
     // Bug hunt #4 #13; SmartPortCard was fixed for the same defect in 2026-09.
-    assert(mem.memRead(base + 0xFE) == 0x07);
+    // Bit 4 since 2026-09-11: two volumes, drive 1 and drive 2 ($17).
+    assert(mem.memRead(base + 0xFE) == 0x17);
     // $CnFF is the driver entry OFFSET, and the ROM moved when the read and
     // write routines grew their out-of-range check — so read it rather than
     // hard-coding it, and check that it points at the JMP below.

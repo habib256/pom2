@@ -43,12 +43,12 @@ constexpr std::size_t kExpansionSize = 2048;
 LironCard::LironCard(int slot)
     : slot_(slot)
 {
-    for (int i = 0; i < kDrives; ++i) {
-        drives_[i].setImage(&images_[i]);
+    for (int i = 0; i < kDrives; ++i) drives_[i].setImage(&images_[i]);
+    for (int i = 0; i < kMaxUnits; ++i) {
         busUnits_[static_cast<std::size_t>(i)].bind(&images_[i]);
         bus_.setUnit(i, &busUnits_[static_cast<std::size_t>(i)]);
     }
-    bus_.setUnitCount(kDrives);
+    bus_.setUnitCount(unitCount_);
 
     // MAME-shaped callbacks, minus the MIG. `SmartPortHub` does the same job
     // for the //c+; a Liron's chain is simpler, so the card is its own hub.
@@ -98,13 +98,30 @@ LironCard::~LironCard()
     // after the flush. Both are worth an inline 800 KB write — there is no
     // later — but neither is the common case, which is why the profile-switch
     // path no longer pays for it under `stateMutex`.
-    for (int bay = 0; bay < kDrives; ++bay) {
+    // Every bay, not just the `unitCount_` the guest sees: a shrink leaves a
+    // bay past the count holding its medium, and this is its last owner.
+    for (int bay = 0; bay < kMaxUnits; ++bay) {
         std::string err;
         if (!flushBay(bay, err) && !err.empty()) {
             pom2::log().warn("Liron", "Shutdown flush failed on bay " +
                              std::to_string(bay + 1) + ": " + err);
         }
     }
+}
+
+void LironCard::setUnitCount(int n)
+{
+    if (n < 2) n = 2;
+    if (n > kMaxUnits) n = kMaxUnits;
+    if (n & 1) ++n;                      // ProDOS drives come in pairs
+    if (n == unitCount_) return;
+    unitCount_ = n;
+    // The chain numbers the host assigned still stand for the units that
+    // remain; a unit the host never INITed has none and is refused until the
+    // next scan (`SmartPortBusDevice::unitFor`), which is the real bus's
+    // behaviour for a drive plugged in with the power on.
+    bus_.setUnitCount(n);
+    bus_.abortTransaction();
 }
 
 void LironCard::setFloppySound(FloppySoundSink* fs)
@@ -131,7 +148,7 @@ bool LironCard::busLive() const
     // spliced with the next one: any change in which bays hold media starts
     // the protocol over.
     unsigned mask = 0;
-    for (int i = 0; i < kDrives; ++i)
+    for (int i = 0; i < unitCount_; ++i)
         if (images_[static_cast<std::size_t>(i)].isLoaded()) mask |= 1u << i;
     if (mask != busMediaMask_) {
         busMediaMask_ = mask;
@@ -398,7 +415,7 @@ void LironCard::onPhases(uint8_t phases)
 MediaBayInfo LironCard::bayInfo(int bay) const
 {
     MediaBayInfo info;
-    if (bay < 0 || bay >= kDrives) return info;
+    if (bay < 0 || bay >= kMaxUnits) return info;
     const Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     info.kindLabel         = "3.5\" 800K";
     info.path              = img.path();
@@ -414,7 +431,9 @@ MediaBayInfo LironCard::bayInfo(int bay) const
 
 bool LironCard::mountBay(int bay, const std::string& path, std::string& errOut)
 {
-    if (bay < 0 || bay >= kDrives) { errOut = "no such bay"; return false; }
+    // Only a bay the chain carries: a medium past `unitCount_` would sit
+    // where the guest cannot see it and the host panels do not look.
+    if (bay < 0 || bay >= unitCount_) { errOut = "no such bay"; return false; }
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     if (!img.loadFile(path)) {
         errOut = img.lastError();
@@ -422,14 +441,14 @@ bool LironCard::mountBay(int bay, const std::string& path, std::string& errOut)
     }
     // The drive has to be told, or its cached bit-cell stream still holds the
     // previous disk — and the firmware's media-change probe never fires.
-    drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
+    if (bay < kDrives) drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
     errOut.clear();
     return true;
 }
 
 bool LironCard::ejectBay(int bay)
 {
-    if (bay < 0 || bay >= kDrives) return false;
+    if (bay < 0 || bay >= kMaxUnits) return false;
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     // Refuse the eject when the save fails, exactly as every sibling does
     // (`DiskIICard::ejectDisk`, `SmartPort35Unit::eject`,
@@ -441,7 +460,7 @@ bool LironCard::ejectBay(int bay)
     if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty())
         return false;
     img.eject();
-    drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
+    if (bay < kDrives) drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
     return true;
 }
 
@@ -450,7 +469,7 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
 {
     errOut.clear();
     out = PendingBayFlush{};
-    if (bay < 0 || bay >= kDrives) { errOut = "no such bay"; return false; }
+    if (bay < 0 || bay >= kMaxUnits) { errOut = "no such bay"; return false; }
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     // The move half of "move out": `takeWriteBack` serialises the whole file
     // and retires the dirty flag under the caller's lock, atomically with the
@@ -465,14 +484,14 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
 
 void LironCard::restoreFlushBayDirty(int bay)
 {
-    if (bay < 0 || bay >= kDrives) return;
+    if (bay < 0 || bay >= kMaxUnits) return;
     images_[static_cast<std::size_t>(bay)].restoreDirty();
 }
 
 bool LironCard::flushBay(int bay, std::string& errOut)
 {
     errOut.clear();
-    if (bay < 0 || bay >= kDrives) { errOut = "no such bay"; return false; }
+    if (bay < 0 || bay >= kMaxUnits) { errOut = "no such bay"; return false; }
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     if (!img.isLoaded() || !img.hasUnsavedChanges()) return true;
     if (!img.saveDirty()) {
@@ -485,7 +504,7 @@ bool LironCard::flushBay(int bay, std::string& errOut)
 
 void LironCard::setBayWriteBack(int bay, bool on)
 {
-    if (bay < 0 || bay >= kDrives) return;
+    if (bay < 0 || bay >= kMaxUnits) return;
     images_[static_cast<std::size_t>(bay)].setWriteBackEnabled(on);
 }
 

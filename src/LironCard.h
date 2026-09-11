@@ -70,7 +70,19 @@ class LironCard : public SlotPeripheral, public MountableMediaCard
 {
 public:
     static constexpr int kDefaultSlot = 5;
-    static constexpr int kDrives      = 2;   // the port daisy-chains two
+    /// Sony mechanisms behind the IWM — the dumb-drive path, which only the
+    /// bus-responder-off configuration reaches (`setBusResponderEnabled`).
+    static constexpr int kDrives      = 2;
+    /// Units on the SmartPort BUS, the path the firmware actually boots
+    /// from: up to eight since 2026-09-11, the same ceiling the //c's rear
+    /// port reached on 2026-09-08 — it is the same firmware, byte for byte,
+    /// and the same responder (`SmartPortBusDevice::kMaxUnits`).
+    static constexpr int kMaxUnits    = SmartPortBusDevice::kMaxUnits;
+    /// The whole chain by default (2026-09-11): a fresh Liron answers for
+    /// eight units, as the //c's rear port can. A count saved under
+    /// `media_slotN_bays` still wins; 2 is one click away in the media panel
+    /// for a ProDOS older than 2.4, which does not remap units 3-8 anyway.
+    static constexpr int kDefaultUnits = 8;
 
     explicit LironCard(int slot = kDefaultSlot);
 
@@ -109,13 +121,15 @@ public:
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
 
     // ── MountableMediaCard ───────────────────────────────────────────────
-    // Two fixed 3.5" bays, the daisy chain the real port carries. No type
-    // select (a Liron drives 3.5" mechanisms and nothing else) and no
-    // two-phase mount: a `Disk35Image` has no `Block512Backing` to prepare
-    // off the lock, so the base class's opt-in defaults decline and callers
-    // fall back to `mountBay` — the same path `SmartPortCard`'s 3.5" unit
-    // takes today.
-    int          bayCount() const override { return kDrives; }
+    // 3.5" bays, one per unit on the daisy chain: 2, 4, 6 or 8 of them
+    // (`setUnitCount`). No type select (a Liron drives 3.5" media and
+    // nothing else) and no two-phase mount: a `Disk35Image` has no
+    // `Block512Backing` to prepare off the lock, so the base class's opt-in
+    // defaults decline and callers fall back to `mountBay` — the same path
+    // `SmartPortCard`'s 3.5" unit takes today.
+    int          bayCount() const override { return unitCount_; }
+    std::vector<int> bayCountChoices() const override { return { 2, 4, 6, 8 }; }
+    void         setBayCount(int n) override { setUnitCount(n); }
     MediaBayInfo bayInfo(int bay) const override;
     bool         mountBay(int bay, const std::string& path,
                           std::string& errOut) override;
@@ -133,6 +147,20 @@ public:
     /// ROM would be a different card, and POM2 already has that card
     /// (`SmartPortCard`).
     bool romLoaded() const { return romLoaded_; }
+
+    /// How many units the firmware's INIT scan finds on the chain — 2, 4, 6
+    /// or 8 (odd counts round up: ProDOS drives come in pairs), exactly
+    /// `SmartPortCard::setUnitCount`'s rule. The guest sees a change at its
+    /// next INIT, i.e. the next boot; ProDOS 8 2.4+ remaps units 3+ onto
+    /// slots with no disk device of their own. Configuration, not state: the
+    /// snapshot does not carry it, as the SmartPort card's does not.
+    ///
+    /// Shrinking does not eject: a bay past the new count keeps its medium,
+    /// unseen by the guest but still flushed by the destructor. The host
+    /// (`StorageCoordinator::setMediaBayCount`) refuses to shrink over a
+    /// loaded bay, so that state is only reachable by hand.
+    void setUnitCount(int n);
+    int  unitCount() const { return unitCount_; }
     const std::string& lastError() const { return lastError_; }
 
     /// The byte-level SmartPort **bus** responder (`SmartPortBusDevice`).
@@ -168,8 +196,9 @@ private:
     std::vector<uint8_t> rom_;          // the 4 KB dump, verbatim
 
     IWMDevice                          iwm_;
-    std::array<Disk35Image, kDrives>   images_;
-    std::array<Sony35Drive, kDrives>   drives_;
+    std::array<Disk35Image, kMaxUnits> images_;
+    std::array<Sony35Drive, kDrives>   drives_;   // bays 0-1 only
+    int                                unitCount_ = kDefaultUnits;
 
     // ── The SmartPort bus ────────────────────────────────────────────────
     // The firmware's device scan is not talking to a disk: it drives PH1 and
@@ -203,7 +232,7 @@ private:
     bool busEnabled_ = true;
     mutable SmartPortBusDevice   bus_;
     mutable unsigned             busMediaMask_ = 0;   // which bays held media last look
-    std::array<ImageUnit, kDrives> busUnits_;
+    std::array<ImageUnit, kMaxUnits> busUnits_;
 
     /// Enabled, and a bay holds media — the device is on the port.
     bool busLive() const;

@@ -77,8 +77,17 @@ class MountableMediaCard
 public:
     virtual ~MountableMediaCard() = default;
 
-    /// Number of mountable bays. HDV/CFFA = 1, SmartPort = 2.
+    /// Number of mountable bays. HDV/CFFA = 1, SmartPort = its unit count.
     virtual int bayCount() const = 0;
+
+    /// Cards whose chain length is the user's to pick — today the Liron,
+    /// whose SmartPort bus carries 2, 4, 6 or 8 units. Empty = fixed.
+    /// (`SmartPortCard` has its own count, its own keyspace and its own
+    /// panel, and does not advertise it here.)
+    virtual std::vector<int> bayCountChoices() const { return {}; }
+    /// Only meaningful when `bayCountChoices()` is non-empty; callers hold
+    /// `stateMutex` and refuse to shrink over a loaded bay first.
+    virtual void setBayCount(int /*n*/) {}
 
     /// Snapshot of bay `bay` (0-based). Out-of-range → default-constructed.
     virtual MediaBayInfo bayInfo(int bay) const = 0;

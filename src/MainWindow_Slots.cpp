@@ -734,8 +734,10 @@ void MainWindow::renderMediaPanel()
 
         // Persistent InputText buffers, keyed [slot][bay/drive]. Primed once
         // from the live path; re-primed (to the new live value) after eject.
-        static std::array<std::array<std::array<char, 512>, 2>, 8> mBuf{};
-        static std::array<std::array<bool, 2>, 8> mPrimed{};
+        // Eight bays: a SmartPort card or a Liron carries up to eight units.
+        constexpr int kPanelBays = 8;
+        static std::array<std::array<std::array<char, 512>, kPanelBays>, 8> mBuf{};
+        static std::array<std::array<bool, kPanelBays>, 8> mPrimed{};
         static std::array<std::array<std::array<char, 512>, 2>, 8> dBuf{};
         static std::array<std::array<bool, 2>, 8> dPrimed{};
         // Re-prime everything after a slot rebuild: these statics survive
@@ -789,8 +791,41 @@ void MainWindow::renderMediaPanel()
                             pom2::cardLabelForKey(liveSlots.keys[s]),
                             builtIn ? " (built-in)" : "");
 
+                // The chain length, on a card that lets the user pick it (the
+                // Liron: 2/4/6/8 units on its SmartPort bus). The SmartPort
+                // card has its own panel, with the same choice.
+                if (const auto choices = media->bayCountChoices(); !choices.empty()) {
+                    ImGui::SameLine();
+                    const int cur = media->bayCount();
+                    ImGui::SetNextItemWidth(70.0f);
+                    if (ImGui::BeginCombo("units", std::to_string(cur).c_str())) {
+                        for (int n : choices) {
+                            if (ImGui::Selectable(std::to_string(n).c_str(), n == cur) &&
+                                n != cur) {
+                                const auto r = storageCoordinator_->setMediaBayCount(
+                                    *controller, *settings, s, n);
+                                if (r.ok) mPrimed[s].fill(false);
+                                tapeStatusMessage = "Slot " + std::to_string(s) +
+                                    (r.ok ? ": " + std::to_string(n) +
+                                            " units — seen at the next boot "
+                                            "(ProDOS 8 2.4+ remaps units 2+ onto "
+                                            "other slots)"
+                                          : ": " + r.error);
+                                tapeStatusUntil = lastFrameTime + (r.ok ? 4.0 : 6.0);
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "Units on the card's SmartPort chain. 0/1 are drive 1/2 of "
+                            "slot %d;\nProDOS 8 2.4+ shows units 2-7 under other slots "
+                            "with no disk device.\nThe firmware counts the chain at "
+                            "boot: reboot to see a change.", s);
+                }
+
                 int nb = media->bayCount();
-                if (nb > 2) nb = 2;
+                if (nb > kPanelBays) nb = kPanelBays;
                 bool bootable = false;
                 for (int b = 0; b < nb; ++b) {
                     // Snapshot the bay state under the lock — the worker
@@ -808,8 +843,8 @@ void MainWindow::renderMediaPanel()
                     ImGui::Indent();
 
                     dot(info.loaded, info.writeProtected);
-                    if (info.supportsTypeSelect) ImGui::Text("Unit %d", b);
-                    else                         ImGui::TextUnformatted("Image");
+                    if (info.supportsTypeSelect || nb > 1) ImGui::Text("Unit %d", b);
+                    else                                   ImGui::TextUnformatted("Image");
                     if (info.loaded) {
                         ImGui::SameLine();
                         ImGui::TextDisabled("(%s, %u blocks%s)",

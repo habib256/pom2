@@ -7294,6 +7294,24 @@ pom2_add_headless_test(test_iic_smartport_six_units
 set_tests_properties(iic_smartport_six_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# The ProDOS HD card's second drive: its ROM driver reaches drive 1 or 2 by
+# bit 7 of ProDOS's unit byte, and ProDOS booted off drive 1 lists both.
+pom2_add_headless_test(test_hdv_two_drives
+    NAME hdv_two_drives TIMEOUT 120
+    SOURCES hdv_two_drives_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(hdv_two_drives PROPERTIES SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# The same chain on a //e's Liron card:its real EPROM (the //c's bank-1
+# SmartPort code) INITs 2, 4, 6 or 8 3.5" units, and ProDOS lists them all.
+pom2_add_headless_test(test_liron_eight_units
+    NAME liron_eight_units TIMEOUT 240
+    SOURCES liron_eight_units_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(liron_eight_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # An HDV mounted from the library adds a volume into the first free bay and
 # refuses, mounting nothing, when the card's units are all taken.
 pom2_add_headless_test(test_hdv_free_bay

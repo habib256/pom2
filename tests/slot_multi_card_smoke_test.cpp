@@ -173,8 +173,9 @@ bool testTwoSmartPortCardsIndependent()
     auto* m2 = dynamic_cast<pom2::MountableMediaCard*>(sps[0]);
     auto* m5 = dynamic_cast<pom2::MountableMediaCard*>(sps[1]);
     if (!m2 || !m5) { std::printf("FAIL: SmartPort not MountableMediaCard\n"); return false; }
-    if (m2->bayCount() != 2 || m5->bayCount() != 2) {
-        std::printf("FAIL: SmartPort bayCount != 2\n"); return false;
+    // Eight: a SmartPort card answers for its whole chain by default.
+    if (m2->bayCount() != 8 || m5->bayCount() != 8) {
+        std::printf("FAIL: SmartPort bayCount != 8\n"); return false;
     }
 
     const std::string pHdv = writeSynthHdv("spA", 8, 0x11);
@@ -225,10 +226,11 @@ bool testMixedMediaEnumeration()
         std::printf("FAIL: mediaCards()=%zu (want 3)\n", media.size());
         return false;
     }
-    // slot 2 = SmartPort(2 bays), slot 5 = block(1 bay), slot 6 = SmartPort(2)
-    if (media[0]->bayCount() != 2 || media[1]->bayCount() != 1 ||
-        media[2]->bayCount() != 2) {
-        std::printf("FAIL: bay counts %d,%d,%d (want 2,1,2)\n",
+    // slot 2 = SmartPort (8 bays by default), slot 5 = ProDOS HD (2 bays —
+    // drive 1 and drive 2), slot 6 = SmartPort (8). All since 2026-09-11.
+    if (media[0]->bayCount() != 8 || media[1]->bayCount() != 2 ||
+        media[2]->bayCount() != 8) {
+        std::printf("FAIL: bay counts %d,%d,%d (want 8,2,8)\n",
                     media[0]->bayCount(), media[1]->bayCount(),
                     media[2]->bayCount());
         return false;

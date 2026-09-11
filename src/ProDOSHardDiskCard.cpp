@@ -42,6 +42,11 @@ constexpr uint8_t  kReadOff    = 0x6E;
 constexpr uint8_t  kWriteOff   = 0x9C;
 constexpr uint8_t  kStatusOff  = 0xD0;
 constexpr uint8_t  kHaltOff    = 0xE8;   // boot-failure halt loop
+/// The ProDOS entry ($CnFF points here, not at the dispatch): latch ProDOS's
+/// unit byte into $C0n6 so the card knows which drive, then JMP to the
+/// dispatch. It lives in the free bytes above the halt loop because the
+/// dispatch region is exactly full (22 of 22).
+constexpr uint8_t  kEntryOff   = 0xEB;
 
 // Block-level I/O trace, gated by POM2_TRACE_HDV=1 (mirrors the env-var
 // diagnostics in DiskIICard.cpp / Memory.cpp). One line per 512-byte block
@@ -64,24 +69,34 @@ ProDOSHardDiskCard::ProDOSHardDiskCard(int slotNum)
     buildRom();
 }
 
-bool ProDOSHardDiskCard::loadImage(const std::string& path)
+void ProDOSHardDiskCard::mediumChanged(int drive)
 {
-    const bool ok = backing_.loadImage(path);
+    // The firmware-visible cursor ($C0n0/$C0n1 block select + the byte
+    // offset inside it) belongs to the selected drive. adoptDrive is what
+    // pom2::mountBlockCard calls — the path a GUI mount actually takes — and
+    // it used to forward to the backing alone, leaving the OUTGOING image's
+    // cursor pointed into the incoming one.
+    if (drive != drive_) return;
     selectedBlock = 0;
     streamOffset  = 0;
+}
+
+bool ProDOSHardDiskCard::loadDrive(int drive, const std::string& path)
+{
+    if (!validDrive(drive)) { lastError_ = "no such drive"; return false; }
+    const bool ok = backings_[drive].loadImage(path);
+    lastError_ = ok ? std::string{} : backings_[drive].lastError();
+    mediumChanged(drive);
     return ok;
 }
 
-bool ProDOSHardDiskCard::adoptImage(pom2::Block512Backing::PreparedImage&& p)
+bool ProDOSHardDiskCard::adoptDrive(int drive,
+                                    pom2::Block512Backing::PreparedImage&& p)
 {
-    // Mirrors loadImage: the medium changed, so the firmware-visible cursor
-    // ($C0n0/$C0n1 block select + the byte offset inside it) must start over.
-    // adoptImage is what pom2::mountBlockCard calls — the path a GUI mount
-    // actually takes — and it used to forward to the backing alone, leaving
-    // the OUTGOING image's cursor pointed into the incoming one.
-    const bool ok = backing_.adoptImage(std::move(p));
-    selectedBlock = 0;
-    streamOffset  = 0;
+    if (!validDrive(drive)) { lastError_ = "no such drive"; return false; }
+    const bool ok = backings_[drive].adoptImage(std::move(p));
+    lastError_ = ok ? std::string{} : backings_[drive].lastError();
+    mediumChanged(drive);
     return ok;
 }
 
@@ -89,37 +104,134 @@ bool ProDOSHardDiskCard::loadImageFromBytes(std::vector<uint8_t> bytes,
                                             const std::string& label,
                                             const std::string& hostFolder)
 {
-    const bool ok = backing_.loadFromBytes(std::move(bytes), label, hostFolder);
-    selectedBlock = 0;
-    streamOffset  = 0;
+    // Drive 1 only: a synthesised host-folder volume is the boot volume.
+    const bool ok = backings_[0].loadFromBytes(std::move(bytes), label, hostFolder);
+    lastError_ = ok ? std::string{} : backings_[0].lastError();
+    mediumChanged(0);
     return ok;
 }
 
-bool ProDOSHardDiskCard::ejectImage()
+bool ProDOSHardDiskCard::ejectDrive(int drive)
 {
+    if (!validDrive(drive)) return false;
+    pom2::Block512Backing& b = backings_[drive];
     // Save-on-eject policy lives here (the card owns the user-facing eject):
     // flush dirty blocks first when write-back is on and the medium allows it,
-    // then drop the image. backing_.saveDirty() is itself a guarded no-op.
+    // then drop the image. b.saveDirty() is itself a guarded no-op.
     // `isMediumLocked()`, not `isWriteProtected()`: a notch flipped on the
     // mounted image must not make the eject drop blocks the guest already
     // wrote (Block512Backing::isMediumLocked).
-    if (backing_.isLoaded() && backing_.hasUnsavedChanges() &&
-        backing_.isWriteBackEnabled() && !backing_.isMediumLocked()) {
-        if (!backing_.saveDirty()) {
-            pom2::log().warn("HDV", "Save-on-eject failed: " + backing_.lastError());
+    if (b.isLoaded() && b.hasUnsavedChanges() &&
+        b.isWriteBackEnabled() && !b.isMediumLocked()) {
+        if (!b.saveDirty()) {
+            lastError_ = b.lastError();
+            pom2::log().warn("HDV", "Save-on-eject failed on drive " +
+                             std::to_string(drive + 1) + ": " + lastError_);
             return false;
         }
     }
-    backing_.eject();
-    selectedBlock = 0;
-    streamOffset  = 0;
+    b.eject();
+    lastError_.clear();
+    mediumChanged(drive);
     return true;
+}
+
+bool ProDOSHardDiskCard::detachDrive(int drive,
+                                     pom2::Block512Backing::PendingWriteBack& out)
+{
+    if (!validDrive(drive)) return false;
+    pom2::Block512Backing& b = backings_[drive];
+    if (!(b.isLoaded() && b.hasUnsavedChanges() &&
+          b.isWriteBackEnabled() && !b.isMediumLocked()))
+        return true;                     // nothing to write: out stays invalid
+    out = b.takeWriteBack();
+    return true;
+}
+
+bool ProDOSHardDiskCard::saveDirty()
+{
+    bool ok = true;
+    lastError_.clear();
+    for (int d = 0; d < kDrives; ++d) {
+        if (backings_[d].saveDirty()) continue;
+        ok = false;
+        if (!lastError_.empty()) lastError_ += "; ";
+        lastError_ += "drive " + std::to_string(d + 1) + ": " +
+                      backings_[d].lastError();
+    }
+    return ok;
+}
+
+// ── Bays ─────────────────────────────────────────────────────────────────
+
+pom2::MediaBayInfo ProDOSHardDiskCard::bayInfo(int bay) const
+{
+    pom2::MediaBayInfo info;
+    if (!validDrive(bay)) return info;
+    const pom2::Block512Backing& b = backings_[bay];
+    info.loaded            = b.isLoaded();
+    info.busy              = b.isBusy();
+    info.path              = b.path();
+    info.lastError         = b.lastError();
+    info.blockCount        = static_cast<uint32_t>(b.blockCount());
+    info.writeProtected    = b.isWriteProtected();
+    info.writeBackEnabled  = b.isWriteBackEnabled();
+    info.hasUnsavedChanges = b.hasUnsavedChanges();
+    info.supportsWriteBack = b.canWriteBack();
+    info.persistenceState  = b.persistenceState();
+    info.persistenceError  = b.persistenceError();
+    return info;
+}
+
+bool ProDOSHardDiskCard::mountBay(int bay, const std::string& path,
+                                  std::string& errOut)
+{
+    if (!validDrive(bay)) { errOut = "invalid bay"; return false; }
+    if (!loadDrive(bay, path)) { errOut = lastError_; return false; }
+    errOut.clear();
+    return true;
+}
+
+bool ProDOSHardDiskCard::adoptBay(int bay,
+                                  pom2::Block512Backing::PreparedImage&& prepared,
+                                  std::string& errOut)
+{
+    if (!validDrive(bay)) { errOut = "invalid bay"; return false; }
+    if (!adoptDrive(bay, std::move(prepared))) {
+        // Every bay here has block backing: a false return is a real
+        // failure, and must never read as "fall back and retry".
+        errOut = lastError_.empty() ? std::string("image could not be adopted")
+                                    : lastError_;
+        return false;
+    }
+    errOut.clear();
+    return true;
+}
+
+bool ProDOSHardDiskCard::flushBay(int bay, std::string& errOut)
+{
+    errOut.clear();
+    if (!validDrive(bay)) { errOut = "no such bay"; return false; }
+    pom2::Block512Backing& b = backings_[bay];
+    if (!b.isLoaded() || !b.hasUnsavedChanges()) return true;
+    if (b.saveDirty()) return true;
+    errOut = b.lastError().empty() ? std::string("write-back failed") : b.lastError();
+    return false;
+}
+
+bool ProDOSHardDiskCard::prepareEjectBay(
+    int bay, pom2::Block512Backing::PendingWriteBack& out, std::string& errOut)
+{
+    errOut.clear();
+    if (!validDrive(bay)) return false;  // empty errOut → caller falls back
+    return detachDrive(bay, out);
 }
 
 void ProDOSHardDiskCard::onReset()
 {
     selectedBlock = 0;
     streamOffset = 0;
+    drive_ = 0;
 }
 
 uint8_t ProDOSHardDiskCard::slotRomRead(uint8_t low8)
@@ -135,7 +247,12 @@ void ProDOSHardDiskCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     //   $C0D2 read  = next byte from selected 512-byte block
     //   $C0D2 write = next byte INTO selected block (write-back enabled)
     //   $C0D3 read  = bit-7 = imageLoaded, bit-6 = isWriteProtected
-    if (low4 == 0x0) {
+    //   $C0D6 write = drive select, bit 7 (ProDOS's unit byte, verbatim)
+    if (low4 == 0x6) {
+        drive_ = (v & 0x80) ? 1 : 0;
+        if (hdvTraceOn())
+            std::fprintf(stderr, "[HDV] DRIVE %d\n", drive_ + 1);
+    } else if (low4 == 0x0) {
         selectedBlock = static_cast<uint16_t>((selectedBlock & 0xFF00u) | v);
         streamOffset = 0;
         if (hdvTraceOn())
@@ -156,6 +273,7 @@ void ProDOSHardDiskCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 uint8_t ProDOSHardDiskCard::deviceSelectRead(uint8_t low4)
 {
     if (low4 == 0x2) return readDataByte();
+    if (low4 == 0x6) return static_cast<uint8_t>(drive_ << 7);
     if (low4 == 0x3) {
         // Status byte. Preserves the original encoding for backward compat:
         //   bit-7 = 0 when image loaded, 1 when missing (legacy).
@@ -173,10 +291,10 @@ uint8_t ProDOSHardDiskCard::deviceSelectRead(uint8_t low4)
         // (AtaBlockDevice::startCommand); this is the synthetic card catching
         // up. Only meaningful with media present — the ROM's error tail reads
         // "bit 5 clear" as "the bay is empty", so an empty bay must not set it.
-        if (!backing_.isLoaded()) return 0x80;
+        if (!cur().isLoaded()) return 0x80;
         uint8_t s = 0x00;
-        if (backing_.isWriteProtected()) s |= 0x40;
-        if (static_cast<size_t>(selectedBlock) >= backing_.blockCount())
+        if (cur().isWriteProtected()) s |= 0x40;
+        if (static_cast<size_t>(selectedBlock) >= cur().blockCount())
             s |= 0x20;
         return s;
     }
@@ -188,7 +306,7 @@ uint8_t ProDOSHardDiskCard::deviceSelectRead(uint8_t low4)
         // BITSY-crash lesson) as SmartPortCard::blockCountByte. Counts
         // above $FFFF clamp (an exactly-65536-block 32 MiB image must
         // report $FFFF, not truncate to 0 = "empty volume").
-        size_t blocks = backing_.isLoaded() ? backing_.blockCount() : 0u;
+        size_t blocks = cur().isLoaded() ? cur().blockCount() : 0u;
         if (blocks > 0xFFFFu) blocks = 0xFFFFu;
         return static_cast<uint8_t>(
             (blocks >> (low4 == 0x5 ? 8 : 0)) & 0xFF);
@@ -198,10 +316,10 @@ uint8_t ProDOSHardDiskCard::deviceSelectRead(uint8_t low4)
 
 uint8_t ProDOSHardDiskCard::readDataByte()
 {
-    if (!backing_.isLoaded()) return 0xFF;
+    if (!cur().isLoaded()) return 0xFF;
 
     if (hdvTraceOn() && streamOffset == 0) {
-        const bool inRange = (selectedBlock + 1u) <= backing_.blockCount();
+        const bool inRange = (selectedBlock + 1u) <= cur().blockCount();
         std::fprintf(stderr, "[HDV] READ  blk=%u%s\n",
                      static_cast<unsigned>(selectedBlock),
                      inRange ? "" : " (OUT-OF-RANGE -> $FF)");
@@ -209,7 +327,7 @@ uint8_t ProDOSHardDiskCard::readDataByte()
 
     const size_t absolute =
         static_cast<size_t>(selectedBlock) * kBlockBytes + streamOffset;
-    const uint8_t out = backing_.readByte(absolute);
+    const uint8_t out = cur().readByte(absolute);
     streamOffset = (streamOffset + 1) % kBlockBytes;
     return out;
 }
@@ -221,19 +339,19 @@ void ProDOSHardDiskCard::writeDataByte(uint8_t v)
     // the real medium WP flag (2MG header) blocks the write. Persisting those
     // RAM changes to the host .hdv/.2mg file is a SEPARATE opt-in handled by
     // writeBackEnabled in saveDirty()/ejectImage().
-    if (!backing_.isLoaded() || backing_.isWriteProtected()) return;
+    if (!cur().isLoaded() || cur().isWriteProtected()) return;
 
     if (hdvTraceOn() && streamOffset == 0) {
-        const bool inRange = (selectedBlock + 1u) <= backing_.blockCount();
+        const bool inRange = (selectedBlock + 1u) <= cur().blockCount();
         std::fprintf(stderr, "[HDV] WRITE blk=%u wb=%d%s\n",
                      static_cast<unsigned>(selectedBlock),
-                     backing_.isWriteBackEnabled() ? 1 : 0,
+                     cur().isWriteBackEnabled() ? 1 : 0,
                      inRange ? "" : " (OUT-OF-RANGE -> dropped)");
     }
 
     const size_t absolute =
         static_cast<size_t>(selectedBlock) * kBlockBytes + streamOffset;
-    backing_.writeByte(absolute, v);
+    cur().writeByte(absolute, v);
     streamOffset = (streamOffset + 1) % kBlockBytes;
 }
 
@@ -255,6 +373,7 @@ void ProDOSHardDiskCard::buildRom()
     //   $Cn9C..$CnCB  write block
     //   $CnD0..$CnE2  STATUS
     //   $CnE8..$CnEA  boot-failure halt
+    //   $CnEB..$CnF2  ProDOS entry: latch the drive, JMP dispatch
     //   $CnFE..$CnFF  capability + driver-entry bytes
     //
     // Every address in the page below is a LABEL. The dispatch's three
@@ -288,7 +407,7 @@ void ProDOSHardDiskCard::buildRom()
              0xA9, 0x00,
              0x85, 0x46,       // STA $46         ; block low = 0
              0x85, 0x47 })     // STA $47         ; block high = 0
-     .jsr("driver")
+     .jsr("entry2")            // through the latch: drive 1, whatever was last
      .branch(0xB0, "bootErr")  // BCS bootErr
      .emit({ 0xA2, kUnitNumber,// LDX #unit
              0xA9, 0x00,       // LDA #$00
@@ -454,6 +573,17 @@ void ProDOSHardDiskCard::buildRom()
     // fully initialised yet.
     a.region("halt", kHaltOff, kHaltOff + 3).jmp("halt");
 
+    // ── ProDOS entry ($CnEB) ───────────────────────────────────────────
+    // ProDOS passes the unit in $43: bits 6-4 the slot, bit 7 the DRIVE. The
+    // card has two (2026-09-11), so the drive bit has to reach it before
+    // anything else does — and STATUS, READ and WRITE all start by asking
+    // $C0n3 about the bay, which is now "the bay of the drive latched here".
+    // Written verbatim: the card looks at bit 7 only.
+    a.region("entry2", kEntryOff, kEntryOff + 8)
+     .emit({ 0xA5, 0x43,                                   // LDA $43
+             0x8D, static_cast<uint8_t>(kDeviceBase + 0x06), 0xC0 }) // STA $C0n6
+     .jmp("driver");
+
     // $CnFE = the ProDOS device-characteristics byte (ProDOS 8 Technical
     // Reference / TN.PDOS.021): bit 0 = status, bit 1 = read, bit 2 = WRITE,
     // bit 3 = format, bits 4-6 = extra units, bit 7 = removable. It said $03
@@ -461,9 +591,14 @@ void ProDOSHardDiskCard::buildRom()
     // a working WRITE_BLOCK all along and ProDOS's own SAVE goes through it.
     // $07 adds the write bit. Same fix, same reason, as SmartPortCard's
     // $13 → $17 (SmartPortCard.cpp).
+    //
+    // Bit 4 since 2026-09-11: TWO volumes, drive 1 and drive 2 — $17, the
+    // byte SmartPortCard already carries. ProDOS installs S<n>,D2 from it, so
+    // drive 2 is in DEVLST from boot (empty until mounted, like a Disk II's
+    // second drive), and a disk mounted there later needs no reboot.
     a.region("tail", 0xFE, pom2::kSlotRomBytes)
-     .emit({ 0x07 })      // status + read + write; high nibble = one unit
-     .byteOf("driver");   // ProDOS driver entry offset
+     .emit({ 0x17 })      // status + read + write; bits 5-4 = 1 → two units
+     .byteOf("entry2");   // ProDOS driver entry offset: the drive latch
 
     romLayoutError_ = !a.finish();
 }
@@ -471,7 +606,8 @@ void ProDOSHardDiskCard::buildRom()
 // ── Snapshot / rewind ─────────────────────────────────────────────────────
 
 namespace {
-constexpr uint8_t kHdvSnapMagic[4] = { 'H', 'D', 'V', '1' };
+constexpr uint8_t kHdvSnapMagicV1[4] = { 'H', 'D', 'V', '1' };
+constexpr uint8_t kHdvSnapMagic[4]   = { 'H', 'D', 'V', '2' };   // + drive
 }
 
 void ProDOSHardDiskCard::appendSnapshotState(std::vector<uint8_t>& out) const
@@ -482,15 +618,22 @@ void ProDOSHardDiskCard::appendSnapshotState(std::vector<uint8_t>& out) const
     // streamOffset ∈ [0, 512]; two bytes are plenty.
     out.push_back(static_cast<uint8_t>(streamOffset));
     out.push_back(static_cast<uint8_t>(streamOffset >> 8));
+    // v2: the latched drive. A rewind into a drive-2 transfer that came back
+    // on drive 1 would stream the rest of the block out of the other volume.
+    out.push_back(static_cast<uint8_t>(drive_));
 }
 
 void ProDOSHardDiskCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
-    if (data == nullptr || len < 8 ||
-        std::memcmp(data, kHdvSnapMagic, 4) != 0)
+    if (data == nullptr || len < 8) return;
+    const bool v2 = std::memcmp(data, kHdvSnapMagic, 4) == 0;
+    if (!v2 && std::memcmp(data, kHdvSnapMagicV1, 4) != 0)
         return;   // foreign blob — a different card sat here
+    if (v2 && len < 9) return;
     selectedBlock = static_cast<uint16_t>(data[4] | (data[5] << 8));
     streamOffset  = static_cast<size_t>(data[6] | (data[7] << 8));
+    // An HDV1 blob predates drive 2: everything it recorded was drive 1.
+    drive_ = (v2 && data[8] != 0) ? 1 : 0;
     // >=: a restored 512 would address the FIRST byte of the next block
     // before the modulo wrap, handing the guest one wrong byte (and
     // corrupting one byte of the wrong block on the write path).

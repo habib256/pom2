@@ -5,6 +5,55 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-11 — SmartPort and Liron start with their whole chain: eight
+
+Both SmartPort-class cards came up answering for two units, so the six
+other bays were there but invisible until the user raised the count. They
+start at their ceiling now: `SmartPortCard::kDefaultUnits` and
+`LironCard::kDefaultUnits` are 8, and a restore with no saved count uses
+them. A count saved as `smartport_slotN_units` / `media_slotN_bays` still
+wins. What changes for a configuration without one: ProDOS 8 2.4 lists
+six more (empty) devices, under slots 2, 4 and 1 on the //e defaults, and
+under the //c's free slots; an older ProDOS still sees drive 1 and 2 only.
+The fresh-install //e has `smartport35` in slot 5, so it is the common
+case. Tests that pin the two-unit geometry now set it explicitly.
+
+## 2026-09-11 — A second drive on the ProDOS HD card
+
+The `hdv` card had one image. It has two now — drive 1, which boots, and
+drive 2 beside it — the AppleWin HDD card's shape. Two is this card's
+ceiling, not a choice: it is a plain block device (`$Cn07 = $01`), ProDOS
+names its units by slot and a single drive bit, and ProDOS 8 2.4 spreads
+units 3-8 over other slots only for a SmartPort card — the `smartport35`
+card already carries eight HDV units. The ROM's driver entry now latches
+ProDOS's unit byte into a new `$C0n6` drive-select register before it
+dispatches, and `$CnFE` says `$17` (two volumes), which is what makes
+ProDOS list S5,D2: measured, at `$07` it does not. Drive 2 is in the
+device list from boot, so a disk mounted there later needs no reboot.
+Mount it from *Internal Disks & Media* (the second row under the card);
+it is saved as `hdv_path_drive2` / `hdv_writeback_drive2`, flushed and
+autosaved like drive 1, and the Disk Library's mount-only fills it when
+drive 1 is taken. Everything that meant "the HDV" — `hdv_path`, the HDV
+panel, the host folder, the CLI, the AI server — still means drive 1.
+Snapshot blob `HDV2`; `HDV1` still loads. Pinned by `hdv_two_drives`.
+
+## 2026-09-11 — Eight 3.5" disks on a //e's Liron card
+
+The //c took eight SmartPort units on its rear port on 2026-09-08; the
+Liron card, which runs the same firmware from its own EPROM over the same
+bus responder, still had two fixed bays. It carries 2, 4, 6 or 8 units
+now, each a 3.5" 800K image. Measured with the real //e ROM, the real
+Liron EPROM and ProDOS 8 2.4 booted off unit 0: eight units come up as
+S5, S2, S4 and S1, two drives each. A fresh card carries all eight — the
+whole chain, as the //c's rear port can; a Liron already in a saved
+configuration comes up with eight too, which a ProDOS 8 2.4 lists as six
+more (empty) devices under slots 2, 4 and 1. The count lives in *Internal Disks & Media* (the `units`
+combo beside the card) and in `media_slotN_bays`; the guest sees it at
+its next boot, and a shrink over a loaded unit is refused rather than
+hiding the disk. That panel also stops cutting every card at two bays,
+so a SmartPort card's units 3-8 show there too. Pinned by
+`liron_eight_units` and `storage_coordinator`.
+
 ## 2026-09-10 — Background persistence for hard-disk images
 
 HDV, CFFA and SmartPort HDV/2MG images now save dirty blocks in the
