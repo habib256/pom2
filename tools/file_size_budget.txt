@@ -251,10 +251,18 @@
 #     switch there and used to start the transport).
 #   src/hgrpaint/HgrPaintEditor.cpp 2653 -> 2656 (+3) the clip records the
 #     block geometry it was copied with (bug hunt #17).
+# 2026-09-11 (chains of eight + the HDV card's drive 2): one ceiling raised
+# for the wiring only. The feature code lives in its own TU
+# (StorageCoordinator_Chains.cpp: the Liron's unit count command and restore,
+# drive 2's settings / rebuild-snapshot / restore paths); what remains here is
+# one call per historical site and the bay-aware `hdv_path` branch. +4 of it
+# predates this change (the 2026-09-10 background persistence left the file
+# at 2361 against 2357, which the ratchet reported and nobody raised).
+#   src/StorageCoordinator.cpp   2357 -> 2372 (+15)
 src/Apple2Display.cpp                    2522
 src/DiskImage.cpp                        3154
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
 src/Memory.cpp                           2694
-src/StorageCoordinator.cpp               2357
+src/StorageCoordinator.cpp               2372
 src/hgrpaint/HgrPaintEditor.cpp          2656

@@ -1272,6 +1272,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Notch.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_HdvBays.cpp
+    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Chains.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     # StorageCoordinator mixes the pure capture/persist half tested here with
     # mount/eject calls that go through EmulationController, so the whole

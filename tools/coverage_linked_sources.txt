@@ -99,6 +99,7 @@ src/SpeakerDevice.cpp
 src/Ssi263.cpp
 src/Ssi263PhonemeData.cpp
 src/StorageCoordinator.cpp
+src/StorageCoordinator_Chains.cpp
 src/StorageCoordinator_HdvBays.cpp
 src/StorageCoordinator_Notch.cpp
 src/SuperSerialCard.cpp

@@ -375,7 +375,26 @@ public:
         autoSmartPortSlot_ = -1;
     }
 
+    /// Settings keys of the 2026-09-11 chains: drive 1 / drive 2 of the
+    /// ProDOS HD card (`hdv_path`, `hdv_path_drive2`, …), and the length of
+    /// a user-sized chain (`media_slotN_bays`).
+    static std::string hdvDriveKey(const char* base, int drive);
+    static std::string bayCountKey(int slot);
+
 private:
+    // StorageCoordinator_Chains.cpp — one call per historical site.
+    static void restoreBayCount(MountableMediaCard& media, int slot,
+                                const Settings& settings);
+    static void restoreHdvDrive2(ProDOSHardDiskCard& hdv,
+                                 const Settings& settings,
+                                 std::vector<std::string>& warnings);
+    static void captureHdvDrive2(const ProDOSHardDiskCard& hdv,
+                                 RebuildSnapshot& snapshot);
+    void persistHdvDrive2(Settings& settings,
+                          const RebuildSnapshot& snapshot) const;
+    static void restoreHdvDrive2(ProDOSHardDiskCard& hdv,
+                                 const RebuildSnapshot& snapshot);
+
     int autoHdvSlot_ = -1;
     int autoSmartPortSlot_ = -1;
 };

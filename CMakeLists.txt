@@ -296,6 +296,7 @@ set(SOURCES
     src/StorageCoordinator.cpp
     src/StorageCoordinator_Notch.cpp
     src/StorageCoordinator_HdvBays.cpp
+    src/StorageCoordinator_Chains.cpp
     src/MC6821.cpp
     src/MemoryViewer_ImGui.cpp
     src/Mockingboard.cpp
@@ -542,6 +543,7 @@ set(POM2_FRONTEND_SOURCES
     src/StorageCoordinator.cpp
     src/StorageCoordinator_Notch.cpp
     src/StorageCoordinator_HdvBays.cpp
+    src/StorageCoordinator_Chains.cpp
     src/CassetteDeck_ImGui.cpp
     src/CliDispatcher.cpp
     src/CliRunner.cpp
@@ -1299,6 +1301,7 @@ set(POM2_CORE_SOURCES
     src/StorageCoordinator.cpp
     src/StorageCoordinator_Notch.cpp
     src/StorageCoordinator_HdvBays.cpp
+    src/StorageCoordinator_Chains.cpp
     src/MC6821.cpp
     src/Mockingboard.cpp
     src/MouseCard.cpp
