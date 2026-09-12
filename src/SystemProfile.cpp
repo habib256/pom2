@@ -364,8 +364,26 @@ bool slotKeyIsUserChoice(const ProfileConfig& cfg, int slot,
     // removal could never stick and the stale key resurrected the adapter
     // on every launch). An "" over anything else stays skipped so the
     // force-emptied virtual slots never clobber a //e card layout.
+    // The Mockingboard 4c is the OTHER card a slotless machine can carry: it
+    // mounts on the //c's INTERNAL expansion header, answers at $C400-$C4FF,
+    // and `SlotConfigurationCoordinator::resolve()` keeps it. Slot Config
+    // offers it on the "Internal expansion connector" row — but every writer
+    // of `slot_N_card` sits behind this gate, so the choice could never reach
+    // state.cfg: Apply cold-booted the machine, the rebuild read the old value
+    // back, and the card the user had just picked silently vanished. DIGIDREAM,
+    // the "SPECIAL IIc/MB4C" release in the corpus, still printed KO.
+    //
+    // Only the WRITE direction opens, deliberately unlike `chatmauve`'s
+    // both-directions clause. Persisting "" over a saved "mockingboard" would
+    // re-open the hole the savedKey guard closes — a //e card layout cleared by
+    // a session that merely passed through a //c. The price is that REMOVING
+    // the 4c from the panel does not stick; that is the cheaper side of the
+    // trade, and it is recorded in TODO.md rather than paid for out of a //e
+    // user's configuration.
+    const bool iicHeaderCard =
+        cardKey == "mockingboard" || cardKey == "mockingboard_c";
     if (cfg.noPhysicalSlots && cardKey != "chatmauve" &&
-        savedKey != "chatmauve") return false;
+        savedKey != "chatmauve" && !iicHeaderCard) return false;
     return true;
 }
 

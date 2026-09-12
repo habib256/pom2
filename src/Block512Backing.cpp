@@ -123,19 +123,37 @@ bool Block512Backing::adoptImage(PreparedImage&& prepared)
         return false;
     }
 
-    // Same file, and the outgoing copy has unsaved changes: the prepared bytes
-    // were read BEFORE the flush below, so adopting them would silently roll
-    // the guest's writes back. Flush, then re-read under the lock. The one
-    // path where the two-phase form degrades to the inline cost.
-    const bool sameFileStillDirty =
-        loaded_ && anyDirty_ && !path_.empty() && path_ == prepared.path;
+    // Same file: the prepared bytes were read BEFORE the flush below, so
+    // adopting them would silently roll the guest's writes back. Flush, then
+    // re-read under the lock. The one path where the two-phase form degrades
+    // to the inline cost.
+    //
+    // This test used to carry an `anyDirty_` term, which was sound only while
+    // nothing but the CALLER'S OWN flush could clear the dirty set. Background
+    // autosave broke that premise: `collectWriteBack` recomputes `anyDirty_`
+    // on a successful commit and `EmulationController::pollBlockWriteBacks`
+    // runs it under `stateMutex` on the CPU worker. A commit landing between
+    // MediaMount's unlocked whole-file read and its locked adopt therefore
+    // left `anyDirty_` FALSE with the file on disk already newer than the
+    // bytes in hand — and `adoptPrepared` installed that pre-write image,
+    // marked clean, over the mounted volume. RAM behind the file, nothing
+    // dirty left to rewrite it, and the next ProDOS allocation cross-links
+    // the volume.
+    //
+    // Re-reading unconditionally on a same-path remount is the fix, rather
+    // than a cheaper freshness stamp, because no stamp discriminates here: a
+    // block image keeps a FIXED size across commits, and an mtime can tie with
+    // the read at one-second filesystem granularity. The extra read costs only
+    // the rare remount-the-same-file case, which already paid it when dirty.
+    const bool sameFileNeedsReread =
+        loaded_ && !path_.empty() && path_ == prepared.path;
 
     // A replacement is an implicit eject. Preserve the current in-memory
     // medium until its opted-in write-back has succeeded; otherwise a failed
     // flush followed by an adopt destroys the only copy of guest writes.
     if (!saveDirty()) return false;
 
-    if (sameFileStillDirty) {
+    if (sameFileNeedsReread) {
         PreparedImage reread;
         std::string   error;
         if (!readImageFile(prepared.path, reread, error)) {

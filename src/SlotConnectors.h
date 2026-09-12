@@ -247,7 +247,17 @@ inline int pendingChangeCount(const ProfileConfig& cfg,
     if (!cfg.noPhysicalSlots && !chatMauveDraft.empty() &&
         chatMauveDraft != chatMauveLive)
         ++pending;
-    if (ramWorksDraft >= 0 && ramWorksDraft != ramWorksLive)
+    // Gated exactly like the row that stages it. `buildConnectorLayout` emits
+    // the AuxMemory row under `if (cfg.iieMode)`, and the //c-class branch
+    // returns before reaching it — so a ][+ and every //c layout have no such
+    // row. Without this gate a size staged on a //e and left behind by a
+    // profile switch kept counting on the next machine: the panel badged
+    // "1 staged change" pointing at no row at all, Apply stayed armed, and
+    // pressing it wrote `ramworks_banks` for a machine that cannot show it and
+    // cold-booted, wiping RAM. MainWindow also clears the draft on a rebuild;
+    // this is the half that holds even if some other path forgets to.
+    if (cfg.iieMode && !cfg.noPhysicalSlots &&
+        ramWorksDraft >= 0 && ramWorksDraft != ramWorksLive)
         ++pending;
     return pending;
 }

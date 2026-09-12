@@ -252,10 +252,24 @@ private:
             if (disk()) return Disk35Image::kBlockCount;
             return hard() ? static_cast<uint32_t>(blk_->blockCount()) : 0u;
         }
+        /// One rule for both bays of this card (TODO.md R1, settled
+        /// 2026-09-07): physically write-protected OR no write-back opt-in.
+        /// The 3.5" bay already answered that way — `Disk35Image::
+        /// isWriteProtected` folds in `!writeBackEnabled_` — while the
+        /// hard-disk bay asked `Block512Backing::isWriteProtected`, which is
+        /// the medium flag alone (`wpHeader_ || hostReadOnly_`). So two bays
+        /// of ONE card gave opposite answers to the same toggle, and the
+        /// hard-disk one was the dangerous direction: the bus replied "write
+        /// accepted", the blocks went dirty, and `dropBay`/`flushBay` then
+        /// discarded them because write-back was off — a guest SAVE reported
+        /// as successful that never reached the user's file. `SmartPortHdvUnit`
+        /// was aligned when R1 was settled; the Liron's hard-disk bay is newer
+        /// code (chains of eight) and was written against the raw flag.
         bool writeProtected() const override
         {
             if (disk()) return img_->isWriteProtected();
-            return !hard() || blk_->isWriteProtected();
+            if (!hard()) return true;
+            return blk_->isWriteProtected() || !blk_->isWriteBackEnabled();
         }
         bool readBlock(uint32_t b, uint8_t out[512]) override
         {

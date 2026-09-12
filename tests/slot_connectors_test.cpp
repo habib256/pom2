@@ -245,6 +245,15 @@ int main()
               "staging the size it already has counts nothing");
         check(pom2::pendingChangeCount(iie, live, live, "", "", 16, 1) == 1,
               "a staged aux size counts once — it cold-boots like the rest");
+        // …but only where there IS an AUX row to stage it in. buildConnectorLayout
+        // emits AuxMemory under `if (cfg.iieMode)`, and the //c-class branch
+        // returns before reaching it — and a //c's iieMode is TRUE, so the
+        // noPhysicalSlots term is the one doing the work here. Bug hunt #20:
+        // a size staged on a //e and carried across a profile switch kept
+        // counting on the next machine, so the panel badged "1 staged change"
+        // pointing at no row at all, with Apply armed to cold-boot and wipe RAM.
+        check(pom2::pendingChangeCount(iic, live, live, "", "", 16, 1) == 0,
+              "a //c has no AUX row, so a stale aux size stages nothing");
     }
 
     if (g_failures) return 1;

@@ -179,6 +179,17 @@ void MainWindow::renderSlotConfigPanel()
             // wrote the stale draft back over it. The sentinel makes "the
             // user picked a model in THIS panel" the only thing that stages.
             chatMauveVariantDraft_.clear();
+            // Same sentinel discipline for the aux-memory row, and the same
+            // reason it must be reset HERE: since the RamWorks size became a
+            // STAGED choice rather than an immediate one, a draft left over
+            // from the previous machine kept counting in `pendingChangeCount`
+            // — which has no iieMode gate — on profiles whose connector
+            // layout contains no AuxMemory row at all (a ][+, and every
+            // //c-class layout). The panel then badged "1 staged change"
+            // pointing at no row, with Apply armed: pressing it wrote
+            // `ramworks_banks` for a machine that cannot show it and
+            // cold-booted, wiping RAM.
+            ramWorksDraft_ = -1;
             slotDraftInited_ = true;
         }
         const std::string cmVariantLive =
@@ -274,20 +285,33 @@ void MainWindow::renderSlotConfigPanel()
         // take a Disk II controller.
         auto renderCardPicker = [&](const pom2::Connector& row) {
             const int s = row.slot;
-            if (!row.accepts.empty()) {
-                // Sanitise: a key the connector cannot carry (a stale
-                // state.cfg from another machine) is not a choice it can show.
-                if (std::find(row.accepts.begin(), row.accepts.end(),
-                              draft[s]) == row.accepts.end())
-                    draft[s] = row.accepts.front();
-            }
+            // A key this connector cannot carry is SHOWN as out-of-place, not
+            // rewritten. Rewriting `draft[s]` from the render path invented a
+            // staged change the user never made: `Revert` restored the plan's
+            // value and the very next frame clobbered it again, so the panel
+            // claimed "1 staged change — not applied yet" forever, Apply stayed
+            // armed, and each press cold-booted the machine (wiping RAM) while
+            // persisting nothing — or, for `chatmauve`, silently wrote "" and
+            // deleted the user's adapter.
+            //
+            // The disagreement is legitimate and permanent, not a stale
+            // state.cfg: on a //c `SlotConfigurationCoordinator::resolve()`
+            // keeps `chatmauve` and the Mockingboard 4c in WHATEVER slot the
+            // user parked them ("just where the user parked it"), while this
+            // table pins the DB-15 to row 7 and the internal header to row 3.
+            const bool outOfPlace =
+                !row.accepts.empty() &&
+                std::find(row.accepts.begin(), row.accepts.end(),
+                          draft[s]) == row.accepts.end();
             const bool dup = isDuplicate(s);
             if (dup) anyDuplicate = true;
 
             const std::string preview =
-                draft[s].empty() ? std::string("(empty)")
-                                 : std::string(cardLabel(draft[s])) +
-                                       levelTag(draft[s]);
+                draft[s].empty()
+                    ? std::string("(empty)")
+                    : std::string(cardLabel(draft[s])) + levelTag(draft[s]) +
+                          (outOfPlace ? std::string("  (on another connector)")
+                                      : std::string());
 
             // A staged row is marked where the user is looking.
             const bool staged = (draft[s] != slotCards[s]);
