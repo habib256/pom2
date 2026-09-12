@@ -70,7 +70,13 @@ public:
     }
 
     CassetteDevice();
-    ~CassetteDevice() override = default;
+    /// Closes the stream decoder. NOT `= default`: a defaulted destructor
+    /// leaked the miniaudio decoder and its data converter (680 bytes in 2
+    /// allocations, ASan nightly) whenever a deck was destroyed with a tape
+    /// still open — a profile switch or shutdown, not just the test that
+    /// caught it. The three other closeAudioStream() callers are all
+    /// operational paths (eject, stop, reload); none of them is teardown.
+    ~CassetteDevice() override;
 
     /// Full reset of every cassette-side state (loaded tape preserved,
     /// recording and playback progress wiped). Called at construction only.

@@ -260,6 +260,14 @@ CassetteDevice::CassetteDevice()
     reset();
 }
 
+// See the declaration: the stream decoder is a miniaudio allocation that only
+// closeAudioStream() frees, and every other caller of it is an operational
+// path. Destroying a deck with a tape open therefore leaked it.
+CassetteDevice::~CassetteDevice()
+{
+    closeAudioStream();
+}
+
 void CassetteDevice::fillAudioBuffer(float* output, int frameCount)
 {
     // Stream mode — direct decode + resample via miniaudio.

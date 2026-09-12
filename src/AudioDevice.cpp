@@ -177,6 +177,17 @@ bool AudioDevice::initAudio()
         pom2::log().warn("Audio", "ma_device_init failed — audio disabled");
         return false;
     }
+    // Publish the negotiated rate BEFORE starting the device. ma_device_start
+    // launches miniaudio's callback thread, and that thread reads
+    // actualSampleRate in mixSources() — so assigning it afterwards is a plain
+    // unsynchronised write racing a live reader. TSan caught it on four
+    // nightly tests (rewind_transport, ui_worker_contention,
+    // ai_control_server_smoke, audio_source_teardown), every one pointing at
+    // this one uint32_t. ma_device_init has already filled raw->sampleRate, so
+    // the value is final here and the write now happens-before the thread that
+    // reads it exists — no atomic needed, and nothing writes it again.
+    actualSampleRate = raw->sampleRate;
+
     if (ma_device_start(raw) != MA_SUCCESS) {
         ma_device_uninit(raw);
         delete raw;
@@ -185,7 +196,6 @@ bool AudioDevice::initAudio()
         return false;
     }
 
-    actualSampleRate = raw->sampleRate;
     pom2::log().info("Audio",
         std::string("miniaudio ready: the device's own rate is ") +
         std::to_string(actualSampleRate) + " Hz" +
