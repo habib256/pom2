@@ -67,6 +67,13 @@ LOCK_FREE = (
     'restoreMediaFromSettings',      # 2. takes SlotBus&
     'persistRebuildSettings',        # 2. takes Settings& + a value snapshot
     'persistSessionSettings',        # 2.
+    # 2. const, takes `const Settings&`, returns a POD. Two getFloat/getBool
+    #    lookups in an in-memory std::map — Settings::load() is the separate
+    #    disk step — so no controller, no machine lock and no file I/O. Its
+    #    three call sites sit in plugSlotsFromSettings, whose StateAccess
+    #    parameter correctly makes the whole body count as locked; the calls
+    #    are safe there for the same reason persistRebuildSettings is.
+    'restoreCardSettings',
     'persistDiskIIDrive',            # 2. takes SlotBus&
     'flushAll',                      # 2. takes SlotBus&
     'topology',                      # 2. takes SlotBus&

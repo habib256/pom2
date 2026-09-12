@@ -67,6 +67,15 @@ jobs:
       - name: Workflow pins
         run: tools/check_workflow_pins.sh
 
+      # `stateMutex` is non-recursive, so a coordinator call placed inside an
+      # existing lock scope hangs the UI thread and the emulator with it. No
+      # test catches it — nothing drives the ImGui panels — which is exactly
+      # why it needs a text guard, and why that guard has to RUN: it sat in
+      # tools/ wired to nothing and was reporting three call sites (false
+      # positives, since fixed) that no one saw. Cheap, like the two above.
+      - name: Coordinator lock scopes
+        run: tools/check_coordinator_locks.sh
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
