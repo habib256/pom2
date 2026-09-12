@@ -1086,6 +1086,74 @@ Grouped by subsystem. Severity encoded by 🔴/🟠/🟡/🟢/🧊 at the head o
 
 ### [Audio]
 
+#### Left open by bug hunt #20 (2026-09-13) — the code new since v0.9.2
+
+Five read-only lots over the delta since the tag (the chains of eight, the
+native //c IOU mouse, background block autosave, Slot Config rebuilt from
+connectors, the extracted mix law), each lot adversarially verified by a second
+pass told to refute: **nine confirmed, three refuted**. Five are fixed in
+`e067603`; these are the rest, with the evidence where it was found.
+
+- **A Liron 3.5" mount or eject writes 800 KB plus two fsyncs under
+  `stateMutex`.** `StorageCoordinator::flushOutgoingBay` (:417) and
+  `ejectMediaBay` (:1006) discover the two-phase form only through
+  `prepareEjectBay`, and `LironCard::prepareEjectBay` (`LironCard.cpp:609`)
+  serves block-backed bays only — it declines a 3.5" bay with an **empty**
+  error, which both callers read as "nothing to write". Phase 2 then takes the
+  lock and reaches `Disk35Image::loadFile`, whose first line is `saveDirty()`.
+  The card already has the right primitive (`prepareFlushBay`, `:621`) and
+  `flushAll` uses it at `:2076` under a comment naming this exact cost; the
+  mount/eject paths simply never ask. Newly reachable on a //e since `d2bc5f1`
+  routed every Liron 3.5" mount through `mountMediaBay`.
+- **The SSI263 playback cursor is moved twice.** `Ssi263::write()` rewinds
+  `playbackPhoneme_`/`playbackOffset_`/`resampleAccum_` at CPU-now
+  (`Ssi263.cpp:140-142`, again in the CTL H→L branch at `:166-168`) and
+  `applyPlaybackEvent` rewinds the same three at its stamp (`:245-251`). On a
+  Sound II both run for ONE guest store (`Mockingboard.cpp:1039-1045`) while
+  `fillAudioTimed` renders two PAL frames behind CPU-now, so every phoneme
+  starts ~40 ms early and then replays its first ~40 ms — a whole phoneme of
+  stutter per syllable at 30-70 ms durations. The waveform shadows
+  (`aDurPhon_`/`aCttrAmp_`/`aFilFreq_`) follow the queue correctly; the PCM
+  cursor is the one render input with no audio-side shadow. The CPU-now rewind
+  is still correct for `EchoPlusCard`'s untimed `fillAudio`, so the fix is a
+  `timedPlayback_` gate, not a deletion.
+- **`Pom2Core::pullAudio` mixes every card but retunes only the last-attached
+  one.** `a30e817` made the mixer WALK the bus (`Pom2Core.cpp:456-461`) while
+  `setAudioSampleRate` still names `impl_->mockingboard` (`:411`) and
+  `attachMockingboard` overwrites that pointer (`:287`). With two cards the
+  first keeps 44 100 while the mixer consumes 48 000, so its `audioCursor`
+  advances 1.113 MHz of emulated time per real second against a 1.0227 MHz
+  producer, `caughtUp` trips and re-anchors every buffer — the documented
+  40-46 ms dropout, plus every note 8.8 % sharp. `setMockingboardVolume` and
+  `mockingboardAttached` address the last card only, for the same reason.
+  **Corrects the #19 entry below**: the mix LAW was unified, the rate
+  negotiation was not.
+- **The native //c IOU mouse counts one cursor unit per X0/Y0 TRANSITION where
+  the ROM counts one per complete period**, so a //c drag travels half as far
+  as the identical drag on a //e with `mouseaw` (`IIcMouse.cpp:11-12` vs
+  `:78-89`). Recorded as a **judgement, not a defect**:
+  `iic_mouse_lle_test.cpp:135-141` documents the two-transition arithmetic
+  deliberately, and MAME's `update_iic_mouse` maps one unit per transition too,
+  scaling at the input port instead. If it is ever changed it is a host-seam
+  calibration (`setHostMouse` queueing two per commanded unit) and that test's
+  expectation moves with it.
+- **The Liron write-protect fix in `e067603` is NOT pinned.** `LironCard` keeps
+  `bus_` and `busUnits_` private, so the honest pin drives a byte-level
+  SmartPort WRITE and asserts `$2B`, the way `smartport_bus_device_test` does
+  with its own stub units. A pin through `bayInfo()` would be **green while the
+  bug lived**: that struct's `writeProtected` is filled from the backing
+  (`LironCard.cpp:466`), not from the unit. G5-1's cross-medium test is still
+  the way to keep R1.
+- **`iic_mockingboard_4c` pinned a feature that could not be used.** The #19
+  entry below records the //c Mockingboard as done and pinned; hunt #20 found
+  the choice could never reach `state.cfg`, because that test plugs the card
+  straight onto the bus with `mem.slotBus().plug(3, …)` and includes no
+  `Settings` header — the persistence path where the defect lived was never
+  exercised. Fixed in `e067603`, write direction only: removing the 4c from the
+  panel still does not stick, deliberately, because persisting `""` over a
+  saved `mockingboard` would clear a //e card layout from a session that merely
+  passed through a //c.
+
 #### Left open by bug hunt #19 (2026-09-12) — the seams
 
 - ~~**A Mockingboard cannot be plugged on a //c-class profile.**~~ **done
