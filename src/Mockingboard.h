@@ -144,7 +144,7 @@ public:
     /// and for keeping it alive past the last audio callback — the
     /// AudioSource lives inside the card, so it must be removed from
     /// AudioDevice before the card is destroyed.
-    AudioSource* audioSource();
+    AudioSource* audioSource() override;
 
     /// Audio output sample rate negotiated with the OS device. Default
     /// is AudioDevice::kSampleRate; override before plugging if your

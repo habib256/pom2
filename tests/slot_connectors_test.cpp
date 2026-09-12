@@ -31,6 +31,7 @@
 #include "SlotConnectors.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <set>
 #include <string>

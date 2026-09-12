@@ -147,7 +147,7 @@ public:
     /// Inner AudioSource — the caller (MainWindow) registers it with
     /// AudioDevice. v1 emits silence; the actual 4-AY mix is a
     /// follow-up.
-    AudioSource* audioSource();
+    AudioSource* audioSource() override;
 
     void setSampleRate(uint32_t hz);
     void  setVolume(float v);

@@ -91,8 +91,8 @@ inline void mixSourcesInto(float* output, int frameCount,
     // whatever the last live buffer measured.
     if (p.suspended) {
         for (AudioSource* src : sources) {
-            const float p = src->lastBufferPeak.load(std::memory_order_relaxed);
-            src->lastBufferPeak.store(p * 0.85f, std::memory_order_relaxed);
+            const float peak = src->lastBufferPeak.load(std::memory_order_relaxed);
+            src->lastBufferPeak.store(peak * 0.85f, std::memory_order_relaxed);
         }
         st.peakL.store(st.peakL.load(std::memory_order_relaxed) * 0.85f,
                            std::memory_order_relaxed);
@@ -170,10 +170,10 @@ inline void mixSourcesInto(float* output, int frameCount,
             // mono source 3 dB down the day the bus went stereo, which
             // is a silent regression nobody asked for; the Apple speaker
             // has no stereo position to be faithful to anyway.
-            const float p  = std::max(-1.0f, std::min(1.0f,
+            const float pan = std::max(-1.0f, std::min(1.0f,
                 src->pan.load(std::memory_order_relaxed)));
-            const float gL = (p > 0.0f) ? (1.0f - p) : 1.0f;
-            const float gR = (p < 0.0f) ? (1.0f + p) : 1.0f;
+            const float gL = (pan > 0.0f) ? (1.0f - pan) : 1.0f;
+            const float gR = (pan < 0.0f) ? (1.0f + pan) : 1.0f;
             for (int i = 0; i < frameCount; ++i) {
                 const float s = st.tmpL[i];
                 const float a = std::fabs(s);

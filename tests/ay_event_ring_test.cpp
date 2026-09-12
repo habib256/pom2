@@ -12,6 +12,8 @@
 #include "AyEventRing.h"
 
 #include <cassert>
+#include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <new>

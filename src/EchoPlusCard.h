@@ -88,7 +88,7 @@ public:
 
     /// Inner AudioSource (silent v1 — see header). The caller registers
     /// it with AudioDevice the same way Mockingboard / Phasor do.
-    AudioSource* audioSource();
+    AudioSource* audioSource() override;
 
     void  setSampleRate(uint32_t hz);
     void  setVolume(float v);
