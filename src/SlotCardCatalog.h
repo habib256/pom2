@@ -31,10 +31,15 @@
 
 namespace pom2 {
 
-/// TODO.md's scope ruling, per card: what the project promises about it.
-/// Shown in the Slot Config picker next to the LLE/HLE level, so a user
-/// knows before filing the report whether a card is one the project stands
-/// behind, one it fixes on report, or one it ships as is.
+/// TODO.md's scope ruling, per card: what the project promises about it —
+/// a card it stands behind, one it fixes on report, or one it ships as is.
+///
+/// NOT shown in the Slot Config picker any more (2026-09-12). It sat on
+/// every row as "[L0 · LLE · core]" beside the abstraction level, and in a
+/// docked panel that tail clipped the card's own name; the level alone
+/// ("[LLE]" / "[HLE]") is what a user picking a card acts on. The ruling
+/// itself lives in TODO.md § The scope ruling, which is where it is
+/// maintained. The enum stays: it is the data behind that ruling.
 enum class CardScope { Core, Supported, Frozen };
 
 inline constexpr const char* cardScopeWord(CardScope s)

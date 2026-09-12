@@ -228,11 +228,11 @@ that cannot be trusted about anything.*
 - ✅ **The two under-claims** — re-read 2026-09-08: § Known Limitations
   already tells the //c+ 3.5" boot story as it is, and `liron` has its row
   in the card table. Nothing to do.
-- ✅ **The card picker carries the scope bucket** *(2026-09-08)*:
-  `CardType::scope` (`SlotCardCatalog.h`, default Supported; Disk II,
-  SmartPort 3.5", Mockingboard A/C and Le Chat Mauve are Core, Uthernet I
-  and the Workstation Card are Frozen) and the Slot Config label reads
-  `[L1 · LLE · core]` — or `[frozen]` alone for a card with no LLE/HLE row.
+- ✅ **The card picker carries the scope bucket** *(2026-09-08, reverted
+  2026-09-12)*: it did, as the tail of "[L0 · LLE · core]". On a docked
+  panel that tail clipped the card's own name, so the tag is now the
+  abstraction level alone ("[LLE]" / "[HLE]"). The ruling is maintained
+  here, not on every picker row; `CardScope` still carries the data.
 - ✅ **Demoted** *(2026-09-08)*: the 3D voxel view and the two paint editors
   keep their bullets and say they are frozen; Floppy Emu names its four
   modes. The headline keeps the voxel view — it is what the project looks

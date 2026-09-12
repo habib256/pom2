@@ -133,15 +133,29 @@ void MainWindow::renderSlotConfigPanel()
             connectorLayoutValid_   = true;
         }
 
-        // Label column measured off the widest label the machine actually
-        // shows, so "Serial port 1 (printer, DIN-5)" does not collide with its
-        // control on a //c while "Slot 1" keeps a tight gutter on a //e.
+        // Label column, measured off the rows that actually HAVE a control.
+        // Measuring every label instead let a row carrying no control at all
+        // — "Game port (DB-9 + 16-pin)" — set the indent for "Slot 1", so on
+        // a docked panel half of every slot row was empty gutter and the
+        // combos were clipped to "Mockingboard C (So". Text-only rows are
+        // laid out below without this column, so they no longer pay for it
+        // or charge anyone else for it.
         float slotGutter = ImGui::CalcTextSize("AUX memory").x;
         for (const auto& section : connectorLayout_)
-            for (const auto& row : section.rows)
+            for (const auto& row : section.rows) {
+                const bool carriesControl =
+                    row.slot >= 0 || row.kind == pom2::ConnectorKind::AuxMemory;
+                if (!carriesControl) continue;
                 slotGutter = std::max(slotGutter,
                                       ImGui::CalcTextSize(row.label.c_str()).x);
+            }
         slotGutter += ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        // …and capped: a //c's "Serial port 1 (printer, DIN-5)" is long
+        // enough to leave a narrow dock with no room for the picker at all.
+        // Past 45 % of the width the label wraps under its own control
+        // rather than squeezing it.
+        slotGutter = std::min(slotGutter,
+                              ImGui::GetContentRegionAvail().x * 0.45f);
         auto slotLabel = [slotGutter](const char* text) {
             ImGui::TextUnformatted(text);
             ImGui::SameLine(slotGutter);
@@ -234,14 +248,17 @@ void MainWindow::renderSlotConfigPanel()
                 if (std::string(id) == e.id) return &e;
             return nullptr;
         };
+        // Silicon or service, and nothing else. The tag used to read
+        // "[L0 · LLE · core]": the L0-L2 sub-levels belong to the Abstraction
+        // Levels panel, which is about them, and the scope word to TODO.md's
+        // ruling, which is where it is maintained. On every row of a docked
+        // picker the pair was clutter that clipped the card's own name.
         auto levelTag = [&](const std::string& key) -> std::string {
             if (key.empty()) return {};
-            const char* scope = pom2::cardScopeWord(pom2::cardScopeForKey(key));
             const auto* e = absEntryFor(key);
-            if (!e) return std::string("  [") + scope + "]";
-            return std::string("  [") + pom2::levelBadge(e->level) + " · " +
-                   (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + " · " +
-                   scope + "]";
+            if (!e) return {};
+            return std::string("  [") +
+                   (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + "]";
         };
         auto cardLabel = [](const std::string& key) -> const char* {
             for (const auto& ct : kCardTypes)
@@ -305,8 +322,7 @@ void MainWindow::renderSlotConfigPanel()
                         draft[s] = ct.key;
                     if (const auto* ae = absEntryFor(ct.key);
                         ae && ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s — %s\n%s",
-                                          pom2::levelBadge(ae->level),
+                        ImGui::SetTooltip("%s\n%s",
                                           pom2::levelName(ae->level),
                                           ae->modelled);
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -383,9 +399,12 @@ void MainWindow::renderSlotConfigPanel()
 
                 switch (row.kind) {
                 case pom2::ConnectorKind::AuxSlot:
+                    // One wrapped line: no control, so no column. Forcing it
+                    // into the label gutter clipped "Extended 80-Column Card
+                    // (built-in, $C300 firmware)" at the panel edge.
                     ImGui::BeginDisabled(true);
-                    slotLabel(row.label.c_str());
-                    ImGui::TextUnformatted(row.note.c_str());
+                    ImGui::TextWrapped("%s — %s", row.label.c_str(),
+                                       row.note.c_str());
                     ImGui::EndDisabled();
                     continue;
 
@@ -451,9 +470,14 @@ void MainWindow::renderSlotConfigPanel()
                 // A port that carries no card at all (game port, cassette):
                 // say what it is and where its device lives.
                 if (s < 0) {
+                    // Same reason as the AUX slot above: label and note on one
+                    // wrapped line. "Game port (DB-9 + 16-pin)" plus
+                    // "Paddles / joystick — Devices -> Joystick" does not fit
+                    // a two-column row in a docked panel, and the note was the
+                    // half that fell off the right edge.
                     ImGui::BeginDisabled(true);
-                    slotLabel(row.label.c_str());
-                    ImGui::TextUnformatted(row.note.c_str());
+                    ImGui::TextWrapped("%s — %s", row.label.c_str(),
+                                       row.note.c_str());
                     ImGui::EndDisabled();
                     continue;
                 }
