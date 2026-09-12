@@ -89,6 +89,12 @@ public:
     /// `stateMutex` and refuse to shrink over a loaded bay first.
     virtual void setBayCount(int /*n*/) {}
 
+    /// Re-apply the notch (MediaNotch.h) on the medium mounted in `bay`
+    /// after the user flipped its file's read-only bit — what
+    /// `ProDOSBlockCard::setHostWriteProtected` is for drive 1, per bay.
+    /// Default: the card has no per-bay notch to update.
+    virtual void setBayHostWriteProtected(int /*bay*/, bool /*on*/) {}
+
     /// Snapshot of bay `bay` (0-based). Out-of-range → default-constructed.
     virtual MediaBayInfo bayInfo(int bay) const = 0;
 

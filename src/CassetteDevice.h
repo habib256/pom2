@@ -132,6 +132,13 @@ public:
     uint8_t toggleOutput();
 
     bool loadTape(const std::string& path);
+    /// Mount `path` as a STREAMED audio tape: the file stays on disk and is
+    /// decoded on demand at the host rate, instead of being converted to a
+    /// pulse-duration list up front (`loadTape`). Public since 2026-09-12 —
+    /// it was private, and nothing in the tree called it, so DeckMode::
+    /// AudioStream and everything built on it (seek, position/total in
+    /// seconds) was unreachable code.
+    bool loadAudioStream(const std::string& path);
     bool saveTape(const std::string& path) const;
 
     void rewindTape();
@@ -181,7 +188,14 @@ public:
     void fillAudioBuffer(float* output, int frameCount) override;
 
     void setAudioAvailable(bool available) { audioAvailable = available; }
-    void setAudioOutputSampleRate(uint32_t hz) { audioOutputSampleRate = std::max<uint32_t>(1, hz); }
+    /// The host rate every cassette timing derives from. A stream-mode
+    /// tape's decoder is opened AT this rate (`ma_decoder_config_init`), so
+    /// changing it afterwards used to leave the decoder converting to the
+    /// old one: the tape then played at the wrong speed, and a guest LOAD
+    /// mis-timed its 770 Hz / 2 kHz windows into an I/O ERROR on a tape
+    /// that was fine. Defined out of line since 2026-09-12 (bug hunt #19):
+    /// it reopens the decoder, keeping the playback position in seconds.
+    void setAudioOutputSampleRate(uint32_t hz);
     /// RateAware override — forwards to setAudioOutputSampleRate so
     /// AudioDevice::addSource auto-config Just Works.
     void setSampleRate(uint32_t hz) override { setAudioOutputSampleRate(hz); }
@@ -231,7 +245,6 @@ private:
     bool loadWavTape(const std::string& path);
     bool saveWavTape(const std::string& path) const;
     bool loadMiniaudioTape(const std::string& path);
-    bool loadAudioStream(const std::string& path);
     void closeAudioStream();
 
     static bool pcmToDurations(const std::vector<float>& mono,

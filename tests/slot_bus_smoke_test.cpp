@@ -155,9 +155,58 @@ static void testOnlyAC800CardClaimsTheWindow()
     std::printf("  ok: only a takesC800() card claims $C800-$CFFF\n");
 }
 
+// ─── A snooper that CONSUMES an access takes it off the bus ──────────────
+//
+// `SlotPeripheral::busSnoop`'s contract: "Return true from `busSnoop` to
+// CONSUME the access — the machine then skips its own handling of it."
+// `Memory::softSwitchAccess` honoured it; `SlotBus` called the snooper as a
+// void statement at all four dispatch sites and then handed the access to the
+// slot card as well (bug hunt #19). Latent — the only snooper in the tree
+// consumes an address `Memory` handles before the bus sees it — but the
+// contract is the contract, and a second snooper would have strobed a card's
+// registers behind its back.
+class SnoopCard : public SlotPeripheral
+{
+public:
+    std::string_view name() const override { return "SnoopCard"; }
+    bool snoopsBus() const override { return true; }
+    bool busSnoop(uint16_t addr, bool, uint8_t) override
+    {
+        ++snooped;
+        return addr == kConsumed;          // consume exactly one address
+    }
+    static constexpr uint16_t kConsumed = 0xC0E3;
+    int snooped = 0;
+};
+
+void testSnooperConsumesTheAccess()
+{
+    SlotBus bus;
+    auto snoopPtr = std::make_unique<SnoopCard>();
+    SnoopCard* snoop = snoopPtr.get();
+    bus.plug(3, std::move(snoopPtr));
+    auto cardPtr = std::make_unique<FakeCard>(0xA0);
+    FakeCard* card = cardPtr.get();
+    bus.plug(6, std::move(cardPtr));       // slot 6 = $C0E0-$C0EF
+
+    // Not consumed: the card sees it and answers.
+    assert(bus.deviceSelectRead(0xC0E1) == (0x01 | 0xA0));
+    assert(card->deviceReads == 1 && snoop->snooped == 1);
+
+    // Consumed: the card must NOT see it, and the bus answers open bus.
+    assert(bus.deviceSelectRead(SnoopCard::kConsumed) == 0xFF);
+    assert(card->deviceReads == 1 && "a consumed access must not reach the card");
+    bus.deviceSelectWrite(SnoopCard::kConsumed, 0x42);
+    assert(card->deviceWrites == 0 && "…on the write side either");
+    bus.deviceSelectWrite(0xC0E5, 0x42);   // not consumed: still delivered
+    assert(card->deviceWrites == 1);
+    std::printf("  ok: a snooper's consume takes the access off the bus\n");
+}
+
 int main()
 {
     testOnlyAC800CardClaimsTheWindow();
+    testSnooperConsumesTheAccess();
 
     SlotBus bus;
 

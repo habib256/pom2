@@ -247,35 +247,38 @@ AudioCoordinator::captureMockingboard() const
     auto* card = primaryCard<MockingboardCard>(bus);
     if (!card) return snapshot;
 
+    // ONE acquisition of the card mutex for the whole panel — see
+    // MockingboardCard::captureDiagnostics. This used to be 51.
+    const MockingboardCard::Diagnostics d = card->captureDiagnostics();
     snapshot.plugged = true;
     snapshot.slot = card->getSlot();
     snapshot.volume = card->getVolume();
     snapshot.muted = card->isMuted();
-    snapshot.slotIrq = card->isIrqAsserted();
+    snapshot.slotIrq = d.irqAsserted;
     for (int c = 0; c < 2; ++c) {
         auto& via = snapshot.via[static_cast<std::size_t>(c)];
-        via.t1cl = card->peekViaRegister(c, 0x04);
-        via.t1ch = card->peekViaRegister(c, 0x05);
-        via.t1ll = card->peekViaRegister(c, 0x06);
-        via.t1lh = card->peekViaRegister(c, 0x07);
-        via.sr = card->peekViaRegister(c, 0x0A);
-        via.acr = card->peekViaRegister(c, 0x0B);
-        via.pcr = card->peekViaRegister(c, 0x0C);
-        via.ifr = card->peekViaRegister(c, 0x0D);
-        via.ier = card->peekViaRegister(c, 0x0E);
+        const auto& src = d.chip[c];
+        via.t1cl = src.via[0x04];
+        via.t1ch = src.via[0x05];
+        via.t1ll = src.via[0x06];
+        via.t1lh = src.via[0x07];
+        via.sr = src.via[0x0A];
+        via.acr = src.via[0x0B];
+        via.pcr = src.via[0x0C];
+        via.ifr = src.via[0x0D];
+        via.ier = src.via[0x0E];
         for (int reg = 0; reg < 16; ++reg)
-            via.ay[static_cast<std::size_t>(reg)] = card->getAyRegister(c, reg);
-        via.viaWrites = card->getViaWriteCount(c);
-        via.ayWrites = card->getAyWriteCount(c);
-        via.ayResets = card->getAyResetCount(c);
-        via.cmdInactive = card->getAyCommandCount(c, 0);
-        via.cmdRead = card->getAyCommandCount(c, 1);
-        via.cmdWrite = card->getAyCommandCount(c, 2);
-        via.cmdLatch = card->getAyCommandCount(c, 3);
+            via.ay[static_cast<std::size_t>(reg)] = src.ay[reg];
+        via.viaWrites = src.viaWrites;
+        via.ayWrites = src.ayWrites;
+        via.ayResets = src.ayResets;
+        via.cmdInactive = src.cmd[0];
+        via.cmdRead = src.cmd[1];
+        via.cmdWrite = src.cmd[2];
+        via.cmdLatch = src.cmd[3];
     }
-    MockingboardCard::Ssi263Snap ssi{};
-    snapshot.hasSsi = card->snapshotSsi263(&ssi);
-    if (snapshot.hasSsi) copySsi(snapshot.ssi, ssi);
+    snapshot.hasSsi = d.hasSsi;
+    if (snapshot.hasSsi) copySsi(snapshot.ssi, d.ssi);
     return snapshot;
 }
 
@@ -289,32 +292,34 @@ AudioCoordinator::PhasorSnapshot AudioCoordinator::capturePhasor() const
     auto* card = primaryCard<PhasorCard>(bus);
     if (!card) return snapshot;
 
+    // ONE acquisition for the whole panel — this used to be 82.
+    const PhasorCard::Diagnostics d = card->captureDiagnostics();
     snapshot.plugged = true;
     snapshot.slot = card->getSlot();
     snapshot.volume = card->getVolume();
     snapshot.muted = card->isMuted();
-    snapshot.slotIrq = card->isIrqAsserted();
-    snapshot.mode = static_cast<std::uint8_t>(card->mode());
-    snapshot.clockScale = card->clockScale();
+    snapshot.slotIrq = d.irqAsserted;
+    snapshot.mode = d.mode;
+    snapshot.clockScale = d.clockScale;
     for (int c = 0; c < 2; ++c) {
         auto& via = snapshot.via[static_cast<std::size_t>(c)];
-        via.t1cl = card->peekViaRegister(c, 0x04);
-        via.t1ch = card->peekViaRegister(c, 0x05);
-        via.t1ll = card->peekViaRegister(c, 0x06);
-        via.t1lh = card->peekViaRegister(c, 0x07);
-        via.sr = card->peekViaRegister(c, 0x0A);
-        via.acr = card->peekViaRegister(c, 0x0B);
-        via.pcr = card->peekViaRegister(c, 0x0C);
-        via.ifr = card->peekViaRegister(c, 0x0D);
-        via.ier = card->peekViaRegister(c, 0x0E);
-        via.writes = card->getViaWriteCount(c);
+        via.t1cl = d.via[c][0x04];
+        via.t1ch = d.via[c][0x05];
+        via.t1ll = d.via[c][0x06];
+        via.t1lh = d.via[c][0x07];
+        via.sr = d.via[c][0x0A];
+        via.acr = d.via[c][0x0B];
+        via.pcr = d.via[c][0x0C];
+        via.ifr = d.via[c][0x0D];
+        via.ier = d.via[c][0x0E];
+        via.writes = d.viaWrites[c];
     }
     for (int c = 0; c < 4; ++c) {
         auto& ay = snapshot.ay[static_cast<std::size_t>(c)];
         for (int reg = 0; reg < 16; ++reg)
-            ay.regs[static_cast<std::size_t>(reg)] = card->getAyRegister(c, reg);
-        ay.writes = card->getAyWriteCount(c);
-        ay.resets = card->getAyResetCount(c);
+            ay.regs[static_cast<std::size_t>(reg)] = d.ay[c][reg];
+        ay.writes = d.ayWrites[c];
+        ay.resets = d.ayResets[c];
     }
     return snapshot;
 }

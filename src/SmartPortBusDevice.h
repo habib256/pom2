@@ -85,11 +85,12 @@ public:
 
 class SmartPortBusDevice {
 public:
-    /// Eight, since 2026-09-08 (four before): the slot-5 card behind the //c's
-    /// rear port answers for up to eight units (A2retroNET's shape), and the
-    /// chain the //c firmware INITs is this array. Whether the firmware's own
-    /// device table takes them all is what `iic_smartport_six_units` measures.
-    static constexpr int kMaxUnits = 8;
+    /// Fourteen since 2026-09-11 (eight from 2026-09-08, four before). The
+    /// //c's rear port carries the slot-5 card's units (eight at most); the
+    /// Liron's chain goes to fourteen — the most ProDOS 8 can list, measured:
+    /// the firmware's INIT scan numbers sixteen without complaint, ProDOS
+    /// 8 2.4 stops at a full 14-entry device table (`liron_chain`).
+    static constexpr int kMaxUnits = 14;
 
     /// Units are non-owning and 0-based; the bus numbers them 1-based, in
     /// chain order. `count` is how many the INIT scan will find.

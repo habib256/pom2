@@ -1048,6 +1048,45 @@ bool CassetteDevice::loadAudioStream(const std::string& path)
     return true;
 }
 
+void CassetteDevice::setAudioOutputSampleRate(uint32_t hz)
+{
+    const uint32_t rate = std::max<uint32_t>(1, hz);
+    const uint32_t previous = audioOutputSampleRate;
+    if (rate == previous) return;
+    audioOutputSampleRate = rate;
+
+    // A stream-mode decoder converts to the rate it was OPENED with. Reopen
+    // it at the new one, landing on the same position in seconds.
+    std::string path;
+    double      seconds = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(audioStreamMutex);
+        if (!audioStreamDecoderOpen) return;
+        path    = loadedTapePath;
+        seconds = static_cast<double>(audioStreamCursor) /
+                  static_cast<double>(previous ? previous : 1);
+    }
+    if (path.empty()) return;
+
+    // `loadAudioStream` is the MOUNT path: it disarms the deck and drops the
+    // initial-level flag, which would silently stop a tape that is playing.
+    // Reopening is not a mount, so the transport state is carried across.
+    const bool armed     = playbackArmed;
+    const bool active    = playbackActive.load(std::memory_order_relaxed);
+    const bool initLevel = loadedInitialLevel;
+    if (!loadAudioStream(path)) return;          // leaves lastError set
+    playbackArmed      = armed;
+    loadedInitialLevel = initLevel;
+    playbackActive.store(active, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(audioStreamMutex);
+    if (!audioStreamDecoderOpen) return;
+    const ma_uint64 frame =
+        static_cast<ma_uint64>(seconds * static_cast<double>(rate));
+    if (frame < audioStreamTotalFrames &&
+        ma_decoder_seek_to_pcm_frame(&audioStreamDecoder, frame) == MA_SUCCESS)
+        audioStreamCursor = frame;
+}
+
 void CassetteDevice::closeAudioStream()
 {
     std::lock_guard<std::mutex> lock(audioStreamMutex);

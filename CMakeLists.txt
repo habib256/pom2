@@ -399,6 +399,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Architecture.cmake)
 
 set(POM2_DEVICES_HEADERS
     src/Ay3_8910.h
+    src/AyEventRing.h
     src/AyPsgSynth.h
     src/FujiNetCard.h
     src/FujiNetLink.h
@@ -508,6 +509,7 @@ set(POM2_FRONTEND_HEADERS
     src/PrinterFeedCursor.h
     src/RomCatalog.h
     src/SlotCardCatalog.h
+    src/SlotConnectors.h
     src/SlotCardFactory.h
     src/SlotConfigurationCoordinator.h
     src/SlotProvisioningCoordinator.h
@@ -646,6 +648,7 @@ set(POM2_MEDIA_SOURCES
 )
 
 set(POM2_RUNTIME_HEADERS
+    src/AudioMix.h
     src/Apple2Display_Internal.h
     include/pom2/core.hpp
     src/Debugger.h

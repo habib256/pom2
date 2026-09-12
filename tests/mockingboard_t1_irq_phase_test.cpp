@@ -104,8 +104,9 @@ static std::pair<uint8_t, uint8_t> phaseProbe(M6502DebugHook* hook)
     // used with and without a hook so the two probes are comparable.
     while (cpu.getProgramCounter() != ldaPc) cpu.run(1);
 
-    // Peek the RAW T1 counter as of the pre-instruction cycle (peek returns
-    // t1Counter, no read-back bias, no sync).
+    // Peek T1 as of the pre-instruction cycle — no sync. Since 2026-09-12
+    // the peek answers what a GUEST read would (`counterReadback`, the -1
+    // bias), so the gap below is the cycle count alone.
     const uint16_t peekBefore =
         static_cast<uint16_t>(card->peekViaRegister(0, 0x04)) |
         static_cast<uint16_t>(card->peekViaRegister(0, 0x05) << 8);
@@ -113,9 +114,9 @@ static std::pair<uint8_t, uint8_t> phaseProbe(M6502DebugHook* hook)
     cpu.run(1);                                  // execute LDA $C404
     const uint8_t got = cpu.getAccumulator();    // value the CPU read
 
-    // LDA abs = 4 cycles; the data-cycle sync lands on cycleCounter+4, and the
-    // VIA read applies the -1 read-back: got == (peekBefore - 4 - 1) low byte.
-    const uint8_t expected = static_cast<uint8_t>((peekBefore - 5) & 0xFF);
+    // LDA abs = 4 cycles; the data-cycle sync lands on cycleCounter+4, and
+    // both sides now carry the same -1 read-back: got == (peekBefore - 4).
+    const uint8_t expected = static_cast<uint8_t>((peekBefore - 4) & 0xFF);
     return { got, expected };
 }
 
@@ -191,13 +192,14 @@ static std::pair<uint16_t, uint8_t> irqPhaseProbe(M6502DebugHook* hook)
 
 static int checkIrqCase(const char* what, std::pair<uint16_t, uint8_t> r)
 {
-    const uint8_t expected = static_cast<uint8_t>((r.first - 12) & 0xFF);
+    const uint8_t expected = static_cast<uint8_t>((r.first - 11) & 0xFF);
     if (r.second != expected) {
         const int delta = static_cast<int>((r.first - r.second) & 0xFF);
         std::fprintf(stderr,
             "mockingboard_t1_irq_phase (%s): the handler's first `LDA $C404` "
-            "read $%02X, expected $%02X — measured delta %d, hardware 12 "
-            "(7 interrupt-entry cycles + 4 for the LDA + the 6522 read-back). "
+            "read $%02X, expected $%02X — measured delta %d, hardware 11 "
+            "(7 interrupt-entry cycles + 4 for the LDA; the 6522 read-back "
+            "bias is on both sides since the peek applies it too). "
             "M6502::step is publishing the entry cycles AFTER the handler's "
             "first instruction instead of before it.\n",
             what, r.second, expected, delta);

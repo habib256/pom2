@@ -17,6 +17,7 @@
 #include <pom2/core.hpp>
 
 #include "Apple2Display.h"
+#include "AudioMix.h"
 #include "CassetteDevice.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
@@ -79,6 +80,11 @@ public:
     std::vector<float> cassetteScratch;
     std::vector<float> leftScratch;
     std::vector<float> rightScratch;
+    /// The bus this core mixes into — the same law the emulator's own audio
+    /// device plays through (`AudioMix.h`). `mixList` is refilled per buffer
+    /// and keeps its capacity, so the audio path stays allocation-free.
+    pom2::MixBusState         mixBus;
+    std::vector<AudioSource*> mixList;
     std::string error;
 };
 
@@ -437,44 +443,35 @@ std::size_t Core::pullAudio(float* interleavedStereo,
 
     setAudioSampleRate(sampleRate);
 
-    constexpr std::size_t kMixChunk = 4096;
-    const std::size_t scratchSize = std::min(frameCount, kMixChunk);
-    impl_->speakerScratch.resize(scratchSize);
-    impl_->cassetteScratch.resize(scratchSize);
-    impl_->leftScratch.resize(scratchSize);
-    impl_->rightScratch.resize(scratchSize);
+    // THE mixer — the same law `AudioDevice` plays through (`AudioMix.h`),
+    // over this core's own bus state. This used to be a SECOND, divergent
+    // mixer: speaker + cassette + one Mockingboard, summed and clamped, with
+    // no pan, no master gain, no mute, no mono downmix, no suspend, no
+    // meters and no second sound card. Every later fix to the real mixer
+    // missed it, which is what makes divergence worth REMOVING rather than
+    // patching.
+    impl_->mixList.clear();
+    impl_->mixList.push_back(&impl_->speaker);
+    impl_->mixList.push_back(&impl_->cassette);
+    for (int slot = 1; slot <= 7; ++slot) {
+        if (SlotPeripheral* card = impl_->memory.slotBus().peripheral(slot)) {
+            if (AudioSource* source = card->audioSource())
+                impl_->mixList.push_back(source);
+        }
+    }
 
+    // The core exposes no master controls, so: unity gain, unmuted, stereo —
+    // the signal the GUI plays at its own defaults.
+    pom2::MixParams params;
+    params.sampleRate = sampleRate;
+
+    constexpr std::size_t kMixChunk = 4096;
     std::size_t produced = 0;
     while (produced < frameCount) {
         const std::size_t count = std::min(frameCount - produced, kMixChunk);
-        const int chunk = static_cast<int>(count);
-        impl_->speaker.fillAudioBuffer(impl_->speakerScratch.data(), chunk);
-        impl_->cassette.fillAudioBuffer(impl_->cassetteScratch.data(), chunk);
-        std::fill_n(impl_->leftScratch.data(), chunk, 0.0f);
-        std::fill_n(impl_->rightScratch.data(), chunk, 0.0f);
-
-        if (impl_->mockingboard) {
-            AudioSource* source = impl_->mockingboard->audioSource();
-            if (source && !source->fillAudioBufferStereo(
-                    impl_->leftScratch.data(), impl_->rightScratch.data(),
-                    chunk)) {
-                source->fillAudioBuffer(impl_->leftScratch.data(), chunk);
-                std::copy_n(impl_->leftScratch.data(), chunk,
-                            impl_->rightScratch.data());
-            }
-        }
-
-        for (int i = 0; i < chunk; ++i) {
-            const float speaker = impl_->speakerScratch[static_cast<size_t>(i)];
-            const float centred = speaker
-                + impl_->cassetteScratch[static_cast<size_t>(i)];
-            interleavedStereo[2 * (produced + static_cast<size_t>(i))] =
-                std::clamp(centred + impl_->leftScratch[static_cast<size_t>(i)],
-                           -1.0f, 1.0f);
-            interleavedStereo[2 * (produced + static_cast<size_t>(i)) + 1] =
-                std::clamp(centred + impl_->rightScratch[static_cast<size_t>(i)],
-                           -1.0f, 1.0f);
-        }
+        pom2::mixSourcesInto(interleavedStereo + 2 * produced,
+                             static_cast<int>(count), impl_->mixList,
+                             params, impl_->mixBus);
         produced += count;
     }
     return produced;

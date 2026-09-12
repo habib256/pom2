@@ -225,12 +225,99 @@ bool Ssi263::advance(int cycles)
 // the contribution. Otherwise we sum (not overwrite) into `output`
 // so the host's AudioSrc can mix multiple sources.
 
-void Ssi263::fillAudio(float* output, int frameCount, uint32_t sampleRate)
+void Ssi263::queuePlaybackEvent(uint8_t reg, uint8_t val, uint64_t cycle)
+{
+    if (!ctlEvents_.push_back(CtlEvent{cycle, static_cast<uint8_t>(reg & 0x07),
+                                       val})) {
+        // Full — the audio device is stalled or absent, and a stale backlog
+        // is worse than none: drop it and re-prime from the live registers
+        // on the next buffer, the same policy the PSG timeline uses.
+        ctlEvents_.clear();
+        aPrimed_ = false;
+    }
+}
+
+void Ssi263::applyPlaybackEvent(uint8_t reg, uint8_t val)
+{
+    switch (reg & 0x07) {
+    case REG_DURPHON:
+        aDurPhon_ = val;
+        // Mirrors `write()`: a DURPHON store rewinds the PCM cursor to the
+        // start of the newly latched phoneme — unless the chip is down.
+        if ((aCttrAmp_ & CONTROL_MASK) == 0) {
+            playbackPhoneme_ = aDurPhon_ & PHONEME_MASK;
+            playbackOffset_  = 0;
+            resampleAccum_   = 0.0f;
+        }
+        break;
+    case REG_CTTRAMP: {
+        const uint8_t prevCtl = aCttrAmp_ & CONTROL_MASK;
+        aCttrAmp_ = val;
+        // CTL H→L: leave power-down and restart the latched phoneme.
+        if (prevCtl != 0 && (aCttrAmp_ & CONTROL_MASK) == 0) {
+            playbackPhoneme_ = aDurPhon_ & PHONEME_MASK;
+            playbackOffset_  = 0;
+            resampleAccum_   = 0.0f;
+        }
+        break;
+    }
+    case REG_FILFREQ: aFilFreq_ = val; break;
+    default: break;   // INFLECT / RATEINF affect timing, not the waveform
+    }
+}
+
+void Ssi263::fillAudioTimed(float* output, int frameCount, uint32_t sampleRate,
+                            double startCycle, double cyclesPerSample)
 {
     if (frameCount <= 0 || sampleRate == 0) return;
-    if (powerDown())              return;
-    if (filFreq_ == FILTER_FREQ_SILENCE) return;
-    const uint8_t amp = amplitude();
+    if (!(cyclesPerSample > 0.0)) {           // no timeline: render as-is
+        fillAudio(output, frameCount, sampleRate);
+        return;
+    }
+    if (!aPrimed_) {                          // first buffer, or after a drop
+        aDurPhon_ = durPhon_;
+        aCttrAmp_ = cttrAmp_;
+        aFilFreq_ = filFreq_;
+        aPrimed_  = true;
+    }
+
+    int    i     = 0;
+    double cycle = startCycle;
+    while (i < frameCount) {
+        // Everything already due happens BEFORE this sample.
+        while (!ctlEvents_.empty() &&
+               static_cast<double>(ctlEvents_.front().cycle) <= cycle) {
+            applyPlaybackEvent(ctlEvents_.front().reg, ctlEvents_.front().val);
+            ctlEvents_.pop_front();
+        }
+        // Render up to the next event, so a phoneme boundary lands on the
+        // sample the driver's write falls in rather than at a buffer edge.
+        int n = frameCount - i;
+        if (!ctlEvents_.empty()) {
+            const double ahead =
+                (static_cast<double>(ctlEvents_.front().cycle) - cycle) /
+                cyclesPerSample;
+            if (ahead < static_cast<double>(n))
+                n = std::max(1, static_cast<int>(ahead));
+        }
+        renderSamples(output + i, n, sampleRate, aCttrAmp_, aFilFreq_);
+        i     += n;
+        cycle += static_cast<double>(n) * cyclesPerSample;
+    }
+}
+
+void Ssi263::fillAudio(float* output, int frameCount, uint32_t sampleRate)
+{
+    renderSamples(output, frameCount, sampleRate, cttrAmp_, filFreq_);
+}
+
+void Ssi263::renderSamples(float* output, int frameCount, uint32_t sampleRate,
+                           uint8_t cttrAmp, uint8_t filFreq)
+{
+    if (frameCount <= 0 || sampleRate == 0) return;
+    if ((cttrAmp & CONTROL_MASK) != 0) return;      // power-down
+    if (filFreq == FILTER_FREQ_SILENCE) return;
+    const uint8_t amp = cttrAmp & AMPLITUDE_MASK;
     if (amp == 0)                 return;
 
     // Phoneme CODE → PCM table index (AppleWin `Play()`; see the mapper).

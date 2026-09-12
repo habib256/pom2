@@ -2391,6 +2391,17 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             //     mouse firmware talks to the native IIcMouse IOU device.
             //     Only an explicit AppleWin HLE substitute needs this punch;
             //     IIcMouse exposes no card ROM. No autostart probe, so unarmed.
+            // …and the INTERNAL EXPANSION CONNECTOR: a card there answers at
+            // a fixed page (`iicRomWindowPage`), not at the POM2 slot that
+            // holds it — the Mockingboard 4c at $C400-$C4FF while slot 4 is
+            // the machine's own IOU mouse. Checked before the per-slot punch
+            // because the page it claims is exactly a slot another device
+            // occupies.
+            if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
+                const int page = (addr >> 8) & 0x07;
+                if (SlotPeripheral* p = slots.peripheralForIicRomPage(page))
+                    return p->slotRomRead(static_cast<uint8_t>(addr & 0xFF));
+            }
             if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
                 const int slot = (addr >> 8) & 0x07;
                 const bool armOk = (slot != 5) ||
@@ -2660,6 +2671,17 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         if (addr >= 0xC300 && addr <= 0xC3FF &&
             !(iieMemMode & MF_SLOTC3ROM)) {
             intC8Rom = true;
+        }
+        // A card on the internal expansion connector is NOT internal ROM:
+        // its window carries writes, which is how DIGIDREAM wakes its
+        // Mockingboard 4c ($C403/$C404) and how every AY register store
+        // reaches the chip. See SlotPeripheral::iicRomWindowPage.
+        if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
+            if (SlotPeripheral* p =
+                    slots.peripheralForIicRomPage((addr >> 8) & 0x07)) {
+                p->slotRomWrite(static_cast<uint8_t>(addr & 0xFF), value);
+                return;
+            }
         }
         // //c-class internal ROM is read-only: writes are absorbed,
         // except the //c+ MIG windows ($CC00/$CE00 in bank 1) which the

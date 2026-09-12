@@ -267,10 +267,21 @@
 # predates this change (the 2026-09-10 background persistence left the file
 # at 2361 against 2357, which the ratchet reported and nobody raised).
 #   src/StorageCoordinator.cpp   2357 -> 2372 (+15)
+# 2026-09-12 (the Mockingboard 4c on the //c's internal connector): one
+# ceiling raised for a decode seam that cannot live anywhere else. A card on
+# that connector answers at a FIXED page ($C400-$C4FF), not at the slot that
+# holds it, so the punch has to sit in `Memory`'s //c-class read and write
+# paths, ahead of the per-slot punch and ahead of `internalRomWrite` — two
+# hunks of 11 lines, one per direction, each mostly the comment explaining
+# why the page a card claims is a page another device occupies. The card
+# itself, its window and its detection are elsewhere (Mockingboard.cpp,
+# SlotBus::peripheralForIicRomPage, SlotPeripheral::iicRomWindowPage). The
+# snapshot trailer remains the split owed on this file.
+#   src/Memory.cpp               2713 -> 2735 (+22)
 src/Apple2Display.cpp                    2522
 src/DiskImage.cpp                        3154
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
-src/Memory.cpp                           2713
+src/Memory.cpp                           2735
 src/StorageCoordinator.cpp               2372
 src/hgrpaint/HgrPaintEditor.cpp          2656

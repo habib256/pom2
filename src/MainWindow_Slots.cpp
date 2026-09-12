@@ -35,6 +35,8 @@
 // otherwise the entry is greyed out in the dropdown.
 
 #include "MainWindow.h"
+
+#include <algorithm>   // std::find / std::max over the connector rows
 #include "SlotConfigurationCoordinator.h"
 #include "SlotRebuildCoordinator.h"
 #include "StorageCoordinator.h"
@@ -119,15 +121,27 @@ void MainWindow::renderSlotConfigPanel()
     ImGui::BeginChild("##slotassign", ImVec2(0.0f, 0.0f),
                       ImGuiChildFlags_Borders);
     {
-        ImGui::SeparatorText("Expansion slots");
+        // The window is built from THIS machine's connector inventory
+        // (SlotConnectors.h), not from a fixed list of seven slots. Rendering
+        // "Slot 1".."Slot 7" on a //c named seven controls that do not exist
+        // on the hardware: five were greyed built-ins, one offered a rear
+        // adapter under a slot number, and on a //c PAL the last one was dead
+        // in every direction. A row exists here only if the connector exists.
+        if (!connectorLayoutValid_ || connectorLayoutProfile_ != activeProfile) {
+            connectorLayout_        = pom2::buildConnectorLayout(profileCfg);
+            connectorLayoutProfile_ = activeProfile;
+            connectorLayoutValid_   = true;
+        }
 
-        // Slot number leads, control fills the rest of the row. ImGui's native
-        // LabelText / BeginCombo put their label on the RIGHT, so the panel
-        // read "(empty) v  Slot 1" — the number, which is exactly what the eye
-        // scans down, trailed its own control. Gutter measured off the widest
-        // label so it survives the UI zoom.
-        const float slotGutter = ImGui::CalcTextSize("AUX slot").x +
-                                 ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        // Label column measured off the widest label the machine actually
+        // shows, so "Serial port 1 (printer, DIN-5)" does not collide with its
+        // control on a //c while "Slot 1" keeps a tight gutter on a //e.
+        float slotGutter = ImGui::CalcTextSize("AUX memory").x;
+        for (const auto& section : connectorLayout_)
+            for (const auto& row : section.rows)
+                slotGutter = std::max(slotGutter,
+                                      ImGui::CalcTextSize(row.label.c_str()).x);
+        slotGutter += ImGui::GetStyle().ItemSpacing.x * 2.0f;
         auto slotLabel = [slotGutter](const char* text) {
             ImGui::TextUnformatted(text);
             ImGui::SameLine(slotGutter);
@@ -163,83 +177,14 @@ void MainWindow::renderSlotConfigPanel()
         const bool mouseAwAvailable  = mouseAwRomPresent();
         const bool cffaAvailable     = cffaRomPresent();
 
-        // AUX slot (IIe-class only): built-in 80-column card at $C300 — shown
-        // greyed as a non-editable row.
-        if (profileCfg.iieMode) {
-            ImGui::BeginDisabled(true);
-            slotLabel("AUX slot");
-            ImGui::TextUnformatted("Extended 80-Column Card (built-in, $C300 firmware)");
-            ImGui::EndDisabled();
-
-            // RamWorks III aux size. The `ramworks_banks` key was READ in two
-            // places and WRITTEN by nothing — the only way to get more than
-            // stock 64 KB aux was to hand-edit state.cfg, and nothing said so.
-            // //c-class is excluded: those profiles force 1 bank back on
-            // (applyProfile step 4), so a picker there would be a dead
-            // control. Applying cold-boots, like every other machine change
-            // in this panel.
-            if (!profileCfg.noPhysicalSlots) {
-                struct RwTier { int banks; const char* label; };
-                static constexpr RwTier kRwTiers[] = {
-                    {   1, "64 KB (stock //e — no RamWorks)" },
-                    {   4, "256 KB RamWorks" },
-                    {   8, "512 KB RamWorks" },
-                    {  16, "1 MB RamWorks" },
-                    {  48, "3 MB RamWorks" },
-                    { 128, "8 MB RamWorks III" },
-                };
-                const int curBanks = settings->getInt("ramworks_banks", 1);
-                const char* curLabel = kRwTiers[0].label;
-                for (const auto& t : kRwTiers)
-                    if (t.banks == curBanks) curLabel = t.label;
-                slotLabel("AUX memory");
-                ImGui::SetNextItemWidth(320.0f);
-                if (ImGui::BeginCombo("##ramworks", curLabel)) {
-                    for (const auto& t : kRwTiers) {
-                        if (ImGui::Selectable(t.label, t.banks == curBanks) &&
-                            t.banks != curBanks) {
-                            settings->setInt("ramworks_banks", t.banks);
-                            if (!settings->save()) {
-                                settings->setInt("ramworks_banks", curBanks);
-                                tapeStatusMessage =
-                                    "Aux memory not changed — settings could "
-                                    "not be saved.";
-                                tapeStatusUntil = lastFrameTime + 6.0;
-                            } else if (!restartEmulationFromSettings()) {
-                                settings->setInt("ramworks_banks", curBanks);
-                                settings->save();
-                                tapeStatusMessage =
-                                    "Could not rebuild the machine with that "
-                                    "aux size.";
-                                tapeStatusUntil = lastFrameTime + 6.0;
-                            }
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        "RamWorks III bank-switched aux RAM ($C071/3/5/7).\n"
-                        "Changing it COLD-BOOTS the machine.\n"
-                        "A rewind snapshot only loads back into a machine\n"
-                        "with the same aux size.");
-            }
-            ImGui::Spacing();
-        }
-
         // Multi-instance cards are never flagged as duplicates. The list is
         // SlotConfigurationCoordinator::isMultiInstance — the same predicate
-        // resolve() applies when it builds the effective plan. This used to
-        // hard-code "diskii" alone, so staging a second CFFA / SmartPort 3.5"
-        // / Liron (all legal, all per-slot storage) lit both rows red and
-        // hard-disabled Apply: a configuration the machine accepts that the
-        // panel would not let you reach.
-        // Built-in slots forced by the profile are also exempt: e.g. //c
-        // ships TWO SSC-compatible serial ports at sl1+sl2 (printer +
-        // modem), both forced by cfgAppleIIc, and the user picker must
-        // not light them up red. Same logic as plugSlotsFromSettings'
-        // uniqueness check.
+        // resolve() applies when it builds the effective plan. Built-in slots
+        // forced by the profile are exempt too: //c ships TWO SSC-compatible
+        // serial ports (printer + modem), both forced, and the picker must
+        // not light them up red.
         auto isDuplicate = [&](int slot) -> bool {
+            if (slot < 1 || slot > 7)                   return false;
             if (draft[slot].empty())                    return false;
             if (pom2::SlotConfigurationCoordinator::isMultiInstance(draft[slot]))
                 return false;
@@ -252,312 +197,375 @@ void MainWindow::renderSlotConfigPanel()
             return false;
         };
 
-        // Does the profile already ship a Le Chat Mauve as an on-board fixture
-        // (//c PAL = "Adaptateur IIc")? If so, the rear-connector adapter is
-        // taken — don't let the no-physical-slots rows offer a second one.
-        bool builtinRgb = false;
-        for (int s = 1; s <= 7; ++s)
-            if (profileCfg.builtInSlots[s].has_value() &&
-                profileCfg.builtInSlots[s]->cardKey == "chatmauve")
-                builtinRgb = true;
+        // Why a card cannot be chosen on THIS machine — empty means it can.
+        // One place, so the greyed entries in a picker and the "Not available
+        // on this machine" group at the bottom can never disagree.
+        auto unavailableReason = [&](const std::string& key) -> const char* {
+            if (key.empty()) return nullptr;
+            if (key == "mouse"   && !mouseAvailable)
+                return "ROM dumps missing (roms/mouse_341-0270-c.bin + "
+                       "roms/mouse_341-0269.bin)";
+            if (key == "mouseaw" && !mouseAwAvailable)
+                return "ROM dump missing (the mouse slot EPROM)";
+            if (key == "cffa"    && !cffaAvailable)
+                return "ROM dump missing (roms/cffa20ee02.bin)";
+            if (profileCfg.noPhysicalSlots &&
+                key != "chatmauve" && key != "mockingboard" &&
+                key != "mockingboard_c")
+                return "no expansion bus on this machine — its forced "
+                       "INTCXROM masks slot ROM entirely";
+            return nullptr;
+        };
+
+        // Each card is tagged with its emulation level from the abstraction
+        // catalog (the LLE/HLE panel's source of truth — docs/lle_vs_hle.md
+        // made live), so the picker says whether you are choosing silicon or
+        // a service, and with its scope bucket from TODO.md's ruling.
+        auto absEntryFor = [](const std::string& key) -> const pom2::AbsEntry* {
+            if (key.empty()) return nullptr;
+            const char* id = key.c_str();
+            if (key == "smartport35")    id = "smartportcard";
+            else if (key == "printer")   id = "printercard";
+            else if (key == "mockingboard_c") id = "mockingboard";
+            else if (key == "phasor")    id = "mockingboard";
+            else if (key == "echoplus")  id = "ssi263";
+            else if (key == "echoplus_tms") id = "tms5220";
+            for (const auto& e : pom2::abstractionCatalog())
+                if (std::string(id) == e.id) return &e;
+            return nullptr;
+        };
+        auto levelTag = [&](const std::string& key) -> std::string {
+            if (key.empty()) return {};
+            const char* scope = pom2::cardScopeWord(pom2::cardScopeForKey(key));
+            const auto* e = absEntryFor(key);
+            if (!e) return std::string("  [") + scope + "]";
+            return std::string("  [") + pom2::levelBadge(e->level) + " · " +
+                   (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + " · " +
+                   scope + "]";
+        };
+        auto cardLabel = [](const std::string& key) -> const char* {
+            for (const auto& ct : kCardTypes)
+                if (ct.key == key) return ct.label;
+            return pom2::cardLabelForKey(key);
+        };
 
         bool anyDuplicate = false;
-        for (int s = 1; s <= 7; ++s) {
-            char label[32];
-            std::snprintf(label, sizeof(label), "Slot %d", s);
 
-            // Profile built-in slot → read-only, greyed, with a badge. The
-            // card key is forced regardless of user edits; sync the draft so
-            // an Apply persists the locked value over a stale saved key.
-            if (profileCfg.builtInSlots[s].has_value()) {
-                const auto& bis = *profileCfg.builtInSlots[s];
-                draft[s] = bis.cardKey;
-                const char* cardName = pom2::cardLabelForKey(bis.cardKey);
-                for (const auto& ct : kCardTypes) {
-                    if (ct.key == bis.cardKey) { cardName = ct.label; break; }
-                }
-                char preview[96];
-                std::snprintf(preview, sizeof(preview),
-                              "%s — %s", cardName, bis.label.c_str());
-                ImGui::BeginDisabled(true);
-                slotLabel(label);
-                ImGui::TextUnformatted(preview);
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Built into %s — cannot be changed.",
-                                      std::string(profileCfg.displayName).c_str());
-                continue;
+        // A connector that carries a card the user may choose. `accepts`
+        // empty = the whole catalog (a real expansion slot); otherwise only
+        // the listed keys, because a DB-15 video connector physically cannot
+        // take a Disk II controller.
+        auto renderCardPicker = [&](const pom2::Connector& row) {
+            const int s = row.slot;
+            if (!row.accepts.empty()) {
+                // Sanitise: a key the connector cannot carry (a stale
+                // state.cfg from another machine) is not a choice it can show.
+                if (std::find(row.accepts.begin(), row.accepts.end(),
+                              draft[s]) == row.accepts.end())
+                    draft[s] = row.accepts.front();
             }
-
-            // Profile has no physical expansion BUS (//c / //c+) — peripheral
-            // cards can't be plugged. The ONE exception is the Le Chat Mauve
-            // RGB card: on a //c it's the "Adaptateur IIc" that goes on the
-            // rear DB-15 video-expansion connector (which the //c does have).
-            // So offer a {empty, Le Chat Mauve} toggle on each virtual slot
-            // and nothing else; the duplicate check keeps it to one adapter.
-            if (profileCfg.noPhysicalSlots) {
-                if (draft[s] != "chatmauve") draft[s] = "";
-                // RGB adapter already on-board (//c PAL) → this slot is just
-                // a non-existent connector; grey it out like the others.
-                if (builtinRgb) {
-                    draft[s] = "";
-                    ImGui::BeginDisabled(true);
-                    slotLabel(label);
-                    ImGui::Text("(no physical slot on %s)",
-                                std::string(profileCfg.displayName).c_str());
-                    ImGui::EndDisabled();
-                    continue;
-                }
-                const char* preview = (draft[s] == "chatmauve")
-                    ? "Le Chat Mauve RGB (rear connector)" : "(empty)";
-                slotLabel(label);
-                char comboId[24];
-                std::snprintf(comboId, sizeof(comboId), "##slotcombo%d", s);
-                if (ImGui::BeginCombo(comboId, preview)) {
-                    if (ImGui::Selectable("(empty)", draft[s].empty()))
-                        draft[s] = "";
-                    if (ImGui::Selectable("Le Chat Mauve RGB (rear connector)",
-                                          draft[s] == "chatmauve"))
-                        draft[s] = "chatmauve";
-                    ImGui::EndCombo();
-                }
-                if (draft[s] == "chatmauve" && isDuplicate(s)) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                                       "(one adapter only)");
-                    anyDuplicate = true;
-                }
-                if (draft[s] == "chatmauve") {
-                    slotLabel("");
-                    ImGui::TextDisabled(
-                        "model: Adaptateur IIc — fixed by the DB-15 connector");
-                }
-                continue;
-            }
-
             const bool dup = isDuplicate(s);
             if (dup) anyDuplicate = true;
 
-            // Each card is tagged with its emulation level from the
-            // abstraction catalog (the LLE/HLE panel's source of truth —
-            // `docs/lle_vs_hle.md` made live), so the picker says whether
-            // you are choosing silicon or a service. Static classification;
-            // the Abstraction Levels panel is where live degradation shows.
-            auto absEntryFor = [](const std::string& key) -> const pom2::AbsEntry* {
-                if (key.empty()) return nullptr;
-                // Card keys that differ from the catalog's ids (the catalog
-                // predates some renames; the Sound II shares the A/C entry).
-                const char* id = key.c_str();
-                if (key == "smartport35")    id = "smartportcard";
-                else if (key == "printer")   id = "printercard";
-                else if (key == "mockingboard_c") id = "mockingboard";
-                else if (key == "phasor")    id = "mockingboard";  // doc row: "Mockingboard / Phasor", L1
-                else if (key == "echoplus")  id = "ssi263";        // the Cricket IS the SSI263 row
-                else if (key == "echoplus_tms") id = "tms5220";
-                // liron / workstation / 4play / transwarp have no row in
-                // docs/lle_vs_hle.md yet — no tag rather than an invented one
-                // (backlog item; the doc and the catalog move together).
-                for (const auto& e : pom2::abstractionCatalog())
-                    if (std::string(id) == e.id) return &e;
-                return nullptr;
-            };
-            // ...and with its scope bucket from TODO.md's ruling (core /
-            // supported / frozen), so a user choosing a card knows what the
-            // project promises about it before filing the report.
-            auto levelTag = [&](const std::string& key) -> std::string {
-                if (key.empty()) return {};
-                const char* scope = pom2::cardScopeWord(pom2::cardScopeForKey(key));
-                const auto* e = absEntryFor(key);
-                if (!e) return std::string("  [") + scope + "]";
-                return std::string("  [") + pom2::levelBadge(e->level) + " · " +
-                       (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + " · " +
-                       scope + "]";
-            };
+            const std::string preview =
+                draft[s].empty() ? std::string("(empty)")
+                                 : std::string(cardLabel(draft[s])) +
+                                       levelTag(draft[s]);
 
-            std::string preview = "(empty)";
-            for (const auto& ct : kCardTypes) {
-                if (ct.key == draft[s]) { preview = ct.label + levelTag(ct.key); break; }
-            }
-
-            // A staged row is marked where the user is looking — on the row
-            // itself — not only by the button at the bottom of the column.
+            // A staged row is marked where the user is looking.
             const bool staged = (draft[s] != slotCards[s]);
             if (staged) {
                 ImGui::PushStyleColor(ImGuiCol_Text,
                     ImGui::ColorConvertU32ToFloat4(pom2::palette().accent));
                 ImGui::TextUnformatted(ICON_FA_CIRCLE_DOT);
                 ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) {
-                    const char* wasLabel = "(empty)";
-                    for (const auto& ct : kCardTypes)
-                        if (ct.key == slotCards[s]) { wasLabel = ct.label; break; }
-                    ImGui::SetTooltip("Staged. Currently plugged: %s", wasLabel);
-                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Staged. Currently plugged: %s",
+                                      slotCards[s].empty()
+                                          ? "(empty)"
+                                          : cardLabel(slotCards[s]));
                 ImGui::SameLine(0.0f, 0.0f);
             }
-            slotLabel(label);
+            slotLabel(row.label.c_str());
             char comboId[24];
             std::snprintf(comboId, sizeof(comboId), "##slotcombo%d", s);
             if (dup) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 96, 96, 255));
             if (ImGui::BeginCombo(comboId, preview.c_str())) {
+                int shown = 0;
                 for (const auto& ct : kCardTypes) {
+                    if (!row.accepts.empty() &&
+                        std::find(row.accepts.begin(), row.accepts.end(),
+                                  ct.key) == row.accepts.end())
+                        continue;
+                    if (unavailableReason(ct.key)) continue;   // grouped below
+                    ++shown;
                     const bool selected = (ct.key == draft[s]);
-                    const bool disabled =
-                        ((std::string(ct.key) == "mouse")   && !mouseAvailable) ||
-                        ((std::string(ct.key) == "mouseaw") && !mouseAwAvailable) ||
-                        ((std::string(ct.key) == "cffa")    && !cffaAvailable);
-                    if (disabled) ImGui::BeginDisabled();
                     const std::string itemLabel = ct.label + levelTag(ct.key);
-                    if (ImGui::Selectable(itemLabel.c_str(), selected)) {
+                    if (ImGui::Selectable(itemLabel.c_str(), selected))
                         draft[s] = ct.key;
-                    }
                     if (const auto* ae = absEntryFor(ct.key);
                         ae && ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s — %s\n%s",
                                           pom2::levelBadge(ae->level),
                                           pom2::levelName(ae->level),
                                           ae->modelled);
-                    if (disabled) {
-                        ImGui::EndDisabled();
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("(ROMs missing)");
-                    }
                     if (selected) ImGui::SetItemDefaultFocus();
+                }
+                // …and everything this machine cannot take, with the reason,
+                // below a separator. Listed rather than hidden: a card that
+                // silently vanishes reads as a gap in POM2, not as a fact
+                // about the machine in front of you.
+                bool headerDrawn = false;
+                for (const auto& ct : kCardTypes) {
+                    if (!row.accepts.empty() &&
+                        std::find(row.accepts.begin(), row.accepts.end(),
+                                  ct.key) == row.accepts.end())
+                        continue;
+                    const char* why = unavailableReason(ct.key);
+                    if (!why) continue;
+                    if (!headerDrawn) {
+                        if (shown > 0) ImGui::Separator();
+                        ImGui::TextDisabled("Not available on this machine");
+                        headerDrawn = true;
+                    }
+                    ImGui::BeginDisabled();
+                    ImGui::Selectable(ct.label, false);
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("%s", why);
                 }
                 ImGui::EndCombo();
             }
             if (dup) ImGui::PopStyleColor();
+            if (dup) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                   "(one only)");
+            }
+        };
 
-            // Which Chat Mauve: the family is ONE catalog key, the model is
-            // the `chatmauve_variant` card setting (docs/chatmauve_plan.md —
-            // Féline / Adaptateur //c / Eve / Video-7 decide which registers
-            // exist and which modes fall back). Staged like the slot itself;
-            // Apply persists it and the rebuild plugs the chosen model.
-            // Not offered on a //c-class machine: there the Chat Mauve is the
-            // rear "Adaptateur IIc" and the connector fixes the model, so a
-            // picker here would stage a change the profile ignores (and the
-            // pending counter below already refuses to count it).
-            if (draft[s] == "chatmauve" && !profileCfg.noPhysicalSlots) {
-                using CmVariant = LeChatMauveCard::Variant;
-                CmVariant cur;
-                if (!LeChatMauveCard::parseVariant(cmVariantEff, cur))
-                    cur = CmVariant::Feline;
-                slotLabel("  model");
-                // Per-slot ID. A bare "##cmvariant" inside this loop is the
-                // same ImGui ID in every row (the loop body pushes none), so
-                // two rows staging a Chat Mauve — which the draft permits
-                // right up to the de-dup at Apply — collide and only the
-                // first one can be opened.
-                char cmId[24];
-                std::snprintf(cmId, sizeof(cmId), "##cmvariant%d", s);
-                if (ImGui::BeginCombo(cmId,
-                                      LeChatMauveCard::variantLabel(cur))) {
-                    for (int vi = 0; vi < LeChatMauveCard::kVariantCount; ++vi) {
-                        const auto v = static_cast<CmVariant>(vi);
-                        if (ImGui::Selectable(LeChatMauveCard::variantLabel(v),
-                                              v == cur))
-                            chatMauveVariantDraft_ =
-                                LeChatMauveCard::variantKey(v);
-                    }
-                    ImGui::EndCombo();
+        for (const auto& section : connectorLayout_) {
+            ImGui::SeparatorText(section.title.c_str());
+            if (!section.blurb.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", section.blurb.c_str());
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
+            for (const auto& row : section.rows) {
+                const int s = row.slot;
+                const bool builtIn =
+                    (s >= 1 && s <= 7) &&
+                    profileCfg.builtInSlots[static_cast<std::size_t>(s)].has_value();
+
+                // ── A connector whose card is soldered on ────────────────
+                // Read-only whatever its kind: the //c's serial ports are
+                // ports you plug a cable into, but the 6551 behind them is
+                // not a card you can swap.
+                if (builtIn) {
+                    const auto& bis =
+                        *profileCfg.builtInSlots[static_cast<std::size_t>(s)];
+                    draft[s] = bis.cardKey;
+                    char preview[128];
+                    std::snprintf(preview, sizeof(preview), "%s — %s",
+                                  cardLabel(bis.cardKey), bis.label.c_str());
+                    ImGui::BeginDisabled(true);
+                    slotLabel(row.label.c_str());
+                    ImGui::TextUnformatted(preview);
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Built into %s — cannot be changed.",
+                                          std::string(profileCfg.displayName).c_str());
+                    continue;
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        "Which registers exist and which modes fall back.\n"
-                        "Feline / Adaptateur //c: mixed DHGR (Extasie, Arlequin).\n"
-                        "Eve: $C0B0-$C0BF, TXT16/CP280/COL280 — NO mixed mode.\n"
-                        "Video-7: 160-wide chunky, F/B text.\n"
-                        "RVB Graph (II/II+, partial): $C0F0-$C0F3 only.");
-            }
 
-            // Slot 3 on a //e-class machine is where the built-in 80-column
-            // firmware keeps OURCH/OURCV — the screen holes at $x78+3 are
-            // its scratchpad, not the card's. Printer firmware stores its
-            // column and line counters there, so a Grappler+/Printer card
-            // in slot 3 reads the cursor position back as its line width
-            // and wraps after every character (real hardware does exactly
-            // the same — the Grappler+ manual says slot 1). Everything
-            // else about the card works, so warn instead of forbidding.
-            // Apple sold the mouse for slot 4, and French mouse software
-            // takes that literally: Extasie calls the slot-4 firmware
-            // entries by self-modified `JSR $C4xx` with no slot scan, so a
-            // mouse anywhere else is simply never touched. Scanning
-            // software (A2DeskTop, MousePaint) finds it in any slot — warn,
-            // don't forbid.
-            if (s != 4 && (draft[s] == "mouse" || draft[s] == "mouseaw")) {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
-                                   "(Extasie & friends want the mouse in slot 4)");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        "Apple's mouse slot is 4. Software that scans the\n"
-                        "slots (A2DeskTop, MousePaint) will find it here,\n"
-                        "but French titles like Extasie call the slot-4\n"
-                        "firmware directly and will not see this card.");
-            }
-            if (s == 3 && profileCfg.iieMode &&
-                (draft[s] == "grappler" || draft[s] == "printer")) {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
-                                   "(80-col firmware owns slot 3 — use 1)");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        "On a //e the internal 80-column firmware uses the "
-                        "slot-3 screen holes ($0478+3, $057B, $05FB…) for "
-                        "its own cursor state.\nA printer card in that slot "
-                        "shares them and prints one character per line.\n"
-                        "Move it to slot 1 (or 2/4/5/7) — same as on real "
-                        "hardware.");
-            }
+                switch (row.kind) {
+                case pom2::ConnectorKind::AuxSlot:
+                    ImGui::BeginDisabled(true);
+                    slotLabel(row.label.c_str());
+                    ImGui::TextUnformatted(row.note.c_str());
+                    ImGui::EndDisabled();
+                    continue;
 
-            // Slot 3 on a //e is not merely awkward, it is DEAD for almost
-            // every card: with SLOTC3ROM off (the reset default) the
-            // motherboard owns $C300-$C3FF outright and slot 3's I/O SELECT
-            // never asserts. Any card that decodes anything in its $Cs00
-            // page is unreachable there — which is most of them, and not
-            // only the ones with firmware: a Mockingboard addresses its
-            // VIAs through that window too (see MockingboardCard::
-            // slotRomRead), so it is as invisible as a mouse.
-            //
-            // Real hardware behaves the same way, which is why Apple sold
-            // the mouse for slot 4 and why the //e manual tells you to leave
-            // slot 3 to the 80-column card. Warned, not forbidden: a user
-            // who knows to flip SLOTC3ROM can still have it.
-            if (s == 3 && profileCfg.iieMode && !draft[s].empty() &&
-                draft[s] != "grappler" && draft[s] != "printer") {
-                const bool isMouse =
-                    (draft[s] == "mouse" || draft[s] == "mouseaw");
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
-                                   isMouse
-                                       ? "(invisible in slot 3 — use 4)"
-                                       : "(slot 3 $C300 window is dead)");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        isMouse
-                        ? "On a //e the internal 80-column firmware owns "
-                          "$C300-$C3FF, so a card there has NO $Cs00 page the "
-                          "guest can reach.\nSoftware finds the mouse by "
-                          "scanning slots for the Apple signature ($Cn05=$38, "
-                          "$Cn07=$18, $Cn0B=$01, $Cn0C=$20) — at $C300 it "
-                          "reads the 80-column firmware instead and decides "
-                          "there is no mouse.\nA2DeskTop, MousePaint and "
-                          "MultiScribe then run keyboard-only.\nMove it to "
-                          "slot 4 (Apple's own slot for it), or 5/7 — same as "
-                          "on real hardware."
-                        : "On a //e the internal 80-column firmware owns "
-                          "$C300-$C3FF, so slot 3's I/O SELECT never asserts "
-                          "and NOTHING in the card's $C300 page is "
-                          "reachable.\nThat kills any card that needs it — "
-                          "firmware the guest scans for, and registers too: a "
-                          "Mockingboard addresses its VIAs through that "
-                          "window, so it goes silent there.\nA card that "
-                          "only uses its $C0nX soft switches still works.\n"
-                          "On real hardware slot 3 belongs to the 80-column "
-                          "card.");
+                case pom2::ConnectorKind::AuxMemory: {
+                    // RamWorks III aux size. //c-class never reaches here:
+                    // those profiles force 1 bank back on (applyProfile step
+                    // 4), so a picker there would be a dead control.
+                    struct RwTier { int banks; const char* label; };
+                    static constexpr RwTier kRwTiers[] = {
+                        {   1, "64 KB (stock //e — no RamWorks)" },
+                        {   4, "256 KB RamWorks" },
+                        {   8, "512 KB RamWorks" },
+                        {  16, "1 MB RamWorks" },
+                        {  48, "3 MB RamWorks" },
+                        { 128, "8 MB RamWorks III" },
+                    };
+                    // STAGED, like every other row in this window
+                    // (2026-09-12). It used to write the setting and cold-boot
+                    // the machine the instant you picked a size: the one
+                    // immediate control in a staged window, directly above an
+                    // Apply button that did not count it — so the window both
+                    // claimed nothing had happened and had already wiped RAM.
+                    const int liveBanks = settings->getInt("ramworks_banks", 1);
+                    const int curBanks  =
+                        (ramWorksDraft_ >= 0) ? ramWorksDraft_ : liveBanks;
+                    const char* curLabel = kRwTiers[0].label;
+                    for (const auto& t : kRwTiers)
+                        if (t.banks == curBanks) curLabel = t.label;
+                    if (curBanks != liveBanks) {
+                        ImGui::PushStyleColor(ImGuiCol_Text,
+                            ImGui::ColorConvertU32ToFloat4(pom2::palette().accent));
+                        ImGui::TextUnformatted(ICON_FA_CIRCLE_DOT);
+                        ImGui::PopStyleColor();
+                        if (ImGui::IsItemHovered()) {
+                            const char* wasLabel = kRwTiers[0].label;
+                            for (const auto& t : kRwTiers)
+                                if (t.banks == liveBanks) wasLabel = t.label;
+                            ImGui::SetTooltip("Staged. Currently: %s", wasLabel);
+                        }
+                        ImGui::SameLine(0.0f, 0.0f);
+                    }
+                    slotLabel(row.label.c_str());
+                    ImGui::SetNextItemWidth(320.0f);
+                    if (ImGui::BeginCombo("##ramworks", curLabel)) {
+                        for (const auto& t : kRwTiers)
+                            if (ImGui::Selectable(t.label, t.banks == curBanks))
+                                ramWorksDraft_ = t.banks;
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "RamWorks III bank-switched aux RAM ($C071/3/5/7).\n"
+                            "Staged: it lands on Apply, which COLD-BOOTS the\n"
+                            "machine.\n"
+                            "A rewind snapshot only loads back into a machine\n"
+                            "with the same aux size.");
+                    continue;
+                }
+
+                default: break;
+                }
+
+                // A port that carries no card at all (game port, cassette):
+                // say what it is and where its device lives.
+                if (s < 0) {
+                    ImGui::BeginDisabled(true);
+                    slotLabel(row.label.c_str());
+                    ImGui::TextUnformatted(row.note.c_str());
+                    ImGui::EndDisabled();
+                    continue;
+                }
+
+                renderCardPicker(row);
+
+                // Which Chat Mauve: the family is ONE catalog key, the model
+                // is the `chatmauve_variant` card setting. Not offered on a
+                // //c-class machine — there the DB-15 connector fixes it.
+                if (draft[s] == "chatmauve") {
+                    if (profileCfg.noPhysicalSlots) {
+                        slotLabel("");
+                        ImGui::TextDisabled(
+                            "model: Adaptateur IIc — fixed by the DB-15 connector");
+                    } else {
+                        using CmVariant = LeChatMauveCard::Variant;
+                        CmVariant cur;
+                        if (!LeChatMauveCard::parseVariant(cmVariantEff, cur))
+                            cur = CmVariant::Feline;
+                        slotLabel("  model");
+                        char cmId[24];
+                        std::snprintf(cmId, sizeof(cmId), "##cmvariant%d", s);
+                        if (ImGui::BeginCombo(cmId,
+                                              LeChatMauveCard::variantLabel(cur))) {
+                            for (int vi = 0; vi < LeChatMauveCard::kVariantCount; ++vi) {
+                                const auto v = static_cast<CmVariant>(vi);
+                                if (ImGui::Selectable(LeChatMauveCard::variantLabel(v),
+                                                      v == cur))
+                                    chatMauveVariantDraft_ =
+                                        LeChatMauveCard::variantKey(v);
+                            }
+                            ImGui::EndCombo();
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip(
+                                "Which registers exist and which modes fall back.\n"
+                                "Feline / Adaptateur //c: mixed DHGR (Extasie, Arlequin).\n"
+                                "Eve: $C0B0-$C0BF, TXT16/CP280/COL280 — NO mixed mode.\n"
+                                "Video-7: 160-wide chunky, F/B text.\n"
+                                "RVB Graph (II/II+, partial): $C0F0-$C0F3 only.");
+                    }
+                }
+
+                // Apple sold the mouse for slot 4, and French mouse software
+                // takes that literally: Extasie calls the slot-4 firmware
+                // entries by self-modified `JSR $C4xx` with no slot scan.
+                // Scanning software finds it anywhere — warn, don't forbid.
+                if (s != 4 && (draft[s] == "mouse" || draft[s] == "mouseaw")) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
+                                       "(Extasie & friends want the mouse in slot 4)");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "Apple's mouse slot is 4. Software that scans the\n"
+                            "slots (A2DeskTop, MousePaint) will find it here,\n"
+                            "but French titles like Extasie call the slot-4\n"
+                            "firmware directly and will not see this card.");
+                }
+                if (s == 3 && profileCfg.iieMode &&
+                    (draft[s] == "grappler" || draft[s] == "printer")) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
+                                       "(80-col firmware owns slot 3 — use 1)");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "On a //e the internal 80-column firmware uses the "
+                            "slot-3 screen holes ($0478+3, $057B, $05FB…) for "
+                            "its own cursor state.\nA printer card in that slot "
+                            "shares them and prints one character per line.\n"
+                            "Move it to slot 1 (or 2/4/5/7) — same as on real "
+                            "hardware.");
+                }
+                // Slot 3 on a //e is not merely awkward, it is DEAD for almost
+                // every card: with SLOTC3ROM off (the reset default) the
+                // motherboard owns $C300-$C3FF outright and slot 3's I/O
+                // SELECT never asserts.
+                if (s == 3 && profileCfg.iieMode && !draft[s].empty() &&
+                    draft[s] != "grappler" && draft[s] != "printer") {
+                    const bool isMouse =
+                        (draft[s] == "mouse" || draft[s] == "mouseaw");
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+                                       isMouse
+                                           ? "(invisible in slot 3 — use 4)"
+                                           : "(slot 3 $C300 window is dead)");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            isMouse
+                            ? "On a //e the internal 80-column firmware owns "
+                              "$C300-$C3FF, so a card there has NO $Cs00 page the "
+                              "guest can reach.\nSoftware finds the mouse by "
+                              "scanning slots for the Apple signature ($Cn05=$38, "
+                              "$Cn07=$18, $Cn0B=$01, $Cn0C=$20) — at $C300 it "
+                              "reads the 80-column firmware instead and decides "
+                              "there is no mouse.\nA2DeskTop, MousePaint and "
+                              "MultiScribe then run keyboard-only.\nMove it to "
+                              "slot 4 (Apple's own slot for it), or 5/7 — same as "
+                              "on real hardware."
+                            : "On a //e the internal 80-column firmware owns "
+                              "$C300-$C3FF, so slot 3's I/O SELECT never asserts "
+                              "and NOTHING in the card's $C300 page is "
+                              "reachable.\nThat kills any card that needs it — "
+                              "firmware the guest scans for, and registers too: a "
+                              "Mockingboard addresses its VIAs through that "
+                              "window, so it goes silent there.\nA card that "
+                              "only uses its $C0nX soft switches still works.\n"
+                              "On real hardware slot 3 belongs to the 80-column "
+                              "card.");
+                }
             }
+            ImGui::Spacing();
         }
-
         ImGui::Spacing();
         ImGui::Separator();
 
@@ -582,18 +590,12 @@ void MainWindow::renderSlotConfigPanel()
         // How many user-editable slots differ from what is actually plugged.
         // Built-in slots are force-fed into the draft by the rows above, so
         // they can never count as pending.
-        int pending = 0;
-        for (int s = 1; s <= 7; ++s) {
-            if (profileCfg.builtInSlots[s].has_value()) continue;
-            if (draft[s] != slotCards[s]) ++pending;
-        }
-
-        // The staged Chat Mauve model counts as a pending change too (it is
-        // persisted and applied by the same cold-boot). //c-class profiles
-        // never stage it — the connector fixes the model.
-        if (!profileCfg.noPhysicalSlots && !chatMauveVariantDraft_.empty() &&
-            chatMauveVariantDraft_ != cmVariantLive)
-            ++pending;
+        // Built-ins never count, the two sentinels mean "nothing staged", and
+        // a //c never stages the Chat Mauve model — all of it in one testable
+        // place (`SlotConnectors.h`), pinned by `slot_connectors`.
+        const int pending = pom2::pendingChangeCount(
+            profileCfg, draft, slotCards, chatMauveVariantDraft_, cmVariantLive,
+            ramWorksDraft_, settings->getInt("ramworks_banks", 1));
 
         if (pending > 0) {
             ImGui::TextColored(
@@ -631,6 +633,14 @@ void MainWindow::renderSlotConfigPanel()
                 changed[s] = true;
                 settings->setString(key, draft[s]);
             }
+            int  prevRamWorks    = 0;
+            bool ramWorksChanged = false;
+            if (ramWorksDraft_ >= 0 &&
+                ramWorksDraft_ != settings->getInt("ramworks_banks", 1)) {
+                prevRamWorks = settings->getInt("ramworks_banks", 1);
+                settings->setInt("ramworks_banks", ramWorksDraft_);
+                ramWorksChanged = true;
+            }
             std::string prevCmVariant;
             bool cmVariantChanged = false;
             if (!profileCfg.noPhysicalSlots &&
@@ -647,6 +657,8 @@ void MainWindow::renderSlotConfigPanel()
                 }
                 if (cmVariantChanged)
                     settings->setString("chatmauve_variant", prevCmVariant);
+                if (ramWorksChanged)
+                    settings->setInt("ramworks_banks", prevRamWorks);
                 tapeStatusMessage = "Slot changes not applied — settings could not be saved.";
                 tapeStatusUntil = lastFrameTime + 8.0;
                 pom2::log().warn("Slots", tapeStatusMessage);
@@ -660,6 +672,8 @@ void MainWindow::renderSlotConfigPanel()
                 }
                 if (cmVariantChanged)
                     settings->setString("chatmauve_variant", prevCmVariant);
+                if (ramWorksChanged)
+                    settings->setInt("ramworks_banks", prevRamWorks);
                 if (!settings->save())
                     pom2::log().error("Slots",
                         "Could not persist the previous slot mapping after a refused rebuild.");
@@ -674,6 +688,7 @@ void MainWindow::renderSlotConfigPanel()
                 }
                 slotConfigCoordinator_->resetDraft();
                 chatMauveVariantDraft_.clear();   // staged change consumed
+                ramWorksDraft_ = -1;
             }
         }
         ImGui::EndDisabled();
@@ -691,6 +706,7 @@ void MainWindow::renderSlotConfigPanel()
         if (ImGui::Button("Revert")) {
             slotConfigCoordinator_->resetDraft();
             chatMauveVariantDraft_.clear();
+            ramWorksDraft_ = -1;
         }
         ImGui::EndDisabled();
         if (pending > 0 && ImGui::IsItemHovered())
@@ -734,8 +750,9 @@ void MainWindow::renderMediaPanel()
 
         // Persistent InputText buffers, keyed [slot][bay/drive]. Primed once
         // from the live path; re-primed (to the new live value) after eject.
-        // Eight bays: a SmartPort card or a Liron carries up to eight units.
-        constexpr int kPanelBays = 8;
+        // Fourteen bays: a Liron's chain carries up to fourteen units, a
+        // SmartPort card eight.
+        constexpr int kPanelBays = 14;
         static std::array<std::array<std::array<char, 512>, kPanelBays>, 8> mBuf{};
         static std::array<std::array<bool, kPanelBays>, 8> mPrimed{};
         static std::array<std::array<std::array<char, 512>, 2>, 8> dBuf{};
@@ -818,10 +835,11 @@ void MainWindow::renderMediaPanel()
                     }
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(
-                            "Units on the card's SmartPort chain. 0/1 are drive 1/2 of "
-                            "slot %d;\nProDOS 8 2.4+ shows units 2-7 under other slots "
-                            "with no disk device.\nThe firmware counts the chain at "
-                            "boot: reboot to see a change.", s);
+                            "Units on the card's SmartPort chain — 3.5\" or hard-disk "
+                            "images. 0/1 are drive 1/2 of slot %d;\nProDOS 8 2.4+ shows "
+                            "units 2+ under other slots with no disk device (14 devices "
+                            "at most).\nThe firmware counts the chain at boot: reboot to "
+                            "see a change.", s);
                 }
 
                 int nb = media->bayCount();

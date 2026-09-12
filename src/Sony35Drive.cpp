@@ -406,6 +406,9 @@ int Sony35Drive::decodeAndCommit(int track, int head) const
             // `cells_` with `head`, so for well-formed data this is a no-op,
             // exactly like the track filter.
             if (sideByte != head) return;
+            // Accepted: every check above passed, so this sector really was
+            // read back out of what the head just wrote.
+            ++sectorsDecoded_;
             const int blkIdx = sony35::blockIndexFor(tr, head, sec);
             if (blkIdx < 0 ||
                 blkIdx >= static_cast<int>(Disk35Image::kBlockCount)) return;
@@ -416,7 +419,7 @@ int Sony35Drive::decodeAndCommit(int track, int head) const
                 std::memcmp(existing, data, Disk35Image::kBlockBytes) == 0) {
                 return;
             }
-            if (image_->writeBlock(blkIdx, data)) ++written;
+            if (image_->writeBlock(blkIdx, data)) { ++written; ++sectorsCommitted_; }
         });
     return written;
 }

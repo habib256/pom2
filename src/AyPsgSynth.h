@@ -78,7 +78,7 @@
 // 20 Hz corner and the comment here claimed it was "the equivalent". It
 // is not: MAME's is a 2-pole Butterworth biquad, which is maximally FLAT
 // in the passband where a 1-pole is already drooping. Measured on a
-// single tone at amplitude 15 (`tests/mockingboard_bass_response_test`),
+// single tone at amplitude 15 (`mockingboard_audio_quality`, `testLowFrequencyResponse`),
 // the 1-pole cost 1.83 dB at 27.5 Hz, 0.53 dB at 55 Hz and 0.24 dB at
 // 82.5 Hz against 1.07 / 0.08 / 0.01 dB for MAME's — i.e. up to 0.8 dB
 // of bass thrown away below 80 Hz, on the AY's lowest two octaves.
@@ -326,12 +326,17 @@ inline float chipLevel(const ChipSynthState& cs, const uint8_t* r)
 ///
 /// `invTicksPerSample` is passed in rather than derived so the caller can
 /// hoist the reciprocal out of its inner loop.
-inline float renderChipSample(ChipSynthState& cs, const uint8_t* r,
-                              float ticksPerSample, float invTicksPerSample)
+/// Integral of the mixer over `ticks` base ticks, in tick x level units —
+/// `renderChipSample` without the normalisation. A sample that a register
+/// write falls inside is the SUM of its segments' integrals, which is what
+/// puts the write at its true sub-sample position instead of retro-applying
+/// it to the whole sample (bug hunt #19). `ticks == 0` contributes nothing.
+inline float integrateChipTicks(ChipSynthState& cs, const uint8_t* r,
+                                float ticks)
 {
     applyEnvShape(cs, r);
     float acc       = 0.0f;
-    float remaining = ticksPerSample;
+    float remaining = ticks;
     while (remaining > 0.0f) {
         const float avail = 1.0f - cs.tickPhase;
         if (avail <= 0.0f) {          // fp equality guard, not a hot path
@@ -348,7 +353,15 @@ inline float renderChipSample(ChipSynthState& cs, const uint8_t* r,
             stepTick(cs, r);
         }
     }
-    return acc * invTicksPerSample;
+    return acc;
+}
+
+/// One whole output sample, normalised — a single `integrateChipTicks`
+/// segment covering it.
+inline float renderChipSample(ChipSynthState& cs, const uint8_t* r,
+                              float ticksPerSample, float invTicksPerSample)
+{
+    return integrateChipTicks(cs, r, ticksPerSample) * invTicksPerSample;
 }
 
 /// MAME's default speaker high-pass, ported verbatim: a 2-pole

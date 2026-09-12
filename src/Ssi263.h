@@ -80,6 +80,8 @@
 #include <cstring>
 #include <vector>
 
+#include "AyEventRing.h"
+
 namespace pom2 {
 
 class Ssi263
@@ -147,6 +149,28 @@ public:
     /// Returns true if A/!R transitioned 0 → 1 this slice (caller
     /// fires the IRQ edge).
     bool advance(int cycles);
+
+    /// Queue a control write on the AUDIO timeline — bug hunt #19.
+    ///
+    /// `write()` mutates the chip at CPU-NOW, and the audio thread rendered
+    /// a whole buffer from whatever state it happened to find at the
+    /// callback. On a Sound II, whose PSG side replays cycle-stamped events
+    /// through a jitter buffer, that put the SPEECH ahead of the music it
+    /// shares a card with by the whole buffer latency (~40 ms here), and
+    /// quantised every phoneme boundary to the CPU worker's chunk instead
+    /// of the cycle the driver actually wrote it on. A card that carries a
+    /// cycle cursor calls this in ADDITION to `write()`; the audio side
+    /// then applies each change at its own sample position.
+    ///
+    /// Caller holds the card mutex (the chip is not internally locked).
+    void queuePlaybackEvent(uint8_t reg, uint8_t val, uint64_t cycle);
+
+    /// Render `frameCount` samples, applying the queued playback events at
+    /// their own cycle positions. `startCycle` is the CPU cycle the first
+    /// sample begins at, `cyclesPerSample` the width of one sample. Mixes
+    /// additively, like `fillAudio`.
+    void fillAudioTimed(float* output, int frameCount, uint32_t sampleRate,
+                        double startCycle, double cyclesPerSample);
 
     // ─── Readable state ──────────────────────────────────────────────────
     bool    aRequest()       const { return aRequest_; }
@@ -225,6 +249,31 @@ public:
     void fillAudio(float* output, int frameCount, uint32_t sampleRate);
 
 private:
+    /// Render with an EXPLICIT register pair, so the timed path can render
+    /// the chip as it was at a past cycle rather than as it is now.
+    void renderSamples(float* output, int frameCount, uint32_t sampleRate,
+                       uint8_t cttrAmp, uint8_t filFreq);
+    /// Apply one queued event to the audio-side shadow state.
+    void applyPlaybackEvent(uint8_t reg, uint8_t val);
+
+    // ── Audio-side shadow of the registers that affect RENDERING ─────────
+    // The latched registers below belong to the CPU thread: they drive the
+    // phoneme countdown and the A/!R IRQ, which are guest-visible and must
+    // stay at CPU-NOW. These follow them through the stamped queue, so what
+    // the audio thread renders at sample N is the chip as it stood at the
+    // CPU cycle that sample covers. Derived state — deliberately NOT in the
+    // snapshot blob (`kSnapshotBytes` is unchanged); a restore re-primes
+    // them from the latched registers.
+    uint8_t aCttrAmp_ = 0;
+    uint8_t aDurPhon_ = 0;
+    uint8_t aFilFreq_ = 0;
+    bool    aPrimed_  = false;
+    struct CtlEvent { uint64_t cycle; uint8_t reg; uint8_t val; };
+    /// Fixed capacity, allocated once: the audio thread pops from this, and
+    /// speech is a few writes per phoneme, so this is minutes of backlog.
+    static constexpr std::size_t kMaxCtlEvents = 1024;
+    AyEventRing<CtlEvent> ctlEvents_{kMaxCtlEvents};
+
     // Latched register values (last write).
     uint8_t durPhon_ = 0;
     uint8_t inflect_ = 0;

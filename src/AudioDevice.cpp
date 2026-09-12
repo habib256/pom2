@@ -15,6 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "AudioDevice.h"
+
+#include "AudioMix.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -76,190 +78,15 @@
 
 void AudioDevice::mixSources(float* output, int frameCount)
 {
-    // Interleaved stereo: 2 floats per frame.
-    std::memset(output, 0,
-                static_cast<size_t>(frameCount) * kChannels * sizeof(float));
-
     std::lock_guard<std::mutex> lock(sourcesMutex);
-
-    // Machine halted (see setSuspended): emit the silence the memset already
-    // wrote and DON'T call the sources at all. Calling them would let the
-    // free-running generators keep droning while the CPU that feeds them is
-    // parked, and would walk the speaker's cycle cursor past a frozen
-    // Memory::cycleCounter. The meters still bleed off on the usual 0.85
-    // envelope so the mixer's needles fall to zero instead of freezing at
-    // whatever the last live buffer measured.
-    if (suspended_.load(std::memory_order_relaxed)) {
-        for (AudioSource* src : sources) {
-            const float p = src->lastBufferPeak.load(std::memory_order_relaxed);
-            src->lastBufferPeak.store(p * 0.85f, std::memory_order_relaxed);
-        }
-        masterPeakL_.store(masterPeakL_.load(std::memory_order_relaxed) * 0.85f,
-                           std::memory_order_relaxed);
-        masterPeakR_.store(masterPeakR_.load(std::memory_order_relaxed) * 0.85f,
-                           std::memory_order_relaxed);
-        return;
-    }
-
-    if (static_cast<int>(tmpBuf.size()) < frameCount) {
-        tmpBuf.resize(static_cast<size_t>(frameCount));
-        tmpBufR.resize(static_cast<size_t>(frameCount));
-    }
-
-    for (AudioSource* src : sources) {
-        // Zero the temp buffer before each source. The AudioSource
-        // contract is *either* assign (Speaker, Cassette, Mockingboard
-        // all do `output[i] = ...`) *or* mix additively starting from
-        // silence (FloppySoundDevice). Without this memset, when the
-        // sources iterate in order [A, B] and A writes its signal into
-        // tmpBuf, an additive source B would see A's samples and add on
-        // top — A then gets counted twice in output (A's pass already
-        // added them once), producing audible doubling whenever two
-        // sources are simultaneously active. Symptom seen during cold
-        // boot: speaker bell beep + Disk II spin-up overlapped, giving
-        // a "horrible" composite. The cost is one extra memset per
-        // source per ~5 ms buffer — negligible.
-        std::memset(tmpBuf.data(), 0,
-                    static_cast<size_t>(frameCount) * sizeof(float));
-        std::memset(tmpBufR.data(), 0,
-                    static_cast<size_t>(frameCount) * sizeof(float));
-
-        // Per-source peak with a short release envelope. 0.85 per
-        // ~5 ms buffer settles to <5 % after ~100 ms of silence,
-        // matches a typical VU meter release. The peak is sampled
-        // BEFORE master gain so the mixer panel reflects the
-        // channel's contribution at the slider position; the master
-        // peak below reflects what the OS actually plays. On a stereo
-        // source it is the louder of the two sides, so one meter still
-        // catches a channel that only feeds one speaker.
-        float srcPeak = 0.0f;
-
-        if (src->fillAudioBufferStereo(tmpBuf.data(), tmpBufR.data(),
-                                       frameCount)) {
-            // Native stereo: the source owns its placement (Mockingboard
-            // AY1/AY2, Phasor AY pairs), so `pan` is deliberately NOT
-            // applied here.
-            for (int i = 0; i < frameCount; ++i) {
-                const float l = tmpBuf[i];
-                const float r = tmpBufR[i];
-                const float a = std::max(std::fabs(l), std::fabs(r));
-                if (a > srcPeak) srcPeak = a;
-                output[2 * i]     += l;
-                output[2 * i + 1] += r;
-            }
-        } else {
-            src->fillAudioBuffer(tmpBuf.data(), frameCount);
-            // Balance law, NOT constant power: centre is unity on both
-            // channels. Constant power would have put every existing
-            // mono source 3 dB down the day the bus went stereo, which
-            // is a silent regression nobody asked for; the Apple speaker
-            // has no stereo position to be faithful to anyway.
-            const float p  = std::max(-1.0f, std::min(1.0f,
-                src->pan.load(std::memory_order_relaxed)));
-            const float gL = (p > 0.0f) ? (1.0f - p) : 1.0f;
-            const float gR = (p < 0.0f) ? (1.0f + p) : 1.0f;
-            for (int i = 0; i < frameCount; ++i) {
-                const float s = tmpBuf[i];
-                const float a = std::fabs(s);
-                if (a > srcPeak) srcPeak = a;
-                output[2 * i]     += s * gL;
-                output[2 * i + 1] += s * gR;
-            }
-        }
-        // The per-source discontinuity tally (AudioSource::clicksPerSecond):
-        // this source's own output, before it is summed into the bus, so a
-        // click is attributed to the source that made it.
-        {
-            float lastL = src->traceLastL_, lastR = src->traceLastR_;
-            uint32_t jumps = 0;
-            for (int i = 0; i < frameCount; ++i) {
-                const float l = tmpBuf[i];
-                const float r = tmpBufR[i];
-                if (std::fabs(l - lastL) > AudioSource::kClickThreshold ||
-                    std::fabs(r - lastR) > AudioSource::kClickThreshold)
-                    ++jumps;
-                lastL = l; lastR = r;
-            }
-            src->traceLastL_ = lastL; src->traceLastR_ = lastR;
-            src->traceJumps_ += jumps;
-            src->traceFrames_ += static_cast<uint32_t>(frameCount);
-            const uint32_t sr = actualSampleRate > 0 ? actualSampleRate : 44100;
-            if (src->traceFrames_ >= sr) {
-                src->clicksPerSecond.store(
-                    static_cast<float>(src->traceJumps_) * static_cast<float>(sr) /
-                        static_cast<float>(src->traceFrames_),
-                    std::memory_order_relaxed);
-                src->traceJumps_ = 0; src->traceFrames_ = 0;
-            }
-        }
-        const float prevSrc =
-            src->lastBufferPeak.load(std::memory_order_relaxed);
-        const float decayedSrc =
-            srcPeak > prevSrc * 0.85f ? srcPeak : prevSrc * 0.85f;
-        src->lastBufferPeak.store(decayedSrc, std::memory_order_relaxed);
-    }
-
-    // Master gain + mute, then clamp. Snapshot atomics once per buffer
-    // (tens of ns vs frameCount loads) — they don't change mid-buffer in
-    // any user-perceptible way.
-    const float masterGain =
-        masterMuted_.load(std::memory_order_relaxed)
-            ? 0.0f
-            : masterVolume_.load(std::memory_order_relaxed);
-    const bool mono = monoDownmix_.load(std::memory_order_relaxed);
-    float masterPkL = 0.0f;
-    float masterPkR = 0.0f;
-    // Master discontinuity tally, folded into the loop that already touches
-    // every frame (see AudioDevice.h). Measured POST-clamp, so it counts the
-    // steps the OS actually heard — the ones no per-source row can show.
-    float    mLastL = masterTraceLastL_, mLastR = masterTraceLastR_;
-    uint32_t mJumps = 0;
-    for (int i = 0; i < frameCount; ++i) {
-        float l = output[2 * i];
-        float r = output[2 * i + 1];
-        if (mono) {
-            // 0.5 * (L + R): the average, not the sum. A centred source
-            // sits at unity on both channels, so summing would make it
-            // 6 dB louder the moment the user ticked "mono" — and for a
-            // stereo card whose two sides used to be summed and halved
-            // by the /6 normalisation, the average reproduces the old
-            // mono render exactly.
-            const float m = 0.5f * (l + r);
-            l = m;
-            r = m;
-        }
-        const float cl = std::max(-1.0f, std::min(1.0f, l * masterGain));
-        const float cr = std::max(-1.0f, std::min(1.0f, r * masterGain));
-        output[2 * i]     = cl;
-        output[2 * i + 1] = cr;
-        const float al = std::fabs(cl);
-        const float ar = std::fabs(cr);
-        if (al > masterPkL) masterPkL = al;
-        if (ar > masterPkR) masterPkR = ar;
-        if (std::fabs(cl - mLastL) > AudioSource::kClickThreshold ||
-            std::fabs(cr - mLastR) > AudioSource::kClickThreshold)
-            ++mJumps;
-        mLastL = cl; mLastR = cr;
-    }
-    masterTraceLastL_ = mLastL; masterTraceLastR_ = mLastR;
-    masterTraceJumps_ += mJumps;
-    masterTraceFrames_ += static_cast<uint32_t>(frameCount);
-    {
-        const uint32_t sr = actualSampleRate > 0 ? actualSampleRate : 44100;
-        if (masterTraceFrames_ >= sr) {
-            masterClicks_.store(
-                static_cast<float>(masterTraceJumps_) * static_cast<float>(sr) /
-                    static_cast<float>(masterTraceFrames_),
-                std::memory_order_relaxed);
-            masterTraceJumps_ = 0; masterTraceFrames_ = 0;
-        }
-    }
-    const float prevL = masterPeakL_.load(std::memory_order_relaxed);
-    const float prevR = masterPeakR_.load(std::memory_order_relaxed);
-    masterPeakL_.store(masterPkL > prevL * 0.85f ? masterPkL : prevL * 0.85f,
-                       std::memory_order_relaxed);
-    masterPeakR_.store(masterPkR > prevR * 0.85f ? masterPkR : prevR * 0.85f,
-                       std::memory_order_relaxed);
+    pom2::MixParams p;
+    p.masterGain = masterMuted_.load(std::memory_order_relaxed)
+                       ? 0.0f
+                       : masterVolume_.load(std::memory_order_relaxed);
+    p.mono       = monoDownmix_.load(std::memory_order_relaxed);
+    p.suspended  = suspended_.load(std::memory_order_relaxed);
+    p.sampleRate = actualSampleRate;
+    pom2::mixSourcesInto(output, frameCount, sources, p, mix_);
 }
 
 void AudioDevice::setMasterVolume(float v)
@@ -323,7 +150,20 @@ bool AudioDevice::initAudio()
     // channel, and the mixer's own "mono downmix" covers the user who
     // wants a centred image on stereo hardware.
     config.playback.channels  = kChannels;
-    config.sampleRate         = kSampleRate;
+    // ZERO = "give me the device's own rate", and that is the whole point of
+    // `getActualSampleRate()` (bug hunt #19). Asking for 44100 was not a
+    // request: miniaudio assigns `pDevice->sampleRate = pConfig->sampleRate`
+    // and only adopts the hardware's rate `if (pDevice->sampleRate == 0)`
+    // (`miniaudio.h:42543`), so the getter answered 44100 on every machine
+    // for ever — and on 48 kHz-only hardware (Apple Silicon) miniaudio
+    // silently inserted its OWN conversion, defaulting to
+    // `ma_resample_algorithm_linear`, documented as "Fastest, lowest
+    // quality" (`miniaudio.h:5403`). Every source synthesised on a 44.1 kHz
+    // grid was then linearly interpolated to 48 kHz behind POM2's back:
+    // imaging on the speaker's square edges and on the AY's top octave.
+    // Now the sources are told the real rate and synthesise straight to it
+    // (`AudioSource.h`'s RateAware contract, which `addSource` applies).
+    config.sampleRate         = 0;
     config.periodSizeInFrames = 256;
     config.periods            = 3;
     config.performanceProfile = ma_performance_profile_low_latency;
@@ -347,8 +187,12 @@ bool AudioDevice::initAudio()
 
     actualSampleRate = raw->sampleRate;
     pom2::log().info("Audio",
-        std::string("miniaudio ready: requested ") + std::to_string(kSampleRate) +
-        " Hz, got " + std::to_string(actualSampleRate) + " Hz");
+        std::string("miniaudio ready: the device's own rate is ") +
+        std::to_string(actualSampleRate) + " Hz" +
+        (actualSampleRate == kSampleRate
+             ? std::string(" (POM2's nominal rate)")
+             : std::string(" — every source synthesises straight to it, so "
+                           "miniaudio inserts no conversion of its own")));
 
     // Forward miniaudio's internal log (warnings, underruns, device drops…)
     // into pom2::log so they show up next to our own audio diagnostics.

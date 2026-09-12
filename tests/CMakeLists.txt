@@ -566,6 +566,9 @@ add_executable(test_smartport_bus_handshake
     smartport_bus_handshake_test.cpp
     ${CMAKE_SOURCE_DIR}/src/LironCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_smartport_bus_handshake
@@ -598,6 +601,9 @@ add_executable(test_liron_boot35
     liron_boot35_test.cpp
     ${CMAKE_SOURCE_DIR}/src/LironCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_liron_boot35 PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -1273,6 +1279,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Notch.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_HdvBays.cpp
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Chains.cpp
+    ${CMAKE_SOURCE_DIR}/src/LironCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     # StorageCoordinator mixes the pure capture/persist half tested here with
     # mount/eject calls that go through EmulationController, so the whole
@@ -4426,6 +4433,26 @@ endif()
 add_test(NAME cassette_wav_tail COMMAND test_cassette_wav_tail)
 set_tests_properties(cassette_wav_tail PROPERTIES TIMEOUT 5)
 
+# ─── Cassette stream decoder follows the host sample rate ─────────────────
+add_executable(test_cassette_stream_rate
+    cassette_stream_rate_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_cassette_stream_rate PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_cassette_stream_rate PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_cassette_stream_rate PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_cassette_stream_rate PRIVATE winmm)
+endif()
+add_test(NAME cassette_stream_rate COMMAND test_cassette_stream_rate)
+set_tests_properties(cassette_stream_rate PROPERTIES TIMEOUT 10)
+
 # ─── 65C02 disassembler regression ────────────────────────────────────────
 add_executable(test_disasm_cmos
     disasm_cmos_test.cpp
@@ -7295,6 +7322,61 @@ pom2_add_headless_test(test_iic_smartport_six_units
 set_tests_properties(iic_smartport_six_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# The sound cards' cycle-stamped queue: FIFO semantics, and no allocation
+# after construction — it is spliced on the realtime audio thread.
+pom2_add_headless_test(test_ay_event_ring
+    NAME ay_event_ring TIMEOUT 30
+    SOURCES ay_event_ring_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# The Mockingboard 4c on a //c's internal expansion connector: DIGIDREAM
+# ("SPECIAL IIc/MB4C") boots and finds it, and says "KO" without it.
+pom2_add_headless_test(test_iic_mockingboard_4c
+    NAME iic_mockingboard_4c TIMEOUT 240
+    SOURCES iic_mockingboard_4c_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(iic_mockingboard_4c PROPERTIES LABELS slow SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Bug hunt #19: there is ONE mix law. `Pom2Core::pullAudio` — the public
+# integration API — used to hand-roll a second mixer with no pan, master gain,
+# mute, mono, suspend or meters, and only one sound card.
+pom2_add_headless_test(test_audio_mix_law
+    NAME audio_mix_law TIMEOUT 30
+    SOURCES audio_mix_law_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# The Slot Configuration window is built from the machine's own connector
+# inventory: a //c exposes no expansion slot at all, a II+ no internal header.
+pom2_add_headless_test(test_slot_connectors
+    NAME slot_connectors TIMEOUT 10 PORTABLE
+    SOURCES slot_connectors_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Bug hunt #19: speech runs on the emuCycles timeline like the PSG side, so
+# a phoneme starts on the sample its stamped cycle falls in — it used to
+# take effect at CPU-NOW, a whole jitter buffer ahead of the music.
+pom2_add_headless_test(test_ssi263_speech_timeline
+    NAME ssi263_speech_timeline TIMEOUT 60
+    SOURCES ssi263_speech_timeline_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Bug hunt #19: the diagnostic capture is ONE acquisition of the card mutex
+# (it was 51 on the Mockingboard, 82 on the Phasor) and therefore ONE
+# instant — the panel used to show a machine state that never existed.
+pom2_add_headless_test(test_card_diagnostics_atomic
+    NAME card_diagnostics_atomic TIMEOUT 120
+    SOURCES card_diagnostics_atomic_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Bug hunt #18: four Mockingboard edges — a DDR write delivering the AY's
+# /RESET, the panel read-back matching the guest's, $C0nX on the floating
+# bus, and a rewind that no longer re-attacks the envelopes.
+pom2_add_headless_test(test_mockingboard_bus_edges
+    NAME mockingboard_bus_edges TIMEOUT 60
+    SOURCES mockingboard_bus_edges_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 # The ProDOS HD card's second drive: its ROM driver reaches drive 1 or 2 by
 # bit 7 of ProDOS's unit byte, and ProDOS booted off drive 1 lists both.
 pom2_add_headless_test(test_hdv_two_drives
@@ -7306,11 +7388,11 @@ set_tests_properties(hdv_two_drives PROPERTIES SKIP_RETURN_CODE 77
 
 # The same chain on a //e's Liron card:its real EPROM (the //c's bank-1
 # SmartPort code) INITs 2, 4, 6 or 8 3.5" units, and ProDOS lists them all.
-pom2_add_headless_test(test_liron_eight_units
-    NAME liron_eight_units TIMEOUT 240
-    SOURCES liron_eight_units_test.cpp
+pom2_add_headless_test(test_liron_chain
+    NAME liron_chain TIMEOUT 240
+    SOURCES liron_chain_test.cpp
     LINK_LIBRARIES pom2_core_test)
-set_tests_properties(liron_eight_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
+set_tests_properties(liron_chain PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # An HDV mounted from the library adds a volume into the first free bay and

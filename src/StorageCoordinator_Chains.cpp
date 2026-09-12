@@ -8,6 +8,7 @@
 #include "StorageCoordinator.h"
 
 #include "EmulationController.h"
+#include "LironCard.h"
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
 #include "MountableMediaCard.h"
@@ -47,6 +48,38 @@ std::string StorageCoordinator::bayCountKey(int slot)
     // The generic keyspace of the card's bays (`media_slotN_bayK_*`), so a
     // card never answers under two names.
     return "media_slot" + std::to_string(slot) + "_bays";
+}
+
+// ── The Liron as a boot target ───────────────────────────────────────────
+
+int StorageCoordinator::lironSlot(const SlotBus& bus)
+{
+    for (int slot = 1; slot < SlotBus::kSlotCount; ++slot)
+        if (dynamic_cast<const LironCard*>(bus.peripheral(slot))) return slot;
+    return -1;
+}
+
+std::optional<StorageCoordinator::RoutedMediaCommandResult>
+StorageCoordinator::mountDisk35OnLiron(EmulationController& controller,
+                                       Settings& settings, int drive,
+                                       const std::string& path) const
+{
+    RoutedMediaCommandResult result;
+    int slot = -1;
+    {
+        auto state = controller.lockState();
+        const auto& bus = state.memory().slotBus();
+        if (!topology(bus).primarySmartPort) slot = lironSlot(bus);
+    }
+    if (slot < 0) return std::nullopt;
+    // The generic bay command does the rest: the outgoing medium's flush off
+    // the lock, the mount, the `media_slotN_bayK_*` keys, the rewind ring.
+    const auto mounted = mountMediaBay(controller, settings, slot, drive, path);
+    result.ok = mounted.ok;
+    result.error = mounted.error;
+    result.bootSlot = slot;
+    result.usesSmartPort = true;         // a SmartPort bus, booted by slot
+    return result;
 }
 
 // ── A chain the user sizes ───────────────────────────────────────────────

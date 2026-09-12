@@ -42,6 +42,7 @@
 #include <mutex>
 #include <vector>
 
+#include "AudioMix.h"
 #include "AudioSource.h"
 
 struct ma_device;
@@ -90,12 +91,12 @@ public:
     /// (saturates at 1.0). Read by the mixer panel. `getMasterPeak` is
     /// the louder of the two channels, so a single meter still shows
     /// clipping on either side.
-    float getMasterPeakL() const { return masterPeakL_.load(std::memory_order_relaxed); }
-    float getMasterPeakR() const { return masterPeakR_.load(std::memory_order_relaxed); }
+    float getMasterPeakL() const { return mix_.peakL.load(std::memory_order_relaxed); }
+    float getMasterPeakR() const { return mix_.peakR.load(std::memory_order_relaxed); }
     float getMasterPeak() const
     {
-        return std::max(masterPeakL_.load(std::memory_order_relaxed),
-                        masterPeakR_.load(std::memory_order_relaxed));
+        return std::max(mix_.peakL.load(std::memory_order_relaxed),
+                        mix_.peakR.load(std::memory_order_relaxed));
     }
 
     /// Discontinuities per second in the POST-CLAMP bus, the master half of
@@ -110,7 +111,7 @@ public:
     /// number" — has no row to point at for any of them.
     float getMasterClicksPerSecond() const
     {
-        return masterClicks_.load(std::memory_order_relaxed);
+        return mix_.clicks.load(std::memory_order_relaxed);
     }
 
     /// Silence the whole bus without touching any source's state or the
@@ -138,11 +139,8 @@ private:
 
     std::vector<AudioSource*> sources;
     mutable std::mutex sourcesMutex;
-    // Per-source planar scratch. `tmpBuf` alone in the mono days; the
-    // stereo path needs a second plane, and the mono path still fills
-    // only tmpBuf (which the pan law then spreads across both).
-    std::vector<float> tmpBuf;
-    std::vector<float> tmpBufR;
+    /// Scratch + ramp + meters for the shared mix law (`AudioMix.h`).
+    pom2::MixBusState mix_;
     bool audioAvailable = false;
     uint32_t actualSampleRate = kSampleRate;
 
@@ -152,14 +150,6 @@ private:
     // Default FALSE: a bare AudioDevice (tests, headless composition) must
     // behave exactly as before. Only an explicit setMode(Stopped) mutes it.
     std::atomic<bool>  suspended_{false};
-    std::atomic<float> masterPeakL_{0.0f};
-    std::atomic<float> masterPeakR_{0.0f};
-    // Master discontinuity tally — same shape and same publish period as
-    // AudioSource's, but measured on the clamped bus. Scratch is audio-
-    // thread-only (mixSources holds sourcesMutex for the whole callback).
-    std::atomic<float> masterClicks_{0.0f};
-    float    masterTraceLastL_ = 0.0f, masterTraceLastR_ = 0.0f;
-    uint32_t masterTraceJumps_ = 0, masterTraceFrames_ = 0;
 
     struct MaDeviceDeleter { void operator()(ma_device* d) const noexcept; };
     std::unique_ptr<ma_device, MaDeviceDeleter> device;

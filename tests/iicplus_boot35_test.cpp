@@ -196,9 +196,21 @@ int bootOnce(bool writable)
     if (maxTrack == 0)
         fail("the head never left track 0 — the firmware read no catalogue, "
              "so at best it read the boot block");
-    if (writable && !imgInt.hasUnsavedChanges())
-        fail("the boot off a writable medium wrote nothing — the write path "
-             "never ran");
+    // The write path is proved by sectors the drive ACCEPTED back out of the
+    // cells it wrote, not by the image going dirty. ProDOS 8's boot-time
+    // write here is idempotent — it rewrites blocks with the bytes already
+    // there — so a correct emulator leaves the medium clean, and asserting
+    // `hasUnsavedChanges()` reported "the write path never ran" about a write
+    // path that had just fed six complete 717-byte sectors (2026-09-12).
+    if (writable && drvInt.sectorsDecoded() == 0)
+        fail("the boot off a writable medium never completed a sector — the "
+             "write path did not run (feed, splice, frame and decode)");
+    // The negative control, and the reason this assertion means something: a
+    // write-protected medium must refuse the same traffic outright
+    // (`Sony35Drive::writeFlux` early-returns on isWriteProtected()).
+    if (!writable && drvInt.sectorsDecoded() != 0)
+        fail("a write-protected medium accepted a sector — the protection "
+             "check in the write path is gone");
 
     if (failures) {
         std::printf("--- text page ---\n%s---\n", screen.c_str());

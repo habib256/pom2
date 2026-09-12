@@ -98,7 +98,11 @@ uint8_t SlotBus::deviceSelectRead(uint16_t addr)
 {
     // $C080-$C0FF — 16 bytes per slot. Slot N starts at $C080 + N*16.
     if (addr < 0xC080 || addr > 0xC0FF) return 0xFF;
-    if (busSnooper_) busSnooper_->busSnoop(addr, false, 0);
+    // A snooper that CONSUMES the access takes it off the bus: the card in
+    // the slot must not see it either (`SlotPeripheral::busSnoop`'s own
+    // contract, which `Memory::softSwitchAccess` honours and these four
+    // sites dropped until 2026-09-12).
+    if (busSnooper_ && busSnooper_->busSnoop(addr, false, 0)) return openBus();
     const int slot = (addr - 0xC080) >> 4;
     const uint8_t low4 = static_cast<uint8_t>(addr & 0x0F);
     if (auto* p = slots[slot].get()) return p->deviceSelectRead(low4);
@@ -109,7 +113,7 @@ uint8_t SlotBus::deviceSelectRead(uint16_t addr)
 
 void SlotBus::deviceSelectWrite(uint16_t addr, uint8_t v)
 {
-    if (busSnooper_) busSnooper_->busSnoop(addr, true, v);
+    if (busSnooper_ && busSnooper_->busSnoop(addr, true, v)) return;
     if (addr < 0xC080 || addr > 0xC0FF) return;
     const int slot = (addr - 0xC080) >> 4;
     const uint8_t low4 = static_cast<uint8_t>(addr & 0x0F);
@@ -120,7 +124,7 @@ uint8_t SlotBus::slotRomRead(uint16_t addr)
 {
     // $C100-$C7FF — slot N at $C(N)00-$C(N)FF, N=1..7.
     if (addr < 0xC100 || addr > 0xC7FF) return 0xFF;
-    if (busSnooper_) busSnooper_->busSnoop(addr, false, 0);
+    if (busSnooper_ && busSnooper_->busSnoop(addr, false, 0)) return openBus();
     const int slot = (addr >> 8) & 0x07;     // $CN00 → N
     if (slot < 1 || slot > 7) return openBus();
 
@@ -138,7 +142,7 @@ uint8_t SlotBus::slotRomRead(uint16_t addr)
 
 void SlotBus::slotRomWrite(uint16_t addr, uint8_t v)
 {
-    if (busSnooper_) busSnooper_->busSnoop(addr, true, v);
+    if (busSnooper_ && busSnooper_->busSnoop(addr, true, v)) return;
     // Mirror of slotRomRead's address decode. Forwards to the card's
     // `slotRomWrite` (default no-op for ROM-only cards) and latches the
     // slot as the active expansion-ROM owner — same Apple II semantics

@@ -174,10 +174,8 @@ bool appendMediaBaySettingUpdates(
         // volumes must not overwrite the user's configured HDV.
         if (bay < 0 || bay >= ProDOSHardDiskCard::kDrives) return false;
         const auto& backing = card->backing(bay);
-        if (slot == autoHdvSlot ||
-            backing.path().rfind("[host folder] ", 0) == 0) {
+        if (slot == autoHdvSlot || backing.path().rfind("[host folder] ", 0) == 0)
             return false;
-        }
         appendStringSetting(updates, StorageCoordinator::hdvDriveKey("hdv_path", bay),
                             backing.isLoaded() ? backing.path() : std::string());
         appendBoolSetting(
@@ -1252,6 +1250,7 @@ StorageCoordinator::mountDisk35(
         return result;
     }
 
+    if (auto viaLiron = mountDisk35OnLiron(controller, settings, drive, path)) return *viaLiron;
     sweepMountDirDebris(path);
     // `mountSmartPortUnitAs` below runs under the lock and starts by flushing
     // whatever the bay holds (a dirty 32 MiB HDV unit = 115 ms of stateMutex).

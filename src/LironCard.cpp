@@ -23,7 +23,9 @@
 #include <cstdio>
 #include <array>
 #include <cstring>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 
 namespace pom2 {
@@ -45,7 +47,7 @@ LironCard::LironCard(int slot)
 {
     for (int i = 0; i < kDrives; ++i) drives_[i].setImage(&images_[i]);
     for (int i = 0; i < kMaxUnits; ++i) {
-        busUnits_[static_cast<std::size_t>(i)].bind(&images_[i]);
+        busUnits_[static_cast<std::size_t>(i)].bind(&images_[i], &blocks_[i]);
         bus_.setUnit(i, &busUnits_[static_cast<std::size_t>(i)]);
     }
     bus_.setUnitCount(unitCount_);
@@ -149,7 +151,7 @@ bool LironCard::busLive() const
     // the protocol over.
     unsigned mask = 0;
     for (int i = 0; i < unitCount_; ++i)
-        if (images_[static_cast<std::size_t>(i)].isLoaded()) mask |= 1u << i;
+        if (bayLoaded(i)) mask |= 1u << i;
     if (mask != busMediaMask_) {
         busMediaMask_ = mask;
         // abortTransaction(), NOT busReset(): a media change is not a bus
@@ -316,6 +318,12 @@ void LironCard::appendSnapshotState(std::vector<uint8_t>& out) const
     // 9.1 ms of a 20 ms PAL frame, under `stateMutex`, for a 10 s scrub.
     for (int k = 0; k < 8; ++k)
         out.push_back(static_cast<uint8_t>(cycles_ >> (8 * k)));
+    // Last tail (2026-09-11): the whole media mask. The byte above holds
+    // bays 0-7 only, and a chain of fourteen restored from it would see
+    // bays 8-13 "change" at the first access and abort the transaction the
+    // blob exists to resume.
+    for (int k = 0; k < 4; ++k)
+        out.push_back(static_cast<uint8_t>(busMediaMask_ >> (8 * k)));
 }
 
 void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -361,6 +369,12 @@ void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         cycles_ = c;
         i += 8;
     }
+    if (i + 4 <= len) {
+        unsigned m = 0;
+        for (int k = 0; k < 4; ++k) m |= static_cast<unsigned>(data[i + k]) << (8 * k);
+        busMediaMask_ = m;
+        i += 4;
+    }
     retargetIwm();
 }
 
@@ -368,8 +382,17 @@ void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 
 void LironCard::onDevsel(uint8_t devsel)
 {
-    // EXPERIMENT: SEL is head select on this card, so devsel must not pick
-    // the drive. Both enables land on the first bay.
+    // SEL is HEAD SELECT on this card, so the enable lines must not pick a
+    // mechanism: both land on bay 0.
+    //
+    // Not provisional — this is what the real EPROM says (2026-09-01). The
+    // //c+'s hub maps devsel to the drive because a MIG gate array sits in
+    // front of it; a Liron has no MIG, and mapping devsel the same way here
+    // was one of two bugs the real firmware exposed. Drive selection on this
+    // card is the DAISY CHAIN: the second mechanism is never addressed by an
+    // enable line at all. Each bay is bound to a bus unit in the constructor
+    // and answers by its SmartPort unit number (bay N as unit N+1), which is
+    // what `liron_smartport_dispatch` measures.
     const int want = (devsel != 0) ? 0 : -1;
     if (want == active_) return;
     active_ = want;
@@ -412,14 +435,46 @@ void LironCard::onPhases(uint8_t phases)
 
 // ── Media bays ───────────────────────────────────────────────────────────
 
+namespace {
+/// Is this file a 3.5" disk rather than a hard disk? The file decides, not a
+/// type selector: a `.woz` is flux, and an 800K image is what `Disk35Image`
+/// takes. Anything past 1 MiB is a hard disk without reading a byte of it.
+bool looksLike35(const std::string& path)
+{
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".woz") return true;
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    return !ec && size <= 1024u * 1024u;
+}
+}  // namespace
+
 MediaBayInfo LironCard::bayInfo(int bay) const
 {
     MediaBayInfo info;
     if (bay < 0 || bay >= kMaxUnits) return info;
-    const Disk35Image& img = images_[static_cast<std::size_t>(bay)];
-    info.kindLabel         = "3.5\" 800K";
+    const auto b = static_cast<std::size_t>(bay);
+    const Block512Backing& blk = blocks_[b];
+    if (blk.isLoaded()) {
+        info.kindLabel         = "ProDOS HDV";
+        info.path              = blk.path();
+        info.lastError         = blk.lastError();
+        info.blockCount        = static_cast<uint32_t>(blk.blockCount());
+        info.loaded            = true;
+        info.busy              = blk.isBusy();
+        info.writeProtected    = blk.isWriteProtected();
+        info.writeBackEnabled  = blk.isWriteBackEnabled();
+        info.hasUnsavedChanges = blk.hasUnsavedChanges();
+        info.supportsWriteBack = blk.canWriteBack();
+        info.persistenceState  = blk.persistenceState();
+        info.persistenceError  = blk.persistenceError();
+        return info;
+    }
+    const Disk35Image& img = images_[b];
+    info.kindLabel         = img.isLoaded() ? "3.5\" 800K" : "3.5\" or HDV";
     info.path              = img.path();
-    info.lastError         = img.lastError();
+    info.lastError         = img.lastError().empty() ? blk.lastError() : img.lastError();
     info.blockCount        = img.isLoaded() ? Disk35Image::kBlockCount : 0;
     info.loaded            = img.isLoaded();
     info.writeProtected    = img.isWriteProtected();
@@ -429,39 +484,138 @@ MediaBayInfo LironCard::bayInfo(int bay) const
     return info;
 }
 
+bool LironCard::dropBay(int bay)
+{
+    const auto b = static_cast<std::size_t>(bay);
+    Block512Backing& blk = blocks_[b];
+    if (blk.isLoaded()) {
+        // Same save-on-eject policy as ProDOSHardDiskCard::ejectDrive, and
+        // `isMediumLocked()` for the same reason: a notch flipped on the
+        // mounted image must not drop blocks the guest already wrote.
+        if (blk.hasUnsavedChanges() && blk.isWriteBackEnabled() &&
+            !blk.isMediumLocked() && !blk.saveDirty())
+            return false;
+        blk.eject();
+    }
+    Disk35Image& img = images_[b];
+    if (img.isLoaded()) {
+        // Refuse the eject when the save fails, exactly as every sibling does
+        // (`DiskIICard::ejectDisk`, `SmartPort35Unit::eject`,
+        // `EmulationController::eject35`): `Disk35Image::eject()` drops
+        // `blocks_`, which is the ONLY copy of everything the guest wrote since
+        // the mount. Keeping the medium mounted and dirty lets the user fix
+        // the cause and retry — or turn write-back off, which makes
+        // `saveDirty` a successful no-op.
+        if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty())
+            return false;
+        img.eject();
+    }
+    if (bay < kDrives) drives_[b].notifyMediaChange();
+    return true;
+}
+
 bool LironCard::mountBay(int bay, const std::string& path, std::string& errOut)
 {
     // Only a bay the chain carries: a medium past `unitCount_` would sit
     // where the guest cannot see it and the host panels do not look.
     if (bay < 0 || bay >= unitCount_) { errOut = "no such bay"; return false; }
-    Disk35Image& img = images_[static_cast<std::size_t>(bay)];
-    if (!img.loadFile(path)) {
-        errOut = img.lastError();
+    const auto b = static_cast<std::size_t>(bay);
+    Disk35Image&     img = images_[b];
+    Block512Backing& blk = blocks_[b];
+    // LOAD FIRST, then retire the other kind: a file that turns out not to
+    // mount must leave the bay's disk where it was. Each loader flushes an
+    // outgoing medium of its own kind itself (`saveDirty` first).
+    bool as35 = false;
+    if (looksLike35(path)) {
+        if (img.loadFile(path)) {
+            as35 = true;
+            // The drive has to be told, or its cached bit-cell stream still
+            // holds the previous disk — and the firmware's media-change probe
+            // never fires.
+            if (bay < kDrives) drives_[b].notifyMediaChange();
+        } else {
+            // Small but not an 800K 3.5" (a 140K or 400K ProDOS volume, say):
+            // a block device takes any whole number of blocks.
+            errOut = img.lastError();
+        }
+    }
+    if (!as35) {
+        const bool hadHard = blk.isLoaded();
+        if (!blk.loadImage(path)) {
+            if (!blk.lastError().empty()) errOut = blk.lastError();
+            return false;
+        }
+        // The 3.5" that was in the bay leaves now that its successor loaded.
+        if (img.isLoaded()) {
+            if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty()) {
+                if (!hadHard) blk.eject();
+                errOut = "unsaved changes on unit " + std::to_string(bay) +
+                         " could not be written: " + img.lastError();
+                return false;
+            }
+            img.eject();
+            if (bay < kDrives) drives_[b].notifyMediaChange();
+        }
+    } else if (blk.isLoaded()) {
+        // …and the hard disk that was there, likewise.
+        if (blk.hasUnsavedChanges() && blk.isWriteBackEnabled() &&
+            !blk.isMediumLocked() && !blk.saveDirty()) {
+            errOut = "unsaved changes on unit " + std::to_string(bay) +
+                     " could not be written: " + blk.lastError();
+            img.eject();
+            return false;
+        }
+        blk.eject();
+    }
+    errOut.clear();
+    return true;
+}
+
+bool LironCard::adoptBay(int bay, Block512Backing::PreparedImage&& prepared,
+                         std::string& errOut)
+{
+    errOut.clear();
+    if (bay < 0 || bay >= unitCount_) { errOut = "no such bay"; return false; }
+    // A 3.5"-sized image goes through `mountBay`, which gives it to the
+    // `Disk35Image` — declined with an EMPTY error so the caller falls back.
+    if (prepared.bytes.size() <= 1024u * 1024u || looksLike35(prepared.path))
+        return false;
+    const auto b = static_cast<std::size_t>(bay);
+    if (images_[b].isLoaded() && !dropBay(bay)) {
+        errOut = "unsaved changes on unit " + std::to_string(bay) +
+                 " could not be written";
         return false;
     }
-    // The drive has to be told, or its cached bit-cell stream still holds the
-    // previous disk — and the firmware's media-change probe never fires.
-    if (bay < kDrives) drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
-    errOut.clear();
+    if (!blocks_[b].adoptImage(std::move(prepared))) {
+        errOut = blocks_[b].lastError().empty() ? std::string("image could not be adopted")
+                                                : blocks_[b].lastError();
+        return false;
+    }
     return true;
 }
 
 bool LironCard::ejectBay(int bay)
 {
     if (bay < 0 || bay >= kMaxUnits) return false;
-    Disk35Image& img = images_[static_cast<std::size_t>(bay)];
-    // Refuse the eject when the save fails, exactly as every sibling does
-    // (`DiskIICard::ejectDisk`, `SmartPort35Unit::eject`,
-    // `EmulationController::eject35`): `Disk35Image::eject()` drops `blocks_`,
-    // which is the ONLY copy of everything the guest wrote since the mount, so
-    // ejecting anyway destroys it with a success return. Keeping the medium
-    // mounted and dirty lets the user fix the cause and retry — or turn
-    // write-back off, which makes `saveDirty` a successful no-op.
-    if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty())
-        return false;
-    img.eject();
-    if (bay < kDrives) drives_[static_cast<std::size_t>(bay)].notifyMediaChange();
+    return dropBay(bay);
+}
+
+bool LironCard::prepareEjectBay(int bay, Block512Backing::PendingWriteBack& out,
+                                std::string& errOut)
+{
+    errOut.clear();
+    if (bay < 0 || bay >= kMaxUnits) return false;
+    Block512Backing& blk = blocks_[static_cast<std::size_t>(bay)];
+    if (!blk.isLoaded()) return false;   // a 3.5" (or nothing): one-phase
+    if (blk.hasUnsavedChanges() && blk.isWriteBackEnabled() && !blk.isMediumLocked())
+        out = blk.takeWriteBack();
     return true;
+}
+
+void LironCard::restoreBayDirty(int bay, const std::vector<uint32_t>& indices)
+{
+    if (bay < 0 || bay >= kMaxUnits) return;
+    blocks_[static_cast<std::size_t>(bay)].restoreDirty(indices);
 }
 
 bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
@@ -470,6 +624,8 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
     errOut.clear();
     out = PendingBayFlush{};
     if (bay < 0 || bay >= kMaxUnits) { errOut = "no such bay"; return false; }
+    // A hard disk flushes its dirty blocks inline (empty error → fallback).
+    if (blocks_[static_cast<std::size_t>(bay)].isLoaded()) return false;
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     // The move half of "move out": `takeWriteBack` serialises the whole file
     // and retires the dirty flag under the caller's lock, atomically with the
@@ -492,6 +648,12 @@ bool LironCard::flushBay(int bay, std::string& errOut)
 {
     errOut.clear();
     if (bay < 0 || bay >= kMaxUnits) { errOut = "no such bay"; return false; }
+    Block512Backing& blk = blocks_[static_cast<std::size_t>(bay)];
+    if (blk.isLoaded()) {
+        if (!blk.hasUnsavedChanges() || blk.saveDirty()) return true;
+        errOut = blk.lastError().empty() ? std::string("write-back failed") : blk.lastError();
+        return false;
+    }
     Disk35Image& img = images_[static_cast<std::size_t>(bay)];
     if (!img.isLoaded() || !img.hasUnsavedChanges()) return true;
     if (!img.saveDirty()) {
@@ -505,7 +667,26 @@ bool LironCard::flushBay(int bay, std::string& errOut)
 void LironCard::setBayWriteBack(int bay, bool on)
 {
     if (bay < 0 || bay >= kMaxUnits) return;
+    // Both kinds: the restore sets the opt-in before it knows what the file
+    // will turn out to be.
     images_[static_cast<std::size_t>(bay)].setWriteBackEnabled(on);
+    blocks_[static_cast<std::size_t>(bay)].setWriteBackEnabled(on);
+}
+
+void LironCard::setBayHostWriteProtected(int bay, bool on)
+{
+    if (bay < 0 || bay >= kMaxUnits) return;
+    const auto b = static_cast<std::size_t>(bay);
+    if (images_[b].isLoaded()) images_[b].setHostWriteProtected(on);
+    if (blocks_[b].isLoaded()) blocks_[b].setHostWriteProtected(on);
+}
+
+std::vector<Block512Backing*> LironCard::blockBackings()
+{
+    std::vector<Block512Backing*> out;
+    out.reserve(kMaxUnits);
+    for (auto& b : blocks_) out.push_back(&b);
+    return out;
 }
 
 }  // namespace pom2

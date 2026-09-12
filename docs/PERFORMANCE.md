@@ -271,7 +271,7 @@ One lead listed here has since been **taken** (2026-07-30 callgrind pass):
 `Memory::advanceCycles` used to call `cassette->advanceCycles`
 unconditionally, even with no tape loaded — measured at 4.1 % of the core.
 It is now gated (`if (cassette)`, in `Memory::advanceCycles` — `Memory.h:747`,
-the hop itself `Memory::cassetteAdvanceCycles`, `Memory.cpp:391`) and the call
+the hop itself `Memory::cassetteAdvanceCycles`) and the call
 is an inline fast path (`CassetteDevice.h:116-125`, rationale at `:105-115`)
 that only takes the out-of-line playback
 route when the deck is actually moving.
@@ -293,7 +293,8 @@ every workload, and `ctest` green (186 tests at the time; 241 today)**. A new te
 Before any optimisation: `pom2_bench --iie` called `loadAppleIIRom()` *before*
 `setIIEMode(true)`. The loader only splits a 16/32 KB //e dump into the
 internal `$C100-$CFFF` I/O ROM when `iieMode` is already on
-(`MainWindow_Slots.cpp:1211-1220` documents the ordering rule), so the //e
+(`MainWindow_Slots.cpp` documents the ordering rule, in the
+`restartEmulationFromSettings` step list), so the //e
 booted into an empty `$C300`, executed `BRK` (`$00`) forever, and every "//e"
 number this file ever quoted — and **three of the PGO training runs in
 `pgo_train.sh`** — measured a BRK loop. `M6502::BRK` at 13 % of a banner

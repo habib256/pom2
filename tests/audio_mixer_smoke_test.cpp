@@ -139,24 +139,45 @@ void testMasterVolumeAndMute()
         assert(std::fabs(out[i] - 0.5f) < 1e-6f);
     }
 
-    // Half volume.
+    // Half volume — reached by a RAMP, not a step (bug hunt #19). Dragging
+    // the master slider or hitting mute during a sustained note used to move
+    // the whole mix by up to full scale at a buffer boundary: an audible
+    // click, and one the per-source click counters could not even see. The
+    // gain now walks to its target over ~5 ms; 256 frames at the 44.1 kHz
+    // fallback rate is 5.8 ms, so the tail of this buffer has converged.
     dev.setMasterVolume(0.5f);
     dev.mixSources(out.data(), kFrames);
-    for (int i = 0; i < kSamples; ++i) {
-        assert(std::fabs(out[i] - 0.25f) < 1e-6f);
-    }
+    assert(std::fabs(out[kSamples - 1] - 0.25f) < 1e-6f &&
+           "the ramp must reach the target inside one buffer");
+    assert(out[0] > 0.25f + 1e-6f &&
+           "…and must not have stepped straight to it");
+    // Frame-to-frame (hence i-2: the bus is interleaved stereo), the mix may
+    // move by at most one gain step times the source level.
+    const double kStep = 1.0 / (0.005 * 44100.0);
+    double maxJump = 0.0;
+    for (int i = 2; i < kSamples; ++i)
+        maxJump = std::max(maxJump,
+                           std::fabs(static_cast<double>(out[i]) - out[i - 2]));
+    assert(maxJump < 0.5 * kStep * 1.001 && "the master gain moved in a jump");
 
-    // Master mute zeroes everything, regardless of master volume.
+    // Master mute zeroes everything, regardless of master volume — through
+    // the same fade.
     dev.setMasterVolume(2.0f);
     dev.setMasterMuted(true);
     dev.mixSources(out.data(), kFrames);
-    for (int i = 0; i < kSamples; ++i) {
-        assert(out[i] == 0.0f);
-    }
+    assert(out[kSamples - 1] == 0.0f && "the fade to mute must complete");
+    assert(out[0] != 0.0f && "a mute is a fade, not a cut");
 
-    // Unmute + sane volume restores normal behaviour.
+    // Unmute + sane volume restores normal behaviour — through the fade
+    // back up, which from silence to unity takes 221 of this buffer's 256
+    // frames, so only the tail is at full level.
     dev.setMasterMuted(false);
     dev.setMasterVolume(1.0f);
+    dev.mixSources(out.data(), kFrames);
+    assert(std::fabs(out[kSamples - 1] - 0.5f) < 1e-6f &&
+           "the fade back up must complete inside this buffer");
+    assert(out[0] < 0.5f - 1e-6f && "an unmute is a fade, not a cut");
+    // …and the next buffer is steady at the target, with no ramp left.
     dev.mixSources(out.data(), kFrames);
     for (int i = 0; i < kSamples; ++i) {
         assert(std::fabs(out[i] - 0.5f) < 1e-6f);

@@ -328,12 +328,22 @@ void testAudioSynth4Chips()
     // Set the floor low enough to survive minor synth tweaks.
     assert(rms > 0.05);
 
-    // Mute path silences everything.
+    // Mute silences the card — through a 5 ms FADE, not a cut (bug hunt
+    // #19). Muting mid-note used to drop the output to zero between two
+    // samples: a click at whatever amplitude the note was holding, and one
+    // no per-source click counter could attribute. The cost is measured in
+    // block RMS, which is blind to the square wave's own edges (they are
+    // larger than kClickThreshold by design): the first 64 samples still
+    // carry most of the note's energy, and the tail is exact silence.
     card.setMuted(true);
     src->fillAudioBuffer(buf.data(), N);
-    sumSq = 0.0;
-    for (float s : buf) sumSq += static_cast<double>(s) * s;
-    assert(sumSq == 0.0);
+    double headSq = 0.0;
+    for (int i = 0; i < 64; ++i) headSq += static_cast<double>(buf[i]) * buf[i];
+    const double headRms = std::sqrt(headSq / 64);
+    double tailSq = 0.0;
+    for (int i = N / 2; i < N; ++i) tailSq += static_cast<double>(buf[i]) * buf[i];
+    assert(tailSq == 0.0 && "the fade must reach exact silence");
+    assert(headRms > 0.3 * rms && "a mute is a fade, not a cut");
 
     std::printf("  ok: 4-AY mix produces non-silent waveform; mute path silences\n");
 }
@@ -586,8 +596,9 @@ void testT1MmioDataCycle()
     cpu.setProgramCounter(0x0300);
     while (cpu.getProgramCounter() != ldaPc) cpu.step();
 
-    // Raw counter as of the pre-instruction cycle (peek: no read-back
-    // bias, no sync).
+    // T1 as of the pre-instruction cycle — no sync. Since 2026-09-12 the
+    // peek answers what a GUEST read would (`counterReadback`, the -1
+    // bias), so the gap below is the cycle count alone.
     const uint16_t peekBefore =
         static_cast<uint16_t>(card->peekViaRegister(0, 0x04)) |
         static_cast<uint16_t>(card->peekViaRegister(0, 0x05) << 8);
@@ -595,9 +606,9 @@ void testT1MmioDataCycle()
     cpu.step();                                  // execute LDA $C404
     const uint8_t got = cpu.getAccumulator();
 
-    // LDA abs = 4 cycles; the data-cycle sync lands on cycleCounter+4, then
-    // the VIA applies its -1 read-back bias: got == (peekBefore - 5) low.
-    const uint8_t expected = static_cast<uint8_t>((peekBefore - 5) & 0xFF);
+    // LDA abs = 4 cycles; the data-cycle sync lands on cycleCounter+4, and
+    // both sides carry the same -1 read-back: got == (peekBefore - 4) low.
+    const uint8_t expected = static_cast<uint8_t>((peekBefore - 4) & 0xFF);
     if (got != expected) {
         std::fprintf(stderr,
             "Phasor T1 MMIO phase: LDA $C404 read $%02X, expected $%02X "
@@ -606,7 +617,7 @@ void testT1MmioDataCycle()
         std::abort();
     }
     std::printf("  ok: $C404 read reflects the access data cycle "
-                "(got $%02X = peek $%04X - 5)\n", got, peekBefore);
+                "(got $%02X = peek $%04X - 4)\n", got, peekBefore);
 }
 
 // A zero or negative slice must be a no-op. On the CPU-attached path

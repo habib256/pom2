@@ -5,6 +5,7 @@
 // mount is refused with nothing mounted, and an ejected bay is reused.
 
 #include "EmulationController.h"
+#include "LironCard.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SmartPortCard.h"
@@ -92,6 +93,43 @@ int main()
         assert(storage.mountHdvIntoFreeBay(c2, settings, imgs[0]).ok);
         assert(storage.mountHdvIntoFreeBay(c2, settings, imgs[1]).ok);
         assert(!storage.mountHdvIntoFreeBay(c2, settings, imgs[2]).ok);
+    }
+    // A //e whose only disk card is a Liron (2026-09-11): its chain takes
+    // the hard disks, first free unit first. The library used to answer
+    // "plug an HDV or SmartPort card" with the Liron sitting right there.
+    {
+        EmulationController c3;
+        pom2::LironCard* liron = nullptr;
+        {
+            auto st = c3.lockState();
+            auto c = std::make_unique<pom2::LironCard>(6);
+            liron = c.get();
+            st.memory().slotBus().plug(6, std::move(c));
+        }
+        for (int n = 0; n < 2; ++n) {
+            const auto r = storage.mountHdvIntoFreeBay(c3, settings, imgs[n]);
+            if (!r.ok) std::printf("liron mount %d: %s\n", n, r.error.c_str());
+            assert(r.ok && r.bootSlot == 6);
+            const auto info = liron->bayInfo(n);
+            assert(info.loaded && info.path == imgs[n] &&
+                   info.kindLabel == "ProDOS HDV" && "a Liron unit took the hard disk");
+        }
+        std::printf("  ok: the Liron's chain takes hard disks from the library\n");
+        // …and 3.5" disks through the library's 3.5" route, which used to
+        // drop them on the //c+'s on-board drive a //e does not have. Into
+        // unit 1, over the hard disk the loop above put there.
+        const fs::path d35 = dir / "disk35.po";
+        {
+            std::vector<char> zeros(819200, 0);
+            std::ofstream f(d35, std::ios::binary | std::ios::trunc);
+            f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
+        }
+        const auto m = storage.mountDisk35(c3, settings, 1, d35.string());
+        if (!m.ok) std::printf("liron 3.5: %s\n", m.error.c_str());
+        assert(m.ok && m.bootSlot == 6);
+        assert(liron->bayInfo(1).kindLabel == "3.5\" 800K" &&
+               liron->bayInfo(1).path == d35.string() &&
+               !liron->blockBackings()[1]->isLoaded());
     }
     fs::remove_all(dir, ec);
     std::puts("hdv_free_bay OK");

@@ -113,8 +113,22 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
 bool SlotConfigurationCoordinator::isMultiInstance(
     const std::string& cardKey) noexcept
 {
-    return cardKey == "diskii" || cardKey == "cffa" ||
-           cardKey == "smartport35" || cardKey == "liron";
+    // Storage cards: their media and settings models are per-slot.
+    if (cardKey == "diskii" || cardKey == "cffa" ||
+        cardKey == "smartport35" || cardKey == "liron")
+        return true;
+    // Sound cards, since 2026-09-12 (bug hunt #19). TRIBU — the Unreeeal
+    // Superhero 3 tribute in the tracked corpus — is a TWO-CARD release:
+    // `Sources/pts.a` is labelled "use 4 AY-3-8910 (2 MOCKINGBOARD
+    // SLOT#4/SLOT#5)" and its player writes $C4xx and $C5xx in one
+    // interleaved pass, panning A left, B centre, C right across the pair.
+    // The dedup gate silently emptied the second slot (a log line, no UI
+    // feedback), and since the card's own detection scan still found the
+    // first one the demo RAN — playing half its voices. These cards carry no
+    // media, and `AudioCoordinator::persist` already writes a per-slot
+    // volume key for each live card, so nothing else stood in the way.
+    return cardKey == "mockingboard" || cardKey == "mockingboard_c" ||
+           cardKey == "phasor" || cardKey == "echoplus";
 }
 
 const SlotConfigurationCoordinator::CardMap&
@@ -166,6 +180,21 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
             log().info("Slots",
                 "Slot " + std::to_string(slot) +
                 " = Le Chat Mauve RGB (rear video-connector adapter) on " +
+                std::string(cfg.displayName));
+            continue;
+        }
+
+        // The Mockingboard 4c is the other card a slotless machine can
+        // carry: it plugs into the //c's INTERNAL expansion connector and
+        // answers at $C400-$C4FF (`SlotPeripheral::iicRomWindowPage`), so
+        // the virtual slot row it sits on is just where the user parked it —
+        // the machine's own IOU mouse keeps slot 4. DIGIDREAM, a "SPECIAL
+        // IIc/MB4C" release in the corpus, prints "KO" and spins without one.
+        if (effectivePlan_[slot] == "mockingboard" ||
+            effectivePlan_[slot] == "mockingboard_c") {
+            log().info("Slots",
+                "Slot " + std::to_string(slot) +
+                " = Mockingboard 4c (internal expansion connector, $C400) on " +
                 std::string(cfg.displayName));
             continue;
         }

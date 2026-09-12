@@ -184,6 +184,8 @@ public:
     { if (validDrive(bay)) backings_[bay].restoreDirty(indices); }
     void setBayWriteBack(int bay, bool on) override
     { if (validDrive(bay)) backings_[bay].setWriteBackEnabled(on); }
+    void setBayHostWriteProtected(int bay, bool on) override
+    { setDriveHostWriteProtected(bay, on); }
 
     std::string_view name() const override { return "ProDOS HDV"; }
     uint8_t deviceSelectRead(uint8_t low4) override;

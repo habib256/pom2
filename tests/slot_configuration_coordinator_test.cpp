@@ -88,8 +88,8 @@ int main()
     assert(slots.draft() == slots.effectivePlan());
 
     // Ordinary cards are unique: the first requested occurrence wins.
-    settings.setString("slot_1_card", "mockingboard");
-    settings.setString("slot_2_card", "mockingboard");
+    settings.setString("slot_1_card", "ssc");
+    settings.setString("slot_2_card", "ssc");
     settings.setString("slot_3_card", "");
     settings.setString("slot_4_card", "");
     settings.setString("slot_5_card", "");
@@ -97,8 +97,24 @@ int main()
     settings.setString("slot_7_card", "");
     const auto& unique = slots.resolve(settings,
         pom2::SystemProfile::AppleIIe);
-    assert(unique[1] == "mockingboard");
+    assert(unique[1] == "ssc");
     assert(unique[2].empty());
+
+    // …but sound cards are NOT: TRIBU (the Unreeeal Superhero 3 tribute in
+    // the corpus) is a two-card release — "use 4 AY-3-8910 (2 MOCKINGBOARD
+    // SLOT#4/SLOT#5)" — and its player writes $C4xx and $C5xx in one pass.
+    // The dedup used to empty slot 5 silently, and since the demo's own scan
+    // still found slot 4 it ran, playing half its voices (bug hunt #19).
+    settings.setString("slot_1_card", "");
+    settings.setString("slot_2_card", "");
+    settings.setString("slot_4_card", "mockingboard");
+    settings.setString("slot_5_card", "mockingboard");
+    const auto& pair = slots.resolve(settings, pom2::SystemProfile::AppleIIe);
+    assert(pair[4] == "mockingboard" && pair[5] == "mockingboard" &&
+           "two Mockingboards must both survive");
+    assert(slots.dedupCleared(5).empty());
+    settings.setString("slot_4_card", "");
+    settings.setString("slot_5_card", "");
 
     // Storage devices with per-slot state deliberately support multiples.
     settings.setString("slot_1_card", "diskii");
@@ -133,6 +149,8 @@ int main()
     assert(iic[7] == "chatmauve");
 
     assert(pom2::SlotConfigurationCoordinator::isMultiInstance("diskii"));
+    assert(pom2::SlotConfigurationCoordinator::isMultiInstance("mockingboard"));
+    assert(pom2::SlotConfigurationCoordinator::isMultiInstance("phasor"));
     assert(!pom2::SlotConfigurationCoordinator::isMultiInstance("ssc"));
 
     // Live topology is copied from SlotBus, independently of the effective

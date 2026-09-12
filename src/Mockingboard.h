@@ -57,13 +57,14 @@
 // is what we model precisely; CB1/CB2/SR/PCR are stubbed.
 //
 // Audio path. The card owns an inner AudioSource that AudioDevice mixes
-// into the same float32 mono buffer as the speaker / cassette. The audio
-// callback runs on miniaudio's thread; it grabs a brief snapshot of both
-// AY register banks under a mutex, releases, then synthesises n samples
-// using its own (audio-thread-resident) tone / noise / envelope state.
-// AY1 and AY2 are summed to mono — Mockingboard hardware does true stereo
-// (one PSG per channel), but POM2's mixer is mono-only and the loss is
-// audibly minor for the 3-voice arpeggios most period software produces.
+// into the same float32 buffer as the speaker / cassette. The audio
+// callback runs on miniaudio's thread; it takes the card's mutex to splice
+// the cycle-stamped register-write queue and snapshot the banks, releases,
+// then synthesises n samples using its own (audio-thread-resident) tone /
+// noise / envelope state, replaying each write at its true sample offset.
+// The card is STEREO, as the hardware is: AY1 (VIA1) goes left, AY2 (VIA2)
+// right, each through its own DC blocker — the mono fold-down this comment
+// used to describe went away with the stereo bus on 2026-08-01.
 //
 // What's NOT modelled (deliberate, scope-bounded omissions):
 //
@@ -84,6 +85,7 @@
 #define POM2_MOCKINGBOARD_H
 
 #include "Ay3_8910.h"
+#include "AyEventRing.h"
 #include "AudioSource.h"
 #include "SlotPeripheral.h"
 #include "Ssi263.h"
@@ -108,9 +110,13 @@ public:
     ///             speech). Slot ROM is just the two VIAs with partial
     ///             address decode mirroring.
     ///   SoundII = Mockingboard "C" / Sound II — adds an SSI263A speech
-    ///             synth at $C(s)40-$C(s)4F. The SSI263's A/!R signal
-    ///             wires (inverted) to VIA1.CA1, so a phoneme-end edge
-    ///             latches IFR.CA1 in VIA1 and (if IER.CA1 is enabled by
+    ///             synth selected by address bit A6 ($Cs40-$Cs7F and
+    ///             $CsC0-$CsFF; the register is the low 3 bits, and the
+    ///             write also lands in the VIA the address selects). Its
+    ///             A/!R signal wires (inverted) to the SECOND 6522's CA1
+    ///             — AppleWin: "SSI263's IRQ (A/!R) is routed via the 2nd
+    ///             6522's CA1 input (at $Cn80)" — so a phoneme-end edge
+    ///             latches IFR.CA1 in VIA2 and (if IER.CA1 is enabled by
     ///             the host) drives the slot IRQ. Stock Sound II software
     ///             configures PCR.0 = 0 (negative-edge active) to match
     ///             the inverted wiring.
@@ -169,6 +175,19 @@ public:
     std::string_view name() const override { return "Mockingboard"; }
     uint8_t slotRomRead (uint8_t low8) override;
     void    slotRomWrite(uint8_t low8, uint8_t v) override;
+    /// The card decodes no DEVICE SELECT: $C0(8+n)X is open bus, the
+    /// floating video byte — MAME's ayboard base ends its `read_c0nx` on
+    /// `return get_open_bus();`, and CLAUDE.md's standing rule says the
+    /// same. A hard $FF (the base class default) froze the floating bus for
+    /// any guest sampling it through this window: VBL detection by comparing
+    /// successive reads never sees a change.
+    uint8_t deviceSelectRead(uint8_t) override { return openBus(); }
+    /// The Mockingboard 4c: the //c-class build of this card, on the
+    /// machine's internal expansion connector, answering at $C400-$C4FF.
+    /// DIGIDREAM ("SPECIAL IIc/MB4C") wakes it with two writes to
+    /// $C403/$C404 and then DETECTS it by reading the 6522's T1 counter
+    /// there, so the window has to carry reads as well as writes.
+    int iicRomWindowPage() const override { return 4; }
     void    advanceCycles(int cycles) override;
     void    onReset() override;
     void    onUnplug() override;
@@ -225,7 +244,40 @@ public:
     /// diagnostic panel safe.
     uint32_t getAyCommandCount(int chip, int cmd) const;
 
+    /// Capture everything the diagnostic panel shows, under ONE acquisition
+    /// of the card mutex (bug hunt #19).
+    ///
+    /// The panel used to assemble its view one accessor at a time:
+    /// `peekViaRegister` (9 per VIA) + `getAyRegister` (16 per chip) +
+    /// `snapshotSsi263` = **51 separate locks of `mtx` per rendered frame**
+    /// on the Mockingboard, 82 on the Phasor — the same mutex the realtime
+    /// audio thread takes on every callback and the CPU thread takes on
+    /// every MMIO access. Two costs, and the second is the real defect:
+    ///   * the panel interleaved with the running machine 51 times a frame,
+    ///     at 60 Hz, on the lock that gates audio rendering;
+    ///   * the values it displayed came from 51 DIFFERENT machine states, so
+    ///     VIA1 and VIA2 — or an AY register bank and the IFR that explains
+    ///     it — never described the same instant. A timing investigation was
+    ///     reading a composite that never existed.
+    struct Diagnostics {
+        struct Chip {
+            uint8_t  via[16];      ///< indexed by VIA register number
+            uint8_t  ay[16];
+            uint32_t viaWrites = 0, ayWrites = 0, ayResets = 0;
+            uint32_t cmd[4]{};     ///< {BDIR,BC1}: INACTIVE/READ/WRITE/LATCH
+        };
+        Chip       chip[2]{};
+        bool       irqAsserted = false;
+        bool       hasSsi      = false;
+        Ssi263Snap ssi{};
+    };
+    Diagnostics captureDiagnostics() const;
+
 private:
+    /// Caller holds `mtx` — the body of `peekViaRegister`, split out so the
+    /// whole card can be captured under one acquisition.
+    uint8_t peekViaRegisterLocked(int chip, int reg) const;
+
     // Forward declarations. `Via6522` and `Ay3_8910` are shared with
     // PhasorCard (see `Via6522.h` / `Ay3_8910.h`); only AudioSrc remains
     // private to this card.
@@ -299,7 +351,10 @@ private:
     /// writes replayed on top and resurrected the note. Stamping it like
     /// any other write puts the silence exactly where the driver put it.
     static constexpr uint8_t kRegAyReset = 0xFF;
-    std::deque<AyRegEvent> ayEvents_;                 // guarded by mtx
+    /// Fixed capacity, allocated once: this queue is spliced on the
+    /// REALTIME audio thread, where the deque this replaces called the
+    /// allocator on every block boundary (bug hunt #19, `AyEventRing.h`).
+    pom2::AyEventRing<AyRegEvent> ayEvents_{kMaxAyEvents};   // guarded by mtx
     std::atomic<uint64_t>  latestAyEventCycle_{0};
     /// Hard cap so a paused audio device can't grow the queue without
     /// bound (the audio thread drains it; nothing else does).
@@ -320,6 +375,9 @@ private:
     /// / 2.00 s / >3 s for rewind depths of 0.5 / 2 / 5 s, bounded only
     /// by `kMaxAyEvents`.
     uint32_t ayQueueGen_ = 0;
+    /// Did the CHIPS go with the last timeline break? See
+    /// invalidateAyTimeline(bool). Audio thread reads it under `mtx`.
+    bool     ayBreakResetsGens_ = true;
     /// Edge state for the /RESET strobe, per chip. `applyControl` reports
     /// `ResetOnly` on EVERY VIA write while PB2 is held low, and a driver
     /// can leave it low for many writes; only the falling edge is an
@@ -331,7 +389,13 @@ private:
     void queueAyEvent(int chip, uint8_t reg, uint8_t val);
     /// Drop both sides of the event stream and bump `ayQueueGen_`.
     /// Caller must hold `mtx`.
-    void invalidateAyTimeline();
+    /// Declare the cycle-stamped event stream discontinuous. Caller holds
+    /// `mtx`. `resetChips` says whether the CHIPS went with it: true for a
+    /// card reset or a queue overflow, false for a rewind / snapshot
+    /// restore, where the registers are restored and the generators must
+    /// keep running — re-seeding them there re-attacked every envelope the
+    /// guest had not re-triggered, once per seek of a scrub.
+    void invalidateAyTimeline(bool resetChips = true);
 
     // Cross-thread guard. CPU thread takes it for VIA reads/writes and
     // for `advanceCycles`; audio thread takes it briefly to snapshot

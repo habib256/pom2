@@ -63,12 +63,18 @@ StorageCoordinator::setMediaNotch(EmulationController& controller,
         if (cards.primaryHdv && cards.primaryHdv->isImageLoaded() &&
             cards.primaryHdv->getImagePath() == path)
             cards.primaryHdv->setHostWriteProtected(protect);
-        // Drive 2 of every ProDOS HD card: `blockCards` above only speaks
-        // the single-image API, which is drive 1.
-        for (auto* block : cards.blockCards)
-            if (auto* hdv = dynamic_cast<ProDOSHardDiskCard*>(block))
-                if (hdv->backing(1).isLoaded() && hdv->backing(1).path() == path)
-                    hdv->setDriveHostWriteProtected(1, protect);
+        // Every bay of every card that carries a per-bay notch — the
+        // Liron's units, the ProDOS HD card's drive 2. None of the loops
+        // above reached them: a notch flipped on a mounted Liron disk changed
+        // the file and left the mounted copy writable until the next mount.
+        auto& bus = state.memory().slotBus();
+        for (int slot = 1; slot < SlotBus::kSlotCount; ++slot)
+            if (auto* media = dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
+                for (int bay = 0; bay < media->bayCount(); ++bay) {
+                    const MediaBayInfo info = media->bayInfo(bay);
+                    if (info.loaded && info.path == path)
+                        media->setBayHostWriteProtected(bay, protect);
+                }
         for (auto* card : cards.smartPortCards) {
             if (!card) continue;
             for (std::size_t u = 0; u < SmartPortCard::kMaxUnits; ++u) {

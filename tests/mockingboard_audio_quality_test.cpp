@@ -761,6 +761,82 @@ void testLowFrequencyResponse()
 
 }  // namespace
 
+// ─── Test 8: a CPU-driven PWM edge is placed WITHIN the sample ──────────
+//
+// Bug hunt #19. Tone, noise and envelope edges were always sub-sample placed
+// (`stepTick` fires at a fractional `tickPhase`), but a REGISTER-driven edge
+// was not: the render loop applied every event stamped anywhere inside a
+// sample before integrating any of it, so the edge snapped to the output grid
+// — 0 to 22.7 us early at 44.1 kHz, never late, uniformly distributed. That
+// is the whole of a volume-PWM digidrum, and it reads as a gritty noise floor
+// rather than as a pitch error.
+//
+// The measurement is the one test 1 uses for tones, applied to a PWM whose
+// period is deliberately incommensurate with the sample grid: the sample-and
+// -hold jitter shows up as energy off the harmonics of f0.
+void testPwmSubSamplePlacement()
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    MockingboardCard card(4);
+    card.setCpu(&cpu);
+    card.setSampleRate(kSr);
+    card.setVolume(1.0f);
+    card.setMuted(false);
+
+    ayWrite(card, 0, 7, 0x3F);          // tone + noise off: R8 IS the output
+    ayWrite(card, 0, 8, 0x00);
+
+    // 167 cycles per half period: 1022727/334 = 3062.1 Hz, and 167 is prime
+    // to the 23.19 cycles an output sample spans, so the edges walk across
+    // the sample grid instead of landing on it.
+    constexpr int kHalfPeriodCycles = 167;
+    const double  kF0 = 1022727.0 / (2.0 * kHalfPeriodCycles);
+    constexpr int kFrameCycles  = 17045;
+    constexpr int kFrameSamples = 735;
+    constexpr int kChunk        = 245;
+    constexpr int kFrames       = 60;
+
+    AudioSource* src = card.audioSource();
+    assert(src);
+    std::vector<float> all;
+    all.reserve(static_cast<size_t>(kFrames) * kFrameSamples);
+    std::vector<float> chunk(kChunk);
+    int  cyclesIntoHalf = 0;
+    bool high = false;
+    for (int f = 0; f < kFrames; ++f) {
+        int remaining = kFrameCycles;
+        while (remaining > 0) {
+            const int step = std::min(remaining, kHalfPeriodCycles - cyclesIntoHalf);
+            mem.advanceCycles(step);
+            cyclesIntoHalf += step;
+            remaining      -= step;
+            if (cyclesIntoHalf >= kHalfPeriodCycles) {
+                cyclesIntoHalf = 0;
+                high = !high;
+                ayWrite(card, 0, 8, high ? 0x0F : 0x00);
+            }
+        }
+        for (int c = 0; c < kFrameSamples / kChunk; ++c) {
+            src->fillAudioBuffer(chunk.data(), kChunk);
+            all.insert(all.end(), chunk.begin(), chunk.end());
+        }
+    }
+    // A power of two from the tail, past the jitter buffer's start-up.
+    constexpr size_t kFft = 16384;
+    assert(all.size() > kFft);
+    std::vector<float> tail(all.end() - static_cast<ptrdiff_t>(kFft), all.end());
+    const double frac = inharmonicFraction(tail, kF0, kSr);
+    std::printf("  PWM %.0f Hz on the amplitude register: inharmonic energy "
+                "= %.2f %% (%.1f dB)\n",
+                kF0, frac * 100.0, 10.0 * std::log10(frac));
+    // Measured on this exact stream: 5.04 % with the edge snapped to the
+    // output grid, 0.36 % with the sample split at the write — a 14x drop,
+    // -11.5 dB. The bound pins the improvement without being brittle about
+    // the filter.
+    assert(frac < 0.01);
+}
+
 int main()
 {
     testTonalPurity();
@@ -777,6 +853,8 @@ int main()
     std::printf("envelope shapes ...... OK\n");
     testLowFrequencyResponse();
     std::printf("bass response ........ OK\n");
+    testPwmSubSamplePlacement();
+    std::printf("PWM sub-sample place . OK\n");
     std::printf("Mockingboard audio quality test passed.\n");
     return 0;
 }

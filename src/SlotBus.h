@@ -166,6 +166,19 @@ public:
     /// an eight-slot virtual scan would not be.
     SlotPeripheral* busSnooper() const { return busSnooper_; }
 
+    /// The card claiming `page` ($Cn00) of a //c-class machine's window
+    /// from its INTERNAL EXPANSION CONNECTOR, or nullptr. See
+    /// `SlotPeripheral::iicRomWindowPage` — the Mockingboard 4c is the
+    /// case: it answers at $C400-$C4FF wherever POM2 holds it, because a
+    /// //c has no slots for it to sit in.
+    SlotPeripheral* peripheralForIicRomPage(int page) const
+    {
+        if (page < 1 || page > 7) return nullptr;
+        for (const auto& s : slots)
+            if (s && s->iicRomWindowPage() == page) return s.get();
+        return nullptr;
+    }
+
     /// System soft-switch broadcast — fan-out to every plugged card's
     /// onVideoSoftSwitch(). Used by Memory::softSwitchAccess() for the
     /// switches that aren't in the per-slot device-select range but that

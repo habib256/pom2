@@ -118,9 +118,19 @@ bool EchoPlusCard::isMuted()  const { return audio_->muted.load(std::memory_orde
 uint8_t EchoPlusCard::slotRomRead(uint8_t low8)
 {
     std::lock_guard<std::mutex> lk(mtx_);
-    // Only the first 5 bytes are decoded. Real Echo II returns open-bus
-    // ($FF) for the rest of the slot ROM page.
-    if (low8 > pom2::Ssi263::REG_FILFREQ) return 0xFF;
+    // Five registers decoded, and the rest of the page is not this card's:
+    // an undecoded slot-ROM read is the FLOATING BUS, not a hard $FF
+    // (CLAUDE.md; `openBus()` answers $FF anyway on a bus with no source,
+    // which is what the harnesses see).
+    //
+    // OPEN QUESTION (bug hunt #18): the CHIP aliases registers 4-7 onto
+    // FILFREQ (A2 alone — hunt #16, `ssi263_phoneme_map`), and the
+    // Mockingboard path reaches those aliases because it forwards
+    // `low8 & 0x07`. Whether the Cricket/Echo card's own decode passes A0-A2
+    // through — making $Cs05-$Cs07 three more FILFREQs rather than open bus
+    // — is not settled by anything POM2 has: no card schematic, no driver
+    // in the corpus that writes there. Left as it was, deliberately.
+    if (low8 > pom2::Ssi263::REG_FILFREQ) return openBus();
     return ssi_.read(low8);
 }
 

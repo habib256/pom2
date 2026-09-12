@@ -381,6 +381,19 @@ public:
     static std::string hdvDriveKey(const char* base, int drive);
     static std::string bayCountKey(int slot);
 
+    /// The lowest slot holding a Liron card, or -1. A boot target for HDV and
+    /// 3.5" images alike (2026-09-11: its chain carries both), after the
+    /// dedicated cards and the SmartPort card. Topology only: the caller holds
+    /// the lock or is the UI thread, like every topology read.
+    static int lironSlot(const SlotBus& bus);
+    /// `mountDisk35`'s first step, for a //e whose 3.5" device is a Liron:
+    /// with no SmartPort card and a Liron plugged, mounts `drive`'s image into
+    /// that unit of the chain and returns the result (boot slot = the Liron's);
+    /// otherwise returns nothing and touches nothing.
+    std::optional<RoutedMediaCommandResult> mountDisk35OnLiron(
+        EmulationController& controller, Settings& settings, int drive,
+        const std::string& path) const;
+
 private:
     // StorageCoordinator_Chains.cpp — one call per historical site.
     static void restoreBayCount(MountableMediaCard& media, int slot,

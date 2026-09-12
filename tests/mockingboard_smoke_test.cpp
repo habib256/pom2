@@ -229,12 +229,22 @@ void testAyAudioSynthesis()
     // active the divide-by-6 in fillAudioBuffer normalises this to
     // ~0.16 mean amplitude.
     assert(rms > 0.05);
-    // Mute path silences output completely.
+    // Mute silences the card — through a 5 ms FADE, not a cut (bug hunt
+    // #19). Muting mid-note used to drop the output to zero between two
+    // samples: a click at whatever amplitude the note was holding, and one
+    // no per-source click counter could attribute. The cost is measured in
+    // block RMS, which is blind to the square wave's own edges (they are
+    // larger than kClickThreshold by design): the first 64 samples still
+    // carry most of the note's energy, and the tail is exact silence.
     card.setMuted(true);
     src->fillAudioBuffer(buf.data(), N);
-    sumSq = 0.0;
-    for (float s : buf) sumSq += static_cast<double>(s) * s;
-    assert(sumSq == 0.0);
+    double headSq = 0.0;
+    for (int i = 0; i < 64; ++i) headSq += static_cast<double>(buf[i]) * buf[i];
+    const double headRms = std::sqrt(headSq / 64);
+    double tailSq = 0.0;
+    for (int i = N / 2; i < N; ++i) tailSq += static_cast<double>(buf[i]) * buf[i];
+    assert(tailSq == 0.0 && "the fade must reach exact silence");
+    assert(headRms > 0.3 * rms && "a mute is a fade, not a cut");
 }
 
 // ─── Test 5b: envelope restarts on a same-value R13 write ────────────────
@@ -395,26 +405,41 @@ void testSoundIIVariantSSI263()
     assert(snap.phonemeRemainingCycles > 0);
     assert(snap.phonemeWriteCount == 1);
 
-    // $50+ still hits VIA1 mirrors (low4 = 0 → ORB). Write to $50,
-    // read back via VIA1 IFR-side-effect-free peek of ORB.
-    mb.slotRomWrite(0x52, 0xFF);          // VIA1 DDRB = $FF
-    mb.slotRomWrite(0x50, 0xA5);          // VIA1 ORB = $A5 (via mirror)
+    // A VIA1 mirror with A6 CLEAR is the VIA alone ($10-$3F; low4 = 0 →
+    // ORB). Anything with A6 set is also the speech chip — see below.
+    mb.slotRomWrite(0x12, 0xFF);          // VIA1 DDRB = $FF
+    mb.slotRomWrite(0x10, 0xA5);          // VIA1 ORB = $A5 (via mirror)
     // ORB readback observes the latched output.
     assert(mb.peekViaRegister(0, 0x00) == 0xA5);
 
+    // The speech chip select is ONE ADDRESS BIT, A6 (AppleWin: "SSI263 at
+    // $Cn4x-Cn7x, $CnCx-CnFx"), and the write also lands in the VIA the
+    // address selects — $CnC3 is speech register 3 AND VIA2's DDRA.
+    mb.slotRomWrite(0xC3, 0x0E);          // CTTRAMP through the $CnCx window
+    assert(mb.snapshotSsi263(&snap) && snap.regs[3] == 0x0E);
+    assert(mb.peekViaRegister(1, 0x03) == 0x0E && "…and VIA2's DDRA too");
+
     // After advanceCycles past the phoneme duration, A/!R fires and
-    // VIA1.IFR.CA1 latches (PCR.0 = 0 at reset = negative-edge active).
-    // IER.CA1 stays disabled so slot IRQ is still released.
+    // latches IFR.CA1 in the SECOND 6522 — AppleWin: "SSI263's IRQ (A/!R)
+    // is routed via the 2nd 6522's CA1 input (at $Cn80)", its code handing
+    // the primary chip to sub-unit 1 ("2nd 6522 is used for 1st speech
+    // chip"). POM2 latched it in VIA1 until 2026-09-12, so a stock driver
+    // enabling IER.CA1 at $Cn8E and servicing $Cn8D never saw the
+    // phoneme-done interrupt. (PCR.0 = 0 at reset = negative-edge active.)
+    // IER.CA1 stays disabled so the slot IRQ is still released.
+    mb.slotRomWrite(0x40, 0xC1);                           // restart the phoneme
+    mb.snapshotSsi263(&snap);
     mb.advanceCycles(snap.phonemeRemainingCycles + 100);
-    const uint8_t ifr1 = mb.peekViaRegister(0, 0x0D);     // VIA1 IFR
-    assert((ifr1 & 0x02) != 0);                            // IFR.CA1 set
+    assert((mb.peekViaRegister(1, 0x0D) & 0x02) != 0);     // VIA2 IFR.CA1 set
+    assert((mb.peekViaRegister(0, 0x0D) & 0x02) == 0 &&
+           "the phoneme-done edge must not land in VIA1");
     assert(!mb.isIrqAsserted());
 
-    // Enable IER.CA1 (write $82 = "set" bit 7 + CA1 bit 1). Drive
+    // Enable IER.CA1 on VIA2 (write $82 = "set" bit 7 + CA1 bit 1). Drive
     // another phoneme so a fresh A/!R edge fires and the slot IRQ
     // line goes high.
-    mb.slotRomWrite(0x0D, 0xFF);                           // clear all IFR bits
-    mb.slotRomWrite(0x0E, 0x82);                           // IER set CA1
+    mb.slotRomWrite(0x8D, 0xFF);                           // clear all IFR bits
+    mb.slotRomWrite(0x8E, 0x82);                           // IER set CA1
     mb.slotRomWrite(0x40, 0xC2);                           // restart phoneme
     mb.snapshotSsi263(&snap);
     mb.advanceCycles(snap.phonemeRemainingCycles + 100);
@@ -454,12 +479,17 @@ void testSoundIISpeechAudio()
     assert(rms > 0.005 &&
            "Sound II AudioSrc must mix SSI263 speech into its output");
 
-    // Mute still silences everything (speech included).
+    // Mute still silences everything, speech included — through the same
+    // 5 ms fade as the PSG side (bug hunt #19), so the tail is exact
+    // silence and the head still carries the utterance.
     mb.setMuted(true);
     src->fillAudioBuffer(buf.data(), N);
-    sumSq = 0.0;
-    for (float s : buf) sumSq += static_cast<double>(s) * s;
-    assert(sumSq == 0.0);
+    double headSq = 0.0;
+    for (int i = 0; i < 64; ++i) headSq += static_cast<double>(buf[i]) * buf[i];
+    double tailSq = 0.0;
+    for (int i = N / 2; i < N; ++i) tailSq += static_cast<double>(buf[i]) * buf[i];
+    assert(tailSq == 0.0 && "the fade must reach exact silence");
+    assert(std::sqrt(headSq / 64) > 0.3 * rms && "a mute is a fade, not a cut");
 
     // Control: the same writes on a vanilla AC card (no SSI263) keep the
     // output silent — the $40-$4F window is VIA territory there and no AY
@@ -560,16 +590,19 @@ void testUndrivenResetPinFloatsHigh()
 // on completion) IFR.CA1 never latched. $Cn4x READS go to the VIA on a
 // Sound II, so IFR.CA1 was the only window onto the pin and a polling
 // driver stalled on its first phoneme. The gate belongs to IER.
+//
+// The CA1 in question is the SECOND 6522's, at $Cn80 (see the variant
+// test above for the AppleWin wiring).
 void testARequestLatchesCa1InPolledMode()
 {
     MockingboardCard mb(4, MockingboardCard::Variant::SoundII);
     mb.slotRomWrite(0x43, 0x0F);              // CTTRAMP: CTL=0, amp=15
     mb.slotRomWrite(0x42, 0xF0);              // RATEINF: rate=15 (fast)
     mb.slotRomWrite(0x40, 0x05);              // DURPHON: mode=00, phon=5
-    assert((mb.peekViaRegister(0, 0x0D) & 0x02) == 0);   // IFR.CA1 clear
-    for (int i = 0; i < 200 && (mb.peekViaRegister(0, 0x0D) & 0x02) == 0; ++i)
+    assert((mb.peekViaRegister(1, 0x0D) & 0x02) == 0);   // IFR.CA1 clear
+    for (int i = 0; i < 200 && (mb.peekViaRegister(1, 0x0D) & 0x02) == 0; ++i)
         mb.advanceCycles(1000);
-    assert((mb.peekViaRegister(0, 0x0D) & 0x02) != 0 &&
+    assert((mb.peekViaRegister(1, 0x0D) & 0x02) != 0 &&
            "A/!R must latch IFR.CA1 in the polled mode (DR1:0 = 00)");
 }
 

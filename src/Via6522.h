@@ -215,6 +215,17 @@ struct Via6522
     /// Latch an external level onto port A's input pins.
     inline void setPortAInput(uint8_t v) { portAIn = v; }
 
+    /// What a guest read of a counter byte would return, with no side
+    /// effect — `written + 1 - elapsed`, the line `read()` implements and
+    /// `via_t1_rearm_chain` pins. The diagnostic panels re-implemented this
+    /// as the RAW counter and were one too high on all four bytes, which is
+    /// the one number somebody debugging a raster problem would trust.
+    inline uint8_t counterReadback(bool t2, bool high) const
+    {
+        const int32_t rb = (t2 ? t2Counter : t1Counter) - 1;
+        return static_cast<uint8_t>((high ? (rb >> 8) : rb) & 0xFF);
+    }
+
     /// What a bus read of ORA/ORANH sees. With ACR bit 0 set the port is
     /// LATCHED: the value frozen by the last active CA1 edge stands until
     /// IFR.CA1 is acknowledged. MAME `6522via.cpp:662-671` (ORA) and
@@ -365,16 +376,25 @@ struct Via6522
             if ((prev & ddrA) != (v & ddrA)) events |= 0x02;
             break;
         }
+        // A DDR write moves PINS, not just the latch — the event has to be
+        // reported on the composed pin value (`readPortB`/`readPortA`), which
+        // is also what the consumer is handed. Comparing `latch & ddr` missed
+        // every bit whose latch is 0: the pin goes from pulled-up 1 to driven
+        // 0, a real edge, with both sides of the comparison reading 0. On the
+        // Mockingboard and the Phasor that pin can be PB2, the AY's /RESET —
+        // so a driver that drives only BC1+BDIR (DDRB = $03, /RESET left to
+        // the board's pull-up) and later takes PB2 over as an output asserted
+        // a reset the AY never saw, and kept the previous program's registers.
         case VIA_DDRB: {
-            const uint8_t prev = portBOut & ddrB;
+            const uint8_t prev = readPortB();
             ddrB = v;
-            if ((portBOut & ddrB) != prev) events |= 0x01;
+            if (readPortB() != prev) events |= 0x01;
             break;
         }
         case VIA_DDRA: {
-            const uint8_t prev = portAOut & ddrA;
+            const uint8_t prev = readPortA();
             ddrA = v;
-            if ((portAOut & ddrA) != prev) events |= 0x02;
+            if (readPortA() != prev) events |= 0x02;
             break;
         }
         case VIA_T1CL:

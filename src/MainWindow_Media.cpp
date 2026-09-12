@@ -259,7 +259,17 @@ bool MainWindow::routeMountHdv(const std::string& path, int& bootSlotOut,
         bootSlotOut = mounted.bootSlot;
         return true;
     }
-    errOut = "no HDV or SmartPort card plugged";
+    // A Liron: its chain takes hard disks too (2026-09-11). Unit 0 is the
+    // one the firmware boots, so "mount and boot" goes there.
+    if (const int liron = pom2::StorageCoordinator::lironSlot(
+            controller->memory().slotBus()); liron >= 0) {
+        const auto r = storageCoordinator_->mountMediaBay(
+            *controller, *settings, liron, 0, path);
+        if (!r.ok) { errOut = r.error; return false; }
+        bootSlotOut = liron;
+        return true;
+    }
+    errOut = "no HDV, SmartPort or Liron card plugged";
     return false;
 }
 
@@ -458,7 +468,10 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             // failing it on the stock II+/IIe config (which ships no
             // SmartPort) made drag-and-drop refuse the single most common
             // 3.5" distribution format. Session-local, never persisted.
-            if (!primarySmartPortCard() &&
+            // A Liron already plugged is the 3.5" device: no card is added.
+            const int liron = pom2::StorageCoordinator::lironSlot(
+                controller->memory().slotBus());
+            if (!primarySmartPortCard() && liron < 0 &&
                 activeProfile != pom2::SystemProfile::AppleIIcPlus &&
                 ensureSmartPortCardForBoot() < 0) {
                 errOut = "no 3.5\" device in this config, and no free slot "
@@ -468,9 +481,11 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             if (!routeMount35(0, path, errOut)) return false;
             // SmartPort card present (incl. //c-class built-in slot 5) →
             // boot it explicitly; otherwise cold-boot (//c+ on-board hub).
-            if (primarySmartPortCard()) {
-                if (!controller->bootFromSlot(primarySmartPortCard()->getSlot())) {
-                    errOut = "slot " + std::to_string(primarySmartPortCard()->getSlot()) +
+            if (primarySmartPortCard() || liron >= 0) {
+                const int slot = primarySmartPortCard()
+                    ? primarySmartPortCard()->getSlot() : liron;
+                if (!controller->bootFromSlot(slot)) {
+                    errOut = "slot " + std::to_string(slot) +
                              " did not boot the image (cold-booted instead)";
                     return false;
                 }

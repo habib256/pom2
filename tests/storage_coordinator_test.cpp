@@ -790,7 +790,7 @@ int main()
                         auto state = mediaController.lockState();
                         auto* card = dynamic_cast<pom2::LironCard*>(
                             state.memory().slotBus().peripheral(1));
-                        assert(card && card->bayCount() == 8 &&
+                        assert(card && card->bayCount() == pom2::LironCard::kMaxUnits &&
                                "a fresh Liron carries the whole chain");
                     }
                     command = mediaStorage.setMediaBayCount(

@@ -131,13 +131,35 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
     // the realtime audio thread, where a heap allocation per buffer tick
     // is the canonical source of underruns/clicks. Grown once, only
     // touched by the audio thread (fillAudioBuffer is single-consumer).
+    /// Smoothed output gain, audio-thread only (bug hunt #19). `volume`
+    /// and `muted` used to be applied as a per-buffer STEP: ticking mute
+    /// during a sustained note, or dragging the mixer slider, stepped the
+    /// card's contribution by up to full scale at a buffer boundary — a pop
+    /// the card's own clicks-per-second meter counts. 5 ms is short enough
+    /// to feel instant and long enough to be inaudible.
+    float gainRamp = 0.0f;
+    // Power-on is not a transition: the ramp exists to smooth a CHANGE of
+    // gain, so the first buffer snaps to whatever the gain already is
+    // instead of fading in from silence.
+    bool  gainPrimed = false;
+    static constexpr float kGainRampSeconds = 0.005f;
+
     std::vector<float> speechScratch;
+    /// Generous enough for any device buffer we are handed (miniaudio asks
+    /// for 256 frames here; 8192 covers a hostile one without a realloc).
+    static constexpr std::size_t kSpeechScratchReserve = 8192;
 
     /// RateAware override — auto-config when AudioDevice::addSource picks
     /// this AudioSrc up (see MainWindow plugMockingboard).
     void setSampleRate(uint32_t hz) override
     {
         if (hz == 0) hz = kAudioSampleRate;
+        // Reserve the speech scratch ONCE, here rather than on the audio
+        // thread: `fillAudioBuffer`'s `resize` then never calls the
+        // allocator, whatever buffer size the device hands us (bug hunt
+        // #19 — the comment at the member's declaration always said so).
+        if (speechScratch.capacity() < kSpeechScratchReserve)
+            speechScratch.reserve(kSpeechScratchReserve);
         sampleRate.store(hz, std::memory_order_relaxed);
     }
 
@@ -167,7 +189,11 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
     /// 2026-08-01 this was cleared and re-filled every callback, and
     /// anything stamped past the buffer's cycle span was dumped wholesale
     /// at the buffer edge.
-    std::deque<MockingboardCard::AyRegEvent> pending;
+    /// Twice the producer's bound: the splice can bring in a full producer
+    /// queue on top of a backlog that the post-loop trim has not cut yet.
+    /// Allocated once — see AyEventRing.h.
+    pom2::AyEventRing<MockingboardCard::AyRegEvent> pending{
+        2 * MockingboardCard::kMaxAyEvents};
     /// Last `MockingboardCard::ayQueueGen_` this thread acted on. A
     /// change means the stamps in `pending` describe a timeline the
     /// machine has left (rewind, snapshot load, reset, queue overflow),
@@ -266,6 +292,8 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // Set when the CPU side signalled a timeline break (rewind,
         // snapshot load, reset, queue overflow) since the last callback.
         bool     timelineBroke    = false;
+        // …and did the CHIPS go with it? invalidateAyTimeline(bool).
+        bool     breakResetsGens  = true;
         // NOTE: `pending` is NOT cleared unless the timeline broke — it is
         // a jitter buffer that carries un-rendered writes over to the next
         // callback.
@@ -288,13 +316,12 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
                 lastSeenQueueGen = parent->ayQueueGen_;
                 pending.clear();
                 timelineBroke = true;
+                breakResetsGens = parent->ayBreakResetsGens_;
             }
             // Take the emuCycles-stamped register writes under the same
             // lock, APPENDING to whatever the last callback could not
             // render yet. See the replay loop below.
-            pending.insert(pending.end(),
-                           parent->ayEvents_.begin(), parent->ayEvents_.end());
-            parent->ayEvents_.clear();
+            pending.appendAndClear(parent->ayEvents_);
             latestEventCycle = parent->latestAyEventCycle_.load(
                 std::memory_order_relaxed);
         }
@@ -317,7 +344,15 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
             std::memcpy(liveRegs, regSnap, sizeof(liveRegs));
             regsPrimed = true;
             if (timelineBroke) {
-                for (int ci = 0; ci < 2; ++ci) chip[ci].resetGenerators();
+                // Only when the CHIPS went with the timeline — a card reset
+                // or a queue overflow. A rewind restores the register banks
+                // and re-anchors the cursor, and the generators must carry
+                // on from where they are: re-seeding them there put every
+                // envelope back at the top of its ramp (a note the guest
+                // never re-triggered) and re-phased every tone, once per
+                // seek of a scrub. See invalidateAyTimeline(bool).
+                if (breakResetsGens)
+                    for (int ci = 0; ci < 2; ++ci) chip[ci].resetGenerators();
                 audioCursor = 0;
                 cursorFrac  = 0.0;
             }
@@ -511,10 +546,17 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         dcL.setRate(sr);
         dcR.setRate(sr);
 
-        if (isMuted) {
+        const float gainTarget = isMuted ? 0.0f : vol;
+        if (!gainPrimed) { gainRamp = gainTarget; gainPrimed = true; }
+        // Muted AND already faded: nothing to render. Otherwise fall
+        // through and let the ramp below walk the gain down to zero.
+        if (isMuted && gainRamp <= 0.0001f) {
+            gainRamp = 0.0f;
             silence();
             return;
         }
+        const float gainStep =
+            1.0f / (kGainRampSeconds * static_cast<float>(sr));
 
         // ── SSI263 speech (Sound II variant only) ─────────────────────
         // Render the speech chip's PCM into a temp buffer under the
@@ -532,21 +574,31 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
                 speechScratch.resize(static_cast<size_t>(frameCount));
             std::fill_n(speechScratch.begin(), frameCount, 0.0f);
             std::lock_guard<std::mutex> lk(parent->mtx);
-            parent->ssi_->fillAudio(speechScratch.data(), frameCount, sr);
+            // On the SAME cursor the PSG replay uses: `audioCursor` is the
+            // CPU cycle this buffer's first sample covers, so a DURPHON
+            // write lands on its own sample instead of at a buffer edge.
+            parent->ssi_->fillAudioTimed(
+                speechScratch.data(), frameCount, sr,
+                static_cast<double>(audioCursor) + cursorFrac,
+                cyclesPerSample);
             speechBuf = speechScratch.data();
         }
 
         for (int i = 0; i < frameCount; ++i) {
-            // Apply every register write stamped at or before this
-            // sample's CPU cycle — this is what gives sub-buffer timing.
+            // This sample spans the CPU cycles (sampleStart, audioCursor].
+            // Every register write stamped inside it is applied AT ITS OWN
+            // position in the sample, not before the whole of it — see the
+            // segment loop below.
+            const double sampleStart =
+                static_cast<double>(audioCursor) + cursorFrac;
             cursorFrac += cyclesPerSample;
             const uint64_t whole = static_cast<uint64_t>(cursorFrac);
             audioCursor += whole;
             cursorFrac  -= static_cast<double>(whole);
+            const std::size_t evFirst = nextEvent;
             while (nextEvent < pending.size() &&
-                   pending[nextEvent].cycle <= audioCursor) {
-                applyEvent(pending[nextEvent++]);
-            }
+                   pending[nextEvent].cycle <= audioCursor) ++nextEvent;
+            const std::size_t evLast = nextEvent;
             // Per chip, NOT summed: chip 0 is the left channel and chip 1
             // the right one (MAME `a2mockingboard.cpp:161-165`).
             float chipOut[2] = { 0.0f, 0.0f };
@@ -576,8 +628,32 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
                 // what fixes CPU-driven volume-register PWM (Digidream
                 // 2's channel-A "SID voice"), whose edges land on
                 // arbitrary CPU cycles rather than on tick boundaries.
-                chipOut[ci] = pom2::ay::renderChipSample(
-                    cs, r, ticksPerSample, invTicksPerSample);
+                // …and the write placement is only sub-sample if the
+                // sample is SPLIT at the write (bug hunt #19). Before that,
+                // every event inside a sample was applied before any of it
+                // was integrated, so a register-driven edge — the whole of a
+                // volume-PWM digidrum — landed on the output grid, 0 to one
+                // sample early, never late. Tone/noise/envelope edges were
+                // always sub-sample placed; these were not.
+                float  acc      = 0.0f;
+                double segStart = 0.0;   // fraction of the sample done
+                for (std::size_t k = evFirst; k < evLast; ++k) {
+                    const auto& e = pending[k];
+                    if (e.chip != ci) continue;
+                    double pos = (static_cast<double>(e.cycle) - sampleStart)
+                                 / cyclesPerSample;
+                    if (pos < segStart) pos = segStart;
+                    if (pos > 1.0)      pos = 1.0;
+                    acc += pom2::ay::integrateChipTicks(
+                        cs, r, static_cast<float>(ticksPerSample
+                                                  * (pos - segStart)));
+                    applyEvent(e);
+                    segStart = pos;
+                }
+                acc += pom2::ay::integrateChipTicks(
+                    cs, r, static_cast<float>(ticksPerSample
+                                              * (1.0 - segStart)));
+                chipOut[ci] = acc * invTicksPerSample;
             }
             // ── Level + DC blocking ───────────────────────────────────
             // ONE AY x 3 channels x peak 1.0 = 3.0 per side, so `/3` is
@@ -600,15 +676,21 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
             // and `/3` falls out naturally.
             const float dcOutL = dcL.process(chipOut[0] * (1.0f / 3.0f));
             const float dcOutR = dcR.process(chipOut[1] * (1.0f / 3.0f));
+            // Walk the gain toward its target instead of stepping to it.
+            if (gainRamp < gainTarget)
+                gainRamp = std::min(gainTarget, gainRamp + gainStep);
+            else if (gainRamp > gainTarget)
+                gainRamp = std::max(gainTarget, gainRamp - gainStep);
+            const float g = gainRamp;
             // Speech is CENTRED — MAME routes the card's speech chip to
             // both channels at unity (`a2mockingboard.cpp:186-189`), and
             // there is one SSI263 on a Sound II, not one per side.
             const float ssi = speechBuf ? speechBuf[i] : 0.0f;
             if (right) {
-                left[i]  = (dcOutL + ssi) * vol;
-                right[i] = (dcOutR + ssi) * vol;
+                left[i]  = (dcOutL + ssi) * g;
+                right[i] = (dcOutR + ssi) * g;
             } else {
-                left[i] = (0.5f * (dcOutL + dcOutR) + ssi) * vol;
+                left[i] = (0.5f * (dcOutL + dcOutR) + ssi) * g;
             }
         }
 
@@ -620,16 +702,14 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // value written to each register in a burst survived, and the
         // cursor was then yanked to `pending.back().cycle`. See the
         // jitter-buffer note above.)
-        pending.erase(pending.begin(),
-                      pending.begin() + static_cast<ptrdiff_t>(nextEvent));
+        pending.eraseFront(nextEvent);
         // Bound the queue: if the audio thread stops consuming (device
         // closed, buffer starvation) the CPU side would otherwise grow it
         // without limit. kMaxAyEvents is the same bound the producer uses.
         if (pending.size() > kMaxAyEvents) {
             const size_t drop = pending.size() - kMaxAyEvents;
             for (size_t k = 0; k < drop; ++k) applyEvent(pending[k]);
-            pending.erase(pending.begin(),
-                          pending.begin() + static_cast<ptrdiff_t>(drop));
+            pending.eraseFront(drop);
         }
     }
 };
@@ -730,7 +810,10 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // both queues go. Without this the audio thread's `pending` front sits
     // in the pre-restore future, the render loop's strict front-ordering
     // blocks on it, and the card is SILENT for the whole rewind depth.
-    invalidateAyTimeline();
+    //
+    // …but the CHIPS did not go with it: this restores their registers, and
+    // the generators must carry on from where they are (see the bool).
+    invalidateAyTimeline(/*resetChips=*/false);
     ayResetHeld_[0] = ayResetHeld_[1] = false;
     if ((present & 0x01) && !loadVia(via_[0])) return;
     if ((present & 0x02) && !loadVia(via_[1])) return;
@@ -935,16 +1018,31 @@ void MockingboardCard::slotRomWrite(uint8_t low8, uint8_t v)
 {
     std::lock_guard<std::mutex> lk(mtx);
     syncToCpuCycle();     // T1 counters reflect "now" before T1CH reload
-    if (ssi_ && (low8 & 0xF0) == 0x40) {
-        // SSI263 register write ($40-$4F, regs 0-7 from the low 3 bits).
-        // Per MAME `a2mockingboard.cpp:346-349` "Cn40 will write to both
-        // the VIA and the first SSI-263" — the write SHADOWS into VIA1's
-        // reg 0-15 mirror as well (fall through below), it does not
-        // replace it. The chip's own write() acks A/!R internally for
+    if (ssi_ && (low8 & 0x40)) {
+        // SSI263 register write. The chip select is ONE ADDRESS BIT, A6 —
+        // AppleWin `Mockingboard.cpp`: `bool CS_SSI263_A = (nAddr & 0x40);
+        // // SSI263 at $Cn4x-Cn7x, $CnCx-CnFx`, with the register taken from
+        // `nAddr & 0x7`. POM2 decoded `$Cn40-$Cn4F` alone until 2026-09-12,
+        // so the $CnCx window — the natural address for this chip, since it
+        // acks into the VIA at $Cn80 — wrote a phoneme byte straight into
+        // VIA2's ORB instead: PB2 low there is AY2's /RESET, wiping the
+        // right-channel PSG once per phoneme.
+        //
+        // The write ALSO lands in the VIA (fall through below), on hardware
+        // and in both references: AppleWin "NB. Mockingboard mode: writes to
+        // $Cn4x/SSI263 also get written to 1st 6522", MAME
+        // `a2mockingboard.cpp` "Cn40 will write to both the VIA and the
+        // first SSI-263". The chip's own write() acks A/!R internally for
         // $00..$02 — the host CPU clears the VIA's IFR.CA1 separately
         // (typical Mockingboard Sound II driver writes the CA1 bit to
         // IFR after each phoneme).
         ssi_->write(low8 & 0x07, v);
+        // …and queue the same write on the AUDIO timeline, stamped with the
+        // cycle the driver issued it on (bug hunt #19). `write()` above is
+        // the CPU-NOW half: it drives the phoneme countdown and A/!R, both
+        // guest-visible. The rendering half now travels with the PSG events
+        // through the same jitter buffer instead of arriving ~40 ms early.
+        ssi_->queuePlaybackEvent(low8 & 0x07, v, lastSyncCycle_);
     }
     const int chip = (low8 & 0x80) ? 1 : 0;
     ++viaWriteCount_[chip];
@@ -1048,8 +1146,9 @@ void MockingboardCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
 }
 
 // Declare the cycle-stamped event stream discontinuous. Caller holds mtx.
-void MockingboardCard::invalidateAyTimeline()
+void MockingboardCard::invalidateAyTimeline(bool resetChips)
 {
+    ayBreakResetsGens_ = resetChips;
     ayEvents_.clear();
     // `latestAyEventCycle_` is half of the cursor's `producerNow`. Leaving
     // a pre-rewind value in it would hold `producerNow` at the OLD
@@ -1081,7 +1180,15 @@ void MockingboardCard::advanceCycles(int cycles)
     if (ssi_) {
         const bool arBefore = ssi_->aRequest();
         (void)ssi_->advance(cycles);
-        if (!arBefore && ssi_->aRequest()) via_[0]->setCa1NegativeEdge();
+        // …into the SECOND 6522's CA1, not the first. AppleWin, which is
+        // the reference for this chip (MAME's Mockingboard carries a Votrax
+        // SC-01 instead and has no SSI263 at all): "SSI263's IRQ (A/!R) is
+        // routed via the 2nd 6522's CA1 input (at $Cn80)", and its code
+        // hands the PRIMARY chip to sub-unit 1 — "2nd 6522 is used for 1st
+        // speech chip". POM2 latched it in VIA1 until 2026-09-12, so a stock
+        // driver that enables IER.CA1 on $Cn8E and services $Cn8D never saw
+        // the phoneme-done interrupt and stalled after its first sound.
+        if (!arBefore && ssi_->aRequest()) via_[1]->setCa1NegativeEdge();
     }
     if (cpu_) {
         // Lazy-sync path: any cycles already accounted for via MMIO accesses
@@ -1117,6 +1224,40 @@ void MockingboardCard::updateIrq()
     assertIrq(combined);
 }
 
+MockingboardCard::Diagnostics MockingboardCard::captureDiagnostics() const
+{
+    Diagnostics d;
+    std::lock_guard<std::mutex> lk(mtx);
+    for (int c = 0; c < 2; ++c) {
+        Diagnostics::Chip& out = d.chip[c];
+        for (int r = 0; r < 16; ++r)
+            out.via[r] = peekViaRegisterLocked(c, r);
+        std::memcpy(out.ay, ay_[c]->regs, sizeof(out.ay));
+        out.viaWrites = viaWriteCount_[c];
+        out.ayWrites  = ayWriteCount_[c];
+        out.ayResets  = ayResetCount_[c];
+        const auto& ay = *ay_[c];
+        out.cmd[0] = ay.inactiveCount;
+        out.cmd[1] = ay.readStrobeCount;
+        out.cmd[2] = ay.writeStrobeCount;
+        out.cmd[3] = ay.latchCount;
+    }
+    d.irqAsserted = slotIrqAsserted();
+    d.hasSsi      = ssi_ != nullptr;
+    if (d.hasSsi) {
+        for (int r = 0; r <= pom2::Ssi263::REG_FILFREQ; ++r)
+            d.ssi.regs[r] = ssi_->peekRegister(static_cast<uint8_t>(r));
+        d.ssi.currentPhoneme         = ssi_->currentPhoneme();
+        d.ssi.mode                   = static_cast<uint8_t>(ssi_->currentMode());
+        d.ssi.aRequest               = ssi_->aRequest();
+        d.ssi.powerDown              = ssi_->powerDown();
+        d.ssi.irqEnabled             = ssi_->irqEnabled();
+        d.ssi.phonemeRemainingCycles = ssi_->phonemeRemainingCycles();
+        d.ssi.phonemeWriteCount      = ssi_->phonemeWriteCount();
+    }
+    return d;
+}
+
 uint8_t MockingboardCard::getAyRegister(int chip, int reg) const
 {
     if (chip < 0 || chip > 1 || reg < 0 || reg >= kAyNumRegs) return 0;
@@ -1128,6 +1269,11 @@ uint8_t MockingboardCard::peekViaRegister(int chip, int reg) const
 {
     if (chip < 0 || chip > 1 || reg < 0 || reg > 15) return 0xFF;
     std::lock_guard<std::mutex> lk(mtx);
+    return peekViaRegisterLocked(chip, reg);
+}
+
+uint8_t MockingboardCard::peekViaRegisterLocked(int chip, int reg) const
+{
     // Read-only peek: replicate the read() switch but skip side effects.
     auto& v = *via_[chip];
     switch (reg & 0x0F) {
@@ -1135,12 +1281,12 @@ uint8_t MockingboardCard::peekViaRegister(int chip, int reg) const
     case VIA_ORA:    return v.readPortA();
     case VIA_DDRB:   return v.ddrB;
     case VIA_DDRA:   return v.ddrA;
-    case VIA_T1CL:   return static_cast<uint8_t>(v.t1Counter & 0xFF);
-    case VIA_T1CH:   return static_cast<uint8_t>((v.t1Counter >> 8) & 0xFF);
+    case VIA_T1CL:   return v.counterReadback(false, false);
+    case VIA_T1CH:   return v.counterReadback(false, true);
     case VIA_T1LL:   return static_cast<uint8_t>(v.t1Latch & 0xFF);
     case VIA_T1LH:   return static_cast<uint8_t>((v.t1Latch >> 8) & 0xFF);
-    case VIA_T2CL:   return static_cast<uint8_t>(v.t2Counter & 0xFF);
-    case VIA_T2CH:   return static_cast<uint8_t>((v.t2Counter >> 8) & 0xFF);
+    case VIA_T2CL:   return v.counterReadback(true, false);
+    case VIA_T2CH:   return v.counterReadback(true, true);
     case VIA_SR:     return v.sr;
     case VIA_ACR:    return v.acr;
     case VIA_PCR:    return v.pcr;

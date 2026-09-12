@@ -173,6 +173,23 @@ public:
 
     /// Convenience accessors for inspectors / save state.
     bool isMotorOn()        const { return motorOn_; }
+
+    /// Guest-write diagnostics. `sectorsDecoded` counts sectors the decoder
+    /// ACCEPTED out of the cells this drive wrote — right track, right side,
+    /// address checksum, data checksum and the DE AA epilogue all valid.
+    /// `sectorsCommitted` counts the subset that actually changed a block.
+    ///
+    /// They are deliberately two numbers, because they answer two different
+    /// questions and only the first one is about the emulator. A guest that
+    /// rewrites a sector with the bytes already on the disk has written
+    /// correctly and changed nothing — which is exactly what ProDOS 8 does
+    /// while booting the //c+. `iicplus_boot35` asserted the image had gone
+    /// dirty and read "the write path never ran" out of a clean image; the
+    /// write path had in fact fed six complete 717-byte sectors. Measured
+    /// 2026-09-12: 9 sectors accepted on track 53, 12 on tracks 0 and 2,
+    /// every one identical to the medium.
+    uint32_t sectorsDecoded()   const { return sectorsDecoded_; }
+    uint32_t sectorsCommitted() const { return sectorsCommitted_; }
     /// Asked of the MEDIUM, never of a cache. There used to be a
     /// `writeProtect_` member refreshed only by `reset()` / `setImage()` /
     /// `notifyMediaChange()`, so every later change — the user toggling
@@ -341,6 +358,10 @@ private:
     // flip between the last written flux and the flush applied the bit stream
     // to whatever track the head had reached by then.
     bool writeActive_ = false;
+    // `decodeAndCommit` is const (it is reachable from the const read path),
+    // so the diagnostic counters are mutable.
+    mutable uint32_t sectorsDecoded_   = 0;
+    mutable uint32_t sectorsCommitted_ = 0;
     int  writeTrack_  = 0;
     int  writeHead_   = 0;
     /// Where the write head sits in the cell array, and the tick that

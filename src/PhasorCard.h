@@ -109,6 +109,7 @@
 #define POM2_PHASOR_CARD_H
 
 #include "Ay3_8910.h"
+#include "AyEventRing.h"
 #include "AudioSource.h"
 #include "SlotPeripheral.h"
 #include "Via6522.h"
@@ -196,7 +197,36 @@ public:
         return (chip >= 0 && chip < 4) ? ayResetCount_[chip] : 0;
     }
 
+    /// Capture everything the diagnostic panel shows, under ONE acquisition
+    /// of the card mutex (bug hunt #19).
+    ///
+    /// The panel used to assemble its view one accessor at a time:
+    /// `peekViaRegister` (9 per VIA) + `getAyRegister` (16 per chip) +
+    /// `snapshotSsi263` = **51 separate locks of `mtx` per rendered frame**
+    /// on the Mockingboard, 82 on the Phasor — the same mutex the realtime
+    /// audio thread takes on every callback and the CPU thread takes on
+    /// every MMIO access. Two costs, and the second is the real defect:
+    ///   * the panel interleaved with the running machine 51 times a frame,
+    ///     at 60 Hz, on the lock that gates audio rendering;
+    ///   * the values it displayed came from 51 DIFFERENT machine states, so
+    ///     VIA1 and VIA2 — or an AY register bank and the IFR that explains
+    ///     it — never described the same instant. A timing investigation was
+    ///     reading a composite that never existed.
+    struct Diagnostics {
+        uint8_t  via[2][16]{};     ///< indexed by VIA register number
+        uint32_t viaWrites[2]{};
+        uint8_t  ay[4][16]{};
+        uint32_t ayWrites[4]{}, ayResets[4]{};
+        bool     irqAsserted = false;
+        uint8_t  mode        = 0;
+        int      clockScale  = 1;
+    };
+    Diagnostics captureDiagnostics() const;
+
 private:
+    /// Caller holds `mtx_` — see `captureDiagnostics`.
+    uint8_t peekViaRegisterLocked(int chip, int reg) const;
+
     struct AudioSrc;
 
     int    slot_;
@@ -258,14 +288,24 @@ private:
         uint8_t  reg;
         uint8_t  val;
     };
-    std::deque<AyRegEvent> ayEvents_;                 // guarded by mtx_
+    /// Fixed capacity, allocated once — see AyEventRing.h and the note on
+    /// MockingboardCard's queue.
+    pom2::AyEventRing<AyRegEvent> ayEvents_{kMaxAyEvents};  // guarded by mtx_
     std::atomic<uint64_t>  latestAyEventCycle_{0};
     static constexpr size_t kMaxAyEvents = 16384;
     uint32_t ayQueueGen_ = 0;
+    /// Did the CHIPS go with the last timeline break? See
+    /// invalidateAyTimeline(bool). Audio thread reads it under `mtx_`.
+    bool     ayBreakResetsGens_ = true;
     /// Queue one cycle-stamped AY event. Caller holds mtx_.
     void queueAyEvent(int chip, uint8_t reg, uint8_t val);
     /// Declare the stamped stream discontinuous. Caller holds mtx_.
-    void invalidateAyTimeline();
+    /// `resetChips` says whether the CHIPS went with it: true for a card
+    /// reset or a queue overflow, false for a rewind / snapshot restore,
+    /// where the registers are restored and the generators must keep
+    /// running — re-seeding them there re-attacked every envelope the guest
+    /// had not re-triggered, once per seek of a scrub.
+    void invalidateAyTimeline(bool resetChips = true);
 
     // MAME-parity slot-ROM VIA select: bit 0 = VIA1, bit 1 = VIA2, 0 =
     // undecoded. See the comment block above the definition for the

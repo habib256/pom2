@@ -209,6 +209,27 @@ public:
     /// Memory::memRead + SmartPortCard.
     virtual bool exposesIicOnboardRom() const { return false; }
 
+    /// A //c-class machine has no slots, but it does have an internal
+    /// expansion connector, and a card on it answers at a FIXED page of the
+    /// $Cn00 window — not at "its slot", which on a //c is a POM2 fiction.
+    /// Return that page (1-7) to be routed there through the forced
+    /// INTCXROM mask, reads and writes alike; -1 (the default) means the
+    /// card has no such window.
+    ///
+    /// The Mockingboard 4c is the case this exists for: it plugs into the
+    /// //c's internal connector and answers at $C400-$C4FF like a slot-4
+    /// Mockingboard, while POM2's slot 4 on that profile is held by the
+    /// native IOU mouse — which is not a card at all on real hardware.
+    virtual int iicRomWindowPage() const { return -1; }
+
+    /// This card's audio output, or null if it makes no sound. On the base
+    /// since 2026-09-12 so a mixer can WALK the bus instead of knowing three
+    /// card names: `Pom2Core::pullAudio` knew about one Mockingboard and
+    /// nothing else, so an embedder heard silence from a Phasor, an Echo+ or
+    /// a second Mockingboard that the GUI played fine. The sound cards
+    /// already declare exactly this signature.
+    virtual class AudioSource* audioSource() { return nullptr; }
+
     /// SmartPort **bus** units this card can put on a //c's external disk
     /// port. The 32 KB //c's own firmware talks to its 3.5" drive as an
     /// intelligent device over the IWM (`SmartPortBusDevice`); a card that

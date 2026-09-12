@@ -1,14 +1,19 @@
-// Eight 3.5" units on a //e's Liron card, enumerated by ProDOS — 2026-09-11.
+// A //e's Liron card with a full chain, enumerated by ProDOS — 2026-09-11.
 //
 // The //c reached eight SmartPort units on 2026-09-08 (`iic_smartport_six_
 // units`): its bank-1 firmware INITs the chain on the rear port and ProDOS
 // 8 2.4+ remaps units 3+ onto slots with no disk device. A Liron runs the
 // same firmware, byte for byte, from its own EPROM, over the same responder
-// (`SmartPortBusDevice`) — but the card had two fixed bays. It takes 2, 4, 6
-// or 8 now (`LironCard::setUnitCount`), eight out of the box. This boots
-// ProDOS from bay 0 (a scratch copy of A2DeskTop's 800K image) with seven 800K volumes behind it,
-// through the card's REAL firmware, and reads DEVLST off the global page:
-// every unit on the chain must be a ProDOS device, and none past the count.
+// (`SmartPortBusDevice`) — but the card had two fixed 3.5" bays. It takes
+// 2 to 14 units now (`LironCard::setUnitCount`), fourteen out of the box,
+// and a unit holds a 3.5" 800K image OR a ProDOS hard disk. This boots
+// ProDOS through the card's REAL firmware — off a 3.5" and off a hard disk
+// in unit 0 — and reads DEVLST off the global page: every unit on the chain
+// must be a ProDOS device, and none past the count.
+//
+// Fourteen is ProDOS 8's own ceiling, measured: the firmware's INIT scan
+// numbers sixteen units without complaint, and ProDOS 8 2.4 fills its
+// 14-entry device table (one entry, S3,D2, stays /RAM's) and stops.
 //
 // Needs roms/apple2e.rom, roms/liron.rom and
 // disks_3.5/A2DeskTop-1.5-en_800k.2mg.
@@ -56,12 +61,42 @@ std::string makeVolume35(int n, const fs::path& scratchDir)
     return po.string();
 }
 
+// A bootable hard disk: the A2DeskTop volume's 1600 blocks at the head of a
+// 4 MiB image — past the 1 MiB line, so the Liron takes it as a hard disk.
+// ProDOS boots a volume smaller than its device without complaint.
+std::string makeBootHdv(const std::string& boot35, const fs::path& scratchDir)
+{
+    pom2::Disk35Image img;
+    if (!img.loadFile(boot35)) { fail("cannot read the 800K image"); return {}; }
+    std::vector<uint8_t> hdv(8192u * 512u, 0);
+    for (uint32_t b = 0; b < pom2::Disk35Image::kBlockCount; ++b)
+        if (!img.readBlock(b, hdv.data() + b * 512u)) { fail("read block"); return {}; }
+    const fs::path out = scratchDir / "boot.hdv";
+    std::ofstream f(out, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char*>(hdv.data()), static_cast<std::streamsize>(hdv.size()));
+    return out.string();
+}
+
+// A small volume padded to 2 MiB: a hard disk, not a 3.5".
+std::string makeVolumeHdv(int n, const fs::path& scratchDir)
+{
+    const std::string po = makeVolume35(n, scratchDir);
+    if (po.empty()) return {};
+    std::error_code ec;
+    fs::resize_file(po, 2u * 1024u * 1024u, ec);
+    if (ec) { fail("resize " + po); return {}; }
+    const fs::path hdv = fs::path(po).replace_extension(".hdv");
+    fs::rename(po, hdv, ec);
+    return ec ? std::string{} : hdv.string();
+}
+
 struct Outcome {
     int devcnt = -1;
     std::vector<uint8_t> devlst;
     uint8_t kernelVersion = 0;
     int transactions = 0;
     int blocksRead = 0;
+    std::vector<std::string> kinds;   // bayInfo().kindLabel per unit
 };
 
 Outcome boot(const std::string& rom, const std::string& boot35,
@@ -124,6 +159,7 @@ Outcome boot(const std::string& rom, const std::string& boot35,
     sample();
     o.transactions = liron->busProgress().transactions;
     o.blocksRead   = liron->busProgress().blocksRead;
+    for (int b = 0; b < unitCount; ++b) o.kinds.push_back(liron->bayInfo(b).kindLabel);
     return o;
 }
 
@@ -147,20 +183,28 @@ int cardDevices(const std::vector<uint8_t>& devlst)
     return n;
 }
 
-void expect(const std::string& rom, const std::string& boot35,
-            const std::vector<std::string>& volumes, int units)
+Outcome expect(const std::string& rom, const std::string& bootImage,
+               const std::vector<std::string>& volumes, int units, int listed)
 {
-    const Outcome o = boot(rom, boot35, volumes, units);
+    const Outcome o = boot(rom, bootImage, volumes, units);
     std::printf("  //e Liron, %d units: ProDOS $%02X, DEVCNT=%d, DEVLST: %s "
                 "(bus transactions %d, blocks read %d)\n",
                 units, o.kernelVersion, o.devcnt, describe(o.devlst).c_str(),
                 o.transactions, o.blocksRead);
     const int n = cardDevices(o.devlst);
-    if (n != units)
+    if (n != listed)
         fail("with " + std::to_string(units) + " units on the Liron, ProDOS lists " +
-             std::to_string(n) + " card devices");
+             std::to_string(n) + " card devices, want " + std::to_string(listed));
     else
         std::printf("  ok: %d units on the chain, %d ProDOS devices\n", units, n);
+    return o;
+}
+
+int count(const std::vector<std::string>& kinds, const char* kind)
+{
+    int n = 0;
+    for (const auto& k : kinds) if (k == kind) ++n;
+    return n;
 }
 
 }  // namespace
@@ -171,7 +215,7 @@ int main()
     const std::string liron = pom2::findResource("roms/liron.rom");
     const std::string disk  = pom2::findResource("disks_3.5/A2DeskTop-1.5-en_800k.2mg");
     if (rom.empty() || liron.empty() || disk.empty()) {
-        std::printf("SKIP liron_eight_units: need roms/apple2e.rom, roms/liron.rom "
+        std::printf("SKIP liron_chain: need roms/apple2e.rom, roms/liron.rom "
                     "and disks_3.5/A2DeskTop-1.5-en_800k.2mg\n");
         return 77;
     }
@@ -185,30 +229,65 @@ int main()
     const fs::path boot35 = scratch / "a2desktop.2mg";
     fs::copy_file(disk, boot35, fs::copy_options::overwrite_existing, ec);
     if (ec) { fail("cannot copy the boot disk: " + ec.message()); return 1; }
+    // Thirteen volumes for units 1-13: 3.5" and hard disks alternating.
     std::vector<std::string> volumes;
-    for (int n = 2; n <= 8; ++n) {
-        const std::string po = makeVolume35(n, scratch);
-        if (po.empty()) return 1;
-        volumes.push_back(po);
+    for (int n = 2; n <= 14; ++n) {
+        const std::string v = (n & 1) ? makeVolumeHdv(n, scratch) : makeVolume35(n, scratch);
+        if (v.empty()) return 1;
+        volumes.push_back(v);
     }
+    const std::string bootHdv = makeBootHdv(boot35.string(), scratch);
+    if (bootHdv.empty()) return 1;
 
-    expect(rom, boot35.string(), volumes, 8);   // the ceiling
-    expect(rom, boot35.string(), volumes, 6);
-    expect(rom, boot35.string(), volumes, 2);   // what an older ProDOS can see
+    // The whole chain, booted off a HARD DISK in unit 0: every unit is a
+    // device up to ProDOS's table — thirteen here, /RAM keeps the fourteenth.
+    {
+        const Outcome o = expect(rom, bootHdv, volumes, 14, 13);
+        if (o.kinds.empty() || o.kinds[0] != "ProDOS HDV")
+            fail("unit 0 did not mount the 4 MiB image as a hard disk");
+        if (count(o.kinds, "ProDOS HDV") != 7 || count(o.kinds, "3.5\" 800K") != 7)
+            fail("the chain is not seven hard disks and seven 3.5\" disks");
+        if (o.blocksRead == 0) fail("nothing was read over the bus from the hard disk");
+    }
+    // Twelve fit whole; eight off a 3.5"; two, what an older ProDOS can see.
+    expect(rom, bootHdv, volumes, 12, 12);
+    expect(rom, boot35.string(), volumes, 8, 8);
+    expect(rom, boot35.string(), volumes, 2, 2);
 
-    // The count's rules, without a boot: pairs, 2..8.
+    // A unit is whatever disk is put in it, and a failed mount keeps the old.
     {
         pom2::LironCard card(5);
-        // The whole chain by default, as the //c's rear port can carry it.
-        if (card.bayCount() != 8)
-            fail("a fresh Liron has " + std::to_string(card.bayCount()) + " bays, want 8");
-        card.setUnitCount(5);  if (card.bayCount() != 6) fail("5 units did not round up to 6");
-        card.setUnitCount(0);  if (card.bayCount() != 2) fail("0 units did not clamp to 2");
-        card.setUnitCount(99); if (card.bayCount() != 8) fail("99 units did not clamp to 8");
+        std::string err;
+        if (!card.mountBay(3, volumes[0], err)) fail("mount a 3.5\" in unit 3: " + err);
+        if (card.bayInfo(3).kindLabel != "3.5\" 800K") fail("unit 3 is not a 3.5\"");
+        if (!card.mountBay(3, volumes[1], err)) fail("mount a hard disk over it: " + err);
+        if (card.bayInfo(3).kindLabel != "ProDOS HDV" || card.bayInfo(3).path != volumes[1])
+            fail("the hard disk did not replace the 3.5\" in unit 3");
+        if (card.blockBackings().size() != 14 || !card.blockBackings()[3]->isLoaded())
+            fail("unit 3's hard disk is not offered to the background autosave");
+        if (card.mountBay(3, (scratch / "no-such.hdv").string(), err))
+            fail("a missing file mounted");
+        if (card.bayInfo(3).path != volumes[1])
+            fail("a failed mount dropped the disk that was in the unit");
+        if (!card.mountBay(3, volumes[0], err) || card.bayInfo(3).kindLabel != "3.5\" 800K" ||
+            card.blockBackings()[3]->isLoaded())
+            fail("a 3.5\" did not replace the hard disk in unit 3");
+        if (!card.ejectBay(3) || card.bayInfo(3).loaded) fail("eject unit 3");
+    }
+
+    // The count's rules, without a boot: pairs, 2..14.
+    {
+        pom2::LironCard card(5);
+        // The whole chain by default.
+        if (card.bayCount() != 14)
+            fail("a fresh Liron has " + std::to_string(card.bayCount()) + " bays, want 14");
+        card.setUnitCount(5);  if (card.bayCount() != 6)  fail("5 units did not round up to 6");
+        card.setUnitCount(0);  if (card.bayCount() != 2)  fail("0 units did not clamp to 2");
+        card.setUnitCount(99); if (card.bayCount() != 14) fail("99 units did not clamp to 14");
     }
 
     fs::remove_all(scratch, ec);
     if (g_failures) return 1;
-    std::puts("liron_eight_units OK");
+    std::puts("liron_chain OK");
     return 0;
 }

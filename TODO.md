@@ -166,7 +166,7 @@ again. Details and rationale in CHANGELOG.md.*
   * `MainWindow_Media.cpp:98` (status bar) — built `disk_path_slot<N>` for
     BOTH drives, so ejecting drive 2 cleared drive 1's path and left
     `_drive2` set. The documented one.
-  * `MainWindow_Slots.cpp:971` (Slot Config) — skipped drive 2 entirely on a
+  * `MainWindow_Slots.cpp` (Slot Config) — skipped drive 2 entirely on a
     comment claiming "drive 2 mounts are session-only", untrue since
     `diskIIPathSettingKey` gained `_drive2` and `restoreMediaFromSettings`
     began looping both drives. Its Insert button had the same gap, so a
@@ -594,8 +594,8 @@ host folder · IWM + Sony 3.5" + SmartPort hub · **the SmartPort card's units
 3-8** *(2026-09-08, A2retroNET's shape: enumerated by ProDOS 8 2.4+, pinned
 `smartport_eight_units` on the //e and `iic_smartport_six_units` on the //c's
 rear port; units 1-2 stay core)* · Liron card *(the fidelity
-alternative to the core `smartport35`; 2-8 units since 2026-09-11, pinned
-`liron_eight_units`)* · //c-class on-board SmartPort + the
+alternative to the core `smartport35`; since 2026-09-11 up to 14 units, each
+3.5" or hard disk, pinned `liron_chain`)* · //c-class on-board SmartPort + the
 `$C500` stub + `IIcExternalSmartPort` · Super Serial Card + telnet *(the "real
 SSC ROM" move is closed as won't-do)* · Uthernet II *(**`LISTEN` closed as
 won't-do**)* · FujiNet relay *(relay side only; three of its five open items are
@@ -1085,6 +1085,84 @@ Grouped by subsystem. Severity encoded by 🔴/🟠/🟡/🟢/🧊 at the head o
   **Strapping RAM 4K→48K**.
 
 ### [Audio]
+
+#### Left open by bug hunt #19 (2026-09-12) — the seams
+
+- ~~**A Mockingboard cannot be plugged on a //c-class profile.**~~ **done
+  2026-09-12**: the Mockingboard 4c is a user choice on every //c-class
+  profile, claiming $C400-$C4FF through `SlotPeripheral::iicRomWindowPage`
+  wherever POM2 holds it, reads and writes alike. The IOU mouse keeps slot 4.
+  Pinned by `iic_mockingboard_4c`, DIGIDREAM's own detection included.
+- ~~**The diagnostic panels re-acquire a card's mutex 51-82 times per
+  frame.**~~ **done 2026-09-12 (bug hunt #19, second wave)**:
+  `MockingboardCard::captureDiagnostics()` / `PhasorCard::captureDiagnostics()`
+  take the card mutex ONCE and return every register, counter and chip state
+  the panel shows. The frame-time cost was the smaller half — the panel was
+  also displaying a machine state that never existed, VIA1 read at one instant
+  and VIA2 fifty acquisitions later, with the guest running in between. Pinned
+  by `card_diagnostics_atomic`: 200 000 captures under a concurrent writer
+  never see the two chips more than one write apart, which is the invariant a
+  single acquisition guarantees and 51 cannot.
+- ~~**`Pom2Core::pullAudio` is a second, divergent mixer**~~ **done
+  2026-09-12 (bug hunt #19, second wave)**: the law moved to `AudioMix.h`
+  UNCHANGED and both call sites now run it over their own `MixBusState`, so
+  the embedding path gets pan, master gain, mute, the mono downmix, suspend
+  and the meters by construction rather than by being kept in sync.
+  `SlotPeripheral::audioSource()` lets a mixer WALK the bus instead of knowing
+  three card names, so a Phasor, an Echo+ or a second Mockingboard is no
+  longer silent through the API. Pinned by `audio_mix_law`.
+- ~~**The cassette's stream decoder bakes the sample rate at open time.**~~
+  **done 2026-09-12 (bug hunt #19, second wave)**: `setAudioOutputSampleRate`
+  reopens the decoder at the new rate, keeping the playback position in
+  seconds and the deck's transport (the mount path disarms it, and a rate
+  change is not a mount). The invariant needs no ear — a tape is a fixed
+  number of SECONDS, so changing the host rate must not change how long it
+  is; pinned by `cassette_stream_rate`. Found while fixing it:
+  `loadAudioStream` was private and **nothing in the tree called it**, so
+  `DeckMode::AudioStream` and everything built on it (seek, position/total in
+  seconds, the panel's readouts) was unreachable code. It is public now.
+
+#### Left open by bug hunt #18 (2026-09-12) — the Mockingboard
+
+Four findings from the hunt that are real but were NOT fixed, each written up
+where the code is. Ranked by how much they can be heard:
+
+1. ~~**The box integrator does not split a sample at a register write.**~~
+   **done 2026-09-12 (bug hunt #19)**: `ay::integrateChipTicks` is the
+   primitive now and both render loops sum a sample from the segments between
+   its events, so a CPU-driven edge lands at its own sub-sample position
+   instead of snapping to the output grid (0-22.7 us early, never late — the
+   whole of a volume-PWM digidrum). Measured on a 3062 Hz PWM incommensurate
+   with the sample grid: inharmonic energy 5.04 % → 0.36 %, a 14x drop.
+   Pinned by `mockingboard_audio_quality::testPwmSubSamplePlacement`; the
+   older `testVolumePwmUnderBurstyProducer` toggles every 1000 cycles (43
+   samples per half period) and was far too slow to resolve it.
+2. ~~**The audio thread allocates.**~~ **done 2026-09-12 (bug hunt #19,
+   second wave)**: `AyEventRing` is that fixed-capacity ring — storage sized
+   once in the constructor, never resized — and both cards use it for the
+   producer and consumer queues; `speechScratch` is reserved once in
+   `setSampleRate`. Pinned by `ay_event_ring`, which counts allocations
+   through a replaced global `operator new`, so it fails if an allocating
+   container ever comes back.
+3. ~~**Mute and volume are per-buffer steps with no ramp**~~ **done
+   2026-09-12 (bug hunt #19, second wave)**: both cards and the master bus
+   walk the gain to its target over 5 ms — instant to the hand, inaudible to
+   the ear. Power-on is deliberately NOT a transition, so the first buffer
+   still starts at full level instead of fading in. Pinned by
+   `audio_mixer_smoke` (the master gain moves by at most one step per frame,
+   and the clamp holds all the way up the ramp), `mockingboard_smoke` and
+   `phasor_card_smoke` (mute leaves the head of the buffer voiced and the tail
+   exactly silent).
+4. ~~**Speech is rendered outside the emuCycles timeline.**~~ **done
+   2026-09-12 (bug hunt #19, second wave)**: `Ssi263` carries its own stamped
+   queue (`queuePlaybackEvent`) and `fillAudioTimed` renders the segments
+   between events, so a phoneme starts on the sample its cycle falls in. The
+   chip keeps its CPU-NOW half — the phoneme countdown and A/!R are
+   guest-visible and must not move — and the audio side shadows only the three
+   registers that shape the waveform, which stay out of the snapshot blob.
+   `EchoPlusCard` keeps the untimed path on purpose: it carries no cycle
+   cursor to align to. Pinned by `ssi263_speech_timeline`, with the untimed
+   path as the control.
 
 #### Mockingboard output level vs MAME's route gain — open question (2026-08-02)
 
@@ -1985,8 +2063,9 @@ unit `ctest`s. Curated list + POM2 status + cross-refs to the dashboard's
     Mockingboard@2** (CLAUDE.md § Fresh-install defaults — swapped 2026-09-02
     because Extasie's self-modified `JSR $C4xx` needs the mouse there and DIX
     scans anyway), so a title of MAD EFFECT's kind needs the two swapped by
-    hand. `MainWindow_Slots.cpp:428-438` already warns about the **mouse** side
-    of this; 🟢 the Mockingboard side has no hint yet.
+    hand. `MainWindow_Slots.cpp` already warns about the **mouse** side of
+    this (the "Extasie & friends want the mouse in slot 4" row hint);
+    🟢 the Mockingboard side has no hint yet.
 - 🟡 **Spiradisc / RWTS18** (*Captain Goodnight*, *Prince of Persia*) — spiral
   tracking + weak bits to validate on real WOZ images. → `Gap #9/#10`. The
   **model** landed 2026-09-07: a flux gap past MAME's 16 µs

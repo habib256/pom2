@@ -56,15 +56,25 @@ StorageCoordinator::mountHdvIntoFreeBay(EmulationController& controller,
                 }
                 ++busyUnits;
             }
+        } else if (const int ls = lironSlot(state.memory().slotBus()); ls >= 0) {
+            // A Liron's chain takes hard disks too (2026-09-11): the first
+            // empty unit of the count the guest sees.
+            const auto* liron = dynamic_cast<const MountableMediaCard*>(
+                state.memory().slotBus().peripheral(ls));
+            unitCount = liron->bayCount();
+            for (int b = 0; b < unitCount && slot < 0; ++b) {
+                if (!liron->bayInfo(b).loaded) { slot = ls; bay = b; blockTarget = true; }
+                else ++busyUnits;
+            }
         }
     }
     if (slot < 0) {
         if (unitCount > 0)
             result.error = "every SmartPort unit holds an image (" +
                            std::to_string(busyUnits) + " of " + std::to_string(unitCount) +
-                           ") — eject one, or raise the unit count in the SmartPort panel";
+                           ") — eject one, or raise the card's unit count";
         else
-            result.error = "no free HDV bay: plug an HDV or SmartPort card";
+            result.error = "no free HDV bay: plug an HDV, SmartPort or Liron card";
         return result;
     }
     if (needsType) {

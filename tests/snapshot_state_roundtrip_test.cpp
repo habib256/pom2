@@ -186,17 +186,23 @@ int main()
             // Rebuild the blob the way a pre-2026-09-06 build wrote it: the
             // IOU section carried 4 bytes and was the LAST thing in the
             // trailer. Today it carries 10 (AN0/AN1/AN2 + vblWasActive +
-            // iicCardWindow_ + the $C800 owner) and is followed by three more optional
-            // length-prefixed sections — the No-Slot Clock and the two
-            // on-board Sony 3.5" mechanisms — each an empty (zero-length)
-            // section on a bare Memory with none of them wired.
-            constexpr size_t kEmptyTail = 3 * 4;   // three zero length prefixes
+            // iicCardWindow_ + the $C800 owner) and is followed by optional
+            // length-prefixed sections — the No-Slot Clock, the two on-board
+            // Sony 3.5" mechanisms, the native //c mouse (2026-09-10) — each
+            // an empty (zero-length) section on a bare Memory with none of
+            // them wired. COUNTED, not assumed: hard-coding how many there
+            // were is what made this test fail when the mouse section landed.
             constexpr size_t kIouNow    = 10;
             constexpr size_t kIouLegacy = 4;
-            CHECK(shortBlob.size() > kEmptyTail + kIouNow + 4,
-                  "blob long enough to truncate");
-            shortBlob.resize(shortBlob.size() - kEmptyTail
-                             - (kIouNow - kIouLegacy));
+            size_t end = shortBlob.size();
+            while (end >= 4 && shortBlob[end - 1] == 0 && shortBlob[end - 2] == 0 &&
+                   shortBlob[end - 3] == 0 && shortBlob[end - 4] == 0)
+                end -= 4;                       // a zero-length section
+            // …and prove we landed on the IOU section rather than inside it:
+            // its own length prefix must be sitting right before its 10 bytes.
+            CHECK(end >= kIouNow + 4 && shortBlob[end - kIouNow - 4] == kIouNow,
+                  "the IOU section is the last non-empty one in the trailer");
+            shortBlob.resize(end - (kIouNow - kIouLegacy));
             // Length prefix is 4 bytes LE and the value fits in the low one.
             shortBlob[shortBlob.size() - kIouLegacy - 4] =
                 static_cast<uint8_t>(kIouLegacy);

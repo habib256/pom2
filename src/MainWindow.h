@@ -37,6 +37,7 @@
 #include "PostScriptRender.h" // pom2::PostScriptSpooler member (LaserWriter)
 #include "PrinterScreenDump.h" // pom2::ScreenDumpOptions member
 #include "PanelRegistry.h"  // pom2::PanelRegistry member (the panel table)
+#include "SlotConnectors.h" // pom2::ConnectorSection member (Slot Config)
 
 #include "imgui.h"  // ImU32 / ImVec2 used in struct MemRegion + member types
 
@@ -857,6 +858,12 @@ private:
     /// Apply. //c-class connectors take only the Adaptateur IIc and never
     /// stage it.
     std::string chatMauveVariantDraft_;
+    /// Staged RamWorks aux size, -1 = nothing staged. The picker used to
+    /// write the setting and cold-boot the machine the instant you chose a
+    /// size — the ONE immediate control in a window whose contract is that
+    /// nothing happens until Apply, sitting directly above an Apply button
+    /// that did not even count it.
+    int         ramWorksDraft_ = -1;
 
     bool showAbout = false;
     // Welcome / Quick Start panel. Opened from Help → Welcome, and
@@ -1415,6 +1422,13 @@ private:
     /// STAGED — edits land on Apply, which restarts the machine.
     /// Implemented in MainWindow_Slots.cpp.
     void renderSlotConfigPanel();
+    /// This machine's connector inventory (SlotConnectors.h), cached because
+    /// building it allocates and the panel runs every frame. Rebuilt when the
+    /// profile changes — a //c and a //e do not have the same connectors, and
+    /// that is the whole point of the window.
+    std::vector<pom2::ConnectorSection> connectorLayout_;
+    pom2::SystemProfile                 connectorLayoutProfile_{};
+    bool                                connectorLayoutValid_ = false;
     /// Internal Disks & Media panel: the internal drives plus the mountable
     /// bays of every plugged storage card. IMMEDIATE — Mount / Insert /
     /// Eject act at once. Was the right column of Slot Configuration until

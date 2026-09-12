@@ -108,7 +108,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
 
     ChipState chip[4];
 
-    /// One-pole 20 Hz high-pass per side — MAME's default per-speaker
+    /// Two-pole 20 Hz Butterworth high-pass per side (`ay::DcBlocker`,
+    /// shared with the Mockingboard since 2026-08-02) — MAME's per-speaker
     /// filter (`src/emu/audio_effects/filter.cpp:39-44`), and MAME really
     /// does put one on each of the Phasor's two speakers.
     /// Implementation in AyPsgSynth.h.
@@ -131,7 +132,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     bool     regsPrimed = false;
     uint64_t audioCursor = 0;
     double   cursorFrac = 0.0;
-    std::deque<PhasorCard::AyRegEvent> pending;
+    pom2::AyEventRing<PhasorCard::AyRegEvent> pending{
+        2 * PhasorCard::kMaxAyEvents};
     uint32_t lastSeenQueueGen = 0;
     /// The AY clock scale AT THE CURSOR — advanced by the stamped
     /// kRegClockScale events, not read from the card at CPU-now. Set true by
@@ -139,6 +141,11 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     /// tick rate mid-buffer.
     int  liveClockScale  = 1;
     bool clockScaleDirty = false;
+    /// Smoothed output gain — see the note in MockingboardCard::AudioSrc.
+    float gainRamp = 0.0f;
+    // See Mockingboard's AudioSrc: power-on is not a transition.
+    bool  gainPrimed = false;
+    static constexpr float kGainRampSeconds = 0.005f;
     void applyEvent(const PhasorCard::AyRegEvent& e)
     {
         if (e.reg == PhasorCard::kRegClockScale) {
@@ -195,6 +202,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         uint64_t latestEventCycle = 0;
         uint64_t cpuNowSnap       = 0;
         bool     timelineBroke    = false;
+        // …and did the CHIPS go with it? invalidateAyTimeline(bool).
+        bool     breakResetsGens  = true;
         {
             std::lock_guard<std::mutex> lk(parent->mtx_);
             for (int ci = 0; ci < 4; ++ci) {
@@ -209,10 +218,9 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 lastSeenQueueGen = parent->ayQueueGen_;
                 pending.clear();
                 timelineBroke = true;
+                breakResetsGens = parent->ayBreakResetsGens_;
             }
-            pending.insert(pending.end(),
-                           parent->ayEvents_.begin(), parent->ayEvents_.end());
-            parent->ayEvents_.clear();
+            pending.appendAndClear(parent->ayEvents_);
             latestEventCycle = parent->latestAyEventCycle_.load(
                 std::memory_order_relaxed);
         }
@@ -222,8 +230,11 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             regsPrimed = true;
             if (timelineBroke) {
                 // Full generator reset (tone, noise LFSR, envelope), as on
-                // /RESET — MAME ay8910_reset_ym, MockingboardCard alike.
-                for (int ci = 0; ci < 4; ++ci) chip[ci].resetGenerators();
+                // /RESET — MAME ay8910_reset_ym, MockingboardCard alike —
+                // but ONLY when the chips went with the timeline. A rewind
+                // restores the banks and must not re-attack the envelopes.
+                if (breakResetsGens)
+                    for (int ci = 0; ci < 4; ++ci) chip[ci].resetGenerators();
                 audioCursor = 0;
                 cursorFrac  = 0.0;
             }
@@ -264,10 +275,15 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             chip[ci].lastSeenEnvWriteCount = envWriteCountSnap[ci];
         }
 
-        if (isMuted) {
+        const float gainTarget = isMuted ? 0.0f : vol;
+        if (!gainPrimed) { gainRamp = gainTarget; gainPrimed = true; }
+        if (isMuted && gainRamp <= 0.0001f) {
+            gainRamp = 0.0f;
             silence();
             return;
         }
+        const float gainStep =
+            1.0f / (kGainRampSeconds * static_cast<float>(sr));
 
         // Base clock/8 ticks covered by one output sample. Phasor-native
         // mode doubles the AY chip clock (clockScale == 2), so every
@@ -299,14 +315,30 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
 
         for (int i = 0; i < frameCount; ++i) {
             // The cursor walks the emulated clock one output sample at a
-            // time; every stamped event it crosses is applied first.
+            // time. A sample is SPLIT at each register write inside it (bug
+            // hunt #19) so the write lands at its own sub-sample position;
+            // the exception is a clock-scale event (a mode switch), which
+            // changes `ticksPerSample` for the sample as a whole and is
+            // therefore applied the old way, before any of it is integrated.
+            const double sampleStart =
+                static_cast<double>(audioCursor) + cursorFrac;
             cursorFrac += cyclesPerSample;
             const uint64_t whole = static_cast<uint64_t>(cursorFrac);
             audioCursor += whole;
             cursorFrac  -= static_cast<double>(whole);
+            std::size_t evFirst = nextEvent;
+            bool scaleInSample = false;
             while (nextEvent < pending.size() &&
                    pending[nextEvent].cycle <= audioCursor) {
-                applyEvent(pending[nextEvent++]);
+                if (pending[nextEvent].reg == PhasorCard::kRegClockScale)
+                    scaleInSample = true;
+                ++nextEvent;
+            }
+            const std::size_t evLast = nextEvent;
+            if (scaleInSample) {
+                for (std::size_t k = evFirst; k < evLast; ++k)
+                    applyEvent(pending[k]);
+                evFirst = evLast;        // nothing left to segment on
             }
             if (clockScaleDirty) deriveTicks();
             // Index 0 = left (VIA0's pair, ay_[0..1]), 1 = right (VIA1's
@@ -319,8 +351,25 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 // away the sub-sample edge position it had just computed,
                 // which folded every harmonic above Nyquist back into the
                 // audible band.
-                side[ci >> 1] += pom2::ay::renderChipSample(
-                    chip[ci], liveRegs[ci], ticksPerSample, invTicksPerSample);
+                float  acc      = 0.0f;
+                double segStart = 0.0;
+                for (std::size_t k = evFirst; k < evLast; ++k) {
+                    const auto& e = pending[k];
+                    if (e.chip != ci) continue;
+                    double pos = (static_cast<double>(e.cycle) - sampleStart)
+                                 / cyclesPerSample;
+                    if (pos < segStart) pos = segStart;
+                    if (pos > 1.0)      pos = 1.0;
+                    acc += pom2::ay::integrateChipTicks(
+                        chip[ci], liveRegs[ci],
+                        static_cast<float>(ticksPerSample * (pos - segStart)));
+                    applyEvent(e);
+                    segStart = pos;
+                }
+                acc += pom2::ay::integrateChipTicks(
+                    chip[ci], liveRegs[ci],
+                    static_cast<float>(ticksPerSample * (1.0 - segStart)));
+                side[ci >> 1] += acc * invTicksPerSample;
             }
             // 2 chips x 3 channels x peak 1.0 = 6.0 per side. Headroom-safe
             // and strictly LINEAR — see the matching note in
@@ -330,13 +379,16 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             // 4-chip summed render used.
             // DC blocker: the AY channel model is unipolar, so gating
             // channels on and off steps the offset.
-            const float l = dcL.process(side[0] * (1.0f / 6.0f)) * vol;
-            const float r = dcR.process(side[1] * (1.0f / 6.0f)) * vol;
+            if (gainRamp < gainTarget)
+                gainRamp = std::min(gainTarget, gainRamp + gainStep);
+            else if (gainRamp > gainTarget)
+                gainRamp = std::max(gainTarget, gainRamp - gainStep);
+            const float l = dcL.process(side[0] * (1.0f / 6.0f)) * gainRamp;
+            const float r = dcR.process(side[1] * (1.0f / 6.0f)) * gainRamp;
             if (right) { left[i] = l; right[i] = r; }
             else       { left[i] = 0.5f * (l + r); }
         }
-        pending.erase(pending.begin(),
-                      pending.begin() + static_cast<std::ptrdiff_t>(nextEvent));
+        pending.eraseFront(nextEvent);
         // Bound the jitter buffer the way MockingboardCard::AudioSrc does:
         // if this thread ever stops consuming (device closed, starvation)
         // the CPU side would otherwise grow it without limit. Drop by
@@ -344,8 +396,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         if (pending.size() > kMaxAyEvents) {
             const size_t drop = pending.size() - kMaxAyEvents;
             for (size_t k = 0; k < drop; ++k) applyEvent(pending[k]);
-            pending.erase(pending.begin(),
-                          pending.begin() + static_cast<std::ptrdiff_t>(drop));
+            pending.eraseFront(drop);
         }
     }
 };
@@ -392,7 +443,10 @@ void PhasorCard::appendSnapshotState(std::vector<uint8_t>& out) const
 void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     std::lock_guard<std::mutex> lk(mtx_);
-    invalidateAyTimeline();   // the CPU-side banks change out of band here
+    // The banks change out of band here — but the CHIPS do not go with the
+    // timeline: a restore hands them back their registers, and their
+    // generators must carry on (see invalidateAyTimeline(bool)).
+    invalidateAyTimeline(/*resetChips=*/false);
     ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     pom2::byteio::Reader r(data, len);
     if (!r.has(6)) return;
@@ -660,13 +714,15 @@ uint8_t PhasorCard::deviceSelectRead(uint8_t low4)
 {
     // Real Phasor mode-switch responds to BOTH reads and writes, with
     // identical bit decoding (the address — not the data — drives the
-    // mode). The read returns $FF (open bus) — MAME `a2mockingboard.cpp`
-    // `a2bus_phasor_device::read_c0nx`: `m_native = BIT(offset,0);
-    // set_clocks(); return 0xff;`. Returning the mode value (as POM2
-    // once did) gave detection routines a readable register real
-    // hardware doesn't have.
+    // mode). The read returns the FLOATING BUS, and both references say so:
+    // MAME's `a2bus_phasor_device::read_c0nx` ends on `return
+    // get_open_bus();`, AppleWin's `PhasorIOInternal` on `return
+    // MemReadFloatingBus(...)`. POM2 answered a hard $FF until 2026-09-12,
+    // and the comment here misquoted MAME as doing the same. Returning the
+    // mode value, as POM2 did before that, gave detection routines a
+    // readable register real hardware does not have.
     applyModeSwitch(low4);
-    return 0xFF;
+    return openBus();
 }
 
 void PhasorCard::deviceSelectWrite(uint8_t low4, uint8_t /*v*/)
@@ -809,8 +865,9 @@ void PhasorCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
     latestAyEventCycle_.store(lastSyncCycle_, std::memory_order_relaxed);
 }
 
-void PhasorCard::invalidateAyTimeline()
+void PhasorCard::invalidateAyTimeline(bool resetChips)
 {
+    ayBreakResetsGens_ = resetChips;
     ayEvents_.clear();
     latestAyEventCycle_.store(0, std::memory_order_relaxed);
     ++ayQueueGen_;
@@ -850,6 +907,25 @@ void PhasorCard::updateIrq()
     assertIrq(combined);
 }
 
+PhasorCard::Diagnostics PhasorCard::captureDiagnostics() const
+{
+    Diagnostics d;
+    std::lock_guard<std::mutex> lk(mtx_);
+    for (int c = 0; c < 2; ++c) {
+        for (int r = 0; r < 16; ++r) d.via[c][r] = peekViaRegisterLocked(c, r);
+        d.viaWrites[c] = viaWriteCount_[c];
+    }
+    for (int c = 0; c < 4; ++c) {
+        std::memcpy(d.ay[c], ay_[c]->regs, sizeof(d.ay[c]));
+        d.ayWrites[c] = ayWriteCount_[c];
+        d.ayResets[c] = ayResetCount_[c];
+    }
+    d.irqAsserted = slotIrqAsserted();
+    d.mode        = static_cast<uint8_t>(mode_);
+    d.clockScale  = (mode_ == PH_Phasor) ? 2 : 1;
+    return d;
+}
+
 uint8_t PhasorCard::getAyRegister(int chip, int reg) const
 {
     if (chip < 0 || chip > 3 || reg < 0 || reg > 15) return 0;
@@ -861,18 +937,23 @@ uint8_t PhasorCard::peekViaRegister(int chip, int reg) const
 {
     if (chip < 0 || chip > 1 || reg < 0 || reg > 15) return 0xFF;
     std::lock_guard<std::mutex> lk(mtx_);
+    return peekViaRegisterLocked(chip, reg);
+}
+
+uint8_t PhasorCard::peekViaRegisterLocked(int chip, int reg) const
+{
     auto& v = *via_[chip];
     switch (reg & 0x0F) {
     case pom2::Via6522::VIA_ORB:    return v.readPortB();
     case pom2::Via6522::VIA_ORA:    return v.readPortA();
     case pom2::Via6522::VIA_DDRB:   return v.ddrB;
     case pom2::Via6522::VIA_DDRA:   return v.ddrA;
-    case pom2::Via6522::VIA_T1CL:   return static_cast<uint8_t>(v.t1Counter & 0xFF);
-    case pom2::Via6522::VIA_T1CH:   return static_cast<uint8_t>((v.t1Counter >> 8) & 0xFF);
+    case pom2::Via6522::VIA_T1CL:   return v.counterReadback(false, false);
+    case pom2::Via6522::VIA_T1CH:   return v.counterReadback(false, true);
     case pom2::Via6522::VIA_T1LL:   return static_cast<uint8_t>(v.t1Latch & 0xFF);
     case pom2::Via6522::VIA_T1LH:   return static_cast<uint8_t>((v.t1Latch >> 8) & 0xFF);
-    case pom2::Via6522::VIA_T2CL:   return static_cast<uint8_t>(v.t2Counter & 0xFF);
-    case pom2::Via6522::VIA_T2CH:   return static_cast<uint8_t>((v.t2Counter >> 8) & 0xFF);
+    case pom2::Via6522::VIA_T2CL:   return v.counterReadback(true, false);
+    case pom2::Via6522::VIA_T2CH:   return v.counterReadback(true, true);
     case pom2::Via6522::VIA_SR:     return v.sr;
     case pom2::Via6522::VIA_ACR:    return v.acr;
     case pom2::Via6522::VIA_PCR:    return v.pcr;

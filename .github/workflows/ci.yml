@@ -2,7 +2,7 @@
 #
 # Two jobs:
 #   linux  — build the full tree (GUI + pom2_headless + unit tests) and run the
-#            241-test ctest suite (Klaus 6502/65C02, Tom Harte curated,
+#            300+-test ctest suite (Klaus 6502/65C02, Tom Harte curated,
 #            cpu_cycle_count, golden-hash display, boot traces). This is the
 #            non-regression gate: it must stay green on every push / PR.
 #   wasm   — Emscripten verification build (build_wasm.sh) so the browser
@@ -123,7 +123,7 @@ jobs:
       - name: Assert the ctest suite is complete
         working-directory: build
         run: |
-          expected=241
+          expected=300
           actual=$(ctest -N | awk '/^Total Tests: /{print $3}')
           echo "ctest declares $actual tests (floor $expected)"
           if [ -z "$actual" ] || [ "$actual" -lt "$expected" ]; then
@@ -252,7 +252,7 @@ jobs:
       - name: Assert the ctest suite is complete
         working-directory: build
         run: |
-          expected=241
+          expected=300
           actual=$(ctest -N | awk '/^Total Tests: /{print $3}')
           echo "ctest declares $actual tests (floor $expected)"
           if [ -z "$actual" ] || [ "$actual" -lt "$expected" ]; then

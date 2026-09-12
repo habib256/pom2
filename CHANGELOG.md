@@ -5,6 +5,346 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-12 — A test that measured the wrong thing, and said so loudly
+
+`iicplus_boot35` had been failing its writable half: "the boot off a writable
+medium wrote nothing — the write path never ran". The emulator was right and
+the test was wrong.
+
+The write path ran in full. Instrumented, one boot feeds **six complete
+717-byte sectors** through the IWM — 717 being exactly a Sony sector (7 address
+bytes + 3 data prologue + 1 sector byte + 700 GCR groups + 6 epilogue) — each
+spliced at one cell per bit and decoded back with the address checksum, the
+data checksum and the `DE AA` epilogue all valid: 9 sectors on track 53, 12 on
+tracks 0 and 2, none on the wrong side. **Every one byte-identical to what the
+medium already held.** ProDOS 8's boot-time write is idempotent here, so
+`decodeAndCommit`'s "only write a block that differs" guard correctly
+committed nothing, and the image correctly stayed clean. The test read that
+cleanliness as a dead write path.
+
+The observable was missing, so it was added: `Sony35Drive::sectorsDecoded()`
+counts sectors the decoder accepted out of the cells the head wrote, and
+`sectorsCommitted()` the subset that changed a block. Two numbers on purpose —
+only the first is about the emulator; the second is a property of the guest's
+data. The test now asserts the first, with the negative control that gives it
+meaning: a write-protected medium must keep it at **zero**, since `writeFlux`
+refuses on `isWriteProtected()`.
+
+Worth recording because it cost four wrong turns: the head-side filter from
+hunt #15, the MIG state clear, the external port's bus capture and a suspected
+IWM starvation were each mutated out in turn and each changed nothing — they
+changed nothing because nothing was broken. The underruns in the log are the
+normal terminator of a completed sector write, not a fault. Guessing at
+suspects drawn from a self-selected handful of the 128 files that had changed
+found nothing; one instrumented run found it.
+
+## 2026-09-12 — Slot Configuration shows the machine you actually have
+
+The window rendered ONE shape for every machine: seven rows labelled "Slot 1"
+to "Slot 7", plus two pseudo-rows for the AUX connector. That is only true of
+a II/II+///e. An Apple //c has **no expansion bus at all** — its peripherals
+are soldered, or they hang off connectors on the back panel — so the panel
+greyed five of those rows as built-ins, offered the rear video adapter under
+the label "Slot 7", and on a //c PAL left exactly one live row (slot 3) that
+was dead in every direction: a control that could never do anything, named
+after a connector the machine does not have.
+
+The window is now built from the machine's own connector inventory
+(`SlotConnectors.h`). A row exists only if the connector exists, it is named
+the way the manual names it, and its kind says what you may do with it. A //c
+shows **Serial port 1 (printer, DIN-5)**, **Serial port 2 (modem, DIN-5)**,
+**Hand controls (DB-9)**, **Disk port (DB-19)** and **Video expansion
+(DB-15)** under "External ports"; its internal drive under "Built-in devices";
+and the Mockingboard 4c under "Internal expansion connector" — and not one row
+called "Slot". A II+ shows seven expansion slots and its cassette jacks; a //e
+shows its slots, the AUX connector with the RamWorks size, and no cassette
+(the //e dropped them).
+
+Three rules sit on top of it. A connector whose slot carries a built-in card
+is **read-only whatever its kind** — the //c's serial ports are sockets you
+plug a cable into, but the 6551 behind them is not a card you can swap, and
+that is also what makes the //c PAL's soldered Chat Mauve read-only with no
+special case. A port **offers only what fits it**: a DB-15 video connector
+cannot take a Disk II controller, so the picker does not list one. And cards
+you cannot use here are **listed rather than hidden**, under a "Not available
+on this machine" separator carrying the reason — *no expansion bus (the //c's
+forced INTCXROM masks slot ROM entirely)* or *ROM dump missing*. A card that
+silently vanishes reads as a gap in POM2 instead of a fact about the machine
+in front of you.
+
+Nothing changed underneath: a connector is a LABEL over a slot index, so
+`slot_N_card`, the persistence guard and the plug back-end are untouched and
+an existing `state.cfg` keeps working. On a //c the two choosable connectors
+map to the two slots the profile leaves free — the DB-15 to slot 7, the
+internal header to slot 3. Kept as they were: the staged model with
+Apply/Revert, the per-row staged marker, the LLE/HLE and scope tags, duplicate
+detection, the Chat Mauve model sub-row and the three slot-3 warnings on a
+//e. AUX memory, which used to be the one immediate control in this staged
+window (picking a RamWorks size cold-booted the machine at once, above an
+Apply button that did not count it), is staged like everything else now:
+accent dot, pending total, Apply with rollback, Revert.
+
+Pinned by `slot_connectors`, with the controls that make the test mean
+something: a //c must expose no expansion slot and no row named after one, a
+II+ no internal header and no AUX connector, and on every machine a slot index
+must drive exactly one row — otherwise the panel could stage two different
+cards into the same slot.
+
+## 2026-09-12 — Bug hunt #19, second wave: the six left open
+
+Hunt #19 ended with a list of things it had measured but not fixed. This is
+that list, closed.
+
+**The audio thread no longer calls the allocator.** Both sound cards carried
+their cycle-stamped queues in a `std::deque`: the producer pushed under the
+card mutex and the audio thread spliced, popped and erased — `operator new` /
+`operator delete` on every block boundary, ON THE REALTIME THREAD, inside the
+same lock the CPU thread takes for every MMIO access. `Mockingboard.cpp`
+states the rule itself for its speech scratch ("a heap allocation per buffer
+tick is the canonical source of underruns") and broke it 160 lines below.
+`AyEventRing` is a fixed-capacity FIFO sized once in its constructor; the
+speech scratch is reserved once too. Pinned by `ay_event_ring`, which counts
+allocations through a replaced global `operator new`.
+
+**Mute and volume are ramps, not steps.** Muting a card, or dragging the
+master slider, moved the gain by up to full scale between two samples: a click
+at whatever amplitude the note was holding, and one no per-source click
+counter could attribute because it happened in the mixer. Both walk to their
+target over 5 ms now — instant to the hand, inaudible to the ear — and
+power-on is deliberately not a transition, so the first buffer still starts at
+full level. Pinned in `audio_mixer_smoke` (the master gain moves by at most
+one step per frame), `mockingboard_smoke` and `phasor_card_smoke` (mute leaves
+the head of the buffer voiced and the tail exactly silent).
+
+**Speech runs on the emuCycles timeline.** The SSI263's register writes took
+effect on the audio side the moment the CPU made them, while the card's PSG
+writes travel as cycle-stamped events replayed through a ~40 ms jitter buffer.
+On a Sound II — one card, one speaker, speech and music together — the speech
+ran a whole buffer AHEAD of the music, and every phoneme boundary was
+quantised to the CPU worker's chunk instead of the cycle the driver wrote it
+on. `Ssi263` now carries its own stamped queue and renders the segments
+between events, so a phoneme starts on the sample its cycle falls in. The chip
+keeps its CPU-NOW half — the phoneme countdown and A/!R are guest-visible and
+must not move. Pinned by `ssi263_speech_timeline`, with the untimed path as
+the control.
+
+**The diagnostic panels take the card mutex once, not 51-82 times.** The
+Mockingboard panel built its view one accessor at a time: 9 VIA peeks + 16 AY
+reads per chip + the SSI263 snapshot = 51 separate locks per rendered frame
+(82 on the Phasor), at 60 Hz, on the mutex the realtime audio thread takes on
+every callback. The cost that matters is not the traffic: the panel showed a
+state that never existed, VIA1 read at one instant and VIA2 fifty acquisitions
+later. `captureDiagnostics()` takes it once. Pinned by
+`card_diagnostics_atomic`, which writes a counter to both chips from another
+thread and checks 200 000 captures never see them more than one write apart.
+
+**There is one mixer.** `Pom2Core::pullAudio` — the public C++ integration API
+an embedder gets its audio from — hand-rolled a second one: speaker plus
+cassette plus ONE Mockingboard, summed and clamped. No pan, no master volume,
+no mute, no mono downmix, no suspend, no meters, and no second sound card, so
+a Phasor, an Echo+ or a second Mockingboard was silent through the API while
+the GUI played it. Divergence like that is not fixed once — the ramp above and
+the click tallies before it would both have missed it. The law moved to
+`AudioMix.h`, unchanged, and both call sites run it over their own state. Any
+card can now offer its output to a mixer that walks the bus
+(`SlotPeripheral::audioSource`), instead of the mixer knowing three card types
+by name.
+
+**The cassette's stream decoder follows the host rate.** A streamed tape is
+decoded into the rate its decoder was OPENED with, and `setAudioOutputSampleRate`
+only assigned the field — so once a decoder was open the rate was baked in,
+while every cassette timing used the new one. The device negotiates 48000 on
+this machine against the 44100 default, which is 8.8 % of speed error: enough
+to drag the 770 Hz / 2 kHz half-cycles a guest LOAD measures out of their
+windows and fail a tape that is fine. The decoder is reopened at the new rate,
+keeping its position in seconds and the deck's transport. Found while fixing
+it, and worth its own line: `loadAudioStream` was private and **nothing in the
+tree called it**, so `DeckMode::AudioStream` and everything built on it — seek,
+position and total in seconds, the panel's readouts — was unreachable code. It
+is public now. Pinned by `cassette_stream_rate`: a one-second tape must still
+be one second long after the rate changes.
+
+## 2026-09-12 — The Mockingboard 4c, on the //c's internal connector
+
+A //c has no slots, so POM2 allowed no cards on it at all. But it does have
+an internal expansion connector, and the Mockingboard 4c sits on it and
+answers at $C400-$C4FF — the slot-4 addresses — while the machine's own mouse
+is the IOU, which is not a card. A whole class of //c software had nowhere to
+run: DIGIDREAM, in this repo's own corpus, is versioned "SPECIAL IIc/MB4C",
+wakes the card with two writes to $C403/$C404, and prints "KO" and spins for
+ever when it finds none.
+
+A card can now claim a fixed page of the //c's $Cn00 window wherever POM2
+holds it (`SlotPeripheral::iicRomWindowPage`), and that window carries writes
+AND reads — the demo's detection reads the 6522's T1 counter at $C404 twice
+and wants to see it running. The machine's IOU mouse keeps slot 4; the virtual
+slot row you park the card on is just where you parked it. Pick it in Slot
+Configuration on any //c-class profile: "Mockingboard 4c (internal
+connector)", with a Sound II variant beside it.
+
+Pinned by `iic_mockingboard_4c`: the window at unit level (writes reach the
+VIA, two reads of $C404 show T1 running, a full AY store lands), DIGIDREAM
+booting on a //c and finding its card, and — the control that makes the test
+mean something — the same boot without a card reaching the demo's own "KO".
+
+## 2026-09-12 — Bug hunt #19: the Mockingboard, deeper
+
+Round two, on the ground #18 left: the four items it wrote up as open, and
+three fresh reviews of seams it had not touched — the card in the machine, the
+audio bus it feeds, and the card as the SOFTWARE sees it (the real 6502 drivers
+in the tracked French Touch corpus).
+
+**A register write now splits the sample it falls in.** The render loop applied
+every event stamped anywhere inside an output sample before integrating any of
+it, so a CPU-driven edge snapped to the output grid — up to 22.7 us early at
+44.1 kHz, never late. Tone, noise and envelope edges were never affected; a
+volume-PWM digidrum is nothing but such edges. `ay::integrateChipTicks` is the
+primitive now and both cards sum a sample from the segments between its events.
+Measured on a 3062 Hz PWM incommensurate with the sample grid: inharmonic
+energy **5.04 % → 0.36 %**, a 14x drop (-11.5 dB). Pinned by
+`mockingboard_audio_quality::testPwmSubSamplePlacement`; the two-card rule by
+`slot_configuration_coordinator`. The rate change was verified against a real
+device — on this Apple Silicon machine the log now reads "the device's own rate
+is 48000 Hz" where it used to claim 44100.
+
+**The audio device asks for the rate it is given, not 44100.** miniaudio only
+adopts the hardware's own rate when asked for zero; POM2 asked for 44100, so
+`getActualSampleRate()` answered 44100 on every machine for ever — and on
+48 kHz-only hardware (Apple Silicon) miniaudio silently inserted its own
+conversion, defaulting to the algorithm its header calls "Fastest, lowest
+quality". Every source was synthesising a 44.1 kHz grid that was then linearly
+interpolated to 48 kHz behind POM2's back. The sources are told the real rate
+now and synthesise straight to it, which is what `AudioSource`'s RateAware
+contract always promised.
+
+**Two Mockingboards can be plugged.** TRIBU — the Unreeeal Superhero 3 tribute
+in the corpus — is a two-card release: its player is labelled "use 4
+AY-3-8910 (2 MOCKINGBOARD SLOT#4/SLOT#5)" and writes $C4xx and $C5xx in one
+interleaved pass, panning A left, B centre, C right across the pair. The
+single-instance gate silently emptied the second slot; the demo's own scan
+still found the first, so it RAN, playing half its voices. Sound cards
+(Mockingboard, Sound II, Phasor, Echo+) join the storage cards as
+multi-instance — they carry no media, and per-slot volume keys already existed.
+
+**A snooping card's "I consumed this" is honoured on the slot bus.**
+`SlotPeripheral::busSnoop`'s contract says returning true takes the access off
+the bus; `Memory` implemented it, `SlotBus` dropped the return on the floor at
+all four dispatch sites and delivered the access to the card as well. Latent
+today (the only snooper consumes an address `Memory` handles), fixed while the
+reason was in front of us, and pinned by `slot_bus_smoke`.
+
+**The crackle meters no longer freeze on pause.** The suspend path returns
+before both tally blocks, so `clicksPerSecond` kept its last live value for the
+whole pause: the Audio panel accused a stopped machine of crackling, which is
+the one thing that column exists not to do.
+
+Checked and found correct, against MAME, AppleWin, miniaudio and the corpus
+sources: every AY register-write idiom the three shipped French Touch releases
+use (strobe orders, both VIAs in one pass, the AY reset idiom, data-then-strobe
+with an unchanged ORA); their T1 timings (`latch + 2`, and T1 not firing before
+T1CH is written); their IRQ acknowledge paths (T1CL read only, IFR/IER write
+idioms, and polling IFR with IER clear); the 4am/`bdet` detection probe and the
+slot scan that cannot false-positive; the whole IRQ path end to end (wire-OR,
+unplug, reset, snapshot) with no stuck or lost line; card lifetime and hot-plug
+with no dangling audio source; the lock order (no cycle, no recursion through
+the new floating-bus read); frames-vs-samples conventions across every audio
+source; and the WASM build's single-threaded assumptions.
+
+Every item this hunt left open has since been closed — the six below, plus the
+//c-class Mockingboard in the section above. Measured while we were there, and worth recording: at shipped
+defaults the Mockingboard is 4.6 dB (one channel) to 14.1 dB (a three-channel
+chord) ABOVE the Apple speaker's loudest square wave, so the old "the card sits
+low and reads thin" hypothesis is not supported by POM2's own numbers.
+
+## 2026-09-12 — Bug hunt #18: the Mockingboard
+
+Five reviews of the card and everything under it — the 6522, the CPU-side
+decode, the AY synthesis and its audio thread, the SSI263, the Phasor and the
+snapshots — checked against MAME's and AppleWin's sources rather than against
+POM2's own comments. What was real, and fixed:
+
+**The speech chip was wired to the wrong 6522.** AppleWin says it twice —
+"SSI263's IRQ (A/!R) is routed via the 2nd 6522's CA1 input (at $Cn80)", "2nd
+6522 is used for 1st speech chip" — and POM2 latched the phoneme-done edge in
+the FIRST VIA. A stock Sound II driver enables IER.CA1 at $Cs8E and services
+$Cs8D: it never saw the interrupt and stalled after one phoneme. MAME is no
+oracle here (its Mockingboard carries a Votrax SC-01 on VIA1's CB1, a pin POM2
+does not model), which is how the old claim of MAME parity survived.
+
+**The speech chip select is one address bit, A6** ($Cs40-$Cs7F and
+$CsC0-$CsFF, register = the low 3 bits), not the 16-byte range POM2 decoded.
+In the $CsCx window — the natural one for a chip that acks into the VIA at
+$Cs80 — a phoneme byte went to VIA2's ORB instead, where PB2 low is AY2's
+/RESET: the right-channel PSG was wiped once per phoneme.
+
+**A DDR write moves pins, and the VIA did not say so.** It reported a port
+change only when the DDR-masked output LATCH changed, so a bit whose latch is
+0 going from pulled-up 1 to driven 0 — a real edge — raised nothing. On this
+card that pin can be PB2: a driver that drives BC1+BDIR only and later takes
+/RESET over as an output asserted a reset the AY never saw, and kept the
+previous program's registers.
+
+**A rewind re-attacked every envelope.** The AY generators are audio-thread
+state and not in the blob; a restore re-seeded them because a timeline break
+and a chip /RESET were the same signal. Every seek put the envelopes back at
+the top of their ramp and re-phased the tones — once per frame during a
+scrub. The two are separated now: a rewind re-anchors the cursor and lets the
+generators run.
+
+**$C0(8+n)X is the floating bus**, not a hard $FF, on both the Mockingboard
+and the Phasor — MAME's ayboard base ends `read_c0nx` on `return
+get_open_bus();`, AppleWin's Phasor handler on `MemReadFloatingBus(...)`. A
+guest sampling the floating bus through a populated slot's window saw a
+frozen value.
+
+**The diagnostic panels' counter read-back was one too high**: they
+re-implemented `read()`'s `written + 1 - elapsed` line as the raw counter.
+`Via6522::counterReadback` is the single answer now, so the number a
+raster-timing investigation trusts is the one the guest reads.
+
+Pinned by `mockingboard_bus_edges` (new) and the updated `mockingboard_smoke`.
+Also corrected: comments claiming the card folds down to mono, the Phasor's
+"one-pole" DC blocker (it is the shared two-pole), and a citation to a test
+file that does not exist.
+
+Checked and found CORRECT, against the same sources: the tone, noise and
+envelope generators and their formulas; the volume table; the DC blocker; the
+AY read-back masks and reset scope; the bus control decode and its /RESET
+precedence; the VIA's timers, flag-clearing rules and IFR/IER semantics; the
+cycle-stamped queue and its thread handoff; the Phasor's mode latch, chip
+select and x2 clock (AppleWin's `SetPhasorMode` scales only in PH_Phasor,
+exactly as POM2 does). Two reported "defects" were checked to the source and
+are not defects: a speech write shadowing into the VIA is what the hardware
+does, and the DDR-edge miss does not reach the demos first blamed for it —
+their next write delivers the reset anyway.
+
+Left open, deliberately: the box integrator does not split a sample at a
+register write (volume-PWM digidrums are placed on the output grid, up to
+22.7 us early); the audio thread allocates when its event deque grows; mute
+and volume are per-buffer steps with no ramp; and whether the Cricket/Echo
+card's own decode passes A0-A2 through to the chip's FILFREQ aliases. Each is
+written up where the code is.
+
+## 2026-09-11 — The Liron boots hard disks, and its chain goes to fourteen
+
+A //e with a Liron could not boot an HDV: each unit took an 800K 3.5" image
+and nothing else, and the library did not even offer the Liron an HDV. The
+card's firmware talks to block devices on a bus — the //c, running the same
+code, already served HDV units through the same responder — so a Liron unit
+now holds either a 3.5" disk or a ProDOS hard disk up to 32 MB, decided by
+the file (a `.woz` or an 800K image is a 3.5", anything else a hard disk).
+Hard disks get the two-phase mount and eject and the background autosave
+every block card has. With no HDV, CFFA or SmartPort card plugged, the Liron
+is the target of the Disk Library's HDV and 3.5" mounts, drag-and-drop and
+the CLI, instead of a second card being auto-plugged beside it.
+
+The chain goes to fourteen units, the default: measured, the firmware
+numbers sixteen and ProDOS 8 2.4 lists them up to its 14-entry device
+table (thirteen on a 128K //e, where S3,D2 stays /RAM's). The notch now
+reaches every unit of a card with per-bay media (it skipped the Liron).
+Pinned by `liron_chain` (a fourteen-unit chain of seven hard disks and seven
+3.5" disks, booted off a hard disk) and `hdv_free_bay`.
+
 ## 2026-09-11 — SmartPort and Liron start with their whole chain: eight
 
 Both SmartPort-class cards came up answering for two units, so the six
@@ -52,7 +392,7 @@ combo beside the card) and in `media_slotN_bays`; the guest sees it at
 its next boot, and a shrink over a loaded unit is refused rather than
 hiding the disk. That panel also stops cutting every card at two bays,
 so a SmartPort card's units 3-8 show there too. Pinned by
-`liron_eight_units` and `storage_coordinator`.
+`liron_chain` and `storage_coordinator`.
 
 ## 2026-09-10 — Background persistence for hard-disk images
 
@@ -953,7 +1293,8 @@ register-`$9` polarity is also the inverse of the ROM's). And the SmartPort
 bus decoder shifted a marker by up to 127 places on a header claiming more
 than six odd bytes: undefined behaviour reachable from any guest poking
 `$C0nD`; such a frame is refused. Pinned in `iicplus_boot35` (which boots a
-writable copy too and checks it wrote) and `smartport_bus_device`. Full-track
+writable copy too; the "and checks it wrote" half of this claim was itself
+wrong and was corrected on 2026-09-12 — see that entry) and `smartport_bus_device`. Full-track
 GCR write-back across all five zones and both sides, bus WRITE through the
 real Liron ROM, block bounds, 1200 hostile 3.5" images and 60 000 hostile
 IWM/Sony snapshots were all probed clean.

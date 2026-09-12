@@ -278,8 +278,8 @@ Assign cards, mount media, eject or boot from `Machine → Slot Configuration`. 
 | `diskii` | Disk II | `clock` | ProDOS Clock / ThunderClock+ |
 | `hdv` | ProDOS HDV — two drives (D1 boots, D2 alongside) | `chatmauve` | Le Chat Mauve RGB |
 | `cffa` | CFFA 2.0 IDE | `mouse` / `mouseaw` | Mouse Card (MAME / AppleWin HLE) |
-| `smartport35` | SmartPort 3.5" — 8 units by default, 2/4/6/8 (3.5" 800K or 32 MB ProDOS volumes); ProDOS 8 2.4+ sees units 3-8 under other slots | `mockingboard` | Mockingboard A/C |
-| `liron` | Liron 3.5" — real EPROM + IWM over the SmartPort bus, 8 units by default, 2/4/6/8 (ProDOS 8 2.4+ sees units 3-8 under other slots) | | |
+| `smartport35` | SmartPort 3.5" — 8 units by default, 2/4/6/8 (3.5" 800K or 32 MB ProDOS volumes); ProDOS 8 2.4+ sees units 3-8 under other slots | `mockingboard` | Mockingboard A/C — and the **Mockingboard 4c** on a //c's internal connector ($C400) |
+| `liron` | Liron — real EPROM + IWM over the SmartPort bus: up to 14 units (the default), each a 3.5" 800K or a 32 MB hard-disk image; boots either; ProDOS 8 2.4+ sees units 3+ under other slots | | |
 | `ssc` | Super Serial Card | `mockingboard_c` | Mockingboard C Sound II + SSI263 |
 | `printer` | Parallel printer (host spool) | `phasor` | Applied Engineering Phasor |
 | `grappler` | Orange Micro Grappler+ | `echoplus` | Cricket / Echo SSI263 |
