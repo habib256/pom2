@@ -31,6 +31,7 @@
 
 #include "DiskImage.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>

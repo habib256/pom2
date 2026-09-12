@@ -43,6 +43,7 @@
 
 #include "DiskImage.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>

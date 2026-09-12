@@ -24,6 +24,7 @@
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
 
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 

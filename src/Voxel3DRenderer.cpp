@@ -24,6 +24,7 @@
 #include "Logger.h"
 #include "OpenGLShader.h"
 
+#include <algorithm>
 #include <string>
 
 #include "Pom2GL.h"

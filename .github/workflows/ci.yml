@@ -76,6 +76,19 @@ jobs:
       - name: Coordinator lock scopes
         run: tools/check_coordinator_locks.sh
 
+      # libc++ lends what libstdc++ does not: a file using std::abort with no
+      # <cstdlib>, or std::fill with no <algorithm>, builds green on a Mac and
+      # fails THIS leg. That cost three CI cycles on 2026-09-11/12 — and the
+      # third one never reached the coverage measurement at all, because the
+      # build died first. The scan catches the class before the 20-minute
+      # build does, and its --self-test pins the two false-positive classes
+      # that made earlier versions of it lie (shared providers of size_t, and
+      # facilities named only in a comment).
+      - name: Declared includes
+        run: |
+          tools/check_includes.sh --self-test
+          tools/check_includes.sh
+
       - name: Install build dependencies
         run: |
           sudo apt-get update

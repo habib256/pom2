@@ -19,6 +19,7 @@
 #include "CpuClock.h"
 #include "FloppySoundDevice.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

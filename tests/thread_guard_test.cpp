@@ -39,6 +39,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdio>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>

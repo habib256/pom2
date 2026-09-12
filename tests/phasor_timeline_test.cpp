@@ -17,6 +17,7 @@
 #include "PhasorCard.h"
 #include "Via6522.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>

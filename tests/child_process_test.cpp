@@ -36,6 +36,7 @@
 #include "ChildProcess.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>

@@ -25,6 +25,7 @@
 // already depends on imgui_internal.h for the same family of helpers.
 #include "imgui_internal.h"
 
+#include <cstdio>
 #include <string>
 
 namespace pom2 {

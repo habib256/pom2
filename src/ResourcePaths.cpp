@@ -16,6 +16,7 @@
 
 #include "ResourcePaths.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <system_error>
 #include <vector>

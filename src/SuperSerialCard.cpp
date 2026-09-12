@@ -22,6 +22,7 @@
 #include "Logger.h"
 #include "M6502.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #if POM2_HAS_SOCKETS

@@ -67,6 +67,7 @@
 #include "Memory.h"
 #include "Mockingboard.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <complex>

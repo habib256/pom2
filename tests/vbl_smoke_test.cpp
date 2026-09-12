@@ -29,6 +29,7 @@
 #include "M6502.h"
 #include "Memory.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>

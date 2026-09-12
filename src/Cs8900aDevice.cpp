@@ -21,6 +21,7 @@
 
 #include "Cs8900aDevice.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace pom2 {

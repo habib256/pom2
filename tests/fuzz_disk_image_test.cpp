@@ -61,6 +61,7 @@
 #include "Disk35Image.h"
 #include "DiskImage.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>

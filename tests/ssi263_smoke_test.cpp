@@ -22,6 +22,7 @@
 #include "Ssi263.h"
 #include "Ssi263PhonemeData.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>

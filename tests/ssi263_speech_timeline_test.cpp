@@ -31,6 +31,7 @@
 
 #include "Ssi263.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

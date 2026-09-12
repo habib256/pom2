@@ -39,6 +39,7 @@
 
 #include "Block512Backing.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>

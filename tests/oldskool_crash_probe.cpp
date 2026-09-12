@@ -27,6 +27,7 @@
 #include "DiskIICard.h"
 #include "Mockingboard.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

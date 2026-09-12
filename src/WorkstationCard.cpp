@@ -23,6 +23,7 @@
 #include "CpuClock.h"
 #include "Logger.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 
