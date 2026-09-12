@@ -27,6 +27,8 @@
 #include "SlotBus.h"
 #include "TestTempPath.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
