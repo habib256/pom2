@@ -301,6 +301,16 @@ private:
     size_t playbackOffset_  = 0;
     // Resampler accumulator (host-rate fraction of a source-rate sample).
     float  resampleAccum_   = 0.0f;
+    /// True once an owner has queued a STAMPED playback event, i.e. this chip
+    /// is rendered through `fillAudioTimed` at the audio cursor rather than
+    /// through the untimed `fillAudio`. The three members above are then owned
+    /// by `applyPlaybackEvent` alone: letting `write()` also rewind them at
+    /// CPU-now moved the phoneme switch off the timeline the stamps build, so
+    /// a phoneme began ~40 ms early (the jitter buffer's lag) and then replayed
+    /// its first ~40 ms when the stamped copy arrived. Not serialised: it is a
+    /// property of the WIRING, not of guest state, and the owner re-establishes
+    /// it on its next queued store.
+    bool   timedPlayback_   = false;
 
     /// Compute the phoneme duration in CPU cycles based on the current
     /// `durPhon_` (mode + phoneme) and `rateInf_` (rate). AppleWin's

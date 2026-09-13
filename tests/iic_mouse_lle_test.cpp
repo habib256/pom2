@@ -133,12 +133,16 @@ static void exercise(pom2::SystemProfile profile, const std::string& rom)
         const int x = coord(0x478), y = coord(0x4F8);
         // The ROM counts the selected edge once per complete X0/Y0 period
         // (two transitions). Give its IRQ handler time to service each edge.
+        // `setHostMouse` therefore queues TWO steps per commanded cursor unit,
+        // so a host unit is a guest unit — the same contract `mouseaw` answers
+        // for the identical drive (iic_mouse_firmware_test). Queuing one per
+        // unit made the //c cursor travel half as far as the //e's.
         for (int step=1; step<=20; ++step) {
             mouse->setHostMouse(step, std::min(step,12), true);
             cpu.run(2000);
         }
         call(0x14, 0);
-        assert(coord(0x478) == x+10 && coord(0x4F8) == y+6);
+        assert(coord(0x478) == x+20 && coord(0x4F8) == y+12);
         assert(mem.memRead(0x778+slot) & 0x80); // current button
         mouse->setHostMouse(20, 12, false);
         call(0x14, 0);

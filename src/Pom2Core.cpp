@@ -23,6 +23,7 @@
 #include "DiskIICard.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
 #include "Mockingboard.h"
 #include "SlotBus.h"
 #include "SpeakerDevice.h"
@@ -73,7 +74,12 @@ public:
     SpeakerDevice speaker;
     CassetteDevice cassette;
     DiskIICard* diskII = nullptr; // non-owning; slot 6 owns the card
-    MockingboardCard* mockingboard = nullptr; // non-owning; its slot owns it
+    // Non-owning; their slots own them. A LIST, not one pointer: `pullAudio`
+    // mixes every card on the bus, so a second attached card was being mixed
+    // at a rate and volume it was never told about — `attachMockingboard`
+    // simply overwrote the single pointer and the earlier card kept 44 100
+    // while the mixer consumed 48 000.
+    std::vector<MockingboardCard*> mockingboards;
     double cpuClockHz = static_cast<double>(POM2_CPU_CLOCK_HZ);
     std::uint32_t audioSampleRate = 44100;
     std::vector<float> speakerScratch;
@@ -284,7 +290,7 @@ bool Core::attachMockingboard(int slot, MockingboardModel model)
     card->setCpu(&impl_->cpu);
     card->setCpuClock(impl_->cpuClockHz);
     card->setSampleRate(impl_->audioSampleRate);
-    impl_->mockingboard = card.get();
+    impl_->mockingboards.push_back(card.get());
     impl_->memory.slotBus().plug(slot, std::move(card));
     impl_->error.clear();
     return true;
@@ -292,12 +298,14 @@ bool Core::attachMockingboard(int slot, MockingboardModel model)
 
 bool Core::mockingboardAttached() const
 {
-    return impl_->mockingboard != nullptr;
+    return !impl_->mockingboards.empty();
 }
 
 void Core::setMockingboardVolume(float volume)
 {
-    if (impl_->mockingboard) impl_->mockingboard->setVolume(volume);
+    // Every attached card, not just the last one: they are all mixed.
+    for (MockingboardCard* card : impl_->mockingboards)
+        if (card) card->setVolume(volume);
 }
 
 void Core::softReset()
@@ -408,7 +416,21 @@ void Core::setAudioSampleRate(std::uint32_t sampleRate)
     impl_->audioSampleRate = sampleRate;
     impl_->speaker.setSampleRate(sampleRate);
     impl_->cassette.setAudioOutputSampleRate(sampleRate);
-    if (impl_->mockingboard) impl_->mockingboard->setSampleRate(sampleRate);
+    for (MockingboardCard* card : impl_->mockingboards)
+        if (card) card->setSampleRate(sampleRate);
+    // …and every OTHER card the mixer walks. `pullAudio` sums each plugged
+    // card's audioSource(), so anything rendering at a rate it was not told
+    // about drifts against the producer: its cycles-per-sample is computed
+    // from the stale rate, the cursor runs onto the producer and the card
+    // re-anchors every buffer (the documented 40-46 ms dropout), with every
+    // note sharp by the ratio. Same idiom as `AudioDevice::addSource`.
+    for (int slot = 1; slot <= 7; ++slot) {
+        SlotPeripheral* card = impl_->memory.slotBus().peripheral(slot);
+        if (!card) continue;
+        if (AudioSource* source = card->audioSource())
+            if (auto* ra = dynamic_cast<RateAware*>(source))
+                ra->setSampleRate(sampleRate);
+    }
 }
 
 std::size_t Core::pullSpeakerAudio(float* monoOutput,

@@ -137,9 +137,16 @@ bool Ssi263::write(uint8_t reg, uint8_t val)
             // Reset audio playback cursor to the start of the newly
             // latched phoneme. Without this, a new phoneme would
             // resume mid-sample at the previous cursor.
-            playbackPhoneme_ = currentPhoneme();
-            playbackOffset_  = 0;
-            resampleAccum_   = 0.0f;
+            //
+            // ONLY on the untimed path (EchoPlusCard's own fillAudio). When
+            // the owner stamps its stores, `applyPlaybackEvent` does this at
+            // the audio cursor instead, and doing it here as well switched the
+            // phoneme ~40 ms early and then replayed its first 40 ms.
+            if (!timedPlayback_) {
+                playbackPhoneme_ = currentPhoneme();
+                playbackOffset_  = 0;
+                resampleAccum_   = 0.0f;
+            }
         }
         break;
     }
@@ -163,9 +170,13 @@ bool Ssi263::write(uint8_t reg, uint8_t val)
             // phoneme (not just the IRQ countdown above). Without this
             // the audio side resumed mid-sample at whatever cursor the
             // pre-power-down phoneme left behind.
-            playbackPhoneme_ = currentPhoneme();
-            playbackOffset_  = 0;
-            resampleAccum_   = 0.0f;
+            //
+            // Untimed path only — see the DURPHON case above.
+            if (!timedPlayback_) {
+                playbackPhoneme_ = currentPhoneme();
+                playbackOffset_  = 0;
+                resampleAccum_   = 0.0f;
+            }
         }
         // CTL L→H (0→1): power-down silences audio + clears A/!R + drops
         // any pending IRQ (AppleWin SSI263.cpp ~line 165).
@@ -227,6 +238,9 @@ bool Ssi263::advance(int cycles)
 
 void Ssi263::queuePlaybackEvent(uint8_t reg, uint8_t val, uint64_t cycle)
 {
+    // From here on the PCM cursor belongs to `applyPlaybackEvent`, which runs
+    // at the audio cursor. See `timedPlayback_` in the header.
+    timedPlayback_ = true;
     if (!ctlEvents_.push_back(CtlEvent{cycle, static_cast<uint8_t>(reg & 0x07),
                                        val})) {
         // Full — the audio device is stalled or absent, and a stale backlog

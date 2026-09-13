@@ -205,6 +205,22 @@ public:
     using BusProgress = SmartPortBusDevice::Progress;
     BusProgress busProgress() const { return bus_.progress(); }
 
+    /// What the BUS unit answers when the guest asks "can I write?" — the
+    /// value `SmartPortBusDevice` gates WRITE and FORMAT on, which is NOT the
+    /// same question as `bayInfo(bay).writeProtected` (that one reports the
+    /// medium's own flag, straight from the backing). The two diverged once
+    /// already: the hard-disk bay answered the raw flag while the 3.5" bay
+    /// folded in the write-back opt-in, so with write-back off a guest SAVE to
+    /// a hard disk was acknowledged and then discarded at eject — a write the
+    /// guest was told had succeeded (TODO.md R1). Exposed so that contract can
+    /// be asserted directly: the bus device itself is private, and a pin
+    /// written through `bayInfo()` would stay green while the bug lived.
+    bool busUnitWriteProtected(int bay) const
+    {
+        if (bay < 0 || bay >= kMaxUnits) return true;
+        return busUnits_[static_cast<std::size_t>(bay)].writeProtected();
+    }
+
     /// Mechanical sound sink, shared with the rest of the 3.5" stack.
     void setFloppySound(FloppySoundSink* fs);
 

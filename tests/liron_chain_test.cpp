@@ -277,6 +277,43 @@ int main()
         if (!card.ejectBay(3) || card.bayInfo(3).loaded) fail("eject unit 3");
     }
 
+    // R1 — ONE write-protect rule for both bays of a card: physically
+    // protected OR no write-back opt-in. The BUS is the question the guest
+    // actually asks, and the two bay kinds used to answer it differently:
+    // with write-back off a 3.5" refused the write, while a hard disk
+    // ACCEPTED it, marked the blocks dirty, and dropped them at eject — a
+    // SAVE the guest was told had succeeded, gone with no error anywhere.
+    // Asserted through `busUnitWriteProtected` and not `bayInfo()`, because
+    // that struct reports the MEDIUM's own flag (LironCard.cpp:466) and would
+    // stay green while this bug lived.
+    {
+        pom2::LironCard card(5);
+        std::string err;
+        if (!card.mountBay(0, volumes[0], err)) fail("mount a 3.5\": " + err);
+        if (!card.mountBay(1, volumes[1], err)) fail("mount a hard disk: " + err);
+        if (card.bayInfo(0).kindLabel != "3.5\" 800K" ||
+            card.bayInfo(1).kindLabel != "ProDOS HDV")
+            fail("the mixed-bay fixture is not one of each kind");
+
+        // Set BOTH states explicitly: ctest runs with
+        // POM2_MEDIA_WRITE_DEFAULT=protected, so the process default is not
+        // the thing under test here — the per-bay opt-in is.
+        card.setBayWriteBack(0, true);
+        card.setBayWriteBack(1, true);
+        if (card.busUnitWriteProtected(0))
+            fail("write-back ON: the 3.5\" bay refused a write");
+        if (card.busUnitWriteProtected(1))
+            fail("write-back ON: the hard-disk bay refused a write");
+
+        card.setBayWriteBack(0, false);
+        card.setBayWriteBack(1, false);
+        if (!card.busUnitWriteProtected(0))
+            fail("write-back OFF: the 3.5\" bay must refuse the write");
+        if (!card.busUnitWriteProtected(1))
+            fail("write-back OFF: the hard-disk bay must refuse it too — "
+                 "accepting it loses the guest's SAVE at eject (TODO.md R1)");
+    }
+
     // The count's rules, without a boot: pairs, 2..14.
     {
         pom2::LironCard card(5);

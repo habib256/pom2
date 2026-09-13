@@ -278,10 +278,28 @@
 # SlotBus::peripheralForIicRomPage, SlotPeripheral::iicRomWindowPage). The
 # snapshot trailer remains the split owed on this file.
 #   src/Memory.cpp               2713 -> 2735 (+22)
+# 2026-09-13 (bug hunt #20, the three-phase flush finished): one ceiling
+# raised. `prepareEjectBay` serves only BLOCK-backed bays and declines a 3.5"
+# bay with an EMPTY error — which four call sites read as "nothing to write":
+# flushOutgoingBay, ejectMediaBay, setMediaBayType and ejectAllMedia. The
+# write then fell to the LOCKED phase (`ejectBay` / `mountBay` ->
+# `Disk35Image::loadFile`, whose first statement is `saveDirty()`): 800 KB
+# plus two fsyncs under `stateMutex`, freezing the CPU worker and the painter
+# together — on every quit and every profile switch, which is when
+# ejectAllMedia runs. Each site now also asks `prepareFlushBay`, the
+# whole-file capture `flushAll` already used, commits it outside the lock and
+# re-marks the bay dirty if that commit fails, so a failed save still costs
+# the user nothing. The hunt reported two of these sites; the other two were
+# found by grepping for the same shape.
+#
+# The four capture/commit pairs duplicate a shape this file already repeats
+# for the block path. Folding both into a `StorageCoordinator_BayFlush` TU,
+# beside _Notch / _HdvBays / _Chains, is the split owed on this file.
+#   src/StorageCoordinator.cpp   2372 -> 2530 (+158)
 src/Apple2Display.cpp                    2522
 src/DiskImage.cpp                        3154
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
 src/Memory.cpp                           2735
-src/StorageCoordinator.cpp               2372
+src/StorageCoordinator.cpp               2530
 src/hgrpaint/HgrPaintEditor.cpp          2656

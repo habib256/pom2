@@ -407,6 +407,7 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
 {
     error.clear();
     Block512Backing::PendingWriteBack pending;
+    MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
     {
         auto state = controller.lockState();
@@ -419,8 +420,52 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
             error = prepareError;
             return false;
         }
+        // `prepareEjectBay` declining with an EMPTY error means "this bay is
+        // not block-backed", NOT "nothing to write" — a Liron 3.5" bay lands
+        // exactly there. Reading it as nothing-to-do left the write to the
+        // LOCKED phase: `mountBay` → `Disk35Image::loadFile`, whose first
+        // statement is `saveDirty()` — 800 KB plus two fsyncs with
+        // `stateMutex` held, freezing the CPU worker and the painter behind
+        // it (CLAUDE.md's standing rule). The card already offers the
+        // whole-file capture that `flushAll` uses; ask for it here too, and
+        // the later locked save finds the bay already clean.
+        if (!twoPhase) {
+            std::string flushError;
+            if (!media->prepareFlushBay(bay, imageFlush, flushError) &&
+                !flushError.empty()) {
+                error = flushError;
+                return false;
+            }
+        }
     }
-    if (!twoPhase || !pending.valid) return true;
+
+    // Phase 2 for a non-block bay: commit the captured image OUTSIDE the lock.
+    if (!twoPhase) {
+        if (!imageFlush.valid) return true;
+        Disk35Image::PendingWriteBack imagePending;
+        imagePending.valid = true;
+        imagePending.path  = std::move(imageFlush.path);
+        imagePending.bytes = std::move(imageFlush.bytes);
+        std::string commitError;
+        if (Disk35Image::commitWriteBack(std::move(imagePending), commitError))
+            return true;
+        // Phase 3: re-mark the bay dirty so the still-mounted medium is saved
+        // again on the next attempt, then refuse — the same contract the
+        // block path below keeps, and the reason a failed commit never
+        // silently loses the guest's writes.
+        {
+            auto state = controller.lockState();
+            if (auto* media = dynamic_cast<MountableMediaCard*>(
+                    state.memory().slotBus().peripheral(slot)))
+                media->restoreFlushBayDirty(bay);
+        }
+        error = "unsaved changes in slot " + std::to_string(slot) + " bay " +
+                std::to_string(bay + 1) + " could not be written: " +
+                (commitError.empty() ? std::string("write-back failed")
+                                     : commitError);
+        return false;
+    }
+    if (!pending.valid) return true;
 
     const std::vector<std::uint32_t> captured = pending.dirtyIndices;
     std::string commitError;
@@ -990,6 +1035,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     // guest writes racing the commit were silently dropped from the user's
     // only host copy, the exact hazard DEV.md ranks above latency.
     Block512Backing::PendingWriteBack pending;
+    MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
     {
         auto state = controller.lockState();
@@ -1006,6 +1052,41 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         twoPhase = media->prepareEjectBay(bay, pending, prepareError);
         if (!twoPhase && !prepareError.empty())
             return commandError(prepareError);
+        // An EMPTY error means "this bay is not block-backed", NOT "nothing to
+        // write": a Liron 3.5" bay lands exactly here, and leaving it to phase
+        // 3 put the whole 800 KB image plus two fsyncs inside `ejectBay`'s
+        // inline `saveDirty()` — under `stateMutex`, which is the one thing
+        // these three phases exist to avoid. `prepareFlushBay` is the same
+        // whole-file capture `flushAll` already uses, and it retires the dirty
+        // flag here, so phase 3 finds the bay clean and writes nothing.
+        if (!twoPhase) {
+            std::string flushError;
+            if (!media->prepareFlushBay(bay, imageFlush, flushError) &&
+                !flushError.empty())
+                return commandError(flushError);
+        }
+    }
+
+    // Phase 2 for a non-block bay — outside the lock, like its sibling below.
+    if (!twoPhase && imageFlush.valid) {
+        Disk35Image::PendingWriteBack imagePending;
+        imagePending.valid = true;
+        imagePending.path  = std::move(imageFlush.path);
+        imagePending.bytes = std::move(imageFlush.bytes);
+        std::string error;
+        if (!Disk35Image::commitWriteBack(std::move(imagePending), error)) {
+            // Re-mark dirty so the still-mounted medium is saved again on the
+            // next attempt, then refuse: a failed commit must never cost the
+            // guest's writes. Re-resolved because the bus can be rebuilt while
+            // the commit runs unlocked.
+            auto state = controller.lockState();
+            auto& bus = state.memory().slotBus();
+            if (auto* media =
+                    dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
+                media->restoreFlushBayDirty(bay);
+            return commandError(error.empty()
+                ? "the image could not be saved" : error);
+        }
     }
 
     if (twoPhase && pending.valid) {
@@ -1112,6 +1193,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
     //                 and abort the type change entirely
     //   3. locked   — re-resolve, flush any inline remainder, swap the type
     Block512Backing::PendingWriteBack pending;
+    MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
     {
         auto state = controller.lockState();
@@ -1135,6 +1217,40 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
         twoPhase = media->prepareEjectBay(bay, pending, prepareError);
         if (!twoPhase && !prepareError.empty())
             return commandError(prepareError);
+        // An EMPTY error means "not block-backed", not "nothing to write" —
+        // and a bay whose CURRENT medium is a 3.5" reaches here whenever the
+        // user switches its type. Leaving it to phase 3 wrote 800 KB plus two
+        // fsyncs inline, under the lock these three phases exist to keep
+        // clear. Capture it here; phase 3 then finds the bay clean.
+        if (!twoPhase) {
+            std::string flushError;
+            if (!media->prepareFlushBay(bay, imageFlush, flushError) &&
+                !flushError.empty())
+                return commandError(flushError);
+        }
+    }
+
+    // Phase 2 for a non-block bay — outside the lock, like its sibling below.
+    if (!twoPhase && imageFlush.valid) {
+        Disk35Image::PendingWriteBack imagePending;
+        imagePending.valid = true;
+        imagePending.path  = std::move(imageFlush.path);
+        imagePending.bytes = std::move(imageFlush.bytes);
+        std::string error;
+        if (!Disk35Image::commitWriteBack(std::move(imagePending), error)) {
+            // Re-mark dirty and ABORT the type change: the medium is still
+            // mounted, so the user can retry rather than lose the writes.
+            auto state = controller.lockState();
+            auto& bus = state.memory().slotBus();
+            if (auto* media =
+                    dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
+                media->restoreFlushBayDirty(bay);
+            return commandError(
+                "unsaved changes in slot " + std::to_string(slot) + " bay " +
+                std::to_string(bay + 1) + " could not be written: " +
+                (error.empty() ? std::string("the image could not be saved")
+                               : error));
+        }
     }
 
     if (twoPhase && pending.valid) {
@@ -1591,6 +1707,12 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         int bay = 0;
         std::string label;
         Block512Backing::PendingWriteBack pending;
+        /// The 3.5" half of the same idea. `prepareEjectBay` serves only
+        /// block-backed bays, so a Liron 3.5" left `twoPhase` false and its
+        /// 800 KB image was written INLINE by phase 3's `ejectBay`, under
+        /// `stateMutex` — on every quit and every profile switch, which is
+        /// exactly when this function runs.
+        MountableMediaCard::PendingBayFlush imageFlush;
         bool twoPhase = false;
         bool failed = false;
     };
@@ -1635,6 +1757,20 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
                                               prepareError);
                     continue;
                 }
+                // Empty error = "not block-backed", not "nothing to write".
+                // Capture the whole image here so phase 2 writes it with the
+                // machine running; phase 3's `ejectBay` then finds the bay
+                // already clean.
+                if (!entry.twoPhase) {
+                    std::string flushError;
+                    if (!media->prepareFlushBay(bay, entry.imageFlush,
+                                                flushError) &&
+                        !flushError.empty()) {
+                        result.failures.push_back(entry.label + ": " +
+                                                  flushError);
+                        continue;
+                    }
+                }
                 bays.push_back(std::move(entry));
             }
         }
@@ -1662,7 +1798,30 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
                            : error));
     }
     for (auto& entry : bays) {
-        if (!entry.twoPhase || !entry.pending.valid) continue;
+        // The non-block bays: commit the captured image here, unlocked.
+        if (!entry.twoPhase) {
+            if (!entry.imageFlush.valid) continue;
+            Disk35Image::PendingWriteBack imagePending;
+            imagePending.valid = true;
+            imagePending.path  = std::move(entry.imageFlush.path);
+            imagePending.bytes = std::move(entry.imageFlush.bytes);
+            std::string error;
+            if (Disk35Image::commitWriteBack(std::move(imagePending), error))
+                continue;
+            entry.failed = true;
+            {
+                auto state = controller.lockState();
+                if (auto* media = dynamic_cast<MountableMediaCard*>(
+                        state.memory().slotBus().peripheral(entry.slot)))
+                    media->restoreFlushBayDirty(entry.bay);
+            }
+            result.failures.push_back(
+                entry.label + ": " +
+                (error.empty() ? std::string("the image could not be saved")
+                               : error));
+            continue;
+        }
+        if (!entry.pending.valid) continue;
         const std::vector<std::uint32_t> captured = entry.pending.dirtyIndices;
         std::string error;
         if (Block512Backing::commitWriteBack(std::move(entry.pending), error))

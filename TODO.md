@@ -1094,8 +1094,16 @@ connectors, the extracted mix law), each lot adversarially verified by a second
 pass told to refute: **nine confirmed, three refuted**. Five are fixed in
 `e067603`; these are the rest, with the evidence where it was found.
 
-- **A Liron 3.5" mount or eject writes 800 KB plus two fsyncs under
-  `stateMutex`.** `StorageCoordinator::flushOutgoingBay` (:417) and
+- ~~**A Liron 3.5" mount or eject writes 800 KB plus two fsyncs under
+  `stateMutex`.**~~ **done 2026-09-13**: fixed at FOUR sites, not the two found
+  by the hunt — `flushOutgoingBay`, `ejectMediaBay`, `setMediaBayType` and
+  `ejectAllMedia` (the quit / profile-switch path, the highest-traffic one).
+  Each now also asks `prepareFlushBay`, commits the captured image outside the
+  lock, and re-marks the bay dirty if that commit fails, so a failed save still
+  costs the user nothing. `mountBlockBytes` shares the shape but NOT the
+  defect: it errors with "has no ProDOS block device", so its card is a block
+  card by construction and no 3.5" bay reaches it. The evidence below stands as
+  written. `StorageCoordinator::flushOutgoingBay` (:417) and
   `ejectMediaBay` (:1006) discover the two-phase form only through
   `prepareEjectBay`, and `LironCard::prepareEjectBay` (`LironCard.cpp:609`)
   serves block-backed bays only — it declines a 3.5" bay with an **empty**
@@ -1105,7 +1113,12 @@ pass told to refute: **nine confirmed, three refuted**. Five are fixed in
   `flushAll` uses it at `:2076` under a comment naming this exact cost; the
   mount/eject paths simply never ask. Newly reachable on a //e since `d2bc5f1`
   routed every Liron 3.5" mount through `mountMediaBay`.
-- **The SSI263 playback cursor is moved twice.** `Ssi263::write()` rewinds
+- ~~**The SSI263 playback cursor is moved twice.**~~ **done 2026-09-13**: a
+  `timedPlayback_` flag, set the first time an owner queues a STAMPED event,
+  gates the two CPU-now rewinds. `applyPlaybackEvent` is then the only writer
+  of the PCM cursor on the timed path, while `EchoPlusCard`'s untimed
+  `fillAudio` keeps today's behaviour — which is why the fix is a gate and not
+  a deletion. Not serialised: it describes the wiring, not guest state. `Ssi263::write()` rewinds
   `playbackPhoneme_`/`playbackOffset_`/`resampleAccum_` at CPU-now
   (`Ssi263.cpp:140-142`, again in the CTL H→L branch at `:166-168`) and
   `applyPlaybackEvent` rewinds the same three at its stamp (`:245-251`). On a
@@ -1117,8 +1130,13 @@ pass told to refute: **nine confirmed, three refuted**. Five are fixed in
   cursor is the one render input with no audio-side shadow. The CPU-now rewind
   is still correct for `EchoPlusCard`'s untimed `fillAudio`, so the fix is a
   `timedPlayback_` gate, not a deletion.
-- **`Pom2Core::pullAudio` mixes every card but retunes only the last-attached
-  one.** `a30e817` made the mixer WALK the bus (`Pom2Core.cpp:456-461`) while
+- ~~**`Pom2Core::pullAudio` mixes every card but retunes only the last-attached
+  one.**~~ **done 2026-09-13**: the single `impl_->mockingboard` pointer became
+  a list, so `setMockingboardVolume` and `mockingboardAttached` address every
+  attached card; and `setAudioSampleRate` now WALKS the bus, retuning any
+  `audioSource()` that exposes `RateAware` — the same idiom
+  `AudioDevice::addSource` uses — so a card the mixer sums is never a card the
+  rate negotiation skipped. `a30e817` made the mixer WALK the bus (`Pom2Core.cpp:456-461`) while
   `setAudioSampleRate` still names `impl_->mockingboard` (`:411`) and
   `attachMockingboard` overwrites that pointer (`:287`). With two cards the
   first keeps 44 100 while the mixer consumes 48 000, so its `audioCursor`
@@ -1128,8 +1146,14 @@ pass told to refute: **nine confirmed, three refuted**. Five are fixed in
   `mockingboardAttached` address the last card only, for the same reason.
   **Corrects the #19 entry below**: the mix LAW was unified, the rate
   negotiation was not.
-- **The native //c IOU mouse counts one cursor unit per X0/Y0 TRANSITION where
-  the ROM counts one per complete period**, so a //c drag travels half as far
+- ~~**The native //c IOU mouse counts one cursor unit per X0/Y0 TRANSITION where
+  the ROM counts one per complete period**~~ **done 2026-09-13**, on the user's
+  call — it was filed here as a judgement, and the judgement went to calibrate:
+  `setHostMouse` now queues TWO steps per commanded unit, so one host unit is
+  one guest unit, the same contract `mouseaw` answers for the identical drive
+  (`iic_mouse_firmware` asserts it, and still passes). `iic_mouse_lle:141` moved
+  to x+20 / y+12 with it. The edge and IRQ model — the MAME-verbatim part — is
+  untouched; only the host seam scales. Originally, so a //c drag travels half as far
   as the identical drag on a //e with `mouseaw` (`IIcMouse.cpp:11-12` vs
   `:78-89`). Recorded as a **judgement, not a defect**:
   `iic_mouse_lle_test.cpp:135-141` documents the two-transition arithmetic
@@ -1137,7 +1161,13 @@ pass told to refute: **nine confirmed, three refuted**. Five are fixed in
   scaling at the input port instead. If it is ever changed it is a host-seam
   calibration (`setHostMouse` queueing two per commanded unit) and that test's
   expectation moves with it.
-- **The Liron write-protect fix in `e067603` is NOT pinned.** `LironCard` keeps
+- ~~**The Liron write-protect fix in `e067603` is NOT pinned.**~~ **done
+  2026-09-13**: `LironCard::busUnitWriteProtected(bay)` exposes what the BUS
+  unit answers — deliberately not `bayInfo()`, which reports the medium's own
+  flag and would have stayed green while the bug lived — and `liron_chain` now
+  mounts one bay of each kind and asserts both in BOTH toggle states. The
+  accessor is not test scaffolding: it is the same question
+  `SmartPortBusDevice` gates WRITE and FORMAT on, and it was unobservable. `LironCard` keeps
   `bus_` and `busUnits_` private, so the honest pin drives a byte-level
   SmartPort WRITE and asserts `$2B`, the way `smartport_bus_device_test` does
   with its own stub units. A pin through `bayInfo()` would be **green while the

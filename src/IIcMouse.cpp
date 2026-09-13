@@ -8,8 +8,16 @@ void IIcMouse::setHostMouse(uint8_t x, uint8_t y, bool button)
     // Caller holds the machine lock. Host counters are relative inputs,
     // never guest coordinates: the unmodified ROM integrates/clamps them.
     auto delta = [](int v) { return v > 128 ? v-256 : v < -128 ? v+256 : v; };
-    countX_ = std::clamp(countX_ + delta(int(x)-hostX_), -32768, 32767);
-    countY_ = std::clamp(countY_ + delta(int(y)-hostY_), -32768, 32767);
+    // TWO queued steps per commanded cursor unit. `step()` spends one queued
+    // unit per X0/Y0 TRANSITION, and the ROM's IRQ handler advances the screen
+    // hole once per complete PERIOD — two transitions. Queuing one per unit
+    // therefore moved the guest cursor exactly half as far as the host asked,
+    // so the same drag that crossed the screen on a //e with `mouseaw` reached
+    // the middle on a //c. MAME scales this at its input port instead; POM2's
+    // host seam is here, and this is the only place that knows a host unit is
+    // meant to be one cursor unit.
+    countX_ = std::clamp(countX_ + 2 * delta(int(x)-hostX_), -32768, 32767);
+    countY_ = std::clamp(countY_ + 2 * delta(int(y)-hostY_), -32768, 32767);
     hostX_ = x; hostY_ = y; button_ = button;
 }
 
