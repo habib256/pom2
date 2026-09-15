@@ -5,6 +5,72 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-15 — Apply no longer joins FujiNet / SSC under the machine lock
+
+`SlotRebuildCoordinator::beginLocked` destroyed cards via `slotBus().clear()`
+while still holding `stateMutex`. `~FujiNetCard` joined the SP-over-SLIP
+worker; `~SuperSerialCard` joined the telnet listener. The FujiNet panel
+Stop path had already moved that join off the lock; Apply, a profile
+switch, and the SSC panel Stop button had not, so a listening card froze
+the window for the join. The SSC panel's Start also bound a socket under
+the same lock.
+
+The coordinator now requires `stopHostWorkers` between `prepareAfterFlush`
+and `beginLocked`. That hook collects the live cards under a brief lock and
+joins outside it. `DevicePanelCoordinator::applySerial` does the same for
+the SSC Start/Stop buttons. A throwing join returns the coordinator to
+Stable so the next Apply is not stuck at Prepared; each card's stop is
+tried even if a sibling throws. The destructors still call `stop()`; after
+this they are a no-op join. Pinned by `slot_rebuild_coordinator`
+(`stop-network` before `clear-slot-bus`; throwing join → Stable).
+
+Review of that change found three more sites with the same shape, fixed the
+same day. `plugSlotsFromSettings` still bound every saved SSC listener's
+socket — and spawned its worker — under the lock on every profile switch
+and Slot Config Apply; the listeners are now queued in
+`pendingSscListeners_` and opened by `startDeferredSscListeners`, the
+FujiNet shape. The CLI `--fujinet` rollback unplugged its card under the
+lock, and since the deferred drain starts *every* queued link, a sibling's
+live worker was joined there; the unplug is two-phase now. And the join sat
+between `applyProfile`'s media snapshot and `beginLocked`, stretching from
+microseconds to seconds the window in which an AI `/disk/insert` mounts a
+disk the rebuild never re-mounts — the join now precedes the snapshot
+(`restartEmulationFromSettings` keeps its pre-existing, flush-sized window).
+The hook itself never throws: its callers have already committed the
+profile and `main()` has no catch. Pinned by `serial_panel_boundary` (a
+probe transport asserts `stateMutex` is free at start/stop — red before)
+and `slot_rebuild_coordinator` (the hook asserts the same).
+
+## 2026-09-15 — One media contract across the parallel write paths
+
+Three storage leaves (`DiskImage`, `Disk35Image`, `Block512Backing`) plus
+the SmartPort units and the Disk II / HDV cards that wrap them. A drift
+between any two of them is how a guest SAVE vanishes. `media_contract`
+asserts the shared rules (default writable, remount preserves the
+write-back opt-out, a clean flush is a no-op, write + save + reload, a
+notch flipped while dirty still commits, eject with write-back off leaves
+the file) and names the deliberate divergences: `Block512Backing` /
+`ProDOSHardDiskCard` do not fold write-back off, `DiskImage::writeNibbleAt`
+gates on physical WP only, and a `.dsk` save re-encodes (persist is "the
+file changed", not nibble identity).
+
+Review tightened it the same day. The notch-while-dirty phase writes a
+*distinct* marker, so a dirty flag that cleared with nothing written can no
+longer pass; a new phase pins save-on-eject with write-back **on**, per row
+(the SmartPort units and the Disk II / HDV cards save, the raw leaves drop —
+`ejectSaves`, the bug four `eject()` comments describe); the `.dsk`
+re-encode must change exactly one byte by exactly 4; a clean flush must
+leave the file bytes alone; scratch files live in a per-process directory
+and are un-notched before removal. The card rows poke the leaf through the
+card, so their "not gated on write-back" is a property of that path — the
+guest's own write reaches `DiskImage::writeFlux` and `DiskIICard` gates it
+on `writeBackEnabled`. **Windows**: `replaceFileAtomic` now clears
+`FILE_ATTRIBUTE_READONLY` on the target for the swap and restores it on
+failure — `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` refuses a read-only
+target with `ERROR_ACCESS_DENIED`, so a notch flipped on a dirty disk left
+it loaded-and-dirty on Windows only (POSIX `rename` never reads the
+target's mode). Compile-checked by the Windows CI job, which runs no ctest.
+
 ## 2026-09-15 — A locked 3.5" vanished from ON_LINE; the UniDisk DIB is $00
 
 A2 File Cmd XL (ProDOS 2.4.3) lists volumes from `ON_LINE` unit 0. A

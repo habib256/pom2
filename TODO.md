@@ -325,20 +325,6 @@ Densest policy files, none of them linked by any test:
 | `AudioCoordinator.cpp` | 444 | 22 / 0 |
 | `CliRunner.cpp` | 264 | 0 / 0 — every deferred CLI action |
 
-- 🟠 **G5-1 · One contract test across the parallel media paths.** *≈1 d.* The
-  direct antidote to the drift shape. Enumerate every medium — `DiskImage`,
-  `Disk35Image`, `Block512Backing`, the SmartPort units — and assert one rule
-  on each: what `isWriteProtected()` reports with write-back off, whether an
-  eject clears the persisted path, whether a mount preserves the write-back
-  opt-in, whether a flush is a no-op when nothing is dirty. Where a path
-  diverges **on purpose**, the test states the divergence. It has a live
-  target: `SmartPortUnit.h:92-95` declares the contract as *"physically WP OR
-  no write-back opt-in"*, `SmartPort35Unit.h:50` honours it and
-  `SmartPortHdvUnit.h:60-62` contradicts it — two bays of one card, one panel,
-  one toggle, opposite answers — **fixed 2026-09-07** (`SmartPortHdvUnit`
-  honours the contract; `smartport_mixed_units_smoke` pins both units in both
-  toggle states), which settles standing ruling R1. The cross-medium contract
-  test over `DiskImage` / `Disk35Image` / `Block512Backing` remains to write.
 - 🟠 **G5-2 · The same shape for slot-card snapshots.** *≈4 h.*
   `tests/card_snapshot_state_test.cpp` covers 6 of 21 cards and asserts exactly
   the right thing for each, including *"every loader must ignore a foreign blob
@@ -574,7 +560,7 @@ backlog items are closed as *won't do* unless somebody arrives with a need.
 | **SlotBus + wire-OR IRQ** | One aggregation bug silences the whole corpus | `slot_bus_smoke`, `irq_aggregator_smoke` block a release |
 | **DiskImage / WOZ / Disk II LSS** | Real P6 PROM + flux model; the boot path of every 5.25" corpus title | Keep the MAME port verbatim; `mame_lss_parity` is the oracle |
 | **SmartPort card, Liron-class HLE (`smartport35`)** | DIX's actual boot path (`disks_3.5/DIX.po` at slot 5) | The `$Cn0A`/`$Cn0D` entry convention is frozen contract |
-| **Media write-back + durability** | Criterion (3) — the only defect class that destroys what a user cannot regenerate; three paths drifted in one day | **G5-1 is a core obligation, not a nice-to-have** |
+| **Media write-back + durability** | Criterion (3) — the only defect class that destroys what a user cannot regenerate; three paths drifted in one day | **Pinned by `media_contract`** (the three leaves, both SmartPort wrappers, Disk II / HDV cards; `Block512Backing` does not fold write-back, on purpose) |
 | **Host-side storage policy** | Both causes of the 2026-09-04 HDV report, and the G2 eject defect, live here | **G5-4 is a core obligation.** The pure half must test without linking the emulator |
 | **System profiles + reset architecture** | Everything above is selected by it; an ordering bug presents as a defect in whatever card loaded last | `system_profile_smoke` + `slot_config_smoke` block a release; G5-6 closes the gap |
 | **Le Chat Mauve — Féline + Eve variants only** | The one non-DIX admission, made deliberately: the project's differentiator, two golden suites, its own corpus section | Keep both suites frozen. **Scope is the two variants** — `rvb` and the //c-adapter quirk are frozen |
@@ -669,19 +655,19 @@ and the G2 eject defect were found.
 
 **The signature failure is drift between parallel paths** — two siblings, one
 updated. The three instances recorded on 2026-09-04 are **all fixed** (write-back
-resync `8991c33`; CRT mask pitch `1c38db0`; write-protect, which G5-1 settles).
-The four found on 2026-09-05 replaced them, which is the point:
+resync `8991c33`; CRT mask pitch `1c38db0`; write-protect, which `media_contract`
+settles). The four found on 2026-09-05 replaced them, which is the point:
 
 | Contract | Sibling A (right) | Sibling B (wrong) |
 |---|---|---|
 | `setCpuClock` fan-out | speaker, cassette, every slot card | `IWMDevice` / `Sony35Drive` hardcode the NTSC constant |
 | Permission carry on write-back | `replaceFileAtomic` carries the original's mode | `ProDOSVolume`'s host-file decode did not — **closed 2026-09-07**, pinned `testWriteBackCarriesFileMode` |
-| Write-protect (still open) | `SmartPort35Unit.h:50` honours the base contract | `SmartPortHdvUnit.h:60-62` contradicts it |
+| Write-protect | `SmartPort35Unit` honours the base contract | `SmartPortHdvUnit` contradicted it — **closed 2026-09-07**; `media_contract` keeps the three leaves honest |
 
-Each path is tested on its own; nothing asserts that all of them obey the same
-rule. **That is what a contract test is for**, and G5-1/2/3 are three of them.
-The pattern has now recurred across four unrelated subsystems in two days, which
-makes it the tree's most productive place to look.
+Each path is tested on its own; nothing asserted that all of them obey the same
+rule. **That is what a contract test is for**, and G5-2/3 remain. `media_contract`
+closed G5-1. The pattern has now recurred across four unrelated subsystems in two
+days, which makes it the tree's most productive place to look.
 
 **Three blind spots, by construction rather than by neglect:**
 
@@ -720,7 +706,7 @@ Decisions, not work. Do not re-litigate without new evidence.
   card's — physically write-protected *or* no write-back opt-in, as the 3.5"
   unit and the Disk II already answered; `SmartPortHdvUnit` was aligned. The
   HDV-class *cards* keep their in-session-writable policy, and DEV.md states
-  the divergence. G5-1's cross-medium test is still the way to keep it so.
+  the divergence. Pinned by `media_contract`.
 - **R2 · Echo+ TMS5220: ship or hide.** A detect-only stub in the catalog is the
   wrong third option. **Answered by the scope ruling: hide** → G3.
 - **R3 · One `Config`** (env → CLI → Settings → defaults), consistent `pom2::`
@@ -1105,13 +1091,25 @@ were not patched this round.
   `clear` + `aPrimed_=false`. Unmute dumps a burst of phonemes at sample 0
   — the same class of dropout hunt #20 closed for the PCM cursor. The
   mute tests cover MB/Phasor amplitude, not the SSI timeline.
-- 🟡 **Apply / profile switch still joins a FujiNet or listening SSC
-  worker under `stateMutex`.** `SlotRebuildCoordinator::beginLocked`
-  destroys cards via `slotBus().clear()`. `~FujiNetCard` →
-  `SpOverSlipLink::stop` joins; `~SuperSerialCard` → `TcpTransport::stop`
-  joins. The panel Stop path was moved off this lock; the destructor was
-  not. The CPU worker is already stopped; the AI server waits. A
-  `stopDetached` on the link is the shape `ChildProcess` already has.
+- ~~**Apply / profile switch still joins a FujiNet or listening SSC
+  worker under `stateMutex`.**~~ **done 2026-09-15**:
+  `SlotRebuildCoordinator::stopHostWorkers` joins the FujiNet link and
+  every SSC listener with the lock released, before `beginLocked`
+  destroys the cards. A destructor `stopDetached` on the *link* is
+  still the wrong shape (UAF on `this`); the join runs on the live
+  card. Same day: the SSC listener's *bind* moved off the lock too
+  (`startDeferredSscListeners`), the CLI `--fujinet` rollback unplugs
+  two-phase, and the join precedes `applyProfile`'s media snapshot.
+  Pinned by `slot_rebuild_coordinator` and `serial_panel_boundary`
+  (both assert the lock is free).
+- 🟡 **`SlotRebuildCoordinator` has no escape from `Rebuilding`.** An
+  exception between `beginLocked` and `publishLocked` (a ROM load, a
+  remount) leaves the phase there for good, every later
+  `prepareAfterFlush` throws `logic_error`, and `main()` has no catch —
+  a terminate with no log line. `Prepared` / `WorkersStopped` got their
+  escape on 2026-09-15; this one wants an RAII guard that resets to
+  Stable on unwind. Both rebuild callers have no early return in that
+  span today, so it is exception-only.
 
 #### Left open by bug hunt #20 (2026-09-13) — the code new since v0.9.2
 
@@ -1199,8 +1197,8 @@ pass told to refute: **nine confirmed, three refuted**. Five are fixed in
   SmartPort WRITE and asserts `$2B`, the way `smartport_bus_device_test` does
   with its own stub units. A pin through `bayInfo()` would be **green while the
   bug lived**: that struct's `writeProtected` is filled from the backing
-  (`LironCard.cpp:466`), not from the unit. G5-1's cross-medium test is still
-  the way to keep R1.
+  (`LironCard.cpp:466`), not from the unit. `media_contract` is the
+  cross-medium pin for R1.
 - **`iic_mockingboard_4c` pinned a feature that could not be used.** The #19
   entry below records the //c Mockingboard as done and pinned; hunt #20 found
   the choice could never reach `state.cfg`, because that test plugs the card
