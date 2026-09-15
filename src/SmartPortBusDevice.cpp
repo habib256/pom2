@@ -429,17 +429,17 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
         st[3] = static_cast<uint8_t>((blocks >> 16) & 0xFF);
         if (code == 0x03) {
             // Device Information Block: name (Pascal string in 16 bytes),
-            // type, subtype, firmware version. An 800K unit is a UniDisk
-            // 3.5 (type $01, subtype $C0 — extended calls, disk-switched
-            // errors); anything else on this bus is a hard disk (type $02,
-            // subtype $80 — extended calls, not removable).
-            const bool floppy = (blocks == 1600) || !media;
+            // type, subtype, firmware version. The unit says what it is —
+            // UniDisk 3.5 #5 (type $01, subtype $00) or a hard disk (type
+            // $02, bit 5 = not removable). Guessing from block count / empty
+            // made an ejected HDV answer as a UniDisk.
+            const bool floppy = u->isUnidisk35();
             static const char kFloppy[16] = "POM2 UNIDISK3.5";
             static const char kHard[16]   = "POM2 HARDDISK  ";
             st[4] = floppy ? 15 : 13;
             std::memcpy(st + 5, floppy ? kFloppy : kHard, 16);
             st[21] = floppy ? 0x01 : 0x02;
-            st[22] = floppy ? 0xC0 : 0x80;
+            st[22] = floppy ? 0x00 : 0x20;
             st[23] = 0x00; st[24] = 0x01;         // firmware 1.0
             buildReply(0x00, st, 25, false);
         } else {

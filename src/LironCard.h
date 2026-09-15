@@ -297,11 +297,21 @@ private:
             if (disk()) return img_->writeBlock(b, in);
             return hard() && blk_->writeBlock(b, in);
         }
+        /// A Liron bay holds either a 3.5" or an HDV. Empty, it is still
+        /// whichever it was last — default UniDisk, because that is the
+        /// drive on this controller until an HDV is put in.
+        bool isUnidisk35() const override
+        {
+            if (disk()) { lastUnidisk_ = true;  return true;  }
+            if (hard()) { lastUnidisk_ = false; return false; }
+            return lastUnidisk_;
+        }
     private:
         bool disk() const { return img_ && img_->isLoaded(); }
         bool hard() const { return blk_ && blk_->isLoaded(); }
         Disk35Image*     img_ = nullptr;
         Block512Backing* blk_ = nullptr;
+        mutable bool     lastUnidisk_ = true;
     };
     bool busEnabled_ = true;
     mutable SmartPortBusDevice   bus_;

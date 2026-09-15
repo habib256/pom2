@@ -172,6 +172,11 @@ public:
     bool isWriteProtected() const {
         return fileWriteProtected_ || hostReadOnly_ || !writeBackEnabled_;
     }
+    /// The medium's OWN lock: the 2IMG header bit, or a WOZ (no encoder).
+    /// Distinct from `isWriteProtected()`, which also carries the notch
+    /// and the write-back opt-out. `takeWriteBack` gates on this plus
+    /// `writeBackEnabled_`, not the notch — see Block512Backing::isMediumLocked.
+    bool isMediumLocked() const { return fileWriteProtected_; }
     /// The medium's own protection: the 2IMG lock flag, a WOZ (always), or
     /// the notch — the host file's read-only bit (MediaNotch.h).
     bool isFileWriteProtected() const { return fileWriteProtected_ || hostReadOnly_; }

@@ -76,6 +76,17 @@ void Ssi263::reset()
     playbackPhoneme_ = 0;
     playbackOffset_  = 0;
     resampleAccum_   = 0.0f;
+    // The audio-side timeline is not guest state, but it MUST die with
+    // the chip: a Sound II queuePlaybackEvent + F12 otherwise leaves
+    // ctlEvents_ and aPrimed_ armed, so fillAudioTimed keeps rendering
+    // the abandoned phoneme (and applyPlaybackEvent rewinds the cursor
+    // the blob just restored — the double-rewind write() no longer does).
+    ctlEvents_.clear();
+    aPrimed_        = false;
+    timedPlayback_  = false;
+    aCttrAmp_       = CONTROL_MASK;
+    aDurPhon_       = 0;
+    aFilFreq_       = 0;
 }
 
 uint8_t Ssi263::peekRegister(uint8_t reg) const

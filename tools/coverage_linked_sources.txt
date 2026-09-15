@@ -4,12 +4,11 @@
 # unlinking a poorly covered file RAISES the percentage — the floor alone
 # rewards deleting coverage. Regenerate with `tools/coverage.sh --update`.
 #
-# seeded-statically 2026-09-07 — NOT measured. Computed from CMake's own
-# per-target source lists (build/**/DependInfo.cmake) for every binary
-# build/tests/CTestTestfile.cmake actually invokes, pom2_headless included,
-# because a coverage build configures a second ~4 GB tree the author could not
-# run. The first real `tools/coverage.sh` run REPLACES this file with what
-# llvm-cov reports and passes loudly; the ratchet starts from that run.
+# Armed 2026-09-15 (bug hunt #21). The list began as a CMake-seeded snapshot
+# (2026-09-07) behind a `# seeded-statically` marker that made every CI run
+# a one-time bootstrap: replace the file in a throwaway workspace, print
+# COMMIT THIS, exit 0. The marker never left the tree, so the set-half of
+# the ratchet never ran. Removing it accepts this list as the baseline.
 src/AiControlServer.cpp
 src/Apple2Display.cpp
 src/Apple2Display_Beam.cpp

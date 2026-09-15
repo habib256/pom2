@@ -91,6 +91,7 @@ struct RamUnit final : pom2::SmartPortBusUnit {
     bool     hasMedia()       const override { return true; }
     uint32_t blockCount()     const override { return 4; }
     bool     writeProtected() const override { return false; }
+    bool     isUnidisk35()    const override { return false; }
     bool readBlock(uint32_t b, uint8_t out[512]) override
     { if (b >= 4) return false; std::memcpy(out, &blocks[b * 512], 512); return true; }
     bool writeBlock(uint32_t b, const uint8_t in[512]) override

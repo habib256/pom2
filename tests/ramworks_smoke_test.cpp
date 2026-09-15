@@ -208,6 +208,15 @@ void testResetWipesAndBankZero()
         selectBank(mem, b);
         assert(readSentinel(mem) == 0x00);
     }
+
+    // Hidden banks get the same 00/FF pattern, not zeros. Slot Config
+    // Apply used to call setRamWorksBanks AFTER coldBoot; assign(0)
+    // then left banks 1+ as a zero fill `$C073` could reach.
+    selectBank(mem, 7);
+    enableAuxRW(mem);
+    assert(mem.memRead(0x1234) == 0x00);
+    assert(mem.memRead(0x1235) == 0xFF);
+    disableAuxRW(mem);
 }
 
 void testIIPlusNotAffected()

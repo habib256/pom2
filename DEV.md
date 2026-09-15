@@ -3583,9 +3583,10 @@ SmartPort READ or STATUS came back carry-set + `$27` with the payload
 already delivered. The re-poll is gated on `spPushPages_`, non-zero only
 in the WRITE branch — the one branch that arms a stream, and it clears
 `ioError_` for its own unit first. Pinned by
-`smartport_call_error_isolation` (real 6502 through the firmware). Noted,
-not fixed: the DIB advertises subtype `$80` (extended calls) while
-`$40-$45` return `$01`, and FORMAT/INIT skip the parameter-count check.
+`smartport_call_error_isolation` (real 6502 through the firmware). The DIB
+is a UniDisk 3.5's (type `$01`, subtype `$00` — UniDisk 3.5 #5; an HDV is
+type `$02`, `$20`). `$40-$45` return `$01` (`$CC5B` `CPX #$0A`). FORMAT/INIT
+still skip the parameter-count check.
 
 **SmartPort-protocol dispatch ($Cn0D, 2026-07-12).** Real SmartPort call
 convention — `JSR $Cn0D / DFB cmd / DW paramList`, error in A + carry,
@@ -3595,11 +3596,14 @@ cmd + first 10 param-list bytes through $C0n7, EXECUTEs via $C0nE, then
 moves data guest↔device ($C0n9 pull / $C0n3 push). Commands: STATUS $00
 (unit 0 controller status; per-unit general status + 24-bit block count;
 statcode $03 = 25-byte DIB with "POM2 SMARTPORT" ID + type $01 3.5"/$02
-disk), READ $01, WRITE $02 (through the legacy commit machinery → real
+disk, subtype `$00`/`$20` — UniDisk 3.5 #5 / not-removable HD, no extended
+bit), READ $01, WRITE $02 (through the legacy commit machinery → real
 error latching), FORMAT $03 (no-op success on a block store), CONTROL $04
 (code 0 only), INIT $05. Errors per the ProDOS/SmartPort set: $01 bad
-cmd (incl. extended $4x), $04 bad pcount, $21 bad status/control code,
-$27 I/O, $28 no device, $2B write-protected, $2D bad block, $2F offline.
+cmd (incl. `$40-$45`: the dump's `$CC5B` `CPX #$0A`), $04 bad pcount, $21
+bad status/control code, $27 I/O, $28 no device, $2B write-protected,
+$2D bad block, $2F offline. `$C0` is the Apple 3.5 Drive (IIgs, IWM in
+the host), not this card.
 
 The entry itself is `BIT $CFFF` **then** `JMP $CE00` (2026-08-14), which is
 what the real Liron firmware does and is load-bearing on a //e: with
@@ -3656,7 +3660,8 @@ $CnE0-..  error halt
 
 Driver examines ProDOS `$43` unit byte: bit 7 = drive (0 → drv 1, 1 →
 drv 2). Write probes `$C0n4` bit 6 first; returns `$2B` (WP) without
-touching memory if WP.
+touching memory if WP. STATUS tests only bit 7 (no media → `$28`); a
+locked bay still returns the block count, so ON_LINE names it.
 
 **`$Cn0A` real-hardware entry.** The Apple Disk 3.5 / Liron firmware exposes
 its block driver at a *fixed* `$Cn0A`; software that bypasses the `$CnFF`
@@ -4675,9 +4680,11 @@ fields that say how long the packet is, which reads like a checksum failure.
 traffic raises no "write underrun".
 
 Backing is a `SmartPortBusUnit` (media / block count / write-protect /
-read / write) — `LironCard` adapts its `Disk35Image`s, `SmartPortCard` its
-`SmartPortUnit`s. Two units per chain by default; INIT answers "last device"
-on the second.
+read / write / UniDisk-or-HD DIB kind) — `LironCard` adapts its
+`Disk35Image`s and `Block512Backing`s, `SmartPortCard` its `SmartPortUnit`s.
+The DIB kind is independent of media: an ejected HDV stays type `$02`
+subtype `$20`, an empty UniDisk stays `$01`/`$00`. Two units per chain by
+default; INIT answers "last device" on the second.
 
 **An oversized odd count is refused** *(2026-09-08, bug hunt #9)*. The odd
 section is the remainder of a 7-byte grouping (0..6) and its high-bits

@@ -1037,6 +1037,12 @@ bool CassetteDevice::loadAudioStream(const std::string& path)
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, audioOutputSampleRate);
     if (ma_decoder_init_file(path.c_str(), &cfg, &audioStreamDecoder) != MA_SUCCESS) {
         lastError = "Cannot decode audio: " + path;
+        // closeAudioStream() already ran: the previous decoder is gone.
+        // Leaving loadedTapeReady / audioStreamMode set described a tape
+        // that Play and a rate change could not move (hunt #21).
+        audioStreamMode  = false;
+        loadedTapeReady  = false;
+        loadedTapePath.clear();
         return false;
     }
     audioStreamDecoderOpen = true;

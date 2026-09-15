@@ -186,6 +186,12 @@ src/Gamma.cpp" \
         _check "every recorded path exists in the tree" "" \
             "$(cov_recorded_set "$LINKED_FILE" | while read -r f; do
                    [ -f "$f" ] || echo "$f"; done)"
+        # Hunt #21: a committed `# seeded-statically` marker made every
+        # coverage job a throwaway bootstrap (exit 0, ratchet never armed).
+        # `--self-test` runs in CI without the 4 GB tree, so this is the pin.
+        cov_seed_is_static "$LINKED_FILE" && live_seed=yes || live_seed=no
+        _check "$LINKED_FILE is not a static seed (the ratchet is armed)" \
+            "no" "$live_seed"
     fi
 
     rm -rf "$tmp"

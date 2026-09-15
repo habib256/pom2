@@ -26,6 +26,7 @@
 #include "Settings.h"
 #include "SlirpNetworkBackend.h"
 #include "SlotBus.h"
+#include "SystemProfile.h"
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
 #include "UthernetCard.h"
@@ -225,9 +226,17 @@ void DevicePanelCoordinator::applyChatMauve(
 
     if (persistInvert)
         settings_.setBool("chatmauve_invert_bit7", command.invertBit7To);
-    if (persistVariant)
-        settings_.setString("chatmauve_variant",
-                            LeChatMauveCard::variantKey(command.variantTo));
+    if (persistVariant) {
+        // A //c-class DB-15 is the Adaptateur IIc: the model is hardware
+        // (`plugChatMauve` forces IIcAdapter and ignores this key). Writing
+        // it here made the panel's combo look applied, then a later //e
+        // session inherited the //c experiment (hunt #21).
+        const auto p = pom2::profileFromKey(
+            settings_.getString("system_profile", ""));
+        if (!pom2::profileConfig(p).noPhysicalSlots)
+            settings_.setString("chatmauve_variant",
+                                LeChatMauveCard::variantKey(command.variantTo));
+    }
 }
 
 std::vector<DevicePanelCoordinator::SerialSnapshot>

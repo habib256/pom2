@@ -228,6 +228,12 @@ public:
         // ~2^30 iterations on a corrupt large value, on the realtime thread.
         if (!(resampleAccum_ >= 0.0f && resampleAccum_ < 1.0f))
             resampleAccum_ = 0.0f;
+        // The queue is not in the blob (kSnapshotBytes is unchanged). A
+        // restore that left it intact applied events from a future the
+        // blob had just abandoned. Re-prime from the latched registers
+        // on the next fillAudioTimed — the comment on aPrimed_ above.
+        ctlEvents_.clear();
+        aPrimed_ = false;
     }
 
     /// Total number of phonemes accepted via writes to $00 since reset.

@@ -211,9 +211,10 @@ int main()
                             "write-protected — it checked WP before media)");
     }
 
-    // ── 4. Write-protect still reports $2B, and only when media IS there ──
+    // ── 4. Write-protect reports $2B on WRITE only ───────────────────────
     // The empty-bay fix works by testing media first; this is the half that
-    // proves it did not simply stop reporting write-protect at all.
+    // proves it did not simply stop reporting write-protect at all. STATUS
+    // must still succeed: ON_LINE names a locked disk.
     {
         auto wp = std::make_unique<pom2::SmartPort35Unit>();
         expect(wp->loadImage(po), tag + "reload for the WP case");
@@ -226,6 +227,17 @@ int main()
 
         Result s = call(0x01, kDrive2, 0);
         expect(s.carry == 0, tag + "READ from a write-protected bay must succeed");
+
+        // STATUS used to answer $2B here. ON_LINE treats that as "no
+        // volume", so a locked 3.5" (a WOZ, a notched .2mg) vanished from
+        // every ProDOS scanner. WP is WRITE's error, not STATUS's.
+        Result t = call(0x00, kDrive2, 0);
+        expect(t.carry == 0, tag + "STATUS on a write-protected bay must return CLC");
+        expect(t.a == 0x00, tag + "STATUS on a write-protected bay must return A = 0, not $2B");
+        const uint16_t wpBlocks =
+            static_cast<uint16_t>(t.x) | static_cast<uint16_t>(t.y) << 8;
+        expect(wpBlocks == kBlocks,
+               tag + "STATUS must still report the block count on a locked bay");
     }
 
     }  // pass

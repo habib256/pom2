@@ -72,7 +72,9 @@
 
 namespace pom2 {
 
-/// One drive behind the responder. The bus does not care what backs it.
+/// One drive behind the responder. The bus does not care what backs the
+/// blocks; it does care what the Device Information Block names, and that
+/// name is a property of the drive, not of the disk in it.
 class SmartPortBusUnit {
 public:
     virtual ~SmartPortBusUnit() = default;
@@ -81,6 +83,10 @@ public:
     virtual bool     writeProtected() const = 0;
     virtual bool     readBlock (uint32_t block, uint8_t out[512]) = 0;
     virtual bool     writeBlock(uint32_t block, const uint8_t in[512]) = 0;
+    /// UniDisk 3.5 (DIB type `$01`, subtype `$00`) vs hard disk (`$02`,
+    /// `$20`). Independent of `hasMedia()`: an empty UniDisk is still a
+    /// UniDisk, an ejected HDV is still a hard disk.
+    virtual bool     isUnidisk35()    const = 0;
 };
 
 class SmartPortBusDevice {

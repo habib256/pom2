@@ -371,6 +371,14 @@ bool SmartPortCard::BusUnit::writeBlock(uint32_t block, const uint8_t in[512])
     return true;
 }
 
+bool SmartPortCard::BusUnit::isUnidisk35() const
+{
+    const SmartPortUnit* u = target();
+    // The unit object is the kind, media or not. A cleared bay (no object)
+    // is the card's default drive on this bus: a UniDisk with the door open.
+    return !u || u->kindKey() == SmartPort35Unit::kKindKey;
+}
+
 bool SmartPortCard::exposesIicOnboardRom() const
 {
     // //c-class memory map masks all slot ROM behind the forced INTCXROM;
@@ -939,18 +947,16 @@ void SmartPortCard::buildC800()
         };
         std::memcpy(c800_.data() + kPreflightC800, pf, sizeof pf);
 
-        // STATUS (ProDOS cmd $00): no media → $28, write-protected → $2B, else
-        // CLC with the total block count in X (low) / Y (high) so a volume
-        // scanner (BITSY, ONLINE) can size the device. Formatters pre-flight
-        // through here too.
+        // STATUS (ProDOS cmd $00): no media → $28, else CLC with the total
+        // block count in X (low) / Y (high) so a volume scanner (BITSY,
+        // ONLINE) can size the device. Write-protect is WRITE's job ($2B)
+        // and a bit in $C0n4; answering it here made ON_LINE skip a locked
+        // 3.5" the way the HDV driver used to. Only bit 7 is tested: bit 6
+        // is the WP flag, and BIT already put it in V without our asking.
         const uint8_t st[] = {
-            0x2C, statReg, 0xC0,   // BIT $C0n4
+            0x2C, statReg, 0xC0,   // BIT $C0n4   ; N = no media
             0x10, 0x04,            // BPL +4      ; media present
             0xA9, 0x28,            // LDA #$28    ; no device connected
-            0x38,                  // SEC
-            0x60,                  // RTS
-            0x50, 0x04,            // BVC +4      ; not write-protected
-            0xA9, 0x2B,            // LDA #$2B    ; write protected
             0x38,                  // SEC
             0x60,                  // RTS
             0xAE, blk5, 0xC0,      // LDX $C0n5
@@ -978,9 +984,10 @@ uint8_t SmartPortCard::expansionRomRead(uint16_t offset)
     return offset < c800_.size() ? c800_[offset] : 0xFF;
 }
 
-// SmartPort call semantics (Apple IIGS Firmware Reference / Tech Notes).
+// SmartPort call semantics (Apple IIc Tech Ref / Liron dump $CBE6).
 // spCollect_: [0]=cmd, [1]=pcount, [2]=unit, [3]/[4]=buffer/status-list
 // pointer, [5..] cmd-specific (statcode, or 3-byte block number).
+// The dump indexes $CDE3 with CPX #$0A at $CC5B: cmd >= $0A is $01.
 uint8_t SmartPortCard::spExecute()
 {
     spResult_.clear();
@@ -1050,7 +1057,11 @@ uint8_t SmartPortCard::spExecute()
                         ? static_cast<uint8_t>(kId[i]) : uint8_t{' '});
                 const bool is35 = u->kindKey() == SmartPort35Unit::kKindKey;
                 spResult_.push_back(is35 ? 0x01 : 0x02);  // type: 3.5 / disk
-                spResult_.push_back(is35 ? 0x80 : 0x20);  // subtype
+                // UniDisk 3.5 #5 / SmartPort #7: type $01 subtype $00
+                // (no extended SmartPort, no disk-switched). $C0 is the
+                // Apple 3.5 Drive on the IIgs, not this card. HDV is type
+                // $02 with bit 5 set (not removable) and bit 7 clear.
+                spResult_.push_back(is35 ? 0x00 : 0x20);
                 spResult_.push_back(0x01);                // firmware version
                 spResult_.push_back(0x00);
                 return ok();
@@ -1181,13 +1192,10 @@ bool SmartPortCard::ejectBay(int bay)
 
 bool SmartPortCard::flushBay(int bay, std::string& errOut)
 {
-    // Inline, like the base contract says — the two-phase form is
-    // `prepareFlushBay`, which this card does not implement, so callers that
-    // hold `stateMutex` should keep using `prepareEjectBay`/`flushAll`'s path.
-    // What matters here is that a dirty unit CAN be flushed at all: without
-    // this override the inherited default refused every dirty bay, and the
-    // one caller that needs it (`setMediaBayType`, before it drops the unit)
-    // had no way to tell "could not save" from "does not do saving".
+    // Inline fallback for callers that do not ask `prepareFlushBay`.
+    // Hunt #21: the coordinator's four two-phase sites already ask, and
+    // a 3.5" unit now answers; this path remains for `flushAll` (worker
+    // stopped) and for any HDV bay whose `prepareEjectBay` already ran.
     errOut.clear();
     SmartPortUnit* u = unit(static_cast<size_t>(bay));
     if (!u || !u->hasUnsavedChanges()) return true;
@@ -1195,6 +1203,31 @@ bool SmartPortCard::flushBay(int bay, std::string& errOut)
     errOut = u->lastError();
     if (errOut.empty()) errOut = "the image could not be saved";
     return false;
+}
+
+bool SmartPortCard::prepareFlushBay(int bay, PendingBayFlush& out,
+                                   std::string& errOut)
+{
+    errOut.clear();
+    out = PendingBayFlush{};
+    SmartPortUnit* u = unit(static_cast<size_t>(bay));
+    if (!u) return false;
+    // HDV bays are block-backed: empty error → the caller uses
+    // prepareEjectBay. A 3.5" unit is the Liron case hunt #20 closed
+    // on that card and this one never answered.
+    auto* u35 = dynamic_cast<SmartPort35Unit*>(u);
+    if (!u35) return false;
+    Disk35Image::PendingWriteBack pending = u35->image().takeWriteBack();
+    out.valid = pending.valid;
+    out.path  = std::move(pending.path);
+    out.bytes = std::move(pending.bytes);
+    return true;
+}
+
+void SmartPortCard::restoreFlushBayDirty(int bay)
+{
+    if (auto* u35 = dynamic_cast<SmartPort35Unit*>(unit(static_cast<size_t>(bay))))
+        u35->image().restoreDirty();
 }
 
 bool SmartPortCard::prepareEjectBay(int bay,

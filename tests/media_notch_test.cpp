@@ -12,6 +12,7 @@
 
 #include "DiskIICard.h"
 #include "DiskImage.h"
+#include "Disk35Image.h"
 #include "EmulationController.h"
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
@@ -21,8 +22,10 @@
 #include "StorageCoordinator.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -190,6 +193,58 @@ void testLegacyCardKeyBecomesTheNotch()
     std::puts("  ok: a legacy disk_writeback_slotN=false became the notch on its disk");
 }
 
+void testNotchOnDirtyFloppyStillFlushes()
+{
+    // The Block512Backing half is pinned by block512_notch_flush. The same
+    // gate lived on DiskImage::saveDirty (isFileWriteProtected, which
+    // includes the notch) and Disk35Image::takeWriteBack (isWriteProtected).
+    // Guest SAVE → user ticks Write-protected → eject dropped the only copy.
+    std::string err;
+
+    {
+        const fs::path dsk = scratch("pom2_notch_dirty.dsk", 143360);
+        DiskImage img;
+        img.setWriteBackEnabled(true);
+        assert(img.loadFile(dsk.string()));
+        img.writeNibbleAt(0, 0, 0xD5);
+        assert(img.hasUnsavedChanges());
+        assert(pom2::setMediaNotch(dsk.string(), true, err) && err.empty());
+        img.setHostWriteProtected(true);
+        assert(img.isFileWriteProtected());
+        assert(img.saveDirty() && "saveDirty must succeed with the notch on");
+        assert(!img.hasUnsavedChanges() &&
+               "must not report success while the nibble is still only in RAM");
+        (void)pom2::setMediaNotch(dsk.string(), false, err);
+        std::error_code ec; fs::remove(dsk, ec);
+        std::puts("  ok: a 5.25\" notched while dirty still flushes");
+    }
+
+    {
+        const fs::path po = scratch("pom2_notch_dirty.po", 819200);
+        pom2::Disk35Image img;
+        img.setWriteBackEnabled(true);
+        assert(img.loadFile(po.string()));
+        uint8_t blk[pom2::Disk35Image::kBlockBytes];
+        std::memset(blk, 0xEE, sizeof(blk));
+        assert(img.writeBlock(2, blk));
+        assert(img.hasUnsavedChanges());
+        assert(pom2::setMediaNotch(po.string(), true, err) && err.empty());
+        img.setHostWriteProtected(true);
+        assert(img.isWriteProtected());
+        assert(img.saveDirty());
+        assert(!img.hasUnsavedChanges());
+        pom2::Disk35Image reload;
+        reload.setWriteBackEnabled(true);
+        assert(reload.loadFile(po.string()));
+        uint8_t got[pom2::Disk35Image::kBlockBytes];
+        assert(reload.readBlock(2, got));
+        assert(got[0] == 0xEE && "block 2 reached the file");
+        (void)pom2::setMediaNotch(po.string(), false, err);
+        std::error_code ec; fs::remove(po, ec);
+        std::puts("  ok: a 3.5\" notched while dirty still flushes");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -203,6 +258,7 @@ int main()
     testPerDiskNotPerDrive();
     testLiveToggleThroughTheCoordinator();
     testLegacyCardKeyBecomesTheNotch();
+    testNotchOnDirtyFloppyStillFlushes();
     std::puts("media_notch OK");
     return 0;
 }

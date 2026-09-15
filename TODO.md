@@ -1086,6 +1086,33 @@ Grouped by subsystem. Severity encoded by 🔴/🟠/🟡/🟢/🧊 at the head o
 
 ### [Audio]
 
+#### Left open by bug hunt #21 (2026-09-15)
+
+Five lots over remaining write-back, settings/CLI, audio seams, Slot Config
+and tooling guards. High/medium findings are fixed above; these are real and
+were not patched this round.
+
+- 🟡 **Echo+ still cuts mute in one buffer and allocates on the audio
+  thread.** `EchoPlusCard::fillAudioBuffer` (`EchoPlusCard.cpp:49-53`)
+  returns immediately when muted — no 5 ms `gainRamp`, unlike MB/Phasor —
+  and `scratch.resize` still lives in the callback (`:38-41`) where
+  Mockingboard reserved `speechScratch` in `setSampleRate`. Hunt #19 closed
+  those two on the cards that have a PSG; Echo+ has the same comments and
+  not the reserve.
+- 🟡 **Sound II stops `fillAudioTimed` once the mute ramp reaches ~0.**
+  `Mockingboard.cpp:580-583` returns after the ramp, so `ctlEvents_` is no
+  longer drained. The CPU keeps `queuePlaybackEvent`; the ring fills, then
+  `clear` + `aPrimed_=false`. Unmute dumps a burst of phonemes at sample 0
+  — the same class of dropout hunt #20 closed for the PCM cursor. The
+  mute tests cover MB/Phasor amplitude, not the SSI timeline.
+- 🟡 **Apply / profile switch still joins a FujiNet or listening SSC
+  worker under `stateMutex`.** `SlotRebuildCoordinator::beginLocked`
+  destroys cards via `slotBus().clear()`. `~FujiNetCard` →
+  `SpOverSlipLink::stop` joins; `~SuperSerialCard` → `TcpTransport::stop`
+  joins. The panel Stop path was moved off this lock; the destructor was
+  not. The CPU worker is already stopped; the AI server waits. A
+  `stopDetached` on the link is the shape `ChildProcess` already has.
+
 #### Left open by bug hunt #20 (2026-09-13) — the code new since v0.9.2
 
 Five read-only lots over the delta since the tag (the chains of eight, the
@@ -1856,11 +1883,10 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
   TEXT under the OE/AppleWin CPU demods uses phase 0 where MAME's
   `is_80_column` term would apply (no colour oracle, and the term is
   per-frame on a beam-raced split). *2 h.*
-- 🟡 **Bug hunt #15's SmartPort residue** *(2026-09-09; read, not fixed)*:
-  the card's DIB advertises subtype `$80` (extended calls supported) while
-  `$40-$45` return `$01`; `FORMAT` and `INIT` skip the parameter-count
-  check; WOZ 2.1 FLUX tracks, 400K and DiskCopy 4.2 images are refused
-  with a clear message rather than supported. *½ day.*
+- 🟡 **Bug hunt #15's SmartPort residue** *(2026-09-09)*: `FORMAT` and
+  `INIT` skip the parameter-count check; WOZ 2.1 FLUX tracks, 400K and
+  DiskCopy 4.2 images are refused with a clear message rather than
+  supported. *½ day.*
 - 🟡 **Ghostscript unreachable on a stock Apple Silicon Homebrew**
   *(2026-09-09, bug hunt #15)*: `ChildProcess::findOnPath` refuses
   group-writable directories and Homebrew ships `/opt/homebrew/bin` as

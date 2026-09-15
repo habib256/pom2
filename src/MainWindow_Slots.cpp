@@ -1411,8 +1411,6 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
         //        iieMode is true for a 16/32 KB dump, so the mode must be set
         //        before the load too.
         st.memory().setIIEMode(cfg.iieMode);
-        st.memory().clearRam();
-        st.memory().resetSoftSwitches();
 
         // RamWorks III — Applied Engineering aux-slot RAM expansion.
         // Plugs into the IIe aux slot, present on BOTH the 1983 Unenhanced
@@ -1420,8 +1418,12 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
         // on the motherboard, no expansion bus). Gate on either //e variant
         // so $C073 writes on //c stay in the paddle-reset-only path. Tiers:
         // 1 (stock 64K), 4 (256K), 8 (512K), 16 (1M), 48 (3M), 128 (8M).
-        // Default 1 = no RamWorks. The setIIEMode(false) branch already
-        // cleared backing storage.
+        // Default 1 = no RamWorks. Grow the backing BEFORE `clearRam()`:
+        // `setRamWorksBanks` zero-fills, and step 11 is `hardReset` which
+        // does not wipe — doing it after the wipe left banks 1+ as zeros
+        // (and swapping back to bank 0 loaded those zeros over the 00/FF
+        // pattern `clearRam` had just painted). The setIIEMode(false)
+        // branch already cleared backing storage.
         if (p == pom2::SystemProfile::AppleIIe ||
             p == pom2::SystemProfile::AppleIIeUnenhanced ||
             p == pom2::SystemProfile::AppleIIePAL ||
@@ -1435,6 +1437,9 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
             // the backing.
             st.memory().setRamWorksBanks(1);
         }
+
+        st.memory().clearRam();
+        st.memory().resetSoftSwitches();
     }
 
     // 5-7 run under stateMutex: the CPU worker is stopped, but the AI
@@ -1723,6 +1728,24 @@ bool MainWindow::restartEmulationFromSettings()
     //    a second copy of the `_drive2` key rule was kept alive next to the
     //    one the coordinator owns. Whatever the two disagreed about, the
     //    later one won silently.
+
+    // RamWorks size lives in settings, not on the SlotBus. applyProfile
+    // step 4 grows the backing BEFORE the wipe so `clearRam()` paints
+    // every bank with the 00/FF pattern. Doing it after `coldBoot()`
+    // (hunt #21's first pass) left $C073 working but banks 1+ as zeros.
+    {
+        const auto cfg = pom2::profileConfig(activeProfile);
+        if (activeProfile == pom2::SystemProfile::AppleIIe ||
+            activeProfile == pom2::SystemProfile::AppleIIeUnenhanced ||
+            activeProfile == pom2::SystemProfile::AppleIIePAL ||
+            activeProfile == pom2::SystemProfile::AppleIIeUnenhancedPAL) {
+            const int banks = settings->getInt("ramworks_banks", 1);
+            st.memory().setRamWorksBanks(
+                static_cast<uint32_t>(banks > 0 ? banks : 1));
+        } else if (cfg.iieMode) {
+            st.memory().setRamWorksBanks(1);
+        }
+    }
 
     }   // end stateMutex scope over steps 3-4
 

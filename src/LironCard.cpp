@@ -506,7 +506,8 @@ bool LironCard::dropBay(int bay)
         // the mount. Keeping the medium mounted and dirty lets the user fix
         // the cause and retry — or turn write-back off, which makes
         // `saveDirty` a successful no-op.
-        if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty())
+        if (img.hasUnsavedChanges() && img.isWriteBackEnabled() &&
+            !img.isMediumLocked() && !img.saveDirty())
             return false;
         img.eject();
     }
@@ -547,7 +548,8 @@ bool LironCard::mountBay(int bay, const std::string& path, std::string& errOut)
         }
         // The 3.5" that was in the bay leaves now that its successor loaded.
         if (img.isLoaded()) {
-            if (img.hasUnsavedChanges() && !img.isWriteProtected() && !img.saveDirty()) {
+            if (img.hasUnsavedChanges() && img.isWriteBackEnabled() &&
+                !img.isMediumLocked() && !img.saveDirty()) {
                 if (!hadHard) blk.eject();
                 errOut = "unsaved changes on unit " + std::to_string(bay) +
                          " could not be written: " + img.lastError();

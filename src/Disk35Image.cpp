@@ -341,16 +341,20 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
 {
     PendingWriteBack out;
     if (!loaded_ || !dirty_) return out;
-    // Write-back off (or read-only host file): a SUCCESSFUL no-op, exactly
-    // like DiskImage::saveDirty. isWriteProtected() folds the user's
-    // write-back opt-out in, and treating that as a hard error wedged the
-    // 3.5" paths for the rest of the session: once dirty, unchecking
-    // "Write-back (save on eject)" made eject, disk swap and the //c+
-    // mount35 flush gate all fail forever with a misleading
-    // "write-protected" error. Opting out means "discard on eject", not
-    // "refuse to eject" — dirty_ is left set so re-enabling write-back
-    // before the eject still saves the session's writes.
-    if (isWriteProtected()) return out;
+    // Write-back off: a SUCCESSFUL no-op. Opting out means "discard on
+    // eject", not "refuse to eject" — dirty_ is left set so re-enabling
+    // write-back before the eject still saves the session's writes.
+    // Treating that as a hard error wedged the 3.5" paths for the rest of
+    // the session (eject, disk swap, the //c+ mount35 flush gate).
+    //
+    // The notch (hostReadOnly_) is NOT in this gate. Folding it in was
+    // the Block512Backing defect `isMediumLocked()` closed: guest writes
+    // block N → dirty → user ticks "Write-protected" → takeWriteBack
+    // refused → saveDirty returned true with dirty_ still set → eject()
+    // dropped the only copy. A chmod-read-only file still accepts the
+    // temp-sibling rename (AtomicFileReplace.h). A medium locked at
+    // mount (WOZ / 2IMG header) can hold no dirty block at all.
+    if (!writeBackEnabled_ || fileWriteProtected_) return out;
 
     out.valid = true;
     out.path  = path_;

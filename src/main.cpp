@@ -748,6 +748,21 @@ int main(int argc, char* argv[])
         if (presetHasNoSlots) {
             pom2::log().error("CLI", "--fujinet: the selected //c-class "
                                       "profile has no physical expansion slots");
+        } else if (plan->preset != pom2::CliPreset::Default) {
+            // The live machine may still be a saved //c. Plugging now
+            // refuses, leaves cliFujiNetSlot_ at 0, and applyProfile
+            // below never installs the card on the slotted machine the
+            // user asked for (hunt #21). Remember the request; step 7
+            // of applyProfile plugs it on the new bus (and relocates
+            // if slot 7 holds the Chat Mauve).
+            mainWindow.rememberCliFujiNet(slot, plan->fujiNetSlotExplicit,
+                                          serial, plan->fujiNetSerialPath,
+                                          plan->fujiNetPort);
+            pom2::log().info("CLI", "FujiNet will occupy slot " +
+                                        std::to_string(slot) +
+                                        " after --preset" +
+                                        (serial ? " (serial)" : " (TCP :" +
+                                            std::to_string(plan->fujiNetPort) + ")"));
         } else if (mainWindow.plugFujiNetFromCli(slot, plan->fujiNetSlotExplicit,
                                           serial, plan->fujiNetSerialPath,
                                           plan->fujiNetPort, err)) {

@@ -232,6 +232,19 @@ int main()
         check(pom2::pendingChangeCount(iic, iicDraft, iicLive, "", "", -1, 1) == 0,
               "a built-in row never makes Apply offer a cold boot");
 
+        // Hunt #21: unplugging the 4c is a change Apply will not persist
+        // (`slotKeyIsUserChoice` refuses "" over a saved mockingboard).
+        // Counting it armed Apply, cold-booted, and put the card back.
+        std::array<std::string, 8> mbLive{}, mbDraft{};
+        mbLive[3]  = "mockingboard";
+        mbDraft[3] = "";
+        check(pom2::pendingChangeCount(iic, mbDraft, mbLive, "", "", -1, 1) == 0,
+              "unplugging the 4c does not arm Apply");
+        mbDraft[3] = "mockingboard";
+        mbLive[3]  = "";
+        check(pom2::pendingChangeCount(iic, mbDraft, mbLive, "", "", -1, 1) == 1,
+              "plugging the 4c still counts");
+
         // Sentinels are not values.
         check(pom2::pendingChangeCount(iie, live, live, "", "feline", -1, 1) == 0,
               "an unstaged Chat Mauve model counts nothing");

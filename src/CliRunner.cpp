@@ -205,10 +205,22 @@ void runDeferredActions(const std::vector<CliAction>& actions,
             case CliAction::Kind::TraceBrk:
                 pom2::log().info("CLI", "--trace-brk: not yet wired in M6502");
                 break;
-            case CliAction::Kind::PlayTape:
+            case CliAction::Kind::PlayTape: {
+                bool loaded = false;
+                {
+                    auto st = emu.lockState();
+                    (void)st;
+                    loaded = emu.cassette().hasLoadedTape();
+                }
+                if (!loaded) {
+                    pom2::log().error("CLI", "--play: no tape loaded");
+                    ok = false;
+                    break;
+                }
                 emu.playTape();
                 pom2::log().info("CLI", "--play: tape rolling");
                 break;
+            }
             case CliAction::Kind::RecTape:
                 emu.armRecording();   // locked wrapper — avoids racing the CPU worker
                 pom2::log().info("CLI", "--rec: cassette capture armed");

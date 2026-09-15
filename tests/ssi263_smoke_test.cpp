@@ -453,6 +453,28 @@ void testSnapshotClampsPlaybackCursor()
                 shortest, (unsigned long long)deepOffset);
 }
 
+void testResetDropsQueuedPlayback()
+{
+    // Hunt #21: reset() restored the CPU latches but left ctlEvents_ and
+    // aPrimed_ armed, so fillAudioTimed kept rendering a phoneme the
+    // guest had just powered down (and applyPlaybackEvent rewound the
+    // cursor a snapshot restore had just written).
+    Ssi263 chip;
+    chip.reset();
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+    chip.write(Ssi263::REG_DURPHON, 0x80 | 0x05);
+    chip.queuePlaybackEvent(Ssi263::REG_CTTRAMP, 0x0F, 0);
+    chip.queuePlaybackEvent(Ssi263::REG_DURPHON, 0x80 | 0x05, 0);
+    chip.reset();
+    std::vector<float> buf(256, 0.0f);
+    chip.fillAudioTimed(buf.data(), 256, 44100, 0.0, 1022727.0 / 44100.0);
+    float peak = 0.0f;
+    for (float s : buf) peak = std::max(peak, std::fabs(s));
+    assert(peak == 0.0f &&
+           "reset must drop queued speech; leftover events would voice the buffer");
+    std::printf("  ok: reset drops queued speech events\n");
+}
+
 int main()
 {
     std::printf("Ssi263 chip smoke test\n");
@@ -465,6 +487,7 @@ int main()
     testAudioRenderNonSilent();
     testDurationFormulaBounds();
     testSnapshotClampsPlaybackCursor();
+    testResetDropsQueuedPlayback();
     std::printf("PASS\n");
     return 0;
 }

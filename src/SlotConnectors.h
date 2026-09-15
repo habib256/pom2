@@ -242,7 +242,14 @@ inline int pendingChangeCount(const ProfileConfig& cfg,
     int pending = 0;
     for (std::size_t s = 1; s <= 7; ++s) {
         if (cfg.builtInSlots[s].has_value()) continue;
-        if (draft[s] != live[s]) ++pending;
+        // A change Apply will not persist is not a staged change. On a
+        // //c, unplugging the Mockingboard 4c is refused by
+        // `slotKeyIsUserChoice` (persisting "" would clobber a saved //e
+        // layout), so counting it armed Apply, cold-booted, and put the
+        // card back — hunt #21.
+        if (draft[s] != live[s] &&
+            slotKeyIsUserChoice(cfg, static_cast<int>(s), draft[s], live[s]))
+            ++pending;
     }
     if (!cfg.noPhysicalSlots && !chatMauveDraft.empty() &&
         chatMauveDraft != chatMauveLive)

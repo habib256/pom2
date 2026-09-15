@@ -725,8 +725,28 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     // FujiNet on its first pass.
     if (cliFujiNetSlot_ > 0 &&
         !pom2::profileConfig(activeProfile).noPhysicalSlots) {
-        const int s = cliFujiNetSlot_;
-        if (st.memory().slotBus().peripheral(s) != nullptr) {
+        int s = cliFujiNetSlot_;
+        auto& bus = st.memory().slotBus();
+        if (bus.peripheral(s) != nullptr && !cliFujiNetSlotExplicit_) {
+            // Same relocation plugFujiNetFromCli does on the live bus:
+            // slot 7 is POM2's preference and the fresh-install Chat Mauve
+            // lives there, so a remembered `--fujinet` without --fujinet-slot
+            // must not die with "slot is taken after the rebuild".
+            int free = 0;
+            for (int cand = 7; cand >= 1 && free == 0; --cand)
+                if (bus.peripheral(cand) == nullptr) free = cand;
+            if (free != 0) {
+                pom2::log().info("CLI", "--fujinet: slot " +
+                                            std::to_string(s) +
+                                            " holds " +
+                                            std::string(bus.peripheral(s)->name()) +
+                                            ", using free slot " +
+                                            std::to_string(free));
+                s = free;
+                cliFujiNetSlot_ = free;
+            }
+        }
+        if (bus.peripheral(s) != nullptr) {
             pom2::log().warn("CLI", "--fujinet: slot " + std::to_string(s) +
                                         " is taken after the rebuild — card "
                                         "not restored");

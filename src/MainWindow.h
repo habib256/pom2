@@ -264,6 +264,14 @@ public:
                             const std::string& serialDevice,
                             int tcpPort, std::string& errOut);
 
+    /// Remember a `--fujinet` request WITHOUT plugging it on the live
+    /// bus. `--preset` rebuilds the SlotBus from settings, and the live
+    /// machine may be a //c that cannot take the card — plugFujiNetFromCli
+    /// then returned false, left cliFujiNetSlot_ at 0, and applyProfile
+    /// never installed it on the slotted machine the user asked for.
+    void rememberCliFujiNet(int slot, bool slotExplicit, bool serial,
+                            const std::string& serialDevice, int tcpPort);
+
 #ifdef __EMSCRIPTEN__
     /// Browser UX: toolbar reset should relaunch the boot image that was
     /// passed in through the WASM page arguments (Total Replay by default).
@@ -1203,6 +1211,7 @@ private:
     /// persisted to `slot_N_card`: a one-shot CLI card must not leak into the
     /// user's saved slot configuration.
     int         cliFujiNetSlot_ = 0;
+    bool        cliFujiNetSlotExplicit_ = false;
     bool        cliFujiNetSerial_ = false;
     std::string cliFujiNetSerialPath_;
     int         cliFujiNetPort_ = 1985;

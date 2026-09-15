@@ -5,6 +5,85 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-15 — A locked 3.5" vanished from ON_LINE; the UniDisk DIB is $00
+
+A2 File Cmd XL (ProDOS 2.4.3) lists volumes from `ON_LINE` unit 0. A
+SmartPort lie made a mounted ProDOS 800K disappear from that list.
+
+**STATUS on a write-protected bay answered `$2B`.** The ProDOS driver at
+`$CD10` used `BIT $C0n4` / `BVC` to treat the WP flag as a STATUS error.
+`ON_LINE` records that as "no volume" and XL skips the unit (`if (!len)
+continue`). A WOZ 3.5" is always locked, so it was always invisible; a
+notched `.2mg` too. WRITE already returns `$2B`; STATUS must return the
+block count so a scanner can name the disk. Same shape the HDV driver
+learned in hunt 4. Pinned by `smartport_rom_layout` (STATUS on a loaded,
+write-back-off bay is CLC + 1600 blocks; WRITE is still `$2B`).
+
+**The DIB is a UniDisk 3.5's, not an Apple 3.5 Drive's.** UniDisk 3.5 #5
+and SmartPort #7: type `$01`, subtype `$00` (no extended SmartPort, no
+disk-switched errors). `$C0` is the *Apple 3.5 Drive* on the IIgs (IWM in
+the host). The Liron dump agrees: `$CC5B` `CPX #$0A` / `$01`, and `$CBF4`
+`ADC #$03` — RA always += 3, `$40-$45` are bad commands. A subtype that
+advertised bit 7 made ProDOS 2.4 speak a protocol this card does not.
+HDV on the same stub is type `$02`, subtype `$20` (not removable, still
+no extended). An empty bay keeps that kind: the bus used to guess
+UniDisk from `!media`, so an ejected HDV on the //c rear port answered
+`$01`/`$00`. The unit now says what it is. Pinned by
+`liron_smartport_dispatch` (DIB `$00`; `$42` is `$01`) and
+`smartport_bus_device` (empty HD stays `$20`; empty UniDisk stays `$00`;
+`$41` is `$01`).
+
+## 2026-09-15 — Bug hunt #21: a notch that dropped the save, and a ratchet that never armed
+
+Five read-only lots over ground hunt #20 did not walk (remaining write-back,
+settings/CLI, audio seams, Slot Config, tooling guards), each adversarially
+verified by a second pass told to refute.
+
+**The notch on a dirty floppy discarded the guest's writes** (high). HDV
+learned this in `block512_notch_flush`: `takeWriteBack` gates on the medium's
+own lock, not the host file's read-only bit, because a temp-sibling rename
+does not need the file to be writable. `Disk35Image::takeWriteBack` and
+`DiskImage::saveDirty` still folded the notch in, so ProDOS SAVE → tick
+"Write-protected" → eject reported success and dropped the only copy. The
+Liron's 3.5" `dropBay` skipped the flush on the same predicate. Pinned by
+`media_notch` (a 5.25" nibble and an 800K block, notched while dirty, both
+reach the file).
+
+**Slot Config Apply wrote `ramworks_banks` and cold-booted; the aux size
+never landed this session.** Staging moved the control off the path that
+called `setRamWorksBanks`. The combo then read the setting and showed 1 MB
+while Memory still had one bank, `$C073` a no-op until quit+relaunch. The
+first pass put the call *after* `coldBoot()`: `$C073` then worked, but
+`setRamWorksBanks` zero-fills and `clearRam()` only paints backing that
+already exists, so banks 1+ were zeros. `applyProfile` had the same order
+relative to step 11's `hardReset` (which does not wipe). Both now grow
+before the wipe. Pinned by `ramworks_smoke` (a hidden bank's odd byte is
+`$FF`, not `$00`).
+
+**The coverage linked-source ratchet was still a bootstrap.**
+`coverage_linked_sources.txt` kept `# seeded-statically 2026-09-07`, so every
+CI run replaced the list in a throwaway workspace, printed COMMIT THIS, and
+exited 0. Unlinking a poorly covered `.cpp` still raised the percentage.
+`--self-test` now fails if the committed file is a seed; the marker is gone.
+
+**The SSI263 timeline survived `reset()` and snapshot restore.**
+`queuePlaybackEvent` filled `ctlEvents_` and `write()` no longer rewound the
+PCM cursor (`timedPlayback_`, hunt #20); `reset()` restored the CPU latches
+and left the queue. F12 mid-speech kept rendering the abandoned phoneme.
+Pinned by `ssi263_smoke`.
+
+Also: `SmartPortCard` now answers `prepareFlushBay` for a 3.5" unit (hunt
+#20's coordinator fix was a no-op on that card); unplugging the //c
+Mockingboard 4c no longer arms Apply for a change `slotKeyIsUserChoice`
+will not persist; the Chat Mauve panel does not write `chatmauve_variant` on
+a //c; `--preset iie --fujinet` remembers the request instead of asking the
+saved //c; `--play` without a tape no longer logs "tape rolling"; a failed
+`loadAudioStream` no longer leaves a dead "loaded" deck.
+
+Left open, with the evidence in the hunt: Echo+ still allocates and cuts mute
+in the callback; Sound II stops `fillAudioTimed` once muted, so the timeline
+stalls; Apply still joins a FujiNet/SSC worker under `stateMutex`.
+
 ## 2026-09-12 — A test that measured the wrong thing, and said so loudly
 
 `iicplus_boot35` had been failing its writable half: "the boot off a writable

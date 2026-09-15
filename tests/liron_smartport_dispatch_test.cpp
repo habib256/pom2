@@ -23,6 +23,9 @@
 // 6502 handler lives in the card's $C800 bank and drives the C++ engine
 // through device-select registers (see SmartPortCard::buildC800).
 //
+// Silicon (roms/liron.rom $CC5B CPX #$0A, UniDisk 3.5 #5): DIB subtype $00,
+// cmd >= $0A → $01. $C0 is the Apple 3.5 Drive, not this card.
+//
 // When roms/liron.rom (the BMOW/Yellowstone dump of the real controller
 // firmware) is present, the slot page is re-based on the real per-slot
 // page — authentic identity bytes — with the HLE entries overlaid; the
@@ -181,6 +184,8 @@ int main()
         assert(mem.memRead(kBuf + 4) == 14 && "ID string length");
         assert(mem.memRead(kBuf + 5) == 'P' && mem.memRead(kBuf + 8) == '2');
         assert(mem.memRead(kBuf + 21) == 0x01 && "device type: 3.5 disk");
+        assert(mem.memRead(kBuf + 22) == 0x00 &&
+               "UniDisk 3.5 DIB subtype $00 (UniDisk 3.5 #5; $C0 is Apple 3.5)");
 
         // ── READ unit 1, block 7 ─────────────────────────────────────────
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 7, 0, 0});
@@ -214,7 +219,7 @@ int main()
         assert(r.carry && r.a == 0x04);
 
         setPlist(mem, {1, 1, 0, 0, 0});
-        r = spCall(cpu, mem, 0x42);          // extended READ — unimplemented
+        r = spCall(cpu, mem, 0x42);          // Liron $CC5B: cmd >= $0A → $01
         assert(r.carry && r.a == 0x01);
 
         setPlist(mem, {3, 1, 0, 0, 0});

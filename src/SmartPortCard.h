@@ -224,6 +224,9 @@ public:
     /// `StorageCoordinator::setMediaBayType` with nothing safe to call before
     /// it destroyed a dirty unit (bug hunt 4 #3).
     bool flushBay(int bay, std::string& errOut) override;
+    bool prepareFlushBay(int bay, PendingBayFlush& out,
+                         std::string& errOut) override;
+    void restoreFlushBayDirty(int bay) override;
     bool prepareEjectBay(int bay, Block512Backing::PendingWriteBack& out,
                          std::string& errOut) override;
     void restoreBayDirty(int bay,
@@ -247,6 +250,7 @@ private:
         bool     writeProtected() const override;
         bool     readBlock (uint32_t block, uint8_t out[512]) override;
         bool     writeBlock(uint32_t block, const uint8_t in[512]) override;
+        bool     isUnidisk35()    const override;
     private:
         SmartPortUnit* target() const
         { return card_ ? card_->units_[bay_].get() : nullptr; }
@@ -299,7 +303,8 @@ private:
     // reg 0x3 machinery (count pages via reg 0xD; post-commit error via
     // reg 0xF). See buildC800() for the stub and spExecute() for the
     // command semantics (STATUS $00 + DIB $03, READ $01, WRITE $02,
-    // FORMAT $03, CONTROL $04, INIT $05; extended $4x → $01 bad command).
+    // FORMAT $03, CONTROL $04, INIT $05; cmd >= $0A → $01, same as the
+    // Liron dump's CPX #$0A at $CC5B).
     std::array<uint8_t, 11> spCollect_{};      // [0]=cmd, [1..10]=param list
     size_t                  spCollectN_ = 0;
     std::vector<uint8_t>    spResult_;

@@ -42,10 +42,11 @@ namespace {
 
 struct RamUnit final : pom2::SmartPortBusUnit {
     std::vector<uint8_t> blocks = std::vector<uint8_t>(512 * 4, 0);
-    bool media = true, wp = false;
+    bool media = true, wp = false, unidisk = false;
     bool     hasMedia()       const override { return media; }
-    uint32_t blockCount()     const override { return 4; }
+    uint32_t blockCount()     const override { return media ? 4u : 0u; }
     bool     writeProtected() const override { return wp; }
+    bool     isUnidisk35()    const override { return unidisk; }
     bool readBlock(uint32_t b, uint8_t out[512]) override
     { if (b >= 4) return false; std::memcpy(out, &blocks[b * 512], 512); return true; }
     bool writeBlock(uint32_t b, const uint8_t in[512]) override
@@ -105,6 +106,30 @@ uint8_t replyStatus(const std::vector<uint8_t>& r)
     size_t i = 0; while (i < r.size() && r[i] != 0xC3) ++i;
     assert(i + 7 < r.size());
     return static_cast<uint8_t>(r[i + 5] & 0x7F);
+}
+
+// Decode the packet body after sync+$C3+7-byte header (same packing as frame()).
+std::vector<uint8_t> replyBody(const std::vector<uint8_t>& r)
+{
+    size_t i = 0; while (i < r.size() && r[i] != 0xC3) ++i;
+    assert(i + 8 < r.size());
+    const uint8_t odd = static_cast<uint8_t>(r[i + 6] & 0x7F);
+    const uint8_t grp = static_cast<uint8_t>(r[i + 7] & 0x7F);
+    size_t p = i + 8;
+    std::vector<uint8_t> body;
+    auto section = [&](int n) {
+        assert(p < r.size());
+        const uint8_t high = r[p++];
+        for (int k = 0; k < n; ++k) {
+            assert(p < r.size());
+            uint8_t v = static_cast<uint8_t>(r[p++] & 0x7F);
+            if (high & static_cast<uint8_t>(0x40 >> k)) v |= 0x80;
+            body.push_back(v);
+        }
+    };
+    if (odd) section(odd);
+    for (int g = 0; g < grp; ++g) section(7);
+    return body;
 }
 
 }  // namespace
@@ -243,6 +268,37 @@ int main()
                "FORMAT on a number nobody was assigned is a bad unit");
     }
 
+    // DIB (STATUS code 3). Kind is a property of the drive, not of the
+    // disk in it: a 4-block unit is a hard disk (type $02, $20) with or
+    // without media; a UniDisk 3.5 is type $01, subtype $00 — UniDisk 3.5
+    // #5 — even with the door open. Cmd $41 is >= $0A → $01, as the Liron
+    // dump ($CC5B) does.
+    {
+        r = transact(d, frame(2, 0x00, {0x00, 0x03, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00}));
+        assert(replyStatus(r) == 0x00);
+        const auto dib = replyBody(r);
+        assert(dib.size() == 25);
+        assert(dib[21] == 0x02 && dib[22] == 0x20);
+        u0.media = false;
+        r = transact(d, frame(2, 0x00, {0x00, 0x03, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00}));
+        assert(replyStatus(r) == 0x00);
+        const auto emptyHd = replyBody(r);
+        assert(emptyHd[21] == 0x02 && emptyHd[22] == 0x20 &&
+               "an empty hard disk is still a hard disk");
+        assert(emptyHd[4] == 13);
+        u0.unidisk = true;
+        r = transact(d, frame(2, 0x00, {0x00, 0x03, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00}));
+        assert(replyStatus(r) == 0x00);
+        const auto emptyFloppy = replyBody(r);
+        assert(emptyFloppy[21] == 0x01 && emptyFloppy[22] == 0x00 &&
+               "an empty UniDisk 3.5 is $00, not Apple 3.5 Drive $C0");
+        assert(emptyFloppy[4] == 15);
+        u0.unidisk = false;
+        u0.media = true;
+        r = transact(d, frame(2, 0x00, {0x41, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}));
+        assert(replyStatus(r) == 0x01 && "extended READ is not a UniDisk command");
+    }
+
     // Snapshot in the middle of a transaction: the command is in, the ack
     // given, REQ not yet released. A restored device must still put the
     // reply on the wire when REQ drops — the rewind ring lands here.
@@ -285,7 +341,7 @@ int main()
 
     std::printf("smartport_bus_device: OK — host-assigned numbers, checksum "
                 "enforced, two-packet WRITE, a new command drops the pending "
-                "one, FORMAT gated like a write, STATUS bytes, snapshot "
-                "mid-transaction\n");
+                "one, FORMAT gated like a write, STATUS bytes, UniDisk DIB, "
+                "snapshot mid-transaction\n");
     return 0;
 }

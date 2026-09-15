@@ -2684,8 +2684,8 @@ bool reportUnsplicableWoz(const std::vector<int>& qts, std::string& lastError)
 
 bool DiskImage::saveDirty()
 {
-    if (!loaded || !anyDirty || !writeBackEnabled || isFileWriteProtected()) {
-        return true;   // nothing to save, save disabled, or medium WP — no error
+    if (!loaded || !anyDirty || !writeBackEnabled || fileWriteProtected) {
+        return true;   // nothing to save, save disabled, or header WP — no error
     }
 
     // .woz: splice each dirty quarter-track's bit cells back into wozRaw

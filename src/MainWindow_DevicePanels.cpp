@@ -878,11 +878,18 @@ bool MainWindow::plugFujiNetFromCli(int& slot, bool slotExplicit, bool serial,
     }
 
     // Remember it so every later slot rebuild reproduces it — see the header.
-    cliFujiNetSlot_       = slot;
-    cliFujiNetSerial_     = serial;
-    cliFujiNetSerialPath_ = serialDevice;
-    cliFujiNetPort_       = tcpPort;
+    rememberCliFujiNet(slot, slotExplicit, serial, serialDevice, tcpPort);
     return true;
+}
+
+void MainWindow::rememberCliFujiNet(int slot, bool slotExplicit, bool serial,
+                                    const std::string& serialDevice, int tcpPort)
+{
+    cliFujiNetSlot_         = slot;
+    cliFujiNetSlotExplicit_ = slotExplicit;
+    cliFujiNetSerial_       = serial;
+    cliFujiNetSerialPath_   = serialDevice;
+    cliFujiNetPort_         = tcpPort;
 }
 
 bool MainWindow::plugFujiNetUnlocked(const pom2::StateAccess& st,
