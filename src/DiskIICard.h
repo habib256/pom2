@@ -343,6 +343,16 @@ public:
     }
     bool isWriteBackEnabled() const { return writeBackEnabled; }
 
+    /// The mounted image in `drive`. Same escape hatch as
+    /// `SmartPort35Unit::image()` — the Disk II panel and the media
+    /// contract talk to the leaf through the card.
+    DiskImage& driveImage(int drive) {
+        return images[validDrive(drive) ? drive : 0];
+    }
+    const DiskImage& driveImage(int drive) const {
+        return images[validDrive(drive) ? drive : 0];
+    }
+
     // ─── SlotPeripheral overrides ────────────────────────────────────────
     std::string_view name() const override { return "Disk II"; }
     uint8_t deviceSelectRead (uint8_t low4) override;

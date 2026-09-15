@@ -310,6 +310,7 @@ public:
     /// write functions and saveDirty() honour it regardless of writeBackEnabled.
     bool isFileWriteProtected() const { return fileWriteProtected || hostReadOnly_; }
     void setWriteBackEnabled(bool on) { writeBackEnabled = on; }
+    bool isWriteBackEnabled() const { return writeBackEnabled; }
     /// The notch (MediaNotch.h): the host file's read-only bit, probed at
     /// load and re-applied here when the user flips it on a mounted disk.
     /// Kept apart from `fileWriteProtected` so clearing the notch cannot
