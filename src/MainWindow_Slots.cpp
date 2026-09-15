@@ -1359,7 +1359,47 @@ void MainWindow::stopSlotNetworkWorkers()
     }
 }
 
+void MainWindow::abandonSlotRebuild(const char* what, const std::string& why)
+{
+    try {
+        auto st = controller->lockState();
+        slotRebuildCoordinator_->abandonLocked(st);
+    } catch (const std::exception& e) {
+        pom2::log().warn("Slots", std::string("abandoning the rebuild "
+                         "failed too: ") + e.what());
+    } catch (...) {
+        pom2::log().warn("Slots", "abandoning the rebuild failed too");
+    }
+    tapeStatusMessage = std::string(what) + " failed: " + why +
+                        " — machine paused; apply again once fixed";
+    tapeStatusUntil = lastFrameTime + 12.0;
+    pom2::log().warn("Slots", tapeStatusMessage);
+}
+
 void MainWindow::applyProfile(pom2::SystemProfile p)
+{
+    try {
+        applyProfileTransaction(p);
+    } catch (const std::exception& e) {
+        abandonSlotRebuild("Profile switch", e.what());
+    } catch (...) {
+        abandonSlotRebuild("Profile switch", "unknown error");
+    }
+}
+
+bool MainWindow::restartEmulationFromSettings()
+{
+    try {
+        return restartEmulationTransaction();
+    } catch (const std::exception& e) {
+        abandonSlotRebuild("Slot rebuild", e.what());
+    } catch (...) {
+        abandonSlotRebuild("Slot rebuild", "unknown error");
+    }
+    return false;
+}
+
+void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
 {
     const auto& cfg = pom2::profileConfig(p);
     pom2::log().info("Profile",
@@ -1713,7 +1753,7 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
     aiServer->setProfileLabel(std::string(cfg.displayName));
 }
 
-bool MainWindow::restartEmulationFromSettings()
+bool MainWindow::restartEmulationTransaction()
 {
     // 0. Snapshot LIVE media into settings BEFORE teardown. Menu Insert/Eject
     //    and the HDV/CFFA library mounts update the live cards but NOT the

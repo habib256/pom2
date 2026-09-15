@@ -7917,7 +7917,10 @@ survives a topology rebuild.
   telnet) are joined in `stopHostWorkers` with the machine lock released;
   `beginLocked` then detaches consumers and clears the SlotBus. It exists
   to make it impossible to clear the bus before those joins, or to publish
-  AI endpoints before the replacement topology is coherent.
+  AI endpoints before the replacement topology is coherent. An exception in
+  the middle is recovered by `abandonLocked` (back to Stable, endpoints
+  published again), which `MainWindow`'s two rebuild entry points call
+  before reporting the failure with the machine paused.
 * **`SlotProvisioningCoordinator`** (179 lines) — additive, session-only slot
   provisioning for explicit boot intent (`ensureHdvBootTarget`,
   `ensureSmartPortBootTarget`). It never tears a topology down and never

@@ -1102,14 +1102,13 @@ were not patched this round.
   two-phase, and the join precedes `applyProfile`'s media snapshot.
   Pinned by `slot_rebuild_coordinator` and `serial_panel_boundary`
   (both assert the lock is free).
-- 🟡 **`SlotRebuildCoordinator` has no escape from `Rebuilding`.** An
-  exception between `beginLocked` and `publishLocked` (a ROM load, a
-  remount) leaves the phase there for good, every later
-  `prepareAfterFlush` throws `logic_error`, and `main()` has no catch —
-  a terminate with no log line. `Prepared` / `WorkersStopped` got their
-  escape on 2026-09-15; this one wants an RAII guard that resets to
-  Stable on unwind. Both rebuild callers have no early return in that
-  span today, so it is exception-only.
+- ~~**`SlotRebuildCoordinator` has no escape from `Rebuilding`.**~~ **done
+  2026-09-15**: `abandonLocked` returns it to Stable from any phase and
+  publishes the endpoints a teardown detached; `beginLocked` enters
+  Rebuilding before its first hook. `applyProfile` and
+  `restartEmulationFromSettings` catch, abandon, log and show the reason,
+  and leave the machine paused instead of terminating. Pinned by
+  `slot_rebuild_coordinator`.
 
 #### Left open by bug hunt #20 (2026-09-13) — the code new since v0.9.2
 

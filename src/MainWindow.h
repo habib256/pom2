@@ -1476,6 +1476,20 @@ private:
     /// constructors don't race against a running CPU thread.
     bool restartEmulationFromSettings();
 
+    /// The two rebuild transactions proper. `applyProfile` and
+    /// `restartEmulationFromSettings` only wrap them: an exception from a ROM
+    /// load, a card constructor or a remount used to escape to main(), which
+    /// has no catch — a terminate with no log line — and even a caller that
+    /// caught it found the coordinator stuck in Rebuilding, refusing every
+    /// later Apply. The wrappers abandon the transaction instead.
+    void applyProfileTransaction(pom2::SystemProfile p);
+    bool restartEmulationTransaction();
+    /// Abandon a rebuild that threw: coordinator back to Stable, AI endpoints
+    /// published again, the reason logged and shown. The machine stays
+    /// paused — its card set is whatever the failed rebuild left — and
+    /// applying again runs a full, fresh transaction.
+    void abandonSlotRebuild(const char* what, const std::string& why);
+
     /// Pick the first existing file path in `candidates`. Empty string
     /// when none exists. Used by applyProfile to probe ROM candidates.
     static std::string firstExistingPath(const std::vector<std::string>& candidates);

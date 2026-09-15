@@ -78,6 +78,15 @@ public:
     /// request can observe a partially published machine.
     void publishLocked(const StateAccess& state);
 
+    /// Give up on the transaction in flight after an exception, from any
+    /// phase, and return to Stable so the next Apply can run. From
+    /// `Rebuilding` (which `beginLocked` enters before its first hook) the
+    /// control endpoints were detached, so they are published again, against
+    /// whatever topology the failed rebuild left; from Prepared or
+    /// WorkersStopped nothing was detached and nothing is published. A no-op
+    /// when Stable. Never the normal path: `publishLocked` is.
+    void abandonLocked(const StateAccess& state);
+
     Phase phase() const noexcept { return phase_; }
     std::uint64_t generation() const noexcept { return generation_; }
 

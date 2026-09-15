@@ -85,6 +85,10 @@ void SlotRebuildCoordinator::beginLocked(const StateAccess& state)
         throw std::logic_error(
             "slot rebuild teardown started before host workers stopped");
     }
+    // Rebuilding from the first hook on, not after the last: a hook that
+    // throws has already detached something, and `abandonLocked` has to know
+    // to publish it again.
+    phase_ = Phase::Rebuilding;
 
     // Gate new card-facing requests first. A request which already acquired
     // stateMutex completes against the still-live bus before this call.
@@ -102,7 +106,6 @@ void SlotRebuildCoordinator::beginLocked(const StateAccess& state)
     // released). The helper process still uses `stopDetached` from
     // `~FujiNetCard`, which is safe under this lock.
     runHook(hooks_.detachDisplayCard);
-    phase_ = Phase::Rebuilding;
 }
 
 void SlotRebuildCoordinator::publishLocked(const StateAccess& state)
@@ -117,6 +120,17 @@ void SlotRebuildCoordinator::publishLocked(const StateAccess& state)
     // coherent before external requests are allowed through again.
     runHook(hooks_.publishControlEndpoints);
     phase_ = Phase::Stable;
+}
+
+void SlotRebuildCoordinator::abandonLocked(const StateAccess& state)
+{
+    (void)state; // lock-ownership token, as for publishLocked.
+    const Phase was = phase_;
+    // Stable first: a publish hook that throws must still leave the next
+    // Apply runnable, which is the whole point of this call.
+    phase_ = Phase::Stable;
+    if (was == Phase::Rebuilding)
+        runHook(hooks_.publishControlEndpoints);
 }
 
 } // namespace pom2

@@ -5,6 +5,22 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-15 — A rebuild that throws no longer kills POM2 or blocks the next Apply
+
+An exception between the slot teardown and the publish (a ROM load, a card
+constructor, a remount) escaped `applyProfile` or
+`restartEmulationFromSettings` into `main()`, which has no catch: the
+process terminated with no log line. A caller that did catch it found
+`SlotRebuildCoordinator` stuck in Rebuilding, so every later profile switch
+or Apply threw `logic_error`. The coordinator gains `abandonLocked`, which
+returns to Stable from any phase and publishes the AI endpoints again when
+the teardown had detached them; `beginLocked` now enters Rebuilding before
+its first hook, so a throw inside it is covered. The two entry points wrap
+their transactions, abandon on an exception, log the reason, show it in the
+status line and leave the machine paused, and applying again runs a fresh
+transaction. Pinned by `slot_rebuild_coordinator` (a hook that throws
+mid-teardown, then abandon, then a new transaction).
+
 ## 2026-09-15 — The armed coverage ratchet failed its first run on three data tables
 
 Hunt #21 armed the linked-sources guard by accepting the CMake-seeded list

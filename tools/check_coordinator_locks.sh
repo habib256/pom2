@@ -107,6 +107,7 @@ LOCK_FREE = (
     #    so flagging them would be backwards.
     'beginLocked',
     'publishLocked',
+    'abandonLocked',
     'prepareAfterFlush',             # 1. mutates coordinator state + hooks
     'phase',                         # 1.
     'generation',                    # 1.

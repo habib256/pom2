@@ -197,5 +197,60 @@ int main()
         }
     }
 
+    // An exception between beginLocked and publishLocked must not wedge the
+    // coordinator in Rebuilding: abandonLocked publishes the endpoints the
+    // teardown detached and returns to Stable, so the next Apply runs.
+    {
+        std::vector<std::string> ev;
+        pom2::SlotRebuildCoordinator t({
+            [&] { ev.push_back("invalidate"); },
+            [&] { ev.push_back("detach-control"); },
+            [&] {
+                ev.push_back("detach-audio");
+                throw std::runtime_error("audio source teardown failed");
+            },
+            [] {},
+            [] {},
+            [] {},
+            [] {},
+            [&] { ev.push_back("publish"); },
+        });
+
+        { auto st = controller.lockState(); t.abandonLocked(st); }
+        assert(ev.empty());   // Stable: nothing to abandon
+
+        t.prepareAfterFlush();
+        t.stopHostWorkers();
+        {
+            auto st = controller.lockState();
+            bool threw = false;
+            try {
+                t.beginLocked(st);
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            assert(threw);
+            // The throw came after detach-control: the phase must say so.
+            assert(t.phase() ==
+                   pom2::SlotRebuildCoordinator::Phase::Rebuilding);
+            t.abandonLocked(st);
+        }
+        assert(t.phase() == pom2::SlotRebuildCoordinator::Phase::Stable);
+        assert((ev == std::vector<std::string>{
+            "invalidate", "detach-control", "detach-audio", "publish"}));
+
+        // Abandoned before the teardown: nothing was detached, so nothing is
+        // published.
+        ev.clear();
+        t.prepareAfterFlush();
+        t.stopHostWorkers();
+        { auto st = controller.lockState(); t.abandonLocked(st); }
+        assert(t.phase() == pom2::SlotRebuildCoordinator::Phase::Stable);
+        assert((ev == std::vector<std::string>{"invalidate"}));
+
+        t.prepareAfterFlush();   // and the next transaction starts
+        assert(t.phase() == pom2::SlotRebuildCoordinator::Phase::Prepared);
+    }
+
     return 0;
 }
