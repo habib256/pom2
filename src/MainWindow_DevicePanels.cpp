@@ -872,8 +872,19 @@ bool MainWindow::plugFujiNetFromCli(int& slot, bool slotExplicit, bool serial,
     if (!startDeferredFujiNetLinks(&errOut)) {
         // The CLI reports a transport it could not open as a failure, and did
         // so before the card existed. Undo the plug so the two answers agree.
-        auto st = controller->lockState();
-        (void)st.memory().slotBus().unplug(slot);
+        //
+        // Two-phase, like every other card teardown: take the card off the
+        // bus under the lock, let it die once the lock is gone. The drain
+        // above starts EVERY queued link, so a sibling whose link came up
+        // is live here and `~FujiNetCard` joins its worker — under
+        // stateMutex that is the freeze `SlotRebuildCoordinator::
+        // stopHostWorkers` exists to prevent.
+        std::unique_ptr<SlotPeripheral> dead;
+        {
+            auto st = controller->lockState();
+            dead = st.memory().slotBus().unplug(slot);
+        }
+        dead.reset();
         return false;
     }
 
@@ -946,6 +957,25 @@ bool MainWindow::startDeferredFujiNetLinks(std::string* errOut)
         pom2::log().warn("FujiNet", "link not started: " + err);
     }
     return allStarted;
+}
+
+void MainWindow::startDeferredSscListeners()
+{
+    if (pendingSscListeners_.empty()) return;
+    std::vector<std::pair<int, uint16_t>> listeners;
+    listeners.swap(pendingSscListeners_);
+    for (const auto& [slot, port] : listeners) {
+        // Same topology read as startDeferredFujiNetLinks: this thread is the
+        // only SlotBus writer and the CPU worker is stopped across every
+        // rebuild that queues one of these.
+        auto* card = dynamic_cast<SuperSerialCard*>(
+            controller->memory().slotBus().peripheral(slot));
+        if (!card) continue;
+        if (!card->startListening(port))
+            pom2::log().warn("SSC", "slot " + std::to_string(slot) +
+                             ": listener not started on port " +
+                             std::to_string(port) + " (bind failed?)");
+    }
 }
 
 void MainWindow::archiveNewPrinterPages()
