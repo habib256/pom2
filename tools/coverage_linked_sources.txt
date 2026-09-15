@@ -9,6 +9,11 @@
 # a one-time bootstrap: replace the file in a throwaway workspace, print
 # COMMIT THIS, exit 0. The marker never left the tree, so the set-half of
 # the ratchet never ran. Removing it accepts this list as the baseline.
+# Not listed, on purpose: src/Ssi263PhonemeData.cpp, src/hgrpaint/HgrFont.cpp
+# and src/hgrpaint/DhgrNtsc8Palette.cpp. The tests link them, but they are
+# pure data tables with no function, so llvm-cov carries no mapping for them
+# and they can never appear in the measured set — the first armed run
+# (2026-09-15) failed on exactly those three.
 src/AiControlServer.cpp
 src/Apple2Display.cpp
 src/Apple2Display_Beam.cpp
@@ -96,7 +101,6 @@ src/SpSerialTransport.cpp
 src/SpTcpTransport.cpp
 src/SpeakerDevice.cpp
 src/Ssi263.cpp
-src/Ssi263PhonemeData.cpp
 src/StorageCoordinator.cpp
 src/StorageCoordinator_Chains.cpp
 src/StorageCoordinator_HdvBays.cpp
@@ -115,9 +119,7 @@ src/W5100NameResolver.cpp
 src/WorkstationCard.cpp
 src/Z80.cpp
 src/hgrpaint/Cam16.cpp
-src/hgrpaint/DhgrNtsc8Palette.cpp
 src/hgrpaint/HgrConvert.cpp
-src/hgrpaint/HgrFont.cpp
 src/hgrpaint/HgrPaintModel.cpp
 src/hgrsprite/HgrSpriteBlit.cpp
 src/pom2_headless.cpp

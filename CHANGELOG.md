@@ -5,6 +5,17 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-15 — The armed coverage ratchet failed its first run on three data tables
+
+Hunt #21 armed the linked-sources guard by accepting the CMake-seeded list
+as the baseline. That list came from CMake's per-target source lists, and
+three of the files the tests link — `Ssi263PhonemeData.cpp`, `HgrFont.cpp`,
+`DhgrNtsc8Palette.cpp` — are pure data tables with no function, so llvm-cov
+carries no mapping for them and the measured set can never contain them.
+The first armed CI run reported them as "left the set". Removed from the
+list, with the reason in the file's header; the guard's own message
+prescribes exactly that.
+
 ## 2026-09-15 — A disk image opened from Finder or dropped on the Dock icon now boots (macOS)
 
 The bundle's `Info.plist` has declared `.dsk/.do/.po/.nib/.woz/.d13/.2mg/.hdv`
