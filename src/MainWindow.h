@@ -47,6 +47,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -1202,9 +1203,26 @@ private:
     /// paths only log it).
     bool startDeferredFujiNetLinks(std::string* errOut = nullptr);
 
+    /// Join FujiNet link workers and SSC telnet listeners with stateMutex
+    /// released. `SlotRebuildCoordinator::stopHostWorkers` runs this before
+    /// `beginLocked` destroys the cards; a destructor join under the lock
+    /// freezes the window (hunt #21 leftover).
+    void stopSlotNetworkWorkers();
+
     /// Slots whose FujiNet card is plugged but whose link has not been opened
     /// yet. Drained by `startDeferredFujiNetLinks()`.
     std::vector<int> pendingFujiNetSlots_;
+
+    /// Start the telnet listener of every SSC `plugSlotsFromSettings` plugged
+    /// with a saved "listening" state. Same contract as
+    /// `startDeferredFujiNetLinks`: no lock held, CPU worker stopped. A bind
+    /// failure is logged; the card stays usable with nothing on the far end,
+    /// exactly as when the socket was bound under the lock.
+    void startDeferredSscListeners();
+
+    /// (slot, port) of the SSC listeners queued by `plugSlotsFromSettings`.
+    /// Drained by `startDeferredSscListeners()`.
+    std::vector<std::pair<int, uint16_t>> pendingSscListeners_;
 
     /// A `--fujinet` request from the command line, kept so every slot
     /// rebuild can reproduce it. Slot 0 = no request. Deliberately NOT

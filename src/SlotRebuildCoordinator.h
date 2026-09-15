@@ -35,6 +35,7 @@ public:
     enum class Phase : std::uint8_t {
         Stable,
         Prepared,
+        WorkersStopped,
         Rebuilding,
     };
 
@@ -45,6 +46,9 @@ public:
         std::function<void()> detachAudioSources;
         std::function<void()> detachFrontendViews;
         std::function<void()> resetPrinterCursor;
+        /// Join FujiNet / SSC workers. MUST run with stateMutex released —
+        /// `beginLocked` then destroys the cards, and a destructor join under
+        /// the lock freezes the window (hunt #21 leftover).
         std::function<void()> stopNetworkRuntime;
         std::function<void()> detachDisplayCard;
         std::function<void()> publishControlEndpoints;
@@ -58,6 +62,13 @@ public:
     /// Commit the rebuild after media durability has been established.
     /// Invalidates topology-bound history before any card is destroyed.
     void prepareAfterFlush();
+
+    /// Stop host-side workers (FujiNet link, SSC telnet) with the machine
+    /// lock released. Required between `prepareAfterFlush` and `beginLocked`:
+    /// the destructors that `slotBus().clear()` runs would otherwise join
+    /// those threads under `stateMutex`. A throwing hook returns the
+    /// coordinator to Stable so a later Apply is not stuck at Prepared.
+    void stopHostWorkers();
 
     /// Detach every external consumer in dependency order, then clear the
     /// SlotBus. The StateAccess token proves the caller owns stateMutex.

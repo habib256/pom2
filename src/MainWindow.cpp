@@ -153,9 +153,9 @@ MainWindow::MainWindow(bool forceIIPlus)
       slotCardFactory_(std::make_unique<pom2::SlotCardFactory>()),
       // The rebuild transaction. Every hook is required — the coordinator
       // throws rather than let a half-wired teardown run — and the ORDER is
-      // its contract, not this list's: gate AI requests, drop the non-owning
-      // views (audio sources, panels, the printer feed identity), clear the
-      // bus, then the host-side services that no longer have a card.
+      // its contract, not this list's: stop host network workers (lock
+      // released), then under the lock gate AI requests, drop the
+      // non-owning views, and clear the bus.
       slotRebuildCoordinator_(std::make_unique<pom2::SlotRebuildCoordinator>(
           pom2::SlotRebuildCoordinator::Hooks{
               // Only reached after a successful flush, which is the point:
@@ -179,10 +179,10 @@ MainWindow::MainWindow(bool forceIIPlus)
                   // clear, not after it.
               },
               [this] { printerCoordinator_->resetFeedCursor(); },
-              // Nothing host-side outlives the cards today; the hook exists
-              // so a helper process gets torn down here rather than somewhere
-              // that runs before SlotBus::clear().
-              [] {},
+              // Join FujiNet / SSC workers with the machine lock released.
+              // `beginLocked` then destroys the cards; their destructors
+              // would otherwise join those threads under stateMutex.
+              [this] { stopSlotNetworkWorkers(); },
               [this] { display->setChatMauveCard(nullptr); },
               [this] {
                   aiServer->attach(controller.get(), display.get(),
@@ -373,6 +373,7 @@ MainWindow::MainWindow(bool forceIIPlus)
     // Any FujiNet card it plugged has its transport still closed — opening
     // one is a blocking syscall and must not happen under the lock above.
     (void)startDeferredFujiNetLinks();
+    startDeferredSscListeners();
 
     // ── Restore display + UI prefs from previous session ─────────────
     {

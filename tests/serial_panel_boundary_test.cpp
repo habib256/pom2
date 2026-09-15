@@ -34,14 +34,61 @@
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SuperSerialCard.h"
+#include "SuperSerialTransport.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
 
 namespace {
 
 using namespace pom2;
+
+/// A transport whose start()/stop() prove the machine lock is free: the
+/// production one binds a socket and joins a worker there, and under
+/// stateMutex that is the freeze CLAUDE.md forbids.
+class LockProbeTransport final : public SuperSerialTransport
+{
+public:
+    explicit LockProbeTransport(EmulationController& c) : controller_(c) {}
+
+    bool start(uint16_t p) override
+    {
+        probe();
+        port_ = p;
+        listening_ = true;
+        ++startCount;
+        return true;
+    }
+    void stop() override
+    {
+        probe();
+        listening_ = false;
+        ++stopCount;
+    }
+    bool isListening() const override { return listening_; }
+    uint16_t port() const override { return port_; }
+
+    int startCount = 0;
+    int stopCount = 0;
+
+private:
+    void probe()
+    {
+        // try_lock on a free mutex succeeds; on one this thread already
+        // holds it is undefined for std::mutex in theory and returns false
+        // on every libc++/libstdc++ in practice — either way the assert is
+        // the red-before pin for "Apply held the lock across the join".
+        const bool free = controller_.stateMutex().try_lock();
+        assert(free);
+        if (free) controller_.stateMutex().unlock();
+    }
+
+    EmulationController& controller_;
+    uint16_t port_ = 0;
+    bool listening_ = false;
+};
 
 SuperSerialCard* plugSsc(EmulationController& controller, int slot)
 {
@@ -122,11 +169,58 @@ void testCommandForRemovedCardIsDropped()
     cmd.slot = 2;
     cmd.requestRawMode = true;
     cmd.rawMode = true;
+    cmd.requestStop = true;
 
     const auto result = coordinator.applySerial(cmd);
     assert(!result.cardFound);   // dropped, not applied
 
     std::printf("  a command for a removed card is dropped: OK\n");
+}
+
+// ── Start / Stop run with the machine lock released ──────────────────────
+//
+// The production transport binds a socket on start() and joins its worker
+// on stop() (which polls accept on a 200 ms budget). Apply used to do both
+// under stateMutex. The probe transport asserts the lock is free at each.
+void testStartStopRunOffTheLock()
+{
+    EmulationController controller;
+    Settings settings;
+    DevicePanelCoordinator coordinator(controller, settings);
+
+    auto* card = plugSsc(controller, 2);
+    auto probe = std::make_unique<LockProbeTransport>(controller);
+    auto* probeRaw = probe.get();
+    card->setTransport(std::move(probe));
+
+    DevicePanelCoordinator::SerialCommand cmd;
+    cmd.slot = 2;
+    cmd.requestStart = true;
+    cmd.port = 6551;
+    auto result = coordinator.applySerial(cmd);
+    assert(result.cardFound);
+    assert(result.startAttempted && result.startSucceeded);
+    assert(probeRaw->startCount == 1);
+    assert(card->isListening());
+    assert(card->getPort() == 6551);
+
+    DevicePanelCoordinator::SerialCommand stop;
+    stop.slot = 2;
+    stop.requestStop = true;
+    result = coordinator.applySerial(stop);
+    assert(result.cardFound);
+    assert(probeRaw->stopCount == 1);
+    assert(!card->isListening());
+
+    // And the lock is ours again afterwards.
+    { auto state = controller.lockState(); (void)state; }
+
+    // Disarm before the controller goes away: ~SuperSerialCard calls
+    // stopListening() from inside ~EmulationController, where probing the
+    // controller's mutex is no longer meaningful.
+    card->setTransport(nullptr);
+
+    std::printf("  start / stop run with the lock released: OK\n");
 }
 
 // ── An empty command does nothing at all ─────────────────────────────────
@@ -161,6 +255,7 @@ int main()
     testSnapshotCoversBothPorts();
     testCommandTargetsItsOwnSlot();
     testCommandForRemovedCardIsDropped();
+    testStartStopRunOffTheLock();
     testEmptyCommandIsInert();
     std::printf("OK\n");
     return 0;

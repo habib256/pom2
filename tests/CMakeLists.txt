@@ -7303,6 +7303,15 @@ pom2_add_headless_test(test_media_notch
     SOURCES media_notch_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# One contract across DiskImage / Disk35Image / Block512Backing and the
+# SmartPort units that wrap the last two. Where a path diverges on purpose
+# (Block512 does not fold write-back into isWriteProtected) the test
+# states the divergence.
+pom2_add_headless_test(test_media_contract
+    NAME media_contract TIMEOUT 30 PORTABLE
+    SOURCES media_contract_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 # Eight SmartPort units enumerated by ProDOS 8 2.4+ (A2retroNET's shape),
 # and two by default. Boots A2DeskTop's 800K image off unit 0 with seven
 # synthesised volumes behind it and reads DEVLST.

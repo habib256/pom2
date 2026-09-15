@@ -332,6 +332,20 @@ inline bool replaceFileAtomic(const std::filesystem::path& from,
     if (!syncFileContents(from, ec)) return false;
     const std::filesystem::path dest = resolveReplaceTarget(to);
 #ifdef _WIN32
+    // A notched image (MediaNotch.h: the host read-only bit, which on
+    // Windows is FILE_ATTRIBUTE_READONLY on the TARGET) refuses
+    // MOVEFILE_REPLACE_EXISTING with ERROR_ACCESS_DENIED, so "a notch
+    // flipped while dirty still commits" (media_contract, media_notch,
+    // block512_notch_flush) failed on Windows only. POSIX rename() never
+    // looks at the target's mode. Clear the bit for the swap and put it back
+    // on failure; on success the temp already carries the original's
+    // attributes (the callers copy them before committing), so the new file
+    // is as read-only as the one it replaced.
+    const DWORD destAttrs = GetFileAttributesW(dest.c_str());
+    const bool destReadOnly = destAttrs != INVALID_FILE_ATTRIBUTES &&
+                              (destAttrs & FILE_ATTRIBUTE_READONLY) != 0;
+    if (destReadOnly)
+        SetFileAttributesW(dest.c_str(), destAttrs & ~FILE_ATTRIBUTE_READONLY);
     if (MoveFileExW(from.c_str(), dest.c_str(),
                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         ec.clear();
@@ -339,6 +353,7 @@ inline bool replaceFileAtomic(const std::filesystem::path& from,
     }
     ec = std::error_code(static_cast<int>(GetLastError()),
                          std::system_category());
+    if (destReadOnly) SetFileAttributesW(dest.c_str(), destAttrs);
     return false;
 #else
     std::filesystem::rename(from, dest, ec);

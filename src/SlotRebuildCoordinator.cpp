@@ -61,11 +61,29 @@ void SlotRebuildCoordinator::prepareAfterFlush()
     runHook(hooks_.invalidateHistoricalState);
 }
 
-void SlotRebuildCoordinator::beginLocked(const StateAccess& state)
+void SlotRebuildCoordinator::stopHostWorkers()
 {
     if (phase_ != Phase::Prepared) {
         throw std::logic_error(
-            "slot rebuild teardown started before a successful flush");
+            "host workers stopped before a successful flush");
+    }
+    try {
+        runHook(hooks_.stopNetworkRuntime);
+    } catch (...) {
+        // Cards still exist. A failed join must not wedge the next Apply:
+        // prepareAfterFlush requires Stable, and generation_/rewind were
+        // already committed by that flush.
+        phase_ = Phase::Stable;
+        throw;
+    }
+    phase_ = Phase::WorkersStopped;
+}
+
+void SlotRebuildCoordinator::beginLocked(const StateAccess& state)
+{
+    if (phase_ != Phase::WorkersStopped) {
+        throw std::logic_error(
+            "slot rebuild teardown started before host workers stopped");
     }
 
     // Gate new card-facing requests first. A request which already acquired
@@ -80,9 +98,9 @@ void SlotRebuildCoordinator::beginLocked(const StateAccess& state)
 
     state.memory().slotBus().clear();
 
-    // These host-side services no longer have a card to represent. Preserve
-    // the historical order: card/link teardown precedes helper shutdown.
-    runHook(hooks_.stopNetworkRuntime);
+    // Network workers were already joined in `stopHostWorkers` (lock
+    // released). The helper process still uses `stopDetached` from
+    // `~FujiNetCard`, which is safe under this lock.
     runHook(hooks_.detachDisplayCard);
     phase_ = Phase::Rebuilding;
 }

@@ -2784,8 +2784,7 @@ refused from the first access. The flush is gated on
 `isMediumLocked()` — the 2IMG header's locked bit alone — while
 `writeBlock`/`writeByte` keep refusing under the notch. Pinned by
 `block512_notch_flush`. The same shape exists in `Disk35Image` and
-`DiskImage`, which also gate write-back on a combined protect and are
-reachable by `setMediaNotch`; not yet probed (TODO).
+`DiskImage`; `media_notch` and `media_contract` probe all three.
 
 The per-card / per-drive `writeBackEnabled` flags survive as the **process
 default** only (`MediaWritePolicy.h`, how the suite runs protected) and are
@@ -3693,7 +3692,9 @@ honours the contract, and `writeBlock` refuses like the 3.5" does. The
 HDV-class *cards* (`ProDOSHardDiskCard`, `CffaCard`) keep their documented
 in-session-writable policy — a different card, a different rule, stated.
 Pinned by `smartport_mixed_units_smoke` (both units, both toggle states, same
-answer).
+answer) and `media_contract` (the three leaves, both SmartPort wrappers, and
+the Disk II / HDV cards; `Block512Backing::isWriteProtected` is the
+documented non-fold).
 
 **Boot wiring**: a library click (or CLI insert+boot) routes 3.5"/HDV
 to the primary `SmartPortCard` and `controller->bootFromSlot(card->
@@ -7910,11 +7911,13 @@ survives a topology rebuild.
   after profile fixtures and the multi-instance policy) and `draft_` (staged UI
   edits, never applied implicitly). Owns `kDefaultCards[]` and `isMultiInstance`.
   SlotBus stays the sole authority for what is actually plugged.
-* **`SlotRebuildCoordinator`** (104 lines) — the *sequencing* of a topology
-  rebuild, as a `Phase` state machine (Stable / Prepared / Rebuilding) plus
-  eight `Hooks`. It exists to make it impossible to clear the SlotBus before
-  consumers are detached, or to publish AI endpoints before the replacement
-  topology is coherent.
+* **`SlotRebuildCoordinator`** — the *sequencing* of a topology
+  rebuild, as a `Phase` state machine (Stable / Prepared / WorkersStopped /
+  Rebuilding) plus eight `Hooks`. Host network workers (FujiNet link, SSC
+  telnet) are joined in `stopHostWorkers` with the machine lock released;
+  `beginLocked` then detaches consumers and clears the SlotBus. It exists
+  to make it impossible to clear the bus before those joins, or to publish
+  AI endpoints before the replacement topology is coherent.
 * **`SlotProvisioningCoordinator`** (179 lines) — additive, session-only slot
   provisioning for explicit boot intent (`ensureHdvBootTarget`,
   `ensureSmartPortBootTarget`). It never tears a topology down and never

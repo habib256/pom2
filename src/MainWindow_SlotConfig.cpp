@@ -278,12 +278,19 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         raw->setTransport(pom2::makeSuperSerialTcpTransport(*raw, s));
         const bool listenDefault = legacyPrimary
             ? settings->getBool("ssc_listening", false) : false;
+        // The listener is STARTED after this function returns, not here:
+        // start() binds a socket and spawns the worker (and joins a
+        // previous one first), and this whole function runs inside the
+        // caller's `stateMutex` scope. Same shape as the FujiNet link just
+        // above — see `startDeferredSscListeners`, which the three callers
+        // run once the lock is released and while the worker is still
+        // stopped.
         if (settings->getBool("ssc_listening" + sk, listenDefault)) {
             const int portDefault = legacyPrimary
                 ? settings->getInt("ssc_port", SuperSerialCard::kDefaultPort)
                 : SuperSerialCard::kDefaultPort;
             const int p = settings->getInt("ssc_port" + sk, portDefault);
-            raw->startListening(static_cast<uint16_t>(p));
+            pendingSscListeners_.push_back({s, static_cast<uint16_t>(p)});
         }
     };
 

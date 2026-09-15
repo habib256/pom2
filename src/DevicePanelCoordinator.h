@@ -20,8 +20,11 @@
 // dereference them directly.  That made profile/slot rebuilds a lifetime trap
 // and spread stateMutex ownership across unrelated ImGui functions.  This
 // coordinator resolves cards from SlotBus while holding lockState(), copies
-// the state needed by one frame, and applies returned commands in one short
-// critical section.  ImGui panels therefore know only Snapshot/FrameResult.
+// the state needed by one frame, and applies cheap mutations in a short
+// critical section. Start/stop of the SSC telnet worker joins a thread
+// and binds a socket, so those run after the lock is released — the same
+// shape NetworkCoordinator uses for FujiNet. ImGui panels therefore know
+// only Snapshot/FrameResult.
 
 #ifndef POM2_DEVICE_PANEL_COORDINATOR_H
 #define POM2_DEVICE_PANEL_COORDINATOR_H

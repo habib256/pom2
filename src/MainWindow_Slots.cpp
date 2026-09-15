@@ -75,6 +75,7 @@
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
 #include "SmartPortHdvUnit.h"
+#include "FujiNetCard.h"
 #include "SuperSerialCard.h"
 #include "SystemProfile.h"
 
@@ -82,7 +83,9 @@
 #include <GLFW/glfw3.h>
 
 #include <array>
+#include <exception>
 #include <filesystem>
+#include <vector>
 
 // Card catalog + ROM-presence probes now live in SlotCardCatalog.h so the
 // Slot Manager panel shares them. Bring the names into this TU unqualified
@@ -1303,6 +1306,59 @@ void MainWindow::setGlfwWindow(GLFWwindow* w)
     }
 }
 
+void MainWindow::stopSlotNetworkWorkers()
+{
+    // Same shape as NetworkCoordinator's Stop button: resolve the cards
+    // under a brief lock, join their workers once it is gone. The CPU
+    // worker is already stopped on every caller; the AI server is still
+    // attached until beginLocked, so this must not run while holding
+    // stateMutex (the mutex is non-recursive and the join can take
+    // seconds).
+    //
+    // Never throws: the callers (`applyProfile`, `restartEmulationFromSettings`)
+    // have already committed the profile and stopped the worker, and main()
+    // has no catch — an escaping exception is a `std::terminate` with no log
+    // line. Each card's stop is tried even if a sibling's threw.
+    std::vector<pom2::FujiNetTransport*> links;
+    std::vector<SuperSerialCard*> serials;
+    try {
+        links.reserve(SlotBus::kSlotCount);
+        serials.reserve(SlotBus::kSlotCount);
+        auto st = controller->lockState();
+        auto& bus = st.memory().slotBus();
+        for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
+            if (auto* fn = dynamic_cast<pom2::FujiNetCard*>(bus.peripheral(slot)))
+                links.push_back(&fn->transportLink());
+            if (auto* ssc = dynamic_cast<SuperSerialCard*>(bus.peripheral(slot)))
+                serials.push_back(ssc);
+        }
+    } catch (...) {
+        pom2::log().warn("Slots", "host worker sweep failed; "
+                         "destructors will join under the lock");
+        return;
+    }
+    for (auto* link : links) {
+        try {
+            link->stop();
+        } catch (const std::exception& e) {
+            pom2::log().warn("Slots",
+                std::string("FujiNet worker stop failed: ") + e.what());
+        } catch (...) {
+            pom2::log().warn("Slots", "FujiNet worker stop failed");
+        }
+    }
+    for (auto* ssc : serials) {
+        try {
+            ssc->stopListening();
+        } catch (const std::exception& e) {
+            pom2::log().warn("Slots",
+                std::string("SSC listener stop failed: ") + e.what());
+        } catch (...) {
+            pom2::log().warn("Slots", "SSC listener stop failed");
+        }
+    }
+}
+
 void MainWindow::applyProfile(pom2::SystemProfile p)
 {
     const auto& cfg = pom2::profileConfig(p);
@@ -1328,6 +1384,16 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
     // old topology (the rewind ring) and session-only provisioning are
     // invalidated exactly once, before any card is destroyed.
     slotRebuildCoordinator_->prepareAfterFlush();
+
+    // Join FujiNet / SSC workers before beginLocked destroys the cards —
+    // their destructors would otherwise join under stateMutex — and BEFORE
+    // the media snapshot below: the join can take seconds (the SSC worker
+    // polls accept on a 200 ms budget, a FujiNet stop waits out the
+    // transact in flight) and the AI control server is not quiesced until
+    // step 3, so a /disk/insert landing between the snapshot and the
+    // teardown would mount a disk the rebuild never re-mounts. Joining
+    // first keeps that window at the microseconds it always was.
+    slotRebuildCoordinator_->stopHostWorkers();
 
     // 0. Commit the active profile NOW — BEFORE step 7's plugSlotsFromSettings(),
     //    which reads `activeProfile` to apply the profile's built-in locked slots
@@ -1535,10 +1601,12 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
 
     }   // end stateMutex scope over steps 5-7
 
-    // 7a. Open the transports of the FujiNet cards step 7 plugged. Deferred
-    //     out of the lock on purpose (a TCP listen / tty open blocks), and
-    //     safe here: the CPU worker is still stopped.
+    // 7a. Open the transports of the FujiNet cards and the SSC listeners
+    //     step 7 plugged. Deferred out of the lock on purpose (a TCP listen /
+    //     tty open / bind blocks), and safe here: the CPU worker is still
+    //     stopped.
     (void)startDeferredFujiNetLinks();
+    startDeferredSscListeners();
 
     // 7b. A profile that ships an on-board Le Chat Mauve (//c PAL = the
     //     Adaptateur IIc machine) defaults its display to ChatMauveRGB — the
@@ -1688,6 +1756,8 @@ bool MainWindow::restartEmulationFromSettings()
     // transaction rather than by two hand-kept copies.
     slotRebuildCoordinator_->prepareAfterFlush();
 
+    slotRebuildCoordinator_->stopHostWorkers();
+
     // 2. Tear down all cards and clear our raw pointers. Holding the
     //    state mutex isn't strictly necessary now that the worker is
     //    stopped, but it's cheap insurance against any UI thread that
@@ -1749,9 +1819,11 @@ bool MainWindow::restartEmulationFromSettings()
 
     }   // end stateMutex scope over steps 3-4
 
-    // 4a. Same as applyProfile's step 7a: the FujiNet transports are opened
-    //     with the lock released and the worker still stopped.
+    // 4a. Same as applyProfile's step 7a: the FujiNet transports and the SSC
+    //     listeners are opened with the lock released and the worker still
+    //     stopped.
     (void)startDeferredFujiNetLinks();
+    startDeferredSscListeners();
 
     // 5. COLD BOOT + restart worker. `coldBoot()`, not `hardReset()`: the
     //    card set just changed, and hardReset preserves RAM — so everything

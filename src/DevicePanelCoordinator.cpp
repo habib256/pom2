@@ -23,6 +23,7 @@
 #include "NetworkBackend.h"
 #include "GrapplerCard.h"
 #include "PrinterCard.h"
+#include "Logger.h"
 #include "Settings.h"
 #include "SlirpNetworkBackend.h"
 #include "SlotBus.h"
@@ -31,6 +32,9 @@
 #include "SuperSerialCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
+
+#include <exception>
+#include <string>
 
 namespace pom2 {
 namespace {
@@ -271,18 +275,46 @@ DevicePanelCoordinator::applySerial(const SerialCommand& command)
     if (command.empty() || command.slot < 1 || command.slot >= SlotBus::kSlotCount)
         return result;
 
-    auto state = controller_.lockState();
-    auto& bus = state.memory().slotBus();
-    auto* card = dynamic_cast<SuperSerialCard*>(bus.peripheral(command.slot));
-    if (!card) return result;
-    result.cardFound = true;
+    SuperSerialCard* card = nullptr;
+    {
+        auto state = controller_.lockState();
+        auto& bus = state.memory().slotBus();
+        card = dynamic_cast<SuperSerialCard*>(bus.peripheral(command.slot));
+        if (!card) return result;
+        result.cardFound = true;
+        if (command.requestRawMode) card->setRawMode(command.rawMode);
+        if (command.requestPrinterTap) card->setPrinterTap(command.printerTap);
+    }
 
-    if (command.requestStop) card->stopListening();
-    if (command.requestRawMode) card->setRawMode(command.rawMode);
-    if (command.requestPrinterTap) card->setPrinterTap(command.printerTap);
+    // stop()/start() join a worker and bind a socket. Under stateMutex that
+    // is the freeze CLAUDE.md forbids — NetworkCoordinator already moved
+    // the FujiNet equivalent off this lock; Apply now does too. SlotBus
+    // topology is UI-thread-confined, so the pointer stays valid across
+    // the join.
+    //
+    // No `callMtx_` equivalent is needed here, unlike SpOverSlipLink: the
+    // CPU thread never reaches `transport_` or `port` — it touches the card
+    // only through the bufferMtx-guarded rings and the `listening` /
+    // `connected` atomics, and the worker→card hooks take the same lock.
+    // `transport_` is written by startListening / stopListening /
+    // setTransport alone, all UI-thread. A card that DOES hand the CPU
+    // thread a pointer into its transport (FujiNet's transact()) must not
+    // copy this shape without that mutex.
+    if (command.requestStop) {
+        try {
+            card->stopListening();
+        } catch (const std::exception& e) {
+            log().warn("SSC", std::string("listener stop failed: ") + e.what());
+        }
+    }
     if (command.requestStart) {
         result.startAttempted = true;
-        result.startSucceeded = card->startListening(command.port);
+        try {
+            result.startSucceeded = card->startListening(command.port);
+        } catch (const std::exception& e) {
+            log().warn("SSC", std::string("listener start failed: ") + e.what());
+            result.startSucceeded = false;
+        }
     }
     return result;
 }
