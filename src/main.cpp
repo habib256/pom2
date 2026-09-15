@@ -24,6 +24,7 @@
 #include "Logger.h"
 #include "ThreadGuard.h"
 #include "MainWindow.h"
+#include "HostOpenFiles.h"
 #include "Pom2Theme.h"
 #include "Version.h"
 // MainWindow.h now forward-declares EmulationController and Apple2Display
@@ -286,7 +287,14 @@ int main(int argc, char* argv[])
 #endif
 
     glfwSetErrorCallback(glfw_error_callback);
+    // macOS: a disk image double-clicked in Finder or dropped on the POM2
+    // icon arrives as an Apple Event, not in argv and not as a window drop.
+    // Hooked BEFORE glfwInit, because that is where AppKit delivers the
+    // opens a launch carries (HostOpenFiles_mac.mm), and again after it as
+    // the fallback. No-op on other hosts.
+    pom2::installHostOpenFilesHandler();
     if (!glfwInit()) return -1;
+    pom2::installHostOpenFilesHandler();
 
 #if POM2_GL_ES
     // GLES 3.0 tier — WebGL2 in the browser, Mesa V3D on a Raspberry Pi.
@@ -1026,6 +1034,11 @@ int main(int argc, char* argv[])
         /// deferred actions always observe the booted machine regardless
         /// of the host refresh rate. Null when there is no boot disk.
         std::atomic<bool>*  bootDiskSettled;
+        /// Frames to wait before draining the host's open-file queue: the
+        /// same 30-frame grace the positional disk gets, for the same
+        /// reason — a file opened AT launch must not boot before the window
+        /// and the machine have settled. Counts down from the first frame.
+        int                 hostOpenGrace;
 #ifdef __EMSCRIPTEN__
         bool                firstFrameReadySignaled;
         /// Where ImGui's layout is written, or null in kiosk mode. Held as
@@ -1036,7 +1049,7 @@ int main(int argc, char* argv[])
 #endif
     } frameCtx{
         window, &mainWindow, plan->bootDiskPath, plan->prodosFolderPath, cliBootCountdown,
-        &autoBootRequested, &autoQuitRequested, &bootDiskSettled
+        &autoBootRequested, &autoQuitRequested, &bootDiskSettled, 30
 #ifdef __EMSCRIPTEN__
         , false
         , plan->kiosk ? nullptr : iniPath.c_str()
@@ -1081,6 +1094,22 @@ int main(int argc, char* argv[])
                 c.bootDiskSettled->store(true, std::memory_order_release);
         }
 
+        // Files the host asked POM2 to open (macOS Finder / Dock; see
+        // HostOpenFiles.h) take the window-drop path: classify, mount,
+        // boot. Held for the same grace as the positional disk, and never
+        // ahead of it — a positional boot pending in `cliBootCountdown`
+        // is the earlier request.
+        if (c.hostOpenGrace > 0) --c.hostOpenGrace;
+        if (c.hostOpenGrace == 0 && c.cliBootCountdown <= 0) {
+            const auto opened = pom2::takeHostOpenFiles();
+            if (!opened.empty()) {
+                std::vector<const char*> paths;
+                paths.reserve(opened.size());
+                for (const auto& p : opened) paths.push_back(p.c_str());
+                c.mainWindow->onFileDrop(static_cast<int>(paths.size()),
+                                         paths.data());
+            }
+        }
         if (c.autoBootRequested->exchange(false)) {
             c.mainWindow->bootHdvImage();
         }

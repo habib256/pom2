@@ -43,7 +43,7 @@ Built with Dear ImGui & OpenGL — fast, lightweight, cross-platform.
 
 Five things to try **right after first boot**:
 
-1. **Boot a disk in one drag** → drop a `.woz`/`.dsk` on the window, or `POM2 path/to/game.woz`. POM2 routes it to Disk II, SmartPort or ProDOS HDV automatically.
+1. **Boot a disk in one drag** → drop a `.woz`/`.dsk`/`.po`/`.2mg`/`.hdv` on the window, or `POM2 path/to/game.woz`. On macOS, double-clicking the image in Finder or dropping it on the POM2 icon does the same. POM2 routes it to Disk II, SmartPort or ProDOS HDV automatically.
 2. **Switch machines live** → `Machine → Profile` (or `--preset iie`). Each switch is a clean cold reset that re-plugs built-in cards and re-mounts your disks.
 3. **Tilt into 3D** → open the **3D voxel view** and orbit the running framebuffer with the camera. Lo-res, hi-res and text all extrude into voxels.
 4. **Rewind** → let something run, then scrub the rewind ring backwards and resume from an earlier instant (a UI feature — note the CLI `--rewind` is unrelated: it rewinds the cassette tape).

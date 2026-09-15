@@ -245,6 +245,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Thread exception barrier (every long-lived thread) | `ThreadGuard.h` | [§ Threading](DEV.md#thread-exception-barrier-threadguardh) |
 | System profiles | `SystemProfile.h/.cpp` | [§ Profiles](DEV.md#profile-switching-internals) |
 | CLI | `CliDispatcher.h/.cpp` | [§ CLI](DEV.md#cli-clidispatcher) |
+| Host open-file events (macOS Finder double-click / Dock drop → `onFileDrop`; GLFW's delegate has no `application:openFiles:`) | `HostOpenFiles.h/.cpp`, `HostOpenFiles_mac.mm` | — |
 | WebAssembly build | `build_wasm.sh`, `wasm/shell.html` | [§ WASM](DEV.md#webassembly-browser-build) |
 | Browser persistence (IDBFS: where, when durable, who writes) | `PersistentFs.h`, `ResourcePaths.*` (`userConfigDir`), `MainWindow_Session.cpp` | [§ Browser persistence](DEV.md#browser-persistence-idbfs) |
 

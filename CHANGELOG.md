@@ -5,6 +5,31 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-15 — A disk image opened from Finder or dropped on the Dock icon now boots (macOS)
+
+The bundle's `Info.plist` has declared `.dsk/.do/.po/.nib/.woz/.d13/.2mg/.hdv`
+since the DMG existed, so Finder offered "Open with POM2", accepted a drop on
+the icon and launched the app — and then showed *"POM2 cannot open files in
+the Apple ][ hard disk image format"*, because nothing in the process received
+the file. macOS delivers those opens as an `odoc` Apple Event to the
+application delegate's `application:openFiles:`; GLFW's delegate
+(`cocoa_init.m`) implements five notifications and not that one, and a
+window drop is a different mechanism (the drop callback, which worked).
+
+`HostOpenFiles_mac.mm` adds the method to `GLFWApplicationDelegate` at
+runtime (`class_addMethod`, so GLFW keeps its own five). It is attached to
+the class by NAME, before `glfwInit`: GLFW runs `[NSApp run]` inside its
+init until `applicationDidFinishLaunching` stops it, and AppKit delivers the
+launch-time opens inside that run — a method added to the live delegate
+afterwards caught only the opens of a POM2 already running (measured: the
+first cut lost the double-clicked file and kept the Dock drop). The paths
+land in a queue `main()` drains once per frame into `onFileDrop`, after the
+same 30-frame grace the positional disk gets and never ahead of it. Other
+hosts pass the file in argv and were never affected.
+Verified with a throwaway `.app` and `open -a`: a 32 MB `.2mg` opened at
+launch boots off the SmartPort card; an 800K `.2mg` opened while running
+boots too; no dialog.
+
 ## 2026-09-15 — Apply no longer joins FujiNet / SSC under the machine lock
 
 `SlotRebuildCoordinator::beginLocked` destroyed cards via `slotBus().clear()`

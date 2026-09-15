@@ -9,6 +9,11 @@ cmake_minimum_required(VERSION 3.16)
 cmake_policy(SET CMP0091 NEW)
 
 project(pom2_imgui VERSION 0.9.3 LANGUAGES CXX)
+if(APPLE)
+    # One Objective-C++ file: src/HostOpenFiles_mac.mm, the Finder / Dock
+    # open-file hook GLFW's delegate does not provide.
+    enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -382,8 +387,12 @@ set(SOURCES
     src/AppleIIeKeyboardLayout.cpp
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
+    src/HostOpenFiles.cpp
     src/main.cpp
 )
+if(APPLE)
+    list(APPEND SOURCES src/HostOpenFiles_mac.mm)
+endif()
 
 # ─── Architecture layers ──────────────────────────────────────────────────
 # POM2 still emits ONE static archive; these manifests do not change how
@@ -494,6 +503,7 @@ set(POM2_FRONTEND_HEADERS
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
     src/DevicePanelCoordinator.h
+    src/HostOpenFiles.h
     src/IconsFontAwesome6.h
     src/KeyChord.h
     src/Mat4.h
@@ -597,6 +607,7 @@ set(POM2_FRONTEND_SOURCES
     src/AppleIIeKeyboardLayout.cpp
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
+    src/HostOpenFiles.cpp
     src/main.cpp
 )
 
