@@ -2684,7 +2684,11 @@ if(WIN32)
     target_link_libraries(test_diskii_unformatted PRIVATE winmm)
 endif()
 add_test(NAME diskii_unformatted_disk COMMAND test_diskii_unformatted)
-set_tests_properties(diskii_unformatted_disk PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+# Two full DOS 3.3 boots and two INITs of 35 tracks, hence `slow`. The 300 s
+# it first carried was enough uninstrumented (14 s) and not under llvm-cov in
+# the coverage job, where it timed out and then passed in 166 s on the re-run.
+set_tests_properties(diskii_unformatted_disk PROPERTIES
+    TIMEOUT 900 LABELS slow SKIP_RETURN_CODE 77)
 
 
 # ─── ProDOS 2.4.3 SAVE / LOAD round-trip smoke test ──────────────────────

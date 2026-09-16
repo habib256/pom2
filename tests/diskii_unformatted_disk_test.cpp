@@ -179,12 +179,31 @@ int runScenario(const std::string& romPath, const std::string& promPath,
 
     // 2. Format it. Every address and data field here is written onto virgin
     //    surface through writeFlux — there is no previous layout to overwrite.
+    //    POLL for the prompt rather than burning a fixed budget: 35 tracks
+    //    cost a few hundred million cycles, and spending 1.5 G regardless ran
+    //    this test into the 300 s ctest timeout under llvm-cov instrumentation
+    //    (CI, 2026-09-16) while passing in 14 s uninstrumented.
     m.mem.pasteRawKeys("INIT HELLO,D2\r", 14);
-    for (int i = 0; i < 1500; ++i) runCycles(*m.cpu, 1000000);
     {
-        const std::string s = scrapeTextPage(m.mem.data());
+        std::string s;
+        bool done = false;
+        for (int i = 0; i < 1500 && !done; ++i) {
+            runCycles(*m.cpu, 1000000);
+            s = scrapeTextPage(m.mem.data());
+            const auto initAt = s.find("INIT HELLO,D2");
+            if (initAt == std::string::npos) continue;
+            // DOS is back when a prompt or an error appears BELOW the echoed
+            // command line.
+            const auto eol = s.find('\n', initAt);
+            if (eol == std::string::npos) continue;
+            done = s.find("I/O ERROR", eol) != std::string::npos ||
+                   s.find("]", eol)         != std::string::npos;
+        }
+        if (s.find("INIT HELLO,D2") == std::string::npos)
+            return fail(m, gate, "INIT never echoed");
+        if (!done)
+            return fail(m, gate, "INIT never came back to the prompt");
         const auto initAt = s.find("INIT HELLO,D2");
-        if (initAt == std::string::npos) return fail(m, gate, "INIT never echoed");
         if (s.find("I/O ERROR", initAt) != std::string::npos)
             return fail(m, gate, "INIT could not format an unformatted diskette");
     }
