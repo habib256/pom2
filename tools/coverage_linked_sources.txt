@@ -118,6 +118,7 @@ src/W5100HostSockets.cpp
 src/W5100NameResolver.cpp
 src/WorkstationCard.cpp
 src/Z80.cpp
+src/ZipMember.cpp
 src/hgrpaint/Cam16.cpp
 src/hgrpaint/HgrConvert.cpp
 src/hgrpaint/HgrPaintModel.cpp

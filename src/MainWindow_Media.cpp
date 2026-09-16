@@ -65,6 +65,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cctype>
 #include <ctime>
 #include <filesystem>
 #include <string>
@@ -430,6 +431,21 @@ bool MainWindow::insertBlankDiskette(int drive, const std::string& path,
     const int bay = (drive == 1) ? 1 : 0;
 
     std::string file = path;
+    if (!file.empty()) {
+        // The file is always a raw 143 360-byte 16-sector image, whatever it
+        // is called, so a name that promises another container is a lie the
+        // user finds later: another tool rejects the "WOZ", a `.d13` comes
+        // up 16-sector, a `.hdv` is routed to the hard-disk card by every
+        // classifier (bug hunt 2026-09-16). Only the names that ARE this.
+        std::string ext = std::filesystem::path(file).extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (ext != ".dsk" && ext != ".do" && ext != ".po") {
+            errOut = file + ": a blank diskette is a 16-sector image — name it "
+                            ".dsk, .do or .po";
+            return false;
+        }
+    }
+    const bool generated = file.empty();
     if (file.empty()) {
         // A generated name, in the folder the Library scans, so the new disk
         // shows up in the list where the user is already looking. Stamped to
@@ -450,15 +466,20 @@ bool MainWindow::insertBlankDiskette(int drive, const std::string& path,
 #endif
         char stamp[32];
         std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-        for (int n = 0; n < 100; ++n) {
-            std::string cand = root + "/blank-" + stamp +
+        // Create-or-next, never check-then-create: the create is exclusive,
+        // so a name another process took between two lines here is simply
+        // the next candidate, not a file we replace.
+        for (int n = 0; n < 100 && file.empty(); ++n) {
+            const std::string cand = root + "/blank-" + stamp +
                 (n ? ("-" + std::to_string(n)) : std::string()) + ".dsk";
-            if (!fs::exists(cand, ec)) { file = cand; break; }
+            std::string err;
+            if (DiskImage::createBlankFile(cand, err)) { file = cand; break; }
+            if (!fs::exists(cand, ec)) { errOut = err; return false; }   // a real failure
         }
         if (file.empty()) { errOut = "could not find a free name in " + root; return false; }
     }
 
-    if (!DiskImage::createBlankFile(file, errOut)) return false;
+    if (!generated && !DiskImage::createBlankFile(file, errOut)) return false;
     if (!pom2::mountBlankDiskII(*controller, *target, bay, file, errOut)) {
         // The file was created moments ago and nothing has used it, so the
         // failed mount leaves no orphan behind.

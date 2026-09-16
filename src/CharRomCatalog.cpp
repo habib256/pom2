@@ -71,11 +71,11 @@ const std::vector<CharRomEntry>& catalogStorage()
         // a 4 KB dump that is byte-identical to the FR-CA unenhanced one and
         // is NOT 342-0274-A, despite how it used to be labelled.
         { CharRomLocale::AppleIIeFrench8k_FR,
-          "//e — Français 342-0274-A (banque FR)", "roms/342-0274-a.e9",                true, 0 },
+          "//e — Français 342-0274-A (banque FR)", "roms/342-0274-a.e9",                true, 0, 8192 },
         { CharRomLocale::AppleIIeFrench8k_US,
-          "//e — Français 342-0274-A (banque US)", "roms/342-0274-a.e9",                true, 1 },
+          "//e — Français 342-0274-A (banque US)", "roms/342-0274-a.e9",                true, 1, 8192 },
         { CharRomLocale::AppleIIeFrenchTouchBlock,
-          "//e — French Touch (Block ASCII custom)", "roms/apple2e_char_ft_blockascii.rom", true, -1 },
+          "//e — French Touch (Block ASCII custom)", "roms/apple2e_char_ft_blockascii.rom", true, -1, 8192 },
     };
     return all;
 }

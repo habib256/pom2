@@ -145,21 +145,25 @@ bool LironCard::busAddressed() const
 
 bool LironCard::busLive() const
 {
-    // A bay changing state under a transaction (eject mid-WRITE, a mount
-    // right after) must not leave half a frame in the responder to be
-    // spliced with the next one: any change in which bays hold media starts
-    // the protocol over.
+    // A bay changing state is reported to the bus, which keeps the protocol
+    // going and refuses only a WRITE whose data would land on a different
+    // disk (SmartPortBusDevice::mediaChanged).
     unsigned mask = 0;
     for (int i = 0; i < unitCount_; ++i)
         if (bayLoaded(i)) mask |= 1u << i;
     if (mask != busMediaMask_) {
+        const unsigned changed = mask ^ busMediaMask_;
         busMediaMask_ = mask;
-        // abortTransaction(), NOT busReset(): a media change is not a bus
-        // reset. The host has not re-run its INIT scan, so the chain numbers
-        // it assigned still stand; only the half-finished frame goes.
-        bus_.abortTransaction();
+        // Not a bus reset, and not an abort either: the host has not re-run
+        // its INIT scan, and a drive whose disk leaves is still on the chain
+        // and still answers. Aborting broke the handshake and hung the
+        // firmware (bug hunt 2026-09-16). Only a WRITE whose data would land
+        // on a different disk is refused (SmartPortBusDevice::mediaChanged).
+        bus_.mediaChanged(changed);
     }
-    return busEnabled_ && mask != 0;
+    // Still on the wire while a transaction is in flight, even with the
+    // last disk gone — the drive is still there (see IIcExternalSmartPort).
+    return busEnabled_ && (mask != 0 || bus_.active());
 }
 
 uint8_t LironCard::deviceSelectRead(uint8_t low4)
@@ -188,9 +192,10 @@ uint8_t LironCard::deviceSelectRead(uint8_t low4)
     case 0x00: {
         // Q6/Q7 both low = the data register in read mode: the device's next
         // byte, bit 7 meaning "there is one" — which is why every SmartPort
-        // byte on the wire has it set. Nothing to say reads as $00.
-        uint8_t b = 0;
-        return bus_.hostReads(b) ? b : uint8_t{0x00};
+        // byte on the wire has it set. $00 while a consumed reply waits for
+        // SENSE, $FF for an idle bus so the firmware's receive timeout can
+        // fire (see SmartPortBusDevice::readDataRegister).
+        return bus_.readDataRegister();
     }
     case 0x80:
         // Write handshake. Bit 7 = "latch free, send the next byte"; bit 6 is
@@ -610,7 +615,7 @@ bool LironCard::prepareEjectBay(int bay, Block512Backing::PendingWriteBack& out,
     Block512Backing& blk = blocks_[static_cast<std::size_t>(bay)];
     if (!blk.isLoaded()) return false;   // a 3.5" (or nothing): one-phase
     if (blk.hasUnsavedChanges() && blk.isWriteBackEnabled() && !blk.isMediumLocked())
-        out = blk.takeWriteBack();
+        out = blk.takeDetachWriteBack();
     return true;
 }
 

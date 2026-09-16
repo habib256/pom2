@@ -82,7 +82,7 @@ public:
         if (!(backing_.isLoaded() && backing_.hasUnsavedChanges() &&
               backing_.isWriteBackEnabled() && !backing_.isWriteProtected()))
             return true;                 // nothing to write: out stays invalid
-        out = backing_.takeWriteBack();
+        out = backing_.takeDetachWriteBack();
         return true;
     }
     void     restoreDirtyBlocks(const std::vector<uint32_t>& indices) override

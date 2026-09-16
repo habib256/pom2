@@ -200,7 +200,11 @@ bool TranswarpCard::setRom(std::vector<uint8_t> bytes)
         // Apple's own F8 ROM, and re-capturing would store the outgoing
         // TransWarp image and hand THAT back on $C072.
         memory_->loadRomBytes(rom_.data(), kRomSize, 0xF000);
-    } else if (busSlot() >= 0 && !readA2Rom_) {
+    } else if (busSlot() >= 0 && !readA2Rom_ && !halted_) {
+        // Not while halted: $C074=3 handed the bus back to the Apple, and a
+        // ROM arriving then (the ROM Status panel's fetch) covered its
+        // Monitor again with the card switched off (bug hunt 2026-09-16).
+        // The next reset takes the bus and engages.
         engageShadow();
     }
     return true;
@@ -266,6 +270,22 @@ void TranswarpCard::onUnplug()
 {
     // Never leave the machine running someone else's Monitor.
     releaseShadow();
+}
+
+void TranswarpCard::beforeMainRomReload()
+{
+    // Put the Apple's bytes back where they were, so the load that follows
+    // overwrites a plain ROM window rather than landing under our image.
+    reengageAfterReload_ = shadowing_;
+    if (shadowing_) releaseShadow();
+}
+
+void TranswarpCard::afterMainRomReload()
+{
+    // Re-capture what is at $F000 NOW — the new firmware — and cover it
+    // again. engageShadow's own guards (a ROM, a bus) still apply.
+    if (reengageAfterReload_) engageShadow();
+    reengageAfterReload_ = false;
 }
 
 void TranswarpCard::onReset()

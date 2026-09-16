@@ -199,9 +199,63 @@ int main()
     d.reqChanged(true);
     uint8_t junk;
     assert(!d.hostReads(junk) && "a frame with a bad checksum is not served");
+    // …and the host is not left staring at $00. The firmware's receive loop
+    // (`$CA02: LDA $C08C,X / BPL`) only counts bytes with bit 7 set against
+    // its 30-byte timeout; a data register stuck at $00 never reaches it and
+    // the //c hung for good (bug hunt 2026-09-16). An idle bus reads $FF.
+    assert(d.readDataRegister() == 0xFF && "no reply must read as an idle bus");
     d.reqChanged(false);
     assert(d.progress().badChecksums == 1);
     assert(d.progress().blocksRead == 1 && "…and it did not read a block");
+
+    // Idle-bus reads and media changes mid-WRITE, on a device of their own
+    // so the counters asserted around this block are not disturbed.
+    {
+        RamUnit a, b;
+        pom2::SmartPortBusDevice e;
+        e.setUnit(0, &a); e.setUnit(1, &b); e.setUnitCount(2);
+        e.reset();
+        assert(replyStatus(transact(e, frame(2, 0x00, {0x05, 0x02}))) == 0x00);   // unit 2 = slot 0
+        assert(replyStatus(transact(e, frame(3, 0x00, {0x05, 0x02}))) == 0x7F);   // unit 3 = slot 1
+
+        // A reply whose bytes are all taken is still on the wire until REQ
+        // drops: "nothing yet" ($00) there, not the idle $FF — the host is
+        // about to poll SENSE, and a stray bit-7 byte would be one it never
+        // asked for.
+        e.reqChanged(true);
+        for (uint8_t w : frame(2, 0x00, {0x01, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}))
+            e.hostWrote(w);
+        e.hostWrote(0x00);
+        e.reqChanged(false);
+        e.reqChanged(true);
+        uint8_t rb;
+        while (e.hostReads(rb)) {}
+        assert(e.readDataRegister() == 0x00 && "a consumed reply reads as nothing-yet");
+        e.reqChanged(false);
+        assert(e.readDataRegister() == 0xFF && "once REQ drops, the bus is idle again");
+
+        // The OTHER unit changing medium leaves a pending WRITE alone.
+        std::vector<uint8_t> blk(512, 0x3C);
+        transact(e, frame(3, 0x00, {0x02, 0x03, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}),
+                 /*expectReply=*/false);
+        assert(e.transactionInvolves(0x2) && !e.transactionInvolves(0x1));
+        e.mediaChanged(0x1);
+        auto rr = transact(e, frame(3, 0x02, blk));
+        assert(replyStatus(rr) == 0x00 && "a change on another unit failed the write");
+        assert(b.blocks[0] == 0x3C && "the write did not land");
+
+        // The TARGET unit changing refuses the data — with a reply, never
+        // silence — and nothing is written.
+        const uint8_t before = b.blocks[3 * 512];
+        transact(e, frame(3, 0x00, {0x02, 0x03, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00}),
+                 /*expectReply=*/false);
+        e.mediaChanged(0x2);
+        rr = transact(e, frame(3, 0x02, blk));
+        assert(replyStatus(rr) == 0x27 && "a write to a disk that left was not refused");
+        assert(b.blocks[3 * 512] == before && "the refused block was written anyway");
+        assert(!e.active() && "the refusal left the bus mid-transaction");
+        assert(e.progress().blocksWritten == 1);
+    }
 
     // WRITE block 2 of unit 3 (= u1): command packet, then a $82 data packet.
     transact(d, frame(3, 0x00, {0x02, 0x03, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00}),

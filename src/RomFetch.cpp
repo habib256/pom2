@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "RomFetch.h"
+#include "ZipMember.h"
 
 #include "AtomicFileReplace.h"
 #include "ChildProcess.h"
@@ -23,11 +24,13 @@
 #include "ResourcePaths.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <thread>
 #include <unordered_map>
@@ -35,6 +38,8 @@
 
 #ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -439,6 +444,29 @@ bool extractZipMember(const fs::path& zip, const std::string& member,
     return false;
 }
 
+bool readAll(const fs::path& path, std::vector<std::uint8_t>& out, std::string& err);
+
+/// One member's bytes. In-process first (stored/deflate — every archive
+/// RetroBIOS serves); a host tool only for what that cannot read. The
+/// in-process reader is not an optimisation: the host fallback was `tar`,
+/// and GNU tar does not read zip, so a Linux box without unzip failed every
+/// romset (bug hunt 2026-09-16).
+bool unpackZipMember(const fs::path& zip, const std::string& member,
+                     const fs::path& extractDir,
+                     std::vector<std::uint8_t>& bytes, std::string& err,
+                     const RomFetchCancel& cancelled)
+{
+    std::vector<std::uint8_t> archive;
+    if (!readAll(zip, archive, err)) return false;
+    bool unsupported = false;
+    if (readZipMember(archive, member, bytes, err, kMaxUnpackedZipBytes,
+                      &unsupported))
+        return true;
+    if (!unsupported) return false;
+    return extractZipMember(zip, member, extractDir, err, cancelled) &&
+           readAll(extractedMemberPath(extractDir, member), bytes, err);
+}
+
 /// Largest thing this module will ever read into memory. The biggest catalog
 /// entry is 32 KB and the biggest zip a few hundred; the cap exists because
 /// the file is whatever the network handed us.
@@ -507,8 +535,62 @@ std::uint32_t crc32Bytes(const std::vector<std::uint8_t>& bytes)
 /// padded out) landed in the user's roms/ and surfaced days later as "it
 /// doesn't boot". Verify before publishing, refuse on mismatch, and say what
 /// was expected. (Bug hunt 2026-09-06 #H9.)
+/// Where a replaced dump goes. OUTSIDE roms/ on purpose: the packaging
+/// manifest ships that directory's working tree as-is, and a user's old ROM
+/// has no business in a release package.
+fs::path replacedRomsDir()
+{
+    return userDataDir() / "roms-replaced";
+}
+
+/// Copy `dest` aside before it is replaced. The planner re-verifies present
+/// files and replaces the ones that are not the dump the catalogue names —
+/// which is right for a damaged dump and wrong for a legitimate VARIANT the
+/// catalogue has no digest for (a 16 KB //e firmware, another //c revision,
+/// an older EPROM). POM2 cannot tell those apart, so it never destroys
+/// either: the old file is kept, and the replacement does not happen at all
+/// if it cannot be (bug hunt 2026-09-16).
+bool backupBeforeReplace(const fs::path& dest, std::string& backupOut, std::string& err)
+{
+    backupOut.clear();
+    std::error_code ec;
+    if (!fs::exists(dest, ec)) return true;          // nothing to keep
+    const fs::path dir = replacedRomsDir();
+    fs::create_directories(dir, ec);
+    if (ec) {
+        err = "cannot keep the old " + dest.filename().string() +
+              " (" + dir.string() + ": " + ec.message() + ") — not replaced";
+        return false;
+    }
+    const std::time_t now = std::time(nullptr);
+    std::tm tmv{};
+#if defined(_WIN32)
+    localtime_s(&tmv, &now);
+#else
+    localtime_r(&now, &tmv);
+#endif
+    char stamp[32];
+    std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+    for (int n = 0; n < 100; ++n) {
+        const fs::path target = dir / (dest.filename().string() + "." + stamp +
+            (n ? ("-" + std::to_string(n)) : std::string()));
+        ec.clear();
+        // copy_options::none refuses an existing target: never overwrite a
+        // backup either.
+        if (fs::copy_file(dest, target, fs::copy_options::none, ec)) {
+            backupOut = target.string();
+            return true;
+        }
+        if (!fs::exists(target)) break;              // a real failure
+    }
+    err = "cannot keep the old " + dest.filename().string() +
+          (ec ? (": " + ec.message()) : std::string()) + " — not replaced";
+    return false;
+}
+
 bool commitBytes(const fs::path& dest, const RomFetchEntry& entry,
-                 const std::vector<std::uint8_t>& bytes, std::string& err)
+                 const std::vector<std::uint8_t>& bytes, std::string& err,
+                 std::string& backupOut)
 {
     if (entry.expectedSize && bytes.size() != entry.expectedSize) {
         err = dest.filename().string() + " is " + std::to_string(bytes.size()) +
@@ -543,6 +625,20 @@ bool commitBytes(const fs::path& dest, const RomFetchEntry& entry,
             return false;
         }
     }
+    // Already exactly these bytes (another POM2 got there first, or the file
+    // was fine all along): nothing to replace, nothing to keep.
+    {
+        std::error_code xec;
+        std::vector<std::uint8_t> have;
+        std::string readErr;
+        if (fs::exists(dest, xec) && readAll(dest, have, readErr) && have == bytes) {
+            backupOut.clear();
+            return true;
+        }
+    }
+    // Only now, with the download proven to be the right file: keep what it
+    // is about to replace.
+    if (!backupBeforeReplace(dest, backupOut, err)) return false;
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
     if (!writeFileAtomic(dest, bytes.data(), bytes.size(), ec)) {
@@ -666,16 +762,24 @@ bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
 
 std::filesystem::path writableRomsDir()
 {
+    // A download has to land where findResource() looks FIRST, or a wrong
+    // file in an earlier root keeps being the one the machine loads. The
+    // per-user data dir is the first root whenever it is per-user, and it is
+    // ours to create — so it is the answer then, whether or not its roms/
+    // exists yet. Created by fetchMissingRoms, not here: this also feeds a
+    // tooltip, and hovering it used to create the directory.
+    if (userDataDirIsPerUser()) return userDataDir() / "roms";
     for (const auto& base : resourceSearchDirs()) {
-        if (base.empty()) continue;
-        const fs::path roms = base / "roms";
+        // The empty root is the working directory, and it is a root like the
+        // others (it used to be skipped, so a writable ./roms was never used).
+        const fs::path roms = base.empty() ? fs::path("roms") : base / "roms";
         std::error_code ec;
-        if (fs::is_directory(roms, ec) && dirIsWritable(roms)) return roms;
+        if (fs::is_directory(roms, ec) && dirIsWritable(roms)) {
+            const fs::path abs = fs::absolute(roms, ec);
+            return ec ? roms : abs;
+        }
     }
-    const fs::path fallback = userDataDir() / "roms";
-    std::error_code ec;
-    fs::create_directories(fallback, ec);
-    return fallback;
+    return userDataDir() / "roms";
 }
 
 std::vector<const RomFetchEntry*> romsToFetch(
@@ -704,22 +808,71 @@ std::vector<const RomFetchEntry*> romsToFetch()
         // which is all POM2 knows about it.
         std::vector<std::uint8_t> have;
         std::string err;
-        if (!readAll(resolved, have, err)) { out.push_back(&e); continue; }
-        if (e.expectedSize && have.size() != e.expectedSize &&
-            !(e.altPresentSize && have.size() == e.altPresentSize)) {
-            out.push_back(&e);
-            continue;
-        }
-        if (e.expectedSha256 && *e.expectedSha256 &&
-            sha256Hex(have.data(), have.size()) != e.expectedSha256) {
-            out.push_back(&e);
-            continue;
-        }
-        if (e.expectedCrc && crc32Bytes(have) != e.expectedCrc)
+        if (!readAll(resolved, have, err) || !localDumpAcceptable(e, have))
             out.push_back(&e);
     }
     return out;
 }
+
+bool installFetchedRom(const fs::path& dest, const RomFetchEntry& entry,
+                       const std::vector<std::uint8_t>& bytes,
+                       std::string& err, std::string& backupOut)
+{
+    return commitBytes(dest, entry, bytes, err, backupOut);
+}
+
+bool localDumpAcceptable(const RomFetchEntry& e, const std::vector<std::uint8_t>& have)
+{
+    // The alternate size is a DIFFERENT dump that is legitimate too — the
+    // 12 KB six-chip II+ image beside the 20 KB one the catalogue fetches.
+    // The digests below describe the fetched dump, so they cannot apply to
+    // it: checking them anyway flagged every 12 KB II+ tree as broken and
+    // "Download missing" replaced a firmware that boots (bug hunt 2026-09-16,
+    // the same regression bug hunt #10 had fixed, re-opened when the II+
+    // entry gained a SHA-256).
+    if (e.altPresentSize && have.size() == e.altPresentSize &&
+        have.size() != e.expectedSize)
+        return true;
+    if (e.expectedSize && have.size() != e.expectedSize) return false;
+    if (e.expectedSha256 && *e.expectedSha256 &&
+        sha256Hex(have.data(), have.size()) != e.expectedSha256)
+        return false;
+    if (e.expectedCrc && crc32Bytes(have) != e.expectedCrc) return false;
+    return true;
+}
+
+namespace {
+
+constexpr const char* kFetchDirPrefix = ".retrobios-fetch";
+
+fs::path uniqueFetchDir(const fs::path& destRoot)
+{
+    static std::atomic<unsigned long long> counter{0};
+#ifdef _WIN32
+    const unsigned long pid = static_cast<unsigned long>(::_getpid());
+#else
+    const unsigned long pid = static_cast<unsigned long>(::getpid());
+#endif
+    return destRoot / (std::string(kFetchDirPrefix) + "-" + std::to_string(pid) +
+                       "-" + std::to_string(counter.fetch_add(1) + 1));
+}
+
+void sweepStaleFetchDirs(const fs::path& destRoot)
+{
+    std::error_code ec;
+    const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(24);
+    for (fs::directory_iterator it(destRoot, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (name.rfind(kFetchDirPrefix, 0) != 0) continue;
+        std::error_code sec;
+        if (!it->is_directory(sec) || sec) continue;
+        const auto mtime = fs::last_write_time(it->path(), sec);
+        if (sec || mtime > cutoff) continue;
+        fs::remove_all(it->path(), sec);
+    }
+}
+
+}  // namespace
 
 RomFetchResult fetchMissingRoms(const fs::path& destRoot,
                                 const RomFetchProgress& progress,
@@ -754,8 +907,13 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         return r;
     }
 
-    const fs::path scratch = destRoot / ".retrobios-fetch";
-    fs::remove_all(scratch, ec);
+    // One scratch directory PER RUN. The name used to be fixed, and every run
+    // removed it at start and at end — so a second POM2 on the same $HOME
+    // pressing Download deleted the first one's half-written files from under
+    // its curl (bug hunt 2026-09-16). Leftovers of a crashed run are swept by
+    // age instead: a live fetch is minutes old, a day-old one is debris.
+    sweepStaleFetchDirs(destRoot);
+    const fs::path scratch = uniqueFetchDir(destRoot);
     fs::create_directories(scratch, ec);
 
     std::unordered_map<std::string, fs::path> zipCache;
@@ -773,6 +931,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         }
         tick(e->label);
         std::string err;
+        std::string backup;
         const fs::path dest = destRoot / fs::path(e->destRel).filename();
 
         bool ok = false;
@@ -782,7 +941,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             if (ok) {
                 std::vector<std::uint8_t> bytes;
                 ok = readAll(raw, bytes, err) &&
-                     commitBytes(dest, *e, bytes, err);
+                     commitBytes(dest, *e, bytes, err, backup);
             }
         } else {
             fs::path zipPath;
@@ -817,21 +976,13 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             if (!zipPath.empty()) {
                 const fs::path extractDir = scratch / ("x-" + std::to_string(done));
                 std::vector<std::uint8_t> bytes;
-                ok = extractZipMember(zipPath, e->zipMember, extractDir, err,
-                                      cancelled);
-                if (ok) {
-                    ok = readAll(extractedMemberPath(extractDir, e->zipMember),
-                                 bytes, err);
-                }
+                ok = unpackZipMember(zipPath, e->zipMember, extractDir, bytes,
+                                     err, cancelled);
                 if (ok && e->zipConcat) {
                     for (const char* const* m = e->zipConcat; *m; ++m) {
-                        if (!extractZipMember(zipPath, *m, extractDir, err,
-                                              cancelled)) {
-                            ok = false;
-                            break;
-                        }
                         std::vector<std::uint8_t> more;
-                        if (!readAll(extractedMemberPath(extractDir, *m), more, err)) {
+                        if (!unpackZipMember(zipPath, *m, extractDir, more, err,
+                                             cancelled)) {
                             ok = false;
                             break;
                         }
@@ -839,14 +990,35 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
                     }
                 }
                 if (ok)
-                    ok = commitBytes(dest, *e, bytes, err);
+                    ok = commitBytes(dest, *e, bytes, err, backup);
             }
         }
 
         if (ok) {
+            // Saved is not USED: a root searched before `destRoot` that holds
+            // this name (and could not be the destination — not writable)
+            // still wins findResource, and it holds the wrong dump, or this
+            // entry would not have been fetched. Say so instead of reporting
+            // a success the machine will not see.
+            const std::string resolved = findResource(e->destRel);
+            std::error_code eqEc;
+            if (!resolved.empty() && !fs::equivalent(resolved, dest, eqEc)) {
+                ok = false;
+                err = std::string("saved ") + dest.string() + ", but " +
+                      resolved + " is found first and is not the expected "
+                      "dump — remove or replace it";
+            }
+        }
+        if (ok) {
             ++r.saved;
             log().info("ROM", std::string("fetched ") + e->destRel +
                        " from RetroBIOS");
+            if (!backup.empty()) {
+                ++r.replaced;
+                log().info("ROM", std::string("the previous ") +
+                           fs::path(e->destRel).filename().string() +
+                           " was not the expected dump; kept as " + backup);
+            }
         } else {
             ++r.failed;
             log().warn("ROM", std::string("RetroBIOS fetch of ") + e->destRel +
@@ -865,6 +1037,16 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
                       "Saved %d ROM%s to %s (%d already present).",
                       r.saved, r.saved == 1 ? "" : "s",
                       destRoot.string().c_str(), r.skipped);
+        if (r.replaced > 0) {
+            // Say it where the user is looking: a file they had is not the
+            // one in roms/ any more.
+            char more[256];
+            std::snprintf(more, sizeof(more),
+                          " %d replaced a different file, kept in %s.",
+                          r.replaced, replacedRomsDir().string().c_str());
+            r.summary = std::string(buf) + more;
+            return r;
+        }
     } else {
         std::snprintf(buf, sizeof(buf),
                       "Saved %d, failed %d, skipped %d — %s",

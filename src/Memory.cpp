@@ -172,6 +172,18 @@ bool Memory::loadRomBytes(const uint8_t* src, size_t length, uint16_t addr)
 
 int Memory::loadAppleIIRom(const char* filename, bool pickLower16KFor32K)
 {
+    // Cards that map over the motherboard ROM step aside for the reload and
+    // come back over the NEW one (see SlotPeripheral::beforeMainRomReload).
+    for (int s = 0; s < SlotBus::kSlotCount; ++s)
+        if (SlotPeripheral* p = slots.peripheral(s)) p->beforeMainRomReload();
+    const int loaded = loadAppleIIRomImpl(filename, pickLower16KFor32K);
+    for (int s = 0; s < SlotBus::kSlotCount; ++s)
+        if (SlotPeripheral* p = slots.peripheral(s)) p->afterMainRomReload();
+    return loaded;
+}
+
+int Memory::loadAppleIIRomImpl(const char* filename, bool pickLower16KFor32K)
+{
     std::ifstream f(filename, std::ios::binary);
     if (!f) {
         lastError = std::string("Cannot open ROM: ") + filename;

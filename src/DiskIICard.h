@@ -263,7 +263,15 @@ public:
     /// whole medium out (a move — no syscall) and leave the bay empty. Returns
     /// null when there was nothing to write back; the bay is emptied either
     /// way. A `DiskImage` is ~242 KB, hence the heap.
-    std::unique_ptr<DiskImage> takeEjectWriteBack(int drive);
+    ///
+    /// The drive stays RESERVED for as long as the returned payload lives:
+    /// any install into it is refused until the caller has dropped the
+    /// payload (committed) or handed it back (`restoreEjected`). Without the
+    /// reservation, a disk mounted into the drive while phase 2 ran — the AI
+    /// control server inserts from its own thread — made a failed commit's
+    /// `restoreEjected` refuse, and the caller then destroyed the only copy of
+    /// the guest's unsaved writes (bug hunt 2026-09-16).
+    std::shared_ptr<DiskImage> takeEjectWriteBack(int drive);
 
     /// Phase 2, with NO lock held: write the lifted medium out. Static — by
     /// now the card may have been unplugged, and the payload is self-contained.
@@ -274,7 +282,7 @@ public:
     /// did. Refuses (returns false) if something was mounted into the bay
     /// while phase 2 ran unlocked — that disk wins, and the caller reports the
     /// loss rather than silently overwriting it.
-    bool restoreEjected(int drive, std::unique_ptr<DiskImage> pending);
+    bool restoreEjected(int drive, std::shared_ptr<DiskImage> pending);
 
     /// Persist any pending write-back for both drives WITHOUT ejecting.
     /// insertDisk / ejectDisk already flush on the swap, but shutdown and
@@ -392,6 +400,9 @@ private:
     M6502* cpu_ = nullptr;
     FloppySoundSink* sound_ = nullptr;
     std::array<DiskImage, kDriveCount> images{};
+    /// The outgoing medium of a two-phase eject, while its commit is pending
+    /// (see takeEjectWriteBack). Expired = the drive is free.
+    std::array<std::weak_ptr<DiskImage>, kDriveCount> ejecting_{};
     std::array<std::string, kDriveCount> mediaErrors{};
     /// Drive currently routed to the LSS / legacy gate. Set by control()
     /// in response to $C0nA ($activeDrive=0) or $C0nB ($activeDrive=1).
@@ -455,6 +466,12 @@ private:
     // signals are controller state and shared between the two drives —
     // only the selected drive's head physically moves in response.
     std::array<bool, 4> phaseOn{};
+    // What each DRIVE's stepper last received — MAME's per-floppy `m_phases`.
+    // The controller only forwards the magnets to the selected drive while
+    // it is enabled (`if (active) seekPhaseW`), so this is not `phaseOn`: a
+    // phase toggled with the motor off, or while the other drive was
+    // selected, never reached it. The WPT line reads THIS (floppy.cpp:817).
+    std::array<uint8_t, 2> drivePhases_{};
     // Head position in quarter-tracks, per drive. 35 tracks × 4 qt = 140;
     // the head can sit at any qt from 0 (track 0) to 4*(kTracks-1) = 136
     // (track 34). Quarter-tracks are needed for some copy protections;
@@ -598,6 +615,18 @@ private:
     /// tracks per call. Called from handleSwitchAccess after every phase
     /// soft-switch hit (rising AND falling).
     void seekPhaseW(int phases);
+    /// The last head step, held for a stepper's response time: the opposing
+    /// magnet energised within `kStepperResponseCycles` cancels it (see
+    /// seekPhaseW). Its click is queued only once the step stands.
+    static constexpr uint64_t kStepperResponseCycles = 256;   // 0.25 ms
+    struct PendingStep {
+        uint64_t cycle = 0;
+        int      drive = -1;        // -1 = none
+        int      from  = 0;
+        int      to    = 0;
+        bool     click = false;
+    } lastStep_;
+    void confirmLastStep();
     // Legacy 32-cycle gate body, retained as a fallback when no P6 PROM
     // is loaded.
     void legacyAdvance(int cycles);
@@ -637,7 +666,8 @@ private:
     /// mid-write, which no controller does — the head is parked before the
     /// write current comes on.
     bool writingInhibited() const {
-        return phaseOn[1] || images[activeDrive].isWriteProtected();
+        return (drivePhases_[activeDrive] & 0x2) != 0 ||
+               images[activeDrive].isWriteProtected();
     }
 
     /// The WPT line as the CONTROLLER senses it — MAME
@@ -657,7 +687,7 @@ private:
     /// the $C0nD/$C0nE register hooks disagree about it deliberately (see the
     /// note at the $C0nD hook), so each site adds `!isLoaded()` itself.
     bool senseWriteProtect() const {
-        return phaseOn[1] || images[activeDrive].isWriteProtected();
+        return writingInhibited();
     }
 
     /// Read-amplifier noise for a head over a surface that modulates

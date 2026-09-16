@@ -144,7 +144,7 @@ bool ProDOSHardDiskCard::detachDrive(int drive,
     if (!(b.isLoaded() && b.hasUnsavedChanges() &&
           b.isWriteBackEnabled() && !b.isMediumLocked()))
         return true;                     // nothing to write: out stays invalid
-    out = b.takeWriteBack();
+    out = b.takeDetachWriteBack();
     return true;
 }
 

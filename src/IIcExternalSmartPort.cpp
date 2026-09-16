@@ -48,32 +48,47 @@ bool IIcExternalSmartPort::bind()
 bool IIcExternalSmartPort::live()
 {
     const bool bound = bind();
-    // Media changing under a transaction (eject mid-WRITE, a mount right
-    // after) must not leave half a frame in the responder to be spliced
-    // with the next one: any change in which units hold media starts the
-    // protocol over.
+    // Which units hold media. A change is reported to the bus, which keeps
+    // the protocol going — a drive whose disk leaves is still on the chain
+    // and answers "offline" — and refuses only a WRITE whose data packet
+    // would land on a different disk than the one its command named.
+    //
+    // It used to abort the transaction on ANY change. That broke the
+    // handshake (the firmware waited for an ACK or a reply that never came,
+    // and the //c hung for good) and failed a write on one bay because a
+    // disk went into the other (bug hunt 2026-09-16). The chain NUMBERS were
+    // never dropped here and still are not: the //c+ numbers this chain from
+    // 2 and does not re-run its INIT scan after a user-side eject.
     unsigned mask = 0;
     for (int i = 0; i < SmartPortBusDevice::kMaxUnits && i < bus_.unitCount(); ++i)
         if (bus_.unitHasMedia(i)) mask |= 1u << i;
     if (mask != mediaMask_) {
+        const unsigned changed = mask ^ mediaMask_;
         mediaMask_ = mask;
-        // abortTransaction(), NOT busReset(): the frame in flight has to go,
-        // but the host's chain numbers must not. The //c+ numbers this
-        // external chain from 2 (its internal MIG drive is device 1), and
-        // it never re-runs the INIT scan after a user-side eject — so
-        // forgetting the numbers here sent `unitFor` back to its "count
-        // from 1" fallback and re-pointed device 2 at the second bay.
-        bus_.abortTransaction();
+        bus_.mediaChanged(changed);
     }
-    return enabled_ && bound && mask != 0;
+    // A transaction in flight keeps the port on the wire even when the last
+    // disk just left: the drive is still there, and going silent mid-frame
+    // hands the firmware's ACK and reply polls to the Disk II.
+    return enabled_ && bound && (mask != 0 || bus_.active());
 }
 
-bool IIcExternalSmartPort::addressed(uint8_t phases, uint8_t control)
+bool IIcExternalSmartPort::addressed(uint8_t phases, uint8_t control,
+                                     bool rearIsDrive2)
 {
     // PH1 (CA1) and PH3 (LSTRB) both high with the port enabled: what the
     // firmware's scan asserts before it polls SENSE, and something no disk
     // transaction ever does.
-    return (phases & 0x02) && (phases & 0x08) && (control & 0x10);
+    //
+    // On the plain //c "the port" is DRIVE 2: the rear connector carries the
+    // second enable line, and the firmware selects it ($C0EB) before it
+    // talks to the bus. Testing the motor bit alone let a 5.25" program on
+    // the internal drive that energised PH1+PH3 have its reads answered by
+    // the bus responder (bug hunt 2026-09-16). The //c+ routes its rear port
+    // through the MIG and addresses the chain with either select, so its
+    // shared-IWM path keeps the looser test.
+    return (phases & 0x02) && (phases & 0x08) && (control & 0x10) &&
+           (!rearIsDrive2 || (control & 0x20));
 }
 
 void IIcExternalSmartPort::syncLines(uint8_t phases)
@@ -88,11 +103,10 @@ bool IIcExternalSmartPort::answer(uint8_t control, uint8_t iwmValue, uint8_t& ou
 {
     switch (control & 0xC0) {
     case 0x00: {
-        // Data register, read mode: the device's next byte, or $00 for
-        // "nothing yet". Every SmartPort byte on the wire carries bit 7,
-        // which is what the firmware's BPL loops are waiting for.
-        uint8_t b = 0;
-        out = bus_.hostReads(b) ? b : uint8_t{0x00};
+        // Data register, read mode: the device's next byte, $00 for
+        // "nothing yet", $FF for an idle bus (SmartPortBusDevice.h says why
+        // that last one is the difference between a retry and a hang).
+        out = bus_.readDataRegister();
         return true;
     }
     case 0x80:
@@ -125,7 +139,7 @@ bool IIcExternalSmartPort::read(uint8_t offset, uint64_t cycles, uint8_t& out)
     regs_.tick(cycles);
     const uint8_t v = regs_.read(static_cast<uint8_t>(offset & 0xF));
     if (!live()) return false;
-    if (!addressed(regs_.phases(), regs_.control()) && !bus_.active()) return false;
+    if (!addressed(regs_.phases(), regs_.control(), true) && !bus_.active()) return false;
     return answer(regs_.control(), v, out);
 }
 
@@ -137,7 +151,7 @@ bool IIcExternalSmartPort::write(uint8_t offset, uint8_t value, uint64_t cycles)
     // of the packet, and the state after it is what the IWM uses to tell a
     // data write from a mode write.
     const bool forBus = live() &&
-        (addressed(regs_.phases(), regs_.control()) || bus_.active());
+        (addressed(regs_.phases(), regs_.control(), true) || bus_.active());
     regs_.setBusCapture(forBus);
     regs_.write(static_cast<uint8_t>(offset & 0xF), value);
     if (forBus) takeByte(regs_, offset, value);
@@ -146,7 +160,7 @@ bool IIcExternalSmartPort::write(uint8_t offset, uint8_t value, uint64_t cycles)
 
 bool IIcExternalSmartPort::sharedWantsWrite(const IWMDevice& iwm)
 {
-    return live() && (addressed(iwm.phases(), iwm.control()) || bus_.active());
+    return live() && (addressed(iwm.phases(), iwm.control(), false) || bus_.active());
 }
 
 void IIcExternalSmartPort::sharedAfterWrite(const IWMDevice& iwm, uint8_t offset,
@@ -161,7 +175,7 @@ bool IIcExternalSmartPort::sharedAfterRead(const IWMDevice& iwm, uint8_t iwmValu
 {
     syncLines(iwm.phases());
     if (!live()) return false;
-    if (!addressed(iwm.phases(), iwm.control()) && !bus_.active()) return false;
+    if (!addressed(iwm.phases(), iwm.control(), false) && !bus_.active()) return false;
     return answer(iwm.control(), iwmValue, out);
 }
 

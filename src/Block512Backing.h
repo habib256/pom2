@@ -183,6 +183,9 @@ public:
         // Preserve capture order even when an eject overtakes an autosave
         // worker. Abandoning a payload releases its successor without reordering.
         std::shared_ptr<CommitTicket> commitTicket;
+        /// Set by `takeDetachWriteBack` only: the backing refuses a new
+        /// image for as long as this lives (see there).
+        std::shared_ptr<const int> reservation;
         bool                  valid      = false;  ///< false → phase 2 no-ops
         bool                  synth      = false;
         std::string           path;               ///< file case
@@ -209,6 +212,15 @@ public:
     /// clear instead silently dropped exactly those writes. A failed commit
     /// calls `restoreDirty(pending.dirtyIndices)` so a retry re-captures.
     PendingWriteBack takeWriteBack();
+
+    /// `takeWriteBack` for an explicit EJECT, which retires the flags for
+    /// good: the backing then refuses to adopt or load another image for as
+    /// long as the returned payload lives. A mount that landed while phase 2
+    /// ran (the AI control server mounts from its own thread) left a failed
+    /// commit nothing to hand its blocks back to, and the caller then dropped
+    /// the only copy of the guest's writes (bug hunt 2026-09-16). The
+    /// autosave needs no such thing: it keeps the flags until the file lands.
+    PendingWriteBack takeDetachWriteBack();
 
     struct WriteBackResult { bool ok = true; std::string error; };
     // Called under the machine lock; copies bytes and starts file work on a
@@ -315,6 +327,9 @@ public:
 
 private:
     void collectWriteBack();
+    /// True, with `lastError_` set, while a detached payload is alive.
+    bool refusedWhileDetaching();
+    std::weak_ptr<const int> detachReservation_;
     std::shared_ptr<WriteBackExecutor> writeBackExecutor_;
     std::shared_ptr<CommitBarrier> commitTail_;
     std::shared_ptr<WriteBackOperation> backgroundWrite_;

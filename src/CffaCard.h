@@ -77,7 +77,7 @@ public:
         if (!(b.isLoaded() && b.hasUnsavedChanges() &&
               b.isWriteBackEnabled() && !b.isMediumLocked()))
             return true;
-        out = b.takeWriteBack();
+        out = b.takeDetachWriteBack();
         return true;
     }
     void restoreDirtyBlocks(const std::vector<uint32_t>& indices) override

@@ -247,7 +247,7 @@ void RomStatus_ImGui::rescan()
         p.note  = "The entry is offered but cannot be selected — "
                   "View \xe2\x86\x92 Character set falls back to the "
                   "profile default.";
-        p.requiredSize = e.isIIeClass ? 4096u : 2048u;
+        p.requiredSize = e.size ? e.size : (e.isIIeClass ? 4096u : 2048u);
         p.files.emplace_back(e.path);
         scanProbe(p);
         if (p.usedIndex < 0) ++missingOptional_;
@@ -507,8 +507,10 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName)
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
             ImGui::TextUnformatted(
                 "Fetches Apple II firmware POM2 knows how to use from the "
-                "RetroBIOS collection (github.com/Abdess/retrobios). Files "
-                "already present are left alone. The collection now covers "
+                "RetroBIOS collection (github.com/Abdess/retrobios). A file "
+                "already present is kept if it is the expected dump; if it is "
+                "not, it is replaced and the old one is copied to the "
+                "roms-replaced folder first. The collection now covers "
                 "the //c / //c+ firmware, the Liron, Workstation, "
                 "ThunderClock+ and TransWarp ROMs and the European "
                 "character sets.");

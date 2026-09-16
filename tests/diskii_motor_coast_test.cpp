@@ -35,6 +35,7 @@
 
 #include "DiskIICard.h"
 #include "Memory.h"
+#include "ResourcePaths.h"
 
 #include <cassert>
 #include <cstdint>
@@ -129,8 +130,105 @@ int main()
         assert(mem.memRead(0xC0EC) == 0xFF);   // the frozen value is $FF
     }
 
+    // ── The coast across a READ-GATE switch ─────────────────────────────
+    // With no roms/diskii_p6.rom the card runs the legacy gate and switches
+    // to the bit-level LSS only while a WOZ is mounted. Both gates share ONE
+    // motor-off countdown, and two switches lost it (bug hunt 2026-09-16):
+    //   A. ejecting the only WOZ mid-coast zeroed the countdown with the motor
+    //      flagged on — the drive never stopped;
+    //   B. inserting a WOZ mid-coast promoted a coasting motor to "running":
+    //      the countdown then cleared the flag under a live LSS and the next
+    //      $C0E9 did nothing.
+    {
+        const std::string woz = pom2::findResource("disks_5.4/demo/fastloader/fastloader.woz");
+        if (woz.empty()) {
+            std::printf("  (gate-switch coast skipped: fastloader.woz not found)\n");
+        } else {
+            const auto scratchWoz = std::filesystem::temp_directory_path() / "pom2_motor_coast.woz";
+            std::error_code cec;
+            std::filesystem::copy_file(woz, scratchWoz,
+                                       std::filesystem::copy_options::overwrite_existing, cec);
+            auto adv = [](DiskIICard& c, long n) {
+                while (n > 0) { const int k = n > 4096 ? 4096 : static_cast<int>(n); c.advanceCycles(k); n -= k; }
+            };
+            constexpr long kSecond = 1'022'727;
+            {   // A
+                DiskIICard c;
+                c.setIwmHost(false);
+                c.setWriteBackEnabled(false);
+                assert(c.insertDisk(0, scratchWoz.string()) && c.usingBitLss());
+                c.deviceSelectRead(0x9); adv(c, 100000);
+                c.deviceSelectRead(0x8); adv(c, 100000);         // coasting
+                c.ejectDisk(0);
+                assert(!c.usingBitLss() && "the eject should demote to the legacy gate");
+                adv(c, 5 * kSecond);
+                assert(!c.isMotorOn() && "a motor coasting across the demotion never stopped");
+            }
+            {   // B
+                DiskIICard c;
+                c.setIwmHost(false);
+                c.setWriteBackEnabled(false);
+                assert(c.insertDisk(0, dsk.string()) && !c.usingBitLss());
+                c.deviceSelectRead(0x9); adv(c, 100000);
+                c.deviceSelectRead(0x8); adv(c, 100000);         // legacy coast
+                assert(c.insertDisk(1, scratchWoz.string()) && c.usingBitLss());
+                adv(c, 5 * kSecond);
+                assert(!c.isMotorOn() && "the promoted coast never stopped");
+                c.deviceSelectRead(0x9); adv(c, 1000);
+                assert(c.isMotorOn() && "$C0E9 after a promoted coast did not start the motor");
+            }
+            std::filesystem::remove(scratchWoz, cec);
+        }
+    }
+
+    // ── A step the opposing magnet cancels at once never happened ───────
+    // The //c's SmartPort firmware addresses the bus with PH1 then, four CPU
+    // cycles later, PH3 — opposing magnets. With the internal drive still
+    // coasting, POM2 (like MAME) moved that head the instant PH1 came on, and
+    // ProDOS's next seek landed a track short (bug hunt 2026-09-16). A real
+    // stepper needs milliseconds to travel and the opposing magnet holds the
+    // rotor where it was, so the step is undone; a step that has STOOD for
+    // longer stays, exactly as before.
+    {
+        const std::string p6 = pom2::findResource("roms/diskii_p6.rom");
+        if (p6.empty()) {
+            std::printf("  (stepper-response case skipped: diskii_p6.rom not found)\n");
+        } else {
+            auto adv = [](DiskIICard& c, long n) {
+                while (n > 0) { const int k = n > 4096 ? 4096 : static_cast<int>(n); c.advanceCycles(k); n -= k; }
+            };
+            auto run = [&](long pause) {
+                DiskIICard c;
+                c.setIwmHost(false);
+                c.setWriteBackEnabled(false);
+                assert(c.loadLssRom(p6));
+                assert(c.insertDisk(0, dsk.string()) && c.usingBitLss());
+                c.deviceSelectRead(0x9); adv(c, 1000);       // motor on
+                // A real seek to track 1: PH1, PH2, PH1 off, PH2 off, with
+                // the milliseconds a driver holds each phase.
+                c.deviceSelectRead(0x3); adv(c, 5000);
+                c.deviceSelectRead(0x5); adv(c, 5000);
+                c.deviceSelectRead(0x2); adv(c, 5000);
+                c.deviceSelectRead(0x4); adv(c, 5000);
+                assert(c.getCurrentTrack(0) == 1 && "the ordinary seek no longer steps");
+                c.deviceSelectRead(0x8); adv(c, 1000);       // motor off: coasting
+                // The addressing pattern: PH1 on, then PH3 after `pause`.
+                c.deviceSelectRead(0x3); adv(c, pause);
+                c.deviceSelectRead(0x7); adv(c, 100);
+                c.deviceSelectRead(0x2);                     // phases off again
+                c.deviceSelectRead(0x6);
+                return c.getCurrentTrack(0);
+            };
+            assert(run(4) == 1 &&
+                   "PH1 cancelled by PH3 four cycles later still moved the head");
+            assert(run(2000) == 0 &&
+                   "a step that stood for 2 ms was undone — only a sub-response one may be");
+        }
+    }
+
     std::error_code ec;
     std::filesystem::remove(dsk, ec);
-    std::printf("diskii motor coast: OK (spin, 1 s coast after $C0E8, $C0E9 cancel, stop)\n");
+    std::printf("diskii motor coast: OK (spin, 1 s coast after $C0E8, $C0E9 cancel, stop, "
+                "across a read-gate switch, and a step cancelled by the opposing magnet)\n");
     return 0;
 }

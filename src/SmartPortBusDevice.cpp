@@ -198,6 +198,7 @@ void SmartPortBusDevice::abortTransaction()
     replyArmed_   = false;
     replyExposed_ = false;
     pendingWrite_ = false;
+    staleWrite_   = false;
     pendingCmd_   = 0;
     pendingUnit_  = 0;
     pendingBlock_ = 0;
@@ -209,6 +210,35 @@ bool SmartPortBusDevice::active() const
 {
     return !rx_.empty() || replyArmed_ || replyExposed_ || pendingWrite_ ||
            !sense_;
+}
+
+bool SmartPortBusDevice::transactionInvolves(unsigned unitMask) const
+{
+    if (!active() || unitMask == 0) return false;
+    int target = -1;                              // chain number
+    if (pendingWrite_) {
+        target = pendingUnit_;
+    } else {
+        std::size_t k = 0;
+        while (k < rx_.size() && rx_[k] != kPacketBegin) ++k;
+        if (k + 1 < rx_.size()) target = rx_[k + 1] & 0x7F;
+    }
+    if (target < 0) return false;                 // not named yet
+    // The same mapping `unitFor` uses, as a slot index.
+    for (int i = 0; i < unitCount_; ++i)
+        if (ids_[static_cast<std::size_t>(i)] != 0 &&
+            ids_[static_cast<std::size_t>(i)] == target)
+            return (unitMask >> i) & 1u;
+    if (assigned_ == 0 && target >= 1 && target <= unitCount_)
+        return (unitMask >> (target - 1)) & 1u;
+    // A number no slot answers to: nothing of ours can be corrupted, but the
+    // frame is going nowhere anyway — let it go.
+    return true;
+}
+
+void SmartPortBusDevice::mediaChanged(unsigned unitMask)
+{
+    if (pendingWrite_ && transactionInvolves(unitMask)) staleWrite_ = true;
 }
 
 bool SmartPortBusDevice::sense()
@@ -349,6 +379,7 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
     // command and block go with it, so a later stray data packet cannot land
     // on the block a long-abandoned WRITE named.
     pendingWrite_ = false;
+    staleWrite_   = false;
     pendingCmd_   = 0;
     pendingUnit_  = 0;
     pendingBlock_ = 0;
@@ -483,6 +514,8 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
 void SmartPortBusDevice::serveWriteData(const std::vector<uint8_t>& body)
 {
     pendingWrite_ = false;
+    const bool stale = staleWrite_;
+    staleWrite_ = false;
     if (pendingCmd_ != kCmdWrite) {
         // CONTROL / character WRITE: taken, nothing to do with it.
         buildReply(0x00, nullptr, 0, false);
@@ -491,6 +524,10 @@ void SmartPortBusDevice::serveWriteData(const std::vector<uint8_t>& body)
     SmartPortBusUnit* u = unitFor(pendingUnit_);
     if (!u)                                { buildReply(kErrBadUnit, nullptr, 0, false); return; }
     if (!u->hasMedia())                    { buildReply(kErrOffline, nullptr, 0, false); return; }
+    // The disk the command was addressed to is not the one in the drive now:
+    // this block belongs to the medium that left. Refused, and SAID so — a
+    // reply keeps the handshake going; silence would hang the host.
+    if (stale)                             { buildReply(kErrIo, nullptr, 0, false); return; }
     if (pendingBlock_ >= u->blockCount())  { buildReply(kErrBadBlock, nullptr, 0, false); return; }
     if (u->writeProtected())               { buildReply(kErrWriteProt, nullptr, 0, false); return; }
     if (body.size() < kBlockBytes)         { buildReply(kErrIo, nullptr, 0, false); return; }
@@ -580,6 +617,7 @@ void SmartPortBusDevice::appendSnapshotState(std::vector<uint8_t>& out) const
     if (sense_)        flags |= 0x04;
     if (req_)          flags |= 0x08;
     if (pendingWrite_) flags |= 0x10;
+    if (staleWrite_)   flags |= 0x20;
     out.push_back(flags);
     out.push_back(pendingUnit_);
     out.push_back(pendingCmd_);
@@ -629,6 +667,7 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     sense_        = flags & 0x04;
     req_          = flags & 0x08;
     pendingWrite_ = flags & 0x10;
+    staleWrite_   = pendingWrite_ && (flags & 0x20);
     pendingUnit_  = data[i++];
     pendingCmd_   = data[i++];
     pendingBlock_ = static_cast<uint32_t>(data[i]) |
@@ -652,6 +691,17 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     if (assigned_ > 0 && ids_[static_cast<std::size_t>(assigned_ - 1)] == 0)
         assigned_ = 0;                          // a truncated table: renumber at the next INIT
     return i;
+}
+
+uint8_t SmartPortBusDevice::readDataRegister()
+{
+    uint8_t b = 0;
+    if (hostReads(b)) return b;
+    // A reply in progress whose bytes are all taken: the host is about to
+    // wait for SENSE, not for data — "nothing yet" is the honest answer.
+    if (replyArmed_ || replyExposed_) return 0x00;
+    // No reply exists: an idle bus. See the header.
+    return 0xFF;
 }
 
 bool SmartPortBusDevice::hostReads(uint8_t& out)

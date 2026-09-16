@@ -128,6 +128,16 @@ TIGER}` set comparison in `mini33_format.py`. It fails on that first,
 in mode `format`, before any blank diskette is involved. The run above
 is the same binary with those four counts corrected, nothing else.
 
+### Bug hunt 2026-09-16 — what was left open
+
+Closed the same day (CHANGELOG, "The hunt's leftovers"). One thing only real
+hardware can settle: POM2 now cancels a Disk II step whose opposing magnet
+comes on within 256 CPU cycles, which is what keeps the //c's SmartPort
+addressing pattern (`$CA80`: PH1, then PH3 four cycles later) from moving the
+internal head. A real //c with the internal motor still coasting would show
+whether its head moves there; if it does, the cancel is the divergence to
+remove (`DiskIICard::seekPhaseW`, `kStepperResponseCycles`).
+
 ### G1 · What we are allowed to ship 🔴
 
 *The gate nothing else survives. It is not a technical problem and it does not

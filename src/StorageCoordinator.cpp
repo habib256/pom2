@@ -795,7 +795,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDiskII(
     // eject side of the v0.8.5 mount split — CLAUDE.md, MediaMount.h). Phase 1
     // lifts the medium out under the lock; phase 2 writes it with the lock
     // released; a failed phase 2 puts the medium back so the user can retry.
-    std::unique_ptr<DiskImage> pending;
+    std::shared_ptr<DiskImage> pending;
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -1699,7 +1699,7 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
     struct PendingDiskII {
         int slot = 0;
         int drive = 0;
-        std::unique_ptr<DiskImage> image;
+        std::shared_ptr<DiskImage> image;
         bool failed = false;
     };
     struct PendingBay {
@@ -2107,6 +2107,7 @@ StorageCoordinator::restoreMediaFromSettings(
             }
         }
     }
+    pom2::dropDuplicateMounts(bus, &result.warnings);
     return result;
 }
 
@@ -2171,6 +2172,7 @@ void StorageCoordinator::restoreRebuildSnapshot(
         // the opt-in after loading. Empty live state still owns the policy.
         card->setWriteBackEnabled(medium.writeBackEnabled);
     }
+    pom2::dropDuplicateMounts(bus, nullptr);   // warned in the log only: no result here
 }
 
 bool StorageCoordinator::flushAll(const SlotBus& bus,

@@ -103,6 +103,7 @@ bool Block512Backing::loadImage(const std::string& path)
     // reading first would capture the pre-flush bytes and then overwrite the
     // guest's writes with them. adoptImage() detects that collision for the
     // two-phase callers.
+    if (refusedWhileDetaching()) return false;
     if (!saveDirty()) return false;
 
     PreparedImage prepared;
@@ -115,6 +116,15 @@ bool Block512Backing::loadImage(const std::string& path)
 }
 
 // Phase 2 of the two-phase mount — see the header.
+bool Block512Backing::refusedWhileDetaching()
+{
+    if (detachReservation_.expired()) return false;
+    lastError_ = "the previous image in this bay is still being saved — "
+                 "retry in a moment";
+    pom2::log().warn("HDV", lastError_);
+    return true;
+}
+
 bool Block512Backing::adoptImage(PreparedImage&& prepared)
 {
     if (!prepared.valid) {
@@ -122,6 +132,7 @@ bool Block512Backing::adoptImage(PreparedImage&& prepared)
         pom2::log().warn("HDV", lastError_);
         return false;
     }
+    if (refusedWhileDetaching()) return false;
 
     // Same file: the prepared bytes were read BEFORE the flush below, so
     // adopting them would silently roll the guest's writes back. Flush, then
@@ -145,8 +156,20 @@ bool Block512Backing::adoptImage(PreparedImage&& prepared)
     // block image keeps a FIXED size across commits, and an mtime can tie with
     // the read at one-second filesystem granularity. The extra read costs only
     // the rare remount-the-same-file case, which already paid it when dirty.
+    //
+    // "Same file" is the FILE, not the spelling: the Disk Library hands out a
+    // canonical path, settings keep what the user typed, and a symlink names
+    // the image under another name. Comparing strings let `./x.hdv` against
+    // `x.hdv` adopt the stale bytes (bug hunt 2026-09-16). `equivalent` is
+    // two stats — metadata, not the payload the lock rule is about.
+    const auto namesSameFile = [](const std::string& a, const std::string& b) {
+        if (a == b) return true;
+        std::error_code ec;
+        const bool same = std::filesystem::equivalent(a, b, ec);
+        return !ec && same;
+    };
     const bool sameFileNeedsReread =
-        loaded_ && !path_.empty() && path_ == prepared.path;
+        loaded_ && !path_.empty() && namesSameFile(path_, prepared.path);
 
     // A replacement is an implicit eject. Preserve the current in-memory
     // medium until its opted-in write-back has succeeded; otherwise a failed
@@ -283,6 +306,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
                                     const std::string& label,
                                     const std::string& hostFolder)
 {
+    if (refusedWhileDetaching()) return false;
     if (!saveDirty()) return false;
     if (bytes.empty() || (bytes.size() % kBlockBytes) != 0) {
         lastError_ = "synthesised image is empty or not a multiple of 512";
@@ -389,6 +413,16 @@ bool Block512Backing::saveDirty()
         return false;
     }
     return true;
+}
+
+Block512Backing::PendingWriteBack Block512Backing::takeDetachWriteBack()
+{
+    PendingWriteBack out = takeWriteBack();
+    if (out.valid) {
+        out.reservation    = std::make_shared<const int>(0);
+        detachReservation_ = out.reservation;
+    }
+    return out;
 }
 
 Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
@@ -552,9 +586,6 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         pom2::log().warn("HDV", error);
         return false;
     }
-    std::error_code permEc;
-    const auto perms = std::filesystem::status(pending.path, permEc).permissions();
-    const bool havePerms = !permEc;
     std::ofstream sink(tmp, std::ios::binary | std::ios::trunc);
     if (!sink ||
         !sink.write(reinterpret_cast<const char*>(output.data()),
@@ -575,12 +606,10 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         pom2::log().warn("HDV", error);
         return false;
     }
+    // Carries the image's mode across the inode swap, read at the rename
+    // under the notch's lock (MediaNotch.h) — not before the write.
     std::error_code ec;
-    if (havePerms) {
-        std::filesystem::permissions(tmp, perms, ec);
-        ec.clear();
-    }
-    if (!replaceFileAtomic(tmp, pending.path, ec)) {
+    if (!replaceMediaFileAtomic(tmp, pending.path, ec)) {
         error = "Cannot replace " + pending.path + ": " + ec.message();
         std::error_code ignored;
         std::filesystem::remove(tmp, ignored);

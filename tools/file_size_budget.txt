@@ -331,11 +331,43 @@
 # answered NO DEVICE CONNECTED. The comment is the only thing that stops the
 # guard coming back, and it belongs at the line it guards.
 #   src/DiskIICard.cpp           2014 -> 2031 (+17)
+#
+# 2026-09-16 (bug hunt, five Opus hunters): three ceilings raised, each for
+# confirmed defects with their why-comments; no feature code, no split.
+#   src/DiskIICard.cpp           2031 -> 2065 (+34)  the write line level is
+#     kept across a mid-burst commit; a media change resets DRIVE state only
+#     (never the sequencer, the latch or the burst); the legacy gate answers
+#     the second read of the write-protect sense; a coasting motor survives a
+#     read-gate switch in both directions; the blank-track noise shortcut is
+#     read-mode only (Q6 low) so the write-protect sense is not noise.
+#   src/DiskImage.cpp            3214 -> 3284 (+70)  createBlankFile creates
+#     EXCLUSIVELY (O_EXCL / _O_EXCL, a plain write loop and a flush — the
+#     rename-based commit replaced a file that appeared between the check and
+#     the rename); eraseSurface no longer dirties the erased tracks; every
+#     non-WOZ commit bumps the media epoch. The flux/WOZ split owed on this
+#     file is now overdue, not merely owed.
+#   src/Memory.cpp               2735 -> 2747 (+12)  loadAppleIIRom tells the
+#     slot cards before and after it rewrites the ROM (the TransWarp shadow).
+#
+# 2026-09-16 (the hunt's leftovers, same day): two ceilings raised, for the
+# suspicions the hunters could not confirm and that turned out real; no
+# feature code. The dedup-at-restore helper moved OUT of StorageCoordinator
+# (to MediaMount.cpp, beside the rule it shares) rather than grow it by 40.
+#   src/DiskIICard.cpp           2065 -> 2140 (+75)  a step cancelled by the
+#     opposing magnet inside the stepper's response time (the //c SmartPort
+#     addressing pattern moved the internal head); the drive stays reserved
+#     while its outgoing medium is being saved; WPT reads the phases the
+#     DRIVE received (per drive, rebuilt on snapshot load); the legacy gate
+#     steps only with the motor on; a refused burst is dropped at motor-off;
+#     drive select keeps the write line level; the IWM $C0nE hook runs the
+#     even-offset sequencer cycle. The LSS/flux walker split is the one owed.
+#   src/StorageCoordinator.cpp   2530 -> 2532 (+2)   the two restore paths
+#     call pom2::dropDuplicateMounts.
 src/Apple2Display.cpp                    2522
-src/DiskIICard.cpp                       2031
-src/DiskImage.cpp                        3214
+src/DiskIICard.cpp                       2140
+src/DiskImage.cpp                        3284
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
-src/Memory.cpp                           2735
-src/StorageCoordinator.cpp               2530
+src/Memory.cpp                           2747
+src/StorageCoordinator.cpp               2532
 src/hgrpaint/HgrPaintEditor.cpp          2656

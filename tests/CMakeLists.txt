@@ -2734,6 +2734,40 @@ add_test(NAME diskii_unformatted_disk COMMAND test_diskii_unformatted)
 set_tests_properties(diskii_unformatted_disk PROPERTIES
     TIMEOUT 900 LABELS slow SKIP_RETURN_CODE 77)
 
+# ─── A SAVE survives whatever the host does while it writes ──────────────
+# Bug hunt 2026-09-16: a flush, or a drive-2 insert / eject, in the middle of
+# a DOS 3.3 SAVE on drive 1 corrupted the sector being written (the write
+# line level and the controller-wide sequencer state were reset), and the
+# legacy gate answered "not protected" to a notched disk so SAVE silently
+# wrote nothing. Every disturbance on both read gates; VERIFY is the check.
+
+add_executable(test_diskii_write_integrity
+    diskii_write_integrity_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_write_integrity PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_write_integrity PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_write_integrity PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_write_integrity PRIVATE winmm)
+endif()
+add_test(NAME diskii_write_integrity COMMAND test_diskii_write_integrity)
+set_tests_properties(diskii_write_integrity PROPERTIES
+    TIMEOUT 900 LABELS slow SKIP_RETURN_CODE 77)
+
 
 # ─── ProDOS 2.4.3 SAVE / LOAD round-trip smoke test ──────────────────────
 # Same regression gate as dos33_save but driving a ProDOS .po image
@@ -5551,6 +5585,7 @@ add_executable(test_ai_control_server
     ai_control_server_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
@@ -5847,6 +5882,7 @@ set_tests_properties(hdv_status_driver PROPERTIES TIMEOUT 10)
 add_executable(test_ai_mouse_hle_probe
     ai_mouse_hle_probe_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
@@ -7386,6 +7422,14 @@ pom2_add_headless_test(test_media_notch
     SOURCES media_notch_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# A host 3.5" eject waits for a firmware eject still being saved: a failed
+# commit must find the medium to hand its writes back to.
+pom2_add_headless_test(test_disk35_eject_pending
+    NAME disk35_eject_pending TIMEOUT 30
+    SOURCES disk35_eject_pending_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(disk35_eject_pending PROPERTIES SKIP_RETURN_CODE 77)
+
 # One contract across DiskImage / Disk35Image / Block512Backing and the
 # SmartPort units that wrap the last two. Where a path diverges on purpose
 # (Block512 does not fold write-back into isWriteProtected) the test
@@ -7716,6 +7760,7 @@ set_tests_properties(char_rom_catalog PROPERTIES TIMEOUT 10)
 add_executable(test_rom_fetch
     rom_fetch_test.cpp
     ${CMAKE_SOURCE_DIR}/src/RomFetch.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
     ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
@@ -8160,6 +8205,7 @@ set_tests_properties(sony35_write_head PROPERTIES TIMEOUT 15)
 add_executable(test_ai_control_mem_bank
     ai_control_mem_bank_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp

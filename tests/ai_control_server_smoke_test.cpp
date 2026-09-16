@@ -36,6 +36,7 @@
 
 #include "AiControlServer.h"
 #include "DiskIICard.h"
+#include <vector>
 #include "Apple2Display.h"
 #include "EmulationController.h"
 #include "Memory.h"
@@ -437,6 +438,61 @@ void testEjectEmptyBay(EmulationController& ctrl, pom2::AiControlServer& srv, Ap
     assert(r.status == 400 && contains(r.body, "holds no medium"));
     srv.attach(&ctrl, &display, nullptr, nullptr);
     std::puts("  eject of an empty bay is refused: OK");
+}
+
+// One image, one drive (bug hunt 2026-09-16). The handler drives the two
+// mount phases itself, so it did not get pom2::mountDiskII's refusal: an agent
+// inserting the disk already in drive 1 into drive 2 made two copies that
+// each wrote their own view of the disk back into one file.
+void testDuplicateDiskInsertRefused(EmulationController& ctrl, pom2::AiControlServer& srv,
+                                    Apple2Display& display)
+{
+    // The handler only takes paths under the working directory.
+    const std::string name = "pom2_ai_duplicate_insert.dsk";
+    {
+        std::FILE* f = std::fopen(name.c_str(), "wb");
+        assert(f);
+        const std::vector<char> zeros(143360, 0);
+        std::fwrite(zeros.data(), 1, zeros.size(), f);
+        std::fclose(f);
+    }
+    DiskIICard* card = nullptr;
+    {
+        // ON the bus: the refusal looks at what the machine has mounted.
+        auto st = ctrl.lockState();
+        st.memory().slotBus().plug(6, std::make_unique<DiskIICard>(6));
+        card = dynamic_cast<DiskIICard*>(st.memory().slotBus().peripheral(6));
+    }
+    assert(card);
+    srv.attach(&ctrl, &display, card, nullptr);
+    auto insert = [&](int drive) {
+        const std::string body = "{\"drive\":" + std::to_string(drive) +
+                                 ",\"path\":\"" + name + "\"}";
+        char req[768];
+        std::snprintf(req, sizeof(req),
+            "POST /disk HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: %zu\r\n\r\n%s",
+            body.size(), body.c_str());
+        return oneShot(kTestPort, req);
+    };
+    HttpResponse r = insert(0);
+    assert(r.status == 200);
+    r = insert(1);
+    assert(r.status == 409 && contains(r.body, "already mounted") &&
+           "the image in drive 1 was inserted again in drive 2");
+    {
+        auto st = ctrl.lockState();
+        assert(!card->isDiskLoaded(1) && "the refused insert still mounted something");
+    }
+    r = insert(0);
+    assert(r.status == 200 && "re-inserting a disk into its own drive was refused");
+
+    srv.attach(&ctrl, &display, nullptr, nullptr);
+    {
+        auto st = ctrl.lockState();
+        st.memory().slotBus().unplug(6);
+    }
+    std::remove(name.c_str());
+    std::puts("  a disk already in one drive is refused in the other: OK");
 }
 
 void testReset(EmulationController& /*ctrl*/, pom2::AiControlServer& /*srv*/)
@@ -923,6 +979,7 @@ int main()
 
     testStatusEndpoint   (ctrl, srv);
     testDiskSync         (ctrl, srv);
+    testDuplicateDiskInsertRefused(ctrl, srv, display);
     testAuth             (ctrl, srv);
     testMemoryRoundtrip  (ctrl, srv);
     testJsonUnicodeEscapes(ctrl, srv);

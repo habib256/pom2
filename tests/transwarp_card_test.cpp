@@ -32,6 +32,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 
@@ -280,6 +282,11 @@ void testRomShadow()
     assert(mem.memRead(0xFFFF) == 0xA5);
     assert(!tw->readsAppleRom() &&
            "$C074 = 3 is not $C072 — the passthrough flag stays clear");
+    // A ROM arriving while halted (the ROM Status fetch) must not take the
+    // bus back: the card is off until a reset.
+    assert(tw->setRom(warp));
+    assert(!tw->shadowActive() && "setRom re-covered the ROM of a halted card");
+    assert(mem.memRead(0xF000) == 0xA5);
     // ...and a reset re-covers it, because `reset_from_bus` (`:212-217`)
     // clears the halt and raises DMA again.
     mem.slotBus().reset();
@@ -398,6 +405,44 @@ void testRestoreReconcilesTheShadowWindow()
 
 } // namespace
 
+// Reload ROM with the shadow engaged. `Memory::loadAppleIIRom` rewrites
+// $F000-$FFFF; it used to land UNDER the card's image, the card went on
+// believing it was mapped, and a later $C072 handed back the Apple ROM that
+// had been REPLACED — old Monitor over new firmware (bug hunt 2026-09-16,
+// reachable by default once roms/ae_transwarp_1.4.bin shipped). The card now
+// steps aside for the reload and re-captures the NEW bytes.
+void testRomReloadUnderShadow()
+{
+    Memory mem;
+    std::vector<uint8_t> apple(0x1000, 0xA5);
+    mem.loadRomBytes(apple.data(), apple.size(), 0xF000);
+    TranswarpCard* tw = plug(mem, 4);
+    std::vector<uint8_t> warp(TranswarpCard::kRomSize, 0x5A);
+    warp[0x000] = 0xAE;
+    assert(tw->setRom(warp) && tw->shadowActive());
+    assert(mem.memRead(0xF000) == 0xAE);
+
+    // A 12 KB image ($D000-$FFFF) whose every byte is $3E.
+    const std::filesystem::path rom =
+        std::filesystem::temp_directory_path() / "pom2_transwarp_reload.rom";
+    {
+        std::ofstream f(rom, std::ios::binary | std::ios::trunc);
+        const std::vector<char> body(12288, 0x3E);
+        f.write(body.data(), static_cast<std::streamsize>(body.size()));
+    }
+    assert(mem.loadAppleIIRom(rom.string().c_str()));
+    assert(tw->shadowActive() && "the reload dropped the card's shadow");
+    assert(mem.memRead(0xF000) == 0xAE && "the reload landed on top of the card's ROM");
+    assert(mem.memRead(0xE000) == 0x3E && "the reload did not happen below $F000");
+
+    // $C072 hands $F000-$FFFF to the Apple — the NEW Apple ROM.
+    mem.memWrite(0xC072, 0);
+    assert(!tw->shadowActive());
+    assert(mem.memRead(0xF000) == 0x3E && "$C072 restored the REPLACED Apple ROM");
+    assert(mem.memRead(0xFFFF) == 0x3E);
+    std::printf("  ok: Reload ROM under the shadow re-captures the new firmware\n");
+}
+
 int main()
 {
     testSpeedsAreExactRatios();
@@ -407,6 +452,7 @@ int main()
     testSlotSlowdownWindows();
     testJoystickWindowIsAWholePread();
     testRomShadow();
+    testRomReloadUnderShadow();
     testBusAggregationAndAbsence();
     testSnapshotRoundTrip();
     testRestoreReconcilesTheShadowWindow();

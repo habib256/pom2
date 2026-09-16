@@ -5,6 +5,162 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-16 — The hunt's leftovers: fourteen more, four refuted
+
+What the morning's hunt left open (the entry below), taken one by one. Every
+fix has a test whose mutation control was run.
+
+**The //c's SmartPort firmware no longer moves the internal head.** Its
+bus-addressing routine (bank 1, `$CA80`) raises PH1 and, four CPU cycles
+later, PH3. MAME moves the head the instant a pattern is energised, and so
+did POM2: while drive 1 still coasted from ProDOS's last read, the head went
+two quarter-tracks and ProDOS's next seek landed a track short. A real
+stepper needs milliseconds to travel, and opposing magnets hold the rotor
+where it is — so a step whose opposite magnet comes on within 256 CPU
+cycles is cancelled now, with no click (`diskii_motor_coast`). No seek
+energises opposing magnets; this is the one documented divergence from
+MAME's `seek_phase_w`. On the plain //c the rear port also claims the bus
+only with DRIVE 2 selected — it is the drive-2 connector — so a 5.25"
+program on drive 1 that energises PH1 + PH3 keeps its own reads
+(`iic_diskii_after_smartport`). The //c+ addresses its chain through the
+MIG and keeps the looser test.
+
+**One image, one drive — everywhere.** The AI control server's
+`/disk/insert` drives the two phases itself and now asks the same question
+(`pom2::imageMountedElsewhere`), answering 409 Conflict. A profile switch
+or a restore loads persisted paths inline, so a settings file naming one
+image twice (hand-edited, or left by an older build) mounted it twice; the
+restore now keeps the first holder in slot order, empties the others and
+says so (`pom2::dropDuplicateMounts`; `storage_coordinator`,
+`ai_control_server_smoke`).
+
+**Writes that could still be lost.**
+- A mount landing while an eject was being saved (the AI server mounts from
+  its own thread) left a failed commit no medium to hand its writes back
+  to, and the caller dropped them. The drive — Disk II, HDV, CFFA,
+  SmartPort HDV, Liron — now stays reserved for as long as the outgoing
+  payload lives (`storage_coordinator`, `two_phase_block_mount`).
+- A host 3.5" eject overtook a firmware eject still in the write-back
+  queue: it found a clean medium, dropped it, and the queued commit's
+  failure had nothing to restore. It waits for the queue now
+  (`disk35_eject_pending`).
+- A notch set while a commit wrote (a 32 MiB HDV autosave) was undone by
+  the rename: the commit read the image's mode before writing and applied
+  it after. The read and the rename now happen under the notch's own lock
+  (`atomic_file_replace`).
+- `adoptImage` decided "same file, re-read it" by path string, so the same
+  HDV under another spelling adopted the pre-write bytes
+  (`two_phase_block_mount`).
+- A burst the write gate refused (notch, phase 1) survived motor-off, and a
+  Q7 drop after the disk was un-notched spliced it against the cleared
+  revolution anchor (`diskii_write_burst`).
+
+**Disk II against MAME.** The write-protect line reads the phases the DRIVE
+received (MAME's per-floppy `m_phases`), not the controller's live latch; the
+legacy gate no longer steps the head with the motor off
+(`diskii_empty_drive`). A drive select no longer resets the write line level
+(MAME's `control()` never touches it), and the IWM `$C0nE` hook runs the
+even-offset sequencer cycle like the `$C0nC` one — the last two have no
+observable effect today and carry no test.
+
+**Around the ROMs.** A download goes to the per-user `roms/`, the first
+search root, so a wrong file in a later root can no longer shadow it; one in
+an unwritable earlier root is reported instead of counted as saved. Asking
+where downloads go (the tooltip, on every hover) no longer creates the
+directory. Romsets unpack in-process (`ZipMember`, stb_image's inflater):
+the fallback was `tar`, and GNU tar does not read zip. A ROM arriving while
+the TransWarp is halted (`$C074=3`) no longer takes the bus back
+(`rom_fetch`, `transwarp_card`).
+
+**Refuted**, with the reason: the `ejectAllMedia` deadlock (every inline
+`saveDirty` under the lock runs on the UI thread, the executor commits
+without it, and a discarded ticket still completes its barrier); SmartPort
+reply bytes consumed by odd-offset reads (in async mode MAME's IWM clears
+its data register after ANY access, `iwm.cpp:246-247`); `insertBlankDisk`
+and the rewind ring (every host path goes through `mountBlankDiskII`, which
+clears it); INIT dropped under `POM2_MEDIA_WRITE_DEFAULT=protected` (the
+same sense fix as the notched SAVE below: DOS answers WRITE PROTECTED).
+
+## 2026-09-16 — Bug hunt: five Opus hunters, twenty-one defects
+
+Five hunters, one area each — the blank diskette that landed this morning,
+the Disk II controller against MAME's `wozfdc.cpp`, the //c's shared IWM,
+the ROM downloader and the TransWarp, and every path that writes a disk
+image back. Each finding was re-proven here before it was fixed, and every
+fix has a test whose mutation control was run (restore the old line, watch
+the test fail).
+
+**The blank diskette was broken on the default machine.** Its test built the
+Disk II by hand, which leaves the //c's IWM hooks on — and the `$C0nE`
+status hook answered the write-protect sense itself. On every machine with
+slots (the default //e Enhanced PAL included) the LSS served read-amplifier
+noise over a blank track even with Q6 high, every noise byte has bit 7 set,
+and DOS 3.3 read a writable blank disk as protected: `INIT` refused it. The
+noise shortcut is read-mode only now, and `diskii_unformatted_disk` builds
+its card the way `SlotCardFactory` does. It was also STUCK in the drive:
+`eraseSurface` dirtied all 35 tracks, an unformatted track decodes to
+nothing, and one refused track refused every eject, swap and flush — an
+aborted `INIT` stranded the tracks it did format in memory for good. The
+erased tracks are clean now. `createBlankFile` checked `exists` and then
+committed through a rename that replaces whatever appeared in between; it
+creates with `O_EXCL` now. `--blank-disk new.woz` made a DSK under a WOZ
+name; only `.dsk` / `.do` / `.po` are accepted.
+
+**Three ways a SAVE was corrupted or silently dropped** (`diskii_write_integrity`,
+both read gates):
+- a commit mid-burst (a flush, the WASM heartbeat) reset the write-line
+  level, so one bit of the sector in flight came out inverted;
+- mounting or ejecting DRIVE 2 while DOS wrote DRIVE 1 reset controller-wide
+  state — the sequencer's WRITE bit with writeMode still on — and write-back
+  then committed the damage;
+- with no `roms/diskii_p6.rom`, the legacy gate answered the second read of
+  the write-protect sense with 0: a SAVE onto a notched disk reported
+  success and wrote nothing.
+
+**The //c could hang for good** (`iic_diskii_after_smartport`, two new
+scenarios; `smartport_bus_device`). Any change of which slot-5 bays held media
+aborted the SmartPort transaction in flight. The firmware's receive loop
+(`$CA02: LDA $C08C,X / BPL`, no timeout for a register stuck at $00) then
+waited for ever. Now a media change interrupts nothing — a drive whose disk
+leaves is still on the chain and answers "offline" — and only a WRITE whose
+data would land on a different disk is refused, with a reply. An idle bus
+reads $FF, so every other no-reply path (bad checksum, unexpected packet)
+times out in the firmware instead of hanging, and the port stays on the wire
+while a transaction is in flight even after the last disk leaves. A disk
+going into bay 2 no longer fails a write on bay 1.
+
+**User data outside the emulator.**
+- A disk image symlinked onto another volume could never be saved: the temp
+  file sat next to the LINK, the rename crossed devices and failed every
+  time, eject and swap were refused and the writes were lost at quit. The
+  temp file now sits next to the real file — verified on a real second
+  volume.
+- The same image mounted in two drives became a file neither copy ever held.
+  The mount helpers the GUI, the CLI and the Library go through refuse it,
+  whatever the spelling (relative, absolute, symlink); re-inserting a disk
+  into its own drive stays allowed.
+- A rewind across a Disk II commit (the WASM heartbeat) mixed two timelines
+  in the file. A commit now bumps the media epoch; a write in memory still
+  does not.
+- "Download missing" replaced a present ROM that was not the expected dump —
+  right for a damaged one, wrong for a legitimate variant, and POM2 cannot
+  tell them apart. The old file is now copied to
+  `userDataDir()/roms-replaced/` first, and nothing is replaced if that copy
+  fails. The II+ 12 KB six-chip image counts as present again (bug hunt #10,
+  re-opened this morning when the entry gained a digest). Two POM2s
+  fetching at once no longer delete each other's scratch directory, and an
+  identical file is neither rewritten nor reported as replaced.
+
+**Smaller.** Reload ROM under an engaged TransWarp shadow landed beneath it,
+and a later `$C072` restored the REPLACED Apple ROM: `Memory::loadAppleIIRom`
+now tells the slot cards before and after (`SlotPeripheral::beforeMainRomReload`).
+A motor coasting across a read-gate switch never stopped, or stopped under a
+live LSS. The 8 KB character-set parts were painted red as "wrong size".
+`--blank-disk` alone logged a host-folder mount that never happened.
+
+**Left open** at the time — the //c firmware stepping the internal head, and
+the hunters' unconfirmed suspicions — and closed the same day (entry above).
+
 ## 2026-09-16 — On a //c, a Disk II read after a SmartPort write found no drive
 
 Reported by a2filecmd: on the `iic` preset, a BASIC program copying a text

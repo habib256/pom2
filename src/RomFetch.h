@@ -28,9 +28,11 @@
 // TransWarp's) plus one real gap: the FR-Canadian UNENHANCED character
 // ROM, which has no upstream copy. Every destRel maps onto a name in
 // SystemProfile / RomCatalog / CharRomCatalog, so a missing file here is
-// a missing file the ROM Status panel already knows about. Existing
-// files are never overwritten — findResource() is the same probe the
-// rest of the boot path uses.
+// a missing file the ROM Status panel already knows about. A file that is
+// present AND is the expected dump is left alone. One that is present but
+// is not — a damaged dump, or a variant POM2 has no digest for; it cannot
+// tell them apart — is replaced, after the old file is copied to
+// userDataDir()/roms-replaced/. If that copy fails, nothing is replaced.
 //
 // Host-side only. HTTPS goes through the system `curl` (and `unzip` /
 // `tar` for the two MAME zips left) so POM2 does not grow a TLS
@@ -127,9 +129,12 @@ bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
                               std::uintmax_t& totalOut,
                               std::string& err);
 
-/// First writable `roms/` among the live search roots, else
-/// `userDataDir()/roms` (created). Downloads land here so an installed
-/// bundle is not written and a source-tree `roms/` is reused when it can be.
+/// Where a download goes: `userDataDir()/roms` whenever the data dir is
+/// per-user (it is then the FIRST search root, so what lands there is what
+/// the machine loads), else the first writable `roms/` among the search roots
+/// (the working directory included), else `userDataDir()/roms`. Never
+/// creates anything — `fetchMissingRoms` does, when it runs. An installed
+/// bundle is never written.
 std::filesystem::path writableRomsDir();
 
 /// Entries whose destRel does not resolve through findResource() — the
@@ -140,10 +145,29 @@ std::vector<const RomFetchEntry*> romsToFetch(
 
 std::vector<const RomFetchEntry*> romsToFetch();
 
+/// Install downloaded bytes at `dest` the way a fetch does: the entry's
+/// size / CRC32 / SHA-256 gates first, then — if `dest` already exists — a
+/// copy of the old file into userDataDir()/roms-replaced/ (its path comes
+/// back in `backupOut`), then the atomic replace. Any failure refuses and
+/// leaves `dest` untouched; a failed backup means no replacement at all.
+bool installFetchedRom(const std::filesystem::path& dest,
+                       const RomFetchEntry& entry,
+                       const std::vector<std::uint8_t>& bytes,
+                       std::string& err, std::string& backupOut);
+
+/// The planner's verdict on a dump already on disk: true when `have` is the
+/// dump the entry describes, or the entry's legitimate alternate
+/// (`altPresentSize`). Exposed so the test can check the rule on synthetic
+/// bytes without depending on which search root findResource hits first.
+bool localDumpAcceptable(const RomFetchEntry& e, const std::vector<std::uint8_t>& have);
+
 struct RomFetchResult {
     int         saved   = 0;
     int         skipped = 0;
     int         failed  = 0;
+    /// Of `saved`: how many replaced a present file that was not the
+    /// expected dump. The old one is kept under userDataDir()/roms-replaced.
+    int         replaced = 0;
     std::string destDir;
     std::string error;     ///< Set when the run could not start (no curl, …).
     std::string summary;   ///< One line for the panel, always filled on return.
@@ -158,10 +182,11 @@ using RomFetchProgress = std::function<void(int done, int total,
 /// application behind curl's 90-second `--max-time`.
 using RomFetchCancel = std::function<bool()>;
 
-/// Download every missing catalog entry into `destRoot` (typically
-/// writableRomsDir()). Never overwrites a destRel that findResource()
-/// already resolves. Safe to call from a worker thread — no ImGui, no
-/// emulator lock.
+/// Download every entry `romsToFetch()` lists into `destRoot` (typically
+/// writableRomsDir()): missing ones, and present ones that are not the
+/// expected dump. A present file is never destroyed — it is copied to
+/// userDataDir()/roms-replaced/ first, and left alone if that fails.
+/// Safe to call from a worker thread — no ImGui, no emulator lock.
 RomFetchResult fetchMissingRoms(const std::filesystem::path& destRoot,
                                 const RomFetchProgress& progress = {},
                                 const RomFetchCancel& cancelled = {});

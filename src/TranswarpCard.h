@@ -214,6 +214,8 @@ public:
     void onPlug()   override;
     void onUnplug() override;
     void onReset()  override;
+    void beforeMainRomReload() override;
+    void afterMainRomReload()  override;
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
@@ -250,6 +252,7 @@ private:
     int slowCycles_ = 0;
 
     bool    shadowing_ = false;
+    bool    reengageAfterReload_ = false;   // see beforeMainRomReload
     Memory* memory_    = nullptr;
     std::vector<uint8_t>            rom_;
     std::array<uint8_t, kRomSize>   displaced_{};   // the Apple ROM we cover
