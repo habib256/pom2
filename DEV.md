@@ -3296,6 +3296,77 @@ carries the nibble cursor forward instead of re-deriving the angle from a
 cell-width map the previous burst just rewrote. Pinned by
 `diskii_format_smoke` and `disk_writeflux_framing`.
 
+**An UNFORMATTED diskette** *(2026-09-16)*. A zero-filled `.dsk` is not
+one, and calling it one is the mistake this paragraph exists to stop.
+Every loader NIBBLIZES on insert, so 143 360 bytes of zeros mount as a
+perfectly formatted disk whose 560 sectors happen to hold zeros — RWTS
+finds every address field and `CATALOG` works. A diskette out of its
+wrapper has no address fields at ALL, and that is the medium a format has
+to CREATE rather than overwrite.
+
+`DiskImage::eraseSurface()` is that medium: every nibble `$00`, so every
+cell is a 0 and the track carries zero flux events. Reads then take the
+two paths MAME takes over unmagnetised surface — `kFluxNever` +
+`DiskIICard::advanceNoise` while a track is wholly blank, and the
+weak-zone pulse train (`kWeakGapLss`, MAME `m_amplifier_freakout_time`)
+over whatever is still blank once a format has started on it. RWTS
+answers I/O ERROR to every read, and a real DOS 3.3 `INIT` writes the
+address and data fields through `writeFlux` onto virgin surface exactly
+as it does on iron; the result CATALOGs, SAVEs and writes back to the
+file as an ordinary image. `DiskIICard::insertBlankDisk(drive, path)`
+mounts one and refuses rather than silently handing back a formatted disk
+if the medium declines the erase.
+
+**Three ways in.** `DiskImage::createBlankFile(path)` makes the backing
+file and **refuses to overwrite an existing one** — "new blank disk"
+landing on somebody's only copy of a game has no undo — and
+`pom2::mountBlankDiskII` is the off-lock two-phase mount, which applies
+the erase between `prepareDisk` and `installDisk` (it belongs with the
+decode, not inside `stateMutex`). Above both sits
+`MainWindow::insertBlankDiskette(drive, path, …)`, which generates a
+non-colliding name under `disks_5.4/` when `path` is empty and deletes
+the file again if the mount fails. The Disk Library's **New Blank**
+button (drive 2 by default — drive 1 holds what you booted, and the disk
+you format is the other one, which is what `INIT HELLO,D2` says) and the
+CLI's `--blank-disk [1|2:]<path>` both go through it. The CLI form runs
+in the same deferred step as the positional boot disk and AFTER it, so
+`POM2 dos33.dsk --blank-disk new.dsk` comes up booted with a virgin
+diskette waiting in drive 2. Parsing pinned by `cli_kiosk`, including
+that a Windows path (`C:\disks\new.dsk`) is not eaten as a drive prefix
+and that a bare `2:` is refused instead of becoming a file called `2:`.
+
+The UNFORMATTED state is **not persistable** in a `.dsk`/`.do`/`.po`: the
+container has no way to say "no address field here", so it lives from the
+mount until the guest formats. WOZ says it properly with a TMAP entry of
+`$FF`, and `eraseSurface` leaves a WOZ alone for the reason
+`writeNibbleAt` documents — its surface is `bitStream`/`wozRaw`, not the
+nibble buffer. Pinned by `diskii_unformatted_disk`, whose companion
+`diskii_format_smoke` only ever proved POM2 could RE-format.
+
+**Both read gates must make that noise** *(2026-09-16)*. The rule above
+was the LSS path's only. The **legacy 32-cycle nibble gate** handed the
+track slot straight to the CPU, and an erased slot is `$00` — no legal
+GCR byte is, so `LDA $C08C,X / BPL -3` waited for a bit 7 that never
+came, RWTS never reached its retry counter, and a blank disk FROZE the
+guest instead of answering I/O ERROR. POM2 ships `roms/diskii_p6.rom` so
+the real machine never took that path; a harness that loads the boot PROM
+and no P6 does, which is how a2filecmd's format bench found it.
+`legacyAdvance` now serves `legacyNoiseNibble()` — the same hash-of-the-
+cycle-cursor shape as `advanceNoise`, for the same rewind-determinism
+reason — wherever the slot is `$00`. Measured on the reporter's repro: no
+answer in 600 M cycles before, I/O ERROR in 6 M after.
+
+One container genuinely cannot do it: a blank **`.nib`**. A raw nibble
+stream has no sync semantics (`expandTrackBits` gives every byte a flat 8
+cells, by design — see `trackBitLength`), so the `$FF` runs a format lays
+down are not self-sync on read-back, and the LSS cannot re-frame after
+the weak noise in the gaps Q7 leaves between an address field and its
+data field. Measured 2026-09-16: DOS 3.3 `INIT` on an all-`$00` `.nib`
+formats track 0, fails its verify and answers I/O ERROR, while the same
+INIT on an erased `.dsk` surface completes all 35 tracks. Prefilling the
+same `.nib` with `$AA` or `$FF` also completes, which is what isolates it
+to the missing sync padding rather than to the blank surface.
+
 **A surface with no flux must still make noise** *(2026-09-07)*. A track
 with no events at all — a WOZ whose TMAP marks the quarter-track `$FF`, a
 35-track image seeked past 34, the gap between half-tracks a nibble scanner

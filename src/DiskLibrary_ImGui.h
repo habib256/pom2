@@ -126,6 +126,17 @@ public:
         std::string requestFloppyEmuMountOnly;
         // Eject every loaded image at once (header-row "Eject All" button).
         bool        requestEjectAllDisks = false;
+        // Header-row "New Blank" button: put a diskette that has NEVER been
+        // formatted into a Disk II drive — no address fields, the medium an
+        // INIT has to create. The host makes the backing file and mounts it
+        // (MainWindow::insertBlankDiskette); the panel only asks, and does
+        // not name the file, because the name it would pick could collide
+        // with one of the user's.
+        bool        requestNewBlankDisk  = false;
+        /// 0 = drive 1, 1 = drive 2. Drive 2 is the default: drive 1 usually
+        /// holds the disk you booted, and the one you format is the other
+        /// one — which is also what `INIT HELLO,D2` says.
+        int         requestNewBlankDrive = 1;
         // The notch (MediaNotch.h): the user flipped the write-protect of
         // THIS image — mounted or not, it is the disk's property. The host
         // applies it through StorageCoordinator::setMediaNotch (file bit +
@@ -162,6 +173,11 @@ public:
                   bool&                     open,
                   const CurrentlyMounted&   mounted,
                   const Lists&              lists);
+
+    /// Force a re-scan on the next frame. The host calls this when IT
+    /// changed the folder the panel lists — a new blank diskette, say —
+    /// because the panel has no way to know a file appeared.
+    void requestRescan() { needsRescan_ = true; }
 
     /// The host applied a notch toggle it got from `Result`: update the
     /// cached row (a rescan would re-stat ~1000 files for one bit).

@@ -399,6 +399,27 @@ bool DiskIICard::prepareDisk(const std::string& path, bool writeBackEnabled,
     return true;
 }
 
+
+bool DiskIICard::insertBlankDisk(int drive, const std::string& path)
+{
+    if (!insertDisk(drive, path)) return false;
+    DiskImage& img = driveImage(drive);
+    img.eraseSurface();
+    // Say so rather than silently handing back a formatted disk: a caller
+    // that asked for a blank one and got a readable medium would go looking
+    // for the bug in its own format code.
+    if (!img.isSurfaceBlank()) {
+        pom2::log().warn("Disk II",
+            "blank insert: " + path + " refused the erase (write-protected, "
+            "or a WOZ — use a TMAP of $FF)");
+        return false;
+    }
+    pom2::log().info("Disk II",
+        "drive " + std::to_string(drive + 1) +
+        ": unformatted diskette (no address fields) backed by " + path);
+    return true;
+}
+
 bool DiskIICard::insertDisk(int drive, const std::string& path)
 {
     if (drive < 0 || drive >= kDriveCount) {
@@ -1119,10 +1140,39 @@ void DiskIICard::legacyAdvance(int cycles)
                 ++writeFlushCount;
             }
         } else {
-            dataLatch = img.nibbleAt(track, pos);
+            const uint8_t n = img.nibbleAt(track, pos);
+            // $00 is not a nibble the head can read — every legal GCR byte
+            // has bit 7 set, so a $00 slot means there is NO FLUX under the
+            // head there: unwritten surface, which is what a diskette that
+            // has never been formatted is made of (DiskImage::eraseSurface).
+            // Handing $00 to the CPU makes `LDA $C08C,X / BPL -3` spin
+            // forever, because bit 7 never comes up — RWTS cannot even reach
+            // its retry counter, so a blank disk HANGS the guest instead of
+            // answering I/O ERROR. The LSS path has answered this since
+            // 2026-09-07 (`advanceNoise`, and the weak-zone train in
+            // getNextTransition); the legacy gate had not, and a harness that
+            // loads the boot PROM without `roms/diskii_p6.rom` runs the
+            // legacy gate — which is how a2filecmd's format bench hit it
+            // (2026-09-16). The read amplifier over unmagnetised surface
+            // makes noise on real hardware, so serve noise.
+            dataLatch = (n != 0x00) ? n : legacyNoiseNibble();
             byteReady = true;
         }
     }
+}
+
+// The legacy gate's half of `advanceNoise`: one pseudo-random byte, high bit
+// set as on every byte the drive ever hands the CPU. Hashed from the CPU
+// cycle cursor rather than drawn from a PRNG member, for the reason spelled
+// out there — no hidden generator state to serialise, so a REWIND reads the
+// same surface the same way.
+uint8_t DiskIICard::legacyNoiseNibble() const
+{
+    uint64_t h = (cpuCycleTotal / kCyclesPerNibble) * 0x9E3779B97F4A7C15ull;
+    h ^= h >> 29;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 32;
+    return static_cast<uint8_t>(static_cast<uint8_t>(h) | 0x80);
 }
 
 // MAME `wozfdc_device::lss_start` — called from control() when the motor

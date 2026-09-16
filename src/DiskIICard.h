@@ -196,6 +196,22 @@ public:
     bool insertDisk(int drive, const std::string& path);
     bool insertDisk(const std::string& path) { return insertDisk(0, path); }
 
+    /// Mount `path` and then ERASE the mounted surface: the drive holds a
+    /// diskette that has never been formatted — no address fields anywhere
+    /// — rather than the formatted-to-zeros disk a zero-filled image
+    /// nibblizes into. See `DiskImage::eraseSurface` for what that means on
+    /// the surface and why the container cannot express it on its own.
+    ///
+    /// The file is still what write-back lands in: once the guest formats
+    /// the disk, `flushPendingWrites()` decodes the freshly written tracks
+    /// into `path` as an ordinary image. The unformatted state is the
+    /// MOUNTED medium's, and lasts until the guest writes.
+    ///
+    /// Returns false if the mount failed, or if the medium refuses the
+    /// erase (physically write-protected, or a WOZ — say it with a TMAP
+    /// of $FF instead).
+    bool insertBlankDisk(int drive, const std::string& path);
+
     /// ── Two-phase mount ──────────────────────────────────────────────────
     /// Phase 1, to be called WITHOUT `stateMutex`: read and decode `path`
     /// into a detached image. This is the expensive half — all of the file
@@ -650,6 +666,9 @@ private:
     /// caller's target and re-hashes `lssData` once per 8 bit cells with
     /// bit 7 set, so a "wait for a nibble" loop always terminates.
     void advanceNoise(uint64_t extraCycles);
+    /// The legacy 32-cycle gate's equivalent: what the read amplifier makes
+    /// of unmagnetised surface. See the call site in `legacyAdvance`.
+    uint8_t legacyNoiseNibble() const;
 
     // ── KNOWN DIVERGENCE: the IWM register hooks answer on every machine ──
     //

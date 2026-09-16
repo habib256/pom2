@@ -709,6 +709,35 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     if (anyMounted && ImGui::IsItemHovered())
         ImGui::SetTooltip("Eject every loaded Disk II / HDV / SmartPort image");
 
+    // A diskette out of its wrapper. Deliberately NOT "a blank .dsk": every
+    // loader nibblizes on insert, so a file of zeros mounts as a formatted
+    // disk whose sectors hold zeros and CATALOGs fine. This one has no
+    // address fields at all, so it reads as I/O ERROR until something
+    // formats it — which is the whole point of having it.
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " New Blank"))
+        ImGui::OpenPopup("##library_new_blank");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Insert an UNFORMATTED diskette (no address fields) "
+                          "into a Disk II drive.\nIt reads as I/O ERROR until "
+                          "you INIT it — a new disk, not a blank image.\n"
+                          "A .dsk cannot record \"never formatted\", so a "
+                          "restart brings it back\nas an ordinary "
+                          "formatted-to-zeros disk unless you format it first.");
+    if (ImGui::BeginPopup("##library_new_blank")) {
+        ImGui::TextDisabled("New unformatted diskette into:");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Drive 2  (the one you format)")) {
+            r.requestNewBlankDisk  = true;
+            r.requestNewBlankDrive = 1;
+        }
+        if (ImGui::MenuItem("Drive 1  (replaces the boot disk)")) {
+            r.requestNewBlankDisk  = true;
+            r.requestNewBlankDrive = 0;
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();

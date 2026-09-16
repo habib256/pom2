@@ -1456,6 +1456,66 @@ void DiskImage::writeNibbleAt(int track, int index, uint8_t value)
     }
 }
 
+void DiskImage::eraseSurface()
+{
+    if (!loaded) return;
+    if (isFileWriteProtected()) return;   // the notch inhibits the erase current
+    // A WOZ keeps its surface in `bitStream`/`wozRaw`; zeroing the nibble
+    // buffers would dirty a store saveDirty's WOZ branch never reads and
+    // leave the medium unchanged — the same trap writeNibbleAt documents.
+    if (wozFormat) return;
+    for (int t = 0; t < kTracks; ++t) {
+        tracks[t].fill(0x00);
+        dirty[t] = true;
+        invalidateWholeTrack(t);
+    }
+    // The head is over a surface that has never been written, so no burst
+    // continues anything: drop the framing cursors or the first format
+    // would resume a nibble slot belonging to the medium that was here
+    // before (see writeFlux).
+    writeFraming.fill(WriteFraming{});
+    anyDirty = true;
+}
+
+bool DiskImage::createBlankFile(const std::string& path, std::string& error)
+{
+    error.clear();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path p(path);
+    // Never over an existing file. See the header: there is no undo for it.
+    if (fs::exists(p, ec)) {
+        error = path + " already exists — pick another name";
+        return false;
+    }
+    if (p.has_parent_path()) {
+        fs::create_directories(p.parent_path(), ec);
+        if (ec) {
+            error = "cannot create " + p.parent_path().string() + ": " + ec.message();
+            return false;
+        }
+    }
+    // The same durable commit every write-back uses: a blank image is still a
+    // file the user will mount, and a half-written one is a mount failure
+    // minutes later with no clue where it came from.
+    const std::vector<uint8_t> zeros(static_cast<std::size_t>(kBytesPerImage), 0u);
+    if (!pom2::writeFileAtomic(p, zeros.data(), zeros.size(), ec)) {
+        error = "cannot write " + path + (ec ? (": " + ec.message()) : std::string());
+        return false;
+    }
+    return true;
+}
+
+bool DiskImage::isSurfaceBlank() const
+{
+    if (!loaded) return false;
+    if (wozFormat) return false;          // ask its TMAP, not this buffer
+    for (int t = 0; t < kTracks; ++t)
+        for (uint8_t n : tracks[t])
+            if (n != 0x00) return false;
+    return true;
+}
+
 // ── Media snapshot (rewind) ──────────────────────────────────────────────
 void DiskImage::appendMediaSnapshot(std::vector<uint8_t>& out) const
 {

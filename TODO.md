@@ -92,6 +92,42 @@ G1+G2 is under three.
 | [G5](#g5--the-donut-policy-without-a-test-) | The donut: policy without a test | 4-6 d | partly |
 | [G6](#g6--the-platforms-we-claim-) | The platforms we claim | 1-4 d | decision |
 
+### ~~G0 · An erased surface must read like a blank diskette~~ ✅ (reported 2026-09-16 by a2filecmd, fixed the same day)
+
+Reproduced exactly as filed, and the diagnosis in the report was right —
+RWTS waits for a nibble with bit 7 set (`LDA $C08C,X / BPL -3`), an erased
+slot is `$00`, no legal GCR byte is, so bit 7 never came and RWTS never
+reached its retry counter. It was in the **legacy 32-cycle nibble gate**,
+not in the surface: the bit-level LSS path has served read-amplifier noise
+over flux-less surface since 2026-09-07 (`advanceNoise`, plus the weak-zone
+train in `getNextTransition`), and the legacy gate had no such rule. A
+harness that loads the boot PROM without `roms/diskii_p6.rom` — which is
+what `bench/mini33_format.cpp` does — runs the legacy gate, which is why
+the bench saw it and POM2 itself never did (it ships the P6).
+
+`DiskIICard::legacyAdvance` now hands `legacyNoiseNibble()` to the CPU
+wherever the track slot is `$00`. Measured on the reporter's own repro
+(boot `A2FC-MINI-DOS33-0.8.8.dsk`, `insertBlankDisk(1, …)`, `Q Y`,
+`CATALOG,D2`): no answer in 600 M cycles before, **I/O ERROR in 6 M
+after**; the LSS path answered in 4 M throughout. `diskii_unformatted_disk`
+now runs its whole scenario twice, once per gate, and the mutation control
+was verified — restoring the bare `$00` read fails the legacy pass and
+leaves the LSS pass green.
+
+**Confirmed by the reporter's own regression check**, the `fresh` mode of
+`bench/mini33_format.cpp`: the Mini's `/` to a never formatted drive 2
+reports READ ERROR instead of hanging, F formats it with the progress
+bar, every file copies over, and the written image reads back with tracks
+0-2 identical to the boot disk, a DOS 3.3 VTOC (catalog 17, volume 254,
+122 pairs, 35×16) and every file byte-identical. One caveat for whoever
+owns that bench: **it cannot run as shipped** — the Mini dist disk now
+holds 9 files (HELLO, A2FC, README, TIGER, SNAKE, SOKOBAN, MAZE3D,
+CHESS, LOGO) and the bench still asserts `4 FILES` / `4 MARKED` /
+`COPY 4 MARKED?` in `mini33_format.cpp` plus the `{HELLO, A2FC, README,
+TIGER}` set comparison in `mini33_format.py`. It fails on that first,
+in mode `format`, before any blank diskette is involved. The run above
+is the same binary with those four counts corrected, nothing else.
+
 ### G1 · What we are allowed to ship 🔴
 
 *The gate nothing else survives. It is not a technical problem and it does not

@@ -57,9 +57,14 @@ void noteHostMediaSwap(EmulationController& ctrl)
 
 }  // namespace
 
-bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
-                 const std::string& path, std::string& error,
-                 bool seekTrack0)
+namespace {
+
+/// The body both Disk II mounts share. `eraseAfterPrepare` makes the mounted
+/// medium an UNFORMATTED diskette — done here, between the phases, because it
+/// is part of preparing the image and has no business inside the lock.
+bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
+                       const std::string& path, std::string& error,
+                       bool seekTrack0, bool eraseAfterPrepare)
 {
     error.clear();
 
@@ -70,6 +75,17 @@ bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
     auto prepared = std::make_unique<DiskImage>();
     if (!DiskIICard::prepareDisk(path, card.isWriteBackEnabled(), *prepared, error))
         return false;
+    if (eraseAfterPrepare) {
+        prepared->eraseSurface();
+        // Refuse rather than install a FORMATTED disk where the caller asked
+        // for a blank one: a user who then finds the disk readable goes
+        // looking for the bug in their format code, not in ours.
+        if (!prepared->isSurfaceBlank()) {
+            error = path + ": the medium refused the erase (write-protected, "
+                           "or a WOZ — say it with a TMAP of $FF)";
+            return false;
+        }
+    }
 
     // Phase 2 — the lock, held only for the swap. Same mutex the CPU worker
     // takes around softSwitchAccess: installing rebuilds the drive's track
@@ -87,6 +103,24 @@ bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
     if (ok) noteHostMediaSwap(ctrl);   // see noteHostMediaSwap
     if (!ok && error.empty()) error = "insert failed";
     return ok;
+}
+
+}  // namespace
+
+bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
+                 const std::string& path, std::string& error,
+                 bool seekTrack0)
+{
+    return mountDiskIICommon(ctrl, card, drive, path, error, seekTrack0,
+                             /*eraseAfterPrepare=*/false);
+}
+
+bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
+                      const std::string& path, std::string& error,
+                      bool seekTrack0)
+{
+    return mountDiskIICommon(ctrl, card, drive, path, error, seekTrack0,
+                             /*eraseAfterPrepare=*/true);
 }
 
 // ── Block devices: the 32 MiB case ──────────────────────────────────────

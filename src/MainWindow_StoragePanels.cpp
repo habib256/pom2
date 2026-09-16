@@ -416,6 +416,26 @@ void MainWindow::renderDiskLibraryWindow()
     // ── Eject-all (header-row button, moved here from the toolbar) ─────
     if (r.requestEjectAllDisks) ejectAllDisks();
 
+    // ── New blank diskette (header-row button) ─────────────────────────
+    // The host picks the file, not the panel: the name has to be one that
+    // cannot land on a disk the user already owns, and only this side knows
+    // the library root. A rescan afterwards so the new disk appears in the
+    // list the user is looking at.
+    if (r.requestNewBlankDisk) {
+        std::string made, err;
+        if (insertBlankDiskette(r.requestNewBlankDrive, {}, made, err)) {
+            noteLibraryRecent(made);
+            diskLibrary->requestRescan();
+            tapeStatusMessage =
+                "New UNFORMATTED diskette in drive " +
+                std::to_string(r.requestNewBlankDrive + 1) +
+                " — it reads as I/O ERROR until you INIT it: " + made;
+        } else {
+            tapeStatusMessage = "New blank disk failed: " + err;
+        }
+        tapeStatusUntil = lastFrameTime + 6.0;
+    }
+
     // ── 5.25" actions → the DiskII card/drive the right-click menu picked ──
     // request525Slot = -1 means "primary card" (left-click default); a real
     // slot routes to that specific DiskII card. drive 0 = drive 1, 1 = drive 2.

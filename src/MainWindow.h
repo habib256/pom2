@@ -222,6 +222,29 @@ public:
     /// internally between frames).
     bool insertAndBootImage(const std::string& path, std::string& errOut);
 
+    /// Put a diskette that has NEVER BEEN FORMATTED into the primary Disk
+    /// II's `drive` (0 = drive 1, 1 = drive 2) — no address fields, the
+    /// medium an `INIT` has to create rather than overwrite. Not the same
+    /// as mounting a zero-filled image, which every loader nibblizes into a
+    /// perfectly formatted disk (see `DiskImage::eraseSurface`).
+    ///
+    /// `path` empty generates a name under the 5.25" library folder that
+    /// cannot collide with an existing file; a caller-supplied path is
+    /// created and refused if it already exists — "new blank disk" must
+    /// never land on somebody's only copy of a game. Either way `pathUsed`
+    /// comes back with the file the drive is backed by, which is where the
+    /// guest's format is written when it happens.
+    ///
+    /// The unformatted state is NOT persistable — a .dsk cannot say "no
+    /// address field here" — so a session that ends before the guest formats
+    /// the disk comes back with an ordinary formatted-to-zeros image in the
+    /// drive. Both callers say so where the user can read it.
+    ///
+    /// Drives the Disk Library's "New blank diskette" button and the CLI's
+    /// `--blank-disk`. UI thread only, like every other mount here.
+    bool insertBlankDiskette(int drive, const std::string& path,
+                             std::string& pathUsed, std::string& errOut);
+
     /// Write everything the next launch needs into the settings store and
     /// commit it (MainWindow_Session.cpp). Called from the destructor on the
     /// desktop; public because the browser build has no destructor moment —

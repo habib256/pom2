@@ -5,6 +5,86 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-16 — A diskette that has never been formatted
+
+POM2 had no way to mount one, and the thing everyone reached for instead
+is not one: a zero-filled `.dsk` is NIBBLIZED on insert, so it mounts as a
+perfectly formatted disk whose 560 sectors happen to hold zeros. RWTS
+finds every address field and `CATALOG` works. `diskii_format_smoke`, the
+test that has guarded formatting since bug hunt #7, therefore only ever
+proved POM2 could RE-format — the address fields it INITs over were
+already there.
+
+`DiskImage::eraseSurface()` models the real thing: every nibble `$00`, so
+every cell is a 0 and the track carries zero flux events — unmagnetised
+surface. Reads take the two paths MAME takes over it (`kFluxNever` +
+`advanceNoise` while a track is wholly blank, the weak-zone pulse train
+of `kWeakGapLss` = MAME's `m_amplifier_freakout_time` over what is still
+blank once a format has started), so RWTS answers I/O ERROR to every
+read. `DiskIICard::insertBlankDisk(drive, path)` mounts one and refuses,
+loudly, rather than hand back a formatted disk when the medium declines
+the erase.
+
+Nothing in the flux model needed changing for the format itself: DOS 3.3
+`INIT` writes the address and data fields onto virgin surface through
+`writeFlux` exactly as it does on iron, and the result CATALOGs, SAVEs
+and writes back to the file as an ordinary image. What was missing was
+only the way to ASK for such a medium. Pinned by
+`diskii_unformatted_disk`, which checks all three claims in the order a
+user meets them and whose two mutation controls were verified: with the
+erase disabled the mount is refused, and with the guard disabled too the
+zero-filled `.dsk` CATALOGs instead of erroring, which is exactly the
+confusion the test exists to prevent.
+
+Reachable three ways, because an engine capability nobody can ask for is
+not a feature: the Disk Library's **New Blank** button (drive 2 by
+default — drive 1 holds what you booted), the CLI's `--blank-disk
+[1|2:]<path>`, and `MainWindow::insertBlankDiskette` under both.
+`DiskImage::createBlankFile` makes the backing file and **refuses to
+overwrite an existing one**; a blank disk landing on somebody's only copy
+of a game has no undo. `pom2::mountBlankDiskII` applies the erase between
+`prepareDisk` and `installDisk`, off `stateMutex` where the decode
+already is. The CLI form runs after the positional boot disk, so `POM2
+dos33.dsk --blank-disk new.dsk` comes up booted with a virgin diskette in
+drive 2.
+
+The unformatted state is not persistable in a `.dsk`/`.do`/`.po` — the
+container cannot say "no address field here" — so it lives from the mount
+until the guest formats, and a session that ends before that comes back
+with an ordinary formatted-to-zeros image in the drive. The button's
+tooltip and the flag's documentation both say so. WOZ says it properly
+with a TMAP of `$FF`, and `eraseSurface` leaves a WOZ alone.
+
+**And the legacy read gate had to learn the same physics.** a2filecmd
+filed the first bug against the feature within the hour: `CATALOG,D2` on
+an erased surface never came back — no I/O ERROR after 600 M cycles,
+where a real Apple II grinds through RWTS's retries and reports in
+seconds. Reproduced exactly, and the filed diagnosis was right: RWTS
+waits for a nibble with bit 7 set, an erased slot is `$00`, no legal GCR
+byte is, so bit 7 never came and RWTS never reached its retry counter.
+The location was not where the report guessed — the surface was fine. The
+bit-level LSS path has answered this since 2026-09-07 (`advanceNoise`);
+the **legacy 32-cycle nibble gate** had no such rule and handed the `$00`
+to the CPU. POM2 ships `roms/diskii_p6.rom` so a real machine never takes
+that path, but a harness that loads the boot PROM and no P6 does, which is
+exactly what `bench/mini33_format.cpp` does. `legacyAdvance` now serves
+`legacyNoiseNibble()` there. I/O ERROR in 6 M cycles after, on the
+reporter's own repro. `diskii_unformatted_disk` runs its whole scenario
+twice, once per gate.
+
+**One container genuinely cannot do it**, and it is worth knowing before
+someone builds a bench on it: a blank `.nib`. A raw nibble stream has no
+sync semantics (every byte is a flat 8 cells by design), so the `$FF`
+runs a format lays down are not self-sync on read-back and the LSS cannot
+re-frame after the weak noise in the gaps Q7 leaves between an address
+field and its data field. Measured: `INIT` on an all-`$00` `.nib` formats
+track 0, fails its verify and answers I/O ERROR; the same INIT on an
+erased `.dsk` surface completes all 35 tracks; prefilling that `.nib`
+with `$AA` or `$FF` also completes, which isolates it to the missing sync
+padding rather than to the blank surface. Recorded in DEV, not fixed:
+giving `.nib` the padded timeline moves the byte cadence every pinned
+`.nib` test is calibrated against.
+
 ## 2026-09-16 — "Download missing from RetroBIOS" can now complete the romset
 
 RetroBIOS [PR #75](https://github.com/Abdess/retrobios/pull/75) (merged

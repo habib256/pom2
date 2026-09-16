@@ -169,6 +169,32 @@ struct CliPlan {
     std::string                     disk35Internal;
     std::string                     disk35External;
 
+    /// `--blank-disk [<drive>:]<path>` — put a diskette that has NEVER been
+    /// formatted into the Disk II. `drive` is 1 or 2 and defaults to **2**:
+    /// drive 1 usually holds what you booted, and the disk you format is the
+    /// other one, which is also what `INIT HELLO,D2` says.
+    ///
+    /// NOT the same as passing an empty image: every loader nibblizes on
+    /// insert, so a file of zeros mounts as a formatted disk whose 560
+    /// sectors hold zeros and which CATALOGs fine. This one has no address
+    /// fields at all — it reads as I/O ERROR until the guest formats it, and
+    /// the format writes the fields onto virgin surface
+    /// (`DiskImage::eraseSurface`).
+    ///
+    /// `<path>` is CREATED and the flag is REFUSED if it already exists: a
+    /// blank disk landing on a name the user already has is how somebody's
+    /// only copy becomes 143 KB of zeros. It is also where write-back lands
+    /// once the guest has formatted the disk.
+    ///
+    /// The unformatted state is NOT persistable — a .dsk cannot say "no
+    /// address field here" — so a session that ends before the guest
+    /// formats the disk comes back with an ordinary formatted-to-zeros
+    /// image in the drive. Pass the flag again (on a new name) to get a
+    /// virgin surface back.
+    std::string                     blankDiskPath;
+    /// 0 = drive 1, 1 = drive 2 (the default).
+    int                             blankDiskDrive = 1;
+
     /// `--rgb-card-invert-bit7` — Le Chat Mauve / Video-7 RGB-card
     /// Dragon-Wars-compat toggle. XORs bit 7 of every Chat Mauve HGR /
     /// DHGR-Mixed source byte at decode time, restoring the intended

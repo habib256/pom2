@@ -1016,7 +1016,8 @@ int main(int argc, char* argv[])
     // small frame countdown keeps this on the UI thread between frames, so
     // the SlotBus mutation in insertAndBootImage() doesn't race the worker.
     // Works in both GUI and --kiosk mode (bare `POM2 disk` boots in GUI).
-    int cliBootCountdown = (plan->bootDiskPath.empty() && plan->prodosFolderPath.empty()) ? -1 : 30;
+    int cliBootCountdown = (plan->bootDiskPath.empty() && plan->prodosFolderPath.empty() &&
+                            plan->blankDiskPath.empty()) ? -1 : 30;
 
     // Loop iteration packaged as a function so the native path can stay a
     // plain `while`, and the WASM path can hand it to
@@ -1027,6 +1028,12 @@ int main(int argc, char* argv[])
         MainWindow*         mainWindow;
         std::string         bootDiskPath;
         std::string         prodosFolderPath;
+        /// `--blank-disk`: mounted AFTER the positional boot disk, so a
+        /// `POM2 dos33.dsk --blank-disk new.dsk` comes up booted with an
+        /// unformatted diskette waiting in drive 2 — which is the whole
+        /// point of the flag.
+        std::string         blankDiskPath;
+        int                 blankDiskDrive;
         int                 cliBootCountdown;
         std::atomic<bool>*  autoBootRequested;
         std::atomic<bool>*  autoQuitRequested;
@@ -1048,7 +1055,8 @@ int main(int argc, char* argv[])
         double              lastPersistSeconds;
 #endif
     } frameCtx{
-        window, &mainWindow, plan->bootDiskPath, plan->prodosFolderPath, cliBootCountdown,
+        window, &mainWindow, plan->bootDiskPath, plan->prodosFolderPath,
+        plan->blankDiskPath, plan->blankDiskDrive, cliBootCountdown,
         &autoBootRequested, &autoQuitRequested, &bootDiskSettled, 30
 #ifdef __EMSCRIPTEN__
         , false
@@ -1087,6 +1095,17 @@ int main(int argc, char* argv[])
                 pom2::log().info("CLI", "booted disk: " + c.bootDiskPath);
             } else {
                 pom2::log().warn("CLI", "disk boot failed: " + err);
+            }
+            if (!c.blankDiskPath.empty()) {
+                std::string made, berr;
+                if (c.mainWindow->insertBlankDiskette(c.blankDiskDrive,
+                                                      c.blankDiskPath, made, berr)) {
+                    pom2::log().info("CLI",
+                        "--blank-disk: unformatted diskette in drive " +
+                        std::to_string(c.blankDiskDrive + 1) + ": " + made);
+                } else {
+                    pom2::log().warn("CLI", "--blank-disk failed: " + berr);
+                }
             }
             // Release the Phase-C deferred actions — success or failure,
             // the machine's boot state is now settled (see bootDiskSettled).
