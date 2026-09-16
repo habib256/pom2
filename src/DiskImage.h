@@ -161,6 +161,60 @@ public:
     /// No-op when no image is loaded or the track is out of range.
     void writeNibbleAt(int track, int index, uint8_t value);
 
+    /// Erase the whole surface to unmagnetised: no address fields, no data
+    /// fields, no sync — a diskette as it leaves the factory, before any
+    /// INIT has been near it.
+    ///
+    /// This is NOT what a zero-filled .dsk gives you. Every loader
+    /// NIBBLIZES on insert, so a 143 360-byte file of zeros mounts as a
+    /// perfectly formatted disk whose 560 sectors happen to hold zeros:
+    /// RWTS finds every address field and reads it happily. A brand-new
+    /// diskette has no address fields at ALL, and that is a different
+    /// medium — the one a format has to create rather than overwrite.
+    ///
+    /// Modelled as it is on the surface: every nibble $00, so every cell is
+    /// a 0 and the track carries ZERO flux events. Reads then take the two
+    /// paths MAME takes over unmagnetised media — `getNextTransition`
+    /// answers `kFluxNever` and `DiskIICard::advanceNoise` serves
+    /// read-amplifier noise, or, once a format has written part of the
+    /// track, the weak-zone pulse train (`kWeakGapLss`, MAME's
+    /// `m_amplifier_freakout_time`) fills what is still blank. RWTS answers
+    /// I/O ERROR to every read, and a real format writes the address fields
+    /// through `writeFlux` exactly as it would on iron.
+    ///
+    /// Marks every track dirty: `saveDirty()` will decode the surface back
+    /// to the source file, so a format done by the guest is persisted. The
+    /// UNFORMATTED state itself is not persistable in a .dsk/.do/.po (the
+    /// container has no way to say "no address field here") — it lives from
+    /// this call until the guest formats. A WOZ says it properly, with a
+    /// TMAP entry of $FF, and is left alone here: its surface is
+    /// `bitStream`/`wozRaw`, not the nibble buffer.
+    ///
+    /// No-op on a physically write-protected medium — you cannot erase a
+    /// disk through a covered notch.
+    void eraseSurface();
+
+    /// Create an empty `kBytesPerImage`-byte 5.25" image at `path` — the
+    /// BACKING FILE for a blank diskette, which is not the same thing as a
+    /// blank diskette: mounted the ordinary way this file nibblizes into a
+    /// perfectly formatted disk. `eraseSurface()` above is what makes the
+    /// MEDIUM unformatted.
+    ///
+    /// REFUSES to overwrite an existing file. "New blank disk" landing on a
+    /// name the user already has is how somebody's only copy of a game turns
+    /// into 143 KB of zeros, and there is no undo for it. The caller picks
+    /// another name; the UI generates one that cannot collide.
+    ///
+    /// Parent directories are created, and the write goes through the same
+    /// atomic + durable commit every media write-back uses. Returns false
+    /// with `error` filled in.
+    static bool createBlankFile(const std::string& path, std::string& error);
+
+    /// True while every track of the medium is blank — no flux anywhere,
+    /// so nothing on it can be read. Goes false as soon as a format writes
+    /// its first track. Cheap: scans the nibble buffers, no cache work.
+    bool isSurfaceBlank() const;
+
     // ── Media snapshot (rewind) ─────────────────────────────────────────
     // The full nibble track buffers + dirty flags — what writeNibbleAt
     // mutates and reads derive from. Captured (by DiskIICard) only for

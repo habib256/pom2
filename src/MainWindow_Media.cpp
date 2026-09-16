@@ -65,6 +65,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -415,6 +416,62 @@ int MainWindow::ensureSmartPortCardForBoot()
         *controller, activeProfile);
     if (!r && !r.error.empty()) pom2::log().warn("Slots", r.error);
     return r.slot;
+}
+
+bool MainWindow::insertBlankDiskette(int drive, const std::string& path,
+                                    std::string& pathUsed, std::string& errOut)
+{
+    pathUsed.clear();
+    errOut.clear();
+    DiskIICard* target = nullptr;
+    for (auto* c : diskIICards()) if (c && c->getSlot() == 6) { target = c; break; }
+    if (!target) target = primaryDiskII();
+    if (!target) { errOut = "no Disk II card in the current config"; return false; }
+    const int bay = (drive == 1) ? 1 : 0;
+
+    std::string file = path;
+    if (file.empty()) {
+        // A generated name, in the folder the Library scans, so the new disk
+        // shows up in the list where the user is already looking. Stamped to
+        // the second and then probed: two clicks inside one second must not
+        // make the second one fail, and createBlankDiskFile refuses to
+        // overwrite (which is the behaviour that protects real disks).
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        std::string root = "disks_5.4";
+        for (const char* r : { "disks_5.4", "../disks_5.4", "../../disks_5.4" })
+            if (fs::is_directory(r, ec)) { root = r; break; }
+        const std::time_t now = std::time(nullptr);
+        std::tm tmv{};
+#if defined(_WIN32)
+        localtime_s(&tmv, &now);
+#else
+        localtime_r(&now, &tmv);
+#endif
+        char stamp[32];
+        std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        for (int n = 0; n < 100; ++n) {
+            std::string cand = root + "/blank-" + stamp +
+                (n ? ("-" + std::to_string(n)) : std::string()) + ".dsk";
+            if (!fs::exists(cand, ec)) { file = cand; break; }
+        }
+        if (file.empty()) { errOut = "could not find a free name in " + root; return false; }
+    }
+
+    if (!DiskImage::createBlankFile(file, errOut)) return false;
+    if (!pom2::mountBlankDiskII(*controller, *target, bay, file, errOut)) {
+        // The file was created moments ago and nothing has used it, so the
+        // failed mount leaves no orphan behind.
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
+        return false;
+    }
+    pathUsed = file;
+    pom2::log().info("Disk II",
+        "new blank diskette (unformatted) in slot " +
+        std::to_string(target->getSlot()) + " drive " +
+        std::to_string(bay + 1) + ": " + file);
+    return true;
 }
 
 bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut)

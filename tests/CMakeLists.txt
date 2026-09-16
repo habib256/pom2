@@ -2652,6 +2652,41 @@ add_test(NAME diskii_format_smoke COMMAND test_diskii_format)
 set_tests_properties(diskii_format_smoke PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 
 
+# ─── An UNFORMATTED diskette: the address fields a format has to CREATE ──
+# diskii_format_smoke above INITs a zero-filled .dsk, which every loader
+# nibblizes on insert — a perfectly formatted disk whose sectors hold
+# zeros. This one mounts a surface with NO address fields at all
+# (DiskIICard::insertBlankDisk / DiskImage::eraseSurface): unreadable
+# first, then INIT writes the fields onto virgin surface and the result is
+# a real DOS 3.3 disk that CATALOGs and SAVEs.
+
+add_executable(test_diskii_unformatted
+    diskii_unformatted_disk_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_unformatted PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_unformatted PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_unformatted PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_unformatted PRIVATE winmm)
+endif()
+add_test(NAME diskii_unformatted_disk COMMAND test_diskii_unformatted)
+set_tests_properties(diskii_unformatted_disk PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+
+
 # ─── ProDOS 2.4.3 SAVE / LOAD round-trip smoke test ──────────────────────
 # Same regression gate as dos33_save but driving a ProDOS .po image
 # through BITSY BYE → BASIC → SAVE/LOAD. Skips silently when ProDOS_2_4_3.po

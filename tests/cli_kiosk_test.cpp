@@ -60,6 +60,50 @@ std::optional<pom2::CliPlan> parse(const std::vector<std::string>& args,
 // stock configuration, because slot 7's own first-run default is the Le Chat
 // Mauve — so the documented headline invocation never worked, and the fallback
 // docs/fujinet_plan.md specifies had nothing to key off.
+// `--blank-disk [<drive>:]<path>` — an UNFORMATTED diskette, which is not
+// the same as an empty image (every loader nibblizes a file of zeros into a
+// perfectly formatted disk). The drive prefix borrows the `--load addr:file`
+// idiom, and the one thing it must not eat is a Windows drive letter.
+void testBlankDisk()
+{
+    bool help = false;
+
+    // Bare path: drive 2, because drive 1 holds what you booted and the disk
+    // you format is the other one.
+    auto bare = parse({"POM2", "--blank-disk", "new.dsk"}, help);
+    assert(bare.has_value());
+    assert(bare->blankDiskPath == "new.dsk");
+    assert(bare->blankDiskDrive == 1);
+
+    auto d1 = parse({"POM2", "--blank-disk", "1:new.dsk"}, help);
+    assert(d1.has_value());
+    assert(d1->blankDiskPath == "new.dsk" && d1->blankDiskDrive == 0);
+
+    auto d2 = parse({"POM2", "--blank-disk", "2:new.dsk"}, help);
+    assert(d2.has_value());
+    assert(d2->blankDiskPath == "new.dsk" && d2->blankDiskDrive == 1);
+
+    // A Windows path is a PATH. "C:" is not a drive prefix, and neither is a
+    // digit that isn't 1 or 2 — eating either would send the disk to a drive
+    // the user never named, or lose the front of the filename.
+    auto win = parse({"POM2", "--blank-disk", "C:\\disks\\new.dsk"}, help);
+    assert(win.has_value());
+    assert(win->blankDiskPath == "C:\\disks\\new.dsk");
+    assert(win->blankDiskDrive == 1);
+
+    auto d9 = parse({"POM2", "--blank-disk", "9:new.dsk"}, help);
+    assert(d9.has_value());
+    assert(d9->blankDiskPath == "9:new.dsk" && d9->blankDiskDrive == 1);
+
+    // A prefix with nothing after it is a user error, not a mount of "".
+    auto empty = parse({"POM2", "--blank-disk", "2:"}, help);
+    assert(!empty.has_value());
+
+    // Not given at all: nothing happens (the frame loop keys off the path).
+    auto none = parse({"POM2"}, help);
+    assert(none.has_value() && none->blankDiskPath.empty());
+}
+
 void testFujiNetSlotExplicitness()
 {
     bool help = false;
@@ -468,6 +512,8 @@ int main()
     std::printf("parseCli rejects \"--flag VALUE\" for =VALUE flags: OK\n");
     testVersionFlag();
     std::printf("parseCli --version / -v: OK\n");
+    testBlankDisk();
+    std::printf("parseCli --blank-disk drive prefix / defaults: OK\n");
 
     std::printf("cli_kiosk OK\n");
     return 0;

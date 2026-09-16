@@ -82,6 +82,31 @@ bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
                  const std::string& path, std::string& error,
                  bool seekTrack0 = false);
 
+// The BACKING FILE for a blank diskette is `DiskImage::createBlankFile` —
+// it makes a file and needs none of the mount machinery here.
+
+/// Mount `path` into `card`'s `drive` as a diskette that has NEVER BEEN
+/// FORMATTED — no address fields anywhere, the medium an INIT has to
+/// create rather than overwrite.
+///
+/// Not the same thing as mounting a zero-filled image: every loader
+/// nibblizes on insert, so `mountDiskII` on a file of zeros gives a
+/// perfectly formatted disk whose 560 sectors hold zeros and which RWTS
+/// reads happily. This applies `DiskImage::eraseSurface()` between the two
+/// phases — off `stateMutex`, like the decode it follows — so what lands
+/// in the drive carries no flux at all.
+///
+/// The file stays the write-back target: once the guest formats the disk,
+/// the tracks it wrote decode into `path` as an ordinary image. The
+/// unformatted state itself is not persistable in a .dsk (the container
+/// cannot say "no address field here"), so it lives from this call until
+/// the guest formats.
+///
+/// Same caller contract as mountDiskII: UI thread only.
+bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
+                      const std::string& path, std::string& error,
+                      bool seekTrack0 = false);
+
 /// Mount `path` into a ProDOS block device (CFFA, the synthetic HDV card)
 /// without holding `stateMutex` across the file read.
 ///
