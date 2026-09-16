@@ -4965,6 +4965,28 @@ short-circuit.
 
 ## Peripherals
 
+**A Disk II read after a SmartPort write** *(2026-09-16, reported by
+a2filecmd)*. The firmware talks to the rear port as DRIVE 2 of the IWM and
+leaves drive 2 selected when it is done, and ProDOS's Disk II driver turns
+the motor on BEFORE it re-selects drive 1 (`$D05F`, then `$D065`). So on a
+//c every Disk II call that follows a SmartPort call starts with the motor
+coming on over drive 2 — which, with no second 5.25", is empty.
+`DiskIICard::control` ran `lssStart()` on that motor-on only when the
+selected drive had MEDIA; MAME runs it whenever the drive EXISTS
+(`wozfdc.cpp` case 0x9, `if(floppy) lss_start();` — `floppy` is the drive
+device, present with or without a disk). Skipped, drive 1 spun on a
+sequencer state `lssStart` would have cleared and ProDOS's presence check
+answered $28 NO DEVICE CONNECTED: a BASIC copy from the internal drive to
+an HDV stopped after 496 bytes, the first floppy block read after a
+SmartPort write. A disk in drive 2 hid it entirely. The traffic split is
+not at fault and was traced to prove it: the port never answers a ProDOS
+Disk II read; the Disk II sees `PH1on PH3on DRV2` before the port claims,
+and `MOTORoff PH1off PH3off` after. Pinned by
+`iic_diskii_after_smartport` — real //c firmware, ProDOS 2.4.3 +
+BASIC.SYSTEM, drive 2 empty, the copied file compared byte for byte, and a
+check that ProDOS lists slot 5 at all (without it the copy fails with PATH
+NOT FOUND and proves nothing).
+
 ### Super Serial Card (slot 2) + telnet bridge
 
 **The keyboard bridge is a terminal, not a clipboard** *(2026-09-09, bug

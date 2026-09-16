@@ -1612,7 +1612,24 @@ void DiskIICard::control(int offset)
                 case MODE_IDLE:
                     motorOn = true;
                     active  = MODE_ACTIVE;
-                    if (images[activeDrive].isLoaded()) lssStart();
+                    // UNCONDITIONAL, as in MAME (`wozfdc.cpp` case 0x9:
+                    // `if(floppy) lss_start();`). There `floppy` is the
+                    // selected DRIVE — a device that exists whether or not a
+                    // disk is in it — and POM2 always has both drives. This
+                    // used to read `if (images[activeDrive].isLoaded())`,
+                    // i.e. "if the selected drive has MEDIA", which skipped
+                    // the sequencer reset whenever the motor came on over an
+                    // empty drive. The //c walks straight into that: its
+                    // SmartPort firmware leaves drive 2 (the rear port)
+                    // selected after every transaction, and ProDOS's Disk II
+                    // driver turns the motor on BEFORE it re-selects drive
+                    // 1 ($D05F then $D065). Drive 1 then ran on a sequencer
+                    // state lssStart would have cleared, its presence check
+                    // failed, and a read after a SmartPort write answered
+                    // $28 NO DEVICE CONNECTED (a2filecmd, 2026-09-16).
+                    // lssStart's one media-dependent step — the write
+                    // splice — is already guarded on isLoaded() inside it.
+                    lssStart();
                     if (sound_) sound_->motor(true, images[activeDrive].isLoaded());
                     if (debugEnabled() && !trace.sawMotorOn) {
                         trace.sawMotorOn = true;
