@@ -15,18 +15,25 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // RomFetch — pull the Apple II dumps POM2 actually probes from RetroBIOS
-// (https://github.com/Abdess/retrobios, bios/Apple + a few MAME card
-// romsets under bios/Arcade/MAME).
+// (https://github.com/Abdess/retrobios, bios/Apple/Apple II plus MAME's
+// a2mouse romset under bios/Arcade/MAME).
 //
-// The collection is not a complete POM2 romset: there is no //c / //c+
-// firmware, no Liron, no TransWarp. What it does have maps onto the
-// names in SystemProfile / RomCatalog / CharRomCatalog, so a missing
-// file here is a missing file the ROM Status panel already knows about.
-// Existing files are never overwritten — findResource() is the same
-// probe the rest of the boot path uses.
+// Since RetroBIOS PR #75 (merged 2026-09-14) the collection covers every
+// dump POM2 probes and can legally point a user at: the //c / //c+
+// firmware, the Liron and Workstation Card images, the ThunderClock+,
+// CFFA 65C02 and TransWarp EPROMs, and the European character
+// generators. What it still cannot serve is alternate SPELLINGS of names
+// that are served (`342-0135-b.64.rom` and `341-0265-a.chr.rom` behind
+// the //e Unenhanced pair, ClockCard's markadev filename, the
+// TransWarp's) plus one real gap: the FR-Canadian UNENHANCED character
+// ROM, which has no upstream copy. Every destRel maps onto a name in
+// SystemProfile / RomCatalog / CharRomCatalog, so a missing file here is
+// a missing file the ROM Status panel already knows about. Existing
+// files are never overwritten — findResource() is the same probe the
+// rest of the boot path uses.
 //
 // Host-side only. HTTPS goes through the system `curl` (and `unzip` /
-// `tar` for the handful of MAME zips) so POM2 does not grow a TLS
+// `tar` for the two MAME zips left) so POM2 does not grow a TLS
 // dependency. The browser build has no helper processes: the fetch
 // returns a clear error and the panel greys the button.
 
@@ -48,10 +55,15 @@ struct RomFetchEntry {
     const char* label;         ///< Shown in the panel while this item runs.
     std::size_t expectedSize;  ///< Reject the download on a mismatch. 0 = any.
     const char* url;           ///< raw.githubusercontent.com file or zip.
-    /// Single zip member to extract. Null when `url` is already the dump.
+    /// Single zip member to extract. Null when `url` is already the dump —
+    /// which, since RetroBIOS PR #75 published loose copies, is every entry
+    /// but two: the mouse slot eprom and the unenhanced //e firmware live
+    /// only inside MAME romsets (a2mouse.zip, apple2e.zip).
     const char* zipMember;
     /// Null-terminated extra members concatenated AFTER `zipMember`, in
-    /// order. Used for the II+ firmware (six 2 KB chips → one 12 KB image).
+    /// order. The unenhanced //e is the case: MAME keeps that firmware as
+    /// two 8 KB chips and POM2 probes the single 16 KB image, which is
+    /// 342-0135-B ($C000-$DFFF) followed by 342-0134-A ($E000-$FFFF).
     const char* const* zipConcat;
     /// CRC32 (IEEE) of the dump POM2 vouches for, or 0 when there is no
     /// reference. A download that matches `expectedSize` and not this is a
@@ -73,13 +85,14 @@ struct RomFetchEntry {
     const char*   expectedSha256;
     /// A LOCAL file of this size also counts as "already present", even
     /// though a fresh download must still match `expectedSize`. 0 = none.
-    /// The II+ firmware is the case that needs it: RetroBIOS serves the
-    /// six-chip 12 KB image while the dump POM2 ships in roms/ is a 20 KB
-    /// MAME pack (4 KB pad + the $C000-$FFFF firmware), and both boot.
-    /// Without this the "present is not the same as CORRECT" re-check in
-    /// romsToFetch() called the shipped, working ROM missing on every launch
-    /// — so "Download missing ROMs" was never done, and clicking it
-    /// overwrote a good dump with a different one (bug hunt #10).
+    /// The II+ firmware is the case that needs it, now the other way round:
+    /// RetroBIOS publishes the same 20 KB dump POM2 ships (4 KB pad + the
+    /// $C000-$FFFF firmware), so that is what a fresh fetch must match — but
+    /// a tree holding the 12 KB six-chip image POM2 used to assemble out of
+    /// apple2p.zip has a legitimate II+ firmware too and must not be
+    /// overwritten. Without this field the "present is not the same as
+    /// CORRECT" re-check in romsToFetch() calls a working ROM missing on
+    /// every launch, and "Download missing ROMs" replaces it (bug hunt #10).
     std::size_t   altPresentSize;
 };
 

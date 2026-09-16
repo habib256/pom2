@@ -295,10 +295,10 @@ the half-speed DIP switch). There is no register to read and nothing to
 configure to make it work: it watches the bus, and software that needs real
 1 MHz timing asks for it by writing `$C074`. The shipped DIP defaults leave
 **slot 6 at stock speed** — that is the Disk II, the one slot AE did not
-trust at full speed. POM2 also looks for `roms/ae_transwarp_1.4.bin` (AE's speed-corrected
-Monitor, overlaid on `$F000-$FFFF`) — **no public dump of it is known**, so
-that name is where one would go, not a file any package ships; the card
-accelerates without it.
+trust at full speed. POM2 also loads `roms/ae_transwarp_1.4.bin` (AE's speed-corrected Monitor,
+overlaid on `$F000-$FFFF` until software writes `$C072`) — it ships since
+v0.9.4, so the stock ROM's 1 MHz delay loops come out right instead of 3.5×
+short. The card accelerates without it.
 
 **Apple II Workstation Card.** The board that put a IIe on LocalTalk, and the
 only card here that is a **computer of its own**: a 65C02, 28 KB of RAM, a

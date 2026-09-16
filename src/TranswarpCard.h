@@ -115,9 +115,10 @@
 // copy of the displaced Apple ROM to put back.
 //
 // ROM-GATED: needs `roms/ae_transwarp_1.4.bin` (4096 bytes, CRC32
-// afe37f55 — MAME `ROM_START(warprom)`). POM2 does not ship the dump. With
-// no ROM the card plugs and accelerates normally and simply never shadows,
-// which is also what DSW-driven software expects after a $C072 write.
+// afe37f55 — MAME `ROM_START(warprom)`), which POM2 ships since
+// 2026-09-16. With no ROM — a build whose roms/ was trimmed — the card
+// plugs and accelerates normally and simply never shadows, which is also
+// what DSW-driven software expects after a $C072 write.
 
 #ifndef POM2_TRANSWARP_CARD_H
 #define POM2_TRANSWARP_CARD_H

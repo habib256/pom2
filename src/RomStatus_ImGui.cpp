@@ -508,8 +508,10 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName)
             ImGui::TextUnformatted(
                 "Fetches Apple II firmware POM2 knows how to use from the "
                 "RetroBIOS collection (github.com/Abdess/retrobios). Files "
-                "already present are left alone. The collection has no //c / "
-                "//c+, Liron or TransWarp dump.");
+                "already present are left alone. The collection now covers "
+                "the //c / //c+ firmware, the Liron, Workstation, "
+                "ThunderClock+ and TransWarp ROMs and the European "
+                "character sets.");
             ImGui::TextDisabled("Saving into: %s",
                                 pom2::writableRomsDir().string().c_str());
             ImGui::PopTextWrapPos();

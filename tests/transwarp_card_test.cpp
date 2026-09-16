@@ -225,8 +225,27 @@ void testRomShadow()
         if (panelSees) assert(tw->hasRom());
         else           assert(!tw->hasRom());
     }
-    assert(mem.memRead(0xF000) == 0xA5);
+    // A dump that LOADS covers $F000-$FFFF there and then — the card comes
+    // up reading AE's speed-corrected Monitor (MAME: m_bReadA2ROM clear out
+    // of reset), so the Apple byte is only still visible when nothing
+    // resolved. This used to be an unconditional `== 0xA5` and it held only
+    // because roms/ shipped no TransWarp dump; adding the real one
+    // (2026-09-16) made the test assert the absence of the feature.
+    if (tw->hasRom()) {
+        assert(tw->shadowActive());
+        assert(mem.memRead(0xF000) != 0xA5 &&
+               "the real AE ROM opens with LDX #$FE, not the Apple's bytes");
+    } else {
+        assert(!tw->shadowActive());
+        assert(mem.memRead(0xF000) == 0xA5);
+    }
 
+    // Now a synthesised dump, so the bytes are recognisable. When the real
+    // one above already engaged the shadow this is also the regression for
+    // setRom-while-shadowing: engageShadow() early-returns on `shadowing_`,
+    // so the card kept the PREVIOUS image mapped until setRom learned to
+    // swap it in itself (without re-capturing `displaced_`, checked below
+    // by the $C072 handback still giving the Apple's 0xA5).
     std::vector<uint8_t> warp(TranswarpCard::kRomSize, 0x5A);
     warp[0x000] = 0xAE;
     warp[0xFFF] = 0xEA;

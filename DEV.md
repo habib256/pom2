@@ -2423,7 +2423,8 @@ is unchanged — the same reason the //c Plus profile runs at 4× with a working
 drive. They are modelled because they are what the board does.
 
 **ROM shadow**, ROM-gated on `roms/ae_transwarp_1.4.bin` (4096 B, CRC32
-`afe37f55`, MAME `ROM_START(warprom)`; POM2 does not ship it). AE's
+`afe37f55`, MAME `ROM_START(warprom)`; **shipped since 2026-09-16** — it
+reached RetroBIOS and `roms/` at the same time). AE's
 speed-corrected Monitor overlays `$F000-$FFFF` until software writes `$C072`
 — the stock F8 delay loops are calibrated for 1 MHz and come out 3.5× short
 otherwise. Implemented as a straight 4 KB swap in the ROM mirror
@@ -2435,6 +2436,16 @@ DIP switches persist as `transwarp_dsw1` / `transwarp_dsw2`. Note DSW2 bit 5
 defaults to 0: **slot 6 ships at stock speed** — that is the Disk II, the one
 slot AE did not trust at 3.5×. Pinned by `transwarp_card`, which drives the
 card through a real `Memory` + `SlotBus` because the snoop hooks live there.
+
+**`setRom` while the shadow is up** *(2026-09-16)*. `engageShadow()`
+early-returns on `shadowing_`, so a second `setRom` left the PREVIOUS image
+mapped at `$F000-$FFFF` while `rom_` held the new one. Invisible until the
+dump started shipping: the card now loads the real ROM at plug time, and
+anything replacing it afterwards (a test, a future user-supplied image) got
+the old bytes. `setRom` swaps the new image in itself when already
+shadowing, and deliberately does NOT re-capture `displaced_` — that holds
+the Apple's own F8 ROM, and re-capturing would hand the outgoing TransWarp
+image back on `$C072`, which is bug hunt #9 by another road.
 
 **A restore reconciles the `$F000` window** *(2026-09-08, bug hunt #9)*.
 `Memory::restoreMainRam` skips every byte `writable[]` calls ROM, so
@@ -8870,8 +8881,33 @@ already looks for (pinned by `rom_fetch`). Existing files are skipped
 (`findResource`); new ones land in `writableRomsDir()` (the first
 writable `roms/` on the search path, else the per-user data dir).
 HTTPS is the system `curl`; MAME zips go through `unzip` or `tar`.
-The collection has no //c / //c+, Liron or TransWarp dump — those
-rows stay missing. Disabled under Emscripten (no helper processes).
+Disabled under Emscripten (no helper processes).
+
+**2026-09-16 — the collection caught up.** RetroBIOS
+[PR #75](https://github.com/Abdess/retrobios/pull/75) (merged 2026-09-14)
+added the dumps the button used to have no source for, so the catalogue
+went from 18 entries to **38**: //c 16 K / //c 32 K / //c+ / UniDisk
+342-0033-A firmware, the Liron, Workstation Card, ThunderClock+, CFFA
+65C02 and TransWarp EPROMs (the TransWarp one is not in POM2's own
+`roms/`, so it is the single row a complete source tree still fetches),
+the Videx LOWER CASE CHIP, the //e FR keyboard-decode and 342-0274-A
+8 KB video ROMs, and the six European character generators. Two names
+were added for dumps already downloadable under another one, because
+they are what the code actually probes: `apple2e_char_us.rom` (the
+char-ROM picker's "US Enhanced" row) and `apple2e_char_2k.rom` (the //e
+**Unenhanced** profile's first char probe). PR #75 also published loose
+copies of the dumps this file used to unzip, so only **two** entries
+still need `unzip`/`tar` — pinned by name in `rom_fetch`.
+
+**Two entries were downloading the wrong file** and had been since the
+SHA-256 gate landed, which is what made them visible: `apple2.rom` was
+pointed at RetroBIOS's `apple2.rom` (same 12 KB length, different
+firmware) when POM2's generic fallback is `apple2-asoft-auto.rom`, and
+`apple2e_unenh.rom` at `AppleIIe.rom`, a different 16 KB //e dump —
+POM2's image is MAME's two chips concatenated, 342-0135-B ($C000-$DFFF)
+then 342-0134-A ($E000-$FFFF), which is what `zipConcat` now assembles
+out of `apple2e.zip`. Both entries failed the digest check on every run
+and reported "this is not the dump POM2 asked for"; both now install.
 
 **Two sources, neither duplicated.** Machine firmware and character
 generators are read from `profileConfig()` (`romProbeOrder` /
@@ -8903,10 +8939,15 @@ there was nothing to borrow.
 
 **Bug hunt #10 (2026-09-08).** `RomFetchEntry::altPresentSize`: a local file of
 that size counts as present even though a download must match
-`expectedSize`. The II+ entry declares RetroBIOS's 12 KB six-chip image
+`expectedSize`. The II+ entry declared RetroBIOS's 12 KB six-chip image
 while roms/ ships a working 20 KB MAME pack, so the planner listed
 `apple2p.rom` as missing on every launch and "Download missing ROMs"
-overwrote a good dump with a different one (`rom_fetch`).
+overwrote a good dump with a different one (`rom_fetch`). Since
+2026-09-16 the roles are swapped and the hazard is gone: RetroBIOS
+serves the same 20 KB dump POM2 ships, so that is what a fetch installs
+and the entry finally has a SHA-256 — `altPresentSize` now names the
+12 KB six-chip image, which is still a legitimate II+ firmware and must
+not be overwritten in a tree that has it.
 
 ### Floppy Emu (BMOW)
 

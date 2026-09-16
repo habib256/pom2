@@ -43,17 +43,21 @@ namespace pom2 {
 
 namespace {
 
-const char* kApple2pChips[] = {
-    "341-0012.d8",
-    "341-0013.e0",
-    "341-0014.e8",
-    "341-0015.f0",
-    "341-0020-00.f8",
+// MAME keeps the unenhanced //e firmware as two 8 KB chips; POM2 probes the
+// single 16 KB image, which is the CD ROM followed by the EF ROM.
+const char* kApple2eUnenhChips[] = {
+    "342-0134-a.64",
     nullptr,
 };
 
-// Loose dumps first; MAME zips only when RetroBIOS has no standalone file
-// under the name POM2 probes. Spaces in GitHub paths are already encoded.
+// Every entry is a LOOSE file under bios/Apple/Apple II, except two that
+// only exist inside a MAME romset: the mouse slot eprom (a2mouse.zip) and
+// the unenhanced //e firmware (apple2e.zip, two chips concatenated).
+// RetroBIOS PR #75 (merged 2026-09-14)
+// added the //c / //c+ firmware, the card ROMs and the European character
+// generators POM2 was missing, and published loose copies of the dumps this
+// file used to extract from a2cffa02 / a2grapplerplus / a2superdrive — so
+// the common path no longer needs `unzip` or `tar` on the host at all.
 const std::vector<RomFetchEntry>& catalogStorage()
 {
     static const std::vector<RomFetchEntry> k = {
@@ -62,29 +66,56 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2o.rom",
           nullptr, nullptr, 0u, nullptr,
           "68d9db6bb4c305d40c3fa89fa0f2d7b7f71516a9431e3138859f23bc5bddb2d1", 0u },
-        { "roms/apple2.rom", "Apple ][ generic fallback", 12288,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2.rom",
+        // apple2-asoft-auto.rom, not RetroBIOS's apple2.rom: same length,
+        // different firmware (the Integer/autostart mix). The digest below
+        // is POM2's own generic fallback — Applesoft + autostart — so the
+        // old URL was rejected on every run.
+        { "roms/apple2.rom", "Apple ][ generic fallback (Applesoft autostart)", 12288,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2-asoft-auto.rom",
           nullptr, nullptr, 0u, nullptr,
           "fc3e9d41e9428534a883df5aa10eb55b73ea53d2fcbb3ee4f39bed1b07a82905", 0u },
-        { "roms/apple2p.rom", "Apple ][+ (six 2 KB chips)", 12288,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2p.zip",
-          "341-0011.d0", kApple2pChips, 0u, nullptr,
-          // The RetroBIOS zip is the SIX-chip 12 KB image; the copy that
-          // ships in roms/ is a different 20 KB dump, so there is no digest
-          // to vouch for here. CRC-less and SHA-less: size is the only gate.
-          nullptr,
-          // …and that gate must not be applied to the LOCAL file: the 20 KB
-          // dump we ship is a legitimate II+ firmware (loadAppleIIRom skips
-          // its 4 KB pad), so accept it as present.
-          20480u },
+        { "roms/apple2p.rom", "Apple ][+", 20480,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2p.rom",
+          nullptr, nullptr, 0u, nullptr,
+          // RetroBIOS now publishes the combined 20 KB dump next to the
+          // six-chip apple2p.zip, and it is byte for byte the one POM2
+          // ships — so this entry finally has a digest to gate on instead
+          // of downloading a DIFFERENT (12 KB) II+ image than the local
+          // file it was comparing against (bug hunt #10).
+          "92c4bef609920842ea472d21b661a0d35dbda6cd90963b8b734a205e22d84108",
+          // …and a tree that already holds the 12 KB six-chip image POM2
+          // used to assemble from that zip still counts as complete: it is
+          // a legitimate II+ firmware, so do not overwrite it.
+          12288u },
         { "roms/apple2e.rom", "Apple //e Enhanced", 32768,
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e.rom",
           nullptr, nullptr, 0u, nullptr,
           "c17bc38c75ba96c33a30c688a1efd60144811073423533fe7f8453cdd9457aab", 0u },
-        { "roms/apple2e_unenh.rom", "Apple //e Unenhanced", 16384,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/AppleIIe.rom",
-          nullptr, nullptr, 0u, nullptr,
+        // NOT RetroBIOS's loose AppleIIe.rom: that is a DIFFERENT 16 KB //e
+        // dump, so the digest below — which is the firmware POM2 ships and
+        // boots — rejected every download this entry ever made. MAME keeps
+        // the unenhanced //e as two 8 KB chips; the image POM2 probes is
+        // 342-0135-B ($C000-$DFFF) then 342-0134-A ($E000-$FFFF).
+        { "roms/apple2e_unenh.rom", "Apple //e Unenhanced (two 8 KB chips)", 16384,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e.zip",
+          "342-0135-b.64", kApple2eUnenhChips, 0u, nullptr,
           "1fb812584c6633fa16b77b20915986ed1178d1e6fc07a647f7ee8d4e6ab9d40b", 0u },
+        { "roms/apple2c-32Kv0.rom", "Apple //c (ROM 0/3/4, 32 KB)", 32768,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2c-32Kv0.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "d65bbf97058b9cdce8eaebf74124048e3b4e42dca1bd42be316747bbc27dc124", 0u },
+        { "roms/apple2c-16K.rom", "Apple //c (ROM 255, 16 KB)", 16384,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2c-16K.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "3ca1c8a27bf111aa0f4dc9372c5e6404457adb9a458ce32ae4b03a7e989e0c76", 0u },
+        { "roms/3420033a.256", "Apple //c UniDisk 3.5 (342-0033-A)", 32768,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/3420033a.256",
+          nullptr, nullptr, 0u, nullptr,
+          "678d5c9d374664d2ee94ba9c9564d26a917b31116b07c46df30a3e82c640885b", 0u },
+        { "roms/apple2cp.rom", "Apple //c Plus (ROM X4)", 32768,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2cp.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "5a62070f6a0b07784681d4df4bf2ce88b2809bec0cbaa65fcb963e804ed60374", 0u },
 
         // ── Character generators ──────────────────────────────────────
         { "roms/apple2_char.rom", "II/II+ character ROM", 2048,
@@ -95,10 +126,65 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e-character.rom",
           nullptr, nullptr, 0u, nullptr,
           "52c3b87900ac939f6525402cab1ccfd8f8259290fc6df54da48fb4c98ae3ed0f", 0u },
+        // Same bytes, second name: CharRomCatalog's "US Enhanced" picker
+        // entry probes apple2e_char_us.rom, so a tree that only got
+        // apple2e_char.rom lost that row from the dropdown. Likewise the
+        // //e UNENHANCED profile's first char probe is apple2e_char_2k.rom,
+        // not the apple2e_char_us_unenh.rom this catalogue already fetched.
+        { "roms/apple2e_char_us.rom", "//e US Enhanced (342-0265-A)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e-character.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "52c3b87900ac939f6525402cab1ccfd8f8259290fc6df54da48fb4c98ae3ed0f", 0u },
         { "roms/apple2e_char_us_unenh.rom", "//e Unenhanced character ROM", 4096,
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2eu-character.rom",
           nullptr, nullptr, 0u, nullptr,
           "ed5bdd4afa509134e85f1d020685af7ff50e279226eb869a17825b471cc1634c", 0u },
+        { "roms/apple2e_char_2k.rom", "//e Unenhanced char ROM (profile probe)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2eu-character.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "ed5bdd4afa509134e85f1d020685af7ff50e279226eb869a17825b471cc1634c", 0u },
+
+        // ── International character sets (the picker's locale rows) ───
+        { "roms/apple2e_char_fr.rom", "//e Français (4 KB)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_fr.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "52d8e46b487a617c288caaf12ab7ad6cb81030b6ab92419f9a2e19c43d765566", 0u },
+        { "roms/apple2e_char_frca.rom", "//e FR Canadien Enhanced", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_frca.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "56479cbec4767651c62a4d0f61e6ed103395216f2b86eddba74d85495dd71cc4", 0u },
+        { "roms/apple2e_char_uk.rom", "//e UK Enhanced (342-0273-A)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_uk.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "d55bd5391485cd78c68c71408f09bd088e82a73d179a0a25820067a0c1554acd", 0u },
+        { "roms/apple2e_char_uk_unenh.rom", "//e UK Unenhanced (341-0160-A)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_uk_unenh.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "f2199fbfb473e98a8c3fb7e7c3312faaf76b4b010b02c655b662e5f87dc997f3", 0u },
+        { "roms/apple2e_char_de.rom", "//e Deutsch (341-0161-A)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_de.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "b92576b4fa994384501078ff99963b53cfa98eff4bb641eb61649d484a469315", 0u },
+        { "roms/apple2e_char_de_improved.rom", "//e Deutsch Improved", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_de_improved.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "0e32ab131e3932fc61c0a5f0f5509b4c37ab8db6239027f5955d47feba56d39f", 0u },
+        // The genuine 342-0274-A: ONE 8 KB part holding both the FR and the
+        // US bank, which is why CharRomCatalog offers it as two rows.
+        { "roms/342-0274-a.e9", "//e Français 342-0274-A (8 KB, both banks)", 8192,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/342-0274-a.e9",
+          nullptr, nullptr, 0u, nullptr,
+          "d4d29771658372c6ab5d18ff3bdab6b3b2b02b8de30ed6b021efb8a415192432", 0u },
+        { "roms/apple2e_char_ft_blockascii.rom",
+          "//e French Touch Block ASCII (custom)", 8192,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/apple2e_char_ft_blockascii.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "c69c8e1eb26923c5df03d3507fdf86c5f768283a924a5fffdd80377cf2339321", 0u },
+        { "roms/Videx Lower Case Chip ROM.bin",
+          "Videx LOWER CASE CHIP (II/II+)", 2048,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/Videx%20Lower%20Case%20Chip%20ROM.bin",
+          nullptr, nullptr, 0x00F68076u, "sha1 447874fe0850c8add3fd5b13fa98f6648fe6f999",
+          "6a516bcd96382597af7a498fb1da7547490c830db0f9d22d541fb065b9cd048b", 0u },
 
         // ── Disk II ───────────────────────────────────────────────────
         { "roms/disk2.rom", "Disk II boot PROM 16-sector", 256,
@@ -118,29 +204,55 @@ const std::vector<RomFetchEntry>& catalogStorage()
           nullptr, nullptr, 0u, nullptr,
           "383c55f5333cbfde39dd41528186631e5aca2eddfec30716344f03b6a4d44655", 0u },
 
-        // ── Cards (MAME romsets sitting next to the Apple II bios/) ──
+        // ── Cards ─────────────────────────────────────────────────────
+        { "roms/liron.rom", "Liron / Apple II 3.5 SmartPort controller", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/liron.rom",
+          nullptr, nullptr, 0u, nullptr,
+          "42c1ae66c6bec932669239599eb8989a5364752d56fa5c8997bb23d8dfc0b657", 0u },
         { "roms/cffa20ee02.bin", "CFFA 2.0 (6502)", 4096,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/a2cffa02.zip",
-          "cffa20ee02.bin", nullptr,
-          0x3ECAFCE5u, "dreher.net Run6_CDROM.zip",
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/cffa20ee02.bin",
+          nullptr, nullptr, 0x3ECAFCE5u, "dreher.net Run6_CDROM.zip",
           "3d7f6918f9af3828f5a6299299a817df0d354ee62e547bc0238755de66162a88", 0u },
+        { "roms/cffa20eec02.bin", "CFFA 2.0 (65C02)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/cffa20eec02.bin",
+          nullptr, nullptr, 0xFB3726F8u, "dreher.net Run6_CDROM.zip",
+          "a08cb25ad80054649ee5fcb620e01ed56f025acb28c753bc28dd187a1d149cab", 0u },
+        { "roms/thunderclock_u9_v1.3.bin", "ThunderClock+ slot ROM v1.3", 2048,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/thunderclock_u9_v1.3.bin",
+          nullptr, nullptr, 0u, nullptr,
+          "ecca793179427fdd193373080bf23e49a95743bd7b5e0b218c747663938b6c03", 0u },
+        { "roms/ae_transwarp_1.4.bin", "TransWarp ROM v1.4 (Applied Engineering)", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/ae_transwarp_1.4.bin",
+          nullptr, nullptr, 0xAFE37F55u, "MAME warprom",
+          "bcbb1a3bab083b0c2988b502f5e024ff4346fab5dbf09276b32724693bcbd0e9", 0u },
+        { "roms/grappler_plus.bin", "Grappler+ EPROM 3.2", 4096,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/grappler_plus.bin",
+          nullptr, nullptr, 0u, nullptr,
+          "9be4dea7722ad8928aee64c2ae708f365a6d66c50a63bff8a3c1a4e7596d44c6", 0u },
+        { "roms/mouse_341-0269.bin", "Mouse card 6805 MCU", 2048,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/mouse_341-0269.bin",
+          nullptr, nullptr, 0u, nullptr,
+          "66480812edad5f6bd70349949cf8bd8fbafee2dc8bf396541d4e78bac2629ec0", 0u },
+        // The only entry left that needs unzip/tar: RetroBIOS has no loose
+        // copy of the mouse SLOT eprom, only MAME's a2mouse romset.
         { "roms/mouse_341-0270-c.bin", "Mouse card slot EPROM", 2048,
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2mouse.zip",
           "341-0270-c.4b", nullptr, 0u, nullptr,
           "7f8e50c0e8a409991264201f9300f109b872b68e09c43f3e6c26af35fd8b89af", 0u },
-        { "roms/mouse_341-0269.bin", "Mouse card 6805 MCU", 2048,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2mouse.zip",
-          "341-0269.2b", nullptr, 0u, nullptr,
-          "66480812edad5f6bd70349949cf8bd8fbafee2dc8bf396541d4e78bac2629ec0", 0u },
-        { "roms/grappler_plus.bin", "Grappler+ EPROM 3.2", 4096,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2grapplerplus.zip",
-          "3.2.u9", nullptr, 0u, nullptr,
-          "9be4dea7722ad8928aee64c2ae708f365a6d66c50a63bff8a3c1a4e7596d44c6", 0u },
+
+        // ── Reference dumps (no POM2 card reads them yet) ─────────────
         { "roms/341-0438-a.bin", "Apple 3.5\" SuperDrive controller", 32768,
-          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2superdrive.zip",
-          "341-0438-a.bin", nullptr,
-          0xC73FF25Bu, "MAME a2superdrive",
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/341-0438-a.bin",
+          nullptr, nullptr, 0xC73FF25Bu, "MAME a2superdrive",
           "084587835c1d2c92f5708a9745fdd43ba32136fcdb861a12ee7d690de22dc172", 0u },
+        { "roms/341-0358-A.bin", "Apple II Workstation Card firmware", 65536,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/341-0358-a.bin",
+          nullptr, nullptr, 0x63819DCBu, "sha1 59c8e8c88bac5c31ada1306b412edfcf5912a720",
+          "ce785b913b9fcec6db0fab89b2d94f07fcd07664a822531dcbba3a5ca70ca3bf", 0u },
+        { "roms/342-0326-a.f12", "//e international keyboard decode ROM (FR)", 2048,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/342-0326-a.f12",
+          nullptr, nullptr, 0xF04970A9u, "MAME apple2eefr",
+          "4ae7ff693a486b155a70a8833047b3d4363464dace6760ed64bfb68db233ed4b", 0u },
     };
     return k;
 }

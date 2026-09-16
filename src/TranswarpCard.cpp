@@ -193,7 +193,16 @@ bool TranswarpCard::setRom(std::vector<uint8_t> bytes)
 {
     if (bytes.size() != kRomSize) return false;
     rom_ = std::move(bytes);
-    if (busSlot() >= 0 && !readA2Rom_) engageShadow();
+    if (shadowing_ && memory_) {
+        // Already covering $F000-$FFFF: engageShadow() would early-return on
+        // `shadowing_` and leave the PREVIOUS dump mapped, so swap the new
+        // bytes in here. `displaced_` must NOT be re-captured — it holds the
+        // Apple's own F8 ROM, and re-capturing would store the outgoing
+        // TransWarp image and hand THAT back on $C072.
+        memory_->loadRomBytes(rom_.data(), kRomSize, 0xF000);
+    } else if (busSlot() >= 0 && !readA2Rom_) {
+        engageShadow();
+    }
     return true;
 }
 

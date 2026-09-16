@@ -101,18 +101,64 @@ int main()
                    std::string("url is under the RetroBIOS raw prefix: ") +
                    url);
         }
-        if (e.zipConcat) {
-            expect(e.zipMember != nullptr,
-                   std::string(e.destRel ? e.destRel : "?") +
-                   " concat list needs a first zipMember");
+    }
+
+    // RetroBIOS PR #75 (merged 2026-09-14) put the dumps POM2 used to have
+    // no source for into the collection. Name them: a later edit that drops
+    // one silently takes the ROM Status panel's Download button back to
+    // "the //c firmware is your problem", which is exactly the state this
+    // catalogue exists to end.
+    {
+        const char* added[] = {
+            "roms/apple2c-32Kv0.rom", "roms/apple2c-16K.rom",
+            "roms/apple2cp.rom", "roms/3420033a.256",
+            "roms/liron.rom", "roms/341-0358-A.bin",
+            "roms/thunderclock_u9_v1.3.bin", "roms/cffa20eec02.bin",
+            "roms/ae_transwarp_1.4.bin",
+            "roms/Videx Lower Case Chip ROM.bin",
+            "roms/342-0274-a.e9", "roms/342-0326-a.f12",
+            "roms/apple2e_char_fr.rom", "roms/apple2e_char_frca.rom",
+            "roms/apple2e_char_uk.rom", "roms/apple2e_char_uk_unenh.rom",
+            "roms/apple2e_char_de.rom", "roms/apple2e_char_de_improved.rom",
+            "roms/apple2e_char_ft_blockascii.rom",
+            // Same bytes as apple2e_char.rom / apple2e_char_us_unenh.rom,
+            // but these are the names the char-ROM picker and the //e
+            // Unenhanced profile actually probe.
+            "roms/apple2e_char_us.rom", "roms/apple2e_char_2k.rom",
+        };
+        for (const char* d : added)
+            expect(dests.count(d) == 1,
+                   std::string(d) + " is served by the RetroBIOS catalogue");
+    }
+
+    // Only TWO entries still need a host unzip/tar: RetroBIOS publishes a
+    // loose copy of everything else, so a machine without those tools can
+    // still complete almost all of its romset. Name them — an entry that
+    // quietly goes back to a zip costs every such machine that dump.
+    {
+        int zipped = 0;
+        for (const auto& e : cat) {
+            if (!e.zipMember) continue;
+            ++zipped;
+            const std::string d(e.destRel);
+            expect(d == "roms/mouse_341-0270-c.bin" ||
+                   d == "roms/apple2e_unenh.rom",
+                   std::string("zip-sourced entries are the mouse slot eprom "
+                               "and the unenhanced //e pair, not ") + d);
         }
+        expect(zipped == 2, "exactly two entries unpack a zip");
+        for (const auto& e : cat)
+            expect(!e.zipConcat || e.zipMember,
+                   std::string(e.destRel) +
+                   " concat list needs a first zipMember");
     }
 
     // Bug hunt #10: the planner re-verified LOCAL files against the
-    // catalogue's download size, and the II+ entry declares the 12 KB
-    // RetroBIOS image while roms/ ships a working 20 KB dump — so on a
+    // catalogue's download size, and the II+ entry declared the 12 KB
+    // six-chip image while roms/ ships a working 20 KB dump — so on a
     // complete tree "Download missing ROMs" listed apple2p.rom every launch
-    // and overwrote a good dump with a different one.
+    // and overwrote a good dump with a different one. Both sizes are
+    // accepted now, and the 20 KB one is what a fresh fetch installs.
     {
         const auto plan = pom2::romsToFetch();
         for (const auto* e : plan) {
@@ -166,6 +212,22 @@ int main()
         }
         expect(withCrc >= 2,
                "the entries with a documented reference dump carry its CRC32");
+        // The two tables must not disagree about the same part: a CRC in
+        // RomCatalog and a different one here means one of them is wrong,
+        // and the one here is the gate that installs the file.
+        for (const auto& e : cat) {
+            if (!e.expectedCrc) continue;
+            for (const auto& c : pom2::romCatalog()) {
+                if (!c.knownCrc) continue;
+                bool same = false;
+                for (const char* cand : c.candidates)
+                    if (std::string(cand) == e.destRel) same = true;
+                if (same)
+                    expect(c.knownCrc == e.expectedCrc,
+                           std::string(e.destRel) +
+                           " CRC32 agrees with RomCatalog");
+            }
+        }
     }
 
     // CRC32 detects DAMAGE. It does not identify a file: 32 non-cryptographic
@@ -187,20 +249,13 @@ int main()
                    std::string(e.destRel ? e.destRel : "?") +
                    " SHA-256 is lowercase hex");
         }
-        expect(withSha >= cat.size() - 1,
-               "every catalog entry but the II+ chip-set carries a SHA-256");
-        // Name the exception, don't just count it. `>= size - 1` let ANY one
-        // entry drop its digest silently; the only entry POM2 has no
-        // reference dump for is the six-chip II+ set (the RetroBIOS zip is
-        // the 12 KB image, the copy in roms/ is a different 20 KB dump), so
-        // that is the one name allowed to appear here. (hunt #4 #31l.)
-        for (const auto& e : cat) {
-            if (e.expectedSha256 && *e.expectedSha256) continue;
-            expect(e.destRel && std::string(e.destRel) == "roms/apple2p.rom",
-                   std::string("the only SHA-less catalog entry is the II+ "
-                               "chip-set, not ") +
-                   (e.destRel ? e.destRel : "?"));
-        }
+        // No exception left. The II+ entry was the one POM2 had no digest
+        // for, because RetroBIOS served a DIFFERENT image (12 KB, six
+        // chips) than the 20 KB dump in roms/; PR #75 published the 20 KB
+        // one, so every entry is now gated on a digest of the exact bytes
+        // POM2 ships. (was hunt #4 #31l.)
+        expect(withSha == static_cast<int>(cat.size()),
+               "every catalog entry carries a SHA-256");
     }
 
     // The digest law itself, against the FIPS 180-4 examples — a hand-rolled

@@ -5,6 +5,62 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-16 — "Download missing from RetroBIOS" can now complete the romset
+
+RetroBIOS [PR #75](https://github.com/Abdess/retrobios/pull/75) (merged
+2026-09-14) put the dumps the button had no source for into the collection,
+so `romFetchCatalog()` goes from 18 entries to **38**: the //c 16 K / //c
+32 K / //c+ / 342-0033-A firmware, the Liron, Workstation Card,
+ThunderClock+, CFFA 65C02 and TransWarp EPROMs, the Videx LOWER CASE CHIP,
+the //e FR keyboard-decode and 342-0274-A 8 KB video ROMs, and the six
+European character generators. Every one is verified live: right size,
+right CRC32 where `RomCatalog` vouches for one, right SHA-256 against the
+copy POM2 ships. The TransWarp ROM is the one row a complete source tree
+still fetches — POM2's own `roms/` has never held it.
+
+Two names were added for dumps already reachable under another one, because
+they are what the code *probes*: `apple2e_char_us.rom` is the char-ROM
+picker's "US Enhanced" row and `apple2e_char_2k.rom` is the //e
+**Unenhanced** profile's first char probe, so a tree that only got
+`apple2e_char.rom` / `apple2e_char_us_unenh.rom` was still missing a
+dropdown entry and still fell back to Enhanced firmware's character set.
+
+**And two entries were fetching the wrong file.** The SHA-256 gate added on
+2026-09-07 is what made it visible — both had been failing it silently on
+every run, reporting "this is not the dump POM2 asked for". `apple2.rom`
+pointed at RetroBIOS's `apple2.rom`: same 12 KB length, different firmware.
+POM2's generic fallback is the Applesoft autostart image, which upstream
+calls `apple2-asoft-auto.rom`. `apple2e_unenh.rom` pointed at
+`AppleIIe.rom`, a different 16 KB //e dump; POM2's image is MAME's two
+chips concatenated — 342-0135-B ($C000-$DFFF) then 342-0134-A
+($E000-$FFFF) — which is exactly what `zipConcat` was built for and now
+assembles out of `apple2e.zip`.
+
+**The TransWarp ROM now ships.** `roms/ae_transwarp_1.4.bin` (4 KB, CRC32
+`afe37f55` = MAME `warprom`) was the one row a complete source tree still
+had to fetch; it is in `roms/` now, so the card shadows `$F000-$FFFF` with
+AE's speed-corrected Monitor out of the box instead of running the stock F8
+delay loops 3.5× short. That immediately found a latent bug: `setRom` calls
+`engageShadow()`, which early-returns on `shadowing_`, so replacing the
+image while the shadow was up left the PREVIOUS one mapped. It swaps the
+new bytes in itself now, without re-capturing `displaced_` (that holds the
+Apple's F8 ROM; re-capturing it is bug hunt #9 by another road).
+`transwarp_card` asserted `$F000 == 0xA5` unconditionally after
+`loadRomFromDisk()` — true only while no dump existed, i.e. the test was
+pinning the absence of the feature. It now checks both branches.
+
+PR #75 also published loose copies of the dumps the catalogue used to
+unpack from `a2cffa02` / `a2grapplerplus` / `a2superdrive` / `a2mouse`, so
+only **two** entries still need `unzip` or `tar` on the host (the mouse
+slot eprom and the unenhanced //e pair) — a machine without those tools can
+now complete almost all of its romset. The II+ entry changed sides too:
+RetroBIOS serves the same 20 KB dump POM2 ships, so a fetch installs that
+and the entry finally carries a digest, while `altPresentSize` now protects
+the 12 KB six-chip image a tree may already hold instead of the reverse
+(bug hunt #10). `rom_fetch` pins the added names, the two zip users, the
+"every entry carries a SHA-256" rule with no exception left, and that the
+CRC32s agree with `RomCatalog`.
+
 ## 2026-09-15 — A rebuild that throws no longer kills POM2 or blocks the next Apply
 
 An exception between the slot teardown and the publish (a ROM load, a card
