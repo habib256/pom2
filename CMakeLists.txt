@@ -382,6 +382,7 @@ set(SOURCES
     src/CommandPalette_ImGui.cpp
     src/Pom2Theme.cpp
     src/RomFetch.cpp
+    src/ZipMember.cpp
     src/RomStatus_ImGui.cpp
     src/AbstractionLevels_ImGui.cpp
     src/AppleIIeKeyboardLayout.cpp
@@ -707,6 +708,7 @@ set(POM2_RUNTIME_SOURCES
     src/PrinterScreenDump.cpp
     src/PrinterSoundDevice.cpp
     src/RomFetch.cpp
+    src/ZipMember.cpp
     src/RewindBuffer.cpp
     src/SlirpNetworkBackend.cpp
     src/SpOverSlipLink.cpp
@@ -751,6 +753,7 @@ set(HEADERS
     src/CffaCard.h
     src/CharRomCatalog.h
     src/RomFetch.h
+    src/ZipMember.h
     src/CliDispatcher.h
     src/ClockCard.h
     src/Disassembler6502.h

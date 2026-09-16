@@ -173,6 +173,8 @@ public:
 
     /// Convenience accessors for inspectors / save state.
     bool isMotorOn()        const { return motorOn_; }
+    /// A firmware eject is queued on the write-back sink and not yet on disk.
+    bool isEjectPending()   const { return ejectPending_; }
 
     /// Guest-write diagnostics. `sectorsDecoded` counts sectors the decoder
     /// ACCEPTED out of the cells this drive wrote — right track, right side,

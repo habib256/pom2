@@ -23,11 +23,29 @@
 
 #include "ResourcePaths.h"
 #include "RomFetch.h"
+#include "ZipMember.h"
+
+// Only to build a DEFLATED member for the in-process reader to undo.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wunused-function"
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+#include "stb_image_write.h"
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
 #include "RomCatalog.h"
 #include "CharRomCatalog.h"
 #include "SystemProfile.h"
 
 #include <algorithm>
+#include <iterator>
+#include <filesystem>
+#include <cstdlib>
+#include <fstream>
 #include <cstdint>
 #include <cstdio>
 #include <set>
@@ -41,6 +59,71 @@ int failures = 0;
 void expect(bool cond, const std::string& what)
 {
     if (!cond) { std::printf("FAIL: %s\n", what.c_str()); ++failures; }
+}
+
+std::uint32_t crc32Of(const std::vector<std::uint8_t>& b)
+{
+    std::uint32_t c = 0xFFFFFFFFu;
+    for (std::uint8_t x : b) {
+        c ^= x;
+        for (int k = 0; k < 8; ++k) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+    }
+    return ~c;
+}
+
+struct ZipEntry {
+    std::string               name;
+    std::vector<std::uint8_t> plain;
+    int                       method;   // 0 stored, 8 deflate, else as-is
+};
+
+/// A minimal but well-formed PKZIP archive.
+std::vector<std::uint8_t> buildZip(const std::vector<ZipEntry>& entries)
+{
+    std::vector<std::uint8_t> out, cdir;
+    auto p16 = [](std::vector<std::uint8_t>& v, std::uint32_t x) {
+        v.push_back(static_cast<std::uint8_t>(x));
+        v.push_back(static_cast<std::uint8_t>(x >> 8));
+    };
+    auto p32 = [&](std::vector<std::uint8_t>& v, std::uint32_t x) {
+        p16(v, x & 0xFFFF); p16(v, x >> 16);
+    };
+    for (const auto& e : entries) {
+        std::vector<std::uint8_t> packed = e.plain;
+        if (e.method == 8) {
+            int zlen = 0;
+            std::vector<std::uint8_t> in = e.plain;
+            unsigned char* z = stbi_zlib_compress(in.data(), static_cast<int>(in.size()), &zlen, 8);
+            // zlib stream -> raw deflate: drop the 2-byte header and Adler-32.
+            packed.assign(z + 2, z + zlen - 4);
+            STBIW_FREE(z);
+        }
+        const std::uint32_t off = static_cast<std::uint32_t>(out.size());
+        const std::uint32_t crc = crc32Of(e.plain);
+        p32(out, 0x04034B50u); p16(out, 20); p16(out, 0);
+        p16(out, static_cast<std::uint32_t>(e.method)); p16(out, 0); p16(out, 0);
+        p32(out, crc); p32(out, static_cast<std::uint32_t>(packed.size()));
+        p32(out, static_cast<std::uint32_t>(e.plain.size()));
+        p16(out, static_cast<std::uint32_t>(e.name.size())); p16(out, 0);
+        out.insert(out.end(), e.name.begin(), e.name.end());
+        out.insert(out.end(), packed.begin(), packed.end());
+
+        p32(cdir, 0x02014B50u); p16(cdir, 20); p16(cdir, 20); p16(cdir, 0);
+        p16(cdir, static_cast<std::uint32_t>(e.method)); p16(cdir, 0); p16(cdir, 0);
+        p32(cdir, crc); p32(cdir, static_cast<std::uint32_t>(packed.size()));
+        p32(cdir, static_cast<std::uint32_t>(e.plain.size()));
+        p16(cdir, static_cast<std::uint32_t>(e.name.size()));
+        p16(cdir, 0); p16(cdir, 0); p16(cdir, 0); p16(cdir, 0); p32(cdir, 0);
+        p32(cdir, off);
+        cdir.insert(cdir.end(), e.name.begin(), e.name.end());
+    }
+    const std::uint32_t cdOff = static_cast<std::uint32_t>(out.size());
+    out.insert(out.end(), cdir.begin(), cdir.end());
+    p32(out, 0x06054B50u); p16(out, 0); p16(out, 0);
+    p16(out, static_cast<std::uint32_t>(entries.size()));
+    p16(out, static_cast<std::uint32_t>(entries.size()));
+    p32(out, static_cast<std::uint32_t>(cdir.size())); p32(out, cdOff); p16(out, 0);
+    return out;
 }
 
 std::set<std::string> knownDests()
@@ -69,6 +152,70 @@ std::set<std::string> knownDests()
 
 int main()
 {
+    // Everything this test writes under the per-user data dir — the
+    // roms-replaced backups below — must land in a scratch tree, not in the
+    // user's real one. userDataDir() follows these, so point them away
+    // BEFORE anything asks for it.
+    const std::filesystem::path home =
+        std::filesystem::temp_directory_path() / "pom2_rom_fetch_home";
+    {
+        std::error_code rec;
+        std::filesystem::remove_all(home, rec);
+        std::filesystem::create_directories(home, rec);
+#ifdef _WIN32
+        _putenv_s("LOCALAPPDATA", home.string().c_str());
+        _putenv_s("APPDATA", home.string().c_str());
+#else
+        setenv("HOME", home.string().c_str(), 1);
+        setenv("XDG_DATA_HOME", home.string().c_str(), 1);
+#endif
+    }
+    // Where a download lands: the per-user roms/, the FIRST search root, so
+    // a wrong file in a later root can never shadow it — and asking must not
+    // create anything (the ROM Status tooltip asks on every hover).
+    {
+        namespace fs = std::filesystem;
+        std::error_code dec;
+        const fs::path want = pom2::userDataDir() / "roms";
+        fs::remove_all(want, dec);
+        const fs::path got = pom2::writableRomsDir();
+        expect(pom2::userDataDirIsPerUser(), "the sandboxed data dir is per-user");
+        expect(got == want, "downloads go to the per-user roms/ (got " +
+                                got.string() + ")");
+        expect(!fs::exists(want, dec), "asking for the directory created it");
+    }
+
+    // Romsets are unpacked in-process: the host fallback was `tar`, and GNU
+    // tar does not read zip, so a Linux box without unzip failed every one.
+    {
+        std::vector<std::uint8_t> rom(12288);
+        for (std::size_t i = 0; i < rom.size(); ++i)
+            rom[i] = static_cast<std::uint8_t>((i * 7) ^ (i >> 5));
+        const std::vector<std::uint8_t> small{ 'A', 'P', 'P', 'L', 'E' };
+        const auto zip = buildZip({ { "341-0011.d0", rom, 8 },
+                                    { "stored.bin", small, 0 },
+                                    { "odd.bin", small, 12 } });
+        std::vector<std::uint8_t> got;
+        std::string zerr;
+        bool unsupported = true;
+        expect(pom2::readZipMember(zip, "341-0011.d0", got, zerr, 1 << 20, &unsupported)
+                   && got == rom && !unsupported,
+               "a deflated member unpacks in-process (" + zerr + ")");
+        expect(pom2::readZipMember(zip, "stored.bin", got, zerr, 1 << 20) && got == small,
+               "a stored member unpacks in-process");
+        expect(!pom2::readZipMember(zip, "absent.bin", got, zerr, 1 << 20),
+               "an absent member is an error");
+        expect(!pom2::readZipMember(zip, "odd.bin", got, zerr, 1 << 20, &unsupported)
+                   && unsupported,
+               "an unknown method is flagged for the host tool");
+        expect(!pom2::readZipMember(zip, "341-0011.d0", got, zerr, 1024),
+               "the size cap applies before inflating");
+        std::vector<std::uint8_t> damaged = zip;
+        damaged[30 + 11 + 40] ^= 0xFF;          // inside the deflated payload
+        expect(!pom2::readZipMember(damaged, "341-0011.d0", got, zerr, 1 << 20),
+               "a damaged member is refused");
+    }
+
     const auto known = knownDests();
     const auto& cat  = pom2::romFetchCatalog();
 
@@ -171,6 +318,114 @@ int main()
             for (const auto* e : plan) if (std::string(e->destRel) == "roms/apple2p.rom") listed = true;
             expect(!listed, "the shipped 20 KB II+ dump counts as present");
         }
+    }
+
+    // ── The planner's verdict on a dump already on disk ──────────────
+    // The II+ entry fetches the 20 KB dump and ALSO accepts the 12 KB
+    // six-chip image as present. The digests describe the 20 KB one, so they
+    // cannot apply to the 12 KB alternate — checking them anyway re-opened
+    // bug hunt #10 the day the entry gained a SHA-256: every 12 KB II+ tree
+    // was flagged and "Download missing" replaced a firmware that boots
+    // (bug hunt 2026-09-16).
+    {
+        const pom2::RomFetchEntry* ap = nullptr;
+        for (const auto& e : cat)
+            if (std::string(e.destRel) == "roms/apple2p.rom") ap = &e;
+        expect(ap != nullptr, "the II+ entry exists");
+        if (ap) {
+            expect(ap->altPresentSize == 12288, "the II+ alternate is the 12 KB image");
+            const std::vector<std::uint8_t> twelveK(12288, 0x4C);
+            expect(pom2::localDumpAcceptable(*ap, twelveK),
+                   "a 12 KB II+ firmware counts as present despite the 20 KB digest");
+            const std::vector<std::uint8_t> wrong20K(ap->expectedSize, 0x00);
+            expect(!pom2::localDumpAcceptable(*ap, wrong20K),
+                   "a 20 KB file that is not the dump is still flagged");
+            const std::vector<std::uint8_t> odd(1234, 0x00);
+            expect(!pom2::localDumpAcceptable(*ap, odd),
+                   "a file of neither size is flagged");
+        }
+    }
+
+    // ── A replaced dump is kept, never destroyed ─────────────────────
+    // The planner replaces a present file that is not the expected dump.
+    // That is right for a damaged one and wrong for a legitimate variant
+    // POM2 has no digest for, and it cannot tell them apart — so the old file
+    // is copied aside first, and nothing is replaced if it cannot be
+    // (bug hunt 2026-09-16).
+    {
+        namespace fs = std::filesystem;
+        std::error_code rec;
+        const fs::path roms = home / "tree" / "roms";
+        fs::create_directories(roms, rec);
+        const fs::path dest = roms / "variant.bin";
+        const std::string oldBody = "A USER'S VARIANT";          // 16 bytes
+        const std::vector<std::uint8_t> newBytes(16, 0xA9);
+        const std::string newSha = pom2::sha256Hex(newBytes.data(), newBytes.size());
+        const pom2::RomFetchEntry entry{
+            "roms/variant.bin", "test variant", 16,
+            "https://raw.githubusercontent.com/Abdess/retrobios/main/x",
+            nullptr, nullptr, 0u, nullptr, newSha.c_str(), 0u };
+        auto slurp = [](const fs::path& p) {
+            std::ifstream f(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(f)),
+                               std::istreambuf_iterator<char>());
+        };
+        auto put = [](const fs::path& p, const std::string& body) {
+            std::ofstream f(p, std::ios::binary | std::ios::trunc);
+            f << body;
+        };
+
+        // A download that is not the dump: refused, nothing touched.
+        put(dest, oldBody);
+        std::string err, backup;
+        const std::vector<std::uint8_t> bogus(16, 0x00);
+        expect(!pom2::installFetchedRom(dest, entry, bogus, err, backup),
+               "a download failing its digest is refused");
+        expect(slurp(dest) == oldBody && backup.empty(),
+               "a refused download leaves the present file alone, with no backup");
+
+        // The right dump over a different file: installed, old one kept.
+        err.clear();
+        expect(pom2::installFetchedRom(dest, entry, newBytes, err, backup),
+               std::string("the expected dump installs over a variant: ") + err);
+        expect(!backup.empty(), "the replaced file's backup is reported");
+        expect(slurp(dest) == std::string(newBytes.begin(), newBytes.end()),
+               "the new dump is in place");
+        expect(!backup.empty() && slurp(backup) == oldBody,
+               "the backup holds the user's old file, byte for byte");
+        expect(!backup.empty() &&
+                   fs::path(backup).parent_path().filename() == "roms-replaced" &&
+                   std::string(backup).find(roms.string()) == std::string::npos,
+               "the backup lives in roms-replaced, outside roms/ (it would ship)");
+
+        // The same bytes again (a second POM2 fetching at the same time, or a
+        // re-run): nothing replaced, nothing backed up — reporting a copy of
+        // an identical file as "replaced a different file" was the race's
+        // other symptom (bug hunt 2026-09-16).
+        {
+            err.clear();
+            std::string again;
+            const auto keptBefore = std::distance(fs::directory_iterator(fs::path(backup).parent_path()),
+                                                  fs::directory_iterator());
+            expect(pom2::installFetchedRom(dest, entry, newBytes, err, again),
+                   "re-installing identical bytes succeeds");
+            expect(again.empty(), "an identical file is not reported as replaced");
+            expect(std::distance(fs::directory_iterator(fs::path(backup).parent_path()),
+                                 fs::directory_iterator()) == keptBefore,
+                   "an identical file is not backed up");
+        }
+
+        // No way to keep the old file: no replacement at all.
+        put(dest, oldBody);
+        const fs::path keepDir = pom2::userDataDir() / "roms-replaced";
+        fs::remove_all(keepDir, rec);
+        put(keepDir, "a FILE where the backup directory should be");
+        err.clear(); backup.clear();
+        expect(!pom2::installFetchedRom(dest, entry, newBytes, err, backup),
+               "an impossible backup refuses the replacement");
+        expect(slurp(dest) == oldBody,
+               "the present file survives a failed backup");
+        fs::remove(keepDir, rec);
     }
 
     // Planner: nothing present → every entry; everything present → none;

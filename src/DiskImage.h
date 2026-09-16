@@ -182,13 +182,16 @@ public:
     /// I/O ERROR to every read, and a real format writes the address fields
     /// through `writeFlux` exactly as it would on iron.
     ///
-    /// Marks every track dirty: `saveDirty()` will decode the surface back
-    /// to the source file, so a format done by the guest is persisted. The
-    /// UNFORMATTED state itself is not persistable in a .dsk/.do/.po (the
-    /// container has no way to say "no address field here") — it lives from
-    /// this call until the guest formats. A WOZ says it properly, with a
-    /// TMAP entry of $FF, and is left alone here: its surface is
-    /// `bitStream`/`wozRaw`, not the nibble buffer.
+    /// Marks NOTHING dirty. An unformatted track has no sector to decode,
+    /// so a dirty one would make `saveDirty()` refuse the whole save — and
+    /// with it every eject, swap and flush of the drive. The tracks the
+    /// guest formats are dirtied by `writeFlux` and written back as usual;
+    /// the ones it never reaches leave the file as it was. The UNFORMATTED
+    /// state itself is not persistable in a .dsk/.do/.po (the container has
+    /// no way to say "no address field here") — it lives from this call
+    /// until the guest formats. A WOZ says it properly, with a TMAP entry of
+    /// $FF, and is left alone here: its surface is `bitStream`/`wozRaw`,
+    /// not the nibble buffer.
     ///
     /// No-op on a physically write-protected medium — you cannot erase a
     /// disk through a covered notch.
@@ -200,14 +203,17 @@ public:
     /// perfectly formatted disk. `eraseSurface()` above is what makes the
     /// MEDIUM unformatted.
     ///
-    /// REFUSES to overwrite an existing file. "New blank disk" landing on a
-    /// name the user already has is how somebody's only copy of a game turns
-    /// into 143 KB of zeros, and there is no undo for it. The caller picks
-    /// another name; the UI generates one that cannot collide.
+    /// REFUSES to overwrite an existing file, and the refusal IS the create
+    /// (O_EXCL / _O_EXCL): "New blank disk" landing on a name the user
+    /// already has is how somebody's only copy of a game turns into 143 KB
+    /// of zeros, and there is no undo for it. A separate "does it exist?"
+    /// check before an atomic rename was not enough — the rename replaces
+    /// whatever got there in between. On refusal the caller picks another
+    /// name; the UI generates names until one is free.
     ///
-    /// Parent directories are created, and the write goes through the same
-    /// atomic + durable commit every media write-back uses. Returns false
-    /// with `error` filled in.
+    /// Parent directories are created and the data is flushed to disk.
+    /// Returns false with `error` filled in; a partial file it created is
+    /// removed.
     static bool createBlankFile(const std::string& path, std::string& error);
 
     /// True while every track of the medium is blank — no flux anywhere,

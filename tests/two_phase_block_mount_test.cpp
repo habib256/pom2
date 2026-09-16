@@ -265,6 +265,93 @@ void testSameFileWithUnsavedWritesIsNotRolledBack()
     std::error_code ec; fs::remove(p, ec);
 }
 
+// ── 4b. …even when the remount spells the path differently ───────────────
+// The collision test compared path STRINGS, so the same file reached as
+// `dir/./name` (or through a symlink) adopted the pre-write bytes.
+void testSameFileUnderAnotherSpellingIsNotRolledBack()
+{
+    const fs::path p = tmpPath("pom2_2pb_spelling.hdv");
+    writeFile(p, rawImage(4));
+
+    std::vector<fs::path> spellings{ p.parent_path() / "." / p.filename() };
+    const fs::path link = tmpPath("pom2_2pb_spelling_link.hdv");
+    std::error_code ec;
+    fs::remove(link, ec);
+    fs::create_symlink(p, link, ec);
+    if (!ec) spellings.push_back(link);   // Windows may refuse without rights
+
+    std::uint8_t fill = 0xB0;
+    for (const fs::path& other : spellings) {
+        pom2::Block512Backing b;
+        assert(b.loadImage(p.string()));
+        b.setWriteBackEnabled(true);
+        ++fill;
+        std::vector<uint8_t> block(kBlk, fill);
+        assert(b.writeBlock(3, block.data()));
+
+        pom2::Block512Backing::PreparedImage prepared;
+        std::string err;
+        assert(pom2::Block512Backing::readImageFile(other.string(), prepared, err));
+        assert(prepared.path != p.string());
+        assert(b.adoptImage(std::move(prepared)));
+        assert(firstByteOfBlock(b, 3) == fill &&
+               "the same file under another name adopted the stale bytes");
+        assert(readFile(p)[3 * kBlk] == fill);
+    }
+
+    std::printf("[ OK ] the same file under another spelling keeps the writes\n");
+    fs::remove(link, ec);
+    fs::remove(p, ec);
+}
+
+// ── 4c. A bay whose eject is still being saved takes no new image ────────
+// The eject's capture retires the dirty flags; if a mount lands before the
+// commit reports (the AI server mounts from its own thread) and the commit
+// then fails, there is no medium left to hand the blocks back to.
+void testDetachReservesTheBay()
+{
+    const fs::path p     = tmpPath("pom2_2pb_detach.hdv");
+    const fs::path other = tmpPath("pom2_2pb_detach_other.hdv");
+    writeFile(p, rawImage(4));
+    writeFile(other, rawImage(4));
+
+    pom2::Block512Backing b;
+    assert(b.loadImage(p.string()));
+    b.setWriteBackEnabled(true);
+    std::vector<uint8_t> block(kBlk, 0x77);
+    assert(b.writeBlock(1, block.data()));
+
+    {
+        auto pending = b.takeDetachWriteBack();
+        assert(pending.valid && pending.reservation);
+        pom2::Block512Backing::PreparedImage prepared;
+        std::string err;
+        assert(pom2::Block512Backing::readImageFile(other.string(), prepared, err));
+        assert(!b.adoptImage(std::move(prepared)) &&
+               "a bay whose eject is being saved took another image");
+        assert(!b.loadImage(other.string()));
+        assert(b.path() == p.string());
+        // The commit fails: the blocks go back to the medium still mounted.
+        b.restoreDirty(pending.dirtyIndices);
+        assert(b.hasUnsavedChanges());
+    }
+    // The payload is gone: the bay is free again.
+    assert(b.loadImage(other.string()) && "the reservation outlived its payload");
+    assert(readFile(p)[1 * kBlk] == 0x77 && "the retry did not save the writes");
+
+    // The autosave capture reserves nothing.
+    assert(b.writeBlock(2, block.data()));
+    {
+        auto pending = b.takeWriteBack();
+        assert(pending.valid && !pending.reservation);
+    }
+
+    std::printf("[ OK ] a bay whose eject is being saved takes no new image\n");
+    std::error_code ec;
+    fs::remove(p, ec);
+    fs::remove(other, ec);
+}
+
 // ── 5. Write-back still works through a two-phase mount ──────────────────
 void testWriteBackAfterTwoPhaseMount()
 {
@@ -415,6 +502,8 @@ int main()
     testTwoImgHeaderIsStillParsed();
     testReadOnlyFileMountsWriteProtected();
     testSameFileWithUnsavedWritesIsNotRolledBack();
+    testSameFileUnderAnotherSpellingIsNotRolledBack();
+    testDetachReservesTheBay();
     testWriteBackAfterTwoPhaseMount();
     testFailurePaths();
     testWritesDuringPendingWriteBackSurvive();

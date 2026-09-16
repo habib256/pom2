@@ -35,6 +35,8 @@
 #ifndef POM2_CHAR_ROM_CATALOG_H
 #define POM2_CHAR_ROM_CATALOG_H
 
+#include <cstddef>
+
 #include "SystemProfile.h"
 
 #include <cstdint>
@@ -95,6 +97,11 @@ struct CharRomEntry {
                                     // entry is shown for every profile)
     int           bank = 0;         // 4 KB bank inside an 8 KB two-set dump;
                                     // ignored for 2 KB / 4 KB parts
+    /// The part's file size when it is not the class default (2 KB for a
+    /// II/II+, 4 KB for a IIe-class). The 8 KB two-set dumps say so here, or
+    /// the ROM Status panel paints a correct file red as "wrong size — a
+    /// different file, not a variant" (bug hunt 2026-09-16). 0 = default.
+    std::size_t   size = 0;
 };
 
 /// All entries the dropdown could ever display, in stable order.

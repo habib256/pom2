@@ -1090,7 +1090,11 @@ int main(int argc, char* argv[])
             }
             err.clear();
             if (c.bootDiskPath.empty()) {
-                pom2::log().info("CLI", "ProDOS host folder mounted without boot disk");
+                // Only true when there WAS a folder: `--blank-disk` alone
+                // also runs this step now, and used to log a mount that
+                // never happened.
+                if (!c.prodosFolderPath.empty())
+                    pom2::log().info("CLI", "ProDOS host folder mounted without boot disk");
             } else if (c.mainWindow->insertAndBootImage(c.bootDiskPath, err)) {
                 pom2::log().info("CLI", "booted disk: " + c.bootDiskPath);
             } else {

@@ -294,7 +294,11 @@ void DiskIICard::refreshMediaDerivedState(bool warnMissing13Rom)
     // next motor-on re-anchors it from scratch.
     if (wasBitLss && !useBitLss && active != MODE_IDLE) {
         active          = MODE_IDLE;
-        motorOffDelay   = 0;
+        // `motorOffDelay` is KEPT. It is the one countdown both gates share
+        // (advanceCycles ticks it on either), and zeroing it while the motor
+        // coasted left `motorOn` true for ever — ejecting the only WOZ in
+        // that second, with no P6 dump, meant a drive that never stopped
+        // (bug hunt 2026-09-16).
         writePosition   = 0;
         writeLineActive = false;
         for (int d = 0; d < kDriveCount; ++d)
@@ -329,7 +333,14 @@ void DiskIICard::commitInFlightWrite()
                   revolutionStartLssCycle[activeDrive]);
     ++writeFlushCount;
     writePosition   = 0;
-    writeLineActive = false;
+    // `writeLineActive` is NOT reset here. It is the level the head is
+    // writing, and the burst goes on after this commit: dropping it made the
+    // next edge look like a transition that never happened, one bit of the
+    // sector in flight came out inverted, and a SAVE interrupted by a flush,
+    // an eject on the other drive or a stepper access failed its verify
+    // (bug hunt 2026-09-16). MAME resets `write_line_active` only in
+    // lss_start (wozfdc.cpp:348); the 30-transition flush in lssSync already
+    // left it alone.
     // RE-BASE the window. Every other flush site does (`lssSync`'s
     // 30-transition pre-emptive flush, the motor-off flush in
     // advanceCycles, selectDrive's swap splice); this one did not, so a
@@ -506,23 +517,25 @@ bool DiskIICard::installDisk(int drive, DiskImage&& prepared)
 // every piece of controller state that depends on the medium.
 bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
 {
+    if (!ejecting_[drive].expired()) {
+        mediaErrors[drive] = "the previous disk in this drive is still being "
+                             "saved — retry in a moment";
+        return false;
+    }
     DiskImage& img = images[drive];
     img = std::move(replacement);
     mediaErrors[drive].clear();
     trackPos[drive] = 0;
-    cycleAccum      = 0;
-    writeLatch      = 0xFF;
-    // Reset MAME wozfdc state. The default P6 ROM is in p6Rom (see
-    // constructor) so the LSS path works without the optional
-    // roms/diskii_p6.rom override. We still gate on `p6RomLoaded` so
-    // the user can opt out by removing the file. (Done unconditionally
-    // here so a drive-2 insert mid-session also resyncs the LSS rather
-    // than carrying over flux state from the prior drive-1 image.)
-    address         = 0x10;          // !PULSE high (no pulse), state=0
-    lssData         = 0;
-    writePosition   = 0;
-    writeLineActive = false;
-    writeStartTime  = 0;
+    // A media change is a DRIVE event, not a controller one. MAME's image
+    // load never touches wozfdc state, and this used to: the sequencer
+    // address, the data register, the write latch and the whole in-flight
+    // burst were reset on ANY insert — so mounting a disk in drive 2 while
+    // DOS wrote drive 1 cleared the WRITE bit of `address` with writeMode
+    // still on, the sequencer ran read states for the rest of the burst, the
+    // sector came out corrupt, and write-back then committed it (bug hunt
+    // 2026-09-16). The legacy gate's nibble timer is the one piece tied to
+    // the medium under the head, so it follows the active drive only.
+    if (drive == activeDrive) cycleAccum = 0;
     refreshMediaDerivedState(/*warnMissing13Rom=*/true);
     // Re-anchor the bit-level LSS clock to "now". If the controller was
     // already spinning (active != MODE_IDLE) over an empty drive, lssCycle
@@ -542,7 +555,11 @@ bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
         // the LSS never runs, and the legacy motor can no longer be
         // switched off through the LSS path. Mirror control() case 0x9's
         // MODE_IDLE branch instead of stranding the state.
-        active = MODE_ACTIVE;
+        // A legacy motor already coasting down stays coasting: promoting it
+        // to MODE_ACTIVE let the shared countdown clear `motorOn` while the
+        // LSS kept running, and the next $C0E9 then did nothing (bug hunt
+        // 2026-09-16).
+        active = (motorOffDelay > 0) ? MODE_DELAY : MODE_ACTIVE;
         lssStart();
     }
     // No click here — fires at user-initiated insert via UI / CLI only.
@@ -553,7 +570,7 @@ bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
     return true;
 }
 
-std::unique_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
+std::shared_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
 {
     if (drive < 0 || drive >= kDriveCount) return nullptr;
     // Same reason insertDisk and flushPendingWrites do it: fold the burst the
@@ -565,7 +582,7 @@ std::unique_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
     // reverted to its old contents while the save reported success.
     commitInFlightWrite();
     DiskImage& img = images[drive];
-    std::unique_ptr<DiskImage> pending;
+    std::shared_ptr<DiskImage> pending;
     if (img.isLoaded() && img.hasUnsavedChanges()) {
         // Move-ASSIGN into an already-heap-allocated image. A `DiskImage` is
         // ~242 KB and macOS gives a std::thread a 512 KB stack, so neither the
@@ -574,13 +591,16 @@ std::unique_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
         // as `prepareDisk`. Element-wise array move is a memcpy done in
         // place: microseconds, and no syscall, which is the whole point of
         // doing this half under the lock.
-        pending = std::make_unique<DiskImage>();
+        pending = std::make_shared<DiskImage>();
         *pending = std::move(img);
+        ejecting_[drive] = pending;          // the drive is reserved until it is gone
     }
     img.eject();
     mediaErrors[drive].clear();
     trackPos[drive] = 0;
-    writeLatch      = 0xFF;
+    // `writeLatch` is the CPU's last byte on the data bus, not a property of
+    // the disk: resetting it here corrupted a write the legacy gate was
+    // clocking out on the OTHER drive (bug hunt 2026-09-16).
     // The 13-sector PROM selection and the WOZ-forced LSS path are functions
     // of what is mounted RIGHT NOW — removing the disk that selected them has
     // to un-select them, or the card keeps answering $Cn00 out of the
@@ -601,9 +621,12 @@ bool DiskIICard::commitEjectWriteBack(DiskImage& pending, std::string& error)
     return false;
 }
 
-bool DiskIICard::restoreEjected(int drive, std::unique_ptr<DiskImage> pending)
+bool DiskIICard::restoreEjected(int drive, std::shared_ptr<DiskImage> pending)
 {
     if (drive < 0 || drive >= kDriveCount || !pending) return false;
+    // The reservation ends here, whatever happens next: this IS the payload
+    // coming back (the caller's handle is about to go).
+    ejecting_[drive].reset();
     if (images[drive].isLoaded()) return false;   // bay refilled meanwhile
     const std::string err = pending->getLastError();
     // installPreparedLocked re-anchors the LSS exactly as an insert does, and
@@ -621,7 +644,7 @@ bool DiskIICard::ejectDisk(int drive)
     // Composed from the three-step form so there is ONE copy of the eject
     // logic — the same shape `Block512Backing::saveDirty` has. The phases are
     // simply not separated in time here.
-    std::unique_ptr<DiskImage> pending = takeEjectWriteBack(drive);
+    std::shared_ptr<DiskImage> pending = takeEjectWriteBack(drive);
     if (!pending) return true;             // empty bay, or nothing to save
     std::string error;
     if (commitEjectWriteBack(*pending, error)) return true;
@@ -677,6 +700,7 @@ void DiskIICard::onReset()
     writeMode = false;
     loadMode  = false;
     phaseOn   = {};
+    drivePhases_ = {};
     cycleAccum = 0;
     dataLatch  = 0;
     byteReady  = false;
@@ -738,8 +762,37 @@ void DiskIICard::seekPhaseW(int phases)
         -1, /*0xE three magnets*/
         -1, /*0xF all four*/
     };
+    drivePhases_[activeDrive] = static_cast<uint8_t>(phases & 0xF);
     const int req = reqPosTable[phases & 0xF];
-    if (req < 0) return;
+    if (req < 0) {
+        // ── The one deliberate divergence from MAME here ──────────────────
+        // MAME moves the head the instant a pattern is energised. A real
+        // stepper needs milliseconds to travel, and a pair of OPPOSING
+        // magnets pulls the rotor both ways at once. So a step whose
+        // opposite magnet comes on within a fraction of a millisecond never
+        // happened on iron: the rotor had not left, and now it is held.
+        //
+        // The //c's SmartPort firmware does exactly that on every call: its
+        // bus-addressing routine (bank 1, $CA80) raises PH1 and, four CPU
+        // cycles later, PH3 — the addressing pattern, not a seek. While the
+        // internal drive's motor was still coasting from ProDOS's last read,
+        // POM2 moved that head two quarter-tracks, and ProDOS's next seek
+        // landed a track short and had to re-seek (bug hunt 2026-09-16).
+        // No seek energises opposing magnets, and none holds a phase for
+        // under a quarter of a millisecond, so nothing else is affected.
+        const int mask = phases & 0xF;
+        if ((mask == 0x5 || mask == 0xA) && lastStep_.drive == activeDrive &&
+            headQuarterTrack[activeDrive] == lastStep_.to &&
+            cpuCycleTotal - lastStep_.cycle < kStepperResponseCycles) {
+            headQuarterTrack[activeDrive] = lastStep_.from;
+            lastStep_ = PendingStep{};      // and it never clicked
+            pushIwmFloppy();
+            return;
+        }
+        confirmLastStep();
+        return;
+    }
+    confirmLastStep();                      // the previous step stands
 
     // Move only the active drive's head. The phase magnets are wired to
     // the controller; only the selected drive's stepper responds.
@@ -763,8 +816,18 @@ void DiskIICard::seekPhaseW(int phases)
     // step cadence in emulated time — wall-clock measurement breaks
     // under disk turbo (all 80 phase-sweep steps land in one audio
     // buffer when the CPU runs ~60× real-time).
-    if (moved && sound_) sound_->step(head / 4, cpuCycleTotal);
-    if (moved) pushIwmFloppy();
+    // The click waits for the step to stand (see the top of this function);
+    // `confirmLastStep` sends it, stamped with the cycle the step began.
+    if (moved) {
+        lastStep_ = PendingStep{ cpuCycleTotal, activeDrive, cur, next, sound_ != nullptr };
+        pushIwmFloppy();
+    }
+}
+
+void DiskIICard::confirmLastStep()
+{
+    if (lastStep_.click && sound_) sound_->step(lastStep_.to / 4, lastStep_.cycle);
+    lastStep_ = PendingStep{};
 }
 
 void DiskIICard::pushIwmFloppy()
@@ -1031,6 +1094,15 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // one). Re-drive it through the same call the live transitions use.
     if (sound_) sound_->motor(motorOn, images[activeDrive].isLoaded());
 
+    // Not in the blob: what the selected drive last received is the latch
+    // itself when the controller is enabled; the other drive is assumed idle.
+    drivePhases_ = {};
+    if (useBitLss ? active != MODE_IDLE : motorOn.load()) {
+        uint8_t mask = 0;
+        for (int i = 0; i < 4; ++i) if (phaseOn[i]) mask |= static_cast<uint8_t>(1 << i);
+        drivePhases_[activeDrive] = mask;
+    }
+
     // Re-point the IWM at the restored head position so the //c+ data path
     // and the restored LSS agree on the current track.
     pushIwmFloppy();
@@ -1090,9 +1162,13 @@ void DiskIICard::advanceCycles(int cycles)
                                   writePosition, writeBuffer,
                                   revolutionStartLssCycle[activeDrive]);
                     ++writeFlushCount;
-                    writePosition  = 0;
-                    writeStartTime = static_cast<int64_t>(lssCycle);
                 }
+                // Whether or not it was spliced: a burst the gate refused
+                // (notch, phase 1, write-back off) is timed against the spin
+                // that just ended, and a later Q7L would splice it against
+                // the cleared anchor — onto a disk un-notched meanwhile.
+                writePosition  = 0;
+                writeStartTime = static_cast<int64_t>(lssCycle);
                 // MAME `floppy_image_device::mon_w(true)`: when the
                 // controller actually stops driving the spindle, the
                 // drive's revolution timestamp becomes `attotime::never`.
@@ -1344,7 +1420,16 @@ void DiskIICard::lssSync(uint64_t extraCycles)
     // it gets the same read-amplifier noise. READ side only: a blank track is
     // precisely what a format writes to, and the write walker below is happy
     // with no transitions to cross.
-    if (nextFlux == DiskImage::kFluxNever && !writeMode) {
+    //
+    // And READ-MODE only: Q6 low. With Q6 high the guest is not reading data
+    // at all, it is sensing write-protect (`LDA $C08D,X / LDA $C08E,X / BMI`),
+    // and the sequencer's shift-right state puts the WP line into bit 7
+    // (MAME `wozfdc.cpp` case 0xa/0xe). Noise there has bit 7 SET on every
+    // byte, so a writable blank disk read as protected and DOS 3.3 refused to
+    // INIT it — on every machine with slots, where the //c's $C0nE status
+    // hook is off; the hook answered the sense itself and hid it (bug hunt
+    // 2026-09-16). With no flux the sequencer simply never sees a pulse.
+    if (nextFlux == DiskImage::kFluxNever && !writeMode && !loadMode) {
         advanceNoise(extraCycles);
         return;
     }
@@ -1545,7 +1630,11 @@ void DiskIICard::selectDrive(int newDrive)
             ++writeFlushCount;
         }
         writePosition   = 0;
-        writeLineActive = false;
+        // `writeLineActive` stays: it is the controller's write flip-flop,
+        // not the drive's, and MAME's drive select (`control()` $A/$B) does
+        // not touch it. Clearing it turned the next cell of a burst that
+        // continues on the new drive into a transition that never happened
+        // — the same one-bit inversion commitInFlightWrite had.
 
         // OLD drive: mon_w(true). Disk angular position is now undefined
         // — flux reads against it would return nothing. MAME uses
@@ -1742,7 +1831,11 @@ void DiskIICard::handleSwitchAccess(uint8_t low4)
             phaseOn[phase]   = on;
             int mask = 0;
             for (int i = 0; i < 4; ++i) if (phaseOn[i]) mask |= (1 << i);
-            seekPhaseW(mask);
+            // The magnets are powered through the drive-enable line, as in
+            // the bit-LSS `control()` (`if (active) seekPhaseW`): a phase
+            // toggled with the motor off moves nothing. The legacy gate used
+            // to step anyway (bug hunt 2026-09-16).
+            if (motorOn) seekPhaseW(mask);
             return;
         }
         switch (low4) {
@@ -1866,6 +1959,11 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         //   (BEQ on `Y EOR status & $1F`) never falls through and the
         //   Monitor hangs before clearing the text page.
         if (iwmHost_ && low4 == 0xE && wasQ6) {
+            // Even offset: MAME's extra sequencer cycle, as for $C0nC below.
+            // Not observable today — the next access's lssSync(0) runs the
+            // same cycle with the same inputs — but the hook must not be
+            // the one place that skips it.
+            lssSync(1);
             DiskImage& img = images[activeDrive];
             const uint8_t wpt = (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
             return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
@@ -1983,6 +2081,17 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     // Same wire, same answer as the bit-LSS path and as $C0nE: no disk reads
     // as write-protected.
     if (low4 == 0xD && !writeMode) {
+        return (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
+    }
+    // $C0nE with Q6 still high is the SECOND half of the sense: DOS 3.3 does
+    // `LDA $C08D,X / LDA $C08E,X / BMI`, so the flags it branches on come
+    // from THIS read. MAME returns the data register on every even offset,
+    // and in that state the sequencer has shifted WPT into bit 7. This gate
+    // answered 0 — never protected — so with no roms/diskii_p6.rom a SAVE
+    // onto a notched disk reported success while writeNibbleAt dropped every
+    // byte (bug hunt 2026-09-16). Q7 is already low here: this very access
+    // cleared it.
+    if (low4 == 0xE && loadMode) {
         return (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
     }
     return 0;

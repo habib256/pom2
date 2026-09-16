@@ -177,7 +177,8 @@ struct WpAnswers {
 
 WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
                            const std::string& nib, bool probeLoadedDrive,
-                           bool phase1On = false)
+                           bool phase1On = false,
+                           bool phase1BeforeMotor = false)
 {
     Memory mem;
     auto card = std::make_unique<DiskIICard>();
@@ -211,6 +212,10 @@ WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
         return { 0, 0, false };
     }
 
+    // A magnet latched while the controller is DISABLED never reaches a
+    // drive: MAME forwards the phase latch only `if (active)`, and the WPT
+    // line reads the drive's own copy (`m_phases`).
+    if (phase1BeforeMotor) mem.memRead(0xC0E3);
     mem.memRead(0xC0E9);                                   // motor on
     mem.memRead(probeLoadedDrive ? 0xC0EA : 0xC0EB);       // select the drive
     // Stepper phase 1 drives the SAME wire as the write-protect sense on the
@@ -218,6 +223,11 @@ WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
     // is `m_wpt || (m_phases & 2)`. $C0n3 energizes it, $C0n2 releases it.
     if (phase1On) mem.memRead(0xC0E3);
 
+    if (phase1BeforeMotor && raw->getQuarterTrack(0) != 0) {
+        std::fprintf(stderr, "FAIL: a phase latched with the motor off moved "
+                     "the head to quarter-track %d\n", raw->getQuarterTrack(0));
+        return { 0x80, 0x80, true };
+    }
     const uint8_t shortcut = mem.memRead(0xC0ED);          // POM2's own probe
     mem.memRead(0xC0ED);                                   // Q6 high
     const uint8_t canonical = mem.memRead(0xC0EE);         // Q7 low -> WP in b7
@@ -337,6 +347,33 @@ int main()
         } else {
             std::printf("[ OK ] %s loaded + phase 1     both WP probes say "
                         "protected\n", gate);
+        }
+    }
+
+    // ── …but only a phase the DRIVE received ───────────────────────────────
+    // Latched with the motor off, phase 1 is controller state the drive never
+    // saw. POM2 read the live latch, so it answered "protected" — and the
+    // legacy gate even stepped the head (bug hunt 2026-09-16).
+    for (bool bitLss : { true, false }) {
+        const WpAnswers w = readWriteProtect(bitLss, p6, nib,
+                                             /*probeLoadedDrive=*/true,
+                                             /*phase1On=*/false,
+                                             /*phase1BeforeMotor=*/true);
+        if (!w.ok) return 1;
+        const char* gate = bitLss ? "bit-LSS" : "legacy ";
+        const bool sProt = (w.shortcut  & 0x80) != 0;
+        const bool cProt = (w.canonical & 0x80) != 0;
+        if (sProt || cProt) {
+            std::fprintf(stderr,
+                "FAIL: %s phase 1 latched with the motor OFF — $C0nD says %s, "
+                "$C0nE says %s; the drive never received it, both must say "
+                "writable.\n",
+                gate, sProt ? "protected" : "writable",
+                cProt ? "protected" : "writable");
+            ++failures;
+        } else {
+            std::printf("[ OK ] %s phase 1 before motor  both WP probes say "
+                        "writable\n", gate);
         }
     }
 

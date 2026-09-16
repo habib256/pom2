@@ -46,6 +46,16 @@
 //      that happens to match.
 // Drive 2 stays EMPTY throughout: that is the trigger.
 //
+// Then two media changes in the middle of a SmartPort WRITE (bug hunt
+// 2026-09-16). The bus used to abort the transaction on ANY change of which
+// bays held media, which broke the handshake: the firmware's receive loop
+// (`$CA02: LDA $C08C,X / BPL`) waited for a byte that never came and the //c
+// hung for good. Now:
+//   4. a disk going into the OTHER bay leaves the write alone — the copy
+//      completes, byte for byte;
+//   5. ejecting the disk BEING written answers the guest with an error it can
+//      report (I/O ERROR), and the bus goes idle — no hang.
+//
 // Skips (77) without the 32 KB //c ROM or the ProDOS 2.4.3 disk.
 
 #include "DiskIICard.h"
@@ -152,17 +162,21 @@ std::vector<uint8_t> readProdosFile(pom2::SmartPortUnit& u, const char* name,
     return {};
 }
 
-}  // namespace
+enum class Scenario { Plain, MountOtherBay, EjectTargetBay };
 
-int main()
+const char* scenarioName(Scenario sc)
 {
-    const std::string rom = pom2::findResource("roms/apple2c-32Kv0.rom");
-    const std::string po  = pom2::findResource("disks_5.4/dsk/ProDOS_2_4_3.po");
-    if (rom.empty() || po.empty()) {
-        std::printf("iic_diskii_after_smartport SKIP: missing //c ROM or ProDOS disk\n");
-        return 77;
+    switch (sc) {
+    case Scenario::Plain:          return "plain copy";
+    case Scenario::MountOtherBay:  return "mount in the other bay mid-WRITE";
+    case Scenario::EjectTargetBay: return "eject the bay being written mid-WRITE";
     }
+    return "?";
+}
 
+int runScenario(Scenario sc, const std::string& rom, const std::string& po)
+{
+    const char* tag = scenarioName(sc);
     std::error_code ec;
     const fs::path scratch = fs::temp_directory_path() / "pom2_iic_diskii_after_sp";
     fs::remove_all(scratch, ec);
@@ -183,6 +197,13 @@ int main()
         f.write(reinterpret_cast<const char*>(vol.data()),
                 static_cast<std::streamsize>(vol.size()));
         if (!f) { std::fprintf(stderr, "cannot write the HDV\n"); return 1; }
+    }
+    // An 800K blank for the second bay (scenario 4).
+    const fs::path d35 = scratch / "blank35.po";
+    {
+        std::ofstream f(d35, std::ios::binary | std::ios::trunc);
+        const std::vector<char> zeros(819200, 0);
+        f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     }
 
     // The plain //c, wired as EmulationController wires it.
@@ -213,6 +234,7 @@ int main()
     mem.slotBus().plug(6, std::move(disk));
 
     auto sp = std::make_unique<pom2::SmartPortCard>(5);
+    pom2::SmartPortCard* card = sp.get();
     auto hdvUnit = std::make_unique<pom2::SmartPortHdvUnit>();
     pom2::SmartPortHdvUnit* unit = hdvUnit.get();
     sp->setUnit(0, std::move(hdvUnit));
@@ -231,7 +253,7 @@ int main()
     cpu.hardReset();
 
     if (!waitFor(mem, cpu, "BITSY  BYE", 250'000'000)) {
-        std::fprintf(stderr, "FAIL: BITSY BYE never appeared\n%s", screen(mem).c_str());
+        std::fprintf(stderr, "FAIL [%s]: BITSY BYE never appeared\n%s", tag, screen(mem).c_str());
         return 1;
     }
     run(cpu, 30'000'000);
@@ -243,7 +265,7 @@ int main()
     { const char k = '\r'; mem.pasteRawKeys(&k, 1); }
     run(cpu, 90'000'000);
     if (screen(mem).find("\n]") == std::string::npos) {
-        std::fprintf(stderr, "FAIL: no BASIC prompt\n%s", screen(mem).c_str());
+        std::fprintf(stderr, "FAIL [%s]: no BASIC prompt\n%s", tag, screen(mem).c_str());
         return 1;
     }
 
@@ -255,8 +277,8 @@ int main()
             if (((mem.memRead(static_cast<uint16_t>(0xBF32 + i)) >> 4) & 7) == 5)
                 slot5 = true;
         if (!slot5) {
-            std::fprintf(stderr, "FAIL: ProDOS did not list slot 5 — the copy "
-                                 "below would prove nothing\n");
+            std::fprintf(stderr, "FAIL [%s]: ProDOS did not list slot 5 — the copy "
+                                 "below would prove nothing\n", tag);
             return 1;
         }
     }
@@ -276,8 +298,8 @@ int main()
     run(cpu, 200'000'000);
     if (screen(mem).find("ERROR") != std::string::npos ||
         screen(mem).find("NOT FOUND") != std::string::npos) {
-        std::fprintf(stderr, "FAIL: could not create T on the floppy\n%s",
-                     screen(mem).c_str());
+        std::fprintf(stderr, "FAIL [%s]: could not create T on the floppy\n%s",
+                     tag, screen(mem).c_str());
         return 1;
     }
 
@@ -298,22 +320,78 @@ int main()
         "100 PRINT D$\"CLOSE\"\r"
         "RUN\r";
     mem.pasteText(copy, std::strlen(copy));
-    run(cpu, 400'000'000);
-    {
-        const std::string s = screen(mem);
-        if (s.find("NO DEVICE CONNECTED") != std::string::npos ||
-            s.find("BREAK") != std::string::npos ||
-            s.find("I/O ERROR") != std::string::npos) {
-            std::fprintf(stderr, "FAIL: the copy stopped\n%s", s.c_str());
+
+    if (sc == Scenario::Plain) {
+        run(cpu, 400'000'000);
+    } else {
+        // Instruction by instruction until the host is part-way through
+        // SENDING a packet to the bus (write mode, bus addressed, a frame in
+        // flight) after the file's first blocks are down — then change the
+        // media, and let the machine run on.
+        bool fired = false;
+        long seen = 0;
+        long n = 0;
+        while (!fired && n < 400'000'000L) {
+            n += cpu.run(1);
+            const auto& r = port.registers();
+            const bool writing   = (r.control() & 0xC0) == 0xC0;
+            const bool addressed = (r.phases() & 0x0A) == 0x0A && (r.control() & 0x10);
+            if (port.device().progress().blocksWritten >= 2 && writing && addressed &&
+                port.device().active() && ++seen == 10) {
+                std::string err;
+                const bool ok = (sc == Scenario::MountOtherBay)
+                    ? card->mountBay(1, d35.string(), err)
+                    : card->ejectBay(0);
+                if (!ok) {
+                    std::fprintf(stderr, "FAIL [%s]: the media change itself failed: %s\n",
+                                 tag, err.c_str());
+                    return 1;
+                }
+                fired = true;
+            }
+        }
+        if (!fired) {
+            std::fprintf(stderr, "FAIL [%s]: never caught a SmartPort send — this "
+                                 "run proves nothing\n", tag);
             return 1;
         }
+        run(cpu, 400'000'000L - n);
+        if (port.device().active()) {
+            std::fprintf(stderr, "FAIL [%s]: the bus is still mid-transaction long "
+                                 "after the change — the firmware is stuck\n%s",
+                         tag, screen(mem).c_str());
+            return 1;
+        }
+    }
+
+    const std::string s = screen(mem);
+    if (sc == Scenario::EjectTargetBay) {
+        // The disk left mid-write: the guest must be TOLD, and must get its
+        // prompt back.
+        const auto runAt = s.rfind("]RUN");
+        if (runAt == std::string::npos ||
+            s.find("I/O ERROR", runAt) == std::string::npos ||
+            s.find(']', s.find("I/O ERROR", runAt)) == std::string::npos) {
+            std::fprintf(stderr, "FAIL [%s]: the guest was not told the disk "
+                                 "left, or never got its prompt back\n%s", tag, s.c_str());
+            return 1;
+        }
+        std::printf("  %s: I/O ERROR reported, prompt back, bus idle\n", tag);
+        return 0;
+    }
+
+    if (s.find("NO DEVICE CONNECTED") != std::string::npos ||
+        s.find("BREAK") != std::string::npos ||
+        s.find("I/O ERROR") != std::string::npos) {
+        std::fprintf(stderr, "FAIL [%s]: the copy stopped\n%s", tag, s.c_str());
+        return 1;
     }
 
     // 3. Byte for byte.
     std::string err;
     const std::vector<uint8_t> got = readProdosFile(*unit, "U", err);
     if (!err.empty()) {
-        std::fprintf(stderr, "FAIL: /SCRATCH/U: %s\n", err.c_str());
+        std::fprintf(stderr, "FAIL [%s]: /SCRATCH/U: %s\n", tag, err.c_str());
         return 1;
     }
     std::vector<uint8_t> want;
@@ -325,20 +403,93 @@ int main()
         want.push_back('\r');
     }
     if (got.size() != static_cast<std::size_t>(kFileBytes)) {
-        std::fprintf(stderr, "FAIL: /SCRATCH/U is %zu bytes, expected %d "
+        std::fprintf(stderr, "FAIL [%s]: /SCRATCH/U is %zu bytes, expected %d "
                              "(496 = the reported stop after one floppy block)\n",
-                     got.size(), kFileBytes);
+                     tag, got.size(), kFileBytes);
         return 1;
     }
     for (std::size_t i = 0; i < want.size(); ++i) {
         if (got[i] != want[i]) {
-            std::fprintf(stderr, "FAIL: /SCRATCH/U differs at byte %zu: $%02X, expected $%02X\n",
-                         i, got[i], want[i]);
+            std::fprintf(stderr, "FAIL [%s]: /SCRATCH/U differs at byte %zu: $%02X, expected $%02X\n",
+                         tag, i, got[i], want[i]);
             return 1;
         }
     }
+    std::printf("  %s: %d bytes copied Disk II -> SmartPort, byte for byte\n",
+                tag, kFileBytes);
+    return 0;
+}
 
-    std::printf("iic_diskii_after_smartport OK: %d bytes copied Disk II -> "
-                "SmartPort with drive 2 empty, byte for byte\n", kFileBytes);
+}  // namespace
+
+// The rear port is DRIVE 2. A 5.25" program on the internal drive that
+// energises PH1 + PH3 with the motor on — opposing magnets, which some
+// protection code does — was taken for the SmartPort addressing pattern, and
+// its reads were answered by the bus responder (bug hunt 2026-09-16).
+int portClaimsOnlyDrive2()
+{
+    namespace fs = std::filesystem;
+    const fs::path hdv = fs::temp_directory_path() / "pom2_iic_port_claim.hdv";
+    {
+        std::vector<char> blocks(512 * 280, 0);
+        std::ofstream f(hdv, std::ios::binary | std::ios::trunc);
+        f.write(blocks.data(), static_cast<std::streamsize>(blocks.size()));
+    }
+    SlotBus bus;
+    {
+        auto sp = std::make_unique<pom2::SmartPortCard>(5);
+        sp->setUnit(0, std::make_unique<pom2::SmartPortHdvUnit>());
+        bus.plug(5, std::move(sp));
+    }
+    std::string err;
+    auto* card = dynamic_cast<pom2::SmartPortCard*>(bus.peripheral(5));
+    if (!card || !card->mountBay(0, hdv.string(), err)) {
+        std::printf("FAIL: port-claim rig: cannot mount (%s)\n", err.c_str());
+        return 1;
+    }
+    pom2::IIcExternalSmartPort port(&bus);
+    uint64_t t = 0;
+    uint8_t out = 0;
+    const auto touch = [&](uint8_t off) { (void)port.read(off, t += 8, out); };
+    touch(0xA);                                   // drive 1
+    touch(0x9);                                   // motor on
+    touch(0x3);                                   // PH1 on
+    touch(0x7);                                   // PH3 on
+    int failures = 0;
+    if (port.read(0xC, t += 8, out)) {
+        std::printf("FAIL: the rear port claimed a drive-1 read with PH1+PH3 "
+                    "(answered $%02X)\n", out);
+        ++failures;
+    }
+    touch(0xB);                                   // drive 2: the rear port
+    if (!port.read(0xC, t += 8, out)) {
+        std::printf("FAIL: the rear port ignored its own addressing pattern\n");
+        ++failures;
+    }
+    std::error_code ec;
+    fs::remove(hdv, ec);
+    if (!failures)
+        std::printf("[ OK ] the rear port answers drive 2 only\n");
+    return failures;
+}
+
+int main()
+{
+    if (portClaimsOnlyDrive2() != 0) return 1;
+
+    const std::string rom = pom2::findResource("roms/apple2c-32Kv0.rom");
+    const std::string po  = pom2::findResource("disks_5.4/dsk/ProDOS_2_4_3.po");
+    if (rom.empty() || po.empty()) {
+        std::printf("iic_diskii_after_smartport SKIP: missing //c ROM or ProDOS disk\n");
+        return 77;
+    }
+    int failures = 0;
+    for (Scenario sc : { Scenario::Plain, Scenario::MountOtherBay, Scenario::EjectTargetBay })
+        failures += runScenario(sc, rom, po);
+    if (failures) {
+        std::printf("iic_diskii_after_smartport: %d failure(s)\n", failures);
+        return 1;
+    }
+    std::printf("iic_diskii_after_smartport OK\n");
     return 0;
 }

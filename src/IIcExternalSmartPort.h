@@ -100,7 +100,7 @@ private:
 
     /// Refresh the unit list from the slot card. True when a card offers any.
     bool bind();
-    static bool addressed(uint8_t phases, uint8_t control);
+    static bool addressed(uint8_t phases, uint8_t control, bool rearIsDrive2);
     /// PH0 is REQ; PH0 + PH2 together is the bus reset ($C9E5 in the Liron
     /// dump). Own-IWM mode gets this from the phases callback, shared mode
     /// from a look at the lines after each access.

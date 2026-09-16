@@ -26,6 +26,7 @@
 //      the write (re-capture is byte-identical to the pre-write capture);
 //   3. an empty / no-disk drive adds no media (just a 1-byte present flag).
 
+#include "Block512Backing.h"
 #include "DiskIICard.h"
 #include "DiskImage.h"
 #include "M6502.h"
@@ -214,6 +215,38 @@ int main()
         assert(back4.size() == v3.size() + kTail);
         for (int i = 0; i < 4; ++i) assert(back4[v3.size() + i] == 0);
         assert(back4[v3.size() + 4] == 0);           // writeLineActive cleared
+    }
+
+    // (5) A COMMIT is irreversible, so it bumps the media epoch. A nibble
+    //     write in memory does not (the ring captures it and a rewind is meant
+    //     to undo it), but a rewind across the save restored the old tracks
+    //     with their dirty flags CLEARED: the next save wrote only later
+    //     tracks and the file mixed two timelines. The WASM heartbeat commits
+    //     mid-session (bug hunt 2026-09-16).
+    {
+        const std::string copy = writeSyntheticDsk("pom2_rewind_commit_epoch.dsk");
+        DiskImage img;
+        assert(img.loadFile(copy));
+        img.setWriteBackEnabled(true);
+        const uint64_t e0 = pom2::mediaWriteEpoch().load();
+        img.writeNibbleAt(5, 100, static_cast<uint8_t>(img.nibbleAt(5, 100) ^ 0x01));
+        assert(pom2::mediaWriteEpoch().load() == e0 &&
+               "a nibble write in memory must stay rewindable");
+        // Restore a decodable track before saving: a flipped nibble may not
+        // decode, and this case is about the epoch, not the decoder.
+        img.writeNibbleAt(5, 100, static_cast<uint8_t>(img.nibbleAt(5, 100) ^ 0x01));
+        img.writeNibbleAt(5, 100, img.nibbleAt(5, 100));   // no-op, still dirty from above
+        const bool dirty = img.hasUnsavedChanges();
+        const bool saved = img.saveDirty();
+        assert(saved);
+        if (dirty)
+            assert(pom2::mediaWriteEpoch().load() > e0 &&
+                   "a commit to the file did not bump the media epoch");
+        const uint64_t e1 = pom2::mediaWriteEpoch().load();
+        assert(img.saveDirty());                           // nothing left to write
+        assert(pom2::mediaWriteEpoch().load() == e1 &&
+               "a save with nothing to write bumped the epoch");
+        std::filesystem::remove(copy);
     }
 
     // (4) No disk → no media (cheap blob).

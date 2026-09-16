@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "AiControlServer.h"
+#include "MediaMount.h"
 #include "Pom2Build.h"
 
 #include "Apple2Display.h"
@@ -850,6 +851,7 @@ void AiControlServer::sendResponse(socket_t fd,
         case 404: reason = "Not Found"; break;
         case 403: reason = "Forbidden"; break;
         case 405: reason = "Method Not Allowed"; break;
+        case 409: reason = "Conflict"; break;
         case 429: reason = "Too Many Requests"; break;
         case 500: reason = "Internal Server Error"; break;
         case 503: reason = "Service Unavailable"; break;
@@ -1463,6 +1465,7 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
     // already latches a flag and answers after the scope; this one didn't.
     bool writeBack = false;
     int  boundSlot = -1;
+    std::string current;             // what the target drive holds now
     DiskIICard* card = nullptr;
     {
         std::lock_guard<std::mutex> lk(ctrl_->stateMutex());
@@ -1470,6 +1473,8 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         if (card) {
             writeBack = card->isWriteBackEnabled();
             boundSlot = card->getSlot();
+            if (card->isDiskLoaded(static_cast<int>(drive)))
+                current = card->driveImage(static_cast<int>(drive)).getPath();
         }
     }
     if (!card) { sendJsonError(fd, 503, "no Disk II card plugged"); return; }
@@ -1477,6 +1482,19 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         sendJsonError(fd, 400, "Disk II endpoints drive the primary card, "
                       "which is in slot " + std::to_string(boundSlot));
         return;
+    }
+    // One image, one drive — the rule pom2::mountDiskII applies for the GUI,
+    // the CLI and the Library, which this handler cannot call (see above).
+    // An agent mounting the disk that is already in another drive made two
+    // copies that each wrote their own view back into one file (bug hunt
+    // 2026-09-16). Checked before the read; the window until the install is
+    // the same one every two-phase mount has.
+    {
+        std::string dupErr;
+        if (pom2::imageMountedElsewhere(*ctrl_, *safe, current, dupErr)) {
+            sendJsonError(fd, 409, "insert refused: " + dupErr);
+            return;
+        }
     }
 
     DiskImage   prepared;
@@ -1555,7 +1573,7 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
     // `stateMutex` froze the CPU worker and the window for the whole
     // round-trip. Phase 1 lifts the medium out (a memcpy), phase 2 writes it
     // with the lock released, phase 3 puts it back if the write failed.
-    std::unique_ptr<DiskImage> pending;
+    std::shared_ptr<DiskImage> pending;
     DiskIICard* card = nullptr;
     bool changed = false;
     {

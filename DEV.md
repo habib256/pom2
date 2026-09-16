@@ -2938,6 +2938,17 @@ because a failure has to be undoable:
   `DiskIICard::restoreEjected`, `restoreFlushBayDirty`. **A failed commit leaves
   the disk loaded and dirty**, so a retry loses nothing — it used to only log a
   line about a disk that was already gone.
+* **The drive is reserved while the payload lives** *(2026-09-16)*. Nothing
+  stops another thread (the AI control server) from mounting into the drive
+  between phases 1 and 3, and then a failed commit had nowhere to go and the
+  caller dropped the writes. `DiskIICard::takeEjectWriteBack` returns a
+  `shared_ptr` and keeps a `weak_ptr`; `Block512Backing::takeDetachWriteBack`
+  (used by every `detachImage` / Liron capture) puts a token in the payload.
+  While either is alive, installs and adopts into that drive are refused with
+  "still being saved — retry". So a caller must drop its payload before it
+  mounts into the same drive; `restoreEjected` releases the Disk II one
+  itself. The autosave capture (`takeWriteBack`) reserves nothing — it keeps
+  the dirty flags until the file lands, so an adopt's own flush covers it.
 
 Drivers: `StorageCoordinator.cpp:792` (HDV eject), `:872` (bay eject), `:1375`
 (`ejectAllMedia` — the last inline holdout, converted the same day), `:1750`
@@ -2946,7 +2957,10 @@ so it hands the payload to `EmulationController::WriteBackQueue`
 (`EmulationController.h:387-424`, its `Disk35WriteBack` thread spawned at
 `EmulationController.cpp:444`) and `Sony35Drive::ejectPending_`
 holds the mechanical eject until the sink reports the
-file landed. `drainDeferredWriteBacks()` is called before the settings are
+file landed. The host eject (`EmulationController::eject35`) drains the
+queue first when that flag is up: the medium it would find is already clean,
+and dropping it left a failing queued commit nothing to restore
+(`disk35_eject_pending`). `drainDeferredWriteBacks()` is called before the settings are
 written at quit, so the queue cannot outlive the process.
 
 One caller keeps the old inline form on purpose: the profile-switch remount in
@@ -3061,6 +3075,44 @@ config directory once at startup (`main.cpp:243`) and an image's own directory
 on mount (`StorageCoordinator::sweepMountDirDebris`, `:367`). `*.pom2tmp` is
 also in `.gitignore` and in the manifest's `denyglob`, so debris can reach
 neither the repo nor a package.
+
+**The temp file sits next to the REAL file** *(2026-09-16, bug hunt)*.
+`tempSiblingPath` resolves the target through `resolveReplaceTarget` first.
+Next to a symlink it used to be, so an image symlinked onto another volume
+failed every commit with `cross_device_link` — eject and swap refused, the
+flush at quit failed, the writes were lost. Verified on a real second volume;
+pinned in `atomic_file_replace` by the rule itself (the temp's directory is
+the target's).
+
+**One image, one drive** *(2026-09-16, bug hunt)*. The helpers in
+`MediaMount.cpp` refuse to mount a file that another drive or bay already
+holds (`refusedAsSecondMount`, compared with `fs::equivalent`, so a relative
+path, an absolute one and a symlink are the same file). Two mounted copies
+each write their own view back and the file becomes a volume neither held.
+Re-inserting a disk into its own drive is allowed. The AI control server
+drives `prepareDisk` / `installDisk` itself and asks the same question
+through the public `pom2::imageMountedElsewhere` (409 Conflict). The inline
+restore paths (`restoreMediaFromSettings`, the profile-switch
+`restoreRebuildSnapshot`) cannot refuse a load half-way, so they run
+`pom2::dropDuplicateMounts` afterwards: the first holder in slot order keeps
+the image, the others are emptied and a warning says so. The //c+ on-board
+3.5" drives are off the bus and not covered there. Pinned in
+`storage_coordinator` and `ai_control_server_smoke`.
+
+**A notch cannot be undone by a commit** *(2026-09-16)*. A rename replaces
+the inode, so every media commit copies the image's mode onto its temp
+file. The three media writers used to read that mode before writing the
+payload, so a notch set during a 32 MiB autosave was reverted by the rename.
+`replaceMediaFileAtomic` (`AtomicFileReplace.h`) reads it at the rename,
+under `mediaPermissionMutex()` (`MediaNotch.h`), which `setMediaNotch` takes
+too. In-process only. Pinned in `atomic_file_replace`.
+
+**A commit bumps the media epoch** *(2026-09-16, bug hunt)*. Every non-WOZ
+`DiskImage::saveDirty` that writes calls `pom2::noteMediaWrite()`. A nibble
+write in memory still does not — the ring captures it and a rewind is meant
+to undo it — but a rewind across the commit restored old tracks with their
+dirty flags clear and the file ended up mixing two timelines. Only the WASM
+heartbeat commits mid-session. Pinned in `rewind_disk_write`.
 
 ### Format detection
 
@@ -3309,7 +3361,10 @@ cell is a 0 and the track carries zero flux events. Reads then take the
 two paths MAME takes over unmagnetised surface — `kFluxNever` +
 `DiskIICard::advanceNoise` while a track is wholly blank, and the
 weak-zone pulse train (`kWeakGapLss`, MAME `m_amplifier_freakout_time`)
-over whatever is still blank once a format has started on it. RWTS
+over whatever is still blank once a format has started on it. The noise
+shortcut applies in READ mode only (Q6 low): with Q6 high the guest is
+sensing write-protect, and noise — bit 7 always set — made a writable blank
+disk read as protected on every machine with slots. RWTS
 answers I/O ERROR to every read, and a real DOS 3.3 `INIT` writes the
 address and data fields through `writeFlux` onto virgin surface exactly
 as it does on iron; the result CATALOGs, SAVEs and writes back to the
@@ -3366,6 +3421,18 @@ formats track 0, fails its verify and answers I/O ERROR, while the same
 INIT on an erased `.dsk` surface completes all 35 tracks. Prefilling the
 same `.nib` with `$AA` or `$FF` also completes, which is what isolates it
 to the missing sync padding rather than to the blank surface.
+
+**A SAVE must survive the host** *(2026-09-16, bug hunt)*. Three resets
+that MAME never does were removed: `commitInFlightWrite` no longer drops
+`writeLineActive` (the burst continues after a commit, and the lost level
+inverted a bit of the sector in flight); `installPreparedLocked` and
+`takeEjectWriteBack` touch only the changed DRIVE — never the sequencer
+address, the data register, the write latch or the burst — so a mount or an
+eject on drive 2 no longer corrupts a write on drive 1; and the legacy gate
+answers `$C0nE` with Q6 high as the second half of the write-protect sense
+(DOS branches on that read), instead of 0. Pinned by `diskii_write_integrity`
+on both read gates, and by `diskii_motor_coast` for the motor countdown both
+gates share, which a read-gate switch used to zero or mis-promote.
 
 **A surface with no flux must still make noise** *(2026-09-07)*. A track
 with no events at all — a WOZ whose TMAP marks the quarter-track `$FF`, a
@@ -4987,6 +5054,23 @@ BASIC.SYSTEM, drive 2 empty, the copied file compared byte for byte, and a
 check that ProDOS lists slot 5 at all (without it the copy fails with PATH
 NOT FOUND and proves nothing).
 
+**A media change does not interrupt the bus** *(2026-09-16, bug hunt)*.
+`live()` used to abort the transaction in flight whenever the set of bays
+holding media changed. That broke the handshake — the firmware's receive
+loop (`$CA02: LDA $C08C,X / BPL`) waits for a bit-7 byte and only then
+counts it against its 30-byte timeout, so a register stuck at $00 hung the
+//c for good — and it failed a write on bay 1 because a disk went into
+bay 2. Now `SmartPortBusDevice::mediaChanged` refuses only a WRITE whose
+data packet arrives after its unit changed medium (an error reply, never
+silence); everything else is served against the units as they are, and a
+drive whose disk left answers "offline". `readDataRegister` gives the host
+$FF — an idle bus — when no reply exists at all, so every deliberate
+no-reply path (bad checksum, unexpected packet) ends in the firmware's own
+timeout. The port stays live while a transaction is in flight even after the
+last disk leaves. LironCard shares all of it. Pinned by
+`iic_diskii_after_smartport` (a mount in the other bay mid-WRITE, an eject
+of the bay being written) and `smartport_bus_device`.
+
 ### Super Serial Card (slot 2) + telnet bridge
 
 **The keyboard bridge is a terminal, not a clipboard** *(2026-09-09, bug
@@ -5225,6 +5309,33 @@ offset with it), and the phase-1 write interlock is modelled —
 `floppy_image_device::writing_disabled`, `m_wpt || (m_phases & 2)`
 (`floppy.cpp:1254-1259`): a drive whose phase-1 coil is energised cannot
 write, which is how the //c's firmware parks a head safely.
+
+**`m_phases` is the DRIVE's copy** *(2026-09-16)*. MAME forwards the phase
+latch to the selected floppy only `if (active)`, and each floppy keeps what
+it last received. `DiskIICard::drivePhases_` is that copy, set in
+`seekPhaseW`; `writingInhibited()` and `senseWriteProtect()` read it, not
+the controller's live `phaseOn`. So a phase toggled with the motor off, or
+while the other drive was selected, never reaches the sense line — and the
+legacy gate, which stepped the head with the motor off, now calls
+`seekPhaseW` only while `motorOn` (`diskii_empty_drive`). Not in the
+snapshot blob: a load rebuilds it from the latch when the controller is
+enabled.
+
+**A step cancelled by its opposing magnet** *(2026-09-16)*. The one
+deliberate divergence from MAME's `seek_phase_w`, which moves the head the
+instant a pattern is energised. `seekPhaseW` remembers the last move
+(`lastStep_`); when 0x5 or 0xA (opposing magnets) arrives on the same drive
+less than `kStepperResponseCycles` (256 CPU cycles, a quarter of a
+millisecond) later, the rotor never left: the head goes back and the click
+is never sent (the sound is emitted when the next pattern confirms the
+step). The //c's SmartPort firmware needs it — its addressing routine
+(`$CA80`) raises PH1, then PH3 four cycles later, and with drive 1 still
+coasting that walked the internal head two quarter-tracks every call. Real
+seeks never energise opposing magnets. Whether iron agrees is the one open
+question (TODO.md). Pinned in `diskii_motor_coast`. The //c's port also
+claims only with drive 2 selected (`IIcExternalSmartPort::addressed`, the
+rear connector being the drive-2 enable), so a 5.25" program on drive 1
+that energises PH1+PH3 keeps its reads.
 
 ### Host sockets (POSIX / Winsock)
 
@@ -8971,9 +9082,18 @@ dumps POM2 actually probes from
 `bios/Arcade/MAME`). The mapping lives in `romFetchCatalog()` — every
 `destRel` is a path `SystemProfile` / `RomCatalog` / `CharRomCatalog`
 already looks for (pinned by `rom_fetch`). Existing files are skipped
-(`findResource`); new ones land in `writableRomsDir()` (the first
-writable `roms/` on the search path, else the per-user data dir).
-HTTPS is the system `curl`; MAME zips go through `unzip` or `tar`.
+(`findResource`); new ones land in `writableRomsDir()`: the per-user
+`roms/` whenever the data dir is per-user — it is the FIRST search root, so
+the download is what the machine loads — else the first writable `roms/`
+among the roots (the working directory included). It creates nothing;
+the fetch does. After each save the fetch checks that `findResource` now
+resolves to the file it wrote, and reports a shadowing file in an earlier
+root instead of counting a success.
+HTTPS is the system `curl`. MAME zips are unpacked in-process
+(`ZipMember.h`: stored and deflated members, stb_image's inflater, CRC and
+size checked); `unzip` or `tar` only for a member that reader cannot handle
+— GNU tar does not read zip at all, which is why the host tools stopped
+being the first choice.
 Disabled under Emscripten (no helper processes).
 
 **2026-09-16 — the collection caught up.** RetroBIOS
@@ -8990,7 +9110,21 @@ they are what the code actually probes: `apple2e_char_us.rom` (the
 char-ROM picker's "US Enhanced" row) and `apple2e_char_2k.rom` (the //e
 **Unenhanced** profile's first char probe). PR #75 also published loose
 copies of the dumps this file used to unzip, so only **two** entries
-still need `unzip`/`tar` — pinned by name in `rom_fetch`.
+still come from a zip — pinned by name in `rom_fetch`.
+
+**A present file that is not the expected dump is replaced, never
+destroyed** *(2026-09-16, bug hunt)*. The planner re-verifies present files
+(`localDumpAcceptable`) and queues the ones that fail — right for a damaged
+dump, wrong for a legitimate variant it has no digest for, and it cannot tell
+them apart. `installFetchedRom` therefore copies the old file to
+`userDataDir()/roms-replaced/` (outside `roms/`, which the packaging ships as
+is) before the atomic replace, refuses the replacement if that copy fails,
+and leaves an already-identical file alone. `altPresentSize` skips the
+digests: they describe the fetched dump, not the alternate. Each run works in
+its own `.retrobios-fetch-<pid>-<n>` directory — a shared fixed one let a
+second POM2 delete the first one's downloads — and day-old leftovers are
+swept. Pinned in `rom_fetch` (no network: the install path is exercised
+directly, under a sandboxed HOME).
 
 **Two entries were downloading the wrong file** and had been since the
 SHA-256 gate landed, which is what made them visible: `apple2.rom` was

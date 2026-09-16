@@ -565,13 +565,25 @@ bool EmulationController::eject35(int idx)
     // writes it with the lock released, phase 3 drops the medium.
     pom2::Disk35Image::PendingWriteBack pending;
     std::string pendingPath;
-    {
-        std::lock_guard<std::mutex> lk(stateMtx);
-        pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
-        if (!image) return false;
-        if (!image->isLoaded()) return true;      // already empty — no-op
-        pending     = image->takeWriteBack();
-        pendingPath = pending.path;
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lk(stateMtx);
+            pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
+            pom2::Sony35Drive* drive = idx == 0 ? drive35Int.get() : drive35Ext.get();
+            if (!image) return false;
+            if (!image->isLoaded()) return true;  // already empty — no-op
+            // A firmware eject already holds this medium's writes in the
+            // queue. Taking the (now clean) medium out from under it would
+            // leave that commit nothing to hand the writes back to if it
+            // fails — the only copy, gone. Let it finish first, unlocked:
+            // its completion takes `stateMtx`.
+            if (!drive || !drive->isEjectPending()) {
+                pending     = image->takeWriteBack();
+                pendingPath = pending.path;
+                break;
+            }
+        }
+        writeBackQueue_.drain();
     }
 
     std::string error;

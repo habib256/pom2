@@ -99,6 +99,17 @@ public:
     virtual void onUnplug() {}
     virtual void onReset()  {}
 
+    /// The motherboard ROM is about to be rewritten (`Memory::loadAppleIIRom`,
+    /// e.g. Reload ROM) and has just been. A card that maps something OVER
+    /// that ROM — the TransWarp's $F000 shadow — lets go before and takes hold
+    /// again after, so what it keeps as "the Apple's own bytes" is the NEW
+    /// ROM, not the one that was replaced. Without it the reload landed
+    /// underneath the shadow, the card went on believing it was mapped, and a
+    /// later $C072 put the OLD $F000 page back over the new firmware
+    /// (bug hunt 2026-09-16).
+    virtual void beforeMainRomReload() {}
+    virtual void afterMainRomReload()  {}
+
     /// Motherboard //c IOU mouse decode. A lifecycle owner in slot 4 may
     /// implement it without supplying any slot firmware or PIA registers.
     virtual bool iicMouseAccess(uint8_t, bool, bool, uint8_t, uint8_t&) { return false; }

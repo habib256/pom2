@@ -290,6 +290,17 @@ int main()
         ++resolved;
         expect(std::filesystem::exists(got),
                "resolved path '" + got + "' exists on disk");
+        // The ROM Status panel judges a present dump by the size the entry
+        // implies (RomStatus_ImGui: `size`, else 4 KB IIe-class / 2 KB).
+        // The 8 KB two-set parts used to be painted red as "a different
+        // file, not a variant" (bug hunt 2026-09-16).
+        std::error_code sec;
+        const auto have = std::filesystem::file_size(got, sec);
+        const std::size_t want = e.size ? e.size : (e.isIIeClass ? 4096u : 2048u);
+        expect(!sec && have == want,
+               std::string(e.displayName) + ": the shipped dump is " +
+               std::to_string(have) + " bytes, the panel expects " +
+               std::to_string(want));
     }
     std::printf("char_rom_catalog: %d/%zu dumps present\n",
                 resolved, cat.size());

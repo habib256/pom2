@@ -131,6 +131,21 @@ public:
     /// The host read the data register in read mode. Returns true and the
     /// byte when the device is driving one.
     bool hostReads(uint8_t& out);
+    /// What the host's read of the data register (read mode) returns: the
+    /// device's next byte; $00 ("nothing yet") while a reply is on the wire
+    /// but already consumed; and $FF when there is NO reply at all.
+    ///
+    /// That last case is not a corner. The firmware's receive loop
+    /// (`$CA02: LDA $C08C,X / BPL / DEY / BMI error`, bank 1 of the //c and
+    /// the Liron) waits for a byte with bit 7 set and only then counts it
+    /// against its 30-byte timeout — a register stuck at $00 never reaches
+    /// the counter, and the call never returns. Every path where the
+    /// responder deliberately sends nothing (an aborted transaction after a
+    /// media change, a bad checksum, an unexpected or empty packet) froze
+    /// the guest for good (bug hunt 2026-09-16). An idle bus reads as $FF on
+    /// the wire, which the loop counts, and after 30 of them it takes its own
+    /// error path and retries.
+    uint8_t readDataRegister();
     /// The ACK line — bit 7 of the status register while addressed.
     bool sense();
     /// REQ (PH0) changed level.
@@ -138,6 +153,26 @@ public:
     /// True while a transaction is in flight, so the owner keeps routing the
     /// data register here even after the phase lines have moved.
     bool active() const;
+    /// True when the transaction in flight names one of the units in
+    /// `unitMask` (bit i = unit slot i): a pending WRITE's target, or the
+    /// destination of a frame whose header has arrived. A frame that has not
+    /// named its target yet, and a reply already built, involve nobody —
+    /// the former is served against the units as they are when it completes,
+    /// the latter was read before the change.
+    bool transactionInvolves(unsigned unitMask) const;
+    /// The units in `unitMask` gained or lost their medium. The protocol is
+    /// NOT interrupted: a drive whose disk is ejected is still on the chain,
+    /// still acknowledges, and answers "offline" — which `serveCommand` and
+    /// `serveWriteData` already do against the units as they are. The one
+    /// thing a change can corrupt is a WRITE whose command was taken before
+    /// it and whose data packet arrives after: that data must not land on a
+    /// disk mounted in between, so the write is refused with an error reply.
+    ///
+    /// This used to abort the transaction outright, on ANY change. That broke
+    /// the handshake — the host waited for an ACK or a reply that never came,
+    /// and the //c hung for good — and a mount in bay 2 failed a write on
+    /// bay 1, which a real two-drive chain never does (bug hunt 2026-09-16).
+    void mediaChanged(unsigned unitMask);
 
     /// How far the last exchange got, for tests and diagnostics.
     struct Progress {
@@ -189,6 +224,10 @@ private:
     // fresh probe — which needs ACK high again with no reply to offer.
     bool    pendingWrite_ = false;
     uint8_t pendingUnit_  = 0;
+    /// The pending WRITE's unit changed medium after the command was taken:
+    /// refuse its data packet (see mediaChanged). Bit 0x20 of the snapshot's
+    /// flags byte — older blobs carry 0 there.
+    bool    staleWrite_   = false;
     uint8_t pendingCmd_   = 0;
     uint32_t pendingBlock_ = 0;
 

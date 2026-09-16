@@ -130,6 +130,11 @@ fs::path userDataDir()
     return userDataDirInfo().path;
 }
 
+bool userDataDirIsPerUser()
+{
+    return userDataDirInfo().perUser;
+}
+
 fs::path userConfigDir()
 {
     // Emscripten: the IDBFS mount from wasm/shell.html's preRun hook. Not a

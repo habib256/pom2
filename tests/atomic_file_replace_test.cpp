@@ -32,6 +32,7 @@
 // failure.
 
 #include "AtomicFileReplace.h"
+#include "MediaNotch.h"
 
 #include <cassert>
 #include <iterator>
@@ -301,6 +302,39 @@ int main()
             std::printf("  (skipped: this filesystem has no symlinks)\n");
         }
     }
+
+    // ── …and its temp file sits next to the TARGET, not the link ───────
+    // The rename that publishes the temp cannot cross a filesystem. With the
+    // temp beside the link, a disk image symlinked onto a USB stick failed
+    // EVERY commit with cross_device_link: eject and swap refused, the flush
+    // at quit failed, the session's writes were lost (bug hunt 2026-09-16).
+    // Two filesystems cannot be summoned portably here, so pin the rule
+    // itself: the link lives in one directory, its target in another, and
+    // the temp must be in the target's.
+    {
+        const fs::path elsewhere = dir / "elsewhere";
+        std::error_code lec;
+        fs::create_directories(elsewhere, lec);
+        const fs::path real = elsewhere / "real_disk.dsk";
+        const fs::path link = dir / "link_disk.dsk";
+        writeFile(real, pattern(64, 0x22));
+        fs::remove(link, lec);
+        fs::create_symlink(real, link, lec);
+        if (!lec) {
+            const fs::path tmp = pom2::tempSiblingPath(link);
+            assert(fs::weakly_canonical(tmp.parent_path()) ==
+                       fs::weakly_canonical(elsewhere) &&
+                   "the temp file is a sibling of the LINK — a cross-device rename");
+            // And the commit still lands on the target through the link.
+            const auto body = pattern(96, 0x5A);
+            ec.clear();
+            assert(pom2::writeFileAtomic(link, body.data(), body.size(), ec));
+            assert(fs::is_symlink(fs::symlink_status(link)));
+            assert(readFile(real) == body);
+        } else {
+            std::printf("  (skipped: this filesystem has no symlinks)\n");
+        }
+    }
 #endif
 
     // ── Stale temp debris is swept, live debris is not ─────────────────
@@ -336,6 +370,48 @@ int main()
         // The suffix the sweep looks for is the one tempSiblingPath hands out.
         const fs::path handed = pom2::tempSiblingPath(keeper);
         assert(handed.extension() == pom2::kTempSiblingSuffix);
+    }
+
+    // A media commit carries the image's mode across the inode swap as it is
+    // AT THE RENAME. It used to read it before writing the payload, so a
+    // notch set meanwhile (the Disk Library, during a 32 MiB HDV autosave)
+    // was undone by the rename. The notch waits for the commit's lock, and
+    // the commit waits for the notch's — pinned here with the lock held
+    // across the window the old code left open. (Bug hunt 2026-09-16.)
+    {
+        const fs::path image = dir / "notched.po";
+        writeFile(image, pattern(64, 0x10));
+        std::string err;
+        assert(pom2::setMediaNotch(image.string(), false, err));
+        const fs::path tmp = pom2::tempSiblingPath(image);
+        writeFile(tmp, pattern(64, 0x20));
+
+        std::atomic<bool> renamed{false};
+        std::thread committer;
+        {
+            std::unique_lock<std::mutex> hold(pom2::mediaPermissionMutex());
+            committer = std::thread([&] {
+                std::error_code cec;
+                const bool ok = pom2::replaceMediaFileAtomic(tmp, image, cec);
+                assert(ok && !cec);
+                renamed = true;
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            assert(!renamed && "the commit renamed without the permission lock");
+            // The notch lands while the payload is "being written": the
+            // chmod the UI does, done here with the lock we already hold.
+            fs::permissions(image,
+                            fs::perms::owner_write | fs::perms::group_write |
+                                fs::perms::others_write,
+                            fs::perm_options::remove, ec);
+            assert(!ec);
+        }
+        committer.join();
+        assert(renamed);
+        assert(pom2::mediaFileIsReadOnly(image.string()) &&
+               "the rename undid a notch set while the commit ran");
+        assert(readFile(image) == pattern(64, 0x20));
+        assert(pom2::setMediaNotch(image.string(), false, err));
     }
 
     fs::remove_all(dir, ec);

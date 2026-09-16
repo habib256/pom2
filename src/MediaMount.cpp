@@ -18,7 +18,13 @@
 
 #include "MediaMount.h"
 
+#include "Logger.h"
+
 #include "DiskIICard.h"
+#include "SlotPeripheral.h"
+#include "SlotBus.h"
+#include "MountableMediaCard.h"
+#include "Disk35Image.h"
 #include "DiskImage.h"
 #include "Block512Backing.h"
 #include "EmulationController.h"
@@ -26,9 +32,11 @@
 #include "RewindBuffer.h"
 #include "SmartPortUnit.h"
 
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 namespace pom2 {
 
@@ -59,6 +67,42 @@ void noteHostMediaSwap(EmulationController& ctrl)
 
 namespace {
 
+/// Every image file mounted anywhere on the machine, as its leaf reports the
+/// path: both Disk II drives of every card, every bay of every mountable card
+/// (Liron, SmartPort, HDV / CFFA), and the //c+'s two on-board 3.5" drives.
+/// Strings only, copied under the state lock — the file comparison happens
+/// after, unlocked.
+std::vector<std::string> mountedImagePaths(EmulationController& ctrl)
+{
+    std::vector<std::string> out;
+    auto st = ctrl.lockState();
+    const SlotBus& bus = st.memory().slotBus();
+    for (int s = 0; s < SlotBus::kSlotCount; ++s) {
+        SlotPeripheral* p = bus.peripheral(s);
+        if (!p) continue;
+        if (auto* d = dynamic_cast<DiskIICard*>(p)) {
+            for (int dr = 0; dr < DiskIICard::kDriveCount; ++dr)
+                if (d->isDiskLoaded(dr)) out.push_back(d->driveImage(dr).getPath());
+            continue;
+        }
+        if (auto* m = dynamic_cast<MountableMediaCard*>(p)) {
+            for (int b = 0; b < m->bayCount(); ++b) {
+                const MediaBayInfo info = m->bayInfo(b);
+                if (info.loaded && !info.path.empty()) out.push_back(info.path);
+            }
+        }
+    }
+    for (Disk35Image* img : { &ctrl.disk35Internal(), &ctrl.disk35External() })
+        if (img->isLoaded() && !img->path().empty()) out.push_back(img->path());
+    return out;
+}
+
+bool refusedAsSecondMount(EmulationController& ctrl, const std::string& path,
+                          const std::string& targetPath, std::string& error)
+{
+    return imageMountedElsewhere(ctrl, path, targetPath, error);
+}
+
 /// The body both Disk II mounts share. `eraseAfterPrepare` makes the mounted
 /// medium an UNFORMATTED diskette — done here, between the phases, because it
 /// is part of preparing the image and has no business inside the lock.
@@ -67,6 +111,12 @@ bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
                        bool seekTrack0, bool eraseAfterPrepare)
 {
     error.clear();
+    std::string current;
+    {
+        auto st = ctrl.lockState();
+        if (card.isDiskLoaded(drive)) current = card.driveImage(drive).getPath();
+    }
+    if (refusedAsSecondMount(ctrl, path, current, error)) return false;
 
     // Phase 1 — no lock. The read and the nibble decode happen here, so the
     // CPU worker keeps running and the UI keeps painting through all of it.
@@ -107,6 +157,28 @@ bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
 
 }  // namespace
 
+bool sameImageFile(const std::string& a, const std::string& b)
+{
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec;
+    if (std::filesystem::equivalent(a, b, ec) && !ec) return true;
+    return a == b;
+}
+
+bool imageMountedElsewhere(EmulationController& ctrl, const std::string& path,
+                           const std::string& targetPath, std::string& error)
+{
+    int held = 0;
+    for (const std::string& p : mountedImagePaths(ctrl))
+        if (sameImageFile(p, path)) ++held;
+    // Putting a disk back into the drive it is already in is fine.
+    if (!targetPath.empty() && sameImageFile(targetPath, path)) --held;
+    if (held <= 0) return false;
+    error = path + " is already mounted in another drive — two copies of one "
+                   "image would each write their own view of the disk into it";
+    return true;
+}
+
 bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
                  const std::string& path, std::string& error,
                  bool seekTrack0)
@@ -121,6 +193,55 @@ bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
 {
     return mountDiskIICommon(ctrl, card, drive, path, error, seekTrack0,
                              /*eraseAfterPrepare=*/true);
+}
+
+// One image, one drive — at restore too (bug hunt 2026-09-16). The restore
+// loads every persisted path inline, card by card, so a settings file naming
+// one image for two drives (hand-edited, or left by a build without this
+// rule) mounted two copies that each wrote their own view of the disk back
+// into one file. Run after the loads: the first holder in slot order keeps
+// the image, a later one is ejected — it was loaded a moment ago and holds
+// nothing to write back — and the user is told. The //c+ on-board 3.5"
+// drives are not on the bus and are not covered here.
+void dropDuplicateMounts(SlotBus& bus, std::vector<std::string>* warnings)
+{
+    std::vector<std::pair<std::string, std::string>> seen;   // path, where
+    auto claim = [&](const std::string& path, const std::string& where) {
+        for (const auto& held : seen) {
+            if (sameImageFile(held.first, path)) {
+                if (warnings)
+                    warnings->push_back(where + ": " + path + " is already mounted in " +
+                                        held.second + " — left empty (one image, one drive)");
+                log().warn("Storage", where + ": duplicate of " + held.second +
+                                            " (" + path + ") left empty");
+                return false;
+            }
+        }
+        seen.emplace_back(path, where);
+        return true;
+    };
+    for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
+        SlotPeripheral* p = bus.peripheral(slot);
+        if (!p) continue;
+        if (auto* d = dynamic_cast<DiskIICard*>(p)) {
+            for (int drive = 0; drive < DiskIICard::kDriveCount; ++drive) {
+                if (!d->isDiskLoaded(drive)) continue;
+                const std::string where = "Disk II slot " + std::to_string(slot) +
+                                          " drive " + std::to_string(drive + 1);
+                if (!claim(d->getDiskPath(drive), where)) (void)d->ejectDisk(drive);
+            }
+            continue;
+        }
+        if (auto* m = dynamic_cast<MountableMediaCard*>(p)) {
+            for (int bay = 0; bay < m->bayCount(); ++bay) {
+                const MediaBayInfo info = m->bayInfo(bay);
+                if (!info.loaded || info.path.empty()) continue;
+                const std::string where = "slot " + std::to_string(slot) +
+                                          " bay " + std::to_string(bay + 1);
+                if (!claim(info.path, where)) (void)m->ejectBay(bay);
+            }
+        }
+    }
 }
 
 // ── Block devices: the 32 MiB case ──────────────────────────────────────
@@ -183,6 +304,15 @@ bool mountBlockLike(EmulationController& ctrl, const std::string& path,
 bool mountBlockCard(EmulationController& ctrl, ProDOSBlockCard& card,
                     const std::string& path, std::string& error)
 {
+    error.clear();
+    std::string current;
+    {
+        auto st = ctrl.lockState();
+        // adoptImage lands in the card's first drive.
+        const MediaBayInfo info = card.bayInfo(0);
+        if (info.loaded) current = info.path;
+    }
+    if (refusedAsSecondMount(ctrl, path, current, error)) return false;
     return mountBlockLike(
         ctrl, path, error,
         [&card](Block512Backing::PreparedImage&& p) {
@@ -195,6 +325,13 @@ bool mountBlockCard(EmulationController& ctrl, ProDOSBlockCard& card,
 bool mountSmartPortUnit(EmulationController& ctrl, SmartPortUnit& unit,
                         const std::string& path, std::string& error)
 {
+    error.clear();
+    std::string current;
+    {
+        auto st = ctrl.lockState();
+        if (unit.isLoaded()) current = unit.path();
+    }
+    if (refusedAsSecondMount(ctrl, path, current, error)) return false;
     return mountBlockLike(
         ctrl, path, error,
         [&unit](Block512Backing::PreparedImage&& p) {

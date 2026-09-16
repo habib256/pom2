@@ -167,6 +167,62 @@ std::vector<uint8_t> runBurst(const Rig& rig, bool midFlush, bool midStep,
     return out;
 }
 
+// C. A burst the write gate refused (the disk is notched) must be DROPPED at
+//    motor-off, not kept. The motor-off flush skipped an inhibited burst but
+//    left `writePosition` standing, timed against a spin that had just ended;
+//    un-notching the disk and dropping Q7 afterwards spliced those stale
+//    transitions against the cleared revolution anchor (bug hunt 2026-09-16).
+int runInhibitedBurst(const Rig& rig)
+{
+    fs::path p = makeBlankNib("inhibit");
+    DiskIICard card;
+    if (!card.loadBootRom(rig.bootRom) || !card.loadLssRom(rig.p6Rom)) {
+        std::printf("FAIL: ROM load\n");
+        std::exit(1);
+    }
+    card.setWriteBackEnabled(true);
+    if (!card.insertDisk(0, p.string())) {
+        std::printf("FAIL: insert: %s\n", card.getLastError().c_str());
+        std::exit(1);
+    }
+    card.seekTrack0();
+    card.deviceSelectWrite(0x9, 0);            // motor on
+    card.advanceCycles(64);
+    card.setDriveHostWriteProtected(0, true);  // the sticker is on
+    card.deviceSelectWrite(0xF, 0);            // Q7H — write mode
+    for (int i = 0; i < 20; ++i) {
+        card.deviceSelectWrite(0xD, static_cast<uint8_t>(0xA0 + i));
+        card.advanceCycles(4);
+        (void)card.deviceSelectRead(0xC);
+        card.advanceCycles(28);
+    }
+    card.deviceSelectWrite(0x8, 0);            // motor off, still in write mode
+    card.advanceCycles(2'000'000);             // the one-shot expires
+    card.setDriveHostWriteProtected(0, false); // the sticker comes off
+    card.deviceSelectWrite(0xE, 0);            // Q7L
+    const uint64_t flushes = card.getWriteFlushCount();
+    (void)card.flushPendingWrites();
+    std::vector<uint8_t> out(
+        static_cast<size_t>(DiskImage::kTracks) * DiskImage::kNibblesPerTrack);
+    {
+        std::ifstream f(p, std::ios::binary);
+        f.read(reinterpret_cast<char*>(out.data()),
+               static_cast<std::streamsize>(out.size()));
+    }
+    std::error_code ec;
+    fs::remove(p, ec);
+    int written = 0;
+    for (int t = 0; t < DiskImage::kTracks; ++t) written += countWritten(out, t);
+    if (flushes != 0 || written != 0) {
+        std::printf("FAIL: a burst refused by the notch reached the disk after "
+                    "it was un-notched (%llu splice(s), %d nibble(s))\n",
+                    static_cast<unsigned long long>(flushes), written);
+        return 1;
+    }
+    std::printf("[ OK ] a burst the notch refused is dropped at motor-off\n");
+    return 0;
+}
+
 void dumpHead(const char* tag, const std::vector<uint8_t>& v)
 {
     std::printf("      %-9s track0[0..31]:", tag);
@@ -241,6 +297,8 @@ int main()
         std::printf("[ OK ] a head step mid-burst leaves the destination "
                     "track untouched (track 0 %d, track 1 %d)\n", t0, t1);
     }
+
+    if (runInhibitedBurst(rig) != 0) ok = false;
 
     if (!ok) return 1;
     std::printf("PASS: Disk II write-burst boundaries\n");

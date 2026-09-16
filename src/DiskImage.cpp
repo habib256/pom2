@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +34,15 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -1464,9 +1474,18 @@ void DiskImage::eraseSurface()
     // buffers would dirty a store saveDirty's WOZ branch never reads and
     // leave the medium unchanged — the same trap writeNibbleAt documents.
     if (wozFormat) return;
+    // The erased tracks are NOT marked dirty. An unformatted track has no
+    // sector to decode, so `saveDirty` refuses it — and one refused track
+    // refuses the whole save, which is what eject, swap and flush all go
+    // through. Marking all 35 dirty (the first version, 2026-09-16) left a
+    // New Blank diskette impossible to eject, swap or save until the guest
+    // had formatted EVERY track, and an aborted INIT stranded the tracks it
+    // did format in memory for good (bug hunt, same day). Nothing is owed
+    // to the file for them anyway: the unformatted state is not persistable
+    // in this container, and the backing file New Blank makes is zeros
+    // already. Tracks the guest writes are dirtied by writeFlux as usual.
     for (int t = 0; t < kTracks; ++t) {
         tracks[t].fill(0x00);
-        dirty[t] = true;
         invalidateWholeTrack(t);
     }
     // The head is over a surface that has never been written, so no burst
@@ -1474,7 +1493,6 @@ void DiskImage::eraseSurface()
     // would resume a nibble slot belonging to the medium that was here
     // before (see writeFlux).
     writeFraming.fill(WriteFraming{});
-    anyDirty = true;
 }
 
 bool DiskImage::createBlankFile(const std::string& path, std::string& error)
@@ -1483,11 +1501,6 @@ bool DiskImage::createBlankFile(const std::string& path, std::string& error)
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path p(path);
-    // Never over an existing file. See the header: there is no undo for it.
-    if (fs::exists(p, ec)) {
-        error = path + " already exists — pick another name";
-        return false;
-    }
     if (p.has_parent_path()) {
         fs::create_directories(p.parent_path(), ec);
         if (ec) {
@@ -1495,14 +1508,59 @@ bool DiskImage::createBlankFile(const std::string& path, std::string& error)
             return false;
         }
     }
-    // The same durable commit every write-back uses: a blank image is still a
-    // file the user will mount, and a half-written one is a mount failure
-    // minutes later with no clue where it came from.
-    const std::vector<uint8_t> zeros(static_cast<std::size_t>(kBytesPerImage), 0u);
-    if (!pom2::writeFileAtomic(p, zeros.data(), zeros.size(), ec)) {
-        error = "cannot write " + path + (ec ? (": " + ec.message()) : std::string());
+    // Never over an existing file, and the test that says so must BE the
+    // create. The first version checked `exists` and then committed through
+    // writeFileAtomic, whose rename replaces whatever is at the target — so
+    // two POM2 instances picking the same stamped name in the same second,
+    // or a file copied into place between the check and the rename, lost the
+    // file that got there first (bug hunt 2026-09-16). O_EXCL is the atomic
+    // form of "only if it does not exist".
+#ifdef _WIN32
+    const int fd = ::_wopen(p.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
+                            _S_IREAD | _S_IWRITE);
+#else
+    const int fd = ::open(p.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+#endif
+    if (fd < 0) {
+        const int e = errno;
+        error = (e == EEXIST) ? path + " already exists — pick another name"
+                              : "cannot create " + path + ": " + std::strerror(e);
         return false;
     }
+    // We made this file a moment ago, so writing it in place is safe; what
+    // the durable commit adds — the flush — is done by hand below. A
+    // half-written blank is a size the loader refuses, never a lost disk.
+    std::vector<char> zeros(static_cast<std::size_t>(kBytesPerImage), 0);
+    std::size_t done = 0;
+    bool ok = true;
+    while (done < zeros.size()) {
+#ifdef _WIN32
+        const int n = ::_write(fd, zeros.data() + done,
+                               static_cast<unsigned int>(zeros.size() - done));
+#else
+        const ssize_t n = ::write(fd, zeros.data() + done, zeros.size() - done);
+#endif
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ok = false; break; }
+        done += static_cast<std::size_t>(n);
+    }
+    const int writeErr = ok ? 0 : errno;
+#ifdef _WIN32
+    if (::_close(fd) != 0) ok = false;
+#else
+    if (::close(fd) != 0) ok = false;
+#endif
+    if (ok) ok = pom2::syncFileContents(p, ec);
+    if (!ok) {
+        // Ours to remove: nobody else could have had it.
+        std::error_code rm;
+        fs::remove(p, rm);
+        error = "cannot write " + path + ": " +
+                (writeErr ? std::strerror(writeErr)
+                          : (ec ? ec.message() : std::string("short write")));
+        return false;
+    }
+    pom2::syncParentDirectory(p);
     return true;
 }
 
@@ -2629,14 +2687,6 @@ bool writeFileAtomic(const std::string& path, std::string& lastError,
     // interleaved their writes, and whichever renamed last published a disk
     // made of both. See pom2::tempSiblingPath.
     const std::string tmp = pom2::tempSiblingPath(path).string();
-    // The rename replaces the inode, so without this the image inherits the
-    // temp file's umask-derived mode and the user's own permissions on their
-    // disk image are silently rewritten on the first write-back. Capture
-    // before the write (same discipline as `Disk35Image::saveDirty`).
-    std::error_code permEc;
-    const std::filesystem::perms origPerms =
-        std::filesystem::status(path, permEc).permissions();
-    const bool havePerms = !permEc;
     // The temp name is derived from a target the caller validated, but gets
     // none of that scrutiny itself, and `ofstream(trunc)` follows symlinks.
     // Anything already sitting at <image>.pom2tmp is our own crash debris or
@@ -2660,12 +2710,11 @@ bool writeFileAtomic(const std::string& path, std::string& lastError,
             return false;
         }
     }
+    // The rename replaces the inode, so without the helper the image would
+    // inherit the temp file's umask-derived mode. It reads the image's mode
+    // AT the rename, under the notch's lock (MediaNotch.h).
     std::error_code ec;
-    if (havePerms) {
-        std::filesystem::permissions(tmp, origPerms, ec);
-        ec.clear();
-    }
-    if (!pom2::replaceFileAtomic(tmp, path, ec)) {
+    if (!pom2::replaceMediaFileAtomic(tmp, path, ec)) {
         lastError = "Cannot replace " + path + ": " + ec.message();
         std::error_code ec2;
         std::filesystem::remove(tmp, ec2);
@@ -2894,6 +2943,7 @@ bool DiskImage::saveDirty()
         if (!wrote) return false;
         dirty.fill(false);
         anyDirty = false;
+        pom2::noteMediaWrite();   // the file moved — see the sector-format exit
         pom2::log().info("Disk II",
             std::string("Saved (.nib") +
             (cnib2Format ? " CNib2 6384/track" : "") +
@@ -2953,6 +3003,7 @@ bool DiskImage::saveDirty()
         if (!wrote) return false;
         dirty.fill(false);
         anyDirty = false;
+        pom2::noteMediaWrite();   // the file moved — see the sector-format exit
         pom2::log().info("Disk II", "Saved " + std::to_string(decodedTracks) +
                          " modified track(s) to " + path + " (13-sector)");
         return true;
@@ -3020,6 +3071,16 @@ bool DiskImage::saveDirty()
     if (!wrote) return false;
     dirty.fill(false);
     anyDirty = false;
+    // The FILE just moved, and that is irreversible. A nibble write in memory
+    // deliberately does not bump the media epoch — the rewind ring captures
+    // those tracks and a rewind is meant to undo them — but the commit is a
+    // different event: rewinding across it restored the old tracks with their
+    // dirty flags CLEARED, so the next save wrote only later tracks and the
+    // file became a mix of two timelines (a ProDOS volume cross-links that
+    // way). The WASM 10 s heartbeat commits mid-session, so it happened there
+    // (bug hunt 2026-09-16). Desktop commits mid-session only on eject, swap
+    // or a rebuild, which clear the ring anyway.
+    pom2::noteMediaWrite();
     pom2::log().info("Disk II", "Saved " + std::to_string(decodedTracks) +
                      " modified track(s) to " + path +
                      (twoImgFormat ? " (2IMG envelope preserved)" : ""));

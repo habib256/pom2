@@ -16,6 +16,7 @@
 #pragma once
 
 #include <filesystem>
+#include <mutex>
 #include <fstream>
 #include <string>
 #include <system_error>
@@ -32,6 +33,20 @@ inline bool mediaFileIsReadOnly(const std::string& path)
     return !probe;
 }
 
+/// Serialises the notch's chmod against a media commit's "which permissions
+/// does the image carry" read and the rename that publishes them
+/// (AtomicFileReplace.h, replaceMediaFileAtomic). A rename replaces the
+/// inode, so a commit copies the image's mode onto its temp file; it used to
+/// read that mode BEFORE writing the payload and apply it after, so a notch
+/// flipped in between (the Disk Library's menu, while the block autosave
+/// wrote a 32 MiB HDV) was silently undone by the rename (bug hunt
+/// 2026-09-16). Process-wide only: another process's chmod is not ours.
+inline std::mutex& mediaPermissionMutex()
+{
+    static std::mutex m;
+    return m;
+}
+
 /// Put the sticker on (`protect` = true: clear every write bit) or take it
 /// off (add the owner's write bit). Returns false with `error` set when the
 /// host refuses — a read-only volume, a file the user does not own — in
@@ -44,6 +59,7 @@ inline bool setMediaNotch(const std::string& path, bool protect, std::string& er
         error = "not a file: " + path;
         return false;
     }
+    std::lock_guard<std::mutex> lk(mediaPermissionMutex());
     const fs::perms bits = protect
         ? (fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write)
         : fs::perms::owner_write;

@@ -134,6 +134,13 @@ int runScenario(const std::string& romPath, const std::string& promPath,
     m.mem.setIIEMode(false);
     if (!m.mem.loadAppleIIRom(romPath.c_str())) { std::fprintf(stderr, "ROM load failed\n"); return 1; }
     auto card = std::make_unique<DiskIICard>();
+    // Built the way SlotCardFactory builds it for a machine WITH slots — the
+    // ][+ here, and the default //e Enhanced PAL: no IWM hooks. A hand-built
+    // card defaults them ON (DiskIICard.h), and the //c's $C0nE status hook
+    // answered the write-protect sense that the plain Disk II path got wrong
+    // over a blank track — so this test passed while INIT of a blank disk
+    // failed on the default machine (bug hunt 2026-09-16).
+    card->setIwmHost(false);
     if (!card->loadBootRom(promPath)) { std::fprintf(stderr, "PROM load failed\n"); return 1; }
     // The only difference between the two passes.
     if (!p6Path.empty() && !card->loadLssRom(p6Path)) {
@@ -356,7 +363,90 @@ int main()
         }
     }
 
-    std::printf("diskii_unformatted_disk OK: both read gates, and the "
-                "blank-disk file helper refuses to overwrite\n");
+    // ── A blank that is never formatted must still leave the drive ───
+    // The first eraseSurface marked all 35 tracks dirty; an unformatted
+    // track decodes to nothing, saveDirty refused the lot, and with it every
+    // eject, swap and flush — a New Blank diskette was stuck in the drive
+    // until the guest had formatted all of it (bug hunt 2026-09-16).
+    {
+        const fs::path stuck = scratch / "stuck.dsk";
+        const fs::path other = scratch / "other.dsk";
+        fs::remove(stuck, ec);
+        fs::remove(other, ec);
+        std::string err;
+        if (!DiskImage::createBlankFile(stuck.string(), err) ||
+            !DiskImage::createBlankFile(other.string(), err)) {
+            std::fprintf(stderr, "FAIL: createBlankFile (stuck): %s\n", err.c_str());
+            return 1;
+        }
+        DiskIICard card;
+        card.setWriteBackEnabled(true);
+        if (!card.insertBlankDisk(1, stuck.string())) {
+            std::fprintf(stderr, "FAIL: insertBlankDisk (stuck)\n");
+            return 1;
+        }
+        if (card.hasUnsavedChanges(1)) {
+            std::fprintf(stderr, "FAIL: an erased, untouched diskette reports unsaved changes\n");
+            return 1;
+        }
+        if (!card.flushPendingWrites()) {
+            std::fprintf(stderr, "FAIL: flushing an unformatted diskette was refused\n");
+            return 1;
+        }
+        if (!card.insertDisk(1, other.string())) {
+            std::fprintf(stderr, "FAIL: swapping an unformatted diskette out was refused\n");
+            return 1;
+        }
+        if (!card.insertBlankDisk(1, stuck.string()) || !card.ejectDisk(1) ||
+            card.isDiskLoaded(1)) {
+            std::fprintf(stderr, "FAIL: ejecting an unformatted diskette was refused\n");
+            return 1;
+        }
+    }
+
+    // ── An aborted format keeps what it formatted ────────────────────
+    // Tracks 0-16 formatted (with the DOS master's contents, so the bytes are
+    // recognisable), 17-34 never reached — an INIT that stopped half way.
+    // The formatted half must reach the file; the first version refused the
+    // save outright because the untouched tracks were dirty.
+    {
+        const fs::path half = scratch / "half.dsk";
+        fs::remove(half, ec);
+        std::string err;
+        if (!DiskImage::createBlankFile(half.string(), err)) {
+            std::fprintf(stderr, "FAIL: createBlankFile (half): %s\n", err.c_str());
+            return 1;
+        }
+        auto ref = std::make_unique<DiskImage>();
+        auto img = std::make_unique<DiskImage>();
+        if (!ref->loadFile(master.string()) || !img->loadFile(half.string())) {
+            std::fprintf(stderr, "FAIL: loading the half-format images\n");
+            return 1;
+        }
+        img->setWriteBackEnabled(true);
+        img->eraseSurface();
+        constexpr int kFormatted = 17;
+        for (int t = 0; t < kFormatted; ++t)
+            for (int i = 0; i < DiskImage::kNibblesPerTrack; ++i)
+                img->writeNibbleAt(t, i, ref->nibbleAt(t, i));
+        if (!img->saveDirty()) {
+            std::fprintf(stderr, "FAIL: a half-formatted diskette cannot be saved: %s\n",
+                         img->getLastError().c_str());
+            return 1;
+        }
+        std::ifstream a(master, std::ios::binary), b(half, std::ios::binary);
+        const std::vector<char> ma((std::istreambuf_iterator<char>(a)), std::istreambuf_iterator<char>());
+        const std::vector<char> hb((std::istreambuf_iterator<char>(b)), std::istreambuf_iterator<char>());
+        const std::size_t span = static_cast<std::size_t>(kFormatted) * 16 * 256;
+        if (hb.size() != static_cast<std::size_t>(DiskImage::kBytesPerImage) ||
+            ma.size() < span || std::memcmp(ma.data(), hb.data(), span) != 0) {
+            std::fprintf(stderr, "FAIL: the formatted tracks did not reach the file intact\n");
+            return 1;
+        }
+    }
+
+    std::printf("diskii_unformatted_disk OK: both read gates, a never-formatted "
+                "diskette ejects and swaps, an aborted format keeps its tracks, "
+                "and the blank-disk file helper refuses to overwrite\n");
     return 0;
 }

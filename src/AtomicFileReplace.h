@@ -19,11 +19,14 @@
 #ifndef POM2_ATOMIC_FILE_REPLACE_H
 #define POM2_ATOMIC_FILE_REPLACE_H
 
+#include "MediaNotch.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <system_error>
 
@@ -161,24 +164,32 @@ inline void syncParentDirectory(const std::filesystem::path& p) noexcept
 /// `denyglob`.
 inline constexpr const char* kTempSiblingSuffix = ".pom2tmp";
 
-/// Make a sibling temporary path safe to create-and-truncate.
+/// Resolve a symlinked TARGET to the file it names.
 ///
-/// Every write-back path here writes `<target>.tmp` and then renames it over
-/// the target. The CALLER validates the target — refuses a path outside the
-/// working directory, refuses a symlink, checks the extension — but the temp
-/// path is derived afterwards and gets none of that scrutiny, while
-/// `ofstream(..., trunc)` follows symlinks like any other open.
+/// A rename does not follow links: renaming over `~/.config/POM2/state.cfg`
+/// when that is a symlink into a dotfiles repo REPLACES the link with a
+/// regular file. The user's setup is quietly dismantled, their repo stops
+/// tracking the file, and nothing says so. Nobody symlinks a path in order
+/// to have it replaced — the link IS the instruction "write to the thing I
+/// point at" — so POM2 follows it rather than refusing (refusing would make
+/// a symlinked settings file or disk image unsaveable, which is worse).
 ///
-/// So a file planted at `<target>.tmp` beforehand redirects the write: the
-/// bytes land on whatever it points at, and the rename then moves the symlink
-/// away, leaving the destroyed target behind with nothing to show what
-/// happened. The temp name is ours by construction, so anything already
-/// sitting there is either our own debris from a crashed run or somebody
-/// else's doing — remove it either way, and refuse to proceed if it will not
-/// go, rather than writing through it.
-///
-/// Returns false only when the path is still unusable afterwards; a missing
-/// temp (the normal case) is success.
+/// `tempSiblingPath` resolves through here too, so the temp file sits next
+/// to the REAL file and the rename stays on one filesystem. It used to sit
+/// next to the LINK: a disk image symlinked onto a USB stick then failed
+/// every commit with `cross_device_link`, forever — eject and swap refused,
+/// the destructor flush failed at quit, and the session's writes were lost
+/// (bug hunt 2026-09-16). The rename has to write in the target's directory
+/// anyway, so putting the temp there asks for nothing more.
+inline std::filesystem::path resolveReplaceTarget(const std::filesystem::path& to)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(to, ec)) || ec)
+        return to;
+    const std::filesystem::path real = std::filesystem::weakly_canonical(to, ec);
+    return (ec || real.empty()) ? to : real;
+}
+
 /// A sibling temporary path that is UNIQUE to this process and this call.
 ///
 /// Every write-back used to derive the temp name from the target alone —
@@ -198,11 +209,32 @@ inline std::filesystem::path tempSiblingPath(const std::filesystem::path& target
 #else
     const unsigned long pid = static_cast<unsigned long>(::getpid());
 #endif
+    // The REAL file's sibling, so the rename that publishes the temp never
+    // crosses a filesystem (see resolveReplaceTarget).
+    const std::filesystem::path real = resolveReplaceTarget(target);
     return std::filesystem::path(
-        target.string() + "." + std::to_string(pid) + "-" +
+        real.string() + "." + std::to_string(pid) + "-" +
         std::to_string(counter.fetch_add(1) + 1) + kTempSiblingSuffix);
 }
 
+/// Make a sibling temporary path safe to create-and-truncate.
+///
+/// Every write-back path here writes `<target>.tmp` and then renames it over
+/// the target. The CALLER validates the target — refuses a path outside the
+/// working directory, refuses a symlink, checks the extension — but the temp
+/// path is derived afterwards and gets none of that scrutiny, while
+/// `ofstream(..., trunc)` follows symlinks like any other open.
+///
+/// So a file planted at `<target>.tmp` beforehand redirects the write: the
+/// bytes land on whatever it points at, and the rename then moves the symlink
+/// away, leaving the destroyed target behind with nothing to show what
+/// happened. The temp name is ours by construction, so anything already
+/// sitting there is either our own debris from a crashed run or somebody
+/// else's doing — remove it either way, and refuse to proceed if it will not
+/// go, rather than writing through it.
+///
+/// Returns false only when the path is still unusable afterwards; a missing
+/// temp (the normal case) is success.
 inline bool prepareTempPath(const std::filesystem::path& tmp,
                             std::error_code& ec)
 {
@@ -300,29 +332,6 @@ inline std::size_t sweepStaleTempSiblings(const std::filesystem::path& dir,
     return removed;
 }
 
-/// Resolve a symlinked TARGET to the file it names.
-///
-/// A rename does not follow links: renaming over `~/.config/POM2/state.cfg`
-/// when that is a symlink into a dotfiles repo REPLACES the link with a
-/// regular file. The user's setup is quietly dismantled, their repo stops
-/// tracking the file, and nothing says so. Nobody symlinks a path in order
-/// to have it replaced — the link IS the instruction "write to the thing I
-/// point at" — so POM2 follows it rather than refusing (refusing would make
-/// a symlinked settings file or disk image unsaveable, which is worse).
-///
-/// The cost is that the temp file is a sibling of the LINK, not of its
-/// target: if they sit on different filesystems the rename now fails loudly
-/// with `cross_device_link` instead of silently eating the link. A loud
-/// failure the user can act on is the better half of that trade.
-inline std::filesystem::path resolveReplaceTarget(const std::filesystem::path& to)
-{
-    std::error_code ec;
-    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(to, ec)) || ec)
-        return to;
-    const std::filesystem::path real = std::filesystem::weakly_canonical(to, ec);
-    return (ec || real.empty()) ? to : real;
-}
-
 inline bool replaceFileAtomic(const std::filesystem::path& from,
                               const std::filesystem::path& to,
                               std::error_code& ec)
@@ -361,6 +370,27 @@ inline bool replaceFileAtomic(const std::filesystem::path& from,
     syncParentDirectory(dest); // ...then the directory entry that names them
     return true;
 #endif
+}
+
+/// `replaceFileAtomic` for a media image: carries `to`'s CURRENT permissions
+/// onto `from` and renames, with `mediaPermissionMutex` held across both. A
+/// target that does not exist yet keeps the temp's own mode.
+inline bool replaceMediaFileAtomic(const std::filesystem::path& from,
+                                   const std::filesystem::path& to,
+                                   std::error_code& ec)
+{
+    // The data flush first and outside the lock: it is the slow part, and
+    // the notch toggle runs on the UI thread. replaceFileAtomic flushes
+    // again; a second fsync of clean contents is cheap.
+    if (!syncFileContents(from, ec)) return false;
+    std::lock_guard<std::mutex> lk(mediaPermissionMutex());
+    std::error_code permEc;
+    const auto perms = std::filesystem::status(to, permEc).permissions();
+    if (!permEc) {
+        std::error_code ignored;
+        std::filesystem::permissions(from, perms, ignored);
+    }
+    return replaceFileAtomic(from, to, ec);
 }
 
 /// Write `bytes` to `path` through the same durable temp + rename commit

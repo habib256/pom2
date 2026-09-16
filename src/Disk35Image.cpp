@@ -392,12 +392,6 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
     // every POM2 instance derives, so two of them saving the same image
     // interleaved their writes into one temp file. See tempSiblingPath().
     const std::string tmp = tempSiblingPath(pending.path).string();
-    // A rename replaces the inode, so the temp file's umask-derived mode
-    // would become the image's. Carry the original's permissions across.
-    std::error_code permEc;
-    const std::filesystem::perms origPerms =
-        std::filesystem::status(pending.path, permEc).permissions();
-    const bool havePerms = !permEc;
     // Same temp-path scrutiny as every AtomicFileReplace caller: a symlink
     // or hard link planted at <path>.pom2tmp would redirect the trunc onto
     // the user's file (or another victim) before anything is committed.
@@ -430,12 +424,11 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
             return false;
         }
     }
+    // A rename replaces the inode, so the temp file's umask-derived mode
+    // would become the image's: carry the image's permissions across, read
+    // at the rename and not before the write (a notch flipped meanwhile).
     std::error_code ec;
-    if (havePerms) {
-        std::filesystem::permissions(tmp, origPerms, ec);
-        ec.clear();
-    }
-    if (!replaceFileAtomic(tmp, pending.path, ec)) {
+    if (!replaceMediaFileAtomic(tmp, pending.path, ec)) {
         error = "Disk35Image: cannot replace " + pending.path + ": " +
                 ec.message();
         std::error_code ec2;

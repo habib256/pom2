@@ -42,8 +42,10 @@
 #define POM2_MEDIA_MOUNT_H
 
 #include <string>
+#include <vector>
 
 class DiskIICard;
+class SlotBus;
 class EmulationController;
 
 namespace pom2 {
@@ -106,6 +108,31 @@ bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
 bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
                       const std::string& path, std::string& error,
                       bool seekTrack0 = false);
+
+/// The same FILE, whatever the spelling: a relative and an absolute path, or
+/// a symlink and its target, name one image (`std::filesystem::equivalent`).
+/// A path that is not a file on disk — a synthesised host-folder volume's
+/// label — compares as a string. Does a `stat`: keep it off `stateMutex`
+/// unless the caller already does file I/O under it.
+bool sameImageFile(const std::string& a, const std::string& b);
+
+/// True, with `error` set, when `path` is already mounted in a drive or bay
+/// other than the target, whose current medium is `targetPath` (empty = the
+/// target is empty). Two mounted copies of one image each write their own
+/// view of the disk back into the same file, which ends up a volume neither
+/// copy ever held (bug hunt 2026-09-16). The mount helpers below call it;
+/// a caller that drives the two phases itself (the AI control server) calls
+/// it before phase 1. Takes the state lock only to copy path strings, so it
+/// is safe from any thread; the comparison runs unlocked.
+bool imageMountedElsewhere(EmulationController& ctrl, const std::string& path,
+                           const std::string& targetPath, std::string& error);
+
+/// The restore-time half of the same rule: after every persisted path has
+/// been loaded inline, keep each image in the first drive or bay (slot
+/// order) that holds it and eject it from the others, appending a line per
+/// ejection to `warnings` when non-null. Caller holds the state lock, or
+/// owns a bus nothing else can reach yet. Does a `stat` per pair.
+void dropDuplicateMounts(SlotBus& bus, std::vector<std::string>* warnings);
 
 /// Mount `path` into a ProDOS block device (CFFA, the synthetic HDV card)
 /// without holding `stateMutex` across the file read.

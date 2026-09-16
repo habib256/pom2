@@ -1050,6 +1050,9 @@ private:
 
     // Expansion bus — owns plugged cards.
     SlotBus slots;
+    /// The file load itself; `loadAppleIIRom` wraps it in the slot cards'
+    /// before/after hooks (SlotPeripheral::beforeMainRomReload).
+    int loadAppleIIRomImpl(const char* filename, bool pickLower16KFor32K);
 
     // Klaus harness flat-RAM mode. See setTestMode().
     bool testMode = false;

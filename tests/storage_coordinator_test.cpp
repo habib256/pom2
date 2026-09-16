@@ -164,6 +164,12 @@ int main()
         "pom2_storage_rebuild.dsk", 35u * 16u * 256u, 0x00);
     const std::string disk2Path = writeImage(
         "pom2_storage_rebuild_drive2.dsk", 35u * 16u * 256u, 0x44);
+    // Slot 2's own pair: one image may be mounted in one drive only, so the
+    // Disk II added later cannot reuse slot 4's.
+    const std::string slot2DiskPath = writeImage(
+        "pom2_storage_rebuild_slot2.dsk", 35u * 16u * 256u, 0x55);
+    const std::string slot2Disk2Path = writeImage(
+        "pom2_storage_rebuild_slot2_drive2.dsk", 35u * 16u * 256u, 0x66);
     const std::string hdvPath = writeImage(
         "pom2_storage_rebuild_hdv.hdv", 8u * 512u, 0x11);
     const std::string cffaPath = writeImage(
@@ -361,17 +367,44 @@ int main()
 
             // A newly-added Disk II did not exist in the live snapshot. It
             // must still honour an older persisted image for its new slot.
-            settings.setString("disk_path_slot2", diskPath);
-            settings.setString("disk_path_slot2_drive2", disk2Path);
+            settings.setString("disk_path_slot2", slot2DiskPath);
+            settings.setString("disk_path_slot2_drive2", slot2Disk2Path);
             settings.setBool("disk_writeback_slot2", true);
             bus.plug(2, std::make_unique<DiskIICard>(2));
             assert(mediaStorage.restoreMediaFromSettings(bus, settings).ok());
             auto* newDisk2 = dynamic_cast<DiskIICard*>(bus.peripheral(2));
             assert(newDisk2 && newDisk2->isDiskLoaded());
-            assert(newDisk2->getDiskPath() == diskPath);
+            assert(newDisk2->getDiskPath() == slot2DiskPath);
             assert(newDisk2->isDiskLoaded(1));
-            assert(newDisk2->getDiskPath(1) == disk2Path);
+            assert(newDisk2->getDiskPath(1) == slot2Disk2Path);
             assert(newDisk2->isWriteBackEnabled());
+
+            // One image, one drive — at restore too (bug hunt 2026-09-16).
+            // Settings naming slot 4's drive-1 image for slot 2's drive 2
+            // (a hand edit, or a build without the rule) must not mount a
+            // second copy: slot order decides, slot 2 comes first, so slot 2
+            // keeps it, slot 4's drive 1 is left empty, and the user is told.
+            settings.setString("disk_path_slot2_drive2", diskPath);
+            {
+                const auto dup = mediaStorage.restoreMediaFromSettings(bus, settings);
+                assert(!dup.ok() && "a duplicate mount was restored silently");
+                bool told = false;
+                for (const auto& w : dup.warnings)
+                    if (w.find("one image, one drive") != std::string::npos) told = true;
+                assert(told && "the duplicate was dropped without saying why");
+                int holders = 0;
+                for (int sl : { 2, 4 }) {
+                    auto* d = dynamic_cast<DiskIICard*>(bus.peripheral(sl));
+                    for (int dr = 0; dr < DiskIICard::kDriveCount; ++dr)
+                        if (d && d->isDiskLoaded(dr) &&
+                            std::filesystem::equivalent(d->getDiskPath(dr), diskPath))
+                            ++holders;
+                }
+                assert(holders == 1 && "the same image is mounted in two drives");
+                assert(newDisk2->getDiskPath(1) == diskPath);
+                assert(!rebuiltDisk4->isDiskLoaded(0));
+            }
+            settings.setString("disk_path_slot2_drive2", slot2Disk2Path);
 
             // A rejected image is diagnostic, not transactional: continue
             // restoring every other card and report each concrete target.
@@ -456,7 +489,7 @@ int main()
                 return staged;
             };
 
-            std::unique_ptr<DiskImage> pending;
+            std::shared_ptr<DiskImage> pending;
             {
                 auto state = mediaController.lockState();
                 auto* card = dynamic_cast<DiskIICard*>(
@@ -474,6 +507,7 @@ int main()
             std::string error;
             assert(DiskIICard::commitEjectWriteBack(*pending, error));
             assert(error.empty());
+            pending.reset();   // committed: the drive's reservation ends
 
             // Phase 3: a failed commit re-mounts the medium so the writes
             // are not lost — what the inline path did by never ejecting.
@@ -483,9 +517,10 @@ int main()
                     state.memory().slotBus().peripheral(4));
                 assert(card);
                 assert(card->installDisk(0, std::move(*stageDirty(7, 90))));
-                std::unique_ptr<DiskImage> doomed = card->takeEjectWriteBack(0);
+                std::shared_ptr<DiskImage> doomed = card->takeEjectWriteBack(0);
                 assert(doomed);
                 assert(!card->isDiskLoaded(0));
+                auto intruder = stageDirty(8, 20);   // before the truncation
                 // Truncating the source is the deterministic, portable save
                 // failure (same trick as disk_writeback_smoke_test).
                 std::error_code ec;
@@ -494,6 +529,15 @@ int main()
                 std::string err2;
                 assert(!DiskIICard::commitEjectWriteBack(*doomed, err2));
                 assert(!err2.empty());
+                // While the outgoing payload lives, the drive is reserved: a
+                // disk mounted meanwhile (the AI server inserts from its own
+                // thread) would make the restore below refuse, and the
+                // caller would then destroy the only copy of the writes.
+                {
+                    assert(!card->installDisk(0, std::move(*intruder)) &&
+                           "an eject still being saved reserves its drive");
+                    assert(!card->isDiskLoaded(0));
+                }
                 assert(card->restoreEjected(0, std::move(doomed)));
                 assert(card->isDiskLoaded(0) &&
                        "a failed commit puts the medium back for a retry");
@@ -1305,6 +1349,58 @@ int main()
             std::cout << "FAIL: pom2::mountBlockCard left " << ringSize()
                       << " rewind frame(s) spanning the media swap\n";
             return 1;
+        }
+
+        // ── One image, one drive ───────────────────────────────────────
+        // Two mounted copies of one file each keep their own view of the
+        // disk and write their own blocks back into it — a file neither copy
+        // ever held (bug hunt 2026-09-16). The raw helpers are the funnel the
+        // GUI, the CLI and the Library use, so they refuse; putting a disk
+        // back into the drive it is already in stays allowed.
+        {
+            DiskIICard* card = nullptr;
+            ProDOSHardDiskCard* hdv = nullptr;
+            {
+                auto state = rewindController.lockState();
+                card = dynamic_cast<DiskIICard*>(state.memory().slotBus().peripheral(6));
+                hdv  = dynamic_cast<ProDOSHardDiskCard*>(state.memory().slotBus().peripheral(5));
+            }
+            std::string err;
+            if (pom2::mountDiskII(rewindController, *card, 1, diskPath, err)) {
+                std::cout << "FAIL: the image in drive 1 was mounted again in drive 2\n";
+                return 1;
+            }
+            if (err.find("already mounted") == std::string::npos) {
+                std::cout << "FAIL: the refusal does not say why: " << err << "\n";
+                return 1;
+            }
+            err.clear();
+            if (!pom2::mountDiskII(rewindController, *card, 0, diskPath, err)) {
+                std::cout << "FAIL: re-inserting a disk into its own drive was refused: "
+                          << err << "\n";
+                return 1;
+            }
+            err.clear();
+            if (!pom2::mountBlockCard(rewindController, *hdv, hdvPath, err)) {
+                std::cout << "FAIL: re-mounting an HDV on its own card was refused: "
+                          << err << "\n";
+                return 1;
+            }
+#ifndef _WIN32
+            // Another spelling of the same file is the same file.
+            const auto alias = std::filesystem::temp_directory_path() / "pom2_same_disk_alias.dsk";
+            std::error_code aec;
+            std::filesystem::remove(alias, aec);
+            std::filesystem::create_symlink(diskPath, alias, aec);
+            if (!aec) {
+                err.clear();
+                if (pom2::mountDiskII(rewindController, *card, 1, alias.string(), err)) {
+                    std::cout << "FAIL: a symlink to the mounted image was mounted in drive 2\n";
+                    return 1;
+                }
+                std::filesystem::remove(alias, aec);
+            }
+#endif
         }
     }
 

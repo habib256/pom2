@@ -52,6 +52,11 @@ std::filesystem::path executableDir();
 /// durable application output.
 std::filesystem::path userDataDir();
 
+/// True when userDataDir() really is a per-user directory — and therefore the
+/// FIRST resourceSearchDirs() root. False when it fell back to `<temp>/POM2`,
+/// which is searched last (see resourceSearchDirs()).
+bool userDataDirIsPerUser();
+
 /// Writable per-user POM2 **configuration** directory — where `state.cfg`
 /// and `imgui.ini` live. Distinct from userDataDir() on purpose: on Linux
 /// the config dir follows `XDG_CONFIG_HOME` (`~/.config/POM2`) while data
