@@ -742,6 +742,50 @@ add_test(NAME iic_external_smartport
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(iic_external_smartport PROPERTIES TIMEOUT 240 LABELS slow)
 
+# ─── //c: a Disk II read after a SmartPort write ─────────────────────────
+# a2filecmd (2026-09-16): on the `iic` preset a BASIC copy from the internal
+# 5.25" to an HDV on the SmartPort stopped after 496 bytes with NO DEVICE
+# CONNECTED. The //c's SmartPort firmware leaves drive 2 (the rear port)
+# selected, ProDOS turns the motor on before re-selecting drive 1, and
+# DiskIICard skipped its sequencer reset whenever the motor came on over an
+# EMPTY drive (MAME resets whenever the drive exists). Real //c firmware,
+# ProDOS 2.4.3 + BASIC.SYSTEM, the copied file checked byte for byte.
+# Two full boots' worth of work, hence `slow`. ROM/disk-gated: SKIPs cleanly.
+
+add_executable(test_iic_diskii_after_smartport
+    iic_diskii_after_smartport_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_iic_diskii_after_smartport
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_iic_diskii_after_smartport PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_iic_diskii_after_smartport PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_iic_diskii_after_smartport PRIVATE winmm)
+endif()
+add_test(NAME iic_diskii_after_smartport
+         COMMAND test_iic_diskii_after_smartport
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(iic_diskii_after_smartport PROPERTIES
+    TIMEOUT 900 LABELS slow SKIP_RETURN_CODE 77)
+
 
 
 add_executable(test_iicplus_boot_trace EXCLUDE_FROM_ALL

@@ -5,6 +5,38 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-16 — On a //c, a Disk II read after a SmartPort write found no drive
+
+Reported by a2filecmd: on the `iic` preset, a BASIC program copying a text
+file from the internal 5.25" to an HDV on the SmartPort — both files open,
+READ and WRITE alternating — stopped after 496 bytes with NO DEVICE
+CONNECTED ($28), the first time BASIC.SYSTEM needed a floppy block after a
+SmartPort write. The same program on a //e with an HDV card copied all
+4 960.
+
+Two ordinary facts met. The //c's SmartPort firmware addresses the rear
+port as drive 2 of the IWM and leaves drive 2 selected when it is done; and
+ProDOS's Disk II driver turns the motor on BEFORE it re-selects drive 1
+($D05F, then $D065). So the motor came on over drive 2, which on this
+machine holds nothing. `DiskIICard` ran its sequencer reset (`lssStart`) on
+motor-on only when the selected drive had MEDIA, where MAME runs it
+whenever the drive EXISTS (`wozfdc.cpp` case 0x9: `if(floppy)
+lss_start();`, `floppy` being the drive device). Skipped, drive 1 spun on a
+sequencer state that should have been cleared, and ProDOS's presence check
+said the drive was not there. The reset is unconditional now; its one
+media-dependent step, the write splice, was already guarded inside it.
+
+A disk in drive 2 hid the bug completely, which is how it survived: the
+first hypothesis — the SmartPort port answering the Disk II's reads — was
+wrong, and a trace of every switch access showed the port never touches a
+ProDOS Disk II read. `iic_diskii_after_smartport` pins it on the real //c
+firmware with ProDOS 2.4.3 + BASIC.SYSTEM and drive 2 empty, compares the
+copied file byte for byte, and first checks that ProDOS lists slot 5 at
+all — the first draft of the repro jumped straight to $C600, skipped the
+//c's reset, never saw the SmartPort, and failed with PATH NOT FOUND for a
+reason that had nothing to do with the bug. Mutation control verified:
+restoring the media guard fails the test with the copy stopped.
+
 ## 2026-09-16 — A diskette that has never been formatted
 
 POM2 had no way to mount one, and the thing everyone reached for instead

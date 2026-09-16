@@ -321,8 +321,18 @@
 # guest). Both are drive behaviour at the point where the head meets the
 # medium, which is what this file is; neither is a window group. The split
 # this file will want when it grows again is the LSS/flux walker, not these.
+#
+# 2026-09-16 (later, a2filecmd's //c report): DiskIICard.cpp 2014 -> 2031
+# (+17), all of it the why-comment on one line that changed. The motor-on
+# sequencer reset (`lssStart`) was gated on the selected drive having MEDIA;
+# MAME gates it on the drive EXISTING. The //c leaves drive 2 (its rear
+# SmartPort) selected after every transaction and ProDOS turns the motor on
+# before re-selecting drive 1, so a Disk II read after a SmartPort write
+# answered NO DEVICE CONNECTED. The comment is the only thing that stops the
+# guard coming back, and it belongs at the line it guards.
+#   src/DiskIICard.cpp           2014 -> 2031 (+17)
 src/Apple2Display.cpp                    2522
-src/DiskIICard.cpp                       2014
+src/DiskIICard.cpp                       2031
 src/DiskImage.cpp                        3214
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
