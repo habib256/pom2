@@ -296,8 +296,34 @@
 # for the block path. Folding both into a `StorageCoordinator_BayFlush` TU,
 # beside _Notch / _HdvBays / _Chains, is the split owed on this file.
 #   src/StorageCoordinator.cpp   2372 -> 2530 (+158)
+#
+# 2026-09-16 (a diskette that has never been formatted): one ceiling raised
+# and one file recorded for the first time.
+#
+# DiskImage.cpp gains `eraseSurface` / `isSurfaceBlank` / `createBlankFile`.
+# The first two mutate the private track buffers and invalidate the bit-cell
+# and flux caches, so they are members of this class or they are nothing —
+# the same reason `writeNibbleAt` lives here. `createBlankFile` is a static
+# that touches no member state and could move; it stays because only
+# DiskImage knows what an empty 5.25" image IS (`kBytesPerImage`), and its
+# one other candidate home, MediaMount, drags the rewind ring and every
+# block device into any test that links it — which is what made the disk
+# test refuse to link when it was there. Still the same seam owed and now
+# owed harder: DiskImage.cpp's flux/WOZ half is a TU of its own waiting to
+# happen, and the erased-surface model belongs on that side of the cut.
+#   src/DiskImage.cpp            3154 -> 3214 (+60)
+#
+# DiskIICard.cpp crosses the 2000-line watch for the first time, with
+# `insertBlankDisk` (mount then erase, refusing rather than handing back a
+# formatted disk) and `legacyNoiseNibble` (what the read amplifier makes of
+# unmagnetised surface on the legacy 32-cycle gate — the LSS path's
+# `advanceNoise` had it and this one did not, so a blank disk froze the
+# guest). Both are drive behaviour at the point where the head meets the
+# medium, which is what this file is; neither is a window group. The split
+# this file will want when it grows again is the LSS/flux walker, not these.
 src/Apple2Display.cpp                    2522
-src/DiskImage.cpp                        3154
+src/DiskIICard.cpp                       2014
+src/DiskImage.cpp                        3214
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
 src/Memory.cpp                           2735
