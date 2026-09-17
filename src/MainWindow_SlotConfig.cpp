@@ -830,7 +830,8 @@ bool MainWindow::swapSlotCardVariant(const char* fromKey, const char* toKey)
         if (slotCards[s] == fromKey) { slot = s; break; }
     if (slot < 0) return false;
 
-    const std::string key      = "slot_" + std::to_string(slot) + "_card";
+    const std::string key      =
+        pom2::slotCardSettingKey(pom2::profileConfig(activeProfile), slot);
     const std::string previous = settings->getString(key, "");
 
     // `slotCards[]` is the RESOLVED plan, so on a profile-forced slot it holds

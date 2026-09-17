@@ -65,8 +65,6 @@ void noteHostMediaSwap(EmulationController& ctrl)
 
 }  // namespace
 
-namespace {
-
 /// Every image file mounted anywhere on the machine, as its leaf reports the
 /// path: both Disk II drives of every card, every bay of every mountable card
 /// (Liron, SmartPort, HDV / CFFA), and the //c+'s two on-board 3.5" drives.
@@ -96,6 +94,8 @@ std::vector<std::string> mountedImagePaths(EmulationController& ctrl)
         if (img->isLoaded() && !img->path().empty()) out.push_back(img->path());
     return out;
 }
+
+namespace {
 
 bool refusedAsSecondMount(EmulationController& ctrl, const std::string& path,
                           const std::string& targetPath, std::string& error)
@@ -177,6 +177,38 @@ bool imageMountedElsewhere(EmulationController& ctrl, const std::string& path,
     error = path + " is already mounted in another drive — two copies of one "
                    "image would each write their own view of the disk into it";
     return true;
+}
+
+// One image, one drive, on the coordinator's own mount paths too (bug hunt
+// 2026-09-17): the Disk Library's "insert only" and "mount into the next free
+// unit" came through here and mounted a second copy of an image already in
+// another drive — two views of one disk, each written back over the other.
+// `slot < 0` names an on-board //c+ 3.5" drive (`index` 0/1); otherwise
+// `index` is the Disk II drive or the media bay. Returns true, with `error`
+// set, when the mount must be refused.
+bool imageMountedElsewhereAt(EmulationController& controller, int slot, int index,
+                       const std::string& path, std::string& error)
+{
+    std::string current;
+    {
+        auto state = controller.lockState();
+        if (slot < 0) {
+            const auto& img = index == 0 ? controller.disk35Internal()
+                                         : controller.disk35External();
+            if (img.isLoaded()) current = img.path();
+        } else if (auto* p = state.memory().slotBus().peripheral(slot)) {
+            if (auto* d = dynamic_cast<DiskIICard*>(p)) {
+                if (DiskIICard::validDrive(index) && d->isDiskLoaded(index))
+                    current = d->driveImage(index).getPath();
+            } else if (auto* m = dynamic_cast<MountableMediaCard*>(p)) {
+                if (index >= 0 && index < m->bayCount()) {
+                    const MediaBayInfo info = m->bayInfo(index);
+                    if (info.loaded) current = info.path;
+                }
+            }
+        }
+    }
+    return imageMountedElsewhere(controller, path, current, error);
 }
 
 bool mountDiskII(EmulationController& ctrl, DiskIICard& card, int drive,

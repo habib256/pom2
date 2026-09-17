@@ -186,6 +186,8 @@ int main()
         s.setString("good_int",        "1022727");
         s.setString("good_int_pad",    " 42 ");
         s.setString("good_float",      "0.25");
+        s.setString("nan_float",       "nan");
+        s.setString("inf_float",       "-inf");
         assert(s.save());
 
         pom2::Settings r;
@@ -213,6 +215,8 @@ int main()
         wantInt("good_int",        -7,      1022727);
         wantInt("good_int_pad",    -7,      42);
         wantFloat("bad_float_unit", 3.0f,   3.0f);
+        wantFloat("nan_float",      0.5f,   0.5f);
+        wantFloat("inf_float",      0.5f,   0.5f);
         wantFloat("bad_float_pct",  3.0f,   3.0f);
         wantFloat("good_float",    -1.0f,   0.25f);
         // A missing key is still the default, and getString is untouched by

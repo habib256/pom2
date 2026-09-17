@@ -42,9 +42,10 @@
 //                                      0 to PB6 to assert)
 //   MCU PB7         ←  mouse button   (active low: 0 = pressed)
 //
-//   MCU clock = 2 MHz (2× Apple II clock). MAME's `M68705P3(config,
-//   m_mcu, 2043600)`. POM2 paces the MCU from the Apple II's
-//   `advanceCycles()` budget at the same 2:1 ratio.
+//   MCU crystal = 2 043 600 Hz (MAME's `M68705P3(config, m_mcu,
+//   2043600)`), divided by 4 inside the 68705: 510 900 machine cycles a
+//   second, half the Apple II clock. POM2 paces the MCU from the Apple II's
+//   `advanceCycles()` budget at that 1:2 ratio.
 //
 // Slot ROM bank-select. The 2 KB EPROM holds 8 banks of 256 bytes.
 // The active bank is `(PIA Port B & 0x0E) << 7` — i.e. PB1, PB2, PB3
@@ -118,8 +119,8 @@ public:
     /// Telemetry: total MCU machine cycles actually retired since the last
     /// `onReset()`. Divided by the CPU cycles handed to `advanceCycles()`
     /// this must converge on MCU_CLOCK_NUMERATOR / MCU_CLOCK_DENOMINATOR
-    /// (2.0), i.e. MAME's `M68705P3(config, m_mcu, 2043600)` against the
-    /// 1.02 MHz bus. Pinned by tests/mouse_card_smoke_test.cpp — dropping
+    /// (0.5), i.e. MAME's `M68705P3(config, m_mcu, 2043600)` divided by 4
+    /// against the 1.02 MHz bus. Pinned by tests/mouse_card_smoke_test.cpp — dropping
     /// the run overshoot instead of billing it used to clock the MCU
     /// 26-50 % fast. Never affects emulation.
     uint64_t mcuCyclesRun() const { return mcuCyclesRun_; }

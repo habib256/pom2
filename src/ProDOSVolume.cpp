@@ -1059,6 +1059,8 @@ struct DecodeWalk {
     /// Mount-time stamp: host files newer than this are preserved, not
     /// reverted (see decodeVolumeToFolder's doc). Null = legacy overwrite.
     const fs::file_time_type*         newerThan   = nullptr;
+    /// Files preserved earlier in this mount (see decodeVolumeToFolder).
+    std::set<std::string>*            sticky      = nullptr;
     /// Newest mtime this walk actually wrote, for the fallback path only —
     /// see noteWriteTime and completedAt.
     fs::file_time_type                newest{};
@@ -1500,7 +1502,10 @@ void decodeOneDir(DecodeWalk& w,
                 std::error_code mec;
                 const fs::path& probe = renameFrom.empty() ? dest : renameFrom;
                 const auto mtime = fs::last_write_time(probe, mec);
-                if (!mec && mtime > *w.newerThan) {
+                const std::string key = probe.lexically_normal().string();
+                const bool sticky = w.sticky && w.sticky->count(key) != 0;
+                if (sticky || (!mec && mtime > *w.newerThan)) {
+                    if (w.sticky) w.sticky->insert(key);
                     pom2::log().warn("ProDOSVol",
                         "decode: preserving host-newer file " +
                         probe.filename().string() +
@@ -1600,7 +1605,8 @@ bool isHostSafeProDOSName(const std::string& name)
 ProDOSDecodeResult decodeVolumeToFolder(
     const std::vector<std::uint8_t>& image,
     const std::string& hostFolder,
-    const std::filesystem::file_time_type* preserveNewerThan)
+    const std::filesystem::file_time_type* preserveNewerThan,
+    std::set<std::string>* stickyPreserved)
 {
     ProDOSDecodeResult r;
 
@@ -1623,7 +1629,7 @@ ProDOSDecodeResult decodeVolumeToFolder(
     }
 
     DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, r, false,
-                     preserveNewerThan, {},
+                     preserveNewerThan, stickyPreserved, {},
                      fs::file_time_type::clock::now(), {} };
     // Resolved ONCE, before anything is written: every destination is checked
     // back against this. `create_directories` above has just made sure the

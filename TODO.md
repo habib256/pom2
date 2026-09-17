@@ -1284,6 +1284,15 @@ pass told to refute: **nine confirmed, three refuted**. Five are fixed in
   panel still does not stick, deliberately, because persisting `""` over a
   saved `mockingboard` would clear a //e card layout from a session that merely
   passed through a //c.
+  **Superseded 2026-09-17**: the //c header has its own key,
+  `iic_expansion_card` (`pom2::slotCardSettingKey`), so removal sticks too and
+  a //e's `slot_3_card` is never read or written by a //c. The shared key was
+  also why a //e Mockingboard showed up inside every //c — and, served from
+  power-on, hid the ROM 0 mouse firmware at $C400 so the //c never reached
+  "Check Disk Drive.". The card now sleeps until written (MAME
+  `m_mockingboard4c`). A //c user who had deliberately fitted a 4c before
+  this date must fit it again: the old value cannot be told apart from a //e
+  layout.
 
 #### Left open by bug hunt #19 (2026-09-12) — the seams
 

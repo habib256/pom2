@@ -159,8 +159,8 @@ const ProfileConfig& cfgAppleIIc()
         // sl3 is the internal 80-col firmware area covered by the AUX label.
         {
             std::nullopt,                                // sl0 reserved
-            // Real //c has TWO serial ports (both RS-232 via the on-board
-            // Zilog SCC), exposed as SSC-compatible firmware at $C100
+            // Real //c has TWO serial ports (two on-board 6551 ACIAs, the
+            // SSC's chip), exposed as SSC-compatible firmware at $C100
             // (printer port) and $C200 (modem port). Apple //c Technical
             // Reference Manual, app. A; MAME apple2e.cpp machine config
             // apple2c. POM2 used to put a parallel PrinterCard at sl1 —
@@ -170,7 +170,7 @@ const ProfileConfig& cfgAppleIIc()
             BuiltInSlot{"ssc",    "built-in modem port (serial)"},   // sl2
             std::nullopt,                                // sl3 (AUX 80-col label)
             // IOU hardware; mouse firmware comes from the system ROM.
-            BuiltInSlot{"iicmouse",  "built-in mouse"},   // sl4
+            BuiltInSlot{"iicmouse",  "IOU mouse (firmware at $C400)"}, // sl4
             BuiltInSlot{"smartport35", "built-in SmartPort"}, // sl5
             BuiltInSlot{"diskii", "built-in Disk II"},   // sl6
             std::nullopt,                                // sl7
@@ -222,7 +222,9 @@ const ProfileConfig& cfgAppleIIcPlus()
             BuiltInSlot{"ssc",         "built-in printer port (serial)"}, // sl1
             BuiltInSlot{"ssc",         "built-in modem port (serial)"},   // sl2
             std::nullopt,                                          // sl3 (AUX)
-            BuiltInSlot{"iicmouse",     "IOU mouse (firmware port 7)"},          // sl4
+            // ROM 5 moved the mouse firmware to $C700; its $C400 page is
+            // the memory-expansion driver (checked in apple2cp.rom).
+            BuiltInSlot{"iicmouse",     "IOU mouse (firmware at $C700)"},        // sl4
             BuiltInSlot{"smartport35", "built-in SmartPort 3.5\""}, // sl5
             BuiltInSlot{"diskii",      "built-in Disk II (IWM)"},  // sl6
             std::nullopt,                                          // sl7
@@ -347,6 +349,12 @@ std::string_view profileKey(SystemProfile p)
     return profileConfig(p).key;
 }
 
+std::string slotCardSettingKey(const ProfileConfig& cfg, int slot)
+{
+    if (cfg.noPhysicalSlots && slot == 3) return "iic_expansion_card";
+    return "slot_" + std::to_string(slot) + "_card";
+}
+
 bool slotKeyIsUserChoice(const ProfileConfig& cfg, int slot,
                          std::string_view cardKey, std::string_view savedKey)
 {
@@ -364,26 +372,15 @@ bool slotKeyIsUserChoice(const ProfileConfig& cfg, int slot,
     // removal could never stick and the stale key resurrected the adapter
     // on every launch). An "" over anything else stays skipped so the
     // force-emptied virtual slots never clobber a //e card layout.
-    // The Mockingboard 4c is the OTHER card a slotless machine can carry: it
-    // mounts on the //c's INTERNAL expansion header, answers at $C400-$C4FF,
-    // and `SlotConfigurationCoordinator::resolve()` keeps it. Slot Config
-    // offers it on the "Internal expansion connector" row — but every writer
-    // of `slot_N_card` sits behind this gate, so the choice could never reach
-    // state.cfg: Apply cold-booted the machine, the rebuild read the old value
-    // back, and the card the user had just picked silently vanished. DIGIDREAM,
-    // the "SPECIAL IIc/MB4C" release in the corpus, still printed KO.
-    //
-    // Only the WRITE direction opens, deliberately unlike `chatmauve`'s
-    // both-directions clause. Persisting "" over a saved "mockingboard" would
-    // re-open the hole the savedKey guard closes — a //e card layout cleared by
-    // a session that merely passed through a //c. The price is that REMOVING
-    // the 4c from the panel does not stick; that is the cheaper side of the
-    // trade, and it is recorded in TODO.md rather than paid for out of a //e
-    // user's configuration.
-    const bool iicHeaderCard =
-        cardKey == "mockingboard" || cardKey == "mockingboard_c";
+    // The //c-class internal expansion connector has its own key
+    // (`slotCardSettingKey`), so its choice persists in BOTH directions —
+    // fitting a Mockingboard 4c and removing it — without touching a //e's
+    // `slot_3_card`. The 4c is a Mockingboard A/C-class PSG board (two AYs,
+    // one 6522, no SSI263): nothing else goes on that header.
+    if (cfg.noPhysicalSlots && slot == 3)
+        return cardKey.empty() || cardKey == "mockingboard";
     if (cfg.noPhysicalSlots && cardKey != "chatmauve" &&
-        savedKey != "chatmauve" && !iicHeaderCard) return false;
+        savedKey != "chatmauve") return false;
     return true;
 }
 

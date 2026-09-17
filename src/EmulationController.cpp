@@ -406,6 +406,18 @@ bool EmulationController::mount35(int idx, const std::string& path)
     // MATTERS is re-taken below, under the same lock as the flush, and a
     // wasted phase-1 read is simply discarded. `DiskIICard::installDisk` does
     // not need this dance because its caller holds one lock across both steps.
+    // A firmware eject whose commit is still queued owns this medium's
+    // writes (Sony35Drive::ejectPending_). Mounting over it lost them when
+    // that commit then failed, and a mount of the SAME file read the
+    // pre-commit bytes and was then ejected by the completion (bug hunt
+    // 2026-09-17). Let it finish first, unlocked — eject35 does the same.
+    const auto ejectPending = [this, idx] {
+        std::lock_guard<std::mutex> lk(stateMtx);
+        const pom2::Sony35Drive* d = idx == 0 ? drive35Int.get() : drive35Ext.get();
+        return d && d->isEjectPending();
+    };
+    while (ejectPending()) writeBackQueue_.drain();
+
     bool writeBack = false;
     bool skipRead  = false;
     {
@@ -422,10 +434,15 @@ bool EmulationController::mount35(int idx, const std::string& path)
     if (!skipRead && !staged.loadFile(path)) return false;
 
     // Phase 2.
-    std::lock_guard<std::mutex> lk(stateMtx);
+    std::unique_lock<std::mutex> lk(stateMtx);
     pom2::Disk35Image*  image = idx == 0 ? image35Int.get() : image35Ext.get();
     pom2::Sony35Drive*  drive = idx == 0 ? drive35Int.get() : drive35Ext.get();
     if (!image || !drive) return false;
+    if (drive->isEjectPending()) {
+        // The guest ejected while phase 1 read: start over behind it.
+        lk.unlock();
+        return mount35(idx, path);
+    }
 
     // Decided HERE, under the lock that also does the flush, so no window
     // exists between the two.

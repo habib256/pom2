@@ -885,6 +885,17 @@ void testSnapshotStatusErrorsAreMasked()
     assert(ssc.irqState() == 0x0F);   // the four defined sources, nothing else
 
     std::printf("  ok: snapshot restore masks statusErrors_ / irqState_\n");
+
+    // The RDR latch travels (2026-09-17): a re-read with an empty ring
+    // returns the restored byte, not the live session's.
+    SuperSerialCard a(2), b(2);
+    std::vector<uint8_t> latchBlob;
+    a.appendSnapshotState(latchBlob);
+    assert(latchBlob.size() == 15);
+    latchBlob[14] = 0x5A;
+    b.loadSnapshotState(latchBlob.data(), latchBlob.size());
+    assert(b.deviceSelectRead(kRdrAddr) == 0x5A);
+    std::printf("  ok: snapshot restore carries the RDR latch\n");
 }
 
 int main()

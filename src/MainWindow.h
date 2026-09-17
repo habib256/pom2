@@ -781,6 +781,10 @@ private:
     // for the same reason as sscPortInput above.
     int          aiPortInput   = 0;
     std::string  aiTokenInput;
+    /// `$POM2_AI_CONTROL_TOKEN` when `--ai-control` used it. It outranks the
+    /// panel's field, which then shows that instead of offering an edit that
+    /// would silently replace the secret (bug hunt 2026-09-17).
+    std::string  aiEnvToken_;
     /// True when the ONLY thing that started the AI server this session was
     /// `--ai-control`. A boot flag is a per-run request, not a saved opt-in;
     /// see persistSession.

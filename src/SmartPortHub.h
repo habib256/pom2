@@ -92,6 +92,8 @@ public:
     /// drives (otherwise the active drive is a 5.25" Disk II under
     /// DiskIICard's control).
     bool active35Selected() const { return active35Selected_; }
+    /// The MIG's external-3.5" select ($C240/$C260), as last pushed.
+    bool mig35Sel() const { return sel35_; }
 
     /// Pointer to the active 3.5" drive (nullptr if no 3.5" drive is
     /// active OR none is mounted in the resolved slot).

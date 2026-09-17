@@ -47,6 +47,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -132,10 +133,17 @@ struct ProDOSDecodeResult {
 /// mounted — the snapshot's copy is stale, so the file is preserved (warned
 /// + counted in `filesSkipped`) instead of silently reverted. Pass nullptr
 /// for the legacy overwrite-everything behaviour.
+///
+/// `stickyPreserved` (optional): host files already preserved earlier in the
+/// same mount. They stay preserved whatever their mtime, and every file this
+/// pass preserves is added. Without it the caller's restamp (see
+/// `completedAt`) moved past the user's edit, and the NEXT flush reverted it
+/// to the mount-time copy (bug hunt 2026-09-17).
 ProDOSDecodeResult decodeVolumeToFolder(
     const std::vector<std::uint8_t>& image,
     const std::string& hostFolder,
-    const std::filesystem::file_time_type* preserveNewerThan = nullptr);
+    const std::filesystem::file_time_type* preserveNewerThan = nullptr,
+    std::set<std::string>* stickyPreserved = nullptr);
 
 /// True iff `name` (a directory-entry name decoded from an untrusted volume
 /// image) is safe to use as a single host path component. The image is

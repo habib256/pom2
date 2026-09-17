@@ -323,6 +323,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     // mtime is later than this (edited on the host while mounted).
     hasMountTime_ = synth_;
     mountTime_    = std::filesystem::file_time_type::clock::now();
+    preserved_    = synth_ ? std::make_shared<PreservedHostFiles>() : nullptr;
     supportsWriteBack_ = synth_;
     wpHeader_   = false;
     hostReadOnly_ = false;
@@ -462,6 +463,7 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
         out.synthImage   = image_;
         out.hasMountTime = hasMountTime_;
         out.mountTime    = mountTime_;
+        out.preserved    = preserved_;
     } else {
         // The file case only needs the blocks that actually changed, which
         // is normally a handful even on a 32 MiB image.
@@ -506,9 +508,15 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     if (complete.barrier) complete.barrier->wait();
 
     if (pending.synth) {
+        std::unique_lock<std::mutex> stickyLock;
+        std::set<std::string>* sticky = nullptr;
+        if (pending.preserved) {
+            stickyLock = std::unique_lock<std::mutex>(pending.preserved->mutex);
+            sticky = &pending.preserved->paths;
+        }
         pom2::ProDOSDecodeResult r = pom2::decodeVolumeToFolder(
             pending.synthImage, pending.hostFolder,
-            pending.hasMountTime ? &pending.mountTime : nullptr);
+            pending.hasMountTime ? &pending.mountTime : nullptr, sticky);
         // Published BEFORE the failure return: a failed pass has usually
         // still written part of the tree, and those files carry the decode's
         // stamp. Returning early left the caller with nothing to adopt.

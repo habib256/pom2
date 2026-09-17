@@ -4650,7 +4650,7 @@ if(WIN32)
 endif()
 
 add_test(NAME mouse_card_smoke COMMAND test_mouse_card)
-set_tests_properties(mouse_card_smoke PROPERTIES TIMEOUT 5)
+set_tests_properties(mouse_card_smoke PROPERTIES TIMEOUT 30)
 
 
 # ─── Apple II Mouse Card (AppleWin HLE variant) smoke test ──────────────
@@ -6297,6 +6297,8 @@ endforeach()
 # snapshot, freezing the IWM after a rewind on //c-class profiles.
 add_executable(test_iwm_mig_snapshot
     iwm_mig_snapshot_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iwm_mig_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)

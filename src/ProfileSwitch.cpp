@@ -72,7 +72,12 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
 
     // 1. The rewind ring describes the outgoing machine; restoring one of its
     //    frames onto the new ROM and slot map would be nonsense.
-    controller.rewind().clear();
+    //    Under the lock: the AI server is only detached at step 3, so a
+    //    /disk or /snapshot/load can clear the same ring meanwhile.
+    {
+        std::lock_guard<std::mutex> lk(controller.stateMutex());
+        controller.rewind().clear();
+    }
 
     // 2. What is mounted now comes back after the cards are rebuilt.
     StorageCoordinator::RebuildSnapshot mediaSnapshot;

@@ -1464,6 +1464,53 @@ int main()
                 std::filesystem::remove(alias, aec);
             }
 #endif
+            // The coordinator's own mount commands obey the same rule
+            // (2026-09-17): the Disk Library's "insert only" and "mount into
+            // the next free unit" go through them, not the raw helpers.
+            pom2::Settings dupSettings;
+            dupSettings.setReadOnly(true);
+            auto dup = rewindStorage.mountDiskII(
+                rewindController, dupSettings, 6, 1, diskPath, false);
+            if (dup.ok || dup.error.find("already mounted") == std::string::npos) {
+                std::cout << "FAIL: StorageCoordinator::mountDiskII mounted the image "
+                             "of drive 1 into drive 2 (" << dup.error << ")\n";
+                return 1;
+            }
+            dup = rewindStorage.mountMediaBay(
+                rewindController, dupSettings, 5, 1, hdvPath);
+            if (dup.ok || dup.error.find("already mounted") == std::string::npos) {
+                std::cout << "FAIL: StorageCoordinator::mountMediaBay mounted the HDV "
+                             "of drive 1 into drive 2 (" << dup.error << ")\n";
+                return 1;
+            }
+            // The notch reaches a mounted copy named by another spelling of
+            // the same file (the Library's relative paths vs an absolute
+            // mount) — 2026-09-17.
+            {
+                std::error_code rec;
+                const std::string rel =
+                    std::filesystem::relative(diskPath, rec).string();
+                if (!rec && !rel.empty() && rel != diskPath) {
+                    if (!rewindStorage.setMediaNotch(rewindController, rel, true).ok) {
+                        std::cout << "FAIL: could not notch " << rel << "\n";
+                        return 1;
+                    }
+                    const bool wp = card->driveImage(0).isHostWriteProtected();
+                    (void)rewindStorage.setMediaNotch(rewindController, rel, false);
+                    if (!wp) {
+                        std::cout << "FAIL: notching " << rel << " left the copy "
+                                     "mounted as " << diskPath << " writable\n";
+                        return 1;
+                    }
+                }
+            }
+            dup = rewindStorage.mountMediaBay(
+                rewindController, dupSettings, 5, 0, hdvPath);
+            if (!dup.ok) {
+                std::cout << "FAIL: re-mounting an HDV into its own bay through the "
+                             "coordinator was refused: " << dup.error << "\n";
+                return 1;
+            }
         }
     }
 

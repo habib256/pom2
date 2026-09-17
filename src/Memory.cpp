@@ -717,6 +717,8 @@ void Memory::resetSoftSwitches()
 
 void Memory::clearRam()
 {
+    iicExpansionAwake_ = false;   // power-on: the 4c sleeps (MAME machine_reset;
+                                  // reset_w, i.e. Ctrl-Reset, leaves it awake)
     // MAME-faithful power-on RAM pattern: alternating `00 FF 00 FF…`
     // (apple2.cpp:294-298 + apple2e.cpp:1014-1035). Real silicon DRAM
     // settles into this pattern from the way the cell columns refresh;
@@ -979,6 +981,8 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
             const int owner = slots.getActiveExpansionSlot();
             sect.push_back(static_cast<uint8_t>(owner >= 1 && owner <= 7 ? owner : 0));
         }
+        // 2026-09-17: the //c Mockingboard 4c wake latch.
+        sect.push_back(iicExpansionAwake_ ? 1 : 0);
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
@@ -1158,15 +1162,12 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
         pos += backingSize;
     }
 
-    // Optional trailer (see appendSnapshotState): //c on-board SmartPort
-    // arming gate. Absent in pre-trailer blobs → keep the live value.
+    // Optional trailer: the //c on-board SmartPort arming gate.
     if (need(1)) iicSmartPortArmed_ = getU8() != 0;
 
-    // Second trailer (see appendSnapshotState): length-prefixed //c-class
-    // device sections. Absent in older blobs → live values kept, which is
-    // exactly the pre-fix behaviour, so nothing regresses on an old save.
-    // Once a section starts, both its framing and device payload must be
-    // valid; failure propagates to MachineSnapshot's transactional rollback.
+    // Second trailer: length-prefixed //c-class device sections, absent in
+    // older blobs (live values kept). A started section must be valid; a
+    // failure propagates to MachineSnapshot's transactional rollback.
     auto readSection = [&](auto&& apply) -> bool {
         if (pos == n) return true;             // optional trailer absent
         if (!need(4)) return false;            // torn length prefix
@@ -1177,6 +1178,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
         pos += len;
         return true;
     };
+    // The IWM stays in restore mode until the MIG section below has re-pointed
+    // the hub, whose push otherwise re-anchored the restored 3.5" revolution.
+    struct IwmRestore { pom2::IWMDevice* d; ~IwmRestore() { if (d) d->setRestoring(false); } };
+    const IwmRestore iwmRestore{iwmDevice}; if (iwmDevice) iwmDevice->setRestoring(true);
     if (!readSection([&](const uint8_t* p, size_t k) {
             return !iwmDevice || iwmDevice->loadSnapshotState(p, k);
         })) return false;
@@ -1217,6 +1222,8 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             // Validated inside SlotBus: a blob naming an empty slot or a
             // card that does not drive /IOSTB restores as unclaimed.
             if (k >= 10) slots.restoreExpansionOwner(static_cast<int>(p[9]));
+            iicExpansionAwake_ = k >= 11 ? (iicProfile_ && p[10] != 0)  // older: 4c always awake
+                : (iicProfile_ && slots.peripheralForIicRomPage(4) != nullptr);
             return true;
         })) return false;
     // No-Slot Clock (see appendSnapshotState). A blob written by a build
@@ -2386,10 +2393,16 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             // or alt-firmware bank-1 bytes (plain //c rev-0/3/4 + //c+
             // outside the MIG windows). Bank 0 — and plain //e INTCXROM —
             // fall through to internalIORom. See IIcClassProfile.
+            // The CPU-socket Mockingboard 4c comes first, in either ROM bank
+            // (MAME c400_int_r / c400_int_bank_r test m_mockingboard4c first),
+            // and only once a write woke it: awake from power-on it hid the
+            // ROM 0 mouse firmware and the //c never said "Check Disk Drive".
+            if (iicExpansionAwake_ && addr >= 0xC100 && addr <= 0xC7FF)
+                if (SlotPeripheral* p = slots.peripheralForIicRomPage((addr >> 8) & 7))
+                    return p->slotRomRead(static_cast<uint8_t>(addr & 0xFF));
             uint8_t out;
-            if (iicProfile_ && iicProfile_->internalRomRead(addr, floatingBus(), out)) {
+            if (iicProfile_ && iicProfile_->internalRomRead(addr, floatingBus(), out))
                 return out;
-            }
             // //c-class slot-ROM punch: a slot peripheral can override the
             // forced INTCXROM mask for its own $Cn00 firmware window by
             // returning true from exposesIicOnboardRom(). Bank 1 is handled
@@ -2398,22 +2411,8 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             // the slot bus above. Used today by:
             //
             //   sl5 SmartPort: host-served stub, armed by bootFromSlot only.
-            //   sl4 AppleWin HLE mouse: PR#4 needs the EPROM at $C400 to
-            //     reach the slot card's PIA at $C0C0. The //c's internal
-            //     mouse firmware talks to the native IIcMouse IOU device.
-            //     Only an explicit AppleWin HLE substitute needs this punch;
-            //     IIcMouse exposes no card ROM. No autostart probe, so unarmed.
-            // …and the INTERNAL EXPANSION CONNECTOR: a card there answers at
-            // a fixed page (`iicRomWindowPage`), not at the POM2 slot that
-            // holds it — the Mockingboard 4c at $C400-$C4FF while slot 4 is
-            // the machine's own IOU mouse. Checked before the per-slot punch
-            // because the page it claims is exactly a slot another device
-            // occupies.
-            if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
-                const int page = (addr >> 8) & 0x07;
-                if (SlotPeripheral* p = slots.peripheralForIicRomPage(page))
-                    return p->slotRomRead(static_cast<uint8_t>(addr & 0xFF));
-            }
+            //   sl4 AppleWin HLE mouse (its EPROM at $C400 reaches its PIA
+            //     at $C0C0); the native IIcMouse exposes no card ROM. Unarmed.
             if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
                 const int slot = (addr >> 8) & 0x07;
                 const bool armOk = (slot != 5) ||
@@ -2694,6 +2693,7 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
             if (SlotPeripheral* p =
                     slots.peripheralForIicRomPage((addr >> 8) & 0x07)) {
+                iicExpansionAwake_ = true;          // wakes the card (MAME c400_w)
                 p->slotRomWrite(static_cast<uint8_t>(addr & 0xFF), value);
                 return;
             }

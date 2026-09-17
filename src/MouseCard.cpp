@@ -73,9 +73,13 @@ void mtrace(const char* fmt, ...)
     pom2::log().info("MouseTrace", buf);
 }
 
-// Sub-cycle ratio: MCU clock = 2× Apple II clock.
-constexpr int MCU_CLOCK_NUMERATOR   = 2;
-constexpr int MCU_CLOCK_DENOMINATOR = 1;
+// MCU machine cycles per Apple II cycle. The 68705 divides its 2043600 Hz
+// crystal by 4 (M68705P3.h; MAME's m6805 core, execute_clock_to_cycles), so
+// it retires 510 900 machine cycles a second — half the 1.02 MHz bus. POM2
+// ran it at 2:1, four times too fast, and the VBL-mode interrupt came at
+// 240 Hz instead of 60 (bug hunt 2026-09-17).
+constexpr int MCU_CLOCK_NUMERATOR   = 1;
+constexpr int MCU_CLOCK_DENOMINATOR = 2;
 
 }  // namespace
 

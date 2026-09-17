@@ -71,6 +71,40 @@
 
 namespace pom2 {
 
+/// Largest snapshot file a load will read. POM2 writes well under this (the
+/// MEX section is capped at 16 MiB); the cap is there so `--snapshot-load
+/// /dev/zero`, or a huge file, fails with a message instead of growing the
+/// process until it dies (bug hunt 2026-09-17).
+inline constexpr std::uintmax_t kMaxSnapshotFileBytes = 64u * 1024u * 1024u;
+
+/// Read a whole snapshot file into `out`. Refuses anything that is not a
+/// regular file, or is larger than kMaxSnapshotFileBytes.
+inline bool readSnapshotFileBytes(const std::string& path,
+                                  std::vector<std::uint8_t>& out,
+                                  std::string& error)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        error = "not a regular file: " + path;
+        return false;
+    }
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    if (ec || size > kMaxSnapshotFileBytes) {
+        error = ec ? "cannot size " + path
+                   : path + " is larger than any POM2 snapshot";
+        return false;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) { error = "cannot open " + path; return false; }
+    out.resize(static_cast<std::size_t>(size));
+    if (size > 0 && !in.read(reinterpret_cast<char*>(out.data()),
+                             static_cast<std::streamsize>(size))) {
+        error = "read error on " + path;
+        return false;
+    }
+    return true;
+}
+
 inline constexpr char     kSnapshotMagic[8] = {'P','O','M','2','S','N','A','P'};
 // v2 adds the "MEX" section (aux RAM, Language-Card RAM, RamWorks banks,
 // paging soft-switches, DisplayState) so IIe/IIc state restores fully.

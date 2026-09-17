@@ -344,6 +344,38 @@ void testMemoryRoundtrip(EmulationController& ctrl, pom2::AiControlServer& /*srv
     assert(r.status == 200);
     assert(contains(r.body, "\"data\":\"AB\""));
 
+    // Numbers are decimal or 0x-hex, whole tokens (2026-09-17): a leading
+    // zero read as OCTAL, so 0768 failed to parse past its 7 and 0300 meant
+    // $C0; trailing garbage was dropped.
+    r = oneShot(kTestPort,
+        "GET /mem?addr=0768&len=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 200 && contains(r.body, "\"data\":\"AB\"") &&
+           "decimal 0768 is $0300");
+    r = oneShot(kTestPort,
+        "GET /mem?addr=0x300z&len=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 400 && "trailing garbage in addr is refused");
+    r = oneShot(kTestPort,
+        "POST /mem?addr=0x0300 HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "Content-Length: 13abc\r\n\r\n{\"data\":\"00\"}");
+    assert(r.status != 200 && "a malformed Content-Length is refused");
+    r = oneShot(kTestPort,
+        "POST /mem?addr=0x0300 HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+    assert(r.status != 200 && "a chunked body is refused, not read as empty");
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        assert(ctrl.memory().data()[0x0300] == 0xAB && "…and wrote nothing");
+    }
+    {
+        const std::string badDrive = "{\"drive\":\"1x\",\"path\":\"x.dsk\"}";
+        char req[512];
+        std::snprintf(req, sizeof(req),
+            "POST /disk HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "Content-Length: %zu\r\n\r\n%s", badDrive.size(), badDrive.c_str());
+        r = oneShot(kTestPort, req);
+        assert(r.status == 400 && "a malformed drive is refused, not read as 1");
+    }
+
     // The two halves of the endpoint must agree on where a byte goes. The
     // POST used to go through the CPU bus, which under RAMWRT lands in AUX,
     // while the GET reads the raw main array: a 200 that had written nothing
@@ -950,6 +982,21 @@ void testAuthHardening(EmulationController& /*ctrl*/, pom2::AiControlServer& srv
         "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
         "X-POM2-Token: correct-horse-battery\r\n\r\n");
     assert(r.status == 200);
+
+    // A web page cannot arm the box (2026-09-17). Browser requests carry
+    // Origin, and a rebound one carries a foreign Host: both are refused by
+    // policy, and counting them let any open page keep the agent at 429.
+    for (int i = 0; i < 12; ++i) {
+        const HttpResponse rr = oneShot(kTestPort, (i % 2)
+            ? "POST /reset HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+              "Origin: https://attacker.invalid\r\nContent-Length: 0\r\n\r\n"
+            : "GET /status HTTP/1.1\r\nHost: attacker.invalid\r\n\r\n");
+        assert(rr.status == 401);
+    }
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(r.status == 200 && "a web page's refused requests armed the brake");
 
     // The generator the panel's button calls: long enough to be worth having.
     const std::string gen = pom2::AiControlServer::generateToken();

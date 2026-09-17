@@ -113,24 +113,38 @@ inline std::vector<ConnectorSection> buildConnectorLayout(const ProfileConfig& c
         ports.blurb = "The connectors on the back panel. The controller "
                       "behind each one is soldered; what you plug into it is "
                       "yours to choose.";
-        // Serial 1 / serial 2 are DIN-5 sockets driven by on-board 6551s —
-        // the profile forces an `ssc` into slots 1 and 2 for exactly that.
+        const bool plus = cfg.profile == SystemProfile::AppleIIcPlus;
+        // Serial 1 / serial 2 are driven by on-board 6551s — the profile
+        // forces an `ssc` into slots 1 and 2 for exactly that. The //c has
+        // DIN-5 sockets; the //c+ moved to the Macintosh mini-DIN-8.
         ports.rows.push_back({ConnectorKind::ExternalPort, 1,
-                              "Serial port 1 (printer, DIN-5)",
+                              plus ? "Serial port 1 (printer, mini-DIN-8)"
+                                   : "Serial port 1 (printer, DIN-5)",
                               builtInLabel(1), {}});
         ports.rows.push_back({ConnectorKind::ExternalPort, 2,
-                              "Serial port 2 (modem, DIN-5)",
+                              plus ? "Serial port 2 (modem, mini-DIN-8)"
+                                   : "Serial port 2 (modem, DIN-5)",
                               builtInLabel(2), {}});
         // The hand-control port is also where the //c's mouse lives: the IOU
         // reads it, which is why POM2 carries `iicmouse` rather than a card.
+        // Its firmware is in the system ROM: at $C400 on the //c ROM 255/0,
+        // at $C700 on the //c+ ROM 5 (and ROM 3/4), whose $C400 page is the
+        // memory-expansion driver.
         ports.rows.push_back({ConnectorKind::ExternalPort, 4,
                               "Hand controls (DB-9)",
                               builtInLabel(4), {}});
         // The disk port chains external drives; the drives themselves are
-        // mounted in Internal Disks & Media, not here.
-        ports.rows.push_back({ConnectorKind::ExternalPort, 5,
+        // mounted in Internal Disks & Media, not here. On the //c its row is
+        // the SmartPort chain (slot 5) and the internal drive is the 5.25"
+        // (slot 6). The //c+ swapped them: its internal drive is a 3.5"
+        // behind the MIG (slot 5) and the rear port is where a 5.25" goes
+        // (slot 6), SmartPort devices chained after it.
+        ports.rows.push_back({ConnectorKind::ExternalPort, plus ? 6 : 5,
                               "Disk port (DB-19)",
-                              builtInLabel(5), {}});
+                              plus ? "external 5.25\" drive (Disk II firmware, "
+                                     "IWM) + SmartPort chain"
+                                   : "external 5.25\" drive (drive 2) + "
+                                     "SmartPort chain", {}});
         // The one connector on a //c that takes a card the user picks: the
         // video expansion, i.e. the Chat Mauve "Adaptateur IIc". On //c PAL
         // the profile solders it on, and the row becomes read-only by way of
@@ -147,20 +161,35 @@ inline std::vector<ConnectorSection> buildConnectorLayout(const ProfileConfig& c
         internals.title = "Built-in devices";
         internals.blurb = "Soldered to the board — shown so you know what the "
                           "machine already has.";
-        internals.rows.push_back({ConnectorKind::BuiltIn, 6,
-                                  "Internal drive", builtInLabel(6), {}});
+        internals.rows.push_back({ConnectorKind::BuiltIn, plus ? 5 : 6,
+                                  plus ? "Internal 3.5\" drive"
+                                       : "Internal 5.25\" drive",
+                                  builtInLabel(plus ? 5 : 6), {}});
         out.push_back(std::move(internals));
 
-        // The internal expansion connector: a header INSIDE the case. The
-        // Mockingboard 4c is the card that goes on it, answering at
-        // $C400-$C4FF while the machine's own IOU mouse keeps slot 4.
+        // The Mockingboard 4c is not a slot card: it piggy-backs in the
+        // 65C02 socket and decodes $C400-$C4FF itself (a CPLD), staying
+        // DORMANT — the page stays the //c's own firmware — until a program
+        // writes there (Memory::iicExpansionAwake_, MAME m_mockingboard4c).
+        // Music only: two AY-3-8910s and a 6522, no SSI263. The //c+ takes a
+        // different board, the 4c+, same address and same rule; there the
+        // page it borrows is the ROM's memory-expansion firmware (the //c+
+        // mouse firmware sits at $C700), so the 4c+ and a RAM card exclude
+        // each other. POM2 holds the card on virtual slot 3.
         ConnectorSection header;
         header.title = "Internal expansion connector";
-        header.blurb = "A header inside the case. A Mockingboard 4c mounts "
-                       "here and answers at $C400-$C4FF.";
+        header.blurb = plus
+            ? "Inside the case: a Mockingboard 4c+ sits in the CPU socket "
+              "and answers at $C400-$C4FF once a program writes there, "
+              "in place of the memory-expansion firmware."
+            : "Inside the case: a Mockingboard 4c sits in the CPU socket "
+              "and answers at $C400-$C4FF once a program writes there; "
+              "until then the page stays the //c's own firmware.";
         header.rows.push_back({ConnectorKind::InternalHeader, 3,
-                               "Expansion header", "",
-                               {"", "mockingboard", "mockingboard_c"}});
+                               plus ? "CPU socket (Mockingboard 4c+)"
+                                    : "CPU socket (Mockingboard 4c)",
+                               "Music only: 2 x AY-3-8910 + 6522",
+                               {"", "mockingboard"}});
         out.push_back(std::move(header));
         return out;
     }
@@ -168,9 +197,13 @@ inline std::vector<ConnectorSection> buildConnectorLayout(const ProfileConfig& c
     // ── II / II+ / //e: a real expansion bus. ────────────────────────────
     ConnectorSection slots;
     slots.title = "Expansion slots";
+    // //e: the Language Card is on the motherboard, and $C300-$C3FF is the
+    // internal 80-column firmware unless a program sets SLOTC3ROM — a card
+    // in slot 3 still gets its $C0Bx device select (UTAIIe 5-28).
     slots.blurb = cfg.iieMode
-        ? "Seven slots on the expansion bus. Slot 3 belongs to the built-in "
-          "80-column firmware on a //e."
+        ? "Seven slots on the expansion bus. The Language Card is built in, "
+          "and slot 3's $C300 page is the internal 80-column firmware unless "
+          "a program selects the slot ROM."
         : "Seven slots on the expansion bus. Slot 0 (the Language Card) is "
           "not modelled as a card.";
     for (int s = 1; s <= 7; ++s) {
@@ -207,13 +240,12 @@ inline std::vector<ConnectorSection> buildConnectorLayout(const ProfileConfig& c
                                       : "Game port (16-pin)",
                           "Paddles / joystick — Devices \xe2\x86\x92 Joystick",
                           {}});
-    if (!cfg.iieMode) {
-        // The cassette jacks are II/II+ only: the //e dropped them, and the
-        // //c never had them.
-        ports.rows.push_back({ConnectorKind::ExternalPort, -1,
-                              "Cassette in / out",
-                              "Devices \xe2\x86\x92 Cassette", {}});
-    }
+    // The cassette jacks: the II, II+ AND //e all have them on the back
+    // panel ($C020 out, $C060 in); only the //c dropped them, and it never
+    // reaches this branch.
+    ports.rows.push_back({ConnectorKind::ExternalPort, -1,
+                          "Cassette in / out",
+                          "Devices \xe2\x86\x92 Cassette", {}});
     out.push_back(std::move(ports));
     return out;
 }
@@ -242,11 +274,9 @@ inline int pendingChangeCount(const ProfileConfig& cfg,
     int pending = 0;
     for (std::size_t s = 1; s <= 7; ++s) {
         if (cfg.builtInSlots[s].has_value()) continue;
-        // A change Apply will not persist is not a staged change. On a
-        // //c, unplugging the Mockingboard 4c is refused by
-        // `slotKeyIsUserChoice` (persisting "" would clobber a saved //e
-        // layout), so counting it armed Apply, cold-booted, and put the
-        // card back — hunt #21.
+        // A change Apply will not persist is not a staged change: counting
+        // one armed Apply, cold-booted, and put the old card back (hunt
+        // #21). `slotKeyIsUserChoice` is the rule Apply itself follows.
         if (draft[s] != live[s] &&
             slotKeyIsUserChoice(cfg, static_cast<int>(s), draft[s], live[s]))
             ++pending;
