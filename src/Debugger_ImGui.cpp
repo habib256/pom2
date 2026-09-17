@@ -79,7 +79,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.p        = cpu.getStatusRegister();
         snap.sp       = cpu.getStackPointer();
         snap.pc       = cpu.getProgramCounter();
-        snap.cmos     = cpu.getCpuMode() == M6502::CpuMode::CMOS;
+        snap.cmos     = cpu.effectiveCpuMode() == M6502::CpuMode::CMOS;
         snap.halted   = cpu.isHalted();
         snap.hit      = ctrl.debugger().lastHit();
         snap.breakpoints = ctrl.debugger().breakpoints();

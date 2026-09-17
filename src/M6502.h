@@ -110,8 +110,24 @@ public:
     /// `code 0xB2` and the other (zp)-mode opcodes that NMOS treats as
     /// `KIL` (halt) become Hang in NMOS mode — exactly what real silicon
     /// would do.
+    ///
+    /// This is the machine's OWN processor — configuration (profile +
+    /// cpu_mode_override), which is what `getCpuMode` reports and what a
+    /// snapshot compares. The core that actually executes can differ, see
+    /// `setCmosSubstitute`.
     void    setCpuMode(CpuMode mode);
-    CpuMode getCpuMode() const { return cpuMode; }
+    CpuMode getCpuMode() const { return ownCpuMode; }
+
+    /// A card that takes the bus away with its OWN 65C02 (the TransWarp)
+    /// makes the program run on CMOS silicon whatever the motherboard
+    /// carries: its firmware is 65C02 code, and on an NMOS table its
+    /// `STZ $C072` is a 3-byte NOP, so the boot never leaves the card's
+    /// ROM. While set, dispatch is CMOS; clearing it restores the
+    /// machine's own mode. `setCpuMode` keeps the substitute in force.
+    void    setCmosSubstitute(bool on);
+    bool    cmosSubstitute() const { return cmosSubstitute_; }
+    /// The core the program runs on right now — what a disassembler wants.
+    CpuMode effectiveCpuMode() const { return cpuMode; }
 
     /// Debug: when true, BRK logs a full CPU+stack dump + recent control-flow
     /// trace + bus state on every execution. Off by default. The `dumpPcTrace`
@@ -392,7 +408,10 @@ private :
     // lookup.
     static const OpcodeEntry kCmosTable[256];
     OpcodeEntry opcodeTable[256]{};
-    CpuMode     cpuMode = CpuMode::CMOS;
+    CpuMode     cpuMode = CpuMode::CMOS;      // the core `opcodeTable` holds
+    CpuMode     ownCpuMode = CpuMode::CMOS;   // the machine's own chip
+    bool        cmosSubstitute_ = false;
+    void        applyDispatch(CpuMode mode);
 
     /// Set by `STP` ($CB on 65C02 / W65C02). When true, `step()` skips
     /// opcode dispatch *and* IRQ/NMI service — only `softReset()` /

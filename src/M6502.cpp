@@ -1316,6 +1316,19 @@ void M6502::Unoff(void)
 
 void M6502::setCpuMode(CpuMode mode)
 {
+    ownCpuMode = mode;
+    applyDispatch(cmosSubstitute_ ? CpuMode::CMOS : mode);
+}
+
+void M6502::setCmosSubstitute(bool on)
+{
+    if (on == cmosSubstitute_) return;
+    cmosSubstitute_ = on;
+    applyDispatch(on ? CpuMode::CMOS : ownCpuMode);
+}
+
+void M6502::applyDispatch(CpuMode mode)
+{
     cpuMode = mode;
     std::memcpy(opcodeTable, kCmosTable, sizeof(opcodeTable));
     if (mode == CpuMode::CMOS) return;

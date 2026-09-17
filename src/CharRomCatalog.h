@@ -86,6 +86,17 @@ enum class CharRomLocale : uint8_t {
     // holds the block glyphs. Without it, the demo's block art renders as the
     // stock font's letters/brackets — the "garbled" screen users see.
     AppleIIeFrenchTouchBlock,
+
+    // 4 KB US Enhanced set with MouseText $46/$47 taken from the later
+    // (IIgs-era) MouseText: a Return symbol and a title-bar pattern where
+    // the original has the two halves of the "running man". The other 30
+    // MouseText glyphs are byte-identical to 342-0265-A. A community patch
+    // for the //e, not an Apple part.
+    AppleIIeUS_MouseTextIIgs,
+    // ReActiveMicro's "ReActiveText" (Henry, ReActiveMicro): the patch
+    // above plus 21 redrawn characters (@ B D G J K V ! " ' * , 0 5 9 ; ?
+    // q r w) — and $7F (DEL) draws an Apple logo instead of the checker.
+    AppleIIeReActive,
 };
 
 struct CharRomEntry {

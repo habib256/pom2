@@ -95,6 +95,9 @@ public:
     /// is replaced with an empty function so stray assertIrq() calls
     /// from teardown don't dereference a dangling pointer).
     void setCpu(M6502* c);
+    /// The wired host CPU (nullptr before `setCpu`). For a card that must
+    /// change what that CPU is — the TransWarp's 65C02 substitute.
+    M6502* hostCpu() const { return cpu; }
 
     /// Apple //c / //c+ on-board IWM controller. Non-owning pointer
     /// set by EmulationController. When iicHasAltBank is on, $C0E0-

@@ -69,13 +69,25 @@ const std::vector<CharRomEntry>& catalogStorage()
         // because POM2 selects a bank at load time instead of modelling the
         // machine's charset switch. Note the older "Français" entry above is
         // a 4 KB dump that is byte-identical to the FR-CA unenhanced one and
-        // is NOT 342-0274-A, despite how it used to be labelled.
+        // is NOT the 342-0274-A part: it is that part's FR bank with the
+        // MouseText replaced by uppercase — the FR bank of the UNENHANCED
+        // French //e ROM, which MAME numbers 341-0163-A (`apple2efr`, CRC
+        // 1824d614 for the whole 8 KB, marked BAD_DUMP because it was
+        // rebuilt from 342-0274-A rather than read off a chip).
+        // ReActiveMicro sells that same unenhanced part under the
+        // 342-0274-A number; MAME's `apple2eefr` gives it to the ENHANCED
+        // part these two rows load. The two 8 KB dumps differ in exactly
+        // the 32 MouseText glyphs ($40-$5F) of each bank.
         { CharRomLocale::AppleIIeFrench8k_FR,
           "//e — Français 342-0274-A (banque FR)", "roms/342-0274-a.e9",                true, 0, 8192 },
         { CharRomLocale::AppleIIeFrench8k_US,
           "//e — Français 342-0274-A (banque US)", "roms/342-0274-a.e9",                true, 1, 8192 },
         { CharRomLocale::AppleIIeFrenchTouchBlock,
           "//e — French Touch (Block ASCII custom)", "roms/apple2e_char_ft_blockascii.rom", true, -1, 8192 },
+        { CharRomLocale::AppleIIeUS_MouseTextIIgs,
+          "//e/c — US Enhanced (MouseText IIgs)",  "roms/apple2e_char_us_mt_iigs.rom",  true },
+        { CharRomLocale::AppleIIeReActive,
+          "//e/c — ReActive (custom)",             "roms/apple2e_char_reactive.rom",    true },
     };
     return all;
 }
@@ -137,6 +149,8 @@ const char* charRomLocaleKey(CharRomLocale l)
         case CharRomLocale::AppleIIeFrench8k_FR:                 return "iie_fr8k_fr";
         case CharRomLocale::AppleIIeFrench8k_US:                 return "iie_fr8k_us";
         case CharRomLocale::AppleIIeFrenchTouchBlock:            return "iie_ft_block";
+        case CharRomLocale::AppleIIeUS_MouseTextIIgs:            return "iie_us_mt_iigs";
+        case CharRomLocale::AppleIIeReActive:                    return "iie_reactive";
     }
     return "default";
 }
@@ -181,6 +195,8 @@ CharRomLocale charRomLocaleFromKey(const std::string& key)
     if (key == "iie_fr8k_fr")       return CharRomLocale::AppleIIeFrench8k_FR;
     if (key == "iie_fr8k_us")       return CharRomLocale::AppleIIeFrench8k_US;
     if (key == "iie_ft_block")      return CharRomLocale::AppleIIeFrenchTouchBlock;
+    if (key == "iie_us_mt_iigs")    return CharRomLocale::AppleIIeUS_MouseTextIIgs;
+    if (key == "iie_reactive")      return CharRomLocale::AppleIIeReActive;
     return CharRomLocale::ProfileDefault;
 }
 

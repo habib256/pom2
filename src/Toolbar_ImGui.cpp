@@ -124,6 +124,8 @@ const char* shortLocaleLabel(CharRomLocale l) {
         case CharRomLocale::AppleIIeFrench8k_FR:              return "FR-8K";
         case CharRomLocale::AppleIIeFrench8k_US:              return "US-8K";
         case CharRomLocale::AppleIIeFrenchTouchBlock:        return "FT-Blk";
+        case CharRomLocale::AppleIIeUS_MouseTextIIgs:        return "US-GS";
+        case CharRomLocale::AppleIIeReActive:                return "ReAct";
     }
     return "?";
 }

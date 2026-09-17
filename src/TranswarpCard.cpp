@@ -22,6 +22,7 @@
 #include "ByteIO.h"
 #include "CpuClock.h"
 #include "Logger.h"
+#include "M6502.h"
 #include "Memory.h"
 #include "ResourcePaths.h"
 
@@ -158,12 +159,13 @@ bool TranswarpCard::busSnoop(uint16_t addr, bool isWrite, uint8_t value)
             // it reads its OWN $F000-$FFFF again (the shadow lived on the
             // card's DMA map, `dma_r:273`). POM2 has one CPU, so the halt is
             // just "multiplier 1"; the bus hand-back is the shadow release,
-            // and without it the machine kept running the card's Monitor
+            // and without it the machine kept running the card's firmware
             // after the accelerator switched itself off. `readA2Rom_` stays
             // false so `onReset` (MAME `reset_from_bus:217`, which clears
             // `m_bReadA2ROM` and `raise_slot_dma()`s) re-covers it.
             halted_ = true;
             releaseShadow();
+            applyCpuSubstitute();
             break;
         default:
             // Undocumented value: MAME ignores it and still swallows the
@@ -268,8 +270,24 @@ void TranswarpCard::onPlug()
 
 void TranswarpCard::onUnplug()
 {
-    // Never leave the machine running someone else's Monitor.
+    // Never leave the machine running someone else's firmware — or on
+    // someone else's CPU.
     releaseShadow();
+    if (M6502* cpu = memory_ ? memory_->hostCpu() : nullptr)
+        cpu->setCmosSubstitute(false);
+}
+
+void TranswarpCard::applyCpuSubstitute()
+{
+    // Whoever holds the bus runs the program. Until $C074=3 that is the
+    // card's own W65C02 (MAME `transwarp.cpp` instantiates one), and the AE
+    // firmware is 65C02 code: on a ][+ or an unenhanced //e the Apple's
+    // NMOS table ran its `STZ $C072` ($9C) as a 3-byte NOP, the shadow
+    // never dropped and the boot hung in 1 MHz mode. The ROM is not the reason —
+    // with no dump the card's CPU still runs the program — so neither it
+    // nor the DIP switches gate this.
+    if (M6502* cpu = memory_ ? memory_->hostCpu() : nullptr)
+        cpu->setCmosSubstitute(busSlot() >= 0 && !halted_);
 }
 
 void TranswarpCard::beforeMainRomReload()
@@ -303,6 +321,7 @@ void TranswarpCard::onReset()
     // recomputed from the flags on every read.
     in1MHz_ = false;
     engageShadow();
+    applyCpuSubstitute();
 }
 
 // ─── Snapshot ────────────────────────────────────────────────────────────
@@ -387,6 +406,9 @@ void TranswarpCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         if (wantShadow) engageShadow();   // captures the live Apple ROM
         else            releaseShadow();  // puts the live copy back
     }
+    // `halted_` just changed under the CPU's feet: a blob taken after
+    // $C074=3 runs on the Apple's own chip again, and vice versa.
+    applyCpuSubstitute();
 }
 
 } // namespace pom2
