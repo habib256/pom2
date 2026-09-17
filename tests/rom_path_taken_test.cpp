@@ -141,7 +141,7 @@ int main()
                     : "CFFA 2.0: the 6502 firmware loads");
     }
 
-    // TransWarp: the speed-corrected Monitor overlay.
+    // TransWarp: the boot-firmware overlay.
     {
         pom2::TranswarpCard tw(3);
         const std::string why = tw.loadRomFromDisk();

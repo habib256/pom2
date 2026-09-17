@@ -23,6 +23,7 @@
 // real SlotBus, because the snoop hooks live in those two files and a test
 // that called the card directly would pin the card and not the wiring.
 
+#include "M6502.h"
 #include "Memory.h"
 #include "SlotBus.h"
 #include "TranswarpCard.h"
@@ -228,7 +229,7 @@ void testRomShadow()
         else           assert(!tw->hasRom());
     }
     // A dump that LOADS covers $F000-$FFFF there and then — the card comes
-    // up reading AE's speed-corrected Monitor (MAME: m_bReadA2ROM clear out
+    // up reading AE's boot firmware (MAME: m_bReadA2ROM clear out
     // of reset), so the Apple byte is only still visible when nothing
     // resolved. This used to be an unconditional `== 0xA5` and it held only
     // because roms/ shipped no TransWarp dump; adding the real one
@@ -403,6 +404,132 @@ void testRestoreReconcilesTheShadowWindow()
     std::printf("  ok: a restore reconciles the $F000 window with the blob\n");
 }
 
+
+// Whoever holds the bus runs the program. The card brings its own W65C02, so
+// on an NMOS machine (][, ][+, unenhanced //e) the program runs on CMOS
+// silicon until $C074=3 hands the bus back. POM2 used to run the AE firmware
+// on the Apple's NMOS table, where `STZ $C072` ($9C) is a 3-byte NOP: $C072
+// was never written, the shadow never dropped and the ][+ never booted.
+void testCardCpuIsA65C02()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    cpu.setCpuMode(M6502::CpuMode::NMOS);
+    using Mode = M6502::CpuMode;
+
+    // `STZ $0810`: a 65C02 clears it; POM2's NMOS table runs $9C as a
+    // 3-byte NOP (SHY abs,X on silicon, which would hit $0811 with X=1),
+    // so $0810 keeps its $55 either way.
+    auto stzRuns = [&]() {
+        mem.memWrite(0x0800, 0x9C);
+        mem.memWrite(0x0801, 0x10);
+        mem.memWrite(0x0802, 0x08);
+        mem.memWrite(0x0810, 0x55);
+        mem.memWrite(0x0811, 0x55);
+        cpu.setProgramCounter(0x0800);
+        cpu.setXRegister(0x01);
+        cpu.setYRegister(0xFF);
+        cpu.step();
+        return mem.memRead(0x0810) == 0x00 && mem.memRead(0x0811) == 0x55;
+    };
+    assert(!stzRuns() && "an NMOS machine with no card has no STZ");
+
+    TranswarpCard* tw = plug(mem, 4);
+    assert(cpu.effectiveCpuMode() == Mode::CMOS && "the card's 65C02 holds the bus");
+    assert(cpu.getCpuMode() == Mode::NMOS && "the machine's own chip is unchanged");
+    assert(stzRuns());
+
+    // The CPU menu or a profile re-apply must not take the bus back.
+    cpu.setCpuMode(Mode::NMOS);
+    assert(cpu.effectiveCpuMode() == Mode::CMOS);
+
+    // A snapshot taken while the card runs...
+    std::vector<uint8_t> running;
+    tw->appendSnapshotState(running);
+
+    // $C074=3 halts the card: the Apple's own 6502 runs again.
+    mem.memWrite(0xC074, 3);
+    assert(tw->cpuHalted());
+    assert(cpu.effectiveCpuMode() == Mode::NMOS);
+    assert(!stzRuns());
+    std::vector<uint8_t> halted;
+    tw->appendSnapshotState(halted);
+
+    // ...and a reset gives the bus back to the card.
+    mem.slotBus().reset();
+    assert(cpu.effectiveCpuMode() == Mode::CMOS);
+
+    // A restore follows the halt state it carries, in both directions.
+    tw->loadSnapshotState(halted.data(), halted.size());
+    assert(cpu.effectiveCpuMode() == Mode::NMOS);
+    tw->loadSnapshotState(running.data(), running.size());
+    assert(cpu.effectiveCpuMode() == Mode::CMOS);
+
+    // Unplugging leaves the machine on its own chip.
+    mem.slotBus().plug(4, nullptr);
+    assert(cpu.effectiveCpuMode() == Mode::NMOS);
+    assert(!stzRuns());
+
+    // A 65C02 machine stays a 65C02 whatever the card does.
+    cpu.setCpuMode(Mode::CMOS);
+    tw = plug(mem, 4);
+    mem.memWrite(0xC074, 3);
+    assert(cpu.effectiveCpuMode() == Mode::CMOS);
+    mem.slotBus().plug(4, nullptr);
+    assert(cpu.effectiveCpuMode() == Mode::CMOS);
+    std::printf("  ok: the card's 65C02 runs the program until $C074=3\n");
+}
+
+// The end-to-end version: the real AE firmware on a real ][+ ROM, NMOS
+// machine. Before the fix this sat in 1 MHz mode in $FCxx with a blank
+// screen; a 65C02 host reached the prompt. Needs both dumps (tracked in
+// roms/), skips otherwise.
+void testIIPlusBootsThroughTheFirmware()
+{
+    const std::string appleRom = pom2::findResource("roms/apple2p.rom");
+    const std::string warpRom  = pom2::findFirstResource(
+        { TranswarpCard::kRomPath, "roms/ae transwarp rom v1.4.bin" });
+    if (appleRom.empty() || warpRom.empty()) {
+        std::printf("  skip: ][+ boot through the firmware (needs roms/apple2p.rom "
+                    "and %s)\n", TranswarpCard::kRomPath);
+        return;
+    }
+    Memory mem;
+    assert(mem.loadAppleIIRom(appleRom.c_str()));
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    cpu.setCpuMode(M6502::CpuMode::NMOS);
+    TranswarpCard* tw = plug(mem, 4);
+    assert(tw->loadRomFromDisk().empty() && tw->shadowActive());
+
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.slotBus().reset();
+    cpu.hardReset();
+    assert(cpu.getProgramCounter() == 0xF000 && "reset vectors through the card's ROM");
+
+    // The firmware's self-test beeps and waits; the banner lands after
+    // roughly 5 M cycles. Stop as soon as it is there.
+    auto bannerUp = [&]() {
+        static constexpr char kBanner[] = "APPLE ][";
+        for (int c = 0; c + 8 <= 40; ++c) {
+            bool hit = true;
+            for (int i = 0; i < 8 && hit; ++i)
+                hit = (mem.data()[0x400 + c + i] & 0x7F) == kBanner[i];
+            if (hit) return true;
+        }
+        return false;
+    };
+    long cycles = 0;
+    while (cycles < 30'000'000 && !bannerUp()) cycles += cpu.run(4096);
+    assert(bannerUp() && "the ][+ never got past the TransWarp firmware");
+    assert(tw->readsAppleRom() && !tw->shadowActive());
+    assert(!tw->inOneMhzMode() && "the firmware fell into its error path");
+    assert(cpu.getCpuMode() == M6502::CpuMode::NMOS);
+    std::printf("  ok: a ][+ boots through the AE firmware (%ld cycles)\n", cycles);
+}
+
 } // namespace
 
 // Reload ROM with the shadow engaged. `Memory::loadAppleIIRom` rewrites
@@ -456,6 +583,8 @@ int main()
     testBusAggregationAndAbsence();
     testSnapshotRoundTrip();
     testRestoreReconcilesTheShadowWindow();
+    testCardCpuIsA65C02();
+    testIIPlusBootsThroughTheFirmware();
     std::printf("OK transwarp_card\n");
     return 0;
 }

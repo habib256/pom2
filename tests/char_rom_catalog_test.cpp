@@ -34,6 +34,7 @@
 
 #include "CharRomCatalog.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <set>
@@ -71,6 +72,8 @@ const std::vector<CharRomLocale> kAllLocales = {
     CharRomLocale::AppleIIeFrench8k_FR,
     CharRomLocale::AppleIIeFrench8k_US,
     CharRomLocale::AppleIIeFrenchTouchBlock,
+    CharRomLocale::AppleIIeUS_MouseTextIIgs,
+    CharRomLocale::AppleIIeReActive,
 };
 
 const std::vector<SystemProfile> kAllProfiles = {
@@ -134,6 +137,8 @@ int main()
             { CharRomLocale::AppleIIeFrench8k_FR,              "iie_fr8k_fr" },
             { CharRomLocale::AppleIIeFrench8k_US,              "iie_fr8k_us" },
             { CharRomLocale::AppleIIeFrenchTouchBlock,         "iie_ft_block" },
+            { CharRomLocale::AppleIIeUS_MouseTextIIgs,         "iie_us_mt_iigs" },
+            { CharRomLocale::AppleIIeReActive,                 "iie_reactive" },
         };
         expect(kKeys.size() == kAllLocales.size(),
                "the pinned key table covers every locale");
@@ -304,6 +309,61 @@ int main()
     }
     std::printf("char_rom_catalog: %d/%zu dumps present\n",
                 resolved, cat.size());
+
+    // ── The two custom 4 KB sets are what their rows say ─────────────────
+    // Both are edits of the stock US Enhanced set (342-0265-A), and the row
+    // names promise the edit, so the edit is pinned glyph by glyph (8 bytes
+    // per glyph, $000-$1FF). The upper 2 KB are the //e's lo-res dot
+    // patterns, not characters, and neither variant touches them. Skipped
+    // when a dump is absent (a trimmed roms/).
+    {
+        auto readAll = [](const std::string& path) {
+            std::vector<unsigned char> b;
+            if (path.empty()) return b;
+            std::FILE* f = std::fopen(path.c_str(), "rb");
+            if (!f) return b;
+            unsigned char buf[4096];
+            std::size_t n;
+            while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) b.insert(b.end(), buf, buf + n);
+            std::fclose(f);
+            return b;
+        };
+        auto changedGlyphs = [](const std::vector<unsigned char>& a,
+                                const std::vector<unsigned char>& b) {
+            std::set<int> g;
+            for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
+                if (a[i] != b[i]) g.insert(static_cast<int>(i / 8));
+            return g;
+        };
+        const auto stock   = readAll(pom2::resolveCharRomPath(CharRomLocale::AppleIIeUS_Enhanced));
+        const auto mtIIgs  = readAll(pom2::resolveCharRomPath(CharRomLocale::AppleIIeUS_MouseTextIIgs));
+        const auto reactiv = readAll(pom2::resolveCharRomPath(CharRomLocale::AppleIIeReActive));
+        if (stock.size() == 4096 && mtIIgs.size() == 4096) {
+            expect(changedGlyphs(stock, mtIIgs) == std::set<int>{0x46, 0x47},
+                   "MouseText IIgs differs from 342-0265-A in MouseText $46/$47 only");
+            // $46 is the Return symbol: a lit right-hand column on rows 0-5.
+            for (int r = 0; r < 6; ++r)
+                expect((mtIIgs[0x46 * 8 + r] & 0x40) != 0,
+                       "MouseText IIgs $46 is the Return symbol");
+        } else {
+            std::printf("char_rom_catalog: skip MouseText IIgs glyph check\n");
+        }
+        if (stock.size() == 4096 && mtIIgs.size() == 4096 && reactiv.size() == 4096) {
+            const std::set<int> g = changedGlyphs(stock, reactiv);
+            expect(g.count(0x46) && g.count(0x47) &&
+                   std::equal(mtIIgs.begin() + 0x46 * 8, mtIIgs.begin() + 0x48 * 8,
+                              reactiv.begin() + 0x46 * 8),
+                   "ReActive carries the same MouseText $46/$47");
+            expect(g.count(0x7F) == 1 && g.count(0xFF) == 1,
+                   "ReActive redraws DEL ($7F) — an Apple logo, not the checker");
+            expect(!g.empty() && *g.rbegin() < 0x100,
+                   "ReActive leaves the lo-res half ($1000-$1FFF) alone");
+            expect(g.size() == 51, "ReActive changes 51 glyphs, got " +
+                                   std::to_string(g.size()));
+        } else {
+            std::printf("char_rom_catalog: skip ReActive glyph check\n");
+        }
+    }
 
     if (failures == 0) std::printf("char_rom_catalog: OK\n");
     return failures == 0 ? 0 : 1;

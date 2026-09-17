@@ -139,10 +139,10 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
         { "Other cards", "TransWarp accelerator ROM v1.4 (Applied Engineering)",
           { "roms/ae_transwarp_1.4.bin",
             "roms/ae transwarp rom v1.4.bin" }, 4096, 0xAFE37F55u, "MAME warprom",
-          "The card still accelerates without it — the ROM only supplies AE's "
-          "speed-corrected Monitor, which it overlays on $F000-$FFFF until "
-          "software writes $C072. Without it the stock F8 ROM's 1 MHz delay "
-          "loops (WAIT, the beep) come out 3.5x short.",
+          "The card still accelerates without it — the ROM is the card's "
+          "boot firmware (power-on RAM/ROM test, language-card setup), "
+          "overlaid on $F000-$FFFF until it writes $C072 itself. Without it "
+          "the machine boots straight into the Apple ROM, untested.",
           RomMissingEffect::Degraded },
         { "Other cards", "Mouse card slot EPROM (Apple 341-0270-C)",
           { "roms/mouse_341-0270-c.bin" }, 2048, 0, "",

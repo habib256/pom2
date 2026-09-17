@@ -673,6 +673,28 @@ ASCII custom)` (key `iie_ft_block`, `roms/apple2e_char_ft_blockascii.rom`).
 A plain 4 KB ROM leaves AN2 a no-op (as on a US //e); the 342-0274-A FR/US
 entries stay single-bank (`bank` 0/1). Pinned by `char_rom_catalog`.
 
+**Two edited US Enhanced sets** (2026-09-17). `//e/c — US Enhanced (MouseText
+IIgs)` (key `iie_us_mt_iigs`, `roms/apple2e_char_us_mt_iigs.rom`) is
+342-0265-A with MouseText `$46/$47` replaced: the original's two-glyph
+"running man" becomes the later MouseText's Return symbol and title-bar
+stripes — the same glyphs as the IIgs character ROM (which stores that block
+bit-inverted at `$200`). `//e/c — ReActive (custom)` (key `iie_reactive`,
+`roms/apple2e_char_reactive.rom`) is ReActiveMicro's ReActiveText: the same
+`$46/$47`, 21 redrawn characters (`@ B D G J K V ! " ' * , 0 5 9 ; ? q r w`,
+dotted zero), and **`$7F` DEL drawn as an Apple logo** instead of the
+checkerboard — a program that shades with DEL shows apples. Neither touches
+the upper 2 KB, which on a //e are the lo-res dot patterns, not glyphs.
+`char_rom_catalog` pins both edits glyph by glyph.
+
+**342-0274-A, enhanced or not.** MAME's `apple2eefr` loads
+`342-0274-a.e9` (CRC32 `8f342081`), with MouseText in both banks: that is
+`roms/342-0274-a.e9`. The UNENHANCED French //e part, MAME's `341-0163-a.e9`
+(`apple2efr`, CRC32 `1824d614`, `BAD_DUMP` because it was rebuilt from the
+enhanced one), is the same 8 KB with uppercase in `$40-$5F`. ReActiveMicro
+labels that unenhanced dump "342-0274-A". Its FR bank is
+`roms/apple2e_char_fr.rom` and its US bank is `apple2e_char_us_unenh.rom`,
+so POM2 already has all of its glyphs.
+
 Text glyphs come from a dumped character ROM (`Memory::loadCharRom`,
 selectable per locale from `CharRomCatalog`). Two properties of a dump are
 NOT knowable from its size, and POM2 used to guess both from it:
@@ -2427,13 +2449,33 @@ drive. They are modelled because they are what the board does.
 
 **ROM shadow**, ROM-gated on `roms/ae_transwarp_1.4.bin` (4096 B, CRC32
 `afe37f55`, MAME `ROM_START(warprom)`; **shipped since 2026-09-16** — it
-reached RetroBIOS and `roms/` at the same time). AE's
-speed-corrected Monitor overlays `$F000-$FFFF` until software writes `$C072`
-— the stock F8 delay loops are calibrated for 1 MHz and come out 3.5× short
-otherwise. Implemented as a straight 4 KB swap in the ROM mirror
+reached RetroBIOS and `roms/` at the same time). The overlay is the card's
+**boot firmware**, not a patched Monitor: W65C02 code with every vector at
+`$F000` that tests RAM, copies itself to `$1000`, writes `$C072` to drop the
+overlay, reads and checks the Apple ROM (`$F800` = `4A 08 20`) through the
+language-card switches, installs an IRQ vector at `$FFE0` and boots through
+the Apple's reset vector — or prints `READ ROM` / `BANK SWITCH` / `RAM MEMORY`
+/ `SLOT TIMEOUT ERR`. A v1.3 dump exists (CRC32 `66e25df5`, not in MAME): the
+same program $218 bytes shorter, with a 9-byte RAM test, a 16-byte copy check,
+a `$DE $ED` signature test at `$FFF8` instead of the `$F800` one, and a single
+`ERROR =` message. Implemented as a straight 4 KB swap in the ROM mirror
 (`Memory::loadRomBytes`), free at run time, with the displaced Apple bytes
 kept for the swap back. Without the dump the card accelerates and simply
 never shadows.
+
+**The card's CPU is a 65C02 on every machine** *(2026-09-17)*. POM2 runs the
+card's program on the Apple's own `M6502` (the divergence above), and on a
+][, ][+ or unenhanced //e that core was NMOS: the firmware's `STZ $C072`
+(`$9C`) ran as a 3-byte NOP, the overlay never dropped, `$FFFC` read the
+card's `$F000` and the boot died in 1 MHz mode with a blank screen. The
+real card substitutes its own W65C02 until `$C074=3`, so
+`TranswarpCard::applyCpuSubstitute` calls `M6502::setCmosSubstitute` on
+plug / reset / snapshot restore and clears it on halt and unplug.
+`getCpuMode()` keeps reporting the machine's own chip (configuration — the
+snapshot core check and the CPU menu use it); `effectiveCpuMode()` is what
+executes, and the debugger's disassembly follows it. Pinned by
+`transwarp_card` (`testCardCpuIsA65C02`, and a real ][+ ROM booting through
+the v1.4 firmware in ~9.7 M cycles).
 
 DIP switches persist as `transwarp_dsw1` / `transwarp_dsw2`. Note DSW2 bit 5
 defaults to 0: **slot 6 ships at stock speed** — that is the Disk II, the one

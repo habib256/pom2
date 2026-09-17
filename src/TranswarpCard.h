@@ -108,17 +108,25 @@
 // ─── ROM shadow ──────────────────────────────────────────────────────────
 //
 // The board overlays $F000-$FFFF with its own 4 KB ROM until software writes
-// $C072. AE shipped speed-corrected Monitor routines there — the stock F8
-// ROM's delay loops (WAIT, the beep) are calibrated for 1 MHz and come out
-// 3.5× short otherwise. POM2 implements this as a straight 4 KB swap in the
+// $C072. That ROM is NOT a patched Monitor: it is the card's boot firmware,
+// W65C02 code (STZ, BRA) with all three vectors at $F000. Disassembled
+// (v1.4, and the v1.3 it grew from by $218 bytes): it tests RAM, copies
+// itself to $1000 and runs there, writes $C072 to drop the overlay, reads
+// the Apple ROM through the language-card switches ($C081/$C08B), checks
+// it ($F800 must read 4A 08 20 — v1.3 looked for $DE $ED at $FFF8
+// instead), installs its own IRQ vector at $FFE0 and boots through the
+// Apple's reset vector. A failure prints READ ROM / BANK SWITCH / RAM
+// MEMORY / SLOT TIMEOUT ERR or ROM COPY FAILED (v1.4 only); the banner is
+// "TRANSWARP TEST V1.4". Being 65C02 code, it only runs on a 65C02 — see
+// `applyCpuSubstitute`. POM2 implements the overlay as a straight 4 KB swap in the
 // ROM mirror (`Memory::loadRomBytes`), which is free at run time, keeping a
 // copy of the displaced Apple ROM to put back.
 //
 // ROM-GATED: needs `roms/ae_transwarp_1.4.bin` (4096 bytes, CRC32
 // afe37f55 — MAME `ROM_START(warprom)`), which POM2 ships since
 // 2026-09-16. With no ROM — a build whose roms/ was trimmed — the card
-// plugs and accelerates normally and simply never shadows, which is also
-// what DSW-driven software expects after a $C072 write.
+// plugs and accelerates normally and simply never shadows: the machine
+// boots straight into the Apple ROM, without the card's power-on test.
 
 #ifndef POM2_TRANSWARP_CARD_H
 #define POM2_TRANSWARP_CARD_H
@@ -236,6 +244,8 @@ private:
     void hitJoystick();
     void engageShadow();
     void releaseShadow();
+    /// Make the host CPU a 65C02 while the card holds the bus.
+    void applyCpuSubstitute();
 
     uint8_t dsw1_ = kDsw1Default;
     uint8_t dsw2_ = kDsw2Default;

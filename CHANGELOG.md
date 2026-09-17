@@ -5,6 +5,33 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-17 — TransWarp on NMOS machines; two more //e character sets
+
+- **A ][, ][+ or unenhanced //e with a TransWarp never booted.**
+  - The card's firmware (`roms/ae_transwarp_1.4.bin`) is W65C02 code. POM2
+    runs it on the Apple's own `M6502`, which is NMOS on those profiles.
+  - Its `STZ $C072` (`$9C`) was therefore a 3-byte NOP, so the ROM overlay
+    never dropped. `$FFFC` then read the card's `$F000`, and the machine sat
+    in 1 MHz mode with a blank screen.
+  - The real card brings its own 65C02, so a ][+ equipped with one boots.
+  - Fix: `M6502::setCmosSubstitute` makes the program run on CMOS while the
+    card holds the bus, until `$C074=3` hands it back. `getCpuMode()` still
+    reports the machine's own chip.
+  - Pinned by `transwarp_card`: a unit test, and a real ][+ ROM booting
+    through the firmware. Each fails with the fix removed.
+- **The TransWarp ROM is boot firmware, not a "speed-corrected Monitor".**
+  - It runs a power-on RAM/ROM test, sets up the language card and then
+    boots the Apple. The README, DEV, ROM Status text and comments said
+    otherwise.
+  - DEV § TransWarp documents the firmware and the v1.3 dump (CRC32
+    `66e25df5`, not in MAME).
+- **Two new entries in the character-set picker:**
+  - `US Enhanced (MouseText IIgs)`: MouseText `$46/$47` are the Return
+    symbol and title-bar glyphs.
+  - `ReActive (custom)`: redrawn glyphs, and DEL draws an Apple logo.
+  - DEV § Character generators also explains which French dump is the
+    enhanced 342-0274-A.
+
 ## 2026-09-17 — Bug hunt: five reviewers, fifteen fixes
 
 Five reviewers each read one area: the //c change below, storage, machine
