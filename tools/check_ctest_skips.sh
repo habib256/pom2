@@ -20,9 +20,9 @@ export LC_ALL=C
 
 ALLOW=$(printf '%s\n' \
   $'iic_onboard_smartport_smoke\tPOM2_TRACE_HDV' \
-  $'crt_glass_resample\t(ctest status: Skipped)' \
-  $'crt_barrel_view\t(ctest status: Skipped)' \
-  $'slirp_loopback_fence\t(ctest status: Skipped)' )
+  $'crt_glass_resample\t*' \
+  $'crt_barrel_view\t*' \
+  $'slirp_loopback_fence\t*' )
 # The last three depend on the HOST, not on the tree: the two CRT tests need
 # an OpenGL context (the main Linux leg has none; the `gl-software` job gives
 # them one and requires that they RUN) and
@@ -57,6 +57,10 @@ self_test() {
     printf '1/1 Testing: iic_onboard_smartport_smoke\nOutput:\n  SKIP: POM2_TRACE_HDV non pose\nTest Passed.\n' > "$L"
     bash "$here" "$tmp/b" >/dev/null || { echo "self-test FAILED: an allowlisted skip was refused"; exit 1; }
     echo '  ok: an allowlisted skip passes'
+    printf '1/1 Testing: crt_barrel_view\nOutput:\nSKIP: glfwInit failed (no display)\nTest Passed.\n' > "$L"
+    printf '1/1 Test #198: crt_barrel_view ...***Skipped   0.00 sec\n' > "$tmp/console"
+    bash "$here" "$tmp/b" "$tmp/console" >/dev/null || { echo "self-test FAILED: a host-dependent skip was refused in one of its two shapes"; exit 1; }
+    echo '  ok: a host-dependent skip passes in both its shapes'
     rm "$L"
     if bash "$here" "$tmp/b" >/dev/null 2>&1; then echo "self-test FAILED: a missing log passed"; exit 1; fi
     echo '  ok: no log is a failure'
@@ -75,7 +79,12 @@ while IFS=$'\t' read -r test line; do
     allowed=0
     while IFS=$'\t' read -r at frag; do
         [ -n "$at" ] || continue
-        if [ "$at" = "$test" ] && [[ "$line" == *"$frag"* ]]; then allowed=1; fi
+        # A fragment of `*` allows the test whatever it printed: a host-
+        # dependent skip shows up twice (its own SKIP line in LastTest.log,
+        # ctest's status in the console), with different words.
+        if [ "$at" = "$test" ] && { [ "$frag" = "*" ] || [[ "$line" == *"$frag"* ]]; }; then
+            allowed=1
+        fi
     done <<< "$ALLOW"
     [ "$allowed" = 1 ] && continue
     echo "SKIPPED  $test: $line"
