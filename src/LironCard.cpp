@@ -180,6 +180,12 @@ uint8_t LironCard::deviceSelectRead(uint8_t low4)
         drives_[active_].ssW(iwm_.sel());
     }
     const uint8_t v = iwm_.read(low4);
+    // …and AFTER it: an access to $C0nA/$C0nB flips SEL itself, and the
+    // drive follows the line at once. Syncing only on the next access left
+    // the mechanism on the old head in between — invisible to the guest,
+    // but a snapshot taken there restored a different head than it recorded
+    // (card_snapshot_contract P1c).
+    syncHeadSelect();
     if (!busLive()) return v;
     // The phase pattern ADDRESSES the device; it does not gate every byte.
     // The firmware drops PH1 as soon as it starts reading the reply ($C982
@@ -239,6 +245,7 @@ void LironCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     const bool forBus = busLive() && (busAddressed() || bus_.active());
     iwm_.setBusCapture(forBus);
     iwm_.write(low4, v);
+    syncHeadSelect();                 // SEL may have moved — see the read path
     // …and only while the drive is enabled: an odd-offset write with Q6+Q7 is
     // a DATA byte when the device is active and the MODE register otherwise.
     if (forBus && !iwm_.isIdle() &&
@@ -340,6 +347,13 @@ void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // tolerates a blob it does not recognise by leaving itself alone.
     if (!data || len < 8 || std::memcmp(data, kLironBlobMagic, 4) != 0) return;
     onReset();
+    // From here on, re-pointing the IWM at a drive is part of the restore,
+    // not a wiring event (IWMDevice::setRestoring). Cleared on every exit.
+    struct RestoreScope {
+        IWMDevice& iwm;
+        explicit RestoreScope(IWMDevice& i) : iwm(i) { iwm.setRestoring(true); }
+        ~RestoreScope() { iwm.setRestoring(false); }
+    } restoreScope(iwm_);
     std::size_t i = 4, iwmLen = 0;
     for (int k = 0; k < 4; ++k) iwmLen |= static_cast<std::size_t>(data[i + k]) << (8 * k);
     i += 4;
@@ -402,6 +416,18 @@ void LironCard::onDevsel(uint8_t devsel)
     if (want == active_) return;
     active_ = want;
     retargetIwm();
+}
+
+void LironCard::setStandardClock(double hz)
+{
+    for (auto& d : drives_) d.setStandardClock(hz);
+}
+
+void LironCard::syncHeadSelect()
+{
+    if (active_ < 0) return;
+    drives_[active_].setSel(iwm_.sel());
+    drives_[active_].ssW(iwm_.sel());
 }
 
 void LironCard::retargetIwm()

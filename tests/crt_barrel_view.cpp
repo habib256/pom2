@@ -32,6 +32,7 @@
 // is skipped), and never shift the brightness of a flat field. Exit code 4.
 #include "CrtEffectStack.h"
 #include "NtscPostProcessor.h"
+#include "ProbeOutDir.h"
 
 #include <GLFW/glfw3.h>
 // Pom2GL.h, not a bare <GL/gl.h>: the latter does not exist on macOS (and is
@@ -178,14 +179,16 @@ static int countTriads(pom2::CrtEffectStack& stack, int sw, int sh,
 }
 
 int main(int argc, char** argv) {
-    if (!glfwInit()) { std::fprintf(stderr, "glfwInit failed\n"); return 1; }
+    // No context = no test, said as a SKIP (77) — since 2026-09-17 this runs
+    // under ctest, and in CI under Xvfb + Mesa's software rasteriser.
+    if (!glfwInit()) { std::printf("SKIP: glfwInit failed (no display)\n"); return 77; }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     GLFWwindow* win = glfwCreateWindow(64, 64, "crt", nullptr, nullptr);
-    if (!win) { std::fprintf(stderr, "createWindow failed\n"); return 1; }
+    if (!win) { std::printf("SKIP: no GL 3.2 core context\n"); glfwTerminate(); return 77; }
     glfwMakeContextCurrent(win);
 
     // ── Source pattern (560×192): a bright field with colour blocks and a
@@ -248,8 +251,12 @@ int main(int argc, char** argv) {
         std::printf("wrote %s (%dx%d) barrel=%.2f\n", path, dstW, dstH, barrel);
     };
 
-    run(0.25f, "/tmp/crt_barrel_on.ppm");
-    run(0.0f,  "/tmp/crt_barrel_off.ppm");
+    // Under the probe directory, never /tmp directly (CLAUDE.md § probes).
+    const std::string outDir = pom2test::probeOutDir();
+    const std::string onPath  = outDir + "/crt_barrel_on.ppm";
+    const std::string offPath = outDir + "/crt_barrel_off.ppm";
+    run(0.25f, onPath.c_str());
+    run(0.0f,  offPath.c_str());
 
     // ── Mask pitch is glass, not signal ───────────────────────────────────
     const int mW = 1680, mH = 768;      // wide enough that a triad spans ~4.5px

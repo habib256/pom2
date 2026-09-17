@@ -845,6 +845,11 @@ private:
     /// first Alt event so no constructor ordering is involved.
     mutable bool altAppleKeysEnabled_  = true;
     mutable bool altAppleKeysLoaded_   = false;
+    /// The setting above, loaded on first use.
+    bool altAppleKeysSetting() const;
+    /// Change it from the UI: persisted, and a host Alt latch that was down
+    /// is released (it would otherwise stay pressed for good).
+    void setAltAppleKeysSetting(bool on);
 
     // Slot number of the DiskII the Insert-disk popup currently routes to.
     // Latched when any panel sets `insertDialogOpen` true; cleared when

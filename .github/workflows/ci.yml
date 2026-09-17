@@ -46,6 +46,93 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A red Linux compile used to surface after the full leg's ~80 minutes, and
+  # a macOS-only green ("it builds here") has turned CI red more than once
+  # (TODO G6). This leg builds the application and the core library only —
+  # no tests, no Tom Harte corpus — with GCC and -Werror, so a missing
+  # include, a GL call outside the loader or a GCC-only warning reports in a
+  # few minutes. It gates nothing the full leg does not; it only answers first.
+  linux-quick:
+    name: Linux quick compile (GCC, -Werror)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev
+
+      - name: Fetch Dear ImGui (pinned)
+        run: |
+          set -euo pipefail
+          source ./imgui_pin.env
+          git init -q imgui
+          git -C imgui remote add origin "$IMGUI_REPO"
+          git -C imgui fetch --depth 1 origin "$IMGUI_COMMIT"
+          git -C imgui checkout -q FETCH_HEAD
+          test "$(git -C imgui rev-parse HEAD)" = "$IMGUI_COMMIT"
+
+      - name: Configure + build the application
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-quick \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPOM2_ENABLE_TESTS=OFF \
+            -DPOM2_WERROR=ON
+          cmake --build build-quick --parallel 4 --target pom2_imgui pom2_headless pom2_bench
+
+  # The render path's two checks — the CRT glass resample and the barrel/mask
+  # /bandwidth pins — need a GL 3.2 core context, which no other leg has, so
+  # they skipped everywhere and "half of the render path rests on review"
+  # (TODO G5-10). Mesa's llvmpipe under Xvfb is a real, if slow, GL; here the
+  # two tests must RUN — a skip on this leg is a failure.
+  gl-software:
+    name: GL tests on Mesa llvmpipe (Xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install build dependencies + software GL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
+            libgl1-mesa-dri xvfb xauth
+
+      - name: Fetch Dear ImGui (pinned)
+        run: |
+          set -euo pipefail
+          source ./imgui_pin.env
+          git init -q imgui
+          git -C imgui remote add origin "$IMGUI_REPO"
+          git -C imgui fetch --depth 1 origin "$IMGUI_COMMIT"
+          git -C imgui checkout -q FETCH_HEAD
+          test "$(git -C imgui rev-parse HEAD)" = "$IMGUI_COMMIT"
+
+      - name: Configure + build the GL tests
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPOM2_ENABLE_TESTS=ON
+          cmake --build build --parallel 4 --target test_crt_glass_resample crt_barrel_view
+
+      - name: Run them under Xvfb
+        working-directory: build
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -o pipefail
+          xvfb-run -a -s "-screen 0 1280x1024x24" \
+            ctest -R '^(crt_glass_resample|crt_barrel_view)$' --output-on-failure \
+            | tee gl-console.log
+          if grep -q 'Skipped' gl-console.log; then
+            echo "::error::a GL test skipped under Xvfb — it found no context"
+            exit 1
+          fi
+
   linux:
     name: Linux build + ctest
     runs-on: ubuntu-latest
@@ -66,6 +153,22 @@ jobs:
       # a release-day landmine). Falsifiable: unpin one and this fails.
       - name: Workflow pins
         run: tools/check_workflow_pins.sh
+
+      # The version strings no header can reach (README package names,
+      # CLAUDE.md, vcpkg.json, the release-notes file). The self-test runs
+      # first: a guard that cannot fail is the defect this project keeps
+      # finding in its own guards.
+      - name: Version strings
+        run: |
+          tools/check_version_strings.sh --self-test
+          tools/check_version_strings.sh
+
+      # Every settings key read is written by something and vice versa, or
+      # sits on the script's allowlist with its reason (TODO G5-7).
+      - name: Settings keys
+        run: |
+          tools/check_settings_keys.sh --self-test
+          tools/check_settings_keys.sh
 
       # `stateMutex` is non-recursive, so a coordinator call placed inside an
       # existing lock scope hangs the UI thread and the emulator with it. No
@@ -126,12 +229,16 @@ jobs:
       # oracle ran at release time only — four weeks of pushes could regress
       # a bus cycle before anything noticed. macOS and Windows stay light:
       # a cycle count is not platform-dependent, so running it once is enough.
+      # -DPOM2_WERROR=ON here too since 2026-09-17 (TODO G5-14): GCC's
+      # warning set is not clang's, and the only warning this leg printed —
+      # a misleadingly indented `else` in Memory::memWriteSlow — is fixed.
       - name: Configure (Release, tests on)
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DPOM2_ENABLE_TESTS=ON \
-            -DPOM2_FETCH_TOMHARTE=ON
+            -DPOM2_FETCH_TOMHARTE=ON \
+            -DPOM2_WERROR=ON
 
       - name: Build everything
         run: cmake --build build --parallel 2
@@ -163,7 +270,17 @@ jobs:
       # the fix honest, since a two-wide run would hide a regression of it.
       - name: Run ctest
         working-directory: build
-        run: ctest --output-on-failure --parallel $(nproc)
+        run: |
+          set -o pipefail
+          ctest --output-on-failure --parallel $(nproc) | tee ctest-console.log
+
+      # A skip on a tree that carries its ROMs and media means something the
+      # test needs went missing (TODO G5-15). Host-dependent skips (no GL, no
+      # libslirp) are allowlisted in the script, with their reason.
+      - name: No unexpected test skips
+        run: |
+          tools/check_ctest_skips.sh --self-test
+          tools/check_ctest_skips.sh build build/ctest-console.log
 
       # The binary this job just built and tested, kept so a run can be
       # checked out rather than only read about. Not a release package (no
@@ -239,9 +356,8 @@ jobs:
       # -DPOM2_WERROR=ON: this is the leg that holds first-party sources to
       # ZERO warnings. It is on here rather than on Linux because the local
       # development compiler is the same AppleClang family, so a contributor
-      # sees the failure before pushing rather than after. Extending it to the
-      # GCC leg is worth doing and is a separate job — GCC's warning set is
-      # not clang's, and nobody has cleaned it yet (TODO P2-3).
+      # sees the failure before pushing rather than after. The GCC leg has it
+      # too since 2026-09-17 (TODO G5-14).
       #
       # The flag earned itself immediately: of the fourteen warnings cleared
       # on 2026-08-28, one was a value-returning lambda in the Super Serial
@@ -461,6 +577,39 @@ jobs:
             setarch -R ctest --output-on-failure --parallel 4 -R "$POM2_TEST_FILTER"
           else
             setarch -R ctest --output-on-failure --parallel 4
+          fi
+
+  # A red nightly used to be seen by nobody: the job runs on `schedule` only,
+  # push CI is a separate run and stays green, and the three defects fixed on
+  # 2026-09-04 sat invisible from 09-03 (TODO G5-9). This opens an issue —
+  # which notifies the repository's watchers — or comments on the open one, so
+  # a string of red nights is one thread. `gh` ships on the runner image; no
+  # third-party action, nothing more to pin. Scheduled runs only: a manual
+  # dispatch has someone watching it.
+  sanitizers-alert:
+    name: Report a red nightly
+    needs: sanitizers
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the nightly issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          title="Nightly sanitizers are red"
+          body="The ASan/UBSan or TSan leg failed on ${COMMIT}: ${RUN_URL}"
+          num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                  --search "\"$title\" in:title" --json number,title \
+                  --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
           fi
 
   wasm:

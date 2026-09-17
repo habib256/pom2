@@ -67,6 +67,7 @@
 #ifndef POM2_SONY35_DRIVE_H
 #define POM2_SONY35_DRIVE_H
 
+#include "CpuClock.h"
 #include "Disk35Image.h"
 
 #include <cstdint>
@@ -225,8 +226,18 @@ public:
 
     /// CPU cycles per revolution at the current zone's RPM (394 / 429 /
     /// 472 / 525 / 590 RPM for outermost to innermost). Derived from
-    /// `60 × POM2_CPU_CLOCK_HZ / RPM`.
+    /// `60 × clock / RPM`, the clock being the video standard's (below).
     int64_t cyclesPerRev() const;
+
+    /// The machine's crystal-derived CPU clock (`VideoTiming::cpuClockHz`).
+    /// The RPM is real time, so a PAL machine (1 015 625 Hz) turns the
+    /// platter in fewer CPU cycles than an NTSC one; the drive used the
+    /// compile-time NTSC constant everywhere, 0.7 % off on both PAL profiles
+    /// (TODO G5-3). The IWM needs no such retune: it counts ticks of the same
+    /// crystal (seven per CPU cycle on either standard). Not the ACCELERATED
+    /// clock — see SlotPeripheral::setStandardClock.
+    void   setStandardClock(double hz);
+    double standardClockHz() const { return standardClockHz_; }
 
     /// The same period in IWM ticks (`POM2_IWM_TICKS_PER_CPU_CYCLE`), which
     /// is the unit the flux timeline below speaks. A cell is ~14.2 ticks
@@ -302,6 +313,9 @@ private:
     /// Optional mechanical-sound sink. Non-owning. Set by
     /// EmulationController at construction time.
     FloppySoundSink* sound_     = nullptr;
+    /// See setStandardClock. NTSC until told otherwise.
+    double       standardClockHz_ = POM2_CPU_CLOCK_HZ;
+    int64_t      cyclesPerRevZone_[5] = { 0, 0, 0, 0, 0 };
     /// Optional deferred-write-back sink (see setWriteBackSink). Non-owning.
     Disk35WriteBackSink* writeBackSink_ = nullptr;
     /// A firmware eject whose payload is queued but not yet on disk. The

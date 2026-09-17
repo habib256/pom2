@@ -43,7 +43,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   Block devices go through the same shape (`Block512Backing::readImageFile` +
   `adoptImage`, wrapped by `pom2::mountBlockCard`): 32 MiB HDV mounts hold the
   lock for **0 ms**. One documented exception survives, in
-  `MainWindow_Slots.cpp`'s profile-switch remount, where atomicity against the
+  the profile-switch remount (`pom2::switchProfile`, `ProfileSwitch.cpp`), where atomicity against the
   AI server outranks latency and the CPU worker is stopped anyway.
   **Eject and flush have the same shape** (since 2026-09-07): phase 1 takes
   the lock and *captures* the payload (`MountableMediaCard::prepareEjectBay` /
@@ -390,7 +390,7 @@ Keyboard wiring:
 
 - **Left Alt = Open-Apple** → $C061 bit 7
 - **Right Alt = Solid-Apple** → $C062 bit 7 — both wires have **two** sources (host Alt + the on-screen //e keyboard's latches), held apart and OR'd in `AppleKeyLatch.h`; a source that assigned the wire directly released the other one. Pinned by `apple_key_latch`.
-- **The Alt→Apple binding is a setting** — `keyboard_alt_apple_keys` (default **on**). Off, the Apple keys come only from the on-screen //e keyboard: on a macOS French layout Option is how `{ } [ ] |` are typed, and $C061/$C062 are the PB0/PB1 *fire buttons*, so writing those characters pressed fire. **Windows AltGr never drives them** — it arrives as `CONTROL|ALT` on the right Alt, where it is a text-entry modifier.
+- **The Alt→Apple binding is a setting** — `keyboard_alt_apple_keys` (default **on**; Machine ▸ "Alt keys are the Apple keys"). Off, the Apple keys come only from the on-screen //e keyboard: on a macOS French layout Option is how `{ } [ ] |` are typed, and $C061/$C062 are the PB0/PB1 *fire buttons*, so writing those characters pressed fire. **Windows AltGr never drives them** — it arrives as `CONTROL|ALT` on the right Alt, where it is a text-entry modifier.
 - **The keyboard POLICY is GLFW-free** (`KeyChord.h`, same shape and same reason as `MouseGrab.h`; `MainWindow_Input.cpp` static_asserts the mirrored GLFW tokens). It owns three decisions no test could reach while they lived in the callback: the layout letter behind a Ctrl-chord (`glfwGetKeyName`, with the US-positional fallback **only** when GLFW has no name — a key whose cap is punctuation is not the US letter at that position, which is how AZERTY's Ctrl+`,` arrived as `RETURN`), Windows AltGr (`CONTROL|ALT` — it must fire neither `Ctrl+Alt+F`/`Ctrl+Alt+G` nor a Ctrl-letter), and the Alt→Apple setting above. Pinned by `key_chord_policy`, which also **scans the sources** for the GLFW entry points Emscripten implements as `abort()` (`glfwGetKeyName`, `glfwSetWindowMonitor`, …) outside an `__EMSCRIPTEN__` guard — none of them is a compile error, and an `abort()` tears the whole WASM module down.
 - **Ctrl+Alt+F = full screen ⇄ windowed** (kiosk toggle — see CLI section). **F10** does the same; the chord exists because F10 is swallowed by the window manager on several desktops.
 - **Ctrl+Alt+G = capture / release the host pointer** for the Mouse Card (a middle click toggles it too; a left click never captures; policy in `MouseGrab.h`) → [DEV § Pointer capture](DEV.md#pointer-capture-mouse-grab--mousegrabh)
@@ -445,6 +445,9 @@ cannot `#include` the header:
 - `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes; the
   publish job tries both conventions, and says so loudly in the log when it
   finds neither before falling back to a generated commit list
+
+`tools/check_version_strings.sh` (CI Linux job) fails when any of these
+disagrees with `project(VERSION)`, or when the release-notes file is missing.
 
 ## Package payload
 

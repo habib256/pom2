@@ -35,6 +35,7 @@
 // otherwise the entry is greyed out in the dropdown.
 
 #include "MainWindow.h"
+#include "ProfileSwitch.h"
 
 #include <algorithm>   // std::find / std::max over the connector rows
 #include "SlotConfigurationCoordinator.h"
@@ -1206,22 +1207,7 @@ std::string MainWindow::firstExistingPath(const std::vector<std::string>& candid
 
 M6502::CpuMode MainWindow::resolveCpuMode(M6502::CpuMode profileDefault) const
 {
-    const std::string override = settings->getString("cpu_mode_override", "auto");
-    // A 65C02 is a strict superset of the NMOS 6502, so forcing CMOS is
-    // always physically plausible (it was a real socket-upgrade on II/II+).
-    if (override == "65c02") return M6502::CpuMode::CMOS;
-    // Forcing NMOS only makes sense on a machine that actually shipped an
-    // NMOS 6502 (II / II+ / //e-unenhanced → profileDefault == NMOS). The
-    // //c, //c+, enhanced //e and the PAL variants have a 65C02 SOLDERED in
-    // — they cannot run NMOS, and their ROMs use 65C02-only opcodes (e.g.
-    // LDA (zp) = $B2) that DECODE AS KIL on an NMOS core and freeze the CPU.
-    // That was the "//c hangs / POM2 freezes when I switch to it via the
-    // menu" bug: a sticky `cpu_mode_override=nmos` (set once on a II+) was
-    // dragged onto the //c. So an NMOS override is honoured only where the
-    // machine supports it; on a CMOS-only profile the profile default wins.
-    if (override == "nmos" && profileDefault == M6502::CpuMode::NMOS)
-        return M6502::CpuMode::NMOS;
-    return profileDefault;     // "auto", or NMOS-override on a CMOS-only machine
+    return pom2::resolveCpuModeSetting(*settings, profileDefault);   // ProfileSwitch.h
 }
 
 float MainWindow::floppyMotorPitchForProfile(pom2::SystemProfile p)
@@ -1401,261 +1387,44 @@ bool MainWindow::restartEmulationFromSettings()
 
 void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
 {
+    // The machine half lives in ProfileSwitch.cpp (TODO G5-6), where a test
+    // can drive it; what stays here is what only the window knows. Each hook
+    // runs at the point the inline code used to do the same thing — the
+    // step numbers in ProfileSwitch.h are the ones these comments used.
     const auto& cfg = pom2::profileConfig(p);
-    pom2::log().info("Profile",
-        std::string("Switching to ") + std::string(cfg.displayName));
-
-    const bool wasRunning =
-        controller->getMode() == EmulationController::Mode::Running;
-    controller->stop();
-    std::string flushErr;
-    if (!flushSlotMedia(flushErr)) {
-        tapeStatusMessage = "Profile switch refused — save failed: " + flushErr;
-        tapeStatusUntil = lastFrameTime + 8.0;
-        pom2::log().warn("Profile", tapeStatusMessage);
-        if (wasRunning) controller->start();
-        return;
-    }
-
-    // The session-local auto-plugged HDV (POM2 <image.hdv> one-shot boot) is
-    // destroyed by the slot rebuild below; clear its marker so a later real
-    // HDV in the same slot number isn't wrongly skipped at shutdown.
-    // Commit the rebuild: the flush above succeeded, so history bound to the
-    // old topology (the rewind ring) and session-only provisioning are
-    // invalidated exactly once, before any card is destroyed.
-    slotRebuildCoordinator_->prepareAfterFlush();
-
-    // Join FujiNet / SSC workers before beginLocked destroys the cards —
-    // their destructors would otherwise join under stateMutex — and BEFORE
-    // the media snapshot below: the join can take seconds (the SSC worker
-    // polls accept on a 200 ms budget, a FujiNet stop waits out the
-    // transact in flight) and the AI control server is not quiesced until
-    // step 3, so a /disk/insert landing between the snapshot and the
-    // teardown would mount a disk the rebuild never re-mounts. Joining
-    // first keeps that window at the microseconds it always was.
-    slotRebuildCoordinator_->stopHostWorkers();
-
-    // 0. Commit the active profile NOW — BEFORE step 7's plugSlotsFromSettings(),
-    //    which reads `activeProfile` to apply the profile's built-in locked slots
-    //    (//c / //c+ on-board SSC / Mouse / SmartPort / Disk II). Setting it only
-    //    at step 12 meant the re-plug used the PREVIOUS profile's built-ins:
-    //    switching INTO //c/c+ never forced its on-board cards (no boot disk
-    //    controller — also at startup, where the ctor calls applyProfile(saved)),
-    //    and switching AWAY leaked //c built-ins into a clean II+/IIe. Everything
-    //    between here and step 7 keys off the local `cfg`/`p`, not the member.
-    activeProfile = p;
-
-    // 1. The worker was stopped before the media flush above, so card
-    //    destructors cannot race a CPU step or worker idle-loop probe.
-    // The rewind ring recorded the PREVIOUS machine: steps below wipe
-    // RAM/aux/ROM and rebuild the card set, so an F6 restore after the
-    // switch would push the old machine's RAM/CPU/slot state onto the new
-    // hardware (II+ Applesoft PC on a //e ROM → crash). Only coldBoot
-    // cleared it before.
-    controller->rewind().clear();
-
-    // 2. Snapshot the currently-mounted media so we can re-mount after
-    //    the cold reset. The user wants to test the same disk under
-    //    different machine models; everything else (CPU state, RAM,
-    //    soft switches) is wiped intentionally.
-    //
-    //    Read the LIVE card state (not `settings->getString("disk_path")`
-    //    which is only written to disk in the MainWindow dtor) — so a
-    //    disk inserted mid-session via the Disk II / HDV panel survives
-    //    a profile switch. Skip the synthesised host-folder HDV volume
-    //    (its "path" is a `[host folder] <dir>` sentinel, not a real
-    //    file) since `loadImage` would fail on the sentinel; the user
-    //    can re-synthesise from the Library after the switch.
-    //
-    //    Built under stateMutex and copied BY VALUE. `controller->stop()`
-    //    above parks the CPU worker but nothing quiesces the AI control
-    //    server's HTTP thread, whose /disk insert + eject handlers reassign
-    //    the very std::string that getDiskPath()/getImagePath() return a
-    //    reference into. aiServer->detach() only happens in step 3, below.
-    // Capture the live media as a typed, value-only snapshot before the
-    // teardown: a mid-session mount or write-back toggle exists only on the
-    // card, not in settings, and plugSlotsFromSettings would otherwise revert
-    // it to whatever was last persisted. Indexed by slot, so re-plugging into
-    // the same slot picks the right medium whatever order the rebuild uses.
-    //
-    // It must happen before step 3's aiServer->detach(): the AI server's HTTP
-    // thread reassigns the very std::string that getDiskPath()/getImagePath()
-    // return a reference into, and nothing else quiesces it.
-    //
-    // The hand-rolled version this replaces captured `isDiskLoaded()` and
-    // `getDiskPath()` with their default arguments — drive 1 only — so a disk
-    // in drive 2 was silently lost on every profile switch.
-    pom2::StorageCoordinator::RebuildSnapshot mediaSnapshot;
-    {
-        std::lock_guard<std::mutex> lk(controller->stateMutex());
-        mediaSnapshot = storageCoordinator_->captureRebuildSnapshot(
-            controller->memory().slotBus());
-    }
-
-    // 3. Tear down all slot cards under the state mutex. Mockingboard's
-    //    AudioSource must be detached BEFORE the slot bus destroys the
-    //    card (the audio thread's next callback would dereference a
-    //    freed source otherwise — same gotcha as restartEmulationFromSettings).
-    {
-        auto st = controller->lockState();
-        // Detach every consumer in dependency order, then clear the bus. The
-        // order is the coordinator's contract now, not a comment here: an AI
-        // request that already holds stateMutex finishes against the live bus,
-        // then audio sources and panel views go (the audio thread's next
-        // callback would otherwise dereference a freed source), then the
-        // printer feed identity, then the cards themselves.
+    pom2::ProfileSwitchHooks hooks;
+    hooks.flushMedia = [this](std::string& err) { return flushSlotMedia(err); };
+    hooks.afterFlush = [this, p] {
+        // Stop FujiNet / SSC host workers before the cards they talk to go.
+        slotRebuildCoordinator_->prepareAfterFlush();
+        slotRebuildCoordinator_->stopHostWorkers();
+        // 0. Commit the active profile NOW — plugSlotsFromSettings (step 7)
+        //    reads it to pick the built-in slots and the ROM identities.
+        activeProfile = p;
+    };
+    hooks.beginLocked = [this](pom2::StateAccess& st) {
         slotRebuildCoordinator_->beginLocked(st);
-
-        // 4. Cold-reset memory: wipe user RAM, aux RAM (if IIe), LC banks,
-        //    soft switches. setIIEMode FIRST, for two reasons:
-        //    (a) clearRam() wipes aux / aux-LC / RamWorks ONLY when iieMode is
-        //        set — so switching INTO a IIe-class profile must flip the mode
-        //        before the wipe, or the new machine inherits the previous
-        //        session's aux RAM instead of a clean 00/FF cold-boot pattern
-        //        (round 9 #6);
-        //    (b) loadAppleIIRom (step 5) populates internalIORom only when
-        //        iieMode is true for a 16/32 KB dump, so the mode must be set
-        //        before the load too.
-        st.memory().setIIEMode(cfg.iieMode);
-
-        // RamWorks III — Applied Engineering aux-slot RAM expansion.
-        // Plugs into the IIe aux slot, present on BOTH the 1983 Unenhanced
-        // and 1985 Enhanced //e; only //c and //c+ lack it (their aux RAM is
-        // on the motherboard, no expansion bus). Gate on either //e variant
-        // so $C073 writes on //c stay in the paddle-reset-only path. Tiers:
-        // 1 (stock 64K), 4 (256K), 8 (512K), 16 (1M), 48 (3M), 128 (8M).
-        // Default 1 = no RamWorks. Grow the backing BEFORE `clearRam()`:
-        // `setRamWorksBanks` zero-fills, and step 11 is `hardReset` which
-        // does not wipe — doing it after the wipe left banks 1+ as zeros
-        // (and swapping back to bank 0 loaded those zeros over the 00/FF
-        // pattern `clearRam` had just painted). The setIIEMode(false)
-        // branch already cleared backing storage.
-        if (p == pom2::SystemProfile::AppleIIe ||
-            p == pom2::SystemProfile::AppleIIeUnenhanced ||
-            p == pom2::SystemProfile::AppleIIePAL ||
-            p == pom2::SystemProfile::AppleIIeUnenhancedPAL) {
-            const int banks = settings->getInt("ramworks_banks", 1);
-            st.memory().setRamWorksBanks(
-                static_cast<uint32_t>(banks > 0 ? banks : 1));
-        } else if (cfg.iieMode) {
-            // //c / //c+ — force RamWorks off (might be left over from a
-            // prior IIe-profile session). setRamWorksBanks(1) releases
-            // the backing.
-            st.memory().setRamWorksBanks(1);
-        }
-
-        st.memory().clearRam();
-        st.memory().resetSoftSwitches();
-    }
-
-    // 5-7 run under stateMutex: the CPU worker is stopped, but the AI
-    // control server stays live (detach() nulls only its card pointers,
-    // not ctrl_) and its handlers take this same mutex around
-    // softReset()/memory reads — without the lock a /reset landing here
-    // raced the ROM array rewrite and the SlotBus unique_ptr swaps
-    // (torn pointer read / fetch from a half-written ROM). Handlers now
-    // simply block until the rebuild is coherent. hardReset (step 11)
-    // stays OUTSIDE: it re-acquires stateMtx internally.
-    std::string newRomPath;   // read by the "Profile: Active" log below
-    {
-    auto st = controller->lockState();
-
-    // 5. Resolve and load the new main ROM.
-    //    //c / //c+ 32 KB dumps are two firmware banks (bank 0 lower,
-    //    bank 1 upper) where the //e 32 KB layout uses "char ROM lower,
-    //    firmware upper" — same file size, opposite slicing. Tell the
-    //    loader which way to slice based on the active profile.
-    const bool pickLowerHalf = pom2::profileUsesLowerRomHalf(p);
-    newRomPath = firstExistingPath(cfg.romProbeOrder);
-    if (!newRomPath.empty()
-        && st.memory().loadAppleIIRom(newRomPath.c_str(), pickLowerHalf)) {
-        romPath  = newRomPath;
-        romStatus = std::string(cfg.iieMode ? "IIe/IIc: " : "loaded: ") + newRomPath;
-        romLoaded_ = true;
-        // ROM identity check (Theme 9, gaps B-4-1 / B-4-2): the generic
-        // "apple2.rom" fallback was originally added for legacy POM2
-        // installs but it silently misroutes — a user running the II
-        // Original profile against an apple2p Applesoft dump gets the
-        // wrong BASIC dialect. Warn so they at least see the mismatch
-        // in the log.
-        if (newRomPath.find("apple2.rom") != std::string::npos &&
-            cfg.romProbeOrder.front() != newRomPath) {
-            pom2::log().warn("Profile",
-                std::string("Loaded generic fallback ") + newRomPath +
-                " for " + std::string(cfg.displayName) +
-                " — profile-specific ROM (" + cfg.romProbeOrder.front() +
-                ") not found; ROM identity may not match the selected machine");
-        }
-    } else {
-        romStatus = std::string("NO ROM (") + cfg.romProbeOrder.front() +
-                    " not found) — $D000-$FFFF stub only";
-        romLoaded_ = false;
-        pom2::log().warn("Profile", romStatus);
-    }
-
-    // 6. Char ROM. The user's toolbar choice (`charRomLocale`) wins over
-    //    the profile probe — switching IIe ↔ IIc shouldn't lose a
-    //    "Français" selection. Drop to the profile probe only when the
-    //    chosen file vanished (deleted between sessions) or the locale
-    //    explicitly says ProfileDefault, AND fall back further to the
-    //    profile probe order so we never leave Apple2Display with a
-    //    stale csbits table from the previous profile.
-    std::string newCharPath;
-    if (charRomLocale != pom2::CharRomLocale::ProfileDefault) {
-        // resolveCharRomPath probes roms/X, ../roms/X, ../../roms/X so
-        // the override works whether POM2 is launched from the repo
-        // root or from build/.
-        newCharPath = pom2::resolveCharRomPath(charRomLocale);
-    }
-    if (newCharPath.empty()) {
-        newCharPath = firstExistingPath(cfg.charRomProbeOrder);
-    }
-    charRomPath = newCharPath;
-    if (!newCharPath.empty()) {
-        st.memory().loadCharRom(newCharPath.c_str(),
-                                         pom2::charRomBank(charRomLocale));
-    }
-    if (cfg.iieMode) display->setAuxMemory(st.memory().auxData());
-    else             display->setAuxMemory(nullptr);
-
-    // 6b. CPU mode BEFORE the rebuild, not after it. plugSlotsFromSettings
-    //     asks the LIVE CPU whether it is a 65C02
-    //     (MainWindow_SlotConfig.cpp) and SlotCardFactory picks the CFFA's
-    //     firmware from that answer — the card ships an NMOS build and a
-    //     65C02 build. Applied at step 9 it was still the OUTGOING machine's
-    //     core, so //e → ][+ (menu, or `--preset ii+`) put cffa20eec02.bin —
-    //     which opens with INC A / LDA (zp) / BRA — on an NMOS 6502, where
-    //     those decode as KIL and froze the machine at the first PR#7.
-    st.cpu().setCpuMode(resolveCpuMode(cfg.defaultCpu));
-
-    // 7. Re-plug slot cards. plugSlotsFromSettings honours user's
-    //    persisted slot config; the profile choice doesn't override that
-    //    (e.g. a user who put SSC in slot 4 keeps it across profile
-    //    switches).
-    plugSlotsFromSettings(st);
-    // Force the Slot Config panel to re-seed its draft from the rebuilt
-    // slotCards[] on its next render (stale-draft-after-profile-switch fix),
-    // and the Media panel to re-prime its path buffers from the new cards.
-    slotDraftInited_ = false;
-    ++mediaPanelSeedGen_;
-
-    }   // end stateMutex scope over steps 5-7
-
-    // 7a. Open the transports of the FujiNet cards and the SSC listeners
-    //     step 7 plugged. Deferred out of the lock on purpose (a TCP listen /
-    //     tty open / bind blocks), and safe here: the CPU worker is still
-    //     stopped.
-    (void)startDeferredFujiNetLinks();
-    startDeferredSscListeners();
-
-    // 7b. A profile that ships an on-board Le Chat Mauve (//c PAL = the
-    //     Adaptateur IIc machine) defaults its display to ChatMauveRGB — the
-    //     whole point of that profile is the RGB output, so a fresh user sees
-    //     it without hunting through the View → Hi-res menu. The card was just
-    //     plugged above, so the mode is immediately meaningful. The user can
-    //     still pick another mode afterwards (it persists until the next load
-    //     of this profile). Other profiles leave the display mode untouched.
-    {
+    };
+    hooks.charRomOverride = [this]() -> std::string {
+        return charRomLocale != pom2::CharRomLocale::ProfileDefault
+                   ? pom2::resolveCharRomPath(charRomLocale)
+                   : std::string();
+    };
+    hooks.charRomBank = pom2::charRomBank(charRomLocale);
+    hooks.plugSlots = [this](pom2::StateAccess& st, bool iieMode) {
+        display->setAuxMemory(iieMode ? st.memory().auxData() : nullptr);
+        plugSlotsFromSettings(st);
+        // The Slot Config draft and the media panels' input fields describe
+        // the machine that just left.
+        slotDraftInited_ = false;
+        ++mediaPanelSeedGen_;
+    };
+    hooks.afterPlug = [this, &cfg] {
+        // 7a. Deferred: the link start() and the SSC bind can block.
+        (void)startDeferredFujiNetLinks();
+        startDeferredSscListeners();
+        // 7b. A profile that SHIPS an on-board Le Chat Mauve (the //c PAL's
+        //     adapter) comes up in its RGB mode.
         bool builtinRgb = false;
         for (int s = 1; s <= 7; ++s)
             if (cfg.builtInSlots[s].has_value() &&
@@ -1664,92 +1433,36 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
         if (builtinRgb &&
             devicePanelCoordinator_->captureInventory().chatMauvePlugged())
             display->setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
-    }
+    };
+    hooks.publishLocked = [this](pom2::StateAccess& st) {
+        slotRebuildCoordinator_->publishLocked(st);
+    };
 
-    // 8. Re-apply the live media over what plugSlotsFromSettings restored
-    //    from the persisted keys. The live snapshot is authoritative for
-    //    EMPTY drives too: a card/drive present in the snapshot and empty
-    //    proves the user ejected it this session, so the settings-driven
-    //    mount is undone rather than resurrecting a disk that was ejected
-    //    after the last save. Cards absent from the snapshot keep whatever
-    //    settings gave them.
-    {
-        std::lock_guard<std::mutex> lk(controller->stateMutex());
-        storageCoordinator_->restoreRebuildSnapshot(
-            controller->memory().slotBus(), mediaSnapshot);
+    const auto r = pom2::switchProfile(*controller, *storageCoordinator_, *settings,
+                                       p, !settingsReadOnly(), hooks);
+    if (!r.applied) {
+        tapeStatusMessage = "Profile switch refused — save failed: " + r.error;
+        tapeStatusUntil = lastFrameTime + 8.0;
+        pom2::log().warn("Profile", tapeStatusMessage);
+        return;
     }
-
-    // 9. Read back the CPU mode set at step 6b, for the log below.
-    bool cpuIsCmos = false;
-    {
-        auto st = controller->lockState();
-        // Capture it here rather than re-reading unlocked for the log
-        // below, which is outside this scope.
-        cpuIsCmos = (st.cpu().getCpuMode() == M6502::CpuMode::CMOS);
-    }
-
-    // 10. Default CPU pacing + video standard (NTSC 60 Hz / PAL 50 Hz). The
-    //     profile's defaultCyclesPerFrame already carries the per-standard
-    //     budget (17045 NTSC / 20313 PAL); setVideoStandard sets the worker's
-    //     50/60 Hz pacing and propagates the 262/312-line geometry to Memory.
-    controller->setCyclesPerFrame(cfg.defaultCyclesPerFrame);
-    controller->setVideoStandard(cfg.videoStandard);
-    // Same step, same reason: this is the machine's identity, and every
-    // snapshot taken from here on is stamped with it so a load onto a
-    // different Apple can be refused instead of landing PC and RAM against
-    // the wrong ROM.
-    controller->setMachineId(pom2::snapshotMachineId(p));
-    // Re-seed the disk-turbo restore value: it defaults to the NTSC 17045 at
-    // construction, and restoring that onto a PAL (or //c+ 4×) profile after
-    // a turbo burst would silently underclock the machine.
+    romStatus  = r.romStatus;
+    romLoaded_ = r.romLoaded;
+    if (r.romLoaded) romPath = r.romPath;
+    charRomPath = r.charRomPath;
     diskSavedCyclesPerFrame = cfg.defaultCyclesPerFrame;
-
-    // 11. Final hard reset — CPU re-fetches PC from the new ROM's reset
-    //     vector at $FFFC/$FFFD.
-    controller->hardReset();
-    controller->start();
-
-    // 12. Persist the profile choice for the next launch. (activeProfile was
-    //     already committed in step 0 so plugSlotsFromSettings saw the new one.)
+    // The internal //c drive is a Sony mechanism that spins up faster.
     controller->floppySound525().setMotorPitch(floppyMotorPitchForProfile(p));
-    // Kiosk is read-only: `POM2 --kiosk --preset ...` must not clobber the
-    // user's saved system_profile (or persist anything else) on the way in.
-    // `settingsReadOnly()`, not `kiosk_`: a session LAUNCHED with --kiosk
-    // stays read-only for its whole life even after toggling back to the GUI
-    // (MainWindow.h), and this is a settings write like any other.
-    if (!settingsReadOnly()) {
-        settings->setString("system_profile", std::string(cfg.key));
-        settings->save();
-    }
 
-    // 13. Reflect the profile in the window title so the user sees which
-    //     machine is active without opening the Machine → Profile menu.
-    //     Skipped when called from the constructor (window not yet set
-    //     by main.cpp's setGlfwWindow).
     if (window) {
         std::string title = "POM2 " POM2_VERSION_STRING " — ";
         title.append(cfg.displayName);
         glfwSetWindowTitle(window, title.c_str());
     }
-
     pom2::log().info("Profile",
         std::string("Active = ") + std::string(cfg.displayName) +
-        ", ROM = " + (newRomPath.empty() ? "<missing>" : newRomPath) +
-        ", CPU = " +
-        (cpuIsCmos ? "65C02" : "NMOS"));
-
-    // Re-bind the AI control server to the freshly rebuilt slot pointers.
-    // (Profile switch rebuilds the SlotBus; primaryDiskII()/primaryHdvCard() pointers from
-    // the previous profile are stale.) Held under stateMutex so a
-    // handler observing the pointers between detach() and now sees the
-    // null (→ 503) rather than a torn intermediate state.
-    {
-        // Publish under the machine lock so no AI request can observe a
-        // partially rebuilt machine, and through the transaction so it
-        // cannot happen while the bus is still being repopulated.
-        auto st = controller->lockState();
-        slotRebuildCoordinator_->publishLocked(st);
-    }
+        ", ROM = " + (r.romPath.empty() ? "<missing>" : r.romPath) +
+        ", CPU = " + (r.cpuIsCmos ? "65C02" : "NMOS"));
     aiServer->setProfileLabel(std::string(cfg.displayName));
 }
 

@@ -178,6 +178,15 @@ public:
     /// unrecognised blob. `disk_`, `sony_` and the callbacks are host
     /// wiring — never serialized, re-installed by the caller.
     bool loadSnapshotState(const uint8_t* data, size_t n);
+    /// While set, `setSony35` / `setFloppy` / `releaseSony35` only REBIND:
+    /// no sync, no flush of the write window, no revolution re-anchor, no
+    /// motor edge. A restore re-points the IWM at the drive the blob names,
+    /// and that is not a wiring event — flushing there wrote the restored
+    /// in-flight window into the drive and emptied it (bug hunt 2026-09-16,
+    /// `card_snapshot_catalog`). `loadSnapshotState` sets it around its own
+    /// callbacks; a controller that retargets after the load (the Liron)
+    /// holds it across its whole restore.
+    void setRestoring(bool on) { restoring_ = on; }
 
     /// Wire the MAME-style callbacks. `EmulationController` installs
     /// these once at construction; tests may install their own.
@@ -283,6 +292,7 @@ private:
     uint64_t delayDeadline_ = 0;
 
     // Mode / read-or-write / state-machine state.
+    bool restoring_ = false;   // see setRestoring
     int active_  = MODE_IDLE;
     int rw_      = MODE_IDLE;
     int rwState_ = S_IDLE;

@@ -45,6 +45,14 @@
 
 namespace pom2 {
 
+/// What a missing dump does to the machine — the distinction the ROM Status
+/// panel used to flatten into one red "missing" (TODO G5-15).
+enum class RomMissingEffect {
+    Degraded,     ///< the card still works, one level down (a synthetic stub, a legacy path)
+    Unavailable,  ///< the card refuses to plug
+    Unused,       ///< nothing in POM2 reads it (an oracle, a future port)
+};
+
 /// One catalogued ROM: what it is, where POM2 looks, how big it must be.
 struct RomCatalogEntry {
     const char* group;        ///< Section heading in the panel.
@@ -61,6 +69,7 @@ struct RomCatalogEntry {
     const char* knownCrcLabel; ///< What that CRC identifies. May be empty.
     /// What POM2 does when none of the candidates resolve.
     const char* whenMissing;
+    RomMissingEffect effect;
 };
 
 /// The peripheral-side catalogue. Machine + character ROMs come from
@@ -71,43 +80,53 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
         // ─── Disk II ──────────────────────────────────────────────────────
         { "Disk II (5.25\")", "Boot PROM, 16-sector (Apple 341-0027-A)",
           { "roms/disk2.rom" }, 256, 0, "",
-          "Falls back to the embedded 341-0027-A — the card still boots." },
+          "Falls back to the embedded 341-0027-A — the card still boots.",
+          RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "P6 sequencer PROM, 16-sector (Apple 341-0028-A)",
           { "roms/diskii_p6.rom" }, 256, 0, "",
           "Falls back to the legacy 32-cycle nibble gate. WOZ images force "
-          "the bit-level LSS path anyway, using the embedded default." },
+          "the bit-level LSS path anyway, using the embedded default.",
+          RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "Boot PROM, 13-sector (Apple 341-0009)",
           { "roms/disk2_13.rom" }, 256, 0, "",
-          "13-sector (DOS 3.2 era) disks mount but cannot boot." },
+          "13-sector (DOS 3.2 era) disks mount but cannot boot.",
+          RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "P6 sequencer PROM, 13-sector (Apple 341-0010)",
           { "roms/diskii_p6_13.rom" }, 256, 0, "",
-          "Same: the card never switches to the 13-sector pair." },
+          "Same: the card never switches to the 13-sector pair.",
+          RomMissingEffect::Degraded },
 
         // ─── Storage cards ────────────────────────────────────────────────
         { "Storage cards", "Liron / SmartPort controller (4 KB)",
           { "roms/liron.rom" }, 4096, 0, "",
           "SmartPortCard presents a synthetic identity instead of the real "
-          "firmware. Blocks still work; the $Cn0D dispatch does not." },
+          "firmware. Blocks still work; the $Cn0D dispatch does not.",
+          RomMissingEffect::Degraded },
         { "Storage cards",
           "Apple II 3.5\" Disk Controller / SuperDrive (341-0438-A)",
           { "roms/341-0438-a.bin" }, 32768, 0xC73FF25Bu,
           "MAME a2superdrive (CRC c73ff25b)",
           "Not used by POM2 yet — kept for the MAME apple2eefr oracle "
-          "(-slN superdrive) and a future SuperDrive card port." },
+          "(-slN superdrive) and a future SuperDrive card port.",
+          RomMissingEffect::Unused },
         { "Reference dumps (oracle only)",
           "//e international keyboard decode ROM (342-0326-A, FR)",
           { "roms/342-0326-a.f12" }, 2048, 0xF04970A9u,
           "MAME apple2eefr (BAD_DUMP upstream: FR half + QWERTY UK half)",
           "Nothing — POM2 maps host keys directly and has no keyboard-decode "
-          "ROM. Present only so the MAME PAL //e oracle romset is complete." },
+          "ROM. Present only so the MAME PAL //e oracle romset is complete.",
+          RomMissingEffect::Unused },
         { "Storage cards", "CFFA 2.0 firmware, 65C02 build",
           { "roms/cffa20eec02.bin" }, 4096, 0xFB3726F8u,
           "dreher.net Run6_CDROM.zip",
-          "The CFFA card refuses to plug — it is a ROM-driven card." },
+          "The CFFA card refuses to plug — it is a ROM-driven card.",
+          RomMissingEffect::Unavailable },
         { "Storage cards", "CFFA 2.0 firmware, 6502 build",
           { "roms/cffa20ee02.bin" }, 4096, 0x3ECAFCE5u,
           "dreher.net Run6_CDROM.zip",
-          "Same — one of the two CFFA dumps must be present." },
+          "Without either CFFA build, the card refuses to plug — one of the "
+          "two dumps must be present (each CPU prefers its own).",
+          RomMissingEffect::Unavailable },
 
         // ─── Printer / input / clock ──────────────────────────────────────
         { "Other cards", "Grappler+ parallel printer EPROM (Orange Micro)",
@@ -115,37 +134,42 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
             "roms/grappler.bin" }, 4096, 0, "",
           "The card plugs with a synthetic stub ROM: PR#n still prints, but "
           "software that looks for the real firmware (AppleWorks' "
-          "\"Printer = Grappler+\") will not find it." },
+          "\"Printer = Grappler+\") will not find it.",
+          RomMissingEffect::Degraded },
         { "Other cards", "TransWarp accelerator ROM v1.4 (Applied Engineering)",
           { "roms/ae_transwarp_1.4.bin",
             "roms/ae transwarp rom v1.4.bin" }, 4096, 0xAFE37F55u, "MAME warprom",
           "The card still accelerates without it — the ROM only supplies AE's "
           "speed-corrected Monitor, which it overlays on $F000-$FFFF until "
           "software writes $C072. Without it the stock F8 ROM's 1 MHz delay "
-          "loops (WAIT, the beep) come out 3.5x short." },
+          "loops (WAIT, the beep) come out 3.5x short.",
+          RomMissingEffect::Degraded },
         { "Other cards", "Mouse card slot EPROM (Apple 341-0270-C)",
           { "roms/mouse_341-0270-c.bin" }, 2048, 0, "",
-          "Neither mouse card can be plugged (both variants need it)." },
+          "Neither mouse card can be plugged (both variants need it).",
+          RomMissingEffect::Unavailable },
         { "Other cards", "Mouse card 6805 MCU ROM (Apple 341-0269)",
           { "roms/mouse_341-0269.bin" }, 2048, 0, "",
           "The MAME-faithful mouse card refuses to plug; the AppleWin HLE "
-          "variant, which only needs the slot EPROM, still works." },
-        { "Reference dumps (oracle only)",
+          "variant, which only needs the slot EPROM, still works.",
+          RomMissingEffect::Unavailable },
+        { "Other cards",
           "Apple II Workstation Card firmware (341-0358-A, 64 KB)",
           { "roms/341-0358-A.bin", "roms/341-0358-a.bin" }, 65536, 0x63819DCBu,
           "sha1 59c8e8c88bac5c31ada1306b412edfcf5912a720",
-          "Nothing — no card reads it yet. Catalogued because the dump is "
-          "the analysed one (docs/printer_plan_2.md \u00a7 5.1): the Apple II "
-          "side of the firmware is at file offsets 0xC400 ($Cn00 page) and "
-          "0xC800-0xCFFF (expansion ROM), and the card's own 65C02 image is "
-          "the upper 32 KB." },
+          "The Workstation Card refuses to plug — the slot is left empty. Its "
+          "Apple II side sits at file offsets 0xC400 ($Cn00 page) and "
+          "0xC800-0xCFFF (expansion ROM); the card's own 65C02 runs the upper "
+          "32 KB (docs/printer_plan_2.md \u00a7 5.1).",
+          RomMissingEffect::Unavailable },
 
         { "Other cards", "Videx LOWER CASE CHIP character generator (1980)",
           { "roms/Videx Lower Case Chip ROM.bin" }, 2048, 0x00F68076u,
           "sha1 447874fe0850c8add3fd5b13fa98f6648fe6f999",
           "The Videx entry disappears from the character-set picker; the "
           "II/II+ keeps its stock uppercase-only generator, which is what "
-          "the machine shipped with." },
+          "the machine shipped with.",
+          RomMissingEffect::Unavailable },
 
         { "Other cards", "ThunderClock+ slot ROM (Thunderware)",
           { "roms/thunderclock_u9_v1.3.bin", "roms/thunderclock_u9.bin",
@@ -156,7 +180,8 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
             // thing this table exists not to do.
             "roms/Thunderware_REV_1.3_ROM_U9.bin" }, 0, 0, "",
           "The clock card runs its synthetic ROM — ProDOS still reads the "
-          "date, but the real firmware entry points are absent." },
+          "date, but the real firmware entry points are absent.",
+          RomMissingEffect::Degraded },
     };
     return kEntries;
 }

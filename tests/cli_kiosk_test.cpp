@@ -34,6 +34,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <regex>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -475,8 +478,144 @@ void testVersionFlag()
 
 }  // namespace
 
+// ── The usage text and the parser name the same flags ────────────────────
+// TODO G5-5: `--prodos-folder` once parsed and was absent from printUsage(),
+// the text CLAUDE.md calls the source of truth. Both CLIs are checked —
+// pom2_headless has its own parser and its own usage(), and it is the one CI
+// runs. Scraped from the sources: every `-x` / `--xx` token in the usage
+// function, against every quoted `"-x` / `"--xx` literal after it, comments
+// stripped. Falsifiable: add a flag to either side only and this fails.
+std::string slurpSource(const char* rel)
+{
+    std::ifstream f(std::string(POM2_TEST_SOURCE_DIR) + "/" + rel);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+std::string stripLineComments(const std::string& text)
+{
+    std::string out;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        bool quoted = false;
+        std::size_t cut = line.size();
+        for (std::size_t i = 0; i + 1 < line.size(); ++i) {
+            if (line[i] == '"' && (i == 0 || line[i - 1] != '\\')) quoted = !quoted;
+            if (!quoted && line[i] == '/' && line[i + 1] == '/') { cut = i; break; }
+        }
+        out += line.substr(0, cut);
+        out += '\n';
+    }
+    return out;
+}
+
+void checkUsageParserSymmetry(const char* rel, const char* usageStart)
+{
+    const std::string src = slurpSource(rel);
+    const std::size_t u0 = src.find(usageStart);
+    assert(u0 != std::string::npos && "usage function not found");
+    const std::size_t u1 = src.find("\n}\n", u0);
+    assert(u1 != std::string::npos);
+    const std::string usage  = src.substr(u0, u1 - u0);
+    const std::string parser = stripLineComments(src.substr(u1));
+
+    std::set<std::string> inUsage, inParser;
+    const std::regex usageFlag(R"((^|[^A-Za-z0-9-])(--?[A-Za-z0-9+][A-Za-z0-9+-]*))");
+    for (std::sregex_iterator it(usage.begin(), usage.end(), usageFlag), end; it != end; ++it)
+        inUsage.insert((*it)[2]);
+    const std::regex parserFlag(R"_("(--?[A-Za-z0-9+][A-Za-z0-9+-]*))_");
+    for (std::sregex_iterator it(parser.begin(), parser.end(), parserFlag), end; it != end; ++it)
+        inParser.insert((*it)[1]);
+
+    bool ok = inUsage.size() > 10;
+    for (const auto& f : inParser)
+        if (!inUsage.count(f)) { std::printf("  %s: %s parses but is not in the usage text\n", rel, f.c_str()); ok = false; }
+    for (const auto& f : inUsage)
+        if (!inParser.count(f)) { std::printf("  %s: %s is documented but never parsed\n", rel, f.c_str()); ok = false; }
+    if (!ok) std::printf("FAIL: usage/parser symmetry in %s (%zu vs %zu flags)\n",
+                         rel, inUsage.size(), inParser.size());
+    assert(ok);
+}
+
+// ── Every flag no other case pinned, table-driven (TODO G5-5) ─────────────
+// What a flag PUTS in the plan, including the deferred actions' order —
+// runDeferredActions replays them in CLI order.
+void testRemainingFlagsTable()
+{
+    using K = pom2::CliAction::Kind;
+    bool help = false;
+
+    auto p = parse({"POM2",
+                    "--paste", "keys.txt",
+                    "--tape", "game.wav",
+                    "--save-tape", "out", "--save-tape-format", "WAV",
+                    "--35-disk1", "a.po", "--35-disk2", "b.2mg",
+                    "--display", "amber",
+                    "--cpu-max", "--ii-plus",
+                    "--prodos-folder", "hostdir",
+                    "--play", "--rec", "--rewind", "--trace-brk",
+                    "--snapshot-save", "s1.snap", "--snapshot-load", "s0.snap",
+                    "--rgb-card-invert-bit7=off"}, help);
+    assert(p.has_value() && !help);
+    assert(p->initialTapePath == "game.wav" && p->initialTapeAutoPlay);
+    assert(p->saveTapePath == "out");
+    assert(p->saveTapeFormat == pom2::CliSaveTapeFormat::Wav);
+    assert(pom2::resolveSaveTapePath(p->saveTapePath, p->saveTapeFormat) == "out.wav");
+    assert(pom2::resolveSaveTapePath("x.ACI", pom2::CliSaveTapeFormat::Wav) == "x.ACI");
+    assert(pom2::resolveSaveTapePath("x", pom2::CliSaveTapeFormat::NoHint) == "x.aci");
+    assert(p->disk35Internal == "a.po" && p->disk35External == "b.2mg");
+    assert(p->displayMode == pom2::CliDisplayMode::MonoAmber);
+    assert(p->cpuMax && p->forceIIPlus);
+    assert(p->prodosFolderPath == "hostdir");
+    assert(p->rgbCardInvertBit7.has_value() && !*p->rgbCardInvertBit7);
+
+    const std::vector<K> want = { K::Paste, K::PlayTape, K::RecTape, K::RewindTape,
+                                  K::TraceBrk, K::SnapshotSave, K::SnapshotLoad };
+    assert(p->deferredActions.size() == want.size());
+    for (std::size_t i = 0; i < want.size(); ++i)
+        assert(p->deferredActions[i].kind == want[i] && "deferred actions keep CLI order");
+    assert(p->deferredActions[0].pathS == "keys.txt");
+    assert(p->deferredActions[5].pathS == "s1.snap");
+    assert(p->deferredActions[6].pathS == "s0.snap");
+
+    // Every display spelling the usage text and the parser accept.
+    const std::vector<std::pair<const char*, pom2::CliDisplayMode>> modes = {
+        {"ntsc", pom2::CliDisplayMode::ColorNTSC},   {"chatmauve", pom2::CliDisplayMode::ChatMauveRGB},
+        {"mono-white", pom2::CliDisplayMode::MonoWhite}, {"mono-green", pom2::CliDisplayMode::MonoGreen},
+        {"mono-amber", pom2::CliDisplayMode::MonoAmber}, {"p31", pom2::CliDisplayMode::MonoGreen},
+    };
+    for (const auto& [name, mode] : modes) {
+        auto d = parse({"POM2", "--display", name}, help);
+        assert(d.has_value() && d->displayMode == mode);
+    }
+
+    // Refusals: a value flag with no value, a bad enum, a bad on/off.
+    for (const auto& bad : std::vector<std::vector<std::string>>{
+             {"POM2", "--paste"}, {"POM2", "--tape"}, {"POM2", "--35-disk1"},
+             {"POM2", "--snapshot-load"}, {"POM2", "--prodos-folder"},
+             {"POM2", "--display", "sepia"}, {"POM2", "--save-tape-format", "mp3"},
+             {"POM2", "--rgb-card-invert-bit7=maybe"}}) {
+        help = false;
+        assert(!parse(bad, help).has_value());
+    }
+
+    // -h / --help: the plan is returned and the caller told to exit.
+    for (const char* h : {"-h", "--help"}) {
+        help = false;
+        (void)parse({"POM2", h}, help);
+        assert(help);
+    }
+}
+
 int main()
 {
+    testRemainingFlagsTable();
+    std::printf("parseCli: every remaining flag lands in the plan: OK\n");
+    checkUsageParserSymmetry("src/CliDispatcher.cpp", "void printUsage()");
+    checkUsageParserSymmetry("src/pom2_headless.cpp", "void usage(");
+    std::printf("usage text and parser agree (POM2 and pom2_headless): OK\n");
     testPositionalDisk();
     std::printf("parseCli positional disk: OK\n");
     testKioskFlagWithDisk();

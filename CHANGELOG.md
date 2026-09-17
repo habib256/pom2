@@ -5,6 +5,185 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-17 — G5-6: a profile switch a test can drive
+
+The machine half of `MainWindow::applyProfile` moved to
+`pom2::switchProfile` (`ProfileSwitch.cpp`), with the window's parts passed
+in as hooks at the points it used to do them. `profile_switch` now checks
+the steps that can lose something — media across the slot rebuild, the
+rewind clear, the standard and pacing, the persisted key — on three
+switches, a refused one and a non-persisting one. No behaviour change.
+
+## 2026-09-17 — G5-10: the GL checks get a context
+
+`crt_barrel_view` checked the CRT mask pitch and the RGB bandwidth pre-pass
+but was an eyeball tool nobody ran; it is a ctest now (and writes under the
+probe directory instead of `/tmp`). A new `gl-software` CI job runs it and
+`crt_glass_resample` under Xvfb with Mesa's software rasteriser, and fails
+if either skips — the other legs have no GL context at all.
+
+## 2026-09-17 — G5-15: the real ROM path, asserted; "degraded" in ROM Status
+
+`rom_path_taken` checks that, with the tree's dumps present, each ROM-driven
+card runs its real firmware rather than its silent fallback, with the
+per-user data directory sandboxed so a developer's own dumps cannot hide a
+missing file. ROM Status distinguishes a missing dump that leaves the card
+running one level down ("missing — degraded") from one that makes it
+unavailable, and from one nothing reads. The Workstation Card's entry no
+longer claims that nothing reads its firmware.
+
+## 2026-09-17 — Contributor files, and a fast Linux compile
+
+`CONTRIBUTING.md`, `SECURITY.md` and a bug-report template, and the README
+now says the browser demo is rebuilt from `main`. A `linux-quick` CI job
+builds the three application targets with GCC and `-Werror` and no tests, so
+a Linux-only break reports in minutes.
+
+## 2026-09-17 — G5-13: two host transports under test
+
+The Super Serial Card's loopback TCP listener and the FujiNet serial
+transport had never run in a test — their seams were exercised with fakes.
+`ssc_tcp_transport` uses a real socket and `sp_serial_transport` a pty.
+Both passed on first run; each was checked by removing the line it guards
+(the RX delivery, the stop flag in the sliced read).
+
+## 2026-09-17 — G5-4: the coordinator's pure half, apart
+
+What `StorageCoordinator` knows about the media on the bus and the settings
+keys they persist to — no lock, no controller — moved to
+`StorageCoordinator_Persist.cpp`. The settings round-trip test links that and
+the cards alone instead of the whole emulator, which is what made the
+2026-09-04 resync gap easy to introduce and hard to test.
+
+## 2026-09-17 — G5-14, G5-15: GCC with -Werror, and a skip is not a pass
+
+The CI Linux leg now builds with `-DPOM2_WERROR=ON`; its only warning, a
+misleadingly indented `else` in `Memory::memWriteSlow`, is fixed. The same
+leg fails when a test skips: `tools/check_ctest_skips.sh` reads ctest's
+console for `***Skipped` and `LastTest.log` for tests that print `SKIP` and
+return 0 (which ctest counts as a pass — and so does its log for a
+`SKIP_RETURN_CODE` exit). The repository carries its ROMs and media, so a
+skip there means one went missing. Two host-dependent skips are allowlisted
+with their reason.
+
+## 2026-09-17 — G5-11: the bench hashes are a test
+
+docs/PERFORMANCE.md makes "`pom2_bench`'s hashes do not move" the condition
+for every hot-path change, and the only automated check was in the Raspberry
+Pi release job. `bench_identity` now runs four workloads on every ctest and
+compares cycle counts and RAM hashes with `tests/bench_golden.txt`
+(`tools/check_bench_identity.sh <bench> --update` for a change that is meant
+to move emulation).
+
+## 2026-09-17 — G5-7: every settings key is read and written
+
+`tools/check_settings_keys.sh` joins the CI Linux job's text guards: a key
+read with a default and written by nothing, or written and read by nothing,
+fails the build unless the allowlist says why it may be one-sided (legacy
+migration keys, run-time prefixes, hand-edited network and DIP-switch keys).
+It removed one dead write, `applewin_submode`, which every quit saved and no
+load ever read. It also surfaced that the Alt→Apple binding
+(`keyboard_alt_apple_keys`) could only be changed by editing `state.cfg`: it
+is now Machine ▸ "Alt keys are the Apple keys", and turning it off releases
+an Alt that was held.
+
+## 2026-09-17 — G5-8: a quit no longer forgets the configured hard disk
+
+`hdv_path` had three writers and two rules. The session save cleared it
+whenever the primary HDV card was the one a one-shot `POM2 image.hdv` had
+auto-plugged, or when there was no HDV card at all — which is the shipped
+slot map and both //c profiles, so the configured path was wiped on nearly
+every quit, and a one-shot boot replaced it with nothing. The rebuild save
+already skipped those cases. Now every writer skips them, the duplicate
+writes in `MainWindow_Session.cpp` are gone, and `storage_coordinator` pins
+the contract instead of the clearing it used to lock in.
+
+## 2026-09-16 — G5-9: a red nightly opens an issue
+
+The sanitizer job runs on `schedule` only and nothing reported its failures;
+three defects sat unseen for a day in early September. A follow-up job now
+opens (or comments on) a "Nightly sanitizers are red" issue with the run
+link when either leg fails. Its lookup query was exercised against the
+repository; the create path runs for the first time on the next red night.
+
+## 2026-09-16 — G5-5: the CLI's two parsers and their usage texts agree
+
+`cli_kiosk` reads `CliDispatcher.cpp` and `pom2_headless.cpp` and fails when
+a flag is parsed but missing from the usage text, or documented but never
+parsed — both CLIs, since the headless one is the parser CI actually runs.
+Both agree today. A table-driven case now pins the eighteen flags nothing
+else covered (`--paste`, the tape and snapshot flags, `--35-disk1/2`,
+`--display`, `--cpu-max`, `--ii-plus`, `--prodos-folder`, `--trace-brk`,
+`-h`…), including the order the deferred actions keep.
+
+## 2026-09-16 — G5-3: a 3.5" platter turns in real time
+
+`Sony35Drive` turned its five RPMs into CPU cycles with the NTSC clock, so on
+the PAL profiles every revolution was 0.7 % too long — a Liron on a PAL //e
+read its disks against the wrong bit-cell period. `setVideoStandard` now
+passes the standard's crystal clock to the on-board drives and to every slot
+card (`SlotPeripheral::setStandardClock`; the Liron forwards it to its
+mechanisms), and Slot Config does the same on a re-plug. It is deliberately
+not the accelerated clock `setCpuClock` carries: the IWM counts crystal
+ticks, which an accelerator does not speed up, and a //c+ at 4× would have
+been handed a revolution four times too long. The IWM itself needed nothing
+— TODO had it wrong: its windows and motor delay are in ticks of the same
+crystal as the CPU, seven per cycle on either standard.
+
+## 2026-09-16 — Four restores that lost state, found with firmware running
+
+`card_snapshot_contract` (TODO G5-2, 2026-09-08) built every card bare, so
+the ROM-gated ones never ran their firmware: a Liron never enabled a drive,
+the mouse's 68705 never executed. It now also builds those through
+`SlotCardFactory` with the shipped dumps, and fails when a slot-catalog key
+has no entry. Two restores that lost state showed up at once:
+- **The Liron, mid-write.** Restoring re-points the IWM at the drive the
+  blob names, and `IWMDevice::setSony35` treated that as a live wiring
+  event: it flushed the in-flight write window — just restored — into the
+  drive, emptied it, and re-anchored the revolution. A rewind taken while
+  the firmware wrote a sector resumed with the window gone. The IWM now has
+  a restoring mode (`setRestoring`) in which the three rebind calls only
+  rebind; its own loader holds it around its callbacks (which reach the //c+
+  hub too), the Liron across its whole restore.
+- **The MAME mouse's 68705 timer.** The loader turned a prescaler value of
+  0 into 1 "against a division by zero", but the field is a shift exponent
+  and 0 is ÷1 — the mouse's own mask option. Every restore halved the
+  MCU's timer rate. The guard now refuses what is actually dangerous, an
+  exponent past 7.
+
+A second, longer stimulus over eight seeds (P1c) found two more:
+- **The Liron's head select.** The card copied SEL into the enabled
+  mechanism before each access, never after, so an access to `$C0nA`/`$C0nB`
+  left the drive on the old head until the next one — harmless to the guest,
+  but a snapshot taken in between restored the other side. It resyncs after
+  every access now, as the line does.
+- **The AppleWin mouse's position.** The restore clamped the pointer into its
+  window, while the live card — like AppleWin's `SetPositionAbs` — stores a
+  POSMOUSE outside it as given. A guest-parked pointer came back moved.
+
+## 2026-09-16 — G4: two release guards that can fail
+
+**The version strings nothing compiled.** `tools/check_version_strings.sh`
+(CI Linux job, after its own `--self-test`) holds `vcpkg.json`, CLAUDE.md,
+README's title, package filenames and `git tag` example to
+`project(VERSION)`, and requires the release-notes file the publish job
+looks for. `vcpkg.json` had sat at `0.8` through three releases before
+someone fixed it by hand; now it cannot drift silently.
+
+**The package payload, through all three manifest parsers.**
+`bundle_manifest_install` proves what `stage_data.sh --self-test` could not
+reach: CMake reads `bundle.manifest` the way the script does (the configure
+dumps its parse), a real `cmake --install` of the build tree prunes leaks
+planted in `roms/` and verifies, and the emcc `--exclude-file` patterns —
+now computed outside the EMSCRIPTEN block so a native build can dump them —
+drop the same leaks when run through Emscripten's own `file_packager.add()`.
+Mutation found one thing the comments had wrong: emsdk 6.0.8 tests
+directories against the patterns too, so the `<glob>/*` directory form is
+redundant there (kept for a packager that walks files only). The self-test
+also plants a wasm-only folder in a desktop tree now.
+
+`roms/341-0358-A.bin` lost its executable bit.
+
 ## 2026-09-16 — The hunt's leftovers: fourteen more, four refuted
 
 What the morning's hunt left open (the entry below), taken one by one. Every

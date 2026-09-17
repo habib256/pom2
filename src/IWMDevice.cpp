@@ -182,6 +182,7 @@ void IWMDevice::setFloppy(DiskImage* disk, int qt)
     // motor come on as part of the rebind. POM2 mirrors this for the
     // 3.5" Sony path (DiskIICard owns 5.25" motor sound).
     if (disk_ == disk && qt_ == qt && !sony_) return;
+    if (restoring_) { disk_ = disk; qt_ = qt; sony_ = nullptr; return; }
     sync(now_);
     flushWrite();
     const bool motorOn = (control_ & 0x10) != 0;
@@ -196,6 +197,7 @@ void IWMDevice::setFloppy(DiskImage* disk, int qt)
 void IWMDevice::releaseSony35()
 {
     if (!sony_) return;
+    if (restoring_) { sony_ = nullptr; return; }
     sync(now_);
     // The burst in flight belongs to the drive we are LEAVING — same order as
     // MAME's set_floppy, which does write_end() before rebinding.
@@ -208,6 +210,12 @@ void IWMDevice::releaseSony35()
 void IWMDevice::setSony35(Sony35Drive* drive)
 {
     if (sony_ == drive && !disk_) return;
+    if (restoring_) {
+        sony_ = drive;
+        disk_ = nullptr;
+        if (sony_) sony_->invalidateCache();
+        return;
+    }
     sync(now_);
     flushWrite();
     const bool motorOn = (control_ & 0x10) != 0;
@@ -1177,8 +1185,11 @@ bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n)
     // the callbacks unconditionally (fireDevsel's transition check would
     // stay silent when the restored value happens to equal the live one)
     // pushes the restored phases / SEL / drive-select down the wire.
+    const bool wasRestoring = restoring_;
+    restoring_ = true;
     if (phasesCb_) phasesCb_(phases_);
     if (devselCb_) devselCb_(devsel_);
+    restoring_ = wasRestoring;
     // ...and then put the revolution anchor back, because those callbacks
     // reach a controller that answers by pointing the IWM at a drive
     // (`LironCard::onDevsel` -> `retargetIwm`, `SmartPortHub::retarget`), and

@@ -405,15 +405,19 @@ asserts the real-ROM path is taken, and exactly the paths that define the L
 levels can degrade unnoticed. `clock_card_smoke` is explicit about this ("the
 ctor loads the dump *when the user has it*").
 
-Two cheap mitigations named when the hole was written down; the first has
-landed, the second has not:
+Two cheap mitigations named when the hole was written down; both have
+landed:
 
 - The Abstraction Levels panel reports **degraded** rather than merely
   *missing* — "running the synthetic ROM" is a different state from "card
-  unavailable". The ROM Status panel still only says present/missing.
-- An opt-in CI lane (or a local `ctest -L rom`) that asserts the real-ROM
-  path is taken when the dumps *are* present, so a regression that quietly
-  routes to the fallback fails somewhere — still open.
+  unavailable" — and since 2026-09-17 so does ROM Status ("missing —
+  degraded" / "card unavailable" / "not used", from
+  `RomCatalogEntry::effect`).
+- `rom_path_taken` (`ctest -L rom`, 2026-09-17) asserts the real-ROM path is
+  taken for every ROM-driven card when the dumps are present, with the
+  per-user data dir sandboxed; and CI now fails on any skipped test
+  (`tools/check_ctest_skips.sh`), so the SKIP-when-absent tests below can no
+  longer go quiet on a complete checkout.
 
 The pattern to copy is `mouse_card_axis_parity_test`: it boots **both** real
 ROMs on a full `M6502` + `Memory` and drives ProDOS `InitMouse/SetMouse/

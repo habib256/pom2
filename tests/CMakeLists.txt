@@ -1315,40 +1315,23 @@ set_tests_properties(cffa_card_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_storage_rebuild_persist
     storage_rebuild_persist_test.cpp
     ${POM2_TEST_CORE_SOURCES}
-    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
-    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
-    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
-    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
-    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator.cpp
-    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Notch.cpp
-    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_HdvBays.cpp
-    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Chains.cpp
-    ${CMAKE_SOURCE_DIR}/src/LironCard.cpp
-    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
-    # StorageCoordinator mixes the pure capture/persist half tested here with
-    # mount/eject calls that go through EmulationController, so the whole
-    # controller comes along even for a settings round-trip. That coupling is
-    # itself part of why the file had no tests.
-    ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
-    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
-    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
-    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
-    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
-    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
-    ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
-    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
-    ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
-    ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
-    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
-    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    # The pure half of the coordinator (TODO G5-4): capture + persist, and
+    # the cards they inspect. No StorageCoordinator.cpp, no
+    # EmulationController — it used to drag both, for a settings round-trip.
+    ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Persist.cpp
     ${CMAKE_SOURCE_DIR}/src/Settings.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
     ${CMAKE_SOURCE_DIR}/src/CffaCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
-    ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
 )
 target_include_directories(test_storage_rebuild_persist PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -5157,6 +5140,9 @@ add_executable(test_cli_kiosk
 target_include_directories(test_cli_kiosk PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated)
+# The usage/parser symmetry check reads the two CLI sources.
+target_compile_definitions(test_cli_kiosk PRIVATE
+    POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_cli_kiosk PRIVATE Threads::Threads)
 endif()
@@ -5791,12 +5777,19 @@ set_tests_properties(crt_glass_resample PROPERTIES
     TIMEOUT 20
     SKIP_RETURN_CODE 77)
 
-add_executable(crt_barrel_view EXCLUDE_FROM_ALL
+# Built and run by ctest since 2026-09-17 (TODO G5-10): it CHECKS the mask
+# pitch (exit 3) and the RGB bandwidth pre-pass (exit 4), which had no pin at
+# all. SKIPs (77) without a GL context; the CI `gl-software` job gives it one.
+add_executable(crt_barrel_view
     crt_barrel_view.cpp
     ${CMAKE_SOURCE_DIR}/src/CrtEffectStack.cpp
     ${CMAKE_SOURCE_DIR}/src/OpenGLShader.cpp
 )
-target_include_directories(crt_barrel_view PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(crt_barrel_view PRIVATE ${CMAKE_SOURCE_DIR}/src
+                                                   ${CMAKE_CURRENT_SOURCE_DIR})
+if(APPLE)
+    target_compile_definitions(crt_barrel_view PRIVATE GL_SILENCE_DEPRECATION)
+endif()
 target_link_libraries(crt_barrel_view PRIVATE ${GLFW_TARGET} ${OPENGL_LIBRARIES})
 if(UNIX AND NOT APPLE)
     target_link_libraries(crt_barrel_view PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
@@ -5804,6 +5797,8 @@ endif()
 if(WIN32)
     target_link_libraries(crt_barrel_view PRIVATE winmm)
 endif()
+add_test(NAME crt_barrel_view COMMAND crt_barrel_view)
+set_tests_properties(crt_barrel_view PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 
 # ─── writeFlux revolution-anchor + padded re-pack regression ──────────────
 # Pins the MAME write_flux semantics (anchored find_position) and the
@@ -6930,6 +6925,21 @@ add_test(NAME serial_port COMMAND test_serial_port
 set_tests_properties(serial_port PROPERTIES TIMEOUT 20)
 
 # 3. The SP-over-SLIP session layer against an in-process fake FujiNet.
+# The FujiNet serial transport over a pty (TODO G5-13). POSIX only.
+if(UNIX)
+    add_executable(test_sp_serial_transport
+        sp_serial_transport_test.cpp
+        ${CMAKE_SOURCE_DIR}/src/SpSerialTransport.cpp
+        ${CMAKE_SOURCE_DIR}/src/SerialPort.cpp
+    )
+    target_include_directories(test_sp_serial_transport PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    if(NOT APPLE)
+        target_link_libraries(test_sp_serial_transport PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME sp_serial_transport COMMAND test_sp_serial_transport)
+    set_tests_properties(sp_serial_transport PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+endif()
+
 add_executable(test_sp_over_slip_link
     sp_over_slip_link_test.cpp
     ${CMAKE_SOURCE_DIR}/src/SpOverSlipLink.cpp
@@ -7166,7 +7176,25 @@ set_tests_properties(debugger PROPERTIES TIMEOUT 30)
 if(UNIX)
     add_test(NAME bundle_manifest
              COMMAND bash ${CMAKE_SOURCE_DIR}/packaging/stage_data.sh --self-test)
-    set_tests_properties(bundle_manifest PROPERTIES TIMEOUT 60)
+    set_tests_properties(bundle_manifest PROPERTIES TIMEOUT 60
+                         RESOURCE_LOCK source_payload)
+    # The other two manifest parsers, run for real: CMake's parse against the
+    # script's, `cmake --install` of this tree with leaks planted in roms/,
+    # and the emcc exclude patterns through Emscripten's packager walk.
+    # Needs the built binaries (install() copies them), hence after the build.
+    # docs/PERFORMANCE.md's rule — the bench's RAM hash and cycle count do
+    # not move — as a gate instead of a review convention (TODO G5-11).
+    if(TARGET pom2_bench)
+        add_test(NAME bench_identity
+                 COMMAND bash ${CMAKE_SOURCE_DIR}/tools/check_bench_identity.sh
+                         $<TARGET_FILE:pom2_bench>)
+        set_tests_properties(bench_identity PROPERTIES TIMEOUT 120)
+    endif()
+    add_test(NAME bundle_manifest_install
+             COMMAND bash ${CMAKE_SOURCE_DIR}/packaging/check_package_payload.sh
+                     ${CMAKE_BINARY_DIR})
+    set_tests_properties(bundle_manifest_install PROPERTIES TIMEOUT 120
+                         RESOURCE_LOCK source_payload)
 endif()
 
 
@@ -7373,10 +7401,26 @@ pom2_add_headless_test(test_iwm_stale_sony
     SOURCES iwm_stale_sony_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# A profile switch, step by step, through pom2::switchProfile (TODO G5-6).
+pom2_add_headless_test(test_profile_switch
+    NAME profile_switch TIMEOUT 60
+    SOURCES profile_switch_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(profile_switch PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# The 3.5" platter's RPM against the standard's crystal clock (TODO G5-3).
+pom2_add_headless_test(test_device_standard_clock
+    NAME device_standard_clock TIMEOUT 30
+    SOURCES device_standard_clock_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_card_snapshot_contract
     NAME card_snapshot_contract TIMEOUT 60
     SOURCES card_snapshot_contract_test.cpp
     LINK_LIBRARIES pom2_core_test)
+# The factory-built half needs the shipped firmware dumps.
+set_tests_properties(card_snapshot_contract PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 pom2_add_headless_test(test_storage_coordinator
     NAME storage_coordinator TIMEOUT 20
@@ -7421,6 +7465,16 @@ pom2_add_headless_test(test_media_notch
     NAME media_notch TIMEOUT 60
     SOURCES media_notch_test.cpp
     LINK_LIBRARIES pom2_core_test)
+
+# Every ROM-driven card takes its real ROM path when the dumps are present
+# (TODO G5-15). `ctest -L rom` runs the ROM-level checks on their own.
+pom2_add_headless_test(test_rom_path_taken
+    NAME rom_path_taken TIMEOUT 30
+    SOURCES rom_path_taken_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(rom_path_taken PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                     LABELS rom)
 
 # A host 3.5" eject waits for a firmware eject still being saved: a failed
 # commit must find the medium to hand its writes back to.
@@ -7635,6 +7689,15 @@ pom2_add_headless_test(test_ssc_transport_seam
     SOURCES ssc_transport_seam_test.cpp
     LINK_LIBRARIES pom2_core_test
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# The SSC's real loopback TCP transport (TODO G5-13). POSIX sockets in the
+# test itself, hence UNIX only.
+if(TARGET pom2_core_test AND UNIX)
+pom2_add_headless_test(test_ssc_tcp_transport
+    NAME ssc_tcp_transport TIMEOUT 30
+    SOURCES ssc_tcp_transport_test.cpp
+    LINK_LIBRARIES pom2_core_test)
 endif()
 
 # ─── Super Serial panel boundary ────────────────────────────────────────

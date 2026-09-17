@@ -216,6 +216,21 @@ int main()
                "a damaged member is refused");
     }
 
+    // Every catalogued card ROM says what its absence does, and the words
+    // agree with the verdict (TODO G5-15: "missing" alone hid whether the
+    // card still ran one level down).
+    for (const auto& e : pom2::romCatalog()) {
+        const std::string w = e.whenMissing ? e.whenMissing : "";
+        const bool saysRefuses = w.find("refuses to plug") != std::string::npos ||
+                                 w.find("cannot be plugged") != std::string::npos;
+        if (saysRefuses)
+            expect(e.effect == pom2::RomMissingEffect::Unavailable,
+                   std::string("a card that refuses to plug is Unavailable: ") + e.name);
+        if (w.rfind("Nothing", 0) == 0 || w.rfind("Not used", 0) == 0)
+            expect(e.effect == pom2::RomMissingEffect::Unused,
+                   std::string("an unread dump is Unused: ") + e.name);
+    }
+
     const auto known = knownDests();
     const auto& cat  = pom2::romFetchCatalog();
 

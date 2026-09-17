@@ -292,6 +292,11 @@ void RomStatus_ImGui::rescan()
         p.group        = e.group;
         p.name         = e.name;
         p.note         = e.whenMissing;
+        switch (e.effect) {
+        case pom2::RomMissingEffect::Degraded:    p.missingEffect = Probe::Missing::Degraded;    break;
+        case pom2::RomMissingEffect::Unavailable: p.missingEffect = Probe::Missing::Unavailable; break;
+        case pom2::RomMissingEffect::Unused:      p.missingEffect = Probe::Missing::Unused;      break;
+        }
         p.crcLabel     = e.knownCrcLabel ? e.knownCrcLabel : "";
         p.requiredSize = e.size;
         for (const char* c : e.candidates) {
@@ -337,12 +342,21 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
         const FileState* used = have ? &p.files[static_cast<std::size_t>(p.usedIndex)]
                                      : nullptr;
         const bool bad = have && !used->sizeOk;
+        // A missing dump whose card still runs one level down is a warning,
+        // one nothing reads is not even that; only "the card is gone" is red.
+        const bool softMissing = !have &&
+            (p.missingEffect == Probe::Missing::Degraded ||
+             p.missingEffect == Probe::Missing::Unused);
+        const ImVec4 missingCol =
+            p.missingEffect == Probe::Missing::Unused ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+          : p.missingEffect == Probe::Missing::Degraded ? colWarn() : colBad();
         ImGui::TextColored(bad ? colBad() : (have ? (p.fallback ? colWarn() : colOk())
-                                                  : colBad()),
+                                                  : missingCol),
                            "%s", bad     ? ICON_FA_TRIANGLE_EXCLAMATION
                                  : have  ? (p.fallback ? ICON_FA_TRIANGLE_EXCLAMATION
                                                        : ICON_FA_CIRCLE_CHECK)
-                                         : ICON_FA_CIRCLE_XMARK);
+                                 : softMissing ? ICON_FA_TRIANGLE_EXCLAMATION
+                                               : ICON_FA_CIRCLE_XMARK);
         ImGui::SameLine();
         const bool isActive = !highlight.empty() && p.name == highlight;
         if (isActive) ImGui::PushStyleColor(ImGuiCol_Text,
@@ -360,7 +374,22 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
         if (have) {
             ImGui::TextUnformatted(used->candidate.c_str());
         } else {
-            ImGui::TextColored(colBad(), "missing");
+            switch (p.missingEffect) {
+            case Probe::Missing::Degraded:
+                // The card still runs, one level down — the state the
+                // Abstraction Levels panel calls "degraded".
+                ImGui::TextColored(colWarn(), "missing — degraded");
+                break;
+            case Probe::Missing::Unavailable:
+                ImGui::TextColored(colBad(), "missing — card unavailable");
+                break;
+            case Probe::Missing::Unused:
+                ImGui::TextDisabled("missing (not used)");
+                break;
+            case Probe::Missing::Unknown:
+                ImGui::TextColored(colBad(), "missing");
+                break;
+            }
         }
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();

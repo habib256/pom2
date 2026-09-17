@@ -1300,8 +1300,9 @@ fixed.
   `uSrcSize.y * 2.0`: the scanline count **is** a signal property (192 real
   beam sweeps), the mask is not. 560 was chosen as the reference over 280 so
   every 560-wide mode — including both OE paths — stays pixel-identical.
-  Checked by `crt_barrel_view` (exit 3 on mismatch); no ctest pin is possible
-  because the shader needs a GL context.
+  Checked by `crt_barrel_view` (exit 3 on mismatch) — a ctest since
+  2026-09-17, which skips without a GL context and RUNS in the CI
+  `gl-software` job (Xvfb + Mesa llvmpipe).
 - **Phosphor curve** (`phosphorGamma`, default 1.0 = identity) is a
   per-channel power law `rgb = rgb^γ` on the beam intensity → emitted light,
   applied after BCS and before the spatial scanline/mask modulation (which
@@ -1382,10 +1383,12 @@ output Nyquist and alias into moiré "lines". Two-part fix:
   Scanlines also use a smooth `cos` beam rather than a hard `fract` edge, and
   the curved barrel border is a soft `fwidth`-based edge mask (no jaggies).
 
-Inspect via the offscreen diagnostic `tests/crt_barrel_view`
-(`EXCLUDE_FROM_ALL`): renders a barrel + scanline + mask test (optional PPM
-source) to `/tmp/crt_barrel_{on,off}.ppm`. No CI hash — the GL path is
-FP/driver-dependent, so it's eyeballed, not pinned.
+Inspect via `tests/crt_barrel_view` (a ctest since 2026-09-17): renders a
+barrel + scanline + mask test (optional PPM source) to
+`<probe dir>/crt_barrel_{on,off}.ppm` (`$POM2_PROBE_OUT`, else
+`$TMPDIR/pom2_probes`), and fails on the two properties it can measure — mask
+pitch (exit 3) and the RGB bandwidth pre-pass (exit 4). The images themselves
+carry no hash: the GL path is FP/driver-dependent, so they are eyeballed.
 
 **Two defects in the glass pass, and one in the 3D tap** *(2026-09-09,
 bug hunt #13 — the first hunt to drive the real GL stage offscreen)*.
@@ -2821,6 +2824,21 @@ All five branches warn now (`storage_restore_missing_path`). Still open:
 the SmartPort/generic loops probe `../` and `../../` and the other three
 do not — same key, different behaviour by card.
 
+**The pure half lives apart** *(2026-09-17, TODO G5-4)*.
+`StorageCoordinator_Persist.cpp` holds everything that reads the bus and
+writes settings without taking a lock or touching the controller — the
+topology walk, `captureRebuildSnapshot`, the three `persist*` functions and
+the key builders. `storage_rebuild_persist` links it and the cards only.
+
+**`hdv_path` has one writer and one rule** *(2026-09-17, TODO G5-8)*.
+`persistRebuildSettings` writes the HDV keys, and `persistSessionSettings`
+(which calls it) adds nothing to them: a primary HDV card that is the
+auto-provisioned one-shot slot, or no HDV card at all, leaves both drive keys
+alone. The session save used to clear them in that case, which wiped the
+configured path on every quit of the default map and both //c profiles;
+`MainWindow_Session.cpp` also wrote them itself under a third rule before
+the coordinator overwrote it. Pinned by `storage_coordinator`.
+
 ### Background block-image persistence
 
 `EmulationController_Storage.cpp` polls every worker iteration, including
@@ -2964,7 +2982,7 @@ and dropping it left a failing queued commit nothing to restore
 written at quit, so the queue cannot outlive the process.
 
 One caller keeps the old inline form on purpose: the profile-switch remount in
-`MainWindow_Slots.cpp`, where the SlotBus rebuild and the remounts must be one
+`pom2::switchProfile` (`ProfileSwitch.cpp`, called from `MainWindow_Slots.cpp`), where the SlotBus rebuild and the remounts must be one
 atomic step against the AI server's handlers. The stall is invisible there —
 the CPU worker is already stopped and a cold boot follows.
 
@@ -4159,6 +4177,18 @@ address decode can latch (a range check now, `mode <= PH_EchoPlus`);
 `revStart35_`, and the controller's retarget re-anchored it to `now_`, so a
 rewind mid-read resumed at the wrong angular position (the anchor is put
 back after the callbacks).
+Since 2026-09-16 the ROM-gated cards are also built through
+`SlotCardFactory` with their firmware, and every `kCardTypes` key must map
+to an entry. Two more: a restore re-points the IWM at a drive, and
+`setSony35` flushed the just-restored write window into it — `IWMDevice::
+setRestoring` makes the three rebind calls plain rebinds while a loader
+holds it (the IWM's own around its callbacks, the Liron's across its whole
+restore); and the 68705 loader's `divisor 0 → 1` guard halved the mouse
+MCU's timer, the field being a shift exponent (0 = ÷1, the mouse's mask
+option). P1c (a longer, `$C0nX`-heavy history over eight seeds) added two:
+the Liron syncs SEL into the enabled mechanism after every access too
+(`syncHeadSelect`), and the AppleWin mouse no longer clamps the restored
+position (POSMOUSE may park it outside the window, as in AppleWin).
 
 `RewindBuffer.{h,cpp}` (storage) + `Rewind_ImGui.{h,cpp}` (UI) +
 `EmulationController` transport — the MicroM8-style rewind: continuous
@@ -4999,7 +5029,11 @@ at power-on. Pinned: `iic_nodisk_boot_trace`.
 *GCR encoder* (verbatim MAME `flopimg.cpp::build_mac_track_gcr
 2017-2106`). Five speed zones (`kCellsPerRev[5] = {76950, 70695,
 64234, 57749, 51388}`, MAME `:2019-2027`), per-zone CPU-cycles-per-rev
-= `60 × POM2_CPU_CLOCK_HZ / RPM`, 64-entry `kGcr6fw[]` (MAME line
+= `60 × clock / RPM` — the clock being the video standard's crystal clock
+(`Sony35Drive::setStandardClock`, since 2026-09-16; it was the NTSC
+constant on PAL too, 0.7 % long), never the accelerated one: the IWM counts
+ticks of the same crystal, so an accelerator must not stretch the
+revolution (`device_standard_clock`), 64-entry `kGcr6fw[]` (MAME line
 967), `gcr6Encode(va,vb,vc)` 3-in-4-out packer (MAME line 512).
 Per-sector: 8× self-sync (384 cells) + D5AA96 addr prologue + 5 GCR
 header + DEAAFF addr epilogue + 2× self-sync + D5AAAD data prologue +
@@ -9214,6 +9248,20 @@ Pinned: `floppy_emu_smoke_test`.
 
 ## Profile switching internals
 
+**The machine half is `pom2::switchProfile`** *(2026-09-17, TODO G5-6)*.
+`ProfileSwitch.h/.cpp` holds the steps with no ImGui and no GLFW — flush,
+rewind clear, media snapshot, paging mode and RamWorks, cold RAM, main and
+character ROMs, CPU mode, slot rebuild, media restore, pacing, video
+standard, snapshot identity, hard reset, persisted key. The window's
+`applyProfileTransaction` supplies `ProfileSwitchHooks` (its card composer,
+the display's aux memory, the rebuild coordinator, the deferred host
+endpoints) and keeps the title, the ROM panel fields and the AI server label.
+The hooks run where the inline code did the same thing; the header lists the
+order, and `profile_switch` pins it — plus the steps that can lose something
+— across //e → //c → //c PAL → //e, a refused flush, and `persist=false`.
+`resolveCpuModeSetting` is the `cpu_mode_override` policy, shared with
+`MainWindow::resolveCpuMode`.
+
 **Step 6b: the CPU mode is set before the slot rebuild** *(2026-09-08, bug
 hunt #7)*. `plugSlotsFromSettings` asks the live CPU whether it is a 65C02
 and `SlotCardFactory` picks the CFFA's firmware from the answer (the card
@@ -9504,7 +9552,10 @@ bootDiskPath`; `--kiosk` → `CliPlan::kiosk`. `main.cpp`:
 Pinned: `cli_kiosk_test` — a **parser-only** smoke test (links against just
 `DiskImage.cpp`): it asserts `parseCli` captures the positional disk +
 `--kiosk` flag and `classifyDiskForSlot` picks the slot; it does not drive
-the full-screen window.
+the full-screen window. Since 2026-09-16 it also pins every flag's effect on
+the plan (table-driven) and scrapes both CLI sources — this parser and
+`pom2_headless.cpp`'s — failing when the usage text and the parser disagree
+on the set of flags (`POM2_TEST_SOURCE_DIR`).
 
 **Bug hunt #10 (2026-09-08).** `--ai-control=` and `--fujinet=` parse their
 port with `parseIntPositive` like every other numeric flag: `atoi` armed
@@ -9830,6 +9881,22 @@ Pinned by **`bundle_manifest`** (`--self-test`): stage into a temp dir, verify,
 then plant a deny-listed folder and require the verifier to *reject* it — a
 guard that always passes is worse than none, because it reads as a guarantee.
 
+**`bundle_manifest_install`** *(2026-09-16)* runs the other two parsers for
+real (`packaging/check_package_payload.sh <build>`). The configure dumps what
+it parsed to `<build>/bundle_manifest.parsed` — the five kinds, the emcc
+exclude patterns (`POM2_WASM_EXCLUDES`, now computed outside the EMSCRIPTEN
+block for exactly this) and `POM2_DATADIR` — and the script compares the
+kinds with `stage_data.sh --list parsed`. Then it plants a control file and
+three leaks under `roms/` (`.pom2-paytest-*`: a differently-cased archive,
+an archive-named folder, a denied folder nested inside), runs
+`cmake --install` into a temp prefix and `--verify`s it, and runs the
+patterns through Emscripten's `tools/file_packager.py` `add()` — imported via
+`em-config EMSCRIPTEN_ROOT`, or a copy of emsdk 6.0.8's walk when there is no
+Emscripten (the CI Linux runner) — with a no-pattern negative control. It
+shares `RESOURCE_LOCK source_payload` with `bundle_manifest`, which plants
+too. Found by its mutation run: emsdk 6.0.8 tests directories against the
+patterns as well, so the directory form below is redundant there.
+
 **Why `floppyemu` is `wasm`-only**: `wasm/shell.html` boots
 `floppyemu/DIX.po` by default (since 2026-09-08 — DIX, GPLv3, on the PAL //e
 with the fresh-install slot map; it replaced Total Replay, whose commercial
@@ -9873,7 +9940,10 @@ since `--verify` is pointed at `usr/share/POM2`. The four rules carry
 on file paths and never sees a folder, so `roms/weird.ZIP/inside.bin`
 shipped in `POM2.data` — the one package never run through `--verify`.
 The WASM link emits the directory form (`<glob>/*`) as well, and
-`bundle_manifest --self-test` asserts both spellings are present. (3)
+`bundle_manifest --self-test` asserts both spellings are present. (The
+2026-09-16 walk through emsdk 6.0.8's own packager shows it prunes a
+matching directory with the file form alone; the measurement above predates
+that emsdk.) (3)
 `tools/check_workflow_pins.sh` passed a tree with four unpinned
 dependencies: its image regex was anchored at line start, so an image
 that is a key's *value* (`image:`, `BUILDER_IMAGE:` — the shape

@@ -33,6 +33,14 @@
 // Caught on first run: PhasorCard rejecting its own blob whenever the mode
 // register held an un-named value, and LironCard restoring an IWM whose clock
 // then jumped the whole rewind depth forward.
+//
+// Two additions (2026-09-16). The bare constructors below leave the ROM-gated
+// cards without firmware, so a Liron never enabled a drive and the 68705 on
+// the mouse never ran — which is how two lossy restores went unseen. Those
+// cards are ALSO built through SlotCardFactory, with the shipped dumps; that
+// half found the Liron flushing its restored write window into the drive and
+// the 68705 loader halving the mouse's timer. And every key of the slot
+// catalog must map to an entry here, so a new card cannot be left out.
 #include "CffaCard.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
@@ -55,13 +63,17 @@
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
 #include "WorkstationCard.h"
+#include "SlotCardCatalog.h"
+#include "SlotCardFactory.h"
 #include "SlotPeripheral.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -89,6 +101,25 @@ void drive(SlotPeripheral& c, uint32_t seed)
         case 3: (void)c.slotRomRead(uint8_t(r >> 8)); break;
         case 4: c.advanceCycles(int((r >> 8) % 97) + 1); break;
         case 5: c.expansionRomWrite(uint16_t((r >> 8) & 0x7FE), uint8_t(r >> 20)); break;
+        }
+    }
+}
+
+// A second history, $C0nX-heavy with long waits: the one that walks a
+// Liron with firmware into WRITE mode with a drive enabled, where the plain
+// `drive()` above never gets. It is what exposed the restore that flushed
+// the IWM's write window (P1c).
+void driveLong(SlotPeripheral& c, uint32_t seed)
+{
+    for (int i = 0; i < 400; ++i) {
+        seed = seed * 1664525u + 1013904223u;
+        const uint32_t v = seed >> 8;
+        const uint8_t low4 = static_cast<uint8_t>(v & 0x0F);
+        switch ((v >> 4) & 3) {
+        case 0: c.deviceSelectWrite(low4, static_cast<uint8_t>(v >> 8)); break;
+        case 1: (void)c.deviceSelectRead(low4); break;
+        case 2: c.advanceCycles(static_cast<int>((v >> 8) & 0x3FF)); break;
+        default: (void)c.slotRomRead(static_cast<uint8_t>(v >> 8)); break;
         }
     }
 }
@@ -129,6 +160,27 @@ void check(const Entry& e)
             std::printf("  %-22s P1b FAIL: self-reload changed state\n", e.name);
             hexdiff(ba, ba2);
             ++failures;
+        }
+    }
+
+    // ---- P1c: round-trip fidelity after the long history -------------
+    // Eight seeds: whether a given history ends mid-write is luck, and one
+    // seed (0xC0FFEE ^ 5) is known to.
+    for (uint32_t k = 0; k < 8; ++k) {
+        auto a2 = e.make();
+        driveLong(*a2, 0xC0FFEEu ^ k);
+        const Blob b1 = cap(*a2);
+        if (!b1.empty()) {
+            auto b2 = e.make();
+            b2->loadSnapshotState(b1.data(), b1.size());
+            const Blob b2b = cap(*b2);
+            if (b2b != b1) {
+                std::printf("  %-22s P1c FAIL: restore is lossy after long history #%u\n",
+                            e.name, static_cast<unsigned>(k));
+                hexdiff(b1, b2b);
+                ++failures;
+                break;
+            }
         }
     }
 
@@ -259,6 +311,64 @@ int main()
         { "SoftCardZ80",       [] { return std::unique_ptr<SlotPeripheral>(new SoftCardZ80()); } },
         { "WorkstationCard",   [] { return std::unique_ptr<SlotPeripheral>(new WorkstationCard(7)); } },
     };
+    // The ROM-gated cards once more, as the machine builds them: through the
+    // factory, with firmware. Skipped (and said so) where a dump is absent.
+    const SlotCardFactory factory;
+    const auto fromFactory = [&](const char* key, int slot) -> Maker {
+        return [&factory, key, slot]() -> std::unique_ptr<SlotPeripheral> {
+            SlotCardFactory::Request req;
+            req.key = key;
+            req.slot = slot;
+            req.cpuIsCmos = true;
+            req.profile = SystemProfile::AppleIIe;
+            auto made = factory.create(req);
+            if (!made.card || made.actualKey != key) return nullptr;
+            return std::move(made.card);
+        };
+    };
+    const std::vector<std::pair<const char*, Entry>> withFirmware = {
+        { "liron",       { "Liron+ROM",       fromFactory("liron", 5) } },
+        { "mouse",       { "MouseCard+ROM",   fromFactory("mouse", 4) } },
+        { "cffa",        { "CffaCard+ROM",    fromFactory("cffa", 7) } },
+        { "grappler",    { "Grappler+ROM",    fromFactory("grappler", 1) } },
+        { "workstation", { "Workstation+ROM", fromFactory("workstation", 7) } },
+        { "smartport35", { "SmartPort35+ROM", fromFactory("smartport35", 5) } },
+    };
+    for (const auto& [key, e] : withFirmware) {
+        if (!e.make()) { std::printf("[%s] skipped: no %s firmware here\n", e.name, key); continue; }
+        cards.push_back(e);
+    }
+
+    // Every catalog key is covered by an entry above.
+    const std::map<std::string, std::string> keyToEntry = {
+        {"diskii", "DiskIICard"}, {"hdv", "ProDOSHardDisk"}, {"cffa", "CffaCard"},
+        {"smartport35", "SmartPortCard"}, {"liron", "LironCard"},
+        {"ssc", "SuperSerialCard"}, {"printer", "PrinterCard"},
+        {"grappler", "GrapplerCard"}, {"clock", "ClockCard"},
+        {"uthernet", "UthernetCard"}, {"uthernet2", "UthernetIICard"},
+        {"fujinet", "(FujiNetCard: its link is a live socket; snapshot pinned in fujinet_card_smoke)"},
+        {"softcard", "SoftCardZ80"}, {"chatmauve", "LeChatMauveFeline"},
+        {"mouse", "MouseCard"}, {"mouseaw", "MouseCardAppleWin"},
+        {"mockingboard", "MockingboardAC"}, {"mockingboard_c", "MockingboardSndII"},
+        {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},
+        {"workstation", "WorkstationCard"}, {"4play", "FourPlayCard"},
+        {"transwarp", "TranswarpCard"},
+    };
+    std::set<std::string> names;
+    for (const auto& e : cards) names.insert(e.name);
+    for (const auto& t : kCardTypes) {
+        if (!t.key || !*t.key) continue;
+        const auto it = keyToEntry.find(t.key);
+        if (it == keyToEntry.end()) {
+            std::printf("catalog key '%s' has no entry in this test — add one\n", t.key);
+            ++failures;
+        } else if (it->second[0] != '(' && !names.count(it->second)) {
+            std::printf("catalog key '%s' maps to missing entry '%s'\n", t.key,
+                        it->second.c_str());
+            ++failures;
+        }
+    }
+
     for (auto& e : cards) { std::printf("[%s]\n", e.name); check(e); }
     std::printf("\n%d failures\n", failures);
     assert(failures == 0);

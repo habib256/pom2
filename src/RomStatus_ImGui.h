@@ -103,6 +103,10 @@ private:
         /// to the Enhanced firmware, say), which is a fidelity warning
         /// rather than an error.
         bool                   fallback = false;
+        /// What absence means, for the catalogued card ROMs: "missing" alone
+        /// hid whether the card still ran one level down (TODO G5-15).
+        enum class Missing { Unknown, Degraded, Unavailable, Unused };
+        Missing                missingEffect = Missing::Unknown;
     };
 
     std::vector<Probe> machine_;   ///< Main firmware, one probe per profile.
