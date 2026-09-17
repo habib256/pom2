@@ -378,11 +378,18 @@
 # here is the four calls that refuse before phase 1, and the 3.5" eject now
 # delegates to the three-phase bay eject.
 #   src/StorageCoordinator.cpp   2320 -> 2325 (+5)
+#
+# 2026-09-17 (TransWarp on NMOS machines): one ceiling raised for the CPU-mode
+# split. `setCpuMode` now records the machine's OWN chip and `setCmosSubstitute`
+# lets the TransWarp's own 65C02 hold the bus; both funnel into `applyDispatch`,
+# which is the old body. The three functions belong next to the opcode table
+# they rewrite, so there is no TU to split them into.
+#   src/M6502.cpp                2346 -> 2359 (+13)
 src/Apple2Display.cpp                    2522
 src/DiskIICard.cpp                       2140
 src/DiskImage.cpp                        3284
 src/ImageWriter.cpp                      2798
-src/M6502.cpp                            2346
+src/M6502.cpp                            2359
 src/Memory.cpp                           2750
 src/StorageCoordinator.cpp               2325
 src/hgrpaint/HgrPaintEditor.cpp          2656
