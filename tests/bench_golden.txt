@@ -1,0 +1,15 @@
+# pom2_bench identity golden — docs/PERFORMANCE.md's rule, as a gate (TODO G5-11).
+#
+# An optimisation must leave these byte-identical. RAM hash and cycle count
+# only: they are integer emulation state and the same on every host; the
+# framebuffer hash goes through host floating point and is left out.
+#
+# A change that is SUPPOSED to move emulation (a fidelity fix) updates this
+# file with `tools/check_bench_identity.sh <pom2_bench> --update`, and says
+# which fix in the commit message. Paths are relative to the repo root.
+#
+# args | cycles | ram
+--rom roms/apple2p.rom --frames 3000 | 51140925 | 66520b00bd0361ca
+--rom roms/apple2p.rom --disk disks_5.4/dsk/dos33_master.dsk --frames 900 | 15341775 | 92d33cc1c77f2221
+--rom roms/apple2e.rom --iie --frames 3000 | 51140426 | 00955e3a93492a81
+--rom roms/apple2e.rom --iie --pal --frames 1000 | 20314706 | aa712e7a50e8df6b

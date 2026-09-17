@@ -798,9 +798,13 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     // period is measured in CPU cycles.
     {
         const double cpuHz = controller->emulatedCpuClockHz();
+        const double standardHz = static_cast<double>(
+            pom2VideoTiming(controller->getVideoStandard()).cpuClockHz);
         for (int s = 1; s < SlotBus::kSlotCount; ++s) {
-            if (auto* card = st.memory().slotBus().peripheral(s))
+            if (auto* card = st.memory().slotBus().peripheral(s)) {
                 card->setCpuClock(cpuHz);
+                card->setStandardClock(standardHz);   // Liron's mechanisms
+            }
         }
     }
 

@@ -327,29 +327,33 @@ same shape as the ratchet that returned 0.*
 - ✅ **`build_dist.sh` runs in a workflow** *(2026-09-08)*: the `dist` job of
   `release.yml`, on every run, uploads nothing and gates nothing — it checks
   the tarball and the `.deb` exist and that the tarball carries `roms/`.
-- 🟠 **`bundle_manifest` is thinner than it reads** — re-read 2026-09-08:
-  the self-test *does* plant a deny leak (top-level and five deep), a
-  differently-cased `denyglob` file and a matching directory, and proves
-  `stage()` prunes both. What it still never does: exercise the `wasm`-only
-  rejection path, cross-check that CMake's `install()` rules and the emcc
-  `--preload-file` list — which parse the same manifest independently —
-  agree with the shell script, or run against a real `.app` / `.zip` /
-  AppImage (the per-job `--verify` in release.yml does that last one on
-  every staged tree). *~2 h for the first two.*
-- 🟡 **Version strings.** The single-source-of-truth claim **holds for compiled
-  code** and the release even asserts tag == `PROJECT_VERSION`. It does not
-  hold outside code: README carries **12** hardcoded `v0.9.0` strings including
-  package filenames, `CLAUDE.md:307`, and `vcpkg.json:4` is **already stale at
-  `"0.8"`** — proof the list is not being walked. `docs/releases/v1.0.md` must
-  exist and its name must match `PROJECT_VERSION` exactly, or the Release body
-  silently degrades to a generated commit list. Add a CI grep for
-  `v${PROJECT_VERSION}` in README. *~2 h + 2 h.*
-- 🟢 `roms/341-0358-A.bin` is mode 700 unlike every sibling at 644, copied
-  verbatim by `stage_data.sh` — unreadable to other users after a system-wide
-  install. *5 min.*
-- 🟢 No `CONTRIBUTING.md`, `SECURITY.md` or issue templates; the Pages deploy
-  lives in `ci.yml` rather than `release.yml`, so the live demo and the shipped
-  `web-wasm.zip` can be different builds and the README never says so.
+- ✅ **`bundle_manifest` covers all three parsers** *(2026-09-16)*. The
+  self-test now also plants a wasm-only folder in a desktop tree. The new
+  `bundle_manifest_install` ctest (`packaging/check_package_payload.sh`)
+  compares CMake's parse (dumped to `<build>/bundle_manifest.parsed`) with
+  the script's, runs `cmake --install` of the build with leaks planted in
+  `roms/` and verifies the result, and runs CMake's emcc exclude patterns
+  through Emscripten's own packager walk (a copy of emsdk 6.0.8's where no
+  Emscripten is installed, as on the CI Linux runner). Mutation-checked: a
+  denyglob dropped by CMake, the install() deny exclude removed, and the WASM
+  deny patterns removed each fail it. One blind spot, recorded in the
+  script: emsdk 6.0.8 also tests directories, so the `<glob>/*` directory
+  form is redundant there and removing it fails nothing. Still not run: a
+  real `.app` / `.zip` / AppImage (the per-job `--verify` in release.yml).
+- ✅ **Version strings** *(2026-09-16)*. `tools/check_version_strings.sh`,
+  run with its `--self-test` in the CI Linux job: `vcpkg.json`, CLAUDE.md's
+  "Current release", README's title, every package filename and the
+  `git tag` example must equal `project(VERSION)`, and
+  `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) must exist. (`vcpkg.json` had
+  been fixed by hand since this item was written; nothing kept it so.)
+- ✅ `roms/341-0358-A.bin` is 644 in git and on disk *(2026-09-16)*; it was
+  100755.
+- ✅ `CONTRIBUTING.md`, `SECURITY.md` and a bug-report issue template
+  *(2026-09-17)*; README now says the live demo is rebuilt from `main` and can
+  be newer than the release's `web-wasm.zip`. **One click left for the
+  owner:** `SECURITY.md` points at GitHub's private vulnerability reporting,
+  which is currently **disabled** on the repository (Settings ▸ Code
+  security).
 
 ### G5 · The donut: policy without a test 🟠
 
@@ -373,94 +377,99 @@ Densest policy files, none of them linked by any test:
 | `AudioCoordinator.cpp` | 444 | 22 / 0 |
 | `CliRunner.cpp` | 264 | 0 / 0 — every deferred CLI action |
 
-- 🟠 **G5-2 · The same shape for slot-card snapshots.** *≈4 h.*
-  `tests/card_snapshot_state_test.cpp` covers 6 of 21 cards and asserts exactly
-  the right thing for each, including *"every loader must ignore a foreign blob
-  rather than misparse it"* — the property `MachineSnapshot.cpp:199-201` relies
-  on. `LironCard`, `PhasorCard` and `IIcExternalSmartPort` have no round-trip
-  test anywhere. Generalise the file into a loop over `SlotCardFactory`'s
-  catalog: ~80 lines, covers 21 cards today and every future card for free.
-  *(The related fear that cards lack magic/version was checked and is
-  unfounded — all ten inspected loaders check both inline.)*
-- 🟠 **G5-3 · The same shape for device clocks.** *≈3 h.*
-  `EmulationController::setVideoStandard` retunes memory, speaker, cassette and
-  every slot card, and `SlotPeripheral::setCpuClock` defaults to a no-op
-  (`SlotPeripheral.h:107`). `IWMDevice` and `Sony35Drive` override nothing and
-  hardcode the compile-time NTSC constant (`Sony35Drive.cpp:92-96,325,332`), so
-  on both PAL profiles 3.5" timing runs ~0.7 % off — the same drift the
-  speaker/cassette retune exists to remove, except that one is documented and
-  deliberate and this one is neither. Extend `pal_timing_test.cpp` to enumerate
-  every clock-bearing device and assert each reports the PAL clock.
-- 🟠 **G5-4 · Split `StorageCoordinator`'s pure half.** *≈1 d.*
-  `captureRebuildSnapshot`, `persistRebuildSettings`, `persistSessionSettings`
-  and the snapshot structs need no `EmulationController`. Extracted, ~600 lines
-  become testable without linking the emulator, and
-  `tests/storage_rebuild_persist_test.cpp` stops dragging **19** sources. The
-  2026-09-04 resync gap would have been impossible to introduce. The coordinator
-  itself is otherwise in good shape and worth not re-auditing.
-- 🟠 **G5-5 · A CLI test, and a usage/parser symmetry check.** *≈4 h.*
-  `CliRunner.cpp` is linked by **zero** test targets — `cli_kiosk` links the
-  *parser* only. Unpinned: `--load`, `--run`, `--paste`, `--step`, `--tape`,
-  `--save-tape[-format]`, `--35-disk1/2`, `--display`, `--cpu-max`,
-  `--ai-control`, `--play/--rec/--rewind`, `--snapshot-save/-load`,
-  `--rgb-card-invert-bit7`, `--trace-brk`, `-h`. And `--prodos-folder` **parses
-  but is absent from `printUsage()`** — shipped and undocumented, in the file
-  CLAUDE.md names as the source of truth. A table-driven test plus a symmetry
-  check that fails when a flag exists in one and not the other catches that
-  today and the whole class after. **Trap worth knowing**: `pom2_headless` has
-  its own second parser, and it is the one CI exercises — the parser users get
-  is the one nothing runs.
-- 🟡 **G5-6 · `applyProfile`'s 14 steps.** *≈1 d.* `system_profile_smoke`
-  states in its own header that it cannot reach `MainWindow::applyProfile`, and
-  replays five of fourteen steps by hand — not the ones that can lose data
-  (slot-bus rebuild ordering, remount after cold reset, rewind clear,
-  video-standard change, persistence gating). Nine profiles, a CLI flag and a
-  menu all lead here, and it holds `stateMutex` across file I/O on purpose.
-  Extract the fourteen steps into a free function taking
-  `(EmulationController&, SlotBus&, Settings&, SystemProfile)` — no ImGui
-  needed — and assert per-step post-conditions for //e→//c, NTSC→PAL, //c→//e.
-  Same refactor shape as G5-4.
-- 🟡 **G5-7 · Settings key symmetry.** *≈3 h.* `settings_roundtrip` pins the
-  storage engine thoroughly (`#` mid-value, embedded newlines, float precision,
-  oversized-file rejection) and exactly one production key. It proves nothing
-  about `system_profile`, `slot_N_card`, `hi_res_mode`, `chatmauve_variant`.
-  A latent instance is already in the tree: `mockingboard_volume/_muted`,
-  `phasor_*` and `echoplus_*` are **read with a hardcoded default and written by
-  nothing** — harmless only because no slider exists yet. Collect every literal
-  passed to `Settings::get*`/`set*` and fail on a reader with no writer, or the
-  reverse, outside an allowlist.
-- 🟡 **G5-8 · Settle the `hdv_path` guard, which is described three ways and
-  implemented two.** *≈2 h.* `MainWindow_Session.cpp:70-71` says *skip*; its
-  `else` at `:83-85` **clears**; the sibling `hdv_writeback` sixty lines below
-  gets it right and claims to implement *"the same guard"*.
-  `StorageCoordinator.cpp:474-485` repeats the asymmetry, and
-  `storage_coordinator_test.cpp:225-227` **pins the surprising branch** — the
-  test locks in the divergence rather than the contract. The `else` also fires
-  when no HDV card is plugged at all, which is the shipped default map and both
-  //c profiles, so `hdv_path` is cleared on nearly every quit. Damage is bounded
-  (a stale path, not data); it is listed because it is this file's own
-  "prose substituting for verification" risk caught in the act, in the densest
-  policy file in the untested set.
-- 🟠 **G5-9 · Notify on a red nightly.** *≈1 h.* `ci.yml:258-261` runs the
-  sanitizers on `schedule` only, with no failure path anywhere in the job; push
-  CI is a different workflow and stays green. The three defects fixed on
-  2026-09-04 sat invisible since 09-03. A few lines of YAML, and the
-  cost/benefit is absurd in its favour.
-- 🟡 **G5-10 · A CI leg with software GL.** *≈1 d.* Mesa llvmpipe + Xvfb.
-  `crt_barrel_view` is `EXCLUDE_FROM_ALL` with **no `add_test`**, so a whole
-  half of the render path — mask pitch, bandwidth — rests on review. More
-  importantly it is the precondition for ever reaching the 14 000 painting
-  lines, and for `tests/frontend_device_panel_concurrency`, the headless ImGui
-  frame driven while cards are replugged that would close the UI-deadlock class
-  rather than scanning for it with `tools/check_coordinator_locks.sh`.
-- 🟢 **G5-11 · Pin the hot path's hash identity.** *≈1 h.* `docs/PERFORMANCE.md`
-  § 9 requires every optimisation to leave `pom2_bench`'s RAM and framebuffer
-  hashes byte-identical, and the only automated gate for it lives in the
-  **Raspberry Pi release job**. One `add_test` against a checked-in golden turns
-  the project's central perf discipline from a review convention into a gate.
-  The bus fast path itself is exemplary — `bus_fastpath_test.cpp` is
-  differential over 1024 paging states × every address, and is the model the
-  rest of the tree should copy.
+- ✅ **G5-2 · Every slot card's snapshot** — done 2026-09-08 as
+  `card_snapshot_contract` (this entry had not been updated), and tightened
+  2026-09-16: its cards were built bare, so the ROM-gated ones never ran
+  their firmware. They are now also built through `SlotCardFactory` with the
+  shipped dumps, and every `kCardTypes` key must map to an entry. That found
+  two lossy restores: the Liron flushed the IWM's restored write window into
+  the drive (`IWMDevice::setRestoring`), and the 68705 loader's `0 → 1`
+  "div-by-zero" guard halved the mouse MCU timer (the field is a shift
+  exponent). A longer eight-seed history (P1c) then found the Liron leaving
+  its head select stale between accesses and the AppleWin mouse clamping a
+  restored pointer the live card leaves alone. The FujiNet card is covered by `fujinet_card_smoke` instead: its
+  link is a live socket.
+- ✅ **G5-3 · Device clocks** *(2026-09-16)*. Half of this entry was
+  wrong, and the half that was right is fixed. `IWMDevice` needs no retune:
+  it counts ticks of the machine's crystal, and so does the CPU (seven ticks
+  per cycle on NTSC and PAL alike), so its windows and its 1 s motor delay
+  are the same number of CPU cycles on both. `Sony35Drive` did need one: its
+  RPMs are real time and it converted them with the NTSC constant, 0.7 %
+  long on both PAL profiles. `setVideoStandard` now hands the on-board drives
+  and every slot card the STANDARD's clock (`SlotPeripheral::
+  setStandardClock`, forwarded by the Liron to its mechanisms; Slot Config
+  re-plugs do the same) — not the accelerated one, which would make a
+  //c+-at-4× revolution unreadable. Pinned by `device_standard_clock`
+  (mutation-checked three ways). Not done: the enumeration of "every
+  clock-bearing device" the entry asked for — the speaker, cassette and
+  floppy-sound retunes have no getter to assert on.
+- ✅ **G5-4 · `StorageCoordinator`'s pure half has its own TU**
+  *(2026-09-17)*. `StorageCoordinator_Persist.cpp` holds the topology walk,
+  `captureRebuildSnapshot`, `persistRebuildSettings`,
+  `persistSessionSettings`, `persistDiskIIDrive`, the HDV drive-2
+  capture/persist and the two key builders — nothing that reaches
+  `EmulationController`. `storage_rebuild_persist` now links that file and
+  the cards it inspects: no `StorageCoordinator.cpp`, no controller, no
+  rewind/snapshot/debugger sources (its one command-path case — the
+  host-folder guard — moved to `storage_coordinator`, which links them
+  anyway). `StorageCoordinator.cpp` went from 2 532 to 2 320 lines.
+- ✅ **G5-6 · `applyProfile`'s steps, testable** *(2026-09-17)*.
+  `pom2::switchProfile(controller, storage, settings, profile, persist,
+  hooks)` in `ProfileSwitch.cpp` — no ImGui; the window's composer, display
+  and rebuild coordinator come in as hooks, called where the inline code did.
+  `profile_switch` drives //e → //c → //c PAL → //e and asserts per switch:
+  the hook order, the rewind clear, the media surviving the slot rebuild,
+  ROM / paging / CPU, video standard and pacing, snapshot identity, the
+  persisted key, a running machine; plus the CPU-override policy, a refused
+  flush that changes nothing, and `persist=false`. Mutation-checked three
+  ways. Not covered: the window's own hooks (`plugSlotsFromSettings` is
+  still GUI-side).
+- ✅ **G5-7 · Settings key symmetry** *(2026-09-17)*.
+  `tools/check_settings_keys.sh` (CI Linux job, after its `--self-test`)
+  scans every literal `get*/set*("key"` under `src/` — calls that span lines
+  included — and fails on a key read but never written, written but never
+  read, or an allowlist entry nothing uses any more. The allowlist names each
+  deliberate exception with its reason: legacy keys read once to migrate,
+  run-time-built prefixes, and five hand-edited keys. It found one dead
+  write, removed: `applewin_submode`, saved on every quit and ignored on load.
+  The example this entry gave (`mockingboard_volume` & co. written by
+  nothing) was stale — `AudioCoordinator` writes them per slot now.
+- ✅ **`keyboard_alt_apple_keys` has a UI** *(2026-09-17)*: Machine ▸
+  "Alt keys are the Apple keys", persisted; turning it off releases a host
+  Alt latch that was down. Off the settings-key allowlist.
+- ✅ **G5-8 · The `hdv_path` guard, settled** *(2026-09-17)*. One rule,
+  one writer: an auto-provisioned HDV card, or no HDV card at all, is
+  SKIPPED and never cleared. `MainWindow_Session.cpp`'s own `hdv_path` /
+  `hdv_writeback` writes are gone (the coordinator overwrote the first and
+  duplicated the second), and `persistSessionSettings` lost the `else` that
+  cleared both drive keys — on the default map and both //c profiles that
+  wiped the configured path on every quit, and a one-shot `POM2 image.hdv`
+  replaced the user's configured disk with nothing. `storage_coordinator`
+  pinned the clearing; it now pins the contract, plus the no-card quit
+  (mutation-checked).
+- ◑ **G5-9 · Notify on a red nightly** *(2026-09-16)*. `ci.yml` job
+  `sanitizers-alert` (`needs: sanitizers`, `if: failure()` on `schedule`,
+  `issues: write`) opens an issue titled "Nightly sanitizers are red", or
+  comments on the open one, with the run URL — `gh` on the runner, no new
+  action to pin. The YAML parses and the lookup query was run against the
+  repository; **the create/comment path itself has not run**, and will first
+  run on the next red night. Close the issue once it has fired once.
+- ◑ **G5-10 · A CI leg with software GL** *(2026-09-17, first run
+  pending)*. `crt_barrel_view` is a ctest now (skips without GL; its mask
+  pitch and bandwidth checks had no pin), and the CI `gl-software` job runs
+  it and `crt_glass_resample` under Xvfb + Mesa llvmpipe, failing if either
+  skips. Both pass on a local GPU; **the Linux job has not run yet**. Still
+  open from this entry: the headless ImGui frame driven while cards are
+  replugged (`frontend_device_panel_concurrency`), which this leg makes
+  possible.
+- ✅ **G5-11 · The hot path's hash identity is a gate** *(2026-09-17)*.
+  `bench_identity` runs `tools/check_bench_identity.sh` over four
+  `pom2_bench` workloads (][+ banner, DOS 3.3 boot through the P6 LSS, //e,
+  //e PAL) and compares cycle count + RAM hash with `tests/bench_golden.txt`;
+  the framebuffer hash is host-FP-dependent and left out. `--update` rewrites
+  the golden for a change meant to move emulation. Mutation: one extra cycle
+  on a CPU addressing mode moves all four. The golden was recorded on
+  macOS/clang; the first Linux CI run is what proves the hashes portable.
 - 🟢 **G5-12 · WASM CI is compile-only.** *≈1 d.* The job builds and checks
   three files are non-empty; it never boots the module, never touches
   `PersistentFs`/IDBFS. The browser build **never destroys its `MainWindow`**,
@@ -468,21 +477,36 @@ Densest policy files, none of them linked by any test:
   regression that compiles but breaks the mount passes green and surfaces as
   *"my browser forgets everything."* A node smoke — load, run N frames, write a
   setting, `pom2_persist_now()`, reload, assert — closes it.
-- 🟢 **G5-13 · The three transports still at 0 %** (`SlirpNetworkBackend`,
-  `SpSerialTransport`, `SuperSerialTcpTransport`). Seams exist for all three
-  (`ssc_transport_seam`, `fujinet_link_seam`), so they are testable in a way
-  they were not before the 2026-08-27 seam work.
-- 🟢 **G5-14 · Extend `-Werror` to the GCC leg.** It is on for macOS only
-  (`ci.yml:195`). GCC's warning set is not clang's — transitive includes, the
-  `-Wmaybe-uninitialized` family — so build the Linux job once with it, fix
-  what it names, then wire it. It is the leg that catches what clang does not.
-- 🟢 **G5-15 · `ctest -L rom` + ROM Status "degraded".** No `LABELS rom` exists
-  anywhere (only `slow`), so every ROM-gated test SKIPs silently when a dump is
-  absent and the L0 path can rot behind a green suite. ROM Status reports
-  *missing*, never *"running the synthetic fallback"*. Fold in the related hole:
-  nothing asserts the real ClockCard ROM path is taken when the dump is present,
-  and the same is true of Disk II P6, the mouse MCU and the Grappler EPROM. →
-  `docs/lle_vs_hle.md` § Keeping a level once you have it.
+- ◑ **G5-13 · The transports at 0 %** *(2026-09-17, two of three)*.
+  `ssc_tcp_transport` opens the Super Serial Card's real listener on
+  127.0.0.1 — both directions in raw mode, a reconnect, `stop()` with a client
+  attached, a restart on the same port, a port in use — and
+  `sp_serial_transport` drives the FujiNet serial transport through a pty —
+  refusal with a reason, open/no-reopen, both directions, the read timeout,
+  `shutdown()` waking a parked reader, drop and reopen. Both mutation-checked.
+  **Still open:** `SlirpNetworkBackend`, which needs libslirp — the CI image
+  does not install it, so its one test (`slirp_loopback_fence`) skips there.
+- ✅ **G5-14 · `-Werror` on the GCC leg** *(2026-09-17)*. The CI Linux
+  job's log carried exactly one first-party warning, printed ten times: a
+  misleadingly indented `else` in `Memory::memWriteSlow` (formatting only;
+  `bench_identity` unchanged). Fixed, and the job configures with
+  `-DPOM2_WERROR=ON`. Its GLES-tier build keeps the default.
+- ✅ **G5-15 · A skip is not a pass, and a fallback is not the real ROM**
+  *(2026-09-17)*. The CI Linux job tees ctest's console and runs
+  `tools/check_ctest_skips.sh` (with its `--self-test`): a `***Skipped`
+  status or a test that prints `SKIP` and returns 0 fails the build —
+  allowlisted with reasons: `crt_glass_resample` (no GL), `slirp_loopback_fence`
+  (no libslirp), one env-gated trace section; a clean worktree shows none.
+  `rom_path_taken` (`ctest -L rom`, `HOME` sandboxed) builds every ROM-driven
+  card the way the machine does and asserts it took its real dump — Disk II
+  P6 (bit-level LSS), ThunderClock+ U9, Grappler+, both mouse cards, the
+  SmartPort card's Liron identity, the Liron, Workstation, both CFFA builds,
+  TransWarp (mutation: a misspelt Grappler probe fails it). The ROM Status
+  panel now says **"missing — degraded"** (orange) when the card still runs
+  one level down, "card unavailable" (red) when it will not plug, and "not
+  used" (grey); `RomCatalogEntry::effect` carries it and `rom_fetch` checks
+  it against the entry's own words. The Workstation entry, which still said
+  no card read its dump, is corrected.
 
 ### G6 · The platforms we claim 🟡
 
@@ -515,6 +539,11 @@ choosing is not.*
   transitive includes — and a Linux container build before pushing costs
   minutes. Worth a pre-push hook or a fast Linux compile-only CI leg that runs
   before the full matrix.
+  **◑ 2026-09-17:** a `linux-quick` CI job (GCC, `-Werror`, the three
+  application targets, no tests) answers in minutes instead of after the
+  full leg; `tools/check_includes.sh` already covers the transitive-include
+  class. Not done: a pre-push hook, and a grep for GL calls outside
+  `OpenGLShader.h`.
 - 🟢 **Notarization / signing.** Both macOS and Windows refuse the first launch;
   README documents the workaround. Absent from this file entirely until now. A
   1.0 where two of three desktop platforms show a security warning reads as

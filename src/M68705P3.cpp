@@ -1024,7 +1024,12 @@ size_t M68705P3::loadSnapshotState(const uint8_t* data, size_t len)
     timer.tcr      = data[p++];
     timer.prescale = data[p++];
     timer.divisor  = data[p++];
-    if (timer.divisor == 0) timer.divisor = 1;   // untrusted: no div-by-zero
+    // An EXPONENT (÷1 … ÷128, `prescale >> divisor`), not a divisor: 0 is
+    // ÷1, the mouse card's own mask option. The old `0 → 1` "no
+    // div-by-zero" guard halved the MCU timer on every restore of that card
+    // (bug hunt 2026-09-16, `card_snapshot_catalog`). The untrusted value to
+    // refuse is a shift past the prescaler's seven bits.
+    if (timer.divisor > 7) timer.divisor = 7;
     pending_interrupts =
         static_cast<uint16_t>(data[p] | (data[p + 1] << 8)); p += 2;
     irq_line_state = data[p++] != 0;

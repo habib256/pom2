@@ -2537,8 +2537,11 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
 void Memory::memWriteSlow(uint16_t addr, uint8_t value)
 {
     // Flat test RAM, or a card CPU's own bus — see memReadSlowBody.
-    if (flatBus_) { if (foreignBus_) foreignBus_->write(addr, value);
-                    else             mem[addr] = value;  return; }
+    if (flatBus_) {
+        if (foreignBus_) foreignBus_->write(addr, value);
+        else             mem[addr] = value;
+        return;
+    }
 
     // Write watchpoints (Memory.h § Write watchpoints). Armed addresses below
     // $C000 are diverted here by having their `writable[]` byte cleared;

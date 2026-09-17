@@ -150,6 +150,8 @@ hard-fails if `imgui/` is missing.)
 ### 🌐 WebAssembly
 
 **Play directly:** [POM2 in your browser](https://habib256.github.io/pom2/wasm/)
+— the live demo is rebuilt from `main` on every push, so it can be newer than
+the latest release's `web-wasm.zip`.
 
 <details><summary>Build it yourself</summary>
 
@@ -585,6 +587,7 @@ the profiling recipe.
 - [`DEV.md`](DEV.md) — implementation deep-dives, MAME-parity ports, internals, gotchas, pinned tests.
 - [`TODO.md`](TODO.md) — active backlog + MAME ↔ POM2 parity dashboard.
 - [`CHANGELOG.md`](CHANGELOG.md) — resolved items and the **why** behind non-obvious fixes.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, and what a pull request needs · [`SECURITY.md`](SECURITY.md) — how to report a vulnerability.
 
 **Conventions**: one concern per `.cpp/.h` pair · MAME = source of truth (cite the file + line range, pin a smoke test under `tests/`) · `emuCycles` everywhere — CPU → audio/UI events carry a cycle stamp, never wall-clock · reach the emulated state through `controller->lockState()`, which hands back `Memory` and the CPU *through* the state lock, so the access cannot be written without it (bare `stateMutex()` is for mutual exclusion that touches neither).
 

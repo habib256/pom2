@@ -176,14 +176,8 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // into one bit — the AltGr tests below need to know which one it was.
     if (key == GLFW_KEY_RIGHT_ALT) rightAltDown_ = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT) {
-        if (!altAppleKeysLoaded_) {
-            altAppleKeysLoaded_  = true;
-            if (settings)
-                altAppleKeysEnabled_ =
-                    settings->getBool("keyboard_alt_apple_keys", true);
-        }
         const bool drive = pom2::keychord::altDrivesAppleKeys(
-            mods, altAppleKeysEnabled_, pom2::keychord::kHostIsWindows,
+            mods, altAppleKeysSetting(), pom2::keychord::kHostIsWindows,
             key == GLFW_KEY_RIGHT_ALT);
         const bool down = drive && (action != GLFW_RELEASE);
         if (key == GLFW_KEY_LEFT_ALT) appleKeys_.hostOpen  = down;
@@ -878,4 +872,29 @@ void MainWindow::onFileDrop(int count, const char** paths)
         "Dropped file not a disk image "
         "(.dsk/.do/.d13/.po/.nib/.woz/.hdv/.2mg)";
     tapeStatusUntil = lastFrameTime + 4.0;
+}
+
+bool MainWindow::altAppleKeysSetting() const
+{
+    if (!altAppleKeysLoaded_) {
+        altAppleKeysLoaded_ = true;
+        if (settings)
+            altAppleKeysEnabled_ = settings->getBool("keyboard_alt_apple_keys", true);
+    }
+    return altAppleKeysEnabled_;
+}
+
+void MainWindow::setAltAppleKeysSetting(bool on)
+{
+    altAppleKeysLoaded_  = true;
+    altAppleKeysEnabled_ = on;
+    if (settings) {
+        settings->setBool("keyboard_alt_apple_keys", on);
+        settings->save();
+    }
+    if (!on && (appleKeys_.hostOpen || appleKeys_.hostSolid)) {
+        appleKeys_.hostOpen  = false;
+        appleKeys_.hostSolid = false;
+        pushAppleKeys();
+    }
 }

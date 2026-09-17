@@ -14,7 +14,8 @@
 #   stage_data.sh --verify <dest>   assert the payload is there and nothing
 #                                   from the deny list leaked in
 #   stage_data.sh --self-test       stage into a temp dir, verify, clean up
-#   stage_data.sh --list [kind]     print manifest entries (for CMake/debugging)
+#   stage_data.sh --list [kind]     print manifest entries (dir|file|wasm|deny|
+#                                   all|parsed — `parsed` is CMake's dump format)
 #
 # `--verify` is the guard every CI package job runs. It exists because both
 # failure modes are SILENT: a missing font drops the UI to ImGui's bitmap face
@@ -58,7 +59,17 @@ if [ "${1:-}" = "--list" ]; then
                   printf '%s\t%s\n' "${FILES_SRC[$i]}" "${FILES_DST[$i]}"; done ;;
         all)  printf '%s\n' "${DIRS[@]:-}"
               for i in "${!FILES_SRC[@]}"; do printf '%s\n' "${FILES_DST[$i]}"; done ;;
-        *)    die "--list takes dir|file|wasm|deny|all" ;;
+        # The same shape CMake dumps to <build>/bundle_manifest.parsed, so
+        # `bundle_manifest_install` can prove the two parsers agree.
+        parsed)
+              for x in "${DIRS[@]:-}"; do [ -n "$x" ] && printf 'dir\t%s\n' "$x"; done
+              for i in "${!FILES_SRC[@]}"; do
+                  printf 'file\t%s\t%s\n' "${FILES_SRC[$i]}" "${FILES_DST[$i]}"; done
+              for x in "${WASM[@]:-}"; do [ -n "$x" ] && printf 'wasm\t%s\n' "$x"; done
+              for x in "${DENY[@]:-}"; do [ -n "$x" ] && printf 'deny\t%s\n' "$x"; done
+              for x in "${DENYGLOB[@]:-}"; do [ -n "$x" ] && printf 'denyglob\t%s\n' "$x"; done
+              ;;
+        *)    die "--list takes dir|file|wasm|deny|all|parsed" ;;
     esac
     exit 0
 fi
@@ -222,6 +233,17 @@ case "${1:-}" in
             log "OK: verify() rejects a deeply nested $DENY_ONE"
         fi
 
+        # The wasm-only extras: a desktop package that carries one must fail.
+        WASM_ONE="${WASM[0]:-}"
+        if [ -n "$WASM_ONE" ]; then
+            mkdir -p "$TMP/$WASM_ONE"; : > "$TMP/$WASM_ONE/boot.po"
+            if ( verify "$TMP" ) >/dev/null 2>&1; then
+                die "self-test: verify() accepted the wasm-only '$WASM_ONE' in a desktop tree"
+            fi
+            rm -rf "${TMP:?}/$WASM_ONE"
+            log "OK: verify() rejects the wasm-only $WASM_ONE"
+        fi
+
         # denyglob, in the two shapes the case-sensitive `-type f -name` form
         # used to wave through: a differently-cased FILE and a matching
         # DIRECTORY.
@@ -278,11 +300,13 @@ case "${1:-}" in
         # the two shapes the same leak, so all three consumers have to spell
         # it — and nothing else checks the WASM leg, which is never run through
         # --verify, only size-bounded at 60 MB.
+        # Text check only; `bundle_manifest_install` runs the real patterns
+        # through Emscripten's packager walk against planted leaks.
         if [ -f "$REPO_ROOT/CMakeLists.txt" ]; then
-            grep -q -- 'exclude-file ${_pom2_ci_glob}"' "$REPO_ROOT/CMakeLists.txt" \
-                || die "self-test: CMakeLists.txt emits no FILE form of the denyglob --exclude-file patterns"
-            grep -q -- 'exclude-file ${_pom2_ci_glob}/\*"' "$REPO_ROOT/CMakeLists.txt" \
-                || die "self-test: CMakeLists.txt emits no DIRECTORY form of the denyglob --exclude-file patterns -- a 'foo.zip/' folder inside roms/ would ship in POM2.data"
+            grep -q -- 'POM2_WASM_EXCLUDES "${_pom2_ci_glob}" "${_pom2_ci_glob}/\*"' "$REPO_ROOT/CMakeLists.txt" \
+                || die "self-test: CMakeLists.txt emits no FILE + DIRECTORY forms of the denyglob --exclude-file patterns -- a 'foo.zip/' folder inside roms/ would ship in POM2.data"
+            grep -q -- 'exclude-file ${_pom2_pat}"' "$REPO_ROOT/CMakeLists.txt" \
+                || die "self-test: CMakeLists.txt no longer passes POM2_WASM_EXCLUDES to emcc"
             log "OK: the WASM leg excludes denyglob matches as files AND as directories"
         fi
         fi

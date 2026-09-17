@@ -70,22 +70,9 @@ void MainWindow::persistSession(bool flushMedia)
 {
     // Persist the current state so the next launch restores the same
     // mounted disks, video mode, panels, and audio levels.
-    // Skip persisting an HDV card that ensureHdvCardForBoot auto-plugged for
-    // a one-shot `POM2 <image.hdv>` boot — it's session-local by contract.
-    const bool hdvIsAutoProvisioned =
-        primaryHdvCard() && primaryHdvCard()->getSlot() == storageCoordinator_->autoProvisionedHdvSlot();
-    if (!hdvIsAutoProvisioned && primaryHdvCard() && primaryHdvCard()->isImageLoaded()) {
-        // Don't persist the synthesised host-folder volume — the path is
-        // a sentinel, not a real file. Re-synthesis happens on click.
-        const std::string& p = primaryHdvCard()->getImagePath();
-        if (p.rfind("[host folder] ", 0) == std::string::npos) {
-            settings->setString("hdv_path", p);
-        } else {
-            settings->setString("hdv_path", "");
-        }
-    } else {
-        settings->setString("hdv_path", "");
-    }
+    // HDV keys: written once, by StorageCoordinator::persistSessionSettings
+    // below — this function used to write `hdv_path` itself first, with a
+    // different rule, and the coordinator then overwrote it (TODO G5-8).
 
     // Persist per-slot DiskII state. The primary (lowest-slot) card ALSO
     // writes to the legacy unsuffixed `disk_path` / `disk_writeback` so
@@ -183,16 +170,6 @@ void MainWindow::persistSession(bool flushMedia)
                                             : std::string());
     settings->setBool("disk35_writeback_1", onboard35[0].writeBack);
     settings->setBool("disk35_writeback_2", onboard35[1].writeBack);
-
-    // Same auto-provision guard as `hdv_path` above: a card that
-    // ensureHdvCardForBoot plugged for a one-shot drag-drop / CLI boot is
-    // session-local, so its write-back flag must not overwrite the one the
-    // user configured for their real HDV card. Without the guard, a single
-    // dropped .hdv persisted `hdv_writeback = false` and silently disarmed
-    // write-back for unrelated media on the next launch.
-    if (primaryHdvCard() && !hdvIsAutoProvisioned) {
-        settings->setBool("hdv_writeback", primaryHdvCard()->isWriteBackEnabled());
-    }
 
     // CFFA per-slot image + write-back for EVERY plugged CFFA card. `cffa`
     // is multi-instance, so persist each (not just the primary `primaryCffaCard()`),
@@ -312,15 +289,8 @@ void MainWindow::persistSession(bool flushMedia)
         return "ColorNTSC";
     };
     settings->setString("hi_res_mode", modeName(display->getHiResMode()));
-    {
-        const char* sub = "monitor";
-        switch (display->getAppleWinSubMode()) {
-            case Apple2Display::AppleWinSubMode::Monitor:   sub = "monitor";   break;
-            case Apple2Display::AppleWinSubMode::Tv:        sub = "tv";        break;
-            case Apple2Display::AppleWinSubMode::Idealized: sub = "idealized"; break;
-        }
-        settings->setString("applewin_submode", sub);
-    }
+    // No `applewin_submode`: the loader forces the TV sub-mode whatever the
+    // file says (MainWindow.cpp), so this write was read by nothing.
     savePanelVisibility();
     settings->setString("floppyemu_mode",
                         pom2::FloppyEmuDevice::modeKey(floppyEmu->mode()));

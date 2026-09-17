@@ -363,11 +363,19 @@
 #     even-offset sequencer cycle. The LSS/flux walker split is the one owed.
 #   src/StorageCoordinator.cpp   2530 -> 2532 (+2)   the two restore paths
 #     call pom2::dropDuplicateMounts.
+#
+# 2026-09-17: one raised, one LOWERED.
+#   src/Memory.cpp               2747 -> 2750 (+3)  memWriteSlow's flat-bus
+#     branch written over four lines instead of two: GCC's
+#     -Wmisleading-indentation flagged the old shape, and the CI Linux leg now
+#     builds with -Werror (TODO G5-14). No code change; bench_identity holds.
+#   src/StorageCoordinator.cpp   2532 -> 2320 (-212)  the pure capture/persist
+#     half moved to StorageCoordinator_Persist.cpp (TODO G5-4).
 src/Apple2Display.cpp                    2522
 src/DiskIICard.cpp                       2140
 src/DiskImage.cpp                        3284
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
-src/Memory.cpp                           2747
-src/StorageCoordinator.cpp               2532
+src/Memory.cpp                           2750
+src/StorageCoordinator.cpp               2320
 src/hgrpaint/HgrPaintEditor.cpp          2656

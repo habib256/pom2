@@ -141,6 +141,14 @@ public:
     /// Mockingboard: a card plugged later via Slot Config used to keep the
     /// NTSC constant under PAL.
     virtual void setCpuClock(double /*hz*/) {}
+    /// The video STANDARD's nominal clock (1 022 727 NTSC / 1 015 625 PAL),
+    /// never scaled by an accelerator. For a timebase that is MECHANICAL —
+    /// a platter's RPM is real time, but the IWM that reads it counts ticks
+    /// of the machine's crystal, which an accelerator does not speed up.
+    /// Handing such a device the accelerated `setCpuClock` value would make
+    /// a //c+-at-4× revolution four times too long. Default: no-op;
+    /// implemented by LironCard (its Sony mechanisms).
+    virtual void setStandardClock(double /*hz*/) {}
 
     virtual void appendSnapshotState(std::vector<uint8_t>& /*out*/) const {}
     virtual void loadSnapshotState(const uint8_t* /*data*/, std::size_t /*len*/) {}

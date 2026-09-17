@@ -128,6 +128,64 @@ else()
     message(WARNING "packaging/bundle.manifest missing — packages will ship no assets")
 endif()
 
+# The emcc --exclude-file patterns, computed here (not inside the EMSCRIPTEN
+# block) so a native build can dump them for `bundle_manifest_install`, which
+# runs them through Emscripten's own packager walk.
+#
+# emcc matches --exclude-file with fnmatch, which has no case-insensitive flag
+# here — spell the classes out so `ROMS.ZIP` is excluded as surely as
+# `roms.zip`, matching the install() REGEX below. Each denyglob is emitted
+# twice: the FILE form, and the DIRECTORY form — a `weird.ZIP/` folder inside
+# roms/ used to ship its contents in POM2.data (measured 2026-09-09) while the
+# other two consumers pruned it. emsdk 6.0.8's packager tests DIRECTORIES
+# against the patterns too, so there the file form already prunes such a
+# folder and the directory form is belt and braces (`bundle_manifest_install`
+# found that out by mutation); it stays for a packager that walks files only. A preloaded `dir` is the working tree, so a
+# denied folder that ended up inside roms/ is excluded by name too.
+set(POM2_WASM_EXCLUDES "")
+foreach(_g ${POM2_BUNDLE_DENYGLOB})
+    set(_pom2_ci_glob "")
+    string(LENGTH "${_g}" _pom2_glen)
+    math(EXPR _pom2_glast "${_pom2_glen} - 1")
+    foreach(_pom2_gi RANGE 0 ${_pom2_glast})
+        string(SUBSTRING "${_g}" ${_pom2_gi} 1 _pom2_gc)
+        if(_pom2_gc MATCHES "^[A-Za-z]$")
+            string(TOLOWER "${_pom2_gc}" _pom2_glo)
+            string(TOUPPER "${_pom2_gc}" _pom2_gup)
+            string(APPEND _pom2_ci_glob "[${_pom2_glo}${_pom2_gup}]")
+        else()
+            string(APPEND _pom2_ci_glob "${_pom2_gc}")
+        endif()
+    endforeach()
+    list(APPEND POM2_WASM_EXCLUDES "${_pom2_ci_glob}" "${_pom2_ci_glob}/*")
+endforeach()
+foreach(_d ${POM2_BUNDLE_DENY})
+    get_filename_component(_pom2_deny_name "${_d}" NAME)
+    list(APPEND POM2_WASM_EXCLUDES "*/${_pom2_deny_name}/*")
+endforeach()
+
+# What this configure understood, for `bundle_manifest_install` to compare with
+# packaging/stage_data.sh's own parse (`--list parsed`): three parsers read the
+# manifest, and nothing used to check that they agree.
+set(_pom2_parsed "")
+foreach(_x ${POM2_BUNDLE_DIRS})
+    string(APPEND _pom2_parsed "dir\t${_x}\n")
+endforeach()
+foreach(_x ${POM2_BUNDLE_FILES})
+    string(REPLACE "|" "\t" _x "${_x}")
+    string(APPEND _pom2_parsed "file\t${_x}\n")
+endforeach()
+foreach(_k WASM DENY DENYGLOB)
+    string(TOLOWER "${_k}" _kl)
+    foreach(_x ${POM2_BUNDLE_${_k}})
+        string(APPEND _pom2_parsed "${_kl}\t${_x}\n")
+    endforeach()
+endforeach()
+foreach(_x ${POM2_WASM_EXCLUDES})
+    string(APPEND _pom2_parsed "wasm-exclude\t${_x}\n")
+endforeach()
+file(WRITE "${CMAKE_BINARY_DIR}/bundle_manifest.parsed" "${_pom2_parsed}")
+
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
@@ -302,6 +360,8 @@ set(SOURCES
     src/StorageCoordinator_Notch.cpp
     src/StorageCoordinator_HdvBays.cpp
     src/StorageCoordinator_Chains.cpp
+    src/StorageCoordinator_Persist.cpp
+    src/ProfileSwitch.cpp
     src/MC6821.cpp
     src/MemoryViewer_ImGui.cpp
     src/Mockingboard.cpp
@@ -557,6 +617,8 @@ set(POM2_FRONTEND_SOURCES
     src/StorageCoordinator_Notch.cpp
     src/StorageCoordinator_HdvBays.cpp
     src/StorageCoordinator_Chains.cpp
+    src/StorageCoordinator_Persist.cpp
+    src/ProfileSwitch.cpp
     src/CassetteDeck_ImGui.cpp
     src/CliDispatcher.cpp
     src/CliRunner.cpp
@@ -753,6 +815,7 @@ set(HEADERS
     src/CffaCard.h
     src/CharRomCatalog.h
     src/RomFetch.h
+    src/ProfileSwitch.h
     src/ZipMember.h
     src/CliDispatcher.h
     src/ClockCard.h
@@ -1095,45 +1158,13 @@ if(EMSCRIPTEN)
     # emcc's --exclude-file applies to every --preload-file above. Same reason
     # as the install() PATTERN EXCLUDE: a preloaded folder is the working tree,
     # and an uncommitted archive in roms/ would otherwise be downloaded by every
-    # visitor to the browser demo.
-    # emcc matches --exclude-file with fnmatch, which has no case-insensitive
-    # flag here — spell the classes out so `ROMS.ZIP` is excluded as surely as
-    # `roms.zip`, matching the install() REGEX above.
-    foreach(_g ${POM2_BUNDLE_DENYGLOB})
-        set(_pom2_ci_glob "")
-        string(LENGTH "${_g}" _pom2_glen)
-        math(EXPR _pom2_glast "${_pom2_glen} - 1")
-        foreach(_pom2_gi RANGE 0 ${_pom2_glast})
-            string(SUBSTRING "${_g}" ${_pom2_gi} 1 _pom2_gc)
-            if(_pom2_gc MATCHES "^[A-Za-z]$")
-                string(TOLOWER "${_pom2_gc}" _pom2_glo)
-                string(TOUPPER "${_pom2_gc}" _pom2_gup)
-                string(APPEND _pom2_ci_glob "[${_pom2_glo}${_pom2_gup}]")
-            else()
-                string(APPEND _pom2_ci_glob "${_pom2_gc}")
-            endif()
-        endforeach()
-        list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_ci_glob}")
-        # …and the DIRECTORY form. emcc's --exclude-file is fnmatch against the
-        # full path of each FILE the packager walked, so `*.[zZ][iI][pP]` only
-        # ever sees a file whose own name ends in .zip — a `weird.ZIP/` FOLDER
-        # inside roms/ walked straight through and its contents shipped in
-        # POM2.data. Both the other consumers prune it (install(DIRECTORY)'s
-        # EXCLUDE'd REGEX applies to directories, and stage()'s `find -depth
-        # -iname` has no -type f), and packaging/bundle.manifest states the
-        # rule outright: "a `Foo.ZIP` file or a `bar.zip/` folder are the same
-        # leak as `foo.zip`". Measured 2026-09-09: roms/weird.ZIP/inside.bin
-        # SHIPPED in the browser bundle and was pruned by the other two.
-        list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_ci_glob}/*")
-    endforeach()
-    # Same for the deny list: a preloaded `dir` is the working tree, so a
-    # denied folder that ended up inside roms/ would be downloaded by every
-    # visitor to the browser demo.
-    foreach(_d ${POM2_BUNDLE_DENY})
-        get_filename_component(_pom2_deny_name "${_d}" NAME)
-        if(NOT POM2_WASM_BUNDLE_DISKS OR NOT _pom2_deny_name STREQUAL "disks_3.5")
-            list(APPEND POM2_WASM_LINK "SHELL:--exclude-file */${_pom2_deny_name}/*")
+    # visitor to the browser demo. The patterns are POM2_WASM_EXCLUDES, built
+    # next to the manifest parse (and exercised by `bundle_manifest_install`).
+    foreach(_pom2_pat ${POM2_WASM_EXCLUDES})
+        if(POM2_WASM_BUNDLE_DISKS AND _pom2_pat STREQUAL "*/disks_3.5/*")
+            continue()
         endif()
+        list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_pat}")
     endforeach()
     target_link_options(${PROJECT_NAME} PRIVATE ${POM2_WASM_LINK})
     # Match shell.html's <canvas id="canvas"> ID convention.
@@ -1319,6 +1350,8 @@ set(POM2_CORE_SOURCES
     src/StorageCoordinator_Notch.cpp
     src/StorageCoordinator_HdvBays.cpp
     src/StorageCoordinator_Chains.cpp
+    src/StorageCoordinator_Persist.cpp
+    src/ProfileSwitch.cpp
     src/MC6821.cpp
     src/Mockingboard.cpp
     src/MouseCard.cpp
@@ -1725,6 +1758,8 @@ endif()
 # ships with every artifact so a release boots out of the box.
 include(GNUInstallDirs)
 set(POM2_DATADIR "${CMAKE_INSTALL_DATADIR}/POM2")
+# Where `cmake --install` puts the payload, for `bundle_manifest_install`.
+file(APPEND "${CMAKE_BINARY_DIR}/bundle_manifest.parsed" "datadir\t${POM2_DATADIR}\n")
 # GNUInstallDirs derives DOCDIR from the (internal) project name pom2_imgui;
 # force the user-facing "POM2" so docs land in share/doc/POM2.
 set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATADIR}/doc/POM2")

@@ -159,6 +159,8 @@ public:
     bool         prepareFlushBay(int bay, PendingBayFlush& out,
                                  std::string& errOut) override;
     void         restoreFlushBayDirty(int bay) override;
+    /// Forwarded to every mechanism (Sony35Drive::setStandardClock).
+    void         setStandardClock(double hz) override;
     void         setBayWriteBack(int bay, bool on) override;
     void         setBayHostWriteProtected(int bay, bool on) override;
 
@@ -341,6 +343,8 @@ private:
     void onPhases(uint8_t phases);
     void onDevsel(uint8_t devsel);
     void retargetIwm();
+    /// Point the enabled mechanism's head at the IWM's SEL line.
+    void syncHeadSelect();
 };
 
 }  // namespace pom2

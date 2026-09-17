@@ -40,6 +40,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -65,8 +66,52 @@ std::string writeImage(const std::string& name, std::size_t bytes,
 
 } // namespace
 
+// A host-folder volume must not overwrite the user's hdv_path, through the
+// COMMAND path (moved here from storage_rebuild_persist, which no longer
+// links the controller — TODO G5-4). The Slot Config media column wrote the
+// bay keys itself, with none of the coordinator's guards: ticking
+// "Write-back" on a synthesised `[host folder] …` volume replaced `hdv_path`
+// with the sentinel, and the next launch tried to mount a path that is not a
+// file. The guarded setters refuse to touch the key for exactly this case.
+void testHostFolderLeavesHdvPathAlone()
+{
+    const std::string image =
+        (std::filesystem::temp_directory_path() / "pom2_hostfolder_guard.hdv").string();
+    {
+        std::vector<char> bytes(2 * 512, 0);
+        std::ofstream f(image, std::ios::binary);
+        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    EmulationController controller;
+    pom2::StorageCoordinator coord;
+    pom2::Settings settings;
+    settings.setReadOnly(true);
+    settings.setString("hdv_path", image);
+    settings.setBool("hdv_writeback", false);
+    {
+        auto state = controller.lockState();
+        state.memory().slotBus().plug(
+            7, std::make_unique<ProDOSHardDiskCard>(7));
+    }
+    std::vector<std::uint8_t> bytes(2 * 512, 0);
+    assert(coord.mountBlockBytes(controller, settings, 7, std::move(bytes),
+                                 "[host folder] /tmp/pom2_host",
+                                 "/tmp/pom2_host").ok);
+    assert(settings.getString("hdv_path", "") == image &&
+           "mounting a host folder leaves hdv_path alone");
+    assert(coord.setMediaBayWriteBack(controller, settings, 7, 0, true).ok);
+    assert(settings.getString("hdv_path", "") == image &&
+           "toggling write-back on a host folder leaves hdv_path alone");
+    assert(!settings.getBool("hdv_writeback", false) &&
+           "…and leaves hdv_writeback alone too");
+    std::error_code ec;
+    std::filesystem::remove(image, ec);
+    std::puts("  ok: a host-folder volume leaves hdv_path alone (commands)");
+}
+
 int main()
 {
+    testHostFolderLeavesHdvPathAlone();
     // The whole run lives in a sandboxed HOME (and XDG_CONFIG_HOME, which
     // userConfigDir() prefers on Linux): this test drives coordinator
     // commands that persist, and a Settings that is not read-only saves to
@@ -260,16 +305,34 @@ int main()
         mediaStorage.persistRebuildSettings(settings, mediaSnapshot);
         assert(settings.getString("hdv_path") == hdvPath);
 
-        // Shutdown persistence adds legacy primary aliases and HDV policy to
-        // the same per-slot/two-drive values. Auto-provisioned HDV media are
-        // explicitly cleared and do not overwrite the configured opt-in.
+        // Shutdown persistence adds legacy primary aliases to the same
+        // per-slot/two-drive values, under the SAME HDV rule as the rebuild:
+        // an auto-provisioned card is skipped, so the configured image and
+        // opt-in survive the quit. This case used to pin the opposite (the
+        // path was cleared), which wiped the configured disk after any
+        // one-shot `POM2 image.hdv` boot (TODO G5-8).
         pom2::Settings sessionSettings;
         sessionSettings.setString("hdv_path", "configured.hdv");
+        sessionSettings.setString("hdv_path_drive2", "configured2.hdv");
         sessionSettings.setBool("hdv_writeback", false);
         mediaStorage.markAutoProvisionedHdv(5);
         mediaStorage.persistSessionSettings(sessionSettings, mediaSnapshot);
-        assert(sessionSettings.getString("hdv_path").empty());
+        assert(sessionSettings.getString("hdv_path") == "configured.hdv");
+        assert(sessionSettings.getString("hdv_path_drive2") == "configured2.hdv");
         assert(!sessionSettings.getBool("hdv_writeback"));
+        // …and NO HDV card at all (the default map, both //c profiles) is not
+        // "nothing mounted": the configured path waits for the card.
+        {
+            auto noHdv = mediaSnapshot;
+            noHdv.primaryHdv.reset();
+            noHdv.primaryHdvDrive2.reset();
+            pom2::Settings quiet;
+            quiet.setString("hdv_path", "configured.hdv");
+            mediaStorage.clearAutoProvisioned();
+            mediaStorage.persistSessionSettings(quiet, noHdv);
+            assert(quiet.getString("hdv_path") == "configured.hdv" &&
+                   "a quit with no HDV card wiped the configured path");
+        }
         mediaStorage.clearAutoProvisioned();
         mediaStorage.persistSessionSettings(sessionSettings, mediaSnapshot);
         assert(sessionSettings.getString("hdv_path") == hdvPath);

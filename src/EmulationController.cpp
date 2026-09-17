@@ -76,9 +76,15 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // EmulationController link-depend on every card it named, breaking
     // tests that link the controller without them.
     for (int slot = 1; slot <= 7; ++slot) {
-        if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
+        if (SlotPeripheral* card = mem.slotBus().peripheral(slot)) {
             card->setCpuClock(hz);
+            card->setStandardClock(vt.cpuClockHz);
+        }
     }
+    // The on-board 3.5" mechanisms turn at a real-time RPM against the
+    // crystal, not against the accelerated budget (SlotPeripheral.h).
+    if (drive35Int) drive35Int->setStandardClock(vt.cpuClockHz);
+    if (drive35Ext) drive35Ext->setStandardClock(vt.cpuClockHz);
 }
 
 void EmulationController::refreshAcceleratorClock()

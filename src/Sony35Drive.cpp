@@ -326,7 +326,19 @@ void buildTrackBits(const Disk35Image& img,
 
 Sony35Drive::Sony35Drive()
 {
+    for (int z = 0; z < 5; ++z) cyclesPerRevZone_[z] = kCyclesPerRev[z];
     reset();
+}
+
+void Sony35Drive::setStandardClock(double hz)
+{
+    if (!(hz > 0.0) || hz == standardClockHz_) return;
+    standardClockHz_ = hz;
+    // Same integer ordering as kCyclesPerRev, so the NTSC value reproduces
+    // those constants exactly.
+    const int64_t clock = static_cast<int64_t>(hz + 0.5);
+    for (int z = 0; z < 5; ++z) cyclesPerRevZone_[z] = clock * 60 / kRpm[z];
+    invalidateCache();   // the cached transitions are in ticks of the old period
 }
 
 bool Sony35Drive::isInserted() const
@@ -341,7 +353,7 @@ int Sony35Drive::cellsPerRev() const
 
 int64_t Sony35Drive::cyclesPerRev() const
 {
-    return kCyclesPerRev[zoneForTrack(track_)];
+    return cyclesPerRevZone_[zoneForTrack(track_)];
 }
 
 int64_t Sony35Drive::ticksPerRev() const
@@ -570,7 +582,7 @@ void Sony35Drive::ensureCacheFor(int track, int head) const
 
     buildTrackBits(*image_, track, head, cells_);
     cachedCellsPerRev_  = static_cast<int>(cells_.size());
-    cachedCyclesPerRev_ = kCyclesPerRev[zoneForTrack(track)];
+    cachedCyclesPerRev_ = cyclesPerRevZone_[zoneForTrack(track)];
     rebuildTransitionsFromCells();
 }
 

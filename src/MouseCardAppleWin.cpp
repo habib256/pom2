@@ -623,8 +623,11 @@ void MouseCardAppleWin::loadSnapshotState(const uint8_t* data, std::size_t len)
     iMinY = clampBound(iMinY); iMaxY = clampBound(iMaxY);
     if (iMinX > iMaxX) { iMinX = 0; iMaxX = 1023; }
     if (iMinY > iMaxY) { iMinY = 0; iMaxY = 1023; }
-    clampX();
-    clampY();
+    // No clampX()/clampY() here: the POSITION is not clamped on the live
+    // card either — `setPositionAbs` (POSMOUSE) stores it as given, exactly
+    // like AppleWin's SetPositionAbs, and the next relative move clamps it.
+    // Clamping on restore moved a pointer the guest had parked outside its
+    // window (card_snapshot_contract P1c). iX/iY index nothing.
 
     // Re-seed the host delta trackers from the live pointer on the next poll.
     hostPrimed = false;

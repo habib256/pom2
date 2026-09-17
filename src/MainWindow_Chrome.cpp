@@ -562,6 +562,21 @@ void MainWindow::renderMenuBar()
             ImGui::EndMenu();
         }
         ImGui::Separator();
+        {
+            // `keyboard_alt_apple_keys` — until 2026-09-17 settable only by
+            // editing state.cfg (TODO G5-7).
+            bool altApple = altAppleKeysSetting();
+            if (ImGui::MenuItem("Alt keys are the Apple keys", nullptr, &altApple))
+                setAltAppleKeysSetting(altApple);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Left Alt = Open-Apple, right Alt = Solid-Apple — which are\n"
+                    "also the joystick fire buttons. Turn it off on a layout\n"
+                    "where Alt/Option types characters (macOS French: { } [ ] |),\n"
+                    "and use the on-screen //e keyboard for the Apple keys.\n"
+                    "Windows AltGr never presses them either way.");
+        }
+        ImGui::Separator();
         panelMenuItem(pom2::PanelId::SlotConfig);
         ImGui::EndMenu();
     }

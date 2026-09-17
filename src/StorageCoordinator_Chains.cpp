@@ -36,13 +36,6 @@ StorageCoordinator::MediaCommandResult commandError(std::string error)
 
 // ── Keys ─────────────────────────────────────────────────────────────────
 
-std::string StorageCoordinator::hdvDriveKey(const char* base, int drive)
-{
-    // `hdv_path` / `hdv_writeback` for drive 1, as they always were; the
-    // Disk II's `_drive2` suffix (`diskIIPathSettingKey`) for drive 2.
-    return drive == 1 ? std::string(base) + "_drive2" : std::string(base);
-}
-
 std::string StorageCoordinator::bayCountKey(int slot)
 {
     // The generic keyspace of the card's bays (`media_slotN_bayK_*`), so a
@@ -151,34 +144,6 @@ void StorageCoordinator::restoreHdvDrive2(ProDOSHardDiskCard& hdv,
     if (hdv.backing(1).isLoaded())
         hdv.setDriveHostWriteProtected(
             1, pom2::mediaFileIsReadOnly(hdv.backing(1).path()));
-}
-
-void StorageCoordinator::captureHdvDrive2(const ProDOSHardDiskCard& hdv,
-                                          RebuildSnapshot& snapshot)
-{
-    const auto& drive2 = hdv.backing(1);
-    SlotMediumSnapshot medium;
-    medium.slot = hdv.getSlot();
-    medium.loaded = drive2.isLoaded();
-    if (medium.loaded) medium.path = drive2.path();
-    medium.writeBackEnabled = drive2.isWriteBackEnabled();
-    snapshot.primaryHdvDrive2 = std::move(medium);
-}
-
-void StorageCoordinator::persistHdvDrive2(Settings& settings,
-                                          const RebuildSnapshot& snapshot) const
-{
-    // Same exclusions as drive 1: the session-only auto-provisioned slot,
-    // and a synthesised "[host folder] " volume.
-    if (!snapshot.primaryHdvDrive2 ||
-        snapshot.primaryHdvDrive2->slot == autoHdvSlot_)
-        return;
-    const auto& medium = *snapshot.primaryHdvDrive2;
-    const bool persistable = medium.loaded &&
-        medium.path.rfind("[host folder] ", 0) == std::string::npos;
-    settings.setString(hdvDriveKey("hdv_path", 1),
-                       persistable ? medium.path : std::string());
-    settings.setBool(hdvDriveKey("hdv_writeback", 1), medium.writeBackEnabled);
 }
 
 void StorageCoordinator::restoreHdvDrive2(ProDOSHardDiskCard& hdv,

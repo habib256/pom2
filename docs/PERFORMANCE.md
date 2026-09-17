@@ -34,6 +34,12 @@ before/after comparisons trustworthy to the percent, far more than wall time.
 It prints an FNV-1a hash of RAM and of the framebuffer: an optimisation that
 moves either one is not an optimisation, it is a bug.
 
+Since 2026-09-17 the RAM half of that rule is a ctest, `bench_identity`
+(`tools/check_bench_identity.sh`, golden in `tests/bench_golden.txt`): four
+workloads, cycle count and RAM hash. The framebuffer hash stays a manual
+check — it goes through host floating point. A change that is meant to move
+emulation regenerates the golden with `--update` and says so in its commit.
+
 ```sh
 # Representative workloads (from the repo root — ROM/disk probes are relative)
 ./build/pom2_bench --frames 3000 --quiet                       # ROM banner: CPU + bus + text
