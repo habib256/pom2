@@ -66,6 +66,7 @@ bool IIcClassProfile::romBankToggle()
         // the profile still claimed "internal 3.5-inch drive selected" while the hub
         // routed to nothing, and the snapshot recorded that stale claim.
         migIntDrive_ = false;
+        mig35Sel_    = false;
         if (hub_) {
             hub_->setMigIntDrive(false);
             hub_->setMig35Sel(false);
@@ -280,10 +281,12 @@ void IIcClassProfile::migWrite(uint16_t migOffset, uint8_t value)
         return;
     }
     if (migOffset >= 0x240 && migOffset < 0x260) {         // 3.5" m_35sel=false
+        mig35Sel_ = false;
         if (hub_) hub_->setMig35Sel(false);
         return;
     }
     if (migOffset >= 0x260 && migOffset < 0x280) {         // 3.5" m_35sel=true
+        mig35Sel_ = true;
         if (hub_) hub_->setMig35Sel(true);
         return;
     }
@@ -304,6 +307,9 @@ constexpr size_t  kMigBlobBytes    = 4 + 2 + 0x800;   // magic + page + RAM
 // Optional v1.1 tail: romBank_ + migIntDrive_ + migHdSel_. Old blobs end
 // at kMigBlobBytes and keep the live values for these three.
 constexpr size_t  kMigBlobTail     = 3;
+// v1.3 tail, after the external port's section: the external-3.5" select
+// (2026-09-17). Self-identifying, so an older blob just keeps the live value.
+constexpr uint8_t kSel35Magic[3]   = { 'S', '3', '5' };
 }  // namespace
 
 void IIcClassProfile::appendSnapshotState(std::vector<uint8_t>& out) const
@@ -323,6 +329,11 @@ void IIcClassProfile::appendSnapshotState(std::vector<uint8_t>& out) const
     // and the bus transaction in flight. Self-identifying, so a blob
     // without it (or a machine without a port) is the v1.1 layout.
     if (extPort_) extPort_->appendSnapshotState(out);
+    // v1.3: the external-3.5" select. Without it a rewind across a bank-0
+    // return (which clears it) routed hub devsel 1 to the 5.25" drive in
+    // the middle of an external 3.5" read.
+    out.insert(out.end(), kSel35Magic, kSel35Magic + 3);
+    out.push_back(mig35Sel_ ? 1 : 0);
 }
 
 size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
@@ -362,13 +373,22 @@ size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
         // Order matters: intdrive first (it re-runs recalcActiveDevice and
         // republishes the active drive), head-select second (MAME does the
         // ss_w at the END of recalc_active_device, apple2e.cpp:804).
-        if (hub_) {
-            hub_->setMigIntDrive(migIntDrive_);
-            hub_->setMigHdSel(migHdSel_);
-        }
         size_t used = kMigBlobBytes + kMigBlobTail;
         if (extPort_ && n > used)
             used += extPort_->loadSnapshotState(data + used, n - used);
+        const bool hasSel35 = n - used >= 4 &&
+                              std::memcmp(data + used, kSel35Magic, 3) == 0;
+        if (hasSel35) {
+            mig35Sel_ = data[used + 3] != 0;
+            used += 4;
+        }
+        // The external-3.5" select goes first: setMigIntDrive re-runs the
+        // routing, and it reads sel35_.
+        if (hub_) {
+            if (hasSel35) hub_->setMig35Sel(mig35Sel_);
+            hub_->setMigIntDrive(migIntDrive_);
+            hub_->setMigHdSel(migHdSel_);
+        }
         return used;
     }
     return kMigBlobBytes;

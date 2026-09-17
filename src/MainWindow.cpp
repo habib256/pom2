@@ -162,7 +162,12 @@ MainWindow::MainWindow(bool forceIIPlus)
               // history that indexes a topology must not outlive it, and
               // session-only provisioning must not be persisted from it.
               [this] {
-                  controller->rewind().clear();
+                  {
+                      // Under the lock: an AI request or a host media swap
+                      // can clear the same ring from another thread.
+                      std::lock_guard<std::mutex> lk(controller->stateMutex());
+                      controller->rewind().clear();
+                  }
                   storageCoordinator_->clearAutoProvisioned();
               },
               [this] { aiServer->detach(); },
@@ -868,7 +873,7 @@ bool MainWindow::startAiControlFromCli(unsigned short port, std::string& errOut)
     // settings file) beats `ai_control_token` from state.cfg.
     std::string token = aiTokenInput;
     if (const char* envTok = std::getenv("POM2_AI_CONTROL_TOKEN")) {
-        if (*envTok) token = envTok;
+        if (*envTok) { token = envTok; aiEnvToken_ = envTok; }
     }
     if (!token.empty() && token.size() < pom2::AiControlServer::kMinTokenLength) {
         pom2::log().warn("CLI",

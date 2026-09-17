@@ -16,6 +16,9 @@
 // The control run (no card) must reach that KO: otherwise this test would
 // pass on a disk that never looked for a Mockingboard at all.
 //
+// The card is DORMANT until the first write into its page (2026-09-17): a
+// //c with a 4c and no disk must still print "Check Disk Drive."
+//
 // Needs roms/apple2c-32Kv0.rom and disks_5.4/demo/digidream/DD.dsk.
 
 #include "DiskIICard.h"
@@ -175,6 +178,98 @@ void testTheWindowCarriesBothDirections(const std::string& rom)
                     "(T1 delta %d)\n", delta);
 }
 
+// ── Dormant until written: the //c's own $C400 firmware stays visible ────
+//
+// 2026-09-17. The real 4c's CPLD (and MAME, `m_mockingboard4c`) leaves the
+// page to the machine until a program writes into it. POM2 served the card
+// from power-on, which hid the ROM 0 mouse firmware: a //c with a 4c and no
+// disk hung on a blank screen instead of printing "Check Disk Drive."
+void testDormantUntilWritten(const std::string& rom)
+{
+    Memory bare;
+    bare.setIIEMode(true);
+    if (!bare.loadAppleIIRom(rom.c_str(), true)) { fail("cannot load the //c ROM"); return; }
+    Memory mem;
+    M6502  cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.setIIEMode(true);
+    if (!mem.loadAppleIIRom(rom.c_str(), true)) { fail("cannot load the //c ROM"); return; }
+    auto card = std::make_unique<MockingboardCard>(3);
+    card->setCpu(&cpu);
+    mem.slotBus().plug(3, std::move(card));
+
+    int diff = 0;
+    for (int a = 0xC400; a <= 0xC4FF; ++a)
+        if (mem.memRead(static_cast<uint16_t>(a)) !=
+            bare.memRead(static_cast<uint16_t>(a))) ++diff;
+    if (diff != 0 || mem.iicExpansionAwake())
+        fail("a dormant 4c changed " + std::to_string(diff) +
+             " bytes of the //c's own $C400 page");
+
+    mem.memWrite(0xC403, 0xFF);                      // wakes it
+    if (!mem.iicExpansionAwake() || mem.memRead(0xC403) != 0xFF)
+        fail("a write into $C400-$C4FF did not wake the 4c");
+
+    // Awake in the alternate ROM bank too (MAME c400_int_bank_r): an IRQ
+    // handler running from bank 1 still has to reach the VIA.
+    (void)mem.memRead(0xC028);                       // ROMBANK -> bank 1
+    if (mem.memRead(0xC403) != 0xFF)
+        fail("the woken 4c vanished while the alternate ROM bank was selected");
+    (void)mem.memRead(0xC028);                       // back to bank 0
+
+    mem.resetSoftSwitches();                         // Ctrl-Reset (reset_w)
+    if (!mem.iicExpansionAwake() || mem.memRead(0xC403) != 0xFF)
+        fail("Ctrl-Reset put the 4c to sleep — MAME's reset_w leaves it awake");
+    mem.clearRam();                                  // power-on (machine_reset)
+    mem.resetSoftSwitches();
+    if (mem.iicExpansionAwake() || mem.memRead(0xC403) != bare.memRead(0xC403))
+        fail("a cold boot did not put the 4c back to sleep");
+    if (g_failures == 0)
+        std::printf("  ok: the 4c sleeps until written, answers in both ROM "
+                    "banks, survives Ctrl-Reset, sleeps again after power-on\n");
+}
+
+// A //c with a 4c and no disk must do what a //c does with no disk.
+void testNoDiskStillSaysCheckDiskDrive(const std::string& rom)
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    pom2::IWMDevice iwm;
+    mem.setCpu(&cpu);
+    mem.setIWM(&iwm);
+    mem.setIWMAuthoritative(true);
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.setIIEMode(true);
+    if (!mem.loadAppleIIRom(rom.c_str(), true)) { fail("cannot load the //c ROM"); return; }
+    auto d2 = std::make_unique<DiskIICard>(6);
+    const std::string bootRom = pom2::findResource("roms/disk2.rom");
+    const std::string lssRom  = pom2::findResource("roms/diskii_p6.rom");
+    if (!bootRom.empty()) d2->loadBootRom(bootRom);
+    if (!lssRom.empty())  d2->loadLssRom(lssRom);
+    d2->setIWM(&iwm);
+    mem.slotBus().plug(6, std::move(d2));
+    auto card = std::make_unique<MockingboardCard>(3);
+    card->setCpu(&cpu);
+    mem.slotBus().plug(3, std::move(card));
+
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
+    cpu.hardReset();
+    std::string screen;
+    for (long total = 0; total < 20'000'000; ) {
+        total += cpu.run(4096);
+        screen = scrapeTextPage(mem.data());
+        if (screen.find("Check Disk Drive") != std::string::npos) break;
+    }
+    if (screen.find("Check Disk Drive") == std::string::npos) {
+        fail("a //c with a Mockingboard 4c and no disk never printed "
+             "\"Check Disk Drive.\"");
+        std::printf("--- text page ---\n%s---\n", screen.c_str());
+    } else {
+        std::printf("  ok: 4c + no disk -> \"Check Disk Drive.\"\n");
+    }
+}
+
 int main()
 {
     const std::string rom = pom2::findResource("roms/apple2c-32Kv0.rom");
@@ -185,6 +280,8 @@ int main()
         return 77;
     }
     testTheWindowCarriesBothDirections(rom);
+    testDormantUntilWritten(rom);
+    testNoDiskStillSaysCheckDiskDrive(rom);
 
     // A COPY: the tracked disk is user media, and a demo may write to it.
     const fs::path scratch = fs::path(pom2test::tempPath("pom2_mb4c")).parent_path()

@@ -116,6 +116,11 @@ bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
 /// unless the caller already does file I/O under it.
 bool sameImageFile(const std::string& a, const std::string& b);
 
+/// Every image path mounted anywhere on the machine, as each leaf reports it
+/// (Disk II drives, every media bay, the //c+ on-board 3.5" drives). Takes
+/// the state lock to copy the strings; compare them after, unlocked.
+std::vector<std::string> mountedImagePaths(EmulationController& ctrl);
+
 /// True, with `error` set, when `path` is already mounted in a drive or bay
 /// other than the target, whose current medium is `targetPath` (empty = the
 /// target is empty). Two mounted copies of one image each write their own
@@ -126,6 +131,13 @@ bool sameImageFile(const std::string& a, const std::string& b);
 /// is safe from any thread; the comparison runs unlocked.
 bool imageMountedElsewhere(EmulationController& ctrl, const std::string& path,
                            const std::string& targetPath, std::string& error);
+
+/// The same rule for a caller that addresses its target by slot: `slot < 0`
+/// names an on-board //c+ 3.5" drive (`index` 0/1), otherwise `index` is the
+/// Disk II drive or media bay whose current medium is the one being replaced.
+/// Used by StorageCoordinator's own mount commands (bug hunt 2026-09-17).
+bool imageMountedElsewhereAt(EmulationController& ctrl, int slot, int index,
+                             const std::string& path, std::string& error);
 
 /// The restore-time half of the same rule: after every persisted path has
 /// been loaded inline, keep each image in the first drive or bay (slot

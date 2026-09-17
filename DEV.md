@@ -7685,8 +7685,12 @@ flight, so the loop is a proper sample-and-hold. Pinned by
 `mouse_sync_policy`.
 
 Verbatim port of MAME `bus/a2bus/mouse.cpp`. Pieces:
-- **M68705P3** MCU (Apple 341-0269, 2 KB mask ROM). Paced at 2× CPU
-  clock from `advanceCycles()` via fractional accumulator.
+- **M68705P3** MCU (Apple 341-0269, 2 KB mask ROM). Paced at **½ the CPU
+  clock** from `advanceCycles()` via fractional accumulator: the 2 043 600 Hz
+  crystal is divided by 4 inside the 68705, so it retires 510 900 machine
+  cycles a second. It ran at 2× until 2026-09-17 — four times too fast, and
+  the VBL-mode interrupt fired at 240 Hz. `mouse_card_smoke` now measures
+  that interrupt (59.8 Hz) with the real ROMs.
 - **MC6821** PIA — bus side at `$C0n0-$C0n3`.
 - **8516 EPROM** — 2 KB slot ROM (Apple 341-0270-c), bank-switched
   into `$Cn00-$CnFF` via PIA PortB bits 1-3 (`bank = (PortB & 0x0E)
@@ -8876,14 +8880,31 @@ on the case), `InternalHeader` (the //c's internal expansion connector),
 |---|---|
 | II / II+ | Expansion slots (7 free; slot 0, the Language Card, is not modelled as a card) · Ports (game port, cassette jacks) |
 | //e | Expansion slots · Auxiliary connector (80-column card read-only + RamWorks size) · Ports (game port; no cassette — the //e dropped it) |
-| //c, //c+ | External ports (serial 1 printer DIN-5, serial 2 modem DIN-5, hand controls DB-9, disk port DB-19, video expansion DB-15) · Built-in devices (internal drive) · Internal expansion connector (Mockingboard 4c) |
+| II / II+ / //e (cassette row) | The cassette jacks are listed on all three — the //e kept them; only the //c dropped them |
+| //c | External ports (serial 1 printer DIN-5, serial 2 modem DIN-5, hand controls DB-9, disk port DB-19 = SmartPort chain + 5.25" drive 2, video expansion DB-15) · Built-in devices (internal 5.25" drive, slot 6) · Internal expansion connector (CPU socket: Mockingboard 4c) |
+| //c+ | Same, except: serial ports are mini-DIN-8; the internal drive is the 3.5" (slot 5) and the disk port row is slot 6 (external 5.25" + SmartPort chain); the CPU-socket board is the 4c+ (its $C400 page replaces the ROM 5 memory-expansion driver; the mouse firmware is at $C700) |
 
 **A connector is a LABEL over a slot index, not a new mechanism.** Each row
-carries the POM2 slot it drives, so `slot_N_card`, the persistence guard
-(`slotKeyIsUserChoice`) and the plug back-end are untouched, and an existing
-`state.cfg` keeps working. On a //c the two user-choosable connectors map to
-the two slots the profile leaves free: the DB-15 video expansion to slot 7
-(the canonical Chat Mauve slot) and the internal header to slot 3.
+carries the POM2 slot it drives, so the persistence guard
+(`slotKeyIsUserChoice`) and the plug back-end are untouched. On a //c the two
+user-choosable connectors map to the two slots the profile leaves free: the
+DB-15 video expansion to slot 7 (the canonical Chat Mauve slot) and the
+internal header to slot 3.
+
+**The settings key comes from `pom2::slotCardSettingKey(cfg, slot)`** —
+`slot_N_card`, except the //c-class internal header, which is
+`iic_expansion_card`. Every reader and writer goes through it. Sharing
+`slot_3_card` with the //e put a //e's Mockingboard inside every //c
+(2026-09-17).
+
+**The Mockingboard 4c sleeps until written.** The real board sits in the
+65C02 socket and its CPLD leaves $C400-$C4FF to the //c ROM (the ROM 0 mouse
+firmware, which the boot code calls) until a program writes into the page.
+MAME's `c400_int_r` / `c400_w` do the same with `m_mockingboard4c`. POM2's
+latch is `Memory::iicExpansionAwake_`: set by a write routed to
+`peripheralForIicRomPage`, cleared by `resetSoftSwitches` (every //c reset),
+carried in the paging snapshot section (byte 10). Pinned by
+`iic_mockingboard_4c`.
 
 Three rules the panel applies on top of the inventory:
 

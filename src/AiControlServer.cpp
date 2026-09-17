@@ -344,6 +344,34 @@ std::string jsonGetString(const std::string& body, const std::string& key)
     return {};
 }
 
+bool jsonGetInt(const std::string& body, const std::string& key, long& out);
+
+/// An optional integer key: absent is fine (`out` untouched), present and
+/// not a whole integer is an error the caller answers with a 400.
+bool jsonOptionalIntOk(const std::string& body, const std::string& key, long& out)
+{
+    long v = 0;
+    if (jsonGetString(body, key).empty()) return true;
+    if (!jsonGetInt(body, key, v)) return false;
+    out = v;
+    return true;
+}
+
+/// A query-string number: decimal, or hex with `0x`. The whole token, no
+/// sign, no whitespace. `std::stol(..., 0)` read a leading 0 as OCTAL and
+/// dropped trailing garbage, so `/mem?addr=0800` read $0000 and `addr=0300`
+/// read $C0 (bug hunt 2026-09-17). Returns -1 when absent or malformed.
+long parseQueryNumber(const std::string& s)
+{
+    const bool hex = s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
+    const std::string digits = hex ? s.substr(2) : s;
+    if (digits.empty() || digits.size() > 10) return -1;
+    for (char c : digits)
+        if (!(hex ? std::isxdigit(static_cast<unsigned char>(c))
+                  : std::isdigit(static_cast<unsigned char>(c)))) return -1;
+    try { return std::stol(digits, nullptr, hex ? 16 : 10); } catch (...) { return -1; }
+}
+
 bool jsonGetInt(const std::string& body, const std::string& key, long& out)
 {
     const std::string s = jsonGetString(body, key);
@@ -353,14 +381,20 @@ bool jsonGetInt(const std::string& body, const std::string& key, long& out)
         // Accept decimal or 0x… hex for convenience.
         const int base = (s.size() > 2 && s[0] == '0' && (s[1]=='x'||s[1]=='X'))
                        ? 16 : 10;
-        out = std::stol(s, &pos, base);
+        const long v = std::stol(s, &pos, base);
         // The WHOLE token has to be a number. `pos > 0` accepted a partial
         // parse, and the value was mangled BEFORE the careful range checks
         // downstream ever saw it: `{"cycles_per_frame":2.5e6}` — legal JSON —
         // parsed as 2, passed the [1, 2000000] check, and set the machine to
         // ~120 emulated cycles per second while answering 200 OK. Same shape
         // for `{"pc":1e3}` -> $0001 and `{"drive":"1x"}` -> 1.
-        return pos == s.size();
+        // And `out` is written only on success: callers that ignore the
+        // return value (`/disk`'s drive and slot) kept the partial number
+        // (bug hunt 2026-09-17).
+        if (pos != s.size() || !(std::isdigit(static_cast<unsigned char>(s[0])) || s[0] == '-'))
+            return false;
+        out = v;
+        return true;
     } catch (...) {
         return false;
     }
@@ -812,9 +846,15 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
     // past the header terminator counts toward the body, plus extra recv()s
     // until we have the full length.
     const size_t bodyStart = headerEnd + 4;
+    // No chunked bodies: ignoring the header read an empty body, so a chunked
+    // `POST /reset {"kind":"soft"}` ran a HARD reset (bug hunt 2026-09-17).
+    if (!req.headerValue("Transfer-Encoding").empty()) return false;
     const std::string clStr = req.headerValue("Content-Length");
     if (!clStr.empty()) {
         long cl = 0;
+        if (clStr.size() > 9 ||
+            clStr.find_first_not_of("0123456789") != std::string::npos)
+            return false;                    // "5abc" used to read as 5
         try { cl = std::stol(clStr); } catch (...) { return false; }
         if (cl < 0 || static_cast<size_t>(cl) > kMaxBodyBytes) return false;
         req.body.reserve(static_cast<size_t>(cl));
@@ -1016,7 +1056,14 @@ void AiControlServer::handleClient(socket_t fd)
         return;
     }
     if (!checkAuth(req)) {
-        noteAuthFailure();
+        // Only a token guess from a native client counts toward the brake. A
+        // browser page (it sends Origin, and cannot send X-POM2-Token without
+        // the CORS preflight this server never grants) or a rebound Host is
+        // refused by policy, not guessing — and counting those let any open
+        // web page keep the real agent locked out with 429s (bug hunt
+        // 2026-09-17).
+        if (hostHeaderIsLoopback(req) && req.headerValue("Origin").empty())
+            noteAuthFailure();
         sendJsonError(fd, 401, "missing or invalid X-POM2-Token");
         return;
     }
@@ -1189,9 +1236,8 @@ void AiControlServer::handleCpuSet(socket_t fd, const Request& req)
 void AiControlServer::handleMemGet(socket_t fd, const Request& req)
 {
     if (req.method != "GET") { sendJsonError(fd, 405, "GET only"); return; }
-    long addr = -1, len = -1;
-    try { addr = std::stol(queryParam(req.query, "addr"), nullptr, 0); } catch (...) {}
-    try { len  = std::stol(queryParam(req.query, "len"),  nullptr, 0); } catch (...) {}
+    const long addr = parseQueryNumber(queryParam(req.query, "addr"));
+    long len        = parseQueryNumber(queryParam(req.query, "len"));
     // `bank`: "main" (default, the raw main 64 KiB array), "aux" (the //e aux
     // bank — the ACTIVE RamWorks bank), or "cpu" (what the 6502 would fetch
     // right now, paging resolved).
@@ -1253,8 +1299,7 @@ void AiControlServer::handleMemGet(socket_t fd, const Request& req)
 void AiControlServer::handleMemSet(socket_t fd, const Request& req)
 {
     if (req.method != "POST") { sendJsonError(fd, 405, "POST only"); return; }
-    long addr = -1;
-    try { addr = std::stol(queryParam(req.query, "addr"), nullptr, 0); } catch (...) {}
+    const long addr = parseQueryNumber(queryParam(req.query, "addr"));
     if (addr < 0 || addr >= 0x10000) { sendJsonError(fd, 400, "addr out of range"); return; }
 
     const std::string hex = jsonGetString(req.body, "data");
@@ -1351,7 +1396,9 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
     const bool haveAx  = jsonGetInt(req.body, "x",     ax);
     const bool haveAy  = jsonGetInt(req.body, "y",     ay);
     const bool haveBtn = jsonGetInt(req.body, "btn",   btn);
-    jsonGetInt(req.body, "reset", rst);
+    if (!jsonOptionalIntOk(req.body, "reset", rst)) {
+        sendJsonError(fd, 400, "reset must be an integer"); return;
+    }
 
     // Clamp per-call delta to ±127 — the MCU's 8-bit signed wrap window,
     // matching MainWindow::onMouseMove. Larger deltas must be split across
@@ -1425,8 +1472,10 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
     // the card) can't slip a null past us.
     long slot  = -1;                     // -1 = "the bound Disk II card"
     long drive = 0;
-    jsonGetInt(req.body, "slot",  slot);
-    jsonGetInt(req.body, "drive", drive);
+    if (!jsonOptionalIntOk(req.body, "slot", slot) ||
+        !jsonOptionalIntOk(req.body, "drive", drive)) {
+        sendJsonError(fd, 400, "slot and drive must be integers"); return;
+    }
     const std::string path = jsonGetString(req.body, "path");
     if (drive < 0 || drive >= DiskIICard::kDriveCount) {
         sendJsonError(fd, 400, "drive must be 0 or 1"); return;
@@ -1557,8 +1606,10 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
     // dropped instead: the wrong medium written back, and nothing to see.
     long slot  = -1;                     // -1 = "the bound Disk II card"
     long drive = 0;
-    jsonGetInt(req.body, "slot",  slot);
-    jsonGetInt(req.body, "drive", drive);
+    if (!jsonOptionalIntOk(req.body, "slot", slot) ||
+        !jsonOptionalIntOk(req.body, "drive", drive)) {
+        sendJsonError(fd, 400, "slot and drive must be integers"); return;
+    }
     if (drive < 0 || drive >= DiskIICard::kDriveCount) {
         sendJsonError(fd, 400, "drive must be 0 or 1"); return;
     }
@@ -1735,18 +1786,10 @@ void AiControlServer::handleSnapshotLoad(socket_t fd, const Request& req)
     // restoreMachineState(), so constructing it here and restoring under the
     // lock still put the disk read inside the critical section.
     std::vector<uint8_t> blob;
-    {
-        std::ifstream in(*safe, std::ios::binary);
-        if (!in) {
-            sendJsonError(fd, 400, "cannot read " + *safe);
-            return;
-        }
-        blob.assign(std::istreambuf_iterator<char>(in),
-                    std::istreambuf_iterator<char>());
-        if (!in && !in.eof()) {
-            sendJsonError(fd, 400, "read error on " + *safe);
-            return;
-        }
+    if (std::string readError;
+        !pom2::readSnapshotFileBytes(*safe, blob, readError)) {
+        sendJsonError(fd, 400, readError);
+        return;
     }
     SnapshotReader r(blob.data(), blob.size());
     if (!r.good()) { sendJsonError(fd, 400, "cannot read " + *safe + ": " + r.error()); return; }

@@ -275,22 +275,11 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 // (64 KiB MEM + a MEX section capped at 16 MiB) inside the
                 // critical section.
                 std::vector<uint8_t> blob;
-                {
-                    std::ifstream in(a.pathS, std::ios::binary);
-                    if (!in) {
-                        pom2::log().error("CLI",
-                            "--snapshot-load: cannot open " + a.pathS);
-                        ok = false;
-                        break;
-                    }
-                    blob.assign(std::istreambuf_iterator<char>(in),
-                                std::istreambuf_iterator<char>());
-                    if (!in && !in.eof()) {
-                        pom2::log().error("CLI",
-                            "--snapshot-load: read error on " + a.pathS);
-                        ok = false;
-                        break;
-                    }
+                if (std::string readError;
+                    !pom2::readSnapshotFileBytes(a.pathS, blob, readError)) {
+                    pom2::log().error("CLI", "--snapshot-load: " + readError);
+                    ok = false;
+                    break;
                 }
                 pom2::SnapshotReader r(blob.data(), blob.size());
                 if (!r.good()) {

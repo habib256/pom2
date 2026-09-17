@@ -5,6 +5,120 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-17 — Bug hunt: five reviewers, fifteen fixes
+
+Five reviewers each read one area: the //c change below, storage, machine
+state, the host-facing surfaces, and the peripherals. Every fix below has a
+test, and each test was checked against the old code (a mutation), except the
+3.5" mount race noted below.
+
+**Media**
+- **A host-folder volume reverted the user's host edit on the second flush.**
+  - The first flush preserved the file. The restamp that followed moved the
+    volume's stamp past the edit's mtime, so the next flush wrote the
+    mount-time copy over it.
+  - Preserved files now stay preserved for the whole mount
+    (`decodeVolumeToFolder`'s `stickyPreserved`, shared through
+    `Block512Backing::PreservedHostFiles`).
+- **"One image, one drive" also applies on the coordinator's own mount
+  commands.** These are Disk II, media bay, HDV and 3.5"; the Disk Library's
+  "insert only" and "next free unit" actions go through them, and they
+  mounted a second copy of an image already in another drive.
+- **The write-protect notch now reaches a mounted copy named by another
+  spelling of the same path.** Paths are compared with `fs::equivalent`. The
+  Library's relative path and an absolute mount used to differ as strings.
+- **A host 3.5" mount now waits for a firmware eject still being saved,**
+  as `eject35` already did.
+  - Mounting over it used to lose the writes when that save then failed.
+  - The test checks the resulting state. It cannot hold the write-back thread
+    open, so it cannot force the race itself.
+- **Ejecting a SmartPort 3.5" unit no longer writes 800 KB under the state
+  lock.** It now goes through the three-phase bay eject.
+
+**Machine state**
+- **A //c+ rewind kept the 3.5" disk position.** The MIG section re-points the
+  hub, and that re-anchored the IWM revolution as a live event. The IWM now
+  stays in restore mode across the whole trailer.
+- **The //c+ external-3.5" select is now saved** (`S35` tail on the MIG
+  section).
+- **The rewind ring is cleared under the state lock** in the profile switch and
+  in the slot rebuild.
+- **The Super Serial Card's receive latch is now saved.**
+
+**Host surfaces**
+- **AI server numbers:**
+  - `/mem`'s `addr` and `len` are decimal, or hex with `0x`, and must be whole
+    tokens. A leading 0 used to be read as octal.
+  - `jsonGetInt` no longer writes a partial number, and a malformed
+    `slot`/`drive`/`reset` now gets a 400.
+  - A chunked body, or a `Content-Length` that is not all digits, is refused.
+    A chunked soft reset used to run a hard reset.
+- **The AI server's 429 brake counts only native token guesses.** Refused
+  browser and rebound requests used to arm it, so any open web page could lock
+  the agent out.
+- **With `$POM2_AI_CONTROL_TOKEN` set, the AI Control panel says so.** It no
+  longer shows "open mode", and its field can no longer replace the secret.
+- **Snapshot loads (CLI and AI) read at most 64 MiB, and only from a regular
+  file.**
+- **`Settings::getFloat` refuses `nan` and `inf`.** They passed every clamp,
+  and `master_volume = nan` silenced the mixer and was saved back.
+
+**Peripherals**
+- **The Mouse Card's 68705 ran four times too fast.** The ratio is now 1:2,
+  and the VBL interrupt comes at 59.8 Hz instead of 240.
+- **The AY-3-8910 honours its mask-programmed chip-select nibble.** A `$1x`
+  address latch deselects the chip, as MAME's `m_active` does.
+
+**Checked and left alone**
+- **RamWorks on a ][+:** `setIIEMode(false)` already drops the backing (now
+  pinned by `profile_switch`).
+- **$C800 at reset:** MAME clears `m_cnxx_slot` only in `machine_start`, so the
+  current behaviour matches it.
+
+**Not done**
+- **The default slot-ROM read of a card with no ROM** (`$FF` rather than the
+  floating bus): MAME's default was not checked.
+- **SoftCard re-arm after a refused snapshot file:** only a crafted file
+  reaches it.
+- **Loading a snapshot file over mounted writable ProDOS media:** a warning at
+  most. It needs a real guest case first.
+
+## 2026-09-17 — The //c boots with no disk again; connectors match the hardware
+
+A //c or //c+ with no disk hung on a blank screen instead of printing
+"Check Disk Drive." (the //c+ ROM 5 prints "UNABLE TO FIND A BOOTABLE DISK
+ONLINE."). Two faults together:
+
+- **The //c read the //e's `slot_3_card`.** A Mockingboard in a //e's slot 3
+  (or 7) came along as a Mockingboard 4c into every //c. The //c's internal
+  connector now has its own key, `iic_expansion_card`, behind
+  `pom2::slotCardSettingKey`, used by every reader and writer of the slot
+  keys. Fitting and removing the 4c both persist. It accepts the plain
+  Mockingboard only: the real 4c has no speech chip.
+- **The 4c answered at $C400 from power-on.** On the //c ROM 0 that page is
+  the mouse firmware, and the boot code calls it. The real card (a CPLD in
+  the CPU socket) and MAME (`apple2e.cpp`, `m_mockingboard4c`) leave the page
+  to the ROM until a program writes there. POM2 now does the same
+  (`Memory::iicExpansionAwake_`, cleared on reset, saved in snapshots).
+  DIGIDREAM still finds its card, because it writes before it reads.
+  `iic_mockingboard_4c` pins both the sleep and the no-disk boot; with the
+  old routing put back, the test fails.
+
+The Slot Config connector list was checked against the machines and their
+ROM dumps:
+
+- The //e has cassette jacks. Only the //c dropped them.
+- The //c+ has mini-DIN-8 serial ports.
+- The //c+ internal drive is the 3.5". The 5.25" goes on the rear port.
+- The //c+ mouse firmware is at $C700. Its $C400 page is the
+  memory-expansion driver, so the CPU-socket board there is the 4c+.
+- The //c serial comment named a Zilog SCC; the chips are two 6551s.
+
+Also fixed: `profile_switch` failed about one run in eight on a loaded machine.
+The worker restarted by the switch could record a rewind frame before the test
+checked that the ring was empty. The test now pauses recording after its
+capture.
+
 ## 2026-09-17 — G5-6: a profile switch a test can drive
 
 The machine half of `MainWindow::applyProfile` moved to

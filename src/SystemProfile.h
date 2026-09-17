@@ -132,6 +132,14 @@ std::string_view profileKey(SystemProfile p);
 /// #10: Reload ROM used the //e slicing on a //c and rebooted into bank 1).
 bool profileUsesLowerRomHalf(SystemProfile p);
 
+/// The settings key that holds `slot`'s card under `cfg`: `slot_N_card`,
+/// except for the //c-class INTERNAL expansion connector (POM2 slot 3), which
+/// has its own key, `iic_expansion_card`. It used to share `slot_3_card` with
+/// the //e, so a //e with a Mockingboard in slot 3 put a Mockingboard 4c
+/// inside every //c the user switched to — and a 4c answering at $C400 from
+/// power-on kept the //c from reaching "Check Disk Drive." (2026-09-17).
+std::string slotCardSettingKey(const ProfileConfig& cfg, int slot);
+
 /// Should `slot_N_card` be persisted for `slot` holding `cardKey` under
 /// this profile? False for profile-forced slots: built-in cards, and —
 /// except for the user-pluggable "chatmauve" rear-connector adapter — the

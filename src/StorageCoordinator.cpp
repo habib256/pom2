@@ -48,6 +48,7 @@ namespace pom2 {
 
 namespace {
 
+
 SmartPortCard* smartPortAt(SlotBus& bus, int requestedSlot = -1)
 {
     if (requestedSlot >= 1 && requestedSlot < SlotBus::kSlotCount)
@@ -541,6 +542,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountDiskII(
                                 std::to_string(slot));
         writeBack = card->isWriteBackEnabled();
     }
+    if (pom2::imageMountedElsewhereAt(controller, slot, drive, path, result.error))
+        return result;
     sweepMountDirDebris(path);
     auto prepared = std::make_unique<DiskImage>();
     if (!DiskIICard::prepareDisk(path, writeBack, *prepared, result.error))
@@ -648,6 +651,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
     // Phase 1, NO lock: read the image. An HDV is up to 32 MiB and this ran
     // under stateMutex before — 25.8 ms with the machine and the window both
     // stopped, against a 20 ms PAL frame.
+    if (pom2::imageMountedElsewhereAt(controller, slot, bay, path, result.error))
+        return result;
     sweepMountDirDebris(path);
     // Still phase 1, still unlocked: the OUTGOING medium's write-back. See
     // flushOutgoingBay — the adopt below does it otherwise, under the lock.
@@ -1168,6 +1173,12 @@ StorageCoordinator::mountDisk35(
             if (cards.primarySmartPort)
                 smartPortSlot = cards.primarySmartPort->getSlot();
         }
+        // Target: the SmartPort unit, or else (slot -1) the on-board drive.
+        if (pom2::imageMountedElsewhereAt(controller, smartPortSlot, drive, path, result.error)) {
+            result.usesSmartPort = smartPortSlot >= 0;
+            result.bootSlot = smartPortSlot;
+            return result;
+        }
         if (smartPortSlot >= 0) {
             if (std::string flushError;
                 !flushOutgoingBay(controller, smartPortSlot, drive,
@@ -1226,34 +1237,23 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDisk35(
         return commandError("invalid 3.5-inch drive " +
                             std::to_string(drive + 1));
 
-    bool usesSmartPort = false;
     std::vector<SettingUpdate> updates;
+    int smartPortSlot = -1;
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
         if (cards.primarySmartPort) {
-            usesSmartPort = true;
-            auto* unit = dynamic_cast<SmartPort35Unit*>(
-                cards.primarySmartPort->unit(
-                    static_cast<std::size_t>(drive)));
-            if (!unit)
+            if (!dynamic_cast<SmartPort35Unit*>(cards.primarySmartPort->unit(
+                    static_cast<std::size_t>(drive))))
                 return commandError("SmartPort unit " +
                     std::to_string(drive + 1) +
                     " is not a 3.5-inch drive");
-            if (!unit->eject()) return commandError(unit->lastError());
-            (void)appendMediaBaySettingUpdates(
-                updates, *cards.primarySmartPort,
-                cards.primarySmartPort->getSlot(), drive,
-                autoHdvSlot_, autoSmartPortSlot_);
-            result.ok = true;
+            smartPortSlot = cards.primarySmartPort->getSlot();
         }
     }
-    if (usesSmartPort) {
-        if (result.ok) invalidateRewindForMediaChange(controller);
-        applySettingUpdates(settings, updates);
-        if (!updates.empty()) (void)settings.save();
-        return result;
-    }
+    // The bay command's three phases: unit->eject() saved 800 KB under the lock.
+    if (smartPortSlot >= 0)
+        return ejectMediaBay(controller, settings, smartPortSlot, drive);
 
     result.ok = controller.eject35(drive);
     {
@@ -1402,6 +1402,11 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
                 targetSlot = cards.preferredBlock()->getSlot();
             else if (cards.primarySmartPort)
                 targetSlot = cards.primarySmartPort->getSlot();
+        }
+        if (targetSlot >= 0 &&
+            pom2::imageMountedElsewhereAt(controller, targetSlot, targetBay, path, result.error)) {
+            result.bootSlot = targetSlot;
+            return result;
         }
         if (targetSlot >= 0) {
             if (std::string flushError;

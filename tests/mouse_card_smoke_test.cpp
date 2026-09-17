@@ -40,7 +40,7 @@
 //     every interrupt that was outstanding at snapshot time, and nothing
 //     re-arms it because the firmware only rewrites PB6 after the host
 //     services the request.
-//   * MCU pacing: the retired/budget cycle ratio converges on 2.0 over
+//   * MCU pacing: the retired/budget cycle ratio converges on 0.5 over
 //     many small per-instruction budgets. `M68705P3::run` finishes the
 //     instruction that straddles the budget edge, so the overshoot must
 //     be billed to the next tick (MAME's `m6805_base_device::execute_run`
@@ -48,6 +48,7 @@
 //     `cycles_running - m_icount`). Discarding it clocked the 68705
 //     26-50 % above its 2043600 Hz.
 
+#include "M6502.h"
 #include "MouseCard.h"
 #include "Memory.h"
 
@@ -58,6 +59,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 #include "TestTempPath.h"
@@ -325,21 +327,77 @@ void test_mcu_pacing_ratio()
     const double ratio = static_cast<double>(card.mcuCyclesRun()) /
                          static_cast<double>(budget);
     std::printf("  mouse MCU pacing: %llu MCU cycles / %llu CPU cycles"
-                " = %.6f (target 2.000000)\n",
+                " = %.6f (target 0.500000)\n",
                 static_cast<unsigned long long>(card.mcuCyclesRun()),
                 static_cast<unsigned long long>(budget), ratio);
     std::fflush(stdout);     // the assert below abort()s without flushing
-    if (std::fabs(ratio - 2.0) > 0.001) {
+    if (std::fabs(ratio - 0.5) > 0.001) {
         std::fprintf(stderr,
-            "MCU clocked at %.4fx the bus instead of 2.0x\n", ratio);
+            "MCU clocked at %.4fx the bus instead of 0.5x\n", ratio);
     }
-    assert(std::fabs(ratio - 2.0) <= 0.001);
+    assert(std::fabs(ratio - 0.5) <= 0.001);
 
     if (!tmpSlot.empty()) std::remove(tmpSlot.c_str());
     if (!tmpMcu.empty())  std::remove(tmpMcu.c_str());
 }
 
 }  // namespace
+
+// The rate the firmware's VBL-mode interrupt actually fires at (2026-09-17).
+// The Mouse Card has no VBL input on a ][+: the MCU times the 60 Hz itself,
+// so the MCU clock IS the interrupt rate. At the old 2:1 ratio this measured
+// 240 Hz. INITMOUSE, SETMOUSE $09 (on + VBL interrupt), then SERVEMOUSE on
+// every IRQ for four emulated seconds.
+void test_vbl_interrupt_rate()
+{
+    const std::string rom     = firstExisting({"roms/apple2p.rom"});
+    const std::string slotRom = firstExisting({"roms/mouse_341-0270-c.bin"});
+    const std::string mcuRom  = firstExisting({"roms/mouse_341-0269.bin"});
+    if (rom.empty() || slotRom.empty() || mcuRom.empty()) {
+        std::printf("  skip: VBL interrupt rate needs the ][+ and Mouse Card ROMs\n");
+        return;
+    }
+    Memory mem; M6502 cpu(&mem); mem.setCpu(&cpu);
+    assert(mem.loadAppleIIRom(rom.c_str()));
+    auto owned = std::make_unique<MouseCard>(4);
+    assert(owned->loadRoms(slotRom, mcuRom));
+    MouseCard* m = owned.get();
+    mem.slotBus().plug(4, std::move(owned));
+    cpu.setCpuMode(M6502::CpuMode::NMOS);
+    cpu.hardReset(); mem.slotBus().reset();
+    const auto entry = [&](int off) { return mem.memRead(static_cast<uint16_t>(0xC400 + off)); };
+    // SEI; LDX #$C4; LDY #$40; JSR $C4xx; NOP; JMP $0309
+    const auto call = [&](uint8_t e, uint8_t a) {
+        const uint8_t stub[] = {0x78, 0xA2, 0xC4, 0xA0, 0x40, 0x20, e, 0xC4,
+                                0xEA, 0x4C, 0x09, 0x03};
+        for (unsigned i = 0; i < sizeof(stub); ++i)
+            mem.memWrite(static_cast<uint16_t>(0x300 + i), stub[i]);
+        cpu.setAccumulator(a); cpu.setProgramCounter(0x300);
+        long spent = 0;
+        while (cpu.getProgramCounter() != 0x309 && spent < 2'000'000) spent += cpu.run(1);
+        assert(cpu.getProgramCounter() == 0x309 && "a Mouse Card entry never returned");
+        return spent;
+    };
+    (void)call(entry(0x19), 0x00);                  // INITMOUSE
+    (void)call(entry(0x12), 0x09);                  // SETMOUSE: on + VBL IRQ
+    const uint8_t serve = entry(0x13);
+    constexpr long kWindow = 1'022'727L * 4;
+    long total = 0;
+    int edges = 0;
+    while (total < kWindow) {
+        const uint8_t park[] = {0x78, 0x4C, 0x01, 0x03};  // SEI; JMP $0301
+        for (unsigned i = 0; i < sizeof(park); ++i)
+            mem.memWrite(static_cast<uint16_t>(0x300 + i), park[i]);
+        cpu.setProgramCounter(0x300);
+        while (!m->slotIrqAsserted() && total < kWindow) total += cpu.run(1);
+        if (total >= kWindow) break;
+        ++edges;
+        total += call(serve, 0x00);                 // SERVEMOUSE acks it
+    }
+    const double hz = edges / 4.0;
+    std::printf("  mouse VBL interrupt: %d in 4 s = %.1f Hz (target ~60)\n", edges, hz);
+    assert(hz > 50.0 && hz < 70.0);
+}
 
 int main()
 {
@@ -349,6 +407,7 @@ int main()
     test_signature_passes_through_to_slot_rom();
     test_pending_irq_survives_snapshot();
     test_mcu_pacing_ratio();
+    test_vbl_interrupt_rate();
 
     std::printf("OK mouse_card_smoke\n");
     return 0;

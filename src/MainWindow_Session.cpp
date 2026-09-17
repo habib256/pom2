@@ -256,7 +256,7 @@ void MainWindow::persistSession(bool flushMedia)
             // Profile-forced slots (built-ins / noPhysicalSlots) hold the
             // profile's value, not the user's — shared guard with the Slot
             // Config Apply button (pom2::slotKeyIsUserChoice).
-            const std::string key = "slot_" + std::to_string(s) + "_card";
+            const std::string key = pom2::slotCardSettingKey(cfg, s);
             const std::string saved = settings->getString(key, "");
             // A slot the single-instance policy EMPTIED (the same card asked
             // for twice) reads back as "" in the plan while the saved key

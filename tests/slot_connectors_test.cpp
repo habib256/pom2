@@ -129,7 +129,7 @@ int main()
         checkNoSlotIsListedTwice(l, "II+");
     }
 
-    // ── //e Enhanced PAL : bus + the AUX connector, no cassette ──────────
+    // ── //e Enhanced PAL : bus + the AUX connector + cassette jacks ──────
     {
         const Layout l = layoutFor(pom2::SystemProfile::AppleIIePAL);
         check(titles(l) == std::vector<std::string>{
@@ -142,7 +142,7 @@ int main()
         for (const auto& s : l)
             for (const auto& r : s.rows)
                 if (r.label.find("Cassette") != std::string::npos) cassette = true;
-        check(!cassette, "//e: no cassette jacks (the //e dropped them)");
+        check(cassette, "//e: the cassette jacks are listed (only the //c dropped them)");
         checkNoSlotIsListedTwice(l, "//e");
     }
 
@@ -174,8 +174,7 @@ int main()
         check(header && header->kind == pom2::ConnectorKind::InternalHeader,
               "//c: slot 3 is the internal expansion header");
         check(header && header->accepts ==
-                            std::vector<std::string>{"", "mockingboard",
-                                                     "mockingboard_c"},
+                            std::vector<std::string>{"", "mockingboard"},
               "//c: the header accepts the Mockingboard 4c only");
 
         // The serial ports and the disk port are named, not numbered.
@@ -206,6 +205,21 @@ int main()
         check(!hasKind(l, pom2::ConnectorKind::ExpansionSlot),
               "//c+: not one expansion slot is offered");
         check(countRows(l) > 0, "//c+: the inventory is not empty");
+        // The //c+'s internal drive is the 3.5" (slot 5); the 5.25" hangs
+        // off the rear disk port (slot 6) — the reverse of the //c.
+        const auto* internal = rowForSlot(l, 5);
+        check(internal && internal->kind == pom2::ConnectorKind::BuiltIn &&
+                  internal->label.find("3.5") != std::string::npos,
+              "//c+: the internal drive is the 3.5\"");
+        const auto* rear = rowForSlot(l, 6);
+        check(rear && rear->label.find("DB-19") != std::string::npos,
+              "//c+: the 5.25\" goes on the rear disk port");
+        const auto* s1 = rowForSlot(l, 1);
+        check(s1 && s1->label.find("mini-DIN-8") != std::string::npos,
+              "//c+: the serial ports are mini-DIN-8");
+        const auto* hdr = rowForSlot(l, 3);
+        check(hdr && hdr->label.find("4c+") != std::string::npos,
+              "//c+: the CPU-socket card is the 4c+");
         checkNoSlotIsListedTwice(l, "//c+");
     }
 
@@ -232,14 +246,13 @@ int main()
         check(pom2::pendingChangeCount(iic, iicDraft, iicLive, "", "", -1, 1) == 0,
               "a built-in row never makes Apply offer a cold boot");
 
-        // Hunt #21: unplugging the 4c is a change Apply will not persist
-        // (`slotKeyIsUserChoice` refuses "" over a saved mockingboard).
-        // Counting it armed Apply, cold-booted, and put the card back.
+        // Unplugging the 4c is a real change since the header got its own
+        // settings key (`iic_expansion_card`): Apply persists it.
         std::array<std::string, 8> mbLive{}, mbDraft{};
         mbLive[3]  = "mockingboard";
         mbDraft[3] = "";
-        check(pom2::pendingChangeCount(iic, mbDraft, mbLive, "", "", -1, 1) == 0,
-              "unplugging the 4c does not arm Apply");
+        check(pom2::pendingChangeCount(iic, mbDraft, mbLive, "", "", -1, 1) == 1,
+              "unplugging the 4c arms Apply");
         mbDraft[3] = "mockingboard";
         mbLive[3]  = "";
         check(pom2::pendingChangeCount(iic, mbDraft, mbLive, "", "", -1, 1) == 1,

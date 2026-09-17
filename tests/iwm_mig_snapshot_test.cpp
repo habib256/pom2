@@ -39,14 +39,22 @@
 //      crafted blob restore 0x7FF and index up to 0x81E, 31 bytes past the
 //      array and over migPage_ / migIntDrive_ / migHdSel_ / iwm_ / hub_.
 
+#include "Disk35Image.h"
+#include "DiskIICard.h"
 #include "IWMDevice.h"
+#include "M6502.h"
 #include "Memory.h"
 #include "MemoryProfile_IIcClass.h"
+#include "ResourcePaths.h"
+#include "SmartPortHub.h"
+#include "Sony35Drive.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -132,7 +140,7 @@ void testMemoryTrailerCarriesIwm()
     // Backward compatibility: lop the length-prefixed trailer off
     // entirely, computing its true size from the sections a blob of this
     // configuration carries — IWM (4-byte length + payload), profile
-    // (4 + 0, no //c profile here), the paging/IOU flags (4 + 10), the
+    // (4 + 0, no //c profile here), the paging/IOU flags (4 + 11), the
     // No-Slot Clock (4 + 0, none wired here) and the two on-board Sony 3.5"
     // mechanisms (4 + 0 each, no SmartPortHub here), then the native //c
     // mouse (4 + 0, no mouse here).
@@ -141,14 +149,15 @@ void testMemoryTrailerCarriesIwm()
     // vblIrqMask, vblIrqPending, then AN0/AN1/AN2 (AN2 selects the live 4 KB
     // half of an 8 KB international char ROM), then vblWasActive (the VBL
     // edge detector), iicCardWindow_ (the //c $C800 window latch) and the
-    // $C800 expansion-window owner (bug hunt #13).
+    // $C800 expansion-window owner (bug hunt #13). 11 since 2026-09-17: the
+    // //c Mockingboard 4c wake latch.
     //
     // A fixed "-8" bit-rotted the moment a third section was added: it
     // only removed the newest section and the "old blob" kept restoring
     // the IWM. Keep this sum in step with Memory::appendSnapshotState.
     std::vector<uint8_t> iwmBlob;
     iwm.appendSnapshotState(iwmBlob);
-    const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 10)
+    const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 11)
                             + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0);
     pom2::IWMDevice iwm3;
     Memory mem3;
@@ -235,20 +244,21 @@ void testRomBankRoundTrip()
     std::vector<uint8_t> altBank(0x4000, 0xEE);
     constexpr size_t kMigBytes = 4 + 2 + 0x800;   // magic + page + RAM
     constexpr size_t kTail     = 3;               // romBank + intDrive + hdSel
+    constexpr size_t kSel35    = 4;               // "S35" + external select
 
     IIcClassProfile a(payload.data(), payload.size(), altBank.data(),
                             nullptr, nullptr, true);
     a.romBankToggle();                            // → bank 1
     std::vector<uint8_t> blobA;
     a.appendSnapshotState(blobA);
-    assert(blobA.size() == kMigBytes + kTail);
+    assert(blobA.size() == kMigBytes + kTail + kSel35);
     assert(blobA[kMigBytes] == 1);                // romBank serialized
 
     // Round-trip into a fresh (bank 0) profile.
     IIcClassProfile b(payload.data(), payload.size(), altBank.data(),
                             nullptr, nullptr, true);
     assert(b.loadSnapshotState(blobA.data(), blobA.size()) ==
-           kMigBytes + kTail);
+           kMigBytes + kTail + kSel35);
     std::vector<uint8_t> blobB;
     b.appendSnapshotState(blobB);
     assert(blobB == blobA);                       // bank 1 came across
@@ -267,6 +277,74 @@ void testRomBankRoundTrip()
     std::printf("  ok: romBank ($C028) round-trips; old blobs keep live bank\n");
 }
 
+// The external-3.5" select travels too (2026-09-17). A bank-0 return clears
+// it, so a rewind taken during an external 3.5" read came back routed to the
+// 5.25" drive.
+void testSel35RoundTrip()
+{
+    std::vector<uint8_t> payload(0x4000, 0x00);
+    payload[0x3bbf] = 0x05;                       // //c+ — the MIG is live
+    std::vector<uint8_t> altBank(0x4000, 0xEE);
+    pom2::SmartPortHub hub;
+    IIcClassProfile p(payload.data(), payload.size(), altBank.data(),
+                      nullptr, &hub, true);
+    p.romBankToggle();                            // MIG writes need bank 1
+    p.internalRomWrite(0xCE60, 0);                // m_35sel = true
+    assert(hub.mig35Sel());
+    std::vector<uint8_t> blob;
+    p.appendSnapshotState(blob);
+    p.internalRomWrite(0xCE40, 0);                // later: m_35sel = false
+    assert(!hub.mig35Sel());
+    assert(p.loadSnapshotState(blob.data(), blob.size()) == blob.size());
+    assert(hub.mig35Sel() && "the external-3.5-inch select was not restored");
+    std::printf("  ok: the external-3.5\" select round-trips\n");
+}
+
+// A restore must not re-anchor the 3.5" revolution when the MIG section
+// re-points the hub (2026-09-17). The IWM section put `revStart35_` back, and
+// the MIG push that followed — the live machine had deselected the internal
+// drive — attached it again as a LIVE event, anchoring the surface at "now".
+void testRestoreKeepsTheRevolution()
+{
+    const std::string rom  = pom2::findResource("roms/apple2cp.rom");
+    const std::string disk = pom2::findResource("disks_3.5/A2DeskTop-1.5-en_800k.2mg");
+    if (rom.empty() || disk.empty()) {
+        std::printf("  skip: needs roms/apple2cp.rom and the A2DeskTop 800K image\n");
+        return;
+    }
+    Memory mem; M6502 cpu(&mem); mem.setCpu(&cpu);
+    pom2::IWMDevice iwm; pom2::SmartPortHub hub;
+    pom2::Disk35Image imgInt, imgExt; pom2::Sony35Drive drvInt, drvExt;
+    drvInt.setImage(&imgInt); drvExt.setImage(&imgExt);
+    hub.attach(&iwm); hub.setSony35(&drvInt, &drvExt);
+    mem.setIWM(&iwm); mem.setSmartPortHub(&hub);
+    mem.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+    mem.setIIEMode(true); mem.clearRam(); mem.resetSoftSwitches();
+    assert(mem.loadAppleIIRom(rom.c_str(), true));
+    imgInt.setWriteBackEnabled(false);            // tracked image: never written
+    assert(imgInt.loadFile(disk));
+    drvInt.notifyMediaChange();
+    cpu.setCpuMode(M6502::CpuMode::CMOS); cpu.hardReset();
+    std::vector<uint8_t> memBlob, iwmBlob;
+    for (long total = 0; total < 60'000'000 && memBlob.empty(); ) {
+        total += cpu.run(4096);
+        iwm.tick(mem.getCycleCounter());
+        if (hub.active35() == &drvInt && iwm.isActive() && total > 5'000'000) {
+            mem.appendSnapshotState(memBlob);
+            iwm.appendSnapshotState(iwmBlob);
+        }
+    }
+    assert(!memBlob.empty() && "the //c+ never read its internal 3.5-inch drive");
+    for (int i = 0; i < 50; ++i) { cpu.run(4096); iwm.tick(mem.getCycleCounter()); }
+    hub.setMigIntDrive(false);                    // the later timeline
+    assert(mem.loadSnapshotState(memBlob.data(), memBlob.size()));
+    std::vector<uint8_t> after;
+    iwm.appendSnapshotState(after);
+    assert(after == iwmBlob && "the restore moved the 3.5-inch revolution anchor");
+    assert(hub.active35() == &drvInt);
+    std::printf("  ok: a restore keeps the 3.5\" revolution across a hub change\n");
+}
+
 }  // namespace
 
 int main()
@@ -276,6 +354,8 @@ int main()
     testMemoryTrailerCarriesIwm();
     testMigPageMasked();
     testRomBankRoundTrip();
+    testSel35RoundTrip();
+    testRestoreKeepsTheRevolution();
     std::printf("PASS\n");
     return 0;
 }

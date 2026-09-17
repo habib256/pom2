@@ -20,6 +20,7 @@
 #include "PersistentFs.h"
 #include "ResourcePaths.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -340,7 +341,10 @@ float Settings::getFloat(const std::string& key, float def) const
     try {
         size_t idx = 0;
         const float v = std::stof(it->second, &idx);
-        return fullyConsumed(it->second, idx) ? v : def;
+        // `nan` and `inf` parse, and pass every downstream `<`/`>` clamp and
+        // `std::clamp`: `master_volume = nan` silenced the mixer and was
+        // saved back on quit (bug hunt 2026-09-17).
+        return fullyConsumed(it->second, idx) && std::isfinite(v) ? v : def;
     } catch (...) { return def; }
 }
 

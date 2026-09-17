@@ -300,9 +300,9 @@ void MainWindow::renderSlotConfigPanel()
             //
             // The disagreement is legitimate and permanent, not a stale
             // state.cfg: on a //c `SlotConfigurationCoordinator::resolve()`
-            // keeps `chatmauve` and the Mockingboard 4c in WHATEVER slot the
-            // user parked them ("just where the user parked it"), while this
-            // table pins the DB-15 to row 7 and the internal header to row 3.
+            // keeps `chatmauve` in WHATEVER free slot the user parked it,
+            // while this table pins the DB-15 to row 7 (the 4c is read on
+            // row 3 only since it got its own key).
             const bool outOfPlace =
                 !row.accepts.empty() &&
                 std::find(row.accepts.begin(), row.accepts.end(),
@@ -414,7 +414,9 @@ void MainWindow::renderSlotConfigPanel()
                     draft[s] = bis.cardKey;
                     char preview[128];
                     std::snprintf(preview, sizeof(preview), "%s — %s",
-                                  cardLabel(bis.cardKey), bis.label.c_str());
+                                  cardLabel(bis.cardKey),
+                                  row.note.empty() ? bis.label.c_str()
+                                                   : row.note.c_str());
                     ImGui::BeginDisabled(true);
                     slotLabel(row.label.c_str());
                     ImGui::TextUnformatted(preview);
@@ -677,7 +679,7 @@ void MainWindow::renderSlotConfigPanel()
             std::array<std::string, 8> previous{};
             std::array<bool, 8> changed{};
             for (int s = 1; s <= 7; ++s) {
-                const std::string key = "slot_" + std::to_string(s) + "_card";
+                const std::string key = pom2::slotCardSettingKey(profileCfg, s);
                 if (!pom2::slotKeyIsUserChoice(profileCfg, s, draft[s],
                                                settings->getString(key, "")))
                     continue;
@@ -705,7 +707,7 @@ void MainWindow::renderSlotConfigPanel()
             if (!settings->save()) {
                 for (int s = 1; s <= 7; ++s) {
                     if (changed[s]) settings->setString(
-                        "slot_" + std::to_string(s) + "_card", previous[s]);
+                        pom2::slotCardSettingKey(profileCfg, s), previous[s]);
                 }
                 if (cmVariantChanged)
                     settings->setString("chatmauve_variant", prevCmVariant);
@@ -720,7 +722,7 @@ void MainWindow::renderSlotConfigPanel()
                 // applied silently on the next launch.
                 for (int s = 1; s <= 7; ++s) {
                     if (changed[s]) settings->setString(
-                        "slot_" + std::to_string(s) + "_card", previous[s]);
+                        pom2::slotCardSettingKey(profileCfg, s), previous[s]);
                 }
                 if (cmVariantChanged)
                     settings->setString("chatmauve_variant", prevCmVariant);
@@ -1557,7 +1559,6 @@ bool MainWindow::restartEmulationTransaction()
     // every bank with the 00/FF pattern. Doing it after `coldBoot()`
     // (hunt #21's first pass) left $C073 working but banks 1+ as zeros.
     {
-        const auto cfg = pom2::profileConfig(activeProfile);
         if (activeProfile == pom2::SystemProfile::AppleIIe ||
             activeProfile == pom2::SystemProfile::AppleIIeUnenhanced ||
             activeProfile == pom2::SystemProfile::AppleIIePAL ||
@@ -1565,7 +1566,7 @@ bool MainWindow::restartEmulationTransaction()
             const int banks = settings->getInt("ramworks_banks", 1);
             st.memory().setRamWorksBanks(
                 static_cast<uint32_t>(banks > 0 ? banks : 1));
-        } else if (cfg.iieMode) {
+        } else if (pom2::profileConfig(activeProfile).iieMode) {
             st.memory().setRamWorksBanks(1);
         }
     }

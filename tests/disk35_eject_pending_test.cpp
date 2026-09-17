@@ -98,6 +98,43 @@ int main()
         }
     }
 
+    // A host MOUNT over a queued firmware eject (2026-09-17): the same hole
+    // from the other side. The medium looked clean, so disk B replaced it
+    // with no flush, and when the queued commit then failed its completion
+    // found another disk in the bay — the writes were dropped.
+    {
+        const fs::path other = fs::temp_directory_path() / "pom2_eject_pending_other.po";
+        {
+            std::vector<char> bytes(pom2::Disk35Image::kBytesPerImage, 0x22);
+            std::ofstream f(other, std::ios::binary | std::ios::trunc);
+            f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            auto st = controller.lockState();
+            pom2::Sony35Drive& drive = controller.sony35Internal();
+            drive.seekPhaseW(0x07, 0);
+            drive.seekPhaseW(0x0F, 0);
+            assert(drive.isEjectPending() && "the firmware eject is queued again");
+        }
+        const bool mounted = controller.mount35(0, other.string());
+        controller.drainDeferredWriteBacks();
+        {
+            auto st = controller.lockState();
+            pom2::Disk35Image& image = controller.disk35Internal();
+            if (mounted || !image.isLoaded() || image.path() != po.string() ||
+                !image.hasUnsavedChanges()) {
+                std::printf("FAIL: mounted=%d path=%s dirty=%d — a host mount "
+                            "overtook a failing firmware eject\n",
+                            int(mounted), image.path().c_str(),
+                            int(image.hasUnsavedChanges()));
+                fs::remove(other, ec);
+                cleanup();
+                return 1;
+            }
+        }
+        fs::remove(other, ec);
+    }
+
     // Fix the cause: the retry saves and ejects.
     fs::permissions(dir, fs::perms::owner_write, fs::perm_options::add, ec);
     assert(controller.eject35(0));
@@ -110,6 +147,6 @@ int main()
                    bytes[4 * pom2::Disk35Image::kBlockBytes]) == 0x9B);
     }
     cleanup();
-    std::puts("OK: a host eject waits for the firmware eject's commit");
+    std::puts("OK: a host eject or mount waits for the firmware eject's commit");
     return 0;
 }

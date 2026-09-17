@@ -39,6 +39,8 @@
 #include <filesystem>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -179,6 +181,10 @@ public:
         std::shared_ptr<CommitBarrier> barrier;
         ~CommitTicket() { if (barrier) barrier->complete(); }
     };
+    struct PreservedHostFiles {
+        std::mutex            mutex;
+        std::set<std::string> paths;
+    };
     struct PendingWriteBack {
         // Preserve capture order even when an eject overtakes an autosave
         // worker. Abandoning a payload releases its successor without reordering.
@@ -200,6 +206,10 @@ public:
         /// silently reverting them to the snapshot's stale copy.
         bool                  hasMountTime = false;
         std::filesystem::file_time_type mountTime{};
+        /// Synth case: the mount's set of preserved host files, shared
+        /// with the backing so a preservation outlives the pass (see
+        /// `decodeVolumeToFolder`'s `stickyPreserved`).
+        std::shared_ptr<PreservedHostFiles> preserved;
     };
 
     /// Phase 1, to be called WITH `stateMutex` held: MOVE out exactly what
@@ -359,6 +369,7 @@ private:
     /// PendingWriteBack::mountTime).
     bool    hasMountTime_      = false;
     std::filesystem::file_time_type mountTime_{};
+    std::shared_ptr<PreservedHostFiles> preserved_;
     std::string hostFolder_;
     std::string path_;
     std::string lastError_;

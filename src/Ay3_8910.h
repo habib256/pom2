@@ -61,7 +61,13 @@ struct Ay3_8910
     static constexpr uint8_t kPbBitReset = 0x04;
 
     uint8_t regs[kAyNumRegs] = {0};
+    /// Low nibble: the register latch. Bit 7 (`kDeselected`): the last
+    /// address latched had a non-zero high nibble, so the chip is not
+    /// selected — the AY-3-8910's mask-programmed 4-bit code is 0000 (GI
+    /// datasheet; MAME `ay8910_write_ym`, `m_active`). Kept in this byte so
+    /// the snapshot layout does not move; every user masks with 0x0F.
     uint8_t latchedAddr = 0;
+    static constexpr uint8_t kDeselected = 0x80;
 
     // PB control state captured on the last VIA strobe — for transition
     // detection in applyControl.
@@ -148,10 +154,18 @@ struct Ay3_8910
         switch (cmd) {
         case 0b11:    // LATCH ADDR
             if (edge) ++latchCount;
-            latchedAddr = static_cast<uint8_t>(pa & 0x0F);
+            // A high nibble other than 0 deselects the chip and leaves the
+            // register latch alone (MAME keeps m_register_latch). A stray
+            // $1x latch used to select register x and the next data byte
+            // landed in it as a note (bug hunt 2026-09-17).
+            if ((pa >> 4) == 0)
+                latchedAddr = static_cast<uint8_t>(pa & 0x0F);
+            else
+                latchedAddr = static_cast<uint8_t>((latchedAddr & 0x0F) | kDeselected);
             break;
         case 0b10:    // WRITE
             if (edge) ++writeStrobeCount;
+            if (latchedAddr & kDeselected) break;
             regs[latchedAddr & 0x0F] = pa;
             result = ApplyResult::Wrote;
             break;
@@ -177,7 +191,9 @@ struct Ay3_8910
                     0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F, 0xFF, 0xFF,
                 };
                 const uint8_t r = latchedAddr & 0x0F;
-                busOut = regs[r] & kReadMask[r];
+                // Deselected, the bus floats high (MAME: 0xff).
+                busOut = (latchedAddr & kDeselected) ? 0xFF
+                                                     : regs[r] & kReadMask[r];
             }
             result = ApplyResult::Read;
             break;

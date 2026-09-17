@@ -160,6 +160,9 @@ public:
     void setIicSmartPortArmed(bool on) { iicSmartPortArmed_ = on;
                                          iicCardWindow_ = false; }
     bool iicSmartPortArmed() const     { return iicSmartPortArmed_; }
+    /// Whether a card on the //c internal expansion connector has been woken
+    /// by a write into its page (see iicExpansionAwake_).
+    bool iicExpansionAwake() const     { return iicExpansionAwake_; }
 
     /// Apple II expansion bus — slots 0-7. Cards plug directly via the
     /// SlotBus. Memory routes $C080-$CFFF accesses through it.
@@ -1096,6 +1099,10 @@ private:
 
     // //c-class on-board SmartPort ROM-exposure gate (see setIicSmartPortArmed).
     bool iicSmartPortArmed_ = false;
+    /// //c-class internal expansion connector: has the program written into
+    /// the card's page yet? Until it has, reads there stay the machine's own
+    /// firmware (MAME `m_mockingboard4c`). Cleared by every reset.
+    bool iicExpansionAwake_ = false;
     /// //c-classe : le flux d'execution est-il "chez" la carte percee ?
     /// Ouvert par un fetch dans sa page $C5xx, referme par tout acces
     /// $C0xx hors de son device-select. Gouverne le perçage $C800-$CFFE.

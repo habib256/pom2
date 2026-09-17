@@ -34,6 +34,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -684,6 +685,28 @@ static void testHostNewerFilePreserved()
     assert(r.filesSkipped >= 1);
     assert(slurp(dir / "NOTES.txt") == "newer" &&
            "write-back reverted a host-newer file to the mount snapshot");
+
+    // The SECOND flush of the same mount (2026-09-17). The caller restamps
+    // the volume with `completedAt`, which is later than the user's edit, so
+    // the mtime test alone lets the stale copy through. The sticky set is
+    // what keeps the file preserved for the rest of the mount.
+    {
+        std::set<std::string> sticky;
+        auto p1 = pom2::decodeVolumeToFolder(img, dir.string(), &newerThan, &sticky);
+        assert(p1.ok && p1.filesSkipped >= 1 && sticky.size() == 1);
+        const auto restamp = p1.completedAt;
+        auto p2 = pom2::decodeVolumeToFolder(img, dir.string(), &restamp, &sticky);
+        assert(p2.ok && p2.filesSkipped >= 1);
+        assert(slurp(dir / "NOTES.txt") == "newer" &&
+               "the second flush reverted a host edit the first one preserved");
+        // Control: without the set, the restamped pass does revert it —
+        // this is the defect the set exists for.
+        writeFile(dir / "NOTES.txt", {'n', 'e', 'w', 'e', 'r'});
+        const auto late = fs::last_write_time(dir / "NOTES.txt") + std::chrono::hours(1);
+        auto p3 = pom2::decodeVolumeToFolder(img, dir.string(), &late);
+        assert(p3.ok && slurp(dir / "NOTES.txt") == "old");
+        writeFile(dir / "NOTES.txt", {'n', 'e', 'w', 'e', 'r'});
+    }
 
     // Legacy callers (no stamp) keep the overwrite-everything behaviour.
     r = pom2::decodeVolumeToFolder(img, dir.string(), nullptr);

@@ -1131,6 +1131,9 @@ void SuperSerialCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(extraStop_ ? 1 : 0);
     out.push_back(baudIndex_);
     out.push_back(irqState_.load());
+    // Appended 2026-09-17: the receive latch. A re-read of RDR with an empty
+    // ring returns it, so a rewind kept the LIVE session's last byte.
+    out.push_back(rdrLatch_);
 }
 
 void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -1166,6 +1169,7 @@ void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     irqState_.store(static_cast<uint8_t>(
         data[p++] & (IRQ_DCD | IRQ_DSR | IRQ_RDRF | IRQ_TDRE)));
     irqLineDirty_.store(true);   // CPU thread re-drives the line
+    if (len > p) rdrLatch_ = data[p++];   // absent in blobs before 2026-09-17
 
     // DERIVED from the restored cmdReg, like rxIrqEnable_ is serialised —
     // without it the transmit-interrupt gate keeps the LIVE session's value.

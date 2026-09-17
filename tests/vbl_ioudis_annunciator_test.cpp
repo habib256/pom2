@@ -83,7 +83,7 @@ void advance(Memory& mem, uint64_t cycles)
 // assumed. It is also no longer the tail: four more optional length-prefixed
 // sections follow it (the No-Slot Clock and the two on-board Sony 3.5"
 // mechanisms, then the native //c mouse), each empty on a bare Memory.
-constexpr size_t kIouSectionLen  = 10;   // the $C800 owner joined on 2026-09-09
+constexpr size_t kIouSectionLen  = 11;   // the 4c wake latch joined on 2026-09-17
 constexpr size_t kEmptyTailCount = 4;
 
 uint8_t iouByte(Memory& mem, size_t index)

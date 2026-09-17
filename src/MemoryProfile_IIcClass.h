@@ -82,6 +82,7 @@ private:
     uint16_t migPage_     = 0;
     bool     migIntDrive_ = false;
     bool     migHdSel_    = false;
+    bool     mig35Sel_    = false;   // $C240/$C260 — the hub's sel35_, saved
 
     pom2::IWMDevice*    iwm_ = nullptr;
     pom2::SmartPortHub* hub_ = nullptr;

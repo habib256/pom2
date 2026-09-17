@@ -137,10 +137,14 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
 {
     effectivePlan_.fill({});
     dedupCleared_.fill({});
+    const auto& profileCfg = profileConfig(profile);
     for (int slot = 1; slot <= 7; ++slot) {
-        const std::string key = "slot_" + std::to_string(slot) + "_card";
+        // slotCardSettingKey: the //c's internal header is not the //e's
+        // slot 3, and must not inherit its card.
+        const std::string key = slotCardSettingKey(profileCfg, slot);
+        const bool ownKey = key.rfind("slot_", 0) != 0;
         effectivePlan_[slot] = settings.getString(
-            key, std::string(kDefaultCards[slot]));
+            key, ownKey ? std::string() : std::string(kDefaultCards[slot]));
     }
 
     // Compatibility with the old clock checkbox. An explicit per-slot value
@@ -185,13 +189,14 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
         }
 
         // The Mockingboard 4c is the other card a slotless machine can
-        // carry: it plugs into the //c's INTERNAL expansion connector and
-        // answers at $C400-$C4FF (`SlotPeripheral::iicRomWindowPage`), so
-        // the virtual slot row it sits on is just where the user parked it —
-        // the machine's own IOU mouse keeps slot 4. DIGIDREAM, a "SPECIAL
-        // IIc/MB4C" release in the corpus, prints "KO" and spins without one.
-        if (effectivePlan_[slot] == "mockingboard" ||
-            effectivePlan_[slot] == "mockingboard_c") {
+        // carry: it sits in the //c's CPU socket and answers at $C400-$C4FF
+        // once written to (`SlotPeripheral::iicRomWindowPage`,
+        // `Memory::iicExpansionAwake_`); the machine's own IOU mouse keeps
+        // slot 4. POM2 holds it on virtual slot 3 only, read from
+        // `iic_expansion_card` — a //e's Mockingboard in slot 3 or 7 used to
+        // come along into every //c. DIGIDREAM, a "SPECIAL IIc/MB4C" release
+        // in the corpus, prints "KO" and spins without one.
+        if (slot == 3 && effectivePlan_[slot] == "mockingboard") {
             log().info("Slots",
                 "Slot " + std::to_string(slot) +
                 " = Mockingboard 4c (internal expansion connector, $C400) on " +

@@ -10,7 +10,10 @@
 #
 # Scans `get|set{String,Bool,Int,Float,Double}("literal"` under src/. A key
 # built at run time is seen by its literal prefix only, so the prefixes
-# below are declared on both sides. Anything else that is deliberately
+# below are declared on both sides. The slot-card keys (`slot_<N>_card`,
+# `iic_expansion_card`) come from `pom2::slotCardSettingKey` and are read
+# and written only through it, so no literal of theirs is left to scan.
+# Anything else that is deliberately
 # one-sided goes in ALLOW with its reason.
 #
 # Usage: tools/check_settings_keys.sh [--self-test]
@@ -22,7 +25,6 @@ export LC_ALL=C
 ALLOW=$(cat <<'LIST'
 clock_card_enable          legacy key, read once to migrate to slot_N_card
 slot_4_card                legacy key, read by the clock-card migration
-slot_                      prefix: slot_<N>_card, written by the slot config
 disk_writeback_slot        prefix: disk_writeback_slot<N>, read by the notch migration
 ethernet_backend           hand-edited: slirp | loopback | none (DEV § Network backends)
 uthernet_allow_loopback    hand-edited opt-in to reach the host loopback (CLAUDE.md)

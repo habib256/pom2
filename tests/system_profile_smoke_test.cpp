@@ -671,12 +671,26 @@ void testSlotKeyIsUserChoice()
     assert(pom2::slotKeyIsUserChoice(iie, 4, "", "mockingboard"));
     // //c built-in slots (sl6 Disk II): never persisted.
     assert(!pom2::slotKeyIsUserChoice(iic, 6, "diskii", ""));
-    // //c virtual connector: chatmauve persists in BOTH directions…
-    assert(pom2::slotKeyIsUserChoice(iic, 3, "chatmauve", ""));
-    assert(pom2::slotKeyIsUserChoice(iic, 3, "", "chatmauve"));
+    // //c rear DB-15 (virtual slot 7): chatmauve persists in BOTH directions…
+    assert(pom2::slotKeyIsUserChoice(iic, 7, "chatmauve", ""));
+    assert(pom2::slotKeyIsUserChoice(iic, 7, "", "chatmauve"));
     // …but the force-emptied "" never clobbers a saved //e card.
-    assert(!pom2::slotKeyIsUserChoice(iic, 3, "", "mockingboard"));
-    assert(!pom2::slotKeyIsUserChoice(iic, 3, "", ""));
+    assert(!pom2::slotKeyIsUserChoice(iic, 7, "", "mockingboard"));
+    assert(!pom2::slotKeyIsUserChoice(iic, 7, "", ""));
+    assert(!pom2::slotKeyIsUserChoice(iic, 2, "", "mockingboard"));
+    // The //c internal expansion connector (virtual slot 3) has its OWN key,
+    // so it persists both ways and never touches the //e's slot_3_card —
+    // that shared key is how a //e Mockingboard landed inside every //c.
+    assert(pom2::slotCardSettingKey(iic, 3) == "iic_expansion_card");
+    assert(pom2::slotCardSettingKey(iie, 3) == "slot_3_card");
+    assert(pom2::slotCardSettingKey(iic, 7) == "slot_7_card");
+    const auto& iicp = pom2::profileConfig(pom2::SystemProfile::AppleIIcPlus);
+    assert(pom2::slotCardSettingKey(iicp, 3) == "iic_expansion_card");
+    assert(pom2::slotKeyIsUserChoice(iic, 3, "mockingboard", ""));
+    assert(pom2::slotKeyIsUserChoice(iic, 3, "", "mockingboard"));
+    // The 4c is a PSG board: no Sound II (SSI263) variant on that header.
+    assert(!pom2::slotKeyIsUserChoice(iic, 3, "mockingboard_c", ""));
+    assert(!pom2::slotKeyIsUserChoice(iic, 3, "chatmauve", ""));
 }
 
 // Theme 12 (IOUDIS): MAME `apple2e.cpp:1224` initialises to true; on

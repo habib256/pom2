@@ -371,11 +371,18 @@
 #     builds with -Werror (TODO G5-14). No code change; bench_identity holds.
 #   src/StorageCoordinator.cpp   2532 -> 2320 (-212)  the pure capture/persist
 #     half moved to StorageCoordinator_Persist.cpp (TODO G5-4).
+#
+# 2026-09-17 (bug hunt, five Opus reviewers): one raised, by the call sites
+# only. The one-image-one-drive check for the coordinator's own mount
+# commands lives in MediaMount.cpp (`imageMountedElsewhereAt`); what stays
+# here is the four calls that refuse before phase 1, and the 3.5" eject now
+# delegates to the three-phase bay eject.
+#   src/StorageCoordinator.cpp   2320 -> 2325 (+5)
 src/Apple2Display.cpp                    2522
 src/DiskIICard.cpp                       2140
 src/DiskImage.cpp                        3284
 src/ImageWriter.cpp                      2798
 src/M6502.cpp                            2346
 src/Memory.cpp                           2750
-src/StorageCoordinator.cpp               2320
+src/StorageCoordinator.cpp               2325
 src/hgrpaint/HgrPaintEditor.cpp          2656

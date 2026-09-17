@@ -12,6 +12,7 @@
 #include "DiskIICard.h"
 #include "EmulationController.h"
 #include "Logger.h"
+#include "MediaMount.h"
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
 #include "ProDOSBlockCard.h"
@@ -20,6 +21,7 @@
 #include "SmartPortCard.h"
 #include "SmartPortUnit.h"
 
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,23 +47,30 @@ StorageCoordinator::setMediaNotch(EmulationController& controller,
     // Phase 1: the file, unlocked. This is the whole of the persistence.
     std::string error;
     if (!pom2::setMediaNotch(path, protect, error)) return notchError(error);
-    // Phase 2: every mounted copy of that file, under the lock. A string
-    // compare, not fs::equivalent — that is a stat per leaf under stateMutex,
-    // and every mount path in POM2 is the string the user or settings gave.
+    // Phase 2: every mounted copy of that file, under the lock. The paths
+    // are compared with fs::equivalent FIRST, unlocked: the Disk Library
+    // names a disk relative ("disks_5.4/x.dsk") while a file-dialog or CLI
+    // mount holds it absolute, and a string compare left that mounted copy
+    // writable under a protected file (bug hunt 2026-09-17). The lock then
+    // only does string lookups.
+    std::set<std::string> same{path};
+    for (const std::string& p : pom2::mountedImagePaths(controller))
+        if (pom2::sameImageFile(p, path)) same.insert(p);
+    const auto matches = [&same](const std::string& p) { return same.count(p) != 0; };
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
         for (auto* card : cards.diskIICards) {
             if (!card) continue;
             for (int d = 0; d < DiskIICard::kDriveCount; ++d)
-                if (card->isDiskLoaded(d) && card->getDiskPath(d) == path)
+                if (card->isDiskLoaded(d) && matches(card->getDiskPath(d)))
                     card->setDriveHostWriteProtected(d, protect);
         }
         for (auto* block : cards.blockCards)
-            if (block && block->isImageLoaded() && block->getImagePath() == path)
+            if (block && block->isImageLoaded() && matches(block->getImagePath()))
                 block->setHostWriteProtected(protect);
         if (cards.primaryHdv && cards.primaryHdv->isImageLoaded() &&
-            cards.primaryHdv->getImagePath() == path)
+            matches(cards.primaryHdv->getImagePath()))
             cards.primaryHdv->setHostWriteProtected(protect);
         // Every bay of every card that carries a per-bay notch — the
         // Liron's units, the ProDOS HD card's drive 2. None of the loops
@@ -72,20 +81,20 @@ StorageCoordinator::setMediaNotch(EmulationController& controller,
             if (auto* media = dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
                 for (int bay = 0; bay < media->bayCount(); ++bay) {
                     const MediaBayInfo info = media->bayInfo(bay);
-                    if (info.loaded && info.path == path)
+                    if (info.loaded && matches(info.path))
                         media->setBayHostWriteProtected(bay, protect);
                 }
         for (auto* card : cards.smartPortCards) {
             if (!card) continue;
             for (std::size_t u = 0; u < SmartPortCard::kMaxUnits; ++u) {
                 auto* unit = card->unit(u);
-                if (unit && unit->isLoaded() && unit->path() == path)
+                if (unit && unit->isLoaded() && matches(unit->path()))
                     unit->setHostWriteProtected(protect);
             }
         }
         for (Disk35Image* img : { &controller.disk35Internal(),
                                   &controller.disk35External() })
-            if (img->isLoaded() && img->path() == path)
+            if (img->isLoaded() && matches(img->path()))
                 img->setHostWriteProtected(protect);
     }
     pom2::log().info("Media", std::string(protect ? "Write-protected: "

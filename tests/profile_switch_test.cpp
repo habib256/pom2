@@ -112,6 +112,10 @@ void checkSwitch(EmulationController& c, pom2::StorageCoordinator& storage,
         c.rewind().capture(st.cpu(), st.memory());
     }
     expect(!c.rewind().empty(), "the rewind ring holds a frame before the switch");
+    // Paused recording keeps its frames but takes no new ones. Left on, the
+    // worker the switch restarts could capture a fresh frame before the
+    // check below — it did, under a loaded full ctest run.
+    c.rewind().setEnabled(false);
 
     Recorder rec;
     const auto r = pom2::switchProfile(c, storage, settings, to, true, rec.hooks());
@@ -186,7 +190,12 @@ int main()
     checkSwitch(controller, storage, settings, pom2::SystemProfile::AppleIIc, disk.string());
     checkSwitch(controller, storage, settings, pom2::SystemProfile::AppleIIcPAL, disk.string());
     expect(controller.getVideoStandard() == VideoStandard::PAL, "NTSC → PAL really is PAL");
+    settings.setInt("ramworks_banks", 4);
     checkSwitch(controller, storage, settings, pom2::SystemProfile::AppleIIe, disk.string());
+    {
+        auto st = controller.lockState();
+        expect(st.memory().ramWorksBanks() == 4, "a //e takes the saved RamWorks size");
+    }
 
     // The CPU override: honoured where the machine shipped NMOS, not on a
     // soldered 65C02.
@@ -230,6 +239,11 @@ int main()
                                   pom2::SystemProfile::AppleIIPlus, false, rec.hooks());
         expect(settings.getString("system_profile") == before,
                "persist=false leaves system_profile alone");
+        auto st = controller.lockState();
+        // setIIEMode(false) drops the backing; pinned so a //e's saved size
+        // never rides along into a ][+ session's rewind frames.
+        expect(st.memory().ramWorksBanks() == 1,
+               "a ][+ does not keep the //e's RamWorks banks");
     }
 
     controller.stop();

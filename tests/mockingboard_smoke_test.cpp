@@ -139,6 +139,19 @@ void testAyRegisterWrite()
     assert(card.getAyRegister(0, 7) == 0);
 }
 
+// ─── Test 2b: the AY's mask-programmed chip select (2026-09-17) ──────────
+// The 8910's upper address nibble must be 0000: a $1x latch deselects the
+// chip, the next data strobe is dropped, and the register latch is kept.
+void testAyChipSelectNibble()
+{
+    MockingboardCard card(4);
+    ayWrite(card, 0, /*reg=*/7, /*v=*/0x38);
+    ayWrite(card, 0, /*reg=*/0x17, /*v=*/0x3F);   // high nibble 1: not us
+    assert(card.getAyRegister(0, 7) == 0x38 && "a $17 latch reached R7");
+    ayWrite(card, 0, /*reg=*/7, /*v=*/0x3E);      // selected again
+    assert(card.getAyRegister(0, 7) == 0x3E);
+}
+
 // ─── Test 3: VIA T1 IRQ generation in continuous mode ────────────────────
 void testT1IrqContinuous()
 {
@@ -617,6 +630,7 @@ int main()
     testAyBusUndrivenBitsFloatHigh();
                                 std::printf("AY bus float-high ..... OK\n");
     testAyRegisterWrite();      std::printf("AY register write ..... OK\n");
+    testAyChipSelectNibble();   std::printf("AY chip-select nibble .. OK\n");
     testT1IrqContinuous();      std::printf("T1 IRQ continuous ..... OK\n");
     testT1IrqOneShot();         std::printf("T1 IRQ one-shot ....... OK\n");
     testAyAudioSynthesis();     std::printf("AY audio synthesis .... OK\n");
