@@ -286,6 +286,12 @@ void appendOnboardDisk35SettingUpdates(std::vector<SettingUpdate>& updates,
                       image.isWriteBackEnabled());
 }
 
+/// A bay's whole-file flush as the image's commit payload, capture order kept.
+Disk35Image::PendingWriteBack imagePayload(MountableMediaCard::PendingBayFlush&& f)
+{
+    return {true, std::move(f.path), std::move(f.bytes), f.seq, f.lineage};
+}
+
 void copyDisk35ImageState(
     StorageCoordinator::Disk35DriveSnapshot& target,
     const Disk35Image& image)
@@ -295,9 +301,8 @@ void copyDisk35ImageState(
     target.path = image.path();
     target.lastError = image.lastError();
     target.hasUnsavedChanges = image.hasUnsavedChanges();
-    const auto persisted = image.persistence();
-    target.persistenceState = persisted.state;
-    target.persistenceError = persisted.error;
+    target.persistenceState = image.persistence().state;
+    target.persistenceError = image.persistence().error;
     target.writeBackEnabled = image.isWriteBackEnabled();
     target.fileWriteProtected = image.isFileWriteProtected();
     target.isWoz = image.kind() == Disk35Image::ImageKind::Woz35;
@@ -433,12 +438,8 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
     // Phase 2 for a non-block bay: commit the captured image OUTSIDE the lock.
     if (!twoPhase) {
         if (!imageFlush.valid) return true;
-        Disk35Image::PendingWriteBack imagePending;
-        imagePending.valid = true;
-        imagePending.path  = std::move(imageFlush.path);
-        imagePending.seq   = imageFlush.seq;
-        imagePending.lineage = imageFlush.lineage;
-        imagePending.bytes = std::move(imageFlush.bytes);
+        Disk35Image::PendingWriteBack imagePending =
+            imagePayload(std::move(imageFlush));
         std::string commitError;
         if (Disk35Image::commitWriteBack(std::move(imagePending), commitError))
             return true;
@@ -867,12 +868,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
 
     // Phase 2 for a non-block bay — outside the lock, like its sibling below.
     if (!twoPhase && imageFlush.valid) {
-        Disk35Image::PendingWriteBack imagePending;
-        imagePending.valid = true;
-        imagePending.path  = std::move(imageFlush.path);
-        imagePending.seq   = imageFlush.seq;
-        imagePending.lineage = imageFlush.lineage;
-        imagePending.bytes = std::move(imageFlush.bytes);
+        Disk35Image::PendingWriteBack imagePending =
+            imagePayload(std::move(imageFlush));
         std::string error;
         if (!Disk35Image::commitWriteBack(std::move(imagePending), error)) {
             // Re-mark dirty so the still-mounted medium is saved again on the
@@ -1032,12 +1029,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
 
     // Phase 2 for a non-block bay — outside the lock, like its sibling below.
     if (!twoPhase && imageFlush.valid) {
-        Disk35Image::PendingWriteBack imagePending;
-        imagePending.valid = true;
-        imagePending.path  = std::move(imageFlush.path);
-        imagePending.seq   = imageFlush.seq;
-        imagePending.lineage = imageFlush.lineage;
-        imagePending.bytes = std::move(imageFlush.bytes);
+        Disk35Image::PendingWriteBack imagePending =
+            imagePayload(std::move(imageFlush));
         std::string error;
         if (!Disk35Image::commitWriteBack(std::move(imagePending), error)) {
             // Re-mark dirty and ABORT the type change: the medium is still
@@ -1603,12 +1596,8 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         // The non-block bays: commit the captured image here, unlocked.
         if (!entry.twoPhase) {
             if (!entry.imageFlush.valid) continue;
-            Disk35Image::PendingWriteBack imagePending;
-            imagePending.valid = true;
-            imagePending.path  = std::move(entry.imageFlush.path);
-            imagePending.seq   = entry.imageFlush.seq;
-            imagePending.lineage = entry.imageFlush.lineage;
-            imagePending.bytes = std::move(entry.imageFlush.bytes);
+            Disk35Image::PendingWriteBack imagePending =
+                imagePayload(std::move(entry.imageFlush));
             std::string error;
             if (Disk35Image::commitWriteBack(std::move(imagePending), error))
                 continue;
@@ -2077,12 +2066,7 @@ bool StorageCoordinator::commitDeferredFlushes(
         // `Disk35Image::commitWriteBack` is simply POM2's atomic whole-file
         // writer (sibling temp + fsync + rename), and every bay that fills a
         // PendingBayFlush holds one of those images.
-        Disk35Image::PendingWriteBack pending;
-        pending.valid = true;
-        pending.path  = item.payload.path;
-        pending.seq   = item.payload.seq;
-        pending.lineage = item.payload.lineage;
-        pending.bytes = std::move(item.payload.bytes);
+        Disk35Image::PendingWriteBack pending = imagePayload(std::move(item.payload));
         std::string commitError;
         if (Disk35Image::commitWriteBack(std::move(pending), commitError))
             continue;

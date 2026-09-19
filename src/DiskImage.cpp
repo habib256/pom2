@@ -1590,13 +1590,10 @@ void DiskImage::appendMediaSnapshot(std::vector<uint8_t>& out) const
 void DiskImage::loadMediaSnapshot(const uint8_t* data, std::size_t len)
 {
     if (len < kMediaSnapshotBytes) return;
-    // The FILE is not rolled back with the tracks. Since the autosave, it
-    // holds whatever was captured last, which a machine snapshot loaded from
-    // disk may well predate. So a track owes the file a write if the snapshot
-    // says so, if it was owed one already, or if restoring it changes it: a
-    // clean track matched the file. A rewind never spans a capture (the
-    // capture bumps the media epoch), so there this only re-saves what the
-    // file already has.
+    // The FILE is not rolled back with the tracks: it holds the last capture,
+    // which a snapshot loaded from disk may predate. A track is owed a write
+    // if the snapshot says so, if it was already, or if restoring changes it
+    // (a clean track matched the file). A rewind never spans a capture.
     std::array<bool, kTracks> owed{};
     std::size_t p = 0;
     for (int t = 0; t < kTracks; ++t) {
@@ -2965,15 +2962,11 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
     if (lineage_ == 0) lineage_ = pom2::nextMediaCaptureSeq();
     out.lineage = lineage_;
     out.path  = path;
-    // The capture is the point of no return for the rewind ring. A nibble
-    // write in memory deliberately does not bump the media epoch — the ring
-    // captures those tracks and a rewind is meant to undo them — but this
-    // payload is about to reach the FILE, and rewinding across it restored
-    // the old tracks with their dirty flags CLEARED: the next save wrote only
-    // later tracks and the file became a mix of two timelines (a ProDOS
-    // volume cross-links that way; bug hunt 2026-09-16). Bumping here, before
-    // the commit even starts, leaves no window in which a scrub could reach
-    // back past it.
+    // The point of no return for the rewind ring. Nibble writes do not bump
+    // the media epoch (the ring captures them), but this payload is bound for
+    // the FILE, and a rewind across it left a file of two timelines — a ProDOS
+    // volume cross-links that way (bug hunt 2026-09-16). Bumping at capture
+    // leaves no window for a scrub to reach back past it.
     pom2::noteMediaWrite();
     return true;
 }
