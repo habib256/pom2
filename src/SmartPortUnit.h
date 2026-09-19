@@ -43,10 +43,14 @@
 
 namespace pom2 {
 
+class AutosavedMedium;
+
 class SmartPortUnit
 {
 public:
     virtual Block512Backing* blockBacking() { return nullptr; }
+    /// A whole-image medium (the 3.5" unit) for the background autosave.
+    virtual AutosavedMedium* autosavedMedium() { return nullptr; }
     virtual const Block512Backing* blockBacking() const { return nullptr; }
     static constexpr size_t kBlockBytes = 512;
 

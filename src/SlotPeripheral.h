@@ -43,7 +43,7 @@
 #include <string_view>
 #include <vector>
 
-namespace pom2 { class SmartPortBusUnit; class Block512Backing; }
+namespace pom2 { class SmartPortBusUnit; class Block512Backing; class AutosavedMedium; }
 
 class SlotBus;
 
@@ -52,6 +52,9 @@ class SlotPeripheral
 public:
     // Host persistence service; vector indices are media bay numbers.
     virtual std::vector<pom2::Block512Backing*> blockBackings() { return {}; }
+    // The same service for whole-image media — floppies, 5.25" and 3.5"
+    // (MediaAutosave.h). Indices are drives / bays; entries may be null.
+    virtual std::vector<pom2::AutosavedMedium*> autosavedMedia() { return {}; }
     virtual ~SlotPeripheral() = default;
 
     /// Short human-readable name (e.g. "Disk II", "Language Card", "80col").

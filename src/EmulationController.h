@@ -163,6 +163,16 @@ public:
     bool syncBlockMedia(std::string& error);
     std::vector<BlockPersistence> blockPersistence();
 
+    /// The floppy half (MediaAutosave.h): every mounted 5.25" and 3.5" image
+    /// — Disk II drives, SmartPort / Liron 3.5" units, and the //c+ on-board
+    /// Sony drives, reported as slot 0 bays 0 (internal) and 1 (external).
+    /// `pollMediaWriteBacks` is what the worker runs: blocks, then floppies,
+    /// the latter held back while a rewind scrub owns the machine (a capture
+    /// would write a historical frame to the file and cost the ring).
+    void pollMediaWriteBacks();
+    bool syncFloppyMedia(std::string& error);
+    std::vector<BlockPersistence> floppyPersistence();
+
     // ─── Cassette transport (forwarded to CassetteDevice under stateMtx) ──
     /// Load / save a tape file. Both do their file work with `stateMtx`
     /// RELEASED (a compressed tape is decoded in full — see the TapeOffBus
@@ -490,6 +500,9 @@ private:
         bool                    busy_     = false;
     };
     WriteBackQueue writeBackQueue_;
+
+    /// Every autosaved whole-image medium, `stateMtx` held by the caller.
+    template <class Fn> void forEachFloppy(Memory& memory, Fn&& fn);
 
     std::unique_ptr<pom2::Disk35Image>  image35Int;
     std::unique_ptr<pom2::Disk35Image>  image35Ext;

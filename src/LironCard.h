@@ -168,6 +168,13 @@ public:
     /// (`EmulationController::pollBlockWriteBacks`). A 3.5" bay's entry is an
     /// unloaded backing, which the executor skips.
     std::vector<Block512Backing*> blockBackings() override;
+    /// The 3.5" bays, same indexing; an empty image is skipped by the poll.
+    std::vector<AutosavedMedium*> autosavedMedia() override
+    {
+        std::vector<AutosavedMedium*> out;
+        for (auto& img : images_) out.push_back(&img);
+        return out;
+    }
 
     /// True once the EPROM was found and loaded. Without it the card is
     /// inert — there is no synthetic fallback here on purpose: a synthesised

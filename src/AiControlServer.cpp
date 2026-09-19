@@ -1071,9 +1071,19 @@ void AiControlServer::handleClient(socket_t fd)
 
     if (req.path == "/disk/sync") {
         if (req.method != "POST") { sendJsonError(fd, 405, "POST only"); return; }
-        std::string error;
-        if (!ctrl_->syncBlockMedia(error)) { sendJsonError(fd, 500, error); return; }
-        sendJsonOk(fd, "{\"scope\":\"block_images\"}");
+        // Block images, then floppies (5.25" and 3.5"): both wait outside
+        // the machine lock, and a failure in one does not skip the other.
+        std::string blockError, floppyError;
+        const bool blocks  = ctrl_->syncBlockMedia(blockError);
+        const bool floppies = ctrl_->syncFloppyMedia(floppyError);
+        if (!blocks || !floppies) {
+            std::string error = blockError;
+            if (!error.empty() && !floppyError.empty()) error += "; ";
+            error += floppyError;
+            sendJsonError(fd, 500, error);
+            return;
+        }
+        sendJsonOk(fd, "{\"scope\":\"media_images\"}");
         return;
     }
     if (req.path == "/status")               return handleStatus(fd, req);
@@ -1171,6 +1181,19 @@ void AiControlServer::handleStatus(socket_t fd, const Request& /*req*/)
         << ",\"block_storage\":[";
     bool first = true;
     for (const auto& disk : ctrl_->blockPersistence()) {
+        if (!first) oss << ",";
+        first = false;
+        oss << "{\"slot\":" << disk.slot << ",\"bay\":" << disk.bay
+            << ",\"path\":\"" << jsonEscape(disk.path)
+            << "\",\"state\":\"" << disk.state
+            << "\",\"pending\":" << (disk.pending ? "true" : "false")
+            << ",\"error\":\"" << jsonEscape(disk.error) << "\"}";
+    }
+    // Floppies, same shape. Slot 0 = the //c+ on-board 3.5" drives (bay 0
+    // internal, bay 1 external); a Disk II's bays are its two drives.
+    oss << "],\"floppy_storage\":[";
+    first = true;
+    for (const auto& disk : ctrl_->floppyPersistence()) {
         if (!first) oss << ",";
         first = false;
         oss << "{\"slot\":" << disk.slot << ",\"bay\":" << disk.bay

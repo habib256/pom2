@@ -5,6 +5,40 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-19 — Floppies save to their files while still mounted
+
+- **A floppy's host file changed only on eject, swap, quit or profile switch.**
+  - That applied to 5.25" and 3.5" alike, in every drive. Anything that read
+    the file with the disk still in the drive saw stale bytes. So did a check
+    that the file was *unchanged*, which passed whether or not the guest had
+    written. A crash lost every write since the mount.
+  - Hard disks had autosaved since 2026-09-10; floppies were left out.
+- **Floppies now follow the same policy** (`MediaAutosave.h`).
+  - A mounted image is saved about a second after the drive stops writing,
+    even while the machine is paused.
+  - The capture is a memcpy under `stateMutex`. One worker thread writes the
+    file, injected from the runtime layer like the block executor.
+  - Dirty state stays set until the file has landed, and a write that races
+    the commit is never cleared by it. A failure is shown in the panel and
+    retried.
+  - Covers Disk II drives (every format, WOZ included), SmartPort and Liron
+    3.5" units, and the //c+ on-board drives.
+- **Every floppy save now has one code path.** `DiskImage::saveDirty` is
+  `takeWriteBack` + `commitWriteBack`, as `Disk35Image`'s already was.
+  - Each capture takes a sequence number, so an eject or flush that commits
+    on another thread cannot be overwritten by an older autosave, nor the
+    reverse.
+  - Ordering is per mount, not per file: two drives holding one image still
+    merge their tracks.
+- **Rewind.** An autosave capture closes the rewind history, as a block write
+  does. The autosave also waits while a scrub is in progress. Nibble writes
+  that have not been captured can still be undone.
+- **AI control.** `POST /disk/sync` also syncs floppies, and its scope now
+  reads `media_images`. `GET /status` adds `floppy_storage`.
+- Pinned by `floppy_autosave`, which reads the host files while the disks
+  stay mounted. Two mutations were checked: retiring dirty state regardless
+  of the write serial, and dropping the ordering check. Each fails the test.
+
 ## 2026-09-17 — TransWarp on NMOS machines; two more //e character sets
 
 - **A ][, ][+ or unenhanced //e with a TransWarp never booted.**

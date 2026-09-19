@@ -153,6 +153,12 @@ public:
         for (auto& u : units_) result.push_back(u ? u->blockBacking() : nullptr);
         return result;
     }
+    std::vector<pom2::AutosavedMedium*> autosavedMedia() override
+    {
+        std::vector<pom2::AutosavedMedium*> result;
+        for (auto& u : units_) result.push_back(u ? u->autosavedMedium() : nullptr);
+        return result;
+    }
 
     /// Currently selected unit (set by $C0n0 writes; resets to 0 on
     /// reset). The ProDOS driver re-latches it on every dispatch.

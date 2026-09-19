@@ -20,6 +20,7 @@
 #include "Block512Backing.h"   // pom2::mediaWriteEpoch
 #include "Logger.h"
 #include "ThreadGuard.h"
+#include "BlockWriteBackExecutor.h"   // pom2::drainMediaCommits
 
 #include <algorithm>
 #include <cmath>
@@ -271,6 +272,10 @@ EmulationController::~EmulationController()
     // AFTER the queue, so it goes first). Leftover payloads are committed
     // here, which is the last chance the session's guest writes get.
     writeBackQueue_.shutdown();
+    // And let the floppy autosave land what it captured (MediaAutosave.h):
+    // its worker is process-wide, and a commit still running at exit would
+    // leave nothing worse than temp debris — but it would lose the write.
+    pom2::drainMediaCommits();
 
     // Tear down audio first so the callback thread is drained before the
     // sources it's pulling from go away.
@@ -704,7 +709,7 @@ void EmulationController::start()
 
 void EmulationController::tickFrame()
 {
-    pollBlockWriteBacks();
+    pollMediaWriteBacks();
     const Mode m = mode.load();
     if (m == Mode::Stopped) {
         return;
@@ -1614,7 +1619,7 @@ void EmulationController::workerLoop()
     };
 
     while (!exitRequested.load()) {
-        pollBlockWriteBacks();
+        pollMediaWriteBacks();
         const Mode m = mode.load();
         if (m != Mode::Stopped) workerParked_.store(false);
 

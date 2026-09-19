@@ -390,15 +390,17 @@ The output is **stereo**, wired the way the hardware is: a Mockingboard puts AY1
 
 ## 💾 Storage — disks, SmartPort, CFFA
 
-Every mounted image is **writable by default** — DOS SAVE, ProDOS saves and a game's high-score table land in the file on eject and on quit. Write-protect works the way it did on the real disk: it is a property of the **disk**, not of the drive. Tick **Write-protected** in a media panel, in the Slot Config media rows, or right-click any image in the Disk Library (a lock glyph marks protected ones): POM2 sets the image file's read-only bit, so the disk stays protected in any drive, in any emulator, and after a restart — untick to write-enable it again. A WOZ or 2IMG whose header says write-protected stays protected regardless. To make every medium come up protected instead (a kiosk, a shared master set), run with `POM2_MEDIA_WRITE_DEFAULT=protected`.
+Every mounted image is **writable by default**. DOS SAVE, ProDOS saves and a game's high-score table reach the image file about a second after the drive stops writing, while the disk is still in the drive. Write-protect works the way it did on the real disk: it is a property of the **disk**, not of the drive. Tick **Write-protected** in a media panel, in the Slot Config media rows, or right-click any image in the Disk Library (a lock glyph marks protected ones): POM2 sets the image file's read-only bit, so the disk stays protected in any drive, in any emulator, and after a restart — untick to write-enable it again. A WOZ or 2IMG whose header says write-protected stays protected regardless. To make every medium come up protected instead (a kiosk, a shared master set), run with `POM2_MEDIA_WRITE_DEFAULT=protected`.
 
 Hard-disk images on HDV, CFFA and SmartPort save automatically in the background,
-in batches roughly one second apart, even while the machine is paused. Slot
-Config and the HDV/SmartPort panels show the host-file state (`pending`,
+in batches roughly one second apart, even while the machine is paused. Floppies
+(5.25" and 3.5", in any drive) do the same once the drive has been quiet for a
+second. Slot Config and the media panels show the host-file state (`pending`,
 `saving`, `saved`, or `error`). Failed saves keep their data in memory and
-retry. With AI control enabled, `POST /disk/sync` waits for pending block-image
-writes to reach their host files; `GET /status` exposes the same state in
-`block_storage`. Host-folder sync and floppy saving follow their own policies.
+retry. A rewind cannot go back past a save. With AI control enabled,
+`POST /disk/sync` waits for every pending disk write to reach its host file;
+`GET /status` exposes the same state in `block_storage` and `floppy_storage`.
+Host-folder sync follows its own policy.
 
 Supported images: `.dsk` `.do` `.d13` `.po` `.nib` `.2mg` `.woz` `.hdv`. Detection is **content-driven** — MacBinary wrappers, DOS/ProDOS sector skew and WOZ/2IMG write-protect flags are all handled. WOZ playback runs the genuine Disk II **P6 LSS sequencer** (`diskii_p6.rom` optional — the embedded 341-0028-A default is used when absent). ProDOS block devices back the HDV / CFFA 2.0 / SmartPort paths.
 

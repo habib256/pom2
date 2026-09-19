@@ -1438,6 +1438,8 @@ void DiskImage::eject()
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    autosave_.reset();
+    lineage_ = 0;
 }
 
 void DiskImage::writeNibbleAt(int track, int index, uint8_t value)
@@ -1458,6 +1460,7 @@ void DiskImage::writeNibbleAt(int track, int index, uint8_t value)
         tracks[track][n] = value;
         dirty[track]     = true;
         anyDirty         = true;
+        autosave_.noteWrite();
         // Bit-cell cache for the whole track is now stale; next bitAt()
         // call rebuilds it from the new nibble buffer. Non-WOZ formats
         // only ever populate the slot at `qt = track*4`, so a single
@@ -1587,16 +1590,29 @@ void DiskImage::appendMediaSnapshot(std::vector<uint8_t>& out) const
 void DiskImage::loadMediaSnapshot(const uint8_t* data, std::size_t len)
 {
     if (len < kMediaSnapshotBytes) return;
+    // The FILE is not rolled back with the tracks. Since the autosave, it
+    // holds whatever was captured last, which a machine snapshot loaded from
+    // disk may well predate. So a track owes the file a write if the snapshot
+    // says so, if it was owed one already, or if restoring it changes it: a
+    // clean track matched the file. A rewind never spans a capture (the
+    // capture bumps the media epoch), so there this only re-saves what the
+    // file already has.
+    std::array<bool, kTracks> owed{};
     std::size_t p = 0;
     for (int t = 0; t < kTracks; ++t) {
+        owed[t] = dirty[t] ||
+                  std::memcmp(tracks[t].data(), data + p, kNibblesPerTrack) != 0;
         std::memcpy(tracks[t].data(), data + p, kNibblesPerTrack);
         p += kNibblesPerTrack;
     }
     anyDirty = false;
     for (int t = 0; t < kTracks; ++t) {
-        dirty[t] = data[p++] != 0;
+        dirty[t] = (data[p++] != 0) || owed[t];
         if (dirty[t]) anyDirty = true;
     }
+    // The medium's content moved under the autosave: a commit captured
+    // before this restore must not retire the restored dirty flags.
+    autosave_.noteWrite();
     // Reads re-derive the bit/flux streams from the restored nibble buffers.
     invalidateAllBitStreams();
 }
@@ -2177,6 +2193,7 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         if (changed) {
             wozQtDirty[qt] = true;
             anyDirty       = true;
+            autosave_.noteWrite();
             // A WRITABLE WOZ is the one medium the rewind media snapshot
             // cannot undo: its authoritative bits live in `wozRaw`, a
             // different store from the nibble buffers `appendMediaSnapshot`
@@ -2386,6 +2403,7 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
     if (changed) {
         dirty[track]    = true;
         anyDirty        = true;
+        autosave_.noteWrite();
         invalidateWholeTrack(track);
     }
 }
@@ -2485,10 +2503,9 @@ void DiskImage::writeDataField13(uint8_t*& dst, const uint8_t* src)
 
 // ── Decoder ─────────────────────────────────────────────────────────────
 
-bool DiskImage::decodeTrack(int track, uint8_t outSectors[kSectorsPerTrack][kSectorBytes]) const
+bool DiskImage::decodeNibbles(const TrackBuffer& buf,
+                              uint8_t outSectors[kSectorsPerTrack][kSectorBytes])
 {
-    if (track < 0 || track >= kTracks) return false;
-    const auto& buf = tracks[track];
     bool decodedAny = false;
 
     // Wrap-around scan: walk 2× the track length so a sector that
@@ -2587,11 +2604,9 @@ bool DiskImage::decodeTrack(int track, uint8_t outSectors[kSectorsPerTrack][kSec
     return decodedAny;
 }
 
-bool DiskImage::decodeTrack13(int track,
-                              uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]) const
+bool DiskImage::decodeNibbles13(const TrackBuffer& buf,
+                                uint8_t outSectors[kSectorsPerTrack13][kSectorBytes])
 {
-    if (track < 0 || track >= kTracks) return false;
-    const auto& buf = tracks[track];
     bool decodedAny = false;
     auto at = [&](int i) -> uint8_t {
         return buf[((i % kNibblesPerTrack) + kNibblesPerTrack) % kNibblesPerTrack];
@@ -2796,9 +2811,31 @@ bool DiskImage::saveDirty()
     if (!loaded || !anyDirty || !writeBackEnabled || fileWriteProtected) {
         return true;   // nothing to save, save disabled, or header WP — no error
     }
+    // Composed from the two-phase pair so there is ONE copy of the write
+    // logic (same shape as `Disk35Image::saveDirty`). The phases are simply
+    // not separated in time here.
+    PendingWriteBack pending;
+    if (!takeWriteBack(pending)) return false;
+    if (!pending.valid) return true;
+    std::string error;
+    if (!commitWriteBack(std::move(pending), error)) {
+        lastError = error;
+        return false;
+    }
+    dirty.fill(false);
+    wozQtDirty.fill(false);
+    anyDirty = false;
+    return true;
+}
+
+bool DiskImage::takeWriteBack(PendingWriteBack& out)
+{
+    out = PendingWriteBack{};
+    if (!loaded || !anyDirty || !writeBackEnabled || fileWriteProtected)
+        return true;
 
     // .woz: splice each dirty quarter-track's bit cells back into wozRaw
-    // at the offset captured at load time, then write the whole file out.
+    // at the offset captured at load time; the whole file is the payload.
     // Per Applesauce WOZ 2.1 spec the header CRC32 is allowed to be zero
     // ("not computed by the imager"); we use that sentinel so a reader
     // that mismatches our recomputed CRC doesn't reject the file.
@@ -2810,13 +2847,11 @@ bool DiskImage::saveDirty()
         // A dirty quarter-track with no usable slot in `wozRaw` — no TRKS
         // entry captured at load, an empty bit stream, or a slot that runs
         // past the buffer — cannot be spliced back. Refuse the WHOLE save
-        // rather than skipping it: the old `continue` fell through to
-        // `wozQtDirty.fill(false)` and `return true`, so the guest's writes to
-        // that track were dropped while `hasUnsavedChanges()` went false and
-        // the eject path saw a clean success. Same rule (and same escape
-        // hatch — turn write-back off) as `reportUndecodable` for the sector
-        // formats. Checked BEFORE any splice so a refusal leaves `wozRaw`
-        // untouched too.
+        // rather than skipping it: skipping cleared the dirty flag and
+        // reported success, so the guest's writes to that track were dropped
+        // silently. Same rule (and same escape hatch — turn write-back off)
+        // as `reportUndecodable` for the sector formats. Checked BEFORE any
+        // splice so a refusal leaves `wozRaw` untouched too.
         std::vector<int> unsplicable;
         for (int qt = 0; qt < kQuarterTracks; ++qt) {
             if (!wozQtDirty[qt]) continue;
@@ -2856,49 +2891,20 @@ bool DiskImage::saveDirty()
         // (matches MAME `as_dsk.cpp:275-277` and the loadWoz path here
         // which treats CRC==0 as "not computed").
         wozRaw[ 8] = 0; wozRaw[ 9] = 0; wozRaw[10] = 0; wozRaw[11] = 0;
-
-        const bool wrote = writeFileAtomic(path, lastError,
-            [&](std::ofstream& wf) {
-                // Wrapper envelope (MacBinary) captured at load — wozRaw
-                // holds the bare WOZ payload; re-emit the header around it.
-                if (twoImgFormat && !twoImgHeaderRaw.empty()) {
-                    wf.write(reinterpret_cast<const char*>(twoImgHeaderRaw.data()),
-                             static_cast<std::streamsize>(twoImgHeaderRaw.size()));
-                }
-                wf.write(reinterpret_cast<const char*>(wozRaw.data()),
-                         static_cast<std::streamsize>(wozRaw.size()));
-                if (twoImgFormat && !twoImgTrailerRaw.empty()) {
-                    wf.write(reinterpret_cast<const char*>(twoImgTrailerRaw.data()),
-                             static_cast<std::streamsize>(twoImgTrailerRaw.size()));
-                }
-            });
-        if (!wrote) return false;
-        wozQtDirty.fill(false);
-        anyDirty = false;
-        pom2::log().info("Disk II",
-            "Saved " + std::to_string(dirtyQts)
-            + " modified quarter-track(s) to " + path + " (.woz, CRC zeroed)");
-        return true;
-    }
-
-    // .nib: just write the raw nibble buffers verbatim. CNib2 source
-    // images use 6384 bytes/track instead of 6656; the load path padded
-    // each track up to the runtime width with $FF and the saveDirty
-    // path truncates back so the round-trip preserves the source size.
-    // If the source was wrapped in a 2IMG envelope, re-emit the captured
-    // header bytes + payload + trailer so the file remains a valid 2IMG
-    // after the round-trip.
-    if (nibFormat) {
-        // CNib2's 6384-byte tracks are padded to the 6656-nibble runtime width
-        // at load, and only the first 6384 go back to the file — so nibbles
-        // 6384..6655 are a WRITE BLACK HOLE covering ~4 % of every track. The
-        // guest's write lands there, saveDirty reports success, and the bytes
-        // are gone on reload with nothing said.
-        //
-        // The pad is $FF, which is also what sync bytes are, so a write that
-        // happens to be sync loses nothing and must not fail the save. Compare
-        // instead of guessing: only real, differing content is a loss, and a
-        // loss is worth refusing over.
+        out.kind    = PendingWriteBack::Kind::Whole;
+        out.payload = wozRaw;
+        out.summary = "Saved " + std::to_string(dirtyQts) +
+                      " modified quarter-track(s) to " + path +
+                      " (.woz, CRC zeroed)";
+    } else if (nibFormat) {
+        // .nib: the raw nibble buffers verbatim. CNib2 source images use 6384
+        // bytes/track instead of 6656; the load path padded each track up to
+        // the runtime width with $FF and only the first 6384 go back — so
+        // nibbles 6384..6655 are a WRITE BLACK HOLE covering ~4 % of every
+        // track. The pad is $FF, which is also what sync bytes are, so a
+        // write that happens to be sync loses nothing and must not fail the
+        // save. Compare instead of guessing: only real, differing content is
+        // a loss, and a loss is worth refusing over.
         if (cnib2Format) {
             std::vector<int> lossy;
             for (int t = 0; t < kTracks; ++t) {
@@ -2922,169 +2928,177 @@ bool DiskImage::saveDirty()
                 return false;
             }
         }
-        const bool wrote = writeFileAtomic(path, lastError,
-            [&](std::ofstream& f) {
-                if (twoImgFormat && !twoImgHeaderRaw.empty()) {
-                    f.write(reinterpret_cast<const char*>(twoImgHeaderRaw.data()),
-                            static_cast<std::streamsize>(twoImgHeaderRaw.size()));
-                }
-                const std::size_t bytesPerTrack =
-                    cnib2Format ? static_cast<std::size_t>(6384)
-                                : static_cast<std::size_t>(kNibblesPerTrack);
-                for (int t = 0; t < kTracks; ++t) {
-                    f.write(reinterpret_cast<const char*>(tracks[t].data()),
-                            static_cast<std::streamsize>(bytesPerTrack));
-                }
-                if (twoImgFormat && !twoImgTrailerRaw.empty()) {
-                    f.write(reinterpret_cast<const char*>(twoImgTrailerRaw.data()),
-                            static_cast<std::streamsize>(twoImgTrailerRaw.size()));
-                }
-            });
-        if (!wrote) return false;
-        dirty.fill(false);
-        anyDirty = false;
-        pom2::noteMediaWrite();   // the file moved — see the sector-format exit
-        pom2::log().info("Disk II",
-            std::string("Saved (.nib") +
-            (cnib2Format ? " CNib2 6384/track" : "") +
-            (twoImgFormat ? ", 2IMG-wrapped" : "") + "): " + path);
-        return true;
+        const std::size_t bytesPerTrack =
+            cnib2Format ? static_cast<std::size_t>(6384)
+                        : static_cast<std::size_t>(kNibblesPerTrack);
+        out.kind = PendingWriteBack::Kind::Whole;
+        out.payload.reserve(bytesPerTrack * kTracks);
+        for (int t = 0; t < kTracks; ++t)
+            out.payload.insert(out.payload.end(), tracks[t].begin(),
+                               tracks[t].begin() + static_cast<std::ptrdiff_t>(bytesPerTrack));
+        out.summary = std::string("Saved (.nib") +
+                      (cnib2Format ? " CNib2 6384/track" : "") +
+                      (twoImgFormat ? ", 2IMG-wrapped" : "") + "): " + path;
+    } else {
+        // Sector formats: the dirty tracks' nibbles, decoded at commit time.
+        out.kind  = is13Sector() ? PendingWriteBack::Kind::Sectors13
+                                 : PendingWriteBack::Kind::Sectors16;
+        out.order = sectorOrder;
+        for (int t = 0; t < kTracks; ++t) {
+            if (!dirty[t]) continue;
+            out.trackNumbers.push_back(t);
+            out.trackNibbles.push_back(tracks[t]);
+        }
+        out.summary = " modified track(s) to " + path +
+                      (is13Sector() ? std::string(" (13-sector)")
+                       : twoImgFormat ? std::string(" (2IMG envelope preserved)")
+                                      : std::string());
     }
+    // Wrapper envelope (2IMG / MacBinary) captured at load: re-emitted around
+    // the payload so the file stays what it was.
+    if (twoImgFormat) {
+        out.header  = twoImgHeaderRaw;
+        out.trailer = twoImgTrailerRaw;
+    }
+    out.valid = true;
+    out.seq   = pom2::nextMediaCaptureSeq();
+    if (lineage_ == 0) lineage_ = pom2::nextMediaCaptureSeq();
+    out.lineage = lineage_;
+    out.path  = path;
+    // The capture is the point of no return for the rewind ring. A nibble
+    // write in memory deliberately does not bump the media epoch — the ring
+    // captures those tracks and a rewind is meant to undo them — but this
+    // payload is about to reach the FILE, and rewinding across it restored
+    // the old tracks with their dirty flags CLEARED: the next save wrote only
+    // later tracks and the file became a mix of two timelines (a ProDOS
+    // volume cross-links that way; bug hunt 2026-09-16). Bumping here, before
+    // the commit even starts, leaves no window in which a scrub could reach
+    // back past it.
+    pom2::noteMediaWrite();
+    return true;
+}
 
-    // 13-sector (.d13 / DOS 3.x): decode via the 5-and-3 path into a
-    // 116480-byte image. Never 2IMG-wrapped, but a MacBinary envelope is
-    // possible and rides the same captured-header plumbing. File offset =
-    // (track*13 + S)*256 where S is the address-field sector number
-    // (decodeTrack13 indexes by S).
-    if (is13Sector()) {
-        const std::size_t payloadStart13 =
-            (twoImgFormat && !twoImgHeaderRaw.empty()) ? twoImgHeaderRaw.size()
-                                                       : 0;
-        std::vector<uint8_t> bytes(kBytesPerImage13, 0);
+bool DiskImage::commitWriteBack(PendingWriteBack&& pending, std::string& error)
+{
+    error.clear();
+    if (!pending.valid) return true;
+    // In capture order: the background autosave and the eject / swap / flush
+    // paths commit from different threads (MediaAutosave.h). The same lock
+    // also serialises the sector formats' read-modify-write of the file.
+    return pom2::commitMediaInOrder(pending.path, pending.lineage, pending.seq, error,
+        [&pending](std::string& err) {
+        const auto emit = [&pending](std::ofstream& wf, const uint8_t* data,
+                                     std::size_t n) {
+            if (!pending.header.empty())
+                wf.write(reinterpret_cast<const char*>(pending.header.data()),
+                         static_cast<std::streamsize>(pending.header.size()));
+            wf.write(reinterpret_cast<const char*>(data),
+                     static_cast<std::streamsize>(n));
+            if (!pending.trailer.empty())
+                wf.write(reinterpret_cast<const char*>(pending.trailer.data()),
+                         static_cast<std::streamsize>(pending.trailer.size()));
+        };
+
+        if (pending.kind == PendingWriteBack::Kind::Whole) {
+            if (!writeFileAtomic(pending.path, err, [&](std::ofstream& wf) {
+                    emit(wf, pending.payload.data(), pending.payload.size());
+                }))
+                return false;
+            pom2::log().info("Disk II", pending.summary);
+            return true;
+        }
+
+        // Sector formats: read the existing file, decode the dirty tracks on
+        // top of it, write it back. The pre-fill is what keeps a sector that
+        // fails to decode (or that the guest never rewrote) at its old bytes.
+        // For an enveloped source the payload starts past the header.
+        const bool is13 = pending.kind == PendingWriteBack::Kind::Sectors13;
+        const std::size_t imageBytes = is13 ? kBytesPerImage13 : kBytesPerImage;
+        const int perTrack = is13 ? kSectorsPerTrack13 : kSectorsPerTrack;
+        std::vector<uint8_t> bytes(imageBytes, 0);
         {
-            std::ifstream rf(path, std::ios::binary);
+            std::ifstream rf(pending.path, std::ios::binary);
             if (!rf ||
-                !rf.seekg(static_cast<std::streamoff>(payloadStart13)) ||
-                !rf.read(reinterpret_cast<char*>(bytes.data()), kBytesPerImage13)) {
-                lastError = "Cannot preserve unchanged tracks: source image "
-                            "is missing or truncated: " + path;
+                !rf.seekg(static_cast<std::streamoff>(pending.header.size())) ||
+                !rf.read(reinterpret_cast<char*>(bytes.data()),
+                         static_cast<std::streamsize>(imageBytes))) {
+                err = "Cannot preserve unchanged tracks: source image "
+                      "is missing or truncated: " + pending.path;
                 return false;
             }
         }
+        // 16-sector: the file holds LOGICAL sectors, the track PHYSICAL ones,
+        // through the DOS or ProDOS skew. 13-sector: file offset =
+        // (track*13 + S)*256 where S is the address-field sector number
+        // (decodeNibbles13 indexes by S), so no skew.
+        const int* skew = (pending.order == SectorOrder::ProDOS)
+                          ? kProDosLogicalForPhysical
+                          : kDos33LogicalForPhysical;
+        const auto fileSector = [&](int t, int p) -> uint8_t* {
+            const int s = is13 ? p : skew[p];
+            return bytes.data() +
+                   (static_cast<std::size_t>(t) * perTrack + s) * kSectorBytes;
+        };
         int decodedTracks = 0;
         std::vector<int> undecodable;
-        for (int t = 0; t < kTracks; ++t) {
-            if (!dirty[t]) continue;
-            uint8_t sectors[kSectorsPerTrack13][kSectorBytes];
-            for (int s = 0; s < kSectorsPerTrack13; ++s)
-                std::memcpy(sectors[s],
-                    bytes.data() + (t * kSectorsPerTrack13 + s) * kSectorBytes,
-                    kSectorBytes);
-            if (!decodeTrack13(t, sectors)) { undecodable.push_back(t); continue; }
-            for (int s = 0; s < kSectorsPerTrack13; ++s)
-                std::memcpy(bytes.data() + (t * kSectorsPerTrack13 + s) * kSectorBytes,
-                    sectors[s], kSectorBytes);
+        for (std::size_t i = 0; i < pending.trackNumbers.size(); ++i) {
+            const int t = pending.trackNumbers[i];
+            uint8_t sectors[kSectorsPerTrack][kSectorBytes];
+            for (int p = 0; p < perTrack; ++p)
+                std::memcpy(sectors[p], fileSector(t, p), kSectorBytes);
+            const bool ok = is13
+                ? decodeNibbles13(pending.trackNibbles[i], sectors)
+                : decodeNibbles(pending.trackNibbles[i], sectors);
+            if (!ok) { undecodable.push_back(t); continue; }
+            for (int p = 0; p < perTrack; ++p)
+                std::memcpy(fileSector(t, p), sectors[p], kSectorBytes);
             ++decodedTracks;
         }
-        if (!undecodable.empty()) return reportUndecodable(undecodable, lastError);
-        const bool wrote = writeFileAtomic(path, lastError,
-            [&](std::ofstream& wf) {
-                if (twoImgFormat && !twoImgHeaderRaw.empty()) {
-                    wf.write(reinterpret_cast<const char*>(twoImgHeaderRaw.data()),
-                             static_cast<std::streamsize>(twoImgHeaderRaw.size()));
-                }
-                wf.write(reinterpret_cast<const char*>(bytes.data()),
-                         kBytesPerImage13);
-                if (twoImgFormat && !twoImgTrailerRaw.empty()) {
-                    wf.write(reinterpret_cast<const char*>(twoImgTrailerRaw.data()),
-                             static_cast<std::streamsize>(twoImgTrailerRaw.size()));
-                }
-            });
-        if (!wrote) return false;
-        dirty.fill(false);
-        anyDirty = false;
-        pom2::noteMediaWrite();   // the file moved — see the sector-format exit
-        pom2::log().info("Disk II", "Saved " + std::to_string(decodedTracks) +
-                         " modified track(s) to " + path + " (13-sector)");
-        return true;
-    }
-
-    // .dsk/.do/.po: read existing file, decode dirty tracks, overwrite.
-    // For a 2IMG-wrapped source, the existing payload starts past the
-    // captured header (twoImgHeaderRaw.size() bytes in).
-    const std::size_t payloadStart =
-        (twoImgFormat && !twoImgHeaderRaw.empty()) ? twoImgHeaderRaw.size()
-                                                   : 0;
-    std::vector<uint8_t> bytes(kBytesPerImage, 0);
-    {
-        std::ifstream rf(path, std::ios::binary);
-        if (!rf ||
-            !rf.seekg(static_cast<std::streamoff>(payloadStart)) ||
-            !rf.read(reinterpret_cast<char*>(bytes.data()), kBytesPerImage)) {
-            lastError = "Cannot preserve unchanged tracks: source image "
-                        "is missing or truncated: " + path;
+        if (!undecodable.empty()) return reportUndecodable(undecodable, err);
+        if (!writeFileAtomic(pending.path, err, [&](std::ofstream& wf) {
+                emit(wf, bytes.data(), bytes.size());
+            }))
             return false;
-        }
+        pom2::log().info("Disk II", "Saved " + std::to_string(decodedTracks) +
+                                    pending.summary);
+        return true;
+    });
+}
+
+std::shared_ptr<pom2::MediaCommitOperation>
+DiskImage::pollAutosave(pom2::MediaCommitExecutor& executor, bool force)
+{
+    if (autosave_.collect("Disk II")) {
+        dirty.fill(false);
+        wozQtDirty.fill(false);
+        anyDirty = false;
     }
-
-    const int* skew = (sectorOrder == SectorOrder::ProDOS)
-                      ? kProDosLogicalForPhysical
-                      : kDos33LogicalForPhysical;
-
-    int decodedTracks = 0;
-    std::vector<int> undecodable;
-    for (int t = 0; t < kTracks; ++t) {
-        if (!dirty[t]) continue;
-        uint8_t sectors[kSectorsPerTrack][kSectorBytes];
-        // Pre-fill with the existing file content so sectors that fail
-        // to decode (or weren't rewritten by the guest) keep their
-        // original bytes.
-        for (int p = 0; p < kSectorsPerTrack; ++p) {
-            const int logical = skew[p];
-            const size_t off  = (t * kSectorsPerTrack + logical) * kSectorBytes;
-            std::memcpy(sectors[p], bytes.data() + off, kSectorBytes);
-        }
-        if (!decodeTrack(t, sectors)) { undecodable.push_back(t); continue; }
-        // Re-pack into the file at logical positions.
-        for (int p = 0; p < kSectorsPerTrack; ++p) {
-            const int logical = skew[p];
-            const size_t off  = (t * kSectorsPerTrack + logical) * kSectorBytes;
-            std::memcpy(bytes.data() + off, sectors[p], kSectorBytes);
-        }
-        ++decodedTracks;
+    const bool pending = loaded && anyDirty && writeBackEnabled &&
+                         !fileWriteProtected;
+    if (!autosave_.due(pending, force)) return autosave_.inFlight();
+    auto capture = std::make_shared<PendingWriteBack>();
+    if (!takeWriteBack(*capture)) {
+        autosave_.refuse(lastError);
+        return autosave_.inFlight();
     }
+    if (!capture->valid) return autosave_.inFlight();
+    return autosave_.start(executor, [capture] {
+        pom2::MediaCommitResult r;
+        r.ok = commitWriteBack(std::move(*capture), r.error);
+        return r;
+    });
+}
 
-    if (!undecodable.empty()) return reportUndecodable(undecodable, lastError);
-
-    const bool wrote = writeFileAtomic(path, lastError,
-        [&](std::ofstream& wf) {
-            if (twoImgFormat && !twoImgHeaderRaw.empty()) {
-                wf.write(reinterpret_cast<const char*>(twoImgHeaderRaw.data()),
-                         static_cast<std::streamsize>(twoImgHeaderRaw.size()));
-            }
-            wf.write(reinterpret_cast<const char*>(bytes.data()), kBytesPerImage);
-            if (twoImgFormat && !twoImgTrailerRaw.empty()) {
-                wf.write(reinterpret_cast<const char*>(twoImgTrailerRaw.data()),
-                         static_cast<std::streamsize>(twoImgTrailerRaw.size()));
-            }
-        });
-    if (!wrote) return false;
-    dirty.fill(false);
-    anyDirty = false;
-    // The FILE just moved, and that is irreversible. A nibble write in memory
-    // deliberately does not bump the media epoch — the rewind ring captures
-    // those tracks and a rewind is meant to undo them — but the commit is a
-    // different event: rewinding across it restored the old tracks with their
-    // dirty flags CLEARED, so the next save wrote only later tracks and the
-    // file became a mix of two timelines (a ProDOS volume cross-links that
-    // way). The WASM 10 s heartbeat commits mid-session, so it happened there
-    // (bug hunt 2026-09-16). Desktop commits mid-session only on eject, swap
-    // or a rebuild, which clear the ring anyway.
-    pom2::noteMediaWrite();
-    pom2::log().info("Disk II", "Saved " + std::to_string(decodedTracks) +
-                     " modified track(s) to " + path +
-                     (twoImgFormat ? " (2IMG envelope preserved)" : ""));
-    return true;
+pom2::MediumPersistence DiskImage::persistence() const
+{
+    pom2::MediumPersistence p;
+    p.loaded  = loaded;
+    p.pending = loaded && anyDirty;
+    p.path    = path;
+    p.state   = autosave_.state(loaded, anyDirty,
+                                writeBackEnabled && !fileWriteProtected);
+    p.error   = autosave_.error();
+    return p;
 }
 
 // ────────────────────────────────────────────────────────────────────────

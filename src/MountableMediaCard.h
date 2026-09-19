@@ -164,6 +164,8 @@ public:
         bool                 valid = false;   ///< false → phase 2 no-ops
         std::string          path;
         std::vector<uint8_t> bytes;
+        uint64_t             seq = 0;         ///< capture order (MediaAutosave.h)
+        uint64_t             lineage = 0;     ///< …within this mount
     };
 
     /// Phase 1 of a two-phase FLUSH (no eject), with `stateMutex` held: lift

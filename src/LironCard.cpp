@@ -512,6 +512,11 @@ MediaBayInfo LironCard::bayInfo(int bay) const
     info.writeBackEnabled  = img.isWriteBackEnabled();
     info.hasUnsavedChanges = img.hasUnsavedChanges();
     info.supportsWriteBack = true;
+    if (img.isLoaded()) {
+        const auto p = img.persistence();
+        info.persistenceState = p.state;
+        info.persistenceError = p.error;
+    }
     return info;
 }
 
@@ -666,6 +671,8 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
     // `valid == false`, exactly as `flushBay` returning true is.
     Disk35Image::PendingWriteBack pending = img.takeWriteBack();
     out.valid = pending.valid;
+    out.seq   = pending.seq;
+    out.lineage = pending.lineage;
     out.path  = std::move(pending.path);
     out.bytes = std::move(pending.bytes);
     return true;

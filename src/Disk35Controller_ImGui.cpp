@@ -134,9 +134,18 @@ void renderDriveBlock(int                                       driveIdx,
         else
             ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
     }
-    if (drv.hasUnsavedChanges) {
+    // The file follows the guest's writes about a second after they stop
+    // (MediaAutosave.h); "unsaved" is left for a disk that will not be saved.
+    if (!drv.persistenceError.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "(unsaved)");
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "(save failed)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", drv.persistenceError.c_str());
+    } else if (drv.hasUnsavedChanges) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                           drv.persistenceState == "disabled" ? "(unsaved)"
+                                                              : "(saving to file)");
     }
 
     ImGui::PopID();

@@ -170,6 +170,7 @@ public:
         std::string path;
         std::string lastError;
         bool hasUnsavedChanges = false;
+        std::string persistenceState, persistenceError;   // MediaAutosave.h
         bool writeBackEnabled = true;
         /// The disk's own protection (tab / 2IMG lock / WOZ), without the
         /// process default folded in — what the panel's notch tick shows.

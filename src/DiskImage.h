@@ -47,6 +47,7 @@
 #ifndef POM2_DISK_IMAGE_H
 #define POM2_DISK_IMAGE_H
 
+#include "MediaAutosave.h"
 #include "MediaWritePolicy.h"
 #include <array>
 #include <cstdint>
@@ -60,7 +61,7 @@
 /// per frame (insertDisk → prepareDisk → loadFile), which is how the AI
 /// control server's HTTP thread SIGBUSed on arm64 macOS (2026-08-23).
 /// Heap-allocate temporaries (`std::make_unique<DiskImage>()`) instead.
-class DiskImage
+class DiskImage final : public pom2::AutosavedMedium
 {
 public:
     static constexpr int kTracks            = 35;
@@ -354,6 +355,48 @@ public:
     /// the dirty bits are cleared.
     bool saveDirty();
 
+    /// One nibble track, as the controller sees it.
+    using TrackBuffer = std::array<uint8_t, kNibblesPerTrack>;
+
+    /// ── Two-phase write-back ────────────────────────────────────────────
+    /// What `saveDirty` owes the file, lifted out so the file work can run
+    /// with no lock held and without this object (the Disk II eject moves
+    /// the image out; the background autosave keeps it mounted). A WOZ or a
+    /// nibble image is captured as its complete payload; a sector image as
+    /// its dirty tracks' nibbles, decoded at commit time on top of the file's
+    /// current sectors — so a sector the decoder cannot parse keeps its old
+    /// bytes, exactly as the inline save always did.
+    struct PendingWriteBack {
+        enum class Kind { Whole, Sectors16, Sectors13 };
+        bool                     valid = false;   ///< false → phase 2 no-ops
+        uint64_t                 seq   = 0;       ///< see nextMediaCaptureSeq
+        uint64_t                 lineage = 0;     ///< the mount it came from
+        std::string              path;
+        Kind                     kind  = Kind::Whole;
+        std::vector<uint8_t>     header, trailer; ///< 2IMG / MacBinary envelope
+        std::vector<uint8_t>     payload;         ///< Kind::Whole
+        SectorOrder              order = SectorOrder::Dos33;
+        std::vector<int>         trackNumbers;    ///< Sectors16/13: dirty tracks
+        std::vector<TrackBuffer> trackNibbles;    ///< …and their nibbles
+        std::string              summary;         ///< for the success log line
+    };
+
+    /// Phase 1, with the lock: capture what `saveDirty` would write. Memcpy
+    /// (plus the WOZ bit re-pack) — no syscall. Leaves the dirty flags alone.
+    /// Returns false, with `getLastError()` set, when the capture is refused
+    /// (a CNib2 track carrying data its layout cannot store, a WOZ track with
+    /// no slot to go back into). True with `out.valid == false` means there
+    /// is nothing to write (clean, write-back off, header-protected).
+    bool takeWriteBack(PendingWriteBack& out);
+
+    /// Phase 2, with NO lock held. Static: the image may be gone by now.
+    static bool commitWriteBack(PendingWriteBack&& pending, std::string& error);
+
+    /// Background autosave (MediaAutosave.h), `stateMutex` held.
+    std::shared_ptr<pom2::MediaCommitOperation>
+    pollAutosave(pom2::MediaCommitExecutor& executor, bool force) override;
+    pom2::MediumPersistence persistence() const override;
+
     /// User opt-in for write-back. Default: false (read-only) to avoid
     /// silently mutating the source file. Mainwindow flips this before
     /// eject if the user has opted in. WOZ images now go through the
@@ -448,9 +491,11 @@ private:
     bool writeBackEnabled = pom2::mediaWritableByDefault();   // see MediaWritePolicy.h
     bool anyDirty = false;
 
+    pom2::MediaAutosave autosave_;
+    uint64_t lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed
+
     // 35 × 6656 = ~228 KB. Heap allocation would also work but a flat
     // member fits the "one concern, plain data" style of POM2.
-    using TrackBuffer = std::array<uint8_t, kNibblesPerTrack>;
     std::array<TrackBuffer, kTracks> tracks;
     std::array<bool, kTracks>        dirty{};
 
@@ -665,12 +710,18 @@ private:
     /// Sectors that can't be parsed (no prologue, bad checksum) are
     /// left untouched in `outSectors` (which the caller pre-fills with
     /// the existing file content so unmodified sectors persist).
-    bool decodeTrack(int track, uint8_t outSectors[kSectorsPerTrack][kSectorBytes]) const;
+    bool decodeTrack(int track, uint8_t outSectors[kSectorsPerTrack][kSectorBytes]) const
+    { return track >= 0 && track < kTracks && decodeNibbles(tracks[track], outSectors); }
+    static bool decodeNibbles(const TrackBuffer& buf,
+                              uint8_t outSectors[kSectorsPerTrack][kSectorBytes]);
 
     /// 13-sector (5-and-3) decoder, inverse of writeDataField13. Used by
     /// saveDirty for .d13/.dsk write-back. outSectors indexed by the
     /// address-field sector number (0..12).
-    bool decodeTrack13(int track, uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]) const;
+    bool decodeTrack13(int track, uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]) const
+    { return track >= 0 && track < kTracks && decodeNibbles13(tracks[track], outSectors); }
+    static bool decodeNibbles13(const TrackBuffer& buf,
+                                uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]);
 };
 
 /// Slot-routing class for a disk image — which kind of card/slot the image
