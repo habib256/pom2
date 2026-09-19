@@ -706,6 +706,7 @@ set(POM2_MACHINE_SOURCES
 
 set(POM2_MEDIA_HEADERS
     src/AtomicFileReplace.h
+    src/MediaAutosave.h
     src/TwoImg.h
 )
 
@@ -831,6 +832,7 @@ set(HEADERS
     src/EchoPlusTMS5220Card.h
     src/EmulationController.h
     src/BlockWriteBackExecutor.h
+    src/MediaAutosave.h
     src/FloppySoundDevice.h
     src/FloppySoundSink.h
     src/HdvController_ImGui.h

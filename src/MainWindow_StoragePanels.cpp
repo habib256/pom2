@@ -189,6 +189,9 @@ void MainWindow::renderDiskPanelWindow()
             snap.lastError         = card->getLastError();
             snap.writeBackEnabled  = card->isWriteBackEnabled();
             snap.hasUnsavedChanges = card->hasUnsavedChanges();
+            const auto persisted   = card->persistence();
+            snap.persistenceState  = persisted.state;
+            snap.persistenceError  = persisted.error;
             snap.fileWriteProtected = card->isFileWriteProtected();
         }
         snap.turboWhileMotor = diskTurboWhileMotor;
@@ -223,7 +226,7 @@ void MainWindow::renderDiskPanelWindow()
                 *controller, snap.diskPath, protect);
             tapeStatusMessage = "slot " + std::to_string(card->getSlot()) +
                 (n.ok ? (protect ? ": disk WRITE-PROTECTED"
-                                 : ": disk WRITABLE (saves on eject)")
+                                 : ": disk WRITABLE (saved as it is written)")
                       : ": " + n.error);
             tapeStatusUntil = lastFrameTime + 4.0;
         }
@@ -1619,6 +1622,8 @@ void MainWindow::renderDisk35PanelWindow()
         dst.diskPath          = src.path;
         dst.lastError         = src.lastError;
         dst.hasUnsavedChanges = src.hasUnsavedChanges;
+        dst.persistenceState  = src.persistenceState;
+        dst.persistenceError  = src.persistenceError;
         dst.writeBackEnabled  = src.writeBackEnabled;
         dst.fileWriteProtected = src.fileWriteProtected;
         dst.isWoz             = src.isWoz;
@@ -1732,7 +1737,7 @@ void MainWindow::renderDisk35PanelWindow()
             tapeStatusMessage = std::string("3.5\" drive ")
                 + (d == 0 ? "1" : "2")
                 + (n.ok ? (protect ? ": disk WRITE-PROTECTED"
-                                   : ": disk WRITABLE (saves on eject)")
+                                   : ": disk WRITABLE (saved as it is written)")
                         : ": " + n.error);
             tapeStatusUntil = lastFrameTime + 4.0;
         }

@@ -82,9 +82,19 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   immutable batches, the runtime commits off `stateMutex`. Per-block versions
   and ordered commit tickets protect concurrent writes and ejects. Errors stay
   dirty and retry. `POST /disk/sync` waits outside the lock; `/status` reports
-  `block_storage`. Host-folder and floppy policies are separate. → DEV §
+  `block_storage`. Host-folder policy is separate. → DEV §
   Background block-image persistence; tests `block_autosave`,
   `ai_control_server_smoke`.
+- **Floppies autosave too** *(2026-09-19)* — every mounted 5.25" and 3.5"
+  image (Disk II, SmartPort/Liron 3.5", //c+ on-board) reaches its file ~1 s
+  after the drive goes quiet, **without an eject**, so a check of an image's
+  bytes may read the file directly (after `POST /disk/sync` for certainty).
+  `MediaAutosave.h` (media layer: state machine + per-mount commit ordering)
+  + `mediaCommitExecutor()` (runtime, one worker). Every floppy save goes
+  through `takeWriteBack`/`commitWriteBack`, so an older capture can never
+  overwrite a newer one. The capture bumps the rewind epoch; the poll pauses
+  during a scrub. `/status` adds `floppy_storage`. → DEV § Background floppy
+  persistence; test `floppy_autosave`.
 - **A rewind may never cross an irreversible write** — the rewind ring never
   captures block-device (up to 32 MiB), 3.5" (800 KB) or writable-WOZ media, so
   rolling RAM back over a ProDOS SAVE would cross-link the volume. Instead every
@@ -92,7 +102,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   (`Block512Backing.h`) and `EmulationController::noteMediaWrite` drops the ring
   at its capture point. Printed output counts as irreversible too. Non-WOZ Disk II
   nibble writes deliberately do NOT bump — those *are* captured and a rewind is
-  expected to undo them.
+  expected to undo them — but the floppy autosave's capture does.
 - **Every long-lived thread wears an exception barrier** — an exception
   escaping a `std::thread` callable calls `std::terminate()`, killing the
   process with no log line: a crash the user cannot report and you cannot

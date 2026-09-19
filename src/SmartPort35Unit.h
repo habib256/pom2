@@ -63,6 +63,7 @@ public:
     void     setWriteBackEnabled(bool on) override { img_.setWriteBackEnabled(on); }
     bool     saveDirty() override { return img_.saveDirty(); }
     bool     hasUnsavedChanges() const override { return img_.hasUnsavedChanges(); }
+    AutosavedMedium* autosavedMedium() override { return &img_; }
 
     /// Escape hatch for the panel UI when it needs to talk to the
     /// underlying image (e.g. for tracks-changed indicators). Borrowed.

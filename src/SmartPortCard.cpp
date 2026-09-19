@@ -1143,6 +1143,10 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
     if (auto* b = u->blockBacking()) {
         info.persistenceState = b->persistenceState();
         info.persistenceError = b->persistenceError();
+    } else if (auto* u35 = dynamic_cast<const SmartPort35Unit*>(u)) {
+        const auto p = u35->image().persistence();
+        info.persistenceState = p.state;
+        info.persistenceError = p.error;
     }
     info.supportsWriteBack = true;
     info.supportsTypeSelect = true;
@@ -1219,6 +1223,8 @@ bool SmartPortCard::prepareFlushBay(int bay, PendingBayFlush& out,
     if (!u35) return false;
     Disk35Image::PendingWriteBack pending = u35->image().takeWriteBack();
     out.valid = pending.valid;
+    out.seq   = pending.seq;
+    out.lineage = pending.lineage;
     out.path  = std::move(pending.path);
     out.bytes = std::move(pending.bytes);
     return true;

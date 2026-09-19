@@ -243,6 +243,8 @@ void Disk35Image::eject()
     twoImgTrailerRaw_.clear();
     path_.clear();
     lastError_.clear();
+    autosave_.reset();
+    lineage_ = 0;
 }
 
 bool Disk35Image::readBlock(uint32_t idx, uint8_t out[kBlockBytes]) const
@@ -258,6 +260,7 @@ bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
     if (isWriteProtected()) return false;
     std::memcpy(blocks_.data() + idx * kBlockBytes, in, kBlockBytes);
     dirty_ = true;
+    autosave_.noteWrite();
     // A rewind may not cross a media write: an 800 KB image is not captured
     // per rewind frame, so the controller clears the ring instead. See
     // `pom2::mediaWriteEpoch()` in Block512Backing.h.
@@ -357,6 +360,9 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
     if (!writeBackEnabled_ || fileWriteProtected_) return out;
 
     out.valid = true;
+    out.seq   = nextMediaCaptureSeq();
+    if (lineage_ == 0) lineage_ = nextMediaCaptureSeq();
+    out.lineage = lineage_;
     out.path  = path_;
     out.bytes.reserve(twoImgHeaderRaw_.size() + blocks_.size() +
                       twoImgTrailerRaw_.size());
@@ -379,6 +385,15 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
 {
     error.clear();
     if (!pending.valid) return true;
+    // In capture order: the background autosave and the explicit eject /
+    // flush paths commit from different threads (MediaAutosave.h).
+    return commitMediaInOrder(pending.path, pending.lineage, pending.seq, error,
+        [&pending](std::string& err) { return writeWholeFile(pending, err); });
+}
+
+bool Disk35Image::writeWholeFile(const PendingWriteBack& pending,
+                                 std::string& error)
+{
 
     // Never open the user's image with `trunc` and rewrite it in place:
     // save-on-eject writes 800 KB, and an ENOSPC / removable-media / network
@@ -441,6 +456,38 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
     return true;
 }
 
+
+std::shared_ptr<MediaCommitOperation>
+Disk35Image::pollAutosave(MediaCommitExecutor& executor, bool force)
+{
+    if (autosave_.collect("Disk35")) dirty_ = false;
+    const bool pending = loaded_ && dirty_ && writeBackEnabled_ &&
+                         !fileWriteProtected_;
+    if (!autosave_.due(pending, force)) return autosave_.inFlight();
+    PendingWriteBack capture = takeWriteBack();
+    if (!capture.valid) return autosave_.inFlight();
+    // `takeWriteBack` retires the flag for the eject-style callers; an
+    // autosave keeps it until the file has landed (MediaAutosave::collect).
+    dirty_ = true;
+    auto payload = std::make_shared<PendingWriteBack>(std::move(capture));
+    return autosave_.start(executor, [payload] {
+        MediaCommitResult r;
+        r.ok = commitWriteBack(std::move(*payload), r.error);
+        return r;
+    });
+}
+
+MediumPersistence Disk35Image::persistence() const
+{
+    MediumPersistence p;
+    p.loaded  = loaded_;
+    p.pending = loaded_ && dirty_;
+    p.path    = path_;
+    p.state   = autosave_.state(loaded_, dirty_,
+                                writeBackEnabled_ && !fileWriteProtected_);
+    p.error   = autosave_.error();
+    return p;
+}
 
 // ─── WOZ 3.5" (flux) → blocks ─────────────────────────────────────────────
 //

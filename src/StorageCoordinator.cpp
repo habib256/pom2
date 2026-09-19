@@ -295,6 +295,9 @@ void copyDisk35ImageState(
     target.path = image.path();
     target.lastError = image.lastError();
     target.hasUnsavedChanges = image.hasUnsavedChanges();
+    const auto persisted = image.persistence();
+    target.persistenceState = persisted.state;
+    target.persistenceError = persisted.error;
     target.writeBackEnabled = image.isWriteBackEnabled();
     target.fileWriteProtected = image.isFileWriteProtected();
     target.isWoz = image.kind() == Disk35Image::ImageKind::Woz35;
@@ -433,6 +436,8 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
         Disk35Image::PendingWriteBack imagePending;
         imagePending.valid = true;
         imagePending.path  = std::move(imageFlush.path);
+        imagePending.seq   = imageFlush.seq;
+        imagePending.lineage = imageFlush.lineage;
         imagePending.bytes = std::move(imageFlush.bytes);
         std::string commitError;
         if (Disk35Image::commitWriteBack(std::move(imagePending), commitError))
@@ -865,6 +870,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         Disk35Image::PendingWriteBack imagePending;
         imagePending.valid = true;
         imagePending.path  = std::move(imageFlush.path);
+        imagePending.seq   = imageFlush.seq;
+        imagePending.lineage = imageFlush.lineage;
         imagePending.bytes = std::move(imageFlush.bytes);
         std::string error;
         if (!Disk35Image::commitWriteBack(std::move(imagePending), error)) {
@@ -1028,6 +1035,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
         Disk35Image::PendingWriteBack imagePending;
         imagePending.valid = true;
         imagePending.path  = std::move(imageFlush.path);
+        imagePending.seq   = imageFlush.seq;
+        imagePending.lineage = imageFlush.lineage;
         imagePending.bytes = std::move(imageFlush.bytes);
         std::string error;
         if (!Disk35Image::commitWriteBack(std::move(imagePending), error)) {
@@ -1597,6 +1606,8 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
             Disk35Image::PendingWriteBack imagePending;
             imagePending.valid = true;
             imagePending.path  = std::move(entry.imageFlush.path);
+            imagePending.seq   = entry.imageFlush.seq;
+            imagePending.lineage = entry.imageFlush.lineage;
             imagePending.bytes = std::move(entry.imageFlush.bytes);
             std::string error;
             if (Disk35Image::commitWriteBack(std::move(imagePending), error))
@@ -2069,6 +2080,8 @@ bool StorageCoordinator::commitDeferredFlushes(
         Disk35Image::PendingWriteBack pending;
         pending.valid = true;
         pending.path  = item.payload.path;
+        pending.seq   = item.payload.seq;
+        pending.lineage = item.payload.lineage;
         pending.bytes = std::move(item.payload.bytes);
         std::string commitError;
         if (Disk35Image::commitWriteBack(std::move(pending), commitError))

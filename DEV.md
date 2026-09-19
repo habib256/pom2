@@ -2917,10 +2917,79 @@ the host files; newer guest writes may already be pending. HTTP 500 includes
 the failing path/reason, and failed bytes remain retryable. `GET /status`
 adds `block_storage`: `{slot, bay, path, state, pending, error}` with zero-based
 bays and states `saved`, `pending`, `saving`, `error`, `disabled` or `manual`
-(host folder). This API does not flush floppy or synthesized folder volumes.
+(host folder). Since 2026-09-19 the same call also syncs every mounted
+**floppy** (next section) and `/status` adds `floppy_storage` in the same
+shape; the reply's scope reads `media_images`. Synthesized folder volumes are
+still not flushed by it.
 Tests: `block_autosave` and `ai_control_server_smoke` inspect host bytes while
 images remain mounted, exercise error recovery, and verify the CPU state
 lock remains available during a blocked synchronization.
+
+### Background floppy persistence (`MediaAutosave.h`)
+
+*(2026-09-19.)* A floppy used to reach its host file only on eject, swap,
+quit, profile switch or the browser heartbeat. Anything that read the file
+while the disk was still in the drive — a test, a script checking a SAVE, a
+backup, a second program — saw stale bytes. That included a check that the
+file was *unchanged*: it passed whether or not the guest had written. A crash
+also lost every write since the mount. Floppies now follow the block policy.
+This covers every whole-image medium: a Disk II's `DiskImage` (`.dsk`/`.do`/
+`.po`/`.d13`/`.nib`/`.woz`, 2IMG- and MacBinary-wrapped), and a `Disk35Image`
+wherever it sits — SmartPort and Liron 3.5" units, and the //c+ on-board Sony
+drives.
+
+- **When.** A guest write bumps the medium's write serial. The worker's
+  `pollMediaWriteBacks` (every iteration, Stopped included; `tickFrame` in the
+  browser) captures once the medium has been *quiet* for 1 s. A DOS SAVE is
+  one burst of sectors and should land as one commit. Each capture also costs
+  the rewind history (below), which is the other reason to wait. A failed
+  commit retries after 5 s, doubling up to 60 s while it keeps failing (a
+  track that no longer decodes fails until the guest rewrites it), and logs
+  each distinct error once.
+- **How.** `takeWriteBack` captures under `stateMutex`, with no syscall. A
+  WOZ splices its dirty bits into `wozRaw` and copies it. A `.nib` copies its
+  tracks. A sector image copies its dirty tracks' nibbles. The commit runs on
+  one worker thread, the `MediaCommitExecutor` injected from
+  `BlockWriteBackExecutor.cpp` (inline in the browser build). A sector
+  format decodes there, on top of the file's current sectors, so a sector the
+  decoder cannot parse keeps its old bytes, as the inline save always did.
+  `saveDirty()` is the two phases run back to back, so eject, swap and
+  `flushAll` share this one copy of the logic.
+- **Dirty state.** Kept until the commit lands. It is retired only if the
+  serial did not move since the capture, so a write that races the commit is
+  never cleared by it. A failure keeps everything; the panels say
+  `(saving to file)` or `(save failed)`, and `(unsaved)` is kept for write-back
+  off.
+- **Ordering.** Eject, swap, `flushAll` and the //c+ firmware-eject queue
+  commit on their own threads. Every capture takes a sequence number, and
+  `commitMediaInOrder` skips an *older* capture of the same mount once a newer
+  one has landed. The newest capture always carries every unconfirmed write,
+  so newest-wins is exact. It is keyed per mount (a lineage id set on the
+  first capture), not per file: two drives holding one image each save their
+  own tracks, and a sector format's read-modify-write merges them. One mutex
+  serialises every media commit.
+- **Rewind.** A capture bumps `pom2::mediaWriteEpoch()` when it is taken,
+  before the commit starts, so no scrub can reach back across a floppy save.
+  Nibble writes still do not bump, so a rewind still undoes writes that have
+  not been captured yet. The poll does not capture while a scrub owns the
+  machine: a capture there would write a historical frame to the file and
+  clear the ring under the user's slider. `loadMediaSnapshot` bumps the serial,
+  so a commit captured before a restore cannot retire the restored dirty
+  flags.
+- **Host API.** `EmulationController::syncFloppyMedia` forces a capture on
+  every mounted floppy and waits outside the lock. `floppyPersistence` reports
+  `{slot, bay, path, state, pending, error}`. Slot 0 is the //c+ on-board pair
+  (bay 0 internal, bay 1 external), and a Disk II's bays are its drives.
+  `~EmulationController` drains the worker.
+
+Test: `floppy_autosave` reads the host files while the disks stay mounted. It
+covers the quiet-period save (5.25" and 3.5"), a write racing a commit held
+on the ordering lock, an older capture committed late, two mounts of one image,
+a failure then an automatic retry, write-back off, the epoch bump, and the
+controller poll plus `syncFloppyMedia` over a Disk II card and the //c+
+internal drive. Mutation controls: retiring dirty state regardless of the
+serial fails the racing-write case, and dropping the ordering check fails the
+late-capture case.
 
 ### Two-phase media mount (`MediaMount.h/.cpp`)
 
@@ -4381,7 +4450,9 @@ clears the history when it moved, so the timeline restarts *after* the write.
 One relaxed atomic load per captured frame, and it covers write paths that do
 not exist yet, because the bump is at the leaf. **Non-WOZ Disk II nibble writes
 deliberately do not bump**: those *are* captured, and a rewind is expected to
-undo them. Every coordinator mount/eject clears the ring for the same reason —
+undo them. What does bump is the floppy autosave's **capture** (since
+2026-09-19, [§ Background floppy persistence](#background-floppy-persistence-mediaautosaveh)):
+once a track is on its way to the file, the ring restarts after it. Every coordinator mount/eject clears the ring for the same reason —
 a host-side media swap makes the recorded timeline a different machine.
 **Since 2026-09-08 (bug hunt #8) the seek and the resume consult the epoch
 too**: `rewindBeginScrub` looked on the way in and `capture` on the way
@@ -5567,7 +5638,8 @@ out-of-range `pc`/`p` silently where `/speed` refuses; write watches are
 short-circuited under `flatBus_` while read watches are not; a watchpoint
 during a Step reports `pc=$0000`; a step-over transient survives an
 unrelated stop. `/status`'s `disks` lists the Disk II only; block images
-now have a separate `block_storage` array (2026-09-10).
+now have a separate `block_storage` array (2026-09-10), floppies a
+`floppy_storage` one (2026-09-19).
 
 **Three more from bug hunt #7** *(2026-09-08)*. `POST /mem` stores with
 `writeRamUnchecked` (or into `auxDataMutable()` with `bank=aux`), never
@@ -5651,8 +5723,8 @@ for the exact JSON shapes):
 
 | Route | Verb(s) | Does |
 |---|---|---|
-| `/status` | GET | profile, cpu_mode, mode, cycles_per_frame, CPU regs, Disk II disks, block-image persistence (`block_storage`) |
-| `/disk/sync` | POST | flush mounted HDV/CFFA/SmartPort block images; waits for host-file commits, HTTP 500 on failure; no body required |
+| `/status` | GET | profile, cpu_mode, mode, cycles_per_frame, CPU regs, Disk II disks, block-image persistence (`block_storage`), floppy persistence (`floppy_storage`) |
+| `/disk/sync` | POST | flush mounted HDV/CFFA/SmartPort block images and every mounted 5.25"/3.5" floppy; waits for host-file commits, HTTP 500 on failure; no body required |
 | `/cpu` | GET / POST | register dump / set `pc`,`a`,`x`,`y` |
 | `/mem?addr=N&len=N[&bank=main\|aux\|cpu]` | GET / POST | hex read (len ≤ 4096; `cpu` = the 6502's view) / bulk RAM write (`main`\|`aux` only) |
 | `/reset` | POST | `{"kind":"soft\|hard\|cold"}` — the three verbs in [CLAUDE § Reset](CLAUDE.md#reset-architecture) |

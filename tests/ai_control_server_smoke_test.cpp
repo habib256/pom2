@@ -221,6 +221,7 @@ void testDiskSync(EmulationController& ctrl, pom2::AiControlServer& srv)
     auto status = oneShot(kTestPort,
         "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
     assert(contains(status.body, "\"block_storage\""));
+    assert(contains(status.body, "\"floppy_storage\""));
     assert(contains(status.body, "\"state\":\"pending\""));
     auto sync = [&] { return oneShot(kTestPort,
         "POST /disk/sync HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n"); };
@@ -228,7 +229,7 @@ void testDiskSync(EmulationController& ctrl, pom2::AiControlServer& srv)
         "GET /disk/sync HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
     assert(r.status == 405);
     r = sync();
-    assert(r.status == 200 && contains(r.body, "\"scope\":\"block_images\""));
+    assert(r.status == 200 && contains(r.body, "\"scope\":\"media_images\""));
     // HTTP success must mean the host file is updated already, while mounted.
     { std::ifstream f(path, std::ios::binary); f.seekg(512); assert(f.get() == 0xA5); }
     status = oneShot(kTestPort,

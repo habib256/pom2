@@ -116,8 +116,8 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
                                   "below to let this disk be saved.");
         } else {
             ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
-                               "WRITABLE — changes are saved to the file on "
-                               "eject and on quit.");
+                               "WRITABLE — changes reach the file a second "
+                               "after the drive stops writing.");
         }
     } else {
         ImGui::TextDisabled("No disk inserted.");
@@ -189,9 +189,18 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Sets the image file's read-only bit — the "
                           "protection travels with the disk, not the drive.");
-    if (snap.hasUnsavedChanges) {
+    // The file follows the guest's writes about a second after they stop
+    // (MediaAutosave.h); "unsaved" is left for a disk that will not be saved.
+    if (!snap.persistenceError.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "(unsaved)");
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "(save failed)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", snap.persistenceError.c_str());
+    } else if (snap.hasUnsavedChanges) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                           snap.persistenceState == "disabled" ? "(unsaved)"
+                                                              : "(saving to file)");
     }
 
     // ─── Disk library ───────────────────────────────────────────────────

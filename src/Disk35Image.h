@@ -40,6 +40,7 @@
 #ifndef POM2_DISK35_IMAGE_H
 #define POM2_DISK35_IMAGE_H
 
+#include "MediaAutosave.h"
 #include "MediaWritePolicy.h"
 #include <array>
 #include <cstdint>
@@ -49,7 +50,7 @@
 
 namespace pom2 {
 
-class Disk35Image
+class Disk35Image final : public AutosavedMedium
 {
 public:
     /// 800K 3.5" geometry: 80 tracks × 2 sides × 10 avg sectors × 512 B
@@ -137,6 +138,10 @@ public:
         bool                 valid = false;   ///< false → phase 2 no-ops
         std::string          path;
         std::vector<uint8_t> bytes;
+        /// Capture order (`nextMediaCaptureSeq`): an older capture never
+        /// replaces a file a newer one reached. 0 = "treat as newest".
+        uint64_t             seq = 0;
+        uint64_t             lineage = 0;   ///< the mount it came from
     };
 
     /// Phase 1, WITH the lock: serialise what `saveDirty()` would write and
@@ -153,7 +158,15 @@ public:
     /// Phase-2 FAILURE undo: re-mark the medium dirty so a retry re-captures
     /// it. Unlike the block backing there is no per-block set to merge — the
     /// payload is the whole image — so this is one flag.
-    void restoreDirty() { if (loaded_) dirty_ = true; }
+    void restoreDirty() { if (loaded_) { dirty_ = true; autosave_.noteWrite(); } }
+
+    /// Background autosave (MediaAutosave.h), `stateMutex` held: the file
+    /// follows the guest's writes about a second after they stop, with the
+    /// 800 KB write done by the media commit worker. Dirty state is kept
+    /// until the commit lands.
+    std::shared_ptr<MediaCommitOperation>
+    pollAutosave(MediaCommitExecutor& executor, bool force) override;
+    MediumPersistence persistence() const override;
 
     /// Write the decoded 800K payload out as a bare ProDOS-order image
     /// (`.po`), leaving the source file untouched. Returns false and fills
@@ -189,11 +202,15 @@ public:
 
 private:
     bool loadFileUnchecked(const std::string& path);
+    /// The atomic temp + rename itself, for `commitWriteBack`.
+    static bool writeWholeFile(const PendingWriteBack& pending, std::string& error);
     /// WOZ2 chunk walk + GCR decode into `blocks_`. See the .cpp.
     bool loadWoz(const std::vector<uint8_t>& buf, const std::string& path);
 
     bool         loaded_              = false;
     bool         dirty_               = false;
+    MediaAutosave autosave_;
+    uint64_t      lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed
     bool         writeBackEnabled_    = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
     bool         fileWriteProtected_  = false;   // header / format says so
     bool         hostReadOnly_        = false;   // the notch (MediaNotch.h)

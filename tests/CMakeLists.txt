@@ -8577,6 +8577,15 @@ pom2_add_headless_test(test_block_autosave
     LINK_LIBRARIES pom2_core_test)
 endif()
 
+# The floppy half of the same policy (MediaAutosave.h): 5.25" and 3.5" images
+# reach their host files while still mounted. Waits out one retry period.
+if(TARGET pom2_core_test)
+pom2_add_headless_test(test_floppy_autosave
+    NAME floppy_autosave TIMEOUT 40 PORTABLE
+    SOURCES floppy_autosave_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+endif()
+
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.
 # Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries

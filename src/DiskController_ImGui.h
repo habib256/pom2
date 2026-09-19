@@ -60,6 +60,7 @@ public:
         bool        turboActive     = false;  // currently boosting?
         bool        writeBackEnabled = true; // writable by default; write-protect is the opt-out
         bool        hasUnsavedChanges = false;// track has been written
+        std::string persistenceState, persistenceError;   // MediaAutosave.h
         /// Physical write-protect of the medium (WOZ INFO+2 / 2IMG flag).
         /// With `writeBackEnabled` this tells the panel WHY the guest sees
         /// a read-only disk — the notch on the sleeve, or the host toggle.

@@ -319,6 +319,17 @@ public:
     int  getActiveDrive() const { return activeDrive; }
     int  getTrackPosition(int drive = 0) const { return validDrive(drive) ? trackPos[drive] : 0; }
     bool hasUnsavedChanges(int drive = 0) const { return validDrive(drive) && images[drive].hasUnsavedChanges(); }
+    /// Both drives, for the background autosave (MediaAutosave.h). A burst
+    /// the controller has not folded into the image yet is simply picked up
+    /// by the next capture: nothing is retired that was not captured.
+    pom2::MediumPersistence persistence(int drive = 0) const
+    { return validDrive(drive) ? images[drive].persistence() : pom2::MediumPersistence{}; }
+    std::vector<pom2::AutosavedMedium*> autosavedMedia() override
+    {
+        std::vector<pom2::AutosavedMedium*> result;
+        for (auto& img : images) result.push_back(&img);
+        return result;
+    }
     /// PHYSICAL write-protect of the medium (WOZ INFO+2 / 2IMG WP flag) —
     /// distinct from the write-back opt-in. The UI needs both to tell the
     /// user *why* the guest is seeing a write-protected disk.

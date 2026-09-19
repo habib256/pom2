@@ -66,6 +66,7 @@ public:
         bool        writeBackEnabled   = true;   // process default (MediaWritePolicy.h), not a UI toggle
         bool        fileWriteProtected = false;  // the disk's own protection: tab / 2IMG lock / WOZ
         bool        hasUnsavedChanges  = false;   // a sector has been written
+        std::string persistenceState, persistenceError;   // MediaAutosave.h
         std::string diskPath;
         std::string lastError;        // last failed mount, if any
     };

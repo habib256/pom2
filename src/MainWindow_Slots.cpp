@@ -1066,7 +1066,7 @@ void MainWindow::renderMediaPanel()
                                     "let them be saved.");
                         } else if (info.loaded) {
                             ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
-                                               "WRITABLE — saved on eject and on quit");
+                                               "WRITABLE — saved in the background");
                         }
                     }
 
