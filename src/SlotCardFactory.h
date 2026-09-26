@@ -30,6 +30,8 @@
 #include <string>
 #include <string_view>
 
+class SuperSerialCard;
+
 namespace pom2 {
 
 class SlotCardFactory final
@@ -64,6 +66,14 @@ public:
     /// Handles the factory-owned subset of the slot catalog. Unknown or
     /// deliberately composer-owned keys return an empty Result with no warning.
     Result create(const Request& request) const;
+
+    /// The Super Serial Card is composed by its caller (transport, keyboard
+    /// sink, settings), but its EPROM is looked up here like every other card
+    /// ROM. A //c-class profile gets none: its serial ports are built in and
+    /// their firmware is the system ROM's. Returns the path loaded, or empty
+    /// when the card keeps its hand-assembled page.
+    std::string loadSuperSerialFirmware(SuperSerialCard& card,
+                                        SystemProfile profile) const;
 
 private:
     Result createMouse(const Request& request) const;

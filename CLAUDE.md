@@ -14,6 +14,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 - `docs/lle_vs_hle.md` — abstraction level per subsystem (silicon vs contract), the HLE seams, and the rule POM2 follows when picking a level.
 - `docs/printer_plan.md` — dot-matrix printer gap analysis vs `web-a2e` + phased plan (character ROMs, screen dump, more heads).
 - `docs/chatmauve_plan.md` — Le Chat Mauve at the silicon: what the RVB Graph / Eve / Féline / //c adapter really do (manuals, the Video-7 patent, the Eve's PLA fuse map, real-hardware measurements), what POM2 models today, and the phased plan to a dot-level model — mixed DHGR (Extasie) first.
+- `docs/printer-detection.md` — what a program can READ from each printer/serial card (SSC DIP banks, 6551 lines, //c ports, Grappler/Grappler+/PIC status, signature table, IIgs) without side effects, and POM2's controls for it: `--slot`, `--printer-port`, `/printer-port`, `/slot-log`, `/printer/spool`, `PrinterPortControl.h`, `PrinterRender.h`.
 - `docs/printer_plan_2.md` — round two: the Epson generations, the C. Itoh cousins, and the LaserWriter (Diablo 630, then PostScript by delegation). § 5 is the Apple II Workstation Card: the dump's memory map, and what the card still needs.
 - `tools/coverage.sh` — line coverage over the code the tests link, with a
   floor that may rise and may not fall (`tools/coverage_floor.txt`). Run it
@@ -197,6 +198,8 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Cricket / Echo (SSI263) — catalog `echoplus` | `EchoPlusCard.h/.cpp` | [§ EchoPlusCard](DEV.md#echopluscard-cricket--ssi263-class--catalog-echoplus) |
 | Echo+ (TMS5220 + 2×AY, silent scaffold) — settings key `echoplus_tms`, **hidden from the picker** since 2026-09-08 | `EchoPlusTMS5220Card.h/.cpp` | [§ EchoPlusTMS5220Card](DEV.md#echoplustms5220card) |
 | Grappler+ (Orange Micro, ROM-gated) — catalog `grappler` | `GrapplerCard.h/.cpp` | [§ Grappler+](DEV.md#grappler-orange-micro) |
+| Grappler (1981) — `grappler1` · Apple Parallel Interface — `pic` (ROM-gated; their printer is a `CentronicsPrinter`) | `GrapplerClassicCard.*`, `AppleParallelCard.*`, `CentronicsPrinter.*` | [printer-detection §§ 8-9](docs/printer-detection.md#8-grappler-1981) |
+| Printer side of a slot, read/set from outside (CLI, HTTP, library) + per-slot bus-access log + stream→PNG | `PrinterPortControl.*`, `SlotBus.h` (`enableAccessLog`), `PrinterRender.*`, `AiControlServer_Printer.cpp` | [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |
 | Floppy mechanical sounds (MAME WAV samples) | `FloppySoundDevice.h/.cpp` | [§ Floppy sounds](DEV.md#floppy-mechanical-sounds) |
 | Printer mechanical sounds (**synthesised** — no sample set exists) | `PrinterSoundDevice.*`, `PrinterSoundSink.h` | [§ Printer sound](DEV.md#printer-sound-printersounddevice) |
 | TransWarp accelerator (Applied Engineering) — catalog `transwarp` | `TranswarpCard.h/.cpp` | [§ TransWarp](DEV.md#transwarp-applied-engineering) |
@@ -333,7 +336,8 @@ the fresh-install map the //e autostart scans `$C700` first and used to hand
 slot 7 a window slot 5's SmartPort ROM needed. The seven cards that override it
 true are `ClockCard`, `GrapplerCard`, `LironCard`, `WorkstationCard`,
 `CffaCard`, `SmartPortCard` and `SuperSerialCard` (the last claims for parity
-with `a2ssc.cpp:50` even though POM2 serves `$FF` there). Released at `$CFFF`.
+with `a2ssc.cpp:50`, and serves Apple's EPROM there when
+`roms/ssc_341-0065-a.bin` is present — `$FF` without it). Released at `$CFFF`.
 
 In IIe mode the same map applies but most of `$0000-$BFFF` can route to aux 64 KB under paging switches — see table at top of `Memory.h`.
 
@@ -412,7 +416,7 @@ Keyboard wiring:
 
 Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`, `--ii-plus` (alias `--ii+`), `--speed`, `--cpu-max`, `--ai-control[=PORT]`, `--display ntsc|chatmauve|mono-white|mono-green|mono-amber`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path` (//c+ Sony 3.5"), `--blank-disk [1|2:]path`
 (an UNFORMATTED diskette — no address fields, not an empty image),
-`--prodos-folder dir`, `--load addr:file`, `--run addr`, `--paste`, `--step N`, `--trace-brk` (accepted, not wired), `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--kiosk`, `-h`/`--help`, `-v`/`--version`. `printUsage()` in `CliDispatcher.cpp` is the source of truth. **`--save-tape <path>` is honoured on clean shutdown** (`main.cpp`, next to `captureWindowGeometryNow()`), with `--save-tape-format aci|wav` picking the extension when the path has none. The flags that carry a value after `=` — `--ai-control`, `--fujinet`, `--fujinet-serial`, `--rgb-card-invert-bit7` — **reject the space-separated form**: written that way the value used to fall through to the positional-disk branch, so `--ai-control 6503` armed the default port and then complained about a disk image called `6503`.
+`--prodos-folder dir`, `--load addr:file`, `--run addr`, `--paste`, `--step N`, `--trace-brk` (accepted, not wired), `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--slot N=KEY`, `--printer-port N:k=v,…` (docs/printer-detection.md § 12), `--kiosk`, `-h`/`--help`, `-v`/`--version`. `printUsage()` in `CliDispatcher.cpp` is the source of truth. **`--save-tape <path>` is honoured on clean shutdown** (`main.cpp`, next to `captureWindowGeometryNow()`), with `--save-tape-format aci|wav` picking the extension when the path has none. The flags that carry a value after `=` — `--ai-control`, `--fujinet`, `--fujinet-serial`, `--rgb-card-invert-bit7` — **reject the space-separated form**: written that way the value used to fall through to the positional-disk branch, so `--ai-control 6503` armed the default port and then complained about a disk image called `6503`.
 
 **Kiosk is a runtime mode, not just a flag**: `MainWindow::toggleKioskMode()`
 (Ctrl+Alt+F, F10, View menu, `view.kiosk` palette command, or the in-kiosk menu's

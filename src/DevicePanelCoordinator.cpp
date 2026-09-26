@@ -259,6 +259,12 @@ DevicePanelCoordinator::captureSerialCards() const
         snapshot.connected = card->clientConnected();
         snapshot.rawMode = card->rawMode();
         snapshot.printerTap = card->printerTap();
+        snapshot.mode = static_cast<std::uint8_t>(card->mode());
+        snapshot.dsw1 = card->dipSwitch1();
+        snapshot.dsw2 = card->dipSwitch2();
+        snapshot.cable = static_cast<std::uint8_t>(card->cable());
+        snapshot.builtInPort = card->builtInPort();
+        snapshot.firmwareLoaded = card->firmwareLoaded();
         snapshot.bytesRx = card->bytesRx();
         snapshot.bytesTx = card->bytesTx();
         snapshot.recentRxText = card->recentRxText();
@@ -283,7 +289,15 @@ DevicePanelCoordinator::applySerial(const SerialCommand& command)
         if (!card) return result;
         result.cardFound = true;
         if (command.requestRawMode) card->setRawMode(command.rawMode);
+        if (command.requestMode && !card->builtInPort()) {
+            const auto mode = static_cast<SuperSerialCard::Mode>(command.mode & 0x03);
+            card->setMode(mode);
+            card->setPrinterTap(mode == SuperSerialCard::Mode::Printer);
+        }
         if (command.requestPrinterTap) card->setPrinterTap(command.printerTap);
+        if (command.requestCable &&
+            command.cable <= static_cast<std::uint8_t>(SuperSerialCard::Cable::NullModem))
+            card->setCable(static_cast<SuperSerialCard::Cable>(command.cable));
     }
 
     // stop()/start() join a worker and bind a socket. Under stateMutex that
@@ -328,6 +342,13 @@ void DevicePanelCoordinator::persistSerial()
         settings_.setInt("ssc_port" + suffix, card.port);
         settings_.setBool("ssc_raw_mode" + suffix, card.rawMode);
         settings_.setBool("ssc_printer_tap" + suffix, card.printerTap);
+        settings_.setString("ssc_cable" + suffix,
+            SuperSerialCard::cableKey(
+                static_cast<SuperSerialCard::Cable>(card.cable)));
+        if (!card.builtInPort) {
+            settings_.setInt("ssc_dsw1" + suffix, card.dsw1);
+            settings_.setInt("ssc_dsw2" + suffix, card.dsw2);
+        }
     }
     if (!cards.empty()) {
         const auto& primary = cards.front();

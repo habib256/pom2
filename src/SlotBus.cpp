@@ -105,10 +105,11 @@ uint8_t SlotBus::deviceSelectRead(uint16_t addr)
     if (busSnooper_ && busSnooper_->busSnoop(addr, false, 0)) return openBus();
     const int slot = (addr - 0xC080) >> 4;
     const uint8_t low4 = static_cast<uint8_t>(addr & 0x0F);
-    if (auto* p = slots[slot].get()) return p->deviceSelectRead(low4);
     // Empty slot: MAME `apple2e.cpp:2883-2918` `c080_r` falls through every
     // per-slot branch to `return read_floatingbus();`.
-    return openBus();
+    const uint8_t v = slots[slot] ? slots[slot]->deviceSelectRead(low4) : openBus();
+    logAccess(slot, addr, v, false);
+    return v;
 }
 
 void SlotBus::deviceSelectWrite(uint16_t addr, uint8_t v)
@@ -117,6 +118,7 @@ void SlotBus::deviceSelectWrite(uint16_t addr, uint8_t v)
     if (addr < 0xC080 || addr > 0xC0FF) return;
     const int slot = (addr - 0xC080) >> 4;
     const uint8_t low4 = static_cast<uint8_t>(addr & 0x0F);
+    logAccess(slot, addr, v, true);
     if (auto* p = slots[slot].get()) p->deviceSelectWrite(low4, v);
 }
 
@@ -133,11 +135,15 @@ uint8_t SlotBus::slotRomRead(uint16_t addr)
     // — first-one-wins, but ONLY among cards that actually drive /IOSTB
     // (`a2bus.h:145`, default false). A card with no expansion ROM used to
     // latch the window here and hand $FF to the card that has one.
+    uint8_t v;
     if (auto* p = slots[slot].get()) {
         if (p->takesC800()) claimExpansion(slot);
-        return p->slotRomRead(static_cast<uint8_t>(addr & 0xFF));
+        v = p->slotRomRead(static_cast<uint8_t>(addr & 0xFF));
+    } else {
+        v = openBus();
     }
-    return openBus();
+    logAccess(slot, addr, v, false);
+    return v;
 }
 
 void SlotBus::slotRomWrite(uint16_t addr, uint8_t v)
@@ -154,6 +160,7 @@ void SlotBus::slotRomWrite(uint16_t addr, uint8_t v)
     // MAME `apple2e.cpp:2989-3025` `write_slot_rom`: same first-one-wins
     // claim as the read, and likewise gated on `take_c800()` (`a2bus.h:145`)
     // — a populated slot is not enough, the card must serve /IOSTB.
+    logAccess(slot, addr, v, true);
     if (auto* p = slots[slot].get()) {
         if (p->takesC800()) claimExpansion(slot);
         p->slotRomWrite(static_cast<uint8_t>(addr & 0xFF), v);
@@ -168,24 +175,76 @@ uint8_t SlotBus::expansionRomRead(uint16_t addr)
         // `apple2e.cpp:3137-3145`, `offset == 0x7ff`). The byte returned is
         // the floating bus — the same `read_floatingbus()` tail every other
         // unclaimed read takes.
+        const int owner = activeExpansionSlot;
         deactivateExpansion();
-        return openBus();
+        const uint8_t v = openBus();
+        if (owner >= 1 && owner <= 7) logAccess(owner, addr, v, false);
+        return v;
     }
     const int slot = activeExpansionSlot;
     if (slot < 1 || slot > 7) return openBus();
-    if (auto* p = slots[slot].get())
-        return p->expansionRomRead(static_cast<uint16_t>(addr - 0xC800));
-    return openBus();
+    const uint8_t v = slots[slot]
+        ? slots[slot]->expansionRomRead(static_cast<uint16_t>(addr - 0xC800))
+        : openBus();
+    logAccess(slot, addr, v, false);
+    return v;
 }
 
 void SlotBus::expansionRomWrite(uint16_t addr, uint8_t v)
 {
     if (addr < 0xC800 || addr > 0xCFFF) return;
-    if (addr == 0xCFFF) { deactivateExpansion(); return; }
+    if (addr == 0xCFFF) {
+        const int owner = activeExpansionSlot;
+        deactivateExpansion();
+        if (owner >= 1 && owner <= 7) logAccess(owner, addr, v, true);
+        return;
+    }
     const int slot = activeExpansionSlot;
     if (slot < 1 || slot > 7) return;
+    logAccess(slot, addr, v, true);
     if (auto* p = slots[slot].get())
         p->expansionRomWrite(static_cast<uint16_t>(addr - 0xC800), v);
+}
+
+void SlotBus::enableAccessLog(int slot, std::size_t capacity)
+{
+    if (slot < 1 || slot >= kSlotCount) return;
+    auto& log = accessLogs_[static_cast<std::size_t>(slot)];
+    log.entries.clear();
+    log.capacity = capacity ? capacity : 1;
+    log.dropped = 0;
+    accessLogMask_ = static_cast<uint8_t>(accessLogMask_ | (1u << slot));
+}
+
+void SlotBus::disableAccessLog(int slot)
+{
+    if (slot < 1 || slot >= kSlotCount) return;
+    accessLogMask_ = static_cast<uint8_t>(accessLogMask_ & ~(1u << slot));
+}
+
+std::vector<SlotBus::SlotAccess> SlotBus::takeAccessLog(int slot)
+{
+    if (slot < 1 || slot >= kSlotCount) return {};
+    auto& log = accessLogs_[static_cast<std::size_t>(slot)];
+    std::vector<SlotAccess> out(log.entries.begin(), log.entries.end());
+    log.entries.clear();
+    return out;
+}
+
+std::uint64_t SlotBus::accessLogDropped(int slot) const
+{
+    if (slot < 1 || slot >= kSlotCount) return 0;
+    return accessLogs_[static_cast<std::size_t>(slot)].dropped;
+}
+
+void SlotBus::recordAccess(int slot, uint16_t addr, uint8_t value, bool write)
+{
+    auto& log = accessLogs_[static_cast<std::size_t>(slot)];
+    if (log.entries.size() >= log.capacity) {
+        log.entries.pop_front();
+        ++log.dropped;
+    }
+    log.entries.push_back({ cycleSource_ ? cycleSource_() : 0, addr, value, write });
 }
 
 void SlotBus::rebuildActiveCache()

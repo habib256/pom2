@@ -19,7 +19,9 @@
 #include "CffaCard.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
+#include "AppleParallelCard.h"
 #include "GrapplerCard.h"
+#include "GrapplerClassicCard.h"
 #include "LironCard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
@@ -29,9 +31,15 @@
 #include "WorkstationCard.h"
 #include "SlotPeripheral.h"
 #include "SmartPortCard.h"
+#include "SuperSerialCard.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <fstream>
+#include <initializer_list>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace pom2 {
 namespace {
@@ -166,6 +174,46 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         return result;
     }
 
+    if (request.key == "grappler1" || request.key == "pic") {
+        // ROM-gated like the CFFA: without its firmware each is a dead $Cn
+        // page a detection routine would still find, so the slot stays empty.
+        const bool pic = request.key == "pic";
+        const std::string rom = locate_(pic ? "roms/341-0057.bin"
+                                            : "roms/grappler_eps-1.bin");
+        std::vector<uint8_t> bytes;
+        if (!rom.empty()) {
+            std::ifstream f(rom, std::ios::binary);
+            bytes.resize(pic ? AppleParallelCard::kPromBytes + 1
+                             : GrapplerClassicCard::kRomBytes + 1);
+            f.read(reinterpret_cast<char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+            bytes.resize(static_cast<std::size_t>(f.gcount()));
+        }
+        std::unique_ptr<SlotPeripheral> card;
+        if (pic) {
+            auto c = std::make_unique<AppleParallelCard>(request.slot);
+            if (c->loadProm(bytes)) card = std::move(c);
+        } else {
+            auto c = std::make_unique<GrapplerClassicCard>(request.slot);
+            if (c->loadRom(bytes)) card = std::move(c);
+        }
+        if (!card) {
+            result.warningCategory = pic ? "PIC" : "Grappler";
+            result.warning = std::string(pic ? "Apple Parallel Interface"
+                                             : "Grappler (1981)") +
+                " requested in slot " + std::to_string(request.slot) +
+                " but its ROM (" + (pic ? "roms/341-0057.bin, 512 B"
+                                        : "roms/grappler_eps-1.bin, 2 KB") +
+                ") is missing or the wrong size — slot left empty";
+            return result;
+        }
+        result.resourcePath = rom;
+        result.status = "loaded: " + rom;
+        card->onReset();
+        result.card = std::move(card);
+        return result;
+    }
+
     if (request.key == "workstation") {
         // Apple II Workstation Card. Hard ROM gate, unlike the Grappler: the
         // card is a coprocessor, so without its firmware there is nothing for
@@ -269,6 +317,26 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
     }
 
     return result;
+}
+
+std::string SlotCardFactory::loadSuperSerialFirmware(
+    SuperSerialCard& card, SystemProfile profile) const
+{
+    if (profileConfig(profile).noPhysicalSlots) return {};
+    for (const std::string_view candidate : {
+             "roms/ssc_341-0065-a.bin", "roms/341-0065-a.bin",
+             "roms/SSC.rom"}) {
+        const std::string rom = locate_(candidate);
+        if (rom.empty()) continue;
+        // One byte past the size, so a larger file is refused, not truncated.
+        std::ifstream f(rom, std::ios::binary);
+        std::vector<uint8_t> bytes(SuperSerialCard::kFirmwareBytes + 1);
+        f.read(reinterpret_cast<char*>(bytes.data()),
+               static_cast<std::streamsize>(bytes.size()));
+        bytes.resize(static_cast<std::size_t>(f.gcount()));
+        if (card.loadFirmware(bytes)) return rom;
+    }
+    return {};
 }
 
 } // namespace pom2

@@ -47,9 +47,12 @@ Expected files
     diskii_p6_13.rom      Disk II P6 LSS PROM (13-sector)
     mouse_341-0270-c.bin  AppleMouse II card firmware
     mouse_341-0269.bin    AppleMouse II 68705 MCU mask ROM
+    ssc_341-0065-a.bin    Super Serial Card EPROM (341-0065-A)
     cffa20ee02.bin        CFFA 2.0 6502 firmware
     cffa20eec02.bin       CFFA 2.0 65C02 firmware
     grappler_plus.bin     Orange Micro Grappler+ 4 KB EPROM
+    grappler_eps-1.bin    Orange Micro Grappler (1981) 2 KB EPROM
+    341-0057.bin          Apple II Parallel Interface Card PROM
     thunderclock_u9_v1.3.bin  ThunderClock+ Rev 1.3 EPROM
     liron.rom             Liron-class SmartPort controller ROM
 

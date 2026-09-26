@@ -102,6 +102,30 @@ bool MainWindow::setChatMauveInvertBit7(bool v)
     return devicePanelCoordinator_->setChatMauveInvertBit7(v);
 }
 
+bool MainWindow::setSlotCardFromCli(int slot, const std::string& key,
+                                    std::string& error)
+{
+    const auto& cfg = pom2::profileConfig(activeProfile);
+    if (cfg.noPhysicalSlots) {
+        error = "this machine has no expansion slots";
+        return false;
+    }
+    if (slot < 1 || slot > 7) { error = "slot must be 1-7"; return false; }
+    bool known = false;
+    for (const auto& ct : pom2::kCardTypes) known = known || key == ct.key;
+    if (!known) { error = "unknown card key \"" + key + "\""; return false; }
+    const std::string settingKey = pom2::slotCardSettingKey(cfg, slot);
+    const std::string previous = settings->getString(settingKey, "");
+    settings->setString(settingKey, key);
+    if (!settingsReadOnly()) (void)settings->save();
+    if (!restartEmulationFromSettings()) {
+        settings->setString(settingKey, previous);
+        error = "the slot rebuild was refused";
+        return false;
+    }
+    return true;
+}
+
 void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
 {
     namespace fs = std::filesystem;
@@ -263,10 +287,38 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         raw->setRawMode(settings->getBool(
             "ssc_raw_mode" + sk,
             legacyPrimary ? settings->getBool("ssc_raw_mode", false) : false));
-        // Printer tap: slot 1 is the printer-port convention (the //c
-        // hard-wires it), so the tap defaults ON there — a //c user gets
-        // PR#1 landing on the ImageWriter with zero configuration.
-        raw->setPrinterTap(settings->getBool("ssc_printer_tap" + sk, s == 1));
+        // A slotted machine gets the real card: Apple's EPROM when roms/ has
+        // it, and the SW1:5-6 mode switches, which default to printer mode in
+        // slot 1 (the printer-port convention) and communications elsewhere.
+        // A //c's ports are built in — system-ROM firmware, no switches.
+        const bool builtIn = pom2::profileConfig(activeProfile).noPhysicalSlots;
+        raw->setBuiltInPort(builtIn);
+        if (!builtIn) {
+            const std::string fw =
+                slotCardFactory_->loadSuperSerialFirmware(*raw, activeProfile);
+            if (!fw.empty())
+                pom2::log().info("SSC", "slot " + std::to_string(s) +
+                                 ": Apple firmware " + fw);
+            raw->setMode((s == 1) ? SuperSerialCard::Mode::Printer
+                                  : SuperSerialCard::Mode::Communications);
+            // The whole banks, once the user (or --ssc-dips) has set them.
+            const int dsw1 = settings->getInt("ssc_dsw1" + sk, -1);
+            const int dsw2 = settings->getInt("ssc_dsw2" + sk, -1);
+            if (dsw1 >= 0 && dsw1 <= 0xFF && dsw2 >= 0 && dsw2 <= 0xFF)
+                raw->setDipSwitches(static_cast<uint8_t>(dsw1),
+                                    static_cast<uint8_t>(dsw2));
+        }
+        SuperSerialCard::Cable cable = SuperSerialCard::Cable::Auto;
+        if (SuperSerialCard::parseCableKey(
+                settings->getString("ssc_cable" + sk, "auto"), cable))
+            raw->setCable(cable);
+        // Printer tap: defaults ON for a card in printer mode — on a //c,
+        // for slot 1, the port it hard-wires to the printer — so PR#n lands
+        // on the ImageWriter with zero configuration.
+        const bool tapDefault = builtIn
+            ? (s == 1)
+            : (raw->mode() == SuperSerialCard::Mode::Printer);
+        raw->setPrinterTap(settings->getBool("ssc_printer_tap" + sk, tapDefault));
         // Give the card its host transport at plug time, listening or not.
         // The card cannot build one itself — that would be a device reaching
         // into runtime — and `startListening` refuses outright without one,
@@ -698,6 +750,13 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "echoplus")    plugEchoPlus(s);
         else if (kind == "echoplus_tms") plugEchoPlusTms(s);
         else if (kind == "grappler")    plugGrappler(s);
+        else if (kind == "grappler1" || kind == "pic") {
+            auto made = slotCardFactory_->create(
+                { kind, s, cpuIsCmosForSlots, activeProfile });
+            if (!made.warning.empty())
+                pom2::log().warn(made.warningCategory.c_str(), made.warning);
+            if (made) st.memory().slotBus().plug(s, std::move(made.card));
+        }
         else if (kind == "workstation") plugWorkstation(s);
         else if (kind == "4play")       plugFourPlay(s);
         else if (kind == "transwarp")   plugTranswarp(s);

@@ -165,6 +165,10 @@ public:
     /// LeChatMauveCard is plugged at boot. Persists to Settings so the
     /// next session picks it up automatically.
     bool setChatMauveInvertBit7(bool v);
+    /// `--slot N=KEY`: stage KEY (a SlotCardCatalog key, "" = empty) for
+    /// slot N the way Slot Config's Apply does — settings key, save, rebuild.
+    /// Refused on a machine with no physical slots and for an unknown key.
+    bool setSlotCardFromCli(int slot, const std::string& key, std::string& error);
 
     void setGlfwWindow(GLFWwindow* w);
 

@@ -420,7 +420,9 @@ Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler) and
 | `liron.rom` | Liron / SmartPort controller firmware (real $Cn0D dispatch identity) |
 | `cffa20ee02.bin` / `cffa20eec02.bin` | CFFA 2.0 firmware |
 | `mouse_341-0270-c.bin` / `mouse_341-0269.bin` | Mouse Card slot ROM / 68705 MCU mask ROM |
+| `ssc_341-0065-a.bin` | Super Serial Card EPROM (Apple 341-0065-A) |
 | `grappler_plus.bin` | Grappler+ EPROM |
+| `grappler_eps-1.bin` / `341-0057.bin` | Original Grappler (1981) EPROM / Apple Parallel Interface PROM |
 | `thunderclock_u9_v1.3.bin` | ThunderClock+ firmware |
 | `roms/floppy_samples/*.wav` | Mechanical drive samples |
 

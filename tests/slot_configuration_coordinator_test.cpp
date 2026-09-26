@@ -29,7 +29,9 @@
 #include "FujiNetCard.h"
 #include "FourPlayCard.h"
 #include "FujiNetCardFactory.h"
+#include "AppleParallelCard.h"
 #include "GrapplerCard.h"
+#include "GrapplerClassicCard.h"
 #include "LeChatMauveCard.h"
 #include "LironCard.h"
 #include "Mockingboard.h"
@@ -173,6 +175,8 @@ int main()
     expectLiveKey(std::make_unique<SuperSerialCard>(3), "ssc");
     expectLiveKey(std::make_unique<PrinterCard>(3), "printer");
     expectLiveKey(std::make_unique<GrapplerCard>(3), "grappler");
+    expectLiveKey(std::make_unique<GrapplerClassicCard>(3), "grappler1");
+    expectLiveKey(std::make_unique<AppleParallelCard>(3), "pic");
     expectLiveKey(std::make_unique<ClockCard>(3), "clock");
     expectLiveKey(std::make_unique<SoftCardZ80>(), "softcard");
     expectLiveKey(std::make_unique<LeChatMauveCard>(3), "chatmauve");

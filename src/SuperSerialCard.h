@@ -34,7 +34,9 @@
 //                   bit 3 = RDRF: RX register full  (1 when bytes are queued)
 //                   bit 0..2 = framing/parity/overrun (always 0)
 //
-// Slot ROM ($Cs00-$CsFF, s=2 → $C200-$C2FF) advertises the SSC
+// With Apple's EPROM loaded (`loadFirmware`) the card runs the real firmware
+// and everything below about the slot ROM is moot. Without it, the
+// hand-assembled slot ROM ($Cs00-$CsFF, s=2 → $C200-$C2FF) advertises the SSC
 // auto-detection signature ($Cn05 = $38, $Cn07 = $18, $Cn0B = $01,
 // $Cn0C = $31), the Pascal 1.1 firmware-protocol entry table at $Cn0D-$Cn10
 // (PINIT/PREAD/PWRITE/PSTATUS routine offsets), and a tiny PR#n / IN#n hook
@@ -58,6 +60,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -88,6 +91,95 @@ public:
 
     /// True when the hand-assembled slot ROM did not fit its declared layout.
     bool romLayoutError() const { return romLayoutError_; }
+
+    /// The real card's 2 KB EPROM, Apple 341-0065-A (MAME `a2ssc.cpp:88-91`,
+    /// CRC b7539d4c). Its last page is the $Cn00 page and the whole 2 KB
+    /// answers the $C800 window (`read_cnxx` / `read_c800`,
+    /// `a2ssc.cpp:352-376`). Loaded, it replaces the hand-assembled page
+    /// entirely — the Apple firmware reads the DIP switches below and drives
+    /// the same 6551, so the telnet bridge and the printer tap are unchanged.
+    /// Anything but exactly 2048 bytes is refused and the card keeps its own
+    /// page. The caller reads the file (`SlotCardFactory`).
+    static constexpr std::size_t kFirmwareBytes = 2048;
+    bool loadFirmware(const std::vector<uint8_t>& bytes);
+    bool firmwareLoaded() const { return firmwareLoaded_; }
+
+    /// SW1:5-6, the mode switches: DSW1 bits $03 at $C0n1, MAME
+    /// `a2ssc.cpp:118-122`. Only the Apple firmware acts on them; the
+    /// hand-assembled page never reads them. Printer mode re-purposes three
+    /// DSW2 switches (`a2ssc.cpp:128-144`: SW2:2 = delay after CR, SW2:3-4 =
+    /// line width), so setMode rewrites DSW2 for the mode it selects — 8N1
+    /// in communications mode, 80 columns with no CR delay in printer mode;
+    /// "no LF after CR" in both (the ImageWriter detects its own).
+    enum class Mode : uint8_t {
+        Communications = 0x00, SicP8 = 0x01, Printer = 0x02, SicP8A = 0x03,
+    };
+    void setMode(Mode m);
+    Mode mode() const { return static_cast<Mode>(lastDip1 & 0x03); }
+    /// Both DIP banks at once, exactly as `$C0n1` / `$C0n2` present them
+    /// (MAME `a2ssc.cpp:98-148`):
+    ///   DSW1  $F0 baud (SW1:4-1: $10 = 50 … $E0 = 9600, $F0 = 19200)
+    ///         $03 mode (SW1:6,5: $00 comm, $01 SIC P8, $02 printer, $03 P8A)
+    ///         $0C unused (reads high)
+    ///   DSW2  $80 stop bits (SW2:1: set = 2)
+    ///         $20 SW2:2 — comm: data bits (set = 7); printer: no delay after CR
+    ///         $0C SW2:4,3 — comm: parity ($00 none, $04 odd, $08 none, $0C
+    ///             even); printer: line width ($00 40, $04 72, $08 80, $0C 132)
+    ///         $02 SW2:5 — end of line (CLEAR = add LF after CR)
+    ///         $50 unused (reads high)
+    /// The interrupt switch (SW2:6) is not in either bank — see
+    /// `setIrqDipEnabled`. Nothing in POM2 reads these but the guest.
+    void setDipSwitches(uint8_t dsw1, uint8_t dsw2)
+    {
+        lastDip1 = dsw1;
+        lastDip2 = dsw2;
+    }
+    uint8_t dipSwitch1() const { return lastDip1; }
+    uint8_t dipSwitch2() const { return lastDip2; }
+
+    /// What is plugged into the card's RS-232 connector, as the 6551's three
+    /// handshake inputs see it (MAME `mos6551.cpp`: DCD and DSR show in the
+    /// status register, active low; an inactive CTS parks the transmitter
+    /// and masks TDRE, `:286-289`):
+    ///
+    ///   Auto            POM2's historical model: DCD+DSR active while a
+    ///                   telnet peer is connected or the printer tap is armed
+    ///                   (or `setModemLinesTied`), CTS always active.
+    ///   Nothing         no cable: every input inactive. A byte written to
+    ///                   the transmitter stays there and TDRE reads 0.
+    ///   PrinterReady    a printer on the usual null-modem printer cable: its
+    ///                   DTR (pin 20) drives DCD and DSR, CTS active.
+    ///   PrinterOffline  the same printer offline, out of paper or buffer
+    ///                   full: it drops DTR, so DCD and DSR go inactive; CTS
+    ///                   stays active. The Apple firmware waits (`$CAF5`).
+    ///   Modem           DSR and CTS active; DCD (carrier) follows the telnet
+    ///                   connection.
+    ///   NullModem       another computer: DCD, DSR and CTS all active.
+    ///
+    /// On a //c port (`setBuiltInPort`) only DCD comes from the cable — its
+    /// CTS is grounded and its DSR is not on the connector — so there the
+    /// explicit cables set DCD alone, CTS stays active and DSR reads inactive.
+    enum class Cable : uint8_t {
+        Auto, Nothing, PrinterReady, PrinterOffline, Modem, NullModem,
+    };
+    void  setCable(Cable c);
+    Cable cable() const;
+    /// "auto" | "none" | "printer" | "printer-offline" | "modem" | "null-modem"
+    static const char* cableKey(Cable c);
+    static bool parseCableKey(std::string_view key, Cable& out);
+
+    /// The three handshake inputs as the 6551 sees them now (true = active).
+    struct InputLines { bool dcd; bool dsr; bool cts; };
+    InputLines inputLines() const;
+
+    /// A //c's two serial ports are this card with no card around it: no
+    /// EPROM (the system ROM drives them) and no DIP switches to set. The
+    /// panel hides the mode selector and the mode is not persisted for them.
+    void setBuiltInPort(bool builtIn) { builtInPort_ = builtIn; }
+    bool builtInPort() const { return builtInPort_; }
+    /// "comm" | "sicp8" | "printer" | "sicp8a" — the `ssc_mode_slotN` value.
+    static const char* modeKey(Mode m);
+    static bool parseModeKey(std::string_view key, Mode& out);
 
     /// Start listening on 127.0.0.1:port. Returns false if the bind fails;
     /// the card stays plugged but `clientConnected()` will always be false.
@@ -283,11 +375,13 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
+    /// The EPROM's 2 KB, when loaded; $FF otherwise.
+    uint8_t expansionRomRead(uint16_t offset) override;
     /// MAME `a2ssc.cpp:50` `take_c800() const override { return true; }` — the
     /// real SSC's 2 KB EPROM answers /IOSTB, so the card claims the window
-    /// even though POM2 serves no expansion ROM there (our `expansionRomRead`
-    /// stays the $FF default). Claiming it is the parity-correct behaviour:
-    /// an SSC that is scanned first DOES lock a later card out until $CFFF.
+    /// even without the dump, when `expansionRomRead` serves $FF. Claiming it
+    /// is the parity-correct behaviour: an SSC that is scanned first DOES lock
+    /// a later card out until $CFFF.
     bool    takesC800() const override { return true; }
     void    onReset() override;
     void    onUnplug() override;
@@ -309,6 +403,9 @@ public:
 private:
     int slot;
     std::array<uint8_t, 256> rom{};
+    std::array<uint8_t, kFirmwareBytes> firmware_{};
+    bool                     firmwareLoaded_ = false;
+    bool                     builtInPort_ = false;
     /// Set by buildRom() when a hand-assembled region overran its budget or
     /// stopped ending where the Pascal entry table / branch targets assume.
     bool                     romLayoutError_ = false;
@@ -389,7 +486,10 @@ private:
     // do. DSW2 keeps SW2-2 (data bits) where the hardware has it — see
     // `irqSwitchOn_` for what used to sit on that bit.
     uint8_t lastDip1   = 0xFC;     // 19200, communications mode
-    uint8_t lastDip2   = 0x52;     // 8N1, CR+LF end of line
+    uint8_t lastDip2   = kDip2Communications;
+    static constexpr uint8_t kDip2Communications = 0x52;  // 8N1, no LF after CR
+    // SW2:2 open (no delay after CR) + SW2:3-4 = 80 columns, no LF after CR.
+    static constexpr uint8_t kDip2Printer        = 0x7A;
 
     /// SW2-6, the interrupt-enable switch. On a real Super Serial Card it
     /// physically gates the 6551's IRQ output before it reaches the slot's IRQ
@@ -508,6 +608,16 @@ private:
     /// Caller must hold `bufferMtx` (reads `printerTap_`).
     bool deviceAttached() const { return connected || printerTap_; }
 
+    Cable cable_ = Cable::Auto;              // guarded by bufferMtx
+    /// The byte in TDR while CTS is inactive: the 6551 keeps it and sends it
+    /// when CTS returns. A second write replaces it, as on the chip.
+    bool    tdrHeld_     = false;
+    uint8_t tdrHeldByte_ = 0;
+    /// `inputLines()` with `bufferMtx` already held.
+    InputLines inputLinesLocked() const;
+    /// Put one byte on the line: TX ring, recent-bytes tail, printer spool,
+    /// transmit interrupt. Caller holds `bufferMtx`.
+    void transmitByte(uint8_t v);
     /// Latch new IRQ sources and push the line if it transitioned.
     /// Caller must hold `bufferMtx`.
     void raiseIrqSource(uint8_t mask);

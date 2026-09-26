@@ -51,9 +51,13 @@
 #include "SlotPeripheral.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <utility>
+#include <vector>
 
 class SlotBus
 {
@@ -98,6 +102,36 @@ public:
     bool isPlugged(int slot) const {
         return slot >= 0 && slot < kSlotCount && slots[slot] != nullptr;
     }
+
+    // ─── Per-slot access log ────────────────────────────────────────────
+    /// One bus access the CPU made to a slot: its $C0nX device-select
+    /// registers, its $CnXX ROM page, or the $C800-$CFFF window while that
+    /// slot owns it (a $CFFF release is logged against the owner it
+    /// releases). `value` is what the card returned on a read, what the CPU
+    /// wrote on a write. `cycle` comes from the installed cycle source —
+    /// Memory's counter, i.e. the cycle of the instruction, not of its bus
+    /// cycle within it.
+    struct SlotAccess {
+        uint64_t cycle;
+        uint16_t addr;
+        uint8_t  value;
+        bool     write;
+    };
+    using CycleSourceFn = std::function<uint64_t()>;
+    void setCycleSource(CycleSourceFn fn) { cycleSource_ = std::move(fn); }
+    /// Start (or restart, clearing it) logging `slot`, keeping at most
+    /// `capacity` entries; past it the oldest go and `accessLogDropped`
+    /// counts them. Logging costs one mask test per slot access when off.
+    void enableAccessLog(int slot, std::size_t capacity = 65536);
+    void disableAccessLog(int slot);
+    bool accessLogEnabled(int slot) const
+    {
+        return slot >= 1 && slot < kSlotCount && (accessLogMask_ >> slot) & 1u;
+    }
+    /// Hand over the entries logged so far and empty the log (it keeps
+    /// running). Slot out of range or never enabled: an empty vector.
+    std::vector<SlotAccess> takeAccessLog(int slot);
+    std::uint64_t accessLogDropped(int slot) const;
 
     /// CPU-side dispatch (called by Memory::memRead / memWrite).
     uint8_t deviceSelectRead (uint16_t addr);   // $C080-$C0FF
@@ -270,6 +304,22 @@ private:
     /// MAME's `read_floatingbus()` tail — what an unclaimed $Cxxx read
     /// puts on the data bus.
     uint8_t openBus() const { return floatingBus_ ? floatingBus_() : uint8_t{0xFF}; }
+
+    // Access log state. `accessLogMask_` bit N = slot N is logged; the only
+    // thing the dispatch paths test when nothing is logged.
+    uint8_t accessLogMask_ = 0;
+    struct AccessLog {
+        std::deque<SlotAccess> entries;
+        std::size_t   capacity = 0;
+        std::uint64_t dropped = 0;
+    };
+    std::array<AccessLog, kSlotCount> accessLogs_{};
+    CycleSourceFn cycleSource_;
+    void logAccess(int slot, uint16_t addr, uint8_t value, bool write)
+    {
+        if ((accessLogMask_ >> slot) & 1u) recordAccess(slot, addr, value, write);
+    }
+    void recordAccess(int slot, uint16_t addr, uint8_t value, bool write);
 };
 
 #endif // POM2_SLOT_BUS_H

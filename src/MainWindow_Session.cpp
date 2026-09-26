@@ -197,6 +197,12 @@ void MainWindow::persistSession(bool flushMedia)
         settings->setInt ("ssc_port"      + sk, ssc->getPort());
         settings->setBool("ssc_raw_mode"  + sk, ssc->rawMode());
         settings->setBool("ssc_printer_tap" + sk, ssc->printerTap());
+        settings->setString("ssc_cable" + sk,
+                            SuperSerialCard::cableKey(ssc->cable()));
+        if (!ssc->builtInPort()) {
+            settings->setInt("ssc_dsw1" + sk, ssc->dipSwitch1());
+            settings->setInt("ssc_dsw2" + sk, ssc->dipSwitch2());
+        }
     }
     if (primarySerialCard()) {
         settings->setBool("ssc_listening", primarySerialCard()->isListening());

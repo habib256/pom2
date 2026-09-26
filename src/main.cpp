@@ -24,6 +24,9 @@
 #include "Logger.h"
 #include "ThreadGuard.h"
 #include "MainWindow.h"
+#include "Memory.h"
+#include "PrinterPortControl.h"
+#include "SlotBus.h"
 #include "HostOpenFiles.h"
 #include "Pom2Theme.h"
 #include "Version.h"
@@ -819,6 +822,29 @@ int main(int argc, char* argv[])
             case pom2::CliPreset::Default: break;
         }
         mainWindow.applyProfile(sp);
+    }
+    // --slot N=KEY: after the profile, so the key lands in that profile's
+    // slot map; each one is a Slot Config Apply (rebuild + cold boot).
+    for (const auto& [slot, key] : plan->slotCards) {
+        std::string err;
+        if (mainWindow.setSlotCardFromCli(slot, key, err))
+            pom2::log().info("CLI", "--slot " + std::to_string(slot) + "=" +
+                             (key.empty() ? "empty" : key));
+        else
+            pom2::log().error("CLI", "--slot " + std::to_string(slot) + ": " + err);
+    }
+    // --printer-port N:k=v,...: on the cards the rebuild above left in place.
+    for (const auto& spec : plan->printerPortSpecs) {
+        int slot = 0;
+        std::string options, err;
+        bool ok = pom2::parsePrinterPortSpec(spec, slot, options, err);
+        if (ok) {
+            auto st = mainWindow.emul().lockState();
+            ok = pom2::applyPrinterPortOptions(st.memory().slotBus(), slot,
+                                               options, err);
+        }
+        if (ok) pom2::log().info("CLI", "--printer-port " + spec);
+        else    pom2::log().error("CLI", "--printer-port " + spec + ": " + err);
     }
     glfwSetWindowUserPointer(window, &mainWindow);
     glfwSetCharCallback(window, glfw_char_callback);

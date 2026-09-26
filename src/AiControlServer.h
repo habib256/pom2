@@ -312,6 +312,10 @@ private:
     void handleSpeed   (socket_t fd, const Request& req);
     void handleScreen  (socket_t fd, const Request& req);
     void handleMouse   (socket_t fd, const Request& req);
+    // AiControlServer_Printer.cpp — docs/printer-detection.md.
+    void handlePrinterPort (socket_t fd, const Request& req);
+    void handleSlotLog     (socket_t fd, const Request& req);
+    void handlePrinterSpool(socket_t fd, const Request& req);
 
     /// True when the request carries a valid auth token (or when no token
     /// is configured server-side). Caller still has to send the 401 — this

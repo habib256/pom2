@@ -205,6 +205,56 @@ void MainWindow::renderSscPanelWindow()
                               "Printer card or Grappler+ takes priority.");
         }
 
+        if (!ssc.builtInPort) {
+            // SW1:5-6 (MAME a2ssc.cpp:118-122), in the order of their values.
+            static const char* kModes[] = {
+                "Communications", "SIC P8 emulation", "Printer",
+                "SIC P8A emulation" };
+            int mode = ssc.mode & 0x03;
+            ImGui::SetNextItemWidth(180);
+            if (ImGui::Combo("Mode (SW1-5/6)", &mode, kModes, 4)) {
+                cmd.requestMode = true;
+                cmd.mode = static_cast<std::uint8_t>(mode);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(ssc.firmwareLoaded
+                    ? "The card's mode switches, read by the Apple\n"
+                      "firmware on PR#n. Printer mode also feeds the\n"
+                      "ImageWriter; the other modes stop feeding it."
+                    : "The card's mode switches. POM2's own slot ROM\n"
+                      "ignores them (roms/ssc_341-0065-a.bin is missing),\n"
+                      "but Printer mode still feeds the ImageWriter.");
+            }
+            ImGui::TextDisabled("DIP switches: DSW1 $%02X  DSW2 $%02X "
+                                "($C0%X1 / $C0%X2)", ssc.dsw1, ssc.dsw2,
+                                8 + slot, 8 + slot);
+        }
+
+        {
+            // SuperSerialCard::Cable, in enum order.
+            static const char* kCables[] = {
+                "Auto (telnet peer or printer tap)", "Nothing plugged in",
+                "Printer, ready", "Printer, offline", "Modem",
+                "Null-modem (computer)" };
+            int cable = ssc.cable < 6 ? ssc.cable : 0;
+            ImGui::SetNextItemWidth(240);
+            if (ImGui::Combo("Cable", &cable, kCables, 6)) {
+                cmd.requestCable = true;
+                cmd.cable = static_cast<std::uint8_t>(cable);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("What the 6551's DCD, DSR and CTS inputs see.\n"
+                                  "A printer drives DCD and DSR from its DTR:\n"
+                                  "offline, it drops them and the firmware\n"
+                                  "waits. With nothing plugged in, CTS is\n"
+                                  "inactive too and no byte leaves the card.");
+            }
+        }
+
         ImGui::Separator();
         ImGui::Text("RX (telnet → A2): %llu B",
             static_cast<unsigned long long>(ssc.bytesRx));
@@ -622,6 +672,10 @@ void MainWindow::renderImageWriterWindow()
             break;
         case SourceKind::FujiNet:
             host.sourceLabel = "fed by FujiNet printer unit, slot " +
+                               std::to_string(printerHost.sourceSlot);
+            break;
+        case SourceKind::Parallel:
+            host.sourceLabel = "fed by parallel card, slot " +
                                std::to_string(printerHost.sourceSlot);
             break;
         case SourceKind::SuperSerial:

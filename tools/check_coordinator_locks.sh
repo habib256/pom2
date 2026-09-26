@@ -84,6 +84,10 @@ LOCK_FREE = (
     #    across a rebuild anyway). See CLAUDE.md, "Never hold stateMutex
     #    across file I/O".
     'create',
+    # Same shape, same call site: the Super Serial Card is composed by
+    # plugSlotsFromSettings rather than create(), and this is its 2 KB EPROM
+    # read — no controller, no bus, the profile-switch rebuild exception.
+    'loadSuperSerialFirmware',
     # NetworkCoordinator's host-only state: no controller, so no machine lock.
     # setHelperPath does search PATH, which is filesystem I/O — acceptable at
     # its one locked call site for the same reason SlotCardFactory::create's

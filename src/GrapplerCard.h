@@ -188,6 +188,43 @@ public:
     }
     bool printerBusy() const { return busy_.load(std::memory_order_relaxed); }
 
+    /// The rest of the printer's side of the cable, as the status byte shows
+    /// it (MAME `read_c0nx`, grappler.cpp:699-707 — raw pin levels, no
+    /// inversion): bit 3 BUSY, bit 2 PAPER EMPTY, bit 1 SELECT.
+    ///
+    ///   setOnline(false)       SELECT low: the printer's ON LINE button is
+    ///                          off. Firmware 3.1 checks SELECT before every
+    ///                          byte ($CD89) and, low, flashes NOT SELECTED on
+    ///                          row 10, beeps three times and waits for SELECT
+    ///                          with no timeout ($CDB5-$CDD2).
+    ///   setPaperOut(true)      PE and BUSY high, no ACK. SELECT is left to
+    ///                          setOnline — whether a printer also drops it
+    ///                          on paper-out is the printer's business (Epsons
+    ///                          reportedly do not). The firmware never reads PE:
+    ///                          with SELECT still high it waits in its ACK
+    ///                          loop ($CD90), silently.
+    ///   setPrinterConnected(false)
+    ///                          no printer on the cable: every input is pulled
+    ///                          up (BUSY = PE = SELECT = 1, MAME ctronics.cpp:
+    ///                          56-73) and /ACK never pulses.
+    ///
+    /// A byte strobed while the printer cannot take it is held, unacknowledged,
+    /// and delivered — with its ACK — when the printer is ready again, so a
+    /// printer switched off and on mid-job loses nothing. (A real printer
+    /// ignores a strobe it cannot take; the firmware would then wait for an
+    /// ACK that never comes. POM2 chooses the recoverable reading.)
+    void setOnline(bool online);
+    void setPaperOut(bool out);
+    void setPrinterConnected(bool connected);
+    bool online() const { return online_.load(std::memory_order_relaxed); }
+    bool paperOut() const { return paperOut_.load(std::memory_order_relaxed); }
+    bool printerConnected() const
+    {
+        return connected_.load(std::memory_order_relaxed);
+    }
+    /// The status byte's line bits (BUSY | PE | SELECT), as read at $C0n0.
+    uint8_t lineBits() const;
+
     /// The ACK latch as the firmware sees it. `ackLatch_` is the MAME
     /// flip-flop (cleared by a data write, set by the printer's /ACK
     /// pulse); a printer with no room in its buffer simply hasn't pulsed
@@ -216,6 +253,23 @@ private:
     bool irqDisable_  = true;   // A1 disables / A2 enables the ACK IRQ
     bool irqAsserted_ = false;
     std::atomic<bool> busy_{false};   // printer BUSY input (see setPrinterBusy)
+    std::atomic<bool> online_{true};      // SELECT (see setOnline)
+    std::atomic<bool> paperOut_{false};   // PE
+    std::atomic<bool> connected_{true};   // a printer on the cable at all
+    /// The byte strobed while the printer could not take it (see setOnline).
+    bool    pendingByte_ = false;
+    uint8_t pendingValue_ = 0;
+    /// Can the printer take a byte right now (ignoring BUSY, which only
+    /// delays the ACK)?
+    bool printerAccepts() const
+    {
+        return connected_.load(std::memory_order_relaxed) &&
+               online_.load(std::memory_order_relaxed) &&
+               !paperOut_.load(std::memory_order_relaxed);
+    }
+    void spoolByte(uint8_t latched);
+    /// Deliver a held byte if the printer is ready again.
+    void releasePending();
     std::atomic<PrinterType> dipType_{PrinterType::AppleDotMatrix};  // S1:4,3,2
     bool        dipMsb_  = true;                          // S1:1
 

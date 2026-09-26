@@ -5,6 +5,62 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-26 — The Super Serial Card runs Apple's firmware
+
+- **The card ran a hand-written slot page and nothing read its mode
+  switches.** A card set to printer mode in slots 2-7 was treated like any
+  other serial card: only slot 1 fed the ImageWriter by default.
+- **Apple's EPROM ships and runs** — 341-0065-A, `roms/ssc_341-0065-a.bin`,
+  the dump MAME's `a2ssc` expects (CRC `b7539d4c`). `$Cn00` is its last page
+  and `$C800` the whole 2 KB, as MAME maps them. Without the file the card
+  keeps its own page. A //c's built-in ports never take it: the system ROM
+  drives them.
+- **"Download missing ROMs" fetches it** from RetroBIOS, which carries it only
+  inside MAME's `a2ssc.zip` — like the Grappler and PIC ROMs below, it needs `unzip`/`tar`.
+- **The SW1:5-6 mode switches are settable** (Super Serial panel, "Mode";
+  saved with the rest of DSW1/DSW2 as `ssc_dsw1_slotN` / `ssc_dsw2_slotN`). They were already emulated at `$C0n1` but fixed at
+  communications mode. Printer mode rewrites the DSW2 switches it
+  re-purposes (80 columns, no CR delay) and arms the printer tap, in any
+  slot. Slot 1 defaults to printer mode, so nothing changes for an existing
+  setup.
+- **Behaviour change:** in communications mode the real firmware waits for
+  DSR and DCD before each byte. `PR#2` with no telnet client connected (and
+  the modem lines not tied) now waits, as on a real card with no modem,
+  instead of sending into the void.
+- Pinned by `ssc_firmware` and `serial_panel_boundary`.
+
+### Same day — printer detection, for A2 File Cmd
+
+A2 File Cmd asked for everything a program can read from a printer card
+before it writes. `docs/printer-detection.md` is the reference; what changed:
+
+- **The SSC's DIP banks are all settable**, not just the mode
+  (`setDipSwitches`).
+- **The 6551's DCD, DSR and CTS follow a cable** — none, printer ready or off
+  line, modem, null modem (`ssc_cable_slotN`). An inactive CTS parks the byte
+  in TDR and masks TDRE, as MAME's 6551 does. A //c port takes only DCD from
+  its cable (CTS grounded, DSR not on the connector). A printer on the //c's
+  port 2 prints, waits off line and resumes through the real firmware.
+- **The Grappler+ printer can go off line, run out of paper or be unplugged**,
+  with MAME's line levels. Firmware 3.1 then flashes NOT SELECTED and beeps —
+  pinned through the real ROM.
+- **Two new cards:** the 1981 Grappler (`grappler1`, one ROM page per slot)
+  and the Apple Parallel Interface Card (`pic`, no Pascal signature), MAME
+  ports with their ROMs, fetched from RetroBIOS. Their printer is a shared
+  `CentronicsPrinter`.
+- **One control layer behind three doors:** `--printer-port` / `--slot` on
+  the command line, `/printer-port`, `/slot-log` and `/printer/spool` over
+  HTTP, `PrinterPortControl.h` in the library.
+- **`SlotBus` can log every access to a slot** with its cycle and value —
+  "zero writes before the decision" is now a count.
+- **`PrinterRender.h`** saves a captured stream and renders it to PNG with any
+  ImageWriter model or the Epson FX-80. It needed the ImageWriter's font table
+  (`hgrpaint/HgrFont.cpp`) in the core library, which had never linked a
+  page on its own.
+- Pinned by `ssc_firmware`, `grappler_printer_state`, `parallel_cards`,
+  `printer_detection`, `iic_printer_port`, `serial_panel_boundary`,
+  `ai_control_server`.
+
 ## 2026-09-19 — Floppies save to their files while still mounted
 
 - **A floppy's host file changed only on eject, swap, quit or profile switch.**

@@ -101,9 +101,57 @@ uint8_t GrapplerCard::deviceSelectRead(uint8_t /*low4*/)
     return static_cast<uint8_t>((irqAsserted_ ? 0x80 : 0x00) |
                                 ((static_cast<uint8_t>(printerType()) & 0x07)
                                      << 4) |
-                                (printerBusy() ? 0x08 : 0x00) |
-                                0x02 |                    // SELECT high
+                                lineBits() |
                                 (acked ? 0x01 : 0x00));
+}
+
+uint8_t GrapplerCard::lineBits() const
+{
+    // No printer: MAME's empty centronics port pulls every input up
+    // (ctronics.cpp:56-73).
+    if (!printerConnected()) return 0x08 | 0x04 | 0x02;
+    const bool out = paperOut();
+    return static_cast<uint8_t>(((printerBusy() || out) ? 0x08 : 0x00) |
+                                (out ? 0x04 : 0x00) |
+                                (online() ? 0x02 : 0x00));
+}
+
+void GrapplerCard::spoolByte(uint8_t latched)
+{
+    std::lock_guard<std::mutex> lk(bufferMtx_);
+    if (spool_.size() == kMaxSpoolBytes) {
+        spool_.pop_front();
+        ++spoolBase_;
+    }
+    spool_.push_back(latched);
+    ++spoolTotal_;
+}
+
+void GrapplerCard::releasePending()
+{
+    if (!pendingByte_ || !printerAccepts()) return;
+    pendingByte_ = false;
+    spoolByte(pendingValue_);
+    ackLatch_ = true;     // the /ACK pulse the byte was waiting for
+    updateIrq();
+}
+
+void GrapplerCard::setOnline(bool online)
+{
+    online_.store(online, std::memory_order_relaxed);
+    releasePending();
+}
+
+void GrapplerCard::setPaperOut(bool out)
+{
+    paperOut_.store(out, std::memory_order_relaxed);
+    releasePending();
+}
+
+void GrapplerCard::setPrinterConnected(bool connected)
+{
+    connected_.store(connected, std::memory_order_relaxed);
+    releasePending();
 }
 
 void GrapplerCard::deviceSelectWrite(uint8_t low4, uint8_t v)
@@ -128,20 +176,26 @@ void GrapplerCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             // MAME `data_latched` (grappler.cpp:795-808): S1:1 open drops
             // bit 7 at the latch.
             const uint8_t latched = dipMsb_ ? v : static_cast<uint8_t>(v & 0x7F);
-            std::lock_guard<std::mutex> lk(bufferMtx_);
-            if (spool_.size() == kMaxSpoolBytes) {
-                spool_.pop_front();
-                ++spoolBase_;
+            if (printerAccepts()) {
+                spoolByte(latched);
+            } else {
+                // Offline, out of paper or no printer: no /ACK. MAME's data
+                // write clears the latch (grappler.cpp:559-570); the byte
+                // waits for the printer (setOnline).
+                pendingByte_ = true;
+                pendingValue_ = latched;
+                ackLatch_ = false;
+                updateIrq();
             }
-            spool_.push_back(latched);
-            ++spoolTotal_;
         }
         // The printer acknowledges as soon as it has room for the byte —
         // instantly unless the host-side ImageWriter reported a full
         // input buffer (`ackEffective`), in which case the firmware's
         // poll loop spins until it drains.
-        ackLatch_ = true;
-        updateIrq();
+        if (!pendingByte_) {
+            ackLatch_ = true;
+            updateIrq();
+        }
     }
     if (low4 & 0x01) romBankHigh_ = true;
     if (low4 & 0x02) {
@@ -196,6 +250,7 @@ void GrapplerCard::onReset()
     // POM2 revision cleared it here, a silent divergence).
     ackLatch_    = true;
     irqDisable_  = true;
+    pendingByte_ = false;   // a reset abandons the strobe no printer took
     updateIrq();
 }
 

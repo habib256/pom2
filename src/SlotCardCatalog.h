@@ -89,6 +89,13 @@ inline constexpr CardType kCardTypes[] = {
     // dump in roms/grappler_plus.bin; falls back to a stub when missing.
     // See markadev/AppleII-RevEng/Orange-Micro-Grappler+.
     { "grappler",     "Grappler+ (Orange Micro)" },
+    // The ORIGINAL Grappler (1981): its own 2 KB ROM, one $Cn page per slot
+    // — only slot 1's carries the Pascal signature. Needs
+    // roms/grappler_eps-1.bin. MAME `a2bus_grappler_device`.
+    { "grappler1",    "Grappler (Orange Micro, 1981)" },
+    // Apple II Parallel Interface Card (1979): 512-byte PROM 341-0057, no
+    // Pascal signature at all. Needs roms/341-0057.bin. MAME `a2pic`.
+    { "pic",          "Apple Parallel Interface" },
     { "clock",        "Clock (ProDOS)"    },
     // Uthernet I (a2RetroSystems) — CS8900A Ethernet NIC. Raw frames
     // only: the Apple-side stack (IP65, Contiki, ADTPro-ethernet) does
