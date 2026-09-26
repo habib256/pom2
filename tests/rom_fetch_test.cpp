@@ -276,7 +276,8 @@ int main()
             "roms/apple2cp.rom", "roms/3420033a.256",
             "roms/liron.rom", "roms/341-0358-A.bin",
             "roms/thunderclock_u9_v1.3.bin", "roms/cffa20eec02.bin",
-            "roms/ae_transwarp_1.4.bin",
+            "roms/ae_transwarp_1.4.bin", "roms/ssc_341-0065-a.bin",
+            "roms/grappler_eps-1.bin", "roms/341-0057.bin",
             "roms/Videx Lower Case Chip ROM.bin",
             "roms/342-0274-a.e9", "roms/342-0326-a.f12",
             "roms/apple2e_char_fr.rom", "roms/apple2e_char_frca.rom",
@@ -293,7 +294,7 @@ int main()
                    std::string(d) + " is served by the RetroBIOS catalogue");
     }
 
-    // Only TWO entries still need a host unzip/tar: RetroBIOS publishes a
+    // Only FIVE entries still need a host unzip/tar: RetroBIOS publishes a
     // loose copy of everything else, so a machine without those tools can
     // still complete almost all of its romset. Name them — an entry that
     // quietly goes back to a zip costs every such machine that dump.
@@ -304,11 +305,15 @@ int main()
             ++zipped;
             const std::string d(e.destRel);
             expect(d == "roms/mouse_341-0270-c.bin" ||
+                   d == "roms/ssc_341-0065-a.bin" ||
+                   d == "roms/grappler_eps-1.bin" ||
+                   d == "roms/341-0057.bin" ||
                    d == "roms/apple2e_unenh.rom",
-                   std::string("zip-sourced entries are the mouse slot eprom "
-                               "and the unenhanced //e pair, not ") + d);
+                   std::string("zip-sourced entries are the mouse slot eprom, "
+                               "the SSC, Grappler and PIC ROMs and the "
+                               "unenhanced //e pair, not ") + d);
         }
-        expect(zipped == 2, "exactly two entries unpack a zip");
+        expect(zipped == 5, "exactly five entries unpack a zip");
         for (const auto& e : cat)
             expect(!e.zipConcat || e.zipMember,
                    std::string(e.destRel) +

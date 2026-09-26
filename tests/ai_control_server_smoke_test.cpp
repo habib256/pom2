@@ -44,6 +44,8 @@
 #include "SlotBus.h"
 #include "SnapshotIO.h"
 #include "ProDOSHardDiskCard.h"
+#include "GrapplerCard.h"
+#include "SuperSerialCard.h"
 #include <fstream>
 #include <array>
 
@@ -254,6 +256,86 @@ void testDiskSync(EmulationController& ctrl, pom2::AiControlServer& srv)
     { auto st = ctrl.lockState(); st.memory().slotBus().unplug(5); }
     fs::remove(path);
     std::puts("  disk sync: host persistence and errors OK");
+}
+
+// /printer-port, /slot-log, /printer/spool — docs/printer-detection.md.
+void testPrinterEndpoints(EmulationController& ctrl, pom2::AiControlServer& srv)
+{
+    srv.setAuthToken("");
+    {
+        auto st = ctrl.lockState();
+        st.memory().slotBus().plug(1, std::make_unique<GrapplerCard>(1));
+        st.memory().slotBus().plug(2, std::make_unique<SuperSerialCard>(2));
+    }
+    auto get = [](const std::string& path) {
+        return oneShot(kTestPort, "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    };
+    auto post = [](const std::string& path, const std::string& body) {
+        return oneShot(kTestPort, "POST " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body);
+    };
+
+    auto r = get("/printer-port");
+    assert(r.status == 200);
+    assert(contains(r.body, "\"card\":\"ssc\"") && contains(r.body, "\"card\":\"grappler\""));
+
+    r = post("/printer-port", "{\"slot\":2,\"set\":\"mode=printer,cable=printer-offline\"}");
+    assert(r.status == 200);
+    assert(contains(r.body, "\"mode\":\"printer\""));
+    assert(contains(r.body, "\"dsw1\":\"$FE\""));
+    assert(contains(r.body, "\"cable\":\"printer-offline\""));
+    assert(contains(r.body, "\"dcd\":false"));
+
+    // One bad key and nothing changes.
+    r = post("/printer-port", "{\"slot\":2,\"set\":\"mode=comm,colour=red\"}");
+    assert(r.status == 400);
+    r = get("/printer-port?slot=2");
+    assert(contains(r.body, "\"mode\":\"printer\""));
+
+    r = post("/printer-port", "{\"slot\":1,\"set\":\"online=off\"}");
+    assert(r.status == 200 && contains(r.body, "\"line_bits\":\"$00\""));
+    r = post("/printer-port", "{\"slot\":1,\"set\":\"online=on,paper=out\"}");
+    assert(r.status == 200 && contains(r.body, "\"line_bits\":\"$0E\""));
+    r = post("/printer-port", "{\"slot\":1,\"set\":\"paper=ok\"}");
+    assert(r.status == 200);
+    r = post("/printer-port", "{\"slot\":4,\"set\":\"online=off\"}");
+    assert(r.status == 400);      // no printer card there
+
+    // The access log: two reads, no write.
+    r = post("/slot-log", "{\"slot\":2,\"enable\":1}");
+    assert(r.status == 200);
+    {
+        auto st = ctrl.lockState();
+        (void)st.memory().slotBus().deviceSelectRead(0xC0A1);
+        (void)st.memory().slotBus().slotRomRead(0xC20C);
+    }
+    r = get("/slot-log?slot=2");
+    assert(r.status == 200);
+    assert(contains(r.body, "\"addr\":\"$C0A1\",\"value\":\"$FE\",\"op\":\"r\""));
+    assert(contains(r.body, "\"addr\":\"$C20C\""));
+    assert(contains(r.body, "\"writes\":0"));
+    r = get("/slot-log?slot=2");
+    assert(contains(r.body, "\"entries\":[]"));          // drained
+    assert(post("/slot-log", "{\"slot\":2,\"enable\":0}").status == 200);
+
+    // The printer spool.
+    {
+        auto st = ctrl.lockState();
+        st.memory().slotBus().deviceSelectWrite(0xC090, 0x41);
+    }
+    r = get("/printer/spool?slot=1");
+    assert(r.status == 200 && contains(r.body, "\"bytes\":\"41\"") &&
+           contains(r.body, "\"next\":1"));
+    r = get("/printer/spool?slot=1&from=1");
+    assert(contains(r.body, "\"bytes\":\"\""));
+    assert(get("/printer/spool?slot=5").status == 404);
+
+    {
+        auto st = ctrl.lockState();
+        st.memory().slotBus().unplug(1);
+        st.memory().slotBus().unplug(2);
+    }
+    std::puts("  printer endpoints: OK");
 }
 
 void testAuth(EmulationController& /*ctrl*/, pom2::AiControlServer& srv)
@@ -1039,6 +1121,7 @@ int main()
     testCpuRegisterSet   (ctrl, srv);
     testNotFoundAndMethod(ctrl, srv);
     testMouseEndpoint    (ctrl, srv);
+    testPrinterEndpoints (ctrl, srv);
     testAuthHardening    (ctrl, srv);
     testStartResumesMode (ctrl);   // last: it spawns the CPU worker thread
 

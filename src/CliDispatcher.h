@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class EmulationController;
@@ -154,6 +155,18 @@ struct CliPlan {
     std::string                     fujiNetSerialPath;
     int                             fujiNetSlot = 7;
     bool                            fujiNetSlotExplicit = false;
+
+    /// `--slot N=KEY` (repeatable): put catalog card KEY in slot N before
+    /// the machine boots, exactly as Slot Config's Apply does — so it is
+    /// persisted like any Apply (a `--kiosk` session keeps it to itself).
+    /// KEY "" or "empty" empties the slot. Validated against the card
+    /// catalogue in main(), which owns it.
+    std::vector<std::pair<int, std::string>> slotCards;
+    /// `--printer-port SLOT:k=v,...` (repeatable), applied once the machine
+    /// is built: the printer side of a slot — SSC DIP banks, cable, printer
+    /// tap; Grappler+ SELECT / PAPER EMPTY / printer present. Option language:
+    /// PrinterPortControl.h.
+    std::vector<std::string>        printerPortSpecs;
 
     std::optional<int>              executionSpeed;        // cycles/frame
     std::string                     initialTapePath;       // --tape <path>

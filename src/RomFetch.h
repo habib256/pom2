@@ -35,7 +35,7 @@
 // userDataDir()/roms-replaced/. If that copy fails, nothing is replaced.
 //
 // Host-side only. HTTPS goes through the system `curl` (and `unzip` /
-// `tar` for the two MAME zips left) so POM2 does not grow a TLS
+// `tar` for the five MAME zips left) so POM2 does not grow a TLS
 // dependency. The browser build has no helper processes: the fetch
 // returns a clear error and the panel greys the button.
 
@@ -59,8 +59,10 @@ struct RomFetchEntry {
     const char* url;           ///< raw.githubusercontent.com file or zip.
     /// Single zip member to extract. Null when `url` is already the dump —
     /// which, since RetroBIOS PR #75 published loose copies, is every entry
-    /// but two: the mouse slot eprom and the unenhanced //e firmware live
-    /// only inside MAME romsets (a2mouse.zip, apple2e.zip).
+    /// but five: the mouse slot eprom, the Super Serial Card EPROM, the 1981
+    /// Grappler EPROM, the Apple Parallel Interface PROM and the unenhanced
+    /// //e firmware live only inside MAME romsets (a2mouse.zip, a2ssc.zip,
+    /// a2grappler.zip, a2pic.zip, apple2e.zip).
     const char* zipMember;
     /// Null-terminated extra members concatenated AFTER `zipMember`, in
     /// order. The unenhanced //e is the case: MAME keeps that firmware as

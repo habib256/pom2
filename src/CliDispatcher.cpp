@@ -153,6 +153,17 @@ void printUsage()
         "  --fujinet-slot N           Which slot the card goes in. Without it,\n"
         "                             slot 7 is preferred and POM2 falls back\n"
         "                             to the first free slot if 7 is taken.\n"
+        "  --slot N=KEY               Put card KEY (ssc, grappler, printer, …,\n"
+        "                             or 'empty') in slot N, as Slot Config's\n"
+        "                             Apply would. Repeatable.\n"
+        "  --printer-port N:K=V,...   Set the printer side of slot N. Super\n"
+        "                             Serial: mode=comm|printer|sicp8|sicp8a,\n"
+        "                             dsw1=0xNN, dsw2=0xNN, cable=auto|none|\n"
+        "                             printer|printer-offline|modem|null-modem,\n"
+        "                             tap=on|off. Grappler+: online=on|off,\n"
+        "                             paper=ok|out, printer=connected|none,\n"
+        "                             busy=on|off, type=0-7. Repeatable;\n"
+        "                             see docs/printer-detection.md.\n"
         "\n"
         "Phase-A boot options (consumed before MainWindow starts):\n"
         "  -p, --preset <ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal>\n"
@@ -372,6 +383,30 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
             }
             plan.fujiNetSlot         = s;
             plan.fujiNetSlotExplicit = true;
+        }
+        else if (a == "--slot") {
+            const char* v = needArg(i, "--slot"); if (!v) return std::nullopt;
+            const std::string spec = v;
+            const auto eq = spec.find('=');
+            if (eq != 1 || spec[0] < '1' || spec[0] > '7') {
+                pom2::log().error("CLI", "--slot expects N=KEY with N 1-7, got " + spec);
+                return std::nullopt;
+            }
+            std::string key = spec.substr(2);
+            if (key == "empty") key.clear();
+            plan.slotCards.emplace_back(spec[0] - '0', key);
+        }
+        else if (a == "--printer-port") {
+            const char* v = needArg(i, "--printer-port"); if (!v) return std::nullopt;
+            // Shape only (N:something); the options are checked against the
+            // card once it exists (PrinterPortControl, in main).
+            const std::string spec = v;
+            if (spec.size() < 3 || spec[1] != ':' || spec[0] < '1' || spec[0] > '7') {
+                pom2::log().error("CLI", "--printer-port expects N:key=value,... "
+                                         "with N 1-7, got " + spec);
+                return std::nullopt;
+            }
+            plan.printerPortSpecs.emplace_back(spec);
         }
         else if (a == "--display") {
             const char* v = needArg(i, "--display"); if (!v) return std::nullopt;

@@ -78,11 +78,14 @@ dumps and say so plainly.
 | `apple2_char.rom`, `apple2e_char*.rom` (fifteen character generators, incl. the French, German, UK and Canadian variants and the French Touch block-ASCII set) | Apple Computer, Inc. (the block-ASCII set: French Touch) | Character generators. |
 | `disk2.rom`, `disk2_13.rom`, `diskii_p6.rom`, `diskii_p6_13.rom` | Apple Computer, Inc. | Disk II boot PROM and P6 sequencer, 16- and 13-sector. |
 | `mouse_341-0269.bin`, `mouse_341-0270-c.bin` | Apple Computer, Inc. | Mouse Card MCU and EPROM. |
+| `ssc_341-0065-a.bin` | Apple Computer, Inc. | Super Serial Card EPROM (341-0065-A). |
 | `341-0358-A.bin` | Apple Computer, Inc. | Apple II Workstation Card firmware. |
 | `341-0438-a.bin`, `342-0274-a.e9`, `342-0326-a.f12` | Apple Computer, Inc. | //c-class and peripheral firmware. |
 | `liron.rom` | Apple Computer, Inc. | Liron / Apple Disk 3.5 controller EPROM, from the public BMOW/Yellowstone dump. |
 | `cffa20ee02.bin`, `cffa20eec02.bin` | R&D Automation (Rich Dreher) | CFFA 2.0 firmware, distributed by its author on his site; no written permission on record here. |
 | `grappler_plus.bin` | Orange Micro, Inc. (defunct) | Grappler+ EPROM; no permission on record. |
+| `grappler_eps-1.bin` | Orange Micro, Inc. (defunct) | Original Grappler (1981) EPROM, from MAME's a2grappler set; no permission on record. |
+| `341-0057.bin` | Apple Computer, Inc. | Apple II Parallel Interface Card PROM. |
 | `thunderclock_u9_v1.3.bin` | Thunderware, Inc. (defunct) | ThunderClock+ EPROM; no permission on record. |
 | `Videx Lower Case Chip ROM.bin` | Videx, Inc. | Lower-case character chip; no permission on record. |
 

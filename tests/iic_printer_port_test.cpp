@@ -269,6 +269,107 @@ int testIIcPrintsThroughPR1(const char* tag, const std::string& romPath,
     return 0;
 }
 
+int testIIcPrintsThroughPort2(const char* tag, const std::string& romPath,
+                              const std::string& disk)
+{
+    if (romPath.empty() || disk.empty()) {
+        std::printf("  SKIP [%s]: ROM or DOS 3.3 disk not present\n", tag);
+        return 0;                       // user-provided media — skip, not fail
+    }
+
+    Memory mem;
+    M6502  cpu(&mem);
+    mem.setCpu(&cpu);
+    pom2::IWMDevice iwm;
+    mem.setIWM(&iwm);
+    mem.setIWMAuthoritative(true);
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.setIIEMode(true);
+    if (!mem.loadAppleIIRom(romPath.c_str(), /*pickLowerHalf=*/true)) {
+        std::printf("FAIL [%s]: could not load %s\n", tag, romPath.c_str());
+        return 1;
+    }
+
+    auto drive = std::make_unique<DiskIICard>(6);
+    const std::string diskRom = firstExisting({"roms/disk2.rom"});
+    if (!diskRom.empty()) drive->loadBootRom(diskRom);
+    const std::string lssRom = firstExisting({"roms/diskii_p6.rom"});
+    if (!lssRom.empty()) drive->loadLssRom(lssRom);
+    drive->insertDisk(disk);
+    drive->setIWM(&iwm);
+    mem.slotBus().plug(6, std::move(drive));
+
+    // An ImageWriter on the MODEM port: port 2, tap armed, printer cable.
+    auto ssc = std::make_unique<SuperSerialCard>(2);
+    ssc->setBuiltInPort(true);
+    ssc->setPrinterTap(true);
+    ssc->setCable(SuperSerialCard::Cable::PrinterReady);
+    SuperSerialCard* tap = ssc.get();
+    mem.slotBus().plug(2, std::move(ssc));
+    mem.slotBus().reset();
+
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
+    cpu.hardReset();
+
+    // Boot right through HELLO — the bare "]" appears transiently mid-boot,
+    // so wait for the SYSTEM MASTER banner and then let it settle, or the
+    // keystrokes below land in a machine that is still reading sectors.
+    bool booted = false;
+    for (int i = 0; i < 120'000'000 && !booted; ++i) {
+        cpu.step();
+        if ((i & 0x3FFFF) == 0 &&
+            scrapeText(mem.data()).find("DOS VERSION 3.3") != std::string::npos)
+            booted = true;
+    }
+    for (int i = 0; i < 20'000'000; ++i) cpu.step();
+    if (!booted) {
+        std::printf("FAIL [%s]: DOS 3.3 never reached its banner\nScreen:\n%s",
+                    tag, scrapeText(mem.data()).c_str());
+        return 1;
+    }
+
+    auto typeLine = [&](const char* s) {
+        for (const char* p = s; *p; ++p) {
+            mem.pasteKeyStream(p, 1);   // FIFO: keys wait while it blocks
+            for (int k = 0; k < 300'000; ++k) cpu.step();
+        }
+    };
+
+    typeLine("PR#2\r");
+    typeLine("PRINT \"HI\"\r");
+    auto spoolText = [&] {
+        std::vector<uint8_t> bytes;
+        tap->drainPrinterSpoolFrom(0, bytes);
+        std::string text;
+        for (uint8_t b : bytes) text.push_back(static_cast<char>(b & 0x7F));
+        return text;
+    };
+    if (spoolText().find("HI") == std::string::npos) {
+        std::printf("FAIL [%s]: PR#2 + PRINT never reached a printer on "
+                    "port 2 (PC=$%04X)\n", tag, cpu.getProgramCounter());
+        return 1;
+    }
+    // The printer goes offline: DCD (pin 5) drops, and the port-2 firmware
+    // waits on it exactly as port 1's does.
+    tap->setCable(SuperSerialCard::Cable::PrinterOffline);
+    typeLine("PRINT \"HO\"\r");
+    if (spoolText().find("HO") != std::string::npos) {
+        std::printf("FAIL [%s]: port 2 printed with DCD inactive\n", tag);
+        return 1;
+    }
+    tap->setCable(SuperSerialCard::Cable::PrinterReady);
+    for (int k = 0; k < 3'000'000; ++k) cpu.step();
+    if (spoolText().find("HO") == std::string::npos) {
+        std::printf("FAIL [%s]: port 2 did not resume when the printer "
+                    "came back (PC=$%04X)\n", tag, cpu.getProgramCounter());
+        return 1;
+    }
+    std::printf("  ok [%s]: a printer on port 2 prints, waits offline, "
+                "resumes\n", tag);
+    return 0;
+}
+
 }  // namespace
 
 int main()
@@ -282,6 +383,8 @@ int main()
     int rc = 0;
     rc |= testIIcPrintsThroughPR1(
         "//c-32k", firstExisting({"roms/apple2c-32Kv0.rom"}), disk);
+    rc |= testIIcPrintsThroughPort2(
+        "//c-32k port 2", firstExisting({"roms/apple2c-32Kv0.rom"}), disk);
     rc |= testIIcPrintsThroughPR1(
         "//c-16k", firstExisting({"roms/apple2c-16K.rom"}), disk);
     rc |= testIIcPrintsThroughPR1(

@@ -5220,6 +5220,42 @@ of the bay being written) and `smartport_bus_device`.
 
 ### Super Serial Card (slot 2) + telnet bridge
 
+**Apple's EPROM and the mode switches** *(2026-09-26)*. The card now runs
+the real firmware, Apple 341-0065-A (`roms/ssc_341-0065-a.bin`, 2 KB, CRC
+`b7539d4c` — MAME `a2ssc.cpp:88-91`, byte-identical to AppleWin's
+`SSC.rom`; RetroBIOS serves it inside MAME's `a2ssc.zip`). The map is
+MAME's: `$Cn00` is the dump's last page, `$C800-$CFFF` the whole 2 KB
+(`read_cnxx` / `read_c800`, `a2ssc.cpp:352-376`). `SlotCardFactory::
+loadSuperSerialFirmware` finds it; without it the card keeps the
+hand-assembled page below. A **//c never gets it** — its two ports are this
+card with no card around it (`setBuiltInPort`), driven by the system ROM.
+
+The firmware reads the **SW1:5-6 mode switches** at `$C0n1` (DSW1 bits `$03`:
+`$00` communications, `$01` SIC P8, `$02` printer, `$03` SIC P8A —
+`a2ssc.cpp:118-122`). `SuperSerialCard::setMode` sets them and rewrites DSW2
+with them, because printer mode re-purposes three of its switches
+(`a2ssc.cpp:128-144`: SW2:2 becomes "delay after CR", SW2:3-4 the line
+width): 8N1 in communications mode, 80 columns and no CR delay in printer
+mode. The mode (Super Serial panel, "Mode"; `--printer-port N:mode=…`)
+defaults to printer in slot 1 and communications elsewhere, and both banks
+are saved whole as `ssc_dsw1_slotN` / `ssc_dsw2_slotN`; **printer mode is what arms
+the printer tap by default**, in any slot, and changing the mode in the panel
+sets the tap to match. The tap stays its own tick (`ssc_printer_tap_slotN`
+still wins at restore).
+
+One behaviour change comes with the real firmware: in communications mode
+it waits for `status & $70 == $10` (`$CAF5`) — transmitter empty **and** DSR
+and DCD active — before every byte. With no telnet peer (and the modem lines
+not tied) `PR#2` therefore waits, as a real card with no modem does; the
+hand-assembled page checked TDRE alone and printed into the void. Printer
+mode is unaffected while the tap is on (`deviceAttached()`). Pinned by
+`ssc_firmware` (map, size gate, switches, factory, and a //e running `PR#2`
+through the EPROM in both modes) and `serial_panel_boundary`.
+
+The cable at the far end (`setCable`, `ssc_cable_slotN`), the raw DIP banks,
+and what a detection routine may read without side effects are in
+[docs/printer-detection.md](docs/printer-detection.md) §§ 4-6.
+
 **The keyboard bridge is a terminal, not a clipboard** *(2026-09-09, bug
 hunt #14)*. The `setKeyboardSink` wiring in `MainWindow_SlotConfig.cpp`
 and `pom2_headless.cpp` handed each telnet byte to `Memory::pasteText`,
@@ -5263,7 +5299,7 @@ doubled, RFC 856). Pinned by `testTelnetBinaryHonoured` in `ssc_acia`.
 TDRE (always 1), bit 3 = RDRF (RX queue), bits 5/6 = DCD/DSR (TCP
 state). Unconnected `$C0A8` returns 0.
 
-Slot ROM `$C200-$C2FF`: autodetect bytes (`$Cn05=$38`,
+Hand-assembled slot ROM (used when the EPROM is absent), `$C200-$C2FF`: autodetect bytes (`$Cn05=$38`,
 `$Cn07=$18`, `$Cn0B=$01`, `$Cn0C=$31`); `JMP $Cn20` skips them.
 PR#2 hooks CSWL/CSWH (`$36/$37`) → `$C2B0`; IN#2 hooks KSWL/KSWH
 (`$38/$39`) → `$C2E0` (load + ORA #$80). Reset clears rings.

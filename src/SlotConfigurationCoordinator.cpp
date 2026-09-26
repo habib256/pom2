@@ -23,7 +23,9 @@
 #include "EchoPlusTMS5220Card.h"
 #include "FourPlayCard.h"
 #include "FujiNetCard.h"
+#include "AppleParallelCard.h"
 #include "GrapplerCard.h"
+#include "GrapplerClassicCard.h"
 #include "LeChatMauveCard.h"
 #include "LironCard.h"
 #include "Logger.h"
@@ -77,6 +79,8 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const SuperSerialCard*>(&peripheral)) return "ssc";
     if (dynamic_cast<const PrinterCard*>(&peripheral)) return "printer";
     if (dynamic_cast<const GrapplerCard*>(&peripheral)) return "grappler";
+    if (dynamic_cast<const GrapplerClassicCard*>(&peripheral)) return "grappler1";
+    if (dynamic_cast<const AppleParallelCard*>(&peripheral)) return "pic";
     if (dynamic_cast<const ClockCard*>(&peripheral)) return "clock";
     if (dynamic_cast<const SoftCardZ80*>(&peripheral)) return "softcard";
     if (dynamic_cast<const LeChatMauveCard*>(&peripheral)) return "chatmauve";

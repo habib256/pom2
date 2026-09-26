@@ -47,7 +47,9 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "FourPlayCard.h"
+#include "AppleParallelCard.h"
 #include "GrapplerCard.h"
+#include "GrapplerClassicCard.h"
 #include "LeChatMauveCard.h"
 #include "LironCard.h"
 #include "Mockingboard.h"
@@ -303,6 +305,8 @@ int main()
         { "FourPlayCard",      [] { return std::unique_ptr<SlotPeripheral>(new FourPlayCard(4)); } },
         { "TranswarpCard",     [] { return std::unique_ptr<SlotPeripheral>(new TranswarpCard(3)); } },
         { "GrapplerCard",      [] { return std::unique_ptr<SlotPeripheral>(new GrapplerCard(1)); } },
+        { "GrapplerClassic",   [] { return std::unique_ptr<SlotPeripheral>(new GrapplerClassicCard(1)); } },
+        { "AppleParallel",     [] { return std::unique_ptr<SlotPeripheral>(new AppleParallelCard(1)); } },
         { "PrinterCard",       [] { return std::unique_ptr<SlotPeripheral>(new PrinterCard(1)); } },
         { "UthernetCard",      [] { return std::unique_ptr<SlotPeripheral>(new UthernetCard(3)); } },
         { "UthernetIICard",    [] { return std::unique_ptr<SlotPeripheral>(new UthernetIICard(3)); } },
@@ -331,6 +335,8 @@ int main()
         { "mouse",       { "MouseCard+ROM",   fromFactory("mouse", 4) } },
         { "cffa",        { "CffaCard+ROM",    fromFactory("cffa", 7) } },
         { "grappler",    { "Grappler+ROM",    fromFactory("grappler", 1) } },
+        { "grappler1",   { "Grappler1+ROM",   fromFactory("grappler1", 1) } },
+        { "pic",         { "PIC+ROM",         fromFactory("pic", 1) } },
         { "workstation", { "Workstation+ROM", fromFactory("workstation", 7) } },
         { "smartport35", { "SmartPort35+ROM", fromFactory("smartport35", 5) } },
     };
@@ -353,6 +359,7 @@ int main()
         {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},
         {"workstation", "WorkstationCard"}, {"4play", "FourPlayCard"},
         {"transwarp", "TranswarpCard"},
+        {"grappler1", "GrapplerClassic"}, {"pic", "AppleParallel"},
     };
     std::set<std::string> names;
     for (const auto& e : cards) names.insert(e.name);

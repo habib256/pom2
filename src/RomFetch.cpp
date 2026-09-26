@@ -55,9 +55,11 @@ const char* kApple2eUnenhChips[] = {
     nullptr,
 };
 
-// Every entry is a LOOSE file under bios/Apple/Apple II, except two that
-// only exist inside a MAME romset: the mouse slot eprom (a2mouse.zip) and
-// the unenhanced //e firmware (apple2e.zip, two chips concatenated).
+// Every entry is a LOOSE file under bios/Apple/Apple II, except five that
+// only exist inside a MAME romset: the mouse slot eprom (a2mouse.zip), the
+// Super Serial Card EPROM (a2ssc.zip), the original Grappler EPROM
+// (a2grappler.zip), the Apple Parallel Interface PROM (a2pic.zip) and the
+// unenhanced //e firmware (apple2e.zip, two chips concatenated).
 // RetroBIOS PR #75 (merged 2026-09-14)
 // added the //c / //c+ firmware, the card ROMs and the European character
 // generators POM2 was missing, and published loose copies of the dumps this
@@ -238,12 +240,28 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Apple/Apple%20II/mouse_341-0269.bin",
           nullptr, nullptr, 0u, nullptr,
           "66480812edad5f6bd70349949cf8bd8fbafee2dc8bf396541d4e78bac2629ec0", 0u },
-        // The only entry left that needs unzip/tar: RetroBIOS has no loose
-        // copy of the mouse SLOT eprom, only MAME's a2mouse romset.
+        // Two of the three entries left that need unzip/tar: RetroBIOS has no
+        // loose copy of the mouse SLOT eprom, only MAME's a2mouse romset.
         { "roms/mouse_341-0270-c.bin", "Mouse card slot EPROM", 2048,
           "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2mouse.zip",
           "341-0270-c.4b", nullptr, 0u, nullptr,
           "7f8e50c0e8a409991264201f9300f109b872b68e09c43f3e6c26af35fd8b89af", 0u },
+        // Same story for the Super Serial Card EPROM: RetroBIOS only has it
+        // inside MAME's a2ssc romset (which bundles every a2bus serial card).
+        // The two A2 File Cmd needed to detect: the original Grappler and
+        // the Apple Parallel Interface, each from its MAME romset.
+        { "roms/grappler_eps-1.bin", "Grappler (1981) EPROM", 2048,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2grappler.zip",
+          "eps-1_c1981.u6", nullptr, 0x862773CBu, "MAME a2grappler",
+          "4cce25c87ba4dd396919ce82f8567894225519c3d9db76c5667760f77054694f", 0u },
+        { "roms/341-0057.bin", "Apple Parallel Interface PROM (341-0057)", 512,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2pic.zip",
+          "341-0057.7b", nullptr, 0x0A6B084Bu, "MAME a2pic",
+          "634e91bae5938820da79183984c03aa06075cbd5701d480debcc4f6d70620001", 0u },
+        { "roms/ssc_341-0065-a.bin", "Super Serial Card EPROM (341-0065-A)", 2048,
+          "https://raw.githubusercontent.com/Abdess/retrobios/main/bios/Arcade/MAME/a2ssc.zip",
+          "341-0065-a.bin", nullptr, 0xB7539D4Cu, "MAME a2ssc",
+          "4fa1323ba31f4bd562486838397b7744257c126806766e360876720daca6e2aa", 0u },
 
         // ── Reference dumps (no POM2 card reads them yet) ─────────────
         { "roms/341-0438-a.bin", "Apple 3.5\" SuperDrive controller", 32768,

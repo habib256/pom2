@@ -43,7 +43,8 @@
 #include <string_view>
 #include <vector>
 
-namespace pom2 { class SmartPortBusUnit; class Block512Backing; class AutosavedMedium; }
+namespace pom2 { class SmartPortBusUnit; class Block512Backing; class AutosavedMedium;
+                 class CentronicsPrinter; }
 
 class SlotBus;
 
@@ -55,6 +56,9 @@ public:
     // The same service for whole-image media — floppies, 5.25" and 3.5"
     // (MediaAutosave.h). Indices are drives / bays; entries may be null.
     virtual std::vector<pom2::AutosavedMedium*> autosavedMedia() { return {}; }
+    // The printer on a parallel card's cable (CentronicsPrinter.h): its
+    // lines for PrinterPortControl, its paper for the host ImageWriter.
+    virtual pom2::CentronicsPrinter* centronicsPrinter() { return nullptr; }
     virtual ~SlotPeripheral() = default;
 
     /// Short human-readable name (e.g. "Disk II", "Language Card", "80col").

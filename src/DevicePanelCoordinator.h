@@ -79,6 +79,14 @@ public:
         bool connected = false;
         bool rawMode = false;
         bool printerTap = false;
+        /// SW1:5-6 as `SuperSerialCard::Mode`; meaningless on a built-in port.
+        std::uint8_t mode = 0;
+        std::uint8_t dsw1 = 0xFF;
+        std::uint8_t dsw2 = 0xFF;
+        /// `SuperSerialCard::Cable`.
+        std::uint8_t cable = 0;
+        bool builtInPort = false;
+        bool firmwareLoaded = false;
         std::uint64_t bytesRx = 0;
         std::uint64_t bytesTx = 0;
         std::string recentRxText;
@@ -94,11 +102,17 @@ public:
         bool rawMode = false;
         bool requestPrinterTap = false;
         bool printerTap = false;
+        /// Setting the mode switches also sets the printer tap to match:
+        /// on in printer mode, off otherwise. The tap stays a separate tick.
+        bool requestMode = false;
+        std::uint8_t mode = 0;
+        bool requestCable = false;
+        std::uint8_t cable = 0;
 
         bool empty() const noexcept
         {
             return !requestStart && !requestStop && !requestRawMode &&
-                   !requestPrinterTap;
+                   !requestPrinterTap && !requestMode && !requestCable;
         }
     };
 

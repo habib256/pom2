@@ -42,6 +42,9 @@ public:
         Grappler,
         FujiNet,
         SuperSerial,
+        /// Any card whose printer is a CentronicsPrinter: the Apple Parallel
+        /// Interface, the 1981 Grappler.
+        Parallel,
     };
 
     struct PrinterPanelSnapshot {

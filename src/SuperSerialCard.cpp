@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <initializer_list>
 #if POM2_HAS_SOCKETS
 // POSIX socket stack — used for the telnet bridge listener. Under
 // Emscripten there is no BSD-socket API in the browser, so the
@@ -492,6 +493,7 @@ void SuperSerialCard::onReset()
     std::lock_guard<std::mutex> lk(bufferMtx);
     txBuf.clear();
     rxBuf.clear();
+    tdrHeld_      = false;
     rdrLatch_     = 0;
     statusErrors_ = 0;
     sendBudget_   = 0.0;
@@ -637,7 +639,13 @@ void SuperSerialCard::onConnectionEdge(bool nowConnected)
     // woken by us.
     // A cable with DCD/DSR strapped shows the guest no edge at all
     // (setModemLinesTied): the peer going away is silence, not NO CARRIER.
-    if (dtrAsserted_ && !modemLinesTied_.load(std::memory_order_relaxed)) {
+    // An explicit cable decides for itself: only a modem's carrier follows
+    // the connection, and every other cable ignores it.
+    if (!dtrAsserted_) return;
+    if (cable_ == Cable::Modem) {
+        raiseIrqSource(IRQ_DCD);
+    } else if (cable_ == Cable::Auto &&
+               !modemLinesTied_.load(std::memory_order_relaxed)) {
         raiseIrqSource(IRQ_DCD | IRQ_DSR);
     }
 }
@@ -694,7 +702,137 @@ void SuperSerialCard::setIrqDipEnabled(bool on)
 
 uint8_t SuperSerialCard::slotRomRead(uint8_t low8)
 {
-    return rom[low8];
+    // MAME `a2ssc.cpp:352-355`: the $Cn00 page is the EPROM's last 256 bytes.
+    return firmwareLoaded_ ? firmware_[0x700u + low8] : rom[low8];
+}
+
+uint8_t SuperSerialCard::expansionRomRead(uint16_t offset)
+{
+    // MAME `a2ssc.cpp:373-376`: the whole 2 KB, from $C800.
+    return firmwareLoaded_ ? firmware_[offset & 0x7FFu] : 0xFF;
+}
+
+bool SuperSerialCard::loadFirmware(const std::vector<uint8_t>& bytes)
+{
+    if (bytes.size() != kFirmwareBytes) return false;
+    std::copy(bytes.begin(), bytes.end(), firmware_.begin());
+    firmwareLoaded_ = true;
+    return true;
+}
+
+void SuperSerialCard::setMode(Mode m)
+{
+    lastDip1 = static_cast<uint8_t>((lastDip1 & ~0x03u) |
+                                    static_cast<uint8_t>(m));
+    lastDip2 = (m == Mode::Printer) ? kDip2Printer : kDip2Communications;
+}
+
+namespace {
+struct CableName { SuperSerialCard::Cable cable; const char* key; };
+constexpr CableName kCableNames[] = {
+    { SuperSerialCard::Cable::Auto,           "auto" },
+    { SuperSerialCard::Cable::Nothing,        "none" },
+    { SuperSerialCard::Cable::PrinterReady,   "printer" },
+    { SuperSerialCard::Cable::PrinterOffline, "printer-offline" },
+    { SuperSerialCard::Cable::Modem,          "modem" },
+    { SuperSerialCard::Cable::NullModem,      "null-modem" },
+};
+}  // namespace
+
+const char* SuperSerialCard::cableKey(Cable c)
+{
+    for (const auto& n : kCableNames)
+        if (n.cable == c) return n.key;
+    return "auto";
+}
+
+bool SuperSerialCard::parseCableKey(std::string_view key, Cable& out)
+{
+    for (const auto& n : kCableNames) {
+        if (key == n.key) { out = n.cable; return true; }
+    }
+    return false;
+}
+
+SuperSerialCard::InputLines SuperSerialCard::inputLinesLocked() const
+{
+    // A //c port wires only DCD to the connector (pin 5, "DSR" on the
+    // label): its CTS is grounded, and DSR is the disk port's EXTINT on
+    // port 1 and the keyboard strobe on port 2 — held inactive here, since
+    // neither is a cable signal. //c Technical Reference 2nd ed., ch. 3
+    // pp. 103-105 and Table 11-37; MAME apple2e.cpp:5531-5551.
+    if (builtInPort_ && cable_ != Cable::Auto) {
+        bool dcd = true;
+        switch (cable_) {
+            case Cable::Nothing:
+            case Cable::PrinterOffline: dcd = false; break;
+            case Cable::Modem:          dcd = connected.load(); break;
+            default:                    dcd = true; break;
+        }
+        return { dcd, false, true };
+    }
+    switch (cable_) {
+        case Cable::Nothing:        return { false, false, false };
+        case Cable::PrinterReady:   return { true,  true,  true  };
+        case Cable::PrinterOffline: return { false, false, true  };
+        case Cable::Modem:          return { connected.load(), true, true };
+        case Cable::NullModem:      return { true,  true,  true  };
+        case Cable::Auto:           break;
+    }
+    const bool up = deviceAttached() ||
+                    modemLinesTied_.load(std::memory_order_relaxed);
+    return { up, up, true };
+}
+
+SuperSerialCard::InputLines SuperSerialCard::inputLines() const
+{
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    return inputLinesLocked();
+}
+
+SuperSerialCard::Cable SuperSerialCard::cable() const
+{
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    return cable_;
+}
+
+void SuperSerialCard::setCable(Cable c)
+{
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    const InputLines before = inputLinesLocked();
+    cable_ = c;
+    const InputLines after = inputLinesLocked();
+    // A DCD or DSR change interrupts only with DTR asserted, the rule
+    // onConnectionEdge already follows (MAME `mos6551.cpp:533-560`).
+    uint8_t edges = 0;
+    if (before.dcd != after.dcd) edges |= IRQ_DCD;
+    if (before.dsr != after.dsr) edges |= IRQ_DSR;
+    if (edges && dtrAsserted_) raiseIrqSource(edges);
+    // CTS back: the byte parked in TDR goes out now.
+    if (after.cts && tdrHeld_) {
+        tdrHeld_ = false;
+        transmitByte(tdrHeldByte_);
+    }
+}
+
+const char* SuperSerialCard::modeKey(Mode m)
+{
+    switch (m) {
+        case Mode::Communications: return "comm";
+        case Mode::SicP8:          return "sicp8";
+        case Mode::Printer:        return "printer";
+        case Mode::SicP8A:         return "sicp8a";
+    }
+    return "comm";
+}
+
+bool SuperSerialCard::parseModeKey(std::string_view key, Mode& out)
+{
+    for (Mode m : { Mode::Communications, Mode::SicP8, Mode::Printer,
+                    Mode::SicP8A }) {
+        if (key == modeKey(m)) { out = m; return true; }
+    }
+    return false;
 }
 
 uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
@@ -760,7 +898,11 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 // reads STATUS before RDR — so the check runs here, where the
                 // answer is still able to reach it.
                 evaluateRxFraming();
-                uint8_t s = SR_TDRE;                   // TCP buffers TX
+                const InputLines lines = inputLinesLocked();
+                // TCP buffers TX, so the transmitter is empty the moment a
+                // byte lands — unless CTS is inactive, which parks the byte
+                // in TDR and masks TDRE (MAME `mos6551.cpp:286-289`).
+                uint8_t s = (lines.cts && !tdrHeld_) ? SR_TDRE : 0;
                 s |= statusErrors_;
                 if (!rxBuf.empty()) s |= SR_RDRF;
                 // DCD/DSR are ACTIVE-LOW pins: the status BIT is set when
@@ -783,10 +925,10 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 // active. Reporting "no carrier" at an armed printer tap
                 // therefore hangs the guest on `PR#1` and no byte ever
                 // reaches the spool. deviceAttached() is what the pins
-                // answer to: a telnet peer OR a tapped printer.
-                if (!deviceAttached() &&
-                    !modemLinesTied_.load(std::memory_order_relaxed))
-                    s |= (SR_DCD | SR_DSR);
+                // answer to: a telnet peer OR a tapped printer, unless the
+                // cable says otherwise (setCable).
+                if (!lines.dcd) s |= SR_DCD;
+                if (!lines.dsr) s |= SR_DSR;
                 if (irqState_ != 0) s |= SR_IRQ;
                 // MAME `mos6551.cpp:237-250`: status read clears
                 // `m_irq_state` and re-evaluates the line. Without this,
@@ -826,57 +968,70 @@ void SuperSerialCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             // MARK in MAME (`mos6551.cpp:317-321`) — drop the byte on
             // the floor rather than queue it for a future re-assert.
             if (!dtrAsserted_) break;
-            if (txBuf.size() >= kBufCap) txBuf.pop_front();
-            txBuf.push_back(v);
-            txTail.push_back(v);
-            if (txTail.size() > kTailCap) txTail.pop_front();
-            ++txCount;
-            // The byte is accepted and the transmitter is empty again the
-            // instant it is — the host side buffers TX, which is why SR_TDRE
-            // is pinned high in the status read. On a 6551 that transition is
-            // exactly what raises the transmit interrupt (MAME
-            // `mos6551.cpp:668-672` does the same for the receiver). It used
-            // to be computed and thrown away, so a driver programmed with
-            // command $05 (DTR on, RX IRQ on, TX IRQ on) wrote one byte,
-            // slept waiting for the ISR to ask for the next, and never woke.
-            if (txIrqEnable_) raiseIrqSource(IRQ_TDRE);
-            // Printer tap: mirror the accepted byte into the host-visible
-            // spool the ImageWriter drains (see setPrinterTap in the header).
-            // The spool is capped: the drain cursor speaks absolute offsets
-            // (printerSpoolBase_ + index), so trimming the consumed prefix
-            // never desynchronises the consumer. Uncapped, a runaway guest
-            // print loop grew this vector without bound (the tx ring above
-            // is capped; this one wasn't).
-            if (printerTap_) {
-                printerSpool_.push_back(v);
-                constexpr size_t kSpoolCap = 1u << 20;
-                if (printerSpool_.size() > kSpoolCap) {
-                    const size_t drop = kSpoolCap / 2;
-                    printerSpool_.erase(
-                        printerSpool_.begin(),
-                        printerSpool_.begin() + static_cast<std::ptrdiff_t>(drop));
-                    printerSpoolBase_ += drop;
-                    // Half a megabyte just fell out of the middle of a
-                    // printout. That has to leave a mark somewhere: it is
-                    // silent data loss otherwise, and the paper only shows
-                    // a job that stops mid-sentence. Logged once per
-                    // session — a guest that trips this once will trip it
-                    // repeatedly, and a log storm helps nobody.
-                    if (!printerSpoolTrimWarned_) {
-                        printerSpoolTrimWarned_ = true;
-                        pom2::log().warn("SSC",
-                            "printer spool hit its 1 MiB cap — dropping the "
-                            "oldest " + std::to_string(drop / 1024) +
-                            " KiB. The ImageWriter is falling behind the "
-                            "guest; the printout will have a gap.");
-                    }
-                }
+            // CTS inactive: the transmitter does not start, the byte waits
+            // in TDR (a second write replaces it) and goes out when CTS
+            // returns — `setCable`. MAME `mos6551.cpp:715-740`.
+            if (!inputLinesLocked().cts) {
+                tdrHeld_ = true;
+                tdrHeldByte_ = v;
+                break;
             }
+            transmitByte(v);
             break;
         }
         case 0x1: applyProgrammedReset(); break;
         case 0x2: applyCommandReg(v);     break;
         case 0x3: applyControlReg(v);     break;
+    }
+}
+
+void SuperSerialCard::transmitByte(uint8_t v)
+{
+    if (txBuf.size() >= kBufCap) txBuf.pop_front();
+    txBuf.push_back(v);
+    txTail.push_back(v);
+    if (txTail.size() > kTailCap) txTail.pop_front();
+    ++txCount;
+    // The byte is accepted and the transmitter is empty again the
+    // instant it is — the host side buffers TX, which is why SR_TDRE
+    // is pinned high in the status read. On a 6551 that transition is
+    // exactly what raises the transmit interrupt (MAME
+    // `mos6551.cpp:668-672` does the same for the receiver). It used
+    // to be computed and thrown away, so a driver programmed with
+    // command $05 (DTR on, RX IRQ on, TX IRQ on) wrote one byte,
+    // slept waiting for the ISR to ask for the next, and never woke.
+    if (txIrqEnable_) raiseIrqSource(IRQ_TDRE);
+    // Printer tap: mirror the accepted byte into the host-visible
+    // spool the ImageWriter drains (see setPrinterTap in the header).
+    // The spool is capped: the drain cursor speaks absolute offsets
+    // (printerSpoolBase_ + index), so trimming the consumed prefix
+    // never desynchronises the consumer. Uncapped, a runaway guest
+    // print loop grew this vector without bound (the tx ring above
+    // is capped; this one wasn't).
+    if (printerTap_) {
+        printerSpool_.push_back(v);
+        constexpr size_t kSpoolCap = 1u << 20;
+        if (printerSpool_.size() > kSpoolCap) {
+            const size_t drop = kSpoolCap / 2;
+            printerSpool_.erase(
+                printerSpool_.begin(),
+                printerSpool_.begin() + static_cast<std::ptrdiff_t>(drop));
+            printerSpoolBase_ += drop;
+            // Half a megabyte just fell out of the middle of a
+            // printout. That has to leave a mark somewhere: it is
+            // silent data loss otherwise, and the paper only shows
+            // a job that stops mid-sentence. Logged once per
+            // session — a guest that trips this once will trip it
+            // repeatedly, and a log storm helps nobody.
+            if (!printerSpoolTrimWarned_) {
+                printerSpoolTrimWarned_ = true;
+                pom2::log().warn("SSC",
+                    "printer spool hit its 1 MiB cap — dropping the "
+                    "oldest " + std::to_string(drop / 1024) +
+                    " KiB. The ImageWriter is falling behind the "
+                    "guest; the printout will have a gap.");
+            }
+        }
     }
 }
 

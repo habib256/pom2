@@ -274,6 +274,9 @@ set(SOURCES
     src/MachineSnapshot.cpp
     src/RewindBuffer.cpp
     src/AiControlServer.cpp
+    src/AiControlServer_Printer.cpp
+    src/PrinterPortControl.cpp
+    src/PrinterRender.cpp
     src/Apple2Display.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
@@ -370,6 +373,9 @@ set(SOURCES
     src/IIcMouse.cpp
     src/NoSlotClock.cpp
     src/GrapplerCard.cpp
+    src/GrapplerClassicCard.cpp
+    src/AppleParallelCard.cpp
+    src/CentronicsPrinter.cpp
     src/NtscPostProcessor.cpp
     src/CrtEffectStack.cpp
     src/Voxel3DRenderer.cpp
@@ -494,6 +500,9 @@ set(POM2_DEVICES_SOURCES
     src/FloppyEmuDevice.cpp
     src/FujiNetCard.cpp
     src/GrapplerCard.cpp
+    src/GrapplerClassicCard.cpp
+    src/AppleParallelCard.cpp
+    src/CentronicsPrinter.cpp
     src/LeChatMauveCard.cpp
     src/IIcExternalSmartPort.cpp
     src/LironCard.cpp
@@ -723,6 +732,9 @@ set(POM2_MEDIA_SOURCES
 )
 
 set(POM2_RUNTIME_HEADERS
+    src/PrinterRender.h
+    src/AiControlJson.h
+    src/PrinterPortControl.h
     src/AudioMix.h
     src/Apple2Display_Internal.h
     include/pom2/core.hpp
@@ -747,6 +759,9 @@ set(POM2_RUNTIME_HEADERS
 
 set(POM2_RUNTIME_SOURCES
     src/AiControlServer.cpp
+    src/AiControlServer_Printer.cpp
+    src/PrinterPortControl.cpp
+    src/PrinterRender.cpp
     src/Debugger.cpp
     src/MediaMount.cpp
     src/TnfsClient.cpp
@@ -807,6 +822,9 @@ set(HEADERS
     src/MachineSnapshot.h
     src/RewindBuffer.h
     src/AiControlServer.h
+    src/AiControlJson.h
+    src/PrinterPortControl.h
+    src/PrinterRender.h
     src/Apple2Display.h
     src/AppleWinNtsc.h
     src/AtaBlockDevice.h
@@ -862,6 +880,9 @@ set(HEADERS
     src/MountableMediaCard.h
     src/Ay3_8910.h
     src/GrapplerCard.h
+    src/GrapplerClassicCard.h
+    src/AppleParallelCard.h
+    src/CentronicsPrinter.h
     src/PhasorCard.h
     src/PrinterCard.h
     src/ImageWriter.h
@@ -1301,6 +1322,9 @@ set(POM2_CORE_SOURCES
     src/MachineSnapshot.cpp
     src/RewindBuffer.cpp
     src/AiControlServer.cpp
+    src/AiControlServer_Printer.cpp
+    src/PrinterPortControl.cpp
+    src/PrinterRender.cpp
     src/W5100HostSockets.cpp
     src/W5100NameResolver.cpp
     src/Pom2Core.cpp
@@ -1361,8 +1385,14 @@ set(POM2_CORE_SOURCES
     src/IIcMouse.cpp
     src/NoSlotClock.cpp
     src/GrapplerCard.cpp
+    src/GrapplerClassicCard.cpp
+    src/AppleParallelCard.cpp
+    src/CentronicsPrinter.cpp
     src/PhasorCard.cpp
     src/PrinterCard.cpp
+    # ImageWriter draws its text faces from the BBFont table; without it a
+    # program linking only the core library could not render a page.
+    src/hgrpaint/HgrFont.cpp
     src/ImageWriter.cpp
     src/ImageWriterPdf.cpp
     src/Ssi263.cpp

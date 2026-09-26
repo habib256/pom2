@@ -249,6 +249,58 @@ void testEmptyCommandIsInert()
 
 } // namespace
 
+// ── The mode switches drive the printer tap, and persist per slot ───────
+//
+// A card set to printer mode in ANY slot feeds the ImageWriter; leaving
+// printer mode stops it. A //c's built-in port has no switches: the command
+// is ignored there and no DIP bank is written for it — but it has a cable.
+void testModeCommandSetsTapAndPersists()
+{
+    EmulationController controller;
+    Settings settings;
+    DevicePanelCoordinator coordinator(controller, settings);
+
+    auto* slotted = plugSsc(controller, 5);
+    auto* builtIn = plugSsc(controller, 1);
+    builtIn->setBuiltInPort(true);
+    assert(!slotted->printerTap());
+
+    DevicePanelCoordinator::SerialCommand cmd;
+    cmd.slot = 5;
+    cmd.requestMode = true;
+    cmd.mode = static_cast<uint8_t>(SuperSerialCard::Mode::Printer);
+    assert(!cmd.empty());
+    assert(coordinator.applySerial(cmd).cardFound);
+    assert(slotted->mode() == SuperSerialCard::Mode::Printer);
+    assert(slotted->printerTap());
+    assert((slotted->deviceSelectRead(0x1) & 0x03) == 0x02);
+
+    cmd.mode = static_cast<uint8_t>(SuperSerialCard::Mode::Communications);
+    coordinator.applySerial(cmd);
+    assert(!slotted->printerTap());
+
+    cmd.slot = 1;
+    cmd.mode = static_cast<uint8_t>(SuperSerialCard::Mode::Printer);
+    coordinator.applySerial(cmd);
+    assert(builtIn->mode() == SuperSerialCard::Mode::Communications);
+
+    cmd.slot = 1;
+    cmd.requestMode = false;
+    cmd.requestCable = true;
+    cmd.cable = static_cast<uint8_t>(SuperSerialCard::Cable::PrinterOffline);
+    coordinator.applySerial(cmd);
+    assert(builtIn->cable() == SuperSerialCard::Cable::PrinterOffline);
+
+    coordinator.persistSerial();
+    assert(settings.getInt("ssc_dsw1_slot5", -1) == 0xFC);
+    assert(settings.getInt("ssc_dsw2_slot5", -1) == 0x52);
+    assert(settings.getInt("ssc_dsw1_slot1", -1) == -1);   // no switches
+    assert(settings.getString("ssc_cable_slot1", "") == "printer-offline");
+    assert(settings.getString("ssc_cable_slot5", "") == "auto");
+
+    std::printf("  the mode switches drive the tap and persist: OK\n");
+}
+
 int main()
 {
     std::printf("Super Serial panel boundary\n");
@@ -257,6 +309,7 @@ int main()
     testCommandForRemovedCardIsDropped();
     testStartStopRunOffTheLock();
     testEmptyCommandIsInert();
+    testModeCommandSetsTapAndPersists();
     std::printf("OK\n");
     return 0;
 }

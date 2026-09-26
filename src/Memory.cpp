@@ -59,18 +59,18 @@ Memory::Memory()
     lcHigh.fill(0);
     // ROM region. The Apple II //e bank-switched language card is NOT
     // modelled — $D000-$FFFF is plain ROM. The slot ROM range
-    // $C100-$C7FF is NOT marked as ROM here: SlotBus owns that window
-    // and dispatches reads to plugged cards (writes are dropped inside
-    // Memory::memWrite).
+    // $C100-$C7FF is NOT marked as ROM here: SlotBus owns that window and
+    // dispatches reads to plugged cards (writes dropped in Memory::memWrite).
     markRomRegion(0xD000, 0xFFFF);  // Applesoft + Monitor
 
     // Unclaimed slot reads put the floating bus on the data lines, not a
     // hard $FF — MAME `apple2e.cpp` ends `c080_r`, `read_slot_rom` and
     // `c800_r` with `return read_floatingbus();`. SlotBus has no video
-    // timing of its own, so Memory hands it the source. SLOW path only:
-    // this closure is reached from `memReadSlow`'s $Cxxx dispatch, never
-    // from the fast bus path (docs/PERFORMANCE.md §§ 8.2/8.5).
+    // timing of its own, so Memory hands it the source — and the cycle
+    // counter that stamps SlotBus's access log. SLOW path only: reached from
+    // `memReadSlow`'s $Cxxx dispatch, never the fast bus (PERFORMANCE §§ 8.2/8.5).
     slots.setFloatingBusSource([this]() { return floatingBus(); });
+    slots.setCycleSource([this]() { return getCycleCounter(); });
 
     // Default reset vector points at $F800 (Monitor cold start) so a
     // fresh boot without ROM loaded still runs *something* (BRK loop)

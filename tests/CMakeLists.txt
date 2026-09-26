@@ -5571,6 +5571,14 @@ add_executable(test_ai_control_server
     ai_control_server_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/AiControlServer_Printer.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterPortControl.cpp
+    ${CMAKE_SOURCE_DIR}/src/CentronicsPrinter.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleParallelCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/GrapplerClassicCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/GrapplerCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
@@ -5877,6 +5885,14 @@ set_tests_properties(hdv_status_driver PROPERTIES TIMEOUT 10)
 add_executable(test_ai_mouse_hle_probe
     ai_mouse_hle_probe_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/AiControlServer_Printer.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterPortControl.cpp
+    ${CMAKE_SOURCE_DIR}/src/CentronicsPrinter.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleParallelCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/GrapplerClassicCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/GrapplerCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
@@ -7390,6 +7406,30 @@ pom2_add_headless_test(test_printer_coordinator
     SOURCES printer_coordinator_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# ─── Apple Parallel Interface + the 1981 Grappler, with their ROMs ────────
+pom2_add_headless_test(test_parallel_cards
+    NAME parallel_cards TIMEOUT 60
+    SOURCES parallel_cards_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ─── Printer-detection toolkit: options, access log, PNG render ──────────
+pom2_add_headless_test(test_printer_detection
+    NAME printer_detection TIMEOUT 30
+    SOURCES printer_detection_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ─── Grappler+: SELECT / PAPER EMPTY / no printer, through firmware 3.1 ───
+pom2_add_headless_test(test_grappler_printer_state
+    NAME grappler_printer_state TIMEOUT 60
+    SOURCES grappler_printer_state_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ─── Super Serial Card: Apple's EPROM + the SW1:5-6 mode switches ─────────
+pom2_add_headless_test(test_ssc_firmware
+    NAME ssc_firmware TIMEOUT 60
+    SOURCES ssc_firmware_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 # ─── Slot-card snapshot contract, every card in the catalog (TODO G5-2) ──
 # ─── The IWM releases a 3.5" drive the hub has deselected ────────────────
 # ─── The device clock is the machine's, not the standard's ────────────────
@@ -8270,6 +8310,14 @@ set_tests_properties(sony35_write_head PROPERTIES TIMEOUT 15)
 add_executable(test_ai_control_mem_bank
     ai_control_mem_bank_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/AiControlServer_Printer.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterPortControl.cpp
+    ${CMAKE_SOURCE_DIR}/src/CentronicsPrinter.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleParallelCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/GrapplerClassicCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/GrapplerCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MediaMount.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp

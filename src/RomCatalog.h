@@ -144,6 +144,22 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
           "overlaid on $F000-$FFFF until it writes $C072 itself. Without it "
           "the machine boots straight into the Apple ROM, untested.",
           RomMissingEffect::Degraded },
+        { "Other cards", "Super Serial Card EPROM (Apple 341-0065-A)",
+          { "roms/ssc_341-0065-a.bin", "roms/341-0065-a.bin", "roms/SSC.rom" },
+          2048, 0xB7539D4Cu, "MAME a2ssc (CRC b7539d4c)",
+          "The card plugs with POM2's hand-written slot ROM: PR#n / IN#n, "
+          "the Pascal 1.1 entries and the telnet bridge still work, but the "
+          "Apple firmware's Ctrl-A / Ctrl-I commands, its printer mode and "
+          "its DIP-switch-driven setup do not exist.",
+          RomMissingEffect::Degraded },
+        { "Other cards", "Grappler EPROM, the original 1981 card (Orange Micro)",
+          { "roms/grappler_eps-1.bin" }, 2048, 0x862773CBu, "MAME a2grappler",
+          "The original Grappler refuses to plug — its ROM is the card.",
+          RomMissingEffect::Unavailable },
+        { "Other cards", "Apple Parallel Interface PROM (341-0057)",
+          { "roms/341-0057.bin" }, 512, 0x0A6B084Bu, "MAME a2pic",
+          "The Apple Parallel Interface refuses to plug — its PROM is the card.",
+          RomMissingEffect::Unavailable },
         { "Other cards", "Mouse card slot EPROM (Apple 341-0270-C)",
           { "roms/mouse_341-0270-c.bin" }, 2048, 0, "",
           "Neither mouse card can be plugged (both variants need it).",
