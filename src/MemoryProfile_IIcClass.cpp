@@ -163,7 +163,7 @@ bool IIcClassProfile::ioWriteIWM(uint16_t addr, uint8_t value, uint64_t cyc)
     iwm_->write(static_cast<uint8_t>(addr & 0xF), value);
     if (extPort_) extPort_->sharedAfterWrite(*iwm_, static_cast<uint8_t>(addr & 0xF),
                                              value, forBus);
-    return forBus;
+    return forBus || (iwmAuthoritative_ && hub_ && hub_->active35Selected());
 }
 
 bool IIcClassProfile::internalRomRead(uint16_t addr, uint8_t floatBus, uint8_t& out)
@@ -393,4 +393,3 @@ size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
     }
     return kMigBlobBytes;
 }
-

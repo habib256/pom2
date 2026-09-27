@@ -1169,6 +1169,45 @@ int main()
         }
     }
 
+    // //c+ has BOTH a Sony pair and an external SmartPort chain. Explicit
+    // Sony mounts must not be redirected to slot 5, and resolving their
+    // physical location must not reopen the image or discard guest writes.
+    {
+        EmulationController c;
+        pom2::StorageCoordinator storage;
+        pom2::Settings settings;
+        settings.setReadOnly(true);
+        {
+            auto state = c.lockState();
+            state.memory().slotBus().plug(5, std::make_unique<pom2::SmartPortCard>(5));
+        }
+        const auto mounted = storage.mountDisk35(c, settings, 0, disk35Path, true);
+        assert(mounted.ok && !mounted.usesSmartPort && mounted.bootSlot == -1);
+        assert(settings.getString("disk35_path_1") == disk35Path);
+        c.disk35Internal().setWriteBackEnabled(true);
+        std::uint8_t changed[512];
+        std::memset(changed, 0xAB, sizeof changed);
+        assert(c.disk35Internal().writeBlock(10, changed));
+        const auto locations = pom2::mountedImageLocations(c);
+        assert(locations.size() == 1);
+        assert(locations[0].slot == -1 && locations[0].bay == 0);
+        assert(pom2::sameImageFile(locations[0].path, disk35Path));
+        assert(c.disk35Internal().hasUnsavedChanges());
+        const auto duplicate = storage.mountDisk35(c, settings, 0, disk35Path);
+        assert(!duplicate.ok);
+        assert(duplicate.error.find("already mounted") != std::string::npos);
+        const auto secondSony = storage.mountDisk35(c, settings, 1, disk35Path, true);
+        assert(!secondSony.ok);
+        std::uint8_t read[512];
+        assert(c.disk35Internal().readBlock(10, read));
+        assert(std::memcmp(read, changed, sizeof read) == 0);
+        assert(!c.disk35External().isLoaded());
+        // Restore the scratch block so the other coordinator fixtures retain
+        // their original payload even if the destructor flushes it.
+        std::memset(changed, 0x77, sizeof changed);
+        assert(c.disk35Internal().writeBlock(10, changed));
+    }
+
     // 3.5-inch commands have one authoritative target. With no SmartPort
     // card they operate on the on-board pair; once a card exists they create
     // and persist SmartPort35Unit media instead.

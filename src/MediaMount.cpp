@@ -70,9 +70,9 @@ void noteHostMediaSwap(EmulationController& ctrl)
 /// (Liron, SmartPort, HDV / CFFA), and the //c+'s two on-board 3.5" drives.
 /// Strings only, copied under the state lock — the file comparison happens
 /// after, unlocked.
-std::vector<std::string> mountedImagePaths(EmulationController& ctrl)
+std::vector<MountedImageLocation> mountedImageLocations(EmulationController& ctrl)
 {
-    std::vector<std::string> out;
+    std::vector<MountedImageLocation> out;
     auto st = ctrl.lockState();
     const SlotBus& bus = st.memory().slotBus();
     for (int s = 0; s < SlotBus::kSlotCount; ++s) {
@@ -80,18 +80,27 @@ std::vector<std::string> mountedImagePaths(EmulationController& ctrl)
         if (!p) continue;
         if (auto* d = dynamic_cast<DiskIICard*>(p)) {
             for (int dr = 0; dr < DiskIICard::kDriveCount; ++dr)
-                if (d->isDiskLoaded(dr)) out.push_back(d->driveImage(dr).getPath());
+                if (d->isDiskLoaded(dr)) out.push_back({s, dr, d->driveImage(dr).getPath()});
             continue;
         }
         if (auto* m = dynamic_cast<MountableMediaCard*>(p)) {
             for (int b = 0; b < m->bayCount(); ++b) {
                 const MediaBayInfo info = m->bayInfo(b);
-                if (info.loaded && !info.path.empty()) out.push_back(info.path);
+                if (info.loaded && !info.path.empty()) out.push_back({s, b, info.path});
             }
         }
     }
-    for (Disk35Image* img : { &ctrl.disk35Internal(), &ctrl.disk35External() })
-        if (img->isLoaded() && !img->path().empty()) out.push_back(img->path());
+    for (int bay = 0; bay < 2; ++bay) {
+        const auto& img = bay == 0 ? ctrl.disk35Internal() : ctrl.disk35External();
+        if (img.isLoaded() && !img.path().empty()) out.push_back({-1, bay, img.path()});
+    }
+    return out;
+}
+
+std::vector<std::string> mountedImagePaths(EmulationController& ctrl)
+{
+    std::vector<std::string> out;
+    for (const auto& location : mountedImageLocations(ctrl)) out.push_back(location.path);
     return out;
 }
 

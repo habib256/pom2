@@ -55,6 +55,14 @@ class SmartPortUnit;
 
 namespace pom2 {
 
+/// A mounted image's physical location. Slot -1 is the //c+ Sony pair.
+struct MountedImageLocation {
+    int slot;
+    int bay;
+    std::string path;
+};
+std::vector<MountedImageLocation> mountedImageLocations(EmulationController& ctrl);
+
 /// Mount `path` into `card`'s `drive` (0 or 1) without holding `stateMutex`
 /// across the file read.
 ///

@@ -2335,8 +2335,8 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
     if (addr >= 0xC0E0 && addr <= 0xC0EF && iicProfile_) {
         uint8_t v;
         if (iicProfile_->ioReadIWM(addr, cycleCounter, v)) {
-            // Disk II side effects — not for the external port's own traffic.
-            if (!iicProfile_->servesExternalSmartPort())
+            // Sony / external SmartPort switches do not belong to Disk II.
+            if (!iicProfile_->servesExternalSmartPort() && !(iwmDevice && iwmDevice->getSony35()))
                 (void)slots.deviceSelectRead(addr);
             return v;
         }

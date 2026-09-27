@@ -832,14 +832,12 @@ void DiskIICard::confirmLastStep()
 
 void DiskIICard::pushIwmFloppy()
 {
-    // Mirror the active drive's image + quarter-track into the //c+
-    // on-board IWM (when wired). MAME `apple2e.cpp:1180-1185` calls
-    // `m_iwm->set_floppy(...)` whenever the controller's notion of
-    // "currently spinning drive" changes; on POM2's slot-6 card that
-    // surface is `insertDisk` / `ejectDisk` / `selectDrive` /
-    // `seekPhaseW`. Keeping the IWM in sync via a single helper means
-    // we route every entry point through the same MAME-faithful hook.
-    if (!iwm_) return;
+    // Mirror 5.25-inch image/head changes into the on-board IWM (MAME
+    // apple2e.cpp:1180-1185). The //c+ forwards IWM switches to this shadow
+    // too: setFloppy clears sony_, even for an empty Disk II drive. Do not
+    // steal the MIG-selected Sony source. The hub releases it when firmware
+    // selects 5.25-inch hardware; only then may this mirror rebind the IWM.
+    if (!iwm_ || iwm_->getSony35()) return;
     DiskImage* img = images[activeDrive].isLoaded()
         ? &images[activeDrive] : nullptr;
     iwm_->setFloppy(img, headQuarterTrack[activeDrive]);

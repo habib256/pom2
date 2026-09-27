@@ -724,8 +724,7 @@ private:
     // guest last wrote through `STA $C08F,X`.
     //
     // Gated on `iwmHost_` (2026-09-07): the card cannot tell the machine class
-    // by itself (`setIWM` is bound on every profile and `iicplus_boot35_test`
-    // boots a //c+ through these hooks without binding it), so the flag is
+    // by itself (`setIWM` is bound on every profile), so the flag is
     // pushed in by `SlotCardFactory`, which knows the profile, and defaults
     // to on for hand-built cards.
 

@@ -106,6 +106,7 @@ int bootOnce(bool writable)
     pom2::IWMDevice    iwm;
     pom2::SmartPortHub hub;
     pom2::Disk35Image  imgInt, imgExt;
+    imgInt.setWriteBackEnabled(writable);
     pom2::Sony35Drive  drvInt, drvExt;
     drvInt.setImage(&imgInt);
     drvExt.setImage(&imgExt);
@@ -120,7 +121,12 @@ int bootOnce(bool writable)
     // card the fall-through returns the floating bus — $FF, whose bit 5 reads
     // as "drive enabled" — and the firmware takes a branch the real machine
     // never takes. (That cost an hour of reading the wrong loop.)
-    mem.slotBus().plug(6, std::make_unique<DiskIICard>(6));
+    auto diskII = std::make_unique<DiskIICard>(6);
+    DiskIICard* shadow = diskII.get();
+    // Match the application wiring: its Disk II shadow shares this IWM.
+    // A phase/head change in that shadow must not steal the Sony flux source.
+    diskII->setIWM(&iwm);
+    mem.slotBus().plug(6, std::move(diskII));
 
     mem.setIIEMode(true);
     mem.clearRam();
@@ -145,6 +151,10 @@ int bootOnce(bool writable)
     }
     if (!imgInt.loadFile(mounted)) {
         std::printf("FAIL iicplus_boot35: cannot load %s\n", mounted.c_str());
+        return 1;
+    }
+    if (imgInt.isWriteProtected() != !writable) {
+        std::printf("FAIL iicplus_boot35: fixture has the wrong write protection\n");
         return 1;
     }
     if (writable && imgInt.isWriteProtected()) {
@@ -211,6 +221,23 @@ int bootOnce(bool writable)
     if (!writable && drvInt.sectorsDecoded() != 0)
         fail("a write-protected medium accepted a sector — the protection "
              "check in the write path is gone");
+
+    // The drive-enable switch belongs to the MIG-selected Sony. Forwarding
+    // it to Disk II also selected its drive 2, and DATA writes could reach a
+    // different medium. Check read AND write switches with the real wiring.
+    shadow->onReset();
+    hub.setMigIntDrive(true);
+    iwm.read(0x9);
+    iwm.read(0xB);
+    shadow->deviceSelectRead(0xA);
+    mem.memRead(0xC0EB);
+    if (iwm.getSony35() != &drvInt || shadow->getActiveDrive() != 0)
+        fail("Sony read switches reached the Disk II shadow");
+    shadow->onReset();
+    shadow->deviceSelectRead(0xA);
+    mem.memWrite(0xC0EB, 0);
+    if (iwm.getSony35() != &drvInt || shadow->getActiveDrive() != 0)
+        fail("Sony write switches reached the Disk II shadow");
 
     if (failures) {
         std::printf("--- text page ---\n%s---\n", screen.c_str());

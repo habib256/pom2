@@ -495,6 +495,18 @@ bool MainWindow::insertBlankDiskette(int drive, const std::string& path,
     return true;
 }
 
+bool MainWindow::mountOnboard35(int drive, const std::string& path, std::string& errOut)
+{
+    if (activeProfile != pom2::SystemProfile::AppleIIcPlus) {
+        errOut = "Sony 3.5-inch drives require the //c+ profile";
+        return false;
+    }
+    const auto result = storageCoordinator_->mountDisk35(
+        *controller, *settings, drive, path, true);
+    if (!result.ok) errOut = result.error;
+    return result.ok;
+}
+
 bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut)
 {
     // Classify by extension + size, route into the matching slot under the
@@ -534,50 +546,51 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             return true;
         }
         case DiskSlotClass::Sony35: {
-            // Without a SmartPort card, routeMount35 falls through to the
-            // //c+ on-board Sony hub — a device that only exists on the
-            // //c+. On any other machine the image would "mount" into
-            // hardware the guest can't see and the cold boot below would
-            // land at the BASIC prompt with no error at all.
-            //
-            // When neither exists, auto-plug a Liron-class SmartPort the
-            // same way the HDV branch below auto-plugs a block card: a
-            // dropped 800K .po/.2mg is explicit "boot this" intent, and
-            // failing it on the stock II+/IIe config (which ships no
-            // SmartPort) made drag-and-drop refuse the single most common
-            // 3.5" distribution format. Session-local, never persisted.
-            // A Liron already plugged is the 3.5" device: no card is added.
-            const int liron = pom2::StorageCoordinator::lironSlot(
-                controller->memory().slotBus());
-            if (!primarySmartPortCard() && liron < 0 &&
-                activeProfile != pom2::SystemProfile::AppleIIcPlus &&
-                ensureSmartPortCardForBoot() < 0) {
-                errOut = "no 3.5\" device in this config, and no free slot "
-                         "to plug a SmartPort 3.5\" card into";
+            // CLI --35-disk1/2 and restored media may have mounted this
+            // image already. Boot its actual device; a second mount on the
+            // external SmartPort chain would correctly be refused.
+            int slot = -1;
+            bool mounted = false;
+            for (const auto& location : pom2::mountedImageLocations(*controller)) {
+                if (!pom2::sameImageFile(location.path, path)) continue;
+                if (mounted) {
+                    errOut = "boot image is mounted in multiple devices";
+                    return false;
+                }
+                mounted = true;
+                slot = location.slot;
+            }
+            const bool onboard = activeProfile == pom2::SystemProfile::AppleIIcPlus;
+            if (mounted && slot < 0 && !onboard) {
+                errOut = "image is in a Sony drive unavailable on this profile";
                 return false;
             }
-            if (!routeMount35(0, path, errOut)) return false;
-            // SmartPort card present (incl. //c-class built-in slot 5) →
-            // boot it explicitly; otherwise cold-boot (//c+ on-board hub).
-            if (primarySmartPortCard() || liron >= 0) {
-                const int slot = primarySmartPortCard()
-                    ? primarySmartPortCard()->getSlot() : liron;
+            if (!mounted) {
+                // On //c+ a new 800K boot image belongs in the internal
+                // Sony drive. Other profiles use their SmartPort / Liron.
+                const int liron = pom2::StorageCoordinator::lironSlot(
+                    controller->memory().slotBus());
+                if (!onboard && !primarySmartPortCard() && liron < 0 &&
+                    ensureSmartPortCardForBoot() < 0) {
+                    errOut = "no 3.5\" device in this config, and no free slot "
+                             "to plug a SmartPort 3.5\" card into";
+                    return false;
+                }
+                const auto result = storageCoordinator_->mountDisk35(
+                    *controller, *settings, 0, path, onboard);
+                if (!result.ok) { errOut = result.error; return false; }
+                slot = result.bootSlot;
+            }
+            if (slot >= 0) {
                 if (!controller->bootFromSlot(slot)) {
                     errOut = "slot " + std::to_string(slot) +
                              " did not boot the image (cold-booted instead)";
                     return false;
                 }
             } else {
-                // //c+ on-board Sony hub. The IWM bit-shift state machine is
-                // deliberately unmodelled (CLAUDE.md), so this cold boot does
-                // NOT reach the mounted 3.5" disk — the image is mounted and
-                // the machine restarted, nothing more. Don't call it a boot.
+                // The real //c+ reset firmware drives MIG + IWM and boots
+                // the internal Sony. Do not enter slot 5's external chain.
                 controller->coldBoot();
-                controller->setMode(EmulationController::Mode::Running);
-                errOut = "mounted on the //c+ on-board 3.5\" drive, which "
-                         "POM2 cannot boot from (unmodelled IWM) — use a "
-                         "SmartPort 3.5\" card to boot this image";
-                return false;
             }
             controller->setMode(EmulationController::Mode::Running);
             return true;

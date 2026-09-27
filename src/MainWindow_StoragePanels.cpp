@@ -514,14 +514,14 @@ void MainWindow::renderDiskLibraryWindow()
             // Slot-aware boot: explicit `bootFromSlot(N)` whenever a
             // SmartPort card is plugged — now including the //c-class
             // built-in SmartPort (slot 5). No SmartPort card at all means
-            // the //c+ on-board Sony hub, whose IWM boot path POM2
-            // deliberately does not model: the cold boot below restarts the
-            // machine but never reaches the disk, so don't call it a boot.
+            // the //c+ on-board Sony hub: its real reset firmware drives
+            // MIG + IWM to boot the disk.
             bool booted = false;
             if (primarySmartPortCard()) {
                 booted = controller->bootFromSlot(primarySmartPortCard()->getSlot());
             } else {
                 controller->coldBoot();
+                booted = true;
             }
             tapeStatusMessage = "Library: 3.5\" drive "
                 + std::string(r.request35BootDrive == 0 ? "1" : "2")

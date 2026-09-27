@@ -1461,6 +1461,21 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
 
 ### [Storage] disks & images
 
+- 🟡 **//c+ secondary 3.5-inch targets and control API** *(2026-09-27).*
+  Internal Sony boot and the CLI's duplicate-target conflict are fixed
+  (see CHANGELOG, September 27). The successful two-volume A2FC / Fantavision
+  configuration is internal Sony + slot-5 external SmartPort. With both
+  `--35-disk1/2` Sony images mounted, A2FC only enumerated the internal
+  volume: investigate the external Sony's MIG drive-selection / firmware
+  enumeration before advertising that pair as equivalent to the SmartPort
+  chain. Keep these physical devices distinct in UI and status. `/disk`
+  still only mounts Disk II; add explicit Sony / SmartPort slot-and-bay
+  control with the same duplicate and failed-write-back safeguards. Also
+  make secondary-bay boot selection explicit: entering a slot ROM or reset
+  firmware does not guarantee it boots the requested bay when an earlier
+  bootable disk is present. Validate whole-application startup, both volumes,
+  a movie and return to A2FC, not just a transient ProDOS banner.
+
 - ✅ **//c + ProDOS — resolved 2026-08-30, kept as a record because the "why"
   is nowhere else.** Three layers, each hiding the next: the mount's own
   deadlock (`routeMountHdv`); the stub's `$C800` bank never opened on

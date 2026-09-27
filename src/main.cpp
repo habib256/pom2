@@ -922,14 +922,12 @@ int main(int argc, char* argv[])
                 " ignored: 3.5\" disks require the //c+ profile (--preset iic+)");
             return;
         }
-        if (mainWindow.emul().mount35(idx, path)) {
+        std::string error;
+        if (mainWindow.mountOnboard35(idx, path, error)) {
             pom2::log().info("CLI", std::string(flag) + " mounted: " + path);
         } else {
-            const auto& img = (idx == 0)
-                ? mainWindow.emul().disk35Internal()
-                : mainWindow.emul().disk35External();
             pom2::log().warn("CLI",
-                std::string(flag) + " failed: " + img.lastError());
+                std::string(flag) + " failed: " + error);
         }
     };
     mount35Cli(0, plan->disk35Internal, "--35-disk1");
