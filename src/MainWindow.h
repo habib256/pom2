@@ -225,6 +225,9 @@ public:
     /// `--kiosk` launcher. Must run on the UI thread (takes the state lock
     /// internally between frames).
     bool insertAndBootImage(const std::string& path, std::string& errOut);
+    /// Explicit //c+ Sony mount used by --35-disk1/2; never the external
+    /// SmartPort chain. UI thread only, with normal duplicate/write guards.
+    bool mountOnboard35(int drive, const std::string& path, std::string& errOut);
 
     /// Put a diskette that has NEVER BEEN FORMATTED into the primary Disk
     /// II's `drive` (0 = drive 1, 1 = drive 2) — no address fields, the

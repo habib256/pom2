@@ -7542,6 +7542,13 @@ pom2_add_headless_test(test_smartport_eight_units
     NAME smartport_eight_units TIMEOUT 120
     SOURCES smartport_eight_units_test.cpp
     LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_smartport_profile_read
+    NAME smartport_profile_read TIMEOUT 240
+    SOURCES smartport_profile_read_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(smartport_profile_read PROPERTIES LABELS slow SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(smartport_eight_units PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 

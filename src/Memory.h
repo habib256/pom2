@@ -111,8 +111,8 @@ public:
     }
 
     /// When true (default), `$C0E0-$C0EF` reads on iicHasAltBank
-    /// profiles return the IWMDevice's value rather than the slot-6
-    /// DiskIICard's. Writes are dispatched to both either way.
+    /// profiles return the IWMDevice's value for a selected Sony rather
+    /// than the slot-6 DiskIICard's. Its switches are exclusive to that drive.
     /// Setting false reverts to "shadow mode" — IWMDevice still
     /// advances on every access (timer drain, mode/status registers
     /// stay coherent with what the //c+ alt firmware expects), but

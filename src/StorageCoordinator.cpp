@@ -1152,7 +1152,7 @@ StorageCoordinator::Disk35Snapshot StorageCoordinator::captureDisk35(
 StorageCoordinator::RoutedMediaCommandResult
 StorageCoordinator::mountDisk35(
     EmulationController& controller, Settings& settings, int drive,
-    const std::string& path) const
+    const std::string& path, bool onboard) const
 {
     RoutedMediaCommandResult result;
     if (drive < 0 || drive >= 2) {
@@ -1161,7 +1161,8 @@ StorageCoordinator::mountDisk35(
         return result;
     }
 
-    if (auto viaLiron = mountDisk35OnLiron(controller, settings, drive, path)) return *viaLiron;
+    if (!onboard)
+        if (auto viaLiron = mountDisk35OnLiron(controller, settings, drive, path)) return *viaLiron;
     sweepMountDirDebris(path);
     // `mountSmartPortUnitAs` below runs under the lock and starts by flushing
     // whatever the bay holds (a dirty 32 MiB HDV unit = 115 ms of stateMutex).
@@ -1172,7 +1173,7 @@ StorageCoordinator::mountDisk35(
         {
             auto state = controller.lockState();
             const auto cards = topology(state.memory().slotBus());
-            if (cards.primarySmartPort)
+            if (!onboard && cards.primarySmartPort)
                 smartPortSlot = cards.primarySmartPort->getSlot();
         }
         // Target: the SmartPort unit, or else (slot -1) the on-board drive.
@@ -1196,7 +1197,7 @@ StorageCoordinator::mountDisk35(
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
-        if (cards.primarySmartPort) {
+        if (!onboard && cards.primarySmartPort) {
             result.usesSmartPort = true;
             result.bootSlot = cards.primarySmartPort->getSlot();
             result.ok = mountSmartPortUnitAs(

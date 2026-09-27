@@ -5,6 +5,40 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-27 — The //c+ really boots its internal Sony drive
+
+- **The Disk II shadow stole the Sony's data source.** The application
+  wires its slot-6 Disk II to the same IWM as the MIG-selected 3.5-inch
+  drive. Forwarded phase/head changes called `setFloppy`, clearing the
+  Sony source even when the Disk II drive was empty; the firmware reported
+  “UNABLE TO FIND A BOOTABLE DISK ONLINE”. The shadow now leaves a selected
+  Sony alone. Sony read/write switches no longer reach the 5.25-inch shadow
+  either: only the selected physical device may react to them. The boot
+  regression uses the application's actual wiring:
+  it fails before this fix and boots after it, protected and writable.
+  Its protection is explicit, independent of the product's writable default.
+- **Mount and boot disagreed about the device.** `--35-disk1/2` selected
+  Sony drives, but an 800K positional image was routed to the external
+  SmartPort chain. Naming an already mounted image then hit the duplicate
+  guard. Positional 3.5-inch boot reuses the mounted device without reopening
+  its medium; a new //c+ boot image goes into the internal Sony and runs the
+  real reset firmware. CLI Sony mounts now use the coordinator's duplicate
+  and persistence guards. The obsolete “unmodelled IWM” refusal is removed.
+  Genuine second mounts remain refused, including aliases of the same file.
+- **Verified:** rebuilt POM2 boots the A2FC 800K image on the internal Sony;
+  an external slot-5 SmartPort 800K exposes `/FANTAVISION`. Coordinator
+  regressions preserve guest-written bytes while refusing duplicate mounts.
+  The Sony boot, five-zone/two-head GCR, SmartPort 3.5-inch, external bus and
+  Disk II-after-SmartPort regressions pass. The separate external Sony
+  enumeration and targeted control API remain in TODO.
+- A six-machine regression boots ProDOS and a compatible 6502 SYSTEM, then
+  executes MLI OPEN/READ/CLOSE on the second 800K disk and compares all
+  1,200 bytes: //c+ internal Sony + external SmartPort, //c rev-0 rear port,
+  IIe and 64K II+ with real Liron firmware in slot 5, plus IIe and II+
+  with SmartPortCard in slot 7. The //c needs a SmartPort-capable ROM and
+  the II+ needs its Language Card, as on the actual machines. A2FC itself
+  requires IIe-class hardware; the II+ test does not claim otherwise.
+
 ## 2026-09-26 — The Super Serial Card runs Apple's firmware
 
 - **The card ran a hand-written slot page and nothing read its mode

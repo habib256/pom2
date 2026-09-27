@@ -259,10 +259,12 @@ public:
     /// units own the drives; otherwise commands target the controller's
     /// on-board pair. A mount safely flushes and replaces a unit of another
     /// kind before loading the requested 3.5-inch image.
+    /// `onboard` explicitly selects the Sony pair even with a SmartPort
+    /// card present (//c+ CLI / positional boot). Caller validates profile.
     Disk35Snapshot captureDisk35(EmulationController& controller) const;
     RoutedMediaCommandResult mountDisk35(
         EmulationController& controller, Settings& settings, int drive,
-        const std::string& path) const;
+        const std::string& path, bool onboard = false) const;
     MediaCommandResult ejectDisk35(EmulationController& controller,
                                    Settings& settings, int drive) const;
     MediaCommandResult setDisk35WriteBack(
