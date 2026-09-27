@@ -10296,3 +10296,35 @@ bisect, 32 of 33 runs, p = 0.00003. The shape that keeps the fix and the speed
 tests `interruptCycles` **first**, so `debugHook_` is never loaded on the
 common path, and falls into a single tail (`M6502.cpp:2150-2158`). RAM and
 framebuffer hashes identical.
+
+### Sony and intelligent UniDisk identification (2026-09-27)
+
+Apple 3.5 (Sony) is an IWM mechanism; UniDisk 3.5 is an intelligent
+SmartPort device. Floppy Emu implements either depending on its selected
+mode, and its SmartPort HD mode is intelligent too. The UI and mount routes
+keep these identities distinct. Liron accepts intelligent UniDisk / HD,
+not Apple 3.5 or a physical Apple 5.25 drive. See the
+[BMOW manual](https://www.bigmessowires.com/femu-instructions.pdf).
+
+External Sony mechanisms start disconnected; mounting attaches them, while
+ejecting only removes their media. Connection settings persist separately
+and may be changed in the Sony panel once affected disks are ejected. This
+prevents a ghost empty Sony from preceding an intelligent UniDisk.
+
+The //c+ has an internal Sony and can address two external Sony drives.
+They occupy S5D1, S5D2 and S2D1 respectively. The real ROM selects the
+external 3.5 path with STA $CE40, and the 5.25 path with STA $CE60; this
+differs from MAME's mig_w levels. Sony motor commands are latched by LSTRB,
+not IWM enable. Real-ROM ProDOS MLI OPEN/READ/CLOSE tests verify each
+external Sony, while DOS 3.3 write/read verifies the 5.25 path. A third
+Sony snapshot section is appended after the historical mouse section.
+See [Apple TIL 03435](https://www.savagetaylor.com/TIL/TIL03435.pdf) for
+physical chain ordering and supported combinations: Sony first, intelligent
+UniDisk / HD next, 5.25 last. The three-external-floppy limit is distinct
+from logical HD units supplied by an intelligent emulator.
+
+SmartPortCard now supports fourteen logical units (default remains eight).
+ProDOS has fourteen device-table entries total, shared with /RAM and other
+controllers; the configured chain size is not a promise that all volumes
+will be visible. Snapshot v4 carries fourteen records; v3 retains its eight
+and v1/v2 their two when loaded.

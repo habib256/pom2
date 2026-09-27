@@ -997,14 +997,7 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
-    // Fifth section: the two ON-BOARD Sony 3.5" mechanisms (//c+ internal
-    // bay + the external port drive). They hang off the SmartPortHub, not
-    // off a slot, so they get no SLOTn section — yet `iwmDevice` above
-    // restores the controller that walks them. Restoring one without the
-    // other left the IWM reading cells from the head position of the
-    // abandoned future. Media is NOT captured (800 KB/frame); the ring is
-    // cleared on a 3.5" write instead. Each drive is length-prefixed on its
-    // own so a machine with one, both or neither round-trips.
+    // The original two Sony sections stay in place for old snapshots.
     for (int which = 0; which < 2; ++which) {
         std::vector<uint8_t> sect;
         if (smartPortHub) {
@@ -1020,6 +1013,13 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
     {
         std::vector<uint8_t> sect;
         if (iicProfile_) if (auto* p = slots.peripheral(4)) p->saveIicMouseState(sect);
+        putU32(static_cast<uint32_t>(sect.size()));
+        putBytes(sect.data(), sect.size());
+    }
+    {   // Optional third Sony: append after the historical mouse section.
+        std::vector<uint8_t> sect;
+        if (smartPortHub && smartPortHub->external35Second())
+            smartPortHub->external35Second()->appendSnapshotState(sect);
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
@@ -1245,6 +1245,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
     if (!readSection([&](const uint8_t* p, size_t k) {
             auto* mouse = iicProfile_ ? slots.peripheral(4) : nullptr;
             return !mouse || mouse->loadIicMouseState(p, k);
+        })) return false;
+    if (!readSection([&](const uint8_t* p, size_t k) {
+            auto* d = smartPortHub ? smartPortHub->external35Second() : nullptr;
+            return !d || d->loadSnapshotState(p, k);
         })) return false;
     return true;
 }
@@ -2403,12 +2407,8 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             uint8_t out;
             if (iicProfile_ && iicProfile_->internalRomRead(addr, floatingBus(), out))
                 return out;
-            // //c-class slot-ROM punch: a slot peripheral can override the
-            // forced INTCXROM mask for its own $Cn00 firmware window by
-            // returning true from exposesIicOnboardRom(). Bank 1 is handled
-            // by internalRomRead() above, so this is bank-0 only. Device-
-            // select I/O ($C0(8+s)0-$C0(8+s)F) is never masked — it reaches
-            // the slot bus above. Used today by:
+            // Bank-0 slot-ROM punch through INTCXROM via exposesIicOnboardRom.
+            // Bank 1 is handled above; device-select I/O remains on the bus.
             //
             //   sl5 SmartPort: host-served stub, armed by bootFromSlot only.
             //   sl4 AppleWin HLE mouse (its EPROM at $C400 reaches its PIA

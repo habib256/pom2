@@ -72,13 +72,13 @@ inline constexpr CardType kCardTypes[] = {
     // SmartPort 3.5" — Apple Disk 3.5 Controller card (the "Liron" /
     // 670-0186). Brings 2× ProDOS block units (3.5" 800K or HDV) to a //e
     // or II+ via the standard ProDOS block-device protocol, no IWM.
-    { "smartport35",  "SmartPort 3.5\"",   CardScope::Core },
+    { "smartport35",  "SmartPort (UniDisk intelligent / HD)",   CardScope::Core },
     // The same controller as silicon: the real 4 KB Liron EPROM executing
     // over a real IWM, its 3.5" drives answered as intelligent UniDisks on
     // the SmartPort bus (SmartPortBusDevice). Needs roms/liron.rom; slot
     // left empty without it. Boots and serves ProDOS through the firmware's
     // own code — pick it to run the real thing, `smartport35` to be quick.
-    { "liron",        "Liron 3.5\" (real firmware)" },
+    { "liron",        "Liron (UniDisk intelligent / HD, real ROM)" },
     { "ssc",          "Super Serial"      },
     // Printer (parallel) — synthetic card that spools COUT bytes to a host
     // file (.txt / .pdf). Built-in at slot 1 of //c / //c+, free-slot pick

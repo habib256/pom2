@@ -959,8 +959,8 @@ private:
     /// frame, so the result is cached and recomputed only when the medium
     /// changes. Display only — `convertWoz35ToPo` re-resolves the name at
     /// conversion time, so a stale memo can never misdirect a write.
-    std::string  convertSrc_[2];
-    std::string  convertDst_[2];
+    std::string  convertSrc_[3];
+    std::string  convertDst_[3];
 
     // Kiosk mode (set by `--kiosk`): render() draws only the Apple II
     // screen, full-viewport, with no menu bar / toolbar / panels.

@@ -39,10 +39,11 @@ void SmartPortHub::attach(IWMDevice* iwm)
     iwm_->setSel35Callback([](bool) {});
 }
 
-void SmartPortHub::setSony35(Sony35Drive* internal, Sony35Drive* external)
+void SmartPortHub::setSony35(Sony35Drive* internal, Sony35Drive* external, Sony35Drive* external2)
 {
     drive35Internal_ = internal;
     drive35External_ = external;
+    drive35External2_ = external2;
     recalcActiveDevice();
 }
 
@@ -80,6 +81,7 @@ void SmartPortHub::reset()
     active35_         = nullptr;
     if (drive35Internal_) drive35Internal_->reset();
     if (drive35External_) drive35External_->reset();
+    if (drive35External2_) drive35External2_->reset();
 }
 
 void SmartPortHub::recalcActiveDevice()
@@ -106,8 +108,10 @@ void SmartPortHub::recalcActiveDevice()
             // 5.25" external (MAME `m_floppy[1]`, line 663) —
             // DiskIICard handles.
         } else {
-            // MAME line 665: "should be external 3.5 #2, for a 3rd
-            // drive" — set to nullptr. POM2 mirrors.
+            // The second external Apple 3.5: Apple TIL03435 lists two
+            // Sony drives on the rear chain; MAME leaves this connector null.
+            is35 = true;
+            drive = drive35External2_;
         }
     }
 
@@ -122,7 +126,7 @@ void SmartPortHub::recalcActiveDevice()
     active35_         = is35 ? drive : nullptr;
 
     if (iwm_) {
-        if (active35_) iwm_->setSony35(active35_);
+        if (is35) iwm_->setSony35(active35_);
         // MAME's set_floppy(nullptr) equivalent. NOT `setSony35(nullptr)`:
         // that would also clear `disk_`, which DiskIICard owns. Leaving the
         // stale Sony attached let a 5.25"-era write burst land on the last

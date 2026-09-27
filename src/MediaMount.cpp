@@ -90,8 +90,8 @@ std::vector<MountedImageLocation> mountedImageLocations(EmulationController& ctr
             }
         }
     }
-    for (int bay = 0; bay < 2; ++bay) {
-        const auto& img = bay == 0 ? ctrl.disk35Internal() : ctrl.disk35External();
+    for (int bay = 0; bay < EmulationController::kSony35Drives; ++bay) {
+        const auto& img = ctrl.disk35(bay);
         if (img.isLoaded() && !img.path().empty()) out.push_back({-1, bay, img.path()});
     }
     return out;
@@ -202,8 +202,7 @@ bool imageMountedElsewhereAt(EmulationController& controller, int slot, int inde
     {
         auto state = controller.lockState();
         if (slot < 0) {
-            const auto& img = index == 0 ? controller.disk35Internal()
-                                         : controller.disk35External();
+            const auto& img = controller.disk35(index);
             if (img.isLoaded()) current = img.path();
         } else if (auto* p = state.memory().slotBus().peripheral(slot)) {
             if (auto* d = dynamic_cast<DiskIICard*>(p)) {

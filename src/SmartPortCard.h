@@ -102,16 +102,16 @@ public:
     /// card ANSWERS FOR is `unitCount()` (2, 4, 6 or 8 — A2retroNET's
     /// `number=`). It starts at the ceiling since 2026-09-11 (`kDefaultUnits`),
     /// like the Liron: a count saved as `smartport_slotN_units` still wins.
-    static constexpr size_t kMaxUnits      = 8;
-    static constexpr int    kDefaultUnits  = static_cast<int>(kMaxUnits);
+    static constexpr size_t kMaxUnits      = 14;
+    static constexpr int    kDefaultUnits  = 8;
 
     /// Snapshot blob version. v1 = transfer state (+ an optional v1.1 call
     /// engine tail); v2 appends one media-identity hash per unit so a primed
     /// write block is never flushed into a disk that was swapped in after
     /// the capture. Older blobs still load. v3 (2026-09-08) carries
-    /// kMaxUnits per-unit records instead of two; a v1/v2 blob's two still
-    /// load and the other bays are reset.
-    static constexpr uint8_t kSnapVersion  = 3;
+    /// eight per-unit records instead of two; v4 carries fourteen.
+    /// Older blobs keep their original record count; extra bays are reset.
+    static constexpr uint8_t kSnapVersion  = 4;
 
     /// `slot` is baked into the slot ROM (signature byte, driver
     /// address, soft-switch trampolines). All units start empty;

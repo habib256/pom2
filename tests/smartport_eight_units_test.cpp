@@ -13,6 +13,7 @@
 // enumerated past drive 2) and disks_3.5/A2DeskTop-1.5-en_800k.2mg.
 
 #include "M6502.h"
+#include "LironCard.h"
 #include "Memory.h"
 #include "ProDOSVolume.h"
 #include "ResourcePaths.h"
@@ -77,7 +78,7 @@ struct Outcome {
 
 Outcome boot(const std::string& rom, const std::string& liron,
              const std::string& disk35, const std::vector<std::string>& volumes,
-             int unitCount)
+             int unitCount, bool realLiron = false)
 {
     Outcome o;
     Memory mem;
@@ -88,6 +89,18 @@ Outcome boot(const std::string& rom, const std::string& liron,
     mem.resetSoftSwitches();
     if (!mem.loadAppleIIRom(rom.c_str())) { fail("cannot load apple2e.rom"); return o; }
 
+    if (realLiron) {
+        auto card = std::make_unique<pom2::LironCard>(5);
+        card->setUnitCount(unitCount);
+        std::string error;
+        card->setBayWriteBack(0, false);
+        if (!card->mountBay(0, disk35, error)) { fail(error); return o; }
+        for (size_t i = 0; i < volumes.size(); ++i) {
+            card->setBayWriteBack(i + 1, false);
+            if (!card->mountBay(i + 1, volumes[i], error)) { fail(error); return o; }
+        }
+        mem.slotBus().plug(5, std::move(card));
+    } else {
     auto card = std::make_unique<pom2::SmartPortCard>(5);
     if (!card->loadLironRom(liron)) { fail("cannot load roms/liron.rom"); return o; }
     card->setUnitCount(unitCount);
@@ -100,6 +113,7 @@ Outcome boot(const std::string& rom, const std::string& liron,
         card->setUnit(i + 1, std::move(u));
     }
     mem.slotBus().plug(5, std::move(card));
+    }
 
     cpu.setCpuMode(M6502::CpuMode::CMOS);
     cpu.hardReset();
@@ -166,7 +180,7 @@ int main()
     fs::remove_all(scratch, ec);
     fs::create_directories(scratch, ec);
     std::vector<std::string> volumes;
-    for (int n = 2; n <= 8; ++n) {
+    for (int n = 2; n <= 14; ++n) {
         const std::string po = makeVolume(n, scratch);
         if (po.empty()) return 1;
         volumes.push_back(po);
@@ -185,6 +199,14 @@ int main()
         } else {
             std::printf("  ok: eight units, eight ProDOS devices\n");
         }
+    }
+    // Fourteen protocol units share ProDOS's finite device table with /RAM.
+    for (bool realLiron : {false, true}) {
+        const Outcome o = boot(rom, liron, disk, volumes, 14, realLiron);
+        const int n = cardDevices(o.devlst);
+        std::printf("  fourteen-unit chain: %d card devices; DEVLST: %s\n",
+                    n, describe(o.devlst).c_str());
+        if (n != 13) fail("fourteen-unit chain should fill 13 slots beside /RAM, got " + std::to_string(n));
     }
     // Two answered for (the default): drive 1 / 2 only, the other bays
     // loaded but invisible — a saved configuration sees what it always did.

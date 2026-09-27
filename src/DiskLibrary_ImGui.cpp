@@ -416,9 +416,11 @@ void DiskLibrary_ImGui::renderMountedHeader(const CurrentlyMounted& mounted,
             [&] { r.request525EjectPath = card.drive2; });
     }
     row("d351", mounted.disk35Internal, mounted.disk35InternalProtected,
-        "3.5\" D1", [&] { r.request35EjectDrive = 0; });
+        mounted.sony35[0] ? "Sony internal" : "UniDisk intelligent U1", [&] { r.request35EjectDrive = 0; });
     row("d352", mounted.disk35External, mounted.disk35ExternalProtected,
-        "3.5\" D2", [&] { r.request35EjectDrive = 1; });
+        mounted.sony35[1] ? "Sony ext. 1" : "UniDisk intelligent U2", [&] { r.request35EjectDrive = 1; });
+    row("d353", mounted.disk35ExternalSecond, mounted.disk35ExternalSecondProtected,
+        "Sony ext. 2", [&] { r.request35EjectDrive = 2; });
     for (size_t i = 0; i < mounted.hdvs.size(); ++i) {
         const auto& h = mounted.hdvs[i];
         std::snprintf(id, sizeof id, "hdv%zu", i);
@@ -701,7 +703,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     // them. Disabled unless something is actually mounted on any path.
     const bool anyMounted =
         !mounted.diskII.empty()        || !mounted.disk35Internal.empty() ||
-        !mounted.disk35External.empty() || !mounted.hdvs.empty();
+        !mounted.disk35External.empty() || !mounted.disk35ExternalSecond.empty() || !mounted.hdvs.empty();
     ImGui::BeginDisabled(!anyMounted);
     if (ImGui::Button(ICON_FA_EJECT " Eject All"))
         r.requestEjectAllDisks = true;
@@ -794,7 +796,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
                       ICON_FA_FLOPPY_DISK " 3.5\"  (%zu)", disk35_.size());
         if (ImGui::BeginTabItem(tabLabel)) {
             std::vector<std::string> marks35 = {
-                mounted.disk35Internal, mounted.disk35External };
+                mounted.disk35Internal, mounted.disk35External, mounted.disk35ExternalSecond };
             renderTab(disk35_, marks35,
                       "  (drop 800K .po / .2mg into disks_3.5/)",
                       &DiskLibrary_ImGui::on35Left,
@@ -824,6 +826,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
             std::vector<std::string> marksEmu = mounted.diskII;
             marksEmu.push_back(mounted.disk35Internal);
             marksEmu.push_back(mounted.disk35External);
+            marksEmu.push_back(mounted.disk35ExternalSecond);
             for (const auto& h : mounted.hdvs) marksEmu.push_back(h.path);
             renderTab(floppyEmu_, marksEmu,
                       "  (the Floppy Emu's SD card — drop any image into floppyemu/)",

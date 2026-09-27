@@ -52,8 +52,8 @@
 //     register set during the cold-boot dispatch (`$C8xx` SmartPort
 //     handler in bank 1) — without this, the probe reads back garbage
 //     and the firmware loops indefinitely.
-//   * `monW(bool stop)` — motor-enable / monitor wire-OR'd from the
-//     IWM. Tracks the floppy spin state for SENSE reads.
+//   * `monW(bool stop)` — ignored, as on the real Sony; motor control
+//     comes from the strobed command register.
 //   * Disk image attach (`setImage(Disk35Image*)`).
 //
 // Phase 2 (deferred, separate session):
@@ -104,9 +104,8 @@ public:
     /// full definition into every includer of this header.
     bool isInserted() const;
 
-    /// IWM motor-enable line (m_floppy->mon_w in MAME). When the IWM
-    /// enters MODE_ACTIVE it pulls this low (motor on); MODE_DELAY /
-    /// MODE_IDLE pull it high (motor off).
+    /// IWM /ENBL notification. A Sony ignores it: MotorOn/MotorOff are
+    /// CA/LSTRB commands (MAME mac_floppy_device::mon_w).
     void monW(bool motorOffHigh);
 
     /// IWM head-select wire (m_floppy->ss_w). MIG routes this from the

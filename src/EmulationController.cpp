@@ -86,6 +86,7 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // crystal, not against the accelerated budget (SlotPeripheral.h).
     if (drive35Int) drive35Int->setStandardClock(vt.cpuClockHz);
     if (drive35Ext) drive35Ext->setStandardClock(vt.cpuClockHz);
+    if (drive35Ext2) drive35Ext2->setStandardClock(vt.cpuClockHz);
 }
 
 void EmulationController::refreshAcceleratorClock()
@@ -204,11 +205,14 @@ EmulationController::EmulationController()
     // routes traffic into it unless `iicHasAltBank` is set.
     image35Int = std::make_unique<pom2::Disk35Image>();
     image35Ext = std::make_unique<pom2::Disk35Image>();
+    image35Ext2 = std::make_unique<pom2::Disk35Image>();
     drive35Int = std::make_unique<pom2::Sony35Drive>();
     drive35Ext = std::make_unique<pom2::Sony35Drive>();
+    drive35Ext2 = std::make_unique<pom2::Sony35Drive>();
     hub        = std::make_unique<pom2::SmartPortHub>();
     drive35Int->setImage(image35Int.get());
     drive35Ext->setImage(image35Ext.get());
+    drive35Ext2->setImage(image35Ext2.get());
     // Mechanical-sound source: dedicated 3.5" `FloppySoundDevice`
     // instance, loaded with the `35_*.wav` Sony sample set. Step cadence
     // + motor on/off are driven from `Sony35Drive::strobeWriteRegister`
@@ -219,13 +223,15 @@ EmulationController::EmulationController()
     // 3.5" channel stays silent.
     drive35Int->setFloppySound(floppy35.get());
     drive35Ext->setFloppySound(floppy35.get());
+    drive35Ext2->setFloppySound(floppy35.get());
     // Firmware-issued ejects (register 7) fire from the IWM path on the CPU
     // worker, `stateMtx` held. Route their write-back through the queue so
     // the 800 KB rewrite happens off that lock — see WriteBackQueue.
     drive35Int->setWriteBackSink(&writeBackQueue_);
     drive35Ext->setWriteBackSink(&writeBackQueue_);
+    drive35Ext2->setWriteBackSink(&writeBackQueue_);
     hub->attach(iwmDev.get());
-    hub->setSony35(drive35Int.get(), drive35Ext.get());
+    hub->setSony35(drive35Int.get(), nullptr, nullptr);
 
     // Dallas DS1216E "No-Slot Clock". Battery-backed on real hardware,
     // so we hold it at controller scope; survives profile switches and
@@ -302,8 +308,10 @@ EmulationController::~EmulationController()
     hub.reset();
     drive35Int.reset();
     drive35Ext.reset();
+    drive35Ext2.reset();
     image35Int.reset();
     image35Ext.reset();
+    image35Ext2.reset();
 }
 
 // ─── Cassette transport ───────────────────────────────────────────────────
@@ -391,9 +399,24 @@ void EmulationController::setCassetteVolume(float v) { tape->setVolume(v); }
 // drives. POM2 collapses the "drive" + "image" into a single mount call
 // per slot index.
 
+bool EmulationController::externalSony35Connected(int idx) const
+{
+    return idx == 1 ? hub->external35() != nullptr
+         : idx == 2 ? hub->external35Second() != nullptr : false;
+}
+
+void EmulationController::connectExternalSony35(int idx, bool connected)
+{
+    auto* first = hub->external35();
+    auto* second = hub->external35Second();
+    if (idx == 1) { first = connected ? drive35Ext.get() : nullptr; if (!connected) second = nullptr; }
+    if (idx == 2) { second = connected ? drive35Ext2.get() : nullptr; if (connected) first = drive35Ext.get(); }
+    hub->setSony35(drive35Int.get(), first, second);
+}
+
 bool EmulationController::mount35(int idx, const std::string& path)
 {
-    if (idx < 0 || idx > 1) return false;
+    if (idx < 0 || idx >= kSony35Drives) return false;
 
     // Two-phase, for the reason in MediaMount.h: `stateMtx` is held by the CPU
     // worker every 4096-cycle chunk and by the UI thread on every frame, so
@@ -418,7 +441,7 @@ bool EmulationController::mount35(int idx, const std::string& path)
     // 2026-09-17). Let it finish first, unlocked — eject35 does the same.
     const auto ejectPending = [this, idx] {
         std::lock_guard<std::mutex> lk(stateMtx);
-        const pom2::Sony35Drive* d = idx == 0 ? drive35Int.get() : drive35Ext.get();
+        const pom2::Sony35Drive* d = &sony35(idx);
         return d && d->isEjectPending();
     };
     while (ejectPending()) writeBackQueue_.drain();
@@ -427,7 +450,7 @@ bool EmulationController::mount35(int idx, const std::string& path)
     bool skipRead  = false;
     {
         std::lock_guard<std::mutex> lk(stateMtx);
-        pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
+        pom2::Disk35Image* image = &disk35(idx);
         if (!image) return false;
         writeBack = image->isWriteBackEnabled();
         skipRead  = image->isLoaded() && image->hasUnsavedChanges() &&
@@ -440,8 +463,8 @@ bool EmulationController::mount35(int idx, const std::string& path)
 
     // Phase 2.
     std::unique_lock<std::mutex> lk(stateMtx);
-    pom2::Disk35Image*  image = idx == 0 ? image35Int.get() : image35Ext.get();
-    pom2::Sony35Drive*  drive = idx == 0 ? drive35Int.get() : drive35Ext.get();
+    pom2::Disk35Image*  image = &disk35(idx);
+    pom2::Sony35Drive*  drive = &sony35(idx);
     if (!image || !drive) return false;
     if (drive->isEjectPending()) {
         // The guest ejected while phase 1 read: start over behind it.
@@ -467,6 +490,7 @@ bool EmulationController::mount35(int idx, const std::string& path)
         if (!staged.loadFile(path)) return false;
     }
     *image = std::move(staged);
+    if (idx > 0) connectExternalSony35(idx, true);
     drive->notifyMediaChange();
     // User-initiated mount → one-shot insert click. Same pattern as
     // `DiskIICard::insertDisk` (5.25"). Silent when no FloppySoundDevice
@@ -585,7 +609,7 @@ void EmulationController::WriteBackQueue::drain()
 
 bool EmulationController::eject35(int idx)
 {
-    if (idx < 0 || idx > 1) return false;
+    if (idx < 0 || idx >= kSony35Drives) return false;
 
     // Two-phase, for the reason in MediaMount.h and mount35 above: an 800 KB
     // rewrite plus two fsyncs under `stateMtx` freezes the CPU worker and the
@@ -596,8 +620,8 @@ bool EmulationController::eject35(int idx)
     for (;;) {
         {
             std::lock_guard<std::mutex> lk(stateMtx);
-            pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
-            pom2::Sony35Drive* drive = idx == 0 ? drive35Int.get() : drive35Ext.get();
+            pom2::Disk35Image* image = &disk35(idx);
+            pom2::Sony35Drive* drive = &sony35(idx);
             if (!image) return false;
             if (!image->isLoaded()) return true;  // already empty — no-op
             // A firmware eject already holds this medium's writes in the
@@ -620,8 +644,8 @@ bool EmulationController::eject35(int idx)
         pom2::Disk35Image::commitWriteBack(std::move(pending), error);
 
     std::lock_guard<std::mutex> lk(stateMtx);
-    pom2::Disk35Image* image = idx == 0 ? image35Int.get() : image35Ext.get();
-    pom2::Sony35Drive* drive = idx == 0 ? drive35Int.get() : drive35Ext.get();
+    pom2::Disk35Image* image = &disk35(idx);
+    pom2::Sony35Drive* drive = &sony35(idx);
     if (!image) return false;
     if (!committed) {
         // Refuse the eject and hand the writes back, so the user can fix the

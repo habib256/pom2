@@ -169,7 +169,7 @@ bool powerUp(pom2::IWMDevice& iwm, pom2::Sony35Drive& drive,
     iwm.write(0xA, 0);            // drive select 1
     now += 64;                    // let MODE_ACTIVE settle
     iwm.tick(now);
-    drive.monW(false);            // motor on, as the IWM's mon_w would
+    strobe(drive, 2);          // MotorOn is a command, not /ENBL
     strobe(drive, 0x2);           // MotorOn register, belt and braces
     now += 64;
     iwm.tick(now);

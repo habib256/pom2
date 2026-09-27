@@ -38,7 +38,7 @@ class SmartPort35Unit : public SmartPortUnit
 {
 public:
     static constexpr std::string_view kKindKey   = "35";
-    static constexpr std::string_view kKindLabel = "3.5\" 800K";
+    static constexpr std::string_view kKindLabel = "UniDisk 3.5 (intelligent SmartPort, 800K)";
 
     SmartPort35Unit();
     ~SmartPort35Unit() override;

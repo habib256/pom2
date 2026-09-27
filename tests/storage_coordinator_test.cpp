@@ -1169,7 +1169,7 @@ int main()
         }
     }
 
-    // //c+ has BOTH a Sony pair and an external SmartPort chain. Explicit
+    // //c+ has BOTH three Sony mechanisms and an external SmartPort chain. Explicit
     // Sony mounts must not be redirected to slot 5, and resolving their
     // physical location must not reopen the image or discard guest writes.
     {
@@ -1202,6 +1202,24 @@ int main()
         assert(c.disk35Internal().readBlock(10, read));
         assert(std::memcmp(read, changed, sizeof read) == 0);
         assert(!c.disk35External().isLoaded());
+        const auto thirdDuplicate = storage.mountDisk35(c, settings, 2, disk35Path, true);
+        assert(!thirdDuplicate.ok);
+        const auto thirdPath = disk35Path + ".third.po";
+        std::filesystem::copy_file(disk35Path, thirdPath,
+                                  std::filesystem::copy_options::overwrite_existing);
+        assert(storage.mountDisk35(c, settings, 2, thirdPath, true).ok);
+        assert(settings.getString("disk35_path_3") == thirdPath);
+        assert(c.externalSony35Connected(1) && c.externalSony35Connected(2));
+        assert(!storage.connectExternalSony35(c, settings, 2, false).ok);
+        assert(storage.captureDisk35(c, true).drives[2].loaded);
+        assert(pom2::mountedImageLocations(c).size() == 2);
+        assert(storage.ejectDisk35(c, settings, 2, true).ok);
+        assert(settings.getString("disk35_path_3").empty());
+        assert(c.externalSony35Connected(2)); // eject leaves the mechanism connected
+        assert(storage.connectExternalSony35(c, settings, 2, false).ok);
+        assert(!c.externalSony35Connected(2));
+        assert(!settings.getBool("disk35_connected_3", true));
+        std::filesystem::remove(thirdPath);
         // Restore the scratch block so the other coordinator fixtures retain
         // their original payload even if the destructor flushes it.
         std::memset(changed, 0x77, sizeof changed);

@@ -158,7 +158,7 @@ void testMemoryTrailerCarriesIwm()
     std::vector<uint8_t> iwmBlob;
     iwm.appendSnapshotState(iwmBlob);
     const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 11)
-                            + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0);
+                            + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0);
     pom2::IWMDevice iwm3;
     Memory mem3;
     mem3.setIWM(&iwm3);
@@ -289,11 +289,11 @@ void testSel35RoundTrip()
     IIcClassProfile p(payload.data(), payload.size(), altBank.data(),
                       nullptr, &hub, true);
     p.romBankToggle();                            // MIG writes need bank 1
-    p.internalRomWrite(0xCE60, 0);                // m_35sel = true
+    p.internalRomWrite(0xCE40, 0);                // m_35sel = true
     assert(hub.mig35Sel());
     std::vector<uint8_t> blob;
     p.appendSnapshotState(blob);
-    p.internalRomWrite(0xCE40, 0);                // later: m_35sel = false
+    p.internalRomWrite(0xCE60, 0);                // later: m_35sel = false
     assert(!hub.mig35Sel());
     assert(p.loadSnapshotState(blob.data(), blob.size()) == blob.size());
     assert(hub.mig35Sel() && "the external-3.5-inch select was not restored");
@@ -345,6 +345,29 @@ void testRestoreKeepsTheRevolution()
     std::printf("  ok: a restore keeps the 3.5\" revolution across a hub change\n");
 }
 
+// The new second external Sony must survive rewind without moving the old
+// mouse section, and snapshots without the appended section still load.
+void testThirdSonySnapshot()
+{
+    Memory mem;
+    pom2::SmartPortHub hub;
+    pom2::Sony35Drive a, b, third;
+    hub.setSony35(&a, &b, &third);
+    mem.setSmartPortHub(&hub);
+    const int originalTrack = third.track();
+    std::vector<uint8_t> blob, sonyBlob;
+    mem.appendSnapshotState(blob);
+    third.appendSnapshotState(sonyBlob);
+    third.seekPhaseW(0); third.seekPhaseW(8); third.seekPhaseW(0);
+    third.seekPhaseW(1); third.seekPhaseW(9); third.seekPhaseW(1);
+    assert(third.track() != originalTrack);
+    assert(mem.loadSnapshotState(blob.data(), blob.size()));
+    assert(third.track() == originalTrack);
+    blob.resize(blob.size() - sonyBlob.size() - 4);
+    assert(mem.loadSnapshotState(blob.data(), blob.size()));
+    std::printf("  ok: third Sony snapshot and historical trailer compatibility\n");
+}
+
 }  // namespace
 
 int main()
@@ -355,6 +378,7 @@ int main()
     testMigPageMasked();
     testRomBankRoundTrip();
     testSel35RoundTrip();
+    testThirdSonySnapshot();
     testRestoreKeepsTheRevolution();
     std::printf("PASS\n");
     return 0;

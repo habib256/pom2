@@ -932,6 +932,7 @@ int main(int argc, char* argv[])
     };
     mount35Cli(0, plan->disk35Internal, "--35-disk1");
     mount35Cli(1, plan->disk35External, "--35-disk2");
+    mount35Cli(2, plan->disk35ExternalSecond, "--35-disk3");
 
     // ─── Phase C deferred actions: kick off in a background thread that
     // sleeps briefly (let the worker thread + first render frame land)

@@ -1105,13 +1105,13 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
 }
 
 StorageCoordinator::Disk35Snapshot StorageCoordinator::captureDisk35(
-    EmulationController& controller) const
+    EmulationController& controller, bool onboard) const
 {
     Disk35Snapshot snapshot;
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
-        if (cards.primarySmartPort) {
+        if (!onboard && cards.primarySmartPort) {
             snapshot.smartPortSlot = cards.primarySmartPort->getSlot();
             for (int drive = 0; drive < 2; ++drive) {
                 const auto* unit = dynamic_cast<const SmartPort35Unit*>(
@@ -1121,14 +1121,15 @@ StorageCoordinator::Disk35Snapshot StorageCoordinator::captureDisk35(
                 copyDisk35ImageState(snapshot.drives[drive], unit->image());
             }
         } else {
-            const Sony35Drive* drives[2] = {
-                &controller.sony35Internal(), &controller.sony35External(),
+            const Sony35Drive* drives[3] = {
+                &controller.sony35Internal(), &controller.sony35External(), &controller.sony35(2),
             };
-            const Disk35Image* images[2] = {
-                &controller.disk35Internal(), &controller.disk35External(),
+            const Disk35Image* images[3] = {
+                &controller.disk35Internal(), &controller.disk35External(), &controller.disk35(2),
             };
-            for (int drive = 0; drive < 2; ++drive) {
+            for (int drive = 0; drive < EmulationController::kSony35Drives; ++drive) {
                 auto& target = snapshot.drives[drive];
+                target.connected = drive == 0 || controller.externalSony35Connected(drive);
                 copyDisk35ImageState(target, *images[drive]);
                 target.loaded = drives[drive]->isInserted();
                 target.motorOn = drives[drive]->isMotorOn();
@@ -1155,7 +1156,7 @@ StorageCoordinator::mountDisk35(
     const std::string& path, bool onboard) const
 {
     RoutedMediaCommandResult result;
-    if (drive < 0 || drive >= 2) {
+    if (drive < 0 || drive >= (onboard ? EmulationController::kSony35Drives : 2)) {
         result.error = "invalid 3.5-inch drive " +
                        std::to_string(drive + 1);
         return result;
@@ -1215,13 +1216,14 @@ StorageCoordinator::mountDisk35(
     result.ok = controller.mount35(drive, path);
     {
         auto state = controller.lockState();
-        const auto& image = drive == 0
-            ? controller.disk35Internal() : controller.disk35External();
+        const auto& image = controller.disk35(drive);
         if (!result.ok) {
             result.error = image.lastError();
             if (result.error.empty()) result.error = "3.5-inch mount failed";
         } else {
             appendOnboardDisk35SettingUpdates(updates, image, drive);
+            if (drive > 0) appendBoolSetting(updates, "disk35_connected_2", true);
+            if (drive == 2) appendBoolSetting(updates, "disk35_connected_3", true);
         }
     }
     if (result.ok) {
@@ -1233,10 +1235,10 @@ StorageCoordinator::mountDisk35(
 }
 
 StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDisk35(
-    EmulationController& controller, Settings& settings, int drive) const
+    EmulationController& controller, Settings& settings, int drive, bool onboard) const
 {
     MediaCommandResult result;
-    if (drive < 0 || drive >= 2)
+    if (drive < 0 || drive >= (onboard ? EmulationController::kSony35Drives : 2))
         return commandError("invalid 3.5-inch drive " +
                             std::to_string(drive + 1));
 
@@ -1245,7 +1247,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDisk35(
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
-        if (cards.primarySmartPort) {
+        if (!onboard && cards.primarySmartPort) {
             if (!dynamic_cast<SmartPort35Unit*>(cards.primarySmartPort->unit(
                     static_cast<std::size_t>(drive))))
                 return commandError("SmartPort unit " +
@@ -1261,8 +1263,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDisk35(
     result.ok = controller.eject35(drive);
     {
         auto state = controller.lockState();
-        const auto& image = drive == 0
-            ? controller.disk35Internal() : controller.disk35External();
+        const auto& image = controller.disk35(drive);
         if (!result.ok) {
             result.error = image.lastError();
             if (result.error.empty()) result.error = "3.5-inch eject failed";
@@ -1281,10 +1282,10 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDisk35(
 StorageCoordinator::MediaCommandResult
 StorageCoordinator::setDisk35WriteBack(
     EmulationController& controller, Settings& settings, int drive,
-    bool enabled) const
+    bool enabled, bool onboard) const
 {
     MediaCommandResult result;
-    if (drive < 0 || drive >= 2)
+    if (drive < 0 || drive >= (onboard ? EmulationController::kSony35Drives : 2))
         return commandError("invalid 3.5-inch drive " +
                             std::to_string(drive + 1));
 
@@ -1292,7 +1293,7 @@ StorageCoordinator::setDisk35WriteBack(
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
-        if (cards.primarySmartPort) {
+        if (!onboard && cards.primarySmartPort) {
             auto* unit = dynamic_cast<SmartPort35Unit*>(
                 cards.primarySmartPort->unit(
                     static_cast<std::size_t>(drive)));
@@ -1306,8 +1307,7 @@ StorageCoordinator::setDisk35WriteBack(
                 cards.primarySmartPort->getSlot(), drive,
                 autoHdvSlot_, autoSmartPortSlot_);
         } else {
-            auto& image = drive == 0
-                ? controller.disk35Internal() : controller.disk35External();
+            auto& image = controller.disk35(drive);
             image.setWriteBackEnabled(enabled);
             appendOnboardDisk35SettingUpdates(updates, image, drive);
         }
@@ -1320,10 +1320,10 @@ StorageCoordinator::setDisk35WriteBack(
 
 StorageCoordinator::RoutedMediaCommandResult
 StorageCoordinator::convertDisk35WozToPo(
-    EmulationController& controller, Settings& settings, int drive) const
+    EmulationController& controller, Settings& settings, int drive, bool onboard) const
 {
     RoutedMediaCommandResult result;
-    if (drive < 0 || drive >= 2) {
+    if (drive < 0 || drive >= (onboard ? EmulationController::kSony35Drives : 2)) {
         result.error = "invalid 3.5-inch drive " +
                        std::to_string(drive + 1);
         return result;
@@ -1333,7 +1333,7 @@ StorageCoordinator::convertDisk35WozToPo(
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
-        if (cards.primarySmartPort) {
+        if (!onboard && cards.primarySmartPort) {
             const auto* unit = dynamic_cast<const SmartPort35Unit*>(
                 cards.primarySmartPort->unit(
                     static_cast<std::size_t>(drive)));
@@ -1347,8 +1347,7 @@ StorageCoordinator::convertDisk35WozToPo(
             result.usesSmartPort = true;
             result.bootSlot = cards.primarySmartPort->getSlot();
         } else {
-            imageSnapshot = drive == 0
-                ? controller.disk35Internal() : controller.disk35External();
+            imageSnapshot = controller.disk35(drive);
         }
     }
     if (imageSnapshot.kind() != Disk35Image::ImageKind::Woz35) {
@@ -1364,13 +1363,13 @@ StorageCoordinator::convertDisk35WozToPo(
         return result;
 
     const auto mounted = mountDisk35(
-        controller, settings, drive, result.outputPath);
+        controller, settings, drive, result.outputPath, onboard);
     if (!mounted.ok) {
         result.error = "converted, but mounting failed: " + mounted.error;
         return result;
     }
     const auto writeBack = setDisk35WriteBack(
-        controller, settings, drive, true);
+        controller, settings, drive, true, onboard);
     if (!writeBack.ok) {
         result.error = "converted and mounted, but write-back failed: " +
                        writeBack.error;
@@ -1386,6 +1385,8 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
     EmulationController& controller, Settings& settings,
     const std::string& path, bool smartPortOnly) const
 {
+    if (smartPortOnly)
+        if (auto viaLiron = mountDisk35OnLiron(controller, settings, 0, path)) return *viaLiron;
     RoutedMediaCommandResult result;
     std::vector<SettingUpdate> updates;
 
@@ -1479,7 +1480,7 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
 {
     EjectAllResult result;
     std::vector<SettingUpdate> updates;
-    std::array<bool, 2> onboardDisk35Loaded{};
+    std::array<bool, 3> onboardDisk35Loaded{};
 
     // Three critical sections, the shape `ejectDiskII` and `ejectMediaBay`
     // already use — this was the last inline holdout, and "eject everything"
@@ -1572,6 +1573,7 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         }
         onboardDisk35Loaded[0] = controller.disk35Internal().isLoaded();
         onboardDisk35Loaded[1] = controller.disk35External().isLoaded();
+        onboardDisk35Loaded[2] = controller.disk35(2).isLoaded();
     }
 
     // Phase 2 — the file writes, with the machine running.
@@ -1679,22 +1681,20 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
     // — "Eject all" undone by a restart, for the one pair of drives that is
     // not a slot card. Every other eject path here persists through the same
     // `appendOnboardDisk35SettingUpdates`.
-    for (int drive = 0; drive < 2; ++drive) {
+    for (int drive = 0; drive < EmulationController::kSony35Drives; ++drive) {
         if (!onboardDisk35Loaded[drive]) continue;
         if (controller.eject35(drive)) {
             result.changed = true;
             {
                 auto state = controller.lockState();
-                const auto& image = drive == 0
-                    ? controller.disk35Internal() : controller.disk35External();
+                const auto& image = controller.disk35(drive);
                 appendOnboardDisk35SettingUpdates(updates, image, drive);
             }
             invalidateRewindForMediaChange(controller);
             continue;
         }
         auto state = controller.lockState();
-        const auto& image = drive == 0
-            ? controller.disk35Internal() : controller.disk35External();
+        const auto& image = controller.disk35(drive);
         result.failures.push_back(
             "on-board 3.5-inch drive " + std::to_string(drive + 1) +
             ": " + image.lastError());

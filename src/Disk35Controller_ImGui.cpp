@@ -174,13 +174,23 @@ Disk35Controller_ImGui::FrameResult Disk35Controller_ImGui::render(
         ImGui::Separator();
     }
 
-    static const char* kDriveNames[2] = {
-        "Drive 1 (internal — //c+ on-board)",
-        "Drive 2 (external — SmartPort daisy-chain)",
+    static const char* kDriveNames[3] = {
+        "Apple 3.5 / Sony — internal (IWM)",
+        "Apple 3.5 / Sony — external 1 (IWM)",
+        "Apple 3.5 / Sony — external 2 (IWM)",
     };
 
-    for (int d = 0; d < 2; ++d) {
+    for (int d = 0; d < 3; ++d) {
         renderDriveBlock(d, kDriveNames[d], snap.drives[d], r);
+        if (d > 0) {
+            ImGui::PushID(d);
+            bool connected = snap.drives[d].connected;
+            if (ImGui::Checkbox("Sony mechanism connected", &connected)) {
+                r.requestConnectionDrive = d;
+                r.newConnected = connected;
+            }
+            ImGui::PopID();
+        }
         ImGui::Separator();
     }
 
@@ -205,7 +215,8 @@ Disk35Controller_ImGui::FrameResult Disk35Controller_ImGui::render(
         for (const auto& entry : snap.library) {
             const bool currentDrv0 = (entry.fullPath == snap.drives[0].diskPath);
             const bool currentDrv1 = (entry.fullPath == snap.drives[1].diskPath);
-            const bool current = currentDrv0 || currentDrv1;
+            const bool current = currentDrv0 || currentDrv1 ||
+                entry.fullPath == snap.drives[2].diskPath;
             // Visual marker for currently-inserted images. We don't try
             // to distinguish drive 1 vs drive 2 in the prefix — the
             // context menu makes that explicit if the user needs to act
@@ -231,6 +242,10 @@ Disk35Controller_ImGui::FrameResult Disk35Controller_ImGui::render(
                 if (ImGui::MenuItem("Mount on drive 2 + boot")) {
                     r.requestInsertAndBoot = entry.fullPath;
                     r.insertAndBootDrive   = 1;
+                }
+                if (ImGui::MenuItem("Mount on drive 3 (second external Sony, no boot)")) {
+                    r.requestMountPath = entry.fullPath;
+                    r.requestMountDrive = 2;
                 }
                 if (ImGui::MenuItem("Mount on drive 2 (no boot)")) {
                     r.requestMountPath  = entry.fullPath;

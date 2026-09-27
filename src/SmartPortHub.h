@@ -34,9 +34,9 @@
 //      1       1       *      →  floppy[3]  (3.5"  external #2)
 //      2       *       1      →  floppy[2]  (3.5"  internal)   ← //c+ on-board
 //      2       0       0      →  floppy[1]  (5.25" external)
-//      2       1       0      →  nullptr    (3.5"  external #1, not modelled)
+//      2       1       0      →  floppy[4]  (3.5"  external #2)
 //
-// The hub maintains the four slot pointers and recalculates the active
+// The hub maintains the five drive pointers and recalculates the active
 // drive on any of the state inputs changing. The active drive's
 // `seekPhaseW` and `ssW` receive the IWM strobes. The IWM's `setFloppy`
 // gets the new target so its bit-cell walker drains/restarts at the
@@ -68,12 +68,14 @@ public:
     /// the device so it can forward strobes to the active drive.
     void attach(IWMDevice* iwm);
 
-    /// Mount the two 3.5" Sony drives. Slots 2 and 3 in MAME's
-    /// `m_floppy[]`. Either may be nullptr if not configured.
-    void setSony35(Sony35Drive* internal, Sony35Drive* external);
+    /// Mount the internal Sony and up to two external Sony drives.
+    /// External drives may be nullptr if not configured.
+    void setSony35(Sony35Drive* internal, Sony35Drive* external, Sony35Drive* external2 = nullptr);
 
     Sony35Drive* internal35() const { return drive35Internal_; }
     Sony35Drive* external35() const { return drive35External_; }
+
+    Sony35Drive* external35Second() const { return drive35External2_; }
 
     /// MIG state setters (called from Memory::migWrite / migRead).
     void setMig35Sel(bool sel35);
@@ -106,6 +108,7 @@ private:
     IWMDevice*   iwm_              = nullptr;
     Sony35Drive* drive35Internal_  = nullptr;
     Sony35Drive* drive35External_  = nullptr;
+    Sony35Drive* drive35External2_ = nullptr;
 
     // Latched MIG / IWM state.
     uint8_t devsel_     = 0;       // 1 / 2 when active, 0 idle

@@ -1461,20 +1461,25 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
 
 ### [Storage] disks & images
 
-- 🟡 **//c+ secondary 3.5-inch targets and control API** *(2026-09-27).*
-  Internal Sony boot and the CLI's duplicate-target conflict are fixed
-  (see CHANGELOG, September 27). The successful two-volume A2FC / Fantavision
-  configuration is internal Sony + slot-5 external SmartPort. With both
-  `--35-disk1/2` Sony images mounted, A2FC only enumerated the internal
-  volume: investigate the external Sony's MIG drive-selection / firmware
-  enumeration before advertising that pair as equivalent to the SmartPort
-  chain. Keep these physical devices distinct in UI and status. `/disk`
-  still only mounts Disk II; add explicit Sony / SmartPort slot-and-bay
-  control with the same duplicate and failed-write-back safeguards. Also
-  make secondary-bay boot selection explicit: entering a slot ROM or reset
-  firmware does not guarantee it boots the requested bay when an earlier
-  bootable disk is present. Validate whole-application startup, both volumes,
-  a movie and return to A2FC, not just a transient ProDOS banner.
+- ✅ **External Sony enumeration and intelligent-drive identity** *(2026-09-27).*
+  The //c+ ROM now enumerates both external Sony drives: `$CE40` selects
+  Apple 3.5, `$CE60` selects 5.25, and Sony motor control uses its command
+  latch. Real ProDOS MLI reads from each external Sony pass, alongside
+  //c, IIe and II+ intelligent UniDisk reads through SmartPort / Liron.
+  Sony has three physical bays (internal + two external); SmartPort offers
+  up to fourteen logical units, subject to the guest's available device
+  slots. Floppy Emu's Apple 3.5 mode uses external Sony/IWM; UniDisk 3.5 and
+  HD modes use intelligent SmartPort / Liron. A Liron does not drive a dumb
+  Sony or a physical 5.25 mechanism. See DEV.md for hardware references.
+
+- 🟡 **Secondary-bay boot selection and control API** *(2026-09-27).*
+  `/disk` still only mounts Disk II; add explicit Sony / SmartPort slot-and-bay
+  control with the same duplicate and failed-write-back safeguards. Entering
+  a slot ROM or reset firmware does not guarantee it boots a requested
+  secondary bay when an earlier bootable disk is present. A physical-chain
+  editor should also validate Apple's three-external-floppy combinations
+  separately from logical SmartPort HD units; the current panels expose
+  these mechanisms independently.
 
 - ✅ **//c + ProDOS — resolved 2026-08-30, kept as a record because the "why"
   is nowhere else.** Three layers, each hiding the next: the mount's own

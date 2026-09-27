@@ -162,6 +162,7 @@ public:
     };
 
     struct Disk35DriveSnapshot {
+        bool connected = false;
         bool loaded = false;
         bool motorOn = false;
         int track = 0;
@@ -180,7 +181,7 @@ public:
     };
 
     struct Disk35Snapshot {
-        std::array<Disk35DriveSnapshot, 2> drives{};
+        std::array<Disk35DriveSnapshot, 3> drives{};
         /// Non-negative when a SmartPort card owns the two logical drives;
         /// otherwise the EmulationController on-board pair is authoritative.
         int smartPortSlot = -1;
@@ -261,15 +262,17 @@ public:
     /// kind before loading the requested 3.5-inch image.
     /// `onboard` explicitly selects the Sony pair even with a SmartPort
     /// card present (//c+ CLI / positional boot). Caller validates profile.
-    Disk35Snapshot captureDisk35(EmulationController& controller) const;
+    MediaCommandResult connectExternalSony35(EmulationController& controller,
+        Settings& settings, int drive, bool connected) const;
+    Disk35Snapshot captureDisk35(EmulationController& controller, bool onboard = false) const;
     RoutedMediaCommandResult mountDisk35(
         EmulationController& controller, Settings& settings, int drive,
         const std::string& path, bool onboard = false) const;
     MediaCommandResult ejectDisk35(EmulationController& controller,
-                                   Settings& settings, int drive) const;
+                                   Settings& settings, int drive, bool onboard = false) const;
     MediaCommandResult setDisk35WriteBack(
         EmulationController& controller, Settings& settings, int drive,
-        bool enabled) const;
+        bool enabled, bool onboard = false) const;
 
     /// The notch (MediaNotch.h): write-protect as a property of the DISK.
     /// Phase 1, unlocked, sets or clears the image file's read-only bit;
@@ -291,7 +294,7 @@ public:
                                        std::vector<std::string>& warnings);
     RoutedMediaCommandResult convertDisk35WozToPo(
         EmulationController& controller, Settings& settings,
-        int drive) const;
+        int drive, bool onboard = false) const;
 
     /// Route an HDV either to the preferred dedicated block card or, when
     /// `smartPortOnly` is true/no block card exists, to SmartPort unit 0.

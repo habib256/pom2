@@ -56,7 +56,7 @@ public:
     };
 
     /// Mirrors SmartPortCard::kMaxUnits (static_assert in StorageCoordinator).
-    static constexpr size_t kMaxUnits = 8;
+    static constexpr size_t kMaxUnits = 14;
 
     struct CardSnapshot {
         int  slot     = 0;

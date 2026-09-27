@@ -15,8 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Disk35Controller_ImGui — //c+ Sony 3.5" drives status panel. Same UX as
-// `DiskController_ImGui` for the 5.25" Disk II, scaled up to two drives
-// (internal + external) stacked vertically:
+// `DiskController_ImGui` for the 5.25" Disk II, scaled up to three drives
+// (internal + two external) stacked vertically:
 //
 //   • Drive header with motor LED (red when spinning).
 //   • Inserted image path, track, head, write-protect / write-back state.
@@ -48,6 +48,7 @@ public:
     };
 
     struct DriveSnapshot {
+        bool connected = false;
         bool        diskLoaded         = false;
         bool        motorOn            = false;
         int         track              = 0;       // 0..79
@@ -74,19 +75,21 @@ public:
     struct PanelSnapshot {
         // Two drives — index 0 = internal (the //c+ on-board 3.5"),
         // index 1 = external (daisy-chained 3.5" #2).
-        std::array<DriveSnapshot, 2> drives{};
+        std::array<DriveSnapshot, 3> drives{};
         bool                         supportedByProfile = false;
         std::vector<LibraryEntry>    library;
     };
 
     struct FrameResult {
         // Per-drive eject request.
-        std::array<bool, 2> requestEject{};
+        std::array<bool, 3> requestEject{};
+        int requestConnectionDrive = -1;
+        bool newConnected = false;
         // Per-drive write-back toggle (host wires through Disk35Image::
         // setWriteBackEnabled). When `requestWriteBackToggle[i]` is true,
         // apply `newWriteBack[i]`.
-        std::array<bool, 2> requestWriteBackToggle{};
-        std::array<bool, 2> newWriteBack{};
+        std::array<bool, 3> requestWriteBackToggle{};
+        std::array<bool, 3> newWriteBack{};
         // Library actions. `requestMountPath` non-empty → mount only into
         // `requestMountDrive`. `requestInsertAndBoot` non-empty → mount
         // into `insertAndBootDrive` AND trigger a host-side cold boot so

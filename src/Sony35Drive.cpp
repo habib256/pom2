@@ -681,21 +681,11 @@ void Sony35Drive::notifyMediaChange()
 
 void Sony35Drive::monW(bool motorOffHigh)
 {
-    // MAME: m_floppy->mon_w(true) = motor STOP. The IWM calls this when it
-    // leaves MODE_ACTIVE.
-    //
-    // Upstream would have this be a NO-OP for a 3.5" — `mac_floppy_device::
-    // mon_w(int) { /* Motor control is through commands */ }`
-    // (floppy.cpp:2835-2838) — because a Sony's motor answers only its own
-    // MotorOn (0x2) / MotorOff (0x6) register strobes, not the controller's
-    // enable line. **POM2 deliberately keeps the enable line wired**, and
-    // bug hunt #4 tried removing it and put it back: `liron_boot35` fails
-    // with "the drive's motor never ran" because POM2's Liron and //c+ paths
-    // reach the mechanism through `IWMDevice`'s enable rather than through a
-    // separately modelled MIG/strobe sequencer. Aligning with upstream here
-    // needs that sequencer first; until then this line is what spins the
-    // disk, and the divergence is recorded in TODO's parity dashboard.
-    motorOn_ = !motorOffHigh;
+    // MAME mac_floppy_device::mon_w: motor control is through commands.
+    // /ENBL selects a drive, not its motor. The //c+ probes /MOTORON on
+    // the external Sony before issuing MotorOn (register 2); starting it
+    // on /ENBL makes that probe mistake the drive for a SmartPort device.
+    (void)motorOffHigh;
 }
 
 void Sony35Drive::ssW(bool side1)

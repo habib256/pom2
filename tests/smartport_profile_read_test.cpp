@@ -83,7 +83,7 @@ std::vector<uint8_t> readProgram()
     return b;
 }
 
-struct Machine { const char* name; const char* rom; bool iie; bool cmos; bool liron; bool plus; bool cClass; int slot; };
+struct Machine { const char* name; const char* rom; bool iie; bool cmos; bool liron; bool plus; bool cClass; int slot; int externalSony = 0; };
 void run(const Machine& machine, const std::string& boot, const std::string& second,
          const std::vector<uint8_t>& expected)
 {
@@ -97,12 +97,14 @@ void run(const Machine& machine, const std::string& boot, const std::string& sec
     mem.resetSoftSwitches();
     pom2::IWMDevice iwm;
     pom2::SmartPortHub hub;
-    pom2::Disk35Image internal, external;
+    pom2::Disk35Image internal, external, external2;
     internal.setWriteBackEnabled(false);
     external.setWriteBackEnabled(false);
-    pom2::Sony35Drive sonyInt, sonyExt;
-    sonyInt.setImage(&internal); sonyExt.setImage(&external);
-    hub.attach(&iwm); hub.setSony35(&sonyInt, &sonyExt);
+    external2.setWriteBackEnabled(false);
+    pom2::Sony35Drive sonyInt, sonyExt, sonyExt2;
+    sonyInt.setImage(&internal); sonyExt.setImage(&external); sonyExt2.setImage(&external2);
+    hub.attach(&iwm); hub.setSony35(&sonyInt, machine.externalSony ? &sonyExt : nullptr,
+                                  machine.externalSony == 2 ? &sonyExt2 : nullptr);
     mem.setIWM(&iwm); mem.setSmartPortHub(&hub);
     pom2::IIcExternalSmartPort port(&mem.slotBus());
     mem.setExternalSmartPort(&port);
@@ -119,7 +121,7 @@ void run(const Machine& machine, const std::string& boot, const std::string& sec
         require(card->mountBay(0, boot, error), error);
         require(card->mountBay(1, second, error), error);
         mem.slotBus().plug(machine.slot, std::move(card));
-    } else {
+    } else if (!machine.externalSony || machine.externalSony == 3) {
         auto card = std::make_unique<pom2::SmartPortCard>(machine.slot);
         require(card->loadLironRom(pom2::findResource("roms/liron.rom")), "missing Liron EPROM");
         card->setUnitCount(2);
@@ -134,6 +136,12 @@ void run(const Machine& machine, const std::string& boot, const std::string& sec
     if (machine.plus) {
         require(internal.loadFile(boot), internal.lastError());
         sonyInt.notifyMediaChange();
+        if (machine.externalSony == 1 || machine.externalSony == 2) {
+            auto& image = machine.externalSony == 1 ? external : external2;
+            auto& drive = machine.externalSony == 1 ? sonyExt : sonyExt2;
+            require(image.loadFile(second), image.lastError());
+            drive.notifyMediaChange();
+        }
     }
     cpu.setCpuMode(machine.cmos ? M6502::CpuMode::CMOS : M6502::CpuMode::NMOS);
     cpu.hardReset();
@@ -207,6 +215,9 @@ int main()
         putWord(second, data + 21, expected.size()); second[data + 23] = 0;
         write(bootPath, boot); write(secondPath, second);
         const Machine machines[] = {
+            {"//c+ internal + second external Sony", "roms/apple2cp.rom", true, true, false, true, true, 5, 2},
+            {"//c+ internal + external Sony", "roms/apple2cp.rom", true, true, false, true, true, 5, true},
+            {"//c+ internal + empty external Sony + UniDisk", "roms/apple2cp.rom", true, true, false, true, true, 5, 3},
             {"//c+ Sony + external SmartPort", "roms/apple2cp.rom", true, true, false, true, true, 5},
             {"//c rev0 external SmartPort", "roms/apple2c-32Kv0.rom", true, true, false, false, true, 5},
             {"IIe Liron slot 5", "roms/apple2e.rom", true, true, true, false, false, 5},
