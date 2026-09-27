@@ -5,6 +5,32 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-27 — External Sony drives and intelligent UniDisk chains
+
+- The //c+ ROM now discovers its external Sony drives: the MIG writes
+  `$CE40` / `$CE60` select 3.5 / 5.25 respectively, and Sony motor control
+  follows CA/LSTRB commands rather than IWM enable. Rebinding also reapplies
+  the phase lines. The second external Sony is wired through its real MIG
+  selection and has media persistence, write-back, duplicate guards and
+  an optional snapshot section. CLI adds `--35-disk3`.
+- External Sony mechanisms start disconnected. Inserting a disk connects
+  the mechanism; ejecting leaves it connected. The Sony panel can connect
+  or disconnect empty mechanisms and persists that independently of media.
+  Previously a ghost empty Sony preceded the UniDisk in a SmartPort-only
+  setup and changed the ROM's boot priority.
+- Labels and Floppy Emu routing distinguish Apple 3.5 / Sony (IWM),
+  UniDisk 3.5 (intelligent SmartPort), and intelligent HD. Liron accepts
+  UniDisk / HD; it does not drive a physical Apple 3.5 or 5.25 mechanism.
+- Whole-application validation: A2FC boots on the internal Sony, loads
+  the exact Fantavision movie from the external Sony, animates it and
+  returns to A2FC with Escape. Twelve targeted regressions pass.
+- SmartPortCard's configurable chain grows to fourteen logical units;
+  its default stays eight and older snapshots keep their record counts.
+  Real ProDOS sees thirteen chain volumes beside /RAM in both the host
+  SmartPort card and real-ROM Liron tests. Other devices consume that same
+  finite ProDOS table; fourteen configured units do not imply fourteen
+  visible volumes or fourteen physical floppy drives.
+
 ## 2026-09-27 — The //c+ really boots its internal Sony drive
 
 - **The Disk II shadow stole the Sony's data source.** The application

@@ -197,9 +197,9 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (len < 3 || data[0] != 'S' || data[1] != 'P') return;
     const uint8_t version = data[2];
     if (version < 1 || version > kSnapVersion) return;
-    // v1/v2 carried two units; v3 carries kMaxUnits. Units the blob does not
+    // v1/v2 carried two units, v3 eight, v4 fourteen. Units the blob does not
     // cover are reset below, not left with the live card's state.
-    const size_t nUnits = version >= 3 ? kMaxUnits : 2;
+    const size_t nUnits = version >= 4 ? kMaxUnits : version == 3 ? 8 : 2;
     const size_t kBase = 4 + nUnits * kPerUnit;
     if (len < kBase) return;
     // An absent tail is the original v1 layout. Once any tail byte exists,

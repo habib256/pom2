@@ -205,7 +205,7 @@ Outcome runPlus(const std::string& rom, const std::string& internal35,
     drvInt.setImage(&imgInt);
     drvExt.setImage(&imgExt);
     hub.attach(&iwm);
-    hub.setSony35(&drvInt, &drvExt);
+    hub.setSony35(&drvInt, nullptr);
     mem.setIWM(&iwm);
     mem.setSmartPortHub(&hub);
     pom2::IIcExternalSmartPort port(&mem.slotBus());

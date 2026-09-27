@@ -47,6 +47,7 @@
 #ifndef POM2_DISK_LIBRARY_IMGUI_H
 #define POM2_DISK_LIBRARY_IMGUI_H
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <ctime>
@@ -77,10 +78,13 @@ public:
             bool        drive2Protected = false;
         };
         std::vector<DiskIICardInfo> diskIICards;
+        std::array<bool, 3>       sony35{};
         std::string              disk35Internal;
         std::string              disk35External;
+        std::string              disk35ExternalSecond;
         bool                     disk35InternalProtected = false;
         bool                     disk35ExternalProtected = false;
+        bool                     disk35ExternalSecondProtected = false;
         /// Every mounted hard-disk volume: the dedicated block card's, and
         /// each SmartPort bay of HDV kind that holds an image (2026-09-08 —
         /// one card answers for up to eight). `slot`/`bay` address an eject.

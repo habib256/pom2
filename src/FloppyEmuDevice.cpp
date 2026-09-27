@@ -75,9 +75,9 @@ const char* FloppyEmuDevice::modeLabel(FloppyEmuMode m)
 {
     switch (m) {
         case FloppyEmuMode::Disk525:     return "Apple II 5.25 Floppy";
-        case FloppyEmuMode::Disk35:      return "Apple II 3.5 Floppy";
-        case FloppyEmuMode::SmartportHD: return "Smartport Hard Disk";
-        case FloppyEmuMode::Unidisk35:   return "Unidisk 3.5";
+        case FloppyEmuMode::Disk35:      return "Apple 3.5 / Sony (IWM)";
+        case FloppyEmuMode::SmartportHD: return "HD (intelligent SmartPort)";
+        case FloppyEmuMode::Unidisk35:   return "UniDisk 3.5 (intelligent SmartPort)";
     }
     return "?";
 }

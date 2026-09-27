@@ -40,8 +40,8 @@ struct TypeEntry {
 };
 const TypeEntry kTypes[] = {
     { "[empty]",     {} },
-    { "3.5\" 800K",  SmartPort35Unit::kKindKey },
-    { "ProDOS HDV",  SmartPortHdvUnit::kKindKey },
+    { "UniDisk 3.5 — intelligent SmartPort (800K)", SmartPort35Unit::kKindKey },
+    { "HD — intelligent SmartPort", SmartPortHdvUnit::kKindKey },
 };
 constexpr int kTypeCount = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
 
@@ -92,13 +92,13 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
     // ProDOS 8 2.4 on, remaps units 2+ onto empty slots. Eight by default
     // (2026-09-11); a count the user saved still wins.
     {
-        static const int   kCounts[] = { 2, 4, 6, 8 };
-        static const char* kLabels[] = { "2", "4", "6", "8" };
+        static const int   kCounts[] = { 2, 4, 6, 8, 10, 12, 14 };
+        static const char* kLabels[] = { "2", "4", "6", "8", "10", "12", "14" };
         int cur = 0;
-        for (int i = 0; i < 4; ++i) if (kCounts[i] == snap.unitCount) cur = i;
+        for (int i = 0; i < 7; ++i) if (kCounts[i] == snap.unitCount) cur = i;
         ImGui::SetNextItemWidth(70.0f);
         if (ImGui::BeginCombo("units", kLabels[cur])) {
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < 7; ++i) {
                 if (ImGui::Selectable(kLabels[i], i == cur) && i != cur)
                     r.setUnitCount = kCounts[i];
             }
@@ -106,7 +106,7 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Units the card answers for. 0/1 are drive 1/2 of slot %d;\n"
-                              "ProDOS 8 2.4+ shows units 2-7 under other, empty slots.",
+                              "ProDOS 8 2.4+ maps later units to free slots; RAM and other disks use entries too.",
                               snap.slot);
     }
     ImGui::TextDisabled(

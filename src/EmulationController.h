@@ -120,20 +120,27 @@ public:
     /// (battery-backed on real hardware) state machine survives profile
     /// switches and CPU resets.
     pom2::NoSlotClock&  noSlotClock() { return *noSlotClock_; }
+    static constexpr int kSony35Drives = 3;
+    /// Physical external mechanisms persist when their media is ejected.
+    /// Caller holds stateMutex (or is restoring before the worker starts).
+    void connectExternalSony35(int idx, bool connected);
+    bool externalSony35Connected(int idx) const;
+    pom2::Sony35Drive& sony35(int idx) { return idx == 0 ? *drive35Int : idx == 1 ? *drive35Ext : *drive35Ext2; }
+    pom2::Disk35Image& disk35(int idx) { return idx == 0 ? *image35Int : idx == 1 ? *image35Ext : *image35Ext2; }
     pom2::Sony35Drive&  sony35Internal() { return *drive35Int; }
     pom2::Sony35Drive&  sony35External() { return *drive35Ext; }
     pom2::Disk35Image&  disk35Internal()  { return *image35Int; }
     pom2::Disk35Image&  disk35External()  { return *image35Ext; }
 
     /// Mount an 800K Sony 3.5" image into drive `idx` (0 = internal,
-    /// 1 = external). Takes the state mutex while swapping the
+    /// 1/2 = first/second external). Takes the state mutex while swapping the
     /// `Disk35Image` payload and notifying the Sony35Drive's disk-
     /// change flip-flop. Returns true on success; on failure the
     /// drive is left empty and the image's `lastError()` carries the
     /// reason.
     bool mount35(int idx, const std::string& path);
 
-    /// Unmount whatever is in 3.5" drive `idx` (0/1). No-op when empty.
+    /// Unmount whatever is in 3.5" drive `idx` (0/1/2). No-op when empty.
     ///
     /// Two-phase like `mount35`: the 800 KB write-back is lifted out under
     /// `stateMtx` (a memcpy) and committed with the lock RELEASED, then the
@@ -505,9 +512,9 @@ private:
     template <class Fn> void forEachFloppy(Memory& memory, Fn&& fn);
 
     std::unique_ptr<pom2::Disk35Image>  image35Int;
-    std::unique_ptr<pom2::Disk35Image>  image35Ext;
+    std::unique_ptr<pom2::Disk35Image>  image35Ext, image35Ext2;
     std::unique_ptr<pom2::Sony35Drive>  drive35Int;
-    std::unique_ptr<pom2::Sony35Drive>  drive35Ext;
+    std::unique_ptr<pom2::Sony35Drive>  drive35Ext, drive35Ext2;
     std::unique_ptr<pom2::SmartPortHub> hub;
     std::unique_ptr<pom2::IIcExternalSmartPort> extSmartPort_;   // plain //c rear port
     std::unique_ptr<pom2::NoSlotClock>  noSlotClock_;

@@ -93,7 +93,7 @@ StorageCoordinator::setMediaNotch(EmulationController& controller,
             }
         }
         for (Disk35Image* img : { &controller.disk35Internal(),
-                                  &controller.disk35External() })
+                                  &controller.disk35External(), &controller.disk35(2) })
             if (img->isLoaded() && matches(img->path()))
                 img->setHostWriteProtected(protect);
     }

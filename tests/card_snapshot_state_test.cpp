@@ -362,6 +362,26 @@ void testSmartPortMediaIdentity()
         assert(out[4 + 6] == 0x5A);
     }
 
+    // Preserve v3's eight records and reset all newer bays. Its call-engine
+    // tail lies after record 8, followed by eight media identities.
+    {
+        constexpr size_t current = pom2::SmartPortCard::kMaxUnits;
+        std::vector<uint8_t> v3(blob.begin(), blob.begin() + 4 + 8 * kPerUnit);
+        v3[2] = 3;
+        v3.insert(v3.end(), blob.begin() + 4 + current * kPerUnit,
+                  blob.end() - current * 8);
+        v3.insert(v3.end(), blob.end() - current * 8,
+                  blob.end() - (current - 8) * 8);
+        pom2::SmartPortCard restored(5);
+        restored.setUnit(0, std::make_unique<pom2::SmartPortHdvUnit>());
+        restored.loadSnapshotState(v3.data(), v3.size());
+        std::vector<uint8_t> out;
+        restored.appendSnapshotState(out);
+        assert(out[kPrimedAt] == 1 && out[4 + 6] == 0x5A);
+        for (size_t bay = 8; bay < current; ++bay)
+            assert(out[4 + bay * kPerUnit + 4] == 0);
+    }
+
     // (2) Identity differs — the medium changed under the frame. The prime
     // and its payload must be dropped, not committed to the new disk.
     {
@@ -436,7 +456,7 @@ void testSony35Mechanism()
     // its whole state machine, so a rewind left the controller reading cells
     // at the head position / side / motor state of the abandoned future.
     pom2::Sony35Drive a;
-    a.monW(false);            // motor enable (active low)
+    a.seekPhaseW(2); a.seekPhaseW(10); a.seekPhaseW(2); // Sony MotorOn command
     a.ssW(true);              // side 1
     a.setSel(true);
     assert(a.isMotorOn());

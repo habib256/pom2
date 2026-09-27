@@ -138,8 +138,9 @@ bool IIcClassProfile::ioReadIWM(uint16_t addr, uint64_t cyc, uint8_t& out)
     // controller that owns it.
     // The rear connector's SmartPort device, on the //c+'s own IWM: while
     // the firmware addresses the bus (or a transaction is in flight) the
-    // port answers; the Sony drives never see those bytes.
-    if (extPort_ && extPort_->sharedAfterRead(*iwm_, v, out)) return true;
+    // port answers with the Sony-select path off; Sony sense probes must
+    // not be answered by the intelligent device on the same connector.
+    if (extPort_ && !mig35Sel_ && extPort_->sharedAfterRead(*iwm_, v, out)) return true;
     if (iwmAuthoritative_ && hub_ && hub_->active35Selected()) {
         out = v;
         return true;
@@ -158,7 +159,7 @@ bool IIcClassProfile::ioWriteIWM(uint16_t addr, uint8_t value, uint64_t cyc)
     // //c+ only — see the rationale in ioReadIWM above.
     if (!hasAltBank_ || !iwm_ || !isPlus_) return false;
     iwm_->tick(cyc);
-    const bool forBus = extPort_ && extPort_->sharedWantsWrite(*iwm_);
+    const bool forBus = extPort_ && !mig35Sel_ && extPort_->sharedWantsWrite(*iwm_);
     iwm_->setBusCapture(forBus);
     iwm_->write(static_cast<uint8_t>(addr & 0xF), value);
     if (extPort_) extPort_->sharedAfterWrite(*iwm_, static_cast<uint8_t>(addr & 0xF),
@@ -253,7 +254,7 @@ uint8_t IIcClassProfile::migRead(uint16_t migOffset, uint8_t floatBus)
 
 void IIcClassProfile::migWrite(uint16_t migOffset, uint8_t value)
 {
-    // Verbatim port of MAME `apple2e.cpp:571-624 apple2e_state::mig_w`.
+    // MAME mig_w, with external-select polarity checked against the //c+ ROM.
     if (migOffset == 0x40) {
         // IWM reset (MAME `apple2e.cpp:647-650`). The //c+ alt firmware
         // writes here on every boot; without it stale mode/control/whd
@@ -280,14 +281,19 @@ void IIcClassProfile::migWrite(uint16_t migOffset, uint8_t value)
         migPage_ = static_cast<uint16_t>((migPage_ + 0x20) & 0x7FF);
         return;
     }
-    if (migOffset >= 0x240 && migOffset < 0x260) {         // 3.5" m_35sel=false
-        mig35Sel_ = false;
-        if (hub_) hub_->setMig35Sel(false);
-        return;
-    }
-    if (migOffset >= 0x260 && migOffset < 0x280) {         // 3.5" m_35sel=true
+    // The shipped //c+ ROM probes external Sony drives at $E603 and
+    // selects them through $E503/$E4F2: STA $CE40 selects 3.5", STA $CE60
+    // selects 5.25". MAME apple2e.cpp mig_w has these levels reversed;
+    // copying it prevented the real firmware from discovering any Sony
+    // on the rear port. ROMBANK's reset still deselects 3.5" for DOS RWTS.
+    if (migOffset >= 0x240 && migOffset < 0x260) {         // select Apple 3.5"
         mig35Sel_ = true;
         if (hub_) hub_->setMig35Sel(true);
+        return;
+    }
+    if (migOffset >= 0x260 && migOffset < 0x280) {         // select Apple 5.25"
+        mig35Sel_ = false;
+        if (hub_) hub_->setMig35Sel(false);
         return;
     }
     if (migOffset == 0x2A0) {

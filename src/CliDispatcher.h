@@ -181,6 +181,7 @@ struct CliPlan {
     /// other profiles log a warning and ignore. Empty = no mount.
     std::string                     disk35Internal;
     std::string                     disk35External;
+    std::string                     disk35ExternalSecond;
 
     /// `--blank-disk [<drive>:]<path>` — put a diskette that has NEVER been
     /// formatted into the Disk II. `drive` is 1 or 2 and defaults to **2**:

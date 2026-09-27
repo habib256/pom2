@@ -23,6 +23,7 @@ void EmulationController::forEachFloppy(Memory& memory, Fn&& fn)
     // Slot 0 = the //c+ on-board Sony drives, which belong to no card.
     fn(0, 0, static_cast<pom2::AutosavedMedium&>(*image35Int));
     fn(0, 1, static_cast<pom2::AutosavedMedium&>(*image35Ext));
+    fn(0, 2, static_cast<pom2::AutosavedMedium&>(*image35Ext2));
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
         auto* card = memory.slotBus().peripheral(slot);
         if (!card) continue;

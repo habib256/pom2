@@ -160,10 +160,8 @@ void IWMDevice::fireDevsel(uint8_t value)
 void IWMDevice::notifyMonW(bool motorOff)
 {
     if (sony_) {
-        // POM2 keeps the controller's enable line wired to the Sony's motor
-        // even though upstream's `mac_floppy_device::mon_w` is a no-op
-        // (floppy.cpp:2835-2838) — see the long note in `Sony35Drive::monW`:
-        // it is what spins the disk on the Liron and //c+ paths today.
+        // Sony mon_w is a no-op: its motor is controlled by CA/LSTRB
+        // commands, separately from /ENBL (MAME mac_floppy_device::mon_w).
         sony_->monW(motorOff);
     }
     // 5.25" DiskImage path: DiskIICard's motor + spin-down + audio
@@ -230,6 +228,10 @@ void IWMDevice::setSony35(Sony35Drive* drive)
         revStart35_ = now_;
         sony_->invalidateCache();
         if (motorOn) notifyMonW(false); // raise mon_w on new drive
+        // MAME iwm.cpp:90-105 set_floppy calls update_phases after
+        // rebinding. The firmware sets SENSE's address before enabling
+        // the external Sony; the selected drive must see those levels.
+        if (phasesCb_) phasesCb_(phases_);
     }
 }
 

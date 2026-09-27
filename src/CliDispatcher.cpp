@@ -178,7 +178,8 @@ void printUsage()
         "                              fenced against browser pages by Origin/Host.\n"
         "  --tape <path>              Preload + auto-play tape\n"
         "  --35-disk1 <path>          Mount 800K 3.5\" image in //c+ internal drive\n"
-        "  --35-disk2 <path>          Mount 800K 3.5\" image in //c+ external drive\n"
+        "  --35-disk2 <path>          Mount 800K 3.5\" image in //c+ external drive 1\n"
+        "  --35-disk3 <path>          Mount 800K 3.5\" image in //c+ external drive 2\n"
         "  --blank-disk [<drive>:]<path>\n"
         "                              Insert an UNFORMATTED 5.25\" diskette (no address\n"
         "                              fields) in Disk II drive 1 or 2 (default 2).\n"
@@ -469,6 +470,10 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         else if (a == "--35-disk2") {
             const char* v = needArg(i, "--35-disk2"); if (!v) return std::nullopt;
             plan.disk35External = v;
+        }
+        else if (a == "--35-disk3") {
+            const char* v = needArg(i, "--35-disk3"); if (!v) return std::nullopt;
+            plan.disk35ExternalSecond = v;
         }
         else if (a == "--blank-disk") {
             const char* v = needArg(i, "--blank-disk"); if (!v) return std::nullopt;

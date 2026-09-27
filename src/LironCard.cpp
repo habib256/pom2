@@ -503,7 +503,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
         return info;
     }
     const Disk35Image& img = images_[b];
-    info.kindLabel         = img.isLoaded() ? "3.5\" 800K" : "3.5\" or HDV";
+    info.kindLabel         = img.isLoaded() ? "UniDisk 3.5 (intelligent SmartPort, 800K)" : "UniDisk intelligent or SmartPort HD";
     info.path              = img.path();
     info.lastError         = img.lastError().empty() ? blk.lastError() : img.lastError();
     info.blockCount        = img.isLoaded() ? Disk35Image::kBlockCount : 0;

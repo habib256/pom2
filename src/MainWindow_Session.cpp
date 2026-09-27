@@ -129,20 +129,23 @@ void MainWindow::persistSession(bool flushMedia)
         bool        writeBack = false;
         std::string path;
     };
-    std::array<Disk35SessionState, 2> onboard35{};
-    std::array<pom2::Disk35Image::PendingWriteBack, 2> pending35{};
+    std::array<Disk35SessionState, 3> onboard35{};
+    std::array<bool, 3> sonyConnected{};
+    std::array<pom2::Disk35Image::PendingWriteBack, 3> pending35{};
     {
         std::lock_guard<std::mutex> lk(controller->stateMutex());
-        pom2::Disk35Image* images[2] = { &controller->disk35Internal(),
-                                         &controller->disk35External() };
-        for (std::size_t i = 0; i < 2; ++i) {
+        for (int drive = 1; drive < 3; ++drive)
+            sonyConnected[drive] = controller->externalSony35Connected(drive);
+        pom2::Disk35Image* images[3] = { &controller->disk35Internal(),
+                                         &controller->disk35External(), &controller->disk35(2) };
+        for (std::size_t i = 0; i < 3; ++i) {
             onboard35[i].loaded    = images[i]->isLoaded();
             onboard35[i].writeBack = images[i]->isWriteBackEnabled();
             if (onboard35[i].loaded) onboard35[i].path = images[i]->path();
             pending35[i] = images[i]->takeWriteBack();
         }
     }
-    for (std::size_t i = 0; i < 2; ++i) {
+    for (std::size_t i = 0; i < 3; ++i) {
         if (!pending35[i].valid) continue;
         const std::string path = pending35[i].path;
         std::string error;
@@ -155,8 +158,7 @@ void MainWindow::persistSession(bool flushMedia)
         pom2::log().warn("Disk35",
                          "session flush failed for " + path + ": " + error);
         std::lock_guard<std::mutex> lk(controller->stateMutex());
-        pom2::Disk35Image& img = i == 0 ? controller->disk35Internal()
-                                        : controller->disk35External();
+        pom2::Disk35Image& img = controller->disk35(static_cast<int>(i));
         if (img.isLoaded() && img.path() == path) img.restoreDirty();
     }
     // Paths AND the write-back opt-in: only the paths were persisted, so a
@@ -170,6 +172,10 @@ void MainWindow::persistSession(bool flushMedia)
                                             : std::string());
     settings->setBool("disk35_writeback_1", onboard35[0].writeBack);
     settings->setBool("disk35_writeback_2", onboard35[1].writeBack);
+    settings->setString("disk35_path_3", onboard35[2].loaded ? onboard35[2].path : std::string());
+    settings->setBool("disk35_writeback_3", onboard35[2].writeBack);
+    settings->setBool("disk35_connected_2", sonyConnected[1]);
+    settings->setBool("disk35_connected_3", sonyConnected[2]);
 
     // CFFA per-slot image + write-back for EVERY plugged CFFA card. `cffa`
     // is multi-instance, so persist each (not just the primary `primaryCffaCard()`),

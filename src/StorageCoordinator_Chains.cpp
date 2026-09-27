@@ -14,6 +14,7 @@
 #include "MountableMediaCard.h"
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
+#include "RewindBuffer.h"
 #include "SlotBus.h"
 
 #include <algorithm>
@@ -72,6 +73,28 @@ StorageCoordinator::mountDisk35OnLiron(EmulationController& controller,
     result.error = mounted.error;
     result.bootSlot = slot;
     result.usesSmartPort = true;         // a SmartPort bus, booted by slot
+    return result;
+}
+
+StorageCoordinator::MediaCommandResult StorageCoordinator::connectExternalSony35(
+    EmulationController& controller, Settings& settings, int drive, bool connected) const
+{
+    if (drive < 1 || drive > 2) return commandError("invalid external Sony");
+    bool first = false, second = false;
+    {
+        auto state = controller.lockState();
+        if (!connected && (controller.disk35(drive).isLoaded() ||
+            (drive == 1 && controller.disk35(2).isLoaded())))
+            return commandError("eject the affected Sony disks before disconnecting");
+        controller.connectExternalSony35(drive, connected);
+        controller.rewind().clear();
+        first = controller.externalSony35Connected(1);
+        second = controller.externalSony35Connected(2);
+    }
+    settings.setBool("disk35_connected_2", first);
+    settings.setBool("disk35_connected_3", second);
+    MediaCommandResult result;
+    result.ok = true;
     return result;
 }
 

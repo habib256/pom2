@@ -44,6 +44,7 @@
 #include "HdvController_ImGui.h"
 #include "IconsFontAwesome6.h"
 #include "Logger.h"
+#include "LironCard.h"
 #include "MediaMount.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
@@ -335,12 +336,17 @@ void MainWindow::renderDiskLibraryWindow()
         // SmartPort card's unit 0/1 (one or the other, never both on the
         // same profile). The library marks rows mounted on either, so the
         // user sees the `* ` cue regardless of which path is active.
+        for (int drive = 0; drive < 3; ++drive)
+            mounted.sony35[drive] = controller->disk35(drive).isLoaded();
         mounted.disk35Internal = controller->disk35Internal().isLoaded()
             ? controller->disk35Internal().path() : std::string();
         mounted.disk35InternalProtected = controller->disk35Internal().isFileWriteProtected();
         mounted.disk35External = controller->disk35External().isLoaded()
             ? controller->disk35External().path() : std::string();
         mounted.disk35ExternalProtected = controller->disk35External().isFileWriteProtected();
+        mounted.disk35ExternalSecond = controller->disk35(2).isLoaded()
+            ? controller->disk35(2).path() : std::string();
+        mounted.disk35ExternalSecondProtected = controller->disk35(2).isFileWriteProtected();
         if (primarySmartPortCard()) {
             const pom2::SmartPortUnit* u0 = primarySmartPortCard()->unit(0);
             const pom2::SmartPortUnit* u1 = primarySmartPortCard()->unit(1);
@@ -675,10 +681,10 @@ void MainWindow::renderDiskLibraryWindow()
         // owning the media the button silently did nothing while the panel
         // went on showing the disk.
         const auto e = storageCoordinator_->ejectDisk35(
-            *controller, *settings, r.request35EjectDrive);
+            *controller, *settings, r.request35EjectDrive, mounted.sony35[r.request35EjectDrive]);
         tapeStatusMessage = e.ok
             ? ("Library: 3.5\" drive " +
-               std::string(r.request35EjectDrive == 0 ? "1" : "2") + " ejected")
+               std::to_string(r.request35EjectDrive + 1) + " ejected")
             : ("Library: 3.5\" eject failed: " + e.error);
         tapeStatusUntil   = lastFrameTime + 3.0;
     }
@@ -789,14 +795,19 @@ void MainWindow::renderFloppyEmuWindow()
         if (b >= 1024)           return std::to_string(b / 1024) + "K";
         return std::to_string(b) + "B";
     };
+    auto intelligentSlot = [&]() -> int {
+        if (auto* card = primarySmartPortCard()) return card->getSlot();
+        for (int slot = 1; slot < 8; ++slot)
+            if (dynamic_cast<pom2::LironCard*>(controller->memory().slotBus().peripheral(slot)))
+                return slot;
+        return -1;
+    };
     auto controllerReady = [&](Mode m) -> bool {
         switch (m) {
             case Mode::Disk525:   return primaryDiskII() != nullptr;
-            case Mode::Disk35:
-            case Mode::Unidisk35: return primarySmartPortCard() != nullptr ||
-                                         activeProfile == pom2::SystemProfile::AppleIIcPlus;
-            case Mode::SmartportHD: return hdvDevice() != nullptr ||
-                                           primarySmartPortCard() != nullptr;
+            case Mode::Disk35: return activeProfile == pom2::SystemProfile::AppleIIcPlus;
+            case Mode::Unidisk35:
+            case Mode::SmartportHD: return intelligentSlot() >= 0;
         }
         return false;
     };
@@ -805,10 +816,10 @@ void MainWindow::renderFloppyEmuWindow()
             case Mode::Disk525:
                 return "No Disk II controller — add 'Disk II' in the Slot Manager.";
             case Mode::Disk35:
+                return "Apple 3.5 / Sony requires the //c+ IWM; Liron requires UniDisk mode.";
             case Mode::Unidisk35:
-                return "No SmartPort/Liron controller for 3.5\" media.";
             case Mode::SmartportHD:
-                return "No SmartPort or HDV controller for hard-disk media.";
+                return "Intelligent UniDisk / HD requires a SmartPort or Liron controller.";
         }
         return std::string();
     };
@@ -822,21 +833,14 @@ void MainWindow::renderFloppyEmuWindow()
                 return (primaryDiskII() && primaryDiskII()->isDiskLoaded())
                            ? baseName(primaryDiskII()->getDiskPath()) : std::string();
             case Mode::Disk35:
+                return controller->disk35External().isLoaded()
+                    ? baseName(controller->disk35External().path()) : std::string();
             case Mode::Unidisk35:
-                if (primarySmartPortCard()) {
-                    const pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0);
-                    return (u && u->isLoaded()) ? baseName(u->path()) : std::string();
-                }
-                return controller->disk35Internal().isLoaded()
-                           ? baseName(controller->disk35Internal().path())
-                           : std::string();
             case Mode::SmartportHD:
-                if (pom2::ProDOSBlockCard* dev = hdvDevice())
-                    return dev->isImageLoaded() ? baseName(dev->getImagePath())
-                                                : std::string();
-                if (primarySmartPortCard()) {
-                    const pom2::SmartPortUnit* u = primarySmartPortCard()->unit(0);
-                    return (u && u->isLoaded()) ? baseName(u->path()) : std::string();
+                if (const int slot = intelligentSlot(); slot >= 0) {
+                    auto* media = dynamic_cast<pom2::MountableMediaCard*>(
+                        controller->memory().slotBus().peripheral(slot));
+                    if (media) return baseName(media->bayInfo(0).path);
                 }
                 return std::string();
         }
@@ -844,7 +848,6 @@ void MainWindow::renderFloppyEmuWindow()
     };
     auto mountImage = [&](const std::string& path, Mode m) {
         std::string err;
-        int bootSlot = 0;
         // Selecting an image BOOTS it, like a left-click in the Disk Library
         // ("left-click = insert + boot"). Mounting alone left the user
         // staring at whatever was already on screen with a status line
@@ -877,30 +880,24 @@ void MainWindow::renderFloppyEmuWindow()
                 break;
             }
             case Mode::Disk35:
+                if (!controllerReady(m)) { floppyEmuStatus = controllerHint(m); break; }
+                if (mountOnboard35(1, path, err)) {
+                    bootTarget = kColdBoot;
+                    floppyEmuStatus = "External Sony mounted; resetting " + baseName(path);
+                } else floppyEmuStatus = "Sony mount failed: " + err;
+                break;
             case Mode::Unidisk35:
+            case Mode::SmartportHD: {
                 if (!controllerReady(m)) ensureSmartPortCardForBoot();
-                if (routeMount35(0, path, err)) {
-                    // With a SmartPort card, boot its slot explicitly;
-                    // without one the mount landed on the //c+ on-board hub,
-                    // which has no slot to jump to — cold boot instead.
-                    bootTarget = primarySmartPortCard() ? primarySmartPortCard()->getSlot()
-                                               : kColdBoot;
+                const auto mounted = m == Mode::Unidisk35
+                    ? storageCoordinator_->mountDisk35(*controller, *settings, 0, path)
+                    : storageCoordinator_->mountHdv(*controller, *settings, path, true);
+                if (mounted.ok) {
+                    bootTarget = mounted.bootSlot;
                     floppyEmuStatus = "Booting " + baseName(path);
-                } else {
-                    floppyEmuStatus = "3.5\" mount failed: " + err;
-                }
+                } else floppyEmuStatus = "Intelligent SmartPort mount failed: " + mounted.error;
                 break;
-            case Mode::SmartportHD:
-                if (!controllerReady(m)) ensureSmartPortCardForBoot();
-                if (routeMountHdv(path, bootSlot, err)) {
-                    // bootSlot is what routeMountHdv resolved. It was being
-                    // filled and then dropped on the floor here.
-                    bootTarget = bootSlot;
-                    floppyEmuStatus = "Booting " + baseName(path);
-                } else {
-                    floppyEmuStatus = "Smartport mount failed: " + err;
-                }
-                break;
+            }
         }
         if (bootTarget != kNoMount) {
             if (bootTarget == kColdBoot) controller->coldBoot();
@@ -926,35 +923,19 @@ void MainWindow::renderFloppyEmuWindow()
                 }
                 break;
             }
-            case Mode::Disk35:
-            case Mode::Unidisk35: {
-                // Through the coordinator, exactly like the 5.25" case above
-                // — and for the same reason, which the comment there wrongly
-                // claimed was already true here: the inline `u->eject()` /
-                // `eject35()` cleared NO settings key, and the SmartPort unit
-                // keys are only ever written by a mount or an eject, so the
-                // disk this button removed was back on the next launch. It
-                // also ran the save-on-eject write under the lock.
-                const auto e = storageCoordinator_->ejectDisk35(
-                    *controller, *settings, 0);
+            case Mode::Disk35: {
+                const auto e = storageCoordinator_->ejectDisk35(*controller, *settings, 1, true);
                 ok = e.ok;
-                if (!ok) err = e.error;
+                err = e.error;
                 break;
             }
+            case Mode::Unidisk35:
             case Mode::SmartportHD: {
-                // Same routing rule as the mount side: a dedicated block card
-                // first, the SmartPort unit otherwise. Both are bays, so one
-                // coordinator command covers them.
-                int slot = -1;
-                if (pom2::ProDOSBlockCard* dev = hdvDevice())
-                    slot = dev->getSlot();
-                else if (primarySmartPortCard())
-                    slot = primarySmartPortCard()->getSlot();
-                if (slot < 0) { err = "no HDV or SmartPort card plugged"; break; }
-                const auto e = storageCoordinator_->ejectMediaBay(
-                    *controller, *settings, slot, 0);
+                const int slot = intelligentSlot();
+                if (slot < 0) { err = "no SmartPort or Liron controller"; break; }
+                const auto e = storageCoordinator_->ejectMediaBay(*controller, *settings, slot, 0);
                 ok = e.ok;
-                if (!ok) err = e.error;
+                err = e.error;
                 break;
             }
         }
@@ -1558,7 +1539,7 @@ void MainWindow::renderHdvFileDialog()
     ImGui::EndPopup();
 }
 
-bool MainWindow::convertWoz35ToPo(int drive, bool /*useSmartPort35*/)
+bool MainWindow::convertWoz35ToPo(int drive, bool useSmartPort35)
 {
     // The way out of a read-only 3.5" WOZ, and the reason it exists: POM2
     // decodes Sony GCR but cannot encode it, so a `.woz` mounted at 800K can
@@ -1574,7 +1555,7 @@ bool MainWindow::convertWoz35ToPo(int drive, bool /*useSmartPort35*/)
     // that gets converted. The routing argument is ignored and kept only so
     // the call sites need not change.
     const auto r = storageCoordinator_->convertDisk35WozToPo(*controller,
-                                                             *settings, drive);
+                                                             *settings, drive, !useSmartPort35);
     if (!r.ok) {
         tapeStatusMessage = "3.5\" convert failed: " + r.error;
         tapeStatusUntil   = lastFrameTime + 6.0;
@@ -1595,25 +1576,14 @@ void MainWindow::renderDisk35PanelWindow()
     if (!show(pom2::PanelId::Disk35)) return;
 
     pom2::Disk35Controller_ImGui::PanelSnapshot snap;
-    // 3.5" is "supported" by the //c+ profile (on-board SmartPort + MIG) OR by
-    // ANY profile where the user plugged a SmartPort 3.5" card (//e +
-    // Liron-class). Both paths share the same Disk35Image objects, so the
-    // panel does not have to care which mux is talking.
-    snap.supportedByProfile =
-        (activeProfile == pom2::SystemProfile::AppleIIcPlus) ||
-        (primarySmartPortCard() != nullptr);
-
-    // One acquisition, and — this is the behaviour change — the SAME source
-    // rule the mount path uses: a plugged SmartPort card owns the 3.5" media,
-    // whatever the profile. The panel used to exclude //c+ from that branch
-    // and read the on-board hub instead, while routeMount35 sent the media to
-    // the card's units regardless. So on //c+ the panel showed two empty
-    // on-board drives over media that was really in the card, and eject and
-    // write-back hit the wrong object.
-    const auto d35 = storageCoordinator_->captureDisk35(*controller);
-    for (int i = 0; i < 2; ++i) {
+    // This panel always names the physical Sony mechanisms. Intelligent
+    // UniDisk/HD devices have their own SmartPort or Liron media panel.
+    snap.supportedByProfile = activeProfile == pom2::SystemProfile::AppleIIcPlus;
+    const auto d35 = storageCoordinator_->captureDisk35(*controller, true);
+    for (int i = 0; i < 3; ++i) {
         const auto& src = d35.drives[i];
         auto& dst = snap.drives[i];
+        dst.connected         = src.connected;
         dst.diskLoaded        = src.loaded;
         dst.motorOn           = src.motorOn;
         dst.track             = src.track;
@@ -1635,7 +1605,7 @@ void MainWindow::renderDisk35PanelWindow()
     // `freePoNameFor` stats the filesystem up to 99 times when earlier
     // candidates are taken — this panel re-snapshots every frame. The answer
     // only changes when the medium changes, so the path is the whole key.
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 3; ++i) {
         auto& s = snap.drives[i];
         if (!s.isWoz) { convertSrc_[i].clear(); convertDst_[i].clear(); continue; }
         if (convertSrc_[i] != s.diskPath) {
@@ -1691,25 +1661,22 @@ void MainWindow::renderDisk35PanelWindow()
 
     ImGui::SetNextWindowPos (ImVec2(1055, 30),  ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(705,  600), ImGuiCond_FirstUseEver);
-    // Title reflects where the SmartPort path lives: on-board on //c+,
-    // or the explicit slot of the plugged Liron-class card on other
-    // profiles. Stable ImGui window-id per slot so the user's position/
-    // size choices are remembered per-configuration.
     char disk35Title[64];
-    if (primarySmartPortCard()) {
-        std::snprintf(disk35Title, sizeof(disk35Title),
-                      "Disk 3.5\" (slot %d)", primarySmartPortCard()->getSlot());
-    } else {
-        std::snprintf(disk35Title, sizeof(disk35Title),
-                      "Disk 3.5\" (//c+ on-board)");
-    }
+    std::snprintf(disk35Title, sizeof(disk35Title), "Apple 3.5 / Sony (//c+ IWM)");
     auto result = disk35Panel->render(
         disk35Title, show(pom2::PanelId::Disk35), snap);
+
+    if (result.requestConnectionDrive >= 0) {
+        const auto command = storageCoordinator_->connectExternalSony35(
+            *controller, *settings, result.requestConnectionDrive, result.newConnected);
+        tapeStatusMessage = command.ok ? "Sony connection updated" : command.error;
+        tapeStatusUntil = lastFrameTime + 4.0;
+    }
 
     if (result.requestConvertDrive >= 0)
         convertWoz35ToPo(result.requestConvertDrive, d35.usesSmartPort());
 
-    for (int d = 0; d < 2; ++d) {
+    for (int d = 0; d < 3; ++d) {
         if (result.requestEject[d]) {
             // Routed like the mount: the coordinator decides whether the
             // medium lives in a SmartPort unit or the on-board pair, ejects
@@ -1717,10 +1684,10 @@ void MainWindow::renderDisk35PanelWindow()
             // here duplicated that decision and only the SmartPort one
             // persisted, so an on-board eject came back on the next launch.
             const auto e = storageCoordinator_->ejectDisk35(*controller,
-                                                            *settings, d);
+                                                            *settings, d, true);
             tapeStatusMessage = e.ok
                 ? (std::string("3.5\" drive ") +
-                   (d == 0 ? "1 (internal)" : "2 (external)") + " ejected")
+                   std::to_string(d + 1) + " ejected")
                 : ("3.5\" eject failed: " + e.error);
             tapeStatusUntil = lastFrameTime + 4.0;
         }
@@ -1735,7 +1702,7 @@ void MainWindow::renderDisk35PanelWindow()
             const auto n = storageCoordinator_->setMediaNotch(
                 *controller, snap.drives[d].diskPath, protect);
             tapeStatusMessage = std::string("3.5\" drive ")
-                + (d == 0 ? "1" : "2")
+                + std::to_string(d + 1)
                 + (n.ok ? (protect ? ": disk WRITE-PROTECTED"
                                    : ": disk WRITABLE (saved as it is written)")
                         : ": " + n.error);
@@ -1748,47 +1715,22 @@ void MainWindow::renderDisk35PanelWindow()
         if (disk35Panel->dialogPath.empty()) disk35Panel->dialogPath = "disks_3.5/";
     }
     if (!result.requestMountPath.empty()) {
-        // routeMount35 sends the image to the SmartPort card's unit on
-        // non-//c+ profiles, or to the on-board hub on //c+ — the same
-        // routing the Disk Library + CLI use. Keeps the standalone panel
-        // and the library in lock-step.
         std::string err;
-        if (routeMount35(result.requestMountDrive, result.requestMountPath, err)) {
+        if (mountOnboard35(result.requestMountDrive, result.requestMountPath, err)) {
             tapeStatusMessage = "3.5\" mounted: " + result.requestMountPath;
         } else {
             tapeStatusMessage = "3.5\" mount failed: " + err;
         }
         tapeStatusUntil = lastFrameTime + 4.0;
     }
-    // Library left-click default = mount + cold boot. The //c+ ROM's
-    // power-on probe scans SmartPort devices in order and boots the
-    // first ready volume, so `coldBoot()` is enough — no need to
-    // pre-set PC. On non-//c+ profiles `mount35` succeeds (the image
-    // sits idle in Sony35Drive) but no device walker exists to read
-    // it, so we still cold-boot but the user sees the Applesoft
-    // prompt instead of the new image's loader.
+    // Reset firmware chooses the boot drive in hardware priority order.
     if (!result.requestInsertAndBoot.empty()) {
         const int d = result.insertAndBootDrive;
         std::string err;
-        if (routeMount35(d, result.requestInsertAndBoot, err)) {
-            // Prefer an explicit `bootFromSlot(N)` when the SmartPort
-            // path is provided by a slot card on a non-//c+ profile —
-            // the user picked the slot in Slot Configuration and the
-            // PR#N landing should follow that. On //c+ on-board, fall
-            // back to `coldBoot()` so the ROM autostart picks up the
-            // built-in SmartPort firmware.
-            if (d35.usesSmartPort()) {
-                controller->bootFromSlot(d35.smartPortSlot);
-                tapeStatusMessage = "3.5\" drive "
-                    + std::string(d == 0 ? "1" : "2")
-                    + " booted (slot " + std::to_string(d35.smartPortSlot)
-                    + "): " + result.requestInsertAndBoot;
-            } else {
-                controller->coldBoot();
-                tapeStatusMessage = "3.5\" drive "
-                    + std::string(d == 0 ? "1" : "2")
-                    + " booted: " + result.requestInsertAndBoot;
-            }
+        if (mountOnboard35(d, result.requestInsertAndBoot, err)) {
+            controller->coldBoot();
+            tapeStatusMessage = "Sony drive " + std::to_string(d + 1)
+                + " mounted; resetting: " + result.requestInsertAndBoot;
         } else {
             tapeStatusMessage = "3.5\" boot failed: " + err;
         }
@@ -1840,7 +1782,7 @@ void MainWindow::renderDisk35FileDialog()
             // routeMount35 dispatches to the SmartPort card unit (non-//c+)
             // or the on-board hub (//c+), matching the panel's read source.
             std::string err;
-            if (routeMount35(disk35Panel->mountDialogForDrive,
+            if (mountOnboard35(disk35Panel->mountDialogForDrive,
                              disk35Panel->dialogPath, err)) {
                 tapeStatusMessage = "3.5\" mounted: " + disk35Panel->dialogPath;
             } else {
