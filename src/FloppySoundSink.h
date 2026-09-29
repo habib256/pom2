@@ -45,6 +45,17 @@ public:
     virtual void step(int newTrack, uint64_t emuCycles) = 0;
     /// One-shot mechanical click — used for disk insert / eject.
     virtual void click() = 0;
+
+    /// Door latch. `inserting` is the lid closing; false is the lid opening.
+    /// The MAME bank has a single click for both, which is what the default
+    /// does. Virtual ][ ships two recordings and overrides this.
+    virtual void latch(bool inserting) { (void)inserting; click(); }
+
+    /// The drive itself reported a failed transfer (a SmartPort read or
+    /// write that did not land). A Disk II never sees this: the guest
+    /// checksums raw nibbles. Default is silence — only the Virtual ][
+    /// bank has an "I-O Error" recording.
+    virtual void ioError() {}
 };
 
 #endif // POM2_FLOPPY_SOUND_SINK_H

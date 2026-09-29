@@ -54,6 +54,11 @@ tests/hero_probe
 /printouts/
 /snapshots/
 
+# Virtual ][ commercial recordings, copied locally from a USB key for
+# listening tests. The accompanying LISEZMOI forbids redistribution, so
+# they stay out of git. packaging/bundle.manifest denies the same folder.
+/roms/virtual_ii_sons/
+
 # imagewriter_pdf writes its sheets to a cwd-relative directory. Under ctest
 # the cwd is build/ (already ignored), but running the binary by hand from the
 # repo root drops it here.

@@ -290,6 +290,10 @@ private:
 
     // ── Sound state ─────────────────────────────────────────────────────
     FloppySoundSink* sound_           = nullptr;
+    /// Rising edge of `ioError_[u]`. The byte stream calls this once per
+    /// failed block, not once per byte — a 512-byte read must not machine-gun
+    /// the Virtual ][ grunt.
+    void noteIoError(size_t unit);
     uint64_t         cpuCycleTotal_   = 0;
     uint64_t         lastAccessCycle_ = 0;
     bool             audibleMotorOn_  = false;

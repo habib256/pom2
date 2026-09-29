@@ -191,7 +191,16 @@ public:
     /// True when the caller should capture now. `pending` = the medium holds
     /// writes the file lacks AND write-back is allowed.
     bool due(bool pending, bool force) {
-        if (!pending) { observedSerial_ = writeSerial_; return false; }
+        if (!pending) {
+            observedSerial_ = writeSerial_;
+            // Nothing owed and nothing in flight: whatever saved the medium
+            // (an explicit flush, a Liron flushAll, saveDirty) settled the
+            // old failure. Only a successful AUTOSAVE collect used to clear
+            // it, so the medium read "error" and /disk/sync failed for a
+            // disk that was fully saved (bug hunt 2026-09-29).
+            if (!inFlight_) { error_.clear(); retryAt_ = {}; failures_ = 0; }
+            return false;
+        }
         const auto now = Clock::now();
         if (writeSerial_ != observedSerial_) {
             observedSerial_ = writeSerial_;

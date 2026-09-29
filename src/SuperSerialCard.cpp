@@ -360,14 +360,17 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
 
     const auto now = std::chrono::steady_clock::now();
     if (bytesPerSecond_ > 0.0) {
-        // Credit accrues with wall time and is capped at one buffer, so a
-        // long pause cannot burst the whole ring onto the wire at once — the
-        // emulated line has a speed and the far end should see it.
+        // Credit accrues with wall time and is capped at 50 ms of line time,
+        // so a long pause cannot burst the whole ring onto the wire at once —
+        // the emulated line has a speed and the far end should see it. The
+        // cap used to be kBufCap, the ring's own size: after 2.5 s idle at
+        // 19200 baud one drain sent all 4000 queued bytes (bug hunt
+        // 2026-09-29). The worker drains every ~2 ms, so 50 ms never starves.
         const double dt =
             std::chrono::duration<double>(now - lastDrainTime_).count();
         sendBudget_ += dt * bytesPerSecond_;
-        if (sendBudget_ > static_cast<double>(kBufCap))
-            sendBudget_ = static_cast<double>(kBufCap);
+        const double cap = std::max(1.0, bytesPerSecond_ * 0.05);
+        if (sendBudget_ > cap) sendBudget_ = cap;
         const size_t take = static_cast<size_t>(sendBudget_);
         while (taken < take && !txBuf.empty()) {
             const uint8_t b = txBuf.front();
@@ -416,7 +419,11 @@ void SuperSerialCard::onTransportConnected()
         std::lock_guard<std::mutex> lk(bufferMtx);
         rxBuf.clear();
         statusErrors_ &= static_cast<uint8_t>(~SR_OVERRUN);
-        clearIrqSource(IRQ_RDRF);
+        // Transport worker thread: drop the source, let the CPU thread move
+        // the line. clearIrqSource() drives assertIrq() directly, which is
+        // CPU-thread-only state (see raiseIrqSource).
+        irqState_ &= static_cast<uint8_t>(~IRQ_RDRF);
+        irqLineDirty_.store(true, std::memory_order_release);
     }
     connected = true;
     onConnectionEdge(true);
@@ -1124,7 +1131,7 @@ void SuperSerialCard::buildRom()
     //   $Cn07 = $18   (sig 2)
     //   $Cn0B = $01   (firmware revision)
     //   $Cn0C = $31   (device class: serial-port aka "Communications")
-    a.region("prEntry", 0x00, 0x05).jmp("prBind");
+    a.region("prEntry", 0x00, 0x05).jmp("dispatch");
 
     // IN#n entry at $Cn08. Apple BASIC calls $Cn00 for both PR# and IN# but
     // distinguishes by zero-page contents; many ROMs publish IN#n at $Cn00+8.
@@ -1158,8 +1165,25 @@ void SuperSerialCard::buildRom()
     a.region("pascalTable", 0x0D, 0x11)
      .byteOf("pinit").byteOf("pread").byteOf("pwrite").byteOf("pstatus");
 
+    // $Cn00 is BOTH hooks: the Monitor's PR#n stores $Cn00 in CSW and its
+    // IN#n stores $Cn00 in KSW, so the $Cn08 entry above is never what IN#n
+    // reaches. An output call is the one where CSW still names this page's
+    // entry; anything else came through KSW. The page used to bind the
+    // output hook for both — IN#n then read nothing, rewrote CSW on every
+    // key poll and handed BASIC $Cn as a keystroke (bug hunt 2026-09-29).
+    // Both paths keep A and carry on into the routine the call was for.
+    a.region("dispatch", 0x11, 0x20)
+     .emit({ 0x48,                   // PHA         (the char, for output)
+             0xA5, 0x37,             // LDA $37     (CSWH)
+             0xC9, a.pageHi() })     // CMP #$Cn
+     .branch(0xD0, "toInput")        // BNE toInput
+     .emit({ 0xA5, 0x36 })           // LDA $36     (CSWL)
+     .branch(0xD0, "toInput")        // BNE toInput (already bound → input)
+     .jmp("prBind");                 // the char stays pushed for prBind
+
     // PR#n bind — initialise the ACIA, then patch CSWL/CSWH to point at the
-    // output routine and RTS so the BASIC interpreter resumes.
+    // output routine and continue into it with the character the call
+    // carried (it was dropped when this returned with RTS).
     //
     // The ACIA init (cmd=$0B: DTR asserted, RX IRQ off, RTS low) mirrors what
     // the real SSC firmware does on first entry — it programs the 6551 from
@@ -1175,17 +1199,22 @@ void SuperSerialCard::buildRom()
      .emit({ 0x85, 0x36,             // STA $36   (CSWL)
              0xA9, a.pageHi(),       // LDA #>cout
              0x85, 0x37,             // STA $37   (CSWH)
-             0x60 });                // RTS
+             0x68 })                 // PLA         (dispatch pushed the char)
+     .jmp("cout")
+     .label("toInput")
+     .emit({ 0x68 })                 // PLA
+     .jmp("inBind");
 
-    // IN#n bind — same ACIA init, then patch KSWL/KSWH (input vector).
+    // IN#n bind — same ACIA init, then patch KSWL/KSWH (input vector) and
+    // read the key the caller is waiting for.
     a.region("inBind", 0x40, 0x50)
      .emit({ 0xA9, 0x0B,
              0x8D, cmdRegAddr, 0xC0,
              0xA9 }).byteOf("cin")   // LDA #<cin
      .emit({ 0x85, 0x38,             // STA $38   (KSWL)
              0xA9, a.pageHi(),
-             0x85, 0x39,             // STA $39   (KSWH)
-             0x60 });
+             0x85, 0x39 })           // STA $39   (KSWH)
+     .jmp("cin");                    // the caller wanted a key: read one
 
     // PINIT — assert DTR + RTS-low/TX-IRQ-off (cmd=$0B) so the port can
     // transmit, then return success (X=0).
@@ -1289,6 +1318,11 @@ void SuperSerialCard::appendSnapshotState(std::vector<uint8_t>& out) const
     // Appended 2026-09-17: the receive latch. A re-read of RDR with an empty
     // ring returns it, so a rewind kept the LIVE session's last byte.
     out.push_back(rdrLatch_);
+    // Appended 2026-09-29: a TDR byte parked behind a de-asserted CTS. Status
+    // reads TDRE=0 while it waits, so a restore that kept the live value
+    // told the guest a byte had gone out that never would (or re-sent one).
+    out.push_back(tdrHeld_ ? 1 : 0);
+    out.push_back(tdrHeldByte_);
 }
 
 void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -1325,6 +1359,12 @@ void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         data[p++] & (IRQ_DCD | IRQ_DSR | IRQ_RDRF | IRQ_TDRE)));
     irqLineDirty_.store(true);   // CPU thread re-drives the line
     if (len > p) rdrLatch_ = data[p++];   // absent in blobs before 2026-09-17
+    if (len >= p + 2) {                    // absent in blobs before 2026-09-29
+        tdrHeld_     = data[p++] != 0;
+        tdrHeldByte_ = data[p++];
+    } else {
+        tdrHeld_ = false;                  // an older machine had nothing parked
+    }
 
     // DERIVED from the restored cmdReg, like rxIrqEnable_ is serialised —
     // without it the transmit-interrupt gate keeps the LIVE session's value.

@@ -90,6 +90,8 @@ public:
 
     const SmartPortBusDevice& device() const { return bus_; }
     const IWMDevice&          registers() const { return regs_; }
+    /// Units that held media at the last look, one bit per chain bay.
+    unsigned mediaMask() const { return mediaMask_; }
 
 private:
     SlotBus*  slots_;

@@ -185,9 +185,11 @@ int main()
     // The probe reached the drive. Both of these come from the firmware's
     // own sequence above, so a regression in the card's wiring shows here
     // rather than as a silent "still does not boot".
-    if (!motorSeen)
-        fail("the drive's motor never ran — the firmware's $C089 never "
-             "reached it (IWM devsel → LironCard::onDevsel)");
+    // No motor check: since 2fbff64 `Sony35Drive::monW` is a no-op, as in
+    // MAME's mac_floppy_device::mon_w — /ENBL selects a Sony, only the
+    // MotorOn command starts it, and this boot never sends one. The SEL
+    // check below still proves the IWM devsel reaches the drive.
+    (void)motorSeen;
     if (!side1Seen)
         fail("SEL was never seen by the drive — $C08B is not reaching "
              "Sony35Drive::ssW, and on a Sony that line is also bit 3 of the "

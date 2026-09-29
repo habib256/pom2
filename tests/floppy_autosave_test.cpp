@@ -22,6 +22,7 @@
 #include "BlockWriteBackExecutor.h"   // mediaCommitExecutor, drainMediaCommits
 #include "MediaAutosave.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -307,6 +308,68 @@ int main()
         assert(c.syncFloppyMedia(error));
         assert(trackBytes(readFile(path525), 18) == trackBytes(donorBytes, 18));
         std::printf("floppy_autosave: controller poll + sync OK\n");
+    }
+
+    // ── Re-inserting the same disk while its autosave lands ───────────────
+    // Phase 1 of the mount reads the file unlocked; the autosave can land and
+    // clear the dirty flag before phase 2. installDisk re-read only a DIRTY
+    // same-file drive, so it installed the pre-save bytes: the drive showed
+    // the disk as it was, the file held the guest's write, and the next DOS
+    // write committed its stale catalog over it (bug hunt 2026-09-29).
+    {
+        const auto path = dir / "remount.dsk";
+        writeFile(path, dskPattern(0x07));
+        auto card = std::make_unique<DiskIICard>(6);
+        card->setWriteBackEnabled(true);
+        assert(card->insertDisk(0, path.string()));
+        DiskImage& img = card->driveImage(0);
+        copyTrack(img, donor, 3);
+        assert(img.hasUnsavedChanges());
+
+        auto prepared = std::make_unique<DiskImage>();   // phase 1, unlocked
+        std::string err;
+        assert(DiskIICard::prepareDisk(path.string(), true, *prepared, err));
+        waitFor([&] { img.pollAutosave(ex, true); return !img.hasUnsavedChanges(); }, 5);
+        assert(trackBytes(readFile(path), 3) == trackBytes(donorBytes, 3));
+
+        assert(card->installDisk(0, std::move(*prepared)));   // phase 2
+        for (int n = 0; n < DiskImage::kNibblesPerTrack; ++n)
+            assert(card->driveImage(0).nibbleAt(3, n) == donor.nibbleAt(3, n));
+        std::printf("floppy_autosave: same-disk re-insert after a save OK\n");
+    }
+
+    // ── A failed autosave's error clears once the medium is saved anyway ──
+    {
+        struct DoneOp : pom2::MediaCommitOperation {
+            pom2::MediaCommitResult r;
+            bool ready() const override { return true; }
+            pom2::MediaCommitResult wait() override { return r; }
+        };
+        struct FailingExec : pom2::MediaCommitExecutor {
+            std::shared_ptr<pom2::MediaCommitOperation>
+            submit(std::function<pom2::MediaCommitResult()>) override {
+                auto op = std::make_shared<DoneOp>();
+                op->r.ok = false;
+                op->r.error = "ENOSPC (simulated)";
+                return op;
+            }
+        } failing;
+        const auto path = dir / "stuck.po";
+        writeFile(path, std::vector<uint8_t>(819200, 0x11));
+        pom2::Disk35Image img;
+        img.setWriteBackEnabled(true);
+        assert(img.loadFile(path.string()));
+        uint8_t blk[512];
+        std::fill(std::begin(blk), std::end(blk), uint8_t{0x22});
+        assert(img.writeBlock(5, blk));
+        img.pollAutosave(failing, true);
+        img.pollAutosave(failing, false);
+        assert(img.persistence().state == "error");
+        assert(img.saveDirty() && !img.hasUnsavedChanges());   // explicit save
+        img.pollAutosave(failing, false);
+        const auto p = img.persistence();
+        assert(p.state == "saved" && p.error.empty());
+        std::printf("floppy_autosave: explicit save clears a stale error OK\n");
     }
 
     pom2::drainMediaCommits();

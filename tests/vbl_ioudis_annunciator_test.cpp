@@ -80,11 +80,12 @@ void advance(Memory& mem, uint64_t cycles)
 //   [len=10][intC8Rom][ioudis][vblIrqMask][vblIrqPending][AN0][AN1][AN2]
 //           [vblWasActive][iicCardWindow_][c800Owner]
 // The payload has grown twice already, so its length is READ rather than
-// assumed. It is also no longer the tail: four more optional length-prefixed
-// sections follow it (the No-Slot Clock and the two on-board Sony 3.5"
-// mechanisms, then the native //c mouse), each empty on a bare Memory.
+// assumed. It is also no longer the tail: five more optional length-prefixed
+// sections follow it (the No-Slot Clock, the two original on-board Sony 3.5"
+// mechanisms, the native //c mouse, then the second external Sony added on
+// 2026-09-27), each empty on a bare Memory.
 constexpr size_t kIouSectionLen  = 11;   // the 4c wake latch joined on 2026-09-17
-constexpr size_t kEmptyTailCount = 4;
+constexpr size_t kEmptyTailCount = 5;
 
 uint8_t iouByte(Memory& mem, size_t index)
 {

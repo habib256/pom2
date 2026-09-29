@@ -351,6 +351,24 @@ MainWindow::MainWindow(bool forceIIPlus)
             dir, FloppySoundDevice::FormFactor::FF35);
         if (ok525 || ok35) break;
     }
+    // Virtual ][ Disk II / printer / power-switch recordings. Commercial,
+    // local only (gitignored, denied from packages). Missing directory
+    // leaves the MAME bank as the only one the mixer can select.
+    static const char* virtualIIDirs[] = {
+        "roms/virtual_ii_sons",
+        "../roms/virtual_ii_sons",
+        "../../roms/virtual_ii_sons",
+    };
+    for (const char* d : virtualIIDirs) {
+        const std::string dir = pom2::findResource(d);
+        if (dir.empty() || !fs::is_directory(dir)) continue;
+        const bool drives = controller->floppySound525().loadVirtualII(dir);
+        (void)controller->floppySound35().loadVirtualII(dir);
+        const std::string printerWav = dir + "/imprimante/Matrix Printer.wav";
+        if (fs::is_regular_file(printerWav))
+            (void)printerSound->loadSample(printerWav);
+        if (drives) break;
+    }
     // One call for the whole host-side audio block — levels, mutes, pans,
     // master, downmix — mirroring `audioCoordinator_->persist()` on the way
     // out (MainWindow_Session.cpp). It used to be hand-rolled here in two

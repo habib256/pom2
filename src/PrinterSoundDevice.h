@@ -62,6 +62,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 namespace pom2 {
 
@@ -86,6 +87,15 @@ public:
     void carriageReturn(double inches) override;
     void paperFeed(double inches) override;
     void power(bool on) override;
+
+    /// Virtual ][ "Matrix Printer" recording. When `setSampled` is on and
+    /// the file decoded, strikes / feeds / returns keep this loop running
+    /// instead of scheduling grains. The recording is commercial and lives
+    /// only in the local `roms/virtual_ii_sons/` tree.
+    bool loadSample(const std::string& wavPath);
+    bool sampleReady() const { return loopReady_.load(std::memory_order_acquire); }
+    void setSampled(bool on);
+    bool sampled() const { return useLoop_.load(std::memory_order_acquire); }
 
     /// Grains currently scheduled or sounding. Exposed for the test, which
     /// has no ears — it is how "a burst thins instead of running away" is
@@ -133,7 +143,17 @@ private:
 
     void  schedule(double durSeconds, double freqHz, double q, double hpHz,
                    double peak, double spacingSeconds, double jitterHz);
+    void  armLoop(double seconds);
+    void  mixLoop(float* output, int frameCount, uint64_t base, float vol);
     float noise();
+
+    std::vector<float> loop_;
+    uint32_t           loopRate_ = 44100;
+    double             loopPos_  = 0.0;   ///< audio thread only
+    float              loopEnv_  = 0.0f;  ///< audio thread only: fade in/out gain
+    std::atomic<bool>     loopReady_{false};
+    std::atomic<bool>     useLoop_{false};
+    std::atomic<uint64_t> loopUntil_{0};
 
     uint32_t sampleRate_ = 44100;
 

@@ -279,6 +279,40 @@ void MainWindow::renderAudioMixerWindow()
         }
     }
 
+    // ── Mechanical-sound bank ──────────────────────────────────────────
+    // MAME's seek/spin set is the default. Virtual ][ is the Disk II,
+    // dot-matrix and power-switch recordings under roms/virtual_ii_sons/
+    // — present on this machine or not at all (they are not packaged).
+    {
+        FloppySoundDevice& fs525 = controller->floppySound525();
+        const bool viiReady = fs525.virtualIIReady();
+        const bool vii = fs525.bank() == FloppySoundDevice::Bank::VirtualII;
+        const char* current = vii ? "Virtual ][" : "MAME samples";
+        ImGui::SetNextItemWidth(14.0f * ImGui::GetFontSize());
+        if (ImGui::BeginCombo("Drive sounds", current)) {
+            if (ImGui::Selectable("MAME samples", !vii)) {
+                controller->floppySound525().setBank(FloppySoundDevice::Bank::Mame);
+                controller->floppySound35().setBank(FloppySoundDevice::Bank::Mame);
+                printerSound->setSampled(false);
+            }
+            if (!viiReady) ImGui::BeginDisabled();
+            if (ImGui::Selectable("Virtual ][", vii)) {
+                controller->floppySound525().setBank(FloppySoundDevice::Bank::VirtualII);
+                if (controller->floppySound35().virtualIIReady())
+                    controller->floppySound35().setBank(FloppySoundDevice::Bank::VirtualII);
+                printerSound->setSampled(printerSound->sampleReady());
+            }
+            if (!viiReady) ImGui::EndDisabled();
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Virtual ][ plays its Disk II recordings on the\n"
+                              "5.25\" and 3.5\" drives, the matrix-printer take\n"
+                              "while printing, and the power switch on cold boot.\n"
+                              "Those files stay on this machine — they are not\n"
+                              "part of a package.");
+    }
+
     // ── Disk 5.25" ─────────────────────────────────────────────────────
     {
         FloppySoundDevice& fs525 = controller->floppySound525();
@@ -320,7 +354,9 @@ void MainWindow::renderAudioMixerWindow()
     {
         float vol  = printerSound->volume();
         bool  mute = printerSound->muted();
-        channelRow("Printer", vol, mute,
+        const char* printerLabel = printerSound->sampled()
+            ? "Printer (Virtual ][)" : "Printer";
+        channelRow(printerLabel, vol, mute,
                    printerSound->lastBufferPeak.load(std::memory_order_relaxed),
                    "prn", false, printerSound.get());
         if (vol != printerSound->volume()) printerSound->setVolume(vol);

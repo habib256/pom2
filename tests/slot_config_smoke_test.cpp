@@ -66,11 +66,12 @@ void testSscAtSlot(int slot)
     assert(mem.memRead(base + 0x0B) == 0x01);
     assert(mem.memRead(base + 0x0C) == 0x31);
 
-    // PR#n entry at $Cn00 should JMP into the per-slot trampoline at
-    // $Cn20. The high byte of the JMP target == base high byte == 0xC0+slot.
+    // $Cn00 is both PR#n's and IN#n's hook, so it JMPs to the dispatcher at
+    // $Cn11, which picks the PR# or IN# bind by looking at CSW. The high
+    // byte of the JMP target == base high byte == 0xC0+slot.
     const uint8_t slotHi = static_cast<uint8_t>(0xC0 + slot);
     assert(mem.memRead(base + 0x00) == 0x4C);          // JMP
-    assert(mem.memRead(base + 0x01) == 0x20);          // low byte of $Cn20
+    assert(mem.memRead(base + 0x01) == 0x11);          // low byte of $Cn11
     assert(mem.memRead(base + 0x02) == slotHi);        // $Cn
 
     // IN#n entry at $Cn08 → JMP $Cn40.
@@ -81,8 +82,9 @@ void testSscAtSlot(int slot)
     // PR#n trampoline at $Cn20: ACIA init (cmd=$0B — the real SSC
     // firmware programs the 6551 before any I/O; without it a plain
     // `PR#n : PRINT` writes the TDR with DTR de-asserted and every byte
-    // is dropped), then LDA #<output_routine ($CnB0) into CSWL/CSWH.
-    //   A9 0B 8D <devLo+A> C0 A9 B0 85 36 A9 <slotHi> 85 37 60
+    // is dropped), then LDA #<output_routine ($CnB0) into CSWL/CSWH, then
+    // on into it with the character the dispatcher pushed.
+    //   A9 0B 8D <devLo+A> C0 A9 B0 85 36 A9 <slotHi> 85 37 68 4C B0 <slotHi>
     const uint8_t devLo = static_cast<uint8_t>(0x80 + slot * 16);
     assert(mem.memRead(base + 0x20) == 0xA9);
     assert(mem.memRead(base + 0x21) == 0x0B);
@@ -97,7 +99,10 @@ void testSscAtSlot(int slot)
     assert(mem.memRead(base + 0x2A) == slotHi);
     assert(mem.memRead(base + 0x2B) == 0x85);
     assert(mem.memRead(base + 0x2C) == 0x37);          // CSWH
-    assert(mem.memRead(base + 0x2D) == 0x60);          // RTS
+    assert(mem.memRead(base + 0x2D) == 0x68);          // PLA
+    assert(mem.memRead(base + 0x2E) == 0x4C);          // JMP $CnB0
+    assert(mem.memRead(base + 0x2F) == 0xB0);
+    assert(mem.memRead(base + 0x30) == slotHi);
 
     // Output routine at $CnB0 patches the absolute LDA $C0n9 / STA $C0n8
     // addresses to the slot's device-select range.

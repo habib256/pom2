@@ -72,6 +72,10 @@ deny snapshots
 deny printouts
 deny cassettes
 deny prodos_folder
+# Virtual ][ drive/printer/UI recordings (Gerard Putter). Kept under
+# roms/virtual_ii_sons/ for local tests; the note in that folder forbids
+# redistribution, and `dir roms` would otherwise ship the whole tree.
+deny virtual_ii_sons
 
 # `dir roms` copies the WORKING TREE — so anything sitting in roms/ ships to
 # every user, tracked or not. That is not hypothetical: two ROM .zip archives

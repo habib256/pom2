@@ -2351,6 +2351,21 @@ Owned by `EmulationController` (audio shutdown drains thread).
 Persisted: `floppy_sound_volume`, `floppy_sound_muted`. Pinned:
 `floppy_sound_smoke_test`.
 
+**Virtual ][ bank** *(2026-09-28)*. A second recording set, selected in the
+mixer ("Drive sounds") and stored as `mechanical_sound_bank` =
+`mame` | `virtual2`. The files are Gerard Putter's commercial takes from
+Virtual ][, kept in `roms/virtual_ii_sons/` for local listening only:
+gitignored, and `deny virtual_ii_sons` so `dir roms` cannot ship them.
+Playback is not the MAME seek classifier pointed at different WAVs — that
+set is one revolution of the motor (`Disk Rotation`, looped), one arm take
+that a phase burst does not restart (`Move arm`, joined for 120 ms),
+separate lid close / open, a boot chirp on motor-on, the I/O-error grunt
+on a SmartPort block failure, the matrix-printer loop while the head is
+moving, and PopOn / PopOff on cold boot (the first boot of a process is
+PopOn only; a later cold boot is a power cycle). 5.25" inserts stay silent
+on the MAME bank. Pinned by `virtual_ii_sound` with synthesised WAVs, so
+the suite does not need the commercial files.
+
 **Bug hunt #10 (2026-09-08), four.** `EmulationController::refreshAcceleratorClock`
 re-derives `emulatedCpuClockHz()` from the plugged accelerator card every
 frame (the multiplier is runtime state: `$C074`, DSW windows, plug/unplug),

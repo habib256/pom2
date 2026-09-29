@@ -52,7 +52,9 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -755,8 +757,13 @@ void testRomPrInEntriesInitAcia()
         assert(ssc.slotRomRead(base + 3) == cmdRegAddr);
         assert(ssc.slotRomRead(base + 4) == 0xC0);
     }
-    // The IN#n entry must not overrun the Pascal PINIT routine at $Cn50.
-    assert(ssc.slotRomRead(0x4E) == 0xEA);                // still NOP fill
+    // $Cn00 is both hooks (PR#n sets CSW, IN#n sets KSW to $Cn00): it
+    // jumps to the dispatcher, not straight to the PR# bind.
+    assert(ssc.slotRomRead(0x00) == 0x4C);                // JMP dispatch
+    assert(ssc.slotRomRead(0x01) == 0x11 && ssc.slotRomRead(0x02) == 0xC2);
+    // The IN#n bind ends in JMP cin and must not overrun PINIT at $Cn50.
+    assert(ssc.slotRomRead(0x4D) == 0x4C);                // JMP cin
+    assert(ssc.slotRomRead(0x4E) == 0xE0 && ssc.slotRomRead(0x4F) == 0xC2);
     assert(ssc.slotRomRead(0x50) == 0xA9);                // PINIT intact
     std::printf("  ok: PR#/IN# ROM entries init the ACIA (cmd=$0B)\n");
 }
@@ -891,11 +898,67 @@ void testSnapshotStatusErrorsAreMasked()
     SuperSerialCard a(2), b(2);
     std::vector<uint8_t> latchBlob;
     a.appendSnapshotState(latchBlob);
-    assert(latchBlob.size() == 15);
+    assert(latchBlob.size() == 17);   // + the parked TDR pair (2026-09-29)
     latchBlob[14] = 0x5A;
     b.loadSnapshotState(latchBlob.data(), latchBlob.size());
     assert(b.deviceSelectRead(kRdrAddr) == 0x5A);
     std::printf("  ok: snapshot restore carries the RDR latch\n");
+}
+
+// ── Bug-hunt pins (2026-09-29) ───────────────────────────────────────────
+
+// A byte parked in TDR behind a de-asserted CTS travels with the snapshot.
+// It was not saved: the restored card kept the LIVE value, so a snapshot
+// taken while a byte waited came back with TDRE=1 and the byte gone.
+void testSnapshotKeepsParkedTdr()
+{
+    SuperSerialCard live(2);
+    live.deviceSelectWrite(kCommandAddr, 0x0B);        // DTR on
+    live.setCable(SuperSerialCard::Cable::Nothing);    // CTS inactive
+    live.deviceSelectWrite(kRdrAddr, 'Z');
+    assert((live.deviceSelectRead(kStatusAddr) & SR_TDRE) == 0);
+    std::vector<uint8_t> blob;
+    live.appendSnapshotState(blob);
+
+    SuperSerialCard restored(2);
+    restored.setCable(SuperSerialCard::Cable::Nothing);
+    restored.loadSnapshotState(blob.data(), blob.size());
+    assert((restored.deviceSelectRead(kStatusAddr) & SR_TDRE) == 0);
+    const auto before = restored.bytesTx();
+    restored.setCable(SuperSerialCard::Cable::NullModem);   // CTS returns
+    assert(restored.bytesTx() == before + 1);
+
+    // An older blob (no tail) restores with nothing parked.
+    SuperSerialCard parked(2);
+    parked.deviceSelectWrite(kCommandAddr, 0x0B);
+    parked.setCable(SuperSerialCard::Cable::Nothing);
+    parked.deviceSelectWrite(kRdrAddr, 'Y');
+    parked.loadSnapshotState(blob.data(), blob.size() - 2);
+    const auto sent = parked.bytesTx();
+    parked.setCable(SuperSerialCard::Cable::NullModem);
+    assert(parked.bytesTx() == sent);                    // 'Y' did not survive
+    std::printf("  ok: snapshot keeps a byte parked behind CTS\n");
+}
+
+// The TX pacing credit is capped at a short burst of line time. It was capped
+// at kBufCap — the ring's own size — so after an idle pause one drain put the
+// whole ring on the wire at once.
+void testTxPacingBurstIsShort()
+{
+    SuperSerialCard ssc(2);
+    ssc.setRawMode(true);
+    ssc.setModemLinesTied(true);
+    ssc.deviceSelectWrite(kControlAddr, 0x1F);         // 19200 baud
+    ssc.deviceSelectWrite(kCommandAddr, 0x0B);
+    std::vector<uint8_t> out;
+    (void)ssc.drainTransportTx(out);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    for (int i = 0; i < 2000; ++i) ssc.deviceSelectWrite(kRdrAddr, 'A');
+    out.clear();
+    const size_t n = ssc.drainTransportTx(out);
+    // 300 ms at 1920 B/s is 576 bytes of credit; 50 ms of it is 96.
+    assert(n > 0 && n <= 120);
+    std::printf("  ok: TX pacing after a pause bursts %zu bytes, not the ring\n", n);
 }
 
 int main()
@@ -925,6 +988,8 @@ int main()
     testTxIrq();
     testTelnetOptionNegotiation();
     testSnapshotStatusErrorsAreMasked();
+    testSnapshotKeepsParkedTdr();
+    testTxPacingBurstIsShort();
     std::printf("OK ssc_acia_smoke\n");
     return 0;
 }

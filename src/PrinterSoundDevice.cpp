@@ -22,6 +22,9 @@
 // printers, and guessing differently would only make it sound less like one.
 
 #include "PrinterSoundDevice.h"
+#include "Logger.h"
+
+#include "third_party/miniaudio.h"
 
 #include <algorithm>
 #include <cmath>
@@ -204,6 +207,14 @@ void PrinterSoundDevice::schedule(double durSeconds, double freqHz, double q,
 void PrinterSoundDevice::strike(int pins)
 {
     if (pins <= 0) return;
+    if (sampled() && sampleReady()) {
+        // A character is ~11 ms of head buzz; hold the recording a little
+        // longer so a line of text fuses into one pass instead of a chatter
+        // of restarts.
+        const double amp = std::clamp(static_cast<double>(pins) / 9.0, 0.15, 1.0);
+        armLoop(0.08 * (0.65 + 0.35 * amp));
+        return;
+    }
     // Loudness follows how many wires fired: a full stop and a 'W' are not
     // the same impact.
     const double amp = std::clamp(static_cast<double>(pins) / 9.0, 0.15, 1.0);
@@ -215,6 +226,10 @@ void PrinterSoundDevice::paperFeed(double inches)
 {
     inches = std::fabs(inches);
     if (inches <= 0.0) return;
+    if (sampled() && sampleReady()) {
+        armLoop(std::clamp(inches * 0.15, 0.04, 0.35));
+        return;
+    }
     // One line feed = one platen grain. A long feed (form feed) is louder,
     // not longer: the reference's line grain is a fixed 40 ms.
     const double amp = std::clamp(inches / (1.0 / 6.0), 0.4, 1.0);
@@ -226,6 +241,12 @@ void PrinterSoundDevice::carriageReturn(double inches)
 {
     inches = std::fabs(inches);
     if (inches < 0.05) return;          // a short hop is not a sweep
+    if (sampled() && sampleReady()) {
+        const double dur = std::clamp(inches * kReturnSecondsPerInch,
+                                      kReturnMinDur, kReturnMaxDur);
+        armLoop(dur);
+        return;
+    }
     const double dur = std::clamp(inches * kReturnSecondsPerInch,
                                   kReturnMinDur, kReturnMaxDur);
     const double amp = std::clamp(inches / 8.0, 0.35, 1.0);
@@ -244,6 +265,111 @@ void PrinterSoundDevice::power(bool on)
         // Switching off silences the mechanism at once — no coasting.
         for (auto& g : grains_) g.active = false;
         nextGrainFrame_ = frameCounter_.load(std::memory_order_relaxed);
+        loopUntil_.store(nextGrainFrame_, std::memory_order_relaxed);
+    }
+}
+
+bool PrinterSoundDevice::loadSample(const std::string& wavPath)
+{
+    loopReady_.store(false, std::memory_order_release);
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
+    ma_decoder dec;
+    if (ma_decoder_init_file(wavPath.c_str(), &cfg, &dec) != MA_SUCCESS) {
+        pom2::log().warn("PrinterSound", "Virtual ][ sample missing: " + wavPath);
+        return false;
+    }
+    const uint32_t rate = dec.outputSampleRate;
+    ma_uint64 total = 0;
+    if (ma_decoder_get_length_in_pcm_frames(&dec, &total) != MA_SUCCESS || total < 2) {
+        ma_decoder_uninit(&dec);
+        return false;
+    }
+    // The stock take is ~15 s. A corrupt header must not allocate gigabytes.
+    constexpr ma_uint64 kMax = 20ull * 192000ull;
+    if (total > kMax) {
+        ma_decoder_uninit(&dec);
+        return false;
+    }
+    std::vector<float> data(static_cast<size_t>(total), 0.0f);
+    ma_uint64 got = 0;
+    const ma_result r = ma_decoder_read_pcm_frames(&dec, data.data(), total, &got);
+    ma_decoder_uninit(&dec);
+    if (r != MA_SUCCESS && r != MA_AT_END) return false;
+    data.resize(static_cast<size_t>(got));
+    if (data.size() < 8) return false;
+    // Same wrap blend the floppy motor uses, so a 15 s loop does not tick.
+    const size_t n = data.size();
+    const size_t window = std::min<size_t>(132, n / 4);
+    for (size_t i = 0; i < window; ++i) {
+        const float alpha = static_cast<float>(i + 1) / static_cast<float>(window);
+        const size_t k = n - window + i;
+        data[k] = data[k] * (1.0f - alpha) + data[i] * alpha;
+    }
+    data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(window));
+    loop_ = std::move(data);
+    loopRate_ = rate == 0 ? 44100 : rate;
+    loopPos_ = 0.0;
+    loopReady_.store(true, std::memory_order_release);
+    pom2::log().info("PrinterSound", "loaded Virtual ][ matrix sample " + wavPath);
+    return true;
+}
+
+void PrinterSoundDevice::setSampled(bool on)
+{
+    useLoop_.store(on, std::memory_order_release);
+    if (!on) return;
+    std::lock_guard<std::mutex> lk(mtx_);
+    for (auto& g : grains_) g.active = false;
+}
+
+void PrinterSoundDevice::armLoop(double seconds)
+{
+    if (!(seconds > 0.0)) return;
+    const uint32_t sr = sampleRate_ == 0 ? 44100 : sampleRate_;
+    const uint64_t now = frameCounter_.load(std::memory_order_relaxed);
+    const uint64_t ext = now + static_cast<uint64_t>(seconds * static_cast<double>(sr));
+    uint64_t cur = loopUntil_.load(std::memory_order_relaxed);
+    while (ext > cur &&
+           !loopUntil_.compare_exchange_weak(cur, ext, std::memory_order_relaxed)) {
+    }
+}
+
+void PrinterSoundDevice::mixLoop(float* output, int frameCount, uint64_t base, float vol)
+{
+    if (!loopReady_.load(std::memory_order_acquire) || loop_.size() < 2 || vol <= 0.0f)
+        return;
+    const uint64_t until = loopUntil_.load(std::memory_order_relaxed);
+    if (base >= until) { loopEnv_ = 0.0f; return; }   // the release ends by `until`
+    const uint32_t sr = sampleRate_ == 0 ? 44100 : sampleRate_;
+    const double rate = static_cast<double>(loopRate_) / static_cast<double>(sr);
+    if (!(rate > 0.0) || rate > 1e6) return;
+    const double len = static_cast<double>(loop_.size());
+    // One envelope for both edges. The cursor resumes wherever the last pass
+    // stopped — mid-waveform — so starting at full gain was a step from
+    // silence, a click on every strike after a pause. The release begins
+    // kFade frames before `until` and so is finished by it; a strike that
+    // extends `until` during the release ramps back up from where the
+    // envelope is instead of jumping to full gain.
+    constexpr uint64_t kFade = 96;
+    constexpr float    kStep = 1.0f / static_cast<float>(kFade);
+    // The take is a close-mic recording. 0.55 keeps it under the grain
+    // model's level at the printer channel's default 0.35.
+    const float baseGain = vol * 0.55f;
+    for (int i = 0; i < frameCount; ++i) {
+        const uint64_t f = base + static_cast<uint64_t>(i);
+        if (f + kFade < until) loopEnv_ = std::min(1.0f, loopEnv_ + kStep);
+        else                   loopEnv_ = std::max(0.0f, loopEnv_ - kStep);
+        if (loopEnv_ <= 0.0f) {
+            if (f >= until) break;
+            continue;
+        }
+        while (loopPos_ >= len) loopPos_ -= len;
+        while (loopPos_ < 0.0)  loopPos_ += len;
+        const size_t k = static_cast<size_t>(loopPos_);
+        const size_t k1 = (k + 1 >= loop_.size()) ? 0 : k + 1;
+        const float frac = static_cast<float>(loopPos_ - static_cast<double>(k));
+        output[i] += (loop_[k] + frac * (loop_[k1] - loop_[k])) * baseGain * loopEnv_;
+        loopPos_ += rate;
     }
 }
 
@@ -259,6 +385,13 @@ void PrinterSoundDevice::fillAudioBuffer(float* output, int frameCount)
 
     std::lock_guard<std::mutex> lk(mtx_);
     const uint64_t base = frameCounter_.load(std::memory_order_relaxed);
+
+    if (useLoop_.load(std::memory_order_acquire)) {
+        mixLoop(output, frameCount, base, vol);
+        frameCounter_.store(base + static_cast<uint64_t>(frameCount),
+                            std::memory_order_relaxed);
+        return;
+    }
 
     for (auto& g : grains_) {
         if (!g.active) continue;

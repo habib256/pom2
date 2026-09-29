@@ -180,7 +180,13 @@ bool IIcExternalSmartPort::sharedAfterRead(const IWMDevice& iwm, uint8_t iwmValu
 }
 
 namespace {
-constexpr uint8_t kPortBlobMagic[4] = { 'X', 'S', 'P', '1' };
+// XSP2 (2026-09-29) carries the media mask as four bytes. XSP1 saved one,
+// which held bays 0-7 only: the slot-5 card went to fourteen units, and a
+// chain restored from it saw bays 8-13 "change" at the first access and
+// refused the WRITE the blob exists to resume — LironCard's 2026-09-11 bug,
+// again. XSP1 still loads.
+constexpr uint8_t kPortBlobMagic[4]   = { 'X', 'S', 'P', '2' };
+constexpr uint8_t kPortBlobMagicV1[4] = { 'X', 'S', 'P', '1' };
 void put32(std::vector<uint8_t>& o, std::size_t v)
 {
     for (int k = 0; k < 4; ++k) o.push_back(static_cast<uint8_t>(v >> (8 * k)));
@@ -205,14 +211,17 @@ void IIcExternalSmartPort::appendSnapshotState(std::vector<uint8_t>& out) const
     out.insert(out.end(), iwm.begin(), iwm.end());
     bus_.appendSnapshotState(out);
     out.push_back(lastPhases_);
-    out.push_back(static_cast<uint8_t>(mediaMask_));
+    for (int k = 0; k < 4; ++k)
+        out.push_back(static_cast<uint8_t>(mediaMask_ >> (8 * k)));
 }
 
 std::size_t IIcExternalSmartPort::loadSnapshotState(const uint8_t* data, std::size_t n)
 {
     // Magic first, reset second: a blob that is not ours must leave the
     // live port exactly as it was (see LironCard::loadSnapshotState).
-    if (!data || n < 8 || std::memcmp(data, kPortBlobMagic, 4) != 0) return 0;
+    if (!data || n < 8) return 0;
+    const bool v1 = std::memcmp(data, kPortBlobMagicV1, 4) == 0;
+    if (!v1 && std::memcmp(data, kPortBlobMagic, 4) != 0) return 0;
     reset();
     std::size_t i = 4;
     const std::size_t iwmLen = get32(data + i); i += 4;
@@ -222,9 +231,12 @@ std::size_t IIcExternalSmartPort::loadSnapshotState(const uint8_t* data, std::si
     const std::size_t busLen = bus_.loadSnapshotState(data + i, n - i);
     if (busLen == 0) { reset(); return 0; }
     i += busLen;
-    if (i + 2 > n) { reset(); return 0; }
+    const std::size_t maskBytes = v1 ? 1 : 4;
+    if (i + 1 + maskBytes > n) { reset(); return 0; }
     lastPhases_ = data[i++];
-    mediaMask_  = data[i++];
+    mediaMask_  = 0;
+    for (std::size_t k = 0; k < maskBytes; ++k)
+        mediaMask_ |= static_cast<unsigned>(data[i++]) << (8 * k);
     return i;
 }
 

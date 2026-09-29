@@ -32,6 +32,9 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -274,6 +277,59 @@ int main()
         controller.setMode(EmulationController::Mode::Running);
         assert(!dev.isSuspended());
         controller.setMode(EmulationController::Mode::Stopped);
+    }
+
+    // mechanical_sound_bank. No recordings → the key cannot leave MAME.
+    // Once the set decodes, restore selects it and persist writes it back.
+    {
+        auto& speaker = controller.speaker();
+        auto& tape = controller.cassette();
+        auto& fs525 = controller.floppySound525();
+        auto& fs35 = controller.floppySound35();
+        pom2::Settings cfg;
+        cfg.setString("mechanical_sound_bank", "virtual2");
+        audio.restore(cfg, speaker, tape, fs525, fs35, printer);
+        assert(fs525.bank() == FloppySoundDevice::Bank::Mame);
+        assert(!printer.sampled());
+        // The folder is not on this machine TODAY (a USB copy, a fresh
+        // checkout). Quitting must not rewrite the choice to "mame": the
+        // next launch with the folder back would forget it.
+        audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+        assert(cfg.getString("mechanical_sound_bank") == "virtual2");
+
+        const auto root = std::filesystem::temp_directory_path() / "pom2_vii_coord";
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+        auto put = [](const std::filesystem::path& path) {
+            std::filesystem::create_directories(path.parent_path());
+            std::vector<int16_t> pcm(64, 1000);
+            std::ofstream f(path, std::ios::binary);
+            const uint32_t dataBytes = static_cast<uint32_t>(pcm.size() * 2);
+            const uint32_t riff = 36 + dataBytes;
+            const uint32_t rate = 44100;
+            auto w32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+            auto w16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+            f.write("RIFF", 4); w32(riff); f.write("WAVE", 4);
+            f.write("fmt ", 4); w32(16); w16(1); w16(1);
+            w32(rate); w32(rate * 2); w16(2); w16(16);
+            f.write("data", 4); w32(dataBytes);
+            f.write(reinterpret_cast<const char*>(pcm.data()), dataBytes);
+        };
+        put(root / "lecteur/Disk Rotation.wav");
+        put(root / "lecteur/Move arm.wav");
+        put(root / "lecteur/Disk Insertion.wav");
+        put(root / "lecteur/Disk Removal.wav");
+        put(root / "imprimante/Matrix Printer.wav");
+        assert(fs525.loadVirtualII(root.string()));
+        assert(fs35.loadVirtualII(root.string()));
+        assert(printer.loadSample((root / "imprimante/Matrix Printer.wav").string()));
+        audio.restore(cfg, speaker, tape, fs525, fs35, printer);
+        assert(fs525.bank() == FloppySoundDevice::Bank::VirtualII);
+        assert(fs35.bank() == FloppySoundDevice::Bank::VirtualII);
+        assert(printer.sampled());
+        audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+        assert(cfg.getString("mechanical_sound_bank") == "virtual2");
+        std::filesystem::remove_all(root, ec);
     }
 
     std::cout << "audio coordinator: OK\n";
