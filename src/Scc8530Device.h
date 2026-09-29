@@ -16,7 +16,13 @@
 
 // Scc8530Device — port of MAME's `src/devices/machine/z80scc.{h,cpp}`
 // (Zilog Z8530 SCC, Serial Communications Controller), pinned to MAME
-// commit 588eeb33707f8d392701716c41b0420a48c41f28 (2026-08-29).
+// commit 588eeb33707f8d392701716c41b0420a48c41f28 (2026-08-29), with the
+// interrupt-block and FIFO fixes MAME master made since carried forward
+// (bug hunt 2026-09-29): per-channel `reset_interrupts(index)`, WR1 turning
+// a source off clears its IP, MIE gates /INT and the acknowledge but not
+// the IP bits (RR3 polling), the Zero Count interrupt obeys WR1 D0, the
+// special condition obeys the Rx interrupt mode, and the receive ring is
+// 3 + 1 slots. Line numbers cited as "master" refer to that newer file.
 //
 // The Z8530 is a two-channel USART with an on-chip baud-rate generator,
 // a 3-byte receive FIFO, a one-byte transmit buffer and a six-source
@@ -239,7 +245,7 @@ public:
     uint32_t rxRate(int channel) const;
     /// True while a byte occupies the transmit shift register.
     bool txBusy(int channel) const;
-    /// Bytes currently in the 3-deep receive FIFO.
+    /// Characters currently in the (3-deep) receive FIFO.
     int rxFifoCount(int channel) const;
 
     // ─── Snapshot (rewind) ───────────────────────────────────────────────
@@ -281,15 +287,19 @@ private:
         uint8_t wr0 = 0, wr1 = 0, wr2 = 0, wr3 = 0, wr4 = 0, wr5 = 0;
         uint8_t wr10 = 0, wr11 = 0, wr12 = 0, wr13 = 0, wr14 = 0, wr15 = 0;
 
-        // Receive FIFO — 3 deep on the NMOS 8530 (MAME z80scc.cpp:1049).
-        uint8_t rxData[3] = {0, 0, 0};
-        uint8_t rxError[3] = {0, 0, 0};
+        // Receive FIFO — 3 deep on the NMOS 8530, held in a ring of FOUR
+        // slots because the ring spends one telling full from empty. MAME
+        // master `z80scc_channel::device_start` (z80scc.cpp:1060-1062,
+        // `m_rx_fifo_sz = 3 + 1`); the pinned 588eeb33 ring was 3 slots and
+        // so held only two characters, overrunning on the chip's third.
+        static constexpr int kRxFifoSz = 3 + 1;
+        uint8_t rxData[kRxFifoSz] = {};
+        uint8_t rxError[kRxFifoSz] = {};
         /// SDLC (datasheet, not MAME): End Of Frame rides beside the slot
         /// rather than inside `rxError`, because MAME's `data_read` masks
         /// that byte down to the three async error bits and would drop it.
-        bool rxEof[3] = {false, false, false};
+        bool rxEof[kRxFifoSz] = {};
         int rxFifoRp = 0, rxFifoWp = 0;
-        static constexpr int kRxFifoSz = 3;
 
         // Transmit "FIFO" — one slot on the NMOS part (z80scc.cpp:1051),
         // whose fullness is carried by RR0 D2 (TBE) rather than pointers.
@@ -326,8 +336,8 @@ private:
         /// SDLC (datasheet, not MAME): the tail of the frame being RECEIVED
         /// that the FIFO could not take yet. On the wire the bytes arrive one
         /// per character time and the driver drains between them; POM2's seam
-        /// hands `receiveFrame` a whole frame at once and the 3-slot FIFO
-        /// signals full at two. Without this the tail vanished in SILENCE —
+        /// hands `receiveFrame` a whole frame at once and the FIFO holds
+        /// only three characters. Without this the tail vanished in SILENCE —
         /// the overrun bit lands on the slot the write pointer never left, so
         /// nothing reached RR1, and End Of Frame was marked on that same
         /// unreadable slot, so RR1 D7 never came up at all. A 3-byte LLAP
@@ -355,7 +365,7 @@ private:
     // ─── Device-level helpers (z80scc_device::) ──────────────────────────
     int  daisyIrqState() const;                       ///< z80scc.cpp:557
     void checkInterrupts();                           ///< z80scc.cpp:651
-    void resetInterrupts();                           ///< z80scc.cpp:666
+    void resetInterrupts(int index);                  ///< master z80scc.cpp:671
     uint8_t modifyVector(uint8_t vec, int index, uint8_t src) const; ///< :679
     static int extIntPriority(int type);              ///< z80scc.cpp:714
     void triggerInterrupt(int index, int type);       ///< z80scc.cpp:733
