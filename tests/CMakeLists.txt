@@ -8684,6 +8684,33 @@ pom2_add_headless_test(test_floppy_autosave
     LINK_LIBRARIES pom2_core_test)
 endif()
 
+# ─── Videx Videoterm 80-column card (][ / ][+) ────────────────────────────
+# MAME a2videoterm port: bus decode + HD6845S register file, the picture
+# (9-dot cells, alternate set, scroll/wrap, cursor blink from emuCycles) and
+# the TEXT + AN0 soft video switch through Apple2Display, the VDXT snapshot,
+# and — ROM-gated, SKIP 77 without the dumps — PR#3 on the real ][+ ROM with
+# the real firmware. The first three use a synthetic ROM and font.
+if(TARGET pom2_core_test)
+pom2_add_headless_test(test_videx_videoterm_bus
+    NAME videx_videoterm_bus TIMEOUT 20 PORTABLE
+    SOURCES videx_videoterm_bus_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+pom2_add_headless_test(test_videx_videoterm_render
+    NAME videx_videoterm_render TIMEOUT 20 PORTABLE
+    SOURCES videx_videoterm_render_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+pom2_add_headless_test(test_videx_videoterm_snapshot
+    NAME videx_videoterm_snapshot TIMEOUT 20 PORTABLE
+    SOURCES videx_videoterm_snapshot_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+pom2_add_headless_test(test_videx_videoterm_boot
+    NAME videx_videoterm_boot TIMEOUT 60
+    SOURCES videx_videoterm_boot_test.cpp
+    LINK_LIBRARIES pom2_core_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(videx_videoterm_boot PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.
 # Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries

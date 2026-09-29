@@ -58,6 +58,7 @@
 #include "TranswarpCard.h"
 #include "GrapplerCard.h"
 #include "LeChatMauveCard.h"
+#include "VidexVideotermCard.h"
 #include "Logger.h"
 #include "Memory.h"
 #include "Mockingboard.h"
@@ -756,6 +757,21 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             if (!made.warning.empty())
                 pom2::log().warn(made.warningCategory.c_str(), made.warning);
             if (made) st.memory().slotBus().plug(s, std::move(made.card));
+        }
+        else if (kind == "videoterm") {
+            // Videx Videoterm: ROM-gated in the factory. The display gets a
+            // non-owning pointer for its soft video switch (TEXT + AN0 put
+            // the card's picture on the monitor); the pre-rebuild hook in
+            // MainWindow.cpp clears it before the bus drops the card.
+            auto made = slotCardFactory_->create(
+                { kind, s, cpuIsCmosForSlots, activeProfile });
+            if (!made.warning.empty())
+                pom2::log().warn(made.warningCategory.c_str(), made.warning);
+            if (made) {
+                auto* videx = static_cast<VidexVideotermCard*>(made.card.get());
+                st.memory().slotBus().plug(s, std::move(made.card));
+                display->setVidexCard(videx);
+            }
         }
         else if (kind == "workstation") plugWorkstation(s);
         else if (kind == "4play")       plugFourPlay(s);

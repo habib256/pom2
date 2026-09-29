@@ -160,6 +160,32 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
           { "roms/341-0057.bin" }, 512, 0x0A6B084Bu, "MAME a2pic",
           "The Apple Parallel Interface refuses to plug — its PROM is the card.",
           RomMissingEffect::Unavailable },
+        // Videx Videoterm (MAME `a2videoterm`, a2videoterm.cpp:44-64). The
+        // factory tries the 60 Hz firmware first, then the 50 Hz one.
+        { "Other cards", "Videx Videoterm firmware v2.4, 60 Hz (clone card, 2 KB)",
+          { "roms/videx_videoterm_v24_60hz.bin" }, 2048, 0x5776FA24u,
+          "MAME a2videoterm BIOS 0 (6.ic6.bin)",
+          "The Videoterm falls back to the 50 Hz v2.4 firmware below (the "
+          "two differ only in the CRTC timing table: the cursor blinks at "
+          "the other rate). With neither dump the card is not offered.",
+          RomMissingEffect::Degraded },
+        { "Other cards", "Videx Videoterm firmware v2.4, 50 Hz (1 KB)",
+          { "roms/videx_videoterm_v24_50hz.bin" }, 1024, 0xBBE3BB28u,
+          "MAME a2videoterm BIOS 1 (videx videoterm rom 2.4.bin)",
+          "Only a fallback for the 60 Hz dump above — nothing changes while "
+          "that one is present. With neither dump the card is not offered.",
+          RomMissingEffect::Degraded },
+        { "Other cards", "Videx Videoterm character ROM, normal set",
+          { "roms/videx_videoterm_char_normal.bin" }, 2048, 0x87F89F08u,
+          "MAME a2videoterm (videx videoterm character rom normal.bin)",
+          "The Videoterm refuses to plug — its 80 columns have no glyphs.",
+          RomMissingEffect::Unavailable },
+        { "Other cards", "Videx Videoterm character ROM, inverse set",
+          { "roms/videx_videoterm_char_inverse.bin" }, 2048, 0x8A497A48u,
+          "MAME a2videoterm (4.ic4.bin)",
+          "The card derives the alternate set as the bitwise inverse of the "
+          "normal one — identical on every raster it displays.",
+          RomMissingEffect::Degraded },
         { "Other cards", "Mouse card slot EPROM (Apple 341-0270-C)",
           { "roms/mouse_341-0270-c.bin" }, 2048, 0, "",
           "Neither mouse card can be plugged (both variants need it).",

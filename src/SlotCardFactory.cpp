@@ -32,6 +32,7 @@
 #include "SlotPeripheral.h"
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
+#include "VidexVideotermCard.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -209,6 +210,62 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         }
         result.resourcePath = rom;
         result.status = "loaded: " + rom;
+        card->onReset();
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "videoterm") {
+        // Videx Videoterm. ROM-gated like the Grappler and the PIC: the
+        // firmware and the normal character set ARE the card — without them
+        // PR#3 jumps into $FF and the 80 columns have no glyphs. The 2 KB
+        // clone dump (MAME BIOS 0, 60 Hz CRTC table) is preferred, the 1 KB
+        // Videx v2.4 (BIOS 1, 50 Hz table) is the fallback. The alternate
+        // (inverse) set is optional: its absence is exactly ~normal.
+        const auto readUpTo = [](const std::string& path, std::size_t max) {
+            std::vector<uint8_t> b;
+            if (path.empty()) return b;
+            std::ifstream f(path, std::ios::binary);
+            b.resize(max + 1);   // one byte over: an oversized file is refused
+            f.read(reinterpret_cast<char*>(b.data()),
+                   static_cast<std::streamsize>(b.size()));
+            b.resize(static_cast<std::size_t>(f.gcount()));
+            return b;
+        };
+        auto card = std::make_unique<VidexVideotermCard>(request.slot);
+        std::string fwPath;
+        for (const std::string_view candidate : {
+                 "roms/videx_videoterm_v24_60hz.bin",
+                 "roms/videx_videoterm_v24_50hz.bin"}) {
+            const std::string p = locate_(candidate);
+            if (!p.empty() &&
+                card->loadFirmware(readUpTo(p, VidexVideotermCard::kRomBytes))) {
+                fwPath = p;
+                break;
+            }
+        }
+        const std::string normal = locate_("roms/videx_videoterm_char_normal.bin");
+        const std::string alt    = locate_("roms/videx_videoterm_char_inverse.bin");
+        std::vector<uint8_t> altBytes =
+            readUpTo(alt, VidexVideotermCard::kCharSetBytes);
+        if (altBytes.size() != VidexVideotermCard::kCharSetBytes) altBytes.clear();
+        const bool charsOk = card->loadCharRoms(
+            readUpTo(normal, VidexVideotermCard::kCharSetBytes), altBytes);
+        if (fwPath.empty() || !charsOk) {
+            result.warningCategory = "Videoterm";
+            result.warning = "Videx Videoterm requested in slot " +
+                std::to_string(request.slot) + " but " +
+                (fwPath.empty()
+                     ? "its firmware (roms/videx_videoterm_v24_60hz.bin, 2 KB, "
+                       "or roms/videx_videoterm_v24_50hz.bin, 1 KB)"
+                     : "its character ROM (roms/videx_videoterm_char_normal.bin, 2 KB)") +
+                " is missing or the wrong size — slot left empty";
+            return result;
+        }
+        result.resourcePath = fwPath;
+        result.status = "loaded: " + fwPath + " + " + normal +
+            (card->alternateIsDerived() ? std::string(" (inverse set derived)")
+                                        : " + " + alt);
         card->onReset();
         result.card = std::move(card);
         return result;

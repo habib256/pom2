@@ -668,6 +668,7 @@ PDF, screen dump, print history *(`printer_plan_2`'s remaining phases are
 unscheduled; the `ImageWriter.cpp` file-size debt is still owed as a **ratchet**
 obligation)* · ThunderClock+ and No-Slot Clock · Mouse Card, both models ·
 Joystick / paddles / 4play *(**4play is complete** — mark it so)* · TransWarp ·
+Videx Videoterm *(2026-09-29; ROM-gated, ][ / ][+ only)* ·
 Rewind + snapshot *("redo" and writable-WOZ undo closed as won't-do)* ·
 Debugger and memory panels · AI control server + SDK *(a break here is urgent —
 the project's own verification method depends on it)* · CLI + kiosk · Panel
@@ -1587,14 +1588,16 @@ rework. Full reasoning → `CHANGELOG.md`; abstraction rationale →
 
   **The four that earn their keep.**
 
-  - **Videx VideoTerm** (`a2videoterm`) — *the clearest functional hole.*
-    POM2 does the //e's 80 columns (internal, `$C300` firmware + AUX under
-    `iieMode`), so a **II/II+ has none at all**. The VideoTerm is the card
-    that made AppleWorks, word processors and CP/M usable on a II+. Not
-    cheap: it carries its own 6845 and its own dot clock, so it is a second
-    complete video path, not a slot peripheral. Cousins if the shape works:
-    `a2ultraterm`, `suprterminal`. **The one to do first** — it changes what
-    the machine can *do*, not what it can imitate.
+  - ✅ **Videx VideoTerm** (`a2videoterm`) — **done 2026-09-29**, catalog
+    key `videoterm` (][ / ][+, slot 3, ROM-gated on RetroBIOS's
+    `a2vidtrm.zip`): `VidexVideotermCard` + `Hd6845Crtc`, its 720 × 216
+    picture shown while TEXT + AN0, `PR#3` pinned on the real firmware by
+    `videx_videoterm_boot` → [DEV § Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard).
+    Left: the other MAME character sets (APL, Epson, French, German,
+    Katakana…) as a setting, and the cousins `a2ultraterm`, `suprterminal`,
+    which the `CardVideoSource` seam was shaped to take.
+    *(Was: the clearest functional hole — a II/II+ had no 80 columns at
+    all; the card that made word processors and CP/M usable on a II+.)*
   - **Mountain Computer Music System** (`a2mcms`) — the real blind spot for
     an emulator that already has Mockingboard A/C, Sound II, Phasor, SSI263
     and a stereo bus. 16 digital voices, the Apple II's first polyphonic

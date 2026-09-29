@@ -374,6 +374,8 @@ set(SOURCES
     src/NoSlotClock.cpp
     src/GrapplerCard.cpp
     src/GrapplerClassicCard.cpp
+    src/Hd6845Crtc.cpp
+    src/VidexVideotermCard.cpp
     src/AppleParallelCard.cpp
     src/CentronicsPrinter.cpp
     src/NtscPostProcessor.cpp
@@ -485,6 +487,8 @@ set(POM2_DEVICES_HEADERS
     src/MountableMediaCard.h
     src/PascalPrinterRom.h
     src/ProDOSBlockCard.h
+    src/PascalPrinterRom.h
+    src/CardVideoSource.h
     src/SlotRomAsm.h
     src/SuperSerialTransport.h
     src/Via6522.h
@@ -503,6 +507,8 @@ set(POM2_DEVICES_SOURCES
     src/FujiNetCard.cpp
     src/GrapplerCard.cpp
     src/GrapplerClassicCard.cpp
+    src/Hd6845Crtc.cpp
+    src/VidexVideotermCard.cpp
     src/AppleParallelCard.cpp
     src/CentronicsPrinter.cpp
     src/LeChatMauveCard.cpp
@@ -885,6 +891,9 @@ set(HEADERS
     src/GrapplerCard.h
     src/PascalPrinterRom.h
     src/GrapplerClassicCard.h
+    src/CardVideoSource.h
+    src/Hd6845Crtc.h
+    src/VidexVideotermCard.h
     src/AppleParallelCard.h
     src/CentronicsPrinter.h
     src/PhasorCard.h
@@ -1390,6 +1399,8 @@ set(POM2_CORE_SOURCES
     src/NoSlotClock.cpp
     src/GrapplerCard.cpp
     src/GrapplerClassicCard.cpp
+    src/Hd6845Crtc.cpp
+    src/VidexVideotermCard.cpp
     src/AppleParallelCard.cpp
     src/CentronicsPrinter.cpp
     src/PhasorCard.cpp

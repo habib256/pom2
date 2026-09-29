@@ -188,7 +188,12 @@ MainWindow::MainWindow(bool forceIIPlus)
               // `beginLocked` then destroys the cards; their destructors
               // would otherwise join those threads under stateMutex.
               [this] { stopSlotNetworkWorkers(); },
-              [this] { display->setChatMauveCard(nullptr); },
+              [this] {
+                  display->setChatMauveCard(nullptr);
+                  // Same rule for the Videx Videoterm's picture source: the
+                  // card is about to be destroyed with the rest of the bus.
+                  display->setVidexCard(nullptr);
+              },
               [this] {
                   aiServer->attach(controller.get(), display.get(),
                                    primaryDiskII(), primaryHdvCard());
