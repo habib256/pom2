@@ -268,7 +268,8 @@ struct FirmwareRig {
         }
         auto ssc = std::make_unique<SuperSerialCard>(2);
         card = ssc.get();
-        expect(card->loadFirmware(fw), "the shipped dump loads");
+        // An empty image keeps POM2's hand-assembled page (no EPROM).
+        if (!fw.empty()) expect(card->loadFirmware(fw), "the shipped dump loads");
         mem.slotBus().plug(2, std::move(ssc));
         mem.slotBus().reset();
         cpu.setCpuMode(M6502::CpuMode::CMOS);
@@ -371,6 +372,53 @@ void testEndToEnd(const std::string& dump)
     }
 }
 
+// Without the EPROM the card serves POM2's own page. The Monitor stores $Cn00
+// in CSW for PR#n and in KSW for IN#n, so $Cn00 has to tell the two apart:
+// it used to bind the OUTPUT hook whatever the call, so IN#2 read nothing,
+// looped rewriting CSW and returned $C2 as a keystroke, and the first
+// character handed to a fresh PR#2 was dropped.
+void testHandRom()
+{
+    const std::string rom = firstExisting({ "roms/apple2e.rom" });
+    if (rom.empty()) {
+        std::printf("  SKIP: roms/apple2e.rom is absent\n");
+        return;
+    }
+    {   // PR#2 — every character reaches the wire, the first one included.
+        FirmwareRig rig;
+        if (!rig.boot(rom, {})) return;
+        expect(!rig.card->firmwareLoaded(), "hand page: no EPROM loaded");
+        rig.card->setPrinterTap(true);
+        rig.card->setModemLinesTied(true);
+        rig.type("PR#2\r");
+        rig.type("PRINT \"HELLO\"\r");
+        const std::string out = rig.spooled();
+        expect(out.find("PRINT \"HELLO\"") != std::string::npos,
+               "hand page: PR#2 sends the echoed command whole");
+        expect(out.find("\rHELLO") != std::string::npos,
+               "hand page: PR#2 sends the output");
+        if (out.find("HELLO") == std::string::npos) rig.dump("PR#2");
+    }
+    {   // IN#2 — the peer types a command and BASIC runs it.
+        FirmwareRig rig;
+        if (!rig.boot(rom, {})) return;
+        rig.card->setModemLinesTied(true);
+        rig.type("IN#2\r");
+        const char* in = "PRINT 12345\r";
+        rig.card->deliverRxBytes(reinterpret_cast<const uint8_t*>(in), 12);
+        rig.run(3'000'000);
+        const uint8_t* ram = rig.mem.data();
+        expect(ram[0x39] == 0xC2 && ram[0x37] != 0xC2,
+               "hand page: IN#2 binds KSW and leaves CSW alone");
+        expect(rig.card->rxQueueDepth() == 0, "hand page: IN#2 reads the port");
+        const std::string screen = scrapeText(ram);
+        const bool ran = screen.find("\n12345") != std::string::npos ||
+                         screen.find(" 12345") != std::string::npos;
+        expect(ran, "hand page: IN#2 input reaches BASIC");
+        if (!ran) rig.dump(in);
+    }
+}
+
 }  // namespace
 
 int main()
@@ -381,6 +429,7 @@ int main()
     testFirmwareMap();
     testModeSwitches();
     testCableLines();
+    testHandRom();
     if (dump.empty()) {
         std::printf("  SKIP: roms/ssc_341-0065-a.bin is absent\n");
     } else {

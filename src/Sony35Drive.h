@@ -140,10 +140,12 @@ public:
     /// which is what a single-threaded host (CLI, tests) wants.
     void setWriteBackSink(Disk35WriteBackSink* sink) { writeBackSink_ = sink; }
 
-    /// User-facing one-shot — host calls this after a successful mount /
-    /// eject so the drive emits a click via the sound sink without going
-    /// through the IWM strobe path. Idempotent: nullptr sink → no-op.
-    void emitInsertClick();
+    /// User-facing one-shot — host calls this after a successful mount
+    /// (`inserting` true) or eject so the drive emits a click via the
+    /// sound sink without going through the IWM strobe path. Idempotent:
+    /// nullptr sink → no-op. The MAME bank plays one click either way;
+    /// the Virtual ][ bank picks the lid-close or lid-open recording.
+    void emitInsertClick(bool inserting = true);
 
     /// IWM SEL wire — bit 5 of IWM control register. Distinguishes
     /// "external" vs "internal" drive on the //c+ but also doubles as

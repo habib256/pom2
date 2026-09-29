@@ -112,6 +112,10 @@ public:
     /// only for any out-of-tree caller. Internal call sites should pick
     /// floppySound525()/floppySound35() explicitly.
     FloppySoundDevice& floppySound() { return *floppy525; }
+    /// User inserted or ejected a 5.25" disk. Plays the Virtual ][ lid
+    /// recording when that bank is selected; the MAME bank stays silent
+    /// here (a Disk II insert never clicked — startup restore must not thunk).
+    void noteFloppyLatch(bool inserting);
     AudioDevice&       audio()       { return *audioDev; }
     pom2::IWMDevice&   iwm()         { return *iwmDev; }
     pom2::SmartPortHub& smartPortHub() { return *hub; }
@@ -359,17 +363,10 @@ public:
     double emulatedCpuClockHz() const { return cpuClockHz_.load(); }
 
     /// Re-derive `emulatedCpuClockHz()` from the plugged ACCELERATOR card and
-    /// fan it back out. `setVideoStandard` folds in the accelerator the
-    /// PROFILE solders on (the //c+'s 4x), but a TransWarp is a card: it is
-    /// plugged and unplugged at runtime and the guest switches it at $C074,
-    /// so its multiplier cannot be folded in once. Called on the frame
-    /// boundary where `scaledFrameBudget()` already samples it; a no-op (one
-    /// double compare) when nothing moved, which is every machine without an
-    /// accelerator (bug hunt #10).
-    void refreshAcceleratorClock();
-
-    /// Same derivation, from a multiplier the caller has ALREADY sampled.
-    /// The chunk loops read `cpuSpeedMultiplier()` once per 4096-cycle chunk
+    /// fan it back out — a TransWarp is plugged, unplugged and switched at
+    /// $C074 at runtime, so its multiplier cannot be folded in once (bug
+    /// hunt #10). Takes the multiplier the caller ALREADY sampled under
+    /// `stateMtx`: the chunk loops read `cpuSpeedMultiplier()` once per 4096-cycle chunk
     /// under `stateMtx` to size the chunk; handing that same value here keeps
     /// the clock the devices are told and the speed the frame is actually run
     /// at on the SAME granularity. Returns immediately (one double compare)

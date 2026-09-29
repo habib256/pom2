@@ -6,6 +6,7 @@
 
 #include "EmulationController.h"
 #include "LironCard.h"
+#include "SmartPort35Unit.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SmartPortCard.h"
@@ -127,7 +128,7 @@ int main()
         const auto m = storage.mountDisk35(c3, settings, 1, d35.string());
         if (!m.ok) std::printf("liron 3.5: %s\n", m.error.c_str());
         assert(m.ok && m.bootSlot == 6);
-        assert(liron->bayInfo(1).kindLabel == "3.5\" 800K" &&
+        assert(liron->bayInfo(1).kindLabel == pom2::SmartPort35Unit::kKindLabel &&
                liron->bayInfo(1).path == d35.string() &&
                !liron->blockBackings()[1]->isLoaded());
     }

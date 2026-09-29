@@ -21,6 +21,7 @@
 #include "M6502.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -487,19 +488,27 @@ bool DiskIICard::installDisk(int drive, DiskImage&& prepared)
     }
     commitInFlightWrite();
 
-    // Same file, and the outgoing copy has unsaved changes: the prepared image
-    // was read BEFORE that flush, so installing it would silently roll the
-    // guest's writes back. Flush, then re-read under the lock. This is the one
-    // path where the two-phase form degrades to the inline cost, and it is the
-    // rare one — write-back is opt-in and the paths have to match exactly.
+    // Same file: the prepared image was read BEFORE anything this drive
+    // wrote since reached the file, so installing it would silently roll the
+    // guest's writes back. Flush, then re-read under the lock. Dirty or NOT —
+    // the floppy autosave can land and clear the dirty flag between phase 1
+    // and here, and gating on "still dirty" then installed the pre-save
+    // bytes over a file that already held the write (bug hunt 2026-09-29;
+    // Block512Backing::installPrepared has always re-read any same file).
+    // This is the one path where the two-phase form degrades to the inline
+    // cost, and it is the rare one: re-inserting the disk already in the bay.
     DiskImage& img = images[drive];
-    const bool sameFileStillDirty =
-        img.isLoaded() && img.hasUnsavedChanges() &&
-        !img.getPath().empty() && img.getPath() == prepared.getPath();
+    bool sameFile = img.isLoaded() && !img.getPath().empty() &&
+                    img.getPath() == prepared.getPath();
+    if (!sameFile && img.isLoaded() && !img.getPath().empty() &&
+        !prepared.getPath().empty()) {
+        std::error_code ec;
+        sameFile = std::filesystem::equivalent(img.getPath(), prepared.getPath(), ec);
+    }
 
     if (!flushOutgoingForSwap(drive)) return false;
 
-    if (sameFileStillDirty) {
+    if (sameFile) {
         const std::string path = prepared.getPath();
         // Heap for the same stack-size reason as prepareDisk above.
         auto reread = std::make_unique<DiskImage>();
@@ -562,10 +571,11 @@ bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
         active = (motorOffDelay > 0) ? MODE_DELAY : MODE_ACTIVE;
         lssStart();
     }
-    // No click here — fires at user-initiated insert via UI / CLI only.
+    // No click here. A user mount goes through MediaMount / StorageCoordinator,
+    // which plays the Virtual ][ lid recording when that bank is selected.
     // Auto-restore of the previous-session disk path calls insertDisk
-    // during MainWindow construction; firing the click there would
-    // surprise the user with a mechanical thunk on every startup.
+    // during MainWindow construction; a thunk on every startup would be
+    // the wrong sound, and the MAME bank has never clicked a 5.25" insert.
     pushIwmFloppy();
     return true;
 }

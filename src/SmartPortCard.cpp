@@ -512,6 +512,14 @@ void SmartPortCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     }
 }
 
+void SmartPortCard::noteIoError(size_t u)
+{
+    if (u >= kMaxUnits) return;
+    const bool rising = !ioError_[u];
+    ioError_[u] = true;
+    if (rising && sound_) sound_->ioError();
+}
+
 uint8_t SmartPortCard::statusByte() const
 {
     const SmartPortUnit* u = (activeUnit_ < kMaxUnits)
@@ -551,7 +559,7 @@ uint8_t SmartPortCard::readDataByte()
             // with a garbage buffer, AND keep the byte stream in phase by
             // serving a 0xFF-filled cache — a mid-transfer failure must not
             // desync the remaining 511 reads of the block.
-            ioError_[u] = true;
+            noteIoError(u);
             readCache_[u].fill(0xFF);
         }
         readCacheBlock_[u] = selectedBlock_[u];
@@ -591,7 +599,7 @@ void SmartPortCard::writeDataByte(uint8_t v)
         if (!unit->writeBlock(selectedBlock_[u], writeBuf_[u].data())) {
             // Out-of-range / rejected commit → report failure to ProDOS
             // (ROM write routine tests $C0n4 bit 0 and returns carry-set).
-            ioError_[u] = true;
+            noteIoError(u);
         }
         writeBufPrimed_[u] = false;
         // The just-committed block is no longer the most-recently-read

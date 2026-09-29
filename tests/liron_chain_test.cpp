@@ -20,6 +20,7 @@
 
 #include "Disk35Image.h"
 #include "LironCard.h"
+#include "SmartPort35Unit.h"
 #include "M6502.h"
 #include "Memory.h"
 #include "ProDOSVolume.h"
@@ -202,7 +203,7 @@ Outcome expect(const std::string& rom, const std::string& bootImage,
     return o;
 }
 
-int count(const std::vector<std::string>& kinds, const char* kind)
+int count(const std::vector<std::string>& kinds, std::string_view kind)
 {
     int n = 0;
     for (const auto& k : kinds) if (k == kind) ++n;
@@ -247,7 +248,7 @@ int main()
         const Outcome o = expect(rom, bootHdv, volumes, 14, 13);
         if (o.kinds.empty() || o.kinds[0] != "ProDOS HDV")
             fail("unit 0 did not mount the 4 MiB image as a hard disk");
-        if (count(o.kinds, "ProDOS HDV") != 7 || count(o.kinds, "3.5\" 800K") != 7)
+        if (count(o.kinds, "ProDOS HDV") != 7 || count(o.kinds, pom2::SmartPort35Unit::kKindLabel) != 7)
             fail("the chain is not seven hard disks and seven 3.5\" disks");
         if (o.blocksRead == 0) fail("nothing was read over the bus from the hard disk");
     }
@@ -261,7 +262,7 @@ int main()
         pom2::LironCard card(5);
         std::string err;
         if (!card.mountBay(3, volumes[0], err)) fail("mount a 3.5\" in unit 3: " + err);
-        if (card.bayInfo(3).kindLabel != "3.5\" 800K") fail("unit 3 is not a 3.5\"");
+        if (card.bayInfo(3).kindLabel != pom2::SmartPort35Unit::kKindLabel) fail("unit 3 is not a 3.5\"");
         if (!card.mountBay(3, volumes[1], err)) fail("mount a hard disk over it: " + err);
         if (card.bayInfo(3).kindLabel != "ProDOS HDV" || card.bayInfo(3).path != volumes[1])
             fail("the hard disk did not replace the 3.5\" in unit 3");
@@ -271,7 +272,7 @@ int main()
             fail("a missing file mounted");
         if (card.bayInfo(3).path != volumes[1])
             fail("a failed mount dropped the disk that was in the unit");
-        if (!card.mountBay(3, volumes[0], err) || card.bayInfo(3).kindLabel != "3.5\" 800K" ||
+        if (!card.mountBay(3, volumes[0], err) || card.bayInfo(3).kindLabel != pom2::SmartPort35Unit::kKindLabel ||
             card.blockBackings()[3]->isLoaded())
             fail("a 3.5\" did not replace the hard disk in unit 3");
         if (!card.ejectBay(3) || card.bayInfo(3).loaded) fail("eject unit 3");
@@ -291,7 +292,7 @@ int main()
         std::string err;
         if (!card.mountBay(0, volumes[0], err)) fail("mount a 3.5\": " + err);
         if (!card.mountBay(1, volumes[1], err)) fail("mount a hard disk: " + err);
-        if (card.bayInfo(0).kindLabel != "3.5\" 800K" ||
+        if (card.bayInfo(0).kindLabel != pom2::SmartPort35Unit::kKindLabel ||
             card.bayInfo(1).kindLabel != "ProDOS HDV")
             fail("the mixed-bay fixture is not one of each kind");
 

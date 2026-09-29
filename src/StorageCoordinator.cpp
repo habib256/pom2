@@ -573,6 +573,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountDiskII(
         appendDiskIIDriveSettingUpdates(updates, bus, *card, drive);
         result.ok = true;
     }
+    if (result.ok) controller.noteFloppyLatch(true);
     // The bay holds different media now — see invalidateRewindForMediaChange.
     invalidateRewindForMediaChange(controller);
     applySettingUpdates(settings, updates);
@@ -593,6 +594,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDiskII(
     // lifts the medium out under the lock; phase 2 writes it with the lock
     // released; a failed phase 2 puts the medium back so the user can retry.
     std::shared_ptr<DiskImage> pending;
+    bool hadDisk = false;
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -603,6 +605,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDiskII(
         if (!DiskIICard::validDrive(drive))
             return commandError("invalid Disk II drive " +
                                 std::to_string(drive + 1));
+        hadDisk = card->isDiskLoaded(drive);
         pending = card->takeEjectWriteBack(drive);
         appendDiskIIDriveSettingUpdates(updates, bus, *card, drive);
         result.ok = true;
@@ -617,6 +620,9 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectDiskII(
             return commandError(error);
         }
     }
+    // Lid-open only when a disk actually left. An empty bay, and a commit
+    // that put the medium back, stay quiet.
+    if (hadDisk) controller.noteFloppyLatch(false);
     // The bay holds different media now — see invalidateRewindForMediaChange.
     invalidateRewindForMediaChange(controller);
     applySettingUpdates(settings, updates);

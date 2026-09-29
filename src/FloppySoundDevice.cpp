@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <type_traits>
@@ -162,6 +163,95 @@ bool FloppySoundDevice::loadOneWav(const std::string& path, Sample& out)
     return !out.data.empty();
 }
 
+bool FloppySoundDevice::loadViiFile(const std::string& dir, const char* rel,
+                                    Sample& out, bool loop)
+{
+    namespace fs = std::filesystem;
+    const fs::path primary = fs::path(dir) / rel;
+    bool ok = loadOneWav(primary.string(), out);
+    if (!ok) {
+        // The bundle's lid / arm / power takes are AIFF. A `.wav` sibling
+        // is what a test writes, and what the USB copy already has next
+        // to the headerless `.raw` files.
+        std::string alt(rel);
+        constexpr const char* kAiff = ".aiff";
+        const size_t n = std::strlen(kAiff);
+        if (alt.size() >= n && alt.compare(alt.size() - n, n, kAiff) == 0) {
+            alt.replace(alt.size() - n, n, ".wav");
+            ok = loadOneWav((fs::path(dir) / alt).string(), out);
+        }
+    }
+    if (!ok) return false;
+    if (loop) applyLoopCrossfade(out.data);
+    return !out.data.empty();
+}
+
+bool FloppySoundDevice::loadVirtualII(const std::string& dir)
+{
+    // Drop the ready flag before replacing the vectors. The callback
+    // acquire-loads it before touching `vii_`, same publish as loadSamples.
+    viiReady_.store(false, std::memory_order_release);
+    struct Entry { ViiIdx idx; const char* rel; bool loop; bool required; };
+    static constexpr Entry kFiles[] = {
+        { VII_ROTATION, "lecteur/Disk Rotation.wav",  true,  true  },
+        { VII_BOOT,     "lecteur/Boot.wav",           false, false },
+        { VII_ARM,      "lecteur/Move arm.aiff",      false, true  },
+        { VII_INSERT,   "lecteur/Disk Insertion.aiff",false, true  },
+        { VII_EJECT,    "lecteur/Disk Removal.aiff",  false, true  },
+        { VII_IOERR,    "lecteur/I-O Error.wav",      false, false },
+        { VII_POP_ON,   "interface/PopOn2.aiff",      false, false },
+        { VII_POP_OFF,  "interface/PopOff2.aiff",     false, false },
+    };
+    int loaded = 0;
+    bool requiredOk = true;
+    for (const auto& e : kFiles) {
+        Sample s;
+        if (loadViiFile(dir, e.rel, s, e.loop)) {
+            vii_[e.idx] = std::move(s);
+            ++loaded;
+        } else {
+            vii_[e.idx] = Sample{};
+            if (e.required) requiredOk = false;
+            pom2::log().warn("FloppySound",
+                std::string("Virtual ][ missing: ") + dir + "/" + e.rel);
+        }
+    }
+    viiReady_.store(requiredOk, std::memory_order_release);
+    if (requiredOk) {
+        pom2::log().info("FloppySound",
+            "loaded Virtual ][ set (" + std::to_string(loaded) +
+            " files) from " + dir);
+    }
+    return requiredOk;
+}
+
+void FloppySoundDevice::setBank(Bank b)
+{
+    if (bank_.load(std::memory_order_relaxed) == b) return;
+    bank_.store(b, std::memory_order_release);
+    const uint32_t bit = (b == Bank::VirtualII) ? 1u : 0u;
+    uint32_t cur = bankGen_.load(std::memory_order_relaxed);
+    while (!bankGen_.compare_exchange_weak(cur, ((cur | 1u) + 1u) | bit,
+                                           std::memory_order_acq_rel)) {
+    }
+}
+
+void FloppySoundDevice::powerSwitch()
+{
+    if (bank_.load(std::memory_order_acquire) != Bank::VirtualII) return;
+    if (!viiReady_.load(std::memory_order_acquire)) return;
+    if (vii_[VII_POP_ON].data.empty()) return;
+    // First cold boot is a machine that was off: PopOn only. A later one
+    // is the user hitting Cold boot on a running machine, so the switch
+    // goes off and then on. The audio thread sequences them — queueing
+    // both in one drain must not let PopOn cut PopOff off at frame 0.
+    const bool cycle = powerLatched_.exchange(true, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(cmdMtx_);
+    if (cycle && !vii_[VII_POP_OFF].data.empty())
+        pushCommandLocked({CmdKind::Chassis, false, 0});
+    pushCommandLocked({CmdKind::Chassis, true, 0});
+}
+
 void FloppySoundDevice::setSampleRate(uint32_t hz)
 {
     if (hz == 0) hz = kAudioSampleRate;
@@ -221,23 +311,50 @@ int FloppySoundDevice::queuedCommandCount() const
 
 void FloppySoundDevice::motor(bool on, bool withDisk)
 {
-    if (!samplesLoaded_.load(std::memory_order_acquire)) return;
+    if (!isLoaded()) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
     pushCommandLocked({on ? CmdKind::MotorOn : CmdKind::MotorOff, withDisk, 0});
 }
 
 void FloppySoundDevice::step(int /*newTrack*/, uint64_t emuCycles)
 {
-    if (!samplesLoaded_.load(std::memory_order_acquire)) return;
+    if (!isLoaded()) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
     pushCommandLocked({CmdKind::Step, false, emuCycles});
 }
 
 void FloppySoundDevice::click()
 {
-    if (!samplesLoaded_.load(std::memory_order_acquire)) return;
+    if (!isLoaded()) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
-    pushCommandLocked({CmdKind::Click, false, 0});
+    if (bank_.load(std::memory_order_acquire) == Bank::VirtualII)
+        pushCommandLocked({CmdKind::Latch, true, 0});
+    else
+        pushCommandLocked({CmdKind::Click, false, 0});
+}
+
+void FloppySoundDevice::latch(bool inserting)
+{
+    if (bank_.load(std::memory_order_acquire) == Bank::VirtualII) {
+        if (!viiReady_.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::mutex> lk(cmdMtx_);
+        pushCommandLocked({CmdKind::Latch, inserting, 0});
+        return;
+    }
+    // MAME: 3.5" inserts and ejects have always clicked. 5.25" ones have
+    // not — DiskIICard keeps startup restore silent, and a latch() from
+    // the user mount path must not grow a new thunk on the default bank.
+    if (formFactor_ != FormFactor::FF35) return;
+    click();
+}
+
+void FloppySoundDevice::ioError()
+{
+    if (bank_.load(std::memory_order_acquire) != Bank::VirtualII) return;
+    if (!viiReady_.load(std::memory_order_acquire)) return;
+    if (vii_[VII_IOERR].data.empty()) return;
+    std::lock_guard<std::mutex> lk(cmdMtx_);
+    pushCommandLocked({CmdKind::IoError, false, 0});
 }
 
 // ─── Audio-thread internals ─────────────────────────────────────────────
@@ -264,7 +381,9 @@ void FloppySoundDevice::drainCommands()
         std::lock_guard<std::mutex> lk(cmdMtx_);
         cmdScratch_.swap(cmdQueue_);
     }
+    const bool vii = audioVii_;
     for (const Cmd& c : cmdScratch_) {
+        if (vii) { drainVirtualII(c); continue; }
         switch (c.kind) {
         case CmdKind::MotorOn: {
             // A fresh MotorOn cancels any pending wall-clock spin-down.
@@ -387,6 +506,13 @@ void FloppySoundDevice::drainCommands()
             clickPos_    = 0.0;
             break;
         }
+        case CmdKind::Latch:
+        case CmdKind::IoError:
+        case CmdKind::Chassis:
+            // Queued for the Virtual ][ bank. A bank change between the
+            // push and this drain drops them — the MAME set has no voice
+            // for a lid, an I/O grunt or the power switch.
+            break;
         }
     }
     // Keep the capacity, drop the contents (no free on the audio thread).
@@ -456,11 +582,279 @@ void FloppySoundDevice::mixLoop(int sampleIdx, double& pos, double pitch,
     }
 }
 
+void FloppySoundDevice::clearVoices()
+{
+    audioMotorOn_ = false;
+    audioWithDisk_ = false;
+    pendingMotorOff_ = false;
+    startIdx_ = -1;
+    startPos_ = 0.0;
+    spinLoopIdx_ = -1;
+    spinLoopPos_ = 0.0;
+    endIdx_ = -1;
+    endPos_ = 0.0;
+    stepSampleIdx_ = -1;
+    stepPos_ = 0.0;
+    stepPitch_ = 1.0;
+    audioInSeek_ = false;
+    anyStepSeen_ = false;
+    lastStepCycle_ = 0;
+    fadeIdx_ = -1;
+    fadeLeft_ = 0;
+    attackLeft_ = 0;
+    clickActive_ = false;
+    clickPos_ = 0.0;
+    viiMotor_ = false;
+    viiRotPos_ = 0.0;
+    viiRotFade_ = 0;
+    viiRotFadePos_ = 0.0;
+    viiBoot_ = false;
+    viiBootPos_ = 0.0;
+    viiArm_ = false;
+    viiArmPos_ = 0.0;
+    viiDoor_ = false;
+    viiDoorIdx_ = -1;
+    viiDoorPos_ = 0.0;
+    viiErr_ = false;
+    viiErrPos_ = 0.0;
+    viiChassis_ = false;
+    viiChassisIdx_ = -1;
+    viiChassisPos_ = 0.0;
+    viiPopOnAfter_ = false;
+}
+
+// A phase sweep is a few milliseconds; the arm recording is 413 ms. Restarting
+// it on every phase would stack the attack. A new movement after this gap
+// (the head actually stopped) starts the take over.
+static constexpr double kViiArmJoinMs = 120.0;
+
+void FloppySoundDevice::drainVirtualII(const Cmd& c)
+{
+    switch (c.kind) {
+    case CmdKind::MotorOn:
+        pendingMotorOff_ = false;
+        viiRotFade_ = 0;
+        if (!viiMotor_) {
+            viiMotor_ = true;
+            audioMotorOn_ = true;
+            viiRotPos_ = 0.0;
+            if (!vii_[VII_BOOT].data.empty()) {
+                viiBoot_ = true;
+                viiBootPos_ = 0.0;
+            }
+        }
+        audioWithDisk_ = c.withDisk;
+        break;
+    case CmdKind::MotorOff:
+        if (viiMotor_ && !pendingMotorOff_) {
+            const double sr = static_cast<double>(hostSampleRate());
+            pendingMotorOff_ = true;
+            motorOffDeadline_ =
+                audioFrameCounter_.load(std::memory_order_relaxed) +
+                static_cast<uint64_t>(kMotorOffHoldMs * sr / 1000.0);
+        }
+        break;
+    case CmdKind::Step: {
+        // Same emulated-time gap the MAME path uses. Under disk turbo a
+        // whole phase sweep lands in one audio buffer; wall-clock gaps
+        // would all read as zero and retrigger the arm every step.
+        double gapMs = 1e9;
+        if (anyStepSeen_) {
+            if (c.emuCycles > lastStepCycle_) {
+                gapMs = static_cast<double>(c.emuCycles - lastStepCycle_) * 1000.0 /
+                        cpuClockHz_.load(std::memory_order_relaxed);
+            } else if (c.emuCycles == lastStepCycle_) {
+                gapMs = 0.0;
+            }
+        }
+        anyStepSeen_ = true;
+        if (gapMs < 1.0) gapMs = 1.0;
+        lastStepCycle_ = c.emuCycles;
+        const bool armPlaying = viiArm_ &&
+            viiArmPos_ + 1.0 < static_cast<double>(vii_[VII_ARM].data.size());
+        if (armPlaying && gapMs <= kViiArmJoinMs) break;
+        viiArm_ = true;
+        viiArmPos_ = 0.0;
+        break;
+    }
+    case CmdKind::Click:
+    case CmdKind::Latch: {
+        const int idx = c.withDisk ? VII_INSERT : VII_EJECT;
+        // A bare Click (the old undifferentiated thunk) is a lid close.
+        const int use = (c.kind == CmdKind::Click) ? VII_INSERT : idx;
+        if (vii_[use].data.empty()) break;
+        viiDoor_ = true;
+        viiDoorIdx_ = use;
+        viiDoorPos_ = 0.0;
+        break;
+    }
+    case CmdKind::IoError: {
+        const Sample& s = vii_[VII_IOERR];
+        if (s.data.empty()) break;
+        // A 512-byte failure is one event. A retry storm that re-enters
+        // before the grunt has decayed must not machine-gun it.
+        if (viiErr_ && viiErrPos_ < static_cast<double>(s.data.size()) * 0.70)
+            break;
+        viiErr_ = true;
+        viiErrPos_ = 0.0;
+        break;
+    }
+    case CmdKind::Chassis:
+        if (!c.withDisk) {
+            if (vii_[VII_POP_OFF].data.empty()) break;
+            viiChassis_ = true;
+            viiChassisIdx_ = VII_POP_OFF;
+            viiChassisPos_ = 0.0;
+            viiPopOnAfter_ = false;
+        } else if (viiChassis_ && viiChassisIdx_ == VII_POP_OFF) {
+            viiPopOnAfter_ = true;
+        } else if (!vii_[VII_POP_ON].data.empty()) {
+            viiChassis_ = true;
+            viiChassisIdx_ = VII_POP_ON;
+            viiChassisPos_ = 0.0;
+            viiPopOnAfter_ = false;
+        }
+        break;
+    }
+}
+
+void FloppySoundDevice::mixVii(int idx, double& pos, double pitch, bool loop,
+                               float* out, int frames, float gain)
+{
+    if (idx < 0 || idx >= VII_COUNT) return;
+    const Sample& s = vii_[idx];
+    if (s.data.size() < 2) return;
+    const double rate = pitch * static_cast<double>(s.sourceRate)
+                              / static_cast<double>(hostSampleRate());
+    if (!(rate > 0.0) || rate > 1e6) {
+        if (!loop) pos = static_cast<double>(s.data.size());
+        return;
+    }
+    const double len = static_cast<double>(s.data.size());
+    for (int i = 0; i < frames; ++i) {
+        if (!loop && pos >= len - 1.0) {
+            pos = len;
+            break;
+        }
+        if (loop) {
+            while (pos >= len) pos -= len;
+            while (pos < 0.0)  pos += len;
+        }
+        const size_t k = static_cast<size_t>(pos);
+        const size_t k1 = (k + 1 >= s.data.size()) ? 0 : k + 1;
+        const float f = static_cast<float>(pos - static_cast<double>(k));
+        out[i] += (s.data[k] + f * (s.data[k1] - s.data[k])) * gain;
+        pos += rate;
+    }
+}
+
+void FloppySoundDevice::fillVirtualII(float* output, int frameCount)
+{
+    drainCommands();
+    if (!viiReady_.load(std::memory_order_acquire) ||
+        muted_.load(std::memory_order_relaxed)) {
+        audioFrameCounter_.fetch_add(static_cast<uint64_t>(frameCount),
+                                     std::memory_order_relaxed);
+        return;
+    }
+    const float gain = volume_.load(std::memory_order_relaxed);
+    const double motorPitch =
+        static_cast<double>(motorPitch_.load(std::memory_order_relaxed));
+
+    if (pendingMotorOff_) {
+        const uint64_t now = audioFrameCounter_.load(std::memory_order_relaxed);
+        if (now >= motorOffDeadline_) {
+            pendingMotorOff_ = false;
+            audioMotorOn_ = false;
+            viiMotor_ = false;
+            viiRotFade_ = kFadeFrames;
+            viiRotFadePos_ = viiRotPos_;
+        }
+    }
+
+    if (viiMotor_) {
+        mixVii(VII_ROTATION, viiRotPos_, motorPitch, true,
+               output, frameCount, gain * 0.85f);
+    } else if (viiRotFade_ > 0) {
+        float tmp[512];
+        int done = 0;
+        const int n = std::min(frameCount, viiRotFade_);
+        while (done < n) {
+            const int chunk = std::min(n - done, 512);
+            std::fill(tmp, tmp + chunk, 0.0f);
+            mixVii(VII_ROTATION, viiRotFadePos_, motorPitch, true,
+                   tmp, chunk, gain * 0.85f);
+            for (int i = 0; i < chunk; ++i) {
+                const float ramp = static_cast<float>(viiRotFade_ - i) /
+                                   static_cast<float>(kFadeFrames);
+                output[done + i] += tmp[i] * ramp;
+            }
+            viiRotFade_ -= chunk;
+            done += chunk;
+        }
+        if (viiRotFade_ <= 0) viiRotFade_ = 0;
+    }
+
+    auto shot = [&](bool& active, int idx, double& pos, double pitch, float g) mutable {
+        if (!active) return;
+        const size_t len = (idx >= 0 && idx < VII_COUNT) ? vii_[idx].data.size() : 0;
+        if (len < 2 || pos >= static_cast<double>(len)) { active = false; return; }
+        mixVii(idx, pos, pitch, false, output, frameCount, g);
+        if (pos >= static_cast<double>(len)) active = false;
+    };
+    shot(viiBoot_, VII_BOOT, viiBootPos_, motorPitch, gain);
+    shot(viiArm_, VII_ARM, viiArmPos_, 1.0, gain * 0.9f);
+    shot(viiDoor_, viiDoorIdx_, viiDoorPos_, 1.0, gain);
+    shot(viiErr_, VII_IOERR, viiErrPos_, 1.0, gain);
+    shot(viiChassis_, viiChassisIdx_, viiChassisPos_, 1.0, gain * 0.9f);
+    // PopOn starts on the next buffer, at the frame after PopOff ended,
+    // rather than from frame 0 of the buffer that finished the switch-off.
+    if (!viiChassis_ && viiPopOnAfter_ && !vii_[VII_POP_ON].data.empty()) {
+        viiPopOnAfter_ = false;
+        viiChassis_ = true;
+        viiChassisIdx_ = VII_POP_ON;
+        viiChassisPos_ = 0.0;
+    }
+
+    audioFrameCounter_.fetch_add(static_cast<uint64_t>(frameCount),
+                                 std::memory_order_relaxed);
+}
+
 void FloppySoundDevice::fillAudioBuffer(float* output, int frameCount)
 {
     if (frameCount <= 0) return;
     // AudioDevice::mixSources zeroes the temp buffer before calling each
     // source, so we mix additively into a zero-initialised window.
+
+    const uint32_t gen = bankGen_.load(std::memory_order_acquire);
+    if (gen != audioBankGen_) {
+        // The motor is STATE, not an event: the controllers push only its
+        // edges, so a spindle that was turning must keep turning in the
+        // other bank — nothing will send another MotorOn until the guest
+        // cycles the drive. Every other voice is a one-shot and is dropped.
+        const bool     spinning = audioMotorOn_;
+        const bool     withDisk = audioWithDisk_;
+        const bool     pending  = pendingMotorOff_;
+        const uint64_t deadline = motorOffDeadline_;
+        clearVoices();
+        audioBankGen_ = gen;
+        audioVii_     = (gen & 1u) != 0;
+        if (spinning) {
+            audioMotorOn_     = true;
+            audioWithDisk_    = withDisk;
+            pendingMotorOff_  = pending;
+            motorOffDeadline_ = deadline;
+            if (audioVii_) {
+                viiMotor_ = true;      // straight into the loop, no boot chirp
+            } else {
+                spinLoopIdx_ = withDisk ? SPIN_LOADED : SPIN_EMPTY;   // no spin-up
+            }
+        }
+    }
+    if (audioVii_) {
+        fillVirtualII(output, frameCount);
+        return;
+    }
 
     drainCommands();
 

@@ -89,19 +89,12 @@ void EmulationController::setVideoStandard(VideoStandard s)
     if (drive35Ext2) drive35Ext2->setStandardClock(vt.cpuClockHz);
 }
 
-void EmulationController::refreshAcceleratorClock()
-{
-    // Same derivation as setVideoStandard, times what the ACCELERATOR CARD
-    // adds. Without this a plugged TransWarp multiplied the frame's cycle
-    // budget (scaledFrameBudget) but every emuCycles consumer kept the stock
-    // clock: the speaker read a 3.5x cycle stamp as 3.5x the time it is, so a
-    // 1 kHz tone came out at 298 Hz and two thirds of the toggles were
-    // purged as "the producer ran ahead". Exactly the //c+ defect of bug
-    // hunt #7, arriving through a slot instead of through the profile.
-    applyAcceleratorClock(mem.slotBus().cpuSpeedMultiplier());
-}
-
-// The body of the above, taking the multiplier the caller already sampled.
+// Same derivation as setVideoStandard, times what the ACCELERATOR CARD
+// adds. Without it a plugged TransWarp multiplied the frame's cycle budget
+// but every emuCycles consumer kept the stock clock: the speaker read a 3.5x
+// cycle stamp as 3.5x the time it is, so a 1 kHz tone came out at 298 Hz
+// (bug hunt #7's //c+ defect, arriving through a slot). The caller passes
+// the multiplier it sampled under the lock.
 //
 // The frame's cycle BUDGET has been chunk-granular since 2026-09-09 (the
 // multiplier is re-read every 4096 cycles), while this fan-out stayed
@@ -664,7 +657,7 @@ bool EmulationController::eject35(int idx)
         drive->notifyMediaChange();
         // Mechanical click on user-initiated eject — pairs with
         // the click emitted by `mount35` above.
-        drive->emitInsertClick();
+        drive->emitInsertClick(false);
     }
     return true;
 }
@@ -766,8 +759,8 @@ void EmulationController::tickFrame()
     // own frame interval, so the emulated clock tracks real time on any
     // display. The threaded path doesn't need this — workerLoop sleeps to
     // an absolute deadline.
-    refreshAcceleratorClock();
-    // Base cycles; the multiplier is sampled per chunk — see workerLoop.
+    // Base cycles; the multiplier is sampled — and the clock fanned out —
+    // per chunk under the lock, as in workerLoop.
     int64_t budget = cyclesPerFrame.load();
     // WASM ONLY. The browser is the only caller that drives this off a
     // display refresh; every other caller is a HEADLESS TEST, where "one
@@ -946,7 +939,17 @@ void EmulationController::coldBoot()
     processor.hardReset();
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
+    // Virtual ][ power switch. No-op on the MAME bank. The first cold boot
+    // of a process is PopOn; a later one (the toolbar) is PopOff then PopOn.
+    if (floppy525) floppy525->powerSwitch();
     pom2::log().info("Emul", "Cold boot (RAM wiped)");
+}
+
+void EmulationController::noteFloppyLatch(bool inserting)
+{
+    if (!floppy525) return;
+    if (floppy525->bank() != FloppySoundDevice::Bank::VirtualII) return;
+    floppy525->latch(inserting);
 }
 
 bool EmulationController::bootFromSlot(int slot)
@@ -1740,11 +1743,14 @@ void EmulationController::workerLoop()
         // An accelerator card (TransWarp) multiplies the frame's cycle
         // budget: on this machine "running the 6502 faster" IS giving it
         // more cycles per video frame, which is why POM2 keeps the Apple's
-        // own CPU where MAME has to substitute a second one. Read once per
-        // frame — see TranswarpCard.h on why sampling a sub-frame duty
-        // cycle at this rate is exact in aggregate. Returns 1.0 (and
-        // touches nothing) on any machine without such a card.
-        refreshAcceleratorClock();
+        // own CPU where MAME has to substitute a second one. The clock
+        // fan-out happens per chunk, UNDER the lock, below. A frame-level
+        // refreshAcceleratorClock() used to run here too, before the lock:
+        // it walked every slot card's cpuSpeedMultiplier() and could call
+        // setCpuClock() on all of them while the UI replugged the bus — a
+        // virtual call on a card being destroyed when a CLI FujiNet whose
+        // transport failed was unplugged after start() (bug hunt
+        // 2026-09-29). The first chunk's locked sample made it redundant.
         // The frame is budgeted in BASE cycles (the 1 MHz clock's) and the
         // accelerator's multiplier is sampled per 4096-cycle chunk, not per
         // frame (2026-09-09): a TransWarp's slow window that opens mid-frame

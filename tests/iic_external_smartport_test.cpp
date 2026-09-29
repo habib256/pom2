@@ -300,6 +300,37 @@ int main()
         return 77;   // ctest SKIP_RETURN_CODE
     }
 
+    // Snapshot of a fourteen-unit chain keeps bays 8-13 in the media mask.
+    // XSP1 saved it as one byte, so a restore saw bay 9 "change" at the
+    // first access and refused a pending WRITE (bug hunt 2026-09-29).
+    {
+        SlotBus bus;
+        auto sp = std::make_unique<pom2::SmartPortCard>(5);
+        sp->setUnitCount(14);
+        for (int u = 0; u < 14; ++u)
+            sp->setUnit(u, std::make_unique<pom2::SmartPort35Unit>());
+        std::string err;
+        if (!sp->mountBay(9, disk35, err)) fail("mount bay 9 of a 14-unit chain");
+        bus.plug(5, std::move(sp));
+        pom2::IIcExternalSmartPort live(&bus);
+        (void)live.live();
+        if (live.mediaMask() != (1u << 9)) fail("live mask is not bay 9");
+        std::vector<uint8_t> blob;
+        live.appendSnapshotState(blob);
+        pom2::IIcExternalSmartPort restored(&bus);
+        if (restored.loadSnapshotState(blob.data(), blob.size()) != blob.size())
+            fail("port blob did not consume itself");
+        if (restored.mediaMask() != (1u << 9))
+            fail("snapshot dropped bay 9 from the media mask");
+        // An XSP1 blob (one mask byte) still loads.
+        std::vector<uint8_t> v1(blob.begin(), blob.end() - 3);
+        v1[3] = '1';
+        v1.back() = 0x05;
+        if (restored.loadSnapshotState(v1.data(), v1.size()) != v1.size() ||
+            restored.mediaMask() != 0x05)
+            fail("an XSP1 port blob no longer loads");
+    }
+
     // A. Internal 5.25" boots; the external 3.5" is a data volume.
     {
         const Outcome o = run(rom, disk525, disk35, /*bootSlot5=*/false);

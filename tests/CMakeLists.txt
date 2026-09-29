@@ -1718,6 +1718,34 @@ add_test(NAME floppy_sound_smoke
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(floppy_sound_smoke PROPERTIES TIMEOUT 10)
 
+# Virtual ][ mechanical bank. Synthesised stand-ins — the commercial
+# recordings are not in the tree. Links AudioDevice for miniaudio's decoder.
+add_executable(test_virtual_ii_sound
+    virtual_ii_sound_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterSoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
+)
+target_include_directories(test_virtual_ii_sound PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_virtual_ii_sound PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_virtual_ii_sound PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_virtual_ii_sound PRIVATE winmm)
+endif()
+add_test(NAME virtual_ii_sound
+    COMMAND test_virtual_ii_sound
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(virtual_ii_sound PROPERTIES TIMEOUT 20)
+
 # ─── Printer grain scheduler: a burst must THIN, not STACK ───────────────
 # Bug hunt #13. `schedule()` clamped its cursor onto the kMaxAheadSeconds cap
 # while the drop gate was strictly greater, so once a burst reached the cap
@@ -1730,10 +1758,15 @@ set_tests_properties(floppy_sound_smoke PROPERTIES TIMEOUT 10)
 add_executable(test_printer_grain_pileup
     printer_grain_pileup_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterSoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
 )
 target_include_directories(test_printer_grain_pileup PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_printer_grain_pileup PRIVATE Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_printer_grain_pileup PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
 endif()
 add_test(NAME printer_grain_pileup COMMAND test_printer_grain_pileup
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -1763,8 +1796,13 @@ set_tests_properties(printer_paper_tray PROPERTIES TIMEOUT 20)
 add_executable(test_printer_sound_crackle
     printer_sound_crackle_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterSoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
 )
 target_include_directories(test_printer_sound_crackle PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(APPLE)
+    target_link_libraries(test_printer_sound_crackle PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
 add_test(NAME printer_sound_crackle COMMAND test_printer_sound_crackle)
 set_tests_properties(printer_sound_crackle PROPERTIES TIMEOUT 60)
 
@@ -7067,10 +7105,15 @@ set_tests_properties(printer_screen_dump PROPERTIES TIMEOUT 30)
 add_executable(test_printer_sound
     printer_sound_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterSoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
 )
 target_include_directories(test_printer_sound PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_printer_sound PRIVATE Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_printer_sound PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
 endif()
 add_test(NAME printer_sound COMMAND test_printer_sound
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

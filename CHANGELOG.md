@@ -5,6 +5,68 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-29 — Bug hunt: four hunters on the code since 09-17, twelve fixes
+
+Every finding was reproduced by a probe or a failing test before it was fixed,
+and each is now pinned.
+
+- **Re-inserting the disk already in a 5.25" bay could lose a SAVE.**
+  `DiskIICard::installDisk` re-read the file only when the outgoing copy was
+  still dirty. The floppy autosave can land between the unlocked phase 1 and
+  phase 2, clear the flag, and phase 2 then installed the pre-save bytes over
+  a file that held the write. The next DOS write committed its stale catalog
+  over it. Now any same file is re-read (`fs::equivalent` as well as string
+  equality), as `Block512Backing::installPrepared` always did. Pin:
+  `floppy_autosave`.
+- **A failed autosave's error outlived an explicit save.** Only a successful
+  autosave collect cleared it, so a medium saved by flush / `saveDirty` kept
+  reading "error" and `POST /disk/sync` failed. `MediaAutosave::due` clears
+  it when nothing is owed and nothing is in flight. Pin: `floppy_autosave`.
+- **`IN#n` on the SSC's hand-assembled page (no EPROM) hung the machine.**
+  `$Cn00` is both hooks: PR#n puts it in CSW, IN#n in KSW. The page always
+  bound the output hook, so IN#n rewrote CSW on every key poll, returned
+  `$Cn` as a keystroke and never read the port. A dispatcher at `$Cn11` now
+  tells the two apart by CSW, and both binds carry on into `cout` / `cin`
+  instead of returning. Pin: `ssc_firmware` (hand page, end to end).
+- **SSC TX pacing burst the whole ring after a pause.** The credit cap was
+  `kBufCap`, the ring's own size. It is now 50 ms of line time. Pin:
+  `ssc_acia_smoke`.
+- **The SSC's transport thread drove the CPU IRQ line** on connect
+  (`clearIrqSource` → `assertIrq`). It now drops the source and marks the
+  line dirty for the CPU thread.
+- **The SSC snapshot lost a byte parked behind CTS** (`tdrHeld_`). It is
+  appended and optional on load. Pin: `ssc_acia_smoke`.
+- **The //c external port's snapshot kept bays 0-7 of the media mask** after
+  the slot-5 chain went to fourteen units, which is the Liron bug of
+  2026-09-11 again. A restored WRITE to bay 8-13 was refused as stale. The
+  blob is now `XSP2` with a four-byte mask, and `XSP1` still loads. Pin:
+  `iic_external_smartport`.
+- **The worker walked the slot bus without `stateMutex`** once per frame
+  (`refreshAcceleratorClock`, before the chunk loop), calling
+  `cpuSpeedMultiplier()` / `setCpuClock()` on every card while the UI could
+  replug it. An example is a CLI FujiNet whose transport failed and was
+  unplugged after `start()`. The per-chunk call under the lock already did
+  the job, so the unlocked one is gone, with the function.
+- **Virtual ][ bank:** a bank change while the spindle turned silenced it
+  until the guest cycled the motor, because the controllers send only edges.
+  The motor now carries across the change, and the audio thread takes bank
+  and generation from one atomic. The matrix-printer loop restarted
+  mid-waveform at full gain (a click per strike after a pause) and jumped
+  back up when extended during its release; one envelope now covers both.
+  Quitting on a machine without `roms/virtual_ii_sons/` rewrote
+  `mechanical_sound_bank` to `mame`. Pins: `virtual_ii_sound`,
+  `audio_coordinator`.
+- **Four tests left red by 2fbff64 were updated:** `liron_chain` and
+  `hdv_free_bay` (the UniDisk kind label), `liron_boot35` (`monW` no longer
+  starts a Sony motor, as in MAME), and `vbl_ioudis_annunciator` (the third
+  Sony's snapshot section is a fifth empty tail).
+
+Refuted along the way: capture ordering, use-after-free on unplug
+mid-commit, lock-held I/O in the autosave, and rewind epochs; SSC status /
+reset / baud semantics; chain numbering, Sony connect / eject, and the
+stale MIG select after reset; TransWarp CMOS substitution, RomFetch hashes
+and paths, the CLI parsers, and the AI server's locking and bounds.
+
 ## 2026-09-27 — External Sony drives and intelligent UniDisk chains
 
 - The //c+ ROM now discovers its external Sony drives: the MIG writes

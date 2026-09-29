@@ -78,6 +78,15 @@ public:
     /// future SmartPort / Liron card can opt in by passing FormFactor::FF35.
     enum class FormFactor { FF525, FF35 };
 
+    /// Which recording drives the mechanism. `Mame` is the 10-WAV
+    /// seek/spin set and the default. `VirtualII` is the Disk II
+    /// recordings shipped with Virtual ][ (Gerard Putter): one motor
+    /// revolution, one arm movement, separate lid open/close, a boot
+    /// chirp, an I/O-error grunt and the machine's power switch.
+    /// Those files are commercial — `roms/virtual_ii_sons/` is local
+    /// only (gitignored, denied from packages). See loadVirtualII().
+    enum class Bank : uint8_t { Mame, VirtualII };
+
     FloppySoundDevice();
     ~FloppySoundDevice() override = default;
 
@@ -92,7 +101,28 @@ public:
     /// gracefully (missing samples just go silent).
     bool loadSamples(const std::string& dir,
                      FormFactor ff = FormFactor::FF525);
-    bool isLoaded() const { return samplesLoaded_.load(std::memory_order_acquire); }
+
+    /// Load the Virtual ][ set from `dir` (typically `roms/virtual_ii_sons`).
+    /// Expects the bundle layout: `lecteur/` (rotation, boot, arm, lid,
+    /// I/O error) and `interface/` (power on / off). `.aiff` names fall
+    /// back to a `.wav` sibling so a test can synthesise the set. Does
+    /// not drop a MAME bank already loaded — `setBank` picks which one
+    /// plays. Returns true when the four drive recordings the model
+    /// needs (rotation, arm, insert, eject) all decoded.
+    bool loadVirtualII(const std::string& dir);
+    bool virtualIIReady() const { return viiReady_.load(std::memory_order_acquire); }
+
+    void setBank(Bank b);
+    Bank bank() const { return bank_.load(std::memory_order_acquire); }
+
+    /// True when the ACTIVE bank has its samples. The mixer dims a row
+    /// on false; `motor` / `step` / `click` no-op on false.
+    bool isLoaded() const
+    {
+        return bank() == Bank::VirtualII
+            ? virtualIIReady()
+            : samplesLoaded_.load(std::memory_order_acquire);
+    }
     FormFactor formFactor() const { return formFactor_; }
 
     /// Configure output sample rate. Resamples are computed on the fly
@@ -119,9 +149,20 @@ public:
     /// destination is informational only. See FloppySoundSink.h for the
     /// rationale on emulated vs wall-clock timing.
     void step(int newTrack, uint64_t emuCycles) override;
-    /// Single-shot "click" for disk insertion / ejection. Uses the
-    /// step_1_1 sample at moderate gain.
+    /// Single-shot "click" for disk insertion / ejection. The MAME bank
+    /// uses `step_1_1`. The Virtual ][ bank uses the lid-close recording
+    /// (see `latch` for the lid-open one).
     void click() override;
+    /// Door. On the MAME bank a 3.5" drive keeps today's one click and a
+    /// 5.25" drive stays silent — Disk II inserts never clicked. On the
+    /// Virtual ][ bank this is the lid-close or lid-open recording.
+    void latch(bool inserting) override;
+    /// Virtual ][ "I-O Error". No-op on the MAME bank.
+    void ioError() override;
+    /// Power switch. The first call plays PopOn; a later one plays PopOff
+    /// and then PopOn, which is a cold boot of a machine that was already
+    /// on. No-op unless the Virtual ][ bank is selected and loaded.
+    void powerSwitch();
 
     // ─── UI-thread API ──────────────────────────────────────────────────
     void  setVolume(float v);
@@ -178,11 +219,37 @@ private:
     std::atomic<bool> samplesLoaded_{false};
     FormFactor formFactor_    = FormFactor::FF525;
 
+    // Virtual ][ recordings. Separate from `samples_` so selecting the
+    // bank never repoints a MAME seek index at a 400 ms arm take.
+    enum ViiIdx : int {
+        VII_ROTATION = 0, VII_BOOT, VII_ARM, VII_INSERT, VII_EJECT,
+        VII_IOERR, VII_POP_ON, VII_POP_OFF, VII_COUNT
+    };
+    std::array<Sample, VII_COUNT> vii_{};
+    std::atomic<bool> viiReady_{false};
+    std::atomic<Bank> bank_{Bank::Mame};
+    /// Bumped by setBank, with the bank itself in bit 0 (1 = VirtualII).
+    /// The audio thread takes both from this ONE load: read from `bank_`
+    /// separately, a switch landing between the two loads ran one buffer
+    /// of the new bank on the old voices, and the clear on the next buffer
+    /// then threw away whatever that buffer had drained — a MotorOn among it.
+    /// A new value drops the in-flight voices, the spindle excepted (see
+    /// fillAudioBuffer).
+    std::atomic<uint32_t> bankGen_{0};
+    uint32_t audioBankGen_ = 0;
+    bool     audioVii_     = false;   ///< audio thread: bank of audioBankGen_
+    /// Set once powerSwitch() has played. The next cold boot is a cycle
+    /// (PopOff, then PopOn) rather than a machine that was never on.
+    std::atomic<bool> powerLatched_{false};
+
     // ─── Command queue (CPU → audio) ────────────────────────────────────
-    enum class CmdKind : uint8_t { MotorOn, MotorOff, Step, Click };
+    enum class CmdKind : uint8_t {
+        MotorOn, MotorOff, Step, Click, Latch, IoError, Chassis
+    };
     struct Cmd {
         CmdKind  kind;
-        bool     withDisk;    // valid for MotorOn / MotorOff
+        bool     withDisk;    // MotorOn/Off: media present.
+                              // Latch: true = lid close. Chassis: true = power on.
         uint64_t emuCycles;   // valid for Step — emulated CPU cycle stamp
     };
     mutable std::mutex cmdMtx_;
@@ -285,9 +352,31 @@ private:
     /// caller can start a new one without a cut. Audio thread only.
     void retireStepVoice();
 
-    // Click (insert / eject).
+    // Click (insert / eject) — MAME bank.
     double clickPos_ = 0.0;
     bool   clickActive_ = false;
+
+    // Virtual ][ voices. Audio thread only; `clearVoices` drops them on a
+    // bank change. The motor loop is one Disk II revolution (~208 ms).
+    // The arm recording is ~413 ms, so a burst of phase steps does not
+    // restart it — see kViiArmJoinMs in the cpp.
+    bool   viiMotor_ = false;
+    double viiRotPos_ = 0.0;
+    int    viiRotFade_ = 0;
+    double viiRotFadePos_ = 0.0;
+    bool   viiBoot_ = false;
+    double viiBootPos_ = 0.0;
+    bool   viiArm_ = false;
+    double viiArmPos_ = 0.0;
+    bool   viiDoor_ = false;
+    int    viiDoorIdx_ = -1;
+    double viiDoorPos_ = 0.0;
+    bool   viiErr_ = false;
+    double viiErrPos_ = 0.0;
+    bool   viiChassis_ = false;
+    int    viiChassisIdx_ = -1;
+    double viiChassisPos_ = 0.0;
+    bool   viiPopOnAfter_ = false;
 
     // Volume / mute.
     std::atomic<float> volume_{0.6f};
@@ -302,6 +391,16 @@ private:
 
     // ─── Helpers ────────────────────────────────────────────────────────
     bool loadOneWav(const std::string& path, Sample& out);
+    bool loadViiFile(const std::string& dir, const char* rel, Sample& out, bool loop);
+
+    /// Audio-thread wipe of every voice. A bank change calls it before
+    /// the next drain so a seek cursor cannot index the other set.
+    void clearVoices();
+
+    void drainVirtualII(const Cmd& c);
+    void fillVirtualII(float* output, int frameCount);
+    void mixVii(int idx, double& pos, double pitch, bool loop,
+                float* out, int frames, float gain);
 
     /// Mix a one-shot sample into `out`, advancing `pos` by `pitch *
     /// (sourceRate / outputRate)` per output frame. Stops when pos
@@ -314,7 +413,8 @@ private:
                  float* out, int frames, float gain);
 
     /// Drain the command queue under cmdMtx_, updating audio-thread state.
-    /// Called once at the top of fillAudioBuffer.
+    /// Called once at the top of fillAudioBuffer. The Virtual ][ bank
+    /// interprets the same commands in `drainVirtualII`.
     void drainCommands();
 
     /// Pick the seek sample whose nominal cadence is closest to

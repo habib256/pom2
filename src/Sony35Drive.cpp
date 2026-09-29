@@ -729,9 +729,9 @@ void Sony35Drive::seekPhaseW(uint8_t phases, uint64_t emuCycles)
     }
 }
 
-void Sony35Drive::emitInsertClick()
+void Sony35Drive::emitInsertClick(bool inserting)
 {
-    if (sound_) sound_->click();
+    if (sound_) sound_->latch(inserting);
 }
 
 void Sony35Drive::completeEject()
@@ -741,7 +741,7 @@ void Sony35Drive::completeEject()
     dskchg_ = false;   // MAME unload(): m_dskchg = 0
     writeActive_     = false;
     writeCursorTick_ = INT64_MIN;
-    if (sound_) sound_->click();
+    emitInsertClick(false);
     pom2::log().info("Sony35", "eject requested by host");
 }
 

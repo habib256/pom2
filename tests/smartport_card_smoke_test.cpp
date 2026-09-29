@@ -36,6 +36,7 @@
 //      tracking, write commit on block-boundary).
 
 #include "Disk35Image.h"
+#include "FloppySoundSink.h"
 #include "SmartPort35Unit.h"
 #include "MediaWritePolicy.h"
 #include "SmartPortCard.h"
@@ -376,6 +377,46 @@ bool testAccessLed()
     return true;
 }
 
+// A failed block is one I/O-error edge, not one per streamed byte. The
+// Virtual ][ grunt hangs off that edge.
+struct CountingIoError : FloppySoundSink
+{
+    int errors = 0;
+    void motor(bool, bool) override {}
+    void step(int, uint64_t) override {}
+    void click() override {}
+    void ioError() override { ++errors; }
+};
+
+bool testIoErrorSoundsOnce()
+{
+    auto unit = std::make_unique<pom2::SmartPort35Unit>();
+    if (!unit->loadImage(writeSyntheticPo("ioerr", 0x11))) {
+        std::printf("FAIL: I/O-error image load\n");
+        return false;
+    }
+    pom2::SmartPortCard card(5);
+    CountingIoError snd;
+    card.setFloppySound(&snd);
+    card.setUnit(0, std::move(unit));
+
+    uint8_t buf[kBlockBytes];
+    readBlockViaCard(card, 0, 1600, buf);   // 800 K image: blocks are 0..1599
+    if (snd.errors != 1) {
+        std::printf("FAIL: out-of-range read sounded %d times, want 1\n",
+                    snd.errors);
+        return false;
+    }
+    readBlockViaCard(card, 0, 1601, buf);
+    if (snd.errors != 2) {
+        std::printf("FAIL: second failed block sounded %d times, want 2\n",
+                    snd.errors);
+        return false;
+    }
+    std::printf("OK : SmartPort I/O error is one sound per failed block\n");
+    return true;
+}
+
 } // anon namespace
 
 int main() {
@@ -386,5 +427,6 @@ int main() {
     ok &= testWriteBackRoundtrip();
     ok &= testBlockCountClamp();
     ok &= testAccessLed();
+    ok &= testIoErrorSoundsOnce();
     return ok ? 0 : 1;
 }

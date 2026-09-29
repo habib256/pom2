@@ -409,6 +409,17 @@ void AudioCoordinator::restore(Settings& settings,
     printer.setVolume(settings.getFloat("printer_sound_volume", 0.35f));
     printer.setMuted(settings.getBool("printer_sound_muted", false));
     printer.pan.store(settings.getFloat("printer_sound_pan", 0.0f));
+
+    // Virtual ][ recordings, when the local set decoded. Absent key, or a
+    // folder that is not on this machine, stays on the MAME samples.
+    const bool wantVii = settings.getString("mechanical_sound_bank", "mame") == "virtual2";
+    const bool vii = wantVii && floppy525.virtualIIReady();
+    floppy525.setBank(vii ? FloppySoundDevice::Bank::VirtualII
+                          : FloppySoundDevice::Bank::Mame);
+    floppy35.setBank(vii && floppy35.virtualIIReady()
+                         ? FloppySoundDevice::Bank::VirtualII
+                         : FloppySoundDevice::Bank::Mame);
+    printer.setSampled(vii && printer.sampleReady());
 }
 
 void AudioCoordinator::persist(Settings& settings,
@@ -437,6 +448,14 @@ void AudioCoordinator::persist(Settings& settings,
     settings.setFloat("printer_sound_volume", printer.volume());
     settings.setBool("printer_sound_muted", printer.muted());
     settings.setFloat("printer_sound_pan", printer.pan.load());
+    // Without the recordings on this machine the mixer cannot offer
+    // Virtual ][, so running on MAME is not a choice the user made: keep
+    // whatever the file says. Writing "mame" here made a session without
+    // the folder (a USB copy, a fresh checkout) forget the setting for
+    // every later one that has it.
+    const bool viiNow = floppy525.bank() == FloppySoundDevice::Bank::VirtualII;
+    if (viiNow || floppy525.virtualIIReady())
+        settings.setString("mechanical_sound_bank", viiNow ? "virtual2" : "mame");
 
     // Capture under the machine lock, then release it before crossing into
     // Settings. Every live instance receives its own key. The highest slot of
