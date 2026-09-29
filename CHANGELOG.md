@@ -5,6 +5,35 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-29 — Videx Videoterm: 80 columns on the Apple ][ / ][+
+
+- **New card `videoterm`** (][ / ][+, slot 3; the firmware hard-codes
+  `$C0B0`). It is a port of MAME `a2videoterm` onto a new HD6845S register
+  file (`Hd6845Crtc`), with 2 KB VRAM in four 512-byte banks. `PR#3` gives
+  80×24 in 9×9 cells on the card's own 720×216 picture. The cursor blinks
+  from emulated time, and the monitor tint applies.
+- **The picture replaces the Apple's while TEXT and AN0 are both on.** That
+  is the firmware's own video switch: it sets AN0 on init and clears it on
+  the escape back to 40 columns, and Ctrl-Reset clears it too. AN0 moved
+  into `Memory::DisplayState`, so the display reads it per published frame
+  and the static-text skip cannot serve a stale screen across the switch.
+- **The display reaches the card through `CardVideoSource.h`**, so no
+  display link line grew.
+- **ROM-gated, and no ROM is committed.** It needs firmware v2.4 (60 Hz,
+  with 50 Hz as a fallback) and the normal character set; the inverse set
+  is derived when absent. ROM Status → Download fetches all four files from
+  RetroBIOS `a2vidtrm.zip`, checked by CRC32 and SHA-256.
+- Pinned by `videx_videoterm_bus`, `_render` and `_snapshot`, and by the
+  ROM-gated `_boot`. With the real dumps, `PR#3` then `PRINT 6*7` answers
+  `42` in VRAM.
+
+**CI was red on main, now green.** Today's rounds landed without their
+file-size ceilings (five files; now recorded with reasons). Also:
+- `PrinterSoundDevice.h` used `std::string` without including it.
+- `check_settings_keys` had been failing since the external-Sony work. The
+  3.5" drive keys were read by prefix but written as literals; they are now
+  written by prefix too.
+
 ## 2026-09-29 — Bug hunt, round three: five hunters, fifteen fixes
 
 This round covered sound cards, Disk II and image formats, coprocessor and

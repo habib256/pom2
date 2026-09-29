@@ -487,7 +487,6 @@ set(POM2_DEVICES_HEADERS
     src/MountableMediaCard.h
     src/PascalPrinterRom.h
     src/ProDOSBlockCard.h
-    src/PascalPrinterRom.h
     src/CardVideoSource.h
     src/SlotRomAsm.h
     src/SuperSerialTransport.h
