@@ -480,7 +480,6 @@ set(POM2_DEVICES_HEADERS
     src/FujiNetCard.h
     src/FujiNetLink.h
     src/FujiNetNetwork.h
-    src/PascalPrinterRom.h
     src/SlotBusClock.h
     src/FujiNetTransport.h
     src/MountableMediaCard.h
@@ -881,7 +880,7 @@ set(HEADERS
     src/Pom2Theme.h
     src/OpenGLShader.h
     src/MountableMediaCard.h
-    src/PascalPrinterRom.h
+    src/SlotBusClock.h
     src/Ay3_8910.h
     src/GrapplerCard.h
     src/PascalPrinterRom.h

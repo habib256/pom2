@@ -5,6 +5,65 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-29 — Bug hunt, round three: five hunters, fifteen fixes
+
+This round covered sound cards, Disk II and image formats, coprocessor and
+serial cards, input and the debugger, and settings and sessions. Every
+finding was reproduced first and is pinned by a test.
+
+- **An accelerator re-clocked the Mockingboard and Phasor.** Their AYs and
+  6522s run from the slot bus clock, not the CPU's. Under a TransWarp
+  (3.5×) or the //c+ 4×, every note was 3.5-4× sharp and VIA-paced music
+  ran 3.5-4× fast. `setStandardClock` now drives the chips through
+  `SlotBusClock.h`, and `setCpuClock` only paces the replay cursor. SSI263
+  phoneme lengths now follow the live CPU clock too. Pins:
+  `mockingboard_smoke`, `phasor_card_smoke`, `accelerator_clock_chunk`.
+- **Z8530 SCC: six fixes MAME master made after our 588eeb33 pin.**
+  - A WR9 channel reset now clears only that channel's interrupts.
+  - WR1 withdraws a disabled source's pending bit.
+  - MIE gates /INT and the acknowledge, but not RR3, so polled mode works.
+  - Zero Count and the special-condition interrupt obey WR1.
+  - The receive FIFO holds the chip's 3 bytes, not 2.
+  - The SCC snapshot is now v4; v3 blobs still restore.
+
+  Pin: `scc8530_smoke`.
+- **The AppleWin-HLE mouse card's VBL interrupt fired at a random
+  scanline.** It counted from the card's last reset rather than from the
+  beam, so A2DeskTop's cursor drew at an arbitrary line that moved on every
+  Ctrl-Reset. It now fires at line 192 on NTSC and PAL, using the machine's
+  cycle counter (`SlotBus::setCycleCounterRef`). Pin:
+  `mouse_card_applewin_smoke`.
+- **A rewind to before an INIT on a New Blank disk left it unsavable.** The
+  restored unformatted tracks were marked dirty and refused every save,
+  eject and swap. An all-`$00` track now owes nothing, as `eraseSurface`
+  already ruled. Pin: `diskii_unformatted_disk`.
+- **Pasted UTF-8 typed stray letters.** Each byte was masked on its own, so
+  "Café" typed "CafC)". The clipboard path now decodes UTF-8 and
+  transliterates it (Cafe, straight quotes, spaces, dashes). Anything else
+  is dropped, and invalid sequences keep the high-ASCII mask. Pin:
+  `paste_smoke`.
+- **A live key on a ][ / ][+ was not folded to upper case.** `print 6*7`
+  with Caps Lock off answered ?SYNTAX ERROR. `Memory::queueKey` now folds
+  it, as paste already did. Pin: `paste_smoke`.
+- **A legacy `*_writeback=false` stuck on an empty or missing 3.5" drive or
+  Liron bay.** The migration ran only after a successful mount, so every
+  disk mounted there later came up write-protected, with no UI to undo it.
+  It now runs on every restore path. Pin: `media_notch`.
+- **Round two's `PascalPrinterRom.h` was in no layer manifest.** A fresh
+  configure failed; this was pushed on its own as a hotfix.
+
+Refuted along the way:
+- **Sound:** 6522 IFR/IER and timers, AY masks and envelopes, the AY event
+  ring, the speaker.
+- **Disk images:** WOZ chunk bounds, 2IMG, sector order, 13- and 16-sector
+  detection.
+- **Coprocessor cards:** SoftCard, the Workstation Card slice loop,
+  No-Slot Clock, ThunderClock, Le Chat Mauve.
+- **Input and the debugger:** paddles, 4play, keyboard mutex races,
+  debugger watchpoints across bank paths.
+- **Settings and sessions:** BOM, CRLF and `=` / `#` in values, atomic
+  writes, snapshot-file staging, `--load` bounds.
+
 ## 2026-09-29 — Bug hunt, round two: five hunters, thirteen fixes
 
 Printers, the block layer, snapshots, networking and the MMU. Every finding
