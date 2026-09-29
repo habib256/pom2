@@ -65,7 +65,7 @@ bool CffaCard::loadRom(const std::string& path)
 bool CffaCard::loadImage(const std::string& path)
 {
     const bool ok = ata_.backing().loadImage(path);
-    ata_.reset();
+    if (ok) ata_.reset();   // a failed mount keeps the old medium — see adoptImage
     lastError_ = ok ? std::string{} : ata_.backing().lastError();
     return ok;
 }
@@ -78,8 +78,13 @@ bool CffaCard::adoptImage(pom2::Block512Backing::PreparedImage&& p)
     // the data port would have been flushed into the new image at the old
     // LBA. `adoptImage` is the path pom2::mountBlockCard takes, so it was the
     // common one, not the exotic one.
+    //
+    // Only when the medium actually changed. A FAILED adopt leaves the old
+    // medium mounted, and resetting then threw away a guest's in-flight PIO
+    // write — the status read DRDY with no error, so the driver reported a
+    // block that was never written as saved (bug hunt 2026-09-29).
     const bool ok = ata_.backing().adoptImage(std::move(p));
-    ata_.reset();
+    if (ok) ata_.reset();
     lastError_ = ok ? std::string{} : ata_.backing().lastError();
     return ok;
 }
@@ -89,7 +94,7 @@ bool CffaCard::loadImageFromBytes(std::vector<uint8_t> bytes,
                                   const std::string& hostFolder)
 {
     const bool ok = ata_.backing().loadFromBytes(std::move(bytes), label, hostFolder);
-    ata_.reset();
+    if (ok) ata_.reset();
     lastError_ = ok ? std::string{} : ata_.backing().lastError();
     return ok;
 }

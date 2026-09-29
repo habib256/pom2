@@ -905,8 +905,14 @@ void ImageWriter::printChar(uint8_t ch)
 void ImageWriter::printCharInternal(uint8_t ch)
 {
     // Bit 7 is masked for text but never for graphics data
-    // (imagewriter.cpp:1260-1263).
-    if (msb_ != 255 && bitGraph_.remBytes == 0) ch &= 0x7F;
+    // (imagewriter.cpp:1260-1263) — nor for the Epson / Diablo parsers'
+    // BINARY parameters, which are full bytes: masking them turned an FX-80
+    // `ESC K 0xE0 0x01` (480 columns) into 352 and printed the rest of the
+    // graphics as text, and `ESC J 216` into an 88/216" feed (bug hunt
+    // 2026-09-29). The B-6 switch is a C. Itoh text rule.
+    if (msb_ != 255 && bitGraph_.remBytes == 0 &&
+        epsonNeed_ == 0 && diabloNeed_ == 0)
+        ch &= 0x7F;
 
     if (bitGraph_.remBytes > 0) { printBitGraph(ch); return; }
     if (processCommandChar(ch))  return;
@@ -1241,8 +1247,13 @@ double ImageWriter::byteCost(uint8_t ch) const
     }
 
     // Mid-escape-sequence bytes (the command letter and its ASCII digit
-    // parameters) never move the mechanism — they land in a register.
-    if (escSeen_ || fsSeen_ || numParam_ < neededParam_) return 0.0;
+    // parameters) never move the mechanism — they land in a register. The
+    // Epson / Diablo binary parameters too: a parameter of 12 used to be
+    // charged a form-feed slew, so every `ESC A 12` held the drain (and a
+    // Grappler+'s BUSY) for ~2.2 s.
+    if (escSeen_ || fsSeen_ || numParam_ < neededParam_ ||
+        epsonNeed_ > 0 || diabloNeed_ > 0)
+        return 0.0;
 
     switch (ch & 0x7F) {
         case 0x0D: {   // CR — carriage back to the left margin

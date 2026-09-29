@@ -82,6 +82,18 @@ public:
     bool strobe(uint8_t byte);
     /// A reset abandons a held byte.
     void dropPending() { pending_ = false; }
+    /// The held byte, for the owning card's snapshot. It travels with the
+    /// ACK latch that waits on it: a rewind that restored the latch without
+    /// it left the guest waiting on an ACK no byte would give, or printed a
+    /// byte from the abandoned future (bug hunt 2026-09-29).
+    bool    hasPending() const  { return pending_; }
+    uint8_t pendingByte() const { return pendingByte_; }
+    void restorePending(bool held, uint8_t byte)
+    {
+        pending_ = held;
+        pendingByte_ = byte;
+        release();           // a printer that accepts now takes it at once
+    }
 
     /// Same contract as PrinterCard::drainSpoolFrom: absolute offsets, and a
     /// `from` past the end hands back everything (the consumer resyncs).

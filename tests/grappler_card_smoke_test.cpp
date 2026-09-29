@@ -64,7 +64,18 @@ void testStubRom()
     assert(card.slotRomRead(0x05) == 0x38);
     assert(card.slotRomRead(0x07) == 0x18);
     assert(card.slotRomRead(0x0B) == 0x01);
-    assert(card.slotRomRead(0x0C) == 0x00);
+    assert(card.slotRomRead(0x0C) == 0x10);
+    // The entry table the signature promises (bug hunt 2026-09-29: it was
+    // NOP fill, so PINIT ran a sled at $CnEA off the page): PINIT $Cn40,
+    // PREAD $Cn43, PWRITE $Cn48, PSTATUS $Cn4E.
+    assert(card.slotRomRead(0x0D) == 0x40 && card.slotRomRead(0x0E) == 0x43 &&
+           card.slotRomRead(0x0F) == 0x48 && card.slotRomRead(0x10) == 0x4E);
+    assert(card.slotRomRead(0x40) == 0xA2 && card.slotRomRead(0x41) == 0x00 &&
+           card.slotRomRead(0x42) == 0x60);                  // PINIT: X=0
+    assert(card.slotRomRead(0x48) == 0x8D &&
+           card.slotRomRead(0x49) == 0x90 &&
+           card.slotRomRead(0x4A) == 0xC0);                  // PWRITE: STA data port
+    assert(card.slotRomRead(0x4E) == 0xA2);                  // PSTATUS
     // CSWL/CSWH installer.
     assert(card.slotRomRead(0x20) == 0xA9);
     assert(card.slotRomRead(0x21) == 0x31);

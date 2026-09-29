@@ -54,6 +54,7 @@
 //      so a malformed call could flip the machine's video mode or bank state
 //      as a side effect.
 
+#include "Block512Backing.h"
 #include "FujiNetCard.h"
 #include "FujiNetCardFactory.h"
 #include "M6502.h"
@@ -830,6 +831,30 @@ void testPrinterTap()
     std::printf("  ok: printer tap spools only the printer unit's writes\n");
 }
 
+// A WRITE BLOCK that went out on the link is irreversible: it must bump the
+// media-write epoch so the rewind ring cannot span it (bug hunt 2026-09-29).
+void testWriteBlockBumpsMediaEpoch()
+{
+    Machine m;
+    m.startLink();
+    FakePeer peer(m.port, standardHandler);
+    assert(waitFor([&] { return m.card->link().deviceCount() == 2; }));
+    for (int i = 0; i < 512; ++i) m.mem.memWrite(uint16_t(0x3000 + i), uint8_t(i));
+    // WRITE BLOCK: count 3, unit 1, buffer $3000, block 2.
+    m.mem.memWrite(0x0310, 0x03); m.mem.memWrite(0x0311, 0x01);
+    m.mem.memWrite(0x0312, 0x00); m.mem.memWrite(0x0313, 0x30);
+    m.mem.memWrite(0x0314, 0x02); m.mem.memWrite(0x0315, 0x00);
+    m.mem.memWrite(0x0316, 0x00);
+    const uint64_t before = pom2::mediaWriteEpoch().load();
+    placeSmartPortCall(m, kSpWriteBlock, 0x0310);
+    m.run(20000);
+    assert(pom2::mediaWriteEpoch().load() != before &&
+           "a FujiNet WRITE BLOCK left the rewind ring spanning it");
+    peer.stop();
+    m.card->transportLink().stop();
+    std::puts("  WRITE BLOCK bumps the media-write epoch: OK");
+}
+
 } // namespace
 
 int main()
@@ -848,6 +873,7 @@ int main()
     testControlListCannotWrapAddressSpace();
     testSnapshotBlob();
     testPrinterTap();
+    testWriteBlockBumpsMediaEpoch();
 
     std::puts("fujinet_card: OK");
     return 0;

@@ -1211,8 +1211,33 @@ void decodeOneDir(DecodeWalk& w,
     const std::vector<HostEntry> named =
         nameHostDir(hostFolder, w.rootReal, symlinksIgnored);
     std::unordered_map<std::string, const HostEntry*> sources;
-    for (const HostEntry& he : named)
-        if (!he.isDir && !he.skipReason) sources.emplace(he.prodosName, &he);
+    // Case-folded, because on a case-insensitive host (macOS, Windows)
+    // `PHOTO.bin` IS `photo.bin`: reserving the exact spelling is not enough.
+    std::unordered_set<std::string> hiddenFolded;
+    // What the build did NOT serve — a skipped file (>128 KB, unreadable) or
+    // a root entry past the 51 slots — the guest never saw, so an entry of
+    // the same name is a NEW file, not that one. Its host name is reserved
+    // up front: the clash gets a numeric suffix instead of the case-fold
+    // spelling lookup landing on the hidden file and overwriting it with
+    // the guest's bytes (bug hunt 2026-09-29: `BSAVE PHOTO` replaced a
+    // 200 KB `photo.bin` that was not on the volume). Same budget rule as
+    // scanHostFolder.
+    {
+        const std::size_t budget = (depth == 0) ? kVolDirTotalSlots : (1u << 16);
+        std::size_t served = 0;
+        for (const HostEntry& he : named) {
+            bool hidden = he.skipReason != nullptr;
+            if (!hidden) {
+                if (served >= budget) hidden = true;
+                else ++served;
+            }
+            if (hidden) {
+                usedHostNames.insert(he.path.filename().string());
+                hiddenFolded.insert(foldCase(he.path.filename().string()));
+            } else if (!he.isDir)
+                sources.emplace(he.prodosName, &he);
+        }
+    }
     // The spelling to use for `wanted`: the file itself when it exists, else
     // a case variant already on disk, else `wanted`. `found` says whether
     // anything on disk answered.
@@ -1475,6 +1500,12 @@ void decodeOneDir(DecodeWalk& w,
                         renameFrom = fs::path(hostFolder) / srcName;
                     }
                 }
+            }
+            // A name that folds onto a hidden host file is taken, whatever
+            // its case — the suffix below then gives the guest's file its own.
+            if (hiddenFolded.count(foldCase(spelled))) {
+                usedHostNames.insert(spelled);
+                onDisk = false;
             }
             const std::string hostName = reserveHostName(usedHostNames, spelled);
             if (hostName != spelled) renameFrom.clear();  // suffixed: a fresh file

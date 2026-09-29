@@ -15,13 +15,13 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskIICard.h"
+#include "Block512Backing.h"
 #include "FloppySoundSink.h"
 #include "IWMDevice.h"
 #include "Logger.h"
 #include "M6502.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -498,13 +498,8 @@ bool DiskIICard::installDisk(int drive, DiskImage&& prepared)
     // This is the one path where the two-phase form degrades to the inline
     // cost, and it is the rare one: re-inserting the disk already in the bay.
     DiskImage& img = images[drive];
-    bool sameFile = img.isLoaded() && !img.getPath().empty() &&
-                    img.getPath() == prepared.getPath();
-    if (!sameFile && img.isLoaded() && !img.getPath().empty() &&
-        !prepared.getPath().empty()) {
-        std::error_code ec;
-        sameFile = std::filesystem::equivalent(img.getPath(), prepared.getPath(), ec);
-    }
+    const bool sameFile =
+        img.isLoaded() && pom2::Block512Backing::sameFile(img.getPath(), prepared.getPath());
 
     if (!flushOutgoingForSwap(drive)) return false;
 

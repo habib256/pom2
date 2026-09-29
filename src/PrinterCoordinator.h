@@ -96,6 +96,8 @@ public:
     FeedBatch drainImageWriter(EmulationController& controller);
 
     bool setGrapplerPrinterType(EmulationController& controller, int value);
+    /// Host back-pressure onto the parallel cable: the Grappler+'s BUSY, and
+    /// the Parallel source's CentronicsPrinter (PIC, 1981 Grappler) on edges.
     BusyUpdate setGrapplerBusy(EmulationController& controller, bool busy);
     void persistGrappler(Settings& settings,
                          EmulationController& controller) const;
@@ -126,6 +128,10 @@ private:
 
     SourceIdentity source_;
     std::size_t consumed_ = 0;
+    /// setGrapplerBusy's hold on a Centronics (Parallel-source) printer: which
+    /// one, and the BUSY value it last drove there.
+    std::uintptr_t busyTarget_ = 0;
+    bool           busyDriven_ = false;
 };
 
 } // namespace pom2

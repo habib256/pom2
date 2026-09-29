@@ -50,6 +50,7 @@
 #include "SocketCompat.h"
 #include "ThreadGuard.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <future>
@@ -218,7 +219,12 @@ inline bool resolveBounded(const std::string& host, const std::string& portStr,
 /// W5100Device already uses. Leaves the socket NON-BLOCKING on success,
 /// which is what a poll-driven transfer wants; a blocking-I/O owner flips
 /// it back with `setBlocking`.
-inline bool connectBounded(const addrinfo* a, int timeoutMs, socket_t& out)
+///
+/// `cancel`, when given, is re-read every 100 ms of the wait and abandons
+/// the connect when set. Without it a worker whose owner had gone held its
+/// socket and thread for the whole timeout (bug hunt 2026-09-29).
+inline bool connectBounded(const addrinfo* a, int timeoutMs, socket_t& out,
+                           const std::atomic<bool>* cancel = nullptr)
 {
     socket_t s = ::socket(a->ai_family, a->ai_socktype, a->ai_protocol);
     if (!isValidSocket(s)) return false;
@@ -226,9 +232,26 @@ inline bool connectBounded(const addrinfo* a, int timeoutMs, socket_t& out)
     if (!setNonBlocking(s)) { closeHostSocketValue(s); return false; }
 
     if (::connect(s, a->ai_addr, static_cast<socklen_c>(a->ai_addrlen)) != 0) {
-        if (!errInProgress(lastSocketError()) ||
-            waitSocket(s, SocketWait::Write, timeoutMs) != WaitResult::Ready ||
-            connectResult(s) != 0) {
+        bool ok = errInProgress(lastSocketError());
+        if (ok) {
+            constexpr int kSliceMs = 100;
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(timeoutMs);
+            WaitResult w = WaitResult::Timeout;
+            for (;;) {
+                if (cancel && cancel->load()) break;
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                int left = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        deadline - now).count());
+                if (cancel && left > kSliceMs) left = kSliceMs;
+                w = waitSocket(s, SocketWait::Write, left);
+                if (w != WaitResult::Timeout) break;
+            }
+            ok = w == WaitResult::Ready && connectResult(s) == 0;
+        }
+        if (!ok) {
             closeHostSocketValue(s);
             return false;
         }

@@ -753,7 +753,18 @@ public:
     void setIIEMode(bool on);
     bool isIIE() const                       { return iieMode; }
     uint16_t iieModeFlags() const            { return iieMemMode; }
+    /// The CPU's aux view: the RamWorks bank it has selected.
     const uint8_t* auxData() const           { return aux.data(); }
+    /// The VIDEO's aux view: always RamWorks bank 0, as the scanner fetches
+    /// on the real card (MAME a2eramworks3.cpp get_vram_ptr → m_ram[0]).
+    /// Bank 0 lives in `aux` while it is selected and in the backing store's
+    /// first slot otherwise, so this pointer MOVES on a bank switch —
+    /// Apple2Display re-reads it every render() (bug hunt 2026-09-29).
+    const uint8_t* videoAuxData() const
+    {
+        return (ramWorksBanks_ > 1 && ramWorksBank_ != 0)
+            ? ramWorksBacking_.data() : aux.data();
+    }
     uint8_t*       auxDataMutable()          { return aux.data(); }
     const uint8_t* internalIORomData() const { return internalIORom.data(); }
 

@@ -276,6 +276,30 @@ PrinterCoordinator::BusyUpdate PrinterCoordinator::setGrapplerBusy(
     BusyUpdate result;
     auto state = controller.lockState();
     auto& bus = state.memory().slotBus();
+
+    // The Apple Parallel Interface and the 1981 Grappler model BUSY on their
+    // CentronicsPrinter, and only the Grappler+ used to hear this: those two
+    // never waited on the ImageWriter, their jobs queued without bound, and
+    // past kHardBacklog the printer dropped input (bug hunt 2026-09-29).
+    // Driven on EDGES of this value only, so a BUSY the user set by hand
+    // through PrinterPortControl is not cleared on every frame.
+    CentronicsPrinter* parallel = nullptr;
+    if (!findFirst<PrinterCard>(bus) && !findFirst<GrapplerCard>(bus)) {
+        for (int slot = 1; slot < SlotBus::kSlotCount && !parallel; ++slot) {
+            auto* peripheral = bus.peripheral(slot);
+            parallel = peripheral ? peripheral->centronicsPrinter() : nullptr;
+        }
+    }
+    const auto target = reinterpret_cast<std::uintptr_t>(parallel);
+    if (target != busyTarget_) {
+        busyTarget_ = target;
+        busyDriven_ = false;           // a new printer starts not held by us
+    }
+    if (parallel && busy != busyDriven_) {
+        parallel->setBusy(busy);
+        busyDriven_ = busy;
+    }
+
     auto* card = findFirst<GrapplerCard>(bus);
     if (!card) return result;
     result.grapplerPlugged = true;

@@ -44,6 +44,7 @@
 #include "FujiNetNetDevice.h"
 #include "FujiNetNetwork.h"   // the kNetErr* bytes are contract, not detail
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -508,6 +509,32 @@ int main()
         check(!net.open("N:HTTP://127.0.0.1:1/a b"),
               "a space in the path is refused outright");
         check(net.lastError() == pom2::kNetErrGeneral, "and reported as GENERAL");
+    }
+
+    // An OPEN/CLOSE retry loop against a host that never answers must not
+    // pile up a thread and a socket per pass (bug hunt 2026-09-29: 1 200
+    // threads and 1 500 fds measured, EMFILE for the rest of POM2). The
+    // workers are capped process-wide, and a cancelled connect gives its
+    // slot back within a slice. 127.0.0.2 stalls a connect on macOS; where
+    // it is refused at once the loop is simply cheap.
+    {
+        pom2::FujiNetNetDevice net;
+        net.setAllowLoopback(true);
+        int peak = 0;
+        for (int i = 0; i < 60; ++i) {
+            (void)net.open("N:HTTP://127.0.0.2:9/x");
+            peak = std::max(peak, pom2::FujiNetNetDevice::inFlightFetches().load());
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            net.close();
+        }
+        check(peak <= pom2::FujiNetNetDevice::kMaxInFlightFetches,
+              "fetch workers are capped");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (pom2::FujiNetNetDevice::inFlightFetches().load() != 0 &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        check(pom2::FujiNetNetDevice::inFlightFetches().load() == 0,
+              "cancelled fetches drain well inside the connect timeout");
     }
 
     if (failures) { std::printf("fujinet_net_device: %d failure(s)\n", failures); return 2; }

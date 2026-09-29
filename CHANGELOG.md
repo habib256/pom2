@@ -5,6 +5,78 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-09-29 — Bug hunt, round two: five hunters, thirteen fixes
+
+Printers, the block layer, snapshots, networking and the MMU. Every finding
+was reproduced first, and all but two are pinned.
+
+- **An FX-80 lost bit 7 of every binary parameter.** The C. Itoh B-6 text
+  mask also ran on the Epson / Diablo parsers' raw parameter bytes. So
+  `ESC K 0xE0 0x01` (a full 480-column line) became 352 columns and printed
+  the rest of the graphics as text, and `ESC J 216` fed 88/216". Pin:
+  `imagewriter`.
+- **Those parameter bytes were also charged as mechanism moves.** A
+  parameter of 12 cost a form-feed slew, so every `ESC A 12` held the paced
+  drain, and a Grappler+'s BUSY with it, for ~2.2 s. Pin: `imagewriter`.
+- **The `printer` card and the Grappler+ stub published a Pascal 1.1
+  signature with no entry table**, and they reported class `$00`. A caller
+  that trusts the signature ran PINIT as a NOP sled off the page. Both now
+  carry real PINIT / PREAD / PWRITE / PSTATUS and class `$10`
+  (`PascalPrinterRom.h`). Pins: `printer_card_smoke`, `grappler_card_smoke`.
+- **Back-pressure reached only the Grappler+.** The PIC and the 1981
+  Grappler never waited on the ImageWriter. They now get BUSY on edges, so
+  a BUSY the user set by hand survives. Pin: `printer_coordinator`.
+- **A dirty host folder re-mounted as `/x/f/` (or relative, or through
+  `/tmp`) mounted its pre-save copy.** The guest's next save then reverted
+  its first one. The check was a string compare. Now it uses
+  `Block512Backing::sameFile`, which `adoptImage` and `DiskIICard` share.
+  Pin: `storage_coordinator`.
+- **A file the guest created could overwrite a host file the volume never
+  showed.** This covers a file over 128 KB and a root entry past slot 51.
+  The case-fold spelling lookup landed on the hidden file. Those names are
+  now reserved, case-folded, so the guest's file gets a suffix. Pin:
+  `prodos_decode_safety`.
+- **The SmartPort HDV unit gated its capture on `isWriteProtected()`**
+  (which includes the notch) rather than `isMediumLocked()`, so a notched
+  dirty image committed inline under `stateMutex`. **A failed CFFA / HDV
+  mount reset the drive's transfer state** while the old medium stayed
+  mounted, losing an in-flight PIO write that then reported success. Both
+  are fixed; neither has a dedicated pin.
+- **The byte held for an offline printer was left out of the snapshot**,
+  while its ACK latch was saved. This applied to the Grappler+, the 1981
+  Grappler and the PIC. A rewind across a Ctrl-Reset hung the firmware, and
+  a rewind to before the strobe printed a phantom byte. Pin:
+  `parallel_cards`.
+- **A FujiNet WRITE BLOCK or FORMAT never bumped the media-write epoch**, so
+  the rewind ring could span a write to the remote volume. Pin:
+  `fujinet_card`.
+- **FujiNet's `N:` started one detached thread and one socket per OPEN**,
+  with no cap and an uncancellable connect. A guest retry loop against a
+  silent host reached 1 200 threads and 1 500 fds, and every file POM2
+  opened then failed with EMFILE. Workers are now capped at four across the
+  process. `connectBounded` takes a cancel flag, sliced at 100 ms, and a
+  failed thread spawn is an I/O error rather than an exception on the CPU
+  thread. Pin: `fujinet_net_device`.
+- **The display painted the CPU-selected RamWorks bank.** The scanner
+  reads bank 0 (MAME `a2eramworks3.cpp` `get_vram_ptr`).
+  `Memory::videoAuxData()` is re-read by `Apple2Display::render()` every
+  frame. Pin: `ramworks_smoke`.
+- **A //c+ reset cleared the hub's MIG drive selects but not the profile's
+  copies**, so a later snapshot restored a stale selection. Pin:
+  `iic_mig_hub_sync`.
+
+Refuted along the way:
+- **Printers:** feed cursors, C. Itoh tabs, `printBitGraph` bounds, the PIC
+  and Grappler status bytes, Ghostscript `-dSAFER` and paths, atomic writes.
+- **Block layer:** 2IMG bounds, HDV and ATA ranges, commit-ticket ordering,
+  decode path traversal.
+- **Snapshots:** framing, the rewind XOR delta, and the profile switch
+  clearing the ring.
+- **Networking:** the slirp alias routes, W5100 checks and rings, CS8900A
+  bounds, the TNFS cache names, the SLIP cap.
+- **MMU:** the language-card state machine, the soft-switch decode, and
+  `bootFromSlot` parity.
+
 ## 2026-09-29 — Bug hunt: four hunters on the code since 09-17, twelve fixes
 
 Every finding was reproduced by a probe or a failing test before it was fixed,

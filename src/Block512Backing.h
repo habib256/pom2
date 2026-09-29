@@ -119,6 +119,21 @@ public:
         bool                 valid        = false;
     };
 
+    /// Two host paths name the same file or folder: equal strings, or
+    /// `std::filesystem::equivalent` (a trailing '/', a relative path, a
+    /// symlink, /tmp vs /private/tmp). Every "re-read the same medium"
+    /// guard uses this — a string compare alone missed the other spellings.
+    /// Inline so a binary that links DiskIICard without this class still
+    /// links.
+    static bool sameFile(const std::string& a, const std::string& b)
+    {
+        if (a.empty() || b.empty()) return false;
+        if (a == b) return true;
+        std::error_code ec;
+        const bool same = std::filesystem::equivalent(a, b, ec);
+        return !ec && same;
+    }
+
     /// Phase 1, to be called WITHOUT `stateMutex`: read `path` whole, with the
     /// same size and emptiness gates loadImage() applies. Touches no object
     /// state — it is static for exactly that reason.

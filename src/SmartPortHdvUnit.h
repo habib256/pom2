@@ -79,8 +79,12 @@ public:
     { return backing_.adoptImage(std::move(p)); }
     bool     detachImage(Block512Backing::PendingWriteBack& out) override
     {
+        // `isMediumLocked()`, as in every sibling card: isWriteProtected()
+        // includes the notch, so flipping it on a dirty image made the
+        // capture decline and eject's saveDirty() commit INLINE under
+        // stateMutex instead (bug hunt 2026-09-29).
         if (!(backing_.isLoaded() && backing_.hasUnsavedChanges() &&
-              backing_.isWriteBackEnabled() && !backing_.isWriteProtected()))
+              backing_.isWriteBackEnabled() && !backing_.isMediumLocked()))
             return true;                 // nothing to write: out stays invalid
         out = backing_.takeDetachWriteBack();
         return true;

@@ -766,9 +766,11 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
             // by its second. The file-image path has the same hazard and
             // re-reads under the lock (`Block512Backing::adoptImage`); the
             // synth path re-synthesises after the commit.
+            // Any spelling of the folder, not only the same string (bug
+            // hunt 2026-09-29: "/x/f" then "/x/f/" mounted the stale copy).
             const bool sameFolderDirty =
                 pending.synth && !hostFolder.empty() &&
-                pending.hostFolder == hostFolder;
+                Block512Backing::sameFile(pending.hostFolder, hostFolder);
             std::string error;
             if (!Block512Backing::commitWriteBack(std::move(pending), error)) {
                 auto state = controller.lockState();

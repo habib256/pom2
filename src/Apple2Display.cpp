@@ -135,7 +135,7 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
     // a stale screen.
     constexpr size_t kBase = 0x0400, kLen = 0x0800;
     const uint8_t* mainRam = mem.data();
-    const uint8_t* auxBytes = mem.auxData();
+    const uint8_t* auxBytes = mem.videoAuxData();   // what the painters read
 
     TextFrameKey k;
     k.valid       = true;
@@ -470,6 +470,12 @@ void Apple2Display::render(Memory& mem)
         Apple2Display* self;
         ~KeyPublisher() { self->commitTextFrameKey(); }
     } keyPublisher{this};
+    // The video scanner reads RamWorks bank 0 whatever bank the CPU selected
+    // (Memory::videoAuxData). The pointer moves with the bank, so it is
+    // re-derived here, once per frame, and only for this Memory's own aux —
+    // a caller that handed us a scratch buffer keeps it.
+    auxRam = (auxRamSource_ && auxRamSource_ == mem.auxData())
+           ? mem.videoAuxData() : auxRamSource_;
     // A demod armed for the PREVIOUS frame's signal must not fire onto the
     // pixels this frame is about to paint; whoever wants it has already had
     // its chance (pixels() / finishPendingCpuDemod() run it lazily), and the
