@@ -91,8 +91,9 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::connectExternalSony35
         first = controller.externalSony35Connected(1);
         second = controller.externalSony35Connected(2);
     }
-    settings.setBool("disk35_connected_2", first);
-    settings.setBool("disk35_connected_3", second);
+    // Prefix + suffix, the form the restore reads (check_settings_keys.sh).
+    settings.setBool("disk35_connected_" + std::to_string(2), first);
+    settings.setBool("disk35_connected_" + std::to_string(3), second);
     MediaCommandResult result;
     result.ok = true;
     return result;
