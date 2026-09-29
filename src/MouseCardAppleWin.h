@@ -113,22 +113,28 @@ public:
         hostGen.fetch_add(1, std::memory_order_relaxed);
     }
 
-    /// VBL pacing in CPU cycles between MODE_INT_VBL events, so MODE_INT_VBL
-    /// stays locked to the machine's actual frame rate instead of drifting
-    /// against the beam. Mirrors AppleWin, which fires its VBL hook from the
-    /// host frame loop rather than a hard-wired constant.
+    /// Frame length in CPU cycles, so MODE_INT_VBL fires once per frame
+    /// AT THE BEAM'S VBL EDGE (scanline 192), like AppleWin, which raises
+    /// it from its video VBL hook.
     ///
-    /// `SlotCardFactory.cpp:229-231` passes the BEAM geometry —
-    /// `scanlinesPerFrame * cyclesPerScanline` (`CpuClock.h:118-119`), i.e.
+    /// The phase is not counted from the card's reset: the edge is derived
+    /// from the machine's own cycle counter the way `Memory` places VBL —
+    /// frame start = `counter - counter % vblCycles_`, edge = start +
+    /// 192 × 65 — so it lands on line 192 whenever the card was reset,
+    /// plugged or restored (bug hunt 2026-09-29: it used to count from
+    /// `onReset`, and every Ctrl-Reset moved the A2DeskTop cursor's update
+    /// to a random scanline).
+    ///
+    /// `SlotCardFactory.cpp` passes the BEAM geometry —
+    /// `scanlinesPerFrame * cyclesPerScanline` (`CpuClock.h`), i.e.
     /// **17030 NTSC (262×65)** and **20280 PAL (312×65)**. Those are not the
     /// profile's CPU budget `defaultCyclesPerFrame` (17045 / 20313), which is
     /// the worker's pacing quantum; VBL is a video event, so it follows the
-    /// raster. The 17045 default below is only what a hand-built card in a
-    /// test sees before anything calls this — every factory-plugged card is
-    /// overridden at plug time.
+    /// raster. The 17030 default below is what a hand-built card in a test
+    /// sees before anything calls this.
     void setVblCycles(int cycles)
     {
-        if (cycles > 0) vblCycles_ = cycles;
+        if (cycles > 0) { vblCycles_ = cycles; nextVblCycle_ = kVblUnphased; }
     }
     int  vblCycles() const { return vblCycles_; }
 
@@ -178,6 +184,8 @@ public:
     uint8_t slotRomRead(uint8_t low8) override;
     void    advanceCycles(int cycles) override;
     void    onReset() override;
+    void    onPlug() override;
+    void    onUnplug() override;
 
     /// Snapshot/rewind: 'MAW1'-tagged blob carrying the HLE'd MCU's whole
     /// working set — mode/state bytes, position + clamp window, button
@@ -237,11 +245,19 @@ private:
     bool     lastHostButton = false;
     bool     hostPrimed = false;
 
-    // ── VBL pacing. Cycles per MODE_INT_VBL event; profile-plumbed via
+    // ── VBL pacing. Frame length in cycles, profile-plumbed via
     //    setVblCycles to the beam geometry, 17030 NTSC (262×65) / 20280 PAL
-    //    (312×65). The 17045 here is only the un-plumbed fallback. ───────
-    int      vblCycles_     = 17045;
-    int      vblCycleAccum  = 0;
+    //    (312×65). The edge is phased to the machine's cycle counter
+    //    (`clock_` → Memory::cycleCounter once plugged), not to onReset.
+    //    `ownClock_` stands in when no Memory is behind the bus. ─────────
+    static constexpr uint64_t kVblUnphased = ~uint64_t{0};
+    int             vblCycles_    = 17030;
+    uint64_t        nextVblCycle_ = kVblUnphased;   // absolute cycle of the next edge
+    uint64_t        ownClock_     = 0;
+    const uint64_t* clock_        = &ownClock_;
+    bool            ownsClock_    = true;
+    void bindBeamClock();
+    void serviceVbl(uint64_t now);
 
     // ── Internal hooks (AppleWin parity) ─────────────────────────────
     void onPiaPortAOut(uint8_t v);    // = On6821_A

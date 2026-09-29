@@ -482,6 +482,7 @@ set(POM2_DEVICES_HEADERS
     src/FujiNetNetwork.h
     src/FujiNetTransport.h
     src/MountableMediaCard.h
+    src/PascalPrinterRom.h
     src/ProDOSBlockCard.h
     src/SlotRomAsm.h
     src/SuperSerialTransport.h
@@ -878,6 +879,7 @@ set(HEADERS
     src/Pom2Theme.h
     src/OpenGLShader.h
     src/MountableMediaCard.h
+    src/PascalPrinterRom.h
     src/Ay3_8910.h
     src/GrapplerCard.h
     src/GrapplerClassicCard.h

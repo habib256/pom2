@@ -8081,8 +8081,19 @@ write-strobe (firmware → "MCU"), BIT4 (PB4) = read-strobe. BIT6/BIT7
 driven back to firmware for poll loops. BIT1..BIT3 still
 slot-ROM bank-select (`bank = (by6821B << 7) & 0x0700`).
 
-VBL interrupt: `OnMouseEvent(true)` fires once per ~17045 cycles
-(60 Hz @ 1 MHz) from `advanceCycles`; host-input poll
+VBL interrupt: `OnMouseEvent(true)` fires once per frame
+(`setVblCycles`: 17030 = 262 × 65 NTSC, 20280 = 312 × 65 PAL) **on the
+beam's VBL edge** — scanline 192 of the frame `Memory` places with
+`cycleCounter % frameCycles`, read through `SlotBus::cycleCounterRef`
+(one load + two compares per `advanceCycles`; the division runs once a
+frame in `serviceVbl`). Until 2026-09-29 it counted from the card's
+`onReset`, so the interrupt landed on a random scanline that moved on
+every Ctrl-Reset; AppleWin raises it from its video VBL hook. Reset,
+plug, `setVblCycles` and a snapshot restore only mark it unphased —
+the next tick re-derives the edge from the clock, and a clock jump
+never fires a spurious VBL. (The MAME-port `mouse` card is different by
+design: its VBL is the 68705's own timer, phased by the firmware's
+INITMOUSE VBLBAR calibration as on the real card.) Host-input poll
 (`pollHostInput`) drains atomic shadow each `advanceCycles` so
 movement/button changes raise IRQ immediately when mode bits allow.
 `CpuIrqAssert(IS_MOUSE)` → `assertIrq(true)`; `CpuIrqDeassert` (in
@@ -8090,7 +8101,9 @@ MOUSE_SERV) → `assertIrq(false)`.
 
 Pinned: `mouse_card_applewin_smoke` — slot-ROM bank-select round
 trip, size/missing-file rejection, BIT5 strobe → `OnCommand`
-(MOUSE_INIT writes canned $FF to PRA).
+(MOUSE_INIT writes canned $FF to PRA), and `test_vbl_irq_locked_to_beam`
+(first VBL IRQ on line 192 ±1 after a reset or restore at seven beam
+phases, NTSC and PAL, cross-checked against `$C019`).
 
 Why ship both? `mouse` (MAME) is preferred — it boots verbatim Apple
 ROMs. But the MCU mask ROM (`mouse_341-0269.bin`) is not always

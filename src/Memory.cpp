@@ -71,6 +71,7 @@ Memory::Memory()
     // `memReadSlow`'s $Cxxx dispatch, never the fast bus (PERFORMANCE §§ 8.2/8.5).
     slots.setFloatingBusSource([this]() { return floatingBus(); });
     slots.setCycleSource([this]() { return getCycleCounter(); });
+    slots.setCycleCounterRef(&cycleCounter);
 
     // Default reset vector points at $F800 (Monitor cold start) so a
     // fresh boot without ROM loaded still runs *something* (BRK loop)
