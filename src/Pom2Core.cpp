@@ -289,6 +289,7 @@ bool Core::attachMockingboard(int slot, MockingboardModel model)
             : MockingboardCard::Variant::AC);
     card->setCpu(&impl_->cpu);
     card->setCpuClock(impl_->cpuClockHz);
+    card->setStandardClock(impl_->cpuClockHz);   // no accelerator here
     card->setSampleRate(impl_->audioSampleRate);
     impl_->mockingboards.push_back(card.get());
     impl_->memory.slotBus().plug(slot, std::move(card));

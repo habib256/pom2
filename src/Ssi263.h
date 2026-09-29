@@ -185,6 +185,17 @@ public:
     uint8_t rate()           const { return (rateInf_ & RATE_MASK) >> 4; }
     int     phonemeRemainingCycles() const { return phonemeRemainingCycles_; }
 
+    /// The CPU clock the phoneme timer is counted down in. The chip's own
+    /// oscillator is real time, so a phoneme lasts the same milliseconds
+    /// whatever the 6502 does — under a TransWarp (3.5x) or the //c+'s 4x
+    /// it therefore lasts 3.5x / 4x as many CPU cycles. Set by the owning
+    /// card's `setCpuClock`; the power-on value is the NTSC nominal. Not
+    /// serialised: it is a property of the machine, not of the chip.
+    void    setCpuClockHz(double hz)
+    {
+        if (hz > 0.0) cpuClockHz_ = static_cast<int64_t>(hz + 0.5);
+    }
+
     /// Direct peek into a register (no A/!R overlay) — for the UI panel.
     uint8_t peekRegister(uint8_t reg) const;
 
@@ -317,12 +328,14 @@ private:
     /// property of the WIRING, not of guest state, and the owner re-establishes
     /// it on its next queued store.
     bool   timedPlayback_   = false;
+    /// See setCpuClockHz. Integer so the duration math stays deterministic.
+    int64_t cpuClockHz_     = static_cast<int64_t>(POM2_CPU_CLOCK_HZ);
 
     /// Compute the phoneme duration in CPU cycles based on the current
     /// `durPhon_` (mode + phoneme) and `rateInf_` (rate). AppleWin's
     /// formula (SSI263.cpp ~line 290):
     ///   ms = (((16 - (rate>>4)) * 4096) / 1023) * (4 - (dur>>6))
-    /// converted to cycles via POM2_CPU_CLOCK_HZ.
+    /// converted to cycles with the live CPU clock (setCpuClockHz).
     int computePhonemeDurationCycles() const;
 };
 

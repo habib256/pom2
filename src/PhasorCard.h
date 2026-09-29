@@ -111,6 +111,7 @@
 #include "Ay3_8910.h"
 #include "AyEventRing.h"
 #include "AudioSource.h"
+#include "SlotBusClock.h"
 #include "SlotPeripheral.h"
 #include "Via6522.h"
 
@@ -162,9 +163,13 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     void    advanceCycles(int cycles) override;
-    /// Retune the four AYs' input clock (slot phase 0) on a PAL/NTSC
-    /// switch — mirrors MockingboardCard::setCpuClock.
+    /// The (possibly accelerated) CPU clock — drives the emuCycles replay
+    /// cursor only. Mirrors MockingboardCard::setCpuClock.
     void    setCpuClock(double hz) override;
+    /// Slot phase-0 clock: the four AYs' input clock and the two 6522s'
+    /// timer clock, which an accelerator does not speed up. Mirrors
+    /// MockingboardCard::setStandardClock.
+    void    setStandardClock(double hz) override;
     void    onReset()  override;
     void    onUnplug() override;
     // Rewind/snapshot: the 2 VIAs + 4 AYs register/timer state.
@@ -242,8 +247,11 @@ private:
     // Last-sync cycle for lazy VIA timer catch-up. Same protocol as
     // MockingboardCard::syncToCpuCycle.
     uint64_t lastSyncCycle_ = 0;
+    /// CPU cycles -> phase-0 ticks for the VIAs (guarded by mtx_).
+    pom2::SlotBusClock busClock_;
     void syncToCpuCycle();
     void syncToCpuCycleAt(uint64_t now);
+    void advanceVias(uint64_t cpuCycles);
 
     // Telemetry counters.
     uint32_t viaWriteCount_[2]  = {0, 0};

@@ -36,10 +36,11 @@ namespace {
 // the per-sample step by `clockScale` so registers produce notes one
 // octave higher in Phasor mode than the same values would on a
 // Mockingboard.
-// NTSC nominal — the power-on default of `AudioSrc::cpuClockHz`, which
-// PhasorCard::setCpuClock retunes on a PAL/NTSC switch (the AY's pin-22
-// CLOCK is the slot's phase-0 line, so on a PAL machine the chip really
-// does run at 1 015 625 Hz).
+// NTSC nominal — the power-on default of `AudioSrc::cpuClockHz`. The AYs
+// run from `busClockHz` once PhasorCard::setStandardClock has set it (the
+// AY's pin-22 CLOCK is the slot's phase-0 line, so on a PAL machine the
+// chip really does run at 1 015 625 Hz, and under a TransWarp it does NOT
+// run 3.5x faster).
 constexpr double kAyClockHz      = static_cast<double>(POM2_CPU_CLOCK_HZ);
 
 // Amplitude table lives in AyPsgSynth.h since 2026-08-01, shared with
@@ -87,10 +88,19 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     std::atomic<uint32_t> sampleRate { kAudioSampleRate };
     std::atomic<float>    volume     { 0.5f };
     std::atomic<bool>     muted      { false };
-    /// Emulated CPU clock feeding the four AYs' pin-22 CLOCK — retuned by
-    /// PhasorCard::setCpuClock on a PAL/NTSC switch, exactly as
+    /// Emulated (possibly accelerated) CPU clock — paces the emuCycles
+    /// replay cursor. Set by PhasorCard::setCpuClock, exactly as
     /// MockingboardCard::AudioSrc::cpuClockHz is.
     std::atomic<double>   cpuClockHz { kAyClockHz };
+    /// Slot phase-0 clock feeding the four AYs' pin-22 CLOCK — set by
+    /// PhasorCard::setStandardClock; 0 = never given, follow `cpuClockHz`.
+    /// An accelerator raises `cpuClockHz` and must not raise the pitch.
+    std::atomic<double>   busClockHz { 0.0 };
+    double ayClockHz() const
+    {
+        const double bus = busClockHz.load(std::memory_order_relaxed);
+        return bus > 0.0 ? bus : cpuClockHz.load(std::memory_order_relaxed);
+    }
 
     void setSampleRate(uint32_t hz) override
     {
@@ -301,8 +311,10 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         float ticksPerSample    = 0.0f;
         float invTicksPerSample = 0.0f;
         const auto deriveTicks = [&]() {
+            // Phase 0, not the CPU clock: a TransWarp speeds the 6502 up
+            // and leaves the AYs' CLOCK pin alone (MockingboardCard note).
             ticksPerSample = static_cast<float>(
-                cpuClockHz.load(std::memory_order_relaxed) / 8.0
+                ayClockHz() / 8.0
                 * static_cast<double>(liveClockScale)
                 / static_cast<double>(sr));
             invTicksPerSample =
@@ -585,7 +597,36 @@ bool PhasorCard::isMuted() const
 // four AYs hang off the same phase-0 line the two Mockingboard chips do.
 void PhasorCard::setCpuClock(double hz)
 {
-    if (hz > 0.0 && audio_) audio_->cpuClockHz.store(hz, std::memory_order_relaxed);
+    if (!(hz > 0.0)) return;
+    if (audio_) audio_->cpuClockHz.store(hz, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(mtx_);
+    busClock_.setCpuClock(hz);
+}
+
+// Slot phase 0: the AYs' CLOCK pin and the 6522s' timer clock, which an
+// accelerator does not raise. Same body as MockingboardCard::setStandardClock.
+void PhasorCard::setStandardClock(double hz)
+{
+    if (!(hz > 0.0)) return;
+    if (audio_) audio_->busClockHz.store(hz, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(mtx_);
+    busClock_.setBusClock(hz);
+}
+
+// CPU cycles -> phase-0 ticks for both VIAs (MockingboardCard::advanceVias).
+// Caller holds `mtx_`.
+void PhasorCard::advanceVias(uint64_t cpuCycles)
+{
+    const uint64_t ticks = busClock_.busTicks(cpuCycles);
+    // The VIAs' `advance()` takes an int; clamp to a sane upper bound
+    // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
+    // few million here means our sync clock got desynchronised) — without
+    // it a desync would truncate/overflow the int cast.
+    const int step = (ticks > 0x7FFFFFFFu) ? 0x7FFFFFFF
+                                           : static_cast<int>(ticks);
+    if (step <= 0) return;
+    via_[0]->advance(step);
+    via_[1]->advance(step);
 }
 
 // ─── VIA lazy-sync (same pattern as MockingboardCard) ────────────────────
@@ -630,16 +671,7 @@ void PhasorCard::syncToCpuCycleAt(uint64_t now)
         updateIrq();
         return;
     }
-    const uint64_t delta = now - lastSyncCycle_;
-    // The VIAs' `advance()` takes an int; clamp to a sane upper bound
-    // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
-    // few million here means our sync clock got desynchronised). Same
-    // defensive clamp as MockingboardCard::syncToCpuCycleAt — without
-    // it a desync would truncate/overflow the int cast.
-    const int step = (delta > 0x7FFFFFFFu) ? 0x7FFFFFFF
-                                           : static_cast<int>(delta);
-    via_[0]->advance(step);
-    via_[1]->advance(step);
+    advanceVias(now - lastSyncCycle_);
     lastSyncCycle_ = now;
     updateIrq();
 }
@@ -895,8 +927,7 @@ void PhasorCard::advanceCycles(int cycles)
         syncToCpuCycleAt(cpu_->getCycleCountNow() -
                          static_cast<uint64_t>(cycles));
     } else {
-        via_[0]->advance(cycles);
-        via_[1]->advance(cycles);
+        advanceVias(static_cast<uint64_t>(cycles));
     }
     updateIrq();
 }

@@ -121,9 +121,11 @@ int Ssi263::computePhonemeDurationCycles() const
     const int rate = (rateInf_ & RATE_MASK) >> 4;
     const int dur  = (durPhon_ & DURATION_MODE_MASK) >> DURATION_MODE_SHIFT;
     const int ms   = ((16 - rate) * 4096 / 1023) * (4 - dur);
-    // Cycles per millisecond ≈ 1022.727. Use integer math for
-    // determinism (no float).
-    return (ms * static_cast<int>(POM2_CPU_CLOCK_HZ)) / 1000;
+    // Cycles per millisecond ≈ 1022.727 at the stock clock, 3.5x that under
+    // a TransWarp: the chip's oscillator is real time, the countdown is in
+    // CPU cycles (setCpuClockHz). Integer math for determinism (no float),
+    // in 64 bits: 256 ms x a 10 MHz accelerated clock overflows an int.
+    return static_cast<int>((static_cast<int64_t>(ms) * cpuClockHz_) / 1000);
 }
 
 bool Ssi263::write(uint8_t reg, uint8_t val)

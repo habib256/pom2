@@ -26,12 +26,14 @@
 #include "CpuClock.h"
 #include "EmulationController.h"
 #include "M6502.h"
+#include "Mockingboard.h"
 #include "Memory.h"
 #include "SlotBus.h"
 #include "TranswarpCard.h"
 
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <memory>
 
@@ -102,6 +104,56 @@ void checkAgrees(EmulationController& c, const char* what)
            "chunks actually ran at");
 }
 
+// The other half of the contract: what an accelerator must NOT re-clock.
+// The Mockingboard's 6522s tick on the slot bus's phase 0 (MAME: the a2bus
+// clock), which a TransWarp leaves alone. Before 2026-09-29 the fan-out
+// handed the card 3.5x and its VIAs ticked once per CPU cycle, so T1-paced
+// music ran 3.5x fast. Arm a one-shot T1 at $FFFF and let one frame of NOPs
+// run at 3.5x: the timer must have moved one frame of BUS ticks (17 045),
+// not one frame of CPU cycles (~59 657).
+void checkMockingboardStaysOnPhase0()
+{
+    auto c = makeWithTranswarp();
+    MockingboardCard* mb = nullptr;
+    {
+        auto st = c->lockState();
+        auto card = std::make_unique<MockingboardCard>(5);
+        card->setCpu(&st.cpu());
+        mb = card.get();
+        st.memory().slotBus().plug(5, std::move(card));
+    }
+    // What Slot Config Apply does after a replug: both clocks, to every card.
+    c->setVideoStandard(VideoStandard::NTSC);
+    loadNops(*c);
+    c->tickFrame();                          // settle the 3.5x fan-out
+    uint16_t before;
+    {
+        auto st = c->lockState();
+        mb->slotRomWrite(0x0B, 0x00);        // ACR: T1 one-shot
+        mb->slotRomWrite(0x06, 0xFF);        // T1LL
+        mb->slotRomWrite(0x05, 0xFF);        // T1CH: load $FFFF + arm
+        before = static_cast<uint16_t>(mb->peekViaRegister(0, 0x04) |
+                                       (mb->peekViaRegister(0, 0x05) << 8));
+    }
+    c->tickFrame();
+    uint16_t after;
+    long cpuCycles;
+    {
+        auto st = c->lockState();
+        after = static_cast<uint16_t>(mb->peekViaRegister(0, 0x04) |
+                                      (mb->peekViaRegister(0, 0x05) << 8));
+        cpuCycles = static_cast<long>(st.memory().getCycleCounter());
+    }
+    (void)cpuCycles;
+    const int ticks = static_cast<uint16_t>(before - after);
+    std::printf("  Mockingboard T1 over one 3.5x frame: %d ticks "
+                "(phase 0 wants ~%d)\n", ticks, kBase);
+    assert(c->emulatedCpuClockHz() > kNominal * 3.0 &&
+           "the fixture is supposed to run accelerated");
+    assert(std::abs(ticks - kBase) < 400 &&
+           "an accelerator re-clocked the Mockingboard's 6522");
+}
+
 }  // namespace
 
 int main()
@@ -140,6 +192,8 @@ int main()
         c->tickFrame();                 // ...and this one never re-opens it
         checkAgrees(*c, "window closes mid-frame");
     }
+    // 5. The accelerator must leave phase-0 devices alone.
+    checkMockingboardStaysOnPhase0();
     std::puts("accelerator_clock_chunk OK");
     return 0;
 }

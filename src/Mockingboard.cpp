@@ -49,7 +49,7 @@ using pom2::ay::kVolumeTable;
 // 2026-05-14.
 // These are the NTSC nominal values, kept for reference and for tests
 // that quote them. The render loop derives its own tick rate from the
-// LIVE CPU clock instead (`ticksPerSample` in fillAudioBuffer) so that a
+// LIVE slot-bus clock instead (`ticksPerSample` in fillAudioBuffer) so that a
 // PAL machine clocks the AY at its real 1 015 625 Hz.
 [[maybe_unused]] constexpr float kAyClockHz     = static_cast<float>(POM2_CPU_CLOCK_HZ);
 [[maybe_unused]] constexpr float kAyToneStepHz  = kAyClockHz / 8.0f;   // ~127.8 kHz
@@ -126,6 +126,17 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
     /// Emulated CPU clock for the emuCycles replay cursor — retuned by
     /// MockingboardCard::setCpuClock on a PAL/NTSC switch.
     std::atomic<double>   cpuClockHz { static_cast<double>(POM2_CPU_CLOCK_HZ) };
+    /// Slot phase-0 clock feeding the AYs' pin-22 CLOCK — set by
+    /// MockingboardCard::setStandardClock. 0 = never given: the generators
+    /// follow `cpuClockHz` (a hand-built card in a test). Kept apart from
+    /// `cpuClockHz` because an accelerator raises that one and must not
+    /// raise the pitch (bug hunt 2026-09-29, round three).
+    std::atomic<double>   busClockHz { 0.0 };
+    double ayClockHz() const
+    {
+        const double bus = busClockHz.load(std::memory_order_relaxed);
+        return bus > 0.0 ? bus : cpuClockHz.load(std::memory_order_relaxed);
+    }
 
     // SSI263 mix scratch — member, not a per-callback local: this runs on
     // the realtime audio thread, where a heap allocation per buffer tick
@@ -530,16 +541,21 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // stream at `master_clock / 8`, `ay8910.cpp:1298`), so one figure
         // serves all three.
         //
-        // Derived from the LIVE CPU clock, not the NTSC compile-time
+        // Derived from the LIVE bus clock, not the NTSC compile-time
         // constant: the AY's pin-22 CLOCK is wired to the slot's phase-0
         // line, so on a PAL machine the chip really does run at
         // 1 015 625 Hz. Synthesising PAL music at the NTSC rate put every
         // note 0.699 % sharp = 12.05 cents — small, but Digidream 2 and
         // the rest of the French Touch / DIX corpus are PAL-timed, which
         // is exactly the material this path exists for.
+        //
+        // Phase 0, NOT the CPU clock: an accelerator (TransWarp 3.5x, the
+        // //c+ 4x) speeds the 6502 and leaves phase 0 alone. Deriving this
+        // from `cpuClockHz` put every note 3.5x sharp under a TransWarp.
+        // `cyclesPerSample` above stays on the CPU clock — it paces the
+        // replay cursor, whose stamps ARE CPU cycles.
         const float ticksPerSample = static_cast<float>(
-            cpuClockHz.load(std::memory_order_relaxed) / 8.0
-            / static_cast<double>(sr));
+            ayClockHz() / 8.0 / static_cast<double>(sr));
         const float invTicksPerSample =
             (ticksPerSample > 0.0f) ? (1.0f / ticksPerSample) : 0.0f;
 
@@ -890,7 +906,41 @@ float MockingboardCard::getVolume() const
 }
 void MockingboardCard::setCpuClock(double hz)
 {
-    if (hz > 0.0 && audio_) audio_->cpuClockHz.store(hz, std::memory_order_relaxed);
+    if (!(hz > 0.0)) return;
+    if (audio_) audio_->cpuClockHz.store(hz, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(mtx);
+    busClock_.setCpuClock(hz);
+    // The SSI263's phoneme timer is its own oscillator (real time), counted
+    // down in CPU cycles — so it converts with the clock actually elapsing.
+    if (ssi_) ssi_->setCpuClockHz(hz);
+}
+
+// Phase 0 of the slot bus: the AYs' CLOCK pin and the 6522s' timer clock.
+// `setVideoStandard` and Slot Config Apply hand it the standard's nominal;
+// `applyAcceleratorClock` never calls it — which is the point.
+void MockingboardCard::setStandardClock(double hz)
+{
+    if (!(hz > 0.0)) return;
+    if (audio_) audio_->busClockHz.store(hz, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(mtx);
+    busClock_.setBusClock(hz);
+}
+
+// The 6522s tick on phase 0, not on the CPU clock (MAME clocks them from the
+// a2bus). Without an accelerator the two are the same clock and this is a
+// plain pass-through; with one, a CPU cycle is worth less than a bus tick.
+// Caller holds `mtx`.
+void MockingboardCard::advanceVias(uint64_t cpuCycles)
+{
+    const uint64_t ticks = busClock_.busTicks(cpuCycles);
+    // The VIAs' `advance()` takes an int; clamp to a sane upper bound
+    // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
+    // few million here means our sync clock got desynchronised).
+    const int step = (ticks > 0x7FFFFFFFu) ? 0x7FFFFFFF
+                                           : static_cast<int>(ticks);
+    if (step <= 0) return;
+    via_[0]->advance(step);
+    via_[1]->advance(step);
 }
 
 void MockingboardCard::setMuted(bool m)
@@ -979,14 +1029,7 @@ void MockingboardCard::syncToCpuCycleAt(uint64_t now)
         lastSyncCycle_ = now;
         return;
     }
-    const uint64_t delta = now - lastSyncCycle_;
-    // The VIAs' `advance()` takes an int; clamp to a sane upper bound
-    // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
-    // few million here means our sync clock got desynchronised).
-    const int step = (delta > 0x7FFFFFFFu) ? 0x7FFFFFFF
-                                           : static_cast<int>(delta);
-    via_[0]->advance(step);
-    via_[1]->advance(step);
+    advanceVias(now - lastSyncCycle_);
     lastSyncCycle_ = now;
 }
 
@@ -1207,8 +1250,7 @@ void MockingboardCard::advanceCycles(int cycles)
         // No CPU back-pointer (unit-test harness — see
         // mockingboard_smoke_test.cpp). Fall back to the legacy
         // batched advance so existing tests keep their semantics.
-        via_[0]->advance(cycles);
-        via_[1]->advance(cycles);
+        advanceVias(static_cast<uint64_t>(cycles));
     }
     updateIrq();
 }

@@ -145,6 +145,12 @@ void EchoPlusCard::slotRomWrite(uint8_t low8, uint8_t v)
     }
 }
 
+void EchoPlusCard::setCpuClock(double hz)
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    ssi_.setCpuClockHz(hz);
+}
+
 void EchoPlusCard::advanceCycles(int cycles)
 {
     if (cycles <= 0) return;
