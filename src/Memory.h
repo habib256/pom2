@@ -654,7 +654,15 @@ public:
     // via $C000 / clears the strobe via $C010. State + FIFO live in
     // pom2::Keyboard (`keyboard_`); these forward to it, and the softswitch
     // read path calls `keyboard_.latchMirror()` / `lastKey7()` directly.
-    void queueKey(uint8_t ascii)  { keyboard_.queueKey(ascii); }
+    /// A live key. The ][ / ][+ keyboard cannot emit $61-$7A, so a-z folds
+    /// to A-Z there, as pasteText already did: typing `print 6*7` with the
+    /// host's Caps Lock off answered ?SYNTAX ERROR (bug hunt 2026-09-29).
+    void queueKey(uint8_t ascii)
+    {
+        if (!iieMode && ascii >= 'a' && ascii <= 'z')
+            ascii = static_cast<uint8_t>(ascii - 'a' + 'A');
+        keyboard_.queueKey(ascii);
+    }
     void clearKeyStrobe()         { keyboard_.clearStrobe(); }
 
     /// Paste a block of text. Line-endings normalised to CR ($0D) — `\r\n`,
