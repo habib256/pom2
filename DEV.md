@@ -627,8 +627,10 @@ SLOTC3ROM state). Pinned in `iie_c8xx_smoke`.
 
 ## Display
 
-Pure software renderer into 280×192 (or 560×192 in IIe 80-col)
-RGBA. Reads `Memory::getDisplayState()` (mutex copy) + flat RAM.
+Pure software renderer into 280×192 (or 560×192 in IIe 80-col, or a
+card's own picture — 720×216 for a Videx Videoterm, see
+[§ Videx Videoterm](#videx-videoterm-videxvideotermcard)
+) RGBA. Reads `Memory::getDisplayState()` (mutex copy) + flat RAM.
 UI uploads via `glTex(Sub)Image2D`. Text flash via
 `frame_number() & 0x10` (MAME parity).
 
@@ -657,6 +659,9 @@ provenance, deviations, pinned tests and side-by-side captures —
 lives in [`docs/graphics_modes_comparison.md`](docs/graphics_modes_comparison.md).
 
 ### Character generators, and the Videx LOWER CASE CHIP
+
+*(Not to be confused with the Videx **Videoterm**, the 80-column card with
+its own character generators — [§ Videx Videoterm](#videx-videoterm-videxvideotermcard).)*
 
 **French Touch custom char ROM + AN2 dual-bank** (2026-09-02): the Unenhanced
 //e the French Touch corpus targets has no MouseText, so demos that draw block
@@ -1139,6 +1144,123 @@ Aux RAM (cells 0,2,…) interleaved with main (1,3,…) into 560-wide
 frame. Mixed (HIRES+80COL+MIXED): HGR top 20 rows doubled, 80-col
 rows 20..23 overlay. ALTCHAR plumbed but no-op against built-in
 fallback.
+
+### Videx Videoterm (`VidexVideotermCard`)
+
+*(2026-09-29)* Catalog key `videoterm`. A port of MAME `a2bus_videx80_device`
+(`src/devices/bus/a2bus/a2videoterm.cpp`) plus the one thing MAME does not
+model: which picture the monitor shows.
+
+**Files.** `Hd6845Crtc.h/.cpp` — the HD6845S register file only (MAME
+`mc6845.cpp`: masks `register_w` 215-270, readable R12-R17 `register_r`
+192-212 with the HD6845S start-address read-back :1214, `device_reset`
+1029-1054, HD `check_cursor_visible` 546-569, blink `update_cursor_state`
+784-813). No raster timer: the frame is painted whole, and the blink phase is
+a pure function of the CRTC frame index derived from `emuCycles`
+(`crtcFrameAt`: `emuCycles × frameHz / cpuHz`, frameHz = 17.43 MHz / 9 /
+((R0+1)·((R4+1)·(R9+1)+R5)) — 60.07 Hz with the 60 Hz table), so a paused
+machine's cursor freezes and a rewind restores the phase of its moment.
+`VidexVideotermCard.h/.cpp` — the `SlotPeripheral` and its painter.
+`CardVideoSource.h` — the abstract seam the display calls.
+
+**Bus map** (a2videoterm.cpp:379-471). Any `$C0nX` access, read or write,
+selects the VRAM quarter `((low4 >> 2) & 3) × 512`; `$C0n0` W = 6845 address
+latch, `$C0n1` R/W = the register (offset 0 is *not* a status read on this
+card). `$CnXX` = firmware[`$300` + low byte], writes ignored.
+`$C800-$CBFF` = firmware[0..`$3FF`], `$CC00-$CDFF` = the 512-byte VRAM window,
+`$CE00-$CFFF` open bus. `takesC800()` true (:122). `onReset` = MAME
+`device_reset` (bank 0) + `reset_from_bus` (6845 reset). The v2.4 firmware
+hard-codes `$C0B0/$C0B1`, so it only works in **slot 3**; the Slot Config row
+says so in red anywhere else (the card itself decodes in any slot). A foreign
+card in slot 3 already blocks the Chat Mauve Eve's `$C0B0-$C0BF` window
+(`Memory::chatMauveBlockedBySlot3`), the Videoterm included.
+
+**Picture** (`paintPicture`, a port of `crtc_update_row` :473-500 walked the
+way `draw_scanline` walks a frame, mc6845.cpp:815-852): 720 × 216 (MAME's
+visible area, `set_raw(..., 720, ..., 216)` :200). Character (row, col) =
+VRAM[(R12:R13 + row·R1 + col) & `$7FF`]; 16 bytes per glyph, the byte index
+is the raster (R9 = 8 → 9 rasters); 9 dots per cell = bits 7..0 then bit 0
+**again**; VRAM bit 7 selects the alternate set; the cursor inverts its whole
+cell on rasters R10..R11. Outside R1 × R6 rows the picture is black.
+
+**Character sets.** `normal.bin` is required; the alternate set is `4.ic4.bin`
+(MAME's default, inverse video) when present, else derived as `~normal` —
+exactly `4.ic4.bin` on every raster the card displays (0-8), checked byte for
+byte against the MAME set. The ten other MAME sets (APL, Epson, French,
+German, Katakana, …) are not offered yet.
+
+**The soft video switch.** MAME gives the card its own screen. On a real
+machine the card's output went to the monitor while the Apple was in TEXT
+with **AN0** set: the firmware's init ends `STA $C059` (vterm24.dis
+`LC82A`), its re-entry does it again (`LCA89`), the return-to-40 escape does
+`STA $C058` (`LC987`), and the ][+ RESET handler reads `$C058` (Autostart
+`$FA6F`), so Ctrl-Reset hands the monitor back. izapple2 implements the same
+rule (`cardVidexVideotern.go:131-139`). POM2: `VidexVideotermCard::ownsScreen`
+= TEXT && AN0.
+
+- **AN0 moved into `Memory::DisplayState`** (it was a private `Memory::an0`
+  with no reader). Written under `stateMutex` like the other fields, cleared
+  by `resetSoftSwitches`, still carried in the snapshot trailer (the loader
+  patches the published frame-start copies too). Being in `DisplayState`
+  makes the display read it from the PUBLISHED per-frame snapshot like
+  every other switch, folds it into `applyIdleSwitchOverride` (a paused
+  machine poked from the debugger), and puts it in the static-text skip key,
+  which compares the struct wholesale.
+- **`Apple2Display::setVidexCard(CardVideoSource*)`** — non-owning, set by
+  `MainWindow_SlotConfig.cpp`'s dispatch, cleared by the slot-rebuild
+  pre-clear hook in `MainWindow.cpp` next to `setChatMauveCard(nullptr)`. In
+  `render()`, right after the published state is known, `renderCardPicture`
+  paints the card into `frameCard_` and publishes it (`useCardPicture_`;
+  `width()/height()` return 720 × 216). Such a frame produces **no
+  composite signal** (`signalProduced()` false), so every pipeline — OE GPU,
+  OE CPU, AppleWin — presents the framebuffer, and the lit colour is
+  `textLitColor(hiResMode)`, so the mono monitors tint the 80 columns like
+  the Apple's 40. A card frame publishes **no static-text key**, so the next
+  Apple frame always repaints; `setUseFrame80()` and
+  `scheduleCpuDemodInto80()` (the doors every Apple frame goes through) clear
+  `useCardPicture_`.
+- The picture keeps the 4:3 on-screen box (the layout uses
+  `Apple2Display::kWidth/kHeight`), like the 560-wide DHGR frame does; the
+  texture is reallocated on the size change (`MainWindow_Screen.cpp`).
+- **Why an interface, not a sibling `Apple2Display_Videx.cpp`**:
+  `Apple2Display.cpp` is linked by ~50 hand-listed test and tool targets; a
+  direct call into the card would have added the card and its CRTC to every
+  one of those link lines. Through `CardVideoSource.h` the display links
+  nothing new. The painter lives in the card, the switch rule too, and the
+  publish step (`renderCardPicture`) is inline in `Apple2Display.h` — the
+  `.cpp` is at its `tools/file_size_budget.txt` ceiling.
+
+**ROMs** (none tracked; RomFetch pulls all four from RetroBIOS
+`bios/Arcade/MAME/a2vidtrm.zip`, CRC + SHA-256 gated):
+
+| `roms/` file | MAME member | CRC32 | Role |
+|---|---|---|---|
+| `videx_videoterm_v24_60hz.bin` | `6.ic6.bin` (2 KB, upper KB `$FF`) | 5776fa24 | firmware, BIOS 0 — preferred |
+| `videx_videoterm_v24_50hz.bin` | `videx videoterm rom 2.4.bin` (1 KB) | bbe3bb28 | firmware, BIOS 1 — fallback |
+| `videx_videoterm_char_normal.bin` | `videx videoterm character rom normal.bin` | 87f89f08 | normal set — required |
+| `videx_videoterm_char_inverse.bin` | `4.ic4.bin` | 8a497a48 | alternate set — optional |
+
+The two firmwares differ in four bytes, all in the 6845 init table at offset
+`$A1` (R0 `$7B`/`$7A`, R4 `$1B`/`$22`, R5 `$08`/`$00`, R7 `$19`/`$1D`) — the
+50 Hz one only changes the blink rate here. The picker offers the card only on
+a ][ / ][+ (not on an `iieMode` profile: their 80 columns are built in) and
+only with a firmware + the normal set present.
+
+**Snapshot.** `"VDXT"` v1: magic, version, bank quarter, R0-R17, address
+latch, 2 KB VRAM. Refused whole when foreign, short, of another version, or
+carrying a bit a register's mask forbids.
+
+Pinned: `videx_videoterm_bus`, `videx_videoterm_render`,
+`videx_videoterm_snapshot` (synthetic ROM + font), `videx_videoterm_boot`
+(ROM-gated, SKIP 77: `PR#3` on the real ][+ ROM → 6845 at 80 × 24 × 9,
+AN0 set, `]` and `PRINT 6*7` → `42` in the card's VRAM, 720 × 216 published;
+Ctrl-Reset → AN0 clear, 40 columns), plus the catalog sweeps
+`card_snapshot_contract` and `slot_configuration_coordinator`.
+
+**Not modelled.** The 6845's light pen, interlace modes and status register;
+a raster-accurate CRTC (a mid-frame R12/R13 write shows next frame); the
+Videoterm's optional soft-switch hardware beyond the TEXT+AN0 rule; the
+other character sets; the //e-era "Videx UltraTerm" (`a2ultraterm`).
 
 ### Static-text frame skip (`TextFrameKey`)
 

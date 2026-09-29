@@ -260,7 +260,7 @@ force 1 bank.
 
 | Subsystem | Highlights |
 |---|---|
-| 📺 **Video** | Text · lo-res · hi-res · double hi-res · 80-column. **Beam-raced** mid-scanline soft switches. Composite NTSC (OpenEmulator-style shader) · AppleWin NTSC (CPU IIR-LUT) · mono phosphor with adjustable curve + persistence · Video-7 RGB · Le Chat Mauve RGB. |
+| 📺 **Video** | Text · lo-res · hi-res · double hi-res · 80-column (the //e's built-in, or a **Videx Videoterm** on a ][ / ][+). **Beam-raced** mid-scanline soft switches. Composite NTSC (OpenEmulator-style shader) · AppleWin NTSC (CPU IIR-LUT) · mono phosphor with adjustable curve + persistence · Video-7 RGB · Le Chat Mauve RGB. |
 | 🧊 **3D voxel view** | MicroM8-style — framebuffer extruded into orbiting voxels with a real camera (`Voxel3DRenderer` + `Mat4`). |
 | ⏪ **Rewind** | MicroM8-style snapshot ring buffer; scrub back and resume. Shares its serializer with the AI-control `/snapshot` endpoints. |
 | 🔊 **Audio** | Speaker · cassette · Mockingboard A/C · Mockingboard C **Sound II** (SSI263 speech) · Applied Engineering **Phasor** (2×VIA / 4×AY) · Cricket / Echo SSI263 · Echo+ TMS5220 scaffold · cycle-stamped Disk II + Sony 3.5" mechanical sounds. |
@@ -289,6 +289,20 @@ Assign cards, mount media, eject or boot from `Machine → Slot Configuration`. 
 | `uthernet2` | Uthernet II (W5100 TCP/IP) | `softcard` | Microsoft SoftCard Z80 (CP/M) |
 | `fujinet` | FujiNet relay (SP over SLIP) | `workstation` | Apple II Workstation Card (LocalTalk) |
 | `4play` | 4play — 4 digital joysticks (Lukazi) | `transwarp` | TransWarp accelerator (Applied Engineering) |
+| `videoterm` | Videx Videoterm 80-column card — ][ / ][+ only, **slot 3**; needs its ROMs (see below) | | |
+
+**Videx Videoterm (1980).** Eighty columns for a ][ or ][+, which has none of
+its own. Put it in **slot 3** (its firmware talks to slot 3's addresses and
+nowhere else) on an `Apple ][` / `Apple ][+` profile, then type `PR#3`: the
+screen switches to the card's 80 × 24 picture (720 × 216 dots, 9 × 9 cells) —
+and back to the Apple's 40 columns when the firmware's own switch-back
+sequence runs or on Ctrl-Reset, exactly when the real card's video switch
+(TEXT + annunciator 0) would. The monitor colour setting applies to it too.
+The card's four ROM files are not in the repository: *ROM Status → Download
+missing ROMs* fetches them from RetroBIOS (MAME's `a2vidtrm` romset), or copy
+MAME's `6.ic6.bin` → `roms/videx_videoterm_v24_60hz.bin`, `videx videoterm
+character rom normal.bin` → `roms/videx_videoterm_char_normal.bin` and
+`4.ic4.bin` → `roms/videx_videoterm_char_inverse.bin` by hand.
 
 **TransWarp (Applied Engineering, 1986).** A 3.58 MHz 65C02 on a card, which
 is simply the machine's processor moved onto a faster clock — same program,
@@ -423,6 +437,7 @@ Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler) and
 | `ssc_341-0065-a.bin` | Super Serial Card EPROM (Apple 341-0065-A) |
 | `grappler_plus.bin` | Grappler+ EPROM |
 | `grappler_eps-1.bin` / `341-0057.bin` | Original Grappler (1981) EPROM / Apple Parallel Interface PROM |
+| `videx_videoterm_v24_60hz.bin` (or `_50hz.bin`) + `videx_videoterm_char_normal.bin` (+ optional `videx_videoterm_char_inverse.bin`) | Videx Videoterm firmware + character sets — not shipped; **ROM Status → Download** fetches them from MAME's `a2vidtrm` romset |
 | `thunderclock_u9_v1.3.bin` | ThunderClock+ firmware |
 | `roms/floppy_samples/*.wav` | Mechanical drive samples |
 

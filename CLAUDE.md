@@ -190,6 +190,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | AppleWin NTSC (CPU IIR-LUT) | `AppleWinNtsc.h/.cpp` | [§ AppleWin NTSC](DEV.md#applewin-ntsc-colorapplewin) |
 | CRT glass pass (scanlines, mask, vignette, phosphor γ) | `CrtEffectStack.*` | [§ CRT effect stack](DEV.md#universal-crt-effect-stack-crteffectstack) |
 | Le Chat Mauve RGB — one catalog key `chatmauve`, four variants by the `chatmauve_variant` setting (Féline · Adaptateur //c · Eve with `$C0B0-$C0BF` + CPREG auto-write · Video-7) | `LeChatMauveCard.h/.cpp` (state), `Apple2Display_ChatMauve.cpp` (painters), `LeChatMauve_ImGui.*`, `docs/chatmauve_plan.md` | [§ Le Chat Mauve](DEV.md#le-chat-mauve-lechatmauvecard) |
+| Videx Videoterm 80-column card (][ / ][+, slot 3, ROM-gated) — catalog `videoterm`; HD6845S register file; its 720×216 picture replaces the Apple's while TEXT + AN0 (`DisplayState::an0`) | `VidexVideotermCard.h/.cpp`, `Hd6845Crtc.h/.cpp`, `CardVideoSource.h` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
 | Speaker / Cassette / Audio bus (stereo; mono sources are pan-placed) | `AudioDevice.*`, `SpeakerDevice.*`, `CassetteDevice.*` | [§ Audio](DEV.md#audio), [§ Stereo bus](DEV.md#stereo-bus-2026-08-01) |
 | Mockingboard A/C + Sound II | `Mockingboard.h/.cpp` + `Via6522.h` + `Ay3_8910.h` + `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard), [§ Sound II](DEV.md#mockingboardcard-variantsoundii) |
 | Phasor (2×VIA, 4×AY) | `PhasorCard.h/.cpp` + `AyPsgSynth.h` | [§ Phasor](DEV.md#phasor-applied-engineering) |
@@ -285,6 +286,8 @@ $C028        //c ROMBANK toggle (decoded across $C020-$C02F on any
              `IIcClassProfile::hasAltBank_`). Cassette on II/II+/IIe.
 $C030-$C03F  Speaker toggle (any access)
 $C050-$C057  Display mode pairs (text/gfx, mixed, page 1/2, lo/hi-res)
+$C058/$C059  AN0 off/on (`DisplayState::an0`) — with TEXT on, a Videx
+             Videoterm's 80 columns replace the Apple's picture
 $C05E/$C05F  IIe DHGR enable/disable (AN3 pulses → Le Chat Mauve FIFO)
 $C061-$C063  Push-buttons (negative when pressed)
 $C064-$C067  Paddle inputs (negative while RC discharging)
@@ -333,9 +336,10 @@ $F800-$FFFF  Monitor ROM + 6502 vectors ($FFFA-$FFFF)
 enough: a card with no expansion ROM (Disk II, Mockingboard, mouse, 4play, Le
 Chat Mauve) must not latch the window and starve the card that serves it — on
 the fresh-install map the //e autostart scans `$C700` first and used to hand
-slot 7 a window slot 5's SmartPort ROM needed. The seven cards that override it
-true are `ClockCard`, `GrapplerCard`, `LironCard`, `WorkstationCard`,
-`CffaCard`, `SmartPortCard` and `SuperSerialCard` (the last claims for parity
+slot 7 a window slot 5's SmartPort ROM needed. The nine cards that override it
+true are `ClockCard`, `GrapplerCard`, `GrapplerClassicCard`, `LironCard`,
+`WorkstationCard`, `CffaCard`, `SmartPortCard`, `VidexVideotermCard` and
+`SuperSerialCard` (the last claims for parity
 with `a2ssc.cpp:50`, and serves Apple's EPROM there when
 `roms/ssc_341-0065-a.bin` is present — `$FF` without it). Released at `$CFFF`.
 
