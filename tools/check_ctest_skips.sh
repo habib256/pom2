@@ -22,8 +22,14 @@ ALLOW=$(printf '%s\n' \
   $'iic_onboard_smartport_smoke\tPOM2_TRACE_HDV' \
   $'crt_glass_resample\t*' \
   $'crt_barrel_view\t*' \
-  $'slirp_loopback_fence\t*' )
-# The last three depend on the HOST, not on the tree: the two CRT tests need
+  $'slirp_loopback_fence\t*' \
+  $'videx_videoterm_boot\t*' )
+# videx_videoterm_boot is the one ROM-gated test whose dumps are deliberately
+# NOT in the tree: the Videoterm firmware and character ROMs are third-party
+# and are fetched at run time (ROM Status → RetroBIOS a2vidtrm.zip), pending
+# the legal-payload gate (TODO G1). The card itself stays covered on CI by
+# videx_videoterm_bus / _render / _snapshot, which use synthetic ROMs.
+# The three before it depend on the HOST, not on the tree: the two CRT tests need
 # an OpenGL context (the main Linux leg has none; the `gl-software` job gives
 # them one and requires that they RUN) and
 # slirp_loopback_fence needs libslirp, which the CI image does not install.
