@@ -879,6 +879,7 @@ set(HEADERS
     src/Pom2Theme.h
     src/OpenGLShader.h
     src/MountableMediaCard.h
+    src/PascalPrinterRom.h
     src/Ay3_8910.h
     src/GrapplerCard.h
     src/PascalPrinterRom.h

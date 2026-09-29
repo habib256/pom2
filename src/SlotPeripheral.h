@@ -295,6 +295,14 @@ protected:
     /// that was hard-coded everywhere before.
     uint8_t openBus() const;
 
+    /// The machine's CPU cycle counter (`Memory::cycleCounter`), for a card
+    /// that must phase an event to the BEAM rather than to its own reset —
+    /// the frame is `counter % (lines * 65)`, exactly how Memory places VBL.
+    /// nullptr when the card is not plugged, or its bus has no Memory behind
+    /// it (standalone test harnesses). Read the pointer once at plug/reset;
+    /// dereferencing it per instruction is one load, no call.
+    const uint64_t* busCycleCounter() const;
+
 private:
     friend class SlotBus;
     /// Called by SlotBus::plug() right after onPlug(). Wires the card to
