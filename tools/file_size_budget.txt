@@ -385,7 +385,14 @@
 # which is the old body. The three functions belong next to the opcode table
 # they rewrite, so there is no TU to split them into.
 #   src/M6502.cpp                2346 -> 2359 (+13)
-src/Apple2Display.cpp                    2522
+#
+# 2026-09-29 (Videx Videoterm): one raised. HEAD was already at 2528 — the
+# 2026-09-29 bug hunt went 6 over without a note — and the card adds 8: the
+# AN0 idle override, the card-picture hook in render() and the monitor-colour
+# accessor. The painter lives in VidexVideotermCard.cpp and the publish step
+# inline in Apple2Display.h, precisely to keep this number where it is.
+#   src/Apple2Display.cpp        2522 -> 2536 (+14)
+src/Apple2Display.cpp                    2536
 src/DiskIICard.cpp                       2140
 src/DiskImage.cpp                        3284
 src/ImageWriter.cpp                      2798

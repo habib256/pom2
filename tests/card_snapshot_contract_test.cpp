@@ -64,6 +64,7 @@
 #include "TranswarpCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
+#include "VidexVideotermCard.h"
 #include "WorkstationCard.h"
 #include "SlotCardCatalog.h"
 #include "SlotCardFactory.h"
@@ -307,6 +308,7 @@ int main()
         { "GrapplerCard",      [] { return std::unique_ptr<SlotPeripheral>(new GrapplerCard(1)); } },
         { "GrapplerClassic",   [] { return std::unique_ptr<SlotPeripheral>(new GrapplerClassicCard(1)); } },
         { "AppleParallel",     [] { return std::unique_ptr<SlotPeripheral>(new AppleParallelCard(1)); } },
+        { "VidexVideoterm",    [] { return std::unique_ptr<SlotPeripheral>(new VidexVideotermCard(3)); } },
         { "PrinterCard",       [] { return std::unique_ptr<SlotPeripheral>(new PrinterCard(1)); } },
         { "UthernetCard",      [] { return std::unique_ptr<SlotPeripheral>(new UthernetCard(3)); } },
         { "UthernetIICard",    [] { return std::unique_ptr<SlotPeripheral>(new UthernetIICard(3)); } },
@@ -337,6 +339,7 @@ int main()
         { "grappler",    { "Grappler+ROM",    fromFactory("grappler", 1) } },
         { "grappler1",   { "Grappler1+ROM",   fromFactory("grappler1", 1) } },
         { "pic",         { "PIC+ROM",         fromFactory("pic", 1) } },
+        { "videoterm",   { "Videoterm+ROM",   fromFactory("videoterm", 3) } },
         { "workstation", { "Workstation+ROM", fromFactory("workstation", 7) } },
         { "smartport35", { "SmartPort35+ROM", fromFactory("smartport35", 5) } },
     };
@@ -360,6 +363,7 @@ int main()
         {"workstation", "WorkstationCard"}, {"4play", "FourPlayCard"},
         {"transwarp", "TranswarpCard"},
         {"grappler1", "GrapplerClassic"}, {"pic", "AppleParallel"},
+        {"videoterm", "VidexVideoterm"},
     };
     std::set<std::string> names;
     for (const auto& e : cards) names.insert(e.name);

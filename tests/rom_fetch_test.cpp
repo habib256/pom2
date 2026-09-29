@@ -279,6 +279,10 @@ int main()
             "roms/ae_transwarp_1.4.bin", "roms/ssc_341-0065-a.bin",
             "roms/grappler_eps-1.bin", "roms/341-0057.bin",
             "roms/Videx Lower Case Chip ROM.bin",
+            "roms/videx_videoterm_v24_60hz.bin",
+            "roms/videx_videoterm_v24_50hz.bin",
+            "roms/videx_videoterm_char_normal.bin",
+            "roms/videx_videoterm_char_inverse.bin",
             "roms/342-0274-a.e9", "roms/342-0326-a.f12",
             "roms/apple2e_char_fr.rom", "roms/apple2e_char_frca.rom",
             "roms/apple2e_char_uk.rom", "roms/apple2e_char_uk_unenh.rom",
@@ -294,7 +298,7 @@ int main()
                    std::string(d) + " is served by the RetroBIOS catalogue");
     }
 
-    // Only FIVE entries still need a host unzip/tar: RetroBIOS publishes a
+    // Only NINE entries still need a host unzip/tar: RetroBIOS publishes a
     // loose copy of everything else, so a machine without those tools can
     // still complete almost all of its romset. Name them — an entry that
     // quietly goes back to a zip costs every such machine that dump.
@@ -308,12 +312,17 @@ int main()
                    d == "roms/ssc_341-0065-a.bin" ||
                    d == "roms/grappler_eps-1.bin" ||
                    d == "roms/341-0057.bin" ||
-                   d == "roms/apple2e_unenh.rom",
+                   d == "roms/apple2e_unenh.rom" ||
+                   d == "roms/videx_videoterm_v24_60hz.bin" ||
+                   d == "roms/videx_videoterm_v24_50hz.bin" ||
+                   d == "roms/videx_videoterm_char_normal.bin" ||
+                   d == "roms/videx_videoterm_char_inverse.bin",
                    std::string("zip-sourced entries are the mouse slot eprom, "
-                               "the SSC, Grappler and PIC ROMs and the "
-                               "unenhanced //e pair, not ") + d);
+                               "the SSC, Grappler and PIC ROMs, the "
+                               "unenhanced //e pair and the four Videx "
+                               "Videoterm dumps, not ") + d);
         }
-        expect(zipped == 5, "exactly five entries unpack a zip");
+        expect(zipped == 9, "exactly nine entries unpack a zip");
         for (const auto& e : cat)
             expect(!e.zipConcat || e.zipMember,
                    std::string(e.destRel) +

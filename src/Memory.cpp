@@ -709,8 +709,7 @@ void Memory::resetSoftSwitches()
     // generator it is wired to the ROM's A12, so a stale AN2 left a
     // freshly-reset machine rendering the second 4 KB font
     // (`charRomBankOffset`). Same reason they are in the snapshot trailer.
-    an0 = false;
-    an1 = false;
+    an1 = false;   // (AN0 is display.an0, cleared with `display` above)
     an2 = false;
     keyboard_.reset();   // abandon any in-flight paste, drop the strobe
 }
@@ -950,7 +949,7 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         // 4 KB font. The section is length-prefixed and grew at the END, so
         // a 4-byte blob from an older build still loads (the loader keeps
         // the live values for anything the section does not carry).
-        sect.push_back(an0 ? 1 : 0);
+        sect.push_back(display.an0 ? 1 : 0);
         sect.push_back(an1 ? 1 : 0);
         sect.push_back(an2 ? 1 : 0);
         // Appended 2026-09-06, same grow-at-the-end rule:
@@ -1208,7 +1207,8 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             // before 2026-09-06 stops at k == 4 and keeps the live values,
             // which is the same back-compat rule the whole trailer follows.
             if (k >= 7) {
-                an0 = p[4] != 0;
+                std::lock_guard<std::mutex> lk(stateMutex);   // AN0 is in DisplayState:
+                display.an0 = displayAtFrameStart_.an0 = publishedFrameStart_.an0 = p[4] != 0;
                 an1 = p[5] != 0;
                 an2 = p[6] != 0;
             }
@@ -1503,7 +1503,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     if (low >= 0x58 && low <= 0x5D) {
         const bool on = (low & 1) != 0;
         switch ((low - 0x58) >> 1) {
-            case 0: an0 = on; break;
+            case 0: { std::lock_guard<std::mutex> lk(stateMutex); display.an0 = on; break; }
             case 1: an1 = on; break;
             case 2: an2 = on; break;
         }

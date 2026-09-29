@@ -38,6 +38,7 @@
 #ifndef POM2_APPLE2_DISPLAY_H
 #define POM2_APPLE2_DISPLAY_H
 
+#include "CardVideoSource.h"
 #include "LeChatMauveCard.h"
 #include "Memory.h"
 
@@ -148,6 +149,7 @@ public:
     // explicitly after releasing stateMutex, making this a no-op there.
     const uint32_t* pixels() const {
         const_cast<Apple2Display*>(this)->finishPendingCpuDemod();
+        if (useCardPicture_) return frameCard_.data();
         return useFrame80_ ? frame80.data() : frame.data();
     }
 
@@ -159,8 +161,17 @@ public:
     /// all. Lock order: stateMutex → demodMutex, never nested the other
     /// way.
     std::mutex& demodMutex() { return demodMutex_; }
-    int             width()  const { return useFrame80_ ? kWidth80 : kWidth; }
-    int             height() const { return kHeight; }
+    int             width()  const
+    {
+        if (useCardPicture_) return cardPictureW_;
+        return useFrame80_ ? kWidth80 : kWidth;
+    }
+    /// 192 for every Apple picture; a card picture has its own height (the
+    /// Videx Videoterm's is 216 — 24 rows of 9 rasters).
+    int             height() const { return useCardPicture_ ? cardPictureH_ : kHeight; }
+    /// True when the last render() presented a card's own picture (a Videx
+    /// Videoterm's 80 columns) instead of the Apple's video.
+    bool            showingCardPicture() const { return useCardPicture_; }
 
     /// Raster position (visible scanline + 40-byte column index) of a CPU
     /// cycle within the current frame. Used by the beam-racing replay to map
@@ -237,6 +248,18 @@ public:
     /// SlotBus that holds it.
     void setChatMauveCard(LeChatMauveCard* c) { chatMauve = c; }
 
+    /// Videx Videoterm (or any card with its own picture — CardVideoSource.h).
+    /// When non-null and the card's rule holds for the published frame
+    /// (TEXT + AN0 for the Videoterm), render() presents the card's picture,
+    /// at the card's own geometry, instead of the Apple's. Non-owning, like
+    /// the Chat Mauve pointer; MainWindow clears it before a slot rebuild.
+    void setVidexCard(pom2::CardVideoSource* c)
+    {
+        videx_ = c;
+        framebufferMutated();
+    }
+    pom2::CardVideoSource* videxCard() const { return videx_; }
+
     /// Composite signal buffer for the ColorCompositeOE mode. 8-bit
     /// per-sample luminance at 14.318 MHz (560 samples per scanline,
     /// 192 scanlines, one byte per sample = 0 or 255). The MainWindow
@@ -276,6 +299,50 @@ private:
     // published buffer is a framebuffer mutation, and the static-text skip is
     // only sound while every such mutation announces itself.
     bool useFrame80_    = false;     // true for the current frame when 80-col
+    // A card's own picture (Videx Videoterm) is published instead of either
+    // Apple buffer. Cleared by setUseFrame80() / scheduleCpuDemodInto80(), the
+    // two doors every Apple frame goes through, and set only by
+    // renderCardPicture().
+    bool useCardPicture_ = false;
+    std::vector<uint32_t> frameCard_;   // cardPictureW_ × cardPictureH_
+    int  cardPictureW_ = 0;
+    int  cardPictureH_ = 0;
+    pom2::CardVideoSource* videx_ = nullptr;   // non-owning, owned by SlotBus
+    uint32_t monitorLitColor() const;   // the Apple text painters' lit colour
+    /// Paints the card's picture and publishes it when the card's rule holds
+    /// for `state` (TEXT + AN0 for the Videoterm). Defined here rather than
+    /// in Apple2Display.cpp to keep that file under its size budget.
+    ///
+    /// A card frame produces nothing of the Apple's video: no composite
+    /// waveform (signalProduced() false, so every present path — OE GPU,
+    /// OE CPU, AppleWin — shows this framebuffer), no mixed band, no deferred
+    /// demod. It publishes no static-text key either (nextTextFrameKey_ stays
+    /// invalid), so the next Apple frame always repaints whichever way AN0 or
+    /// TEXT moved. The lit colour is the text painters', so a green or amber
+    /// monitor shows the 80 columns in its phosphor. Returns false when the
+    /// rule does not hold, after taking the card's buffer off the screen.
+    bool renderCardPicture(Memory& mem, const Memory::DisplayState& state)
+    {
+        if (!videx_ || !videx_->ownsScreen(state.textMode, state.an0) ||
+            videx_->pictureWidth() <= 0 || videx_->pictureHeight() <= 0) {
+            if (useCardPicture_) { useCardPicture_ = false; framebufferMutated(); }
+            return false;
+        }
+        cardPictureW_ = videx_->pictureWidth();
+        cardPictureH_ = videx_->pictureHeight();
+        frameCard_.resize(static_cast<std::size_t>(cardPictureW_) *
+                          static_cast<std::size_t>(cardPictureH_));
+        videx_->paintPicture(frameCard_.data(), monitorLitColor(), 0xFF000000u,
+                             mem.getCycleCounter(),
+                             pom2VideoTiming(mem.videoStandard()).cpuClockHz);
+        useCardPicture_ = true;
+        framebufferMutated();
+        signalProducedFlag    = false;
+        mixedBandLeftBlack_   = false;
+        mixedCompositeUsesFb_ = false;
+        pendingCpuDemodRows_  = 0;
+        return true;
+    }
     const uint8_t* auxRam = nullptr; // IIe auxiliary RAM (non-owning)
     /// What setAuxMemory() was handed. When it is the rendered Memory's own
     /// aux (`auxData()`), render() swaps in `videoAuxData()` for the frame:
@@ -467,13 +534,19 @@ private:
     /// EVERY such mutation must funnel through here — that is what the private
     /// `useFrame80_` name and the two helpers below enforce.
     void framebufferMutated() { textFrameKey_.valid = false; }
-    void setUseFrame80(bool v) { useFrame80_ = v; framebufferMutated(); }
+    void setUseFrame80(bool v)
+    {
+        useFrame80_ = v;
+        useCardPicture_ = false;
+        framebufferMutated();
+    }
     /// Arms the deferred OE-CPU demod over rows [0, rows) and routes the UI to
     /// frame80 — the single door to `pendingCpuDemodRows_`, so a demod
     /// scheduled from outside render() (screen capture) can never be forgotten
     /// by the skip. The demod itself runs in finishPendingCpuDemod().
     void scheduleCpuDemodInto80(int rows) {
         useFrame80_          = true;
+        useCardPicture_      = false;
         pendingCpuDemodRows_ = rows;
         framebufferMutated();
     }

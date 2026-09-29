@@ -595,6 +595,14 @@ public:
         // selecting page 2. The display needs this to know whether to read
         // the text page from aux when 80STORE+PAGE2 are both on.
         bool eightyStore = false;
+        // Annunciator 0 ($C058 off / $C059 on). Nothing on the motherboard
+        // displays it, but a Videx Videoterm's soft video switch does: the
+        // card's picture replaces the Apple's while TEXT and AN0 are both
+        // on (VidexVideotermCard.h). It lives HERE, not beside AN1/AN2, so
+        // the display reads it from the same published per-frame snapshot
+        // as every other switch — and so the static-text skip key, which
+        // compares this struct wholesale, sees an AN0 flip.
+        bool an0 = false;
     };
     DisplayState getDisplayState() const {
         std::lock_guard<std::mutex> lk(stateMutex);
@@ -1148,12 +1156,12 @@ private:
     // drives Le Chat Mauve's FIFO clock). AN2 is NOT decorative: on an
     // 8 KB international character generator it is wired to the ROM's
     // A12, so it selects the live 4 KB font (`charRomBankOffset`).
-    // AN0/AN1 have no external sink yet; the state is tracked so a
-    // future GameI/O-style pin model can pick it up without
-    // restructuring the soft-switch handler.
+    // AN0 drives a Videx Videoterm's soft video switch (see
+    // DisplayState::an0); AN1 has no external sink yet — it is tracked so a
+    // future GameI/O-style pin model can pick it up.
     // All three are cleared by `resetSoftSwitches` (the 74LS259's /CLR
-    // rides the reset line) and carried in the snapshot trailer.
-    bool an0 = false;
+    // rides the reset line) and carried in the snapshot trailer. AN0 is
+    // `display.an0` since 2026-09-29 (a Videx Videoterm watches it).
     bool an1 = false;
     bool an2 = false;
 

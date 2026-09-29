@@ -205,6 +205,7 @@ void MainWindow::renderSlotConfigPanel()
         const bool mouseAvailable    = mouseRomsPresent();
         const bool mouseAwAvailable  = mouseAwRomPresent();
         const bool cffaAvailable     = cffaRomPresent();
+        const bool videotermAvailable = pom2::videotermRomsPresent();
 
         // Multi-instance cards are never flagged as duplicates. The list is
         // SlotConfigurationCoordinator::isMultiInstance — the same predicate
@@ -238,6 +239,14 @@ void MainWindow::renderSlotConfigPanel()
                 return "ROM dump missing (the mouse slot EPROM)";
             if (key == "cffa"    && !cffaAvailable)
                 return "ROM dump missing (roms/cffa20ee02.bin)";
+            // The Videoterm is a ][ / ][+ card: every //e-class machine has
+            // its 80 columns built in (and its $C300 page is the
+            // motherboard's), and the //c family has no slots at all.
+            if (key == "videoterm" && profileCfg.iieMode)
+                return "a ][ / ][+ card — this machine's 80 columns are built in";
+            if (key == "videoterm" && !videotermAvailable)
+                return "ROM dumps missing (roms/videx_videoterm_v24_60hz.bin "
+                       "or _50hz.bin + roms/videx_videoterm_char_normal.bin)";
             if (profileCfg.noPhysicalSlots &&
                 key != "chatmauve" && key != "mockingboard" &&
                 key != "mockingboard_c")
@@ -565,6 +574,20 @@ void MainWindow::renderSlotConfigPanel()
                             "slots (A2DeskTop, MousePaint) will find it here,\n"
                             "but French titles like Extasie call the slot-4\n"
                             "firmware directly and will not see this card.");
+                }
+                // The Videoterm's v2.4 firmware hard-codes $C0B0/$C0B1 (the
+                // slot-3 device select), so anywhere else PR#n finds a card
+                // whose firmware talks to an empty slot.
+                if (s != 3 && draft[s] == "videoterm") {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+                                       "(firmware only works in slot 3)");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "The Videoterm firmware (v2.4) programs its CRTC at\n"
+                            "$C0B0/$C0B1 — slot 3's I/O addresses — whatever\n"
+                            "slot it runs from. Videx: \"The Videoterm must be\n"
+                            "installed in slot 3.\" Use PR#3.");
                 }
                 if (s == 3 && profileCfg.iieMode &&
                     (draft[s] == "grappler" || draft[s] == "printer")) {
