@@ -26,8 +26,9 @@
 //     therefore opened with a byte from the frame that collided.
 //
 //  2. **`receiveFrame` dropped everything past the second byte, in silence.**
-//     The 3-slot receive FIFO signals full one slot early (MAME
-//     `receive_data`, z80scc.cpp:2566), so it holds two bytes — and
+//     The receive FIFO then held two bytes (a 3-slot ring that signals full
+//     one slot early; since 2026-09-29 it is MAME master's 3 + 1 ring and
+//     holds the chip's three) — and
 //     `receiveFrame` pushed the whole frame in with no chance for the driver
 //     to drain. The overrun bit landed on the slot the write pointer never
 //     left and End Of Frame was marked there too, so NEITHER reached RR1: a
@@ -100,7 +101,7 @@ void testSendAbortEmptiesTheTransmitBuffer()
     std::printf("  ok: Send Abort empties the transmit buffer, not just the frame\n");
 }
 
-// ─── 2. a whole SDLC frame survives the 2-byte FIFO ──────────────────────
+// ─── 2. a whole SDLC frame survives the 3-byte FIFO ──────────────────────
 void testWholeFrameReachesTheDriver()
 {
     Scc8530Device scc;
@@ -110,9 +111,11 @@ void testWholeFrameReachesTheDriver()
     writeReg(scc, A, 1, 0x10);          // Rx interrupt on all characters
 
     // A real LLAP control frame: destination, source, type ($81 = lapENQ).
-    const uint8_t llap[] = { 0x0B, 0x2A, 0x81 };
+    // Four bytes (a control frame plus one) so a tail is held back: the
+    // FIFO takes the chip's three characters and keeps the fourth pending.
+    const uint8_t llap[] = { 0x0B, 0x2A, 0x81, 0x5A };
     scc.receiveFrame(A, llap, sizeof llap);
-    assert(scc.rxFifoCount(A) == 2 && "the FIFO takes two and holds the rest");
+    assert(scc.rxFifoCount(A) == 3 && "the FIFO takes three and holds the rest");
 
     std::vector<uint8_t> got;
     bool eofOnLast = false;
@@ -139,7 +142,7 @@ void testWholeFrameReachesTheDriver()
         back.push_back(scc.dataRead(A));
         if (scc.peekRr(A, 1) & 0x80) scc.controlWrite(A, 0x30);
     }
-    assert(back == big && "a 35-byte SDLC frame did not survive the 2-byte FIFO");
+    assert(back == big && "a 35-byte SDLC frame did not survive the 3-byte FIFO");
     std::printf("  ok: a whole SDLC frame reaches the driver, End Of Frame included\n");
 }
 
@@ -169,9 +172,9 @@ void testPendingTailRoundTrips()
     Scc8530Device scc;
     writeReg(scc, A, 4, 0x20);
     writeReg(scc, A, 3, 0xC1);
-    const uint8_t frame[] = { 0x0B, 0x2A, 0x81, 0x5A };
+    const uint8_t frame[] = { 0x0B, 0x2A, 0x81, 0x5A, 0xC3 };
     scc.receiveFrame(A, frame, sizeof frame);
-    assert(scc.rxFifoCount(A) == 2);
+    assert(scc.rxFifoCount(A) == 3);
 
     std::vector<uint8_t> blob;
     scc.appendSnapshot(blob);

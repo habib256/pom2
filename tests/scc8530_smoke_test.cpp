@@ -35,8 +35,9 @@
 //   6. Local loopback: a transmitted byte reappears in the receive FIFO
 //      after exactly one frame time, with the FIFO and RR0 bits the
 //      manual describes.
-//   7. Receive FIFO depth 3, MAME's overrun handling, and the Error Reset
-//      step (z80scc.cpp:2566 / 2362 / 1811).
+//   7. Receive FIFO depth 3 (a 3 + 1 ring, MAME master z80scc.cpp:1062),
+//      MAME's overrun handling, and the Error Reset step (z80scc.cpp:2566 /
+//      2362 / 1811).
 //   8. The interrupt block: MIE gating, IP bits in RR3, vector
 //      modification into RR2, and the Reset Highest IUS command.
 //   9. Zero Count external interrupt from the BRG timer (z80scc.cpp:1171).
@@ -47,6 +48,11 @@
 //  12. WR8 as the transmit buffer, and what a disabled transmitter does.
 //  13. Both bus orderings; the ab_dc one is what the card wires at
 //      $7500-$7503.
+//  14. The interrupt-block fixes MAME master made after the 588eeb33 pin
+//      (bug hunt 2026-09-29): per-channel reset of IP/IUS, WR1 withdrawing
+//      a source's IP, MIE gating /INT and the acknowledge but not RR3,
+//      Zero Count obeying WR1 D0, the special condition obeying the Rx
+//      interrupt mode, and a v3 snapshot's 3-slot ring restoring.
 
 #include "Scc8530Device.h"
 
@@ -259,19 +265,22 @@ void testReceiveFifoOverrun()
     Scc8530Device scc;
     writeReg(scc, A, 3, 0xC1);      // Rx enable
 
-    // The NMOS 8530 has a 3-byte receive FIFO, and MAME's ring keeps one
-    // slot as the full/empty discriminator, so two bytes fit and the third
-    // overruns (z80scc.cpp:2566).
+    // The NMOS 8530 has a 3-byte receive FIFO. MAME's ring keeps one slot
+    // as the full/empty discriminator, so master sizes it 3 + 1
+    // (z80scc.cpp:1060-1062): three bytes fit and the FOURTH overruns. The
+    // 588eeb33 pin sized the ring 3 and overran on the chip's third byte.
     scc.receiveByte(A, 0x10);
     scc.receiveByte(A, 0x20);
-    assert(scc.rxFifoCount(A) == 2);
+    scc.receiveByte(A, 0x30);
+    assert(scc.rxFifoCount(A) == 3);
     assert((scc.peekRr(A, 0) & 0x01) != 0);     // Rx Character Available
 
-    scc.receiveByte(A, 0x30);
-    assert(scc.rxFifoCount(A) == 2);            // dropped, not queued
+    scc.receiveByte(A, 0x40);
+    assert(scc.rxFifoCount(A) == 3);            // dropped, not queued
 
     assert(scc.dataRead(A) == 0x10);
     assert(scc.dataRead(A) == 0x20);
+    assert(scc.dataRead(A) == 0x30);
     assert(scc.rxFifoCount(A) == 0);
     assert((scc.peekRr(A, 0) & 0x01) == 0);
 
@@ -339,10 +348,13 @@ void testInterruptVectorAndIus()
     assert(!scc.intAsserted());
     assert(!line);
 
-    // With MIE clear nothing may interrupt at all (z80scc.cpp:747).
+    // With MIE clear nothing may interrupt at all — but the IP bit still
+    // lands in RR3 for a polling driver (MAME master z80scc.cpp:750-754).
     writeReg(scc, A, 9, 0x01);
     scc.receiveByte(A, 0x22);
     assert(!scc.intAsserted());
+    assert(!line);
+    assert(scc.peekRr(A, 3) == 0x20);
     std::printf("  ok: vector modification, IUS, MIE gate\n");
 }
 
@@ -686,7 +698,7 @@ void testSdlcReceive()
     assert((scc.peekRr(A, 0) & 0x10) != 0 && "Enter Hunt sets Sync/Hunt");
 
     const uint8_t frame[] = { 0x21, 0x01, 0x81 };
-    scc.receiveFrame(A, frame, 2);          // only two bytes fit the FIFO
+    scc.receiveFrame(A, frame, 2);          // a two-byte frame
     assert((scc.peekRr(A, 0) & 0x10) == 0 && "the opening flag clears hunt");
     assert(scc.rxFifoCount(A) == 2);
 
@@ -793,7 +805,8 @@ void testSnapshotShortBlobIsRefused()
     // Header 5 + global 15 + channel A's fixed part, whose last two bytes are
     // its frame length; the frame runs to the end of the blob, so channel B
     // has nothing left.
-    const size_t lenAt = 5 + 15 + 78;
+    // (81 since the v4 receive ring: 3 x 4 FIFO bytes where v3 had 3 x 3.)
+    const size_t lenAt = 5 + 15 + 81;
     assert(blob.size() > lenAt + 2);
     const size_t frameLen = blob.size() - (lenAt + 2);
     blob[lenAt]     = static_cast<uint8_t>(frameLen & 0xFF);
@@ -872,6 +885,230 @@ void testSnapshotRoundTrip()
     std::printf("  ok: snapshot round-trips and rejects foreign blobs\n");
 }
 
+
+// ─── 14. MAME master's interrupt-block fixes (bug hunt 2026-09-29) ───────
+
+namespace {
+
+/// Leave channel `ch` with a Transmit Buffer Empty interrupt pending: Tx
+/// interrupts on, transmitter on, one byte loaded straight into the shift
+/// register so the buffer is empty again and TBE raises the IP.
+void armTxIp(Scc8530Device& scc, int ch)
+{
+    writeReg(scc, ch, 4, 0x44);     // x16 clock, 1 stop bit
+    writeReg(scc, ch, 5, 0x68);     // Tx enable, 8 bits
+    writeReg(scc, ch, 11, 0x50);    // Tx/Rx clocks from the BRG
+    writeReg(scc, ch, 12, 0x00);
+    writeReg(scc, ch, 13, 0x00);
+    writeReg(scc, ch, 14, 0x03);    // BRG from PCLK, enabled
+    writeReg(scc, ch, 1, 0x02);     // Tx interrupt enable
+    scc.dataWrite(ch, 0x55);
+}
+
+} // namespace
+
+// F1. WR9's channel reset "resets all IPs and IUSs and disables all
+// interrupts in that channel" — its own, not the other one's. The pin ran
+// a device-wide wipe from channel A's reset only: Channel A Reset dropped
+// channel B's request, and Channel B Reset left its own /INT asserted.
+// MAME master `reset_interrupts(int index)`, z80scc.cpp:671-684 / 1176.
+void testChannelResetClearsOnlyItsOwnInterrupts()
+{
+    {
+        Scc8530Device scc;
+        writeReg(scc, A, 9, 0x08);      // MIE
+        armTxIp(scc, B);
+        assert(scc.intAsserted());
+        assert(scc.peekRr(A, 3) == 0x02);   // channel B Tx IP
+        writeReg(scc, A, 9, 0x48);      // Channel B Reset, MIE kept
+        assert(!scc.intAsserted() && "channel B reset left its /INT asserted");
+        assert(scc.peekRr(A, 3) == 0x00);
+    }
+    {
+        Scc8530Device scc;
+        writeReg(scc, A, 9, 0x08);
+        armTxIp(scc, A);
+        armTxIp(scc, B);
+        assert(scc.peekRr(A, 3) == 0x12);   // A Tx + B Tx
+        writeReg(scc, A, 9, 0x88);      // Channel A Reset, MIE kept
+        assert(scc.peekRr(A, 3) == 0x02 && "channel A reset wiped channel B's IP");
+        assert(scc.intAsserted());
+        // The acknowledge now serves channel B's request.
+        assert(scc.intAck() >= 0);
+    }
+    {
+        // IUS too: an in-service channel B interrupt survives channel A's
+        // reset and still blocks the lower-priority sources behind it (in
+        // POM2's daisy order channel B Rx sits after channel B Tx) until its
+        // own Reset Highest IUS.
+        Scc8530Device scc;
+        writeReg(scc, A, 9, 0x08);
+        armTxIp(scc, B);
+        assert(scc.intAck() >= 0);      // channel B Tx now in service
+        assert(!scc.intAsserted());
+        writeReg(scc, A, 9, 0x88);      // Channel A Reset
+        writeReg(scc, B, 3, 0xC1);
+        writeReg(scc, B, 1, 0x12);      // Rx on all chars (+ Tx IE kept)
+        scc.receiveByte(B, 0x99);
+        assert(!scc.intAsserted() && "channel A's reset dropped channel B's IUS");
+        scc.controlWrite(B, 0x38);      // Reset Highest IUS
+        assert(scc.intAsserted() && "channel B Rx is served once the IUS clears");
+    }
+    std::printf("  ok: a WR9 channel reset clears only that channel's IP/IUS\n");
+}
+
+// F2. "If the corresponding IE bit is not set, the IP for that source of
+// interrupt will never be set": clearing an enable in WR1 withdraws the
+// request; the latched conditions come back with the enable. MAME master
+// `do_sccreg_wr1`, z80scc.cpp:1913-1932.
+void testWr1DisableWithdrawsPendingIp()
+{
+    Scc8530Device scc;
+    writeReg(scc, A, 9, 0x08);
+    armTxIp(scc, B);
+    assert(scc.intAsserted());
+    writeReg(scc, B, 1, 0x00);
+    assert(!scc.intAsserted() && "Tx IE off left the request pending");
+    assert(scc.peekRr(A, 3) == 0x00);
+
+    // Receive: withdrawn with the mode, back while a character waits.
+    writeReg(scc, A, 3, 0xC1);
+    writeReg(scc, A, 1, 0x10);
+    scc.receiveByte(A, 0x42);
+    assert(scc.peekRr(A, 3) == 0x20 && scc.intAsserted());
+    writeReg(scc, A, 1, 0x00);
+    assert(scc.peekRr(A, 3) == 0x00 && !scc.intAsserted());
+    writeReg(scc, A, 1, 0x10);
+    assert(scc.peekRr(A, 3) == 0x20 && scc.intAsserted());
+    assert(scc.dataRead(A) == 0x42);
+    assert(!scc.intAsserted());
+
+    // External/status: withdrawn with D0, re-raised from the held latch.
+    writeReg(scc, A, 15, 0x08);     // DCD
+    writeReg(scc, A, 1, 0x01);
+    scc.dcdW(A, false);
+    assert(scc.peekRr(A, 3) == 0x08);
+    writeReg(scc, A, 1, 0x00);
+    assert(scc.peekRr(A, 3) == 0x00 && !scc.intAsserted());
+    writeReg(scc, A, 1, 0x01);
+    assert(scc.peekRr(A, 3) == 0x08 && scc.intAsserted() &&
+           "the latched ext/status condition comes back with its enable");
+    std::printf("  ok: WR1 turning a source off withdraws its IP\n");
+}
+
+// F3. MIE gates the REQUEST and the acknowledge, not the IP bits — Zilog's
+// documented polling mode reads them in RR3 with MIE clear. And clearing
+// MIE drops a /INT already asserted. MAME master z80scc.cpp:579-583,
+// 605-606, 750-754, 2087-2089.
+void testMieGatesLineNotPending()
+{
+    Scc8530Device scc;
+    bool line = false;
+    scc.setIntCallback([&](bool s) { line = s; });
+    writeReg(scc, A, 9, 0x08);
+    armTxIp(scc, B);
+    assert(line && scc.intAsserted());
+
+    writeReg(scc, A, 9, 0x00);      // MIE off
+    assert(!line && !scc.intAsserted() && "clearing MIE left /INT asserted");
+    assert(scc.peekRr(A, 3) == 0x02 && "the IP stays pollable");
+    assert(scc.intAck() == -1 && "no acknowledge with MIE clear");
+
+    writeReg(scc, A, 9, 0x08);      // MIE back on
+    assert(line && scc.intAsserted() && "no IUS was set by the refused ack");
+
+    // Polling from reset: MIE never set, IP bits still appear.
+    Scc8530Device poll;
+    writeReg(poll, A, 3, 0xC1);
+    writeReg(poll, A, 1, 0x10);
+    poll.receiveByte(A, 0x41);
+    assert(poll.peekRr(A, 3) == 0x20 && "RR3 must show the IP in polled mode");
+    assert(!poll.intAsserted());
+    assert(poll.dataRead(A) == 0x41);
+    assert(poll.peekRr(A, 3) == 0x00);
+    std::printf("  ok: MIE gates /INT and the ack, RR3 still polls\n");
+}
+
+// F4. The BRG Zero Count is an external/status source like the others:
+// WR1 D0 must be set for it to raise an IP. MAME master `brg_tick`,
+// z80scc.cpp:1183-1188.
+void testZeroCountObeysWr1ExtEnable()
+{
+    Scc8530Device scc;
+    writeReg(scc, A, 9, 0x08);
+    writeReg(scc, A, 12, 10);
+    writeReg(scc, A, 13, 0);
+    writeReg(scc, A, 15, 0x02);     // Zero Count IE
+    writeReg(scc, A, 14, 0x03);
+    scc.tick(1000);
+    assert(!scc.intAsserted() && scc.peekRr(A, 3) == 0x00 &&
+           "Zero Count interrupted with WR1 D0 clear");
+    writeReg(scc, A, 1, 0x01);
+    scc.tick(1000);
+    assert(scc.intAsserted() && scc.peekRr(A, 3) == 0x08);
+    std::printf("  ok: Zero Count needs WR1's ext/status enable\n");
+}
+
+// The Special Receive Condition still locks the FIFO with receive
+// interrupts disabled, but raises no interrupt. MAME master `data_read`,
+// z80scc.cpp:2424-2428.
+void testSpecialConditionObeysRxIntMode()
+{
+    Scc8530Device scc;
+    writeReg(scc, A, 9, 0x08);
+    writeReg(scc, A, 4, 0x20);      // SDLC: End Of Frame is a special condition
+    writeReg(scc, A, 3, 0xC1);
+    const uint8_t one[] = { 0x7E };
+    scc.receiveFrame(A, one, 1);
+    assert(scc.dataRead(A) == 0x7E);
+    assert((scc.peekRr(A, 1) & 0x80) != 0);
+    assert(scc.rxFifoCount(A) == 1 && "the special condition still locks");
+    assert(!scc.intAsserted() && scc.peekRr(A, 3) == 0x00 &&
+           "a special condition interrupted with Rx interrupts disabled");
+    std::printf("  ok: the special condition obeys WR1's Rx interrupt mode\n");
+}
+
+// The receive ring grew from 3 to 4 slots, and the snapshot to v4. A v3
+// blob — a 3-slot ring whose read pointer may sit anywhere — restores with
+// its characters in the same read order.
+void testSnapshotV3FifoRestores()
+{
+    Scc8530Device src;
+    std::vector<uint8_t> blob;
+    src.appendSnapshot(blob);
+    // 4 magic + 1 version + 3 + 6 + 6 device bytes; per channel (empty SDLC
+    // buffers) 17 registers + 3 x 4 FIFO + 2 pointers + 3 + 6 + 2 + 16 + 1
+    // + 2 + 8 + 4 + 8 + 2 + 1 + 2 = 86 bytes.
+    constexpr std::size_t kHead = 20, kChan = 86, kFifo = 17;
+    assert(blob.size() == kHead + 2 * kChan);
+    assert(blob[4] == 4);
+    // Down-convert: drop the fourth slot of data, error and EOF in each
+    // channel, highest offset first.
+    for (int ch = 1; ch >= 0; --ch) {
+        const std::size_t f = kHead + static_cast<std::size_t>(ch) * kChan + kFifo;
+        blob.erase(blob.begin() + static_cast<long>(f + 11));
+        blob.erase(blob.begin() + static_cast<long>(f + 7));
+        blob.erase(blob.begin() + static_cast<long>(f + 3));
+    }
+    blob[4] = 3;
+    // Channel A's 3-slot ring: rp = 2, wp = 1, so the read order is slot 2
+    // then slot 0; slot 1 is the parked write slot.
+    const std::size_t fa = kHead + kFifo;
+    blob[fa + 0] = 0xB2;
+    blob[fa + 1] = 0xCC;
+    blob[fa + 2] = 0xA1;
+    blob[fa + 9]  = 2;      // rp
+    blob[fa + 10] = 1;      // wp
+
+    Scc8530Device dst;
+    assert(dst.restoreSnapshot(blob.data(), blob.size()));
+    assert(dst.rxFifoCount(A) == 2);
+    assert(dst.dataRead(A) == 0xA1);
+    assert(dst.dataRead(A) == 0xB2);
+    assert(dst.rxFifoCount(A) == 0);
+    std::printf("  ok: a v3 snapshot's 3-slot receive ring restores in order\n");
+}
+
 int main()
 {
     testHardwareResetValues();
@@ -893,6 +1130,12 @@ int main()
     testSnapshotShortBlobIsRefused();
     testSdlcCrcErrorDoesNotPoisonTheSlot();
     testSnapshotRoundTrip();
+    testChannelResetClearsOnlyItsOwnInterrupts();
+    testWr1DisableWithdrawsPendingIp();
+    testMieGatesLineNotPending();
+    testZeroCountObeysWr1ExtEnable();
+    testSpecialConditionObeysRxIntMode();
+    testSnapshotV3FifoRestores();
     std::printf("OK scc8530_smoke\n");
     return 0;
 }

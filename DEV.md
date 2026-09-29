@@ -6167,6 +6167,21 @@ loops for ever. One pre-existing assertion in `scc8530_smoke` had pinned the
 stuck latch as if it were correct, and is corrected with the code — a reminder
 that a test written against the bug locks the bug in.
 
+**MAME master's interrupt-block fixes, carried forward** *(2026-09-29)*.
+The port is pinned at 588eeb33; upstream has since fixed six things POM2
+now takes from master (`z80scc.cpp`, lines cited in the source): a WR9
+channel reset clears only *that* channel's IP/IUS and RR3 bits
+(`reset_interrupts(int index)` — the pin wiped both channels on "Channel A
+Reset" and none on "Channel B Reset"); turning a source off in WR1 withdraws
+its IP (`reset_ip`), with a held Ext/Status latch or a waiting character
+re-raised when the enable returns; MIE gates `/INT` and the acknowledge but
+**not** the IP bits, so RR3 polling with MIE clear works as Zilog documents
+and clearing MIE drops a live `/INT`; the BRG Zero Count needs WR1 D0; the
+Special Receive Condition interrupt needs a non-zero WR1 Rx mode (the FIFO
+still locks); and the receive ring is `3 + 1` slots, so the chip's three
+characters fit (the pin overran on the third). Snapshot v4 carries the
+4-slot ring; a v3 blob restores with its ring re-laid in read order.
+
 **One MAME divergence deliberately kept.** On receive overrun MAME writes the
 offending byte into the slot the write pointer is parked on and sets Overrun
 in the *error* FIFO, but never advances past it — so that slot is unreachable
