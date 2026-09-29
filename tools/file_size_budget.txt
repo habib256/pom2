@@ -385,11 +385,35 @@
 # which is the old body. The three functions belong next to the opcode table
 # they rewrite, so there is no TU to split them into.
 #   src/M6502.cpp                2346 -> 2359 (+13)
-src/Apple2Display.cpp                    2522
-src/DiskIICard.cpp                       2140
-src/DiskImage.cpp                        3284
-src/ImageWriter.cpp                      2798
+#
+# 2026-09-29 (Videx Videoterm): one raised. HEAD was already at 2528 — the
+# 2026-09-29 bug hunt went 6 over without a note — and the card adds 8: the
+# AN0 idle override, the card-picture hook in render() and the monitor-colour
+# accessor. The painter lives in VidexVideotermCard.cpp and the publish step
+# inline in Apple2Display.h, precisely to keep this number where it is.
+#   src/Apple2Display.cpp        2522 -> 2536 (+14)
+#
+# 2026-09-29 (bug hunts, rounds one to three): five raised, by the fixes and
+# the comments that say why — no new function in any of them. They landed
+# without their ceilings, so check_file_sizes was red on main; recorded here.
+#   src/DiskIICard.cpp           2140 -> 2143 (+3)   a same-file re-insert is
+#       re-read whatever its dirty flag (the autosave can land between the
+#       two mount phases); the path test moved to Block512Backing::sameFile.
+#   src/DiskImage.cpp            3284 -> 3293 (+9)   a rewind that restores
+#       an unformatted (all-$00) track does not dirty it — eraseSurface's
+#       rule. The flux/WOZ split this file owes is still owed.
+#   src/ImageWriter.cpp          2798 -> 2809 (+11)  Epson / Diablo binary
+#       parameters keep bit 7 and cost no mechanism time.
+#   src/Memory.cpp               2750 -> 2751 (+1)   the slot bus gets the
+#       cycle counter by pointer (the mouse card's beam-locked VBL).
+#   src/StorageCoordinator.cpp   2325 -> 2344 (+19)  a host folder re-mounted
+#       under another spelling is re-synthesised; the legacy write-back key
+#       is migrated on empty / missing / failed-mount bays too.
+src/Apple2Display.cpp                    2536
+src/DiskIICard.cpp                       2143
+src/DiskImage.cpp                        3293
+src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
-src/Memory.cpp                           2750
-src/StorageCoordinator.cpp               2325
+src/Memory.cpp                           2751
+src/StorageCoordinator.cpp               2344
 src/hgrpaint/HgrPaintEditor.cpp          2656

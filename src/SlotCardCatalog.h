@@ -96,6 +96,13 @@ inline constexpr CardType kCardTypes[] = {
     // Apple II Parallel Interface Card (1979): 512-byte PROM 341-0057, no
     // Pascal signature at all. Needs roms/341-0057.bin. MAME `a2pic`.
     { "pic",          "Apple Parallel Interface" },
+    // Videx Videoterm (1980) — the ][ / ][+ 80-column card: its own HD6845S,
+    // 2 KB of VRAM and character generator; its picture replaces the Apple's
+    // while TEXT and AN0 are on. The v2.4 firmware hard-codes $C0B0, so
+    // SLOT 3 only. Needs roms/videx_videoterm_v24_60hz.bin (or _50hz) and
+    // roms/videx_videoterm_char_normal.bin. Not offered on a //e-class
+    // machine: its 80 columns are built in. MAME `a2videoterm`.
+    { "videoterm",    "Videx Videoterm 80-column" },
     { "clock",        "Clock (ProDOS)"    },
     // Uthernet I (a2RetroSystems) — CS8900A Ethernet NIC. Raw frames
     // only: the Apple-side stack (IP65, Contiki, ADTPro-ethernet) does
@@ -206,6 +213,15 @@ inline bool mouseRomsPresent()
 inline bool mouseAwRomPresent()
 {
     return !findResource("roms/mouse_341-0270-c.bin").empty();
+}
+
+/// Videx Videoterm: one firmware (60 Hz clone dump or 50 Hz v2.4) plus the
+/// normal character set. The inverse set is optional (derived as ~normal).
+inline bool videotermRomsPresent()
+{
+    return (!findResource("roms/videx_videoterm_v24_60hz.bin").empty() ||
+            !findResource("roms/videx_videoterm_v24_50hz.bin").empty()) &&
+           !findResource("roms/videx_videoterm_char_normal.bin").empty();
 }
 
 inline bool cffaRomPresent()

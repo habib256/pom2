@@ -59,10 +59,11 @@ struct RomFetchEntry {
     const char* url;           ///< raw.githubusercontent.com file or zip.
     /// Single zip member to extract. Null when `url` is already the dump —
     /// which, since RetroBIOS PR #75 published loose copies, is every entry
-    /// but five: the mouse slot eprom, the Super Serial Card EPROM, the 1981
-    /// Grappler EPROM, the Apple Parallel Interface PROM and the unenhanced
-    /// //e firmware live only inside MAME romsets (a2mouse.zip, a2ssc.zip,
-    /// a2grappler.zip, a2pic.zip, apple2e.zip).
+    /// but nine: the mouse slot eprom, the Super Serial Card EPROM, the 1981
+    /// Grappler EPROM, the Apple Parallel Interface PROM, the unenhanced
+    /// //e firmware and the four Videx Videoterm dumps live only inside MAME
+    /// romsets (a2mouse.zip, a2ssc.zip, a2grappler.zip, a2pic.zip,
+    /// apple2e.zip, a2vidtrm.zip).
     const char* zipMember;
     /// Null-terminated extra members concatenated AFTER `zipMember`, in
     /// order. The unenhanced //e is the case: MAME keeps that firmware as

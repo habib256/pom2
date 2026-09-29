@@ -457,6 +457,7 @@ void Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
     if (live.altChar     != was.altChar)     s.altChar     = live.altChar;
     if (live.dhgr        != was.dhgr)        s.dhgr        = live.dhgr;
     if (live.eightyStore != was.eightyStore) s.eightyStore = live.eightyStore;
+    if (live.an0         != was.an0)         s.an0         = live.an0;
 }
 
 void Apple2Display::render(Memory& mem)
@@ -577,6 +578,10 @@ void Apple2Display::render(Memory& mem)
         applyIdleSwitchOverride(state, mem);
     }
     lastRenderState_ = state;   // published-frame snapshot for present-path decisions
+
+    // TEXT + AN0 under a Videx Videoterm: the card's picture replaces this
+    // frame entirely (renderCardPicture, Apple2Display.h).
+    if (renderCardPicture(mem, state)) return;
     // Whether the 32-row text band needs patching is NOT a property of the
     // frame's final state, and it is not "any band was mixed graphics"
     // either. It is exactly: did fillCompositeSignal leave scanlines
@@ -2526,3 +2531,6 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
         });
     return true;
 }
+
+// The lit colour of the monitor, for a card's own picture (Apple2Display.h).
+uint32_t Apple2Display::monitorLitColor() const { return textLitColor(hiResMode); }

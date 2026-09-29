@@ -164,18 +164,18 @@ void MainWindow::persistSession(bool flushMedia)
     // Paths AND the write-back opt-in: only the paths were persisted, so a
     // 3.5" drive the user had opted in came back write-protected after every
     // restart (and silently discarded the next session's writes on eject).
-    settings->setString("disk35_path_1",
-                        onboard35[0].loaded ? onboard35[0].path
-                                            : std::string());
-    settings->setString("disk35_path_2",
-                        onboard35[1].loaded ? onboard35[1].path
-                                            : std::string());
-    settings->setBool("disk35_writeback_1", onboard35[0].writeBack);
-    settings->setBool("disk35_writeback_2", onboard35[1].writeBack);
-    settings->setString("disk35_path_3", onboard35[2].loaded ? onboard35[2].path : std::string());
-    settings->setBool("disk35_writeback_3", onboard35[2].writeBack);
-    settings->setBool("disk35_connected_2", sonyConnected[1]);
-    settings->setBool("disk35_connected_3", sonyConnected[2]);
+    // Written with the SAME prefix + suffix the restore reads them with
+    // (MainWindow.cpp), so tools/check_settings_keys.sh sees one key on both
+    // sides; spelled out per drive, the guard saw nine write-only literals
+    // and three read-only prefixes.
+    for (std::size_t i = 0; i < onboard35.size(); ++i) {
+        const std::string suffix = std::to_string(i + 1);
+        settings->setString("disk35_path_" + suffix,
+                            onboard35[i].loaded ? onboard35[i].path : std::string());
+        settings->setBool("disk35_writeback_" + suffix, onboard35[i].writeBack);
+        if (i > 0)   // the internal drive is always connected
+            settings->setBool("disk35_connected_" + suffix, sonyConnected[i]);
+    }
 
     // CFFA per-slot image + write-back for EVERY plugged CFFA card. `cffa`
     // is multi-instance, so persist each (not just the primary `primaryCffaCard()`),

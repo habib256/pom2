@@ -47,6 +47,7 @@ src/FujiNetCard.cpp
 src/FujiNetCardFactory.cpp
 src/FujiNetNetDevice.cpp
 src/GrapplerCard.cpp
+src/Hd6845Crtc.cpp
 src/IIcExternalSmartPort.cpp
 src/IWMDevice.cpp
 src/ImageWriter.cpp
@@ -115,6 +116,7 @@ src/TnfsMedia.cpp
 src/TranswarpCard.cpp
 src/UthernetCard.cpp
 src/UthernetIICard.cpp
+src/VidexVideotermCard.cpp
 src/W5100Device.cpp
 src/W5100HostSockets.cpp
 src/W5100NameResolver.cpp
