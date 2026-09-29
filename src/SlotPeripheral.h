@@ -153,8 +153,12 @@ public:
     /// a platter's RPM is real time, but the IWM that reads it counts ticks
     /// of the machine's crystal, which an accelerator does not speed up.
     /// Handing such a device the accelerated `setCpuClock` value would make
-    /// a //c+-at-4× revolution four times too long. Default: no-op;
-    /// implemented by LironCard (its Sony mechanisms).
+    /// a //c+-at-4× revolution four times too long. The slot bus's phase 0
+    /// is the same kind of clock: MockingboardCard and PhasorCard take it
+    /// for their AYs' pin-22 CLOCK and their 6522 timers (MAME clocks both
+    /// from the a2bus), so a TransWarp no longer raises the pitch or the
+    /// tempo. Default: no-op; implemented by LironCard (its Sony
+    /// mechanisms), MockingboardCard and PhasorCard.
     virtual void setStandardClock(double /*hz*/) {}
 
     virtual void appendSnapshotState(std::vector<uint8_t>& /*out*/) const {}
@@ -294,6 +298,14 @@ protected:
     /// bus with no source (several test harnesses), gets $FF — the constant
     /// that was hard-coded everywhere before.
     uint8_t openBus() const;
+
+    /// The machine's CPU cycle counter (`Memory::cycleCounter`), for a card
+    /// that must phase an event to the BEAM rather than to its own reset —
+    /// the frame is `counter % (lines * 65)`, exactly how Memory places VBL.
+    /// nullptr when the card is not plugged, or its bus has no Memory behind
+    /// it (standalone test harnesses). Read the pointer once at plug/reset;
+    /// dereferencing it per instruction is one load, no call.
+    const uint64_t* busCycleCounter() const;
 
 private:
     friend class SlotBus;

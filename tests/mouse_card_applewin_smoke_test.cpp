@@ -30,9 +30,11 @@
 //   4. MOUSE_HOME lands on the clamp window's upper-left corner, which is
 //      what Apple's HOMEMOUSE entry promises — not the hard (0,0) AppleWin
 //      uses (the two agree only at the power-on 0..1023 window).
-//   5. Snapshot / rewind: mode, the mid-command byte cursor and the VBL
-//      pacer round-trip, and a card restored from a state where the guest
-//      had interrupts OFF stops interrupting.
+//   5. Snapshot / rewind: mode and the mid-command byte cursor round-trip,
+//      the restored VBL re-phases to the beam, and a card restored from a
+//      state where the guest had interrupts OFF stops interrupting.
+//   6. MODE_INT_VBL lands on the beam's VBL edge (scanline 192), NTSC and
+//      PAL, whatever the beam phase of the reset or restore.
 //
 // Note what test_vbl_pacing_follows_set_cycles pins on purpose: mode $08
 // (MODE_INT_VBL with MOUSE_ON clear) DOES raise the VBL interrupt. That is
@@ -204,9 +206,9 @@ void test_command_handshake_reaches_oncommand()
     std::remove(slotPath.c_str());
 }
 
-// MODE_INT_VBL pacing follows the profile-plumbed cycles-per-frame
-// (setVblCycles): default 17045 (NTSC 60 Hz); PAL profiles pass 20313
-// (50 Hz). Regression: the period was a hard-wired NTSC constant, so on
+// MODE_INT_VBL pacing follows the profile-plumbed frame length
+// (setVblCycles): default 17030 (262 x 65, NTSC); PAL profiles pass 20280
+// (312 x 65). Regression: the period was a hard-wired NTSC constant, so on
 // PAL profiles the VBL interrupt drifted against the 50 Hz frame.
 void test_vbl_pacing_follows_set_cycles()
 {
@@ -215,13 +217,14 @@ void test_vbl_pacing_follows_set_cycles()
 
     auto runCase = [&](bool usePal) {
         Memory mem;
+        if (usePal) mem.setVideoStandard(VideoStandard::PAL);
         auto card = std::make_unique<MouseCardAppleWin>(4);
         assert(card->loadRom(slotPath));
         MouseCardAppleWin* raw = card.get();
         mem.slotBus().plug(4, std::move(card));
         raw->onReset();
-        assert(raw->vblCycles() == 17045);          // NTSC default
-        const int period = usePal ? 20313 : 17045;
+        assert(raw->vblCycles() == 17030);          // NTSC default
+        const int period = usePal ? 20280 : 17030;
         if (usePal) raw->setVblCycles(period);
         assert(raw->vblCycles() == period);
 
@@ -230,11 +233,13 @@ void test_vbl_pacing_follows_set_cycles()
         // MOUSE_SET ($0n) with MODE_INT_VBL (bit 3) in the low nibble.
         pulseCommand(mem, devBase, 0x08);
 
-        // One cycle short of a frame → no VBL IRQ yet.
-        raw->advanceCycles(period - 1);
+        // The edge is line 192 of the beam's frame: one cycle short of it,
+        // no VBL IRQ; crossing it raises the interrupt.
+        mem.advanceCycles(1);                       // card phases itself
+        const uint64_t edge = 192 * 65;
+        mem.advanceCycles(static_cast<int>(edge - mem.getCycleCounter() - 1));
         assert(!raw->slotIrqAsserted());
-        // Crossing the frame boundary raises the VBL interrupt.
-        raw->advanceCycles(1);
+        mem.advanceCycles(1);
         assert(raw->slotIrqAsserted());
     };
     runCase(/*usePal=*/false);
@@ -244,7 +249,92 @@ void test_vbl_pacing_follows_set_cycles()
     MouseCardAppleWin guard(4);
     guard.setVblCycles(0);
     guard.setVblCycles(-5);
-    assert(guard.vblCycles() == 17045);
+    assert(guard.vblCycles() == 17030);
+
+    std::remove(slotPath.c_str());
+}
+
+// MODE_INT_VBL fires at the BEAM's VBL edge, not a frame after the card's
+// reset. Bug hunt 2026-09-29: the pacer counted from onReset, so the first
+// interrupt landed on scanlines 188 / 234 / 65 / 157 for four reset phases
+// and every Ctrl-Reset moved the A2DeskTop cursor update to a new line.
+// Resets the card at several beam phases (and restores a snapshot onto a
+// clock moved to yet another phase) on NTSC and PAL, and requires the first
+// VBL interrupt on scanline 192 +-1 -- cross-checked against Memory's own
+// VBLBAR at $C019.
+void test_vbl_irq_locked_to_beam()
+{
+    std::vector<uint8_t> rom(0x800, 0x00);
+    const auto slotPath = writeTempBlob(rom, "vbl_beam_slot.bin");
+    const uint16_t devBase = 0xC0C0;     // slot 4
+
+    auto firstIrqLine = [&](Memory& mem, MouseCardAppleWin* raw,
+                            uint64_t frame) -> int {
+        // 4-cycle steps: instruction-sized, far inside the +-1 line bound.
+        for (uint64_t i = 0; i < 2 * frame; i += 4) {
+            mem.advanceCycles(4);
+            if (raw->slotIrqAsserted()) {
+                const uint64_t c = mem.getCycleCounter();
+                // Memory agrees the beam is in VBL ($C019 bit 7 low).
+                assert((mem.memRead(0xC019) & 0x80) == 0);
+                return static_cast<int>((c % frame) / 65);
+            }
+        }
+        return -1;
+    };
+
+    for (const bool pal : { false, true }) {
+        const uint64_t lines = pal ? 312 : 262;
+        const uint64_t frame = lines * 65;
+        for (const uint64_t phase : { uint64_t{0}, uint64_t{3000}, uint64_t{9000},
+                                      uint64_t{12479}, uint64_t{12480},
+                                      uint64_t{15000}, frame - 1 }) {
+            Memory mem;
+            mem.setIIEMode(true);
+            if (pal) mem.setVideoStandard(VideoStandard::PAL);
+            auto card = std::make_unique<MouseCardAppleWin>(4);
+            assert(card->loadRom(slotPath));
+            MouseCardAppleWin* raw = card.get();
+            raw->setVblCycles(static_cast<int>(frame));
+            mem.slotBus().plug(4, std::move(card));
+
+            // Somewhere mid-session, then Ctrl-Reset at this beam phase.
+            mem.setCycleCounter(frame * 57 + phase);
+            mem.slotBus().reset();
+            primePiaForOutput(mem, devBase);
+            pulseCommand(mem, devBase, 0x09);   // MOUSE_SET: ON | INT_VBL
+
+            const int line = firstIrqLine(mem, raw, frame);
+            if (line < 191 || line > 193) {
+                std::fprintf(stderr,
+                    "%s reset at phase %llu: first VBL IRQ on line %d, "
+                    "want 192\n", pal ? "PAL" : "NTSC",
+                    static_cast<unsigned long long>(phase), line);
+            }
+            assert(line >= 191 && line <= 193);
+
+            // Service + read the interrupt, snapshot, move the clock to
+            // another beam phase (a restore carries its own CPU counter),
+            // restore: re-phased to the beam, no spurious interrupt out of
+            // the clock jump.
+            pulseCommand(mem, devBase, 0x20);   // MOUSE_SERV: drops the line
+            pulseCommand(mem, devBase, 0x10);   // MOUSE_READ: clears status
+            assert(!raw->slotIrqAsserted());
+            std::vector<uint8_t> blob;
+            raw->appendSnapshotState(blob);
+            mem.setCycleCounter(frame * 1000 + (phase + 7777) % frame);
+            raw->loadSnapshotState(blob.data(), blob.size());
+            mem.advanceCycles(1);
+            assert(!raw->slotIrqAsserted());
+            const int line2 = firstIrqLine(mem, raw, frame);
+            if (line2 < 191 || line2 > 193) {
+                std::fprintf(stderr,
+                    "%s restore: first VBL IRQ on line %d, want 192\n",
+                    pal ? "PAL" : "NTSC", line2);
+            }
+            assert(line2 >= 191 && line2 <= 193);
+        }
+    }
 
     std::remove(slotPath.c_str());
 }
@@ -345,7 +435,7 @@ void test_snapshot_round_trip_and_irq_rewind()
     pulseCommand(memA, devBase, 0x60);      // MOUSE_CLAMP: 5-byte command...
     pulseCommand(memA, devBase, 0x11);      // ...byte 2
     pulseCommand(memA, devBase, 0x22);      // ...byte 3 (cursor parked at 3)
-    a->advanceCycles(1000);                 // VBL pacer partly elapsed
+    memA.advanceCycles(1000);               // before the first VBL edge
     assert(!a->slotIrqAsserted());
     {
         const auto s = a->debugSnapshot();
@@ -371,11 +461,15 @@ void test_snapshot_round_trip_and_irq_rewind()
     b->appendSnapshotState(blob2);
     assert(blob2 == blob);
 
-    // The restored pacer still owes 17045 - 1000 cycles before the next
-    // MODE_INT_VBL, not a full frame.
-    b->advanceCycles(17045 - 1000 - 1);
+    // The restored card's next MODE_INT_VBL is the BEAM's VBL edge (line
+    // 192 of whatever frame memB's clock is in), not a count carried in
+    // the blob.
+    memB.setCycleCounter(17030 * 3 + 100);
+    memB.advanceCycles(1);
+    const uint64_t edgeB = 17030 * 3 + 192 * 65;
+    memB.advanceCycles(static_cast<int>(edgeB - memB.getCycleCounter() - 1));
     assert(!b->slotIrqAsserted());
-    b->advanceCycles(1);
+    memB.advanceCycles(1);
     assert(b->slotIrqAsserted());
 
     // ── C/D: rewind to before the guest enabled interrupts. The restored
@@ -389,7 +483,8 @@ void test_snapshot_round_trip_and_irq_rewind()
     Memory memD;
     MouseCardAppleWin* d = plug(memD);
     pulseCommand(memD, devBase, 0x09);
-    d->advanceCycles(17045);
+    memD.advanceCycles(1);                  // card phases to the beam
+    memD.advanceCycles(17030);
     assert(d->slotIrqAsserted());           // interrupting the guest
 
     d->loadSnapshotState(quiet.data(), quiet.size());
@@ -399,7 +494,7 @@ void test_snapshot_round_trip_and_irq_rewind()
     }
     assert(!d->slotIrqAsserted());
     assert(d->debugSnapshot().byMode == 0);
-    for (int i = 0; i < 5; ++i) d->advanceCycles(17045);
+    for (int i = 0; i < 5; ++i) memD.advanceCycles(17030);
     assert(!d->slotIrqAsserted());          // and stays quiet
 
     // ── A foreign blob must be ignored, not misparsed.
@@ -427,6 +522,7 @@ int main()
     test_home_goes_to_clamp_origin();
     test_snapshot_round_trip_and_irq_rewind();
     test_vbl_pacing_follows_set_cycles();
+    test_vbl_irq_locked_to_beam();
 
     std::printf("OK mouse_card_applewin_smoke\n");
     return 0;

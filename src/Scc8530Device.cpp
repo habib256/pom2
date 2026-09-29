@@ -22,6 +22,8 @@
 
 #include "ByteIO.h"
 
+#include <cstring>
+
 
 
 namespace pom2 {
@@ -258,16 +260,22 @@ void Scc8530Device::channelReset(int index)
     c.rr1  &= 0x07;
     c.rr1  |= 0x06;            // required reset value
     c.rr1  |= RR1_ALL_SENT;    // "don't care" in the manual, drivers hang without it
-    c.rr3   = 0x00;
+    // No `rr3 = 0` here: RR3 lives in channel A only, and a channel B reset
+    // zeroing ITS unused copy while leaving channel A's bits for channel B
+    // standing was the pinned port's bug. `resetInterrupts(index)` clears
+    // exactly this channel's three RR3 bits instead (master 1169, 1176).
     c.rr10 &= 0x40;
 
     // reset external lines
     setRts(index, c.rts = (c.wr5 & WR5_RTS) ? 0 : 1);
     setDtr(index, c.dtr = (c.wr14 & WR14_DTR_REQ_FUNC) ? 0 : ((c.wr5 & WR5_DTR) ? 0 : 1));
 
-    // reset interrupts
-    if (index == CHAN_A)
-        resetInterrupts();
+    // reset interrupts - for THIS channel, whichever it is. The pinned port
+    // ran the device-wide wipe from channel A's reset only, so WR9 "Channel
+    // A Reset" also dropped channel B's pending and in-service interrupts
+    // and "Channel B Reset" dropped none of its own: /INT stayed asserted
+    // for a channel that had just been reset. MAME master z80scc.cpp:1176.
+    resetInterrupts(index);
 
     c.extIntLatch = 0;
     c.extIntStates = c.rr0;
@@ -304,7 +312,7 @@ void Scc8530Device::reset()
 //  Interrupts
 // ─────────────────────────────────────────────────────────────────────────
 
-/// MAME `z80scc_device::z80daisy_irq_state` (z80scc.cpp:557).
+/// MAME `z80scc_device::z80daisy_irq_state` (master z80scc.cpp:560-592).
 int Scc8530Device::daisyIrqState() const
 {
     int state = 0;
@@ -313,6 +321,12 @@ int Scc8530Device::daisyIrqState() const
         if (elem & kDaisyIeo) { state |= kDaisyIeo; break; }
         state |= elem;
     }
+    // The IP bits are set whatever MIE says (they can be polled in RR3), but
+    // with MIE clear they do not request an interrupt: "This bit, when
+    // reset, has the same effect as pulling the IEI pin Low". MAME master
+    // z80scc.cpp:579-583.
+    if (!(wr9_ & WR9_BIT_MIE))
+        state &= ~kDaisyInt;
     // Last chance to keep the control of the interrupt line
     state |= (wr9_ & WR9_BIT_DLC) ? kDaisyIeo : 0;
     return state;
@@ -328,10 +342,16 @@ void Scc8530Device::checkInterrupts()
     }
 }
 
-/// MAME `z80scc_device::reset_interrupts` (z80scc.cpp:666).
-void Scc8530Device::resetInterrupts()
+/// MAME master `z80scc_device::reset_interrupts(int index)`
+/// (z80scc.cpp:671-684). A channel reset "resets all IPs and IUSs and
+/// disables all interrupts in that channel" - that channel's three daisy
+/// entries and its three RR3 bits, nothing of the other channel's.
+void Scc8530Device::resetInterrupts(int index)
 {
-    for (uint8_t& elem : intState_) elem = 0;
+    const int base = (index == CHAN_A) ? 0 : 3;
+    for (int i = 0; i < 3; i++)
+        intState_[base + i] = 0;
+    ch_[CHAN_A].rr3 &= static_cast<uint8_t>(~(0x07 << ((index == CHAN_A) ? 3 : 0)));
     checkInterrupts();
 }
 
@@ -364,14 +384,17 @@ int Scc8530Device::extIntPriority(int type)
     }
 }
 
-/// MAME `z80scc_device::trigger_interrupt` (z80scc.cpp:733).
+/// MAME `z80scc_device::trigger_interrupt` (master z80scc.cpp:740-801).
 void Scc8530Device::triggerInterrupt(int index, int type)
 {
     uint8_t vector = ch_[CHAN_A].rr2;
 
-    // The Master Interrupt Enable (MIE) bit, WR9 D3, gates everything.
-    if (!(wr9_ & WR9_BIT_MIE))
-        return;
+    // The Master Interrupt Enable (MIE) bit, WR9 D3, gates the REQUEST, not
+    // the IP bit: "Another way of polling SCC is to enable one of the
+    // interrupt modes and then reset the MIE bit in WR9. The processor may
+    // then poll the IP bits in RR3A". The pinned port returned here, so RR3
+    // read zero in polled mode for ever. MIE is applied in daisyIrqState()
+    // and intAck() instead. MAME master z80scc.cpp:750-754.
 
     int source = type;
     int prioLevel = extIntPriority(type);
@@ -432,7 +455,9 @@ int Scc8530Device::intAck()
 {
     int ret = -1;   // "use the CPU's default vector"
     for (uint8_t& elem : intState_) {
-        if (elem & kDaisyInt) {
+        // "No IUS bit is set after the MIE bit is cleared to zero" - MAME
+        // master z80scc.cpp:605-606.
+        if ((elem & kDaisyInt) && (wr9_ & WR9_BIT_MIE)) {
             elem = kDaisyIeo;   // set IUS
             checkInterrupts();
             if (wr9_ & WR9_BIT_NV)
@@ -730,11 +755,35 @@ void Scc8530Device::doWr0(int index, uint8_t data)
     wr0PtrBits_ |= static_cast<uint8_t>(c.wr0 & WR0_REGISTER_MASK);
 }
 
-/// MAME `z80scc_channel::do_sccreg_wr1` (z80scc.cpp:1867).
+/// MAME `z80scc_channel::do_sccreg_wr1` (master z80scc.cpp:1877-1935).
 void Scc8530Device::doWr1(int index, uint8_t data)
 {
-    ch_[index].wr1 = data;
+    Channel& c = ch_[index];
+    c.wr1 = data;
     checkDmaRequest(index);
+
+    // A source only has its IP set while its IE is set: "If the
+    // corresponding IE bit is not set, the IP for that source of interrupt
+    // will never be set". Turning an enable OFF therefore withdraws a
+    // pending request (the pinned port left it, /INT and all); the latched
+    // external/status and receive conditions come back with the enable.
+    // MAME master z80scc.cpp:1913-1932.
+    const auto resetIp = [this, index](int prio) {
+        intState_[prio + (index == CHAN_A ? 0 : 3)] &= static_cast<uint8_t>(~kDaisyInt);
+        ch_[CHAN_A].rr3 &= static_cast<uint8_t>(
+            ~(1 << (prio + ((index == CHAN_A) ? 3 : 0))));
+    };
+    if (!(data & WR1_EXT_INT_ENABLE))
+        resetIp(INT_EXTERNAL_PRIO);
+    else if (c.extIntLatch)
+        triggerInterrupt(index, INT_EXTERNAL);
+    if (!(data & WR1_TX_INT_ENABLE))
+        resetIp(INT_TRANSMIT_PRIO);
+    if ((data & WR1_RX_INT_MODE_MASK) == WR1_RX_INT_DISABLE)
+        resetIp(INT_RECEIVE_PRIO);
+    else
+        checkReceiveInterrupt(index);
+
     checkInterrupts();
 }
 
@@ -813,6 +862,11 @@ void Scc8530Device::doWr9(int /*index*/, uint8_t data)
     default:
         break;
     }
+
+    // MIE gates the pending interrupts onto /INT, so a write that clears it
+    // must drop the line (and one that sets it raise a pending request).
+    // MAME master z80scc.cpp:2087-2089.
+    checkInterrupts();
 }
 
 /// MAME `z80scc_channel::do_sccreg_wr14` (z80scc.cpp:2177). The DPLL
@@ -882,7 +936,12 @@ uint8_t Scc8530Device::dataRead(int channel)
         // of them (SDLC, datasheet).
         if (eof || (c.rr1 & (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR |
                      ((c.wr1 & WR1_PARITY_IS_SPEC_COND) ? RR1_PARITY_ERROR : 0)))) {
-            triggerInterrupt(index, INT_SPECIAL);
+            // The FIFO still locks, but the Special Receive Condition only
+            // interrupts when WR1 enables receive interrupts at all (every
+            // non-zero mode includes "or Special Condition"). MAME master
+            // z80scc.cpp:2424-2428.
+            if ((c.wr1 & WR1_RX_INT_MODE_MASK) != WR1_RX_INT_DISABLE)
+                triggerInterrupt(index, INT_SPECIAL);
         } else {
             rxFifoRpStep(index);
 
@@ -1405,7 +1464,12 @@ void Scc8530Device::tick(uint64_t pclkCycles)
             c.brgAcc += pclkCycles * static_cast<uint64_t>(c.brgTimerRate);
             if (c.brgAcc >= pclk_) {
                 c.brgAcc %= pclk_;
-                triggerInterrupt(index, INT_EXTERNAL);
+                // WR15's Zero Count IE arms the timer; WR1 D0 is the
+                // channel's External/Status master enable and gates the IP
+                // like every other ext/status source. MAME master
+                // `brg_tick` (z80scc.cpp:1183-1188).
+                if (c.wr1 & WR1_EXT_INT_ENABLE)
+                    triggerInterrupt(index, INT_EXTERNAL);
             }
         }
     }
@@ -1476,12 +1540,12 @@ void Scc8530Device::receiveFrame(int channel, const uint8_t* data,
     pumpRxPending(index);
 }
 
-/// SDLC (datasheet, not MAME). The FIFO signals full one slot early (MAME's
-/// `receive_data`, z80scc.cpp:2566: `wp + 1 == rp`), so three slots hold TWO
-/// bytes — while an LLAP control frame is three bytes and a data frame up to
-/// 603. Feeding the tail as the reader drains is what the wire does; what
-/// this replaced shoved the whole frame in at once and lost everything past
-/// the second byte with no bit set anywhere to say so.
+/// SDLC (datasheet, not MAME). The FIFO holds three characters (a 3 + 1
+/// ring, MAME master z80scc.cpp:1060-1062, full at `wp + 1 == rp`) — while
+/// an LLAP data frame is up to 603 bytes. Feeding the tail as the reader
+/// drains is what the wire does; what this replaced shoved the whole frame
+/// in at once and lost everything past the FIFO with no bit set anywhere to
+/// say so.
 void Scc8530Device::pumpRxPending(int index)
 {
     Channel& c = ch_[index];
@@ -1563,7 +1627,11 @@ int Scc8530Device::rxFifoCount(int channel) const
 
 namespace {
 constexpr uint32_t kSnapMagic   = 0x53434331u;  // "SCC1"
-constexpr uint8_t  kSnapVersion = 3;   // +3: the pending SDLC receive frame
+// +3: the pending SDLC receive frame. +4: the receive ring grew from 3 to
+// 4 slots (MAME master's 3 + 1). A v3 blob still restores: its 3-slot ring
+// is re-laid into the 4-slot one in read order.
+constexpr uint8_t  kSnapVersion = 4;
+constexpr uint8_t  kSnapVersionV3 = 3;
 } // namespace
 
 void Scc8530Device::appendSnapshot(std::vector<uint8_t>& out) const
@@ -1630,15 +1698,20 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
     byteio::Reader r(data, len);
     if (!r.has(5)) return false;
     if (r.u32() != kSnapMagic) return false;
-    if (r.u8()  != kSnapVersion) return false;
+    const uint8_t version = r.u8();
+    if (version != kSnapVersion && version != kSnapVersionV3) return false;
+    // Receive ring slots in this blob: 4 since v4, 3 before.
+    const int fifoSlots = (version >= kSnapVersion) ? Channel::kRxFifoSz : 3;
 
     // 3 device bytes + 6 int states + 6 int sources, then per channel:
-    // 17 registers + 6 rx bytes + 2 rx pointers + 3 tx + 6 flags + 2 sync
+    // 17 registers + 3 x fifoSlots rx bytes (data, error, EOF) + 2 rx
+    // pointers + 3 tx + 6 flags + 2 sync
     // + 16 rate/accumulator bytes + 1 + 2 + 8 + 4 + 8.
     // The per-channel fixed part; each channel is then followed by a
     // 16-bit SDLC frame length and that many bytes, checked as they come.
-    constexpr std::size_t kPerChannel =
-        17 + 6 + 3 + 2 + 3 + 6 + 2 + 16 + 1 + 2 + 8 + 4 + 8 + 2;
+    const std::size_t kPerChannel =
+        17 + 3 * static_cast<std::size_t>(fifoSlots) +
+        2 + 3 + 6 + 2 + 16 + 1 + 2 + 8 + 4 + 8 + 2;
     if (!r.has(3 + 6 + 6)) return false;
 
     // Decode into LOCALS and commit at the end. This function's contract —
@@ -1675,11 +1748,37 @@ bool Scc8530Device::restoreSnapshot(const uint8_t* data, std::size_t len)
         c.wr4 = r.u8(); c.wr5 = r.u8(); c.wr10 = r.u8(); c.wr11 = r.u8();
         c.wr12 = r.u8(); c.wr13 = r.u8(); c.wr14 = r.u8(); c.wr15 = r.u8();
 
-        for (uint8_t& v : c.rxData)  v = r.u8();
-        for (uint8_t& v : c.rxError) v = r.u8();
-        for (bool& e : c.rxEof)      e = r.u8() != 0;
-        c.rxFifoRp = r.u8() % Channel::kRxFifoSz;
-        c.rxFifoWp = r.u8() % Channel::kRxFifoSz;
+        uint8_t rxDataV[Channel::kRxFifoSz] = {};
+        uint8_t rxErrorV[Channel::kRxFifoSz] = {};
+        bool    rxEofV[Channel::kRxFifoSz] = {};
+        for (int i = 0; i < fifoSlots; ++i) rxDataV[i]  = r.u8();
+        for (int i = 0; i < fifoSlots; ++i) rxErrorV[i] = r.u8();
+        for (int i = 0; i < fifoSlots; ++i) rxEofV[i]   = r.u8() != 0;
+        const int rp = r.u8() % fifoSlots;
+        const int wp = r.u8() % fifoSlots;
+        if (fifoSlots == Channel::kRxFifoSz) {
+            std::memcpy(c.rxData, rxDataV, sizeof c.rxData);
+            std::memcpy(c.rxError, rxErrorV, sizeof c.rxError);
+            for (int i = 0; i < Channel::kRxFifoSz; ++i) c.rxEof[i] = rxEofV[i];
+            c.rxFifoRp = rp;
+            c.rxFifoWp = wp;
+        } else {
+            // v3: re-lay the 3-slot ring from its read pointer, including
+            // the slot the write pointer is parked on (it carries the
+            // pending overrun flag), so the reader sees the same order.
+            const int count = (wp - rp + fifoSlots) % fifoSlots;
+            for (int i = 0; i <= count; ++i) {
+                const int from = (rp + i) % fifoSlots;
+                c.rxData[i]  = rxDataV[from];
+                c.rxError[i] = rxErrorV[from];
+                c.rxEof[i]   = rxEofV[from];
+            }
+            for (int i = count + 1; i < Channel::kRxFifoSz; ++i) {
+                c.rxData[i] = 0; c.rxError[i] = 0; c.rxEof[i] = false;
+            }
+            c.rxFifoRp = 0;
+            c.rxFifoWp = count;
+        }
         c.txData[0] = r.u8();
         c.txFifoRp = r.u8() % Channel::kTxFifoSz;
         c.txFifoWp = r.u8() % Channel::kTxFifoSz;

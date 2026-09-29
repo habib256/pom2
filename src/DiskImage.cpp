@@ -1605,6 +1605,17 @@ void DiskImage::loadMediaSnapshot(const uint8_t* data, std::size_t len)
     anyDirty = false;
     for (int t = 0; t < kTracks; ++t) {
         dirty[t] = (data[p++] != 0) || owed[t];
+        // eraseSurface's rule: an all-$00 track is the unformatted surface,
+        // which has no sector to decode and nothing it owes the file. A
+        // rewind to before an INIT on a New Blank disk restored those tracks
+        // AND dirtied them, and from then on every save — autosave, eject,
+        // swap, flush — was refused as "no longer decodes" (bug hunt
+        // 2026-09-29). A rewind never spans a capture, so the file still
+        // holds what it held before the format.
+        if (dirty[t] &&
+            std::all_of(tracks[t].begin(), tracks[t].end(),
+                        [](uint8_t b) { return b == 0; }))
+            dirty[t] = false;
         if (dirty[t]) anyDirty = true;
     }
     // The medium's content moved under the autosave: a commit captured

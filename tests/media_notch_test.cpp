@@ -14,6 +14,7 @@
 #include "DiskImage.h"
 #include "Disk35Image.h"
 #include "EmulationController.h"
+#include "LironCard.h"
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
 #include "ProDOSHardDiskCard.h"
@@ -245,6 +246,29 @@ void testNotchOnDirtyFloppyStillFlushes()
     }
 }
 
+// A legacy `*_writeback = false` on a bay that is EMPTY, or whose file has
+// moved, is migrated too. The generic-bay restore skipped the migration on
+// those paths, so the Liron bay stayed write-back-off for good and every disk
+// mounted there later came up write-protected (bug hunt 2026-09-29).
+void testLegacyKeyOnEmptyBayIsMigrated()
+{
+    pom2::Settings s;
+    s.setReadOnly(true);
+    s.setBool("media_slot5_bay0_writeback", false);                // empty bay
+    s.setBool("media_slot5_bay1_writeback", false);
+    s.setString("media_slot5_bay1_path", "/nonexistent/moved.po");  // moved file
+    SlotBus bus;
+    bus.plug(5, std::make_unique<pom2::LironCard>(5));
+    auto* liron = dynamic_cast<pom2::LironCard*>(bus.peripheral(5));
+    pom2::StorageCoordinator sc;
+    (void)sc.restoreMediaFromSettings(bus, s);
+    assert(liron->bayInfo(0).writeBackEnabled &&
+           "a legacy false on an empty Liron bay was not migrated");
+    assert(liron->bayInfo(1).writeBackEnabled &&
+           "a legacy false on a Liron bay whose file moved was not migrated");
+    std::puts("  ok: a legacy write-back key on an empty bay is migrated");
+}
+
 }  // namespace
 
 int main()
@@ -259,6 +283,7 @@ int main()
     testLiveToggleThroughTheCoordinator();
     testLegacyCardKeyBecomesTheNotch();
     testNotchOnDirtyFloppyStillFlushes();
+    testLegacyKeyOnEmptyBayIsMigrated();
     std::puts("media_notch OK");
     return 0;
 }

@@ -55,6 +55,11 @@ uint8_t SlotPeripheral::openBus() const
     return bus_ ? bus_->openBus() : uint8_t{0xFF};
 }
 
+const uint64_t* SlotPeripheral::busCycleCounter() const
+{
+    return bus_ ? bus_->cycleCounterRef() : nullptr;
+}
+
 void SlotPeripheral::assertIrq(bool asserted)
 {
     if (asserted == irqAsserted_) return;

@@ -756,11 +756,17 @@ MainWindow::MainWindow(bool forceIIPlus)
             auto& image = controller->disk35(drive);
             image.setWriteBackEnabled(wb);
             const auto path = settings->getString("disk35_path_" + suffix, "");
-            if (path.empty() || !fs::is_regular_file(path, ec)) continue;
-            if (!controller->mount35(drive, path)) continue;
+            const bool mounted = !path.empty() && fs::is_regular_file(path, ec) &&
+                                 controller->mount35(drive, path);
+            // Migrate on EVERY path, the empty / missing / failed ones too:
+            // skipping it left a legacy `false` on the drive for good, and
+            // every disk mounted there later came up write-protected with no
+            // UI to undo it (bug hunt 2026-09-29). With nothing mounted there
+            // is nothing to notch, and the flag simply reverts.
             std::vector<std::string> warnings;
             image.setWriteBackEnabled(pom2::StorageCoordinator::migrateLegacyWriteBack(
-                wb, { path }, warnings));
+                wb, mounted ? std::vector<std::string>{ path }
+                            : std::vector<std::string>{}, warnings));
             for (const auto& w : warnings) pom2::log().warn("Sony35", w);
         }
     }

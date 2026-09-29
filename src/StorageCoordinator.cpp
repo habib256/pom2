@@ -1882,7 +1882,16 @@ StorageCoordinator::restoreMediaFromSettings(
                 settings.getBool(base + "_writeback", pom2::mediaWritableByDefault());
             media->setBayWriteBack(bay, legacyWriteBack);
             const std::string path = settings.getString(base + "_path", "");
-            if (path.empty()) continue;
+            // The migration runs whatever happens below: an empty bay, a
+            // missing file or a failed mount used to `continue` past it and
+            // keep the legacy `false` on the bay for good (bug hunt
+            // 2026-09-29). With nothing mounted the flag simply reverts; a
+            // successful mount re-runs it with the file to notch.
+            if (path.empty()) {
+                media->setBayWriteBack(bay, migrateLegacyWriteBack(
+                    legacyWriteBack, {}, result.warnings));
+                continue;
+            }
             std::string resolved;
             std::error_code error;
             for (const std::string& candidate : {
@@ -1899,10 +1908,14 @@ StorageCoordinator::restoreMediaFromSettings(
                 result.warnings.push_back(
                     "slot " + std::to_string(slot) + " bay " +
                     std::to_string(bay + 1) + ": persisted path not found: " + path);
+                media->setBayWriteBack(bay, migrateLegacyWriteBack(
+                    legacyWriteBack, {}, result.warnings));
             } else if (!media->mountBay(bay, resolved, err)) {
                 result.warnings.push_back(
                     "slot " + std::to_string(slot) + " bay " +
                     std::to_string(bay + 1) + ": " + err);
+                media->setBayWriteBack(bay, migrateLegacyWriteBack(
+                    legacyWriteBack, {}, result.warnings));
             } else {
                 media->setBayWriteBack(bay, migrateLegacyWriteBack(
                     legacyWriteBack, { resolved }, result.warnings));

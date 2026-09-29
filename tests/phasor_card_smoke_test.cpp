@@ -677,23 +677,26 @@ void testAdvanceCyclesGuard()
     std::printf("  ok: advanceCycles(<=0) is a no-op, timers survive it\n");
 }
 
-// setCpuClock must retune the four AYs' input clock (their pin-22 CLOCK is
-// the slot's phase-0 line, so a PAL machine really does run them slower).
-// Before this the synth derived its step rate from the compile-time NTSC
-// constant and PAL music came out 0.7 % sharp. A 0.7 % delta is below the
-// zero-crossing estimator's noise, so drive the mechanism with a 2x clock
-// and require a 2x tone — the same shape as testClockScaleDoublesPitch.
-void testSetCpuClockRetunesAy()
+// setStandardClock must retune the four AYs' input clock (their pin-22
+// CLOCK is the slot's phase-0 line, so a PAL machine really does run them
+// slower). Before this the synth derived its step rate from the
+// compile-time NTSC constant and PAL music came out 0.7 % sharp. A 0.7 %
+// delta is below the zero-crossing estimator's noise, so drive the
+// mechanism with a 2x clock and require a 2x tone — the same shape as
+// testClockScaleDoublesPitch. (Until 2026-09-29 this retune rode on
+// setCpuClock, which an accelerator also drives — see the next test.)
+void testSetStandardClockRetunesAy()
 {
     constexpr int N = 16384;
     constexpr uint32_t SR = 44100;
 
-    auto measureAt = [](double cpuHz) -> double {
+    auto measureAt = [](double busHz) -> double {
         PhasorCard card(4);
         card.setSampleRate(SR);
         card.setVolume(1.0f);
         card.setMuted(false);
-        card.setCpuClock(cpuHz);
+        card.setCpuClock(busHz);
+        card.setStandardClock(busHz);
         const uint8_t pb = makePb(0, 0, /*pri*/true, /*sec*/false);
         doLatchWrite(card, 0, pb, 0, 0x00);
         doLatchWrite(card, 0, pb, 1, 0x02);   // period $200
@@ -712,7 +715,65 @@ void testSetCpuClockRetunesAy()
     assert(f1 > 50.0 && f1 < 200.0);
     assert(f2 / f1 > 1.7 && f2 / f1 < 2.3);
 
-    std::printf("  ok: setCpuClock retunes the AY clock (PAL follows)\n");
+    std::printf("  ok: setStandardClock retunes the AY clock (PAL follows)\n");
+}
+
+// An accelerator (TransWarp 3.5x, the //c+ 4x) raises the CPU clock the
+// controller hands `setCpuClock`, and leaves phase 0 alone: the four AYs
+// and the two 6522s must not notice. Before 2026-09-29 every note came out
+// 3.5x sharp and every VIA-T1-paced tune 3.5x fast under a TransWarp.
+void testAcceleratorKeepsBusClock()
+{
+    constexpr int N = 16384;
+    constexpr uint32_t SR = 44100;
+    const double base  = static_cast<double>(POM2_CPU_CLOCK_HZ);
+    const double accel = base * 3.5;
+
+    auto measureAt = [](double cpuHz, double busHz) -> double {
+        PhasorCard card(4);
+        card.setSampleRate(SR);
+        card.setVolume(1.0f);
+        card.setMuted(false);
+        card.setStandardClock(busHz);
+        card.setCpuClock(cpuHz);
+        const uint8_t pb = makePb(0, 0, /*pri*/true, /*sec*/false);
+        doLatchWrite(card, 0, pb, 0, 0x00);
+        doLatchWrite(card, 0, pb, 1, 0x02);   // period $200
+        doLatchWrite(card, 0, pb, 7, 0x3E);   // tone A only
+        doLatchWrite(card, 0, pb, 8, 0x0F);   // amp 15
+        std::vector<float> buf(N);
+        card.audioSource()->fillAudioBuffer(buf.data(), N);
+        return estimateFreqHz(buf, SR);
+    };
+    const double f1 = measureAt(base, base);
+    const double f2 = measureAt(accel, base);
+    std::printf("  tone @ period $200: %.1f Hz stock, %.1f Hz under 3.5x\n",
+                f1, f2);
+    assert(f1 > 50.0 && f1 < 200.0);
+    assert(f2 / f1 > 0.95 && f2 / f1 < 1.05);
+
+    // VIA T1 in real time: 3500 accelerated CPU cycles = 1000 phase-0
+    // ticks, in odd slices so the fractional carry has to be right.
+    auto t1 = [](PhasorCard& c) -> uint16_t {
+        return static_cast<uint16_t>(c.peekViaRegister(0, 0x04)) |
+               static_cast<uint16_t>(c.peekViaRegister(0, 0x05) << 8);
+    };
+    PhasorCard card(4);
+    card.setStandardClock(base);
+    card.setCpuClock(accel);
+    card.slotRomWrite(pom2::Via6522::VIA_T1LL, 0x00);
+    card.slotRomWrite(pom2::Via6522::VIA_T1LH, 0x20);
+    card.slotRomWrite(pom2::Via6522::VIA_ACR,  0x40);   // continuous
+    card.slotRomWrite(pom2::Via6522::VIA_T1CH, 0x20);   // arm
+    const uint16_t before = t1(card);
+    for (int i = 0; i < 500; ++i) card.advanceCycles(7);
+    const int elapsed = before - t1(card);
+    std::printf("  VIA T1 under 3.5x: %d ticks over 3500 CPU cycles\n",
+                elapsed);
+    assert(elapsed == 1000);
+
+    std::printf("  ok: an accelerator leaves the AY pitch and VIA timers "
+                "on phase 0\n");
 }
 
 // The AY data bus is the VIA's port-A PINS: a bit whose DDRA says "input"
@@ -797,7 +858,8 @@ int main()
     testResetBumpsAyResetCount();
     testT1MmioDataCycle();
     testAdvanceCyclesGuard();
-    testSetCpuClockRetunesAy();
+    testSetStandardClockRetunesAy();
+    testAcceleratorKeepsBusClock();
     testAyBusUndrivenBitsFloatHigh();
     std::printf("PASS\n");
     return 0;

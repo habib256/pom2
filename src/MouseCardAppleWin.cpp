@@ -65,10 +65,12 @@ constexpr uint8_t MODE_MOUSE_ON     = 1 << 0;
 constexpr uint8_t MODE_INT_VBL      = 1 << 3;
 constexpr uint8_t MODE_INT_ALL      = STAT_INT_ALL;
 
-// VBL period now lives in the member `vblCycles_` (default 17045 =
-// 1.022727 MHz / 60 Hz NTSC; PAL profiles plumb 20313 ≈ 50 Hz through
-// setVblCycles at plug time) — a hard-wired NTSC constant desynced
-// MODE_INT_VBL from the 50 Hz frame on the PAL profiles.
+// VBL period now lives in the member `vblCycles_` (default 17030 =
+// 262 × 65 NTSC; PAL profiles plumb 20280 = 312 × 65 through setVblCycles
+// at plug time) — a hard-wired NTSC constant desynced MODE_INT_VBL from the
+// 50 Hz frame on the PAL profiles. Its PHASE is the beam's: see serviceVbl.
+constexpr uint64_t kCyclesPerScanline = 65;
+constexpr uint64_t kVisibleScanlines  = 192;
 
 }  // namespace
 
@@ -205,11 +207,55 @@ void MouseCardAppleWin::advanceCycles(int cycles)
         pollHostInput();
     }
 
-    vblCycleAccum += cycles;
-    while (vblCycleAccum >= vblCycles_) {
-        vblCycleAccum -= vblCycles_;
+    // MODE_INT_VBL on the beam's VBL edge. One load + two compares per
+    // instruction; the division lives in serviceVbl, reached once a frame.
+    // The second test catches the counter moving BACKWARDS (snapshot
+    // restore, rewind, setCycleCounter) and the kVblUnphased sentinel.
+    if (ownsClock_) ownClock_ += static_cast<uint64_t>(cycles);
+    const uint64_t now = *clock_;
+    if (now >= nextVblCycle_ ||
+        nextVblCycle_ - now > static_cast<uint64_t>(vblCycles_))
+        serviceVbl(now);
+}
+
+void MouseCardAppleWin::serviceVbl(uint64_t now)
+{
+    const uint64_t frame = static_cast<uint64_t>(vblCycles_);
+    // Fire only on an ordinary crossing. A counter that jumped more than a
+    // frame past the edge (a restore moving the clock forward) or is still
+    // unphased just re-phases: no spurious VBL out of a clock jump.
+    if (now >= nextVblCycle_ && now - nextVblCycle_ < frame)
         onMouseEvent(/*vbl=*/true);
-    }
+    // Next edge strictly after `now`, on the same grid Memory's VBL uses
+    // (`advanceCyclesVideo`: frame base = counter - counter % frameCycles,
+    // VBL begins at scanline 192).
+    const uint64_t edgeOffset = (frame > kVisibleScanlines * kCyclesPerScanline)
+                                    ? kVisibleScanlines * kCyclesPerScanline : 0;
+    uint64_t edge = now - (now % frame) + edgeOffset;
+    if (edge <= now) edge += frame;
+    nextVblCycle_ = edge;
+}
+
+void MouseCardAppleWin::bindBeamClock()
+{
+    const uint64_t* bus = busCycleCounter();
+    clock_     = bus ? bus : &ownClock_;
+    ownsClock_ = (bus == nullptr);
+    nextVblCycle_ = kVblUnphased;
+}
+
+void MouseCardAppleWin::onPlug()
+{
+    bindBeamClock();
+}
+
+void MouseCardAppleWin::onUnplug()
+{
+    // Still attached here (SlotBus detaches after onUnplug), so drop the
+    // pointer into the old bus's Memory by hand.
+    clock_     = &ownClock_;
+    ownsClock_ = true;
+    nextVblCycle_ = kVblUnphased;
 }
 
 void MouseCardAppleWin::onReset()
@@ -234,7 +280,8 @@ void MouseCardAppleWin::onReset()
     lastHostX = lastHostY = 0;
     lastHostButton = false;
     hostPrimed = false;
-    vblCycleAccum = 0;
+    // The VBL edge is the beam's, not a count from here: just re-phase.
+    bindBeamClock();
 
     assertIrq(false);
 }
@@ -567,7 +614,10 @@ void MouseCardAppleWin::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(bBtn0 ? 1 : 0);
     out.push_back(bBtn1 ? 1 : 0);
     put32(vblCycles_);
-    put32(vblCycleAccum);
+    // Formerly the VBL pacer's accumulator. The phase is now the machine's
+    // cycle counter (carried by the CPU section), so this slot is reserved
+    // and always 0 — kept so older blobs keep their layout.
+    put32(0);
     // The IRQ level cannot be re-derived from byState: MOUSE_SERV drops the
     // line (AppleWin's CpuIrqDeassert(IS_MOUSE)) WITHOUT clearing byState's
     // STAT_INT_* bits — only the next MOUSE_READ does that. Carry the level
@@ -604,17 +654,17 @@ void MouseCardAppleWin::loadSnapshotState(const uint8_t* data, std::size_t len)
     bBtn0       = data[p++] != 0;
     bBtn1       = data[p++] != 0;
     vblCycles_    = get32();
-    vblCycleAccum = get32();
+    (void)get32();          // reserved (old VBL accumulator), see append
+    nextVblCycle_ = kVblUnphased;   // re-phase to the beam on the next tick
     const bool irq = data[p++] != 0;
     p += pia.loadSnapshotState(data + p, len - p);
 
     // Untrusted blob: onPiaPortBOut indexes byBuff with nBuffPos and
-    // advanceCycles loops `while (vblCycleAccum >= vblCycles_)`, so clamp
-    // every cursor and pacer to the range this card can actually produce.
+    // serviceVbl divides by vblCycles_, so clamp every cursor and the frame
+    // length to the range this card can actually produce.
     if (nBuffPos < 0 || nBuffPos > 7) nBuffPos = 0;
     if (nDataLen < 1 || nDataLen > 8) nDataLen = 1;
-    if (vblCycles_ <= 0) vblCycles_ = 17045;
-    if (vblCycleAccum < 0 || vblCycleAccum >= vblCycles_) vblCycleAccum = 0;
+    if (vblCycles_ <= 0) vblCycles_ = 17030;
     // AppleWin's SetClampX/Y only ever store 0..0xFFFF; anything else came
     // from a corrupt blob and would let clampX/clampY strand iX outside the
     // firmware's window.

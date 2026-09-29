@@ -620,9 +620,112 @@ void testARequestLatchesCa1InPolledMode()
            "A/!R must latch IFR.CA1 in the polled mode (DR1:0 = 00)");
 }
 
+// An accelerator speeds the 6502, not the slot bus's phase 0. The AYs'
+// pin-22 CLOCK and the two 6522s run from phase 0 (MAME clocks both from
+// the a2bus), so a TransWarp at 3.5x must leave the pitch and the VIA
+// timer's REAL-TIME period alone. Before the fix `applyAcceleratorClock`'s
+// `setCpuClock(3.5x)` re-clocked both: every note 3.5x sharp, T1-paced
+// music 3.5x fast. `setStandardClock` is the phase-0 clock the controller
+// hands every card; `setCpuClock` still drives the replay cursor and the
+// SSI263's phoneme countdown (a real-time length, counted in CPU cycles).
+double measureAyToneHz(double cpuHz, double standardHz)
+{
+    MockingboardCard card(4);
+    card.setSampleRate(44100);
+    card.setVolume(1.0f);
+    card.setMuted(false);
+    card.setStandardClock(standardHz);
+    card.setCpuClock(cpuHz);
+    constexpr int period = 100;
+    ayWrite(card, 0, 0, period & 0xFF);
+    ayWrite(card, 0, 1, (period >> 8) & 0x0F);
+    ayWrite(card, 0, 7, 0x3E);                  // tone A only
+    ayWrite(card, 0, 8, 0x0F);
+    constexpr int N = 16384;
+    std::vector<float> buf(N);
+    card.audioSource()->fillAudioBuffer(buf.data(), N);
+    double mean = 0.0;
+    for (float s : buf) mean += s;
+    mean /= N;
+    int crossings = 0;
+    for (int i = 1; i < N; ++i)
+        if (buf[i - 1] <= mean && buf[i] > mean) ++crossings;
+    return crossings * 44100.0 / N;
+}
+
+void testAcceleratorKeepsBusClock()
+{
+    const double base = 1022727.0;
+    const double accel = base * 3.5;            // TransWarp
+
+    // (1) AY pitch follows phase 0, not the accelerated CPU clock.
+    const double stock  = measureAyToneHz(base, base);
+    const double tw     = measureAyToneHz(accel, base);
+    const double doubled = measureAyToneHz(base, base * 2.0);
+    std::printf("  AY tone period 100: %.1f Hz stock, %.1f Hz under 3.5x, "
+                "%.1f Hz with a 2x bus clock\n", stock, tw, doubled);
+    assert(stock > 600.0 && stock < 680.0);     // 1022727/8/200 = 639 Hz
+    assert(std::fabs(tw / stock - 1.0) < 0.03 &&
+           "an accelerator must not raise the AY pitch");
+    assert(doubled / stock > 1.9 && doubled / stock < 2.1 &&
+           "the AY clock must follow setStandardClock (PAL retune)");
+
+    // (2) VIA T1: 3500 accelerated CPU cycles are 1000 phase-0 ticks —
+    // in odd-sized slices, so the fractional carry is what gets it exact.
+    auto t1 = [](MockingboardCard& c) -> uint16_t {
+        return static_cast<uint16_t>(c.peekViaRegister(0, 0x04) |
+                                     (c.peekViaRegister(0, 0x05) << 8));
+    };
+    MockingboardCard card(4);
+    card.setStandardClock(base);
+    card.setCpuClock(accel);
+    writeVia(card, 0, 0x06, 0x00);              // T1LL
+    writeVia(card, 0, 0x07, 0x20);              // T1LH -> latch $2000
+    writeVia(card, 0, 0x0B, 0x40);              // ACR = continuous
+    writeVia(card, 0, 0x05, 0x20);              // T1CH: load + arm
+    const uint16_t before = t1(card);
+    for (int i = 0; i < 500; ++i) card.advanceCycles(7);   // 3500 CPU cycles
+    const int elapsed = before - t1(card);
+    std::printf("  VIA T1 under 3.5x: %d ticks over 3500 CPU cycles\n", elapsed);
+    assert(elapsed == 1000);
+
+    // Without an accelerator the VIA stays one tick per CPU cycle.
+    MockingboardCard plain(4);
+    plain.setStandardClock(base);
+    plain.setCpuClock(base);
+    writeVia(plain, 0, 0x06, 0x00);
+    writeVia(plain, 0, 0x07, 0x20);
+    writeVia(plain, 0, 0x0B, 0x40);
+    writeVia(plain, 0, 0x05, 0x20);
+    const uint16_t plainBefore = t1(plain);
+    plain.advanceCycles(3500);
+    assert(plainBefore - t1(plain) == 3500);
+
+    // (3) SSI263 phoneme: the same milliseconds, so 3.5x the CPU cycles.
+    auto phonemeCycles = [](double cpuHz) {
+        MockingboardCard mb(4, MockingboardCard::Variant::SoundII);
+        mb.setStandardClock(1022727.0);
+        mb.setCpuClock(cpuHz);
+        mb.slotRomWrite(0x43, 0x0F);            // CTTRAMP: CTL=0, amp=15
+        mb.slotRomWrite(0x42, 0x00);            // RATEINF: rate 0 (slow)
+        mb.slotRomWrite(0x40, 0x01);            // DURPHON: mode 00, phon 1
+        MockingboardCard::Ssi263Snap snap;
+        assert(mb.snapshotSsi263(&snap));
+        return snap.phonemeRemainingCycles;
+    };
+    const int ssiStock = phonemeCycles(base);
+    const int ssiTw    = phonemeCycles(accel);
+    std::printf("  SSI263 phoneme: %d CPU cycles stock, %d under 3.5x\n",
+                ssiStock, ssiTw);
+    assert(ssiStock > 0);
+    assert(std::fabs(static_cast<double>(ssiTw) / ssiStock - 3.5) < 0.01);
+}
+
 int main()
 {
     testAddressDecode();        std::printf("address decode ........ OK\n");
+    testAcceleratorKeepsBusClock();
+                                std::printf("accelerator vs phase 0  OK\n");
     testUndrivenResetPinFloatsHigh();
                                 std::printf("PB2 /RESET floats high  OK\n");
     testARequestLatchesCa1InPolledMode();

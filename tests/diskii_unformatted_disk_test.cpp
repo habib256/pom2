@@ -445,6 +445,41 @@ int main()
         }
     }
 
+    // A rewind to before an INIT restores the unformatted surface. Those
+    // tracks owe the file nothing (eraseSurface's rule); dirtying them left
+    // the disk impossible to save, eject or swap (bug hunt 2026-09-29).
+    {
+        const std::string blank = (scratch / "rewind_blank.dsk").string();
+        const std::string fmtd  = (scratch / "rewind_ref.dsk").string();
+        std::error_code rec;
+        fs::remove(blank, rec);
+        fs::remove(fmtd, rec);
+        std::string cerr;
+        if (!DiskImage::createBlankFile(blank, cerr) ||
+            !DiskImage::createBlankFile(fmtd, cerr)) {
+            std::fprintf(stderr, "FAIL: blank file: %s\n", cerr.c_str());
+            return 1;
+        }
+        auto img = std::make_unique<DiskImage>();
+        img->setWriteBackEnabled(true);
+        auto ref = std::make_unique<DiskImage>();
+        if (!img->loadFile(blank) || !ref->loadFile(fmtd)) {
+            std::fprintf(stderr, "FAIL: rewind fixture did not load\n");
+            return 1;
+        }
+        img->eraseSurface();
+        std::vector<uint8_t> frame;
+        img->appendMediaSnapshot(frame);                 // the frame before INIT
+        for (int i = 0; i < DiskImage::kNibblesPerTrack; ++i)
+            img->writeNibbleAt(0, i, ref->nibbleAt(0, i));   // INIT formats track 0
+        img->loadMediaSnapshot(frame.data(), frame.size());  // rewind
+        if (!img->isSurfaceBlank() || img->hasUnsavedChanges() || !img->saveDirty()) {
+            std::fprintf(stderr, "FAIL: a rewind to before INIT left the disk "
+                                 "unsavable: %s\n", img->getLastError().c_str());
+            return 1;
+        }
+    }
+
     std::printf("diskii_unformatted_disk OK: both read gates, a never-formatted "
                 "diskette ejects and swaps, an aborted format keeps its tracks, "
                 "and the blank-disk file helper refuses to overwrite\n");

@@ -119,6 +119,12 @@ public:
     };
     using CycleSourceFn = std::function<uint64_t()>;
     void setCycleSource(CycleSourceFn fn) { cycleSource_ = std::move(fn); }
+    /// The same counter as a raw pointer, for a card that reads it on its
+    /// `advanceCycles` path (`SlotPeripheral::busCycleCounter`) where a
+    /// `std::function` call per instruction would cost. Memory installs it
+    /// next to the cycle source; a standalone bus leaves it null.
+    void setCycleCounterRef(const uint64_t* p) { cycleCounterRef_ = p; }
+    const uint64_t* cycleCounterRef() const { return cycleCounterRef_; }
     /// Start (or restart, clearing it) logging `slot`, keeping at most
     /// `capacity` entries; past it the oldest go and `accessLogDropped`
     /// counts them. Logging costs one mask test per slot access when off.
@@ -315,6 +321,7 @@ private:
     };
     std::array<AccessLog, kSlotCount> accessLogs_{};
     CycleSourceFn cycleSource_;
+    const uint64_t* cycleCounterRef_ = nullptr;
     void logAccess(int slot, uint16_t addr, uint8_t value, bool write)
     {
         if ((accessLogMask_ >> slot) & 1u) recordAccess(slot, addr, value, write);

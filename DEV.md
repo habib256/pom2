@@ -6167,6 +6167,21 @@ loops for ever. One pre-existing assertion in `scc8530_smoke` had pinned the
 stuck latch as if it were correct, and is corrected with the code — a reminder
 that a test written against the bug locks the bug in.
 
+**MAME master's interrupt-block fixes, carried forward** *(2026-09-29)*.
+The port is pinned at 588eeb33; upstream has since fixed six things POM2
+now takes from master (`z80scc.cpp`, lines cited in the source): a WR9
+channel reset clears only *that* channel's IP/IUS and RR3 bits
+(`reset_interrupts(int index)` — the pin wiped both channels on "Channel A
+Reset" and none on "Channel B Reset"); turning a source off in WR1 withdraws
+its IP (`reset_ip`), with a held Ext/Status latch or a waiting character
+re-raised when the enable returns; MIE gates `/INT` and the acknowledge but
+**not** the IP bits, so RR3 polling with MIE clear works as Zilog documents
+and clearing MIE drops a live `/INT`; the BRG Zero Count needs WR1 D0; the
+Special Receive Condition interrupt needs a non-zero WR1 Rx mode (the FIFO
+still locks); and the receive ring is `3 + 1` slots, so the chip's three
+characters fit (the pin overran on the third). Snapshot v4 carries the
+4-slot ring; a v3 blob restores with its ring re-laid in read order.
+
 **One MAME divergence deliberately kept.** On receive overrun MAME writes the
 offending byte into the slot the write pointer is parked on and sets Overrun
 in the *error* FIFO, but never advances past it — so that slot is unreachable
@@ -8081,8 +8096,19 @@ write-strobe (firmware → "MCU"), BIT4 (PB4) = read-strobe. BIT6/BIT7
 driven back to firmware for poll loops. BIT1..BIT3 still
 slot-ROM bank-select (`bank = (by6821B << 7) & 0x0700`).
 
-VBL interrupt: `OnMouseEvent(true)` fires once per ~17045 cycles
-(60 Hz @ 1 MHz) from `advanceCycles`; host-input poll
+VBL interrupt: `OnMouseEvent(true)` fires once per frame
+(`setVblCycles`: 17030 = 262 × 65 NTSC, 20280 = 312 × 65 PAL) **on the
+beam's VBL edge** — scanline 192 of the frame `Memory` places with
+`cycleCounter % frameCycles`, read through `SlotBus::cycleCounterRef`
+(one load + two compares per `advanceCycles`; the division runs once a
+frame in `serviceVbl`). Until 2026-09-29 it counted from the card's
+`onReset`, so the interrupt landed on a random scanline that moved on
+every Ctrl-Reset; AppleWin raises it from its video VBL hook. Reset,
+plug, `setVblCycles` and a snapshot restore only mark it unphased —
+the next tick re-derives the edge from the clock, and a clock jump
+never fires a spurious VBL. (The MAME-port `mouse` card is different by
+design: its VBL is the 68705's own timer, phased by the firmware's
+INITMOUSE VBLBAR calibration as on the real card.) Host-input poll
 (`pollHostInput`) drains atomic shadow each `advanceCycles` so
 movement/button changes raise IRQ immediately when mode bits allow.
 `CpuIrqAssert(IS_MOUSE)` → `assertIrq(true)`; `CpuIrqDeassert` (in
@@ -8090,7 +8116,9 @@ MOUSE_SERV) → `assertIrq(false)`.
 
 Pinned: `mouse_card_applewin_smoke` — slot-ROM bank-select round
 trip, size/missing-file rejection, BIT5 strobe → `OnCommand`
-(MOUSE_INIT writes canned $FF to PRA).
+(MOUSE_INIT writes canned $FF to PRA), and `test_vbl_irq_locked_to_beam`
+(first VBL IRQ on line 192 ±1 after a reset or restore at seven beam
+phases, NTSC and PAL, cross-checked against `$C019`).
 
 Why ship both? `mouse` (MAME) is preferred — it boots verbatim Apple
 ROMs. But the MCU mask ROM (`mouse_341-0269.bin`) is not always

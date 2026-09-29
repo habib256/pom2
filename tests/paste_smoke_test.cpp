@@ -164,7 +164,7 @@ int main()
         while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
         for (unsigned char c : out)
             assert(c >= 0x20 || c == 0x0D || c == 0x09);
-        assert(out == "b");                    // $E2 & $7F; $80/$99 dropped
+        assert(out == "'");                    // decoded, then the typewriter quote
     }
     {
         Memory mem;
@@ -174,7 +174,38 @@ int main()
         while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
         for (unsigned char c : out)
             assert(c >= 0x20 || c == 0x0D || c == 0x09);
-        assert(out == "ACZ");                  // $C3 & $7F = 'C'; $83 dropped
+        assert(out == "AAZ");                  // U+00C3 Ã → A
+    }
+    // ── UTF-8 is decoded, not masked byte by byte (bug hunt 2026-09-29) ──
+    // Each byte of a multi-byte character used to be masked on its own, so
+    // the lead byte typed a stray letter: "Café" → "CafC)".
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        mem.pasteText("PRINT \"Caf\xC3\xA9\" \xE2\x80\x9CHI\xE2\x80\x9D"
+                      "A\xC2\xA0" "B \xE2\x80\x94 \xF0\x9F\x98\x80!");
+        std::string out;
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        assert(out == "PRINT \"Cafe\" \"HI\"A B - !");   // emoji dropped
+    }
+    {
+        Memory mem;                            // ][+: folded after decoding
+        mem.pasteText("caf\xC3\xA9");
+        std::string out;
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        assert(out == "CAFE");
+    }
+
+    // ── A live key on a ][ / ][+ is folded like a paste ──────────────────
+    // (bug hunt 2026-09-29): its keyboard cannot emit $61-$7A.
+    {
+        Memory mem;
+        mem.queueKey('p');
+        assert(consumeKey(mem) == 'P');
+        Memory iie;
+        iie.setIIEMode(true);
+        iie.queueKey('p');
+        assert(consumeKey(iie) == 'p');       // the //e has lowercase
     }
 
     // ── Cap at Memory::kPasteMaxChars ────────────────────────────────────

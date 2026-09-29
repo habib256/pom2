@@ -101,6 +101,9 @@ public:
     uint8_t slotRomRead  (uint8_t low8) override;
     void    slotRomWrite (uint8_t low8, uint8_t v) override;
     void    advanceCycles(int cycles) override;
+    /// Forwards the (possibly accelerated) CPU clock to the SSI263's
+    /// phoneme timer, which counts a real-time duration in CPU cycles.
+    void    setCpuClock(double hz) override;
     void    onReset()  override;
     void    onUnplug() override;
 
