@@ -17,6 +17,7 @@
 // PrinterCard — see header for ROM layout + protocol notes.
 
 #include "PrinterCard.h"
+#include "PascalPrinterRom.h"
 #include "SlotRomAsm.h"
 
 #include <algorithm>
@@ -133,17 +134,16 @@ void PrinterCard::buildRom()
     a.region("entry", 0x00, 0x05).jmp("prn");
 
     // Pascal 1.1 autodetect signature — ProDOS scans for these to publish
-    // the card in its device list. Apple Pascal also recognises this
-    // shape; we don't implement the full PINIT/PREAD/PWRITE/PSTATUS
-    // entry table because BASIC PR#n is the only documented use case
-    // for a printer card and Pascal printer drivers were rare in the
-    // POM2 software corpus. These addresses are mandated, hence poke()
-    // inside a declared region rather than emit().
+    // the card in its device list, and a Pascal 1.1 caller that trusts it
+    // dispatches through the entry table at $Cn0D-$Cn10, so the table and
+    // its four routines are real (PascalPrinterRom.h). These addresses are
+    // mandated, hence poke() inside a declared region rather than emit().
     a.region("pascalId", 0x05, 0x0D)
      .poke(0x05, 0x38)      // SEC
      .poke(0x07, 0x18)      // CLC
      .poke(0x0B, 0x01)      // Pascal firmware revision
-     .poke(0x0C, 0x00);     // device class = printer
+     .poke(0x0C, pom2::kPascalPrinterClass);   // class 1 = printer
+    pom2::assemblePascalPrinterEntries(a, dataLo, 0x40, 0x60);
 
     // PR#n trampoline — hook CSWL/CSWH ($36/$37) to point at the output
     // handler. The next COUT call lands there instead of the standard
@@ -159,7 +159,7 @@ void PrinterCard::buildRom()
     // Output handler — write A to the data port. A is preserved (STA does
     // not modify it), satisfying COUT's "A unchanged on exit" convention.
     // The CPU's existing flags/X/Y are untouched.
-    a.region("cout", 0x31, pom2::kSlotRomBytes)
+    a.region("cout", 0x31, 0x40)
      .emit({ 0x8D, dataLo, 0xC0,      // STA $C0(8+s)1
              0x60 });                 // RTS
 

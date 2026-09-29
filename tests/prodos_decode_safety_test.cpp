@@ -225,6 +225,41 @@ int main()
         assert(fs::exists(root / "F1") && fs::exists(root / "F2"));
     }
 
+    // A host file the build HID from the volume (>128 KB) is not the
+    // guest's new file of the same name: the decode must not overwrite it
+    // (bug hunt 2026-09-29 — `BSAVE PHOTO` replaced a 200 KB photo.bin).
+    {
+        const fs::path served = base / "hidden_served";
+        const fs::path guest  = base / "hidden_guest";
+        fs::create_directories(served);
+        fs::create_directories(guest);
+        { std::FILE* f = std::fopen((served / "photo.bin").string().c_str(), "wb");
+          std::string big(200000, 'H'); std::fwrite(big.data(), 1, big.size(), f); std::fclose(f); }
+        { std::FILE* f = std::fopen((served / "a.txt").string().c_str(), "wb");
+          std::fwrite("hello", 1, 5, f); std::fclose(f); }
+        std::vector<std::uint8_t> vol;
+        const auto b = pom2::buildVolumeFromFolder(served.string(), "HOST", vol);
+        assert(b.ok && b.filesSkipped == 1);
+        const auto mountTime = fs::file_time_type::clock::now();
+        // The directory the guest ends with: a.txt, plus a small PHOTO.
+        { std::FILE* f = std::fopen((guest / "photo.bin").string().c_str(), "wb");
+          std::fwrite("tiny", 1, 4, f); std::fclose(f); }
+        { std::FILE* f = std::fopen((guest / "a.txt").string().c_str(), "wb");
+          std::fwrite("hello", 1, 5, f); std::fclose(f); }
+        std::vector<std::uint8_t> after;
+        assert(pom2::buildVolumeFromFolder(guest.string(), "HOST", after).ok);
+        const auto r = pom2::decodeVolumeToFolder(after, served.string(), &mountTime);
+        assert(r.ok);
+        assert(fs::file_size(served / "photo.bin") == 200000 &&
+               "the guest's new PHOTO overwrote a host file it never saw");
+        bool saved = false;               // the guest's file landed beside it
+        for (const auto& de : fs::directory_iterator(served))
+            if (de.path().filename() != "photo.bin" && de.path().filename() != "a.txt" &&
+                fs::file_size(de.path()) == 4)
+                saved = true;
+        assert(saved && "the guest's PHOTO was not written under a fresh name");
+    }
+
     fs::remove_all(base);
     std::printf("OK prodos_decode_safety (validator + traversal blocked, "
                 "benign OK, cyclic volume bounded)\n");

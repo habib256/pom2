@@ -1768,6 +1768,57 @@ static void testLfAfterCrSwitchDoesNotStack()
     std::printf("  A-8 line feed does not stack with AutoFeed: OK\n");
 }
 
+// Bug hunt 2026-09-29. The C. Itoh B-6 switch masks bit 7 of TEXT, and the
+// mask ran on the Epson / Diablo parsers' raw binary parameters too: an FX-80
+// `ESC K 0xE0 0x01` (a full 480-column line) became 352 columns with 128
+// graphics bytes printed as text, and `ESC J 216` fed 88/216".
+static void testEpsonBinaryParamsKeepBit7()
+{
+    {
+        ImageWriter iw(72);
+        iw.setModel(pom2::IwModel::EpsonFX80);
+        iw.setSpeed(ImageWriter::Speed::Instant);
+        std::vector<uint8_t> b = { 0x1B, 'K', 0xE0, 0x01 };
+        b.insert(b.end(), 480, 0x01);
+        iw.printBytes(b.data(), b.size());
+        assert(std::fabs(iw.status().headX - (0.25 + 480.0 / 60.0)) < 0.02 &&
+               "ESC K lost bit 7 of its column count");
+    }
+    {
+        ImageWriter iw(72);
+        iw.setModel(pom2::IwModel::EpsonFX80);
+        iw.setSpeed(ImageWriter::Speed::Instant);
+        const double y0 = iw.status().headY;
+        const uint8_t j[] = { 0x1B, 'J', 216 };
+        iw.printBytes(j, sizeof j);
+        assert(std::fabs((iw.status().headY - y0) - 1.0) < 1e-6 &&
+               "ESC J lost bit 7 of its feed");
+    }
+    std::printf("  Epson binary parameters keep bit 7: OK\n");
+}
+
+// Parameter bytes are register loads, not mechanism moves. byteCost charged
+// an Epson/Diablo parameter of 12 as a form-feed slew: every `ESC A 12` (the
+// standard 1/6" spacing) held the paced drain — and a Grappler+'s BUSY line
+// with it — for ~2.2 s.
+static void testEpsonParamBytesCostNothing()
+{
+    auto drain = [](pom2::IwModel m, std::vector<uint8_t> b) {
+        ImageWriter iw(72);
+        iw.setModel(m);
+        iw.setSpeed(ImageWriter::Speed::Draft);
+        iw.queueBytes(b.data(), b.size());
+        double t = 0.0;
+        while (iw.busy() && t < 10.0) { iw.tick(0.001); t += 0.001; }
+        return t;
+    };
+    assert(drain(pom2::IwModel::EpsonFX80, { 0x1B, 'A', 12, 'X' }) < 0.5 &&
+           "ESC A 12 was charged a form feed");
+    assert(drain(pom2::IwModel::LaserWriterDiablo, { 0x1B, 0x1E, 12, 'X' }) < 0.5 &&
+           "Diablo ESC RS 12 was charged a form feed");
+    std::printf("  Epson / Diablo parameter bytes cost no mechanism time: OK\n");
+}
+
 int main()
 {
     testEscPProportionalIsConsumed();
@@ -1798,6 +1849,8 @@ int main()
     testGraphicsStopsAtTheRightMargin();
     testPacedDrainIsBounded();
     testPrintShopColourPass();
+    testEpsonBinaryParamsKeepBit7();
+    testEpsonParamBytesCostNothing();
     std::printf("PASS\n");
     return 0;
 }

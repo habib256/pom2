@@ -21,6 +21,7 @@
 #include "SocketUtil.h"
 
 #include <algorithm>
+#include <system_error>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -218,6 +219,12 @@ int msLeft(SteadyPoint deadline)
 
 FujiNetNetDevice::~FujiNetNetDevice() { close(); }
 
+std::atomic<int>& FujiNetNetDevice::inFlightFetches()
+{
+    static std::atomic<int> count{0};
+    return count;
+}
+
 void FujiNetNetDevice::fetchInto(Fetch& out, std::string host, uint16_t port,
                                  std::string path, int deadlineMs,
                                  bool allowLoopback)
@@ -254,7 +261,7 @@ void FujiNetNetDevice::fetchInto(Fetch& out, std::string host, uint16_t port,
             continue;
         }
         const int budget = std::min(kConnectTimeoutMs, msLeft(deadline));
-        if (connectBounded(a, budget, fd)) break;
+        if (connectBounded(a, budget, fd, &out.cancel)) break;
     }
     ::freeaddrinfo(res);
     if (!isValidSocket(fd)) { finishFetch(false, kErrGeneral); return; }
@@ -392,22 +399,49 @@ bool FujiNetNetDevice::open(const std::string& devicespec)
     // its own reference to the shared block, so nothing here ever waits for
     // it: the device can be destroyed (which it is, under the machine lock,
     // whenever the card is unplugged) while the fetch is still running.
+    //
+    // Bounded, process-wide. close() only CANCELS a worker, and the guest
+    // is inside the perimeter: an OPEN/CLOSE retry loop against a host that
+    // drops SYNs used to leave one thread and one socket alive per pass for
+    // the whole connect timeout — 1 200 threads and 1 500 fds measured, and
+    // under macOS's 256-fd launchd limit every other file POM2 opens (media
+    // autosave, snapshots) then failed with EMFILE. Past the cap an OPEN is
+    // answered "busy" until a cancelled worker drains, which the sliced
+    // connect makes a matter of ~100 ms (bug hunt 2026-09-29).
+    if (inFlightFetches().load() >= kMaxInFlightFetches) {
+        error_       = kErrGeneral;
+        description_ = devicespec + " — busy (earlier requests still closing)";
+        return false;
+    }
     spec_        = devicespec;
     error_       = kErrSuccess;   // nothing has gone wrong yet
     description_ = devicespec + " — fetching";
     auto f = std::make_shared<Fetch>();
-    fetch_ = f;
     const int budget = deadlineMs_;
     const bool allowLoopback = allowLoopback_;
-    std::thread([f, host, port, path, budget, allowLoopback] {
-        pom2::runGuarded("FujiNetN", [&] {
-            fetchInto(*f, host, port, path, budget, allowLoopback);
-        });
-        // Outside runGuarded on purpose: an exception that escaped the fetch
-        // must still end it, or a guest polls STATUS for ever.
-        std::lock_guard<std::mutex> lk(f->mtx);
-        f->done = true;
-    }).detach();
+    inFlightFetches().fetch_add(1);
+    try {
+        std::thread([f, host, port, path, budget, allowLoopback] {
+            pom2::runGuarded("FujiNetN", [&] {
+                fetchInto(*f, host, port, path, budget, allowLoopback);
+            });
+            // Outside runGuarded on purpose: an exception that escaped the
+            // fetch must still end it, or a guest polls STATUS for ever.
+            {
+                std::lock_guard<std::mutex> lk(f->mtx);
+                f->done = true;
+            }
+            inFlightFetches().fetch_sub(1);
+        }).detach();
+    } catch (const std::system_error&) {
+        // Out of threads: an I/O error for the guest, not an exception on
+        // the CPU thread in the middle of a SmartPort call.
+        inFlightFetches().fetch_sub(1);
+        error_       = kErrGeneral;
+        description_ = devicespec + " — no worker available";
+        return false;
+    }
+    fetch_ = f;
     return true;
 }
 

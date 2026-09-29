@@ -18,7 +18,9 @@
 // handover without retaining SlotBus-owned pointers.
 
 #include "EmulationController.h"
+#include "CentronicsPrinter.h"
 #include "GrapplerCard.h"
+#include "GrapplerClassicCard.h"
 #include "PrinterCard.h"
 #include "PrinterCoordinator.h"
 #include "Settings.h"
@@ -121,6 +123,30 @@ int main()
     host = printers.captureHost(controller);
     assert(host.source == pom2::PrinterCoordinator::SourceKind::SuperSerial);
     assert(host.sourceSlot == 1);
+
+    // Back-pressure reaches a Centronics card (1981 Grappler) too, and only
+    // on edges: a BUSY set by hand survives the per-frame "not busy".
+    {
+        auto state = controller.lockState();
+        auto& bus = state.memory().slotBus();
+        (void)bus.unplug(1);
+        (void)bus.unplug(2);
+        bus.plug(4, std::make_unique<GrapplerClassicCard>(4));
+    }
+    auto centronics = [&]() {
+        auto state = controller.lockState();
+        return state.memory().slotBus().peripheral(4)->centronicsPrinter()->busy();
+    };
+    (void)printers.setGrapplerBusy(controller, true);
+    assert(centronics() && "back-pressure did not reach the 1981 Grappler");
+    (void)printers.setGrapplerBusy(controller, false);
+    assert(!centronics());
+    {
+        auto state = controller.lockState();
+        state.memory().slotBus().peripheral(4)->centronicsPrinter()->setBusy(true);
+    }
+    (void)printers.setGrapplerBusy(controller, false);
+    assert(centronics() && "a hand-set BUSY was cleared by the frame pump");
 
     std::cout << "printer coordinator: OK\n";
     return 0;

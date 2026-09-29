@@ -153,6 +153,9 @@ void AppleParallelCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(ackLatch_ ? 1 : 0);
     out.push_back(irqEnable_ ? 1 : 0);
     out.push_back(static_cast<uint8_t>(firmwareBase_ >> 8));
+    // Tail (2026-09-29): the byte the printer is holding, with its flag.
+    out.push_back(printer_.hasPending() ? 1 : 0);
+    out.push_back(printer_.pendingByte());
 }
 
 void AppleParallelCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -165,5 +168,7 @@ void AppleParallelCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     ackLatch_ = data[6] != 0;
     irqEnable_ = data[7] != 0;
     firmwareBase_ = (data[8] & 1) ? 0x100 : 0x000;
+    if (len >= 11) printer_.restorePending(data[9] != 0, data[10]);
+    else           printer_.dropPending();  // older blob: nothing was held
     updateIrq();
 }

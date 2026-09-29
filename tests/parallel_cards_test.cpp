@@ -26,6 +26,8 @@
 // ROM-gated: SKIPs when roms/apple2e.rom or a card ROM is absent.
 
 #include "AppleParallelCard.h"
+#include "CentronicsPrinter.h"
+#include "GrapplerCard.h"
 #include "GrapplerClassicCard.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -208,6 +210,61 @@ void testGrappler1981Firmware(const std::string& rom,
            "Grappler 1981: RETURN with the printer on line resumes");
 }
 
+// A byte strobed into an offline printer is held; its ACK latch is in the
+// snapshot, so the byte must be too (bug hunt 2026-09-29). Without it a rewind
+// across a Ctrl-Reset left the firmware waiting on an ACK nothing would give
+// (HANG), and a rewind to before the strobe printed a byte the restored
+// timeline never sent (PHANTOM). All three parallel cards.
+void testPendingByteInSnapshot()
+{
+    using Blob = std::vector<uint8_t>;
+    auto make = [](int k) -> std::unique_ptr<SlotPeripheral> {
+        if (k == 0) return std::make_unique<GrapplerCard>(1);
+        if (k == 1) return std::make_unique<GrapplerClassicCard>(1);
+        return std::make_unique<AppleParallelCard>(1);
+    };
+    auto setOnline = [](SlotPeripheral& c, bool on) {
+        if (auto* p = c.centronicsPrinter()) p->setOnline(on);
+        else static_cast<GrapplerCard&>(c).setOnline(on);
+    };
+    auto printed = [](SlotPeripheral& c) -> size_t {
+        if (auto* p = c.centronicsPrinter()) return p->bytesWritten();
+        return static_cast<GrapplerCard&>(c).spoolBytes().size();
+    };
+    auto strobe = [](SlotPeripheral& c, int k, uint8_t v) {
+        if (k == 0) { c.deviceSelectWrite(0, v); return; }             // Grappler+
+        if (k == 1) { c.deviceSelectWrite(1, v); c.deviceSelectWrite(2, 0);
+                      c.deviceSelectWrite(4, 0); return; }             // Grappler 1981
+        c.deviceSelectWrite(0, v); c.deviceSelectWrite(2, 0);          // PIC
+    };
+    const char* names[3] = { "Grappler+", "Grappler 1981", "PIC" };
+    for (int k = 0; k < 3; ++k) {
+        {   // HANG: strobe offline, capture, reset, rewind, back on line.
+            auto c = make(k);
+            setOnline(*c, false);
+            strobe(*c, k, 'A');
+            Blob b;
+            c->appendSnapshotState(b);
+            c->onReset();
+            c->loadSnapshotState(b.data(), b.size());
+            setOnline(*c, true);
+            expect(printed(*c) == 1,
+                   std::string(names[k]) + ": the held byte did not survive a rewind");
+        }
+        {   // PHANTOM: capture idle, strobe offline, rewind, back on line.
+            auto c = make(k);
+            setOnline(*c, false);
+            Blob b;
+            c->appendSnapshotState(b);
+            strobe(*c, k, 'A');
+            c->loadSnapshotState(b.data(), b.size());
+            setOnline(*c, true);
+            expect(printed(*c) == 0,
+                   std::string(names[k]) + ": a byte from the abandoned future printed");
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -217,6 +274,7 @@ int main()
     const std::string gpRom = firstExisting("roms/grappler_eps-1.bin");
     const std::string iie = firstExisting("roms/apple2e.rom");
     testStatus();
+    testPendingByteInSnapshot();
     if (picRom.empty() || gpRom.empty() || iie.empty()) {
         std::printf("  SKIP: card ROMs or roms/apple2e.rom absent\n");
     } else {

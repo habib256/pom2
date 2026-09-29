@@ -177,7 +177,7 @@ public:
     /// has been called. Pointer is non-owning. May be nullptr; the 80-col
     /// path then falls back to reading main RAM in both halves of each pair
     /// (still produces 80 character cells, just without aux content).
-    void setAuxMemory(const uint8_t* aux) { auxRam = aux; }
+    void setAuxMemory(const uint8_t* aux) { auxRam = aux; auxRamSource_ = aux; }
 
     /// Hi-res rendering mode. Switching modes resets the persistence buffer
     /// so an amber afterglow doesn't bleed into a freshly-selected green
@@ -277,6 +277,11 @@ private:
     // only sound while every such mutation announces itself.
     bool useFrame80_    = false;     // true for the current frame when 80-col
     const uint8_t* auxRam = nullptr; // IIe auxiliary RAM (non-owning)
+    /// What setAuxMemory() was handed. When it is the rendered Memory's own
+    /// aux (`auxData()`), render() swaps in `videoAuxData()` for the frame:
+    /// the scanner reads RamWorks bank 0, not the CPU's bank, and that
+    /// pointer moves on a bank switch.
+    const uint8_t* auxRamSource_ = nullptr;
     HiResMode hiResMode = HiResMode::ColorNTSC;
     AppleWinSubMode appleWinSubMode = AppleWinSubMode::Tv;
     LeChatMauveCard* chatMauve = nullptr;   // non-owning, owned by SlotBus

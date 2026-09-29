@@ -19,6 +19,7 @@
 // See FujiNetCard.h for the architecture and the source citations.
 
 #include "FujiNetCard.h"
+#include "Block512Backing.h"   // pom2::noteMediaWrite
 
 #include <cstdlib>
 
@@ -492,12 +493,19 @@ void FujiNetCard::handleSmartPortCall()
         uint8_t buf[kBlockBytes];
         if (!readGuestBlock(payload, buf, kBlockBytes)) { finish(kSpIoError); return; }
         const auto r = link().writeBlock(unit, block, buf, kBlockBytes);
+        // Irreversible: it landed on the relay's SD / image. The rewind ring
+        // must not span it (CLAUDE.md), whatever the status — a write the
+        // relay may have half-applied is just as final. Missing, so a scrub
+        // back over a ProDOS SAVE to a FujiNet volume and a run on
+        // cross-linked the remote volume (bug hunt 2026-09-29).
+        pom2::noteMediaWrite();
         finish(statusFor(r, connected), 0x00, 0x02);
         return;
     }
 
     case kSpFormat: {
         const auto r = link().format(unit);
+        pom2::noteMediaWrite();   // irreversible, as WRITE above
         finish(statusFor(r, connected));
         return;
     }
@@ -949,12 +957,19 @@ void FujiNetCard::handleProDosCall()
         uint8_t buf[kBlockBytes];
         if (!readGuestBlock(buffer, buf, kBlockBytes)) { finish(kSpIoError); return; }
         const auto r = link().writeBlock(unit, block, buf, kBlockBytes);
+        // Irreversible: it landed on the relay's SD / image. The rewind ring
+        // must not span it (CLAUDE.md), whatever the status — a write the
+        // relay may have half-applied is just as final. Missing, so a scrub
+        // back over a ProDOS SAVE to a FujiNet volume and a run on
+        // cross-linked the remote volume (bug hunt 2026-09-29).
+        pom2::noteMediaWrite();
         finish(statusFor(r, connected), 0x00, 0x02);
         return;
     }
 
     case 0x03: {                                   // FORMAT
         const auto r = link().format(unit);
+        pom2::noteMediaWrite();   // irreversible, as WRITE above
         finish(statusFor(r, connected));
         return;
     }

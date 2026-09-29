@@ -92,6 +92,9 @@ void GrapplerClassicCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(dataLatch_);
     out.push_back(strobe_ ? 1 : 0);
     out.push_back(ackLatch_ ? 1 : 0);
+    // Tail (2026-09-29): the byte the printer is holding, with its flag.
+    out.push_back(printer_.hasPending() ? 1 : 0);
+    out.push_back(printer_.pendingByte());
 }
 
 void GrapplerClassicCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -102,4 +105,6 @@ void GrapplerClassicCard::loadSnapshotState(const uint8_t* data, std::size_t len
     dataLatch_ = data[4];
     strobe_ = data[5] != 0;
     ackLatch_ = data[6] != 0;
+    if (len >= 9) printer_.restorePending(data[7] != 0, data[8]);
+    else          printer_.dropPending();   // older blob: nothing was held
 }

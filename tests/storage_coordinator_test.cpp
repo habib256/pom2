@@ -1727,6 +1727,74 @@ int main()
         assert(c && c->isWriteBackEnabled() == policy && "a CFFA with no key did not follow the policy");
     }
 
+    // A dirty host folder re-mounted under ANOTHER SPELLING of its path
+    // (a trailing '/', a relative path, /tmp vs /private/tmp) must be
+    // re-synthesised after the flush, like the exact spelling. It was a
+    // string compare: the pre-flush snapshot was mounted, and the guest's
+    // next save reverted its first one (bug hunt 2026-09-29).
+    {
+        namespace fs = std::filesystem;
+        const auto folder = fs::temp_directory_path() / "pom2_samefolder_remount";
+        std::error_code ec;
+        fs::remove_all(folder, ec);
+        fs::create_directories(folder);
+        { std::ofstream n(folder / "note.txt", std::ios::binary); n << "one"; }
+        EmulationController ctl;
+        pom2::Settings st;
+        st.setReadOnly(true);
+        pom2::StorageCoordinator sc;
+        {
+            auto s = ctl.lockState();
+            s.memory().slotBus().plug(5, std::make_unique<ProDOSHardDiskCard>(5));
+        }
+        auto synth = [&] {
+            std::vector<std::uint8_t> b;
+            const auto r = pom2::buildVolumeFromFolder(folder.string(), "HOST", b);
+            assert(r.ok);
+            return b;
+        };
+        auto mount = [&](std::vector<std::uint8_t> b, const std::string& hf) {
+            const auto r = sc.mountBlockBytes(ctl, st, 5, std::move(b),
+                                              "[host folder] " + hf, hf);
+            assert(r.ok);
+        };
+        // Offset of note.txt's data: the one file in the root directory.
+        auto noteOffset = [&]() -> size_t {
+            auto s = ctl.lockState();
+            auto* c = dynamic_cast<ProDOSHardDiskCard*>(s.memory().slotBus().peripheral(5));
+            for (size_t e = 1; e < 13; ++e) {
+                const size_t ent = 2 * 512 + 4 + e * 39;
+                if ((c->backing().readByte(ent) & 0x0F) != 4) continue;
+                return (c->backing().readByte(ent + 0x11) |
+                        (c->backing().readByte(ent + 0x12) << 8)) * 512u;
+            }
+            return 0;
+        };
+        auto readNote = [&] {
+            std::ifstream in(folder / "note.txt", std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        mount(synth(), folder.string());
+        assert(sc.setMediaBayWriteBack(ctl, st, 5, 0, true).ok);
+        const size_t off = noteOffset();
+        assert(off != 0);
+        {
+            auto s = ctl.lockState();
+            auto* c = dynamic_cast<ProDOSHardDiskCard*>(s.memory().slotBus().peripheral(5));
+            c->backing().writeByte(off, 'X');
+        }
+        mount(synth(), folder.string() + "/");      // same folder, other spelling
+        const size_t after = noteOffset();
+        {
+            auto s = ctl.lockState();
+            auto* c = dynamic_cast<ProDOSHardDiskCard*>(s.memory().slotBus().peripheral(5));
+            assert(c->backing().readByte(after) == 'X' &&
+                   "re-mount under another spelling installed the pre-save volume");
+        }
+        fs::remove_all(folder, ec);
+        std::cout << "host folder re-mounted under another spelling keeps its save: OK\n";
+    }
+
     // The sentinel config must be byte-identical: nothing in this run may have
     // saved to the user's config directory.
     {

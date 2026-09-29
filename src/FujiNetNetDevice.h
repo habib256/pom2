@@ -151,6 +151,11 @@ public:
     void setAllowLoopback(bool allow) { allowLoopback_ = allow; }
     bool allowLoopback() const        { return allowLoopback_; }
 
+    /// Fetch workers alive in the whole process, cancelled ones included,
+    /// and the cap `open()` enforces on them (see open()).
+    static constexpr int kMaxInFlightFetches = 4;
+    static std::atomic<int>& inFlightFetches();
+
 private:
     /// A fetch in flight, shared with the worker that performs it.
     ///

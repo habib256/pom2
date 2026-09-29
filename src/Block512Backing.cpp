@@ -162,14 +162,8 @@ bool Block512Backing::adoptImage(PreparedImage&& prepared)
     // the image under another name. Comparing strings let `./x.hdv` against
     // `x.hdv` adopt the stale bytes (bug hunt 2026-09-16). `equivalent` is
     // two stats — metadata, not the payload the lock rule is about.
-    const auto namesSameFile = [](const std::string& a, const std::string& b) {
-        if (a == b) return true;
-        std::error_code ec;
-        const bool same = std::filesystem::equivalent(a, b, ec);
-        return !ec && same;
-    };
     const bool sameFileNeedsReread =
-        loaded_ && !path_.empty() && namesSameFile(path_, prepared.path);
+        loaded_ && !path_.empty() && sameFile(path_, prepared.path);
 
     // A replacement is an implicit eject. Preserve the current in-memory
     // medium until its opted-in write-back has succeeded; otherwise a failed

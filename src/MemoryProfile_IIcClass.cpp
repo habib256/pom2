@@ -78,6 +78,14 @@ bool IIcClassProfile::romBankToggle()
 void IIcClassProfile::onResetSoftSwitches()
 {
     romBank_ = false;
+    // The hub's copies of the MIG drive selects are cleared by
+    // SmartPortHub::reset(); these private ones must follow, as they do on a
+    // bank-0 edge (romBankToggle). They are what the snapshot serialises, so
+    // a reset taken with $CE40 / $CC80 set left them stale, and a restore
+    // wrote the stale selection back into the hub (bug hunt 2026-09-29).
+    migIntDrive_ = false;
+    mig35Sel_    = false;
+    migHdSel_    = false;
     // A reset mid-transaction leaves the external drive waiting for bytes
     // that will never come; it starts over with the machine.
     if (extPort_) extPort_->reset();

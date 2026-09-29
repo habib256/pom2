@@ -86,7 +86,7 @@ bool ProDOSHardDiskCard::loadDrive(int drive, const std::string& path)
     if (!validDrive(drive)) { lastError_ = "no such drive"; return false; }
     const bool ok = backings_[drive].loadImage(path);
     lastError_ = ok ? std::string{} : backings_[drive].lastError();
-    mediumChanged(drive);
+    if (ok) mediumChanged(drive);   // a failed mount keeps the old medium
     return ok;
 }
 
@@ -96,7 +96,9 @@ bool ProDOSHardDiskCard::adoptDrive(int drive,
     if (!validDrive(drive)) { lastError_ = "no such drive"; return false; }
     const bool ok = backings_[drive].adoptImage(std::move(p));
     lastError_ = ok ? std::string{} : backings_[drive].lastError();
-    mediumChanged(drive);
+    // Only a medium that changed resets the transfer state: a FAILED adopt
+    // leaves the old one mounted mid-transfer (bug hunt 2026-09-29).
+    if (ok) mediumChanged(drive);
     return ok;
 }
 
@@ -107,7 +109,7 @@ bool ProDOSHardDiskCard::loadImageFromBytes(std::vector<uint8_t> bytes,
     // Drive 1 only: a synthesised host-folder volume is the boot volume.
     const bool ok = backings_[0].loadFromBytes(std::move(bytes), label, hostFolder);
     lastError_ = ok ? std::string{} : backings_[0].lastError();
-    mediumChanged(0);
+    if (ok) mediumChanged(0);
     return ok;
 }
 

@@ -310,6 +310,33 @@ void testMaxBanksCap()
 
 } // namespace
 
+// The video scanner fetches from the FIRST 64 KB aux bank, whatever bank the
+// CPU has selected (MAME a2eramworks3.cpp get_vram_ptr → m_ram[0]; AppleWin
+// "Video scanner … always fetches from 1st 64K aux bank"). POM2 painted the
+// CPU-selected bank: a RamWorks program sitting in bank N at frame time
+// turned every aux column of the 80-column screen to garbage (bug hunt
+// 2026-09-29).
+void testVideoReadsBankZero()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    mem.setRamWorksBanks(4);
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.memWrite(0xC005, 0);          // RAMWRT on: $0200-$BFFF writes → aux
+    mem.memWrite(0x0400, 0xC1);       // bank 0 text page
+    mem.memWrite(0xC073, 0x01);       // select bank 1
+    mem.memWrite(0x0400, 0xC2);       // bank 1 text page
+    mem.memWrite(0xC004, 0);
+    assert(mem.ramWorksBank() == 1);
+    assert(mem.auxData()[0x400] == 0xC2);          // the CPU's view: bank 1
+    assert(mem.videoAuxData()[0x400] == 0xC1 &&
+           "the video path read the CPU-selected RamWorks bank");
+    mem.memWrite(0xC073, 0x00);
+    assert(mem.videoAuxData()[0x400] == 0xC1 && mem.videoAuxData() == mem.auxData());
+    std::printf("  video reads RamWorks bank 0 whatever the CPU selected: OK\n");
+}
+
 int main()
 {
     testStockIIeRegression();
@@ -324,5 +351,6 @@ int main()
     testMaxBanksCap();
 
     std::printf("RamWorks III smoke: OK\n");
+    testVideoReadsBankZero();
     return 0;
 }

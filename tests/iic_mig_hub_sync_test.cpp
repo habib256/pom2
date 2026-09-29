@@ -135,6 +135,28 @@ void testRomSwitchClearsIntDrive()
            "$C028 →bank0 left migIntDrive_ set (MAME apple2e.cpp:1942)");
 }
 
+// ── 1b. a reset clears the profile's copies, as it clears the hub's ────
+// Bug hunt 2026-09-29: only SmartPortHub::reset() cleared them, so a
+// snapshot after a reset taken with $CE40/$CC80 set wrote the stale
+// selection back into the hub on restore.
+void testResetClearsProfileCopies()
+{
+    Rig r;
+    r.selectDrive2();
+    r.prof.romBankToggle();                       // → bank 1
+    r.prof.internalRomWrite(0xCC80, 0x00);        // MIG: intdrive on
+    r.prof.internalRomWrite(0xCE40, 0x00);        // MIG: external 3.5" select
+    expect(r.hub.mig35Sel(), "MIG $CE40 did not set the hub's 3.5\" select");
+    r.hub.reset();                                // what a machine reset does
+    r.prof.onResetSoftSwitches();
+    expect(r.blobIntDrive() == 0, "a reset left migIntDrive_ set");
+    std::vector<uint8_t> b;
+    r.prof.appendSnapshotState(b);
+    r.prof.loadSnapshotState(b.data(), b.size());
+    expect(!r.hub.mig35Sel(),
+           "a snapshot taken after a reset restored a stale MIG 3.5\" select");
+}
+
 // ── 2. a restored blob reaches the hub ────────────────────────────────
 void testRestorePushesToHub()
 {
@@ -225,6 +247,7 @@ int testStatusReads()
 int main()
 {
     testRomSwitchClearsIntDrive();
+    testResetClearsProfileCopies();
     testRestorePushesToHub();
     const int tested = testStatusReads();
     if (failures) {

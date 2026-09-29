@@ -17,6 +17,7 @@
 // GrapplerCard — see header for ROM layout + protocol notes.
 
 #include "GrapplerCard.h"
+#include "PascalPrinterRom.h"
 #include "SlotRomAsm.h"
 
 #include "Logger.h"
@@ -345,12 +346,13 @@ void GrapplerCard::buildStubRom()
 
     a.region("entry", 0x00, 0x05).jmp("prn");   // $Cn00: skip the Pascal sig
 
-    // Pascal 1.1 autodetect — same shape as PrinterCard.
+    // Pascal 1.1 autodetect + entry table — same shape as PrinterCard.
     a.region("pascalId", 0x05, 0x0D)
      .poke(0x05, 0x38)      // SEC
      .poke(0x07, 0x18)      // CLC
      .poke(0x0B, 0x01)      // Pascal firmware rev
-     .poke(0x0C, 0x00);     // device class = printer
+     .poke(0x0C, pom2::kPascalPrinterClass);   // class 1 = printer
+    pom2::assemblePascalPrinterEntries(a, dataLo, 0x40, 0x60);
 
     // PR#n CSWL/CSWH install.
     a.region("prn", 0x20, 0x31)
@@ -358,7 +360,7 @@ void GrapplerCard::buildStubRom()
      .emit({ 0x85, 0x36, 0xA9, a.pageHi(), 0x85, 0x37, 0x60 });
 
     // Output handler: STA $C0(8+s)0 / RTS.
-    a.region("cout", 0x31, pom2::kSlotRomBytes)
+    a.region("cout", 0x31, 0x40)
      .emit({ 0x8D, dataLo, 0xC0, 0x60 });
 
     romLayoutError_ = !a.finish();
@@ -370,6 +372,11 @@ void GrapplerCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(romBankHigh_ ? 1 : 0);
     out.push_back(ackLatch_    ? 1 : 0);
     out.push_back(irqDisable_  ? 1 : 0);
+    // Tail (2026-09-29): the byte held for an offline printer. The ACK latch
+    // above waits on it, so without it a rewind across a Ctrl-Reset hung the
+    // firmware, and a rewind to before the strobe printed a phantom byte.
+    out.push_back(pendingByte_ ? 1 : 0);
+    out.push_back(pendingValue_);
 }
 
 void GrapplerCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -378,5 +385,12 @@ void GrapplerCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     romBankHigh_ = data[3] != 0;
     ackLatch_    = data[4] != 0;
     irqDisable_  = data[5] != 0;
+    if (len >= 8) {
+        pendingByte_  = data[6] != 0;
+        pendingValue_ = data[7];
+    } else {
+        pendingByte_ = false;          // older blob: nothing was held
+    }
     updateIrq();   // re-derive the slot IRQ line from the restored state
+    releasePending();                  // a printer that accepts now takes it
 }
