@@ -87,6 +87,7 @@
 #include "Ay3_8910.h"
 #include "AyEventRing.h"
 #include "AudioSource.h"
+#include "SlotBusClock.h"
 #include "SlotPeripheral.h"
 #include "Ssi263.h"
 #include "Via6522.h"
@@ -166,10 +167,17 @@ public:
     /// silently undoing the sub-buffer timing on exactly the PAL demos
     /// (French Touch / DIX) that need it. Wired from
     /// `EmulationController::setVideoStandard`, same as the speaker and
-    /// cassette. NOTE this does NOT retune the AY tone/noise generators
-    /// themselves — those stay at the NTSC nominal, the project's
-    /// documented audio-pitch approximation (see CLAUDE.md § profiles).
+    /// cassette, AND from `applyAcceleratorClock` — so under a TransWarp
+    /// or the //c+'s 4x this is the ACCELERATED clock. It therefore drives
+    /// only what is counted in CPU cycles: the replay cursor, and the
+    /// SSI263's phoneme length (the chip's own oscillator is real time).
     void setCpuClock(double hz) override;
+    /// The slot bus's phase-0 clock (the video standard's nominal, never
+    /// accelerated). The AYs' pin-22 CLOCK and the two 6522s run from it,
+    /// as in MAME (a2bus clock): an accelerator must not raise the pitch
+    /// or speed up VIA-T1-paced music. Until this is first called the card
+    /// follows `setCpuClock` (SlotBusClock.h).
+    void setStandardClock(double hz) override;
 
     // ─── SlotPeripheral overrides ────────────────────────────────────────
     std::string_view name() const override { return "Mockingboard"; }
@@ -311,8 +319,12 @@ private:
     // CLAUDE.md "Mockingboard" section for the Nox Archaist / Skyfox /
     // Broadside detection-failure class this fixes.
     uint64_t lastSyncCycle_ = 0;
+    /// CPU cycles -> phase-0 ticks for the VIAs (guarded by mtx).
+    pom2::SlotBusClock busClock_;
     void syncToCpuCycle();
     void syncToCpuCycleAt(uint64_t now);
+    /// Advance both VIAs by `cpuCycles` CPU cycles' worth of bus ticks.
+    void advanceVias(uint64_t cpuCycles);
 
     // Telemetry counters, bumped by slotRomWrite / onViaPortBChange.
     // Read by the Mockingboard ImGui panel; never affect emulation

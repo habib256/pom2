@@ -480,6 +480,8 @@ set(POM2_DEVICES_HEADERS
     src/FujiNetCard.h
     src/FujiNetLink.h
     src/FujiNetNetwork.h
+    src/PascalPrinterRom.h
+    src/SlotBusClock.h
     src/FujiNetTransport.h
     src/MountableMediaCard.h
     src/ProDOSBlockCard.h
