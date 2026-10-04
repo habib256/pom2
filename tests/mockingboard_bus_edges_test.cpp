@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <memory>
 #include <vector>
+#include <utility>
 
 namespace {
 
@@ -169,10 +170,47 @@ void testRewindKeepsTheEnvelopeWhereItWas()
     std::printf("  ok: a rewind leaves the envelope where it was\n");
 }
 
+// MAME 6522via.cpp:847-853 dispatches every ORB store; the AY receives
+// two R13 writes even with BDIR held high and unchanged data. Test both
+// PSGs through the real card path, including the queued audio retrigger.
+void testHeldWriteRetriggersEnvelope()
+{
+    MockingboardCard held(4), pulsed(4);
+    held.setSampleRate(44100); pulsed.setSampleRate(44100);
+    for (auto* card : {&held, &pulsed}) {
+        for (uint8_t base : {uint8_t{0}, uint8_t{0x80}}) {
+            auto wr = [&](uint8_t reg, uint8_t value) { card->slotRomWrite(base | reg, value); };
+            wr(3, 0xff); wr(2, 7);
+            for (const auto& entry : {std::pair<uint8_t,uint8_t>{7, 0x3f},
+                                     {8, 0x10}, {11, 0x80}, {12, 0}, {13, 8}}) {
+                wr(1, entry.first); wr(0, kPbLatch); wr(0, kPbInactive);
+                wr(1, entry.second); wr(0, kPbWrite); wr(0, kPbInactive);
+            }
+            wr(1, 13); wr(0, kPbLatch); wr(0, kPbInactive);
+            wr(1, 8); wr(0, kPbWrite); // leave the write command held
+        }
+    }
+    std::vector<float> a(512), b(512);
+    held.audioSource()->fillAudioBuffer(a.data(), 512);
+    pulsed.audioSource()->fillAudioBuffer(b.data(), 512);
+    for (int chip = 0; chip < 2; ++chip) {
+        const uint8_t base = chip ? 0x80 : 0;
+        const auto before = held.getAyWriteCount(chip);
+        held.slotRomWrite(base, kPbWrite); // same-value ORB store
+        pulsed.slotRomWrite(base, kPbInactive);
+        pulsed.slotRomWrite(base, kPbWrite);
+        assert(held.getAyWriteCount(chip) == before + 1);
+    }
+    held.audioSource()->fillAudioBuffer(a.data(), 512);
+    pulsed.audioSource()->fillAudioBuffer(b.data(), 512);
+    for (size_t i = 0; i < a.size(); ++i) assert(std::abs(a[i] - b[i]) < 1e-6f);
+}
+
 }  // namespace
 
 int main()
 {
+    testHeldWriteRetriggersEnvelope();
     testDdrWriteDeliversTheResetEdge();
     testPeekMatchesTheGuestReadback();
     testDeviceSelectIsOpenBus();

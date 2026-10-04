@@ -2015,7 +2015,11 @@ state machine (all 16 shapes pinned against MAME's step sequence).
 Both chips sit on the stereo bus — AY1 left, AY2 right, matching
 MAME `a2mockingboard.cpp:161-165` → [§ Stereo bus](#stereo-bus-2026-08-01).
 
-Three properties the audio path depends on, each of which was broken
+The [2026-10-03 MAME audit](docs/mockingboard_mame_audit.md) records the
+fixed tone-modulation phase loss, repeated ORB envelope stores and reset
+deselection, with differential tests and the remaining fidelity limits.
+
+Four properties the audio path depends on, each of which was broken
 until 2026-08-01 (full reasoning + numbers → `CHANGELOG.md`):
 
 * **Band-limiting.** MAME never renders at the output rate: its stream
@@ -2032,7 +2036,7 @@ until 2026-08-01 (full reasoning + numbers → `CHANGELOG.md`):
   cursor to `pending.back().cycle` — that is zero lag, and it collapsed
   ~90 % of writes onto the buffer edge.
 * **DC blocking.** The channel model is unipolar, so gating channels
-  and changing volumes steps the offset. 1-pole 20 Hz high-pass,
+  and changing volumes steps the offset. 2-pole Butterworth 20 Hz high-pass,
   matching MAME's default per-speaker filter
   (`src/emu/audio_effects/filter.cpp:39-44`). One per side since the
   card went stereo — MAME really does put one on each speaker, and the
@@ -2044,8 +2048,8 @@ until 2026-08-01 (full reasoning + numbers → `CHANGELOG.md`):
   splits by VIA pair, `/6` per side. Full contract → [§ Stereo
   bus](#stereo-bus-2026-08-01).
 
-The AY tick rate derives from the **live** CPU clock, not the NTSC
-constant — pin 22 is the slot's phase-0 line, so PAL clocks the chip at
+The AY tick rate derives from the **unaccelerated slot bus** clock,
+not an accelerator's CPU clock — pin 22 is the phase-0 line, so PAL runs at
 1 015 625 Hz (12 cents below NTSC). `PhasorCard::setCpuClock` exists
 (`PhasorCard.h`, the same body as `MockingboardCard::setCpuClock`), and
 `setVideoStandard` fans it out to every plugged card, not only the
