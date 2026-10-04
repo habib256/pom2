@@ -5,6 +5,27 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-10-03 — Mockingboard audit against MAME
+
+- **Live AY tone-period reductions preserve phase.** The old generator
+  zeroed its counter and toggled once when the new period was shorter than
+  the elapsed count. MAME subtracts every elapsed period, preserving the
+  remainder and the parity of the output transitions. The shared PSG core
+  now does the equivalent in constant time, also fixing Phasor modulation.
+- **Repeated VIA Port-B stores reach the AY.** A same-value ORB store with
+  BDIR held high was discarded as “no pin change”, losing same-value R13
+  envelope retriggers. It now dispatches whenever DDRB enables outputs,
+  matching MAME's VIA callback. Both Mockingboard PSGs are tested through
+  the card and audio paths against an explicitly pulsed reference.
+- **AY reset deselects the data bus.** Data writes are ignored and reads
+  return $FF until a valid address is latched, matching MAME's `m_active`.
+  The existing snapshot byte carries this state without a layout change.
+- `ay_mame_parity` compares all 4094 nontrivial old tone periods against
+  eight new periods, three channel phases and a MAME loop transcription;
+  it also checks all 16 envelope shapes at five periods, including zero
+  and $FFFF. Each of the three defect checks failed before its fix.
+  Reference revision and remaining fidelity limits: [audit](docs/mockingboard_mame_audit.md).
+
 ## 2026-09-29 — Videx Videoterm: 80 columns on the Apple ][ / ][+
 
 - **New card `videoterm`** (][ / ][+, slot 3; the firmware hard-codes

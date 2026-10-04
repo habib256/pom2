@@ -8711,6 +8711,12 @@ pom2_add_headless_test(test_videx_videoterm_boot
 set_tests_properties(videx_videoterm_boot PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# AY tone modulation, all envelope shapes, reset selection and VIA strobes.
+add_executable(test_ay_mame_parity ay_mame_parity_test.cpp)
+target_include_directories(test_ay_mame_parity PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME ay_mame_parity COMMAND test_ay_mame_parity)
+set_tests_properties(ay_mame_parity PROPERTIES TIMEOUT 15)
+
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.
 # Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries

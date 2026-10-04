@@ -99,13 +99,13 @@ namespace ay {
 /// `ay8910.cpp:695-712`), renormalised to 0..1. Index 0 is silence, index
 /// 15 the per-channel peak, so three channels at peak put one AY at 3.0.
 ///
-/// NOT MAME's `build_single_table` output, despite what the copies in
-/// Mockingboard.cpp / PhasorCard.cpp used to claim: MAME's normalize = 1
-/// branch maps to [-0.125, +0.375] (deliberately DC-offset, because MAME
-/// then high-passes it), and normalize is only 1 under
-/// AY8910_LEGACY_OUTPUT; the Mockingboard's AY8913 with 3 streams takes
-/// normalize = 0 and gets raw divider ratios. The underlying measurements
-/// agree within a few percent. Citation corrected 2026-08-01.
+/// This is not MAME's `build_single_table` output. At revision
+/// a2b6ba2d4be7, ay8910.cpp:1577-1580 defaults AY8913 to
+/// AY8910_LEGACY_OUTPUT; the Mockingboard does not override it, so
+/// normalize=1 maps to [-0.125,+0.375] (:820-854). MAME also models
+/// the load (default 1 kOhm) and separate fixed/envelope zero levels.
+/// POM2 retains the measured curve above a zero baseline; analogue
+/// amplitudes therefore remain an approximation, documented in the audit.
 inline constexpr float kVolumeTable[16] = {
     0.0000f, 0.0105f, 0.0154f, 0.0223f, 0.0321f, 0.0468f, 0.0635f, 0.1061f,
     0.1319f, 0.2164f, 0.2974f, 0.3909f, 0.5128f, 0.6371f, 0.8186f, 1.0000f
@@ -242,8 +242,13 @@ inline void stepTick(ChipSynthState& cs, const uint8_t* r)
         const int pv = ((r[ch * 2 + 1] & 0x0F) << 8) | r[ch * 2];
         const uint16_t p = static_cast<uint16_t>(pv == 0 ? 1 : pv);
         if (++cs.toneCounter[ch] >= p) {
-            cs.toneCounter[ch] = 0;
-            cs.toneOut[ch] ^= 1;
+            // MAME ay8910.cpp:1073-1084 (a2b6ba2d4be7) subtracts the
+            // period repeatedly. A live period reduction can cross several
+            // expiries: keep the remainder and toggle by their parity.
+            // Zeroing the count and toggling once lost modulation phase.
+            const uint16_t expiries = cs.toneCounter[ch] / p;
+            cs.toneCounter[ch] %= p;
+            cs.toneOut[ch] ^= static_cast<uint8_t>(expiries & 1);
         }
     }
     // ── Noise (MAME `ay8910.cpp:1086-1105`) ──

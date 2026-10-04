@@ -355,16 +355,18 @@ struct Via6522
     }
 
     // 6522 write. Returns a bit-pattern of which "events" happened so
-    // the caller can react: bit 0 = Port B output changed, bit 1 = Port
-    // A output changed.
+    // the caller can react: bit 0 = Port B output dispatched (including
+    // repeated ORB stores), bit 1 = Port A output changed.
     inline uint8_t write(uint8_t reg, uint8_t v)
     {
         uint8_t events = 0;
         switch (reg & 0x0F) {
         case VIA_ORB: {
-            const uint8_t prev = portBOut;
             portBOut = v;
-            if ((prev & ddrB) != (v & ddrB)) events |= 0x01;
+            // MAME 6522via.cpp:847-853 (a2b6ba2d4be7) dispatches EVERY
+            // ORB store when outputs are enabled. A held AY WRITE command
+            // must re-strobe R13 even if neither the command nor data moves.
+            if (ddrB != 0) events |= 0x01;
             break;
         }
         case VIA_ORA: {

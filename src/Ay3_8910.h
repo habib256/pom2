@@ -66,8 +66,8 @@ struct Ay3_8910
     /// selected — the AY-3-8910's mask-programmed 4-bit code is 0000 (GI
     /// datasheet; MAME `ay8910_write_ym`, `m_active`). Kept in this byte so
     /// the snapshot layout does not move; every user masks with 0x0F.
-    uint8_t latchedAddr = 0;
     static constexpr uint8_t kDeselected = 0x80;
+    uint8_t latchedAddr = kDeselected;
 
     // PB control state captured on the last VIA strobe — for transition
     // detection in applyControl.
@@ -87,7 +87,9 @@ struct Ay3_8910
         // wire R14/R15 unused so this is academic, but `getAyRegister`
         // peeks would diverge from MAME if we wiped all 16.
         std::memset(regs, 0, 14);
-        latchedAddr = 0;
+        // MAME ay8910.cpp:1305-1308 (a2b6ba2d4be7): reset clears
+        // m_active. No data-bus access is accepted until an address latch.
+        latchedAddr = kDeselected;
         prevCommand = 0;
     }
 
