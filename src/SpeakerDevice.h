@@ -20,7 +20,7 @@
 // between ~50 Hz and ~5 kHz; the cone's natural mechanical low-pass
 // turns the resulting square wave into recognisable tones.
 //
-// Reconstruction pipeline (MAME `spkrdev.cpp:74-327` verbatim port):
+// Reconstruction pipeline (based on MAME's oversampled speaker):
 //
 //   CPU thread ─ Memory's $C030 handler calls recordToggle(absoluteCpuCycle)
 //                 → push event onto an SPSC-style deque (mutex-guarded).
@@ -29,9 +29,9 @@
 //                     (RATE_MULTIPLIER=4 oversampling) by rectangle-area
 //                     integration of the latch level over each sub-window.
 //                   * Convolve the rolling 64-entry composed_volume ring
-//                     with a windowed sinc kernel (FILTER_STEP =
+//                     with a Blackman-windowed sinc kernel (FILTER_STEP =
 //                     π/(2*RATE_MULTIPLIER), cutoff ≈ sr/4).
-//                   * 0.995-pole DC blocker (matches MAME `:280-285`).
+//                   * DC blocker (0.995 pole at 44.1 kHz, rate-adjusted).
 //
 // This replaces the earlier "snap-to-level + 1-pole LP" reconstruction
 // which aliased badly on tight click sequences (Karateka music, click-
@@ -109,7 +109,7 @@ private:
     static constexpr float  kSquareAmp    = 0.18f;     // headroom vs cassette mix
     static constexpr float  kCatchUpSecs  = 0.10f;     // snap forward if behind
     static constexpr size_t kMaxEvents    = 16384;     // ~750 ms at 22 kHz toggles
-    // MAME parity: 4× oversampling × 64-tap windowed sinc.
+    // 4× oversampling × 64-tap Blackman-windowed sinc.
     // RATE_MULTIPLIER must divide FILTER_LENGTH evenly.
     static constexpr int    kRateMultiplier = 4;       // MAME `spkrdev.cpp:74`
     static constexpr int    kFilterLength   = 64;      // MAME `spkrdev_h.txt:28`
@@ -137,22 +137,19 @@ private:
     std::vector<uint64_t> windowEvents_;
     uint64_t audioCpuCursor   = 0;     // CPU cycle at start of next sample
     double   subSampleAccum   = 0.0;   // fractional CPU cycles into next sub
-    double   lastUpdateFrac   = 0.0;   // accumulator since last sub-sample
-                                       //   boundary (units: sub-sample
-                                       //   periods, range [0, 1)).
     bool     currentLevel     = false;
     // Rolling ring of integrated sub-sample windows. Each slot stores the
-    // time-weighted average of `level` over one sub-sample period
+    // time-weighted average of `level` over one complete sub-sample period
     // (= [0..1] given binary level). Indexed by `composedIdx` (write
     // head); the sinc convolution walks the 64 most-recent slots
     // newest-last via `composedIdx + 1 .. composedIdx + 64`.
     std::array<double, kFilterLength> composedVolume{};
     int                               composedIdx = 0;
-    // DC blocker state (MAME's y[n] = x[n] - x[n-1] + 0.995 * y[n-1]).
+    // DC blocker state (y[n] = x[n] - x[n-1] + pole * y[n-1]).
     double dcPrevX = 0.0;
     double dcPrevY = 0.0;
 
-    // Sinc kernel + its abs-sum (used as the convolution normaliser).
+    // Sinc kernel + its signed sum (unity-gain convolution normaliser).
     std::array<double, kFilterLength> ampl{};
     double ampSum = 1.0;
 

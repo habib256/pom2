@@ -5,6 +5,18 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+## 2026-10-05 — Cleaner Apple II speaker reconstruction
+
+- The 64-tap sinc now uses a Blackman window to reduce audible aliases
+  from rapid speaker toggles. Signed-sum normalisation restores unity
+  passband gain, making ordinary tones fuller at the same volume setting.
+- Every intermediate sample integrates its complete fractional CPU-cycle
+  window before filtering, removing timing modulation from partially
+  composed samples.
+- The DC-blocker decay follows the output sample rate: bass keeps the
+  same response at 44.1, 48 and 96 kHz. `speaker_audio_quality` checks
+  ultrasonic rejection, bass consistency and callback-size independence.
+
 ## 2026-10-03 — Mockingboard audit against MAME
 
 - **Live AY tone-period reductions preserve phase.** The old generator

@@ -32,20 +32,22 @@ SpeakerDevice::SpeakerDevice()
 
 void SpeakerDevice::buildSincKernel()
 {
-    // MAME `spkrdev.cpp:121-132`. The kernel is centred on x=0 (or
-    // bisected by an x≈0 pair when length is even). For FILTER_LENGTH=64
-    // the loop goes from x = (0.5 - 32) * step = -31.5 * step to
-    // +31.5 * step in `step` increments. Step π/(2·R) puts the first
-    // zero at half the cutoff frequency = sr/(2·2·R) = sr/(4·R) — for
-    // R=4 cutoff ends up at ~sr/4 (~12 kHz @ 48 kHz host).
+    // Low-pass at output sample rate / 4 on the oversampled grid. A
+    // rectangularly truncated sinc has large sidelobes: fast click trains
+    // leak through and fold into audible tones at the final decimation.
+    // Blackman's window suppresses those sidelobes without adding taps or
+    // work to the callback. Normalise the signed sum for unity passband gain.
     constexpr double kPi = 3.14159265358979323846;
     constexpr double kStep = kPi / (2.0 * kRateMultiplier);
     ampSum = 0.0;
     double x = (0.5 - kFilterLength / 2.0) * kStep;
     for (int i = 0; i < kFilterLength; ++i, x += kStep) {
-        const double v = (std::abs(x) < 1e-12) ? 1.0 : std::sin(x) / x;
+        const double phase = 2.0 * kPi * i / (kFilterLength - 1);
+        const double window = 0.42 - 0.5 * std::cos(phase)
+                                      + 0.08 * std::cos(2.0 * phase);
+        const double v = ((std::abs(x) < 1e-12) ? 1.0 : std::sin(x) / x) * window;
         ampl[i] = v;
-        ampSum += std::abs(v);
+        ampSum += v;
     }
     if (ampSum == 0.0) ampSum = 1.0;
 }
@@ -132,7 +134,6 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
     if (resetPending_.exchange(false, std::memory_order_acquire)) {
         audioCpuCursor = 0;
         subSampleAccum = 0.0;
-        lastUpdateFrac = 0.0;
         currentLevel   = false;
         composedVolume.fill(0.0);
         composedIdx    = 0;
@@ -178,7 +179,6 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         if (dropped & 1u) currentLevel = !currentLevel;
         audioCpuCursor = snapTo;
         subSampleAccum = 0.0;
-        lastUpdateFrac = 0.0;
     }
 
     // Snapshot events that could fire inside this buffer's window.
@@ -230,7 +230,6 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
             audioCpuCursor =
                 (events.front() > lead) ? events.front() - lead : 0;
             subSampleAccum = 0.0;
-            lastUpdateFrac = 0.0;
         }
         const uint64_t windowEndApprox = audioCpuCursor +
             static_cast<uint64_t>(frameCount * cyclesPerSubSample *
@@ -252,11 +251,12 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
 
     const float vol     = volume.load(std::memory_order_relaxed);
     const bool  isMuted = muted.load(std::memory_order_relaxed);
+    // Preserve the original 44.1 kHz DC-block decay in seconds. A fixed
+    // 0.995 pole at every rate made bass thinner on 96 kHz devices.
+    const double dcPole = std::pow(0.995, 44100.0 / sr);
     size_t evIdx = 0;
 
-    // Helper: emit one fully-composed output sample after kRateMultiplier
-    // sub-samples have been finalised. Implements MAME `get_filtered_volume`
-    // + DC blocker.
+    // Emit one output sample after kRateMultiplier complete sub-samples.
     auto emitSample = [&]() -> float {
         // Convolve the 64-sample ring with the sinc kernel. We walk
         // starting one slot AFTER the most-recently-written index, so
@@ -269,79 +269,43 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
             i = (i + 1) & (kFilterLength - 1);
         }
         filtered /= ampSum;
-        // DC blocker (identical filter to MAME).
+        // DC blocker with a sample-rate-independent time constant.
         const double tempX = filtered;
-        filtered = tempX - dcPrevX + 0.995 * dcPrevY;
+        filtered = tempX - dcPrevX + dcPole * dcPrevY;
         dcPrevX = tempX;
         dcPrevY = filtered;
         return isMuted ? 0.0f :
             static_cast<float>(filtered * kSquareAmp * vol);
     };
 
-    // Advance one CPU cycle window of duration `dCycles` against the
-    // current sub-sample. Accumulates `currentLevel * timeFraction` into
-    // composedVolume[composedIdx]. The fraction is measured against the
-    // sub-sample period so each slot ends up in [0, 1] (binary level).
-    // When the sub-sample boundary is crossed (lastUpdateFrac reaches 1),
-    // advance composedIdx and reset its slot to 0.
-    auto integrate = [&](double dCycles) {
-        // Time still owed to the current sub-sample, in cycles.
-        double remainingInSub =
-            (1.0 - lastUpdateFrac) * cyclesPerSubSample;
-        while (dCycles >= remainingInSub) {
-            // Finish this sub-sample.
-            if (currentLevel) {
-                composedVolume[composedIdx] += (1.0 - lastUpdateFrac);
-            }
-            dCycles -= remainingInSub;
-            // Move to next sub-sample slot.
-            composedIdx = (composedIdx + 1) & (kFilterLength - 1);
-            composedVolume[composedIdx] = 0.0;
-            lastUpdateFrac = 0.0;
-            remainingInSub = cyclesPerSubSample;
-        }
-        // Partial accumulation: fraction of the *next* (still-open)
-        // sub-sample.
-        if (dCycles > 0.0) {
-            const double frac = dCycles / cyclesPerSubSample;
-            if (currentLevel) composedVolume[composedIdx] += frac;
-            lastUpdateFrac += frac;
-        }
-    };
-
     for (int i = 0; i < frameCount; ++i) {
-        // Process exactly RATE_MULTIPLIER sub-samples per output sample.
-        // We use sub-sample boundaries (not output-sample boundaries) as
-        // the unit so toggles always land precisely.
         for (int sub = 0; sub < kRateMultiplier; ++sub) {
-            // Cycles until the next sub-sample boundary.
-            subSampleAccum += cyclesPerSubSample;
-            // Integer-cycle deadline for the next sub-sample boundary.
-            const uint64_t deadline = audioCpuCursor +
-                static_cast<uint64_t>(subSampleAccum);
-            subSampleAccum -= static_cast<double>(deadline - audioCpuCursor);
-
-            // Process events with cycle ≤ deadline. For each, integrate
-            // up to the event, flip the level, continue.
+            // Keep the fractional boundary rather than rounding the window
+            // to whole CPU cycles. Every convolution slot must hold exactly
+            // one complete sub-sample; occasionally emitting a still-open
+            // slot modulates the signal and creates audible alias tones.
+            const double end = subSampleAccum + cyclesPerSubSample;
+            const uint64_t wholeCycles = static_cast<uint64_t>(end);
+            const uint64_t deadline = audioCpuCursor + wholeCycles;
+            double position = subSampleAccum;
+            double area = 0.0;
             while (evIdx < windowEvents.size()
                    && windowEvents[evIdx] <= deadline) {
-                const uint64_t evCycle = windowEvents[evIdx];
-                const double   gap     =
-                    (evCycle > audioCpuCursor)
-                        ? static_cast<double>(evCycle - audioCpuCursor)
-                        : 0.0;
-                integrate(gap);
-                audioCpuCursor = evCycle;
+                const double edge = std::max(position,
+                    windowEvents[evIdx] > audioCpuCursor
+                        ? static_cast<double>(windowEvents[evIdx] - audioCpuCursor)
+                        : 0.0);
+                if (currentLevel) area += edge - position;
+                position = edge;
                 currentLevel = !currentLevel;
                 ++evIdx;
             }
-            // Integrate up to the sub-sample boundary.
-            integrate(static_cast<double>(deadline - audioCpuCursor));
+            if (currentLevel) area += end - position;
+            composedIdx = (composedIdx + 1) & (kFilterLength - 1);
+            composedVolume[composedIdx] = area / cyclesPerSubSample;
             audioCpuCursor = deadline;
+            subSampleAccum = end - static_cast<double>(wholeCycles);
         }
-        // 4 sub-samples now in place; the most recent one is at
-        // composedIdx-3 .. composedIdx (mod 64). emitSample walks the
-        // full 64-entry window through the kernel.
         output[i] = emitSample();
     }
 
