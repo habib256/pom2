@@ -1687,6 +1687,14 @@ target_include_directories(test_speaker PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME speaker_smoke COMMAND test_speaker)
 set_tests_properties(speaker_smoke PROPERTIES TIMEOUT 5)
 
+add_executable(test_speaker_audio_quality
+    speaker_audio_quality_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SpeakerDevice.cpp
+)
+target_include_directories(test_speaker_audio_quality PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME speaker_audio_quality COMMAND test_speaker_audio_quality)
+set_tests_properties(speaker_audio_quality PROPERTIES TIMEOUT 5)
+
 
 # ─── FloppySoundDevice (MAME-port head-step/motor sounds) ─────────────────
 # Self-contained — links FloppySoundDevice + AudioDevice (for the
