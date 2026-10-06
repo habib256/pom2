@@ -8677,6 +8677,13 @@ pom2_add_headless_test(test_iic_mouse_lle
 endif()
 
 if(TARGET pom2_core_test)
+pom2_add_headless_test(test_iic_acia_idle
+    NAME iic_acia_idle TIMEOUT 15 PORTABLE
+    SOURCES iic_acia_idle_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+endif()
+
+if(TARGET pom2_core_test)
 pom2_add_headless_test(test_block_autosave
     NAME block_autosave TIMEOUT 20 PORTABLE
     SOURCES block_autosave_test.cpp
