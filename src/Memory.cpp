@@ -2354,6 +2354,21 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
     // to the card only while slot 3 is free (Memory.h, chatMauveBlockedBySlot3).
     if (addr >= 0xC0B0 && addr <= 0xC0BF && !chatMauveBlockedBySlot3())
         slots.broadcastVideoSwitch(addr);
+    // //c-class: the two 6551 ACIAs ($C098-$C09F printer port, $C0A8-$C0AF
+    // modem port) are soldered to the motherboard, not cards — MAME's
+    // apple2c config instantiates both unconditionally. When the slot-1/2
+    // SSC that models them is missing (a hand-built bench, a profile whose
+    // card failed to plug) the read must still come from an ACIA, never the
+    // floating bus: the //c ROM polls both status registers on EVERY IRQ,
+    // and a video byte with bit 7 set reads as a serial interrupt, so the
+    // ROM swallows it and the mouse VBL never reaches the program. An idle
+    // 6551 with nothing attached answers like MAME's device_reset: status
+    // TDRE|DCD|DSR ($70, no IRQ), every other register $00. A0-A1 decode
+    // only, so $C0nC-$C0nF mirror $C0n8-$C0nB.
+    if (iicProfile_ && (addr & 0x08) &&
+        ((addr & 0xFFF0) == 0xC090 || (addr & 0xFFF0) == 0xC0A0) &&
+        !slots.isPlugged((addr >> 4) & 0x07))
+        return (addr & 0x03) == 0x01 ? uint8_t{0x70} : uint8_t{0x00};
     if (addr <= 0xC0FF) return slots.deviceSelectRead(addr);
 
     // $C100-$CFFF — slot ROM dispatch.
