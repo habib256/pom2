@@ -5,9 +5,14 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
-Entries above the **v0.9.4 marker** (before the first 2026-09-17 heading)
-are not in a tagged release yet; the next version's notes go in
-`docs/releases/v<x.y.z>.md` and are written from them.
+Each release has a marker line just above its newest entry; entries above
+the newest marker are not in a tagged release yet. A version's notes go in
+`docs/releases/v<x.y.z>.md` and are written from the entries between its
+marker and the previous one.
+
+<a id="v0.9.5"></a>
+**v0.9.5 marker** — tagged 2026-10-07. Everything below shipped in v0.9.5
+or earlier.
 
 ## 2026-10-07 — Bug hunt 2026-10-06: five fixes, and the red size ratchet
 
@@ -81,12 +86,21 @@ removed).
   (`$Cn0C` class byte, MIG `$CE40/$CE60`, `readLatch()`, `adoptImage`,
   `undrawn()`, the mouse HOME target, the SSC tap default, the printer
   drain order) and three sources listed twice in `CMakeLists.txt` deduped.
-- Leads left open, not traced to a defect: the hand-assembled SSC page
-  (no EPROM) under DOS 3.3 `PR#n` — does it take the call for input? — and
-  `SlotBus::reset()` keeping the `$C800` owner across Ctrl-Reset where
-  MAME may release it (no local MAME checkout to confirm). The firmware
-  3.5" eject (`Sony35Drive`, EjectOn) has the same late-write shape as the
-  host eject but the guest has just asked for the disk out; left as is.
+- The firmware 3.5" eject (`Sony35Drive`, EjectOn) had the same late-write
+  shape as the host eject; its completion now does the same late capture.
+  The sampled (Virtual ][) printer sound ignored the power switch; it obeys
+  it like the synthesised grains. `/cpu` replies after releasing the
+  machine lock, like every other handler. `rom_path_taken` now covers the
+  SSC, the Grappler 1981, the PIC and the Videoterm.
+- Leads left open, not traced to a defect, now backlog items:
+  [CARDS-012](docs/backlog/cards.md#cards-012) (the SSC fallback page under
+  DOS 3.3 `PR#n`) and [CARDS-013](docs/backlog/cards.md#cards-013) (the
+  `$C800` owner across Ctrl-Reset).
+- Backlog: STORAGE-001/-009/-012 removed (shipped, recorded above in their
+  own entries); seven items the 2026-10-05 migration had dropped re-homed
+  (ARCH-014/-015, VALIDATION-004/-005, three standing decisions in
+  `project-scope.md`, a release-checklist line). GitHub private
+  vulnerability reporting, which `SECURITY.md` points to, is enabled.
 
 ## 2026-10-06 — The //c's ACIAs answer when no SSC models them
 

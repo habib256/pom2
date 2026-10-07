@@ -151,7 +151,7 @@ done < "$BUDGET"
 
 if [ "$fail" -ne 0 ]; then
     echo "" >&2
-    echo "The rule is TODO.md's: do not grow the god-objects (target < $LIMIT lines)." >&2
+    echo "The rule is R0 in docs/decisions/project-scope.md: do not grow the god-objects (target < $LIMIT lines)." >&2
     echo "New code for an existing window group belongs in its own translation unit." >&2
     exit 1
 fi

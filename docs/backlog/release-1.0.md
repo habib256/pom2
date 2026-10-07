@@ -331,6 +331,9 @@ the historical completions.
 
 - [ ] Release rehearsal green within the last 7 days (attach a current run URL)
 - [ ] emsdk pinned; debian:bookworm pinned by digest; actions/* pinned by SHA (tools/check_workflow_pins.sh)
+- [ ] `packaging/bundle.manifest --verify` run against a real `.app`, `.zip` and AppImage from
+      the candidate's release jobs, not only against a staged tree (never done as of 2026-10-05;
+      [archive](../archive/todo-2026-10-05.md))
 - [ ] ghcr.io/habib256/pom2-bionic-builder (pom2's own mirror) pulled by the rehearsal
 - [ ] ./build_dist.sh (.deb + tarball) builds on the release candidate
 - [ ] packaging/stage_data.sh --self-test passes

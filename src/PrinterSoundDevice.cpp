@@ -325,6 +325,13 @@ void PrinterSoundDevice::setSampled(bool on)
 void PrinterSoundDevice::armLoop(double seconds)
 {
     if (!(seconds > 0.0)) return;
+    {
+        // The sampled bank obeys the power switch like the grains do
+        // (schedule()); power(false) clamped the loop once, and the next
+        // strike re-armed it on a printer that was off.
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!powered_) return;
+    }
     const uint32_t sr = sampleRate_ == 0 ? 44100 : sampleRate_;
     const uint64_t now = frameCounter_.load(std::memory_order_relaxed);
     const uint64_t ext = now + static_cast<uint64_t>(seconds * static_cast<double>(sr));

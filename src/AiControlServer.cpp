@@ -898,9 +898,12 @@ void AiControlServer::handleReset(socket_t fd, const Request& req)
 
 void AiControlServer::handleCpuGet(socket_t fd, const Request& /*req*/)
 {
+    // Read under the lock, reply after it (the file's rule: never send
+    // under stateMutex).
+    std::ostringstream oss;
+    {
     auto st = ctrl_->lockState();
     M6502& cpu = st.cpu();
-    std::ostringstream oss;
     oss << "{"
         << "\"pc\":"     << cpu.getProgramCounter() << ","
         << "\"a\":"      << +cpu.getAccumulator()   << ","
@@ -911,12 +914,14 @@ void AiControlServer::handleCpuGet(socket_t fd, const Request& /*req*/)
         << "\"cpu_mode\":\"" << cpuModeName(cpu.getCpuMode()) << "\","
         << "\"cycles\":" << st.memory().getCycleCounter()
         << "}";
+    }
     sendJsonOk(fd, oss.str());
 }
 
 void AiControlServer::handleCpuSet(socket_t fd, const Request& req)
 {
     if (req.method != "POST") { sendJsonError(fd, 405, "POST only"); return; }
+    {
     auto st = ctrl_->lockState();
     M6502& cpu = st.cpu();
     long v = 0;
@@ -929,6 +934,7 @@ void AiControlServer::handleCpuSet(socket_t fd, const Request& req)
     if (jsonGetInt(req.body, "y",  v)) cpu.setYRegister     (static_cast<uint8_t>(v & 0xFF));
     if (jsonGetInt(req.body, "p",  v)) cpu.setStatusRegister(static_cast<uint8_t>(v & 0xFF));
     if (jsonGetInt(req.body, "sp", v)) cpu.setStackPointer  (static_cast<uint8_t>(v & 0xFF));
+    }
     sendJsonOk(fd, "{}");
 }
 

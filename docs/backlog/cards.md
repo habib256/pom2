@@ -26,6 +26,8 @@ an explicit request before scheduling.
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-009](#cards-009) | 🧊 | Frozen | Slinky / RamFAST RAM disk |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
+| [CARDS-012](#cards-012) | 🟡 | To verify | SSC fallback page and DOS 3.3 `PR#n` |
+| [CARDS-013](#cards-013) | 🟢 | To verify | `$C800` owner across Ctrl-Reset |
 
 <a id="cards-001"></a>
 
@@ -320,3 +322,24 @@ driver loaded from `$C800`; only that residue remains.
 
 - 🧊 **Apple 3.5" Controller IWM-level** — refactor IWMDevice attached
   to a slot card (rare).
+
+<a id="cards-012"></a>
+
+## CARDS-012 — SSC fallback page and DOS 3.3 `PR#n`
+
+**Priority:** 🟡 · **State:** To verify (lead from bug hunt 2026-10-06, not traced to a defect).
+
+**Acceptance criterion:** With `roms/ssc_341-0065-a.bin` absent, DOS 3.3 + `PR#2` + `CATALOG` prints to the SSC and returns to the prompt; pin it.
+
+**Evidence:** the hand-assembled page's dispatch (`SuperSerialCard.cpp`, region `dispatch`) decides output vs input by `CSWH == $Cn && CSWL == 0`. Under DOS 3.3, `PR#n` stores `$Cn00` in DOS's own hook; if CSW still points at DOS when DOS calls `$Cn00`, the page would take the input path and spin. DOS's own hook swap may make this safe — unverified. Only matters without the EPROM dump, which ships.
+
+<a id="cards-013"></a>
+
+## CARDS-013 — `$C800` owner across Ctrl-Reset
+
+**Priority:** 🟢 · **State:** To verify against a MAME checkout.
+
+**Acceptance criterion:** Cite MAME's `machine_reset` for `m_cnxx_slot`; if it releases the window, `SlotBus::reset()` does too, pinned.
+
+**Evidence:** `SlotBus::reset()` keeps `activeExpansionSlot` deliberately. Bug hunt 2026-10-06 recalled (from memory) `m_cnxx_slot = CNXX_UNCLAIMED` in MAME's reset. Low impact: every shipped ROM opens with `LDA $CFFF`.
+

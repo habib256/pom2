@@ -837,6 +837,22 @@ void Sony35Drive::strobeWriteRegister(uint8_t reg)
                                     "Sony35", "eject refused: " + err);
                                 return;
                             }
+                            // A block written while the queued commit ran
+                            // re-dirtied the medium after the capture; the
+                            // same late capture as EmulationController::
+                            // eject35 (bug hunt 2026-10-06) — normally a
+                            // no-op, one block's I/O when it is not.
+                            if (auto late = image_->takeWriteBack();
+                                late.valid) {
+                                std::string lateErr;
+                                if (!Disk35Image::commitWriteBack(
+                                        std::move(late), lateErr)) {
+                                    image_->restoreDirty();
+                                    pom2::log().warn(
+                                        "Sony35", "eject refused: " + lateErr);
+                                    return;
+                                }
+                            }
                             completeEject();
                         });
                     break;
