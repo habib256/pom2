@@ -56,6 +56,10 @@ public:
     static constexpr uint32_t kChannels   = 2;
 
     AudioDevice();
+    /// Offline mixing uses kSampleRate and starts no host callback. Callers
+    /// drive mixSources themselves, including in deterministic mixer tests.
+    enum class OutputMode { Host, Offline };
+    explicit AudioDevice(OutputMode mode);
     ~AudioDevice();
 
     void addSource(AudioSource* source);

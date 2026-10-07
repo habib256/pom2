@@ -115,10 +115,11 @@ void testDualInstanceCoexistence(const std::string& dir)
 
 void testMasterVolumeAndMute()
 {
-    AudioDevice dev;
-    // mixSources is called by miniaudio's callback on a real device,
-    // but we drive it directly here — independent of whether the
-    // hardware audio init succeeded (headless CI commonly fails it).
+    // A host callback would advance the ramp between our assertions.
+    // Offline mixing also fixes the rate at the 44.1 kHz used below.
+    AudioDevice dev(AudioDevice::OutputMode::Offline);
+    assert(!dev.isAvailable());
+    assert(dev.getActualSampleRate() == AudioDevice::kSampleRate);
     ConstSource src(0.5f);
     dev.addSource(&src);
 
@@ -195,7 +196,7 @@ void testPerSourcePeakTracking()
     // and AudioDevice::getMasterPeak() reflects the post-clamp output.
     // Without this the UI can't show "channel is alive" feedback and
     // users wonder if the slider is wired at all.
-    AudioDevice dev;
+    AudioDevice dev(AudioDevice::OutputMode::Offline);
     ConstSource quiet(0.25f);
     ConstSource loud (0.80f);
     dev.addSource(&quiet);
@@ -243,7 +244,7 @@ void testRateAwareAutoConfig()
     // FloppySoundDevice inherits RateAware. AudioDevice::addSource
     // should auto-call setSampleRate(actualSampleRate) so a future hot-
     // plug path that forgets the explicit call still gets configured.
-    AudioDevice dev;
+    AudioDevice dev(AudioDevice::OutputMode::Offline);
     FloppySoundDevice fs;
     dev.addSource(&fs);
     // We can't directly observe `outputSampleRate_` from outside, but
@@ -284,7 +285,7 @@ public:
 
 void testSuspendSilencesBus()
 {
-    AudioDevice dev;
+    AudioDevice dev(AudioDevice::OutputMode::Offline);
     CountingSource src;
     dev.addSource(&src);
     assert(!dev.isSuspended() && "a bare AudioDevice must behave as before");

@@ -282,6 +282,10 @@ echo "coverage: running the suite"
 CTEST_RC=$?
 if [ "$CTEST_RC" -ne 0 ]; then
     echo "coverage: the suite is not green — measure on a green tree" >&2
+    # Keep the ORIGINAL assertion/output: an intermittent failure can pass
+    # when re-run below, and the tail may have scrolled its diagnostic away.
+    echo "--- original ctest.log ---" >&2
+    cat "$BUILD_DIR/ctest.log" >&2
     # ctest names the casualties as "  N - name (Failed)" / "(Timeout)" —
     # lower-case, so a grep for FAILED prints the "The following tests
     # FAILED:" banner and then nothing. CI's log is all anyone gets (this

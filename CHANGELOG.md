@@ -10,6 +10,17 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-07 — Deterministic audio mixer CI test
+
+`audio_mixer_smoke` drove `mixSources` directly while `AudioDevice` also
+started miniaudio's host callback. On a busy coverage or sanitizer runner,
+the callback could finish a gain ramp before the test checked its first
+sample, or advance the source call counters. The test now uses an explicit
+offline output mode: no host callback, and a fixed 44.1 kHz rate matching
+its ramp assertions. Default construction still opens the host device.
+Coverage failures now print the original ctest log as well as the serial
+re-run, so a passing re-run cannot hide the original assertion.
+
 <a id="v0.9.5"></a>
 **v0.9.5 marker** — tagged 2026-10-07. Everything below shipped in v0.9.5
 or earlier.

@@ -128,9 +128,13 @@ void AudioDevice::audioDataCallback(ma_device* pDevice, void* pOutput,
     self->mixSources(output, static_cast<int>(frameCount));
 }
 
-AudioDevice::AudioDevice()
+AudioDevice::AudioDevice() : AudioDevice(OutputMode::Host)
 {
-    initAudio();
+}
+
+AudioDevice::AudioDevice(OutputMode mode)
+{
+    if (mode == OutputMode::Host) initAudio();
 }
 
 AudioDevice::~AudioDevice()
