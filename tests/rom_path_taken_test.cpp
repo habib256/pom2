@@ -28,16 +28,20 @@
 // with the production resource locator, or the card's own probing
 // constructor — and run from the repo root.
 
+#include "AppleParallelCard.h"
 #include "ClockCard.h"
 #include "CffaCard.h"
 #include "DiskIICard.h"
 #include "GrapplerCard.h"
+#include "GrapplerClassicCard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
 #include "ResourcePaths.h"
 #include "SlotCardFactory.h"
 #include "SmartPortCard.h"
+#include "SuperSerialCard.h"
 #include "TranswarpCard.h"
+#include "VidexVideotermCard.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -109,6 +113,37 @@ int main()
         auto card = make("grappler", 1);
         auto* g = dynamic_cast<GrapplerCard*>(card.get());
         expect(g && g->isRomLoaded(), "Grappler+: grappler_plus.bin is the slot ROM");
+    }
+
+    // Grappler (1981) and the Apple Parallel Interface: ROM-gated, so a
+    // built card already proves the dump; the flag says it is the one in use.
+    {
+        auto card = make("grappler1", 1);
+        auto* g = dynamic_cast<GrapplerClassicCard*>(card.get());
+        expect(g && g->romLoaded(), "Grappler (1981): grappler_eps-1.bin is the slot ROM");
+    }
+    {
+        auto card = make("pic", 1);
+        auto* p = dynamic_cast<AppleParallelCard*>(card.get());
+        expect(p && p->promLoaded(), "Apple Parallel Interface: 341-0057.bin is the slot PROM");
+    }
+
+    // Super Serial Card: Apple's 341-0065-A EPROM, not the hand-assembled
+    // page. The slot-config path asks the factory for it exactly like this.
+    {
+        SuperSerialCard ssc(2);
+        const pom2::SlotCardFactory factory;
+        const std::string rom =
+            factory.loadSuperSerialFirmware(ssc, pom2::SystemProfile::AppleIIe);
+        expect(!rom.empty() && ssc.firmwareLoaded(),
+               "Super Serial Card: ssc_341-0065-a.bin is the firmware");
+    }
+
+    // Videx Videoterm (its dumps are tracked since 2026-10-07).
+    {
+        auto card = make("videoterm", 3, /*cmos=*/false);
+        auto* v = dynamic_cast<VidexVideotermCard*>(card.get());
+        expect(v && v->firmwareLoaded(), "Videx Videoterm: firmware + character ROM found");
     }
 
     // Mouse Card, MAME level: slot EPROM and the 68705 mask ROM both.
