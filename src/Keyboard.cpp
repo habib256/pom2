@@ -106,6 +106,35 @@ bool decodeUtf8(const uint8_t* p, std::size_t n, uint32_t& cp, std::size_t& len)
         if ((p[k] & 0xC0) != 0x80) return false;
         cp = (cp << 6) | (p[k] & 0x3F);
     }
+    // The second byte's range tightens on four leads (RFC 3629 table):
+    // overlong 3- and 4-byte forms, the surrogate block and anything past
+    // U+10FFFF are not UTF-8 either. Every rejection here is one more
+    // high-ASCII pair that keeps its mask.
+    if (len == 3 && cp < 0x800)                   return false;  // E0 80-9F
+    if (len == 3 && cp >= 0xD800 && cp <= 0xDFFF) return false;  // ED A0-BF
+    if (len == 4 && (cp < 0x10000 || cp > 0x10FFFF)) return false;
+    return true;
+}
+
+// Whole-buffer rule: `data` is UTF-8 only if EVERY byte ≥ $80 in it sits
+// in a well-formed sequence. The per-byte rule the first version applied
+// ("a byte that starts a valid sequence is UTF-8") broke Apple high-ASCII
+// text, where an upper-case letter $C2-$DF followed by a space, digit or
+// punctuation mark $A0-$BF IS a well-formed 2-byte sequence: a pasted DOS
+// 3.3 listing lost "T " from every "PRINT " (U+0520, nothing to type) —
+// bug hunt 2026-10-06. Real high-ASCII text always fails this test
+// somewhere (a lone $8D CR, a digit or space starting a line), and then
+// the whole buffer keeps the 7-bit mask it always had.
+bool isWellFormedUtf8(const char* data, std::size_t length)
+{
+    const auto* p = reinterpret_cast<const uint8_t*>(data);
+    for (std::size_t i = 0; i < length;) {
+        if (p[i] < 0x80) { ++i; continue; }
+        uint32_t cp = 0;
+        std::size_t len = 0;
+        if (!decodeUtf8(p + i, length - i, cp, len)) return false;
+        i += len;
+    }
     return true;
 }
 
@@ -151,6 +180,8 @@ std::size_t Keyboard::pushChars(const char* data, std::size_t length,
     const std::size_t room = (inFlight >= kPasteMaxChars) ? 0u : (kPasteMaxChars - inFlight);
 
     std::size_t queued = 0;
+    // Decided ONCE for the buffer (see isWellFormedUtf8), never per byte.
+    const bool utf8 = dropControls && isWellFormedUtf8(data, length);
     // Everything below the line-ending step, for one 7-bit character.
     auto emit = [&](uint8_t b) {
         if (queued >= room) return;
@@ -168,10 +199,10 @@ std::size_t Keyboard::pushChars(const char* data, std::size_t length,
         // "CafC)", curly quotes typed 'b', a no-break space 'B' (bug hunt
         // 2026-09-29). Decode it and type what an Apple II keyboard could:
         // the letter without its accent, straight quotes, a space — or
-        // nothing. A byte that does not start a valid sequence is Apple
-        // high-ASCII and keeps the old mask. A TERMINAL stream
+        // nothing. A buffer that is not well-formed UTF-8 throughout is
+        // Apple high-ASCII and keeps the old mask. A TERMINAL stream
         // (dropControls false) is raw 8-bit and is left alone.
-        if (dropControls && b >= 0x80) {
+        if (utf8 && b >= 0x80) {
             uint32_t cp = 0;
             std::size_t len = 0;
             if (decodeUtf8(reinterpret_cast<const uint8_t*>(data) + i,

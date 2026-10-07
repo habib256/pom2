@@ -250,6 +250,29 @@ int main()
     assert(!slots.wouldDuplicate("", 3));
     assert(!slots.wouldDuplicate("cffa", 3));       // nobody holds it
 
+    // ── bug hunt 2026-10-06: a Videx saved on a ][+ must not follow the
+    // user onto a //e. The picker refused it there, resolve() did not: the
+    // card's $C0Bx decode then cut Le Chat Mauve's Eve window. Dropped on
+    // every iieMode profile, kept on the ][ / ][+, and remembered so the
+    // ][+ key survives the //e session's shutdown write.
+    settings.setString("slot_1_card", "");
+    settings.setString("slot_2_card", "");
+    settings.setString("slot_3_card", "videoterm");
+    settings.setString("slot_4_card", "");
+    settings.setString("slot_5_card", "");
+    settings.setString("slot_6_card", "diskii");
+    settings.setString("slot_7_card", "");
+    for (auto profile : { pom2::SystemProfile::AppleIIeUnenhanced,
+                          pom2::SystemProfile::AppleIIe,
+                          pom2::SystemProfile::AppleIIePAL }) {
+        const auto& plan = slots.resolve(settings, profile);
+        assert(plan[3].empty());
+        assert(slots.dedupCleared(3) == "videoterm");
+    }
+    const auto& iiplus = slots.resolve(settings, pom2::SystemProfile::AppleIIPlus);
+    assert(iiplus[3] == "videoterm");
+    assert(slots.dedupCleared(3).empty());
+
     // A live failure/absence must never erase the effective request. This is
     // the contract that preserves a CFFA assignment while its ROM is missing.
     settings.setString("slot_1_card", "cffa");

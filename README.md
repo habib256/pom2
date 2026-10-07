@@ -195,7 +195,7 @@ POM2 --kiosk path/to/game.dsk       # exclusive full-screen, chrome-free
 | Enter | Return | Left Alt | Open-Apple (`$C061`) |
 | Backspace | Left arrow | Right Alt | Solid-Apple (`$C062`) |
 | Arrows | Apple II arrows | `Ctrl-A..Z` | `$01..$1A` |
-| Esc | ESC | F9 | Screenshot → `screenshot_NNN.ppm` |
+| Esc | ESC | F9 | Screenshot → `screenshots/screenshot_NNN.ppm` in the per-user data directory |
 | `Ctrl+Alt+F` / F10 | **Full screen ⇄ windowed** (kiosk toggle) | F11 | Soft reset / Ctrl-Reset |
 | F12 | Hard reset / power-cycle | `Ctrl+Alt+G` | **Capture / release the mouse** |
 | F6 | **Hold to rewind** (time-travel) | `Ctrl+Shift+P` | **Command palette** |
@@ -219,7 +219,7 @@ Nine one-click machines spanning the line — six NTSC plus three **PAL (50 Hz)*
 | **Apple ][+** (1979) | NMOS 6502 | — | `apple2p.rom`, `apple2.rom` | — |
 | **Apple //e Unenhanced** (1983) | NMOS 6502 | IIe | `apple2e_unenh.rom`, `342-0135-b.64.rom`, `apple2e.rom` | AUX = Ext. 80-col (built-in) |
 | **Apple //e Enhanced** (1985) | 65C02 | IIe | `apple2e.rom` | AUX = Ext. 80-col (built-in) |
-| **Apple //c** (1984) | 65C02 | IIe | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` | sl1/2 SSC · sl4 IOU Mouse (LLE, native ROM) · sl5 SmartPort (2 to 8 units on the rear port — 3.5" or 32 MB HDV; ProDOS 8 2.4 shows units 3-8 under slots 2, 4 and 1) · sl6 Disk II |
+| **Apple //c** (1984) | 65C02 | IIe | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` | sl1/2 SSC · sl4 IOU Mouse (LLE, native ROM) · sl5 SmartPort (2 to 14 units, 8 by default, on the rear port — 3.5" or 32 MB HDV; ProDOS 8 2.4+ remaps units 3+ onto other slots) · sl6 Disk II |
 | **Apple //c Plus** (1988) | 65C02 | IIe | `apple2cp.rom`, `apple2c-plus.rom`, `apple2c-32Kv0.rom` | sl1/2 SSC · IOU Mouse (LLE, firmware port 7) · sl5 SmartPort 3.5" · sl6 Disk II |
 | **Apple //e Unenhanced PAL** (50 Hz) | NMOS 6502 | IIe | `apple2e_unenh.rom`, `342-0135-b.64.rom`, `apple2e.rom` | AUX = Ext. 80-col (built-in) · **PAL timing** |
 | **Apple //e Enhanced PAL** (50 Hz) ← *default* | 65C02 | IIe | `apple2e.rom` | AUX = Ext. 80-col (built-in) · **PAL timing** |
@@ -245,7 +245,7 @@ Slot 3 is empty because the //e's 80-column card isn't a slot card: the firmware
 
 ## ✨ Hardware
 
-**Core** — MAME-faithful **6502 / 65C02 / Rockwell / WDC** CPU; full IIe paging, Language Card + aux LC, and **RamWorks III up to 8 MB**; running at `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14), 17045 cycles/frame (//c+ defaults to 4× for its Zip-style accelerator).
+**Core** — MAME-faithful **6502 / 65C02 / Rockwell / WDC** CPU; full IIe paging, Language Card + aux LC, and **RamWorks III up to 8 MB**; running at `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14) — 17045 cycles per 60 Hz frame, 20313 per 50 Hz frame on the PAL profiles (//c+ defaults to 4× for its Zip-style accelerator).
 
 **RamWorks III aux memory** — a //e profile ships stock 64 KB aux. Pick a
 bigger card in **Slot Configuration → AUX memory**: 64 KB (none) · 256 KB ·
@@ -263,7 +263,7 @@ force 1 bank.
 | 📺 **Video** | Text · lo-res · hi-res · double hi-res · 80-column (the //e's built-in, or a **Videx Videoterm** on a ][ / ][+). **Beam-raced** mid-scanline soft switches. Composite NTSC (OpenEmulator-style shader) · AppleWin NTSC (CPU IIR-LUT) · mono phosphor with adjustable curve + persistence · Video-7 RGB · Le Chat Mauve RGB. |
 | 🧊 **3D voxel view** | MicroM8-style — framebuffer extruded into orbiting voxels with a real camera (`Voxel3DRenderer` + `Mat4`). |
 | ⏪ **Rewind** | MicroM8-style snapshot ring buffer; scrub back and resume. Shares its serializer with the AI-control `/snapshot` endpoints. |
-| 🔊 **Audio** | Speaker · cassette · Mockingboard A/C · Mockingboard C **Sound II** (SSI263 speech) · Applied Engineering **Phasor** (2×VIA / 4×AY) · Cricket / Echo SSI263 · Echo+ TMS5220 scaffold · cycle-stamped Disk II + Sony 3.5" mechanical sounds. |
+| 🔊 **Audio** | Speaker · cassette · Mockingboard A/C · Mockingboard C **Sound II** (SSI263 speech) · Applied Engineering **Phasor** (2×VIA / 4×AY) · Cricket / Echo SSI263 · cycle-stamped Disk II + Sony 3.5" mechanical sounds. |
 | 💾 **Storage** | `.dsk` `.do` `.d13` `.po` `.nib` `.2mg` `.woz` `.hdv` · DOS 3.x · ProDOS · SmartPort · CFFA 2.0. WOZ uses the real Disk II P6 LSS sequencer; detection is content-driven (MacBinary, DOS/ProDOS skew, WOZ/2IMG write-protect handled). |
 | 🌐 **Ethernet** | **Uthernet II** (WIZnet W5100 hardware TCP/IP — runs on host sockets, so period IRC / telnet / FTP clients work with no extra dependency and no root; Linux, macOS and Windows) · **Uthernet I** (CS8900A NIC, raw frames, bridged to the host by libslirp user-mode NAT — shipped in the aarch64, Raspberry Pi and Pi 400 AppImages only, see below). |
 | 🔌 **Peripherals** | Super Serial (+ telnet bridge) · parallel printer with host spool · Orange Micro Grappler+ · **Apple ImageWriter II** printer with a rendered paper tray (colour ribbon, bit-image graphics, PNG + multi-page PDF export) · ProDOS Clock / ThunderClock+ · Mouse Card (MAME + AppleWin HLE) · joystick / paddles · Floppy Emu (BMOW — its Disk II 5.25", dumb 3.5", UniDisk 3.5" and SmartPort HD modes; the two IIgs daisy-chain modes are out of scope) · on-board //c devices. |
@@ -273,18 +273,19 @@ force 1 bank.
 
 ## 🃏 Expansion Cards
 
-Assign cards, mount media, eject or boot from `Machine → Slot Configuration`. A typical II / II+ / //e setup: **sl2** Super Serial · **sl4** Mockingboard/Phasor · **sl5** HDV or SmartPort · **sl6** Disk II · **sl7** Le Chat Mauve RGB. On //c and //c+ the built-in slots are locked.
+Assign cards, mount media, eject or boot from `Machine → Slot Configuration`. The first-launch map (§ Machine Profiles) is a sensible //e setup; a title that hard-codes its Mockingboard in **sl4** needs the card moved there in place of the mouse. On //c and //c+ the built-in slots are locked.
 
 | Key | Card | Key | Card |
 |---|---|---|---|
 | `diskii` | Disk II | `clock` | ProDOS Clock / ThunderClock+ |
 | `hdv` | ProDOS HDV — two drives (D1 boots, D2 alongside) | `chatmauve` | Le Chat Mauve RGB |
 | `cffa` | CFFA 2.0 IDE | `mouse` / `mouseaw` | Mouse Card (MAME / AppleWin HLE) |
-| `smartport35` | SmartPort 3.5" — 8 units by default, 2/4/6/8 (3.5" 800K or 32 MB ProDOS volumes); ProDOS 8 2.4+ sees units 3-8 under other slots | `mockingboard` | Mockingboard A/C — and the **Mockingboard 4c** in a //c's CPU socket ($C400, once a program writes there) |
+| `smartport35` | SmartPort 3.5" — 8 units by default, 2 to 14 in pairs (3.5" 800K or 32 MB ProDOS volumes); ProDOS 8 2.4+ sees units 3+ under other slots | `mockingboard` | Mockingboard A/C — and the **Mockingboard 4c** in a //c's CPU socket ($C400, once a program writes there) |
 | `liron` | Liron — real EPROM + IWM over the SmartPort bus: up to 14 units (the default), each a 3.5" 800K or a 32 MB hard-disk image; boots either; ProDOS 8 2.4+ sees units 3+ under other slots | | |
 | `ssc` | Super Serial Card | `mockingboard_c` | Mockingboard C Sound II + SSI263 |
 | `printer` | Parallel printer (host spool) | `phasor` | Applied Engineering Phasor |
 | `grappler` | Orange Micro Grappler+ | `echoplus` | Cricket / Echo SSI263 |
+| `grappler1` | Orange Micro Grappler (1981) — needs its EPROM | `pic` | Apple Parallel Interface — needs its PROM |
 | `uthernet` | Uthernet I (CS8900A NIC) — ARM Linux packages only, see *Ethernet, per platform* | | |
 | `uthernet2` | Uthernet II (W5100 TCP/IP) | `softcard` | Microsoft SoftCard Z80 (CP/M) |
 | `fujinet` | FujiNet relay (SP over SLIP) | `workstation` | Apple II Workstation Card (LocalTalk) |
@@ -298,11 +299,11 @@ screen switches to the card's 80 × 24 picture (720 × 216 dots, 9 × 9 cells) �
 and back to the Apple's 40 columns when the firmware's own switch-back
 sequence runs or on Ctrl-Reset, exactly when the real card's video switch
 (TEXT + annunciator 0) would. The monitor colour setting applies to it too.
-The card's four ROM files are not in the repository: *ROM Status → Download
-missing ROMs* fetches them from RetroBIOS (MAME's `a2vidtrm` romset), or copy
-MAME's `6.ic6.bin` → `roms/videx_videoterm_v24_60hz.bin`, `videx videoterm
-character rom normal.bin` → `roms/videx_videoterm_char_normal.bin` and
-`4.ic4.bin` → `roms/videx_videoterm_char_inverse.bin` by hand.
+The card's four ROM files ship in `roms/` (firmware v2.4 in its 60 Hz and
+50 Hz tables, the normal and the inverse character sets — MAME's `a2vidtrm`
+romset: `6.ic6.bin`, `videx videoterm character rom normal.bin`, `4.ic4.bin`).
+*ROM Status → Download missing ROMs* re-fetches them from RetroBIOS should
+they go missing.
 
 **TransWarp (Applied Engineering, 1986).** A 3.58 MHz 65C02 on a card, which
 is simply the machine's processor moved onto a faster clock — same program,
@@ -349,8 +350,9 @@ On Linux, a serial FujiNet needs your user in the `dialout` group (`sudo usermod
 ## 🖨️ ImageWriter II — see what you printed
 
 The **ImageWriter II** is a printer, not a card, so it has no slot key: it
-hangs off whichever printer interface card you plugged (`printer` or
-`grappler`) and picks up everything that card spools. Open it with
+hangs off whichever printer interface you plugged (`printer`, `grappler`,
+`grappler1`, `pic`, a Super Serial Card's printer tap, or a FujiNet printer
+unit) and picks up everything it spools. Open it with
 *Devices → ImageWriter II (printout)* and print from BASIC:
 
 ```
@@ -384,7 +386,7 @@ POM2's renderer is **event-driven, not frame-snapshot**. Soft-switch writes carr
 
 - **Composite NTSC** — OpenEmulator-style fragment shader (`NtscPostProcessor` / `OpenGLShader`): barrel → hue → BCS → phosphor curve → glow.
 - **AppleWin NTSC** — the alternative CPU-side IIR-LUT colour path (`AppleWinNtsc`).
-- **Mono phosphor** — adjustable **phosphor curve** (`ntsc_phosphor_gamma`, luminance half of the CRT model) and **persistence** (temporal half), tunable in *View → CRT Settings*.
+- **Mono phosphor** — adjustable **phosphor curve** (`ntsc_phosphor_gamma`, luminance half of the CRT model) and **persistence** (temporal half), tunable in *Display → CRT Settings*.
 - **RGB cards** — Le Chat Mauve (Féline · Adaptateur //c · Eve with its `$C0B0-$C0BF` switches) and the Video-7 AppleColor, one card with a variant setting (`chatmauve_variant`), for IIe-class machines.
 - **3D voxel view** — lift the whole framebuffer into an orbiting voxel scene. *Frozen: it works, has one math test, and gets no further work.*
 - **HGR/DHGR Paint editor** (*Tools → HGR Paint Editor*) — MacPaint-style painting straight into live video RAM (HGR, GR lo-res, and DHGR on IIe-class machines), rendered through the real NTSC pipeline. Imports PNG/JPG with ii-pix-style CAM16-UCS perceptual dithering; loads/saves raw pages (8 KB HGR, 1 KB GR, 16 KB A2FC DHGR) and PNG exports.
@@ -437,7 +439,7 @@ Accepted main ROM sizes: 12 KB, 16 KB, 20 KB system packs (with 4 KB filler) and
 | `ssc_341-0065-a.bin` | Super Serial Card EPROM (Apple 341-0065-A) |
 | `grappler_plus.bin` | Grappler+ EPROM |
 | `grappler_eps-1.bin` / `341-0057.bin` | Original Grappler (1981) EPROM / Apple Parallel Interface PROM |
-| `videx_videoterm_v24_60hz.bin` (or `_50hz.bin`) + `videx_videoterm_char_normal.bin` (+ optional `videx_videoterm_char_inverse.bin`) | Videx Videoterm firmware + character sets — not shipped; **ROM Status → Download** fetches them from MAME's `a2vidtrm` romset |
+| `videx_videoterm_v24_60hz.bin` (or `_50hz.bin`) + `videx_videoterm_char_normal.bin` (+ optional `videx_videoterm_char_inverse.bin`) | Videx Videoterm firmware (v2.4, 60 Hz and 50 Hz CRTC tables) + character sets, from MAME's `a2vidtrm` romset |
 | `thunderclock_u9_v1.3.bin` | ThunderClock+ firmware |
 | `roms/floppy_samples/*.wav` | Mechanical drive samples |
 
@@ -454,7 +456,7 @@ POM2 --snapshot-save out.pom2snap
 POM2 --snapshot-load in.pom2snap
 ```
 
-More flags: `--speed`, `--cpu-max`, `--ii-plus` (alias `--ii+`), `--ai-control[=PORT]`, `--display <ntsc|chatmauve|mono-white|mono-green|mono-amber>`, `--tape`, `--save-tape` / `--save-tape-format aci|wav`, `--35-disk1`, `--35-disk2` (//c+ Sony 3.5"), `--blank-disk [1|2:]<path>`, `--prodos-folder <dir>`, `--load addr:file`, `--run <addr>`, `--step N`, `--paste`, `--play`, `--rec`, `--rewind`, `--rgb-card-invert-bit7[=on|off]`, `--fujinet[=PORT]` / `--fujinet-serial[=DEV]` / `--fujinet-slot N`, `--version`. `POM2 --help` is the full list. `--blank-disk` puts a diskette that has **never been formatted** in a Disk II drive (2 by default) — no address fields, so it reads as I/O ERROR until you `INIT` it, which is not what an empty `.dsk` gives you (that one mounts as a formatted disk whose sectors hold zeros). The Disk Library's **New Blank** button does the same from the GUI. The file is created and the flag refuses a name that already exists. `--save-tape <path>` writes the cassette out on a clean exit; `--save-tape-format aci|wav` picks the extension when the path has none. The `[=VALUE]` flags want the `=`: `--ai-control 6503` is refused, `--ai-control=6503` is what you meant. Full architecture → [`CLAUDE.md`](CLAUDE.md).
+More flags: `--speed`, `--cpu-max`, `--ii-plus` (alias `--ii+`), `--ai-control[=PORT]`, `--display <ntsc|chatmauve|mono-white|mono-green|mono-amber>`, `--tape`, `--save-tape` / `--save-tape-format aci|wav`, `--35-disk1`, `--35-disk2`, `--35-disk3` (//c+ Sony 3.5": internal, external 1, external 2), `--blank-disk [1|2:]<path>`, `--prodos-folder <dir>`, `--load addr:file`, `--run <addr>`, `--step N`, `--paste`, `--play`, `--rec`, `--rewind`, `--rgb-card-invert-bit7[=on|off]`, `--fujinet[=PORT]` / `--fujinet-serial[=DEV]` / `--fujinet-slot N`, `--version`. `POM2 --help` is the full list. `--blank-disk` puts a diskette that has **never been formatted** in a Disk II drive (2 by default) — no address fields, so it reads as I/O ERROR until you `INIT` it, which is not what an empty `.dsk` gives you (that one mounts as a formatted disk whose sectors hold zeros). The Disk Library's **New Blank** button does the same from the GUI. The file is created and the flag refuses a name that already exists. `--save-tape <path>` writes the cassette out on a clean exit; `--save-tape-format aci|wav` picks the extension when the path has none. The `[=VALUE]` flags want the `=`: `--ai-control 6503` is refused, `--ai-control=6503` is what you meant. Full architecture → [`CLAUDE.md`](CLAUDE.md).
 
 ### 🕹️ Kiosk mode
 
@@ -477,7 +479,7 @@ anyone who doesn't know the shortcut.
 
 Everything the machine needs keeps running: keyboard, joystick/paddles, auto-turbo during disk I/O, **F11 / F12** (soft / hard reset), **F9** (screenshot), **Left / Right Alt** (Open / Solid Apple), and **F6** (hold to rewind — inert while the in-game menu is up).
 
-**In-game menu.** Press **Start** on a gamepad — or **F1** — for the Start menu: the games list on the left (every 5.25" / 3.5" / HDV image in the booted disk's folder plus your extra ROM folders; a 5.25" hot-swaps in place for flip-disk games, a 3.5"/HDV mounts and boots straight away) and an action column on the right (**Restart · Keyboard · ROM folders · Exit kiosk · Quit**). **Select** — or **K** — toggles a live on-screen keyboard band without pausing the game. D-pad / arrows move, **A / Enter** validates, **B / Esc** backs out. The machine is paused while the menu is up (except under the keyboard band), and menu presses never leak into the running game. **Alt-F4** still quits directly (POM2 handles the combo itself, so it works even in exclusive full-screen).
+**In-game menu.** Press **Start** on a gamepad — or **F1** — for the Start menu: the games list on the left (every 5.25" / 3.5" / HDV image in the booted disk's folder plus your extra ROM folders; a 5.25" hot-swaps in place for flip-disk games, a 3.5"/HDV mounts and boots straight away) and an action column on the right (**Restart · Keyboard · ROM folders · Exit kiosk · Quit**). **Select** — or **F2** — toggles a live on-screen keyboard band without pausing the game. D-pad / arrows move, **A / Enter** validates, **B / Esc** backs out. The machine is paused while the menu is up (except under the keyboard band), and menu presses never leak into the running game. **Alt-F4** still quits directly (POM2 handles the combo itself, so it works even in exclusive full-screen).
 
 ```bash
 POM2 --kiosk "Lode Runner.dsk"                 # boot a game, full-screen
@@ -598,7 +600,7 @@ the profiling recipe.
 
 - Mouse absolute position can drift under A2Desktop / MGTK.
 - Some anti-//e copy-protected titles refuse to boot on //e/c/c+ hardware.
-- **//c+ 3.5"/SmartPort: two paths, and only the drive-side firmware is out of scope.** POM2 boots 3.5" and HDV images on the //c+ through a host-served SmartPort block device at the built-in slot 5, *and* through the silicon: the IWM state machine and the Sony GCR drives are ported (`IWMDevice`, `Sony35Drive` — `--35-disk1/2` mounts 800K images in the //c+ Sony bays), and since 2026-09-01 the //c+ firmware's own on-board boot path drives them end to end — the ROM works the MIG, the MIG selects the drive, the IWM walks the bit cells, ProDOS 8 boots off the internal bay (pinned by the `iicplus_boot35` test). What stays out of scope is the UniDisk 3.5's drive-side 65C02 firmware: POM2 answers its *protocol* instead. (The Liron-class controller firmware itself is no longer the obstacle it once was — the BMOW/Yellowstone dump is public, POM2 ships it, and the slot card presents its real identity on //e-class machines; MAME's *WANTED* entry is simply stale.)
+- **//c / //c+ 3.5"/SmartPort: only the drive-side firmware is out of scope.** The IWM state machine and the Sony GCR drives are ported (`IWMDevice`, `Sony35Drive` — `--35-disk1/2/3` mounts 800K images in the //c+ Sony bays), and the //c+ firmware's own on-board boot path drives them end to end — the ROM works the MIG, the MIG selects the drive, the IWM walks the bit cells, ProDOS 8 boots off the internal bay (pinned by the `iicplus_boot35` test). The rear-port 3.5" and HDV units of slot 5 are found and booted by the machine's own firmware over the SmartPort bus on the 32 KB //c and the //c+ (pinned by `iic_external_smartport`); only the 16 KB //c, whose ROM has no SmartPort code, gets a host-served stand-in. What stays out of scope is the UniDisk 3.5's drive-side 65C02 firmware: POM2 answers its *protocol* instead. (The Liron-class controller firmware itself is no longer the obstacle it once was — the BMOW/Yellowstone dump is public, POM2 ships it, and the slot card presents its real identity on //e-class machines; MAME's *WANTED* entry is simply stale.)
 
 ---
 
@@ -606,7 +608,7 @@ the profiling recipe.
 
 - [`CLAUDE.md`](CLAUDE.md) — always-loaded orientation index (build, memory map, profiles, reset architecture, CLI).
 - [`DEV.md`](DEV.md) — implementation deep-dives, MAME-parity ports, internals, gotchas, pinned tests.
-- [`TODO.md`](TODO.md) — active backlog + MAME ↔ POM2 parity dashboard.
+- [`TODO.md`](TODO.md) — planning index, with domain backlogs, audit evidence and scope decisions.
 - [`CHANGELOG.md`](CHANGELOG.md) — resolved items and the **why** behind non-obvious fixes.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, and what a pull request needs · [`SECURITY.md`](SECURITY.md) — how to report a vulnerability.
 

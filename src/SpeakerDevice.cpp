@@ -223,8 +223,23 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         // stream keeps the same kCatchUpSecs lead the forward path
         // maintains; the catchUpCycles threshold keeps ordinary
         // rounding-stale events (a few cycles) on the cheap purge path.
+        //
+        // The second test is the one the threshold alone missed: a worker
+        // stall of 100-300 ms (host hiccup, swap, a long WASM frame) that
+        // workerLoop RESYNCS rather than catches up leaves the cursor ahead
+        // of the producer's present by LESS than catchUpCycles, so neither
+        // snap fired, every new toggle landed behind the cursor, the purge
+        // below ate it, and — producer and consumer advancing at the same
+        // rate — the speaker stayed silent until a reset (bug hunt
+        // 2026-10-06; the Mockingboard's `caughtUp` re-anchor is the
+        // same idea). When the NEWEST toggle the producer has stamped is
+        // already behind the cursor, everything queued would be purged
+        // anyway, so re-anchoring loses nothing; a few-cycle rounding
+        // straggler at the front with a live stream behind it does not
+        // trip this, because `latest` is then well ahead.
         if (!events.empty()
-            && events.front() + catchUpCycles < audioCpuCursor) {
+            && (events.front() + catchUpCycles < audioCpuCursor
+                || latest < audioCpuCursor)) {
             const uint64_t lead =
                 static_cast<uint64_t>(kCatchUpSecs * cpuClockHz);
             audioCpuCursor =

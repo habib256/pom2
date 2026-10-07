@@ -33,9 +33,10 @@ in this tree:
   project against the installed archive with plain flags, which cannot work
   against an instrumented build, and it measures the export contract rather than
   POM2's code.
-- `pom2_core_test` is the same source list built for the test binaries. Since
-  2026-09-07 it carries `POM2_HAVE_SLIRP` alongside `pom2_core`, so the tests and
-  the SDK compile the network backend that actually ships rather than its stub.
+- `pom2_core_test` is the same source list built for the test binaries. When
+  libslirp is found it carries `POM2_HAVE_SLIRP` alongside `pom2_core`, so the
+  tests and the SDK compile the network backend that actually ships rather than
+  its stub.
 
 ## What is deliberately not here
 

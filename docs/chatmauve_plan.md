@@ -7,6 +7,16 @@ POM2's `LeChatMauveCard` and the Chat Mauve render paths in
 `Apple2Display`. The point of this document is precision: each rule below
 carries where it comes from, and each gap says what would close it.*
 
+> **Status (checked against the code 2026-10-06).** P0, P1, P2 shipped;
+> P3 closed as bounded; P4 partial (the RVB Graph variant with its four
+> `$C0F0-$C0F3` strobes); P6 first rung (the mode latch beam-races) plus
+> the live switch/CPREG panel; P7 done. Open: P4's registers (gated on the
+> manual), P5, the rest of P6 (dot-level `$C0Bx`, TTL-RGBI palette), and
+> the Extasie / DIX / PoP goldens. § 0 and § 2.2 describe the model as it
+> was *before* the plan. The living description is
+> [`DEV.md` § Le Chat Mauve](../DEV.md#le-chat-mauve-lechatmauvecard) and
+> the header of `src/LeChatMauveCard.h`.
+
 ## 0. In one paragraph
 
 POM2 today models **one** Chat Mauve: a Féline-class 2-bit mode latch with
@@ -76,7 +86,7 @@ started.*
 ### 2.1 After P0-P2 (2026-09-01)
 
 `LeChatMauveCard` carries a **variant** — Féline, Adaptateur //c, Eve,
-Video-7 — and answers three questions for the renderers: `dhgrMode()`,
+Video-7, and since 2026-09-02 a partial RVB Graph (§ 5, P4) — and answers three questions for the renderers: `dhgrMode()`,
 `hgrMode(an3On)`, `textMode(eightyCol, an3On)`. The card owns the latch, the
 Eve's switch byte and CPREG; the pixel rules live in `Apple2Display`.
 
@@ -92,13 +102,18 @@ Eve's switch byte and CPREG; the pixel rules live in `Apple2Display`.
 | COL280A/B | the 560 stream in **2-dot cells** (code = dot + 2·next), palettes in the manual's order — read off Purplesoft's `& PLOT` bytes (§ 6) | smoke § 10, goldens `cm/eve/dhgr-hr*-col280*` |
 | SPEC1 / SPEC2 | 5-dot window: `11011` → black (SPEC1), plus `00100` → white (SPEC2); alternating runs stay coloured | goldens `cm/eve/hgr-spec*` (rule from the manual's prose, to confirm against the PLA in P3) |
 | DASH | rendered as HRAPPLE — P3 | — |
-| Variant selection | one catalog key; `chatmauve_variant` setting (`feline` \| `iic` \| `eve` \| `video7`). Chosen in **Slot Configuration** (a "model" combo under the card's row, staged + applied with the slots) or live in the Chat Mauve panel; //c-class connectors are hardware-fixed to the Adaptateur IIc at plug time | — |
-| Snapshot | blob v3 = latch + switch byte + CPREG; v2's two toggles map onto TXT16 / TXTGREEN | smoke § 12 |
+| Variant selection | one catalog key; `chatmauve_variant` setting (`feline` \| `iic` \| `eve` \| `video7` \| `rvb` — `LeChatMauveCard.cpp:29-35`). Chosen in **Slot Configuration** (a "model" combo under the card's row, staged + applied with the slots) or live in the Chat Mauve panel; //c-class connectors are hardware-fixed to the Adaptateur IIc at plug time | — |
+| Snapshot | blob v3 = latch + switch byte + CPREG; v2's two toggles map onto TXT16 / TXTGREEN. Now **v4** (+ the RVB Graph mode strobe, `LeChatMauveCard.cpp:421-428`) | smoke § 12 |
 
 Not done yet: the dot-clock tap (P6 — mid-line switches still land per
 frame), the //c adapter's inferred-80COL quirk (P5), the RVB Graph (P4),
 the PLA-derived Eve pixel rules (P3), Extasie / Purplesoft screens as
 goldens, a TTL-RGBI palette option.
+*Update 2026-10-06:* the mode latch now beam-races (P6 first rung); the
+RVB Graph exists with its four mode strobes (P4 partial); P3 is closed as
+bounded; Purplesoft's screens are frozen by `purplesoft_eve_screens`.
+Still open: dot-level `$C0Bx`, P5, the RVB Graph's registers, Extasie /
+DIX / PoP goldens, the TTL-RGBI palette.
 
 ### 2.2 As found, 2026-09-01 morning
 
@@ -590,12 +605,21 @@ straight out of the fuse map — the Eve decoder becomes the PLA itself.
 Cross-check with Purplesoft's `&PLOT` for the COL280 bit order. Where the
 PLA leaves a choice (rev A palette, the "blanked" row), document it.
 
-**P4 — RVB Graph (1 d, gated on its manual).** `$C0F0-$C0F3`, the text
+**P4 — RVB Graph (1 d, gated on its manual). ◔ Partial 2026-09-02** —
+fifth variant `rvb` (`LeChatMauveCard::Variant::RvbGraph`): the four mode
+strobes `$C0F0-$C0F3` at the card's device select (colour + white text,
+colour + green text, mono white, mono green), COL140/BW560 by the latch,
+no mixed, no 160. The text-colour register, the HGR colour registers and
+the dotted-line option stay unmodelled — still gated on the manual.
+
+*As planned:* `$C0F0-$C0F3`, the text
 colour register, the HGR colour registers and dotted lines, on the II+
 profiles. Blocked until the RVB Graph manual or a board photo surfaces;
 the plan records exactly which forum threads to ask.
 
-**P5 — //c adapter quirk (½-1 d, optional).** Model 80COL as inferred from
+**P5 — //c adapter quirk (½-1 d, optional). Not started** (the
+`IIcAdapter` variant still behaves as the Féline, `LeChatMauveCard.h:32-34`).
+Model 80COL as inferred from
 the VID7M/LDPS cadence rather than read from the switch, behind a toggle,
 so the PoP regression reproduces as on the real box. Off by default.
 
@@ -607,7 +631,11 @@ edge ring (`latchBefore`), and each band paints with the latch of its own
 moment. Pinned by `chatmauve_latch_split` (COL140/BW560 split both ways in
 one frame). Still per-frame: the Eve's `$C0Bx` switches (no video events),
 the exact in-cell dot position, the TTL-RGBI palette option, and the DIX /
-PoP goldens.
+PoP goldens. Since then: the Chat Mauve panel shows the eight Eve switch
+pairs and CPREG live (`LeChatMauve_ImGui.cpp:71-73`, `:285`), and the
+analog Péritel connector got its bandwidth stage (`NtscParams::
+rgbBandwidthMHz`, CHANGELOG 2026-09-04) — the TTL-RGBI palette option is
+still absent.
 
 *As planned:* Move the Chat Mauve renderers onto the
 per-dot tap driven by the existing soft-switch event log, so mid-scanline
@@ -615,7 +643,11 @@ mode changes (DIX) and per-line register changes land at the dot; PAL
 convenience; TTL-RGBI palette option next to the capture; UI panel shows
 the sixteen Eve switches and CPREG live.
 
-**P7 — Docs.** `DEV.md` § Le Chat Mauve rewritten from this document,
+**P7 — Docs. ✅** — `DEV.md` § Le Chat Mauve, the `docs/lle_vs_hle.md`
+row at L1, the `CLAUDE.md` subsystem row and the CHANGELOG entries all
+exist.
+
+*As planned:* `DEV.md` § Le Chat Mauve rewritten from this document,
 `docs/lle_vs_hle.md` row moved from "H1 + machine-level lie" to the level
 each variant actually reaches, `CLAUDE.md` subsystem row, CHANGELOG.
 

@@ -8,7 +8,12 @@ real ImageWriter faces, can dump the screen through the printer's own graphics
 parser, has a power switch and custom paper, and models three C. Itoh heads
 (ImageWriter II / I / Apple DMP) plus the Epson FX-80 with its own ESC/P
 parser. What implementation
-changed is recorded in [§ 12](#12-what-implementation-changed).
+changed is recorded in [§ 12](#12-what-implementation-changed). The living
+description of the printer is [DEV § ImageWriter](../DEV.md#imagewriter-ii-printer-host-side)
+(and [§ Print history](../DEV.md#print-history-printerhistory),
+[§ Screen dump](../DEV.md#screen-dump-printerscreendump),
+[§ Printer sound](../DEV.md#printer-sound-printersounddevice)); this file is
+the plan's record.
 
 Reference:
 [`mikedaley/web-a2e`](https://github.com/mikedaley/web-a2e) (MIT, C++/JS Apple
@@ -350,7 +355,9 @@ sample-rate change drops grains built for the old rate.
   heuristic — adjacent dots abut exactly at any page DPI, so graphics dumps
   have no seams. Keep it.
 - **Its pacing.** POM2's is `emuCycles`-driven and tied to the emulated clock;
-  a browser emulator's is not. Keep POM2's.
+  a browser emulator's is not. Keep POM2's. *(As built, 2026-10-06: the head
+  paces itself on host time, `ImageWriter::tick(double dt)` at the model's
+  cps — see § 9 "Wrong 1" and `ImageWriter.h:389`.)*
 - **The agent/tool layer** (`printer-tools.js`) — POM2's equivalent is the AI
   control API, and the commands should be added there, in POM2's own idiom,
   not ported.
@@ -427,7 +434,11 @@ the input path and touches nothing else.
 `saveScreenshot` the same way (F9 / palette / toolbar), so `printer.dumpscreen`
 follows that rather than inventing a menu.
 
-Not done from the phases marked shipped: per-model paper ranges (four models
-exist now, but the paper range is still a single set of file-scope constants
-shared by all of them), and the `printerSetup`-style AI control commands — POM2's
-equivalent belongs in the AI control API, which is Phase C's neighbourhood.
+Not done from the phases marked shipped (rechecked 2026-10-06): per-model
+paper ranges (eleven `IwModel` values exist now, `ImageWriter.h:99-149`, but
+the paper range is still one set of class constants,
+`ImageWriter::kMin/kMaxPaperWidthIn` / `…LengthIn` at `ImageWriter.h:352-355`,
+shared by all of them), and the `printerSetup`-style AI control commands —
+the AI control API has since grown the card-side `/printer-port`,
+`/slot-log` and `/printer/spool` ([printer-detection § 12](printer-detection.md#12-pom2s-controls-cli-http-library)),
+but still nothing that selects the printer model, ribbon or paper.

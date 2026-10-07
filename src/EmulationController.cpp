@@ -439,6 +439,16 @@ bool EmulationController::mount35(int idx, const std::string& path)
     };
     while (ejectPending()) writeBackQueue_.drain();
 
+    // Re-inserting the disk that is already in the bay — under ANY spelling
+    // of its path: the Disk Library uses relative paths, a file dialog
+    // absolute ones, and /tmp is /private/tmp on macOS — is decided by
+    // `Block512Backing::sameFile`, the way DiskIICard::installDisk and
+    // Block512Backing::adoptImage already do. A string compare let a dirty
+    // image be flushed and then REPLACED by the pre-flush bytes phase 1 had
+    // read under the other spelling, and the next autosave wrote that stale
+    // copy back over the file (bug hunt 2026-10-06). Phase 1 skips the read
+    // whenever it is the same file, dirty or not: phase 2 re-reads it after
+    // the flush, under the lock, where nothing can land in between.
     bool writeBack = false;
     bool skipRead  = false;
     {
@@ -446,8 +456,8 @@ bool EmulationController::mount35(int idx, const std::string& path)
         pom2::Disk35Image* image = &disk35(idx);
         if (!image) return false;
         writeBack = image->isWriteBackEnabled();
-        skipRead  = image->isLoaded() && image->hasUnsavedChanges() &&
-                    !image->path().empty() && image->path() == path;
+        skipRead  = image->isLoaded() &&
+                    pom2::Block512Backing::sameFile(image->path(), path);
     }
 
     pom2::Disk35Image staged;
@@ -466,10 +476,12 @@ bool EmulationController::mount35(int idx, const std::string& path)
     }
 
     // Decided HERE, under the lock that also does the flush, so no window
-    // exists between the two.
+    // exists between the two. Same file ⇒ re-read whatever the dirty flag
+    // says: an autosave may have landed between the phases, and the staged
+    // copy (if any) predates it.
     const bool staleAfterFlush =
-        image->isLoaded() && image->hasUnsavedChanges() &&
-        !image->path().empty() && image->path() == path;
+        image->isLoaded() &&
+        pom2::Block512Backing::sameFile(image->path(), path);
 
     if (image->isLoaded() && image->hasUnsavedChanges() &&
         !image->saveDirty()) {
@@ -624,7 +636,11 @@ bool EmulationController::eject35(int idx)
             // its completion takes `stateMtx`.
             if (!drive || !drive->isEjectPending()) {
                 pending     = image->takeWriteBack();
-                pendingPath = pending.path;
+                // The image's path, not the capture's: a clean medium
+                // yields an invalid capture with an empty path, and phase
+                // 3 still has to recognise it as the disk it was asked to
+                // eject.
+                pendingPath = image->path();
                 break;
             }
         }
@@ -652,6 +668,25 @@ bool EmulationController::eject35(int idx)
         return false;
     }
     if (!image->isLoaded()) return true;          // ejected under us — done
+    // A mount that landed while phase 2 ran unlocked owns the bay now; the
+    // disk this call was asked to eject is already gone. Leave the new one.
+    if (image->path() != pendingPath) return true;
+    // The CPU kept running through phase 2, and a block ProDOS wrote during
+    // the commit re-dirtied the medium AFTER the capture — `eject()` would
+    // discard it silently and report success. Same defect the slot-card
+    // bays closed on 2026-09-02 (`ejectBay` saves inline first); this
+    // on-board sibling never got it (bug hunt 2026-10-06). Capture again:
+    // normally nothing is owed and this is a no-op; when something is, the
+    // commit is one block's worth of file I/O under the lock, paid rarely.
+    // On failure the medium stays loaded and dirty, like the branch above.
+    if (auto late = image->takeWriteBack(); late.valid) {
+        std::string lateError;
+        if (!pom2::Disk35Image::commitWriteBack(std::move(late), lateError)) {
+            image->restoreDirty();
+            pom2::log().warn("Sony35", "3.5\" eject refused: " + lateError);
+            return false;
+        }
+    }
     image->eject();
     if (drive) {
         drive->notifyMediaChange();

@@ -7577,6 +7577,15 @@ pom2_add_headless_test(test_disk35_eject_pending
     LINK_LIBRARIES pom2_core_test)
 set_tests_properties(disk35_eject_pending PROPERTIES SKIP_RETURN_CODE 77)
 
+# The on-board 3.5" bays' two data-loss paths (bug hunt 2026-10-06): a
+# re-insert under another spelling of the same path must not install the
+# pre-flush image, and an eject must not drop a block written while its
+# commit ran unlocked.
+pom2_add_headless_test(test_disk35_remount
+    NAME disk35_remount TIMEOUT 60
+    SOURCES disk35_remount_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 # One contract across DiskImage / Disk35Image / Block512Backing and the
 # SmartPort units that wrap the last two. Where a path diverges on purpose
 # (Block512 does not fold write-back into isWriteProtected) the test

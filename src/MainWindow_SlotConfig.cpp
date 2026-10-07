@@ -115,6 +115,14 @@ bool MainWindow::setSlotCardFromCli(int slot, const std::string& key,
     bool known = false;
     for (const auto& ct : pom2::kCardTypes) known = known || key == ct.key;
     if (!known) { error = "unknown card key \"" + key + "\""; return false; }
+    // Same refusal as the Slot Config picker and
+    // SlotConfigurationCoordinator::resolve: the Videoterm has no place in
+    // a machine whose 80 columns are built in.
+    if (key == "videoterm" && cfg.iieMode) {
+        error = "the Videx Videoterm is a ][ / ][+ card; this machine's "
+                "80 columns are built in";
+        return false;
+    }
     const std::string settingKey = pom2::slotCardSettingKey(cfg, slot);
     const std::string previous = settings->getString(settingKey, "");
     settings->setString(settingKey, key);

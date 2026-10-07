@@ -88,7 +88,7 @@ addressing (A6 swapped, `a2pic.cpp:286-293`).
 | Grappler+ 3.1 (POM2's `grappler_plus.bin`) | `c4781f97` | `$000` | 18 | B0 | 90 | 38 | 18 | 01 | **14** | 92 51 54 83 | `grappler` |
 | Grappler+ 3.2, Buffered Grappler+ | `6f88b70c` / `cd07c7ef` | `$000` | 18 | B0 | 90 | 38 | 18 | 01 | **14** | 92 52 55 83 | — |
 | Grappler (1981), slot 1 | eps-1 (`862773cb`) | `slot×$100` | 18 | B0 | 90 | 38 | 18 | 01 | **14** | 24 27 2A 33 | `grappler1` |
-| Grappler (1981), slots 2-7 | same | `slot×$100` | 18 | B0 | 8D | **04** | **48** | `$Cn` | AA | varies | `grappler1` |
+| Grappler (1981), slots 2-7 | same | `slot×$100` | 18 | B0 | 8D | **04** | **48** | `$Cn` | AA | 8D F8 07 AD (code, not entries) | `grappler1` |
 | Apple Parallel Interface, SW6 on | 341-0057 (`0a6b084b`) | `$100` † | 18 | B0 | 48 | **48** | **48** | 58 | FF | BA 68 68 68 | `pic` |
 | Apple Parallel Interface, SW6 off | same | `$000` † | 18 | B0 | 48 | 48 | 48 | 58 | FF | BA 68 68 68 | `pic` |
 | Apple Parallel Printer Interface (1977) | prom.b4 (`00b742ca`, MAME BAD_DUMP) | `$000` † | 18 | B0 | 48 | 48 | 48 | 58 | FF | BA 68 68 68 | — |
@@ -100,7 +100,7 @@ addressing (A6 swapped, `a2pic.cpp:286-293`).
 
 Telling models apart once the class says "printer": the Grappler+ versions
 differ at `$Cn0E/$Cn0F` (51 54 vs 52 55); the //c ROM revision shows at
-`$Cn01` (58 vs 89); the SSC has high-ASCII "APPLE" at `$CnF9-$CnFE`; the PIC,
+`$Cn01` (58 vs 89); the SSC has high-ASCII "APPLE" at `$CnFA-$CnFE`; the PIC,
 the Epson APL and the 4th Dimension card are byte-identical and **cannot** be
 told apart by ROM. The Grappler+, the 1981 Grappler and the PIC all start
 `18 B0 38` — Apple's Pascal 1.0 printer entry — so that prefix alone says
@@ -383,11 +383,11 @@ bad key and nothing changes):
 
 | Endpoint | |
 |---|---|
-| `GET /printer-port[?slot=N]` | the printer side of one slot, or of every printer-capable slot |
+| `GET /printer-port[?slot=N]` | the printer side of one slot, or of every slot holding an `ssc`, `grappler`, `grappler1` or `pic` |
 | `POST /printer-port` `{"slot":N,"set":"k=v,…"}` | same option language; returns the new state |
-| `POST /slot-log` `{"slot":N,"enable":1[,"capacity":C]}` | start logging slot N's bus accesses |
-| `GET /slot-log?slot=N` | drain the log: `cycle`, `addr`, `value`, `op` (r/w), plus `writes` and `dropped` |
-| `GET /printer/spool?slot=N[&from=K]` | bytes the card sent its printer since K (hex) and the next cursor |
+| `POST /slot-log` `{"slot":N,"enable":1[,"capacity":C]}` | start logging slot N's bus accesses (capacity 1-4194304, default 65536; `"enable":0` stops) |
+| `GET /slot-log?slot=N` | drain the log: `entries` of `cycle`, `addr`, `value`, `op` (r/w), plus `enabled`, `writes` and `dropped` |
+| `GET /printer/spool?slot=N[&from=K]` | bytes the card sent its printer since byte offset K, as a hex string, and the `next` cursor; also answers for the synthetic `printer` card |
 
 **Library** (`libpom2_core_test.a`):
 

@@ -36,7 +36,9 @@
 //   $50 MOUSE_INIT    3-byte    Init (clamp 0..1023, pos = 0)
 //   $60 MOUSE_CLAMP   5-byte    Set X or Y clamp window (LSB of cmd byte
 //                                = axis select: 0 = X, 1 = Y)
-//   $70 MOUSE_HOME    1-byte    Re-home to (0, 0)
+//   $70 MOUSE_HOME    1-byte    Re-home to the clamp window's (MinX, MinY)
+//                                — (0, 0) only while the window is the
+//                                power-on 0..1023 (see the .cpp)
 //   $90 MOUSE_TIME    1..4 byte VBL-time command (no-op in HLE)
 //
 // PIA Port B handshake (AppleWin's On6821_B): the firmware uses BIT5 of

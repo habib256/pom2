@@ -161,7 +161,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "aux-shadow + table IX-1 from Purplesoft; Video-7 keeps 160 chunky",
       "Not the PLA and not a 14 MHz tap: mid-line switches land at the frame "
       "(P6), Eve DASH/COL280 still prose (P3), IIc 80COL is read not inferred "
-      "(P5), RVB Graph absent (P4). docs/chatmauve_plan.md",
+      "(P5), RVB Graph has its $C0F0-$C0F3 strobes but not its colour "
+      "registers (P4 partial). docs/chatmauve_plan.md",
       "LeChatMauveCard.h/.cpp, Apple2Display.cpp" },
 
     // ── Audio ───────────────────────────────────────────────────────────
@@ -251,11 +252,13 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "ProDOSVolume.*" },
 
     // ── Network & serial ────────────────────────────────────────────────
-    { "ssc", "Network & serial", "Super Serial Card", AbsLevel::H1,
-      "6551 ACIA is register-faithful (L1); the slot ROM is synthetic — PR#n / "
-      "IN#n hooks plus a Pascal 1.1 ID block",
-      "The chip is right; the firmware is a stub because no dump is bundled. "
-      "The real 341-0065-A is publicly dumped — this is a sourcing job.",
+    { "ssc", "Network & serial", "Super Serial Card", AbsLevel::L2,
+      "6551 ACIA is register-faithful (L1) and Apple's 341-0065-A EPROM "
+      "EXECUTES (roms/ssc_341-0065-a.bin, pinned ssc_firmware): DIP banks, "
+      "cable lines, $C800 bank",
+      "Without the dump the card falls back to the hand-assembled page — "
+      "PR#n / IN#n hooks plus a Pascal 1.1 ID block (H1, shown as degraded). "
+      "The host side is a telnet bridge or a wiretap, not a DB-25.",
       "SuperSerialCard.h/.cpp" },
     { "uthernet", "Network & serial", "Uthernet I (CS8900A)", AbsLevel::L1,
       "Verbatim MAME machine/cs8900a.cpp (VICE lineage), packet-level",
@@ -280,10 +283,11 @@ const std::vector<AbsEntry>& abstractionCatalog()
 
     // ── Printing ────────────────────────────────────────────────────────
     { "printercard", "Printing", "Printer card (parallel)", AbsLevel::H1,
-      "Synthetic ROM whose entire job is the PR#n CSWL/CSWH hook plus a 4-byte "
-      "trampoline; the data port spools to a std::vector",
-      "No PROM dump exists to run. The Pascal entry block is deliberately "
-      "absent, so Pascal drivers cannot bind — BASIC PR#n only.",
+      "Synthetic ROM: the PR#n CSWL/CSWH hook, a 4-byte trampoline and a "
+      "Pascal 1.1 ID block whose four entries are real (PascalPrinterRom.h); "
+      "the data port spools to a std::vector",
+      "No PROM dump exists to run — there is no one card this models. "
+      "BASIC PR#n and Pascal / ProDOS drivers both bind.",
       "PrinterCard.h/.cpp" },
     { "grappler", "Printing", "Grappler+ (Orange Micro)", AbsLevel::L2,
       "The real 4 KB Orange Micro EPROM EXECUTES; status byte, register "

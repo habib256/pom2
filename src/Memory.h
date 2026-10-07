@@ -661,7 +661,7 @@ public:
     // Keyboard bridge — UI thread enqueues keys, CPU thread reads them
     // via $C000 / clears the strobe via $C010. State + FIFO live in
     // pom2::Keyboard (`keyboard_`); these forward to it, and the softswitch
-    // read path calls `keyboard_.latchMirror()` / `lastKey7()` directly.
+    // read path calls `keyboard_.readLatch()` / `lastKey7()` directly.
     /// A live key. The ][ / ][+ keyboard cannot emit $61-$7A, so a-z folds
     /// to A-Z there, as pasteText already did: typing `print 6*7` with the
     /// host's Caps Lock off answered ?SYNTAX ERROR (bug hunt 2026-09-29).
@@ -1021,8 +1021,9 @@ private:
     void pushVideoEventLocked(VideoEventKind kind, bool value);
 
     // Keyboard latch + host paste FIFO — its own concern now (Keyboard.h).
-    // The $C000 hot read is `keyboard_.latchMirror()` (a lock-free atomic
-    // republished under Keyboard's own mutex); the cold IIe status reads use
+    // The $C000 hot read is `keyboard_.readLatch()` (a lock-free atomic
+    // mirror republished under Keyboard's own mutex, which also promotes
+    // the next paste byte); the cold IIe status reads use
     // `keyboard_.lastKey7()`.
     pom2::Keyboard keyboard_;
 

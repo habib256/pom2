@@ -14,7 +14,8 @@ NeoST's were the 68000 bus and its scheduler.
 
 **Non-negotiable constraint for everything below**: POM2 is a cycle-accurate
 emulator. None of these optimisations changes a single value it produces. Each
-was validated by the full test suite (`ctest`, 241 tests) *and* by
+was validated by the full test suite (`ctest`, 241 tests at the time; the
+suite has grown since) *and* by
 `pom2_bench`'s output hashes — RAM and framebuffer, byte-identical before and
 after, on every workload measured here.
 
@@ -144,8 +145,8 @@ cases and delegates everything else to `memReadSlow` (the original body,
 untouched):
 
 * `$0000-$BFFF` → main RAM (on a //e, the shared `iieReadFromAux` helper
-  picks aux vs main inline — `Memory.h:271`, over the `iieReadFromAux`
-  helper at `Memory.h:1160`);
+  picks aux vs main inline — `Memory.h:280`, over the `iieReadFromAux`
+  helper at `Memory.h:1269`);
 * `$D000-$FFFF` with the language card mapped to ROM → ROM.
 
 > **The trap, and it is the same one NeoST hit.** The first instinct is to
@@ -276,9 +277,9 @@ Two of these have since moved — see § 7 for `Memory::advanceCycles`; the
 One lead listed here has since been **taken** (2026-07-30 callgrind pass):
 `Memory::advanceCycles` used to call `cassette->advanceCycles`
 unconditionally, even with no tape loaded — measured at 4.1 % of the core.
-It is now gated (`if (cassette)`, in `Memory::advanceCycles` — `Memory.h:747`,
+It is now gated (`if (cassette)`, in `Memory::advanceCycles` — `Memory.h:832`,
 the hop itself `Memory::cassetteAdvanceCycles`) and the call
-is an inline fast path (`CassetteDevice.h:116-125`, rationale at `:105-115`)
+is an inline fast path (`CassetteDevice.h:122-131`, rationale at `:111-121`)
 that only takes the out-of-line playback
 route when the deck is actually moving.
 
@@ -291,7 +292,7 @@ profiles are `sample <pid> 5 1 -mayDie` over a long `pom2_bench` run of the
 profiling build (`build-prof`, § 1 recipe), and the comparisons are wall time
 (best of 5) on the release build. The subject is unchanged, and so is the
 rule: **every change below leaves both `pom2_bench` hashes byte-identical on
-every workload, and `ctest` green (186 tests at the time; 241 today)**. A new test,
+every workload, and `ctest` green (186 tests at the time)**. A new test,
 `bus_fastpath`, is part of that — see 7.2.
 
 ### 7.0 The bench's //e workload was a BRK loop
@@ -370,10 +371,13 @@ back must zero the threshold** — `setCycleCounter()`, `setVideoStandard()`
 and the snapshot restore do; the slow path already self-heals from any jump,
 the gate just has to let it run.
 
-**Keyboard latch mirror** (`Memory.h`, `kbLatchMirror_`). `lastKey |
-keyReady << 7` is republished — under `kbMutex`, by every writer, through
-`publishKbLatch()` — into one `std::atomic<uint8_t>`, and the `$C000-$C01F`
-read takes a relaxed load instead of the lock. Non-keyboard soft switches
+**Keyboard latch mirror** (now `pom2::Keyboard` in `Keyboard.h`, `mirror_`;
+at the time `Memory.h`, `kbLatchMirror_`). `lastKey |
+keyReady << 7` is republished — under the keyboard mutex (`mtx_`, formerly
+`kbMutex`), by every writer, through `publish()` (formerly
+`publishKbLatch()`) — into one `std::atomic<uint8_t>`, and the `$C000-$C01F`
+read takes a relaxed load (`Memory` calls `keyboard_.latchMirror()`)
+instead of the lock. Non-keyboard soft switches
 never touch it at all. A reader that lands between a writer's member stores
 and its publish sees the previous pair, which is what it would have seen had
 it taken the lock a moment earlier.
@@ -432,7 +436,7 @@ RAM and framebuffer hashes identical on all six, before and after each step.
 | Item | Share (after) | Why it stayed |
 |---|---|---|
 | `M6502::executeOpcode` + `step` | ~30 % (banner) | the interpreter and its two indirect calls per instruction — PGO's job, not source changes (§ 5) |
-| `Memory::memRead` condition chain | ~15 % (banner) | four loads and branches before the ROM-window hit. The next step is the per-page dispatch table in `TODO.md`, which trades them for one indexed load at the price of an invalidation at every paging-state writer — the class of bug § 3.1 was designed to avoid. Not worth it below ~10 % |
+| `Memory::memRead` condition chain | ~15 % (banner) | four loads and branches before the ROM-window hit. The next step is the per-page dispatch table in [MEMORY-002](backlog/cpu-memory.md#memory-002), which trades them for one indexed load at the price of an invalidation at every paging-state writer — the class of bug § 3.1 was designed to avoid. Not worth it below ~10 % |
 | `DiskIICard::lssSync` | ~15 % (disk, motor on) | unchanged from § 6 — the per-bit-cell model |
 | `SlotBus::advanceCycles` fan-out | ~4 % (disk) | one virtual call per plugged card per instruction; a "needs ticking" mask would save the idle ones at the cost of every card having to keep it honest |
 | `renderText` + `glyphRows7` | ~3 % (banner) | the full-frame static-text skip already covers the static case |
@@ -701,8 +705,7 @@ makes a 2 % claim survive this host's layout noise):
 identifies the CPU loop rather than the display changes of the same round.
 
 **The shape that keeps both.** One epilogue, and `interruptCycles` tested
-*first* so `debugHook_` is never loaded on the common path
-(`M6502.cpp:2150-2158`):
+*first* so `debugHook_` is never loaded on the common path. As shipped:
 
 ```cpp
 if (POM2_UNLIKELY(interruptCycles != 0 && debugHook_ != nullptr)) {
@@ -713,6 +716,16 @@ if (POM2_UNLIKELY(interruptCycles != 0 && debugHook_ != nullptr)) {
 cycles += interruptCycles;
 if (memory != nullptr) memory->advanceCycles(cycles);
 ```
+
+The same day a later fix (`5b8d1f9`, "Publish the interrupt entry's seven
+cycles before the handler runs") reshaped it: the interrupt's cycles are now
+published *before* the handler's first opcode, and `cycles += interruptCycles`
+moved after the epilogue's `advanceCycles`. The properties this section is
+about survive — one exit, one `advanceCycles` on the common path, `debugHook_`
+loaded only inside the `interruptCycles != 0` branch (`M6502.cpp:2298-2313`,
+whose comment cites this section). The +2.46 % figure and the baseline claim
+below were measured on the shape above; the current shape has not been
+re-benched here (unverified).
 
 Back at baseline, with the round-2 fix intact and **RAM + framebuffer hashes
 byte-identical** — the same contract §§ 1-9 are held to.

@@ -28,6 +28,7 @@
 #include "MouseCoordinator.h"
 #include "PrinterCoordinator.h"
 #include "SmartPortCard.h"
+#include "SuperSerialCard.h"
 #include "StorageCoordinator.h"
 
 // stb_image is bundled (single-header public-domain JPEG/PNG decoder) solely
@@ -314,7 +315,19 @@ void MainWindow::renderAbstractionPanel()
     row("ssi263", (plugged("echoplus") || plugged("mockingboard_c"))
                       ? Live::Active : Live::NotPlugged);
     row("tms5220", plugged("echoplus_tms") ? Live::Active : Live::NotPlugged);
-    row("ssc",       plugged("ssc")       ? Live::Active : Live::NotPlugged);
+    // Same shape as the Grappler+ and the Liron: plugged with Apple's EPROM
+    // is L2, plugged on the hand-assembled fallback page is H1 and says so.
+    // Not on a //c: its two ports are not slots, the machine's own ROM
+    // serves $C100/$C200, and the card there models the soldered ACIAs
+    // only — nothing is degraded by the EPROM's absence.
+    degradable("ssc", primarySerialCard() != nullptr,
+               primarySerialCard() &&
+                   (primarySerialCard()->firmwareLoaded() ||
+                    pom2::profileConfig(activeProfile).noPhysicalSlots),
+               pom2::AbsLevel::H1,
+               "roms/ssc_341-0065-a.bin absent — running the hand-assembled "
+               "slot page (PR#n / IN#n hooks + Pascal ID), not Apple's "
+               "firmware; programs that probe the EPROM see the stub.");
     row("uthernet",  plugged("uthernet")  ? Live::Active : Live::NotPlugged);
     row("uthernet2", plugged("uthernet2") ? Live::Active : Live::NotPlugged);
     // The one entry in this group that used to report nothing, so it
@@ -412,9 +425,9 @@ void MainWindow::renderAbstractionPanel()
                          "What AppleWorks and the graphics dumps expect.";
         t.high.label   = "Printer card — synthetic ROM, PR#n hook only";
         t.high.level   = pom2::AbsLevel::H1;
-        t.high.why     = "A CSWL/CSWH hook and a 4-byte trampoline. No PROM\n"
-                         "dump exists to run, and the Pascal entry block is\n"
-                         "deliberately absent, so BASIC PR#n only.";
+        t.high.why     = "A CSWL/CSWH hook, a 4-byte trampoline and a real\n"
+                         "Pascal 1.1 entry block. No PROM dump exists to run:\n"
+                         "there is no one card this models.";
         t.selected     = plugged("grappler") ? 0 : (plugged("printer") ? 1 : -1);
         if (t.selected < 0)
             t.note = "Neither is plugged — add one in Slot Configuration "

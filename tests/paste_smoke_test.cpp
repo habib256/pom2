@@ -195,6 +195,37 @@ int main()
         while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
         assert(out == "CAFE");
     }
+    // ── Apple high-ASCII survives the UTF-8 decode (bug hunt 2026-10-06) ──
+    // "10 PRINT 1<CR>" as a DOS 3.3 text file stores it: bit 7 set on every
+    // byte. 'T'+' ' is $D4 $A0, a well-formed 2-byte UTF-8 sequence (U+0520),
+    // and the per-byte rule decoded it and dropped both characters:
+    // "10 PRIN1". The decision is per buffer now — a lone $8D or a leading
+    // digit is not UTF-8, so the whole paste keeps its 7-bit mask.
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        const std::string hi = "\xB1\xB0\xA0\xD0\xD2\xC9\xCE\xD4\xA0\xB1\x8D";
+        const size_t queued = mem.pasteText(hi);
+        std::string out;
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        assert(queued == 11);
+        assert(out == "10 PRINT 1\r");
+    }
+    {
+        // Overlong ($E0 $80 $AF, "/" in three bytes) and surrogate ($ED $A0
+        // $80) forms are not UTF-8 either, so a buffer holding one is
+        // high-ASCII and masks ($80 masks to NUL, a control, and is dropped).
+        Memory mem;
+        mem.setIIEMode(true);
+        mem.pasteText("A\xE0\x80\xAFZ");
+        std::string out;
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        assert(out == "A`/Z");
+        mem.pasteText("A\xED\xA0\x80Z");
+        out.clear();
+        while (keyReady(mem)) out.push_back(static_cast<char>(consumeKey(mem)));
+        assert(out == "Am Z");
+    }
 
     // ── A live key on a ][ / ][+ is folded like a paste ──────────────────
     // (bug hunt 2026-09-29): its keyboard cannot emit $61-$7A.

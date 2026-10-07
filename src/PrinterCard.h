@@ -57,7 +57,7 @@
 //   $Cn05  38        Pascal 1.1 sig 1               (SEC)
 //   $Cn07  18        Pascal 1.1 sig 2               (CLC)
 //   $Cn0B  01        Pascal 1.1 firmware revision
-//   $Cn0C  00        Pascal device class = printer
+//   $Cn0C  10        Pascal device class 1 = printer (kPascalPrinterClass)
 //   $Cn20  A9 31     LDA #$31                       (CSWL low byte)
 //   $Cn22  85 36     STA $36                        (= low byte of $Cn31)
 //   $Cn24  A9 ss     LDA #slotHi                    (CSWH = $C0+s)
