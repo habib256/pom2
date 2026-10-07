@@ -1,7 +1,7 @@
 # POM2 graphics modes — deep comparison with the original sources
 
 POM2 offers **ten hi-res render modes** (`Apple2Display::HiResMode`,
-[`src/Apple2Display.h:57-101`](../src/Apple2Display.h)). Each mode is
+[`src/Apple2Display.h:68-112`](../src/Apple2Display.h)). Each mode is
 ported from a reference emulator (MAME, AppleWin, OpenEmulator) or
 models a hardware behaviour (Le Chat Mauve, monochrome phosphors).
 
@@ -23,7 +23,7 @@ pinned tests, and the capture of the intro screen produced by
 | 2 | `ColorCompMedium` | MAME `apple2video.cpp` row 1 | 7-bit LUT | 280×192 | `dhgr_render_smoke` | [↓](#2-colorcompmedium) |
 | 3 | `ColorComp4Bit` | MAME `apple2video.cpp` square filter | nibble→palette | 280×192 | `dhgr_render_smoke` | [↓](#3-colorcomp4bit) |
 | 4 | `ChatMauveRGB` | AppleWin `RGBMonitor.cpp` (PR #837) + Péritel hardware | direct RGB | 560×192 | `le_chat_mauve_smoke`, `video7_parity_smoke` | [↓](#4-chatmauvergb) |
-| 5 | `ColorCompositeOE` | OpenEmulator + apple2shader | GLSL shader | 560×384 | `oe_demod_gpu_cpu_parity`, `text_oecpu_crisp` | [↓](#5-colorcompositeoe) |
+| 5 | `ColorCompositeOE` | OpenEmulator + apple2shader | GLSL shader | 560×192 | `oe_demod_gpu_cpu_parity`, `text_oecpu_crisp` | [↓](#5-colorcompositeoe) |
 | 5b | `ColorCompositeOECpu` | OpenEmulator (same demod, on the CPU) | CPU demod → RGBA framebuffer | 560×192 | `oe_demod_gpu_cpu_parity`, `text_oecpu_crisp` | [↓](#5-colorcompositeoe) |
 | 6 | `MonoWhite` | AppleWin VT_MONO_WHITE (empirical palette) | luminance | 280/560×192 | `display_persistence_smoke` | [↓](#6-monowhite) |
 | 7 | `MonoGreen` | AppleWin VT_MONO_GREEN (P31 phosphor) | luminance×tint+decay | 280/560×192 | `display_persistence_smoke` | [↓](#7-monogreen) |
@@ -57,11 +57,11 @@ refined by [PR #10792](https://github.com/mamedev/mame/pull/10792)
 2. Sliding 7-bit window (3 left-context bits + 1 center + 3 right)
    over the stream.
 3. Index `kArtifactColorLut[0][w & 0x7F]` (128 entries copied verbatim
-   from MAME, [`src/Apple2VideoDecode.h:53`](../src/Apple2VideoDecode.h)).
+   from MAME, [`src/Apple2VideoDecode.h:64`](../src/Apple2VideoDecode.h)).
 4. `rotl4b(lutEntry, absX)` extracts the 4-bit palette index for the
    current NTSC phase (4 phases every 4 dots).
 5. `kLoResPalette[16]` (IIGS-corrected palette) yields the final RGB
-   color ([`:1356`](../src/Apple2Display.cpp)).
+   color ([`:1365`](../src/Apple2Display.cpp)).
 6. Downsample 560 → 280 by averaging pairs (the optical low-pass of a
    real CRT; otherwise the 14 MHz pattern aliases against the 7 MHz grid).
 
@@ -138,8 +138,8 @@ Reference implementation: AppleWin `source/RGBMonitor.cpp`
 real card). MAME variant: `apple2video.cpp:896-977` (4 DHGR rgbmodes).
 
 **POM2 algorithm** ([`LeChatMauveCard.h`](../src/LeChatMauveCard.h),
-[`Apple2Display.cpp::renderHiResChatMauve80`](../src/Apple2Display.cpp) + table
-`kChatMauveHGR` for HGR, [`::renderDhgr`](../src/Apple2Display.cpp) for DHGR).
+[`Apple2Display_ChatMauve.cpp::renderHiResChatMauve80`](../src/Apple2Display_ChatMauve.cpp) + table
+`kChatMauveHGR` (same file) for HGR, [`::renderDhgr`](../src/Apple2Display.cpp) for DHGR).
 
 The card taps the pre-modulation digital stream at the slot connector:
 
@@ -164,7 +164,7 @@ The card taps the pre-modulation digital stream at the slot connector:
     at indices 5 and 10 — the Chat Mauve "signature", where MAME collapses
     the two indices to a single neutral gray).
 - **Colored fg/bg text** (`renderTextChatMauveFgBg`,
-  [`:1305`](../src/Apple2Display.cpp)): active on IIe in 40-col text
+  [`Apple2Display.cpp:1312`](../src/Apple2Display.cpp)): active on IIe in 40-col text
   + DHGR (AN3) on. Char code from main RAM, fg/bg colors from aux RAM
   (hi/lo nibble). 7-bit glyph doubled into 14 dots. Port of MAME
   `apple2video.cpp:788-791`.
@@ -197,33 +197,36 @@ POM2 **reimplements** the public NTSC spec (FCC §73.682) — no
 OpenEmulator code copied, POM2 stays under its own license.
 
 **POM2 algorithm** (fragment shader at
-[`NtscPostProcessor.cpp:148-253`](../src/NtscPostProcessor.cpp)):
+[`NtscPostProcessor.cpp:159-264`](../src/NtscPostProcessor.cpp)):
 
-1. `Apple2Display::fillCompositeSignal` ([`:2373`](../src/Apple2Display.cpp))
+1. `Apple2Display::fillCompositeSignal` ([`Apple2Display.cpp:2226`](../src/Apple2Display.cpp))
    serializes the current mode into 1-bit luminance at 14.318 MHz (560×192 R8).
    HGR/DHGR/40-col/80-col text/40-col lo-res all supported.
-2. Upload R8 texture, ping-pong FBO for persistence.
-3. Fragment shader, per fragment:
-   - Optional barrel distortion of the UVs.
-   - 17 Gaussian taps around the current column.
-   - Y: narrow sigma (0.8) → sharp luma.
-   - I/Q: OE chroma FIR (soft 0.6 MHz at Sharpness **0.5** = neutral, identical
-     to the CPU path); demod `sin/cos(π/2·(x+phaseOffset))` — **DHGR:
+2. Upload the R8 texture.
+3. Fragment shader, per fragment — **demodulation only**
+   ([`NtscPostProcessor.cpp:134-152`](../src/NtscPostProcessor.cpp)):
+   - 17 taps around the current column, with OpenEmulator-exact FIR
+     kernels (Dolph-Chebyshev 50 dB window × sinc, AppleColor Composite
+     Monitor IIe config).
+   - Y: 2.0 MHz luma FIR that notches the fs/4 subcarrier.
+   - U/V: OE chroma FIR (soft 0.6 MHz at Sharpness **0.5** = neutral, identical
+     to the CPU path; the upper half of the slider blends toward a 2.0 MHz
+     kernel); demod `sin/cos(π/2·((x+phaseOffset) & 3))` — **DHGR:
      `phaseOffset=1`** (MAME `rotl4(absX+1)`), HGR/text = 0.
-   - Hue rotation in the IQ plane.
-   - YIQ → RGB (standard NTSC FCC matrix).
-   - B/C/S/H in RGB.
-   - Persistence: `max(rgb, prev * decay)`.
-   - Scanlines: darken odd lines (2× vertical output).
-   - Optional: procedural shadow mask (Triad / Aperture grille /
-     Dot); PAL mode (Q-sign flip on odd lines).
+   - PAL mode: Q-sign flip on odd lines.
+   - Hue rotation in the U/V plane.
+   - YUV → RGB (OpenEmulator decoder matrix).
+4. Barrel geometry, brightness/contrast/saturation, phosphor persistence,
+   scanlines and the shadow mask are **not** in this shader any more: they
+   are the shared `CrtEffectStack` pass every colour mode goes through.
+   The demod output is 1× (no scanline doubling).
 
 **Deviations vs OpenEmulator**:
 
 | Deviation | Detail |
 |---|---|
 | No comb filter | OE supports notch + comb (configurable). POM2 uses notch (consistent with the Apple II, which violates NTSC phase alternation). |
-| Simplified persistence | OE models phosphor decay with configurable persistence + temporal ringing. POM2 does `max(decoded, prev × decay)` — less physically faithful, faster. |
+| Simplified persistence | OE models phosphor decay with configurable persistence + temporal ringing. POM2 applies a per-frame retention factor in the shared `CrtEffectStack` pass (on the final colour, with OE's −0.5/256 floor) — less physically faithful, faster. |
 | Approximated PAL | OE simulates the reduced PAL chroma band. POM2 only flips the Q sign on odd lines (line-phase alternation). |
 | Lo-res supported in v2 | Initially OE-only, v2 adds lo-res signal generation via `(nibble >> (absX & 3)) & 1`. |
 | Sharp text bypass | UX-only toggle: skip the shader in text mode for legibility (would otherwise lose authentic composite fringing). |
@@ -232,10 +235,10 @@ OpenEmulator code copied, POM2 stays under its own license.
 `text_oecpu_crisp` — the demod exists in three copies (GLSL, the CPU twin
 `Apple2Display::renderCompositeOeCpu`, and the test's C++ re-simulation)
 under the three-way PARITY CONTRACT stated at
-[`NtscPostProcessor.cpp:143-147`](../src/NtscPostProcessor.cpp). The CPU
+[`NtscPostProcessor.cpp:154-158`](../src/NtscPostProcessor.cpp). The CPU
 port in
 [`tests/render_total_replay_modes.cpp`](../tests/render_total_replay_modes.cpp)
-(`renderCompositeShader`, line 69) also serves as an offline oracle for the
+(`renderCompositeShader`, line 87) also serves as an offline oracle for the
 captures.
 
 ![ColorCompositeOE](img/total_replay_05_ColorCompositeOE_shader.png)
@@ -352,7 +355,7 @@ extra calibration.
 |---|---|---|---|
 | Approach | pre-computed 4-phase × 4096-hist LUT, 2-pole IIR (CPU) | static 128-entry 7-bit-window LUT (CPU) | 17-tap GPU shader demod |
 | Frame cost | ~1 lookup/dot ≈ 0.3 ms | direct LUT lookup ≈ 0.3 ms | GPU pass ≈ 0.05 ms |
-| Chroma separation | dedicated IIR band-pass @ fs/4 | implicit in the LUT | Gaussian (sigma=1.5-2.5) |
+| Chroma separation | dedicated IIR band-pass @ fs/4 | implicit in the LUT | 17-tap Dolph-Chebyshev FIR (0.6 MHz chroma) |
 | Typical colors | green / magenta / blue (≈ MAME) | magenta / cyan / green | magenta / cyan / blue |
 
 **Historical note**: before 2026-05 this mode used a Gaussian
@@ -383,7 +386,7 @@ Pins on:
 
 ![AppleWin Idealized](img/total_replay_11_ColorAppleWin_Idealized.png)
 *Idealized sub-mode — same 4-phase × 4096-history hue LUT as Monitor/Tv,
-chroma ×1.6 (`AppleWinNtsc.cpp:75,193-197`), "modern flat panel" look*
+chroma ×1.6 (`AppleWinNtsc.cpp:86` `kIdealChromaBoost`, applied at `:205`), "modern flat panel" look*
 
 ---
 

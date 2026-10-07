@@ -5,8 +5,16 @@ panel, the CLI flags and four pinned tests are in the tree — see `DEV.md`
 § FujiNet for what the code actually does. Phase 2 shipped partially (two
 items deliberately dropped — [§ 7](#7-phase-2--pom2-native-integrations)) and
 Phase 3 shipped by a different route than proposed
-([§ 8](#8-phase-3--helper-process-and-why-not-embedded-firmware)); both are
-recorded as ✅ DONE in `TODO.md`.
+([§ 8](#8-phase-3--helper-process-and-why-not-embedded-firmware)); both were
+recorded as ✅ DONE in the pre-2026-10-05 TODO, now preserved at
+`docs/archive/todo-2026-10-05.md`.
+
+*Checked against the code 2026-10-06:* the card has grown past this plan —
+POM2's own `N:` device (`FujiNetNetDevice`, setting `fujinet_builtin_network`),
+the `FujiNetTransport` / `FujiNetNetwork` seams with `makeFujiNetCard()`
+(`FujiNetCardFactory.cpp`) as the only place naming the implementations
+(CHANGELOG 2026-08-27), and TNFS media fetch (`TnfsClient`, `TnfsMedia`). See
+[§ 15](#15-what-implementation-changed) items 8-9 and `DEV.md` § FujiNet.
 
 This document was the design + work-breakdown, and is kept as the rationale
 record: why a relay rather than a port, why blocking on the CPU thread is the
@@ -216,11 +224,11 @@ Modified files:
 | File | Change |
 |---|---|
 | `SlotCardCatalog.h` | Add `{ "fujinet", "FujiNet (SP over SLIP)" }` with the usual rationale comment. |
-| `MainWindow.cpp` | `plugFujiNet(s)` lambda next to `plugUthernetII` / `plugSmartPort35`; dispatch entry in the `kind ==` chain (`MainWindow_SlotConfig.cpp:668`). |
-| `MainWindow.cpp` (settings) | Per-slot keys `fujinet_port<sk>`, `fujinet_enabled<sk>`, `fujinet_timeout_ms<sk>` — same `+ sk` suffix pattern — plus `fujinet_helper_path<sk>` (`MainWindow_Session.cpp:247` (write) / `MainWindow_SlotConfig.cpp:422` (read)). |
+| `MainWindow.cpp` | `plugFujiNet(s)` lambda next to `plugUthernetII` / `plugSmartPort35`; dispatch entry in the `kind ==` chain. *As built:* both live in `MainWindow_SlotConfig.cpp` (lambda `:443`, dispatch `:783`). |
+| `MainWindow.cpp` (settings) | Per-slot keys `fujinet_port<sk>`, `fujinet_enabled<sk>`, `fujinet_timeout_ms<sk>` — same `+ sk` suffix pattern — plus `fujinet_helper_path<sk>` (`MainWindow_Session.cpp:237` (write) / `MainWindow_SlotConfig.cpp:500` (read)). *As built*, also `fujinet_transport`, `fujinet_serial_path`, `fujinet_serial_baud`, `fujinet_builtin_network`. |
 | `MainWindow.cpp` (panels) | Register the FujiNet panel in the DockSpace + View menu. |
 | `CliDispatcher.cpp` | `--fujinet[=port]` → plug the card into the first free slot (or slot 7) and start listening. |
-| `tests/CMakeLists.txt` | Four `add_executable` + `add_test` blocks, modelled on `test_smartport_card` (`tests/CMakeLists.txt:2066-2086`); `serial_port_test` guarded to non-Windows. |
+| `tests/CMakeLists.txt` | Four `add_executable` + `add_test` blocks, modelled on `test_smartport_card` (`tests/CMakeLists.txt:2363-2384`); `serial_port_test` guarded to non-Windows. |
 | `CLAUDE.md`, `DEV.md`, `TODO.md`, `docs/lle_vs_hle.md`, `CHANGELOG.md` | See [12](#12-documentation-duties). |
 
 ## 6. Phase 1 — the relay
@@ -704,7 +712,7 @@ connected). The user understands "the internet doesn't rewind".
 
 Per the project convention, every ported behaviour gets a smoke test under
 `tests/`, registered in `tests/CMakeLists.txt` the way `test_smartport_card`
-(`tests/CMakeLists.txt:2066-2086`) is, with a `TIMEOUT`. Socket tests have precedent:
+(`tests/CMakeLists.txt:2363-2384`) is, with a `TIMEOUT`. Socket tests have precedent:
 `socket_compat_test.cpp`, `ssc_acia_smoke_test.cpp`,
 `uthernet2_w5100_smoke_test.cpp`.
 
@@ -918,8 +926,21 @@ settings would silently target somebody else's device after a reboot.
 
 **7. The page-1 wrap is pinned at `SP = $01` only.** [§ 11](#11-pinned-tests)
 asked for both `SP = $01` and `SP = $FE`; the smoke test covers only the `$01`
-case.
+case (`testStackWrapAtPageBoundary`, `tests/fujinet_card_smoke_test.cpp:484`).
+
+**8. POM2 serves `N:` itself when asked** *(after this plan)*. The desktop
+firmware build answers the guest's `N:` open and never opens a socket, so
+`FujiNetNetDevice` answers the `N:` unit out of host sockets while disks,
+CONFIG and the clock still go to the peer (`fujinet_builtin_network`;
+tests `fujinet_net_device`, `fujinet_link_seam`).
+
+**9. The card is a device-layer card again** *(2026-08-27)*. `FujiNetCard`
+holds `FujiNetTransport` / `FujiNetNetwork` interfaces; `makeFujiNetCard()`
+(`FujiNetCardFactory.cpp:24`) is the only place naming `SpOverSlipLink` /
+`FujiNetNetDevice`. The `setLinkForTesting` hook the tests used is gone.
 
 Line counts came in close to the estimate: `SlipFramer.h` ~180,
 `SerialPort.*` ~600, the transports ~430, `SpOverSlipLink.*` ~640,
-`FujiNetCard.*` ~700, the panel ~320, tests ~1200.
+`FujiNetCard.*` ~700, the panel ~320, tests ~1200. (At 2026-10-06 they have
+grown: `SlipFramer.h` 217, `SerialPort.*` 832, the transports 577,
+`SpOverSlipLink.*` 1197, `FujiNetCard.*` 1380, the panel 511.)

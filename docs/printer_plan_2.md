@@ -6,10 +6,14 @@ FX-80. That plan closed with four printers emulated. This one asks the
 question the Grappler+ was already asking: **the card in slot 1 models a
 seven-position printer-type DIP switch, so what are the other positions?**
 
-**Status: all five items shipped**, with the Workstation Card at "boots and
-configures LocalTalk" rather than "carries traffic" — see
-[§ 5](#5-the-apple-ii-workstation-card--it-boots) for exactly what that means
-and what is left.
+**Status: all five items shipped**, with the Workstation Card at "boots,
+configures LocalTalk and answers AppleShare's driver" rather than "carries
+traffic" — see [§ 5](#5-the-apple-ii-workstation-card--it-boots) for exactly
+what that means and what is left (rechecked against the code 2026-10-06: one
+§ 5.3 step remains, the host-side LocalTalk endpoint; § 6 is not started).
+The living description is [DEV § ImageWriter](../DEV.md#imagewriter-ii-printer-host-side)
+for the heads and [DEV § Workstation Card](../DEV.md#apple-ii-workstation-card-workstationcard)
+for the card.
 
 ## Table of contents
 
@@ -380,10 +384,16 @@ precisely so this evidence did not have to wait for step 2 below.
    pinned by `workstation_card_smoke`. The firmware boots on the card's own
    65C02, passes its POST and configures LocalTalk at 230400 bit/s with the
    card in a real slot.
-4. ❌ **Map the host handshake** (`$C0nX`). The way in is a guest AppleTalk
-   disk driven the way `workstation_card_cardcat` drives CardCat — static
-   reading has been taken about as far as it goes.
-   Original notes: This is what remains between the
+4. ~~Map the host handshake.~~ **Done** (CHANGELOG 2026-08-31, "The
+   handshake works, and it was one wrong number") — and not at `$C0nX`: the
+   card patches the host's own code in the `$Cn00` page (the `JMP` operands
+   at `$CnBB`/`$CnBC`, the block-move operands, `SEC` over `CLC` to release
+   a spin), with data through `$CnEA` and `$02A9` as the handshake.
+   `WorkstationCard.h` § THE HANDSHAKE has the map; the `$C0nX` strobes stay
+   unmodelled on purpose (`WorkstationCard.h:82-92`). AppleShare IIe
+   Workstation's ATINIT passes the card's diagnostics and reaches its menu;
+   `workstation_card_smoke` services a driver call the way ATINIT makes one.
+   Original notes, kept for the history: This is what remains between the
    card and a working AppleTalk guest: the driver writes `$71` to `$C080,X`
    and `$C081,X` and `$50` from the expansion ROM, and the card firmware has
    **no interrupt path** for any of it (`$EE07` counts anything that is
@@ -395,8 +405,10 @@ precisely so this evidence did not have to wait for step 2 below.
    With it, the card's firmware acquires a LocalTalk node address and
    transmits: `0B 0B 81` is lapENQ, and once it holds `$0B` it broadcasts
    short DDP datagrams.
-6. ❌ **A host-side LocalTalk endpoint.** The seam exists and works
-   (`setFrameCallback` / `receiveFrame`); note the card disables its receiver
+6. ❌ **A host-side LocalTalk endpoint.** Not started (2026-10-06): the seam
+   exists and works (`Scc8530Device::setFrameCallback` / `receiveFrame`,
+   `Scc8530Device.h:193,202`) but nothing outside the chip and its tests
+   installs a callback; note the card disables its receiver
    while transmitting, so an endpoint must wait for WR3 D0 before answering.
 
 Step 1 is independently useful whatever happens to the card — the same chip is

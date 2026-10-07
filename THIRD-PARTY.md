@@ -53,7 +53,7 @@ material that no package carries.
 Until the author states where they come from and under which terms, treat
 them as *all rights reserved* by their unknown photographers; a package
 maintainer who needs certainty should replace them with photographs of
-known origin. (Filed in `TODO.md` § G1.)
+known origin. (Filed in [`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1).)
 
 ## Test-time downloads (never shipped)
 
@@ -69,7 +69,7 @@ known origin. (Filed in `TODO.md` § G1.)
 POM2 ships firmware dumps so that a package boots as downloaded, the way
 established Apple II emulators do. That is a practice, not a licence: none of
 the rights holders below has granted permission, and a redistributor who needs
-one has to obtain it. The decision (2026-09-05, `TODO.md` § G1) is to keep the
+one has to obtain it. The decision (2026-09-05, [`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1)) is to keep the
 dumps and say so plainly.
 
 | Dump | Rights holder | Notes |
@@ -87,11 +87,14 @@ dumps and say so plainly.
 | `grappler_eps-1.bin` | Orange Micro, Inc. (defunct) | Original Grappler (1981) EPROM, from MAME's a2grappler set; no permission on record. |
 | `341-0057.bin` | Apple Computer, Inc. | Apple II Parallel Interface Card PROM. |
 | `thunderclock_u9_v1.3.bin` | Thunderware, Inc. (defunct) | ThunderClock+ EPROM; no permission on record. |
+| `ae_transwarp_1.4.bin` | Applied Engineering (defunct) | TransWarp boot firmware (MAME `warprom`); no permission on record. |
 | `Videx Lower Case Chip ROM.bin` | Videx, Inc. | Lower-case character chip; no permission on record. |
+| `videx_videoterm_v24_60hz.bin`, `videx_videoterm_v24_50hz.bin`, `videx_videoterm_char_normal.bin`, `videx_videoterm_char_inverse.bin` | Videx, Inc. | Videoterm firmware v2.4 (both CRTC tables) and character generators, from MAME's `a2vidtrm` set; no permission on record. |
 
 Apple system software on disk (the DOS 3.x masters, `AppleShare IIe
 Workstation.po`, Apple Présente //c) sits in the repository under
 `disks_5.4/` and `disks_3.5/`, which no package ships (`deny` list in
 `packaging/bundle.manifest`). Commercial titles were removed from the working
-tree on 2026-09-05; they remain in the git history, which `TODO.md` § G1
+tree on 2026-09-05; they remain in the git history, which
+[`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1)
 records as an open decision.

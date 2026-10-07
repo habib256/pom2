@@ -23,7 +23,9 @@ not tests. The WebAssembly build is `./build_wasm.sh`.
   keeps finding in its own guards.
 - **The text guards pass** — CI runs them, and so can you:
   `tools/check_file_sizes.sh`, `tools/check_version_strings.sh`,
-  `tools/check_settings_keys.sh`, `tools/check_workflow_pins.sh`.
+  `tools/check_settings_keys.sh`, `tools/check_workflow_pins.sh`,
+  `tools/check_coordinator_locks.sh`, `tools/check_includes.sh` (none needs a
+  build tree).
 - **The emulation did not move by accident.** `ctest -R bench_identity`
   compares `pom2_bench`'s cycle counts and RAM hashes with
   `tests/bench_golden.txt`. A change *meant* to alter emulation regenerates
@@ -46,9 +48,9 @@ trip on:
 - every long-lived thread goes through `pom2::guardedThread`;
 - documentation is written in English.
 
-`DEV.md` holds the why behind each subsystem; `TODO.md` holds the open work
-and the scope ruling — check it before starting something large, because
-some subsystems are deliberately frozen.
+`DEV.md` holds the why behind each subsystem. `TODO.md` indexes open work in
+`docs/backlog/` and the scope decisions in `docs/decisions/project-scope.md`.
+Check them before starting something large: some subsystems are deliberately frozen.
 
 ## Reporting bugs
 

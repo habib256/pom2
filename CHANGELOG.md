@@ -5,6 +5,112 @@ canonical source for the exact mechanics; this file captures the **"why"**
 and the pitfalls we don't want to rediscover. Active backlog → `TODO.md`.
 Current implementation → `DEV.md`.
 
+Entries above the **v0.9.4 marker** (before the first 2026-09-17 heading)
+are not in a tagged release yet; the next version's notes go in
+`docs/releases/v<x.y.z>.md` and are written from them.
+
+## 2026-10-07 — Bug hunt 2026-10-06: five fixes, and the red size ratchet
+
+Three read-only hunts (storage, cards and bus, audio and control surface)
+over the code changed since v0.9.4. Every fix below has its test; the two
+data-loss ones were verified by mutation (the test fails with the fix
+removed).
+
+- **A 3.5" disk re-inserted under another spelling of its path lost its
+  writes** (//c+ on-board drives, `EmulationController::mount35`). Phase 1
+  compared paths as strings, so the Disk Library's relative path against a
+  file dialog's absolute one — or `dir/./x.po`, or a symlink — read "another
+  disk": the pre-flush bytes were staged, phase 2 flushed the guest's blocks
+  to the file and then installed that stale copy, and the next autosave
+  wrote it back over the file. Decided by `Block512Backing::sameFile` now,
+  on both phases, re-reading whatever the dirty flag says — the rule
+  `DiskIICard::installDisk` and `Block512Backing::adoptImage` already
+  followed. Pinned by `disk35_remount`.
+- **A host eject of a 3.5" disk dropped the blocks written during its own
+  commit** (`EmulationController::eject35`). Phase 1 captured the image and
+  cleared the dirty flag, phase 2 wrote the file with the CPU still running,
+  phase 3 called `eject()` without looking again — a block ProDOS wrote in
+  that 10-50 ms window was gone, and the eject reported success. The
+  slot-card bays had this closed on 2026-09-02 (`ejectBay` saves first);
+  this sibling never got it. Phase 3 now captures again and commits inline
+  (rarely anything; one block's worth when there is), refusing the eject and
+  keeping the medium dirty on failure, and leaves a disk that was mounted
+  over it during phase 2 alone. Same test.
+- **The speaker went silent for the rest of the session after a 100-300 ms
+  worker stall** (`SpeakerDevice::fillAudioBuffer`). `workerLoop` RESYNCS
+  rather than catches up once it is 100 ms late, while the audio callback
+  kept consuming, so the cursor ended up ahead of the producer by less than
+  the 0.2 s the consumer-ahead re-anchor needed; every new toggle landed
+  behind the cursor and the stale purge ate it, and since producer and
+  consumer then advanced at the same rate nothing ever resolved it (a
+  reset did, or a pause of over 0.3 s). A host hiccup, swapping, or a host
+  that cannot hold 2×/4×/max did it; the first launch starts with no lead
+  at all, so it was easiest there. The re-anchor also fires when the NEWEST
+  toggle the producer has stamped is already behind the cursor — everything
+  queued would have been purged anyway, so it loses nothing, and a
+  few-cycle rounding straggler with a live stream behind it does not trip
+  it. Predates the 2026-10-05 speaker work. Pinned by `speaker_smoke` case 6
+  (a 140 ms stall; 0/20 buffers audible before, 20/20 after).
+- **Clipboard / file paste ate Apple high-ASCII text** — a regression of
+  the 2026-09-29 UTF-8 transliteration (`Keyboard::pushChars`). The decision
+  was per byte, and a high-ASCII upper-case letter `$C2-$DF` followed by a
+  space, digit or punctuation mark `$A0-$BF` IS a well-formed 2-byte
+  sequence: a pasted DOS 3.3 listing lost "T " from every "PRINT " (U+0520,
+  nothing to type). The decision is per buffer now (`isWellFormedUtf8`):
+  real high-ASCII text always fails it somewhere (a lone `$8D` CR, a digit
+  starting a line) and keeps its 7-bit mask throughout. The decoder also
+  rejects overlong, surrogate and >U+10FFFF forms. Pinned by `paste_smoke`.
+- **A Videx Videoterm saved on a ][+ followed the user onto the //e**
+  (`SlotConfigurationCoordinator::resolve`, `--slot 3=videoterm`). Only the
+  Slot Config picker refused it there; `slot_N_card` is one key for every
+  slotted profile, so a profile switch plugged it, its `$C0Bx` decode cut
+  Le Chat Mauve's Eve window (`Memory::chatMauveBlockedBySlot3`) and a
+  TEXT+AN0 program got the card's unprogrammed black picture. Dropped from
+  the plan on every `iieMode` profile, remembered like a de-dup drop so the
+  ][+ key survives the //e session's shutdown write; the CLI path refuses
+  with a message. Pinned by `slot_configuration_coordinator`.
+- **CI was red on main since 2026-10-06**: 95cf8bd grew `src/Memory.cpp` by
+  15 lines without raising its ceiling, and the Linux job failed in the
+  file-size ratchet before compiling anything. Ceiling 2751 → 2766, recorded
+  in `tools/file_size_budget.txt`.
+- Housekeeping from the same hunts' doc pass: the Abstraction Levels panel
+  said the SSC ROM was synthetic, the printer card's Pascal block absent
+  and the RVB Graph missing — all three false since September. The SSC row
+  is L2 now with a live "degraded" state when the EPROM is missing (not on
+  a //c, whose ports are not slots). Nine stale source comments fixed
+  (`$Cn0C` class byte, MIG `$CE40/$CE60`, `readLatch()`, `adoptImage`,
+  `undrawn()`, the mouse HOME target, the SSC tap default, the printer
+  drain order) and three sources listed twice in `CMakeLists.txt` deduped.
+- Leads left open, not traced to a defect: the hand-assembled SSC page
+  (no EPROM) under DOS 3.3 `PR#n` — does it take the call for input? — and
+  `SlotBus::reset()` keeping the `$C800` owner across Ctrl-Reset where
+  MAME may release it (no local MAME checkout to confirm). The firmware
+  3.5" eject (`Sony35Drive`, EjectOn) has the same late-write shape as the
+  host eject but the guest has just asked for the disk out; left as is.
+
+## 2026-10-06 — The //c's ACIAs answer when no SSC models them
+
+- The //c's two 6551s are soldered to the board, and the //c ROM polls both
+  status registers on every IRQ. With slot 1 or 2 empty (a bench, a probe, a
+  card that failed to plug), `$C098-$C09F` / `$C0A8-$C0AF` read the floating
+  bus, a video byte with bit 7 set passed for a serial interrupt, and the VBL
+  IRQ never reached the `$03FE` handler (ChromaBreak's DHGR screen stayed
+  cleared). `Memory::memReadSlowBody` now answers an absent ACIA as an idle
+  6551, as MAME's `device_reset` leaves it: status `$70` (TDRE|DCD|DSR, no
+  IRQ), every other register `$00`, `$C0nC-$C0nF` mirroring `$C0n8-$C0nB`.
+- Pinned by `iic_acia_idle`: 0 → 10 VBL IRQs in 10 frames on every //c ROM.
+
+## 2026-10-05 — TODO becomes a planning index
+
+- `TODO.md` now links to prioritised domain backlogs in `docs/backlog/`,
+  with stable task IDs, state, acceptance criteria and original evidence.
+- Scope decisions and dated audits have separate documents. Repeated TSan
+  and file-size debt reports share one task each. Completed reports remain
+  in the full historical snapshot; older open claims require revalidation.
+- The 1.0 checklist is for the next candidate build, with fresh checks rather
+  than September sign-off. Incoming parity links and contributor guidance
+  point to the new locations.
+
 ## 2026-10-05 — Cleaner Apple II speaker reconstruction
 
 - The 64-tap sinc now uses a Blackman window to reduce audible aliases
@@ -135,10 +241,10 @@ was reproduced first, and all but two are pinned.
   mask also ran on the Epson / Diablo parsers' raw parameter bytes. So
   `ESC K 0xE0 0x01` (a full 480-column line) became 352 columns and printed
   the rest of the graphics as text, and `ESC J 216` fed 88/216". Pin:
-  `imagewriter`.
+  `imagewriter_smoke`.
 - **Those parameter bytes were also charged as mechanism moves.** A
   parameter of 12 cost a form-feed slew, so every `ESC A 12` held the paced
-  drain, and a Grappler+'s BUSY with it, for ~2.2 s. Pin: `imagewriter`.
+  drain, and a Grappler+'s BUSY with it, for ~2.2 s. Pin: `imagewriter_smoke`.
 - **The `printer` card and the Grappler+ stub published a Pascal 1.1
   signature with no entry table**, and they reported class `$00`. A caller
   that trusts the signature ran PINIT as a NOP sled off the page. Both now
@@ -197,6 +303,20 @@ Refuted along the way:
   bounds, the TNFS cache names, the SLIP cap.
 - **MMU:** the language-card state machine, the soft-switch decode, and
   `bootFromSlot` parity.
+
+## 2026-09-29 — A second mechanical-sound bank: Virtual ][
+
+- The mixer's **Drive sounds** combo picks between MAME's samples (the
+  default) and Virtual ][ recordings: the Disk II take on the 5.25" and 3.5"
+  drives, a matrix-printer sample while printing, and the power switch on
+  cold boot. The choice persists as `mechanical_sound_bank` (`mame` /
+  `virtual2`, `AudioCoordinator.cpp`).
+- The recordings are not POM2's to ship: they load from
+  `roms/virtual_ii_sons/` on this machine only, which `.gitignore` excludes
+  and `packaging/bundle.manifest` denies. Without them the entry is disabled
+  and the MAME bank plays.
+- Pinned by `virtual_ii_sound`, with synthesised WAVs in place of the
+  recordings.
 
 ## 2026-09-29 — Bug hunt: four hunters on the code since 09-17, twelve fixes
 
@@ -374,7 +494,7 @@ before it writes. `docs/printer-detection.md` is the reference; what changed:
   page on its own.
 - Pinned by `ssc_firmware`, `grappler_printer_state`, `parallel_cards`,
   `printer_detection`, `iic_printer_port`, `serial_panel_boundary`,
-  `ai_control_server`.
+  `ai_control_server_smoke`.
 
 ## 2026-09-19 — Floppies save to their files while still mounted
 
@@ -409,6 +529,10 @@ before it writes. `docs/printer-detection.md` is the reference; what changed:
 - Pinned by `floppy_autosave`, which reads the host files while the disks
   stay mounted. Two mutations were checked: retiring dirty state regardless
   of the write serial, and dropping the ordering check. Each fails the test.
+
+<a id="v0.9.4"></a>
+**v0.9.4 marker** — tagged 2026-09-17. Everything below shipped in v0.9.4
+or earlier.
 
 ## 2026-09-17 — TransWarp on NMOS machines; two more //e character sets
 

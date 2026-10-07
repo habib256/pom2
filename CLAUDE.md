@@ -4,12 +4,10 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 
 - `README.md` — user walkthrough (build, profiles, ROM/disk placement, keys, CLI).
 - `DEV.md` — implementation deep-dives (MAME-parity ports, internals, gotchas, pinned tests).
-- `TODO.md` — **the road to 1.0**: six ordered gates (legal payload, the
-  defects that reach user data, honesty, release repeatability, the untested
-  host side, the platforms we claim), the **scope ruling** that puts every
-  subsystem in core / supported / frozen, the MAME↔POM2 parity dashboard, and
-  the post-1.0 backlog. Re-verify a `file:line` before acting on it — a 2026-09-05
-  audit found ~20 items describing a tree that no longer existed.
+- `TODO.md` — planning index for the road to 1.0 and domain tasks in
+  `docs/backlog/`. Scope decisions → `docs/decisions/project-scope.md`;
+  parity and dated evidence → `docs/audits/`. Reproduce historical reports
+  on current main before implementing them; archive completions in CHANGELOG.
 - `docs/test_corpus.md` — edge-case integration corpus; **[DIX](https://github.com/Fr3nchT0uch/DIX/)** (French Touch anthology) is the priority gold-standard benchmark.
 - `docs/lle_vs_hle.md` — abstraction level per subsystem (silicon vs contract), the HLE seams, and the rule POM2 follows when picking a level.
 - `docs/printer_plan.md` — dot-matrix printer gap analysis vs `web-a2e` + phased plan (character ROMs, screen dump, more heads).
@@ -19,7 +17,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 - `tools/coverage.sh` — line coverage over the code the tests link, with a
   floor that may rise and may not fall (`tools/coverage_floor.txt`). Run it
   before claiming something is untested: the 2026-08-28 plan named three such
-  subsystems and all three had suites. **Two** ratchets since 2026-09-07: the
+  subsystems and all three had suites. **Two** ratchets: the
   percentage is blind to code no test binary links and goes *up* when you drop
   a source from a test's link line, so the set of linked `src/**.cpp` is
   recorded in `tools/coverage_linked_sources.txt` and may grow but not shrink.
@@ -46,7 +44,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   lock for **0 ms**. One documented exception survives, in
   the profile-switch remount (`pom2::switchProfile`, `ProfileSwitch.cpp`), where atomicity against the
   AI server outranks latency and the CPU worker is stopped anyway.
-  **Eject and flush have the same shape** (since 2026-09-07): phase 1 takes
+  **Eject and flush have the same shape**: phase 1 takes
   the lock and *captures* the payload (`MountableMediaCard::prepareEjectBay` /
   `prepareFlushBay`), phase 2 commits the file unlocked, phase 3 takes the lock
   again to finish — either retiring the bay or, on failure, putting the medium
@@ -120,7 +118,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   fenced by default: `W5100Device::checkDestination` (127/8, 0/8, 169.254/16,
   224/4, 240/4 refused as `SOCK_CLOSED` + `TIMEOUT`; no privileged or
   POM2-owned local port) and `SlirpOptions::allowHostLoopback` — which
-  since 2026-09-09 also drops, in `SlirpBackend::transmit`, any guest frame
+  also drops, in `SlirpBackend::transmit`, any guest frame
   naming 127/8, 0/8 or 169.254/16 directly, because libslirp's own
   `disable_host_loopback` only refuses the `10.0.2.2` alias route. One opt-in
   drives both — settings key **`uthernet_allow_loopback`** (default false;
@@ -141,7 +139,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   sets it from `profileConfig(...).noPhysicalSlots`. It **defaults to true**,
   so a hand-built card in a test keeps the old behaviour (`iicplus_boot35`
   relies on that); only the factory path narrows it.
-- **`make probes` builds the 24 eyeball tools** that are deliberately not
+- **`make probes` builds the 25 eyeball tools** that are deliberately not
   ctest tests (`EXCLUDE_FROM_ALL`; they assert nothing reproducible and some
   need untracked media). Run it before concluding a capability is missing —
   the 2026-09-07 sweep said "no built binary can boot an HDV" while
@@ -190,18 +188,18 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | AppleWin NTSC (CPU IIR-LUT) | `AppleWinNtsc.h/.cpp` | [§ AppleWin NTSC](DEV.md#applewin-ntsc-colorapplewin) |
 | CRT glass pass (scanlines, mask, vignette, phosphor γ) | `CrtEffectStack.*` | [§ CRT effect stack](DEV.md#universal-crt-effect-stack-crteffectstack) |
 | Le Chat Mauve RGB — one catalog key `chatmauve`, four variants by the `chatmauve_variant` setting (Féline · Adaptateur //c · Eve with `$C0B0-$C0BF` + CPREG auto-write · Video-7) | `LeChatMauveCard.h/.cpp` (state), `Apple2Display_ChatMauve.cpp` (painters), `LeChatMauve_ImGui.*`, `docs/chatmauve_plan.md` | [§ Le Chat Mauve](DEV.md#le-chat-mauve-lechatmauvecard) |
-| Videx Videoterm 80-column card (][ / ][+, slot 3, ROM-gated) — catalog `videoterm`; HD6845S register file; its 720×216 picture replaces the Apple's while TEXT + AN0 (`DisplayState::an0`) | `VidexVideotermCard.h/.cpp`, `Hd6845Crtc.h/.cpp`, `CardVideoSource.h` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
+| Videx Videoterm 80-column card (][ / ][+, slot 3, ROM-gated) — catalog `videoterm`; HD6845S register file; its 720×216 picture replaces the Apple's while TEXT + AN0 (`DisplayState::an0`). **Dropped from the plan on every `iieMode` profile** (`SlotConfigurationCoordinator::resolve`, the saved key kept): a //e's 80 columns are built in, and the card's `$C0Bx` decode would cut the Chat Mauve's Eve window | `VidexVideotermCard.h/.cpp`, `Hd6845Crtc.h/.cpp`, `CardVideoSource.h` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
 | Speaker / Cassette / Audio bus (stereo; mono sources are pan-placed) | `AudioDevice.*`, `SpeakerDevice.*`, `CassetteDevice.*` | [§ Audio](DEV.md#audio), [§ Stereo bus](DEV.md#stereo-bus-2026-08-01) |
 | Mockingboard A/C + Sound II | `Mockingboard.h/.cpp` + `Via6522.h` + `Ay3_8910.h` + `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard), [§ Sound II](DEV.md#mockingboardcard-variantsoundii) |
 | Phasor (2×VIA, 4×AY) | `PhasorCard.h/.cpp` + `AyPsgSynth.h` | [§ Phasor](DEV.md#phasor-applied-engineering) |
 | AY PSG audio-thread synth (shared: generators, mixer, band-limiting, DC) | `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard) |
 | SSI263 speech chip | `Ssi263.h/.cpp` + `Ssi263PhonemeData.h/.cpp` | [§ SSI263](DEV.md#ssi263--echo-street-electronics) |
 | Cricket / Echo (SSI263) — catalog `echoplus` | `EchoPlusCard.h/.cpp` | [§ EchoPlusCard](DEV.md#echopluscard-cricket--ssi263-class--catalog-echoplus) |
-| Echo+ (TMS5220 + 2×AY, silent scaffold) — settings key `echoplus_tms`, **hidden from the picker** since 2026-09-08 | `EchoPlusTMS5220Card.h/.cpp` | [§ EchoPlusTMS5220Card](DEV.md#echoplustms5220card) |
+| Echo+ (TMS5220 + 2×AY, silent scaffold) — settings key `echoplus_tms`, **hidden from the picker** (a saved key still plugs it) | `EchoPlusTMS5220Card.h/.cpp` | [§ EchoPlusTMS5220Card](DEV.md#echoplustms5220card) |
 | Grappler+ (Orange Micro, ROM-gated) — catalog `grappler` | `GrapplerCard.h/.cpp` | [§ Grappler+](DEV.md#grappler-orange-micro) |
 | Grappler (1981) — `grappler1` · Apple Parallel Interface — `pic` (ROM-gated; their printer is a `CentronicsPrinter`) | `GrapplerClassicCard.*`, `AppleParallelCard.*`, `CentronicsPrinter.*` | [printer-detection §§ 8-9](docs/printer-detection.md#8-grappler-1981) |
 | Printer side of a slot, read/set from outside (CLI, HTTP, library) + per-slot bus-access log + stream→PNG | `PrinterPortControl.*`, `SlotBus.h` (`enableAccessLog`), `PrinterRender.*`, `AiControlServer_Printer.cpp` | [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |
-| Floppy mechanical sounds (MAME WAV samples) | `FloppySoundDevice.h/.cpp` | [§ Floppy sounds](DEV.md#floppy-mechanical-sounds) |
+| Floppy mechanical sounds (MAME WAV samples; optional Virtual ][ bank, never packaged) | `FloppySoundDevice.h/.cpp` | [§ Floppy sounds](DEV.md#floppy-mechanical-sounds) |
 | Printer mechanical sounds (**synthesised** — no sample set exists) | `PrinterSoundDevice.*`, `PrinterSoundSink.h` | [§ Printer sound](DEV.md#printer-sound-printersounddevice) |
 | TransWarp accelerator (Applied Engineering) — catalog `transwarp` | `TranswarpCard.h/.cpp` | [§ TransWarp](DEV.md#transwarp-applied-engineering) |
 | Character-generator dump conventions (incl. Videx LOWER CASE CHIP) | `CharRomDump.h/.cpp` | [§ Character generators](DEV.md#character-generators-and-the-videx-lower-case-chip) |
@@ -217,7 +215,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | TNFS media (fetch a disk image from a TNFS server into a local cache) | `TnfsClient.*`, `TnfsMedia.*` | [§ FujiNet](DEV.md#fujinet-sp-over-slip-relay) |
 | IWM (//c, //c+, Mac, IIgs) | `IWMDevice.*` | [§ IWM](DEV.md#iwm-c-on-board) |
 | SmartPort 3.5" //c+ on-board (`.po`/`.2mg`/`.woz`) | `Disk35Image.*`, `Sony35Drive.*`, `Sony35Gcr.*`, `SmartPortHub.*` | [§ SmartPort 3.5"](DEV.md#smartport-35-stack) |
-| SmartPort slot card (Liron-class), 2 to 8 units | `SmartPortCard.*`, `SmartPort*Unit.*` | [§ SmartPortCard](DEV.md#smartportcard-e-liron-class) |
+| SmartPort slot card (Liron-class), 2 to 14 units (8 by default) | `SmartPortCard.*`, `SmartPort*Unit.*` | [§ SmartPortCard](DEV.md#smartportcard-e-liron-class) |
 | Liron card at silicon level — real EPROM + IWM, boots over the SmartPort **bus**, 2 to 14 units (3.5" or HDV each) — catalog `liron` | `LironCard.h/.cpp` | [§ SmartPort 3.5"](DEV.md#smartport-35-stack) |
 | SmartPort bus responder — an HLE UniDisk 3.5 answering INIT / STATUS / READ / WRITE at the byte level of the wire | `SmartPortBusDevice.h/.cpp` | [§ SmartPort bus](DEV.md#the-smartport-bus-smartportbusdevice) |
 | //c / //c+ external 3.5" port — bus responder behind `$C0E0-$C0EF` (own IWM register tracker on the //c, riding the shared IWM on the //c+), units from the slot-5 card; the Disk II keeps the 5.25" | `IIcExternalSmartPort.*`, `SmartPortBusPort.h` | [§ //c external port](DEV.md#the-c-external-35-port-iicexternalsmartport) |
@@ -239,13 +237,13 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Print history (durable printouts, `printouts/history/`) | `PrinterHistory.h/.cpp` | [§ Print history](DEV.md#print-history-printerhistory) |
 | ProDOS clock card | `ClockCard.h/.cpp` | [§ Clock](DEV.md#prodos-clock-card-slot-4) |
 | No-Slot Clock (DS1216E, sits under a ROM — no slot used) | `NoSlotClock.h/.cpp` | [§ No-Slot Clock](DEV.md#no-slot-clock-noslotclock--ds1216e-smartwatch) |
-| Mouse Card (MAME + AppleWin HLE) + host pointer capture | `MouseCard.*`, `MouseCardAppleWin.*`, `MouseGrab.h` | [§ Mouse](DEV.md#mouse-card), [§ Pointer capture](DEV.md#pointer-capture-mouse-grab--mousegrabh) |
+| Mouse Card (MAME + AppleWin HLE) + //c IOU mouse (`iicmouse`) + host pointer capture | `MouseCard.*`, `MouseCardAppleWin.*`, `IIcMouse.*`, `MouseGrab.h` | [§ Mouse](DEV.md#mouse-card), [§ Pointer capture](DEV.md#pointer-capture-mouse-grab--mousegrabh) |
 | Joystick / paddles | `JoystickInput.h/.cpp` | [§ Joystick](DEV.md#joystick--paddles) |
 | 4play — four digital joysticks — catalog `4play` | `FourPlayCard.h/.cpp` | [§ 4play](DEV.md#4play-fourplaycard) |
 | AI control server (HTTP on loopback, opt-in) | `AiControlServer.h/.cpp` | [§ AI control server](DEV.md#ai-control-server-aicontrolserver) |
 | UI (ImGui) — `MainWindow.cpp` is the composition root only; each concern is a `MainWindow_<Area>.cpp` sibling, hard-capped at 2000 lines | `MainWindow.*`, `MainWindow_*.cpp`, `*_ImGui.*` | [§ UI](DEV.md#ui-imgui), [§ MainWindow family](DEV.md#the-mainwindow-family) |
 | UI theme + DPI/zoom scaling | `Pom2Theme.h/.cpp` | [§ Theme](DEV.md#theme--ui-scaling-pom2theme) |
-| Panel registry — the ONE list of panels (menus + palette + persistence derive from it) | `PanelCatalog.h`, `PanelRegistry.h/.cpp`, `MainWindow_Panels.cpp` | [§ Panel registry](DEV.md#panel-registry-panelcataloghpanelregistry-mainwindow_panelscpp) |
+| Panel registry — the ONE list of panels (menus + palette + persistence derive from it) | `PanelCatalog.h`, `PanelRegistry.h/.cpp`, `MainWindow_Panels.cpp` | [§ Panel registry](DEV.md#panel-registry-panelcatalogh-panelregistry-mainwindow_panelscpp) |
 | Command palette (Ctrl+Shift+P) | `CommandPalette_ImGui.h/.cpp` | [§ Palette](DEV.md#command-palette-commandpalette_imgui) |
 | Docking + layout presets | `MainWindow.cpp` (`renderDockSpace`/`applyDockLayout`), `imgui_pin.env` | [§ Docking](DEV.md#docking--layout-presets) |
 | HGR/DHGR Paint editor + sprite editor (portable, shared w/ POM1) | `hgrpaint/*`, `hgrsprite/*`, `Pom2HgrPaintHost.*` | [§ Paint editor](DEV.md#hgr--dhgr-paint-editor-hgrpaint-shared-with-pom1) |
@@ -299,8 +297,10 @@ $C07E/$C07F  IOUDIS SET/CLR (writes effective on //c/c+ only). The
              RDIOUDIS *read* at $C07E is likewise //c-class only
              (MAME's c000_iic_r has the case; a plain //e's c000_r
              does not) and carries the floating bus in bits 0-6
-$C0A8-$C0AB  SSC ACIA (slot 2)
-$C0C0        ThunderClock+ uPD1990AC bit-bang (slot 4)
+$C0A8-$C0AB  SSC ACIA with an SSC in slot 2 (the //c modem port;
+             $C098-$C09B for its printer port in slot 1)
+$C0C0        ThunderClock+ uPD1990AC bit-bang with `clock` in slot 4
+             (not the default — slot 4 holds the mouse)
 $C0E0-$C0EF  Disk II soft switches (slot 6 — $C0EC=Q6L, $C0ED=Q6H)
 $C0(8+s)X    Per-slot device select (e.g. Phasor mode soft-switch
              $C0(8+s)0..F when a Phasor sits in slot s; a whole
@@ -308,8 +308,9 @@ $C0(8+s)X    Per-slot device select (e.g. Phasor mode soft-switch
              4-register indirect window — mode / addr-hi / addr-lo /
              data — repeated 4× when it's an Uthernet II)
 $C100-$C5FF  Slot ROMs (or IIe internal I/O ROM when INTCXROM=on).
-             When MockingboardCard SoundII is in slot s, $Cs40-$Cs4F
-             writes shadow into the SSI263 (reads stay VIA); when
+             When MockingboardCard SoundII is in slot s, writes with
+             address bit A6 set ($Cs40-$Cs7F, $CsC0-$CsFF) also land
+             in the SSI263 (reads stay VIA); when
              EchoPlusCard is in slot s, $Cs00-$Cs04 routes to its
              SSI263.
 $C300-$C3FF  IIe 80-col firmware (internal when SLOTC3ROM=off)
@@ -336,10 +337,11 @@ $F800-$FFFF  Monitor ROM + 6502 vectors ($FFFA-$FFFF)
 enough: a card with no expansion ROM (Disk II, Mockingboard, mouse, 4play, Le
 Chat Mauve) must not latch the window and starve the card that serves it — on
 the fresh-install map the //e autostart scans `$C700` first and used to hand
-slot 7 a window slot 5's SmartPort ROM needed. The nine cards that override it
-true are `ClockCard`, `GrapplerCard`, `GrapplerClassicCard`, `LironCard`,
-`WorkstationCard`, `CffaCard`, `SmartPortCard`, `VidexVideotermCard` and
-`SuperSerialCard` (the last claims for parity
+slot 7 a window slot 5's SmartPort ROM needed. Nine cards override it:
+`LironCard`, `WorkstationCard`, `CffaCard`, `SmartPortCard`,
+`VidexVideotermCard` and `SuperSerialCard` return true; `ClockCard`,
+`GrapplerCard` and `GrapplerClassicCard` only while their expansion ROM is
+loaded (`SuperSerialCard` claims for parity
 with `a2ssc.cpp:50`, and serves Apple's EPROM there when
 `roms/ssc_341-0065-a.bin` is present — `$FF` without it). Released at `$CFFF`.
 
@@ -354,7 +356,7 @@ In IIe mode the same map applies but most of `$0000-$BFFF` can route to aux 64 K
 | Apple //e Unenh. (1983)   | NMOS  | on  | `apple2e_unenh.rom`, `342-0135-b.64.rom`, `apple2e.rom` | — (AUX = ext80) |
 | Apple //e Unenh. PAL (50 Hz) | NMOS | on  | `apple2e_unenh.rom`, `342-0135-b.64.rom`, `apple2e.rom` | — (AUX = ext80) · **PAL timing** — the French Touch 6502-only corpus machine (OLDSKOOL: `LSR abs,X` = 7 cycles NMOS / 6 CMOS, rasters drift on a 65C02) |
 | Apple //e Enh. (1985)     | 65C02 | on  | `apple2e.rom` | — (AUX = ext80) |
-| Apple //c (1984)          | 65C02 | on  | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` | sl1 SSC (printer port) · sl2 SSC (modem port) · sl4 Mouse (AppleWin HLE) · sl5 SmartPort · sl6 Disk II |
+| Apple //c (1984)          | 65C02 | on  | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` | sl1 SSC (printer port) · sl2 SSC (modem port) · sl4 IOU mouse (firmware at $C400) · sl5 SmartPort · sl6 Disk II |
 | Apple //c Plus (1988)     | 65C02 | on  | `apple2cp.rom`, `apple2c-plus.rom`, `apple2c-32Kv0.rom` | sl1 SSC (printer port) · sl2 SSC (modem port) · sl4 IOU mouse (firmware at $C700) · sl5 SmartPort 3.5" (internal drive) · sl6 Disk II (IWM, rear port) |
 | Apple //e Enh. PAL (50 Hz) | 65C02 | on  | `apple2e.rom` | — (AUX = ext80) · **PAL timing** |
 | Apple //c PAL (Le Chat Mauve) | 65C02 | on  | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` | same as //c **+ sl7 built-in Le Chat Mauve RGB** (Adaptateur IIc) · **PAL timing** |
@@ -385,7 +387,7 @@ The map lives in `kDefaultCards[]` in `SlotConfigurationCoordinator.cpp`; `MainW
 
 Default `cyclesPerFrame` = 17045 on the NTSC II/II+/IIe/IIc profiles and **20313 on the three PAL ones** (so 20313 on a fresh install); **//c+ defaults to 68180 (4×)** for its on-board Zip-style accelerator. `$C036` 1 MHz fall-back during disk I/O not modelled (event-driven disk LSS keeps nibbles cycle-correct anyway). `cpu_mode_override = auto|nmos|65c02` (Machine → CPU menu).
 
-**//c+ MIG + IWM**: //c+ alt firmware (bank 1) drives the Apple MIG gate-array at `$CC00-$CCFF` / `$CE00-$CEFF` + IWM at `$C0E0-$C0EF`. The IWM state machine **is** ported (`IWMDevice`, verbatim MAME, incl. the bit-cell read walker and write windows) and the Sony GCR drives exist (`Sony35Drive`, `--35-disk1/2`); and since 2026-09-01 the //c+ firmware's on-board 3.5" **boot** works through them: the ROM drives the MIG, the MIG selects the drive, the IWM walks the cells, ProDOS boots off the internal bay (pinned `iicplus_boot35`). It needed the IWM's state machine moved off the CPU clock onto the controller's own 7.16 MHz one — a Sony cell is 2.02 CPU cycles, too coarse to place a window edge in (`POM2_IWM_TICKS_PER_CPU_CYCLE`, `CpuClock.h`) — plus a flux query that asked one tick late. The Liron card and the plain //c followed the same day through the OTHER half of that firmware, the SmartPort **bus** — see the next paragraph. The Liron controller ROM **has been publicly dumped** (BMOW/Yellowstone `LIRONALL.bin`, 4 KB, [github.com/steve-chamberlin/fpga-disk-controller](https://github.com/steve-chamberlin/fpga-disk-controller), with full disassembly; MAME still lists it *WANTED* only because it never ingested the dump) and POM2 ships it as `roms/liron.rom`; the UniDisk 3.5 drive-side 65C02 firmware stays deliberately out of scope — POM2 answers its **protocol** instead (`SmartPortBusDevice`). → [DEV](DEV.md#profile-switching-internals).
+**//c+ MIG + IWM**: //c+ alt firmware (bank 1) drives the Apple MIG gate-array at `$CC00-$CCFF` / `$CE00-$CEFF` + IWM at `$C0E0-$C0EF`. The IWM state machine **is** ported (`IWMDevice`, verbatim MAME, incl. the bit-cell read walker and write windows) and the Sony GCR drives exist (`Sony35Drive`, `--35-disk1/2/3`), and the //c+ firmware's on-board 3.5" **boot** works through them: the ROM drives the MIG, the MIG selects the drive, the IWM walks the cells, ProDOS boots off the internal bay (pinned `iicplus_boot35`). It needed the IWM's state machine moved off the CPU clock onto the controller's own 7.16 MHz one — a Sony cell is 2.02 CPU cycles, too coarse to place a window edge in (`POM2_IWM_TICKS_PER_CPU_CYCLE`, `CpuClock.h`) — plus a flux query that asked one tick late. The Liron card and the plain //c boot through the OTHER half of that firmware, the SmartPort **bus** — see the next paragraph. The Liron controller ROM **has been publicly dumped** (BMOW/Yellowstone `LIRONALL.bin`, 4 KB, [github.com/steve-chamberlin/fpga-disk-controller](https://github.com/steve-chamberlin/fpga-disk-controller), with full disassembly; MAME still lists it *WANTED* only because it never ingested the dump) and POM2 ships it as `roms/liron.rom`; the UniDisk 3.5 drive-side 65C02 firmware stays deliberately out of scope — POM2 answers its **protocol** instead (`SmartPortBusDevice`). → [DEV](DEV.md#profile-switching-internals).
 
 **//c-class SmartPort (3.5" + HDV)**: on the **32 KB //c** (rev 0/3/4) the machine's own firmware serves slot 5 — its bank-0 `$C500` page is the controller firmware (the Liron's, byte for byte) and it talks to the rear-port drive as an intelligent SmartPort device over the disk port. `IIcExternalSmartPort` answers that bus for the units of the built-in slot-5 card: its own IWM as a register tracker, claiming only bus accesses (PH1 + LSTRB with the port enabled, or a transaction in flight) and only while a unit holds media; `DiskIICard` keeps the 5.25" and never sees the bus traffic. So a 5.25" boot lists `S5,D1/D2` next to `S6`, `bootFromSlot(5)` / the GUI's Boot jumps into the real `$C500` and the firmware boots the 3.5" itself, and no `$C500` punch happens while media is mounted. The **//c+** probes the same connector at boot ($F223, bank 1) and gets the same answer through its shared IWM, its external chain numbered from 2 behind the internal MIG drive — an empty internal bay boots the external 3.5", a full one lists both. Pinned `iic_external_smartport` (five boots). The host-served **stub** path remains for the **16 KB //c** — ROM 255 has no SmartPort firmware, its `$C500` is not a disk page, and its rear connector takes only a second 5.25" (`DiskIICard` drive 2): `Memory::memRead` punches `$C500-$C5FF` iff the slot is **armed** + holds media; `bootFromSlot` arms, every reset disarms — the //c's autostart does `JSR $C5F8` into that page, and a stub does not survive it. Pinned `iic_onboard_smartport_smoke`. → [DEV § Storage](DEV.md#c-class-on-board-smartport-35--hdv-boot).
 
@@ -418,7 +420,7 @@ Keyboard wiring:
 
 `CliDispatcher` (parser, no `EmulationController` dep) + `CliRunner` (Phase-C runner). Three phases: parse → pre-boot (preset / ROM / display / speed) → post-boot Phase C (deferred actions: `--load addr:file`, `--snapshot-load`/`--snapshot-save`, tape ops, paste, run, step).
 
-Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`, `--ii-plus` (alias `--ii+`), `--speed`, `--cpu-max`, `--ai-control[=PORT]`, `--display ntsc|chatmauve|mono-white|mono-green|mono-amber`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path` (//c+ Sony 3.5"), `--blank-disk [1|2:]path`
+Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`, `--ii-plus` (alias `--ii+`), `--speed`, `--cpu-max`, `--ai-control[=PORT]`, `--display ntsc|chatmauve|mono-white|mono-green|mono-amber`, `--tape`, `--save-tape`/`--save-tape-format aci|wav`, `--35-disk1 path`/`--35-disk2 path`/`--35-disk3 path` (//c+ Sony 3.5": internal, external 1, external 2), `--blank-disk [1|2:]path`
 (an UNFORMATTED diskette — no address fields, not an empty image),
 `--prodos-folder dir`, `--load addr:file`, `--run addr`, `--paste`, `--step N`, `--trace-brk` (accepted, not wired), `--play`/`--rec`/`--rewind`, `--snapshot-save`/`--snapshot-load`, `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`, `--rgb-card-invert-bit7[=on|off]`, `--slot N=KEY`, `--printer-port N:k=v,…` (docs/printer-detection.md § 12), `--kiosk`, `-h`/`--help`, `-v`/`--version`. `printUsage()` in `CliDispatcher.cpp` is the source of truth. **`--save-tape <path>` is honoured on clean shutdown** (`main.cpp`, next to `captureWindowGeometryNow()`), with `--save-tape-format aci|wav` picking the extension when the path has none. The flags that carry a value after `=` — `--ai-control`, `--fujinet`, `--fujinet-serial`, `--rgb-card-invert-bit7` — **reject the space-separated form**: written that way the value used to fall through to the positional-disk branch, so `--ai-control 6503` armed the default port and then complained about a disk image called `6503`.
 
@@ -448,9 +450,10 @@ Current release: **v0.9.4**. **Single source of truth = `CMakeLists.txt`
 version from there (`POM2_VERSION` / `POM2_VERSION_STRING` macros + `pom2::
 kVersion[String]`). Consumers — `main.cpp` (banner + window title),
 `MainWindow_Slots.cpp` (runtime title), `MainWindow_MiscPanels.cpp` (About),
-`pom2_headless.cpp` (`--version`) — no longer hard-code it, and
-`packaging/windows/POM2.rc.in` expands the same numbers into the Windows
-VERSIONINFO resource. Bumping `project(VERSION)` re-runs CMake and rebuilds
+`pom2_headless.cpp` and `CliDispatcher.cpp` (`--version`) — no longer
+hard-code it, and `packaging/windows/POM2.rc.in` / `packaging/macos/Info.plist.in`
+expand the same numbers into the Windows VERSIONINFO resource and the macOS
+bundle version. Bumping `project(VERSION)` re-runs CMake and rebuilds
 them.
 
 To bump a release, edit **`CMakeLists.txt`** then the prose-only files that
@@ -474,8 +477,8 @@ package** — `roms/` (+ `packaging/roms_README.txt` renamed to `roms/README.txt
 + `fonts/` + the About photo + the //e keyboard photo, `wasm floppyemu` as the
 browser-only extra (it holds the demo's boot disk), a `deny` list
 (`disks_5.4`, `hdv`, `disks_3.5`, `snapshots`, `printouts`, `cassettes`,
-`prodos_folder`) that must never appear in one, and a `denyglob` archive filter
-(`*.zip`, `*.7z`, …). Since 2026-09-07 **all three parsers enforce `deny` and
+`prodos_folder`, `virtual_ii_sons`) that must never appear in one, and a `denyglob` archive filter
+(`*.zip`, `*.7z`, …). **All three parsers enforce `deny` and
 `denyglob`**, not just `--verify`: the CMake `install()` rules, the emcc
 `--preload-file` arguments, and `packaging/stage_data.sh`'s `stage()`. Matching
 is case-insensitive and applies to directories as well as files, at any depth
