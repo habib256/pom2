@@ -562,8 +562,9 @@ void MainWindow::pumpImageWriter()
     archiveNewPrinterPages();
 
     // One call resolves every candidate source under the machine lock,
-    // applies the physical priority (PrinterCard > Grappler+ > FujiNet unit >
-    // SSC tap), advances the feed cursor across a source change or a cleared
+    // applies the physical priority (PrinterCard > Grappler+ > parallel card
+    // (Grappler 1981 / PIC) > FujiNet unit > SSC tap — `PrinterCoordinator`),
+    // advances the feed cursor across a source change or a cleared
     // spool, and hands back an OWNED byte batch. The cursor handover rules
     // still live in printerFeedCursor() (PrinterFeedCursor.h explains why
     // re-seating at 0 was wrong); they are now applied inside the coordinator

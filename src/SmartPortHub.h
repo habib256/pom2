@@ -22,9 +22,9 @@
 //
 // State inputs (mirrored from MAME `apple2e_state`):
 //   m_devsel    — IWM control bit 5 derived (1 or 2 when active, 0 idle)
-//   m_35sel     — MIG $C240/$C260 toggle (3.5" daisy-chain select)
+//   m_35sel     — MIG $CE40/$CE60 toggle (3.5" daisy-chain select)
 //   m_intdrive  — MIG $C080/$C0C0 toggle (internal drive select)
-//   m_hdsel     — MIG $C240/$C260 read-side head select
+//   m_hdsel     — MIG $CE40/$CE60 read-side head select
 //
 // Drive routing table (MAME line 644-666):
 //

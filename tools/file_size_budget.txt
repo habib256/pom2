@@ -409,11 +409,17 @@
 #   src/StorageCoordinator.cpp   2325 -> 2344 (+19)  a host folder re-mounted
 #       under another spelling is re-synthesised; the legacy write-back key
 #       is migrated on empty / missing / failed-mount bays too.
+#
+# 2026-10-07: one raised. 95cf8bd (the //c's soldered ACIAs answer as idle
+# 6551s when no SSC models them) landed without its ceiling, so the Linux
+# job was red on main from 2026-10-06. The fix is a 15-line branch in
+# memReadSlowBody and the comment that says why; recorded here.
+#   src/Memory.cpp               2751 -> 2766 (+15)
 src/Apple2Display.cpp                    2536
 src/DiskIICard.cpp                       2143
 src/DiskImage.cpp                        3293
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
-src/Memory.cpp                           2751
+src/Memory.cpp                           2766
 src/StorageCoordinator.cpp               2344
 src/hgrpaint/HgrPaintEditor.cpp          2656

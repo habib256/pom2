@@ -290,8 +290,9 @@ public:
     /// unaffected — tap and telnet can run at once (a serial printer and
     /// a terminal can't share a real port either, but the tap is a
     /// host-side wiretap, not a second DB-25). Persisted per slot as
-    /// `ssc_printer_tap_slotN`; defaults ON for slot 1 (the printer-port
-    /// convention) and OFF elsewhere.
+    /// `ssc_printer_tap_slotN`; defaults ON for a //c's built-in slot 1
+    /// (its printer port) and, for a slotted card, whenever the card is in
+    /// printer mode (`MainWindow_SlotConfig.cpp`, `tapDefault`).
     void setPrinterTap(bool on);
     bool printerTap() const;
     /// Append every spooled byte at index >= `from` to `out`; returns the

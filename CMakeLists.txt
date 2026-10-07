@@ -317,7 +317,6 @@ set(SOURCES
     src/JoystickPanel_ImGui.cpp
     src/LeChatMauveCard.cpp
     src/LeChatMauve_ImGui.cpp
-    src/IIcExternalSmartPort.cpp
     src/LironCard.cpp
     src/SmartPortBusDevice.cpp
     src/M68705P3.cpp
@@ -417,8 +416,6 @@ set(SOURCES
     src/Cs8900aDevice.cpp
     src/UthernetCard.cpp
     src/W5100Device.cpp
-    src/W5100HostSockets.cpp
-    src/W5100NameResolver.cpp
     src/UthernetIICard.cpp
     src/SlirpNetworkBackend.cpp
     src/Uthernet_ImGui.cpp
@@ -1371,7 +1368,6 @@ set(POM2_CORE_SOURCES
     src/CharRomCatalog.cpp
     src/CharRomDump.cpp
     src/LeChatMauveCard.cpp
-    src/IIcExternalSmartPort.cpp
     src/LironCard.cpp
     src/SmartPortBusDevice.cpp
     src/M68705P3.cpp
@@ -1426,8 +1422,6 @@ set(POM2_CORE_SOURCES
     src/Cs8900aDevice.cpp
     src/UthernetCard.cpp
     src/W5100Device.cpp
-    src/W5100HostSockets.cpp
-    src/W5100NameResolver.cpp
     src/UthernetIICard.cpp
     src/SlirpNetworkBackend.cpp
     src/SmartPort35Unit.cpp

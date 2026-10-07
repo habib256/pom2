@@ -20,8 +20,9 @@
 // The hardware is a single-byte latch: $C000 reads `key | strobe`, $C010
 // clears the strobe (the byte stays latched — KEYIN re-polls until a fresh
 // key arrives). POM2 adds a host paste FIFO behind it: pasted text lands one
-// byte at a time, promoted into the latch on each strobe clear, so the ROM's
-// own strobe-and-poll loop clocks it out at exactly the rate it consumes.
+// byte at a time, promoted into the latch by the next `readLatch()` once the
+// strobe is clear, so the ROM's own strobe-and-poll loop clocks it out at
+// exactly the rate it consumes.
 //
 // Threading: writers (the GLFW key callback on the UI thread, the AI-control
 // HTTP thread, the clipboard path) serialise on `mtx_`. The CPU worker's hot
@@ -93,7 +94,8 @@ public:
     // flight, else appended so it is delivered in FIFO order after the paste.
     void queueKey(uint8_t apple2Key);
 
-    // $C010: drop the strobe; promote the next paste byte if there is one.
+    // $C010: drop the strobe. The next paste byte is promoted by the
+    // `readLatch()` that follows, not here.
     void clearStrobe();
 
     // Host paste. `foldToUpper` maps a-z → A-Z (the ][/][+ keyboard has no

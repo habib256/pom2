@@ -171,7 +171,58 @@ int main()
                "resumed toggles were purged as stale after a pause");
     }
 
+    // ── Case 6: a short worker stall — producer-behind re-anchor ─────────
+    // A host hiccup of 100-300 ms parks the CPU worker while the audio
+    // callback keeps consuming; `workerLoop` then RESYNCS (it does not catch
+    // up once more than 100 ms late), so the cursor stays ahead of the
+    // producer's present by less than the 0.2 s the gross consumer-ahead
+    // re-anchor (case 5) needs. Every new toggle landed behind the cursor
+    // and the stale purge ate it, and since producer and consumer advance
+    // at the same rate the speaker stayed silent until a reset (bug hunt
+    // 2026-10-06). Steady-state here is produced frame by frame, like the
+    // real machine, so the cursor starts with no lead at all — the shape of
+    // a first launch, where coldBoot() and start() run back to back.
+    {
+        SpeakerDevice spk;
+        spk.setSampleRate(kSampleRate);
+        const double cyclesPerBuffer =
+            kFrameCount * POM2_CPU_CLOCK_HZ / static_cast<double>(kSampleRate);
+        const double halfPeriod = POM2_CPU_CLOCK_HZ / 2000.0;   // 1 kHz
+        double producer = 0.0, nextToggle = 0.0;
+        auto produceOneBuffer = [&] {
+            const double end = producer + cyclesPerBuffer;
+            for (; nextToggle < end; nextToggle += halfPeriod)
+                spk.recordToggle(static_cast<uint64_t>(nextToggle));
+            producer = end;
+        };
+        auto swings = [&] {
+            bool pos = false, neg = false;
+            for (float v : buf) { if (v > 0.05f) pos = true; if (v < -0.05f) neg = true; }
+            return pos && neg;
+        };
+
+        for (int b = 0; b < 40; ++b) { produceOneBuffer(); runOneBuffer(spk, buf); }
+        assert(swings() && "steady tone not reconstructed before the stall");
+
+        // ~140 ms stall: six callbacks consume with the producer frozen.
+        for (int b = 0; b < 6; ++b) runOneBuffer(spk, buf);
+
+        // Resume from the frozen producer clock. Allow a few buffers for
+        // the re-anchor and the filter to settle, then require the tone to
+        // be back AND to stay back.
+        for (int b = 0; b < 8; ++b) { produceOneBuffer(); runOneBuffer(spk, buf); }
+        int audible = 0;
+        for (int b = 0; b < 20; ++b) {
+            produceOneBuffer(); runOneBuffer(spk, buf);
+            if (swings()) ++audible;
+        }
+        std::printf("Speaker smoke: case 6 — %d/20 buffers audible after a "
+                    "140 ms stall\n", audible);
+        assert(audible >= 18 &&
+               "speaker stayed silent after a sub-0.2 s worker stall");
+    }
+
     std::printf("Speaker smoke: OK (silence, square synth, reset, mute, "
-                "pause/resume)\n");
+                "pause/resume, short stall)\n");
     return 0;
 }

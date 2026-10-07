@@ -28,7 +28,7 @@
 // (which `bool` it lives in, and what makes it available), and four short
 // functions that DERIVE the menus, the palette, the palette's dispatch and the
 // settings round-trip from those. Adding a panel is a catalog row plus a bind
-// line; forgetting the bind is caught at startup by `unbound()`.
+// line; forgetting the bind is caught at startup by `undrawn()`.
 //
 // It lives outside MainWindow.cpp for the reason the file-size ratchet exists:
 // the god-object does not get to grow by 250 lines of table.

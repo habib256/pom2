@@ -34,7 +34,7 @@ void SmartPortHub::attach(IWMDevice* iwm)
     iwm_->setPhasesCallback([this](uint8_t p) { onIwmPhases(p); });
     iwm_->setDevselCallback([this](uint8_t d) { onIwmDevsel(d); });
     // sel35Cb_ is unused by MAME (`apple2e.cpp:633-635` defines
-    // sel35_w as an empty stub — the MIG's $C240/$C260 toggles do
+    // sel35_w as an empty stub — the MIG's $CE40/$CE60 toggles do
     // the work). We keep the callback wired for symmetry but ignore.
     iwm_->setSel35Callback([](bool) {});
 }

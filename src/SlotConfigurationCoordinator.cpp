@@ -185,6 +185,27 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
             continue;
         }
 
+        // The Videoterm is a ][ / ][+ card: a //e-class machine has its 80
+        // columns on the motherboard and its $C300 page is internal. The
+        // Slot Config picker refuses it there, but `slot_N_card` is one key
+        // for every slotted profile, so a Videx plugged on a ][+ (or asked
+        // for with `--slot 3=videoterm`) followed the user onto the //e,
+        // where its $C0Bx decode cut Le Chat Mauve's Eve window
+        // (`Memory::chatMauveBlockedBySlot3`) and any TEXT+AN0 program got
+        // the card's unprogrammed black picture (bug hunt 2026-10-06).
+        // Dropped from the plan, remembered like a de-dup drop so the
+        // shutdown writer does not erase the ][+ key.
+        if (cfg.iieMode && effectivePlan_[slot] == "videoterm") {
+            log().info("Slots",
+                "Slot " + std::to_string(slot) + " left empty on " +
+                std::string(cfg.displayName) +
+                " (the Videx Videoterm is a ][ / ][+ card; this machine's "
+                "80 columns are built in); user setting kept");
+            dedupCleared_[slot] = effectivePlan_[slot];
+            effectivePlan_[slot].clear();
+            continue;
+        }
+
         if (!cfg.noPhysicalSlots || effectivePlan_[slot].empty()) continue;
         if (effectivePlan_[slot] == "chatmauve" && !builtinRgb) {
             log().info("Slots",

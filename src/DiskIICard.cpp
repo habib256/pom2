@@ -494,7 +494,7 @@ bool DiskIICard::installDisk(int drive, DiskImage&& prepared)
     // the floppy autosave can land and clear the dirty flag between phase 1
     // and here, and gating on "still dirty" then installed the pre-save
     // bytes over a file that already held the write (bug hunt 2026-09-29;
-    // Block512Backing::installPrepared has always re-read any same file).
+    // Block512Backing::adoptImage has always re-read any same file).
     // This is the one path where the two-phase form degrades to the inline
     // cost, and it is the rare one: re-inserting the disk already in the bay.
     DiskImage& img = images[drive];
