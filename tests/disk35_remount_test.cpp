@@ -162,8 +162,9 @@ int main()
         }
         assert(!image.isLoaded());
         const auto onDisk = readBlockFromFile(po, 4);
+        // The block carries the serial's low 16 bits; compare on those.
         const int inFile = onDisk[0] | (onDisk[1] << 8);
-        if (inFile != last) {
+        if (inFile != (last & 0xFFFF)) {
             std::printf("FAIL: round %d — last accepted write was #%d, the "
                         "file holds #%d: a block written during the eject's "
                         "commit was dropped\n", round, last, inFile);
