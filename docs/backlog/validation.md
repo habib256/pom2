@@ -18,6 +18,8 @@ an explicit request before scheduling.
 | [VALIDATION-002](#validation-002) | 🟠 | To verify | [DIX](https://github.com/Fr3nchT0uch/DIX/) — French Touch demo anthology |
 | [VALIDATION-001](#validation-001) | 🟡 | To verify | Disk II opposing-magnet response on a real //c |
 | [VALIDATION-003](#validation-003) | 🟡 | To verify | Spiradisc / RWTS18 |
+| [VALIDATION-004](#validation-004) | 🟢 | Blocked (oracle) | DOS 3.1 / 3.1.1 `]` anomaly |
+| [VALIDATION-005](#validation-005) | 🟢 | To verify | A2 File Cmd one-in-three GUI-only DHGR failure |
 
 <a id="validation-002"></a>
 
@@ -91,3 +93,24 @@ remove (`DiskIICard::seekPhaseW`, `kStepperResponseCycles`).
   revolution, so a weak-bit protection is a coin toss instead of a constant,
   and a track with no flux at all answers read-amplifier noise instead of
   hanging the guest's `LDA $C08C,X / BPL`. What is unvalidated is the titles.
+
+<a id="validation-004"></a>
+
+## VALIDATION-004 — DOS 3.1 / 3.1.1 `]` anomaly
+
+**Priority:** 🟢 · **State:** Blocked — needs MAME or real hardware to arbitrate.
+
+**Acceptance criterion:** Boot both masters on an oracle; record whether the `]` loop with the head swept to half-track 66 is the disk (an Integer-BASIC HELLO on an Applesoft ][+) or POM2.
+
+**Evidence:** [original report](../archive/todo-2026-10-05.md), bug hunt #3 (2026-09-07). Every DOS 3.2 image boots. `DOS13SEC.DSK` is separately known to carry a hand-modified boot0 — a disk defect. Recovered 2026-10-07.
+
+<a id="validation-005"></a>
+
+## VALIDATION-005 — A2 File Cmd: one-in-three GUI-only DHGR failure
+
+**Priority:** 🟢 · **State:** To verify on current main.
+
+**Acceptance criterion:** Reproduce or refute `DHGR.RAW: not an image` followed by a corrupt HGR in the GUI with A2 File Cmd 0.9.5 (`hdv/A2FILECMD-PRODOS-XL-65C02-enhanced-0.9.5.2mg`).
+
+**Evidence:** [original report](../archive/todo-2026-10-05.md), "Retour A2FC 2026-09-09": seen in the GUI only, once in three, on 0.6.8; never headless, card or not; same bytes in RAM. Points after `Apple2Display::render` or at GUI timing. Recovered 2026-10-07.
+

@@ -177,6 +177,30 @@ Things we will not do unless explicitly requested + clear ROI.
 
 ## Deliberate limits from prior findings
 
+- 🟢 **Declined by bug hunt #3 (2026-09-07), each a decision, not a backlog
+  item.** *The 489 ns LSS cell*: `lssCyclesPerCell()` is an integer shared
+  by the whole 5.25" timeline, so MAME's 8.17-cycle cell is a re-basing of
+  that timeline, not a constant swap; nothing in the corpus needs it.
+  *SSC BREAK and the RTS line-condition modes*: a TCP stream cannot carry
+  either. *A FujiNet SP authentication handshake*: fujinet-pc's protocol has
+  none, and adding one breaks unmodified FujiNet software; the listener is
+  loopback-only and armed only while the card is plugged. *HDV / 800K in
+  `pom2_headless`*: a build change, covered by the `hdv_boot_dump` probe.
+  *6522 port-B latching (ACR.1)*: it latches on CB1, which this VIA does not
+  model (`Via6522.h`, the complete not-modelled list).
+
+- 🟢 **FujiNet media bays and the modem bridge — decided against.** The
+  peer's block units as `MountableMediaCard` bays would show Mount/Eject
+  rows that cannot work (the images live on the FujiNet's own storage), and
+  the FujiNet panel's device table already lists them. Bridging its modem
+  unit into the SSC telnet path would fight the FujiNet's own network stack.
+
+- 🟢 **The `$C800` claim and the Workstation Card's `$Cn00` page.** Every
+  ROM POM2 ships opens with `LDA $CFFF` and self-heals a wrong `$C800`
+  owner; the Workstation page has no `$CFFF` access, so it is the one
+  exposure if the claim rule regresses. Informational; the rule is pinned
+  (`SlotPeripheral::takesC800`).
+
 - 🟢 **Two snapshot fields are deliberately not captured, and that is the
   answer, not a gap** *(recorded 2026-09-07)*. `Ay3_8910::busOut` is consumed
   within a single `applyControl`, and the VIA's `portAIn` — which *is*

@@ -373,3 +373,24 @@ half (nothing asserts the stopped-worker condition).
 
 - 🟢 **Legacy M6502 style** — FR/EN comments, C-style casts,
   `void(void)`. Targeted `clang-format` + `clang-tidy modernize-*`.
+
+<a id="arch-014"></a>
+
+## ARCH-014 — No getter to assert every clock-bearing device was retuned
+
+**Priority:** 🟢 · **State:** Ready.
+
+**Acceptance criterion:** `device_standard_clock` enumerates every device `setVideoStandard` retunes — the speaker, the cassette and the floppy-sound device included — and fails when one is skipped.
+
+**Evidence:** [original report](../archive/todo-2026-10-05.md) G5-3, "Not done": the speaker, cassette and floppy-sound retunes have no getter to assert on. Recovered from the archive 2026-10-07; it had no home after the migration.
+
+<a id="arch-015"></a>
+
+## ARCH-015 — The window's slot hooks are not covered by the slot-config tests
+
+**Priority:** 🟢 · **State:** Ready.
+
+**Acceptance criterion:** `MainWindow::plugSlotsFromSettings` (still GUI-side) is either reached by a headless test or its policy moved into `SlotConfigurationCoordinator`, where `slot_configuration_coordinator` already pins it.
+
+**Evidence:** [original report](../archive/todo-2026-10-05.md) G5-6, "Not covered". The 2026-10-06 Videx-on-//e bug lived exactly in this seam (the picker refused, the plug path did not). Recovered from the archive 2026-10-07.
+
