@@ -292,13 +292,13 @@ public:
 private:
     std::mutex demodMutex_;          // see demodMutex()
     std::vector<uint32_t> frame;     // kWidth   * kHeight RGBA pixels
-    std::vector<uint32_t> frame80;   // kWidth80 * kHeight RGBA pixels (IIe)
+    std::vector<uint32_t> frame80;   // kWidth80 * kHeight RGBA: native 560-dot paths
     // Which buffer pixels()/width() publish. Write it ONLY through
     // setUseFrame80() / scheduleCpuDemodInto80() — the trailing underscore is
     // there so a plain `useFrame80 = true` no longer compiles: flipping the
     // published buffer is a framebuffer mutation, and the static-text skip is
     // only sound while every such mutation announces itself.
-    bool useFrame80_    = false;     // true for the current frame when 80-col
+    bool useFrame80_    = false;     // true when the current picture is 560 dots wide
     // A card's own picture (Videx Videoterm) is published instead of either
     // Apple buffer. Cleared by setUseFrame80() / scheduleCpuDemodInto80(), the
     // two doors every Apple frame goes through, and set only by
@@ -364,13 +364,8 @@ private:
     // frame80 before it held an AppleWin frame ghosted the outgoing mode in.
     bool appleWinPrevValid_ = false;
     bool appleWinPainted_   = false;
-    // History buffer for monochrome phosphor decay. One byte per pixel
-    // (0..255 luminance). Color mode leaves this untouched; switching modes
-    // clears it. We carry two parallel buffers so HGR (280×192) and DHGR
-    // (560×192) can each accumulate afterglow without their dimensions
-    // fighting — without `persistenceL80`, DHGR mono had no decay because
-    // the path wrote a 560-wide frame against a 280-wide history.
-    std::vector<uint8_t> persistenceL;
+    // Native 560-dot monochrome graphics share one phosphor history.
+    // One byte per dot (0..255); mode changes clear it.
     std::vector<uint8_t> persistenceL80;
     // OpenEmulator-style composite signal: one byte per 14.318 MHz sample
     // (0x00 = black, 0xFF = white). 560 samples × 192 lines = 105 600 bytes.
@@ -439,7 +434,7 @@ private:
     //     a column-bounded save/restore). Never skipped: `render()` only
     //     consults this on the `events.empty()` branch.
     //   * PERSISTENCE — the graphics painters implement a phosphor rule
-    //     (`max(target, prev x decay)` into persistenceL/persistenceL80), so
+    //     (`max(target, prev x decay)` into persistenceL80), so
     //     their output legitimately changes every frame from identical inputs.
     //     Only FULL-SCREEN TEXT is skipped; renderText/renderText80 write no
     //     persistence at all (verified), making their output a pure function.
@@ -644,6 +639,12 @@ private:
     }
     void renderInternalBandImpl(Memory& mem, const Memory::DisplayState& state,
                                 int scanY0, int scanY1);
+    void renderMonoGraphics(Memory& mem, const Memory::DisplayState& state,
+                            int firstScanline, int lastScanline);
+    bool isMonochrome() const {
+        return hiResMode == HiResMode::MonoWhite || hiResMode == HiResMode::MonoGreen ||
+               hiResMode == HiResMode::MonoAmber;
+    }
     // IIe-only. Renders text rows [firstRow, lastRow) into `frame80` at
     // 560×192. Reads aux RAM for even columns and main RAM for odd
     // columns (per AppleWin's scanner). `altCharSet` toggles flashing

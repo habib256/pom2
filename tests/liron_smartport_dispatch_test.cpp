@@ -222,7 +222,35 @@ int main()
         r = spCall(cpu, mem, 0x42);          // Liron $CC5B: cmd >= $0A → $01
         assert(r.carry && r.a == 0x01);
 
-        setPlist(mem, {3, 1, 0, 0, 0});
+        // FORMAT and INIT take one parameter, unlike READ/WRITE/STATUS.
+        // Exercise the firmware entry so both carry and A reach the caller.
+        for (uint8_t cmd : {uint8_t{0x03}, uint8_t{0x05}}) {
+            for (uint8_t count : {uint8_t{0}, uint8_t{2}, uint8_t{3}, uint8_t{255}}) {
+                setPlist(mem, {count, cmd == 0x03 ? uint8_t{1} : uint8_t{0}});
+                r = spCall(cpu, mem, cmd);
+                if (!r.carry || r.a != 0x04 || r.sentinel != 0x77) {
+                    std::printf("FAIL: cmd=$%02X count=%u returned C=%d A=$%02X\n",
+                                cmd, count, r.carry, r.a);
+                    return 1;
+                }
+            }
+        }
+
+        setPlist(mem, {1, 0});
+        r = spCall(cpu, mem, 0x05);          // INIT controller
+        assert(!r.carry && r.a == 0x00);
+
+        for (uint8_t unitNo : {uint8_t{1}, uint8_t{2}, uint8_t{255}}) {
+            setPlist(mem, {1, unitNo});
+            r = spCall(cpu, mem, 0x05);      // INIT cannot target a device
+            if (!r.carry || r.a != 0x28 || r.sentinel != 0x77) {
+                std::printf("FAIL: INIT unit=%u returned C=%d A=$%02X\n",
+                            unitNo, r.carry, r.a);
+                return 1;
+            }
+        }
+
+        setPlist(mem, {1, 1});
         r = spCall(cpu, mem, 0x03);          // FORMAT (write-back on)
         assert(!r.carry && r.a == 0x00);
 

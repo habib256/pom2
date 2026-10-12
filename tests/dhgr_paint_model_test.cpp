@@ -234,8 +234,7 @@ int main()
     // ── 5. Monochrome lo-res rendering (2026-07-12) ──────────────────────────
     // On a mono monitor a lo-res nibble displays as its repeating 4-bit dot
     // pattern (the colour generator keeps cycling at 14.318 MHz). Pins:
-    // GR white/black solid, GR grey 5 (0101 pattern → each 280-wide pixel
-    // averages one lit + one dark sample = uniform 127), and DLGR grey 5 at
+    // GR white/black solid, GR grey 5 at native 560 dots, and DLGR grey 5 at
     // native 560 dots (alternating full/dark dots, aux rotation included).
     {
         Memory mem;
@@ -253,17 +252,17 @@ int main()
                 mem.writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), bb);
             advanceOneEmulatedFrame(mem);
             disp.render(mem);
-            assert(disp.width() == Apple2Display::kWidth);
+            assert(disp.width() == Apple2Display::kWidth80);
         };
         fillGr(15);
-        for (int i = 0; i < 280 * 192; ++i)
+        for (int i = 0; i < 560 * 192; ++i)
             assert((disp.pixels()[i] & 0xFFFFFF) == 0xFFFFFF);
         fillGr(0);
-        for (int i = 0; i < 280 * 192; ++i)
+        for (int i = 0; i < 560 * 192; ++i)
             assert((disp.pixels()[i] & 0xFFFFFF) == 0x000000);
         fillGr(5);
-        for (int i = 0; i < 280 * 192; ++i)
-            assert((disp.pixels()[i] & 0xFFFFFF) == 0x7F7F7F);
+        for (int i = 0; i < 560 * 192; ++i)
+            assert((disp.pixels()[i] & 0xFFFFFF) == ((i & 1) ? 0 : 0xFFFFFF));
 
         // DLGR: grey 5 renders as alternating full/dark dots at 560 wide.
         std::vector<uint8_t> pair(kDlgrPairSize, 0);

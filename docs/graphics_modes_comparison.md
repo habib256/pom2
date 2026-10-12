@@ -251,18 +251,23 @@ captures.
 provenance: empirical (visual measurement, no published CIE
 chromaticity).
 
-**POM2 algorithm** ([`Apple2Display.cpp::renderHiRes`](../src/Apple2Display.cpp), `monochrome` branch):
+**POM2 algorithm** ([`Apple2Display.cpp::renderMonoGraphics`](../src/Apple2Display.cpp)):
 
 1. Raw bit stream (no LUT, no artifact window).
-2. For each 280-wide pixel: sample 2 bits from the 560 stream → luminance
-   (0/127/255).
+2. Retain all 560 signal dots → luminance (0/255), including HGR's
+   half-dot delay and GR's repeating four-bit patterns.
 3. Persistence: `max(target, prev × decay)` with `decay = 0.0` (no
    afterglow for white — it's the neutral reference).
 4. Phosphor tint RGB = `(255, 255, 255)` — multiplicative on luminance.
 
 **Deviations**: none. Neutral reference.
 
-**Tests**: `display_persistence_smoke` (decay=0 control case).
+**Tests**: `hgr_render_smoke` (HGR colour pairs and all 16 GR dot patterns),
+`display_persistence_smoke` (decay=0 control case).
+
+The monochrome screenshots below predate the 2026-10-12 correction and show
+the former 280-pixel averaging. Monochrome graphics now use 560 dots;
+full-screen text keeps its native 280/560 width.
 
 ![MonoWhite](img/total_replay_06_MonoWhite.png)
 
@@ -296,9 +301,8 @@ empirical (0x33, 0xFF, 0x33), not formally derived from the CIE.
 Tektronix / Sanyo type). RGB tint `(0xFF, 0xB0, 0x00)` empirical. Decay 0.96
 — ~25 frames of visible afterglow.
 
-**Algorithm**: MonoWhite + amber tint + `decay = 0.96`. Parallel
-persistence buffer (`persistenceL` 280×192 + `persistenceL80` 560×192)
-to avoid mixing HGR and DHGR.
+**Algorithm**: MonoWhite + amber tint + `decay = 0.96`. One native-dot
+persistence buffer (`persistenceL80` 560×192), shared by HGR, GR, DHGR and DLGR.
 
 **Deviations**:
 

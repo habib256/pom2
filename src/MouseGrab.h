@@ -35,9 +35,11 @@
 // GLFW reports an unbounded virtual position, so deltas keep flowing in every
 // direction for as long as the user keeps moving.
 //
-// Capture is entered and left by exactly two deliberate gestures, the ones
+// Capture is entered and left by deliberate gestures, the ones
 // every VM viewer and PC emulator already trains into the user's fingers:
 // **Ctrl+Alt+G**, or a click on the **middle button (wheel)**. Both TOGGLE.
+// **Alt+Enter** toggles full screen captured / windowed with a free pointer,
+// including when there is no Mouse Card.
 //
 // A left click deliberately does NOT capture. It used to, which is the
 // classic "click the screen to give the guest your mouse" contract, but it
@@ -60,8 +62,11 @@ namespace mousegrab {
 // MainWindow.cpp static_asserts every one of them against <GLFW/glfw3.h>, so
 // a token change upstream is a compile error rather than a silent desync.
 inline constexpr int kKeyG         = 71;      // GLFW_KEY_G
+inline constexpr int kKeyEnter     = 257;     // GLFW_KEY_ENTER
+inline constexpr int kKeyKpEnter   = 335;     // GLFW_KEY_KP_ENTER
 inline constexpr int kModControl   = 0x0002;  // GLFW_MOD_CONTROL
 inline constexpr int kModAlt       = 0x0004;  // GLFW_MOD_ALT
+inline constexpr int kModSuper     = 0x0008;  // GLFW_MOD_SUPER
 inline constexpr int kButtonLeft   = 0;       // GLFW_MOUSE_BUTTON_LEFT
 inline constexpr int kButtonMiddle = 2;       // GLFW_MOUSE_BUTTON_MIDDLE
 
@@ -73,6 +78,15 @@ inline constexpr int kButtonMiddle = 2;       // GLFW_MOUSE_BUTTON_MIDDLE
 inline bool isToggleChord(int key, int mods)
 {
     return key == kKeyG && (mods & kModControl) != 0 && (mods & kModAlt) != 0;
+}
+
+/// Alt+Enter toggles full screen with capture / windowed with a free pointer.
+/// The caller consumes every edge so no Return reaches the guest.
+/// Only PRESS changes the mode.
+inline bool isFullscreenChord(int key, int mods)
+{
+    return (key == kKeyEnter || key == kKeyKpEnter) && (mods & kModAlt) &&
+           !(mods & (kModControl | kModSuper));
 }
 
 /// Middle button (wheel click) — the button that carries the toggle.

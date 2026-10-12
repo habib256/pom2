@@ -1108,6 +1108,9 @@ uint8_t SmartPortCard::spExecute()
             return ok();
         }
         case 0x03: {                                   // FORMAT
+            // Apple IIgs Firmware Reference, SmartPort FORMAT / INIT
+            // (pp. 7-14, 7-17): one parameter, the unit number.
+            if (pcount != 1) return fail(0x04);
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
             if (!u->isLoaded()) return fail(0x2F);
@@ -1122,6 +1125,8 @@ uint8_t SmartPortCard::spExecute()
             return spCollect_[5] == 0x00 ? ok() : fail(0x21);
         }
         case 0x05:                                     // INIT
+            if (pcount != 1) return fail(0x04);
+            if (unitNo != 0) return fail(0x28);        // controller only
             return ok();
         default:
             return fail(0x01);                         // bad command

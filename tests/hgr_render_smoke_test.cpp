@@ -88,8 +88,47 @@ uint8_t b8(uint32_t c) { return (c >> 16) & 0xFFu; }
 
 } // namespace
 
+// A colour fill is a dot pattern on a monochrome monitor, even when bit 7
+// delays HGR by half a dot. In particular, orange must not become flat grey.
+static void testMonochromeDotPatterns()
+{
+    for (auto mode : {Apple2Display::HiResMode::MonoWhite,
+                      Apple2Display::HiResMode::MonoGreen,
+                      Apple2Display::HiResMode::MonoAmber}) {
+        const uint32_t litColour = mode == Apple2Display::HiResMode::MonoWhite
+            ? kWhite : mode == Apple2Display::HiResMode::MonoGreen
+            ? pack(0x33, 0xFF, 0x33) : pack(0xFF, 0xB0, 0);
+        for (int delay = 0; delay < 2; ++delay) {
+            for (int opposite = 0; opposite < 2; ++opposite) {
+                Memory mem;
+                mem.memRead(0xC050); mem.memRead(0xC052); mem.memRead(0xC057);
+                for (int col = 0; col < 40; ++col)
+                    writeHgrByte(mem, 0, col,
+                        (((col & 1) ^ opposite) ? 0x55 : 0x2A) | (delay ? 0x80 : 0));
+                Apple2Display d; d.setHiResMode(mode); d.render(mem);
+                assert(d.width() == 560 && "mono must retain half-dot resolution");
+                for (int x = 20; x < 540; ++x) {
+                    const bool on = ((((x - delay) / 2) & 1) ^ opposite) != 0;
+                    assert(d.pixels()[x] == (on ? litColour : kBlack));
+                }
+            }
+        }
+        for (int nibble = 0; nibble < 16; ++nibble) {
+            Memory mem;
+            mem.memRead(0xC050); mem.memRead(0xC052); mem.memRead(0xC056);
+            for (int col = 0; col < 40; ++col)
+                mem.memWrite(0x400 + col, nibble | (nibble << 4));
+            Apple2Display d; d.setHiResMode(mode); d.render(mem);
+            assert(d.width() == 560);
+            for (int x = 0; x < 560; ++x)
+                assert(d.pixels()[x] == ((nibble & (1 << (x & 3))) ? litColour : kBlack));
+        }
+    }
+}
+
 int main()
 {
+    testMonochromeDotPatterns();
     Memory mem;
     Apple2Display display;
     // Raw LUT output — easy to assert exactly. The CPU-side glow has been

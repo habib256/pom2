@@ -234,11 +234,13 @@ NTSC/PAL toggle were not rechecked.
     ~0.05/0.05/0 — *biggest visual gain*, OR own the "punchy" choice and
     document it (`NtscPostProcessor.h`).
   - **F2** cosine scanline → OE's **sin²** (keep the `scanAA` anti-moiré term).
-  - **F7** HGR mono: 280 px average / 3 levels → **560 binary** (copy of the
-    DHGR-mono loop already shipped).
   - **F6** row-dim mask ×0.7 ⚠ (make luminance-neutral, don't drop hard).
   - *(Non-items, documented: F1 clamp double > AppleWin float; F8/F9 amber/green
     tints assumed — optional "AppleWin-faithful" preset.)*
+
+F7 was reproduced and fixed on 2026-10-12: HGR and GR monochrome now
+retain all 560 signal dots, preserving orange/blue stripes and phosphor
+decay. See [CHANGELOG](../../CHANGELOG.md) and `hgr_render_smoke`.
 
 <a id="display-003"></a>
 

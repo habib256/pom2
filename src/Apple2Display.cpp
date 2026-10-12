@@ -38,7 +38,6 @@ Apple2Display::Apple2Display()
     , frame80(kWidth80 * kHeight, 0xFF000000)
     , appleWinPrev  (kWidth   * kHeight, 0xFF000000)
     , appleWinPrev80(kWidth80 * kHeight, 0xFF000000)
-    , persistenceL  (kWidth   * kHeight, 0)
     , persistenceL80(kWidth80 * kHeight, 0)
     , signalBuf    (kSignalWidth * kSignalHeight, 0)
 {
@@ -50,7 +49,6 @@ void Apple2Display::setHiResMode(HiResMode m)
     hiResMode = m;
     // Clear both phosphor histories so a residual amber afterglow doesn't
     // tint a freshly-selected green or colour mode for a few frames.
-    std::fill(persistenceL.begin(),   persistenceL.end(),   0);
     std::fill(persistenceL80.begin(), persistenceL80.end(), 0);
     // Clear the composite signal buffer too: if we just left the
     // OpenEmulator mode the leftover bytes would be irrelevant; if we
@@ -216,6 +214,22 @@ void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplaySta
     const bool iie80 = mem.isIIE() && state.eightyCol;
     const int  hiResEnd = state.mixedMode ? 160 : 192;
     int gLo = 0, gHi = 0, tLo = 0, tHi = 0;
+
+    // Single HGR / GR monochrome preserves the 14 MHz dot stream. Pair
+    // averaging at 280 pixels erases delayed orange/blue and lo-res stripes.
+    if (isMonochrome() && !state.textMode && !(iie80 && state.dhgr)) {
+        if (bandScanlines(scanY0, scanY1, 0, hiResEnd, &gLo, &gHi))
+            renderMonoGraphics(mem, state, gLo, gHi);
+        if (state.mixedMode && bandRows(scanY0, scanY1, 20, 24, &tLo, &tHi)) {
+            if (iie80) renderText80(mem, state, tLo, tHi, scanY0, scanY1);
+            else {
+                renderText(mem, state, tLo, tHi, 0, 40, scanY0, scanY1);
+                upscaleFrameToFrame80(std::max(scanY0, 160), scanY1);
+            }
+        }
+        setUseFrame80(true);
+        return;
+    }
 
     // ── Le Chat Mauve / Video-7 RGB card — single HGR (native 560 dots) ──
     // Every single-HGR state under the card comes here: AN3 on (ordinary
@@ -1445,20 +1459,6 @@ void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
     const bool useChatMauve = (hiResMode == HiResMode::ChatMauveRGB) && (chatMauve != nullptr);
     const uint32_t* palette = useChatMauve ? kChatMauveLoResPalette : kLoResPalette;
 
-    // Monochrome: a lo-res block on a mono monitor is NOT a grey — the colour
-    // nibble keeps cycling on the 14.318 MHz dot clock, so it displays as its
-    // repeating 4-bit pattern (vertical stripes; nibble 0 black, 15 white,
-    // greys 5/10 fine 50% stripes). Same serialisation as the composite
-    // signal path (fillCompositeSignal paintLoRes40: bit = nibble >>
-    // (absSample & 3)); each 280-wide pixel covers two 14 MHz samples, so its
-    // luminance is the average of its sample pair, then the standard
-    // max(target, prev × decay) phosphor rule (persistenceL, like renderHiRes).
-    const bool monochrome = (hiResMode == HiResMode::MonoWhite ||
-                             hiResMode == HiResMode::MonoGreen ||
-                             hiResMode == HiResMode::MonoAmber);
-    const Phosphor phos = phosphorFor(hiResMode);
-    const float effDecay = effectivePhosphorDecay(phos, emuFrameDelta_);
-
     // Each lo-res row corresponds to half a text row (4 scanlines).
     for (int blockRow = firstRow; blockRow < lastRow; ++blockRow) {
         const int textRow = blockRow / 2;
@@ -1473,26 +1473,6 @@ void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
             for (int dy = 0; dy < 4; ++dy) {
                 const int y = y0 + dy;
                 if (y < clipY0 || y >= clipY1) continue;   // beam-split clip
-                if (monochrome) {
-                    uint8_t* histRow = persistenceL.data()
-                                     + static_cast<size_t>(y) * kWidth;
-                    for (int dx = 0; dx < 7; ++dx) {
-                        const int px = x0 + dx;
-                        const int s0 = (nibble >> ((px * 2)     & 3)) & 1;
-                        const int s1 = (nibble >> ((px * 2 + 1) & 3)) & 1;
-                        const int target = ((s0 + s1) * 255) / 2;   // 0 / 127 / 255
-                        const int prev = static_cast<int>(
-                            static_cast<float>(histRow[px]) * effDecay);
-                        const int merged = std::max(target, prev);
-                        histRow[px] = static_cast<uint8_t>(merged);
-                        const uint32_t r = (static_cast<uint32_t>(phos.r) * merged + 127) / 255;
-                        const uint32_t g = (static_cast<uint32_t>(phos.g) * merged + 127) / 255;
-                        const uint32_t bl = (static_cast<uint32_t>(phos.b) * merged + 127) / 255;
-                        frame[y * kWidth + px] =
-                            (uint32_t(0xFF) << 24) | (bl << 16) | (g << 8) | r;
-                    }
-                    continue;
-                }
                 for (int dx = 0; dx < 7; ++dx)
                     frame[y * kWidth + (x0 + dx)] = rgb;
             }
@@ -1618,8 +1598,8 @@ void Apple2Display::renderLoResDouble(Memory& mem,
 // framebuffer pixels (the chroma-bandwidth-limited downsample real
 // CRTs perform optically).
 //
-// Monochrome paths reuse the doubled bit stream but skip the LUT and
-// rotation — luminance only, multiplied by a phosphor tint. Persistence
+// renderMonoGraphics retains all 560 dots, skipping the LUT and rotation
+// — luminance only, multiplied by a phosphor tint. Persistence
 // for amber rides on a per-pixel history × decay buffer.
 //
 // Convention: bit 0 of an HGR byte is the LEFTMOST pixel, bit 6 the
@@ -1665,8 +1645,6 @@ void Apple2Display::renderHiRes(Memory& mem, const Memory::DisplayState& state,
     // standard-HGR rev-0 territory (II+ always has `state.dhgr=false`).
     const uint8_t bit7Mask = state.dhgr ? uint8_t{0x7F} : uint8_t{0xFF};
 
-    std::array<uint32_t, kWidth> raw;
-
     // Effective mode: ChatMauveRGB without a plugged card silently falls
     // back to NTSC (matches a real Apple II that's been pulled out of its
     // RGB adapter — the composite signal is still on the wire).
@@ -1683,7 +1661,8 @@ void Apple2Display::renderHiRes(Memory& mem, const Memory::DisplayState& state,
     // for the card — the pair-aligned decode it used to carry here was a
     // second, byte-level copy of the LCM rule and is gone.
     if (effMode == HiResMode::ChatMauveRGB) effMode = HiResMode::ColorNTSC;
-    if (effMode == HiResMode::ColorCompositeOE)           effMode = HiResMode::ColorNTSC;
+    if (effMode == HiResMode::ColorCompositeOE ||
+        effMode == HiResMode::ColorCompositeOECpu)        effMode = HiResMode::ColorNTSC;
     // ColorAppleWin normally never reaches renderHiRes at all: render()
     // skips renderInternal for it and demodulates the composite signal
     // CPU-side into frame80 (Phase 4 — no more discarded LUT pass). This
@@ -1813,43 +1792,39 @@ void Apple2Display::renderHiRes(Memory& mem, const Memory::DisplayState& state,
         return;
     }
 
-    // (See bottom of file for IIe 80-col text helpers.)
+}
 
-    // Monochrome path. The bit stream is sampled at twice the visible
-    // pixel rate — averaging adjacent sub-pixels gives the soft
-    // horizontal anti-aliased luminance a real CRT's chroma-bandwidth
-    // limit produces. Persistence is per-pixel max(target, prev × decay):
-    // mimics the additive re-excitation + passive fade of phosphor
-    // chemistry. Switching modes clears the buffer (see setHiResMode).
+void Apple2Display::renderMonoGraphics(Memory& mem, const Memory::DisplayState& state,
+                                       int firstScanline, int lastScanline)
+{
+    // MAME apple2video.cpp:471-479, 764-825: keep all
+    // 14 dots per byte, including the bit-7 delay, before monitor effects.
+    // https://github.com/mamedev/mame/blob/master/src/mame/apple/apple2video.cpp
     uint8_t stream[kStreamLen];
-    const Phosphor phos = phosphorFor(effMode);
-    // Decay is per EMULATED frame; the UI may render the same frame several
-    // times on a >60 Hz monitor. (The rule this inlined now lives in
-    // effectivePhosphorDecay, shared with the lo-res / DLGR / DHGR mono
-    // painters — same arithmetic, so this path's output is unchanged.)
+    const Phosphor phos = phosphorFor(hiResMode);
     const float effDecay = effectivePhosphorDecay(phos, emuFrameDelta_);
     for (int y = firstScanline; y < lastScanline; ++y) {
-        const uint16_t rowAddr = hgrRowAddress(y, videoHgrPage2(state));
-        buildBitStream(ram, rowAddr, stream, bit7Mask);
-
-        uint8_t* histRow = persistenceL.data() + static_cast<size_t>(y) * kWidth;
-        for (int x = px0; x < px1; ++x) {
-            const int sub = x * 2;
-            const int lit = stream[sub] + stream[sub + 1];   // 0..2
-            const int target = (lit * 255) / 2;
-            const int prev   = static_cast<int>(static_cast<float>(histRow[x]) * effDecay);
-            const int merged = std::max(target, prev);
-            histRow[x] = static_cast<uint8_t>(merged);
-
+        if (state.hiRes) {
+            buildBitStream(mem.data(), hgrRowAddress(y, videoHgrPage2(state)), stream,
+                           state.dhgr ? uint8_t{0x7F} : uint8_t{0xFF});
+        } else {
+            const uint16_t rowAddr = textRowAddress(y / 8, videoTextPage2(state));
+            for (int x = 0; x < kWidth80; ++x) {
+                const uint8_t byte = mem.data()[rowAddr + x / 14];
+                const uint8_t nibble = (y & 4) ? byte >> 4 : byte & 0x0F;
+                stream[x] = (nibble >> (x & 3)) & 1;
+            }
+        }
+        uint8_t* hist = persistenceL80.data() + static_cast<size_t>(y) * kWidth80;
+        uint32_t* out = frame80.data() + static_cast<size_t>(y) * kWidth80;
+        for (int x = 0; x < kWidth80; ++x) {
+            const int merged = std::max(stream[x] * 255, static_cast<int>(hist[x] * effDecay));
+            hist[x] = static_cast<uint8_t>(merged);
             const uint32_t r = (static_cast<uint32_t>(phos.r) * merged + 127) / 255;
             const uint32_t g = (static_cast<uint32_t>(phos.g) * merged + 127) / 255;
             const uint32_t b = (static_cast<uint32_t>(phos.b) * merged + 127) / 255;
-            raw[x] = (uint32_t(0xFF) << 24) | (b << 16) | (g << 8) | r;
+            out[x] = 0xFF000000u | (b << 16) | (g << 8) | r;
         }
-
-        uint32_t* outRow = frame.data() + static_cast<size_t>(y) * kWidth;
-        std::memcpy(outRow + px0, raw.data() + px0,
-                    static_cast<size_t>(px1 - px0) * sizeof(uint32_t));
     }
 }
 
@@ -1966,7 +1941,7 @@ void Apple2Display::upscaleFrameToFrame80(int firstScanline, int lastScanline)
 //   Mono*       — each dot = luminance bit × phosphor tint. No artifact
 //                 decoding. Uses the dedicated `persistenceL80` history
 //                 buffer (560×192) so amber afterglow persists in DHGR
-//                 just like it does in HGR via `persistenceL`.
+//                 shared with HGR / GR via `persistenceL80`.
 
 void Apple2Display::renderDhgr(Memory& mem, const Memory::DisplayState& state,
                                int firstScanline, int lastScanline)

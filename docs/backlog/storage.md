@@ -18,7 +18,7 @@ an explicit request before scheduling.
 | [STORAGE-002](#storage-002) | 🟡 | To verify | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
 | [STORAGE-010](#storage-010) | 🟡 | To verify | Bug hunt #16's Disk II read residue |
-| [STORAGE-011](#storage-011) | 🟡 | To verify | Bug hunt #15's SmartPort residue |
+| [STORAGE-011](#storage-011) | 🟡 | To verify | SmartPort image-format restrictions |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-004](#storage-004) | 🟢 | To verify | `decodeTrack` trusts the address field |
 | [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
@@ -75,18 +75,20 @@ an explicit request before scheduling.
 
 <a id="storage-011"></a>
 
-## STORAGE-011 — Bug hunt #15's SmartPort residue
+## STORAGE-011 — SmartPort image-format restrictions
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** To verify (parameter validation resolved).
 
-**Acceptance criterion (after revalidation):** Reject malformed FORMAT/INIT parameter counts; document unsupported flux and image formats without claiming support.
+**Acceptance criterion:** Document unsupported flux and image formats without claiming support.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1992). Original dates and estimates are retained below.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1992).
 
-- 🟡 **Bug hunt #15's SmartPort residue** *(2026-09-09)*: `FORMAT` and
-  `INIT` skip the parameter-count check; WOZ 2.1 FLUX tracks, 400K and
-  DiskCopy 4.2 images are refused with a clear message rather than
-  supported. *½ day.*
+The original report also named missing FORMAT/INIT parameter-count checks.
+Reproduced and fixed 2026-10-12, along with INIT accepting nonzero units;
+see [CHANGELOG](../../CHANGELOG.md). `liron_smartport_dispatch` covers the
+guest-visible error codes and valid calls. The report's remaining WOZ 2.1
+FLUX-track, 400K and DiskCopy 4.2 restrictions still need revalidation and
+documentation; they were not tested by that protocol regression.
 
 <a id="storage-003"></a>
 

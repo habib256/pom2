@@ -396,7 +396,8 @@ void MainWindow::updateKioskMenu()
     // adventure game played in kiosk. F2 sits next to the F1 Start fallback
     // and no Apple II program can type it.
     const bool eSelect  = nav.select  || ImGui::IsKeyPressed(ImGuiKey_F2,     false);
-    const bool eConfirm = nav.confirm || ImGui::IsKeyPressed(ImGuiKey_Enter,  false);
+    const bool eConfirm = nav.confirm ||
+        (!ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Enter, false));
     const bool eCancel  = nav.cancel  || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     // Left/right zone-swap is a one-shot edge (never auto-repeats).
     const bool eLeft    = nav.left    || ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  false);
