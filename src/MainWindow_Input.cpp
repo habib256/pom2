@@ -67,6 +67,9 @@
 // in scope — an upstream renumbering becomes a compile error, not a chord
 // that silently stops working.
 static_assert(pom2::mousegrab::kKeyG         == GLFW_KEY_G);
+static_assert(pom2::mousegrab::kKeyEnter     == GLFW_KEY_ENTER);
+static_assert(pom2::mousegrab::kKeyKpEnter   == GLFW_KEY_KP_ENTER);
+static_assert(pom2::mousegrab::kModSuper     == GLFW_MOD_SUPER);
 static_assert(pom2::mousegrab::kModControl   == GLFW_MOD_CONTROL);
 static_assert(pom2::mousegrab::kModAlt       == GLFW_MOD_ALT);
 static_assert(pom2::mousegrab::kButtonLeft   == GLFW_MOUSE_BUTTON_LEFT);
@@ -201,6 +204,19 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // inside an ImGui text field, since this chord is routed unconditionally.
     const bool chordOk = pom2::keychord::chordMayFire(
         mods, rightAltDown_, pom2::keychord::kHostIsWindows);
+    if (chordOk && pom2::mousegrab::isFullscreenChord(key, mods)) {
+        if (action == GLFW_PRESS) {
+            if (!kiosk_) {
+                setKioskModeRuntime(true);
+                setMouseGrab(true);
+            } else {
+                // Leaving full screen also releases capture before GLFW
+                // restores the window geometry.
+                setKioskModeRuntime(false);
+            }
+        }
+        return;
+    }
     if (chordOk && pom2::mousegrab::isToggleChord(key, mods)) {
         if (action == GLFW_PRESS) toggleMouseGrab();
         return;
@@ -406,9 +422,9 @@ pom2::mousegrab::Context MainWindow::mouseGrabContext() const
 void MainWindow::setMouseGrab(bool on)
 {
     if (on == mouseGrabbed_) return;
-    if (on && !mouseCoordinator_->capture().plugged()) {
-        // Capturing the pointer with nothing to feed would strand the user
-        // in a hidden-cursor mode for no gain.
+    if (on && !kiosk_ && !mouseCoordinator_->capture().plugged()) {
+        // In full screen capture also hides the host cursor for keyboard
+        // games. In the windowed GUI it needs a Mouse Card to feed.
         tapeStatusMessage = "Mouse capture: no Mouse Card plugged "
                             "(Slot Configuration → mouse / mouseaw)";
         tapeStatusUntil   = lastFrameTime + 4.0;

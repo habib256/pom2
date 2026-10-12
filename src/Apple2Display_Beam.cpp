@@ -66,6 +66,7 @@ bool Apple2Display::usesLegacyPath(Memory& mem, const Memory::DisplayState& stat
     // BELOW this return as `cm && …`, i.e. as dead code reading like a rule
     // that still applied — removed rather than left to mislead.
     if (cm || force560_) return false;
+    if (isMonochrome() && !state.textMode) return false;
 
     // The IIe 80-col block returns (non-legacy) for every sub-state except
     // its fall-through: !textMode && !dhgr && !mixedMode (plain 40-col HGR /
@@ -111,17 +112,6 @@ void Apple2Display::renderInternalSegment(Memory& mem, const Memory::DisplayStat
                     savedFb.size() * sizeof(uint32_t));
         std::memcpy(savedPe.data(), persistenceL80.data() + scanY0 * rowLen,
                     savedPe.size());
-        // The 280-wide phosphor history needs the same bounding: the mixed
-        // 80-col path (and the Chat Mauve legacy tail) paints its graphics
-        // band through renderHiRes / renderLoRes into `frame` + persistenceL
-        // at FULL width before the pixel-doubling, so without this every
-        // segment on a line decayed and re-merged the whole row — a
-        // MonoGreen/MonoAmber beam split ghosted the left segment's dots
-        // through the right one.
-        const size_t peLen = static_cast<size_t>(kWidth);
-        std::vector<uint8_t> savedPe280(nRows * peLen);
-        std::memcpy(savedPe280.data(), persistenceL.data() + scanY0 * peLen,
-                    savedPe280.size());
         renderInternalBand(mem, state, scanY0, scanY1);   // sets useFrame80_
         for (size_t r = 0; r < nRows; ++r) {
             uint32_t* fbRow = frame80.data()        + (scanY0 + r) * rowLen;
@@ -138,13 +128,6 @@ void Apple2Display::renderInternalSegment(Memory& mem, const Memory::DisplayStat
                 std::memcpy(peRow + px1, sPe + px1,
                             static_cast<size_t>(kWidth80 - px1));
             }
-            uint8_t* pe280 = persistenceL.data() + (scanY0 + r) * peLen;
-            const uint8_t* s280 = savedPe280.data() + r * peLen;
-            if (col0 > 0)
-                std::memcpy(pe280, s280, static_cast<size_t>(col0) * 7);
-            if (col1 < 40)
-                std::memcpy(pe280 + col1 * 7, s280 + col1 * 7,
-                            static_cast<size_t>(40 - col1) * 7);
         }
         return;
     }

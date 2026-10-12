@@ -756,8 +756,8 @@ per byte → 560-dot stream. Three color paths, matching MAME
   nibble rotl 1 → `kChatMauveLoResPalette`), BW560, the per-dot **mixed**
   mux, the Video-7's 160 chunky, or hands the Eve's COL280A/B / CP280 /
   blank to their own painters.
-- **`Mono*`** — luminance × tint; persistence sized for 280-wide
-  HGR.
+- **`Mono*`** — native 560-dot luminance × tint; HGR, GR, DHGR and
+  DLGR share the 560-wide phosphor history. HGR retains the half-dot delay.
 
 Mixed = DHGR top 160 + 80-col text bottom 4 rows.
 

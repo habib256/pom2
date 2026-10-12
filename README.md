@@ -470,6 +470,11 @@ settings-writing — so a game keeps playing across it and nothing is lost.
 From inside kiosk, the in-game menu also offers **EXIT KIOSK (WINDOWED)** for
 anyone who doesn't know the shortcut.
 
+**Alt+Enter** (including keypad Enter) enters full screen with the host
+pointer captured. The next press returns to the windowed GUI with the
+pointer released. This also works without a Mouse Card.
+F10 or Ctrl+Alt+F also toggles between full screen and the windowed GUI.
+
 `POM2 --kiosk <disk-image>` turns POM2 into a distraction-free appliance — think arcade cabinet, museum exhibit, or a dedicated retro corner. It:
 
 - Opens **exclusive full-screen** on the primary monitor at its native video mode (falls back to a plain window if there's no monitor to grab).

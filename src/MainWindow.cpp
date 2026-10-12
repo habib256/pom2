@@ -1280,14 +1280,14 @@ void MainWindow::render()
 
     pollJoystickAndPushToMemory();
 
-    // A pointer capture only makes sense while a Mouse Card is on the bus.
+    // Windowed pointer capture needs a Mouse Card on the bus.
     // Every path that can take one away — Slot Configuration, a profile
     // switch, a snapshot restore — unplugs both mouse cards, so
     // releasing here covers all of them at one point instead of chasing
     // each call site. Kiosk deliberately keeps the grab (it is the mode
     // most likely to want it), which is why this sits above the kiosk
     // early-out below.
-    if (mouseGrabbed_ && !mouseCoordinator_->capture().plugged()) setMouseGrab(false);
+    if (mouseGrabbed_ && !kiosk_ && !mouseCoordinator_->capture().plugged()) setMouseGrab(false);
 
     // Decide CPU turbo from disk activity every frame, independent of whether
     // any disk panel window is open (the disk panel defaults to hidden).

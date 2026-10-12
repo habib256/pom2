@@ -10,6 +10,39 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-12 — Preserve monochrome orange / blue dot patterns
+
+Single HGR and GR now render monochrome at the full 560-dot signal
+resolution. Averaging pairs into 280 pixels made shifted HGR orange/blue
+and some GR patterns (including orange) appear as uniform half-intensity
+fills instead of light/dark stripes. The native-dot path retains the HGR
+half-dot delay, GR nibble phase and green/amber phosphor decay. Mixed text
+and beam-raced segments compose in the same 560-wide buffer. Colour and
+full-screen text hashes are unchanged; only the 30 affected monochrome
+HGR/GR goldens change. `hgr_render_smoke` now checks both HGR colour pairs
+and all 16 GR patterns in all three phosphor modes; it fails on the old
+280-wide renderer.
+
+## 2026-10-12 — SmartPort FORMAT / INIT argument validation
+
+The SmartPort HLE dispatcher now rejects FORMAT and INIT parameter counts
+other than one with carry set and A=$04. INIT also rejects nonzero unit
+numbers with A=$28: it resets the controller, not an individual device.
+Both previously returned success for malformed calls. The Apple IIgs
+Firmware Reference specifies these lists on pp. 7-14 and 7-17; the existing
+FORMAT test itself incorrectly supplied three parameters. Extended
+`liron_smartport_dispatch` drives valid and invalid lists through the 6502
+entry with synthetic and Liron-based ROM identity. The regressions failed
+before each fix (FORMAT count zero and INIT unit one returned C=0, A=$00).
+
+## 2026-10-12 — Alt+Enter full-screen pointer capture
+
+Alt+Enter toggles between full screen with the host pointer captured and
+the windowed GUI with the pointer released. Key repeats
+do not toggle it and Return does not reach the guest or confirm a kiosk
+menu item. Full-screen capture works without a Mouse Card; leaving full
+screen still releases the pointer. F10 / Ctrl+Alt+F keep the windowed toggle.
+
 ## 2026-10-07 — Deterministic audio mixer CI test
 
 `audio_mixer_smoke` drove `mixSources` directly while `AudioDevice` also

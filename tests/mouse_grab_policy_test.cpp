@@ -46,6 +46,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <initializer_list>
 
 namespace mg = pom2::mousegrab;
 
@@ -255,11 +256,25 @@ void testGlfwTokenMirrors()
     static_assert(mg::kButtonMiddle == 2);
 }
 
+void testFullscreenChord()
+{
+    for (int key : {mg::kKeyEnter, mg::kKeyKpEnter}) {
+        assert(mg::isFullscreenChord(key, mg::kModAlt));
+        assert(mg::isFullscreenChord(key, mg::kModAlt | 0x0001));
+        assert(!mg::isFullscreenChord(key, 0));
+        assert(!mg::isFullscreenChord(key, mg::kModControl));
+        assert(!mg::isFullscreenChord(key, mg::kModAlt | mg::kModControl));
+        assert(!mg::isFullscreenChord(key, mg::kModAlt | mg::kModSuper));
+    }
+    assert(!mg::isFullscreenChord(mg::kKeyG, mg::kModAlt));
+}
+
 } // namespace
 
 int main()
 {
     testToggleChord();
+    testFullscreenChord();
     testToggleButton();
     testToggleGrab();
     testLeftClickNeverCaptures();
