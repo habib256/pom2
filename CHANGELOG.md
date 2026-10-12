@@ -10,6 +10,25 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-12 — Resolve keyboard, drive-sound and nightly issues
+
+Corrected the second horizontal-arrow legend in the keyboard image (#13),
+keeping its dimensions and measured clickable rectangles. The source photo
+still has undocumented provenance; the legend correction does not change it.
+
+Audio Mixer now validates a user-supplied Virtual II sound folder and lists
+missing or unreadable required recordings (#14). It remembers the absolute
+path and activates the bank on the next launch, avoiding a reload race with
+the CPU and audio threads. AIFF/WAV alternatives remain supported; pending
+imports survive exit-time mixer persistence. Recordings remain local and are
+excluded from packages. Synthetic tests cover import diagnostics and bank
+selection across persistence/restart.
+
+The last failure reported in #12 was the audio mixer's nondeterministic host
+callback assertion, fixed by 5bb1ffa. The last five scheduled runs are green;
+both sanitizer legs passed on 2026-10-12. Future nightly alerts now include
+the failed job/step and available test names or sanitizer report excerpts.
+
 ## 2026-10-12 — Preserve monochrome orange / blue dot patterns
 
 Single HGR and GR now render monochrome at the full 560-dot signal

@@ -595,23 +595,45 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      actions: read
     steps:
       - name: Open or update the nightly issue
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           title="Nightly sanitizers are red"
-          body="The ASan/UBSan or TSan leg failed on ${COMMIT}: ${RUN_URL}"
+          body_file=$(mktemp)
+          log_file=$(mktemp)
+          trap 'rm -f "$body_file" "$log_file"' EXIT
+          printf 'The ASan/UBSan or TSan leg failed on %s: %s\n\n' "$COMMIT" "$RUN_URL" > "$body_file"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "failure") | "- " + .name + ": " + ([.steps[] | select(.conclusion == "failure") | .name] | join(", "))' \
+            >> "$body_file" || printf 'Job details unavailable; see the run above.\n' >> "$body_file"
+          if gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed > "$log_file"; then
+            python3 - "$log_file" "$body_file" <<'PY'
+          import re, sys
+          lines = []
+          for raw in open(sys.argv[1]):
+              line = raw.rstrip().split("\t")[-1]
+              if re.search(r'ERROR: AddressSanitizer|SUMMARY:|WARNING: ThreadSanitizer|runtime error:|Assertion .*failed|\d+ - .*\((Failed|Timeout|Subprocess aborted)\)', line):
+                  if line not in lines:
+                      lines.append(line)
+          if lines:
+              with open(sys.argv[2], "a") as out:
+                  out.write("\nFailure excerpts:\n\n```text\n" + "\n".join(lines[:12]) + "\n```\n")
+          PY
+          fi
           num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
                   --search "\"$title\" in:title" --json number,title \
                   --jq "map(select(.title == \"$title\")) | .[0].number // empty")
           if [ -n "$num" ]; then
-            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "$body"
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
           else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body_file"
           fi
 
   wasm:

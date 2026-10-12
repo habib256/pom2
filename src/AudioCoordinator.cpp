@@ -420,6 +420,7 @@ void AudioCoordinator::restore(Settings& settings,
                          ? FloppySoundDevice::Bank::VirtualII
                          : FloppySoundDevice::Bank::Mame);
     printer.setSampled(vii && printer.sampleReady());
+    settings.setBool("mechanical_sound_import_pending", false);
 }
 
 void AudioCoordinator::persist(Settings& settings,
@@ -454,7 +455,8 @@ void AudioCoordinator::persist(Settings& settings,
     // the folder (a USB copy, a fresh checkout) forget the setting for
     // every later one that has it.
     const bool viiNow = floppy525.bank() == FloppySoundDevice::Bank::VirtualII;
-    if (viiNow || floppy525.virtualIIReady())
+    if (!settings.getBool("mechanical_sound_import_pending", false) &&
+        (viiNow || floppy525.virtualIIReady()))
         settings.setString("mechanical_sound_bank", viiNow ? "virtual2" : "mame");
 
     // Capture under the machine lock, then release it before crossing into
