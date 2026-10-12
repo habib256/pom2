@@ -34,6 +34,15 @@
 namespace pom2 {
 namespace {
 
+SlotProvisioningCoordinator::Result existingBootTarget(int slot, SystemProfile profile)
+{
+    SlotProvisioningCoordinator::Result result;
+    if (slot == 3 && profileConfig(profile).iieMode) {
+        result.error = "slot 3 storage firmware is masked at reset on this profile; move the controller to another slot";
+    } else result.slot = slot;
+    return result;
+}
+
 int findFreeSlot(const SlotBus& bus, int preferred, bool iieClass)
 {
     if (preferred >= 1 && preferred < SlotBus::kSlotCount &&
@@ -80,8 +89,8 @@ SlotProvisioningCoordinator::ensureHdvBootTarget(
         profile == SystemProfile::AppleIIcPlus ||
         profile == SystemProfile::AppleIIcPAL;
     if (smartPortOnly) {
-        if (cards.primarySmartPort) {
-            result.slot = cards.primarySmartPort->getSlot();
+        if (dynamic_cast<SmartPortCard*>(bus.peripheral(5))) {
+            result.slot = 5;
             return result;
         }
         result.error = "this profile has no bootable SmartPort target";
@@ -89,22 +98,18 @@ SlotProvisioningCoordinator::ensureHdvBootTarget(
     }
 
     if (cards.primaryCffa) {
-        result.slot = cards.primaryCffa->getSlot();
-        return result;
+        return existingBootTarget(cards.primaryCffa->getSlot(), profile);
     }
     if (cards.primaryHdv) {
-        result.slot = cards.primaryHdv->getSlot();
-        return result;
+        return existingBootTarget(cards.primaryHdv->getSlot(), profile);
     }
     if (cards.primarySmartPort) {
-        result.slot = cards.primarySmartPort->getSlot();
-        return result;
+        return existingBootTarget(cards.primarySmartPort->getSlot(), profile);
     }
     // A Liron's chain carries hard disks too (2026-09-11): the card the user
     // plugged is the target, not a second one conjured beside it.
     if (const int liron = StorageCoordinator::lironSlot(bus); liron >= 0) {
-        result.slot = liron;
-        return result;
+        return existingBootTarget(liron, profile);
     }
 
     const int slot = findFreeSlot(bus, 7, profileConfig(profile).iieMode);
@@ -144,14 +149,16 @@ SlotProvisioningCoordinator::ensureSmartPortBootTarget(
     auto state = controller.lockState();
     auto& bus = state.memory().slotBus();
     const auto cards = storage_.topology(bus);
-    if (cards.primarySmartPort) {
-        result.slot = cards.primarySmartPort->getSlot();
-        return result;
-    }
     if (profileConfig(profile).noPhysicalSlots) {
+        if (dynamic_cast<SmartPortCard*>(bus.peripheral(5))) {
+            result.slot = 5;
+            return result;
+        }
         result.error = "this profile has no physical slot for SmartPort";
         return result;
     }
+    if (cards.primarySmartPort)
+        return existingBootTarget(cards.primarySmartPort->getSlot(), profile);
 
     const int slot = findFreeSlot(bus, 5, profileConfig(profile).iieMode);
     if (slot < 0) {

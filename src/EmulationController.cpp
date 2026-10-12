@@ -1020,19 +1020,12 @@ bool EmulationController::bootFromSlot(int slot)
     if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
-    // Card-has-boot-entry sanity check. Apple II Ref Manual Appx C
-    // describes 4 signature bytes ($Cn01=$20, $Cn03=$00, $Cn05=$03,
-    // $Cn07=$3C); the F8 Autostart Monitor (Apple part 341-0020-00)
-    // checks ALL four and only auto-scans Disk II / SmartPort
-    // ($Cn07=$3C). HDV uses $Cn07=$01 (ProDOS non-removable) and
-    // SmartPort uses $Cn07=$3C; both carry the JSR-dispatch trio at
-    // $Cn01/03/05. The user-initiated "Boot" GUI button bypasses the
-    // F8 scan deliberately — it's the WHOLE POINT of bootFromSlot
-    // (the F8 firmware refuses to scan HDV cards, so the user clicking
-    // "Boot HDV" needs this shortcut). We therefore validate only the
-    // JSR trio, NOT the $Cn07=$3C marker. Theme 8 audit (gap B-2-2)
-    // originally required $Cn07=$3C too, but that broke HDV boot —
-    // see DEV.md § Storage § DiskIICard for the bootFromSlot rationale.
+    // Explicit boot validates the dispatch trio at $Cn01/03/05, allowing
+    // the user to select a card independently of the ROM's slot scan.
+    // II+/unenhanced IIe autostart also requires $Cn07=$3C; Enhanced IIe
+    // checks only the trio and can auto-boot HDV ($Cn07=$01). Both scan
+    // from slot 7 down to slot 1; display order does not set boot priority.
+    // Requiring $Cn07=$3C here would incorrectly reject explicit HDV boot.
     const uint16_t cnxx = static_cast<uint16_t>(0xC000 + slot * 0x100);
     const uint8_t b1 = mem.memRead(static_cast<uint16_t>(cnxx + 1));
     const uint8_t b3 = mem.memRead(static_cast<uint16_t>(cnxx + 3));

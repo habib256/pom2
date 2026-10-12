@@ -870,9 +870,17 @@ void MainWindow::pushAppleKeys()
     controller->memory().setSolidAppleKey(appleKeys_.solidApple());
 }
 
-void MainWindow::onFileDrop(int count, const char** paths)
+void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
 {
     if (count <= 0 || !paths) return;
+    if (atPointer && window) {
+        double x = 0, y = 0;
+        glfwGetCursorPos(window, &x, &y);
+        driveRackDropPosition_ = ImVec2(static_cast<float>(x), static_cast<float>(y));
+        driveRackPendingDrop_.clear();
+        for (int i = 0; i < count; ++i) if (paths[i]) driveRackPendingDrop_.emplace_back(paths[i]);
+        return; // Resolve against this frame's visible drive images, after rendering.
+    }
     // Boot the first image whose extension/size we recognise; skip the
     // rest (a single Apple II has one boot path). insertAndBootImage takes
     // the state lock itself and must run on the UI thread — the GLFW drop

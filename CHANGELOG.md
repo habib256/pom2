@@ -10,6 +10,102 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-13 — Default desktop matches the release reference
+
+Fresh native sessions now open the Monitor II-framed screen above the machine
+keyboard on the left, with Drives selected alongside Disk Library and Slot
+Configuration in a single right-hand tab group. ImageWriter stays available
+on demand. Saved layouts are preserved, and first-time browser sessions retain
+their compact screen-only interface. README records the supplied //c PAL
+reference without making its mounted Ultima V disks the startup media.
+
+## 2026-10-13 — Stable ROM installation, Liron HD routing and keyboard height
+
+Profile switching installs the exact ROM bytes staged before the outgoing
+media flush. Reopening the path after validation allowed a removed or changed
+file to leave the old firmware under the new profile; a regression removes
+the file during the switch and verifies the validated //c+ firmware remains.
+The general HD mount route now accepts the Liron selected by provisioning,
+while retaining dedicated block-card and SmartPort precedence.
+
+The replacement //c keyboard image has a 2:1 pixel ratio. Its presentation
+now uses the //e's 2578:908 ratio regardless of source resolution, avoiding
+an overly tall keyboard. Hotspots follow the replacement's bottom row and
+horizontal Return; keyboard regression checks rendered ratio and key clicks.
+
+## 2026-10-13 — Validate boot targets against machine profiles
+
+A saved storage controller in IIe slot 3 was still returned as an explicit
+boot target, although reset selects the motherboard's 80-column ROM there.
+Provisioning and mounted-image boot now reject it before resetting; Slot
+Configuration reports the failure. The slot remains available on II/II+.
+Slotless profiles select their built-in SmartPort connector at S5.
+
+Profile changes now validate the candidate main ROM before teardown. A
+missing or unreadable ROM previously left the outgoing firmware installed
+while changing the CPU, cards and profile identity; refusal now preserves
+the current machine. Regression tests reproduce both failures, switch through
+all nine profiles, and execute a shared saved storage plan with real ROMs to
+check the different automatic boot results.
+
+## 2026-10-13 — Boot the mounted controller and respect native ROM priority
+
+Disk II panel boot now resets and selects its own slot instead of merely
+changing PC or launching a general reset that could boot a higher-slot HD.
+The 3.5-inch library boots the slot returned by its mount operation, including
+Liron, rather than guessing SmartPort or resetting generally. Image boot
+commands retain the mounted bay and reject firmware selections that would
+boot another drive/unit. On //c+, explicit external SmartPort boot refuses
+while Sony disks would win the required reset scan; status messages report
+that refusal instead of claiming the requested image booted.
+
+`boot_configuration` executes the real ROMs for all nine profiles. It pins
+older versus Enhanced IIe signature checks, //c S6D1 → SmartPort (without
+S6D2), //c+ Sony → external SmartPort → first 5.25-inch fallback, explicit
+slot/Liron selection, and refusal without resetting RAM or PC.
+
+## 2026-10-13 — Automatic //c keyboard skin
+
+Added the supplied keyboard photo as `pic/Keyboard_AppleIIc.png`, displayed at
+the //e skin's 2578:908 ratio. The keyboard selects this photo and
+its own measured hotspots for //c, //c PAL and //c+ profiles, and reloads
+the texture when switching between machine families. Option maps to the
+Solid-Apple latch; a separate Reset button remains available because the
+photo excludes that key. Both skins ship in native and browser packages.
+
+## 2026-10-12 — Browse the whole disk when inserting an image
+
+The drive picture's file browser now offers Home, filesystem root and mounted
+volume shortcuts, an editable folder address with Enter/Go navigation, and an
+option to reveal hidden folders and image files. Changing folders clears the
+previous file selection, avoiding accidental insertion from the old folder.
+Windows lists accessible drive letters; macOS opens /Volumes.
+
+## 2026-10-12 — Display drives in descending slot order
+
+The Drives window lists slot cards from slot 7 down to slot 1, then each
+card's drives or SmartPort units in numerical order. This replaces grouping
+by drive type, which could place a lower-priority Disk II above a HDV card.
+The //c+ retains its internal and connected external Sony mechanisms first.
+Comments and developer documentation now distinguish Enhanced IIe autostart,
+which accepts HDV signatures, from the older four-byte signature scan.
+This display groups each controller's drives; it is not a per-drive boot
+sequence. The SmartPort-capable //c tries S6D1 then SmartPort S5, without
+automatically booting S6D2. A real-ROM regression leaves S6D1 empty and a
+bootable disk in S6D2, and verifies that the SmartPort fallback boots instead.
+
+## 2026-10-12 — Insert disks directly through drive artwork
+
+Empty drive pictures open a file browser and accept images dropped from the
+host desktop or Disk Library. Mounts address the selected slot and bay without
+resetting the machine; occupied or reconfigured mechanisms and incompatible
+images are rejected without routing to another drive. OS drop hit testing uses
+the current frame and visible image bounds, avoiding stale targets on hidden
+tabs or scrolled rows. The picker retains mounting errors so the user can retry.
+Headless ImGui frames reproduce the previously inert click and cover textured
+pictures and real drag payload delivery; controller tests cover non-primary
+Disk II drive 2, SmartPort 3.5/HDV, HDV drive 2 and occupied/stale targets.
+
 ## 2026-10-12 — Curated disks and 3.5-inch artwork
 
 All package manifests include A2FC XL v0.9.6 (the compatible 6502 edition),

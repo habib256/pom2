@@ -39,6 +39,7 @@
 #include "PanelRegistry.h"  // pom2::PanelRegistry member (the panel table)
 #include "SlotConnectors.h" // pom2::ConnectorSection member (Slot Config)
 #include "RetroArtwork.h"
+#include "DriveRackFilePicker.h"
 
 #include "imgui.h"  // ImU32 / ImVec2 used in struct MemRegion + member types
 
@@ -207,11 +208,11 @@ public:
     void toggleMouseGrab();
     bool mouseGrabbed() const { return mouseGrabbed_; }
 
-    /// GLFW file-drop callback (installed by main.cpp). Routes the first
-    /// recognised disk image among `paths` through `insertAndBootImage`
-    /// (auto-routes Disk II / SmartPort 3.5" / ProDOS HDV). Unrecognised
-    /// or extra files are ignored; a status-bar message reports the result.
-    void onFileDrop(int count, const char** paths);
+    /// Window drops are queued until visible drive targets have been drawn.
+    /// A drop on a drive mounts there without rebooting; other drops and
+    /// Finder opens auto-route and boot the first recognised disk image.
+    void onFileDrop(int count, const char** paths, bool atPointer = false);
+    void processDriveRackFileDrop();
 
     // HDV helper — cold-boot through the slot-5 ProDOS block-device ROM.
     // Public so main() can drive it from `POM2_AUTO_BOOT_HDV` for headless
@@ -555,8 +556,14 @@ private:
     // framebuffer — the colour demod still runs, only the CRT glass is
     // bypassed. Persisted under `crt_effects_enabled`.
     bool         crtEffectsEnabled = true;
-    bool         monitorArtworkEnabled = false;
+    bool         monitorArtworkEnabled = true;
     pom2::RetroArtwork retroArtwork_;
+    pom2::DriveRackFilePicker driveRackFilePicker_;
+    std::vector<pom2::DriveRackHit> driveRackHits_;
+    int driveRackHitFrame_ = -1;
+    pom2::SystemProfile driveRackPickerProfile_{};
+    std::vector<std::string> driveRackPendingDrop_;
+    ImVec2 driveRackDropPosition_{};
 
     // Presentation aspect (Phase 6). The Apple II's 280×192 active area was
     // shown on a 4:3 CRT → its pixels are NOT square. Square = 1:1 logical
@@ -589,6 +596,7 @@ private:
     /// `ui_dock_seeded`). Without it, every launch would rebuild the default
     /// layout and throw away whatever the user had docked.
     bool       dockSeeded_         = false;
+    bool       focusDefaultDrives_ = false;
     // ── Disk Library favourites / recents ────────────────────────────────
     // Host-owned because the panel has no Settings access. Persisted as
     // newline-free, '\n'-unsafe paths joined by '\x1f' (unit separator) under
@@ -680,10 +688,8 @@ private:
     // caps-lock happens to be on. Acceptable: the badge exists to explain
     // unexpected uppercase, which requires typing in the first place.
     bool hostCapsLock_ = false;
-    // Default UI layout: Apple II Screen on the left, HDV top-right,
-    // Disk II bottom-right. Every other panel (Emulation controls,
-    // Cassette deck, Memory viewers, Joystick, Le Chat Mauve) starts
-    // hidden — toggle from the Debug / Hardware menus.
+    // Default desktop: screen above the machine keyboard on the left;
+    // Drives, Disk Library and Slot Configuration tabbed on the right.
     // Per-frame 64 KB main-RAM (+ aux) snapshots handed to the HGR Paint
     // editor as its canvas/shadow read source (see renderHgrPaintWindow).
     std::vector<uint8_t> hgrPaintMem_;
@@ -702,9 +708,7 @@ private:
     // counter + clock-readout bit counter so the user can verify ProDOS
     // walked the magic key successfully.
     // Printer panel — view spool buffer, save as .txt, clear.
-    // ImageWriter II paper-tray window (rendered printout). Visible by
-    // default: it is one of the three tabs the default dock layout seeds to
-    // the right of the screen (see `applyDockLayout`, DockLayout::Reset).
+    // ImageWriter II paper-tray window (rendered printout), opened on demand.
     // The feed cursor and the identity of the card it counts against now
     // live inside PrinterCoordinator — they are one invariant with the drain
     // that advances them, and keeping them here meant every source branch
@@ -931,16 +935,17 @@ private:
     int      aboutImageH_   = 0;
     bool     aboutImageTried_ = false;
 
-    // Clickable Apple //e keyboard (pic/Keyboard_AppleIIe.jpeg + the measured
-    // hotspot table). Same lazy-load-once contract as the About photo, and
+    // Clickable keyboard with the machine's photo and measured hotspot table.
+    // Lazy-loaded per skin, like the About photo, and
     // the texture is freed in the same place. Persisted as `show_keyboard`;
-    // Devices → Apple //e Keyboard.
+    // Devices → Apple Keyboard.
     std::unique_ptr<pom2::Keyboard_ImGui> keyboardPanel;
     unsigned     kbImageTex_   = 0;
     int          kbImageW_     = 0;
     int          kbImageH_     = 0;
     bool         kbImageTried_ = false;
     std::string  kbImageError_;
+    std::string  kbImageResource_;
     /// Was the keyboard window open last frame? The close-time latch release
     /// is edge-triggered on this: `keyboardPanel` is never destroyed once
     /// built, so a "release on close" that ran every frame the window is shut
@@ -1388,6 +1393,7 @@ private:
     void renderDiskLibraryWindow();
     void renderDisk35PanelWindow();
     void renderDriveRackWindow();
+    bool insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path);
     void renderDisk35FileDialog();
     void renderHdvPanelWindow();
     void renderHdvFileDialog();
@@ -1459,7 +1465,7 @@ private:
     /// $C061/$C062. Every writer of either source calls this instead of
     /// touching `Memory::setOpenAppleKey` / `setSolidAppleKey` directly.
     void pushAppleKeys();
-    /// Lazy-load `pic/Keyboard_AppleIIe.jpeg` into `kbImageTex_`. Same
+    /// Lazy-load the active machine's keyboard photo into `kbImageTex_`. Same
     /// once-only contract as `ensureAboutImageLoaded`.
     void ensureKeyboardImageLoaded();
     /// Abstraction Levels window: builds the live snapshot from the slot map

@@ -173,28 +173,52 @@ bool Memory::loadRomBytes(const uint8_t* src, size_t length, uint16_t addr)
 
 int Memory::loadAppleIIRom(const char* filename, bool pickLower16KFor32K)
 {
+    AppleIIRomImage image;
+    if (!prepareAppleIIRom(filename, image, lastError)) {
+        pom2::log().warn("ROM", lastError);
+        return 0;
+    }
+    return loadAppleIIRom(image, pickLower16KFor32K);
+}
+
+bool Memory::prepareAppleIIRom(const char* filename, AppleIIRomImage& image, std::string& error)
+{
+    image = {};
+    error.clear();
+    std::ifstream f(filename, std::ios::binary | std::ios::ate);
+    if (!f) { error = std::string("Cannot open ROM: ") + filename; return false; }
+    const auto length = f.tellg();
+    if (length < 0x800 || length > 0x10000) {
+        error = "Unexpected ROM size: " + std::to_string(static_cast<long long>(length));
+        return false;
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(length));
+    f.seekg(0, std::ios::beg);
+    if (!f.read(reinterpret_cast<char*>(bytes.data()), length)) {
+        error = "Short read"; return false;
+    }
+    image.path = filename;
+    image.bytes = std::move(bytes);
+    return true;
+}
+
+int Memory::loadAppleIIRom(const AppleIIRomImage& image, bool pickLower16KFor32K)
+{
     // Cards that map over the motherboard ROM step aside for the reload and
     // come back over the NEW one (see SlotPeripheral::beforeMainRomReload).
     for (int s = 0; s < SlotBus::kSlotCount; ++s)
         if (SlotPeripheral* p = slots.peripheral(s)) p->beforeMainRomReload();
-    const int loaded = loadAppleIIRomImpl(filename, pickLower16KFor32K);
+    const int loaded = loadAppleIIRomImpl(image, pickLower16KFor32K);
     for (int s = 0; s < SlotBus::kSlotCount; ++s)
         if (SlotPeripheral* p = slots.peripheral(s)) p->afterMainRomReload();
     return loaded;
 }
 
-int Memory::loadAppleIIRomImpl(const char* filename, bool pickLower16KFor32K)
+int Memory::loadAppleIIRomImpl(const AppleIIRomImage& image, bool pickLower16KFor32K)
 {
-    std::ifstream f(filename, std::ios::binary);
-    if (!f) {
-        lastError = std::string("Cannot open ROM: ") + filename;
-        pom2::log().warn("ROM", lastError);
-        return 0;
-    }
-    f.seekg(0, std::ios::end);
-    auto size = static_cast<size_t>(f.tellg());
-    f.seekg(0, std::ios::beg);
-
+    const auto& buf = image.bytes;
+    const auto size = buf.size();
+    const char* filename = image.path.c_str();
     // Common image sizes:
     //   12 KB ($D000-$FFFF) = Apple II+ Autostart + Applesoft
     //   16 KB ($C000-$FFFF) = Apple //e — split into the internal I/O ROM
@@ -239,13 +263,6 @@ int Memory::loadAppleIIRomImpl(const char* filename, bool pickLower16KFor32K)
     } else {
         lastError = "Unexpected ROM size: " + std::to_string(size);
         pom2::log().warn("ROM", lastError);
-        return 0;
-    }
-
-    std::vector<uint8_t> buf(size);
-    f.read(reinterpret_cast<char*>(buf.data()), size);
-    if (!f) {
-        lastError = "Short read";
         return 0;
     }
 

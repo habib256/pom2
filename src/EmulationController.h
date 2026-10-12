@@ -252,16 +252,19 @@ public:
     //
     //   bootFromSlot() → Synthetic shortcut: coldBoot + force PC=$Cn00
     //                    after validating the slot has the autostart
-    //                    signature ($Cn01=$20, $Cn03=$00, $Cn05=$03,
-    //                    $Cn07=$3C — Apple II Ref Manual Appx C). On
+    //                    dispatch trio ($Cn01=$20, $Cn03=$00, $Cn05=$03).
+    //                    The //c+ external SmartPort uses the reset scan.
+    //                    This selects a slot, not a particular medium. On
     //                    signature mismatch, falls back to coldBoot
     //                    so the F8 autostart firmware can scan slots
     //                    naturally (Theme 8).
     void hardReset();
     void softReset();
     void coldBoot();
-    /// Returns true when the machine really was launched into that slot's
-    /// ROM. False means the card carried no Apple-II JSR-dispatch signature,
+    /// Returns true when launched into the slot ROM, or through the //c+
+    /// reset scan required to initialise its external SmartPort. That scan
+    /// retains native boot priority. Use bootMountedMedia for a named image.
+    /// False means the card carried no Apple-II JSR-dispatch signature,
     /// so this degraded to a plain cold boot: the emulator is running, but
     /// off the F8 ROM's own slot scan, not off this card. Callers that
     /// report "booted <image>" to the user MUST honour it — the drop / CLI /

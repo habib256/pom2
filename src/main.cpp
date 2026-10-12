@@ -210,7 +210,7 @@ static void glfw_drop_callback(GLFWwindow* w, int count, const char** paths)
     // the dropped image(s) through MainWindow, which classifies each one
     // (Disk II / SmartPort 3.5" / ProDOS HDV) and boots it.
     if (auto* mw = static_cast<MainWindow*>(glfwGetWindowUserPointer(w))) {
-        mw->onFileDrop(count, paths);
+        mw->onFileDrop(count, paths, true);
     }
 }
 
@@ -1172,6 +1172,7 @@ int main(int argc, char* argv[])
         ImGui::NewFrame();
 
         c.mainWindow->render();
+        c.mainWindow->processDriveRackFileDrop();
 
         ImGui::Render();
         int dw, dh;

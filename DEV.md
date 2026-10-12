@@ -615,6 +615,41 @@ CPU side: `M6502::hardReset()` doesn't wipe stack `$0100-$01FF`
 (MAME `reset_w` doesn't touch RAM); `M6502::softReset()` decrements
 SP by 3 (faked-BRK reset semantic).
 
+Boot priority is executed by the system ROM, not derived from the drive rack.
+`boot_configuration` runs all nine profiles with real ROMs and distinct boot
+sector markers. Original II has no autostart; II+ and unenhanced IIe scan
+7 down to 1 with the four-byte signature (including `$Cn07=$3C`); Enhanced
+IIe accepts the three-byte dispatch signature and therefore HDV cards too.
+The supplied SmartPort-capable //c ROM tries S6D1 then S5, not S6D2. The
+//c+ tries Sony mechanisms in physical order, external SmartPort, then the
+first 5.25-inch drive. PAL uses the same priorities as its NTSC counterpart.
+These expectations describe the supplied ROMs, not every replacement ROM.
+
+Use `pom2::bootMountedMedia(controller, slot, bay, error)` for commands that
+promise to boot a particular image. The slot must come from the mount result
+(including Liron), and the bay must come from the actual mounted location.
+Slot boot entries select drive/unit 1; requests for another bay are refused.
+Sony locations use slot -1 and their physical bay. The //c+ native SmartPort
+entry requires reset-time RAM setup, so slot 5 uses a normal reset scan;
+the helper refuses while Sony media would take priority. Refusals for bay
+or priority preserve RAM, PC and run mode. `bootFromSlot` remains the lower
+level slot-selection API; its failed signature check falls back to normal
+autostart and returns false. Neither API guarantees the image contains a
+valid boot loader.
+
+Existing storage cards need the same reset visibility checks as automatic
+provisioning: on every IIe profile, S3's motherboard ROM masks the card's
+entry after reset. `SlotProvisioningCoordinator` rejects that target, as
+does `bootMountedMedia` before changing RAM or PC. Slot Configuration's Boot
+buttons use the latter and report failures. On slotless profiles, provisioning
+selects the built-in S5 connector rather than an arbitrary host SmartPort card.
+The real-ROM boot regression also resolves one saved storage plan through
+`SlotConfigurationCoordinator`, the production factory and settings restore
+on all nine profiles; the same disks boot differently according to the ROM.
+The general HD mount route retains the same CFFA → HDV → SmartPort → Liron
+preference as provisioning; a Liron-only configuration can mount and boot an
+HD through its real firmware without adding another controller.
+
 ### Test/debug write helpers
 
 `Memory::dataMutable()` is gone — the raw pointer let a stray poke
@@ -3312,10 +3347,11 @@ Q7L/Q7H.
 
 **Boot signature** (Apple II Ref Manual Appx C): `$Cn00` starts with
 `$20 ?? $00 $03` at offsets 1/3/5 (JSR dispatch trio). `$Cn07`
-distinguishes Disk II / SmartPort (`$3C`, scanned by F8 Autostart
-`341-0020-00`) from ProDOS block devices (`$01` for non-removable
-HDV). F8 ONLY auto-scans `$Cn07=$3C`; HDV needs `PR#N` /
-`bootFromSlot`.
+identifies Disk II (`$3C`), SmartPort (`$00`), or the HDV card's
+non-removable ProDOS block interface (`$01`). II+/unenhanced IIe
+autostart requires `$Cn07=$3C`; Enhanced IIe checks only the first
+three signature bytes and can auto-boot HDV. The scan runs from slot
+7 down to slot 1, independently of the Drive Rack's display order.
 
 `bootFromSlot()` validates the JSR trio so clicking "Boot" on a
 non-bootable card warns + falls back to `coldBoot`. `$Cn07=$3C` is
@@ -3637,9 +3673,10 @@ carry clear *and* the accumulator zero (WRITE and STATUS load `#$00` too).
 History: CHANGELOG 2026-09-09 (bug hunt #14).
 
 `deviceSelectRead/Write` move bytes via host `memcpy` — no GCR, no
-flux. `$Cn07=$01` (plain ProDOS block, not SmartPort `$3C`); JSR
-trio `$Cn01/03/05 = $20/$00/$03`. F8 Autostart won't scan `$01` →
-boot via `PR#n` / `bootFromSlot`.
+flux. `$Cn07=$01` (plain ProDOS block; SmartPort's ID is `$00`); JSR
+trio `$Cn01/03/05 = $20/$00/$03`. Enhanced IIe autostart accepts
+this signature; II+/unenhanced IIe requires explicit `PR#n` /
+`bootFromSlot` for this card.
 
 **Trade-off**: mounts `.hdv`/`.2mg` directly (MAME accepts only
 CHD/raw), no card-ROM dump needed; cannot execute real CFFA/SCSI
@@ -8405,7 +8442,7 @@ and stay wherever the user docks them.
 
 Docking a **hidden** panel still matters: the assignment is written into the
 window's settings, so when the user later opens e.g. the Memory viewer it
-appears as a tab in the bottom-right group instead of floating over the screen.
+appears as a tab in the assigned group instead of floating over the screen.
 That is most of the value of seeding a layout at all.
 
 **Seeding is gated on a persisted flag** (`ui_dock_seeded` in `state.cfg`), not
@@ -8427,24 +8464,24 @@ rect lands on the node's tab bar and `SetWindowPos` fights the node every
 frame: the screen jitters and the tab won't drag out. Hence the
 `if (!ImGui::IsWindowDocked())` guard.
 
-Presets: **Reset** (screen centre; **Disk Library / Slot Configuration /
-ImageWriter II** tabbed top-right; inspector tab group bottom-right),
+Presets: **Reset** (screen above the machine keyboard on the left;
+**Drives / Disk Library / Slot Configuration** tabbed on the right),
 **Emulation** (widest screen, one storage column, no debug
 tools), **Debug** (memory viewer + maps right, horizontal map along the bottom),
 **Audio** (Mockingboard/Phasor/Echo+ right, mixer + tape bottom-right). The
 menu entries are actions with no checkmarks — the moment a tab is dragged, the
 "active" preset stops describing what's on screen.
 
-**Reset is also the fresh-install startup layout**, so its top-right trio is
-what a first launch opens on: all three of `PanelId::DiskLibrary`,
-`PanelId::SlotConfig` and `PanelId::ImageWriter` carry `defaultOpen = true`
-in `PanelCatalog.h` (the per-panel `bool` is bound by `PanelRegistry`; the old
-hand-kept `showDiskLibrary` / `showSlotConfigPanel` / `showImageWriterPanel`
-members are gone) — seeding a dock node for a panel that is hidden would place
-the tab but show nothing. `Disk Library` is docked first, which makes it the
-selected tab. Cassette Deck and Floppy Emu moved down into the inspector
-group: still assigned (so they never float over the screen), just not part of
-the opening set.
+**Reset is also the fresh native startup layout.** `PanelId::Drives`,
+`DiskLibrary`, `SlotConfig` and `Keyboard` carry `defaultOpen = true` in
+`PanelCatalog.h`; ImageWriter and inspectors open on demand as additional
+right-column tabs. The right column takes 34% of the work area and the keyboard
+37% of the left column's height. The keyboard docks by stable `###appleKeyboard`
+identity despite profile-dependent titles. A one-shot focus selects Drives
+after seeding, independent of panel render order. Native sessions enable the
+Monitor II frame by default; saved choices and layouts are preserved. First-time
+browser sessions retain their compact screen-only presentation. The reference
+capture is `pic/POM2-default-desktop.png`.
 
 Known gap: kiosk mode bypasses the dockspace entirely (it returns before
 `renderDockSpace`), which is correct — kiosk is chrome-free by definition.
@@ -8930,6 +8967,14 @@ fallback would repeat the exact mistake the panel exists to expose.
 
 ### Apple //e keyboard panel
 
+`KeyboardSkin` chooses the photo and hotspot table from the machine profile.
+//c, //c PAL and //c+ use `pic/Keyboard_AppleIIc.png`; other profiles use the
+//e photo. The replacement //c photo is 1774×887, but its `displayAspect`
+uses 2578:908 to match the //e's displayed height at equal width. Hotspots
+are fractions of the source image and share the presented rectangle. The
+replacement has horizontal Return, backslash at the end of row 2, and a
+different bottom row; the separate Reset and Option controls remain above.
+
 `Keyboard_ImGui.{h,cpp}` + the generated `AppleIIeKeyboardLayout.{h,cpp}`
 (Devices → Apple //e Keyboard, `show_keyboard`, palette `panel.keyboard`).
 A photo of a real //e keyboard (`pic/Keyboard_AppleIIe.jpeg`, shipped via
@@ -9285,6 +9330,11 @@ contract). The steps keep the numbers the window's comments have always
 used, so a "step N" in this file, in `CLAUDE.md` or in a code comment means
 the same step:
 
+- Read and validate the candidate main ROM through an isolated Memory before stopping
+  or changing the live machine. Missing or unreadable firmware refuses the
+  switch; failed loads must not preserve an outgoing ROM under a new profile.
+  `Memory::AppleIIRomImage` retains the bytes until step 5; installation does
+  not reopen a path that may have changed during the outgoing media flush.
 - Flush the outgoing media (the worker is already stopped); a refused flush
   ends the switch here with nothing changed.
 0. `afterFlush`: stop the host workers (FujiNet links, SSC listeners) and

@@ -8848,6 +8848,44 @@ target_include_directories(test_ay_mame_parity PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME ay_mame_parity COMMAND test_ay_mame_parity)
 set_tests_properties(ay_mame_parity PROPERTIES TIMEOUT 15)
 
+# Real ImGui input frames: clicking an empty drive picture selects that bay.
+add_executable(test_drive_rack_interaction
+    drive_rack_interaction_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DriveRackFilePicker.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/DriveRack_ImGui.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(test_drive_rack_interaction PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+add_test(NAME drive_rack_interaction COMMAND test_drive_rack_interaction)
+set_tests_properties(drive_rack_interaction PROPERTIES TIMEOUT 10)
+
+pom2_add_headless_test(test_drive_rack_mount
+    NAME drive_rack_mount TIMEOUT 20
+    SOURCES drive_rack_mount_test.cpp ${CMAKE_SOURCE_DIR}/src/DriveRackMount.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_boot_configuration
+    NAME boot_configuration TIMEOUT 60
+    SOURCES boot_configuration_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+add_executable(test_keyboard_skin
+    keyboard_skin_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/KeyboardSkin.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleIIeKeyboardLayout.cpp
+    ${CMAKE_SOURCE_DIR}/src/Keyboard_ImGui.cpp
+    ${CMAKE_SOURCE_DIR}/src/Pom2Theme.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(test_keyboard_skin PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+add_test(NAME keyboard_skin COMMAND test_keyboard_skin)
+set_tests_properties(keyboard_skin PROPERTIES TIMEOUT 10)
+
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.
 # Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries

@@ -667,7 +667,7 @@ MainWindow::MainWindow(bool forceIIPlus)
         }
         crtEffectsEnabled = settings->getBool("crt_effects_enabled",
                                               crtEffectsEnabled);
-        monitorArtworkEnabled = settings->getBool("monitor_artwork", false);
+        monitorArtworkEnabled = settings->getBool("monitor_artwork", monitorArtworkEnabled);
         // Own the renderer up-front (ctor is GL-free; initialize() stays lazy)
         // so the settings panel and persistence can bind to its tunables even
         // before the 3D view is first toggled on.
@@ -727,6 +727,7 @@ MainWindow::MainWindow(bool forceIIPlus)
             // the list could only rot in one direction. The registry knows
             // all of them.
             hideAllPanels();
+            monitorArtworkEnabled = false;
             // …except the greeting a browser user with no ROM still needs:
             // the constructor opened it above, and chrome-light is about
             // chrome.
@@ -781,14 +782,10 @@ MainWindow::MainWindow(bool forceIIPlus)
         }
     }
 
-    // Always wake up at the Applesoft prompt. A default HDV / disk may be
-    // mounted (above), but we never auto-boot — the user picks via the
-    // Disk II / HDV panel libraries. Use coldBoot (not just a CPU reset)
-    // so the Apple II Monitor runs its full cold-start sequence: HOME
-    // clears the freshly-zeroed text page so the user briefly sees the
-    // "Apple //e" banner instead of the `@`-tile garbage that the text
-    // page renders when full of $00, then it tries slot 6, fails (no
-    // disk in drive at first launch), and falls through to AppleSoft.
+    // Cold-start the selected ROM with restored media already mounted.
+    // The firmware controls automatic boot: IIe scans slots 7 down to 1,
+    // and Enhanced IIe accepts HDV as well as Disk II. The monitor also
+    // clears the freshly-zeroed text page and prints the machine banner.
     controller->coldBoot();
     controller->setMode(EmulationController::Mode::Running);
     controller->start();
@@ -1112,10 +1109,12 @@ void MainWindow::applyDockLayout(DockLayout preset)
 
     switch (preset) {
         case DockLayout::Reset:
+            focusDefaultDrives_ = true;
             right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
                                                      0.34f, nullptr, &centre);
-            rightLower = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down,
-                                                     0.45f, nullptr, &right);
+            bottom     = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down,
+                                                     0.37f, nullptr, &centre);
+            rightLower = right;
             break;
         case DockLayout::Emulation:
             // No inspectors: one right column, all storage.
@@ -1156,16 +1155,14 @@ void MainWindow::applyDockLayout(DockLayout preset)
 
     switch (preset) {
         case DockLayout::Reset:
-            // The default startup trio, tabbed to the right of the screen:
-            // what you mount (Disk Library), what the machine is made of
-            // (Slot Configuration), what it prints (ImageWriter II). All
-            // three default to visible, so a fresh install opens on exactly
-            // this arrangement. Disk Library is docked first, so it is the
-            // selected tab.
+            // Desktop reference: screen above keyboard on the left;
+            // Drives, Disk Library and Slot Configuration tabbed on the right.
+            dock("Drives", right);
             dock("Disk Library", right);
             dock("Slot Configuration", right);
+            dock(ICON_FA_KEYBOARD " Apple Keyboard###appleKeyboard", bottom);
             dock(ICON_FA_PRINT " ImageWriter II###imageWriterPanel", right);
-            // Inspector tab group, bottom right.
+            // Hidden tools open as additional right-column tabs.
             dock("Cassette Deck", rightLower);
             dock("Floppy Emu (BMOW)", rightLower);
             dock("Memory viewer", rightLower);

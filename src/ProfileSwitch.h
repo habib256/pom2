@@ -85,7 +85,8 @@ struct ProfileSwitchResult {
 
 /// Switch the machine to `profile`. Steps, in this order (the numbers are
 /// the ones the window's comments have always used):
-///   flush (refusal ends here) · 0 afterFlush · rewind cleared · 2 media
+///   validate main ROM (refusal preserves the machine) · flush ·
+///   0 afterFlush · rewind cleared · 2 media
 ///   snapshot · 3-4 beginLocked, //e paging mode, RamWorks banks, cold RAM ·
 ///   5 main ROM · 6 character ROM · 6b CPU mode · 7 plugSlots · 7a afterPlug ·
 ///   8 media restored · 10 CPU pacing, video standard, snapshot machine id ·

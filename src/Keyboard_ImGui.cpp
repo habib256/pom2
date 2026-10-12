@@ -41,7 +41,7 @@ bool isLatch(const KeyHotspot& k)
 
 Keyboard_ImGui::Event
 Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
-                       const std::string& loadError)
+                       const std::string& loadError, const KeyboardSkin& skin)
 {
     Event ev;
     ev.latches = latches_;
@@ -50,8 +50,8 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
     // Sized to the photo's own 2578x908 (~2.84:1) so the default window opens
     // on an undistorted keyboard rather than on a letterboxed sliver.
     ImGui::SetNextWindowSize(ImVec2(980, 430), ImGuiCond_FirstUseEver);
-    const bool visible = ImGui::Begin(ICON_FA_KEYBOARD " Apple //e Keyboard"
-                                      "###appleKeyboard", open);
+    const std::string title = std::string(ICON_FA_KEYBOARD " ") + skin.title + "###appleKeyboard";
+    const bool visible = ImGui::Begin(title.c_str(), open);
     if (!visible) {
         ImGui::End();
         return ev;
@@ -62,7 +62,7 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
 
     if (texture == 0) {
         ImGui::PushStyleColor(ImGuiCol_Text, u32(pal.warn));
-        ImGui::TextWrapped("pic/Keyboard_AppleIIe.jpeg could not be loaded%s%s",
+        ImGui::TextWrapped("%s could not be loaded%s%s", skin.image,
                            loadError.empty() ? "" : " — ", loadError.c_str());
         ImGui::PopStyleColor();
         ImGui::TextWrapped(
@@ -104,8 +104,18 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
              "Held down at $C061 bit 7 for as long as it is latched, so\n"
              "Open-Apple+Ctrl+Reset (the //e self-test / cold boot) can be\n"
              "clicked one key at a time.");
-        chip("SOLID-APPLE", &latches_.solidApple,
+        chip(skin.compact ? "OPTION" : "SOLID-APPLE", &latches_.solidApple,
              "Held down at $C062 bit 7 while latched.");
+        // The //c photograph excludes the separate Reset key.
+        if (skin.compact) {
+            if (ImGui::Button("RESET")) {
+                static const KeyHotspot reset{"reset", "Reset", KeyKind::Special,
+                    KeyAction::Reset, 0, 0, 0, 0, 0, 0};
+                ev.key = &reset;
+                ev.latches = latches_;
+            }
+            ImGui::SameLine();
+        }
         ImGui::Checkbox("Show hitboxes", &showHitboxes_);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
@@ -116,7 +126,10 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
 
     // ── The keyboard ────────────────────────────────────────────────────
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float  aspect = static_cast<float>(texH) / static_cast<float>(texW);
+    // Replacement //c photos may have another pixel ratio. Keep the same
+    // displayed proportions as the //e, including the fractional hitboxes.
+    const float aspect = skin.displayAspect > 0.0f ? 1.0f / skin.displayAspect
+        : static_cast<float>(texH) / static_cast<float>(texW);
     // Fit inside the region on BOTH axes: driving off width alone made the
     // photo overflow a short window.
     float drawW = avail.x;
@@ -149,14 +162,14 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
     // hover test is per rect, the highlight is per key id.
     const KeyHotspot* hovered = nullptr;
     if (imageHovered) {
-        for (const KeyHotspot& k : appleIIeKeyboard())
+        for (const KeyHotspot& k : skin.keys)
             if (inside(rectOf(k))) { hovered = &k; break; }
     }
 
     // Pass 2: draw. Latched modifiers stay lit; the last key pressed flashes
     // for 150 ms, which is the only feedback a click otherwise gets (the
     // guest may print nothing at all).
-    for (const KeyHotspot& k : appleIIeKeyboard()) {
+    for (const KeyHotspot& k : skin.keys) {
         const ImVec4 r = rectOf(k);
         const ImVec2 a(r.x, r.y), b(r.z, r.w);
         const bool sameKey = hovered && std::strcmp(hovered->id, k.id) == 0;

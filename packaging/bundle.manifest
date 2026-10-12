@@ -45,13 +45,14 @@ file packaging/roms_README.txt  roms/README.txt
 # only a structural check catches a package that lost them.
 dir  fonts
 
-# The Apple ][+ photo in Help → About, and the //e keyboard photo the
-# clickable keyboard window (Devices → Apple //e Keyboard) is built on — its
+# The Apple ][+ photo in Help → About, and the //e and //c keyboard photos the
+# clickable keyboard window (Devices → Apple Keyboard) is built on — its
 # hotspots are fractions OF THAT IMAGE, so without the file the window has
 # nothing to click and says so. Named files, not the folder: pic/ holds 4 MB
 # of reference photography that no code path reads.
 file pic/Apple_II_plus.jpg
 file pic/Keyboard_AppleIIe.jpeg
+file pic/Keyboard_AppleIIc.png
 # MIT Monitor II / Disk II artwork, attribution and editable SVGs.
 dir  pic/retro
 

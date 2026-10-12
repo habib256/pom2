@@ -117,6 +117,8 @@ void testVisibilityStorage()
     }
     assert(open == 4 && "the fresh-install set is a decision, not an accident");
     assert(reg.visible(pom2::PanelId::Drives));
+    assert(reg.visible(pom2::PanelId::Keyboard));
+    assert(!reg.visible(pom2::PanelId::ImageWriter));
 
     reg.visible(pom2::PanelId::Debugger) = true;
     assert(reg.visible(pom2::PanelId::Debugger));

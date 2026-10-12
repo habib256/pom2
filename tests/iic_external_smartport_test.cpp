@@ -103,7 +103,7 @@ struct Outcome {
 };
 
 Outcome run(const std::string& rom, const std::string& disk525,
-            const std::string& disk35, bool bootSlot5)
+            const std::string& disk35, bool bootSlot5, bool internalLoaded = true)
 {
     Outcome o;
     Memory mem;
@@ -125,7 +125,7 @@ Outcome run(const std::string& rom, const std::string& disk525,
     const std::string lssRom  = pom2::findResource("roms/diskii_p6.rom");
     if (!bootRom.empty()) d2->loadBootRom(bootRom);
     if (!lssRom.empty())  d2->loadLssRom(lssRom);
-    d2->insertDisk(disk525);
+    if (internalLoaded) d2->insertDisk(disk525);
     // Drive 2 holds a writable scratch copy with write-back ON: on a real //c
     // the bus traffic selects drive 2 (the rear connector) and enables the
     // motor — bytes the Disk II must never see as flux.
@@ -347,6 +347,16 @@ int main()
                  "the slot-6 card (Memory must drop a write the port claimed)");
         if (o.plusBootRule) fail("A: the //c+ reset-boot rule fired on a plain //c");
         if (g_failures) std::printf("%s", o.screen.c_str());
+    }
+    // Empty S6D1: the real //c ROM falls back to SmartPort, even with a
+    // bootable 5.25" disk in S6D2. Drive 2 is not an autostart candidate.
+    {
+        const Outcome o = run(rom, disk525, disk35, /*bootSlot5=*/false,
+                              /*internalLoaded=*/false);
+        dump("A2 empty internal, external 5.25 + SmartPort", o);
+        if (!o.prodosSeen) fail("A2: SmartPort fallback did not boot ProDOS");
+        if (o.bus.blocksRead == 0)
+            fail("A2: empty internal drive did not fall back to SmartPort");
     }
     // B. Boot the 3.5" through the real firmware.
     {

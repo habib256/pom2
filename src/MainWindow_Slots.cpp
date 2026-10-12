@@ -44,6 +44,7 @@
 #include "DevicePanelCoordinator.h"
 #include "PrinterCoordinator.h"
 #include "MediaMount.h"
+#include "MediaBoot.h"
 
 // Same heavy-includes-here pattern as MainWindow.cpp — MainWindow.h
 // forward-declares the controller / cards / panels.
@@ -1109,8 +1110,9 @@ void MainWindow::renderMediaPanel()
 
                 ImGui::BeginDisabled(!bootable);
                 if (ImGui::SmallButton("Boot slot")) {
-                    controller->bootFromSlot(s);
-                    tapeStatusMessage = "Booting slot " + std::to_string(s);
+                    std::string error;
+                    const bool booted = pom2::bootMountedMedia(*controller, s, 0, error);
+                    tapeStatusMessage = booted ? "Booting slot " + std::to_string(s) : "Boot failed: " + error;
                     tapeStatusUntil = lastFrameTime + 3.0;
                 }
                 ImGui::EndDisabled();
@@ -1201,8 +1203,9 @@ void MainWindow::renderMediaPanel()
 
                 ImGui::BeginDisabled(!bootable);
                 if (ImGui::SmallButton("Boot slot")) {
-                    controller->bootFromSlot(s);
-                    tapeStatusMessage = "Booting slot " + std::to_string(s);
+                    std::string error;
+                    const bool booted = pom2::bootMountedMedia(*controller, s, 0, error);
+                    tapeStatusMessage = booted ? "Booting slot " + std::to_string(s) : "Boot failed: " + error;
                     tapeStatusUntil = lastFrameTime + 3.0;
                 }
                 ImGui::EndDisabled();
@@ -1466,7 +1469,7 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
     const auto r = pom2::switchProfile(*controller, *storageCoordinator_, *settings,
                                        p, !settingsReadOnly(), hooks);
     if (!r.applied) {
-        tapeStatusMessage = "Profile switch refused — save failed: " + r.error;
+        tapeStatusMessage = "Profile switch refused: " + r.error;
         tapeStatusUntil = lastFrameTime + 8.0;
         pom2::log().warn("Profile", tapeStatusMessage);
         return;

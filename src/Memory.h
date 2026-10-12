@@ -150,6 +150,7 @@ public:
         return iicProfile_ && iicProfile_->isIIcPlus() &&
                iicProfile_->servesExternalSmartPort();
     }
+    bool isIIcPlus() const { return iicProfile_ && iicProfile_->isIIcPlus(); }
 
     /// //c-class on-board SmartPort "armed" gate. The slot-5 SmartPort
     /// firmware stub is punched through the INTCXROM mask at $C500-$C5FF
@@ -452,6 +453,15 @@ public:
     // indistinguishable from file size alone — the caller passes
     // `pickLower16KFor32K=true` when loading a //c-style dump.
     int loadAppleIIRom(const char* filename, bool pickLower16KFor32K = false);
+    struct AppleIIRomImage {
+        std::string path;
+        std::vector<uint8_t> bytes;
+    };
+    // Stage once before a profile teardown; installation never rereads a
+    // file that may have changed while outgoing media were being saved.
+    static bool prepareAppleIIRom(const char* filename, AppleIIRomImage& image,
+                                 std::string& error);
+    int loadAppleIIRom(const AppleIIRomImage& image, bool pickLower16KFor32K = false);
     /// 2 KB (II/II+) or 4 KB (IIe-class) dump, or an 8 KB INTERNATIONAL //e
     /// video ROM — two 4 KB banks, `bank` selects which (0 = low). See the
     /// comment in the definition for why an 8 KB part exists at all.
@@ -1086,9 +1096,9 @@ private:
 
     // Expansion bus — owns plugged cards.
     SlotBus slots;
-    /// The file load itself; `loadAppleIIRom` wraps it in the slot cards'
+    /// Install a staged image; `loadAppleIIRom` wraps it in the slot cards'
     /// before/after hooks (SlotPeripheral::beforeMainRomReload).
-    int loadAppleIIRomImpl(const char* filename, bool pickLower16KFor32K);
+    int loadAppleIIRomImpl(const AppleIIRomImage& image, bool pickLower16KFor32K);
 
     // Klaus harness flat-RAM mode. See setTestMode().
     bool testMode = false;

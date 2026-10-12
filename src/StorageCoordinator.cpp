@@ -1393,8 +1393,7 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
     EmulationController& controller, Settings& settings,
     const std::string& path, bool smartPortOnly) const
 {
-    if (smartPortOnly)
-        if (auto viaLiron = mountDisk35OnLiron(controller, settings, 0, path)) return *viaLiron;
+    if (auto viaLiron = mountHdvOnLiron(controller, settings, path, smartPortOnly)) return *viaLiron;
     RoutedMediaCommandResult result;
     std::vector<SettingUpdate> updates;
 

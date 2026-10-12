@@ -52,6 +52,7 @@
 #include "CassetteDevice.h"
 #include "IconsFontAwesome6.h"
 #include "Keyboard_ImGui.h"
+#include "KeyboardSkin.h"
 #include "AppleIIeKeyboardLayout.h"
 #include "Pom2GL.h"
 #include "Pom2Theme.h"
@@ -487,10 +488,23 @@ void MainWindow::renderAbstractionPanel()
 
 void MainWindow::ensureKeyboardImageLoaded()
 {
+    const auto& skin = pom2::keyboardSkin(activeProfile);
+    if (kbImageResource_ != skin.image) {
+        if (kbImageTex_) {
+            const GLuint tex = kbImageTex_;
+            glDeleteTextures(1, &tex);
+        }
+        kbImageTex_ = 0;
+        kbImageW_ = kbImageH_ = 0;
+        kbImageTried_ = false;
+        kbImageError_.clear();
+        kbImageResource_ = skin.image;
+        if (keyboardPanel) keyboardPanel->releaseAll();
+    }
     if (kbImageTried_) return;
     kbImageTried_ = true;
 
-    const std::string path = pom2::findResource("pic/Keyboard_AppleIIe.jpeg");
+    const std::string path = pom2::findResource(skin.image);
     if (path.empty()) {
         kbImageError_ = "not found in any resource search dir";
         return;
@@ -548,7 +562,8 @@ void MainWindow::renderKeyboardPanel()
         keyboardPanel = std::make_unique<pom2::Keyboard_ImGui>();
 
     const auto ev = keyboardPanel->render(&show(pom2::PanelId::Keyboard), kbImageTex_,
-                                          kbImageW_, kbImageH_, kbImageError_);
+                                          kbImageW_, kbImageH_, kbImageError_,
+                                          pom2::keyboardSkin(activeProfile));
 
     // The Apple keys are LEVELS, not events: $C061/$C062 bit 7 reads the
     // switch, so the latch has to be pushed every frame for as long as it is

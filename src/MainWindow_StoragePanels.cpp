@@ -46,6 +46,7 @@
 #include "Logger.h"
 #include "LironCard.h"
 #include "MediaMount.h"
+#include "MediaBoot.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
 #include "Pom2Theme.h"
@@ -240,15 +241,10 @@ void MainWindow::renderDiskPanelWindow()
             tapeStatusUntil   = lastFrameTime + 4.0;
         }
         if (result.requestBoot) {
-            auto st = controller->lockState();
-            card->seekTrack0();
-            const uint16_t pc = static_cast<uint16_t>(
-                0xC000 + (card->getSlot() << 8));
-            st.cpu().setProgramCounter(pc);
-            controller->setMode(EmulationController::Mode::Running);
-            char msg[64];
-            std::snprintf(msg, sizeof(msg), "Boot: PC → $%04X", pc);
-            tapeStatusMessage = msg;
+            std::string error;
+            const bool booted = pom2::bootMountedMedia(*controller, card->getSlot(), 0, error);
+            tapeStatusMessage = booted ? "Booting Disk II slot " + std::to_string(card->getSlot())
+                                      : "Boot failed: " + error;
             tapeStatusUntil   = lastFrameTime + 3.0;
         }
         if (!result.requestInsertAndBoot.empty()) {
@@ -257,12 +253,11 @@ void MainWindow::renderDiskPanelWindow()
             const bool ok = pom2::mountDiskII(*controller, *card, 0, path, err,
                                               /*seekTrack0=*/true);
             if (ok) {
-                controller->coldBoot();
-                controller->setMode(EmulationController::Mode::Running);
+                const bool booted = pom2::bootMountedMedia(*controller, card->getSlot(), 0, err);
                 pom2::log().info("Disk II",
                     "slot " + std::to_string(card->getSlot()) +
                     " Library click → insert + boot: " + path);
-                tapeStatusMessage = "Booting: " + path;
+                tapeStatusMessage = booted ? "Booting: " + path : "Mounted, boot failed: " + err;
             } else {
                 tapeStatusMessage = "Boot failed: " + err;
             }
@@ -463,10 +458,9 @@ void MainWindow::renderDiskLibraryWindow()
                                                     /*seekTrack0=*/true);
         if (ok && target) {
             // Boot the target card's slot (its boot PROM boots drive 1).
-            const bool booted = controller->bootFromSlot(target->getSlot());
-            controller->setMode(EmulationController::Mode::Running);
+            const bool booted = pom2::bootMountedMedia(*controller, target->getSlot(), drive, err);
             tapeStatusMessage = std::string("Library: inserted") +
-                (booted ? " + booted" : " (slot did not boot — cold-booted)") +
+                (booted ? " + booted" : " (did not boot: " + err + ")") +
                 " (slot " + std::to_string(target->getSlot()) + " drive " +
                 std::to_string(drive + 1) + "): " + path;
         } else {
@@ -515,26 +509,19 @@ void MainWindow::renderDiskLibraryWindow()
 
     if (!r.request35MountAndBoot.empty()) {
         std::string err;
-        if (routeMount35(r.request35BootDrive,
-                         r.request35MountAndBoot, err)) {
-            // Slot-aware boot: explicit `bootFromSlot(N)` whenever a
-            // SmartPort card is plugged — now including the //c-class
-            // built-in SmartPort (slot 5). No SmartPort card at all means
-            // the //c+ on-board Sony hub: its real reset firmware drives
-            // MIG + IWM to boot the disk.
-            bool booted = false;
-            if (primarySmartPortCard()) {
-                booted = controller->bootFromSlot(primarySmartPortCard()->getSlot());
-            } else {
-                controller->coldBoot();
-                booted = true;
-            }
+        const auto mountResult = storageCoordinator_->mountDisk35(*controller, *settings,
+            r.request35BootDrive, r.request35MountAndBoot);
+        if (mountResult.ok) {
+            // Preserve the actual mount route, including a Liron in a
+            // non-default slot. Recomputing from primarySmartPort loses it.
+            const bool booted = pom2::bootMountedMedia(*controller, mountResult.bootSlot,
+                                                     r.request35BootDrive, err);
             tapeStatusMessage = "Library: 3.5\" drive "
                 + std::string(r.request35BootDrive == 0 ? "1" : "2")
                 + (booted ? " booted: " : " mounted (did not boot): ")
-                + r.request35MountAndBoot;
+                + (booted ? r.request35MountAndBoot : err);
         } else {
-            tapeStatusMessage = "Library: 3.5\" boot failed: " + err;
+            tapeStatusMessage = "Library: 3.5\" boot failed: " + mountResult.error;
         }
         tapeStatusUntil = lastFrameTime + 4.0;
     }
@@ -563,10 +550,10 @@ void MainWindow::renderDiskLibraryWindow()
         int bootSlot = 0;
         std::string err;
         if (routeMountHdv(path, bootSlot, err)) {
-            const bool booted = controller->bootFromSlot(bootSlot);
+            const bool booted = pom2::bootMountedMedia(*controller, bootSlot, 0, err);
             tapeStatusMessage = "Library: HDV (slot " +
                 std::to_string(bootSlot) +
-                (booted ? ") booted: " : ") mounted, did not boot: ") + path;
+                (booted ? ") booted: " : ") mounted, did not boot: ") + (booted ? path : err);
         } else {
             tapeStatusMessage = "Library: HDV mount failed: " + err;
         }
@@ -900,9 +887,9 @@ void MainWindow::renderFloppyEmuWindow()
             }
         }
         if (bootTarget != kNoMount) {
-            if (bootTarget == kColdBoot) controller->coldBoot();
-            else                        controller->bootFromSlot(bootTarget);
-            controller->setMode(EmulationController::Mode::Running);
+            if (!pom2::bootMountedMedia(*controller, bootTarget,
+                                       m == Mode::Disk35 ? 1 : 0, err))
+                floppyEmuStatus = "Mounted, boot failed: " + err;
         }
     };
     auto ejectCurrent = [&](Mode m) {
@@ -1266,12 +1253,13 @@ void MainWindow::renderHdvPanelWindow()
             }
         }
         if (ok) {
-            controller->bootFromSlot(primaryHdvCard()->getSlot());
+            const bool booted = pom2::bootMountedMedia(*controller, primaryHdvCard()->getSlot(), 0, err);
             pom2::log().info("HDV",
                 "slot " + std::to_string(primaryHdvCard()->getSlot()) +
                 " library click → mount + boot: " + path);
-            tapeStatusMessage = "Mounting + booting HDV (slot " +
-                std::to_string(primaryHdvCard()->getSlot()) + "): " + path;
+            tapeStatusMessage = booted ? "Mounting + booting HDV (slot " +
+                std::to_string(primaryHdvCard()->getSlot()) + "): " + path
+                : "Mounted, boot failed: " + err;
         } else {
             tapeStatusMessage = "Boot failed: " + err;
         }
@@ -1723,14 +1711,14 @@ void MainWindow::renderDisk35PanelWindow()
         }
         tapeStatusUntil = lastFrameTime + 4.0;
     }
-    // Reset firmware chooses the boot drive in hardware priority order.
+    // The reset firmware must be able to reach the requested Sony first.
     if (!result.requestInsertAndBoot.empty()) {
         const int d = result.insertAndBootDrive;
         std::string err;
         if (mountOnboard35(d, result.requestInsertAndBoot, err)) {
-            controller->coldBoot();
-            tapeStatusMessage = "Sony drive " + std::to_string(d + 1)
-                + " mounted; resetting: " + result.requestInsertAndBoot;
+            const bool booted = pom2::bootMountedMedia(*controller, -1, d, err);
+            tapeStatusMessage = booted ? "Booting Sony drive " + std::to_string(d + 1)
+                + ": " + result.requestInsertAndBoot : "Mounted, boot failed: " + err;
         } else {
             tapeStatusMessage = "3.5\" boot failed: " + err;
         }

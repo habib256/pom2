@@ -46,6 +46,7 @@
 #include "EmulationController.h"
 #include "Logger.h"
 #include "MediaMount.h"
+#include "MediaBoot.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
 #include "ProDOSBlockCard.h"
@@ -91,9 +92,10 @@ void MainWindow::bootHdvImage()
     // boot path follows. The card's slot ROM bakes its slot number into
     // the ProDOS dispatcher trampolines, so `bootFromSlot(N)` lands on
     // the right $C(N)00 entry point automatically.
-    controller->bootFromSlot(dev->getSlot());
-    tapeStatusMessage = "Booting HDV (slot " +
-        std::to_string(dev->getSlot()) + "): " + p;
+    std::string error;
+    const bool booted = pom2::bootMountedMedia(*controller, dev->getSlot(), 0, error);
+    tapeStatusMessage = booted ? "Booting HDV (slot " +
+        std::to_string(dev->getSlot()) + "): " + p : "HDV boot failed: " + error;
     tapeStatusUntil   = lastFrameTime + 4.0;
 }
 
@@ -537,11 +539,7 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             const bool ok = pom2::mountDiskII(*controller, *target, 0, path,
                                               errOut, /*seekTrack0=*/true);
             if (!ok) return false;
-            if (!controller->bootFromSlot(target->getSlot())) {
-                errOut = "slot " + std::to_string(target->getSlot()) +
-                         " did not boot the image (cold-booted instead)";
-                return false;
-            }
+            if (!pom2::bootMountedMedia(*controller, target->getSlot(), 0, errOut)) return false;
             controller->setMode(EmulationController::Mode::Running);
             return true;
         }
@@ -550,6 +548,7 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             // image already. Boot its actual device; a second mount on the
             // external SmartPort chain would correctly be refused.
             int slot = -1;
+            int bay = 0;
             bool mounted = false;
             for (const auto& location : pom2::mountedImageLocations(*controller)) {
                 if (!pom2::sameImageFile(location.path, path)) continue;
@@ -559,6 +558,7 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
                 }
                 mounted = true;
                 slot = location.slot;
+                bay = location.bay;
             }
             const bool onboard = activeProfile == pom2::SystemProfile::AppleIIcPlus;
             if (mounted && slot < 0 && !onboard) {
@@ -581,17 +581,7 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
                 if (!result.ok) { errOut = result.error; return false; }
                 slot = result.bootSlot;
             }
-            if (slot >= 0) {
-                if (!controller->bootFromSlot(slot)) {
-                    errOut = "slot " + std::to_string(slot) +
-                             " did not boot the image (cold-booted instead)";
-                    return false;
-                }
-            } else {
-                // The real //c+ reset firmware drives MIG + IWM and boots
-                // the internal Sony. Do not enter slot 5's external chain.
-                controller->coldBoot();
-            }
+            if (!pom2::bootMountedMedia(*controller, slot, bay, errOut)) return false;
             controller->setMode(EmulationController::Mode::Running);
             return true;
         }
@@ -604,11 +594,7 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             }
             int bootSlot = 0;
             if (!routeMountHdv(path, bootSlot, errOut)) return false;
-            if (!controller->bootFromSlot(bootSlot)) {
-                errOut = "slot " + std::to_string(bootSlot) +
-                         " did not boot the image (cold-booted instead)";
-                return false;
-            }
+            if (!pom2::bootMountedMedia(*controller, bootSlot, 0, errOut)) return false;
             controller->setMode(EmulationController::Mode::Running);
             return true;
         }

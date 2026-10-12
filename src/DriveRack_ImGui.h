@@ -18,12 +18,18 @@ struct DrivePicture {
 };
 // Value-only renderer: no machine access, file I/O or texture ownership.
 struct DriveRackAction {
-    enum class Type { Eject, ToggleWrite };
+    enum class Type { Eject, ToggleWrite, Insert, Mount };
     Type type;
     std::size_t driveIndex;
+    std::string path;
+};
+struct DriveRackHit {
+    DrivePicture drive;
+    float x0, y0, x1, y1;
 };
 struct DriveRackResult {
     bool manage = false;
+    std::vector<DriveRackHit> hits;
     std::vector<DriveRackAction> actions;
 };
 DriveRackResult renderDriveRack(bool& open, const std::vector<DrivePicture>& drives);

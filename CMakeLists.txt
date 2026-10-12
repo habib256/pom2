@@ -294,12 +294,15 @@ set(SOURCES
     src/Disk35Controller_ImGui.cpp
     src/DiskController_ImGui.cpp
     src/DriveRack_ImGui.cpp
+    src/DriveRackFilePicker.cpp
+    src/DriveRackMount.cpp
     src/MainWindow_DriveRack.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/Debugger.cpp
     src/Debugger_ImGui.cpp
     src/MediaMount.cpp
+    src/MediaBoot.cpp
     src/DiskImage.cpp
     src/DiskLibrary_ImGui.cpp
     src/EchoPlusCard.cpp
@@ -455,6 +458,7 @@ set(SOURCES
     src/RomStatus_ImGui.cpp
     src/AbstractionLevels_ImGui.cpp
     src/AppleIIeKeyboardLayout.cpp
+    src/KeyboardSkin.cpp
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
     src/HostOpenFiles.cpp
@@ -644,6 +648,8 @@ set(POM2_FRONTEND_SOURCES
     src/Disk35Controller_ImGui.cpp
     src/DiskController_ImGui.cpp
     src/DriveRack_ImGui.cpp
+    src/DriveRackFilePicker.cpp
+    src/DriveRackMount.cpp
     src/MainWindow_DriveRack.cpp
     src/DiskLibrary_ImGui.cpp
     src/HdvController_ImGui.cpp
@@ -690,6 +696,7 @@ set(POM2_FRONTEND_SOURCES
     src/RomStatus_ImGui.cpp
     src/AbstractionLevels_ImGui.cpp
     src/AppleIIeKeyboardLayout.cpp
+    src/KeyboardSkin.cpp
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
     src/HostOpenFiles.cpp
@@ -777,6 +784,7 @@ set(POM2_RUNTIME_SOURCES
     src/PrinterRender.cpp
     src/Debugger.cpp
     src/MediaMount.cpp
+    src/MediaBoot.cpp
     src/TnfsClient.cpp
     src/TnfsMedia.cpp
     src/Apple2Display.cpp
@@ -1363,6 +1371,7 @@ set(POM2_CORE_SOURCES
     src/DiskIICard_Cycles.cpp
     src/Debugger.cpp
     src/MediaMount.cpp
+    src/MediaBoot.cpp
     src/DiskImage.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
@@ -1456,6 +1465,7 @@ set(POM2_CORE_SOURCES
     src/SuperSerialTcpTransport.cpp
     src/SystemProfile.cpp
     src/AppleIIeKeyboardLayout.cpp
+    src/KeyboardSkin.cpp
 )
 
 # ─── pom2_core : the installable SDK archive ──────────────────────────────

@@ -489,6 +489,11 @@ void DiskLibrary_ImGui::renderRow(
                           ImGuiSelectableFlags_AllowOverlap)) {
         (this->*ctx.onLeftClick)(e.fullPath, r);
     }
+    if (ImGui::BeginDragDropSource()) {
+        ImGui::SetDragDropPayload("POM2_DISK_IMAGE", e.fullPath.c_str(), e.fullPath.size() + 1);
+        ImGui::TextUnformatted(e.displayName.c_str());
+        ImGui::EndDragDropSource();
+    }
     if (ImGui::BeginPopupContextItem("ctx")) {
         // Favourite toggle lives in the context menu rather than as a clickable
         // star: the row is already a full-span selectable, and an overlapping

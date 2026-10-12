@@ -57,6 +57,29 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
     const auto& cfg = profileConfig(p);
     log().info("Profile", std::string("Switching to ") + std::string(cfg.displayName));
 
+    // A failed load leaves Memory's outgoing firmware intact. Validate the
+    // candidate before afterFlush commits the frontend profile or tears down
+    // its cards; otherwise "NO ROM" still executes the old ROM with a new
+    // CPU, slot map and snapshot identity. Use the real loader's size/read
+    // checks on an isolated memory so this cannot mutate the running machine.
+    const bool pickLowerHalf = profileUsesLowerRomHalf(p);
+    const std::string newRomPath = findFirstResource(cfg.romProbeOrder);
+    Memory::AppleIIRomImage romImage;
+    {
+        Memory probe;
+        probe.setIIEMode(cfg.iieMode);
+        std::string error;
+        if (newRomPath.empty() || !Memory::prepareAppleIIRom(newRomPath.c_str(), romImage, error) ||
+            !probe.loadAppleIIRom(romImage, pickLowerHalf)) {
+            result.error = newRomPath.empty()
+                ? "No ROM found for " + std::string(cfg.displayName)
+                : "Cannot load ROM for " + std::string(cfg.displayName) + ": " +
+                  (error.empty() ? probe.getLastError() : error);
+            log().warn("Profile", result.error);
+            return result;
+        }
+    }
+
     // Stop the CPU worker FIRST, so the flush below sees a quiescent machine
     // and nothing it writes can be undone by a guest still running.
     const bool wasRunning = controller.getMode() == EmulationController::Mode::Running;
@@ -111,10 +134,8 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
         auto st = controller.lockState();
 
         // 5. Main ROM.
-        const bool pickLowerHalf = profileUsesLowerRomHalf(p);
-        const std::string newRomPath = findFirstResource(cfg.romProbeOrder);
         if (!newRomPath.empty() &&
-            st.memory().loadAppleIIRom(newRomPath.c_str(), pickLowerHalf)) {
+            st.memory().loadAppleIIRom(romImage, pickLowerHalf)) {
             result.romPath   = newRomPath;
             result.romLoaded = true;
             result.romStatus = std::string(cfg.iieMode ? "IIe/IIc: " : "loaded: ") + newRomPath;

@@ -184,5 +184,37 @@ int main()
         assert(t && t.added && t.slot == 3 && "a II+ has a real slot 3");
     }
 
+    // Already-plugged cards need the same reset visibility check as new
+    // cards. A saved slot-3 device must not be returned as a IIe boot target.
+    for (auto profile : {pom2::SystemProfile::AppleIIe,
+                         pom2::SystemProfile::AppleIIeUnenhanced,
+                         pom2::SystemProfile::AppleIIePAL,
+                         pom2::SystemProfile::AppleIIeUnenhancedPAL}) {
+        pom2::StorageCoordinator maskedStorage;
+        pom2::SlotProvisioningCoordinator maskedProvision(factory, maskedStorage);
+        EmulationController maskedController;
+        maskedController.memory().slotBus().plug(3, std::make_unique<ProDOSHardDiskCard>(3));
+        target = maskedProvision.ensureHdvBootTarget(maskedController, settings, profile);
+        assert(!target && !target.error.empty());
+        maskedController.memory().slotBus().plug(3, std::make_unique<pom2::SmartPortCard>(3));
+        target = maskedProvision.ensureSmartPortBootTarget(maskedController, profile);
+        assert(!target && !target.error.empty());
+        target = maskedProvision.ensureHdvBootTarget(maskedController, settings, profile);
+        assert(!target && !target.error.empty());
+        target = maskedProvision.ensureSmartPortBootTarget(maskedController, pom2::SystemProfile::AppleIIPlus);
+        assert(target && !target.added && target.slot == 3);
+    }
+    // A slotless machine's target is always its built-in connector at S5,
+    // even if another host card was plugged through a lower-level API.
+    iicController.memory().slotBus().plug(3, std::make_unique<pom2::SmartPortCard>(3));
+    for (auto profile : {pom2::SystemProfile::AppleIIc,
+                         pom2::SystemProfile::AppleIIcPAL,
+                         pom2::SystemProfile::AppleIIcPlus}) {
+        target = iicProvision.ensureHdvBootTarget(iicController, settings, profile);
+        assert(target && target.slot == 5);
+        target = iicProvision.ensureSmartPortBootTarget(iicController, profile);
+        assert(target && target.slot == 5);
+    }
+
     return 0;
 }

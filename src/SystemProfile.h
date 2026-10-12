@@ -108,9 +108,9 @@ struct ProfileConfig {
 /// Resolve a profile enum to its full configuration. The probe orders
 /// are ordered by preference; the caller's job is to pick the first
 /// existing file at runtime. Every profile is always defined —
-/// missing ROM files don't disable the profile, they just degrade the
-/// machine to "no ROM" status (the user sees `NO ROM` in the title
-/// bar and the CPU starts running garbage at the reset vector).
+/// missing ROM files do not remove its configuration. Startup can report
+/// "NO ROM"; switching from an existing machine refuses an absent or
+/// unreadable main ROM before committing the new profile.
 const ProfileConfig& profileConfig(SystemProfile p);
 
 /// Inverse — parse a persistence/CLI key to a profile enum. Returns

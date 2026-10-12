@@ -38,6 +38,7 @@
 #define POM2_KEYBOARD_IMGUI_H
 
 #include "AppleIIeKeyboardLayout.h"
+#include "KeyboardSkin.h"
 
 #include <string>
 
@@ -72,7 +73,7 @@ public:
     /// @param texW,texH   pixel size of that texture, for the aspect ratio.
     /// @param loadError   why the photo is missing, shown when texture == 0.
     Event render(bool* open, unsigned int texture, int texW, int texH,
-                 const std::string& loadError);
+                 const std::string& loadError, const KeyboardSkin& skin);
 
     /// The latches, for a caller that mirrors them elsewhere (the Apple keys
     /// are machine state: they must be pushed to $C061/$C062 every frame,

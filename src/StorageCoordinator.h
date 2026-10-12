@@ -402,6 +402,9 @@ public:
 
 private:
     // StorageCoordinator_Chains.cpp — one call per historical site.
+    std::optional<RoutedMediaCommandResult> mountHdvOnLiron(
+        EmulationController& controller, Settings& settings,
+        const std::string& path, bool smartPortOnly) const;
     static void restoreBayCount(MountableMediaCard& media, int slot,
                                 const Settings& settings);
     static void restoreHdvDrive2(ProDOSHardDiskCard& hdv,

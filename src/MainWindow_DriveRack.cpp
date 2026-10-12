@@ -2,12 +2,14 @@
 #include "MainWindow.h"
 #include "DiskIICard.h"
 #include "DriveRack_ImGui.h"
+#include "DriveRackMount.h"
 #include "EmulationController.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
 #include "StorageCoordinator.h"
 #include "SystemProfile.h"
 #include <algorithm>
+#include <utility>
 
 void MainWindow::renderDriveRackWindow() {
     using pom2::DrivePicture;
@@ -79,17 +81,15 @@ void MainWindow::renderDriveRackWindow() {
         }
         drives.insert(drives.begin(), onboard.begin(), onboard.end());
     }
-    const auto order = [](Kind kind) {
-        switch (kind) {
-        case Kind::DiskII: return 0;
-        case Kind::Floppy35: return 1;
-        case Kind::HardDisk: return 2;
-        case Kind::Generic: return 3;
-        }
-        return 3;
-    };
-    std::stable_sort(drives.begin(), drives.end(), [&](const DrivePicture& a, const DrivePicture& b) {
-        return order(a.kind) < order(b.kind);
+    // List slots 7 down to 1, then each card's drives/units in ascending
+    // order. This follows the //e slot scan, but is not a per-drive boot
+    // sequence: the //c tries S6D1 then SmartPort S5, not S6D2.
+    // The //c+ Sony mechanisms have no slot-card bay; retain their leading
+    // position and physical order (internal, then connected externals).
+    std::stable_sort(drives.begin(), drives.end(), [](const DrivePicture& a, const DrivePicture& b) {
+        if ((a.slot < 0) != (b.slot < 0)) return a.slot < 0;
+        if (a.slot != b.slot) return a.slot > b.slot;
+        return a.bay < b.bay;
     });
     for (auto& drive : drives)
         if (drive.kind == Kind::DiskII)
@@ -99,11 +99,23 @@ void MainWindow::renderDriveRackWindow() {
             drive.texture = retroArtwork_.drive35(drive.busy);
         else if (drive.kind == Kind::HardDisk)
             drive.texture = retroArtwork_.hardDisk(drive.busy);
+    if (focusDefaultDrives_) { ImGui::SetNextWindowFocus(); focusDefaultDrives_ = false; }
     const auto result = pom2::renderDriveRack(show(pom2::PanelId::Drives), drives);
+    driveRackHits_ = result.hits;
+    driveRackHitFrame_ = ImGui::GetFrameCount();
     if (result.manage)
         show(pom2::PanelId::Media) = true;
     for (const auto& action : result.actions) {
         const auto& drive = drives.at(action.driveIndex);
+        if (action.type == pom2::DriveRackAction::Type::Insert) {
+            driveRackPickerProfile_ = activeProfile;
+            driveRackFilePicker_.open(drive);
+            continue;
+        }
+        if (action.type == pom2::DriveRackAction::Type::Mount) {
+            insertDriveRackImage(drive, action.path);
+            continue;
+        }
         pom2::StorageCoordinator::MediaCommandResult command;
         if (action.type == pom2::DriveRackAction::Type::ToggleWrite)
             command = storageCoordinator_->setMediaNotch(*controller, drive.path, !drive.writeProtected);
@@ -118,4 +130,42 @@ void MainWindow::renderDriveRackWindow() {
             : command.error;
         tapeStatusUntil = lastFrameTime + 4.0;
     }
+}
+
+bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path) {
+    std::string error;
+    const bool ok = pom2::mountEmptyDrive(*controller, *settings, *storageCoordinator_, target, path, error);
+    tapeStatusMessage = ok ? "Inserted into " + target.label + ": " + path : error;
+    tapeStatusUntil = lastFrameTime + 5.0;
+    return ok;
+}
+
+void MainWindow::processDriveRackFileDrop() {
+    if (const auto selected = driveRackFilePicker_.render()) {
+        if (driveRackPickerProfile_ != activeProfile) {
+            driveRackFilePicker_.complete(false, "Machine changed. Cancel and select a drive again.");
+        } else {
+            const bool ok = insertDriveRackImage(selected->target, selected->path);
+            driveRackFilePicker_.complete(ok, ok ? "" : tapeStatusMessage);
+        }
+    }
+    if (driveRackPendingDrop_.empty()) return;
+    auto paths = std::move(driveRackPendingDrop_);
+    driveRackPendingDrop_.clear();
+    if (driveRackHitFrame_ == ImGui::GetFrameCount()) {
+        for (const auto& hit : driveRackHits_) {
+            if (driveRackDropPosition_.x < hit.x0 || driveRackDropPosition_.x >= hit.x1 ||
+                driveRackDropPosition_.y < hit.y0 || driveRackDropPosition_.y >= hit.y1) continue;
+            insertDriveRackImage(hit.drive, paths.front());
+            return; // No fallback to another drive, including on error or an occupied bay.
+        }
+    }
+    if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+        tapeStatusMessage = "Close the dialog before dropping a disk onto a drive.";
+        tapeStatusUntil = lastFrameTime + 4.0;
+        return;
+    }
+    std::vector<const char*> raw;
+    for (const auto& path : paths) raw.push_back(path.c_str());
+    onFileDrop(static_cast<int>(raw.size()), raw.data());
 }

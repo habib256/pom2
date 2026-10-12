@@ -76,6 +76,21 @@ StorageCoordinator::mountDisk35OnLiron(EmulationController& controller,
     return result;
 }
 
+std::optional<StorageCoordinator::RoutedMediaCommandResult>
+StorageCoordinator::mountHdvOnLiron(EmulationController& controller,
+                                   Settings& settings, const std::string& path,
+                                   bool smartPortOnly) const
+{
+    {
+        auto state = controller.lockState();
+        // Match provisioning's CFFA -> HDV -> SmartPort -> Liron choice.
+        // An explicitly intelligent route ignores dedicated block cards.
+        if (!smartPortOnly && topology(state.memory().slotBus()).preferredBlock())
+            return std::nullopt;
+    }
+    return mountDisk35OnLiron(controller, settings, 0, path);
+}
+
 StorageCoordinator::MediaCommandResult StorageCoordinator::connectExternalSony35(
     EmulationController& controller, Settings& settings, int drive, bool connected) const
 {

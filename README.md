@@ -93,10 +93,14 @@ Disk images can be `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.2mg` or
 `.hdv`. A game written for a particular Apple II still needs that machine:
 changing profiles performs a cold reset.
 
-![POM2 running Bruce Lee, with the Monitor II frame, clickable Apple //e keyboard and drive stack](pic/POM2-desktop.png)
+![Default desktop: Ultima V on Apple //c PAL, Monitor II frame, machine keyboard and right-column drive tabs](pic/POM2-default-desktop.png)
 
-*Bruce Lee on screen, the keyboard below, the drives beside it. A familiar desk,
-with room for another game.*
+The default desktop places the **Apple II Screen** with its Monitor II frame
+above the **Apple Keyboard** on the left. The right column groups **Drives**
+(selected), **Disk Library** and **Slot Configuration** as tabs. The keyboard
+skin follows the active machine; saved window arrangements are restored on
+later launches. The screenshot shows Ultima V on //c PAL; the game and machine
+selection belong to that session.
 
 No disk handy? At the Applesoft prompt, try this:
 
@@ -152,7 +156,16 @@ the running picture. The old pixels have a little depth now.
 ### The chatter of the drive
 
 Open **Devices → Storage → Drives** for a vertical stack of your configured
-drives. The doors, activity lights and mounted disk names follow the machine.
+drives. Slot cards appear from slot 7 down to slot 1,
+with each card's drives in numerical order. This matches the //e's slot scan;
+the //c normally tries its internal 5.25-inch drive, then SmartPort, without
+automatically trying the external 5.25-inch drive. The //c+ keeps its internal and
+external 3.5-inch mechanisms at the top. Click an empty drive picture to choose an image, or drop a file onto
+it from your desktop or the Disk Library. POM2 inserts it into that drive
+without restarting your game. Eject a mounted disk before inserting another.
+The file browser lets you explore your whole disk: jump to Home, the root or
+mounted volumes, enter a folder path directly, and reveal hidden folders.
+The doors, activity lights and mounted disk names follow the machine.
 
 The Audio Mixer's **Automatic** sound mode uses **MAME recordings for classic
 Disk II drives** and **Virtual II recordings for //c-family 5¼-inch drives**
@@ -198,8 +211,11 @@ Mapped gamepads use the left stick for `PDL(0/1)` and the right stick for
 controls. Unmapped desktop joysticks use their raw X/Y axes and leave the extra
 paddles centred.
 
-The clickable **Apple //e Keyboard** lets you type with the mouse and latch
-Shift, Control and the Apple keys. It is also handy for sending guest Ctrl+V,
+The clickable **Apple Keyboard** selects the //c photo for //c, //c PAL and
+//c+ machines, and the //e photo for other profiles. Both skins use the same
+2578 × 908 image dimensions, with their own clickable key positions. It lets
+you type with the mouse and latch Shift, Control and the Apple keys (Option
+on the //c). It is also handy for sending guest Ctrl+V,
 which the host keyboard normally uses for clipboard paste.
 
 And yes, you can print. Open **Devices → ImageWriter II (printout)**, connect
@@ -267,10 +283,33 @@ The default //e Enhanced PAL has Grappler+ in slot 1, Mockingboard in slot 2,
 Mouse Card in slot 4, SmartPort in slot 5, Disk II in slot 6 and Le Chat Mauve
 in slot 7. Slot 3 is empty; extended 80-column memory uses the AUX connector.
 
+On IIe profiles, a storage card in slot 3 cannot boot through its slot entry
+after reset: the motherboard's 80-column firmware owns that ROM page. Use
+another slot. The //c family forces its built-in devices, including SmartPort
+in slot 5 and the 5¼-inch controller in slot 6, over saved expansion choices.
+The //c+ adds its physical Sony drives; //c PAL also forces its RGB adapter.
+
 **Machine → Slot Configuration** lets you change cards and mount or boot disks.
 Some programs expect specific slots: DIX, for example, needs its Mockingboard
 moved to slot 4. The //c family's built-in devices are locked to their hardware
 positions. Profile changes reset the machine and remount disks where possible.
+An absent or unreadable main ROM refuses a profile change and keeps the
+current machine and its configuration.
+
+At power-on, the supplied ROMs choose boot devices in this order:
+
+| Machine | Automatic boot |
+|---|---|
+| Original Apple II | No disk autostart in the original ROM |
+| II+ / unenhanced IIe (NTSC or PAL) | Slots 7 → 1, requiring the older four-byte boot signature |
+| Enhanced IIe (NTSC or PAL) | Slots 7 → 1; HDV cards qualify too |
+| //c (NTSC or PAL, SmartPort-capable ROM) | Internal S6D1, then SmartPort S5; no automatic S6D2 attempt |
+| //c+ | Internal Sony, connected external Sonys, external SmartPort, then first 5¼-inch drive |
+
+The Drives window groups controllers and their drives; its row order is not
+a per-drive boot sequence. **Insert + Boot** selects the mounted controller.
+If its firmware cannot select the requested drive or unit, POM2 reports why;
+on //c+, booting an external SmartPort image requires ejecting Sony disks first.
 
 ## Explore the hardware
 

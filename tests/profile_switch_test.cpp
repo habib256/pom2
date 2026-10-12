@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -210,6 +211,11 @@ int main()
            "a 65c02 override is honoured anywhere");
     settings.setString("cpu_mode_override", "auto");
 
+    // Every machine, not just the //e -> //c transition, must resolve its
+    // own ROM, CPU, timing, paging and snapshot identity after a switch.
+    for (auto profile : pom2::allProfiles())
+        checkSwitch(controller, storage, settings, profile, disk.string());
+
     // A refused switch changes nothing.
     {
         std::printf("-> refused\n");
@@ -246,7 +252,51 @@ int main()
                "a ][+ does not keep the //e's RamWorks banks");
     }
 
+    // A broken per-user ROM override must not advertise the new machine
+    // while continuing to execute the outgoing ROM with a new card map.
     controller.stop();
+    controller.setMode(EmulationController::Mode::Stopped);
+    {
+        const auto overrideRom = pom2::userDataDir() / "roms" / "apple2cp.rom";
+        fs::create_directories(overrideRom.parent_path());
+        { std::ofstream badRom(overrideRom, std::ios::binary); badRom.put(0); }
+        const auto before = settings.getString("system_profile");
+        const auto id = controller.machineId();
+        const auto standard = controller.getVideoStandard();
+        controller.memory().memWrite(0x0300, 0x77);
+        const auto pc = controller.cpu().getProgramCounter();
+        const auto romByte = controller.memory().memRead(0xF800);
+        Recorder rec;
+        const auto r = pom2::switchProfile(controller, storage, settings,
+            pom2::SystemProfile::AppleIIcPlus, true, rec.hooks());
+        controller.stop();
+        expect(!r.applied && !r.error.empty(), "an unreadable ROM refuses the profile switch");
+        expect(rec.calls.empty(), "ROM validation precedes teardown and frontend profile commit");
+        expect(settings.getString("system_profile") == before && controller.machineId() == id &&
+               controller.getVideoStandard() == standard, "a refused ROM preserves the profile");
+        expect(controller.getMode() == EmulationController::Mode::Stopped &&
+               controller.cpu().getProgramCounter() == pc &&
+               controller.memory().peekMainRam(0x0300) == 0x77 &&
+               controller.memory().memRead(0xF800) == romByte,
+               "a refused ROM preserves the paused machine, RAM, PC and firmware");
+        fs::remove(overrideRom);
+    }
+    // A profile switch can spend time flushing media. The validated ROM
+    // must remain the one installed, even if its file disappears meanwhile.
+    {
+        const auto source = pom2::findResource("roms/apple2cp.rom");
+        const auto overrideRom = pom2::userDataDir() / "roms" / "apple2cp.rom";
+        fs::copy_file(source, overrideRom, fs::copy_options::overwrite_existing);
+        Recorder rec;
+        auto hooks = rec.hooks();
+        const auto afterFlush = hooks.afterFlush;
+        hooks.afterFlush = [&] { afterFlush(); fs::remove(overrideRom); };
+        const auto r = pom2::switchProfile(controller, storage, settings,
+            pom2::SystemProfile::AppleIIcPlus, true, hooks);
+        controller.stop();
+        expect(r.applied && r.romLoaded && controller.memory().isIIcPlus(),
+               "the validated ROM survives file removal during the switch");
+    }
     {
         auto* d = diskAt6(controller);
         auto st = controller.lockState();

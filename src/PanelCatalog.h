@@ -191,18 +191,17 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "Parallel printer card \xe2\x86\x92 text spool (.txt)." },
 { PanelId::ImageWriter, "panel.imagewriter", "ImageWriter II (printout)", PanelGroup::DevPorts,
   "show_imagewriter", nullptr,
-  "Rendered ImageWriter II output: pages, colour ribbon, PNG export.", /*defaultOpen=*/true },
+  "Rendered ImageWriter II output: pages, colour ribbon, PNG export." },
 { PanelId::ChatMauve, "panel.chatmauve", "Le Chat Mauve (slot 7)", PanelGroup::DevPorts,
   "show_chatmauve", nullptr,
   "Le Chat Mauve RGB / Eve video card controls." },
 { PanelId::Joystick, "panel.joystick", "Joystick", PanelGroup::DevPorts,
   "show_joystick", nullptr,
   "Analog paddles / joystick mapping + push-buttons." },
-{ PanelId::Keyboard, "panel.keyboard", "Apple //e Keyboard", PanelGroup::DevPorts,
+{ PanelId::Keyboard, "panel.keyboard", "Apple Keyboard", PanelGroup::DevPorts,
   "show_keyboard", nullptr,
-  "A photo of the real //e keyboard, clickable. The keys a host keyboard\n"
-  "has nowhere to put — Open-Apple, Solid-Apple, the //e's own Reset —\n"
-  "are here, with the real legends." },
+  "Clickable keyboard with a skin selected for the active machine.\n"
+  "Includes Open-Apple, Option/Solid-Apple and Reset controls.", /*defaultOpen=*/true },
 
 // ── Devices ▸ Inspectors & tools ────────────────────────────────────────
 { PanelId::Rewind, "panel.rewind", "Rewind (time-travel)", PanelGroup::DevInspectors,

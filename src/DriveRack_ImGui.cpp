@@ -37,7 +37,7 @@ void mechanismPicture(const DrivePicture& drive, float width) {
     const char* badge = drive.kind == DrivePictureKind::HardDisk ? "HARD DISK" :
                         drive.kind == DrivePictureKind::Floppy35 ? "3.5\" DRIVE" : "DRIVE";
     draw->AddText(point(0.20f, 0.68f), dark, badge);
-    ImGui::Dummy(ImVec2(width, height));
+    ImGui::InvisibleButton("##drive-picture", ImVec2(width, height));
 }
 } // namespace
 
@@ -54,19 +54,45 @@ DriveRackResult renderDriveRack(bool& open, const std::vector<DrivePicture>& dri
         ImGui::Separator();
         ImGui::TextWrapped("%s", drive.label.c_str());
         const float width = std::min(320.0f, std::max(1.0f, ImGui::GetContentRegionAvail().x));
-        if (drive.texture)
-            ImGui::Image(static_cast<ImTextureID>(drive.texture),
-                         ImVec2(width, width * drive.pictureAspect));
-        else
-            mechanismPicture(drive, width);
+        if (drive.texture) {
+            ImGui::InvisibleButton("##drive-picture", ImVec2(width, width * drive.pictureAspect));
+            ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(drive.texture),
+                ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        } else mechanismPicture(drive, width);
+        const auto pictureMin = ImGui::GetItemRectMin(), pictureMax = ImGui::GetItemRectMax();
+        if (ImGui::IsItemClicked() && !drive.loaded)
+            result.actions.push_back({DriveRackAction::Type::Insert, index, {}});
+        // Clip OS drop targets to the visible picture, including scrolled rows.
+        if (ImGui::IsItemVisible() && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+            const auto clipMin = ImGui::GetWindowDrawList()->GetClipRectMin();
+            const auto clipMax = ImGui::GetWindowDrawList()->GetClipRectMax();
+            result.hits.push_back({drive, std::max(pictureMin.x, clipMin.x),
+                std::max(pictureMin.y, clipMin.y), std::min(pictureMax.x, clipMax.x),
+                std::min(pictureMax.y, clipMax.y)});
+        }
+        if (!drive.loaded && ImGui::BeginDragDropTarget()) {
+            if (const auto* payload = ImGui::AcceptDragDropPayload("POM2_DISK_IMAGE"))
+                if (payload->DataSize > 0 && static_cast<const char*>(payload->Data)[payload->DataSize - 1] == 0)
+                    result.actions.push_back({DriveRackAction::Type::Mount, index,
+                        static_cast<const char*>(payload->Data)});
+            ImGui::EndDragDropTarget();
+        }
+        if (ImGui::IsItemHovered()) {
+            if (!drive.loaded) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip("Click to choose a disk, or drop an image here");
+                ImGui::GetWindowDrawList()->AddRect(pictureMin, pictureMax,
+                    ImGui::GetColorU32(ImGuiCol_ButtonHovered), 4.0f, 2.0f);
+            } else ImGui::SetTooltip("Eject this disk before inserting another");
+        }
         ImGui::BeginDisabled(!drive.loaded || drive.path.empty());
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, ImGui::GetStyle().FramePadding.y));
         if (ImGui::SmallButton(ICON_FA_EJECT))
-            result.actions.push_back({DriveRackAction::Type::Eject, index});
+            result.actions.push_back({DriveRackAction::Type::Eject, index, {}});
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eject disk");
         ImGui::SameLine(0.0f, 3.0f);
         if (ImGui::SmallButton(drive.writeProtected ? ICON_FA_LOCK : ICON_FA_LOCK_OPEN))
-            result.actions.push_back({DriveRackAction::Type::ToggleWrite, index});
+            result.actions.push_back({DriveRackAction::Type::ToggleWrite, index, {}});
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(drive.writeProtected
             ? "Allow writing to disk" : "Protect disk from writing");
         ImGui::PopStyleVar();
