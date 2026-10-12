@@ -10,6 +10,37 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-12 — Curated disks and 3.5-inch artwork
+
+All package manifests include A2FC XL v0.9.6 (the compatible 6502 edition),
+DIX-fix, ChromaBreak 1.0 and Micro-Sokoban 1.2, with source links and SHA-256
+checksums. The Disk Library finds them beside user libraries through executable-
+relative resource paths; the browser boots the patched DIX image.
+The 3.5-inch SVG's manual-eject hole now sits below the right end of the slot,
+in both stopped and running artwork. Alt+Enter keeps fullscreen and toggles
+mouse capture; F10 remains the fullscreen/windowed switch.
+
+## 2026-10-12 — v0.9.6 bug hunt and drive-sound policy
+
+The GLFW keyboard gate now forwards releases even when ImGui captures the
+keyboard. A key pressed over the guest and released after focusing a host
+widget previously remained down on the IIe AKD wire. `key_chord_policy`
+reproduced the lost release before the fix. Alt+Enter is also a global chord,
+so fullscreen remains reachable from focused widgets. Consumed fullscreen,
+mouse-grab, paste and palette shortcuts no longer assert guest key-down.
+
+Automatic mechanical sounds select MAME for the classic Disk II and Virtual
+II for //c-family 5.25-inch mechanisms, falling back to MAME when local
+recordings are unavailable. The mode survives persistence and updates on
+profile changes; manual bank overrides remain available. Sony 3.5-inch
+mechanisms keep MAME recordings in automatic mode. `audio_coordinator`
+covers the policy, fallback, override and persistence cases.
+
+Moved Disk II cycle advancement unchanged into `DiskIICard_Cycles.cpp`,
+retaining the exact spindle-stop fix while bringing the original file back
+under its size budget. Version metadata and release notes prepare v0.9.6;
+no release tag has been created.
+
 ## 2026-10-12 — Resolve keyboard, drive-sound and nightly issues
 
 Corrected the second horizontal-arrow legend in the keyboard image (#13),
@@ -61,6 +92,75 @@ the windowed GUI with the pointer released. Key repeats
 do not toggle it and Return does not reach the guest or confirm a kiosk
 menu item. Full-screen capture works without a Mouse Card; leaving full
 screen still releases the pointer. F10 / Ctrl+Alt+F keep the windowed toggle.
+
+## 2026-10-12 — Dedicated vertical drive stack
+
+Fixed empty HDV/CFFA mechanisms disappearing and small hard-disk images
+being mistaken for generic drives: fixed block bays now report their media
+kind independently of capacity or whether an image is loaded. The Drives
+notch icon now consistently reflects disk protection, without folding in
+SmartPort's process write-back policy. `drive_rack_media` covers empty and
+small HD bays and the distinction between disk protection and policy.
+The regression also exposed CFFA and SmartPort per-bay notch setters doing
+nothing; their bay adapters now forward protection to the mounted medium.
+Liron's snapshot also reports the disk's protection independently of policy.
+
+Moved drive artwork into the new persisted `Drives` window under Devices /
+Storage, open by default. All Disk II cards, configured SmartPort/Liron units,
+HDV/CFFA bays and connected //c+ Sony mechanisms appear one after another
+vertically, including empty drives. The stack is rebuilt from locked value
+snapshots each frame, so adding/removing a card or unit updates it live.
+Disk II reuses the MIT artwork with per-drive door/motor state; 3.5-inch and
+hard-disk mechanisms have original vector illustrations. `Manage disks...`
+opens the existing media controls. Disk II controller panels now keep their
+controls without duplicating the pictures.
+
+## 2026-10-12 — Protected WOZ gameplay evidence and vertical Disk II artwork
+
+Manual WOZ-a-day runs reached Captain Goodnight gameplay after the face-B
+swap and Prince of Persia's first dungeon room. Added
+`protected_disk_boot_probe` to `make probes`: single-threaded IIe boot,
+scheduled keys/media swap, CSV timeline, screen captures and main/aux RAM
+dumps, with write-back disabled. The dated audit records exact image hashes,
+milestones, commands and remaining validation; diagnostic exit 0 makes no
+claim that all copy protections passed. No game images are bundled.
+
+The two Disk II images are now stacked vertically, each sized to the panel
+width up to 240 px.
+
+## 2026-10-12 — Disk II protection prerequisites and exact spindle stop
+
+Added two self-contained synthetic WOZ2 tests: an independent transition
+oracle for exact bit counts, quarter/fat-track mappings, revolution seams
+and anchors; and controller read comparisons across head moves, drive
+selects and motor stop/restart with different CPU advancement batch sizes.
+Shared fat-track head moves also compare against a stationary-head stream.
+Both exercise OBT 28/32/36 without importing SmartDisk II firmware or requiring
+commercial game images. Actual SpiraDisc/RWTS18 game validation remains open.
+
+The cadence test exposed a real stop/restart discrepancy: `advanceCycles`
+processed flux until the end of a batch crossing the spindle-stop deadline.
+That extra PROM activity changed subsequent reads ($1E versus $02 in the
+OBT=32 regression). Advancement now splits at the deadline, then advances
+the remaining CPU time with the motor stopped, preserving the exact write
+flush boundary too.
+
+## 2026-10-12 — Monitor II / Disk II artwork and four analog paddles
+
+Added an optional Monitor II frame in Display and the CRT panel, with its
+setting persisted and the guest mouse rectangle limited to the picture.
+The Disk II panel shows independent door/motor artwork for both drives.
+PNG textures load lazily outside the machine lock, fall back to the existing
+UI if missing, and are released before GL teardown. MIT artwork, attribution
+and editable SVGs from sscanf/apple2e-emulator are bundled through the shared
+package manifest; no upstream sound recordings are imported.
+
+Mapped gamepads now route the right stick to `PDL(2/3)`, with the same radial
+deadzone and square gate as the left stick and independent persisted
+inversion. Unmapped desktop pads leave that pair centered to avoid mapping
+triggers to paddles. The joystick panel previews all four axes/readings;
+`joystick_square_gate` also checks independent pair routing, right-stick
+inversion/deadzone, invalid indices and disconnect centering.
 
 ## 2026-10-07 — Deterministic audio mixer CI test
 

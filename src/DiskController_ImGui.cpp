@@ -20,6 +20,7 @@
 #include "imgui.h"
 
 #include <cstdio>
+#include <algorithm>
 
 namespace pom2 {
 

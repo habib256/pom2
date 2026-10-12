@@ -195,6 +195,8 @@ void MainWindow::renderCommandPalette()
             aspectMode == AspectMode::Integer);
         add("disp.crttoggle", "Display", "Toggle CRT effects", "", true,
             crtEffectsEnabled);
+        add("disp.monitor", "Display", "Monitor II frame", "", true,
+            monitorArtworkEnabled);
     }
 
     // ── Layout + interface ───────────────────────────────────────────────
@@ -285,6 +287,7 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "disp.aspect.crt43")   { aspectMode = AspectMode::Crt43;   return; }
     if (id == "disp.aspect.integer") { aspectMode = AspectMode::Integer; return; }
     if (id == "disp.crttoggle")      { toggle(crtEffectsEnabled);        return; }
+    if (id == "disp.monitor")        { toggle(monitorArtworkEnabled);    return; }
 
     // Layout + interface
     if (id == "layout.reset")     { pendingDockLayout_ = DockLayout::Reset;     dockLayoutRequested_ = true; return; }
@@ -620,6 +623,7 @@ void MainWindow::renderMenuBar()
         // sharpness / BCS). The shared effect stack runs on every pipeline,
         // so this one panel governs the CRT look across all modes.
         panelMenuItem(pom2::PanelId::Crt);
+        ImGui::MenuItem("Monitor II frame", nullptr, &monitorArtworkEnabled);
 
         // 3D voxel view (MicroM8 "Voxel Cube"): rebuild the screen as an
         // upright 4:3 slab of equal-depth cubes; left-drag orbits, middle-drag

@@ -149,6 +149,11 @@ public:
     void write(std::uint16_t address, std::uint8_t value);
 
     void queueKey(std::uint8_t ascii);
+    /// Physical key state for IIe AKD ($C010), independent of the strobe.
+    /// Tokens in 0..511 distinguish simultaneous host keys. queueKey still
+    /// supplies character/repeat events; these calls do not inject a byte.
+    void setKeyHeld(std::uint16_t token, bool down);
+    void releaseHeldKeys();
     std::size_t pasteText(std::string_view text);
 
     /// Drive one of the four Apple II paddle inputs directly. Values map to

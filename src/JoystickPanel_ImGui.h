@@ -33,7 +33,7 @@ namespace pom2 {
 class JoystickPanel_ImGui
 {
 public:
-    static constexpr int kAxes    = 2;
+    static constexpr int kAxes    = 4;
     static constexpr int kButtons = 3;
 
     /// One entry per detected GLFW host joystick. Used to populate the
@@ -55,7 +55,7 @@ public:
         bool  squareGate = true;
 
         // Live Apple-II-side values for confirmation.
-        std::array<uint8_t, 4> appleIIPaddle{ 127, 127, 127, 127 };
+        std::array<uint8_t, 4> appleIIPaddle{ 128, 128, 128, 128 };
         std::array<bool,    3> appleIIButton{ false, false, false };
     };
 

@@ -368,22 +368,29 @@ void MainWindow::drawScreenImage()
     const float W = static_cast<float>(Apple2Display::kWidth);
     const float H = static_cast<float>(Apple2Display::kHeight);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const unsigned int bezel = monitorArtworkEnabled && !show(pom2::PanelId::Voxel)
+        ? retroArtwork_.monitor() : 0;
+    // SVG opening: (41,40), 608x432, inside a 690x512 case.
+    // Reserve the case margins before choosing the picture/CRT resolution.
+    const ImVec2 pictureAvail = bezel
+        ? ImVec2(avail.x * 608.0f / 690.0f, avail.y * 432.0f / 512.0f)
+        : avail;
     ImVec2 size;
     switch (aspectMode) {
         case AspectMode::Crt43: {
-            float h = std::min(avail.y, avail.x * 3.0f / 4.0f);
+            float h = std::min(pictureAvail.y, pictureAvail.x * 3.0f / 4.0f);
             h = std::max(h, H);
             size = ImVec2(h * 4.0f / 3.0f, h);
             break;
         }
         case AspectMode::Integer: {
-            float s = std::max(1.0f, std::floor(std::min(avail.x / W, avail.y / H)));
+            float s = std::max(1.0f, std::floor(std::min(pictureAvail.x / W, pictureAvail.y / H)));
             size = ImVec2(W * s, H * s);
             break;
         }
         case AspectMode::Square:
         default: {
-            float s = std::max(1.0f, std::min(avail.x / W, avail.y / H));
+            float s = std::max(1.0f, std::min(pictureAvail.x / W, pictureAvail.y / H));
             size = ImVec2(W * s, H * s);
             break;
         }
@@ -535,9 +542,13 @@ void MainWindow::drawScreenImage()
     //   Integer — Square snapped to an integer multiple (no fractional-scale
     //             shimmer); never < 1×.
     ImVec2 cur = ImGui::GetCursorPos();
+    const ImVec2 bodySize = bezel
+        ? ImVec2(size.x * 690.0f / 608.0f, size.y * 512.0f / 432.0f) : size;
+    const ImVec2 margin = bezel
+        ? ImVec2(size.x * 41.0f / 608.0f, size.y * 40.0f / 432.0f) : ImVec2(0, 0);
     ImGui::SetCursorPos(ImVec2(
-        cur.x + std::max(0.0f, (avail.x - size.x) * 0.5f),
-        cur.y + std::max(0.0f, (avail.y - size.y) * 0.5f)));
+        cur.x + std::max(0.0f, (avail.x - bodySize.x) * 0.5f) + margin.x,
+        cur.y + std::max(0.0f, (avail.y - bodySize.y) * 0.5f) + margin.y));
 
     ImGui::Image(static_cast<ImTextureID>(presentTex), size);
     // Capture the screen widget's screen-space rect so the GLFW
@@ -556,6 +567,15 @@ void MainWindow::drawScreenImage()
     // hidden screen window cannot leave a stale `true` behind.
     const bool screenHovered = ImGui::IsItemHovered();
     screenHovered_ = screenHovered;
+    if (bezel) {
+        const ImVec2 bodyMin(screenRectMin.x - margin.x, screenRectMin.y - margin.y);
+        ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(bezel),
+            bodyMin, ImVec2(bodyMin.x + bodySize.x, bodyMin.y + bodySize.y));
+        // Reserve the bottom case margin without making it a guest target.
+        ImGui::SetCursorPos(ImVec2(cur.x, cur.y + std::max(0.0f,
+            (avail.y - bodySize.y) * 0.5f) + bodySize.y));
+        ImGui::Dummy(ImVec2(bodySize.x, 0));
+    }
 
     // 3D voxel view camera: left-drag orbits, middle-drag strafes (pan),
     // wheel zooms (MicroM8-style). All reference the Image item above

@@ -1151,6 +1151,7 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
     info.loaded            = u->isLoaded();
     info.busy              = u->isBusy();
     info.writeProtected    = u->isWriteProtected();
+    info.fileWriteProtected = u->isFileWriteProtected();
     info.writeBackEnabled  = u->isWriteBackEnabled();
     info.hasUnsavedChanges = u->hasUnsavedChanges();
     if (auto* b = u->blockBacking()) {
@@ -1164,6 +1165,13 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
     info.supportsWriteBack = true;
     info.supportsTypeSelect = true;
     return info;
+}
+
+void SmartPortCard::setBayHostWriteProtected(int bay, bool on)
+{
+    if (bay < 0 || bay >= bayCount()) return;
+    if (auto* u = unit(static_cast<std::size_t>(bay)))
+        u->setHostWriteProtected(on);
 }
 
 bool SmartPortCard::adoptBay(int bay, Block512Backing::PreparedImage&& prepared,

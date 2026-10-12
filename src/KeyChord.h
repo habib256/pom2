@@ -56,6 +56,13 @@
 namespace pom2 {
 namespace keychord {
 
+inline bool routeHostKey(bool uiCaptures, bool globalShortcut, bool release)
+{
+    // A key can be pressed over the guest, then released over a text field.
+    // Losing that edge leaves the IIe any-key-down wire asserted forever.
+    return release || !uiCaptures || globalShortcut;
+}
+
 // ── GLFW token mirrors (static_asserted in MainWindow_Input.cpp) ────────
 inline constexpr int kKeyA        = 65;      // GLFW_KEY_A
 inline constexpr int kKeyZ        = 90;      // GLFW_KEY_Z

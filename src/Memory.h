@@ -672,6 +672,8 @@ public:
         keyboard_.queueKey(ascii);
     }
     void clearKeyStrobe()         { keyboard_.clearStrobe(); }
+    void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
+    void releaseHeldKeys()        { keyboard_.releaseHeldKeys(); }
 
     /// Paste a block of text. Line-endings normalised to CR ($0D) — `\r\n`,
     /// `\r`, `\n` all collapse to one CR. Non-printable controls below

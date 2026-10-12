@@ -86,7 +86,7 @@
   const _qs = new URLSearchParams(window.location.search);
   const _preset = _qs.get('preset') || 'iie-pal';
   const _disk   = _qs.get('nodisk') === '1' ? null
-                 : (_qs.get('disk') || 'floppyemu/DIX.po');
+                 : (_qs.get('disk') || 'bundled_disks/DIX-fix.po');
   const _args = ['--preset', _preset];
   if (_disk) _args.push(_disk);
 

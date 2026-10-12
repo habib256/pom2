@@ -38,6 +38,7 @@
 #include "PrinterScreenDump.h" // pom2::ScreenDumpOptions member
 #include "PanelRegistry.h"  // pom2::PanelRegistry member (the panel table)
 #include "SlotConnectors.h" // pom2::ConnectorSection member (Slot Config)
+#include "RetroArtwork.h"
 
 #include "imgui.h"  // ImU32 / ImVec2 used in struct MemRegion + member types
 
@@ -554,6 +555,8 @@ private:
     // framebuffer — the colour demod still runs, only the CRT glass is
     // bypassed. Persisted under `crt_effects_enabled`.
     bool         crtEffectsEnabled = true;
+    bool         monitorArtworkEnabled = false;
+    pom2::RetroArtwork retroArtwork_;
 
     // Presentation aspect (Phase 6). The Apple II's 280×192 active area was
     // shown on a 4:3 CRT → its pixels are NOT square. Square = 1:1 logical
@@ -1384,6 +1387,7 @@ private:
     void renderDiskFileDialog();
     void renderDiskLibraryWindow();
     void renderDisk35PanelWindow();
+    void renderDriveRackWindow();
     void renderDisk35FileDialog();
     void renderHdvPanelWindow();
     void renderHdvFileDialog();
@@ -1474,6 +1478,7 @@ private:
     /// Optional CSV log to `mouseInspectorLogPath` for offline review.
     void renderMouseInspectorWindow();
     void renderAudioMixerWindow();
+    void updateDriveSoundBank();
     void renderNtscSettingsWindow();
     void renderVoxelSettingsWindow();
     void renderAiControlPanelWindow();

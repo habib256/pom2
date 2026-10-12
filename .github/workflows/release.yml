@@ -860,16 +860,17 @@ jobs:
           for f in index.html POM2.js POM2.wasm POM2.data; do
             test -s "wasm/$f" || { echo "ERROR: wasm/$f is missing or empty"; exit 1; }
           done
-          # Size bound. The manifest payload plus floppyemu/ lands near 35 MB;
-          # a jump past 60 MB means a deny-listed folder (disks_5.4 at 192 MB,
+          # Size bound: v0.9.6 explicitly adds the 32 MB A2FC XL disk and
+          # three small images to the earlier ~35 MB payload. The 100 MB
+          # ceiling still catches a leaked library (disks_5.4 at 192 MB,
           # hdv at 130 MB) found its way into POM2.data — which nothing else
           # here would notice, since a fat bundle still works locally and only
           # fails once it meets GitHub Pages' limits and a user's bandwidth.
           TOTAL=$(du -cb wasm/index.html wasm/POM2.js wasm/POM2.wasm wasm/POM2.data \
                   | tail -1 | cut -f1)
           echo "Bundle size: $TOTAL bytes"
-          test "$TOTAL" -lt 60000000 \
-            || { echo "ERROR: bundle > 60 MB — did a large folder leak into POM2.data?"; exit 1; }
+          test "$TOTAL" -lt 100000000 \
+            || { echo "ERROR: bundle > 100 MB — did a large folder leak into POM2.data?"; exit 1; }
 
       - name: Zip the bundle
         env:

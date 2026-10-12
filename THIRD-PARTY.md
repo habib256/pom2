@@ -66,7 +66,19 @@ known origin. (Filed in [`docs/backlog/release-1.0.md` § G1](docs/backlog/relea
 | [Tom Harte ProcessorTests](https://github.com/SingleStepTests/ProcessorTests) | MIT | The 6502 / 65C02 per-opcode oracle, a curated subset fetched at configure time (`tests/tomharte_*.manifest`). |
 | Klaus Dormann's 6502 functional tests | GPL-3.0 | The CPU functional suite, fetched at test time. |
 | zexall / zexdoc | GPL | The Z80 exerciser, fetched at test time. |
-| [DIX](https://github.com/Fr3nchT0uch/DIX/) (French Touch) | GPL-3.0 | `disks_3.5/DIX.po`, the priority benchmark — and, as `floppyemu/DIX.po`, the disk the browser demo boots. Sources published by the authors. |
+| [DIX](https://github.com/Fr3nchT0uch/DIX/) (French Touch) | GPL-3.0 | `disks_3.5/DIX.po`, the priority benchmark. Sources published by the authors. |
+
+## Bundled disks (`bundled_disks/`)
+
+| Disk | Licence | Source |
+|---|---|---|
+| A2FC XL v0.9.6 (6502 edition) | GPL-3.0 | [A2FileCommander](https://github.com/habib256/a2filecmd/releases/tag/v0.9.6) |
+| DIX-fix | GPL-3.0 | [French Touch DIX](https://github.com/Fr3nchT0uch/DIX/); reproduced with `tools/make_dix_fix.py`. Browser default disk. |
+| ChromaBreak 1.0 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.0) |
+| Micro-Sokoban 1.2 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/1.2) |
+
+The shipped README records machine requirements and source links; SHA256SUMS
+records the pristine images. User disk libraries remain excluded.
 
 ## ROM dumps and system software (shipped in `roms/`)
 

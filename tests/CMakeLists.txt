@@ -636,6 +636,7 @@ set_tests_properties(liron_boot35 PROPERTIES TIMEOUT 60 LABELS slow)
 add_executable(test_iicplus_boot35
     iicplus_boot35_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -714,6 +715,7 @@ add_executable(test_iic_external_smartport
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
@@ -757,6 +759,7 @@ add_executable(test_iic_diskii_after_smartport
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
@@ -792,6 +795,7 @@ add_executable(test_iicplus_boot_trace EXCLUDE_FROM_ALL
     iicplus_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -818,6 +822,7 @@ add_executable(test_iic_boot_trace
     iic_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -846,6 +851,7 @@ add_executable(test_iic_nodisk_boot_trace
     iic_nodisk_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -874,6 +880,7 @@ add_executable(test_choplifter_iie_trace EXCLUDE_FROM_ALL
     choplifter_iie_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -1090,6 +1097,7 @@ add_executable(test_rewind_slot_state
     rewind_slot_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1150,6 +1158,7 @@ add_executable(test_rewind_disk_write
     rewind_disk_write_test.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1321,6 +1330,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/StorageCoordinator_Persist.cpp
     ${CMAKE_SOURCE_DIR}/src/Settings.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
@@ -1419,6 +1429,7 @@ add_executable(test_media_write_default
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2038,6 +2049,7 @@ add_executable(test_disk_media_state
     disk_media_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2054,6 +2066,7 @@ add_executable(test_two_phase_mount
     two_phase_mount_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2192,6 +2205,7 @@ add_executable(test_diskii_lss
     diskii_lss_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2240,6 +2254,7 @@ add_executable(test_mame_lss_parity
     mame_lss_parity_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2289,6 +2304,7 @@ add_executable(test_disk_write_controller
     disk_write_controller_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2312,6 +2328,7 @@ add_executable(test_woz_load
     woz_load_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2419,6 +2436,7 @@ set_tests_properties(iic_onboard_smartport_smoke PROPERTIES TIMEOUT 15)
 add_executable(test_iic_dual_boot_trace EXCLUDE_FROM_ALL
     iic_dual_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
@@ -2566,6 +2584,7 @@ add_executable(test_disk_drive2
     disk_drive2_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2602,6 +2621,7 @@ add_executable(test_disk_boot
     disk_boot_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2635,6 +2655,7 @@ add_executable(test_dos32_boot_trace
     dos32_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2668,6 +2689,7 @@ add_executable(test_dos33_save
     dos33_save_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2701,6 +2723,7 @@ add_executable(test_diskii_format
     diskii_format_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2737,6 +2760,7 @@ add_executable(test_diskii_unformatted
     diskii_unformatted_disk_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2774,6 +2798,7 @@ add_executable(test_diskii_write_integrity
     diskii_write_integrity_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2807,6 +2832,7 @@ add_executable(test_prodos_save
     prodos_save_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2840,6 +2866,7 @@ add_executable(test_sector_order
     sector_order_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2873,6 +2900,7 @@ add_executable(test_no_slot_clock_prodos_driver
     no_slot_clock_prodos_driver_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2903,6 +2931,7 @@ add_executable(c2plus_boot_probe EXCLUDE_FROM_ALL
     c2plus_boot_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2931,6 +2960,7 @@ add_executable(copy2plus_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -2984,6 +3014,7 @@ add_executable(iic_a2fc_printer_port_probe EXCLUDE_FROM_ALL
     iic_a2fc_printer_port_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2998,6 +3029,7 @@ add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     hdv_boot_dump.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -3453,6 +3485,7 @@ add_executable(madef_phase_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3477,6 +3510,7 @@ add_executable(u5_woz_save_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3505,6 +3539,7 @@ add_executable(dd2_ay_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3638,6 +3673,7 @@ add_executable(test_drol_probe
     drol_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_drol_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3661,6 +3697,7 @@ add_executable(test_diskii_motor_coast
     diskii_motor_coast_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_diskii_motor_coast PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3692,6 +3729,7 @@ add_executable(test_purplesoft_eve_screens
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_purplesoft_eve_screens PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3722,6 +3760,7 @@ add_executable(test_extasie_mouse_probe
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
@@ -3754,6 +3793,7 @@ add_executable(test_purplesoft_eve_probe
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_purplesoft_eve_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3996,6 +4036,7 @@ set_tests_properties(display_dirty_skip PROPERTIES TIMEOUT 30)
 add_executable(test_diskii_empty_drive
     diskii_empty_drive_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -4085,6 +4126,7 @@ set_tests_properties(fujinet_net_device PROPERTIES TIMEOUT 60)
 add_executable(test_bus_fastpath
     bus_fastpath_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4110,6 +4152,7 @@ set_tests_properties(bus_fastpath PROPERTIES TIMEOUT 120)
 add_executable(test_memory_cpu_view
     memory_cpu_view_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4845,6 +4888,7 @@ add_executable(test_slot_config
     slot_config_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -5635,6 +5679,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -5704,6 +5749,7 @@ add_executable(hero_probe EXCLUDE_FROM_ALL
     hero_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -5949,6 +5995,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
@@ -6290,6 +6337,7 @@ add_executable(test_softcard_cpm_boot
     ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -6336,6 +6384,7 @@ foreach(_diag cpu_smoke disasm_smoke iic_dump rom_basic rom_boot)
         ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
         ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
         ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+        ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
         ${POM2_TEST_CORE_SOURCES}
     )
     target_include_directories(${_diag} PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -6360,6 +6409,7 @@ endforeach()
 add_executable(test_iwm_mig_snapshot
     iwm_mig_snapshot_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -6515,6 +6565,7 @@ add_executable(test_iic_printer_port
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialTcpTransport.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iic_printer_port PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -6545,6 +6596,7 @@ add_executable(iicplus_boot_probe EXCLUDE_FROM_ALL
     iicplus_boot_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -6570,6 +6622,7 @@ add_executable(test_iic_plus_boot_write
     iic_plus_boot_write_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -6647,6 +6700,7 @@ set(POM2_DD1_AB_COMMON
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -6834,6 +6888,7 @@ set_tests_properties(audio_source_teardown PROPERTIES TIMEOUT 10)
 add_executable(test_disk_path_snapshot
     disk_path_snapshot_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -6861,6 +6916,7 @@ set_tests_properties(disk_path_snapshot PROPERTIES TIMEOUT 15)
 add_executable(test_diskii_insert_thread_stack
     diskii_insert_thread_stack_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -7362,6 +7418,7 @@ add_executable(test_fuzz_snapshot
     # and the SLOTn sections are all zero-length and the fuzzer mutates
     # lengths with nothing behind them (2026-09-07 R8).
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
 )
 target_include_directories(test_fuzz_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -7557,6 +7614,11 @@ set_tests_properties(controller_mode_races PROPERTIES RUN_SERIAL TRUE LABELS slo
 pom2_add_headless_test(test_media_notch
     NAME media_notch TIMEOUT 60
     SOURCES media_notch_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_drive_rack_media
+    NAME drive_rack_media TIMEOUT 20
+    SOURCES drive_rack_media_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 # Every ROM-driven card takes its real ROM path when the dumps are present
@@ -7978,6 +8040,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(dix_menu_raster_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -8013,6 +8076,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(oldskool_raster_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -8048,6 +8112,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(oldskool_crash_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -8193,6 +8258,7 @@ add_executable(test_diskii_write_burst
     diskii_write_burst_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -8395,6 +8461,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
@@ -8442,6 +8509,7 @@ add_executable(test_diskii_track_reach_weak
     diskii_track_reach_weak_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
@@ -8465,6 +8533,38 @@ endif()
 
 add_test(NAME diskii_track_reach_weak COMMAND test_diskii_track_reach_weak)
 set_tests_properties(diskii_track_reach_weak PROPERTIES TIMEOUT 20)
+
+# Synthetic WOZ protection signals: independent flux oracle and controller cadence.
+add_executable(test_disk_protection_signals
+    disk_protection_signals_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+)
+target_include_directories(test_disk_protection_signals
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_disk_protection_signals PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_disk_protection_signals PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_disk_protection_signals PRIVATE winmm)
+endif()
+
+add_test(NAME disk_protection_flux COMMAND test_disk_protection_signals flux)
+add_test(NAME diskii_read_cadence COMMAND test_disk_protection_signals cadence)
+set_tests_properties(disk_protection_flux diskii_read_cadence PROPERTIES TIMEOUT 30)
+
 
 # ─── Two ctest entries that check the build's own contracts (hunt #16) ────
 # sdk_component_excluded: the developer SDK (libpom2_core.a, headers, the
@@ -8631,6 +8731,12 @@ add_test(NAME workstation_card_pacing
 set_tests_properties(workstation_card_pacing PROPERTIES
     TIMEOUT 30 SKIP_RETURN_CODE 77)
 
+# Manual protected-disk integration evidence; deliberately no ctest gate.
+if(TARGET pom2_core_test)
+    add_executable(protected_disk_boot_probe EXCLUDE_FROM_ALL protected_disk_boot_probe.cpp)
+    target_link_libraries(protected_disk_boot_probe PRIVATE pom2_core_test)
+endif()
+
 set(POM2_PROBE_TARGETS
     artifact_probe
     c2plus_boot_probe
@@ -8649,6 +8755,7 @@ set(POM2_PROBE_TARGETS
     madef_phase_probe
     oldskool_crash_probe
     oldskool_raster_probe
+    protected_disk_boot_probe
     render_total_replay_modes
     rom_basic
     rom_boot

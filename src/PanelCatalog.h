@@ -79,7 +79,7 @@ enum class PanelGroup {
 /// missing or duplicated row is a compile error, not a runtime surprise.
 enum class PanelId : std::size_t {
     DiskLibrary, SlotConfig,
-    Media, FloppyEmu, Cassette, DiskII, Disk35, Hdv, SmartPort, FujiNet,
+    Media, Drives, FloppyEmu, Cassette, DiskII, Disk35, Hdv, SmartPort, FujiNet,
     Mockingboard, Phasor, EchoPlus, Mixer,
     Ssc, Ethernet, Printer, ImageWriter, ChatMauve, Joystick, Keyboard,
     Rewind, Mouse, NoSlotClock,
@@ -115,9 +115,8 @@ struct PanelInfo {
     const char* shortcut;
     /// Menu tooltip. Written for somebody who has not opened the panel yet.
     const char* tip;
-    /// Open on a fresh install (no settings file yet). Three panels are: the
-    /// two that answer "where do I put my disks" and the printout the printer
-    /// cards feed. Everything else starts closed.
+    /// Open on a fresh install (no settings file yet): disk library, slot
+    /// configuration, the drive stack and the printer's paper view.
     bool defaultOpen = false;
 };
 
@@ -136,6 +135,9 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "//c-class profiles are locked and say why.", /*defaultOpen=*/true },
 
 // ── Devices ▸ Storage ───────────────────────────────────────────────────
+{ PanelId::Drives, "panel.drives", "Drives", PanelGroup::DevStorage,
+  "show_drives", nullptr,
+  "All configured drives, stacked vertically with their mounted media and activity.", true },
 { PanelId::Media, "panel.media", "Internal Disks & Media...", PanelGroup::DevStorage,
   "show_media_panel", nullptr,
   "Every internal drive and mountable bay in one place. Mount / Insert /\n"

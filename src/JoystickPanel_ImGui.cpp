@@ -97,8 +97,8 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     }
 
     ImGui::TextDisabled(
-        "Pick which host pad drives the Apple II game port. Its X/Y axes"
-        " feed PADL(0)/PADL(1); buttons feed PB0/PB1/PB2.");
+        "Left stick: PDL(0/1). Right stick: PDL(2/3)."
+        " Buttons feed PB0/PB1/PB2. Right stick needs a mapped gamepad.");
     ImGui::Separator();
 
     // ─── Device combo ────────────────────────────────────────────────────
@@ -142,12 +142,14 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     if (bound) {
         drawAxisBar("X axis", bound->axis[0], snap.deadzone);
         drawAxisBar("Y axis", bound->axis[1], snap.deadzone);
+        drawAxisBar("Right X", bound->axis[2], snap.deadzone);
+        drawAxisBar("Right Y", bound->axis[3], snap.deadzone);
         ImGui::Spacing();
         drawButtonLed("Btn 0", bound->buttons[0]);
         drawButtonLed("Btn 1", bound->buttons[1]);
         drawButtonLed("Btn 2", bound->buttons[2]);
     } else {
-        ImGui::TextDisabled("Joystick disabled — paddles read 127, buttons up.");
+        ImGui::TextDisabled("Joystick disabled — paddles read 128, buttons up.");
     }
 
     ImGui::Spacing();
@@ -159,6 +161,9 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     if (ImGui::Checkbox("Invert X", &r.invert[0])) r.changed = true;
     ImGui::SameLine();
     if (ImGui::Checkbox("Invert Y", &r.invert[1])) r.changed = true;
+    if (ImGui::Checkbox("Invert right X", &r.invert[2])) r.changed = true;
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Invert right Y", &r.invert[3])) r.changed = true;
 
     if (ImGui::Checkbox("Square gate (Apple II corners)", &r.squareGate))
         r.changed = true;
@@ -175,6 +180,8 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     ImGui::TextUnformatted("Apple II side (live):");
     ImGui::Text(" PADL(0)=%-3u  PADL(1)=%-3u",
                 snap.appleIIPaddle[0], snap.appleIIPaddle[1]);
+    ImGui::Text(" PADL(2)=%-3u  PADL(3)=%-3u",
+                snap.appleIIPaddle[2], snap.appleIIPaddle[3]);
     ImGui::Text(" PB0=%s  PB1=%s  PB2=%s",
                 snap.appleIIButton[0] ? "DOWN" : "up",
                 snap.appleIIButton[1] ? "DOWN" : "up",

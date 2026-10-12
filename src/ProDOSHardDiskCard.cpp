@@ -170,6 +170,8 @@ pom2::MediaBayInfo ProDOSHardDiskCard::bayInfo(int bay) const
 {
     pom2::MediaBayInfo info;
     if (!validDrive(bay)) return info;
+    info.typeKey           = "hdv";
+    info.kindLabel         = "ProDOS HDV";
     const pom2::Block512Backing& b = backings_[bay];
     info.loaded            = b.isLoaded();
     info.busy              = b.isBusy();
@@ -177,6 +179,7 @@ pom2::MediaBayInfo ProDOSHardDiskCard::bayInfo(int bay) const
     info.lastError         = b.lastError();
     info.blockCount        = static_cast<uint32_t>(b.blockCount());
     info.writeProtected    = b.isWriteProtected();
+    info.fileWriteProtected = b.isWriteProtected();
     info.writeBackEnabled  = b.isWriteBackEnabled();
     info.hasUnsavedChanges = b.hasUnsavedChanges();
     info.supportsWriteBack = b.canWriteBack();

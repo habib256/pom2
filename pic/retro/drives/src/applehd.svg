@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="400" viewBox="0 0 1000 400">
+<title>Apple hard disk — front face</title>
+<desc>Front elevation drawn from the user's photograph: plain case, shallow upper cover, left activity indicator, central ventilation opening and lower-left rainbow Apple emblem.</desc>
+<defs>
+<linearGradient id="upper" x2="0" y2="1"><stop stop-color="#e9e1cc"/><stop offset="1" stop-color="#c9c0ab"/></linearGradient>
+<linearGradient id="front" x2="0" y2="1"><stop stop-color="#ded5bf"/><stop offset="1" stop-color="#cbc2ab"/></linearGradient>
+<linearGradient id="button" x2="0" y2="1"><stop stop-color="#ece3cf"/><stop offset="1" stop-color="#b3aa95"/></linearGradient>
+<!-- MIT emblem geometry from sscanf/apple2e-emulator; see ../../NOTICE.txt. -->
+<clipPath id="apple"><path d="M54 40C38 28 17 35 11 53C3 77 18 111 33 117C41 120 45 113 54 113C63 113 68 120 76 116C88 111 97 96 100 86C81 78 80 58 99 49C89 33 71 30 56 40ZM55 30C53 15 64 4 79 1C80 15 70 29 55 30Z"/></clipPath>
+</defs>
+<rect x="20" y="25" width="970" height="365" rx="12" fill="#211f1c" opacity=".35"/>
+<rect x="15" y="15" width="970" height="365" rx="12" fill="url(#front)" stroke="#948b78" stroke-width="2"/>
+<!-- Shallow cover with a fine horizontal seam, rather than a floppy slot. -->
+<path d="M27 15H973Q985 15 985 27V139H15V27Q15 15 27 15Z" fill="url(#upper)"/>
+<path d="M29 19H971" stroke="#f1e8d3" stroke-width="4"/>
+<path d="M17 139H983" stroke="#a19985" stroke-width="3"/>
+<path d="M18 144H982" stroke="#eee5cf" stroke-width="3"/>
+<!-- Activity indicator on the left edge of the seam. -->
+<rect x="17" y="139" width="108" height="33" rx="4" fill="#978e7b"/>
+<rect x="20" y="141" width="99" height="24" rx="4" fill="url(#button)" id="activity" stroke="#aea590" stroke-width="1.5"/>
+<!-- Central ventilation opening, unchanged during disk activity. -->
+<rect x="438" y="140" width="140" height="21" rx="2" fill="#575347"/>
+<rect x="444" y="144" width="128" height="13" rx="1" fill="#242722"/>
+<path d="M29 376H971" stroke="#b1a894" stroke-width="3"/>
+<g transform="translate(112 245) scale(.8)" clip-path="url(#apple)">
+  <path fill="#5e9750" d="M0 0H110V44H0Z"/><path fill="#d8bd50" d="M0 44H110V59H0Z"/><path fill="#d58b42" d="M0 59H110V74H0Z"/><path fill="#ba5147" d="M0 74H110V89H0Z"/><path fill="#96557e" d="M0 89H110V104H0Z"/><path fill="#477f9e" d="M0 104H110V125H0Z"/>
+</g>
+</svg>

@@ -249,6 +249,9 @@ void testNoEmscriptenAbortStubs()
 
 int main()
 {
+    check(routeHostKey(true, false, true), "release reaches the guest after UI focus changes");
+    check(!routeHostKey(true, false, false), "UI text presses stay outside the guest");
+    check(routeHostKey(true, true, false), "global shortcuts survive UI capture");
     testLayoutLetter();
     testAltGr();
     testCtrlLetter();

@@ -495,6 +495,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
         info.loaded            = true;
         info.busy              = blk.isBusy();
         info.writeProtected    = blk.isWriteProtected();
+        info.fileWriteProtected = blk.isWriteProtected();
         info.writeBackEnabled  = blk.isWriteBackEnabled();
         info.hasUnsavedChanges = blk.hasUnsavedChanges();
         info.supportsWriteBack = blk.canWriteBack();
@@ -509,6 +510,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
     info.blockCount        = img.isLoaded() ? Disk35Image::kBlockCount : 0;
     info.loaded            = img.isLoaded();
     info.writeProtected    = img.isWriteProtected();
+    info.fileWriteProtected = img.isFileWriteProtected();
     info.writeBackEnabled  = img.isWriteBackEnabled();
     info.hasUnsavedChanges = img.hasUnsavedChanges();
     info.supportsWriteBack = true;

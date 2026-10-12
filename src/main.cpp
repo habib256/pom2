@@ -145,6 +145,7 @@ static void glfw_key_callback(GLFWwindow* w, int key, int sc, int action, int mo
             pom2::keychord::letterFromKeyName(glfwGetKeyName(key, sc), key);
 #endif
         const bool isGlobalKey = (key == GLFW_KEY_F11 || key == GLFW_KEY_F12 ||
+                                  pom2::mousegrab::isFullscreenChord(key, mods) ||
                                   key == GLFW_KEY_F9 || key == GLFW_KEY_F10 ||
                                   key == GLFW_KEY_LEFT_ALT ||
                                   key == GLFW_KEY_RIGHT_ALT ||
@@ -157,7 +158,8 @@ static void glfw_key_callback(GLFWwindow* w, int key, int sc, int action, int mo
                                   (key == GLFW_KEY_F &&
                                    (mods & GLFW_MOD_CONTROL) &&
                                    (mods & GLFW_MOD_ALT)));
-        if (!ImGui::GetIO().WantCaptureKeyboard || isGlobalKey) {
+        if (pom2::keychord::routeHostKey(ImGui::GetIO().WantCaptureKeyboard,
+                                        isGlobalKey, action == GLFW_RELEASE)) {
             mw->onKey(key, sc, action, mods);
         }
     }

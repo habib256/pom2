@@ -17,6 +17,7 @@
 // AudioCoordinator slot-topology and immutable-snapshot contract.
 
 #include "AudioCoordinator.h"
+#include "DriveSoundPolicy.h"
 #include "AudioDevice.h"
 #include "CassetteDevice.h"
 #include "FloppySoundDevice.h"
@@ -50,6 +51,12 @@ bool near(float lhs, float rhs)
 
 int main()
 {
+    for (bool ready : {false, true}) {
+        assert(!pom2::useVirtualIIDriveSounds(false, "auto", ready));
+        assert(pom2::useVirtualIIDriveSounds(true, "auto", ready) == ready);
+        assert(!pom2::useVirtualIIDriveSounds(true, "mame", ready));
+        assert(pom2::useVirtualIIDriveSounds(false, "virtual2", ready) == ready);
+    }
     EmulationController controller;
     pom2::AudioCoordinator audio(controller.audio(), controller);
     pom2::Settings settings;
@@ -339,6 +346,10 @@ int main()
         fs525.setBank(FloppySoundDevice::Bank::Mame);
         audio.persist(cfg, speaker, tape, fs525, fs35, printer);
         assert(cfg.getString("mechanical_sound_bank") == "mame");
+        cfg.setString("mechanical_sound_bank", "auto");
+        fs525.setBank(FloppySoundDevice::Bank::VirtualII);
+        audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+        assert(cfg.getString("mechanical_sound_bank") == "auto");
         std::filesystem::remove_all(root, ec);
     }
 

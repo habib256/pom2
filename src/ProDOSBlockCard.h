@@ -92,17 +92,24 @@ public:
     // pure virtuals above, so they gain the bay interface here for free —
     // the Slot Manager renders them generically alongside SmartPort units.
     int bayCount() const override { return 1; }
+    void setBayHostWriteProtected(int bay, bool on) override
+    {
+        if (bay == 0) setHostWriteProtected(on);
+    }
 
     MediaBayInfo bayInfo(int bay) const override
     {
         MediaBayInfo info;
         if (bay != 0) return info;
+        info.typeKey           = "hdv";
+        info.kindLabel         = "ProDOS HDV";
         info.loaded            = isImageLoaded();
         info.busy              = isBusy();
         info.path              = getImagePath();
         info.lastError         = getLastError();
         info.blockCount        = static_cast<uint32_t>(getBlockCount());
         info.writeProtected    = isWriteProtected();
+        info.fileWriteProtected = isWriteProtected();
         info.writeBackEnabled  = isWriteBackEnabled();
         info.hasUnsavedChanges = hasUnsavedChanges();
         info.supportsWriteBack = canWriteBack();

@@ -412,7 +412,7 @@ void AudioCoordinator::restore(Settings& settings,
 
     // Virtual ][ recordings, when the local set decoded. Absent key, or a
     // folder that is not on this machine, stays on the MAME samples.
-    const bool wantVii = settings.getString("mechanical_sound_bank", "mame") == "virtual2";
+    const bool wantVii = settings.getString("mechanical_sound_bank", "auto") == "virtual2";
     const bool vii = wantVii && floppy525.virtualIIReady();
     floppy525.setBank(vii ? FloppySoundDevice::Bank::VirtualII
                           : FloppySoundDevice::Bank::Mame);
@@ -456,6 +456,7 @@ void AudioCoordinator::persist(Settings& settings,
     // every later one that has it.
     const bool viiNow = floppy525.bank() == FloppySoundDevice::Bank::VirtualII;
     if (!settings.getBool("mechanical_sound_import_pending", false) &&
+        settings.getString("mechanical_sound_bank", "auto") != "auto" &&
         (viiNow || floppy525.virtualIIReady()))
         settings.setString("mechanical_sound_bank", viiNow ? "virtual2" : "mame");
 

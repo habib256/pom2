@@ -358,6 +358,16 @@ void Core::write(std::uint16_t address, std::uint8_t value)
     impl_->memory.memWrite(address, value);
 }
 
+void Core::setKeyHeld(std::uint16_t token, bool down)
+{
+    impl_->memory.setKeyHeld(token, down);
+}
+
+void Core::releaseHeldKeys()
+{
+    impl_->memory.releaseHeldKeys();
+}
+
 void Core::queueKey(std::uint8_t ascii)
 {
     impl_->memory.queueKey(ascii);
