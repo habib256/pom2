@@ -511,6 +511,8 @@ MainWindow::MainWindow(bool forceIIPlus)
                 settings->getFloat("joystick_deadzone", jb.deadzone), 0.0f, 0.9f);
             jb.invert[0]  = settings->getBool("joystick_invert_x", jb.invert[0]);
             jb.invert[1]  = settings->getBool("joystick_invert_y", jb.invert[1]);
+            jb.invert[2]  = settings->getBool("joystick_invert_right_x", jb.invert[2]);
+            jb.invert[3]  = settings->getBool("joystick_invert_right_y", jb.invert[3]);
             // -2 is "key absent": a fresh install must still auto-bind, and
             // a persisted -1 means the user chose "(none)" and the
             // auto-binder has to keep its hands off (markBindingExplicit).
@@ -665,6 +667,7 @@ MainWindow::MainWindow(bool forceIIPlus)
         }
         crtEffectsEnabled = settings->getBool("crt_effects_enabled",
                                               crtEffectsEnabled);
+        monitorArtworkEnabled = settings->getBool("monitor_artwork", false);
         // Own the renderer up-front (ctor is GL-free; initialize() stays lazy)
         // so the settings panel and persistence can bind to its tunables even
         // before the 3D view is first toggled on.
@@ -854,6 +857,7 @@ MainWindow::MainWindow(bool forceIIPlus)
     // through applyProfile (auto-probe matching the saved profile, or
     // no saved profile at all).
     controller->floppySound525().setMotorPitch(floppyMotorPitchForProfile(activeProfile));
+    updateDriveSoundBank();
 
     // The machine's snapshot identity, unconditionally — `applyProfile` step
     // 10 sets it, and the two branches above that SKIP applyProfile (the

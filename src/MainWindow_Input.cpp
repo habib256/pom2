@@ -160,6 +160,15 @@ char layoutLetter(int key, int scancode)
 
 void MainWindow::onKey(int key, int scancode, int action, int mods)
 {
+    // AKD is a level, not the strobe. Observe releases before early returns;
+    // modifiers and emulator function keys are not Apple II character keys.
+    const bool characterKey =
+        (key >= GLFW_KEY_SPACE && key <= GLFW_KEY_GRAVE_ACCENT) ||
+        (key >= GLFW_KEY_ESCAPE && key <= GLFW_KEY_END) ||
+        (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_EQUAL);
+    if (characterKey && action == GLFW_RELEASE)
+        controller->memory().setKeyHeld(static_cast<uint16_t>(key), false);
+
     // Open-Apple / Solid-Apple are read by the IIe/IIc/IIc+ firmware via
     // $C061/$C062 bit 7 (MAME `apple2e.cpp:2157-2169`) — the firmware itself
     // decides cold-reboot vs self-test on Ctrl+Reset. We just source the
@@ -210,9 +219,8 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
                 setKioskModeRuntime(true);
                 setMouseGrab(true);
             } else {
-                // Leaving full screen also releases capture before GLFW
-                // restores the window geometry.
-                setKioskModeRuntime(false);
+                // Alt+Enter keeps fullscreen and only toggles mouse capture.
+                toggleMouseGrab();
             }
         }
         return;
@@ -293,6 +301,7 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
         return;
     }
 
+    if (characterKey) controller->memory().setKeyHeld(static_cast<uint16_t>(key), true);
     switch (key) {
         case GLFW_KEY_ENTER:        // fallthrough — main + numpad Enter both
         case GLFW_KEY_KP_ENTER:     injectAscii(0x0D); break;
@@ -492,7 +501,10 @@ void MainWindow::toggleMouseGrab() { setMouseGrab(!mouseGrabbed_); }
 
 void MainWindow::onWindowFocus(bool focused)
 {
-    if (!focused) setMouseGrab(false);
+    if (!focused) {
+        setMouseGrab(false);
+        controller->memory().releaseHeldKeys();
+    }
 }
 
 void MainWindow::onMouseMove(double x, double y)

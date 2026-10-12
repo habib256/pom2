@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="450" viewBox="0 0 1000 450">
+<title>Apple 3.5 Drive — front face with activity light</title>
+<desc>Front elevation based on the user's dsc_0050-3 reference: rounded case, black slot under the upper cover, rectangular left activity light and right eject button.</desc>
+<defs>
+<linearGradient id="upper" x2="0" y2="1"><stop stop-color="#e2dac3"/><stop offset="1" stop-color="#cbc2ab"/></linearGradient>
+<linearGradient id="front" x2="0" y2="1"><stop stop-color="#d9d1b9"/><stop offset="1" stop-color="#cbc2ab"/></linearGradient>
+<linearGradient id="button" x2="0" y2="1"><stop stop-color="#e1d9c2"/><stop offset="1" stop-color="#bcb39b"/></linearGradient>
+<!-- MIT emblem geometry from sscanf/apple2e-emulator; see ../../NOTICE.txt. -->
+<clipPath id="apple"><path d="M54 40C38 28 17 35 11 53C3 77 18 111 33 117C41 120 45 113 54 113C63 113 68 120 76 116C88 111 97 96 100 86C81 78 80 58 99 49C89 33 71 30 56 40ZM55 30C53 15 64 4 79 1C80 15 70 29 55 30Z"/></clipPath>
+</defs>
+<!-- Low feet and a shallow shadow; the reference is seen straight on. -->
+<rect x="158" y="416" width="98" height="23" rx="5" fill="#777362"/>
+<rect x="755" y="416" width="98" height="23" rx="5" fill="#777362"/>
+<rect x="21" y="25" width="970" height="408" rx="19" fill="#211f1c" opacity=".30"/>
+<rect x="15" y="15" width="970" height="410" rx="19" fill="url(#front)" stroke="#a79e87" stroke-width="2"/>
+<!-- The broad upper cover ends flush with the top of the opening. -->
+<path d="M34 15H966Q985 15 985 34V120H15V34Q15 15 34 15Z" fill="url(#upper)"/>
+<path d="M37 20H963" stroke="#ede5cf" stroke-width="4"/>
+<!-- Rectangular indicator inset at the far left, beneath the cover. -->
+<rect x="15" y="120" width="116" height="43" fill="url(#front)"/>
+<rect x="29" y="120" width="43" height="17" fill="#e34436" id="activity"/>
+<path d="M73 122V161H128" fill="none" stroke="#bdb49c" stroke-width="2"/>
+<!-- Single black opening, with a narrow lower lip. -->
+<rect x="130" y="120" width="740" height="43" fill="#080b0d"/>
+<path d="M130 120V163H870V120" fill="none" stroke="#8a826e" stroke-width="2"/>
+<path d="M132 168H868" stroke="#eee5ce" stroke-width="4"/>
+<!-- Eject button at the right edge; manual-eject hole below the slot. -->
+<path d="M871 120H981" stroke="#514c40" stroke-width="4"/>
+<rect x="889" y="126" width="96" height="39" rx="3" fill="#a69e88"/>
+<rect x="891" y="125" width="94" height="35" rx="3" fill="url(#button)" stroke="#9b927d" stroke-width="1.5"/>
+<circle id="manual-eject" cx="850" cy="192" r="5" fill="#151913"/>
+<path d="M35 420H965" stroke="#b7ae96" stroke-width="3"/>
+<g transform="translate(122 295) scale(.72)" clip-path="url(#apple)">
+  <path fill="#5e9750" d="M0 0H110V44H0Z"/><path fill="#d8bd50" d="M0 44H110V59H0Z"/><path fill="#d58b42" d="M0 59H110V74H0Z"/><path fill="#ba5147" d="M0 74H110V89H0Z"/><path fill="#96557e" d="M0 89H110V104H0Z"/><path fill="#477f9e" d="M0 104H110V125H0Z"/>
+</g>
+</svg>

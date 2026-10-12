@@ -32,6 +32,8 @@
 #include "EchoPlusCard.h"
 #include "FloppyEmuDevice.h"
 #include "FloppySoundDevice.h"
+#include "DriveSoundPolicy.h"
+#include "SystemProfile.h"
 #include "LeChatMauveCard.h"
 #include "LeChatMauve_ImGui.h"
 #include "Mockingboard.h"
@@ -56,6 +58,21 @@
 // atomics on each source / on AudioDevice — no UI-side cache, so cross-
 // thread read-back stays consistent. Replaces the two sliders that used
 // to live in the Status panel.
+
+void MainWindow::updateDriveSoundBank()
+{
+    const auto mode = settings->getString("mechanical_sound_bank", "auto");
+    const bool compact = activeProfile == pom2::SystemProfile::AppleIIc ||
+                         activeProfile == pom2::SystemProfile::AppleIIcPAL ||
+                         activeProfile == pom2::SystemProfile::AppleIIcPlus;
+    auto& fs525 = controller->floppySound525();
+    const bool vii = pom2::useVirtualIIDriveSounds(compact, mode, fs525.virtualIIReady());
+    fs525.setBank(vii ? FloppySoundDevice::Bank::VirtualII : FloppySoundDevice::Bank::Mame);
+    auto& fs35 = controller->floppySound35();
+    fs35.setBank(mode == "virtual2" && fs35.virtualIIReady()
+        ? FloppySoundDevice::Bank::VirtualII : FloppySoundDevice::Bank::Mame);
+    printerSound->setSampled(mode == "virtual2" && printerSound->sampleReady());
+}
 
 void MainWindow::renderAudioMixerWindow()
 {
@@ -291,16 +308,24 @@ void MainWindow::renderAudioMixerWindow()
         FloppySoundDevice& fs525 = controller->floppySound525();
         const bool viiReady = fs525.virtualIIReady();
         const bool vii = fs525.bank() == FloppySoundDevice::Bank::VirtualII;
-        const char* current = vii ? "Virtual ][" : "MAME samples";
+        const auto mode = settings->getString("mechanical_sound_bank", "auto");
+        const char* current = mode == "auto" ? "Automatic (by machine)"
+                                            : vii ? "Virtual ][" : "MAME samples";
         ImGui::SetNextItemWidth(14.0f * ImGui::GetFontSize());
         if (ImGui::BeginCombo("Drive sounds", current)) {
-            if (ImGui::Selectable("MAME samples", !vii)) {
+            if (ImGui::Selectable("Automatic (Disk II: MAME, //c: Virtual II)", mode == "auto")) {
+                settings->setString("mechanical_sound_bank", "auto");
+                updateDriveSoundBank();
+            }
+            if (ImGui::Selectable("MAME samples", mode == "mame")) {
+                settings->setString("mechanical_sound_bank", "mame");
                 controller->floppySound525().setBank(FloppySoundDevice::Bank::Mame);
                 controller->floppySound35().setBank(FloppySoundDevice::Bank::Mame);
                 printerSound->setSampled(false);
             }
             if (!viiReady) ImGui::BeginDisabled();
-            if (ImGui::Selectable("Virtual ][", vii)) {
+            if (ImGui::Selectable("Virtual ][", mode == "virtual2")) {
+                settings->setString("mechanical_sound_bank", "virtual2");
                 controller->floppySound525().setBank(FloppySoundDevice::Bank::VirtualII);
                 if (controller->floppySound35().virtualIIReady())
                     controller->floppySound35().setBank(FloppySoundDevice::Bank::VirtualII);
@@ -342,7 +367,7 @@ void MainWindow::renderAudioMixerWindow()
                 if (ec) soundImportStatus = "Cannot resolve this folder.";
                 else {
                     settings->setString("mechanical_sound_path", absolute.string());
-                    settings->setString("mechanical_sound_bank", "virtual2");
+                    settings->setString("mechanical_sound_bank", "auto");
                     settings->setBool("mechanical_sound_import_pending", true);
                     soundImportStatus = settings->save()
                         ? "Sounds validated. Restart POM2 to activate them."

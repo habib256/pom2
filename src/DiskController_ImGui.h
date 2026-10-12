@@ -26,6 +26,7 @@
 #define POM2_DISK_CONTROLLER_IMGUI_H
 
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 

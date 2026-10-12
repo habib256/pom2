@@ -119,7 +119,16 @@ void JoystickInput::poll()
         int axisCount = 0;
         const float* axes = glfwGetJoystickAxes(jid, &axisCount);
         for (int i = 0; i < kAxes; ++i) {
-            d.axis[i] = (axes && i < axisCount) ? axes[i] : 0.0f;
+            d.axis[i] = (i < 2 && axes && i < axisCount) ? axes[i] : 0.0f;
+        }
+        // Raw axes 2/3 can be triggers. Only a standard mapping identifies
+        // the right stick reliably; unmapped sticks stay centered.
+        GLFWgamepadstate mapped{};
+        if (glfwGetGamepadState(jid, &mapped)) {
+            d.axis = {mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_X],
+                      mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_Y],
+                      mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_X],
+                      mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y]};
         }
 
         int btnCount = 0;
@@ -289,17 +298,20 @@ void JoystickInput::stickToPaddles(float x, float y, const Binding& b,
 
 uint8_t JoystickInput::paddleValue(int paddleIdx) const
 {
-    // Only paddles 0/1 are driven by the active host; 2/3 are not wired.
-    // Return centered = 128 to match both the centered live value
-    // (axisToPaddle01(0.0) → 128) and Memory's paddleValue default.
-    if (paddleIdx < 0 || paddleIdx >= kAxes) return 128;
     if (active.hostIdx < 0 || active.hostIdx >= kHostCount) return 128;
-    const DeviceState& d = devices[active.hostIdx];
-    if (!d.present) return 128;
+    return paddleValue(devices[active.hostIdx], active, paddleIdx);
+}
 
+uint8_t JoystickInput::paddleValue(const DeviceState& d, const Binding& b, int paddleIdx)
+{
+    if (!d.present || paddleIdx < 0 || paddleIdx >= kAxes) return 128;
+    const int firstAxis = paddleIdx & ~1;
+    Binding pair = b;
+    pair.invert[0] = b.invert[firstAxis];
+    pair.invert[1] = b.invert[firstAxis + 1];
     uint8_t px = 128, py = 128;
-    stickToPaddles(d.axis[0], d.axis[1], active, px, py);
-    return paddleIdx == 0 ? px : py;
+    stickToPaddles(d.axis[firstAxis], d.axis[firstAxis + 1], pair, px, py);
+    return (paddleIdx & 1) == 0 ? px : py;
 }
 
 bool JoystickInput::buttonDown(int buttonIdx) const

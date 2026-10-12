@@ -1335,26 +1335,9 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         clearKeyStrobe();
         return kbLatch & 0x7F;   // store: return value unused
     }
-    // IIe keyboard strobe read — clear + AKD approximation.
-    if (low == 0x10) {
-        // IIe: bit 7 reflects "any key down" (MAME `apple2e.cpp:1833`:
-        // `m_transchar | (m_anykeydown ? 0x80 : 0x00)`). POM2 doesn't
-        // model key-release events separately, so we approximate
-        // "any-key-down" with the pre-clear strobe state — that's what
-        // software typically polls $C010 for ("is the user still
-        // holding a key?"). On II+ the strobe-clear semantic is
-        // historical: bit 7 LOW after clear.
-        // Reuse the bit captured under kbMutex into kbLatch above (bit 7 ==
-        // keyReady) rather than re-reading the keyReady member here unlocked —
-        // a bare read races the UI/HTTP threads that write it under kbMutex.
-        const bool wasReady = (kbLatch & 0x80) != 0;
-        clearKeyStrobe();
-        if (iieMode) {
-            return static_cast<uint8_t>(
-                (kbLatch & 0x7F) | (wasReady ? 0x80 : 0x00));
-        }
-        return kbLatch & 0x7F;
-    }
+    // IIe AKD follows physical key state, independently of the strobe.
+    // II/II+ reads still clear the strobe and return bit 7 low.
+    if (low == 0x10) return keyboard_.readStrobe(iieMode);
     // //c mouse IOU overrides the IIe status aliases and paddle inputs.
     // Keyboard writes above retain their strobe-clear side effect.
     if (iicProfile_ && (low == 0x15 || low == 0x17 || (low >= 0x40 && low <= 0x6F))) {

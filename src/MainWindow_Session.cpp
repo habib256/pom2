@@ -355,6 +355,7 @@ void MainWindow::persistSession(bool flushMedia)
         settings->setBool ("ntsc_text_sharp",  p.textSharp);
     }
     settings->setBool  ("crt_effects_enabled", crtEffectsEnabled);
+    settings->setBool  ("monitor_artwork", monitorArtworkEnabled);
     if (voxel3d_) {
         settings->setFloat("voxel_depth",       voxel3d_->voxelDepth);
         settings->setFloat("voxel_colorshift",  voxel3d_->colorShift);

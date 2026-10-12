@@ -23,8 +23,8 @@
 //   host btn 1   → PB1       ($C062, "closed-apple")
 //   host btn 2   → PB2       ($C063, "shift mod" / third button)
 //
-// PADL(2) and PADL(3) are not driven (return centered, 127). They were
-// the second-stick inputs on real hardware and are rarely used.
+// A mapped gamepad's right stick feeds PADL(2)/PADL(3). Unmapped host
+// joysticks keep their raw X/Y and leave the second pair centered.
 //
 // All 16 GLFW slots are polled each frame so a hot-plugged pad shows up
 // in the selection combo immediately. The active "binding" picks one of
@@ -41,7 +41,7 @@ class JoystickInput
 {
 public:
     static constexpr int kHostCount  = 16;     // GLFW slots
-    static constexpr int kAxes       = 2;      // X, Y
+    static constexpr int kAxes       = 4;      // left X/Y, right X/Y
     static constexpr int kButtons    = 3;      // PB0, PB1, PB2
 
     struct DeviceState {
@@ -144,9 +144,11 @@ public:
     Binding&       binding()       { return active; }
     const Binding& binding() const { return active; }
 
-    /// 0..3. Paddles 0/1 reflect the bound host's X/Y; 2/3 are always
-    /// centered (no second-stick wiring).
+    /// 0..3: left X/Y, right X/Y; unavailable axes are centered.
     uint8_t paddleValue(int paddleIdx) const;
+    /// Pure routing helper, also used by controller regression tests.
+    static uint8_t paddleValue(const DeviceState& device, const Binding& binding,
+                              int paddleIdx);
 
     /// 0..2. PB0/PB1/PB2 = bound host buttons 0/1/2.
     bool buttonDown(int buttonIdx) const;

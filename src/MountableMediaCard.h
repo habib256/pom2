@@ -58,6 +58,9 @@ struct MediaBayInfo
     /// than a flicker. False on cards that expose no activity signal.
     bool        busy             = false;
     bool        writeProtected   = false;
+    /// Disk/header protection, without the process write-back policy.
+    /// The notch button edits the disk, rather than that policy.
+    bool        fileWriteProtected = false;
     bool        writeBackEnabled  = pom2::mediaWritableByDefault();
     bool        supportsWriteBack = true;
     /// Guest writes are held in memory and not yet on disk. With write-back

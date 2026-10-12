@@ -1478,6 +1478,7 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
     diskSavedCyclesPerFrame = cfg.defaultCyclesPerFrame;
     // The internal //c drive is a Sony mechanism that spins up faster.
     controller->floppySound525().setMotorPitch(floppyMotorPitchForProfile(p));
+    updateDriveSoundBank();
 
     if (window) {
         std::string title = "POM2 " POM2_VERSION_STRING " — ";

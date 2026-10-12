@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # link exists to prevent. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(pom2_imgui VERSION 0.9.5 LANGUAGES CXX)
+project(pom2_imgui VERSION 0.9.6 LANGUAGES CXX)
 if(APPLE)
     # One Objective-C++ file: src/HostOpenFiles_mac.mm, the Finder / Dock
     # open-file hook GLFW's delegate does not provide.
@@ -293,7 +293,10 @@ set(SOURCES
     src/Disk35Image.cpp
     src/Disk35Controller_ImGui.cpp
     src/DiskController_ImGui.cpp
+    src/DriveRack_ImGui.cpp
+    src/MainWindow_DriveRack.cpp
     src/DiskIICard.cpp
+    src/DiskIICard_Cycles.cpp
     src/Debugger.cpp
     src/Debugger_ImGui.cpp
     src/MediaMount.cpp
@@ -333,6 +336,7 @@ set(SOURCES
     src/MainWindow_Media.cpp
     src/MainWindow_Chrome.cpp
     src/MainWindow_Screen.cpp
+    src/RetroArtwork.cpp
     src/MainWindow_Input.cpp
     src/MainWindow_SlotConfig.cpp
     src/MainWindow_Session.cpp
@@ -497,6 +501,7 @@ set(POM2_DEVICES_SOURCES
     src/ClockCard.cpp
     src/Cs8900aDevice.cpp
     src/DiskIICard.cpp
+    src/DiskIICard_Cycles.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/FloppyEmuDevice.cpp
@@ -554,6 +559,7 @@ set(POM2_FOUNDATION_SOURCES
 )
 
 set(POM2_FOUNDATION_HEADERS
+    src/DriveSoundPolicy.h
     src/MediaWritePolicy.h
     src/MediaNotch.h
     src/AudioSource.h
@@ -637,6 +643,8 @@ set(POM2_FRONTEND_SOURCES
     src/CliRunner.cpp
     src/Disk35Controller_ImGui.cpp
     src/DiskController_ImGui.cpp
+    src/DriveRack_ImGui.cpp
+    src/MainWindow_DriveRack.cpp
     src/DiskLibrary_ImGui.cpp
     src/HdvController_ImGui.cpp
     src/JoystickInput.cpp
@@ -651,6 +659,7 @@ set(POM2_FRONTEND_SOURCES
     src/MainWindow_Media.cpp
     src/MainWindow_Chrome.cpp
     src/MainWindow_Screen.cpp
+    src/RetroArtwork.cpp
     src/MainWindow_Input.cpp
     src/MainWindow_SlotConfig.cpp
     src/MainWindow_Session.cpp
@@ -1351,6 +1360,7 @@ set(POM2_CORE_SOURCES
     src/Disassembler6502.cpp
     src/Disk35Image.cpp
     src/DiskIICard.cpp
+    src/DiskIICard_Cycles.cpp
     src/Debugger.cpp
     src/MediaMount.cpp
     src/DiskImage.cpp
@@ -1598,6 +1608,7 @@ add_executable(pom2_headless
     src/Disk35Image.cpp
     src/DiskImage.cpp
     src/DiskIICard.cpp
+    src/DiskIICard_Cycles.cpp
     src/EmulationController.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
@@ -1683,6 +1694,7 @@ add_executable(pom2_bench
     src/CassetteDevice.cpp
     src/Disk35Image.cpp
     src/DiskIICard.cpp
+    src/DiskIICard_Cycles.cpp
     src/DiskImage.cpp
     src/FloppySoundDevice.cpp
     src/IWMDevice.cpp

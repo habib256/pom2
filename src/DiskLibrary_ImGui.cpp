@@ -17,6 +17,7 @@
 #include "DiskLibrary_ImGui.h"
 
 #include "IconsFontAwesome6.h"
+#include "ResourcePaths.h"
 #include "Pom2Theme.h"   // palette() for the favourite star + mounted marker
 #include "imgui.h"
 
@@ -217,6 +218,16 @@ void DiskLibrary_ImGui::rescan()
     rescanInto(floppyEmu_,
                { "floppyemu", "../floppyemu", "../../floppyemu" },
                &acceptFloppyEmu);
+    // Packaged disks remain visible even when a user library already exists.
+    auto appendBundled = [&](auto& entries, auto accept) {
+        std::vector<Entry> bundled;
+        const auto root = findFirstResource({"bundled_disks", "packaging/disks"});
+        rescanInto(bundled, {root.c_str()}, accept);
+        entries.insert(entries.end(), bundled.begin(), bundled.end());
+    };
+    appendBundled(disk525_, &accept525);
+    appendBundled(disk35_, &accept35);
+    appendBundled(hdv_, &acceptHdv);
     needsRescan_ = false;
 }
 

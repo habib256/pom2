@@ -238,6 +238,7 @@ public:
     void restoreBayDirty(int bay,
                          const std::vector<uint32_t>& indices) override;
     void setBayWriteBack(int bay, bool on) override;
+    void setBayHostWriteProtected(int bay, bool on) override;
     std::vector<std::pair<std::string, std::string>>
          bayTypeOptions(int bay) const override;
     void setBayType(int bay, const std::string& kindKey) override;

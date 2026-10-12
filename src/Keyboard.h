@@ -56,6 +56,7 @@
 #define POM2_KEYBOARD_H
 
 #include <atomic>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -97,6 +98,30 @@ public:
     // $C010: drop the strobe. The next paste byte is promoted by the
     // `readLatch()` that follows, not here.
     void clearStrobe();
+
+    // Physical press/release state is independent of the keyboard strobe.
+    // Tokens identify host keys, allowing simultaneous keys and auto-repeat.
+    void setKeyHeld(uint16_t token, bool down) {
+        if (token >= heldKeys_.size()) return;
+        std::lock_guard<std::mutex> lk(mtx_);
+        hostKeysTracked_ = true;
+        heldKeys_.set(token, down);
+    }
+    void releaseHeldKeys() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        hostKeysTracked_ = true;
+        heldKeys_.reset();
+    }
+    // $C010 read: acknowledge without losing a physically held key.
+    // Stream-only hosts retain their existing one-shot AKD approximation.
+    uint8_t readStrobe(bool iie) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        const bool down = hostKeysTracked_ ? heldKeys_.any() : keyReady_;
+        const uint8_t value = (lastKey_ & 0x7F) | (iie && down ? 0x80 : 0);
+        keyReady_ = false;
+        publish();
+        return value;
+    }
 
     // Host paste. `foldToUpper` maps a-z → A-Z (the ][/][+ keyboard has no
     // lowercase); the caller passes `!iieMode`. Control bytes except CR/HT
@@ -145,6 +170,7 @@ public:
         lastKey_  = 0;
         keyReady_ = false;
         streamPrevCR_ = false;
+        heldKeys_.reset();
         pasteQueue_.clear();
         publish();
     }
@@ -169,6 +195,8 @@ private:
     mutable std::mutex   mtx_;
     uint8_t              lastKey_  = 0;
     bool                 keyReady_ = false;
+    bool                 hostKeysTracked_ = false;
+    std::bitset<512>     heldKeys_;
     // pasteKeyStream's persistent "saw a CR" state — see its declaration.
     bool                 streamPrevCR_ = false;
     std::atomic<uint8_t> mirror_{ 0 };

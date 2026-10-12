@@ -115,7 +115,8 @@ void testVisibilityStorage()
         assert(reg.visible(p.id) == p.defaultOpen);
         if (p.defaultOpen) ++open;
     }
-    assert(open == 3 && "the fresh-install set is a decision, not an accident");
+    assert(open == 4 && "the fresh-install set is a decision, not an accident");
+    assert(reg.visible(pom2::PanelId::Drives));
 
     reg.visible(pom2::PanelId::Debugger) = true;
     assert(reg.visible(pom2::PanelId::Debugger));

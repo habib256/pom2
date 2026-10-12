@@ -33,6 +33,7 @@
 // reporting the switch OFF while it was ON. The flag is out-of-band now.
 
 #include "Memory.h"
+#include "KeyChord.h"
 
 #include <cassert>
 #include <cstdint>
@@ -46,6 +47,40 @@ bool strobeHigh(Memory& mem) { return (mem.memRead(0xC000) & 0x80) != 0; }
 
 int main()
 {
+    // Bagman reads $C000 then writes $C010 every frame. A held direction
+    // must remain high on subsequent $C010 reads until its release event.
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        mem.setKeyHeld('L', true);
+        mem.queueKey('L');
+        if (pom2::keychord::routeHostKey(true, false, true))
+            mem.setKeyHeld('L', false);
+        assert(!(mem.memRead(0xC010) & 0x80) && "UI focus must not swallow a guest key release");
+        mem.setKeyHeld('L', true);
+        mem.queueKey('L');
+        assert(mem.memRead(0xC000) == ('L' | 0x80));
+        mem.memWrite(0xC010, 0);
+        for (int i = 0; i < 20; ++i) {
+            assert(!strobeHigh(mem));
+            assert(mem.memRead(0xC010) == ('L' | 0x80));
+        }
+        mem.setKeyHeld('I', true);
+        mem.setKeyHeld('L', false);
+        assert(mem.memRead(0xC010) & 0x80);
+        mem.setKeyHeld('I', false);
+        assert(!(mem.memRead(0xC010) & 0x80));
+        mem.setKeyHeld(' ', true);
+        mem.queueKey(' ');
+        assert(mem.memRead(0xC010) & 0x80);
+        mem.releaseHeldKeys();
+        assert(!(mem.memRead(0xC010) & 0x80));
+        mem.setIIEMode(false);
+        mem.setKeyHeld('L', true);
+        mem.queueKey('L');
+        assert(!(mem.memRead(0xC010) & 0x80));
+    }
+
     // ── II/II+ mirror: any $C01x access clears the strobe ────────────────
     {
         Memory mem;                       // default = II/II+ mode

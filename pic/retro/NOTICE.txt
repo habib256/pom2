@@ -1,0 +1,17 @@
+Monitor II and Disk II artwork from apple2e-emulator
+Copyright (c) 2026 Oscar Casamitjana — MIT License (see LICENSE).
+Source: https://github.com/sscanf/apple2e-emulator
+Upstream commit: dd1c57a24e35d179726a51401581d3f313fd3793
+Editable SVG sources are included alongside the PNG textures.
+POM2 adapts the Monitor II bezel to its hard-disk beige palette and removes
+the top and bottom decorative emblems.
+The Apple 3.5 front illustration is drawn for POM2 from a user-supplied
+reference photograph. It reuses the MIT rainbow emblem geometry from the
+Disk II SVG; the photograph itself is not distributed.
+The Disk //c front illustration is drawn for POM2 from a user-supplied
+reference photograph, with its central latch and light grey case.
+The photograph itself is not distributed.
+The Apple hard-disk front illustration is drawn for POM2 from a user-supplied
+reference photograph and reuses the MIT rainbow emblem geometry.
+The photograph itself is not distributed.
+No drive recordings or firmware are included.

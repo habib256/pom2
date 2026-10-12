@@ -233,6 +233,32 @@ void testInvert()
     std::printf("  ok: per-axis invert flips before the pipeline\n");
 }
 
+void testFourPaddleRouting()
+{
+    JoystickInput::DeviceState device;
+    device.present = true;
+    device.axis = {0.0f, 0.0f, 0.70710678f, -0.70710678f};
+    JoystickInput::Binding binding;
+    assert(JoystickInput::paddleValue(device, binding, 0) == 128);
+    assert(JoystickInput::paddleValue(device, binding, 1) == 128);
+    assert(JoystickInput::paddleValue(device, binding, 2) == 255);
+    assert(JoystickInput::paddleValue(device, binding, 3) == 0);
+    binding.invert[2] = binding.invert[3] = true;
+    assert(JoystickInput::paddleValue(device, binding, 2) == 0);
+    assert(JoystickInput::paddleValue(device, binding, 3) == 255);
+    device.axis = {1.0f, -1.0f, 0.01f, -0.01f};
+    assert(JoystickInput::paddleValue(device, binding, 0) == 255);
+    assert(JoystickInput::paddleValue(device, binding, 1) == 0);
+    assert(JoystickInput::paddleValue(device, binding, 2) == 128);
+    assert(JoystickInput::paddleValue(device, binding, 3) == 128);
+    assert(JoystickInput::paddleValue(device, binding, -1) == 128);
+    assert(JoystickInput::paddleValue(device, binding, 4) == 128);
+    device.present = false;
+    for (int i = 0; i < 4; ++i)
+        assert(JoystickInput::paddleValue(device, binding, i) == 128);
+    std::printf("  ok: independent sticks, right inversion/deadzone and disconnect\n");
+}
+
 } // namespace
 
 int main()
@@ -249,6 +275,7 @@ int main()
     testAxisSnapSuppressesCrossDrift();
     testGateOffPath();
     testInvert();
+    testFourPaddleRouting();
     std::printf("joystick_square_gate: all assertions passed\n");
     return 0;
 }

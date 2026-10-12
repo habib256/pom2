@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="430" viewBox="0 0 1000 430">
+<title>Disk //c — closed latch with activity light</title>
+<desc>Front elevation drawn from the user's Disk //c reference photograph.</desc>
+<defs>
+<linearGradient id="case" x2="0" y2="1"><stop stop-color="#d9d1b9"/><stop offset="1" stop-color="#cbc2ab"/></linearGradient>
+<linearGradient id="top" x2="0" y2="1"><stop stop-color="#e9e1cc"/><stop offset="1" stop-color="#c9c0ab"/></linearGradient>
+<linearGradient id="latch" x2="0" y2="1"><stop stop-color="#e1d9c2"/><stop offset=".65" stop-color="#c6bda5"/><stop offset="1" stop-color="#b3aa95"/></linearGradient>
+<linearGradient id="recess" x2="0" y2="1"><stop stop-color="#827967"/><stop offset="1" stop-color="#d8cfb8"/></linearGradient>
+</defs>
+<rect x="26" y="62" width="953" height="350" rx="16" fill="#211f1c" opacity=".3"/>
+<rect x="110" y="386" width="780" height="31" rx="8" fill="#948b78"/>
+<rect x="18" y="52" width="964" height="344" rx="17" fill="url(#case)" stroke="#948b78" stroke-width="2"/>
+<path d="M35 52H965Q982 52 982 69V224H18V69Q18 52 35 52Z" fill="url(#top)"/>
+<path d="M36 57H964" stroke="#f1e8d3" stroke-width="3"/>
+<path d="M20 224H980" stroke="#8a826e" stroke-width="3"/>
+<!-- Long horizontal opening and recessed central latch well. -->
+<rect x="94" y="198" width="812" height="51" rx="15" fill="#bcb39b" stroke="#a19985" stroke-width="2"/>
+<rect x="113" y="210" width="774" height="21" rx="6" fill="#080b0d"/>
+<path d="M115 233H885" stroke="#eee5ce" stroke-width="5"/>
+<path d="M358 163H642L635 312Q634 334 616 334H384Q366 334 365 312Z" fill="url(#recess)" stroke="#958c77" stroke-width="3"/>
+<path d="M370 312Q371 327 386 327H614Q628 327 630 312" fill="none" stroke="#eee5ce" stroke-width="4"/>
+<rect x="372" y="107" width="256" height="138" rx="13" fill="url(#latch)" stroke="#9b927d" stroke-width="3"/>
+<path d="M377 216H623" stroke="#a19985" stroke-width="2"/>
+<path d="M386 112H614" stroke="#f1e8d3" stroke-width="4"/>
+<!-- The diagonal window at the lower right is the activity indicator. -->
+<path d="M808 297H824L804 352H788Z" fill="#81bf51" id="activity"/>
+<path d="M39 390H961" stroke="#b7ae96" stroke-width="3"/>
+</svg>

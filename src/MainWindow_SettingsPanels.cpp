@@ -232,6 +232,7 @@ void MainWindow::renderNtscSettingsWindow()
         ImGui::PopStyleColor(4);
     }
 
+    ImGui::Checkbox("Monitor II frame", &monitorArtworkEnabled);
     ImGui::BeginDisabled(!crtEffectsEnabled);
 
     pom2::NtscParams p = ntscFx ? ntscFx->getParams() : pom2::NtscParams{};
@@ -437,6 +438,8 @@ void MainWindow::renderJoystickPanelWindow()
             settings->setFloat("joystick_deadzone",    bind.deadzone);
             settings->setBool ("joystick_invert_x",    bind.invert[0]);
             settings->setBool ("joystick_invert_y",    bind.invert[1]);
+            settings->setBool ("joystick_invert_right_x", bind.invert[2]);
+            settings->setBool ("joystick_invert_right_y", bind.invert[3]);
         }
     }
 }

@@ -223,6 +223,25 @@ built image.
 the **raw magnetic flux** (`.woz`) + the behavior of the stepper motor and the
 300 RPM rotation.
 
+Automated prerequisites (2026-10-12): `disk_protection_flux` generates WOZ2
+images and checks exact transitions against the original fixture bits:
+non-byte-aligned track lengths, shared TMAP entries, distinct quarter tracks,
+revolution seams, spin anchors and non-monotonic queries at OBT 28/32/36.
+`diskii_read_cadence` checks uninterrupted reads while moving within a shared
+fat track, and compares cycle-by-cycle advancement with batched advancement
+through head moves, drive changes, motor coasting and a full stop/restart.
+The latter exposed and pins a spindle-stop deadline overshoot: a batch must
+stop processing disk data at the deadline, even if CPU time advances farther.
+`diskii_track_reach_weak` separately covers weak-bit variation and track 39.
+These synthetic tests require no game images or external ROMs and do **not**
+establish that any particular commercial protection boots successfully;
+real-image validation below remains pending where indicated. Manual WOZ-a-day
+runs on 2026-10-12 reached **Captain Goodnight gameplay after the side-B
+swap** and **Prince of Persia's first dungeon room**; image identities,
+commands, limitations and the false Captain 13-sector warning are recorded
+in [the integration report](audits/protected-disks-2026-10-12.md). These
+milestones do not validate every late-game protection or every edition.
+
 | Program | Protection | Why it's an edge case | POM2 status |
 |---|---|---|---|
 | **Captain Goodnight and the Islands of Fear** (Broderbund) | **Spiradisc**: data written on a **continuous spiral** (track `$01`→`$0E`), not in concentric circles. | The controller must follow head moves **"on the fly"** while the flux streams by; an LSS that resyncs per track crashes at boot. | 🟡 Event-driven LSS + WOZ bit-stream present (`DiskIICard`, `DiskImage`, `#9/#10`). Half-tracks handled; continuous spiral tracking **to validate** on a real WOZ image. Nearby tests: `woz_bit_timing_smoke_test`, `diskii_lss_smoke_test`. |

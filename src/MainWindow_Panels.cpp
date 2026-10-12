@@ -211,6 +211,7 @@ void MainWindow::registerPanelDraws()
     draw(P::DiskLibrary,  [this] { renderDiskLibraryWindow(); });
     draw(P::SlotConfig,   [this] { renderSlotConfigPanel(); });
     draw(P::Media,        [this] { renderMediaPanel(); });
+    draw(P::Drives,       [this] { renderDriveRackWindow(); });
     draw(P::FloppyEmu,    [this] { renderFloppyEmuWindow(); });
     draw(P::Cassette,     [this] { renderCassetteDeckWindow(panelDelta_); });
     draw(P::DiskII,       [this] { renderDiskPanelWindow(); });

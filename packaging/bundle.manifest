@@ -52,6 +52,8 @@ dir  fonts
 # of reference photography that no code path reads.
 file pic/Apple_II_plus.jpg
 file pic/Keyboard_AppleIIe.jpeg
+# MIT Monitor II / Disk II artwork, attribution and editable SVGs.
+dir  pic/retro
 
 # ─── Browser-only extras ────────────────────────────────────────────────────
 # floppyemu/ holds the browser demo's boot disk — `wasm/shell.html` boots
@@ -59,6 +61,15 @@ file pic/Keyboard_AppleIIe.jpeg
 # since 2026-09-08 — so the browser bundle cannot drop it. Desktop users mount
 # their own media, hence `wasm`, not `dir`.
 wasm floppyemu
+
+# Curated disks explicitly selected for this release. Keep user libraries
+# excluded; named source/destination pairs also feed the WASM preload.
+file packaging/disks/A2FILECMD-PRODOS-XL-0.9.6.2mg bundled_disks/A2FILECMD-PRODOS-XL-0.9.6.2mg
+file packaging/disks/DIX-fix.po bundled_disks/DIX-fix.po
+file packaging/disks/CHROMABREAK.po bundled_disks/CHROMABREAK.po
+file packaging/disks/MICRO-SOKOBAN.dsk bundled_disks/MICRO-SOKOBAN.dsk
+file packaging/disks/README.txt bundled_disks/README.txt
+file packaging/disks/SHA256SUMS.txt bundled_disks/SHA256SUMS.txt
 
 # ─── Never packaged ─────────────────────────────────────────────────────────
 # Large libraries and user state. These live in the work tree and must never

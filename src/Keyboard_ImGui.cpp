@@ -118,10 +118,10 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float  aspect = static_cast<float>(texH) / static_cast<float>(texW);
     // Fit inside the region on BOTH axes: driving off width alone made the
-    // photo overflow a short window and swallow the status line under it.
+    // photo overflow a short window.
     float drawW = avail.x;
     float drawH = drawW * aspect;
-    const float roomH = avail.y - ImGui::GetFrameHeightWithSpacing() * 1.6f;
+    const float roomH = avail.y;
     if (drawH > roomH && roomH > 32.0f) {
         drawH = roomH;
         drawW = drawH / aspect;
@@ -225,19 +225,6 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
             }
         }
     }
-
-    // ── What the next click will send ───────────────────────────────────
-    ImGui::PushStyleColor(ImGuiCol_Text, u32(pal.textDim));
-    if (latches_.control)
-        ImGui::TextUnformatted("Next character key sends Ctrl+<key> ($01-$1A). "
-                               "Reset needs Control latched to fire.");
-    else if (latches_.shift)
-        ImGui::TextUnformatted("Next character key sends its shifted legend.");
-    else
-        ImGui::TextUnformatted(
-            "Click a cap to type it. Legends are French (top) over US "
-            "(bottom) — POM2 sends the US one, which is what the ROM decodes.");
-    ImGui::PopStyleColor();
 
     ImGui::End();
     return ev;
