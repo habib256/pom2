@@ -26,10 +26,9 @@ Nine Apple II profiles · GPL-3.0
 [Make it yours](#make-it-yours) · [Controls](#controls) ·
 [Build from source](#build-from-source)**
 
-> **In development:** this README describes v0.9.6, including its new bundled
-> disks. See the [releases page](https://github.com/habib256/pom2/releases/latest) for
-> currently published packages.
-> The [v0.9.6 notes](docs/releases/v0.9.6.md) describe the upcoming changes.
+> **v0.9.6:** see the [release notes](docs/releases/v0.9.6.md) for the changes
+> and the [releases page](https://github.com/habib256/pom2/releases/latest)
+> for downloads and checksums.
 
 ## Get started
 

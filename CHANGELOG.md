@@ -10,6 +10,9 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+<a id="v0.9.6"></a>
+**v0.9.6 marker** — 2026-10-13. Release notes: [v0.9.6](docs/releases/v0.9.6.md).
+
 ## 2026-10-13 — Default desktop matches the release reference
 
 Fresh native sessions now open the Monitor II-framed screen above the machine
