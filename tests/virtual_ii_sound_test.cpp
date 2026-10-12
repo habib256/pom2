@@ -111,6 +111,15 @@ int main()
     const fs::path root = fs::temp_directory_path() / "pom2_virtual_ii_sound";
     std::error_code ec;
     fs::remove_all(root, ec);
+    {
+        FloppySoundDevice missing;
+        std::string error;
+        if (missing.loadVirtualII(root.string(), &error) || missing.virtualIIReady())
+            return fail("missing sound folder was accepted");
+        for (const char* name : {"Disk Rotation", "Move arm", "Disk Insertion", "Disk Removal"})
+            if (error.find(name) == std::string::npos)
+                return fail("required recording absent from import diagnostic");
+    }
     writeWav(root / "lecteur/Disk Rotation.wav", tone(400, 8000));
     writeWav(root / "lecteur/Boot.wav", tone(48, 24000));
     writeWav(root / "lecteur/Move arm.wav", tone(800, 20000, 200));
@@ -127,6 +136,9 @@ int main()
     writeWav(root / "imprimante/Matrix Printer.wav", tone(2000, 16000));
 
     FloppySoundDevice probe;
+    std::string importError = "stale diagnostic";
+    if (!probe.loadVirtualII(root.string(), &importError) || !importError.empty())
+        return fail("valid WAV alternatives rejected or stale import diagnostic retained");
     loadDev(probe, root);
     if (!probe.virtualIIReady())
         return fail("synthesised Virtual ][ set did not load");

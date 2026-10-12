@@ -113,9 +113,8 @@ with open("src/AppleIIeKeyboardLayout.h", "w") as f:
 // expects. Two consequences worth knowing before reading the table:
 //   * the extra ISO key at the left of row 4 (legends "> |" / "< \\\\") is the
 //     US backslash key;
-//   * the photo draws BOTH horizontal arrow caps pointing left. That is an
-//     error in the picture, not a layout: the //e has left then right, and
-//     the table follows the hardware. The tooltip names each one.
+//   * the horizontal arrow caps are left then right. The right-arrow legend
+//     was corrected in October 2026; the measured rectangles did not change.
 //
 // The empty recess between Caps Lock and Open-Apple is left out on purpose —
 // it is a bare well on the real machine, with no cap and no switch.

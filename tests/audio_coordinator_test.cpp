@@ -323,12 +323,22 @@ int main()
         assert(fs525.loadVirtualII(root.string()));
         assert(fs35.loadVirtualII(root.string()));
         assert(printer.loadSample((root / "imprimante/Matrix Printer.wav").string()));
+        // Importing while an old bank is loaded must survive exit-time
+        // persistence; after restart normal bank selection works again.
+        cfg.setBool("mechanical_sound_import_pending", true);
+        fs525.setBank(FloppySoundDevice::Bank::Mame);
+        audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+        assert(cfg.getString("mechanical_sound_bank") == "virtual2");
         audio.restore(cfg, speaker, tape, fs525, fs35, printer);
+        assert(!cfg.getBool("mechanical_sound_import_pending", true));
         assert(fs525.bank() == FloppySoundDevice::Bank::VirtualII);
         assert(fs35.bank() == FloppySoundDevice::Bank::VirtualII);
         assert(printer.sampled());
         audio.persist(cfg, speaker, tape, fs525, fs35, printer);
         assert(cfg.getString("mechanical_sound_bank") == "virtual2");
+        fs525.setBank(FloppySoundDevice::Bank::Mame);
+        audio.persist(cfg, speaker, tape, fs525, fs35, printer);
+        assert(cfg.getString("mechanical_sound_bank") == "mame");
         std::filesystem::remove_all(root, ec);
     }
 

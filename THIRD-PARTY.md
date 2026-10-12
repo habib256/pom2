@@ -49,6 +49,10 @@ them): `pic/Apple_II_plus.jpg` (the About panel and the README) and
 hotspots were measured on it). The other files under `pic/` are working
 material that no package carries.
 
+The keyboard's right-arrow legend was corrected with an image-generation
+edit in October 2026; the image dimensions and hotspot coordinates are
+unchanged. This edit does not establish the original photograph's provenance.
+
 **Provenance of the two shipped photographs is not recorded in this tree.**
 Until the author states where they come from and under which terms, treat
 them as *all rights reserved* by their unknown photographers; a package

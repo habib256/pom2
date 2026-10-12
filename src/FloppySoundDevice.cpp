@@ -186,8 +186,9 @@ bool FloppySoundDevice::loadViiFile(const std::string& dir, const char* rel,
     return !out.data.empty();
 }
 
-bool FloppySoundDevice::loadVirtualII(const std::string& dir)
+bool FloppySoundDevice::loadVirtualII(const std::string& dir, std::string* error)
 {
+    if (error) error->clear();
     // Drop the ready flag before replacing the vectors. The callback
     // acquire-loads it before touching `vii_`, same publish as loadSamples.
     viiReady_.store(false, std::memory_order_release);
@@ -211,7 +212,14 @@ bool FloppySoundDevice::loadVirtualII(const std::string& dir)
             ++loaded;
         } else {
             vii_[e.idx] = Sample{};
-            if (e.required) requiredOk = false;
+            if (e.required) {
+                requiredOk = false;
+                if (error) {
+                    if (!error->empty()) *error += "\n";
+                    *error += std::string("Missing or unreadable: ") + e.rel +
+                              " (a .wav alternative is also accepted)";
+                }
+            }
             pom2::log().warn("FloppySound",
                 std::string("Virtual ][ missing: ") + dir + "/" + e.rel);
         }

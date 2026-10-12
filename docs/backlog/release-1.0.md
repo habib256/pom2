@@ -130,9 +130,12 @@ Closed implementation details remain in the [original gate report](../archive/to
 both paths have run. Issue [#12](https://github.com/habib256/pom2/issues/12)
 "Nightly sanitizers are red" was opened by `github-actions[bot]` on
 2026-09-17, and the bot commented on it after the red nightlies of
-2026-09-28, 09-29, 10-01 and 10-04. The issue is still open — and the
-sanitizer legs it reports were red on those nights (green again on 10-05 and
-10-06), which is a separate matter from this alert item. No CHANGELOG entry
+2026-09-28, 09-29, 10-01 and 10-04. The sanitizer legs it reports were red on those nights (green again on
+10-05 and 10-06), which is a separate matter from this alert item.
+Rechecked 2026-10-12: the last five scheduled runs passed, including both
+sanitizer legs in run 38238133924. The last reported failure was the audio
+mixer assertion fixed by 5bb1ffa. Alert messages now name failed jobs/steps
+and include available test or sanitizer excerpts. No CHANGELOG entry
 records the first firing; the 2026-09-16 "G5-9: a red nightly opens an issue"
 entry covers the implementation.
 

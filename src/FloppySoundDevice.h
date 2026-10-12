@@ -109,7 +109,7 @@ public:
     /// not drop a MAME bank already loaded — `setBank` picks which one
     /// plays. Returns true when the four drive recordings the model
     /// needs (rotation, arm, insert, eject) all decoded.
-    bool loadVirtualII(const std::string& dir);
+    bool loadVirtualII(const std::string& dir, std::string* error = nullptr);
     bool virtualIIReady() const { return viiReady_.load(std::memory_order_acquire); }
 
     void setBank(Bank b);

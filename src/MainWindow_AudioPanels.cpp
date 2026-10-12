@@ -44,6 +44,10 @@
 
 #include "imgui.h"
 
+#include <cstdio>
+#include <filesystem>
+#include <string>
+
 // ─── Audio Mixer ─────────────────────────────────────────────────────────
 //
 // Consolidated mixer panel: one row per source (Master, Speaker, Cassette,
@@ -311,6 +315,46 @@ void MainWindow::renderAudioMixerWindow()
                               "while printing, and the power switch on cold boot.\n"
                               "Those files stay on this machine — they are not\n"
                               "part of a package.");
+    }
+
+    ImGui::SameLine();
+    static char soundFolder[2048] = {};
+    static std::string soundImportStatus;
+    if (ImGui::Button("Import sounds...")) {
+        std::snprintf(soundFolder, sizeof(soundFolder), "%s",
+                      settings->getString("mechanical_sound_path", "").c_str());
+        soundImportStatus.clear();
+        ImGui::OpenPopup("Import Virtual II sounds");
+    }
+    if (ImGui::BeginPopupModal("Import Virtual II sounds", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Choose your local Virtual II sound folder.");
+        ImGui::TextUnformatted("It should contain lecteur/ and optionally interface/ and imprimante/.");
+        ImGui::SetNextItemWidth(32.0f * ImGui::GetFontSize());
+        ImGui::InputText("Folder", soundFolder, sizeof(soundFolder));
+        if (ImGui::Button("Validate and use")) {
+            // Decode a detached probe: replacing a live bank would race both
+            // the mixer callback and CPU events. Activate on the next launch.
+            FloppySoundDevice probe;
+            if (probe.loadVirtualII(soundFolder, &soundImportStatus)) {
+                std::error_code ec;
+                const auto absolute = std::filesystem::absolute(soundFolder, ec);
+                if (ec) soundImportStatus = "Cannot resolve this folder.";
+                else {
+                    settings->setString("mechanical_sound_path", absolute.string());
+                    settings->setString("mechanical_sound_bank", "virtual2");
+                    settings->setBool("mechanical_sound_import_pending", true);
+                    soundImportStatus = settings->save()
+                        ? "Sounds validated. Restart POM2 to activate them."
+                        : "Could not save the sound folder. Check settings permissions.";
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
+        if (!soundImportStatus.empty()) ImGui::TextUnformatted(soundImportStatus.c_str());
+        ImGui::TextUnformatted("Sound recordings stay in your folder; they are not bundled with POM2.");
+        ImGui::EndPopup();
     }
 
     // ── Disk 5.25" ─────────────────────────────────────────────────────
