@@ -13,6 +13,13 @@ marker and the previous one.
 <a id="v0.9.6"></a>
 **v0.9.6 marker** — 2026-10-13. Release notes: [v0.9.6](docs/releases/v0.9.6.md).
 
+## 2026-10-13 — Size the macOS installer for logical disk-image lengths
+
+The release rehearsal built and signed the universal application but failed
+creating its DMG: the automatically sized volume could not hold the bundled
+32 MB A2FC image. The packager now sums logical file sizes and adds filesystem
+headroom before creating the compressed installer.
+
 ## 2026-10-13 — Default desktop matches the release reference
 
 Fresh native sessions now open the Monitor II-framed screen above the machine

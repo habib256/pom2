@@ -103,6 +103,12 @@ rm -rf "$STAGE"; mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 cp README.md "$STAGE/README.md"
+# hdiutil's automatic estimate can under-size a volume containing sparse
+# disk images (v0.9.6 failed copying the 32 MB A2FC image). Budget logical
+# file lengths, plus 25% and 64 MiB for filesystem and directory overhead.
+DMG_MIB=$(find "$STAGE" -type f -exec stat -f '%z' {} + \
+          | awk '{ bytes += $1 } END { print int(bytes / 1048576 * 1.25) + 64 }')
+log "DMG filesystem capacity: ${DMG_MIB} MiB"
 # `hdiutil create` intermittently fails with "Resource busy" on CI: a
 # diskimages-helper from an earlier attach can still hold the staging tree
 # (the runner even reports "Terminate orphan process: (diskimages-help)" in
@@ -114,7 +120,7 @@ cp README.md "$STAGE/README.md"
 dmg_attempts=4
 for attempt in $(seq 1 $dmg_attempts); do
     if hdiutil create -volname "POM2 ${VERSION}" -srcfolder "$STAGE" \
-                      -ov -format UDZO "$DMG"; then
+                      -size "${DMG_MIB}m" -ov -format UDZO "$DMG"; then
         break
     fi
     if [ "$attempt" -eq "$dmg_attempts" ]; then
