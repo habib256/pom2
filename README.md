@@ -92,7 +92,7 @@ Disk images can be `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.2mg` or
 `.hdv`. A game written for a particular Apple II still needs that machine:
 changing profiles performs a cold reset.
 
-![Default desktop: Ultima V on Apple //c PAL, Monitor II frame, machine keyboard and right-column drive tabs](pic/POM2-default-desktop.png)
+![Default desktop: Wilderness on Apple //c PAL, Monitor II frame, machine keyboard and right-column drive tabs](pic/POM2-default-desktop.png)
 
 The default desktop places the **Apple II Screen** with its Monitor II frame
 above the **Apple Keyboard** on the left. The right column groups **Drives**
