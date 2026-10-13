@@ -1574,6 +1574,8 @@ private:
     /// rather than trusting a cached pointer, clears whatever settings key
     /// would otherwise remount the image next launch, and leaves the medium
     /// mounted if its write-back save failed. Drives the status-bar chips.
+    /// `slot < 0` names a //c+ on-board Sony 3.5" mechanism (`index` = its
+    /// drive, 0 internal) — no slot card owns those.
     bool ejectMediaBay(int slot, int index, bool diskII);
     /// Write a read-only 3.5" WOZ out as a writable `.po` beside it, then
     /// mount the copy in the same drive with write-back on. The WOZ is left

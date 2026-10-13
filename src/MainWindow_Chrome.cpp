@@ -923,9 +923,12 @@ void MainWindow::renderStatusBar()
             //
             // The bar is one line and the machine can carry a lot of media,
             // so each entry is added only while `roomFor` still says yes and
-            // the rest are dropped silently. Entries go in bus order (slot,
-            // then drive/bay) so a given machine's layout stays put instead
-            // of reshuffling as drives spin up.
+            // the rest are dropped silently. Entries go slot 7 down to 1,
+            // then each card's drives/bays ascending — the order the Drives
+            // rack uses (`renderDriveRackWindow`), which is the //e slot
+            // scan — so the bar reads as a flattened copy of that rack and
+            // a given machine's layout stays put instead of reshuffling as
+            // drives spin up.
             //
             // LED semantics differ per bay and that is deliberate: a Disk II
             // lights on real spindle motion, while a block device has no
@@ -947,19 +950,45 @@ void MainWindow::renderStatusBar()
                 std::string label;
                 std::string tip;
                 // Identity, so a click on the chip can act on the exact bay
-                // it names. `index` is the Disk II drive or the media bay.
+                // it names. `index` is the Disk II drive or the media bay;
+                // `slot < 0` is a //c+ on-board Sony mechanism (no slot
+                // card owns it) and `index` is then its drive number.
                 int         slot   = 0;
                 int         index  = 0;
                 bool        diskII = false;
                 bool        dirty  = false;   // unsaved changes pending
             };
             std::vector<MediaRow> mediaRows;
+            auto baseName = [](const std::string& p) {
+                return std::filesystem::path(p).filename().string();
+            };
+            // The //c+'s Sony mechanisms (internal, then the connected
+            // externals) lead, as they do in the Drives rack: they are not
+            // slot-card bays, so the bus walk below never sees them. Taken
+            // BEFORE the state lock — `captureDisk35` takes it itself and it
+            // is non-recursive.
+            if (activeProfile == pom2::SystemProfile::AppleIIcPlus) {
+                const auto sony =
+                    storageCoordinator_->captureDisk35(*controller, true);
+                for (int drv = 0; drv < 3; ++drv) {
+                    const auto& info = sony.drives[drv];
+                    if (!info.connected || !info.loaded || info.path.empty())
+                        continue;
+                    const std::string where =
+                        drv == 0 ? std::string("Internal")
+                                 : "External " + std::to_string(drv);
+                    mediaRows.push_back(
+                        { info.motorOn, ICON_FA_FLOPPY_DISK,
+                          baseName(info.path),
+                          "Apple 3.5\" · " + where + " — track " +
+                              std::to_string(info.track) + "\n" + info.path,
+                          /*slot=*/-1, drv, /*diskII=*/false,
+                          info.hasUnsavedChanges });
+                }
+            }
             {
-                auto baseName = [](const std::string& p) {
-                    return std::filesystem::path(p).filename().string();
-                };
                 auto st = controller->lockState();
-                for (int slot = 1; slot <= 7; ++slot) {
+                for (int slot = 7; slot >= 1; --slot) {
                     SlotPeripheral* per =
                         st.memory().slotBus().peripheral(slot);
                     if (!per) continue;

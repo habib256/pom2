@@ -127,7 +127,13 @@ bool MainWindow::ejectMediaBay(int slot, int index, bool diskII)
     // sections so neither runs under `stateMutex` (this file's own header
     // rule, and CLAUDE.md's).
     std::string label;
-    if (diskII) {
+    if (slot < 0) {
+        // A //c+ on-board Sony mechanism: no slot card owns it, the
+        // controller's on-board pair does (the status bar lists them ahead
+        // of the bus, as the Drives rack does).
+        label = index == 0 ? std::string("the internal 3.5\" drive")
+                           : "external 3.5\" drive " + std::to_string(index);
+    } else if (diskII) {
         label = "slot " + std::to_string(slot) + " drive " +
                 std::to_string(index + 1);
     } else {
@@ -148,10 +154,12 @@ bool MainWindow::ejectMediaBay(int slot, int index, bool diskII)
     }
 
     const auto r =
-        diskII ? storageCoordinator_->ejectDiskII(*controller, *settings,
-                                                  slot, index)
-               : storageCoordinator_->ejectMediaBay(*controller, *settings,
-                                                    slot, index);
+        slot < 0 ? storageCoordinator_->ejectDisk35(*controller, *settings,
+                                                    index, /*onboard=*/true)
+        : diskII ? storageCoordinator_->ejectDiskII(*controller, *settings,
+                                                    slot, index)
+                 : storageCoordinator_->ejectMediaBay(*controller, *settings,
+                                                      slot, index);
 
     // A refused eject leaves the medium MOUNTED on purpose: the write-back
     // failed, so dropping it would lose the only copy of the writes.

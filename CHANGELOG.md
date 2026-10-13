@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-13 — Status bar lists mounted media in the Drives rack's order
+
+The bottom bar's media chips walked the bus from slot 1 up to slot 7 while
+the Drives rack lists slot 7 down to 1 (the //e slot scan) with each card's
+drives ascending, so the same machine read in opposite directions on the two
+surfaces. The bar now walks slot 7 down to 1 and is a flattened copy of the
+rack. Nothing else keyed on the walk: chips are identified by slot + bay, not
+by position.
+
+The same pass closed a gap the rack did not have: the //c+'s on-board Sony
+3.5" mechanisms are not slot-card bays, so the bus walk never saw them and a
+disk in the internal drive had no chip at all. They now lead the bar (internal,
+then the connected externals), as in the rack, with the motor as their LED and
+a click ejecting through `ejectDisk35(onboard)`; `MainWindow::ejectMediaBay`
+takes `slot < 0` for that case.
+
 <a id="v0.9.6"></a>
 **v0.9.6 marker** — 2026-10-13. Release notes: [v0.9.6](docs/releases/v0.9.6.md).
 
