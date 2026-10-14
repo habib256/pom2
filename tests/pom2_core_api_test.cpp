@@ -20,8 +20,10 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,10 +54,155 @@ void writeTestCassette(const std::string& path)
     assert(tape.good());
 }
 
+std::vector<char> readFile(const std::string& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    return std::vector<char>(std::istreambuf_iterator<char>(input), {});
+}
+
+/// A blank 800 KiB ProDOS-order image whose block 0 is a boot program:
+/// at $0801 it stores $A5 and the X the boot ROM handed over, then spins.
+void writeBoot800K(const std::string& path)
+{
+    std::vector<char> image(1600u * 512u, 0);
+    const unsigned char boot[] = {
+        0x01,                   // $0800: ProDOS boot-block count
+        0xA9, 0xA5,             // LDA #$A5
+        0x8D, 0x00, 0x03,       // STA $0300
+        0x8E, 0x01, 0x03,       // STX $0301
+        0x4C, 0x09, 0x08,       // JMP $0809
+    };
+    std::copy(std::begin(boot), std::end(boot), image.begin());
+    std::ofstream disk(path, std::ios::binary);
+    disk.write(image.data(), static_cast<std::streamsize>(image.size()));
+    assert(disk.good());
+}
+
+pom2::Core makeSmartPortCore(const std::string& sourceDir)
+{
+    pom2::Core core({
+        pom2::CpuModel::CMOS65C02,
+        pom2::VideoTiming::NTSC,
+        true,
+    });
+    assert(core.loadRom(sourceDir + "/roms/apple2e.rom"));
+    return core;
+}
+
+// The 3.5" SmartPort half of the facade, the contract a headless test host
+// (pom2games' a2shot) relies on: boot an 800 KiB ProDOS image from slot 5
+// with a Disk II still in slot 6, write a block, flush, and read the image
+// file back from the host while the core is alive.
+void testSmartPort(const std::string& sourceDir)
+{
+    const std::string imagePath = "pom2_core_api_800k.po";
+    writeBoot800K(imagePath);
+
+    pom2::Core core = makeSmartPortCore(sourceDir);
+    assert(!core.bootSlot(5));                       // empty slot
+    assert(!core.insertSmartPortDisk(0, imagePath)); // no controller yet
+    assert(core.attachSmartPort(5));
+    assert(!core.attachSmartPort(5));                // slot taken
+    assert(core.attachDiskII(sourceDir + "/roms/disk2.rom",
+                             sourceDir + "/roms/diskii_p6.rom"));
+    assert(!core.smartPortDiskInserted(0));
+    assert(!core.insertSmartPortDisk(2, imagePath));
+    assert(!core.insertSmartPortDisk(0, "pom2_core_api_missing.po"));
+    assert(!core.lastError().empty());
+
+    // A 140 KiB image is not a 3.5" disk.
+    const std::string smallPath = "pom2_core_api_140k.po";
+    {
+        std::ofstream small(smallPath, std::ios::binary);
+        const std::vector<char> blank(280u * 512u, 0);
+        small.write(blank.data(), static_cast<std::streamsize>(blank.size()));
+    }
+    assert(!core.insertSmartPortDisk(0, smallPath));
+    assert(std::remove(smallPath.c_str()) == 0);
+
+    assert(core.insertSmartPortDisk(0, imagePath));
+    assert(core.smartPortDiskInserted(0));
+    assert(!core.smartPortDiskInserted(1));
+
+    assert(core.bootSlot(5));
+    assert(core.cpuState().programCounter == 0xC500);
+    core.run(200000);
+    assert(core.read(0x0300) == 0xA5);
+    assert(core.read(0x0301) == 0x50);               // X = slot × 16
+    const pom2::CpuState booted = core.cpuState();
+    assert(booted.programCounter >= 0x0809 && booted.programCounter <= 0x080B);
+
+    // No mechanical timing: a second core replays the boot to the cycle.
+    {
+        pom2::Core replay = makeSmartPortCore(sourceDir);
+        assert(replay.attachSmartPort(5));
+        assert(replay.attachDiskII(sourceDir + "/roms/disk2.rom",
+                                   sourceDir + "/roms/diskii_p6.rom"));
+        assert(replay.insertSmartPortDisk(0, imagePath));
+        assert(replay.bootSlot(5));
+        replay.run(200000);
+        const pom2::CpuState again = replay.cpuState();
+        assert(again.cycles == booted.cycles);
+        assert(again.programCounter == booted.programCounter);
+    }
+
+    // Stream one block through the card's own soft switches ($C0D0-$C0D4
+    // for slot 5): unit, block LO/HI, then 512 data bytes.
+    const auto writeBlock = [&core](std::uint8_t block, std::uint8_t seed) {
+        core.write(0xC0D0, 0x00);
+        core.write(0xC0D1, block);
+        core.write(0xC0D2, 0x00);
+        for (int i = 0; i < 512; ++i)
+            core.write(0xC0D3, static_cast<std::uint8_t>(seed + i));
+        assert((core.read(0xC0D4) & 0x01) == 0);     // no I/O error
+    };
+    const auto blockOnHost = [&imagePath](std::uint8_t block,
+                                          std::uint8_t seed) {
+        const std::vector<char> bytes = readFile(imagePath);
+        assert(bytes.size() == 1600u * 512u);
+        for (int i = 0; i < 512; ++i)
+            if (static_cast<std::uint8_t>(bytes[block * 512u + i])
+                != static_cast<std::uint8_t>(seed + i))
+                return false;
+        return true;
+    };
+
+    writeBlock(7, 0x11);
+    assert(core.flushSmartPortDisk(0));
+    assert(blockOnHost(7, 0x11));
+    assert(core.flushSmartPortDisk(0));              // clean: nothing to do
+    assert(core.flushSmartPortDisk(1));              // empty unit
+    assert(!core.flushSmartPortDisk(2));
+
+    // Inserting over a dirty disk saves it first — the swap a test host
+    // uses to reach the file without a flush.
+    writeBlock(8, 0x33);
+    assert(core.insertSmartPortDisk(0, imagePath));
+    assert(blockOnHost(8, 0x33));
+
+    // So does an eject.
+    writeBlock(9, 0x55);
+    assert(core.ejectSmartPortDisk(0));
+    assert(!core.smartPortDiskInserted(0));
+    assert(blockOnHost(9, 0x55));
+    assert(!core.bootSlot(4));                       // nothing in slot 4
+
+    assert(std::remove(imagePath.c_str()) == 0);
+}
+
 } // namespace
 
 int main()
 {
+    // ctest protects media for every test (CLAUDE.md, MediaWritePolicy.h);
+    // this one writes only images it created, and pins that writes land.
+#ifdef _WIN32
+    _putenv_s("POM2_MEDIA_WRITE_DEFAULT", "writable");
+#else
+    setenv("POM2_MEDIA_WRITE_DEFAULT", "writable", 1);
+#endif
+    testSmartPort(POM2_TEST_SOURCE_DIR);
+
     pom2::Core core;
 
     const std::string sourceDir = POM2_TEST_SOURCE_DIR;

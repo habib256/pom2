@@ -10,6 +10,27 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-14 — `pom2_core` mounts and boots 800 KiB 3.5" disks
+
+The SDK facade only exposed the 140 KiB Disk II, so a headless host
+(pom2games' a2shot) could not run a game shipped on an 800 KiB ProDOS disk:
+the Disk II refuses an 819 200-byte file. `core.hpp` gains
+`attachSmartPort`, `insertSmartPortDisk`, `ejectSmartPortDisk`,
+`smartPortDiskInserted`, `flushSmartPortDisk` and `bootSlot`, over the same
+block-level `SmartPortCard` + `SmartPort35Unit` the emulator plugs as
+`smartport35`, with the synthetic ROM only (the factory's `roms/liron.rom`
+lookup stays out: the facade reads no file it was not handed).
+
+Two choices worth keeping. The card is built with **two** units, not the
+card's default eight: ProDOS 2.4 remaps units 3+ onto free slots, which would
+change the guest's view of the machine for nothing. And the facade starts no
+autosave — it has no threads — so writes reach the file on an explicit flush,
+an insert over the disk, an eject or destruction; a host that rereads the
+image mid-run flushes first. The block path has no mechanical timing, so a run
+is cycle-reproducible. Checked end to end with Neowilderness' 800 KiB build
+(ProDOS + game menu in under 2 s of emulated time, Disk II still in slot 6);
+pinned by `pom2_core_api`. → `docs/SDK.md` § 3.5" SmartPort.
+
 ## 2026-10-13 — Status bar lists mounted media in the Drives rack's order
 
 The bottom bar's media chips walked the bus from slot 1 up to slot 7 while

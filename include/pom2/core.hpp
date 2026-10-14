@@ -107,6 +107,30 @@ public:
     /// controller, its boot ROM and at least one disk are present.
     bool bootDisk();
 
+    /// Install a 3.5" SmartPort controller in an empty slot (5 by convention)
+    /// with two 800 KiB units, ProDOS drive 1 and drive 2 of that slot. The
+    /// card is POM2's block-level model with its synthetic slot ROM — no
+    /// Liron dump is read — identifying as a ProDOS block device ($Cn07=$01).
+    /// It has no mechanical timing: a block costs exactly the CPU cycles of
+    /// the driver's 512-byte copy loop, so runs are cycle-reproducible.
+    bool attachSmartPort(int slot = 5);
+    /// Mount an 800 KiB (819 200-byte) ProDOS-order .po or an 800 KiB .2mg on
+    /// unit 0 or 1. Mounting over a disk first writes that disk's changed
+    /// blocks back to its file, as insertDisk() does for the Disk II. Guest
+    /// writes reach the file on flushSmartPortDisk(), on the next insert or
+    /// eject, and when the Core is destroyed. A read-only file mounts
+    /// write-protected; POM2_MEDIA_WRITE_DEFAULT=protected protects them all.
+    bool insertSmartPortDisk(int unit, std::string_view path);
+    bool ejectSmartPortDisk(int unit);
+    bool smartPortDiskInserted(int unit = 0) const;
+    /// Write the unit's changed blocks back to its image file now, durably
+    /// (temp file + rename). True when there was nothing to write.
+    bool flushSmartPortDisk(int unit);
+    /// Cold boot directly at the boot ROM of the card in `slot` ($Cn00).
+    /// Returns false unless that slot's ROM carries the ProDOS boot
+    /// signature ($Cn01=$20, $Cn03=$00, $Cn05=$03). Slot 6 is bootDisk().
+    bool bootSlot(int slot);
+
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
     /// by the host transport below, while the guest sees the real $C060 input.
     bool loadCassette(std::string_view path);

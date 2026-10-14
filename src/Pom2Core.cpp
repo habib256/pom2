@@ -26,6 +26,8 @@
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
 #include "Mockingboard.h"
 #include "SlotBus.h"
+#include "SmartPort35Unit.h"
+#include "SmartPortCard.h"
 #include "SpeakerDevice.h"
 
 #include <algorithm>
@@ -74,6 +76,7 @@ public:
     SpeakerDevice speaker;
     CassetteDevice cassette;
     DiskIICard* diskII = nullptr; // non-owning; slot 6 owns the card
+    SmartPortCard* smartPort = nullptr; // non-owning; its slot owns the card
     // Non-owning; their slots own them. A LIST, not one pointer: `pullAudio`
     // mixes every card on the bus, so a second attached card was being mixed
     // at a rate and volume it was never told about — `attachMockingboard`
@@ -202,6 +205,121 @@ bool Core::bootDisk()
     coldBoot();
     impl_->diskII->seekTrack0();
     impl_->cpu.setProgramCounter(0xC600);
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::attachSmartPort(int slot)
+{
+    if (slot < 1 || slot > 7) {
+        impl_->error = "SmartPort slot must be between 1 and 7";
+        return false;
+    }
+    if (impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "Requested SmartPort slot is already occupied";
+        return false;
+    }
+    if (impl_->smartPort) {
+        impl_->error = "A SmartPort controller is already attached";
+        return false;
+    }
+    // Synthetic ROM only: SlotCardFactory loads roms/liron.rom on a //e, but
+    // the facade reads no file it was not handed, and the HLE service entries
+    // are the same either way. Two units — ProDOS drive 1 / drive 2 of the
+    // slot; with eight, ProDOS 2.4 would remap the empty six onto free slots.
+    auto card = std::make_unique<SmartPortCard>(slot);
+    card->setUnitCount(2);
+    for (std::size_t unit = 0; unit < 2; ++unit)
+        card->setUnit(unit, std::make_unique<SmartPort35Unit>());
+    impl_->smartPort = card.get();
+    impl_->memory.slotBus().plug(slot, std::move(card));
+    impl_->error.clear();
+    return true;
+}
+
+namespace {
+
+SmartPortUnit* smartPortUnit(SmartPortCard* card, int unit, std::string& error)
+{
+    if (!card) {
+        error = "SmartPort controller is not attached";
+        return nullptr;
+    }
+    if (unit < 0 || unit > 1) {
+        error = "SmartPort unit index must be 0 or 1";
+        return nullptr;
+    }
+    return card->unit(static_cast<std::size_t>(unit));
+}
+
+} // namespace
+
+bool Core::insertSmartPortDisk(int unit, std::string_view path)
+{
+    SmartPortUnit* target = smartPortUnit(impl_->smartPort, unit, impl_->error);
+    if (!target) return false;
+    // SmartPort35Unit::loadImage saves the outgoing disk's dirty blocks first
+    // and leaves it mounted if that save fails.
+    const bool inserted = target->loadImage(std::string(path));
+    impl_->error = inserted ? std::string{} : target->lastError();
+    return inserted;
+}
+
+bool Core::ejectSmartPortDisk(int unit)
+{
+    SmartPortUnit* target = smartPortUnit(impl_->smartPort, unit, impl_->error);
+    if (!target) return false;
+    // Save-on-eject: a failed save keeps the disk mounted and dirty.
+    const bool ejected = target->eject();
+    impl_->error = ejected ? std::string{} : target->lastError();
+    return ejected;
+}
+
+bool Core::smartPortDiskInserted(int unit) const
+{
+    if (!impl_->smartPort || unit < 0 || unit > 1) return false;
+    const SmartPortUnit* target =
+        impl_->smartPort->unit(static_cast<std::size_t>(unit));
+    return target && target->isLoaded();
+}
+
+bool Core::flushSmartPortDisk(int unit)
+{
+    SmartPortUnit* target = smartPortUnit(impl_->smartPort, unit, impl_->error);
+    if (!target) return false;
+    if (!target->hasUnsavedChanges()) {
+        impl_->error.clear();
+        return true;
+    }
+    const bool saved = target->saveDirty();
+    impl_->error = saved ? std::string{} : target->lastError();
+    if (!saved && impl_->error.empty())
+        impl_->error = "the image could not be saved";
+    return saved;
+}
+
+bool Core::bootSlot(int slot)
+{
+    if (slot == DiskIICard::kDefaultSlot && impl_->diskII) return bootDisk();
+    SlotPeripheral* card = (slot >= 1 && slot <= 7)
+        ? impl_->memory.slotBus().peripheral(slot) : nullptr;
+    if (!card) {
+        impl_->error = "No card in the requested boot slot";
+        return false;
+    }
+    // The JSR-dispatch trio of Apple II Reference Manual Appx C, the check
+    // the emulator's own bootFromSlot makes. $Cn07 is not checked: a ProDOS
+    // block device reads $01 there. Asked of the card, not the bus, so the
+    // answer does not depend on INTCXROM and a refusal leaves RAM untouched.
+    if (card->slotRomRead(0x01) != 0x20 || card->slotRomRead(0x03) != 0x00
+        || card->slotRomRead(0x05) != 0x03) {
+        impl_->error = "Slot " + std::to_string(slot)
+                     + " ROM carries no boot signature";
+        return false;
+    }
+    coldBoot();
+    impl_->cpu.setProgramCounter(
+        static_cast<std::uint16_t>(0xC000 | (slot << 8)));
     impl_->error.clear();
     return true;
 }
