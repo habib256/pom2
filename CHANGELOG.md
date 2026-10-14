@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-14 — The lock-scope lint misread a one-line lock scope
+
+`tools/check_coordinator_locks.sh` counted braces from the start of the lock's
+line, so `{ auto st = controller->lockState(); state = ...; }` netted zero and
+the scope never closed: every coordinator call later in the function read as
+"inside the lock". The status-bar commit put `captureDisk35` after exactly
+such a line — deliberately outside it — and the Linux job went red on a false
+positive. The scan now counts from the lock token itself, on its own line too.
+A lock really held across that call is still flagged (checked by mutation).
+
 ## 2026-10-14 — `pom2_core` mounts and boots 800 KiB 3.5" disks
 
 The SDK facade only exposed the 140 KiB Disk II, so a headless host

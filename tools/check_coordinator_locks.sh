@@ -136,25 +136,33 @@ def lock_still_open(lines, fn_start, call_idx):
         return fn_start + 1
 
     lock = None
+    lock_col = 0
     for j in range(call_idx - 1, fn_start - 1, -1):
         code = lines[j].split('//')[0]
-        if 'lockState()' in code or 'stateMutex()' in code:
-            lock = j
+        cols = [code.find(t) for t in ('lockState()', 'stateMutex()')]
+        cols = [c for c in cols if c >= 0]
+        if cols:
+            lock, lock_col = j, max(cols)
             break
     if lock is None:
         return None
     # Count braces CHARACTER by character, not per line. `} else {` closes the
     # lock's block and opens another, netting zero — a per-line counter never
     # sees the depth go negative and reports a scope that has in fact ended.
+    # Start AT the lock token, on its own line too: in the one-line scope
+    # `{ auto st = c->lockState(); x = st...; }` the `{` before the token is
+    # not inside the lock, and counting it hid the `}` that closes it.
     depth = 0
     for j in range(lock, call_idx):
         code = lines[j].split('//')[0]
+        if j == lock:
+            code = code[lock_col:]
         for ch in code:
             if ch == '{':
                 depth += 1
             elif ch == '}':
                 depth -= 1
-                if j > lock and depth < 0:
+                if depth < 0:
                     return None      # scope closed before the call
     return lock + 1
 
