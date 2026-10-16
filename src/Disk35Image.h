@@ -159,6 +159,19 @@ public:
     /// it. Unlike the block backing there is no per-block set to merge — the
     /// payload is the whole image — so this is one flag.
     void restoreDirty() { if (loaded_) { dirty_ = true; autosave_.noteWrite(); } }
+    /// The same undo, only when this is still the mount a capture came from
+    /// (`PendingWriteBack::lineage`; a load or an eject resets it). False —
+    /// and nothing touched — when another disk has been mounted since.
+    /// This mount's process-unique identity (0 = nothing loaded). Survives
+    /// moves; every load draws a new one, so a phase-3 check can tell "the
+    /// disk I captured" from "the same file mounted again since".
+    uint64_t mountId() const { return loaded_ ? lineage_ : 0; }
+    bool restoreDirtyFor(uint64_t lineage)
+    {
+        if (!loaded_ || lineage == 0 || lineage != lineage_) return false;
+        restoreDirty();
+        return true;
+    }
 
     /// Background autosave (MediaAutosave.h), `stateMutex` held: the file
     /// follows the guest's writes about a second after they stop, with the

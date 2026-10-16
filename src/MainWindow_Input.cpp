@@ -877,6 +877,13 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
         double x = 0, y = 0;
         glfwGetCursorPos(window, &x, &y);
         driveRackDropPosition_ = ImVec2(static_cast<float>(x), static_cast<float>(y));
+        // The drive hits are gated on ImGui's hover, and ImGui learns the
+        // pointer only from GLFW's cursor events — which an OS drag into an
+        // unfocused window does not send. With a stale position no drive was
+        // "hovered", the drop fell through to insert-AND-BOOT and rebooted
+        // the machine. Feed the drop point, as the cursor callback would.
+        ImGui::GetIO().AddMousePosEvent(driveRackDropPosition_.x,
+                                        driveRackDropPosition_.y);
         driveRackPendingDrop_.clear();
         for (int i = 0; i < count; ++i) if (paths[i]) driveRackPendingDrop_.emplace_back(paths[i]);
         return; // Resolve against this frame's visible drive images, after rendering.

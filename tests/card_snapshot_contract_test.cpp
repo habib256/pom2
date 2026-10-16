@@ -62,9 +62,12 @@
 #include "SoftCardZ80.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
+#include "SlinkyCard.h"
+#include "SamCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
 #include "VidexVideotermCard.h"
+#include "VidHDCard.h"
 #include "WorkstationCard.h"
 #include "SlotCardCatalog.h"
 #include "SlotCardFactory.h"
@@ -305,10 +308,13 @@ int main()
         { "MouseCard",         [] { return std::unique_ptr<SlotPeripheral>(new MouseCard(4)); } },
         { "FourPlayCard",      [] { return std::unique_ptr<SlotPeripheral>(new FourPlayCard(4)); } },
         { "TranswarpCard",     [] { return std::unique_ptr<SlotPeripheral>(new TranswarpCard(3)); } },
+        { "SlinkyCard",        [] { return std::unique_ptr<SlotPeripheral>(new SlinkyCard(4)); } },
+        { "SamCard",           [] { return std::unique_ptr<SlotPeripheral>(new SamCard(4)); } },
         { "GrapplerCard",      [] { return std::unique_ptr<SlotPeripheral>(new GrapplerCard(1)); } },
         { "GrapplerClassic",   [] { return std::unique_ptr<SlotPeripheral>(new GrapplerClassicCard(1)); } },
         { "AppleParallel",     [] { return std::unique_ptr<SlotPeripheral>(new AppleParallelCard(1)); } },
         { "VidexVideoterm",    [] { return std::unique_ptr<SlotPeripheral>(new VidexVideotermCard(3)); } },
+        { "VidHD",             [] { return std::unique_ptr<SlotPeripheral>(new VidHDCard(3)); } },
         { "PrinterCard",       [] { return std::unique_ptr<SlotPeripheral>(new PrinterCard(1)); } },
         { "UthernetCard",      [] { return std::unique_ptr<SlotPeripheral>(new UthernetCard(3)); } },
         { "UthernetIICard",    [] { return std::unique_ptr<SlotPeripheral>(new UthernetIICard(3)); } },
@@ -362,8 +368,9 @@ int main()
         {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},
         {"workstation", "WorkstationCard"}, {"4play", "FourPlayCard"},
         {"transwarp", "TranswarpCard"},
+        {"slinky", "SlinkyCard"}, {"sam", "SamCard"},
         {"grappler1", "GrapplerClassic"}, {"pic", "AppleParallel"},
-        {"videoterm", "VidexVideoterm"},
+        {"videoterm", "VidexVideoterm"}, {"vidhd", "VidHD"},
     };
     std::set<std::string> names;
     for (const auto& e : cards) names.insert(e.name);

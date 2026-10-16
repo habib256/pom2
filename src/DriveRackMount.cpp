@@ -44,7 +44,8 @@ bool mountEmptyDrive(EmulationController& controller, Settings& settings,
             const bool floppy = info.typeKey == "35" || info.kindLabel.find("3.5") != std::string::npos;
             const bool hardDisk = info.typeKey == "hdv" || info.kindLabel.find("HD") != std::string::npos;
             if ((target.kind == DrivePictureKind::Floppy35 && !floppy) ||
-                (target.kind == DrivePictureKind::HardDisk && !hardDisk)) {
+                (target.kind == DrivePictureKind::HardDisk && !hardDisk) ||
+                (target.kind == DrivePictureKind::Generic && !info.acceptsSony35OrHdv)) {
                 error = "The drive type changed. Select the drive again."; return false;
             }
             if (info.loaded) {
@@ -57,9 +58,13 @@ bool mountEmptyDrive(EmulationController& controller, Settings& settings,
     const auto kind = classifyDiskForSlot(path);
     const auto expected = target.kind == DrivePictureKind::DiskII ? DiskSlotClass::Floppy525 :
                           target.kind == DrivePictureKind::Floppy35 ? DiskSlotClass::Sony35 : DiskSlotClass::Hdv;
-    if (kind != expected) {
+    // A bay that takes either kind lets the file decide (mountMediaBay routes).
+    const bool either = target.kind == DrivePictureKind::Generic &&
+                        (kind == DiskSlotClass::Sony35 || kind == DiskSlotClass::Hdv);
+    if (kind != expected && !either) {
         error = target.kind == DrivePictureKind::DiskII ? "Choose a 5.25-inch disk image for this drive." :
                 target.kind == DrivePictureKind::Floppy35 ? "Choose an 800K 3.5-inch disk image for this drive." :
+                target.kind == DrivePictureKind::Generic ? "Choose an 800K 3.5-inch or ProDOS hard-disk image for this drive." :
                 "Choose a ProDOS hard-disk image for this drive.";
         return false;
     }

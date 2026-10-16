@@ -238,7 +238,7 @@ int main()
         mem.memWrite(0xC058, 0);   // AN0 off
         disp.render(mem);
         expect(disp.width() == 280 && disp.height() == 192, "no card on the display: 280x192");
-        disp.setVidexCard(card);
+        disp.setCardVideoSource(card);
         disp.render(mem);
         expect(disp.width() == 280 && !disp.showingCardPicture(),
                "TEXT but AN0 off: the Apple's picture");
@@ -281,7 +281,7 @@ int main()
         expect(disp.pixels()[1] == kBlack, "unlit dots stay black");
         disp.setHiResMode(Apple2Display::HiResMode::ColorNTSC);
         // Unwiring the card returns the monitor to the Apple.
-        disp.setVidexCard(nullptr);
+        disp.setCardVideoSource(nullptr);
         disp.render(mem);
         expect(disp.width() == 280 && !disp.showingCardPicture(),
                "no card pointer: the Apple's picture");

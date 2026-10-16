@@ -43,7 +43,9 @@ namespace {
 struct RamUnit final : pom2::SmartPortBusUnit {
     std::vector<uint8_t> blocks = std::vector<uint8_t>(512 * 4, 0);
     bool media = true, wp = false, unidisk = false;
+    uint64_t id = 0;                                  // 0 = no identity check
     bool     hasMedia()       const override { return media; }
+    uint64_t mediaIdentity()  const override { return id; }
     uint32_t blockCount()     const override { return media ? 4u : 0u; }
     bool     writeProtected() const override { return wp; }
     bool     isUnidisk35()    const override { return unidisk; }
@@ -255,6 +257,36 @@ int main()
         assert(b.blocks[3 * 512] == before && "the refused block was written anyway");
         assert(!e.active() && "the refusal left the bus mid-transaction");
         assert(e.progress().blocksWritten == 1);
+
+        // A disk SWAPPED for another, never empty in between: the presence
+        // mask cannot see it, the medium's identity does (bug hunt
+        // 2026-10-16).
+        b.id = 7;
+        const uint8_t blk1 = b.blocks[1 * 512];
+        transact(e, frame(3, 0x00, {0x02, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}),
+                 /*expectReply=*/false);
+        b.id = 8;
+        rr = transact(e, frame(3, 0x02, blk));
+        assert(replyStatus(rr) == 0x27 && "a write to a swapped-in disk was not refused");
+        assert(b.blocks[1 * 512] == blk1 && "the swapped-in disk took the block");
+
+        // The same through a snapshot: a WRITE pending in the blob, restored
+        // over another disk, is refused; over the same disk it lands.
+        for (const bool sameDisk : {false, true}) {
+            b.id = 9;
+            transact(e, frame(3, 0x00, {0x02, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}),
+                     /*expectReply=*/false);
+            std::vector<uint8_t> blob;
+            e.appendSnapshotState(blob);
+            e.reset();
+            if (!sameDisk) b.id = 10;
+            assert(e.loadSnapshotState(blob.data(), blob.size()) == blob.size());
+            rr = transact(e, frame(3, 0x02, blk));
+            assert(replyStatus(rr) == (sameDisk ? 0x00 : 0x27) &&
+                   "a restored WRITE checked the wrong disk");
+            assert((b.blocks[1 * 512] == 0x3C) == sameDisk);
+        }
+        b.id = 0;
     }
 
     // WRITE block 2 of unit 3 (= u1): command packet, then a $82 data packet.

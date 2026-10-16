@@ -613,7 +613,8 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
     }
 }
 
-bool MainWindow::mountProDOSFolder(const std::string& path, std::string& errOut)
+bool MainWindow::mountProDOSFolder(const std::string& path, std::string& errOut,
+                                   int bay)
 {
     if (ensureHdvCardForBoot() < 0 || !primaryHdvCard()) {
         errOut = "no free slot to plug an HDV card into";
@@ -629,7 +630,7 @@ bool MainWindow::mountProDOSFolder(const std::string& path, std::string& errOut)
 
     const auto mounted = storageCoordinator_->mountBlockBytes(
         *controller, *settings, primaryHdvCard()->getSlot(), std::move(bytes),
-        std::string("[host folder] ") + path, path);
+        std::string("[host folder] ") + path, path, bay);
     if (!mounted.ok) {
         errOut = mounted.error;
         return false;

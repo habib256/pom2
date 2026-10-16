@@ -170,7 +170,8 @@ public:
     /// Videx Videoterm's is 216 — 24 rows of 9 rasters).
     int             height() const { return useCardPicture_ ? cardPictureH_ : kHeight; }
     /// True when the last render() presented a card's own picture (a Videx
-    /// Videoterm's 80 columns) instead of the Apple's video.
+    /// Videoterm's 80 columns, a VidHD's Super Hi-Res) instead of the
+    /// Apple's video.
     bool            showingCardPicture() const { return useCardPicture_; }
 
     /// Raster position (visible scanline + 40-byte column index) of a CPU
@@ -248,17 +249,20 @@ public:
     /// SlotBus that holds it.
     void setChatMauveCard(LeChatMauveCard* c) { chatMauve = c; }
 
-    /// Videx Videoterm (or any card with its own picture — CardVideoSource.h).
+    /// A card with its own picture (CardVideoSource.h): the Videx Videoterm
+    /// on a ][ / ][+, the VidHD on a //e — never both, the Videoterm is
+    /// dropped from every //e-class plan and the VidHD from every other one.
     /// When non-null and the card's rule holds for the published frame
-    /// (TEXT + AN0 for the Videoterm), render() presents the card's picture,
-    /// at the card's own geometry, instead of the Apple's. Non-owning, like
-    /// the Chat Mauve pointer; MainWindow clears it before a slot rebuild.
-    void setVidexCard(pom2::CardVideoSource* c)
+    /// (TEXT + AN0 for the Videoterm, NEWVIDEO SHR for the VidHD), render()
+    /// presents the card's picture, at the card's own geometry, instead of
+    /// the Apple's. Non-owning, like the Chat Mauve pointer; MainWindow
+    /// clears it before a slot rebuild.
+    void setCardVideoSource(pom2::CardVideoSource* c)
     {
-        videx_ = c;
+        cardVideo_ = c;
         framebufferMutated();
     }
-    pom2::CardVideoSource* videxCard() const { return videx_; }
+    pom2::CardVideoSource* cardVideoSource() const { return cardVideo_; }
 
     /// Composite signal buffer for the ColorCompositeOE mode. 8-bit
     /// per-sample luminance at 14.318 MHz (560 samples per scanline,
@@ -307,11 +311,12 @@ private:
     std::vector<uint32_t> frameCard_;   // cardPictureW_ × cardPictureH_
     int  cardPictureW_ = 0;
     int  cardPictureH_ = 0;
-    pom2::CardVideoSource* videx_ = nullptr;   // non-owning, owned by SlotBus
+    pom2::CardVideoSource* cardVideo_ = nullptr;   // non-owning, owned by SlotBus
     uint32_t monitorLitColor() const;   // the Apple text painters' lit colour
     /// Paints the card's picture and publishes it when the card's rule holds
-    /// for `state` (TEXT + AN0 for the Videoterm). Defined here rather than
-    /// in Apple2Display.cpp to keep that file under its size budget.
+    /// for `state` (TEXT + AN0 for the Videoterm, SHR for the VidHD).
+    /// Defined here rather than in Apple2Display.cpp to keep that file under
+    /// its size budget.
     ///
     /// A card frame produces nothing of the Apple's video: no composite
     /// waveform (signalProduced() false, so every present path — OE GPU,
@@ -323,16 +328,16 @@ private:
     /// rule does not hold, after taking the card's buffer off the screen.
     bool renderCardPicture(Memory& mem, const Memory::DisplayState& state)
     {
-        if (!videx_ || !videx_->ownsScreen(state.textMode, state.an0) ||
-            videx_->pictureWidth() <= 0 || videx_->pictureHeight() <= 0) {
+        if (!cardVideo_ || !cardVideo_->ownsScreen(state.textMode, state.an0) ||
+            cardVideo_->pictureWidth() <= 0 || cardVideo_->pictureHeight() <= 0) {
             if (useCardPicture_) { useCardPicture_ = false; framebufferMutated(); }
             return false;
         }
-        cardPictureW_ = videx_->pictureWidth();
-        cardPictureH_ = videx_->pictureHeight();
+        cardPictureW_ = cardVideo_->pictureWidth();
+        cardPictureH_ = cardVideo_->pictureHeight();
         frameCard_.resize(static_cast<std::size_t>(cardPictureW_) *
                           static_cast<std::size_t>(cardPictureH_));
-        videx_->paintPicture(frameCard_.data(), monitorLitColor(), 0xFF000000u,
+        cardVideo_->paintPicture(frameCard_.data(), monitorLitColor(), 0xFF000000u,
                              mem.getCycleCounter(),
                              pom2VideoTiming(mem.videoStandard()).cpuClockHz);
         useCardPicture_ = true;

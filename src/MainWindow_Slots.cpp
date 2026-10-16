@@ -245,6 +245,8 @@ void MainWindow::renderSlotConfigPanel()
             // motherboard's), and the //c family has no slots at all.
             if (key == "videoterm" && profileCfg.iieMode)
                 return "a ][ / ][+ card — this machine's 80 columns are built in";
+            if (key == "vidhd" && (!profileCfg.iieMode || profileCfg.noPhysicalSlots))
+                return "a //e card — Super Hi-Res is read from the //e's aux RAM";
             if (key == "videoterm" && !videotermAvailable)
                 return "ROM dumps missing (roms/videx_videoterm_v24_60hz.bin "
                        "or _50hz.bin + roms/videx_videoterm_char_normal.bin)";
@@ -1467,7 +1469,8 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
     };
 
     const auto r = pom2::switchProfile(*controller, *storageCoordinator_, *settings,
-                                       p, !settingsReadOnly(), hooks);
+                                       p, !settingsReadOnly() && !restoringSavedProfile_,
+                                       hooks);
     if (!r.applied) {
         tapeStatusMessage = "Profile switch refused: " + r.error;
         tapeStatusUntil = lastFrameTime + 8.0;

@@ -10,6 +10,83 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-16 — Browser opens an Apple //c with DIX and docked drives
+
+Both the browser shell and the no-argument WASM fallback now select a PAL
+Apple //c with the bundled DIX-fix disk. The opening layout docks the screen
+on the left and Drives on the right. Existing browser layouts migrate once;
+later docking changes remain persistent. URL preset/disk overrides remain
+available.
+
+## 2026-10-16 — Slinky, S.A.M. DAC and Zip Chip
+
+Three peripherals join the supported set: Apple's Memory Expansion card
+("Slinky", with its real 341-0344A firmware), the S.A.M. cycle-stamped 8-bit
+DAC, and the Zip Chip CPU-socket accelerator. The Zip Chip is configured in
+the Machine menu, including its speed after reset; guest software controls
+its registers and temporary slow-down windows. Tests `slinky_card`,
+`sam_card` and `zip_chip` cover firmware, audio reconstruction, register
+access, snapshots and clock changes. Hardware limits and deliberate
+approximations are documented in DEV.md.
+
+## 2026-10-16 — Media recovery and diagnostic fixes
+
+Failed 3.5-inch write-back restores dirty state only to the captured mount;
+bulk eject also preserves a disk replaced while file I/O runs unlocked.
+MacBinary loaders respect the data-fork length, preserving padding and
+resource forks without including them in a wrapped WOZ's CRC. HDV byte
+mounts can select the second drive, and card-mounted 3.5-inch media play
+their latch sounds. The debugger's CPU view follows the //c card-ROM
+overrides, and SDK slot boot checks the ROM actually visible after reset.
+
+The libslirp loopback fence also rejects non-DNS TCP/UDP traffic redirected
+through the virtual DNS address. CI failure excerpts now fetch completed
+job logs while the containing workflow is still running; the coordinator
+lock lint checks outer locks even when a nearer nested scope has closed.
+
+## 2026-10-16 — An empty HDV/SmartPort card no longer stops the boot
+
+Three boot-order defects around the synthetic block cards, all traced with
+the real ROMs. (1) Both synthetic `$Cn20` boots (`ProDOSHardDiskCard`,
+`SmartPortCard`) parked in a `JMP`-to-self when block 0 would not read, so a
+//e with an EMPTY HDV or SmartPort card in slot 7 never reached the Disk II
+in slot 6 — the autostart scan stops at the first slot that signs. They now
+do what the real Liron does (`roms/liron.rom` `$E90-$ED3`): entered from the
+scan (`$00=0`, `$01=$07F8`), `JMP $FABA` and the scan tries the next slot;
+otherwise "ERR" and `JMP $E000`. POM2 also checks `$FABA` holds the scan's
+`LDY #imm`, because on a //c it is not the scan loop. (2) The HDV card
+signed `$Cn07=$01`, which the four-byte autostart of the ][+ and Unenhanced
+//e (`LDY #$07`) walks past; it signs `$3C` now, as AppleWin's HDD firmware
+does (`firmware/HDD/hddrvr.a65`). ProDOS only treats `$00` as SmartPort.
+(3) On a //c whose unit 1 was an empty 3.5" bay, the library's "Mount only"
+put an HDV in unit 2, and the //c firmware boots unit 1 only (`$C570`), so
+"Check Disk Drive." With nothing on the chain yet, the empty non-HDV unit 1
+is retyped and takes the disk — on //e SmartPort chains too, whose `$Cn20`
+boot also reads unit 1. Pinned by `hdv_boot_scan`; `boot_configuration` now
+expects the ][+ / Unenhanced //e to boot the S7 HDV.
+
+## 2026-10-16 — VidHD: Super Hi-Res on a //e
+
+New slot card `vidhd` (DISPLAY-001), a port of AppleWin's VidHD with
+pom2gs's SHR line painter. It answers the `$24 $EA $4C` detection bytes at
+`$C0n0-2`, latches the IIgs registers `$C022/$C029/$C034/$C035` off
+motherboard WRITES, and while NEWVIDEO has bits 7 and 6 set it takes the
+monitor with a 640×400 picture read from aux RAM `$2000-$9FFF` (320, 320 +
+colour fill, 640 modes; 16 palettes of 4096 colours).
+
+Three choices worth keeping. The registers are not in the card's slot, so
+`Memory::softSwitchAccess` forwards those four addresses through the existing
+video-switch broadcast — inside the `$C02x` / `$C03x` branches, write-only, so
+the cassette toggle, the speaker click and the //c ROMBANK are untouched and
+the RAM path pays nothing. The card reads aux RAM through the slot bus
+(`SlotPeripheral::busAuxRam`, installed by `Memory` like the cycle-counter
+ref), which is the CPU's selected RamWorks bank, so the card needs no Memory
+dependency. And the display's one card-picture pointer was renamed
+`setCardVideoSource` (was `setVidexCard`): the Videoterm is dropped from every
+//e plan and the VidHD from every ][ / ][+ / //c plan, so one seam serves
+both. Not modelled: IIgs text/border colours, the VidHD's extended text
+modes, the ][+ aux mirror. Pinned by `vidhd_card`.
+
 ## 2026-10-14 — The lock-scope lint misread a one-line lock scope
 
 `tools/check_coordinator_locks.sh` counted braces from the start of the lock's

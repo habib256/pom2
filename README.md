@@ -318,7 +318,7 @@ these machines so versatile.
 
 | Area | Available hardware and tools |
 |---|---|
-| **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7 and Le Chat Mauve RGB |
+| **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7, Le Chat Mauve RGB and VidHD Super Hi-Res on a //e |
 | **Memory** | Language Card, IIe auxiliary memory and RamWorks III up to 8 MB |
 | **Sound** | Speaker, cassette, Mockingboard A/C, Mockingboard C with SSI263 speech, Phasor, Cricket / Echo; stereo mixing and mono output |
 | **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0 and Floppy Emu |
@@ -459,6 +459,11 @@ The local server supplies the headers needed for browser threads. The asset
 list comes from [the package manifest](packaging/bundle.manifest), including
 the curated disks. `--with-data` adds the local `disks_3.5/` collection for
 **development only**; do not publish that larger personal bundle.
+
+The browser opens a PAL Apple //c and boots DIX-fix by default, with the
+Apple II Screen docked on the left and Drives on the right. URL parameters
+`?preset=...&disk=...` override the machine and boot image; `?nodisk=1`
+starts without a disk.
 
 Host socket networking and the listening AI-control HTTP server are unavailable
 in the browser.

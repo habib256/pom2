@@ -267,10 +267,13 @@ public:
     /// used to flush twice — once locked, once not.
     void persistSession(bool flushMedia = true);
 
-    /// Build and mount a read-only ProDOS /HOST/ volume from `path` on an
-    /// HDV card, auto-provisioning the card when necessary. Does not boot it:
-    /// the synthetic volume deliberately has no boot blocks.
-    bool mountProDOSFolder(const std::string& path, std::string& errOut);
+    /// Build and mount a ProDOS /HOST/ volume from `path` (guest writes go
+    /// back to the folder) on an HDV card, auto-provisioning the card when
+    /// necessary. Does not boot it: the synthetic volume deliberately has no
+    /// boot blocks. `bay` 0 = drive 1, 1 = drive 2 (beside a boot HDV
+    /// already in drive 1).
+    bool mountProDOSFolder(const std::string& path, std::string& errOut,
+                           int bay = 0);
 
     /// Start the loopback automation endpoint explicitly for this process.
     bool startAiControlFromCli(unsigned short port, std::string& errOut);
@@ -1394,6 +1397,20 @@ private:
     void renderDisk35PanelWindow();
     void renderDriveRackWindow();
     bool insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path);
+    /// Every drive of the machine as plain values, in the rack's order — the
+    /// one list the Drives window and the File menu both draw from.
+    std::vector<pom2::DrivePicture> collectDrivePictures();
+    bool isCompactDriveProfile() const;
+    /// Eject / write-protect / insert (opens the rack's picker) / mount one
+    /// drive — the rack's actions, callable from any menu.
+    void runDriveRackAction(const pom2::DrivePicture& drive,
+                            pom2::DriveRackAction::Type type,
+                            const std::string& path = std::string());
+    /// File menu: one row per drive (insert when empty, eject / protect when
+    /// loaded), built from collectDrivePictures().
+    void renderFileMenuDrives();
+    /// Display ▸ Color pipeline items, shared with the toolbar video popup.
+    void renderColorPipelineItems();
     void renderDisk35FileDialog();
     void renderHdvPanelWindow();
     void renderHdvFileDialog();
@@ -1533,6 +1550,9 @@ private:
     /// caught it found the coordinator stuck in Rebuilding, refusing every
     /// later Apply. The wrappers abandon the transaction instead.
     void applyProfileTransaction(pom2::SystemProfile p);
+    /// True while the constructor re-applies the saved profile: that switch
+    /// must not persist (see MainWindow.cpp).
+    bool restoringSavedProfile_ = false;
     bool restartEmulationTransaction();
     /// Abandon a rebuild that threw: coordinator back to Stable, AI endpoints
     /// published again, the reason logged and shown. The machine stays

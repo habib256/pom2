@@ -36,7 +36,9 @@ constexpr uint8_t kBootOff   = 0x20;
 constexpr uint8_t kDriverOff = 0x50;
 constexpr uint8_t kReadOff   = 0x6F;
 constexpr uint8_t kWriteOff  = 0xA2;
-/// Halt loop the boot routine jumps to when the boot block will not load.
+/// End of the write routine. $CnE0-$CnE2 held the boot-failure halt loop
+/// until 2026-10-16; boot failure now continues the autostart scan instead
+/// (see `bootErr` in buildRom), and the three bytes are NOP padding.
 constexpr uint8_t kHaltOff   = 0xE0;
 
 /// The ProDOS media pre-flight and STATUS routines live in the $C800 bank,
@@ -59,6 +61,10 @@ constexpr size_t   kPreflightC800 = 0x500;      // → $CD00
 constexpr size_t   kStatusC800    = 0x510;      // → $CD10
 constexpr uint16_t kPreflightAddr = 0xC800 + kPreflightC800;
 constexpr uint16_t kStatusAddr    = 0xC800 + kStatusC800;
+/// Boot failure: "was this slot entered from the //e autostart scan?" —
+/// continues the scan if so, else restores CSW/KSW and returns. $CD30.
+constexpr size_t   kBootScanC800  = 0x530;
+constexpr uint16_t kBootScanAddr  = 0xC800 + kBootScanC800;
 
 } // anon namespace
 
@@ -295,6 +301,10 @@ void SmartPortCard::noteAccess(SmartPortUnit* unit)
     if (unit) unit->bumpActivity();
 
     if (!sound_) return;
+    // The UniDisk spin and steps are a 3.5" mechanism's: an HDV unit on this
+    // card sounded like a floppy drive, while the same HDV on the hdv, CFFA
+    // or Liron card is silent (bug hunt 2026-10-16).
+    if (!dynamic_cast<SmartPort35Unit*>(unit)) return;
     if (!audibleMotorOn_) {
         sound_->motor(true, true);
         audibleMotorOn_ = true;
@@ -377,6 +387,16 @@ bool SmartPortCard::BusUnit::isUnidisk35() const
     // The unit object is the kind, media or not. A cleared bay (no object)
     // is the card's default drive on this bus: a UniDisk with the door open.
     return !u || u->kindKey() == SmartPort35Unit::kKindKey;
+}
+
+uint64_t SmartPortCard::BusUnit::mediaIdentity() const
+{
+    const SmartPortUnit* u = target();
+    if (!u) return 0;
+    if (const auto* b = u->blockBacking()) return b->mountId();
+    if (const auto* u35 = dynamic_cast<const SmartPort35Unit*>(u))
+        return u35->image().mountId();
+    return 0;
 }
 
 bool SmartPortCard::exposesIicOnboardRom() const
@@ -632,7 +652,7 @@ void SmartPortCard::buildRom()
     //   $Cn50-$Cn6E  ProDOS driver dispatch
     //   $Cn6F-$CnA1  read block
     //   $CnA2-$CnDF  write block
-    //   $CnE0-$CnE2  boot-failure halt loop
+    //   $CnE0-$CnE2  spare (the old boot-failure halt loop)
     //   $CnE3-$CnFD  LEFT ALONE — real dump ID bytes
     //   $CnFE-$CnFF  capability + driver-entry bytes
     //
@@ -717,7 +737,23 @@ void SmartPortCard::buildRom()
      .emit({ 0xA2, kUnitDrv1,       // X = unit
              0xA9, 0x00,
              0x4C, 0x01, 0x08 })    // JMP $0801
-     .label("bootErr").jmp("halt");
+     // Boot failure (empty unit 1, unreadable block 0). Not a halt any more:
+     // a //e with an EMPTY SmartPort card in slot 7 used to park here and
+     // never reach the Disk II in slot 6. $CD30 does what the real Liron
+     // firmware does (roms/liron.rom $E90-$ED3): when the //e autostart
+     // scan brought us here it JMPs $FABA, and the scan tries the next slot
+     // down; it never returns in that case. Otherwise it puts CSW/KSW back
+     // and returns, and the Monitor calls happen HERE, in the $Cn page: on
+     // a //c the card's $C800 window closes at the first foreign $C0xx
+     // access (Memory::memRead, iicCardWindow_), so returning into $C800
+     // from COUT would run the //c's internal ROM. No BIT $CFFF first: the
+     // driver's pre-flight at $CD00 just ran, so the window is ours.
+     .label("bootErr")
+     .emit({ 0x20, static_cast<uint8_t>(kBootScanAddr & 0xFF),
+                   static_cast<uint8_t>(kBootScanAddr >> 8),  // JSR $CD30
+             0x20, 0x8E, 0xFD,      // JSR $FD8E  CROUT
+             0x20, 0x2D, 0xFF,      // JSR $FF2D  PRERR ("ERR" + bell)
+             0x4C, 0x00, 0xE0 });   // JMP $E000  BASIC, like the Liron
 
     // ── ProDOS driver dispatch ($Cn50) ─────────────────────────────────
     // ProDOS calls here with $42 = command, $43 = unit, $44/$45 = buffer,
@@ -837,8 +873,6 @@ void SmartPortCard::buildRom()
      .emit({ 0xA9, 0x27,            // LDA #$27 (ProDOS I/O error)
              0x38,                  // SEC
              0x60 });               // RTS
-
-    a.region("halt", kHaltOff, kHaltOff + 3).jmp("halt");
 
     // $CnFE capability byte (ProDOS 8 TN #21): bit3 format, bit2 WRITE,
     // bit1 read, bit0 status, bits5-4 volume count. Was $13 — read+status
@@ -976,6 +1010,43 @@ void SmartPortCard::buildC800()
         static_assert(sizeof st <= kStatusC800 - kPreflightC800 + 0x100,
                       "STATUS must not run into the handler at $CE00");
         std::memcpy(c800_.data() + kStatusC800, st, sizeof st);
+    }
+
+    // ── Boot failure ($CD30) ────────────────────────────────────────────
+    // The real Liron's answer to "nothing to boot" ($CE90 in its bank,
+    // roms/liron.rom $E96-$EA1):
+    //     LDX $00 / BNE err / LDX $01 / CPX $07F8 / BNE err / JMP $FABA
+    // $00 = 0 and $01 = $07F8 = $Cn is the state the //e autostart scan loop
+    // ($FAB4-$FAD2) leaves when it JMP ($0000)s into a slot; $FABA re-enters
+    // the loop, which DECs $01 and tries the next slot. One extra test the
+    // Liron, being card-resident on slot machines only, never needed: $FABA
+    // must hold the scan's LDY #imm ($A0). On a //c it is LDA $AC and on an
+    // original Apple ][ it is not code, so there the scan path is refused.
+    // Not the scan: CSW = COUT1 ($FDF0), KSW = KEYIN ($FD1B) — what SETVID /
+    // SETKBD store, written inline because a Monitor call from this bank is
+    // exactly what a //c cannot return from — then RTS to the $Cn page,
+    // which prints and goes to BASIC.
+    {
+        const uint8_t bs[] = {
+            0xA6, 0x00,            // LDX $00
+            0xD0, 0x11,            // BNE notScan  (+17)
+            0xA6, 0x01,            // LDX $01
+            0xEC, 0xF8, 0x07,      // CPX $07F8
+            0xD0, 0x0A,            // BNE notScan  (+10)
+            0xAD, 0xBA, 0xFA,      // LDA $FABA
+            0xC9, 0xA0,            // CMP #$A0   ; the scan's LDY #imm
+            0xD0, 0x03,            // BNE notScan  (+3)
+            0x4C, 0xBA, 0xFA,      // JMP $FABA  ; next slot down
+            // notScan:
+            0xA9, 0xF0, 0x85, 0x36,   // LDA #$F0 / STA $36   CSWL
+            0xA9, 0xFD, 0x85, 0x37,   // LDA #$FD / STA $37   CSWH
+            0xA9, 0x1B, 0x85, 0x38,   // LDA #$1B / STA $38   KSWL
+            0xA9, 0xFD, 0x85, 0x39,   // LDA #$FD / STA $39   KSWH
+            0x60                      // RTS
+        };
+        static_assert(kBootScanC800 + sizeof bs <= 0x600,
+                      "boot-scan stub must not run into the handler at $CE00");
+        std::memcpy(c800_.data() + kBootScanC800, bs, sizeof bs);
     }
 
     constexpr size_t kHandlerOff = 0x600;   // $CE00
@@ -1157,8 +1228,10 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
     if (auto* b = u->blockBacking()) {
         info.persistenceState = b->persistenceState();
         info.persistenceError = b->persistenceError();
+        info.mountId          = b->mountId();
     } else if (auto* u35 = dynamic_cast<const SmartPort35Unit*>(u)) {
         const auto p = u35->image().persistence();
+        info.mountId          = u35->image().mountId();
         info.persistenceState = p.state;
         info.persistenceError = p.error;
     }
@@ -1251,10 +1324,10 @@ bool SmartPortCard::prepareFlushBay(int bay, PendingBayFlush& out,
     return true;
 }
 
-void SmartPortCard::restoreFlushBayDirty(int bay)
+void SmartPortCard::restoreFlushBayDirty(int bay, uint64_t lineage)
 {
     if (auto* u35 = dynamic_cast<SmartPort35Unit*>(unit(static_cast<size_t>(bay))))
-        u35->image().restoreDirty();
+        (void)u35->image().restoreDirtyFor(lineage);
 }
 
 bool SmartPortCard::prepareEjectBay(int bay,

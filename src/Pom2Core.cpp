@@ -308,18 +308,37 @@ bool Core::bootSlot(int slot)
         return false;
     }
     // The JSR-dispatch trio of Apple II Reference Manual Appx C, the check
-    // the emulator's own bootFromSlot makes. $Cn07 is not checked: a ProDOS
-    // block device reads $01 there. Asked of the card, not the bus, so the
-    // answer does not depend on INTCXROM and a refusal leaves RAM untouched.
-    if (card->slotRomRead(0x01) != 0x20 || card->slotRomRead(0x03) != 0x00
-        || card->slotRomRead(0x05) != 0x03) {
+    // the emulator's own bootFromSlot makes. $Cn07 is not checked: a SmartPort
+    // reads $00 there and the //c-class block stub $01. Asked of the card first, so a slot with
+    // nothing bootable is refused with RAM untouched…
+    const auto hasTrio = [](auto read) {
+        return read(0x01) == 0x20 && read(0x03) == 0x00 && read(0x05) == 0x03;
+    };
+    if (!hasTrio([card](std::uint8_t off) { return card->slotRomRead(off); })) {
         impl_->error = "Slot " + std::to_string(slot)
                      + " ROM carries no boot signature";
         return false;
     }
+    // …then of the BUS, after the reset, because the CPU runs what the bus
+    // maps at $Cn00, not what the card holds. A //e comes out of reset with
+    // SLOTC3ROM off ($C300 = the internal 80-column firmware); a //c forces
+    // INTCXROM and shows a slot-5 card only while armed — the arm every
+    // reset clears and EmulationController::bootFromSlot re-applies. Checking
+    // the card alone returned true there and jumped into the machine's own
+    // firmware.
     coldBoot();
-    impl_->cpu.setProgramCounter(
-        static_cast<std::uint16_t>(0xC000 | (slot << 8)));
+    impl_->memory.setIicSmartPortArmed(slot == 5);
+    const auto cnxx = static_cast<std::uint16_t>(0xC000 | (slot << 8));
+    if (!hasTrio([this, cnxx](std::uint8_t off) {
+            return impl_->memory.memRead(static_cast<std::uint16_t>(cnxx + off));
+        })) {
+        impl_->memory.setIicSmartPortArmed(false);
+        impl_->error = "Slot " + std::to_string(slot)
+                     + " ROM is not visible at $C" + std::to_string(slot)
+                     + "00 on this machine; it was cold-booted";
+        return false;
+    }
+    impl_->cpu.setProgramCounter(cnxx);
     impl_->error.clear();
     return true;
 }

@@ -232,15 +232,31 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
                std::memcmp(q, "WOZ1", 4) == 0 ||
                std::memcmp(q, "WOZ2", 4) == 0;
     };
+    // The header's data-fork length (big-endian u32 at bytes 83-86). The
+    // spec pads the fork to a multiple of 128 and a resource fork may follow,
+    // so "everything after the header" is not the image: a padded CNib2
+    // (223440 is no multiple of 128) or a fork with resources was refused
+    // (bug hunt 2026-10-16). 0 = absent or implausible.
+    const std::size_t dataForkLen = [&]() -> std::size_t {
+        if (totalLen < 128) return 0;
+        const uint8_t* p = bytes.data();
+        const std::size_t len = (std::size_t(p[83]) << 24) | (std::size_t(p[84]) << 16) |
+                                (std::size_t(p[85]) << 8)  |  std::size_t(p[86]);
+        return len > 0 && len <= totalLen - 128 ? len : 0;
+    }();
     if (looksLikeMacBinary(bytes.data(), totalLen) &&
         !knownPayloadLength(totalLen) &&
-        (knownPayloadLength(totalLen - 128) || magicAfterStrip())) {
+        (knownPayloadLength(totalLen - 128) || knownPayloadLength(dataForkLen) ||
+         magicAfterStrip())) {
         baseOff = 128;
         macBinaryStripped = true;
     }
 
     const uint8_t* base = bytes.data() + baseOff;
-    const std::size_t n = totalLen - baseOff;
+    // A stripped wrapper ends at its data fork; the padding and any
+    // resource fork go into the envelope trailer and are written back.
+    const std::size_t n = macBinaryStripped && dataForkLen ? dataForkLen
+                                                           : totalLen - baseOff;
 
     auto addMacBinaryNote = [&](DetectResult& res) {
         if (macBinaryStripped) {
@@ -256,7 +272,7 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
             if (!res.twoImgWrap) {
                 res.twoImgWrap         = true;
                 res.twoImgHeaderEnd    = baseOff;
-                res.twoImgTrailerStart = totalLen;
+                res.twoImgTrailerStart = baseOff + n;
             }
         }
     };
@@ -956,7 +972,14 @@ bool DiskImage::loadWoz(const std::string& imgPath)
     if (fileSize > 140 && std::memcmp(buf.data(), "WOZ", 3) != 0 &&
         (std::memcmp(buf.data() + 128, "WOZ1", 4) == 0 ||
          std::memcmp(buf.data() + 128, "WOZ2", 4) == 0)) {
+        // Keep the data fork only (u32 BE at header bytes 83-86): the
+        // spec's padding to 128 and any resource fork sat inside the CRC32
+        // range, so every properly padded wrapped WOZ failed its CRC (bug
+        // hunt 2026-10-16). detectFormat puts the rest in the trailer.
+        const std::size_t fork = (std::size_t(buf[83]) << 24) | (std::size_t(buf[84]) << 16) |
+                                 (std::size_t(buf[85]) << 8)  |  std::size_t(buf[86]);
         buf.erase(buf.begin(), buf.begin() + 128);
+        if (fork > 0 && fork < buf.size()) buf.resize(fork);
     }
     // Size of the WOZ payload actually in `buf` (differs from fileSize
     // when the MacBinary strip above ran) — every bound below uses this.

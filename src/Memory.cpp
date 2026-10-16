@@ -72,6 +72,7 @@ Memory::Memory()
     slots.setFloatingBusSource([this]() { return floatingBus(); });
     slots.setCycleSource([this]() { return getCycleCounter(); });
     slots.setCycleCounterRef(&cycleCounter);
+    slots.setAuxRamRef(aux.data());   // VidHD's SHR source; stable (RamWorks memcpys INTO aux)
 
     // Default reset vector points at $F800 (Monitor cold start) so a
     // fresh boot without ROM loaded still runs *something* (BRK loop)
@@ -696,6 +697,7 @@ void Memory::resetSoftSwitches()
     vblIrqPending = false;
     if (cpu) cpu->setIrqLine(M6502::IRQ_SRC_VBL, false);
     if (iicProfile_) iicProfile_->onResetSoftSwitches();  // ROMBANK → bank 0
+    if (accel_) accel_->onReset(cycleCounter);  // Zip: MAME reset_w → accel_reset
     // //c boots with INTCXROM forced on (MAME `apple2e.cpp:1273`,
     // `apple2e.cpp:1467-1475`). Gate on `isIIcClass` so BOTH 16 KB
     // rev-255 //c dumps and 32 KB rev-0/3/4 + //c+ dumps re-force the
@@ -1040,6 +1042,12 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
+    {   // Zip Chip in the CPU socket (CpuSocketAccelerator.h): no slot, so here.
+        std::vector<uint8_t> sect;
+        if (accel_) accel_->appendSnapshotState(sect);
+        putU32(static_cast<uint32_t>(sect.size()));
+        putBytes(sect.data(), sect.size());
+    }
 }
 
 void Memory::resetVideoEventLogForClockJump()
@@ -1268,7 +1276,15 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             auto* d = smartPortHub ? smartPortHub->external35Second() : nullptr;
             return !d || d->loadSnapshotState(p, k);
         })) return false;
+    if (!readSection([&](const uint8_t* p, size_t k) {
+            return !accel_ || k == 0 || accel_->loadSnapshotState(p, k);
+        })) return false;
     return true;
+}
+
+uint64_t Memory::accelNow() const   // the Zip's clock: the exact cycle of the access
+{
+    return cycleCounter + (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0);
 }
 
 void Memory::restoreMainRam(const uint8_t* data, size_t n)
@@ -1662,6 +1678,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // cycle progress for sub-instruction timestamps; without this every
     // toggle inside a frame collapses to one cycle and the audio aliases.
     if (low >= 0x30 && low <= 0x3F) {
+        if (isWrite && (low & 0xFE) == 0x34) slots.broadcastVideoSwitchWrite(addr, writeVal);  // VidHD $C034/5 (AppleWin IOWrite_C03x)
         speakerToggles.fetch_add(1, std::memory_order_relaxed);
         if (speakerCb) speakerCb(speakerUser);
         if (speaker) {
@@ -1684,6 +1701,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // MAME-faithful. The Apple IIc Tech Ref 2e lists the softswitch
     // at "$c02x" range, not just $C028. Both reads and writes trigger.
     if (low >= 0x20 && low <= 0x2F) {
+        if (isWrite && (low == 0x22 || low == 0x29)) slots.broadcastVideoSwitchWrite(addr, writeVal);  // VidHD (AppleWin IOWrite_C02x)
         // //c-class: $C02x toggles ROMBANK — the profile flips its alt-
         // firmware bank and resets MIG state on the →bank-0 edge (MAME
         // `apple2e.cpp:1907-1923`). On II/II+/IIe it's the cassette
@@ -2313,6 +2331,9 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
 
     // $C000-$C07F — built-in I/O page (keyboard, speaker, cassette,
     // display soft switches, paddles).
+    if (addr <= 0xC0FF) if (auto* a = activeAccel()) {   // Zip Chip (ZipChip.h)
+        uint8_t v; if (accelIoRead(*a, addr, v)) return v;
+    }
     if (addr <= 0xC07F) return softSwitchAccess(addr, /*isWrite=*/false, 0);
 
     // $C080-$C0FF — slot device-select (16 bytes per slot, slot N at
@@ -2642,6 +2663,8 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         (addr < 0xC0D0 || addr > 0xC0DF))
         iicCardWindow_ = false;
 
+    if (addr <= 0xC0FF) if (auto* a = activeAccel())     // Zip Chip: watches, never takes
+        a->ioWrite(static_cast<uint8_t>(addr), value, accelNow());
     if (addr <= 0xC07F) {
         softSwitchAccess(addr, /*isWrite=*/true, value);
         return;

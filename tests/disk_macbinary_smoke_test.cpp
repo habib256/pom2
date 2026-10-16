@@ -147,10 +147,56 @@ bool runNegative(const std::vector<uint8_t>& payload)
     return true;
 }
 
+// A MacBinary-wrapped WOZ padded to 128 bytes, as the spec requires (and a
+// resource fork could follow): the pad sat inside the WOZ's CRC32 range and
+// every such file failed its CRC (bug hunt 2026-10-16). Self-contained — a
+// one-track WOZ2 built here, so it needs no fixture.
+bool runPaddedWoz()
+{
+    auto put32 = [](std::vector<uint8_t>& b, size_t o, uint32_t v) {
+        for (int i = 0; i < 4; ++i) b[o + i] = static_cast<uint8_t>(v >> (8 * i));
+    };
+    std::vector<uint8_t> w(1536, 0);
+    std::memcpy(w.data(), "WOZ2\xFF\n\r\n", 8);
+    std::memcpy(w.data() + 12, "INFO", 4); put32(w, 16, 60);
+    w[20] = 2; w[21] = 1; w[20 + 39] = 32;
+    std::memcpy(w.data() + 80, "TMAP", 4); put32(w, 84, 160);
+    std::memset(w.data() + 88, 0xFF, 160); w[88] = 0;
+    std::memcpy(w.data() + 248, "TRKS", 4); put32(w, 252, 1280 + 13 * 512);
+    w[256] = 3; w[258] = 13; put32(w, 260, 50000);
+    for (size_t i = 0; i < 13 * 512; ++i) w.push_back((i % 3) ? 0xFF : 0xD5);
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 12; i < w.size(); ++i) {
+        crc ^= w[i];
+        for (int b = 0; b < 8; ++b) crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320u : (crc >> 1);
+    }
+    put32(w, 8, ~crc);
+
+    std::vector<uint8_t> mb(128, 0);
+    mb[1] = 4; std::memcpy(mb.data() + 2, "DISK", 4);
+    mb[83] = static_cast<uint8_t>(w.size() >> 24); mb[84] = static_cast<uint8_t>(w.size() >> 16);
+    mb[85] = static_cast<uint8_t>(w.size() >> 8);  mb[86] = static_cast<uint8_t>(w.size());
+    mb.insert(mb.end(), w.begin(), w.end());
+    while (mb.size() % 128) mb.push_back(0);
+    const std::string path = "pom2_macbinary_padded.woz";
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(mb.data()), static_cast<std::streamsize>(mb.size()));
+    }
+    DiskImage img;
+    const bool loaded = img.loadFile(path);
+    if (!loaded)
+        std::fprintf(stderr, "padded MacBinary WOZ refused: %s\n", img.getLastError().c_str());
+    std::remove(path.c_str());
+    return loaded;
+}
+
 }  // namespace
 
 int main()
 {
+    if (!runPaddedWoz()) return 1;
+
     std::vector<uint8_t> payload;
     if (!loadPayload(payload)) {
         std::fprintf(stderr,

@@ -50,6 +50,8 @@ void EmulationController::setVideoStandard(VideoStandard s)
              ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     cpuClockHz_.store(hz);
     mem.setVideoStandard(s);
+    // The Zip's 4 MHz and its millisecond delays are against the stock clock.
+    zipChip_.setStockClockHz(static_cast<double>(vt.cpuClockHz));
     // Retune the 1-bit speaker's cycle→sample reconstruction to the standard's
     // actual CPU clock (PAL ≈ 1.0156 MHz vs NTSC ≈ 1.0227 MHz). Without this
     // the audio path assumed NTSC under PAL and starved the reconstructor,
@@ -290,6 +292,7 @@ EmulationController::~EmulationController()
     mem.setSmartPortHub(nullptr);
     mem.setExternalSmartPort(nullptr);
     mem.setNoSlotClock(nullptr);
+    mem.setCpuSocketAccelerator(nullptr);
     tape.reset();
     spk.reset();
     floppy525.reset();
@@ -407,7 +410,7 @@ void EmulationController::connectExternalSony35(int idx, bool connected)
     hub->setSony35(drive35Int.get(), first, second);
 }
 
-bool EmulationController::mount35(int idx, const std::string& path)
+bool EmulationController::mount35(int idx, const std::string& path, bool click)
 {
     if (idx < 0 || idx >= kSony35Drives) return false;
 
@@ -500,7 +503,7 @@ bool EmulationController::mount35(int idx, const std::string& path)
     // User-initiated mount → one-shot insert click. Same pattern as
     // `DiskIICard::insertDisk` (5.25"). Silent when no FloppySoundDevice
     // sink is wired (headless / tests).
-    drive->emitInsertClick();
+    if (click) drive->emitInsertClick();
     return true;
 }
 
@@ -652,7 +655,7 @@ bool EmulationController::eject35(int idx)
         !pending.valid ||
         pom2::Disk35Image::commitWriteBack(std::move(pending), error);
 
-    std::lock_guard<std::mutex> lk(stateMtx);
+    std::unique_lock<std::mutex> lk(stateMtx);
     pom2::Disk35Image* image = &disk35(idx);
     pom2::Sony35Drive* drive = &sony35(idx);
     if (!image) return false;
@@ -671,6 +674,18 @@ bool EmulationController::eject35(int idx)
     // A mount that landed while phase 2 ran unlocked owns the bay now; the
     // disk this call was asked to eject is already gone. Leave the new one.
     if (image->path() != pendingPath) return true;
+    // The guest may have written AND strobed its own eject during phase 2:
+    // the firmware capture then holds those writes in the queue and left the
+    // medium clean, so the late capture below finds nothing and `eject()`
+    // would drop the only place a FAILED queued commit could hand them back
+    // to. Phase 1 waits for exactly this; phase 3 must too (bug hunt
+    // 2026-10-16). Drain unlocked, then start over: the completion has
+    // either ejected the disk (→ no-op) or put it back loaded and dirty.
+    if (drive && drive->isEjectPending()) {
+        lk.unlock();
+        writeBackQueue_.drain();
+        return eject35(idx);
+    }
     // The CPU kept running through phase 2, and a block ProDOS wrote during
     // the commit re-dirtied the medium AFTER the capture — `eject()` would
     // discard it silently and report success. Same defect the slot-card
@@ -827,7 +842,7 @@ void EmulationController::tickFrame()
 #endif
     for (double doneBase = 0.0; doneBase < static_cast<double>(budget); ) {
         std::lock_guard<std::mutex> lk(stateMtx);
-        const double mul = std::max(1e-3, mem.slotBus().cpuSpeedMultiplier());
+        const double mul = std::max(1e-3, mem.cpuSpeedMultiplier());
         // Keep the clock the emuCycles consumers are told on the SAME
         // granularity as the speed the chunk is actually run at — see
         // applyAcceleratorClock. One double compare when nothing moved.
@@ -886,6 +901,14 @@ void EmulationController::stop()
                 std::to_string(waitedMs) + " ms — still waiting");
         }
     }
+}
+
+void EmulationController::setZipChipInstalled(bool on)
+{
+    std::lock_guard<std::mutex> lk(stateMtx);
+    zipInstalled_.store(on);
+    zipChip_.onReset(0);   // a chip just seated comes up as after a reset
+    mem.setCpuSocketAccelerator(on ? &zipChip_ : nullptr);
 }
 
 void EmulationController::hardReset()
@@ -987,6 +1010,11 @@ void EmulationController::noteFloppyLatch(bool inserting)
     floppy525->latch(inserting);
 }
 
+void EmulationController::noteFloppy35Latch(bool inserting)
+{
+    if (floppy35) floppy35->latch(inserting);
+}
+
 bool EmulationController::bootFromSlot(int slot)
 {
     if (slot < 1 || slot > 7) return false;
@@ -1023,9 +1051,11 @@ bool EmulationController::bootFromSlot(int slot)
     // Explicit boot validates the dispatch trio at $Cn01/03/05, allowing
     // the user to select a card independently of the ROM's slot scan.
     // II+/unenhanced IIe autostart also requires $Cn07=$3C; Enhanced IIe
-    // checks only the trio and can auto-boot HDV ($Cn07=$01). Both scan
-    // from slot 7 down to slot 1; display order does not set boot priority.
-    // Requiring $Cn07=$3C here would incorrectly reject explicit HDV boot.
+    // checks only the trio. Both scan from slot 7 down to slot 1; display
+    // order does not set boot priority. The HDV card now signs $3C like
+    // AppleWin's, but a SmartPort-class card ($Cn07=$00) and the //c-class
+    // block stub ($01) do not, so requiring $3C here would still reject an
+    // explicit boot the user asked for.
     const uint16_t cnxx = static_cast<uint16_t>(0xC000 + slot * 0x100);
     const uint8_t b1 = mem.memRead(static_cast<uint16_t>(cnxx + 1));
     const uint8_t b3 = mem.memRead(static_cast<uint16_t>(cnxx + 3));
@@ -1354,7 +1384,7 @@ void EmulationController::rewindEndPaused()
 int64_t EmulationController::scaledFrameBudget() const
 {
     const int64_t base = cyclesPerFrame.load();
-    const double  mul  = mem.slotBus().cpuSpeedMultiplier();
+    const double  mul  = mem.cpuSpeedMultiplier();
     if (mul == 1.0) return base;
     // Guard the arithmetic, not the caller: the multiplier comes from a
     // card and the base from --speed / the AI /speed endpoint, and their
@@ -1804,7 +1834,7 @@ void EmulationController::workerLoop()
             std::lock_guard<std::mutex> lk(stateMtx);
             // Under the lock: the multiplier is card state the CPU thread
             // writes, and the UI may replug the bus between chunks.
-            const double mul = std::max(1e-3, mem.slotBus().cpuSpeedMultiplier());
+            const double mul = std::max(1e-3, mem.cpuSpeedMultiplier());
             // Keep the clock the emuCycles consumers are told on the SAME
             // granularity as the speed the chunk is actually run at — see
             // applyAcceleratorClock. One double compare when nothing moved.

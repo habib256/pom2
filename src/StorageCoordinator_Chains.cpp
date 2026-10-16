@@ -179,7 +179,8 @@ void StorageCoordinator::restoreHdvDrive2(ProDOSHardDiskCard& hdv,
     const bool legacy = settings.getBool(hdvDriveKey("hdv_writeback", 1),
                                          pom2::mediaWritableByDefault());
     hdv.setBayWriteBack(1, migrateLegacyWriteBack(
-        legacy, { hdv.backing(1).path() }, warnings));
+        legacy, { hdv.backing(1).path() }, warnings,
+        hdvDriveKey("hdv_writeback", 1)));
     if (hdv.backing(1).isLoaded())
         hdv.setDriveHostWriteProtected(
             1, pom2::mediaFileIsReadOnly(hdv.backing(1).path()));

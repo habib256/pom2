@@ -45,6 +45,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -249,8 +250,14 @@ void AiControlServer::noteAuthFailure()
 
 void AiControlServer::noteAuthSuccess()
 {
+    // A success does NOT clear a live window: the count is shared by every
+    // peer, so the real agent's next good poll used to wipe a guesser's four
+    // failures and the brake never armed (~40 guesses/s instead of ~1/s).
+    // The window still expires on its own (`authBackoffArmed`, noteAuthFailure).
     std::lock_guard<std::mutex> lk(authMtx_);
-    authFailures_ = 0;
+    const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - authWindowStart_).count();
+    if (age >= kAuthWindowMs) authFailures_ = 0;
 }
 
 std::string AiControlServer::generateToken()
@@ -921,19 +928,34 @@ void AiControlServer::handleCpuGet(socket_t fd, const Request& /*req*/)
 void AiControlServer::handleCpuSet(socket_t fd, const Request& req)
 {
     if (req.method != "POST") { sendJsonError(fd, 405, "POST only"); return; }
+    // Validate EVERY key before touching the CPU, and refuse what does not
+    // fit: `{"pc":1e3}` was dropped and `{"a":256}` / `{"pc":-1}` wrapped,
+    // all behind a 200 (bug hunt 2026-10-16). kAbsent survives an absent key.
+    constexpr long kAbsent = std::numeric_limits<long>::min();
+    struct Reg { const char* key; long max; long value; };
+    Reg regs[] = {{"pc", 0xFFFF, kAbsent}, {"a", 0xFF, kAbsent},
+                  {"x", 0xFF, kAbsent},    {"y", 0xFF, kAbsent},
+                  {"p", 0xFF, kAbsent},    {"sp", 0xFF, kAbsent}};
+    for (Reg& r : regs) {
+        if (!jsonOptionalIntOk(req.body, r.key, r.value) ||
+            (r.value != kAbsent && (r.value < 0 || r.value > r.max))) {
+            sendJsonError(fd, 400, std::string(r.key) + " must be an integer 0.." +
+                                   std::to_string(r.max));
+            return;
+        }
+    }
     {
     auto st = ctrl_->lockState();
     M6502& cpu = st.cpu();
-    long v = 0;
     // Full register set — the setters exist on M6502 (M6502.h:133-137,
     // added for snapshot restore), so the documented POST /cpu API accepts
     // every register, not just PC.
-    if (jsonGetInt(req.body, "pc", v)) cpu.setProgramCounter(static_cast<uint16_t>(v & 0xFFFF));
-    if (jsonGetInt(req.body, "a",  v)) cpu.setAccumulator   (static_cast<uint8_t>(v & 0xFF));
-    if (jsonGetInt(req.body, "x",  v)) cpu.setXRegister     (static_cast<uint8_t>(v & 0xFF));
-    if (jsonGetInt(req.body, "y",  v)) cpu.setYRegister     (static_cast<uint8_t>(v & 0xFF));
-    if (jsonGetInt(req.body, "p",  v)) cpu.setStatusRegister(static_cast<uint8_t>(v & 0xFF));
-    if (jsonGetInt(req.body, "sp", v)) cpu.setStackPointer  (static_cast<uint8_t>(v & 0xFF));
+    if (regs[0].value >= 0) cpu.setProgramCounter(static_cast<uint16_t>(regs[0].value));
+    if (regs[1].value >= 0) cpu.setAccumulator   (static_cast<uint8_t>(regs[1].value));
+    if (regs[2].value >= 0) cpu.setXRegister     (static_cast<uint8_t>(regs[2].value));
+    if (regs[3].value >= 0) cpu.setYRegister     (static_cast<uint8_t>(regs[3].value));
+    if (regs[4].value >= 0) cpu.setStatusRegister(static_cast<uint8_t>(regs[4].value));
+    if (regs[5].value >= 0) cpu.setStackPointer  (static_cast<uint8_t>(regs[5].value));
     }
     sendJsonOk(fd, "{}");
 }
@@ -978,7 +1000,7 @@ void AiControlServer::handleMemGet(socket_t fd, const Request& req)
     if (addr + len > 0x10000) len = 0x10000 - addr;
 
     std::vector<uint8_t> buf(static_cast<size_t>(len));
-    {
+    if (len > 0) {   // memcpy from/to a null data() is UB even for 0 bytes
         auto st = ctrl_->lockState();
         if (which == Bank::Cpu) {
             Memory& m = st.memory();
@@ -1096,14 +1118,20 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
 
     // All keys optional. Absolute "x"/"y" win over relative "dx"/"dy".
     long dx = 0, dy = 0, ax = 0, ay = 0, btn = 0, rst = 0;
+    // Present-but-malformed is a 400, not a silently ignored key.
+    for (const char* key : {"dx", "dy", "x", "y", "btn", "reset"}) {
+        long ignored = 0;
+        if (!jsonOptionalIntOk(req.body, key, ignored)) {
+            sendJsonError(fd, 400, std::string(key) + " must be an integer");
+            return;
+        }
+    }
     const bool haveDx  = jsonGetInt(req.body, "dx",    dx);
     const bool haveDy  = jsonGetInt(req.body, "dy",    dy);
     const bool haveAx  = jsonGetInt(req.body, "x",     ax);
     const bool haveAy  = jsonGetInt(req.body, "y",     ay);
     const bool haveBtn = jsonGetInt(req.body, "btn",   btn);
-    if (!jsonOptionalIntOk(req.body, "reset", rst)) {
-        sendJsonError(fd, 400, "reset must be an integer"); return;
-    }
+    (void)jsonOptionalIntOk(req.body, "reset", rst);
 
     // Clamp per-call delta to ±127 — the MCU's 8-bit signed wrap window,
     // matching MainWindow::onMouseMove. Larger deltas must be split across
@@ -1258,6 +1286,14 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         return;
     }
 
+    // Save the OUTGOING disk now, unlocked, through the floppy autosave:
+    // `installDisk` flushes a dirty outgoing medium inline, a sector
+    // re-encode + write + fsync with `stateMutex` held (CLAUDE.md's standing
+    // rule; bug hunt 2026-10-16). Normally a no-op; a failure here is not
+    // fatal — the inline flush stays the fallback and still refuses the
+    // swap when the medium cannot be saved.
+    { std::string ignored; (void)ctrl_->syncFloppyMedia(ignored); }
+
     bool noCard  = false;
     bool changed = false;
     bool ok      = false;
@@ -1285,6 +1321,7 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         return;
     }
     if (!ok)    { sendJsonError(fd, 400, "insert failed: " + errMsg); return; }
+    ctrl_->noteFloppyLatch(true);   // the lid, as the GUI's insert plays it
     // The bay holds different media now: every rewind frame in the ring was
     // captured against the PREVIOUS disk, and scrubbing back would restore
     // that RAM (DOS buffers, open-file state) on top of the new one. The 19
@@ -1387,6 +1424,7 @@ void AiControlServer::handleDiskEject(socket_t fd, const Request& req)
         return;
     }
     if (!ejected) { sendJsonError(fd, 500, "eject failed: " + errMsg); return; }
+    ctrl_->noteFloppyLatch(false);
     // The bay is empty now — same rule as /disk. See the note there.
     {
         auto st = ctrl_->lockState();

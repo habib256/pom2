@@ -532,9 +532,16 @@ void ClockCard::tryLoadDump()
 
 uint8_t ClockCard::expansionRomRead(uint16_t offset)
 {
-    if (!expansionRomLoaded_) return 0xFF;
-    if (offset >= expansionRom_.size()) return 0xFF;
-    return expansionRom_[offset];
+    uint8_t v = 0xFF;
+    (void)peekExpansionRom(offset, v);
+    return v;
+}
+
+bool ClockCard::peekExpansionRom(uint16_t offset, uint8_t& out) const
+{
+    out = (expansionRomLoaded_ && offset < expansionRom_.size())
+        ? expansionRom_[offset] : 0xFF;
+    return true;
 }
 
 // ── Snapshot / rewind ─────────────────────────────────────────────────────

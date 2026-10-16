@@ -1019,6 +1019,7 @@ set_tests_properties(rewind_delta PROPERTIES TIMEOUT 5)
 add_executable(test_rewind_transport
     rewind_transport_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -1058,6 +1059,7 @@ set_tests_properties(rewind_transport PROPERTIES TIMEOUT 20)
 add_executable(test_ui_worker_contention
     ui_worker_contention_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -4151,6 +4153,8 @@ set_tests_properties(bus_fastpath PROPERTIES TIMEOUT 120)
 # sweeping all 64 KiB leaves the machine bit-identical.
 add_executable(test_memory_cpu_view
     memory_cpu_view_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -5255,6 +5259,7 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -5687,6 +5692,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -5997,6 +6003,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -6297,6 +6304,7 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -7256,6 +7264,7 @@ add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -7520,6 +7529,32 @@ pom2_add_headless_test(test_parallel_cards
     SOURCES parallel_cards_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# ─── Apple II Memory Expansion Card ("Slinky") ───────────────────────────
+# MAME a2memexp registers, then the real 341-0344A firmware serving ProDOS
+# STATUS / WRITE / READ through its $CnFF driver entry. Skips without the ROM.
+pom2_add_headless_test(test_slinky_card
+    NAME slinky_card TIMEOUT 30
+    SOURCES slinky_card_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(slinky_card PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} SKIP_RETURN_CODE 77)
+
+# ─── S.A.M. 8-bit DAC card ───────────────────────────────────────────────
+# MAME DAC_8BIT_R2R levels, cycle-stamped writes reconstructed at the right
+# output sample (offline, 10 CPU cycles per sample), and the bus path.
+pom2_add_headless_test(test_sam_card
+    NAME sam_card TIMEOUT 20
+    SOURCES sam_card_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ─── Zip Chip (CPU-socket accelerator) ───────────────────────────────────
+# MAME apple2e.cpp's Zip registers through a real controller on a //e:
+# lock/unlock, AN passthrough, speed in the frame budget, slot slow-down.
+pom2_add_headless_test(test_zip_chip
+    NAME zip_chip TIMEOUT 30
+    SOURCES zip_chip_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 # ─── Printer-detection toolkit: options, access log, PNG render ──────────
 pom2_add_headless_test(test_printer_detection
     NAME printer_detection TIMEOUT 30
@@ -7762,6 +7797,17 @@ pom2_add_headless_test(test_hdv_free_bay
     NAME hdv_free_bay TIMEOUT 60
     SOURCES hdv_free_bay_test.cpp
     LINK_LIBRARIES pom2_core_test)
+
+# Boot order around a synthetic HDV / SmartPort card (2026-10-16): an empty
+# one in slot 7 hands the //e autostart on to slot 6, the HDV card's $Cn07=$3C
+# lets the four-byte autostart boot it, and a //c "Mount only" with an empty
+# 3.5" unit 1 retypes unit 1 so the firmware's unit-1 boot finds the disk.
+pom2_add_headless_test(test_hdv_boot_scan
+    NAME hdv_boot_scan TIMEOUT 120
+    SOURCES hdv_boot_scan_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(hdv_boot_scan PROPERTIES SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # The TransWarp multiplier is sampled per chunk: a slow window opening
 # mid-frame slows the rest of the frame, not the next one.
@@ -8463,6 +8509,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -8840,6 +8887,17 @@ pom2_add_headless_test(test_videx_videoterm_boot
     LINK_LIBRARIES pom2_core_test
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(videx_videoterm_boot PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+# ─── VidHD (Super Hi-Res on a //e) — DISPLAY-001 ──────────────────────────
+# AppleWin VidHD port: the $C0n0-2 signature, NEWVIDEO & co. latched off
+# motherboard writes, 320 / 320+fill / 640 pictures read from aux RAM
+# (RamWorks bank included) through Apple2Display, the VDHD snapshot. No ROM.
+if(TARGET pom2_core_test)
+pom2_add_headless_test(test_vidhd_card
+    NAME vidhd_card TIMEOUT 20 PORTABLE
+    SOURCES vidhd_card_test.cpp
+    LINK_LIBRARIES pom2_core_test)
 endif()
 
 # AY tone modulation, all envelope shapes, reset selection and VIA strobes.

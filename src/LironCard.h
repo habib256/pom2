@@ -158,7 +158,7 @@ public:
     /// the background autosave has normally committed them already.
     bool         prepareFlushBay(int bay, PendingBayFlush& out,
                                  std::string& errOut) override;
-    void         restoreFlushBayDirty(int bay) override;
+    void         restoreFlushBayDirty(int bay, uint64_t lineage) override;
     /// Forwarded to every mechanism (Sony35Drive::setStandardClock).
     void         setStandardClock(double hz) override;
     void         setBayWriteBack(int bay, bool on) override;
@@ -268,6 +268,11 @@ private:
     public:
         void bind(Disk35Image* img, Block512Backing* blk) { img_ = img; blk_ = blk; }
         bool hasMedia() const override { return disk() || hard(); }
+        uint64_t mediaIdentity() const override
+        {
+            if (disk()) return img_->mountId();
+            return hard() ? blk_->mountId() : 0;
+        }
         /// An empty bay has no blocks. Answering the 800K geometry with no
         /// media let a STATUS on an empty unit report a 1600-block volume the
         /// firmware could then try to read — every sibling unit

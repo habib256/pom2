@@ -438,6 +438,7 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
     // Phase 2 for a non-block bay: commit the captured image OUTSIDE the lock.
     if (!twoPhase) {
         if (!imageFlush.valid) return true;
+        const uint64_t capturedLineage = imageFlush.lineage;
         Disk35Image::PendingWriteBack imagePending =
             imagePayload(std::move(imageFlush));
         std::string commitError;
@@ -451,7 +452,7 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
             auto state = controller.lockState();
             if (auto* media = dynamic_cast<MountableMediaCard*>(
                     state.memory().slotBus().peripheral(slot)))
-                media->restoreFlushBayDirty(bay);
+                media->restoreFlushBayDirty(bay, capturedLineage);
         }
         error = "unsaved changes in slot " + std::to_string(slot) + " bay " +
                 std::to_string(bay + 1) + " could not be written: " +
@@ -478,6 +479,15 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
             (commitError.empty() ? std::string("write-back failed")
                                  : commitError);
     return false;
+}
+
+/// A loaded 3.5" disk in a card bay: the SmartPort card's 3.5" unit
+/// (`typeKey` "35") or a Liron bay holding a `Disk35Image` (label "UniDisk
+/// 3.5 …"). What decides whether a bay command plays the 3.5" click.
+bool bayHolds35(const MediaBayInfo& info)
+{
+    return info.loaded && (info.typeKey == "35" ||
+                           info.kindLabel.find("3.5") != std::string::npos);
 }
 
 StorageCoordinator::MediaCommandResult commandError(std::string error)
@@ -554,6 +564,14 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountDiskII(
     auto prepared = std::make_unique<DiskImage>();
     if (!DiskIICard::prepareDisk(path, writeBack, *prepared, result.error))
         return result;
+
+    // Save the OUTGOING disk now, unlocked, through the floppy autosave:
+    // `installDisk` flushes a dirty outgoing medium inline, a sector
+    // re-encode + write + fsync with `stateMutex` held (CLAUDE.md's standing
+    // rule; bug hunt 2026-10-16). Normally a no-op; a failure here is not
+    // fatal — the inline flush stays the fallback and still refuses the
+    // swap when the medium cannot be saved.
+    { std::string ignored; (void)controller.syncFloppyMedia(ignored); }
 
     // Phase 2 — re-resolve by SLOT, never through a pointer carried across
     // the gap. This is the caller contract MediaMount.h spells out for
@@ -657,6 +675,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
     EmulationController& controller, Settings& settings, int slot, int bay,
     const std::string& path) const
 {
+    bool click35 = false;   // a 3.5" landed in a card bay: its click
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
 
@@ -711,11 +730,13 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
                 return result;
             }
         }
+        click35 = bayHolds35(media->bayInfo(bay));
         (void)appendMediaBaySettingUpdates(
             updates, *peripheral, slot, bay,
             autoHdvSlot_, autoSmartPortSlot_);
         result.ok = true;
     }
+    if (click35) controller.noteFloppy35Latch(true);
     // The bay holds different media now — see invalidateRewindForMediaChange.
     invalidateRewindForMediaChange(controller);
     applySettingUpdates(settings, updates);
@@ -726,7 +747,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
 StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
     EmulationController& controller, Settings& settings, int slot,
     std::vector<std::uint8_t> bytes, const std::string& label,
-    const std::string& hostFolder) const
+    const std::string& hostFolder, int bay) const
 {
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
@@ -749,7 +770,10 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
                 return commandError("slot " + std::to_string(slot) +
                                     " has no ProDOS block device");
             std::string prepareError;
-            twoPhase = media->prepareEjectBay(0, pending, prepareError);
+            if (bay < 0 || bay >= media->bayCount())
+                return commandError("invalid media bay " +
+                                    std::to_string(bay + 1));
+            twoPhase = media->prepareEjectBay(bay, pending, prepareError);
             if (!twoPhase && !prepareError.empty())
                 return commandError(prepareError);
         }
@@ -776,7 +800,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
                 auto state = controller.lockState();
                 if (auto* media = dynamic_cast<MountableMediaCard*>(
                         state.memory().slotBus().peripheral(slot)))
-                    media->restoreBayDirty(0, captured);
+                    media->restoreBayDirty(bay, captured);
                 return commandError(
                     "unsaved changes on the mounted volume could not be "
                     "written: " +
@@ -803,10 +827,17 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
         if (!card)
             return commandError("slot " + std::to_string(slot) +
                                 " has no ProDOS block device");
-        if (!card->loadImageFromBytes(std::move(bytes), label, hostFolder))
+        auto* twoDrive = dynamic_cast<ProDOSHardDiskCard*>(peripheral);
+        if (bay != 0 && !twoDrive)
+            return commandError("slot " + std::to_string(slot) +
+                                " has no drive " + std::to_string(bay + 1));
+        const bool loaded = bay == 0
+            ? card->loadImageFromBytes(std::move(bytes), label, hostFolder)
+            : twoDrive->loadDriveFromBytes(bay, std::move(bytes), label, hostFolder);
+        if (!loaded)
             return commandError(card->getLastError());
         (void)appendMediaBaySettingUpdates(
-            updates, *peripheral, slot, 0,
+            updates, *peripheral, slot, bay,
             autoHdvSlot_, autoSmartPortSlot_);
         result.ok = true;
     }
@@ -821,6 +852,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     EmulationController& controller, Settings& settings, int slot,
     int bay) const
 {
+    bool click35 = false;   // a 3.5" left a card bay: its click
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
 
@@ -876,6 +908,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
 
     // Phase 2 for a non-block bay — outside the lock, like its sibling below.
     if (!twoPhase && imageFlush.valid) {
+        const uint64_t capturedLineage = imageFlush.lineage;
         Disk35Image::PendingWriteBack imagePending =
             imagePayload(std::move(imageFlush));
         std::string error;
@@ -888,7 +921,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
             auto& bus = state.memory().slotBus();
             if (auto* media =
                     dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
-                media->restoreFlushBayDirty(bay);
+                media->restoreFlushBayDirty(bay, capturedLineage);
             return commandError(error.empty()
                 ? "the image could not be saved" : error);
         }
@@ -928,6 +961,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         // captured, and any block the guest dirtied while phase 2 ran
         // unlocked kept its flag — this ejectBay flushes that (normally
         // empty) remainder inline before dropping the medium.
+        click35 = bayHolds35(media->bayInfo(bay));
         if (!media->ejectBay(bay)) {
             const auto info = media->bayInfo(bay);
             return commandError(info.lastError.empty()
@@ -938,6 +972,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
             autoHdvSlot_, autoSmartPortSlot_);
         result.ok = true;
     }
+    if (click35) controller.noteFloppy35Latch(false);
     // The bay holds different media now — see invalidateRewindForMediaChange.
     invalidateRewindForMediaChange(controller);
     applySettingUpdates(settings, updates);
@@ -1037,6 +1072,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
 
     // Phase 2 for a non-block bay — outside the lock, like its sibling below.
     if (!twoPhase && imageFlush.valid) {
+        const uint64_t capturedLineage = imageFlush.lineage;
         Disk35Image::PendingWriteBack imagePending =
             imagePayload(std::move(imageFlush));
         std::string error;
@@ -1047,7 +1083,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
             auto& bus = state.memory().slotBus();
             if (auto* media =
                     dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
-                media->restoreFlushBayDirty(bay);
+                media->restoreFlushBayDirty(bay, capturedLineage);
             return commandError(
                 "unsaved changes in slot " + std::to_string(slot) + " bay " +
                 std::to_string(bay + 1) + " could not be written: " +
@@ -1215,7 +1251,10 @@ StorageCoordinator::mountDisk35(
         }
     }
     if (result.usesSmartPort) {
-        if (result.ok) invalidateRewindForMediaChange(controller);
+        if (result.ok) {
+            controller.noteFloppy35Latch(true);
+            invalidateRewindForMediaChange(controller);
+        }
         applySettingUpdates(settings, updates);
         if (!updates.empty()) (void)settings.save();
         return result;
@@ -1517,6 +1556,12 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         /// `stateMutex` — on every quit and every profile switch, which is
         /// exactly when this function runs.
         MountableMediaCard::PendingBayFlush imageFlush;
+        /// What phase 1 found mounted. Phase 2 runs unlocked, so the bay may
+        /// hold ANOTHER disk by phase 3, mounted after this eject-all began;
+        /// that one is not ours to eject.
+        std::string path;
+        uint64_t    mountId = 0;   // preferred over `path` when known
+        bool is35 = false;         // a 3.5" disk: its eject clicks
         bool twoPhase = false;
         bool failed = false;
     };
@@ -1548,10 +1593,14 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
             auto* media = dynamic_cast<MountableMediaCard*>(peripheral);
             if (!media) continue;
             for (int bay = 0; bay < media->bayCount(); ++bay) {
-                if (!media->bayInfo(bay).loaded) continue;
+                const MediaBayInfo info = media->bayInfo(bay);
+                if (!info.loaded) continue;
                 PendingBay entry;
                 entry.slot  = slot;
                 entry.bay   = bay;
+                entry.path  = info.path;
+                entry.mountId = info.mountId;
+                entry.is35  = bayHolds35(info);
                 entry.label = ejectAllBayLabel(peripheral, slot, bay);
                 std::string prepareError;
                 entry.twoPhase =
@@ -1606,6 +1655,7 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         // The non-block bays: commit the captured image here, unlocked.
         if (!entry.twoPhase) {
             if (!entry.imageFlush.valid) continue;
+            const uint64_t capturedLineage = entry.imageFlush.lineage;
             Disk35Image::PendingWriteBack imagePending =
                 imagePayload(std::move(entry.imageFlush));
             std::string error;
@@ -1616,7 +1666,7 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
                 auto state = controller.lockState();
                 if (auto* media = dynamic_cast<MountableMediaCard*>(
                         state.memory().slotBus().peripheral(entry.slot)))
-                    media->restoreFlushBayDirty(entry.bay);
+                    media->restoreFlushBayDirty(entry.bay, capturedLineage);
             }
             result.failures.push_back(
                 entry.label + ": " +
@@ -1642,13 +1692,16 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
                            : error));
     }
 
-    // Phase 3 — drop what committed, and persist every key.
+    // Phase 3 — drop what committed, and persist every key. One click per
+    // mechanism kind, not one per disk: a burst of identical clicks is noise.
+    bool ejected525 = false, ejected35 = false;
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
         for (const auto& entry : diskII) {
             if (entry.failed) continue;
             result.changed = true;
+            ejected525 = true;
             auto* card = dynamic_cast<DiskIICard*>(bus.peripheral(entry.slot));
             if (card)
                 appendDiskIIDriveSettingUpdates(updates, bus, *card,
@@ -1659,6 +1712,14 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
             auto* peripheral = bus.peripheral(entry.slot);
             auto* media = dynamic_cast<MountableMediaCard*>(peripheral);
             if (!media || entry.bay >= media->bayCount()) continue;
+            // Swapped meanwhile: the newcomer stays mounted. By mount
+            // identity when the card reports one — the same file mounted
+            // again is still a newcomer — else by path.
+            if (const MediaBayInfo now = media->bayInfo(entry.bay);
+                !now.loaded || (entry.mountId != 0
+                                    ? now.mountId != entry.mountId
+                                    : now.path != entry.path))
+                continue;
             // Any block the guest dirtied while phase 2 ran unlocked kept its
             // flag; this ejectBay flushes that (normally empty) remainder.
             if (!media->ejectBay(entry.bay)) {
@@ -1671,11 +1732,14 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
                 continue;
             }
             result.changed = true;
+            ejected35 = ejected35 || entry.is35;
             (void)appendMediaBaySettingUpdates(
                 updates, *peripheral, entry.slot, entry.bay,
                 autoHdvSlot_, autoSmartPortSlot_);
         }
     }
+    if (ejected525) controller.noteFloppyLatch(false);
+    if (ejected35)  controller.noteFloppy35Latch(false);
     if (result.changed) invalidateRewindForMediaChange(controller);
 
     // EmulationController::eject35 owns the same state lock internally, so
@@ -1721,8 +1785,10 @@ StorageCoordinator::restoreMediaFromSettings(
     for (auto* card : cards.diskIICards) {
         if (!card) continue;
         const bool isPrimary = card == cards.primaryDiskII;
+        const std::string legacyKey =
+            "disk_writeback_slot" + std::to_string(card->getSlot());
         const bool legacyWriteBack = settings.getBool(   // absent key = writable
-            "disk_writeback_slot" + std::to_string(card->getSlot()),
+            legacyKey,
             isPrimary ? settings.getBool("disk_writeback", pom2::mediaWritableByDefault())
                       : pom2::mediaWritableByDefault());
         card->setWriteBackEnabled(legacyWriteBack);
@@ -1758,7 +1824,8 @@ StorageCoordinator::restoreMediaFromSettings(
             std::vector<std::string> paths;
             for (int d = 0; d < DiskIICard::kDriveCount; ++d)
                 if (card->isDiskLoaded(d)) paths.push_back(card->getDiskPath(d));
-            const bool wb = migrateLegacyWriteBack(legacyWriteBack, paths, result.warnings);
+            const bool wb = migrateLegacyWriteBack(legacyWriteBack, paths, result.warnings,
+                                                   legacyKey);
             card->setWriteBackEnabled(wb);
             for (int d = 0; d < DiskIICard::kDriveCount; ++d)
                 if (card->isDiskLoaded(d))
@@ -1781,7 +1848,8 @@ StorageCoordinator::restoreMediaFromSettings(
         }
         const bool legacy = settings.getBool("hdv_writeback", pom2::mediaWritableByDefault());
         cards.primaryHdv->setWriteBackEnabled(migrateLegacyWriteBack(
-            legacy, { cards.primaryHdv->getImagePath() }, result.warnings));
+            legacy, { cards.primaryHdv->getImagePath() }, result.warnings,
+            "hdv_writeback"));
         if (cards.primaryHdv->isImageLoaded())
             cards.primaryHdv->setHostWriteProtected(
                 pom2::mediaFileIsReadOnly(cards.primaryHdv->getImagePath()));
@@ -1806,7 +1874,8 @@ StorageCoordinator::restoreMediaFromSettings(
         }
         const bool legacy = settings.getBool(key + "_writeback", pom2::mediaWritableByDefault());
         card->setWriteBackEnabled(migrateLegacyWriteBack(
-            legacy, { card->getImagePath() }, result.warnings));
+            legacy, { card->getImagePath() }, result.warnings,
+            key + "_writeback"));
         if (card->isImageLoaded())
             card->setHostWriteProtected(pom2::mediaFileIsReadOnly(card->getImagePath()));
     }
@@ -1862,7 +1931,8 @@ StorageCoordinator::restoreMediaFromSettings(
                     ": persisted path not found: " + path);
             }
             unit->setWriteBackEnabled(migrateLegacyWriteBack(
-                legacyWriteBack, { unit->path() }, result.warnings));
+                legacyWriteBack, { unit->path() }, result.warnings,
+                base + "_writeback"));
             if (unit->isLoaded())
                 unit->setHostWriteProtected(pom2::mediaFileIsReadOnly(unit->path()));
             card->setUnit(bay, std::move(unit));
@@ -1917,7 +1987,8 @@ StorageCoordinator::restoreMediaFromSettings(
                     legacyWriteBack, {}, result.warnings));
             } else {
                 media->setBayWriteBack(bay, migrateLegacyWriteBack(
-                    legacyWriteBack, { resolved }, result.warnings));
+                    legacyWriteBack, { resolved }, result.warnings,
+                    base + "_writeback"));
             }
         }
     }
@@ -2087,6 +2158,7 @@ bool StorageCoordinator::commitDeferredFlushes(
         // `Disk35Image::commitWriteBack` is simply POM2's atomic whole-file
         // writer (sibling temp + fsync + rename), and every bay that fills a
         // PendingBayFlush holds one of those images.
+        const uint64_t capturedLineage = item.payload.lineage;
         Disk35Image::PendingWriteBack pending = imagePayload(std::move(item.payload));
         std::string commitError;
         if (Disk35Image::commitWriteBack(std::move(pending), commitError))
@@ -2097,7 +2169,7 @@ bool StorageCoordinator::commitDeferredFlushes(
             auto state = controller.lockState();
             auto* media = dynamic_cast<MountableMediaCard*>(
                 state.memory().slotBus().peripheral(item.slot));
-            if (media) media->restoreFlushBayDirty(item.bay);
+            if (media) media->restoreFlushBayDirty(item.bay, capturedLineage);
         }
         if (!error.empty()) error += "; ";
         error += item.label + ": " +

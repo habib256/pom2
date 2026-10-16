@@ -593,8 +593,8 @@ void Apple2Display::render(Memory& mem)
     }
     lastRenderState_ = state;   // published-frame snapshot for present-path decisions
 
-    // TEXT + AN0 under a Videx Videoterm: the card's picture replaces this
-    // frame entirely (renderCardPicture, Apple2Display.h).
+    // TEXT + AN0 under a Videx Videoterm, SHR under a VidHD: the card's
+    // picture replaces this frame entirely (renderCardPicture, Apple2Display.h).
     if (renderCardPicture(mem, state)) return;
     // Whether the 32-row text band needs patching is NOT a property of the
     // frame's final state, and it is not "any band was mixed graphics"

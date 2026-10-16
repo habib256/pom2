@@ -190,8 +190,24 @@ void testLegacyCardKeyBecomesTheNotch()
     card->ejectDisk(0);
     std::string err; std::error_code ec;
     (void)pom2::setMediaNotch(dsk.string(), false, err);
+
+    // ONCE: the user unprotects the disk, then a profile switch or Slot
+    // Apply restores again from a store that still says `false` (nothing is
+    // written until quit). That re-notched the disk silently (bug hunt
+    // 2026-10-16).
+    {
+        SlotBus again;
+        again.plug(6, std::make_unique<DiskIICard>(6));
+        (void)storage.restoreMediaFromSettings(again, settings);
+        auto* card2 = dynamic_cast<DiskIICard*>(again.peripheral(6));
+        assert(card2->isDiskLoaded(0));
+        assert(!pom2::mediaFileIsReadOnly(dsk.string()) &&
+               "a second restore re-protected a disk the user unprotected");
+        assert(card2->isWriteBackEnabled());
+        card2->ejectDisk(0);
+    }
     fs::remove(dsk, ec);
-    std::puts("  ok: a legacy disk_writeback_slotN=false became the notch on its disk");
+    std::puts("  ok: a legacy disk_writeback_slotN=false became the notch on its disk, once");
 }
 
 void testNotchOnDirtyFloppyStillFlushes()

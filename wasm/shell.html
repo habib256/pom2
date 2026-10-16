@@ -69,12 +69,11 @@
     }, 250);
   };
 
-  // Default WASM experience (since 2026-09-08): the PAL //e Enhanced
+  // Default WASM experience: the PAL Apple //c
   // auto-booting DIX — the French Touch demo anthology, GPLv3, POM2's
-  // priority benchmark — from the bundled floppyemu/. It replaced Total
+  // priority benchmark — from bundled_disks/DIX-fix.po. It replaced Total
   // Replay (commercial titles, removed from the tree 2026-09-05; the shell
-  // kept pointing at the deleted file, so the demo 404'd on boot). DIX wants
-  // a PAL //e with a Mockingboard, which is the fresh-install slot map.
+  // kept pointing at the deleted file, so the demo 404'd on boot).
   // Both knobs are URL-overridable so a deeplink can pick a different
   // profile or disk without rebuilding. The disk path must resolve inside
   // POM2.data — only roms/, fonts/, pic/ and floppyemu/ ship by default;
@@ -84,7 +83,7 @@
   //   ?preset=ii+        (no auto-boot — drops to the BASIC prompt)
   //   ?nodisk=1          (keep the preset, skip the disk arg)
   const _qs = new URLSearchParams(window.location.search);
-  const _preset = _qs.get('preset') || 'iie-pal';
+  const _preset = _qs.get('preset') || 'iic-pal';
   const _disk   = _qs.get('nodisk') === '1' ? null
                  : (_qs.get('disk') || 'bundled_disks/DIX-fix.po');
   const _args = ['--preset', _preset];

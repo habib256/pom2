@@ -110,7 +110,7 @@ int main()
     mem.slotBus().reset();
     cpu.hardReset();
     Apple2Display disp;
-    disp.setVidexCard(card);
+    disp.setCardVideoSource(card);
 
     // 1. Applesoft, 40 columns.
     runCycles(cpu, 3'000'000);

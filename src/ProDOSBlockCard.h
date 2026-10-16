@@ -116,6 +116,7 @@ public:
         if (auto* backing = blockBacking()) {
             info.persistenceState = backing->persistenceState();
             info.persistenceError = backing->persistenceError();
+            info.mountId          = backing->mountId();
         }
         return info;
     }

@@ -20,6 +20,7 @@
 #include "CassetteDevice.h"
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
+#include "SamCard.h"
 #include "EmulationController.h"
 #include "FloppySoundDevice.h"
 #include "Mockingboard.h"
@@ -61,6 +62,7 @@ const char* settingsStem(AudioCoordinator::CardKind kind)
         case AudioCoordinator::CardKind::Phasor: return "phasor";
         case AudioCoordinator::CardKind::EchoPlus: return "echoplus";
         case AudioCoordinator::CardKind::EchoPlusTms5220: return "echoplus_tms";
+        case AudioCoordinator::CardKind::Sam: return "sam";
     }
     return "audio_card";
 }
@@ -187,6 +189,11 @@ AudioCoordinator::captureMixerCards() const
             snapshot.volume = echo->getVolume();
             snapshot.muted = echo->isMuted();
             source = echo->audioSource();
+        } else if (auto* sam = cardAt<SamCard>(bus, slot)) {
+            snapshot.kind = CardKind::Sam;
+            snapshot.volume = sam->getVolume();
+            snapshot.muted = sam->isMuted();
+            source = sam->audioSource();
         } else {
             continue;
         }
@@ -232,6 +239,13 @@ bool AudioCoordinator::applyMixerCard(const MixerCardCommand& command)
             break;
         case CardKind::EchoPlusTms5220:
             break; // scaffold card has no AudioSource yet
+        case CardKind::Sam:
+            if (auto* card = cardAt<SamCard>(bus, command.slot)) {
+                card->setVolume(command.volume);
+                card->setMuted(command.muted);
+                return true;
+            }
+            break;
     }
     return false;
 }

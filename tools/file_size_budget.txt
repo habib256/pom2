@@ -415,11 +415,32 @@
 # job was red on main from 2026-10-06. The fix is a 15-line branch in
 # memReadSlowBody and the comment that says why; recorded here.
 #   src/Memory.cpp               2751 -> 2766 (+15)
+#
+# 2026-10-16: one raised. The VidHD card (DISPLAY-001) latches the IIgs video
+# registers off motherboard WRITES to $C022/$C029/$C034/$C035, which only
+# softSwitchAccess sees; one line in each of the $C02x and $C03x branches,
+# and one installing the aux-RAM pointer on the slot bus. The card itself is
+# its own TU (src/VidHDCard.cpp).
+#   src/Memory.cpp               2766 -> 2769 (+3)
+#
+# 2026-10-16: one raised. The Zip Chip sits in the 6502 socket, so it has no
+# slot and Memory calls it directly: one hook on the $C0xx read path, one on
+# the write path, its reset call, its snapshot trailer section (save + load)
+# and the cycle accessor. The chip itself is its own TU (src/ZipChip.cpp)
+# behind an abstract seam (src/CpuSocketAccelerator.h).
+#   src/Memory.cpp               2769 -> 2789 (+20)
 src/Apple2Display.cpp                    2536
 src/DiskIICard.cpp                       2143
-src/DiskImage.cpp                        3293
+# 2026-10-16: MacBinary data-fork bounds and WOZ CRC handling stay beside
+# the existing format detection and loader; covered by disk_macbinary_smoke.
+#   src/DiskImage.cpp: 3293 -> 3316 (+23)
+src/DiskImage.cpp                        3316
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
-src/Memory.cpp                           2766
-src/StorageCoordinator.cpp               2344
+src/Memory.cpp                           2789
+# 2026-10-16: existing media transactions gain mount-identity checks,
+# lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
+# and 3.5-inch latch sounds. These checks belong in their transaction phases.
+#   src/StorageCoordinator.cpp: 2344 -> 2415 (+71)
+src/StorageCoordinator.cpp               2415
 src/hgrpaint/HgrPaintEditor.cpp          2656

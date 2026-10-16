@@ -39,7 +39,9 @@
 //      replace, which under RAMWRT≠RAMRD is NOT peekCpuView(a).
 
 #include "DiskIICard.h"
+#include "M6502.h"
 #include "Memory.h"
+#include "MouseCardAppleWin.h"
 
 #include <cstdio>
 #include <cstdint>
@@ -128,8 +130,53 @@ bool mapsInternalIORom(unsigned s, unsigned addr)
 
 }  // namespace
 
+// A //c forces INTCXROM, yet lets a card that exposesIicOnboardRom through
+// at its $Cn page — the AppleWin-HLE mouse in slot 4 here. The view stopped
+// at the //c's own ROM, so the debugger disassembled the IOU mouse firmware
+// while the CPU ran the card's EPROM: 246 of 256 bytes differed (bug hunt
+// 2026-10-16). memRead of $C4xx has no side effect for this card.
+int testIicPunchedCardRom()
+{
+    namespace fs = std::filesystem;
+    std::string rom, mouse;
+    for (const char* base : {"", "../", "../../"}) {
+        if (rom.empty() && fs::exists(std::string(base) + "roms/apple2c-32Kv0.rom"))
+            rom = std::string(base) + "roms/apple2c-32Kv0.rom";
+        if (mouse.empty() && fs::exists(std::string(base) + "roms/mouse_341-0270-c.bin"))
+            mouse = std::string(base) + "roms/mouse_341-0270-c.bin";
+    }
+    if (rom.empty() || mouse.empty()) {
+        std::fprintf(stderr, "memory_cpu_view: //c or mouse ROM missing — //c case skipped\n");
+        return 0;
+    }
+    Memory m;
+    M6502 cpu(&m);
+    m.setCpu(&cpu);
+    m.clearRam();
+    m.setIIEMode(true);
+    if (!m.loadAppleIIRom(rom.c_str(), /*pickLowerHalf=*/true)) return 1;
+    m.resetSoftSwitches();
+    auto card = std::make_unique<MouseCardAppleWin>(4);
+    if (!card->loadRom(mouse)) return 1;
+    m.slotBus().plug(4, std::move(card));
+    int diffs = 0;
+    for (unsigned a = 0xC400; a < 0xC500; ++a) {
+        const uint8_t view = m.peekCpuView(static_cast<uint16_t>(a));
+        const uint8_t bus  = m.memRead(static_cast<uint16_t>(a));
+        if (view != bus && diffs++ < 4)
+            std::fprintf(stderr, "  $%04X view=$%02X bus=$%02X\n", a, view, bus);
+    }
+    if (diffs) {
+        std::fprintf(stderr, "FAIL: //c $C4xx view differs from the bus at %d bytes\n", diffs);
+        return 1;
+    }
+    std::puts("[ OK ] //c: the view shows the punched-through card ROM");
+    return 0;
+}
+
 int main()
 {
+    if (testIicPunchedCardRom() != 0) return 1;
     const std::string rom = findRom();
     if (rom.empty()) {
         std::fprintf(stderr,

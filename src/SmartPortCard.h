@@ -197,6 +197,10 @@ public:
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead      (uint8_t low8) override;
     uint8_t expansionRomRead (uint16_t offset) override;
+    bool    peekSlotRom(uint8_t low8, uint8_t& out) const override
+    { out = rom_[low8]; return true; }
+    bool    peekExpansionRom(uint16_t offset, uint8_t& out) const override
+    { out = offset < c800_.size() ? c800_[offset] : 0xFF; return true; }
     bool    takesC800() const override { return true; }  // MAME a2bus.h:145 take_c800
     bool    exposesIicOnboardRom() const override;
     void    onReset() override;
@@ -232,7 +236,7 @@ public:
     bool flushBay(int bay, std::string& errOut) override;
     bool prepareFlushBay(int bay, PendingBayFlush& out,
                          std::string& errOut) override;
-    void restoreFlushBayDirty(int bay) override;
+    void restoreFlushBayDirty(int bay, uint64_t lineage) override;
     bool prepareEjectBay(int bay, Block512Backing::PendingWriteBack& out,
                          std::string& errOut) override;
     void restoreBayDirty(int bay,
@@ -258,6 +262,7 @@ private:
         bool     readBlock (uint32_t block, uint8_t out[512]) override;
         bool     writeBlock(uint32_t block, const uint8_t in[512]) override;
         bool     isUnidisk35()    const override;
+        uint64_t mediaIdentity()  const override;
     private:
         SmartPortUnit* target() const
         { return card_ ? card_->units_[bay_].get() : nullptr; }

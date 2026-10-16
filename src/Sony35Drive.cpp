@@ -633,6 +633,10 @@ int64_t Sony35Drive::nextTransition(int64_t fromTick,
 
 void Sony35Drive::reset()
 {
+    // The spin loop only stops on an explicit motor(false): a reset during
+    // 3.5" activity left it looping for the session (DiskIICard::reset has
+    // the same guard; bug hunt 2026-10-16).
+    if (motorOn_ && sound_) sound_->motor(false, image_ && image_->isLoaded());
     motorOn_       = false;
     writeActive_     = false;
     writeCursorTick_ = INT64_MIN;

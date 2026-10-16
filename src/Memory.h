@@ -63,6 +63,7 @@ class CassetteDevice;
 class M6502;
 class SpeakerDevice;
 namespace pom2 { class NoSlotClock; }
+#include "CpuSocketAccelerator.h"
 
 namespace pom2 { class IWMDevice; class SmartPortHub; class SmartPortBusPort; }
 
@@ -89,6 +90,20 @@ public:
     /// EmulationController; nullptr disables the intercept.
     void setNoSlotClock(pom2::NoSlotClock* nsc) { noSlotClock_ = nsc; }
     pom2::NoSlotClock* getNoSlotClock() const { return noSlotClock_; }
+    /// An accelerator in the 6502 SOCKET — the Zip Chip (ZipChip.h).
+    /// Non-owning, set by EmulationController; nullptr = stock CPU. It is
+    /// consulted only on //e-class machines with slots (activeAccel), so a
+    /// profile switch needs no re-wiring.
+    void setCpuSocketAccelerator(pom2::CpuSocketAccelerator* a) { accel_ = a; }
+    pom2::CpuSocketAccelerator* cpuSocketAccelerator() const { return accel_; }
+    /// The 6502 clock multiplier the frame loop burns at: any slot
+    /// accelerator (SlotBus) times the socket one. Sampled per chunk.
+    double cpuSpeedMultiplier() const
+    {
+        double m = slots.cpuSpeedMultiplier();
+        if (const auto* a = activeAccel()) m *= a->cpuSpeedMultiplier(cycleCounter);
+        return m;
+    }
     /// Wire the host CPU. Also installs a SlotBus IRQ router so cards
     /// can raise IRQ via `SlotPeripheral::assertIrq()` without each
     /// holding their own M6502*. Pass nullptr to disconnect (the router
@@ -1072,6 +1087,35 @@ private:
     // EmulationController so it survives profile switches (battery-
     // backed RTC keeps state across resets on real hardware).
     pom2::NoSlotClock* noSlotClock_ = nullptr;
+
+    // Zip Chip seam (CpuSocketAccelerator.h). The helpers run on the
+    // $C000-$C0FF slow path only — never on the RAM fast path.
+    pom2::CpuSocketAccelerator* accel_ = nullptr;
+    pom2::CpuSocketAccelerator* activeAccel() const
+    {
+        return (accel_ && iieMode && !iicProfile_) ? accel_ : nullptr;
+    }
+    uint64_t accelNow() const;
+    /// MAME apple2e.cpp:2266-2275 — the Zip's $C05E STATEREG-like byte.
+    uint8_t zipStateByte() const
+    {
+        return static_cast<uint8_t>(
+            ((iieMemMode & MF_ALTZP)   ? 0x80 : 0) | ((iieMemMode & MF_RAMRD) ? 0x40 : 0) |
+            ((iieMemMode & MF_RAMWRT)  ? 0x20 : 0) | ((iieMemMode & MF_80STORE) ? 0x10 : 0) |
+            (display.hiRes ? 0x08 : 0) | (display.page2 ? 0x04 : 0) |
+            (lcBank2Active ? 0 : 0x02) | (lcReadRam ? 0 : 0x01));
+    }
+    /// A read the Zip answers: the motherboard switch still acts unless the
+    /// chip says it runs from cache (ReadResult::skipMotherboard).
+    bool accelIoRead(pom2::CpuSocketAccelerator& a, uint16_t addr, uint8_t& v)
+    {
+        const uint8_t low = static_cast<uint8_t>(addr);
+        const auto r = a.ioRead(low, accelNow(), low == 0x5E ? zipStateByte() : 0);
+        if (!r.answer) return false;
+        if (!r.skipMotherboard) (void)softSwitchAccess(addr, false, 0);
+        v = r.value;
+        return true;
+    }
 
     // Speaker + CPU back-pointers for $C030 sub-instruction timestamping.
     SpeakerDevice* speaker = nullptr;

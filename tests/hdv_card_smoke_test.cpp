@@ -68,14 +68,15 @@ int main()
     assert(mem.memRead(0xC505) == 0x03);
 
     // $CnFF = the ProDOS driver entry OFFSET. Not a fixed constant: the page
-    // is assembled from labels (SlotRomAsm.h) and $CnFF is `byteOf("driver")`,
+    // is assembled from labels (SlotRomAsm.h) and $CnFF is `byteOf("entry2")`,
     // so the routine may move — it did, when the shared error tail grew to
     // separate "block past the end" ($27) from "empty bay" ($28). What has to
     // hold is that the byte points at real code inside the page and that a
     // JSR there lands on the dispatch, which hdv_status_driver executes.
     {
         const uint8_t entry = mem.memRead(0xC5FF);
-        assert(entry >= 0x08 && entry < 0xF0);
+        // The drive-latch entry is eight bytes, before the $CnFE flags.
+        assert(entry >= 0x08 && static_cast<unsigned>(entry) + 8 <= 0xFE);
         assert(mem.memRead(static_cast<uint16_t>(0xC500 | entry)) == 0xA5);
     }
 

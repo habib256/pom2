@@ -4,19 +4,22 @@
 #include "DriveRack_ImGui.h"
 #include "DriveRackMount.h"
 #include "EmulationController.h"
+#include "IconsFontAwesome6.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
 #include "StorageCoordinator.h"
 #include "SystemProfile.h"
 #include <algorithm>
+#include <filesystem>
 #include <utility>
 
-void MainWindow::renderDriveRackWindow() {
+// Every drive of the machine, in the rack's order, as plain values. The Drives
+// window and the File menu both list from here, so the two can never show a
+// different machine.
+std::vector<pom2::DrivePicture> MainWindow::collectDrivePictures() {
     using pom2::DrivePicture;
     using Kind = pom2::DrivePictureKind;
-    const bool compact = activeProfile == pom2::SystemProfile::AppleIIc ||
-                         activeProfile == pom2::SystemProfile::AppleIIcPAL ||
-                         activeProfile == pom2::SystemProfile::AppleIIcPlus;
+    const bool compact = isCompactDriveProfile();
     std::vector<DrivePicture> drives;
     // Copy values under the machine lock. Card pointers never survive it;
     // artwork decode/upload and drawing take place afterwards.
@@ -29,9 +32,9 @@ void MainWindow::renderDriveRackWindow() {
                 for (int bay = 0; bay < DiskIICard::kDriveCount; ++bay) {
                     DrivePicture row;
                     row.kind = Kind::DiskII; row.slot = slot; row.bay = bay;
-                    row.label = "Slot " + std::to_string(slot) + " · Disk II " + std::to_string(bay + 1);
+                    row.label = "Slot " + std::to_string(slot) + "," + std::to_string(bay + 1) + " · Disk II";
                     if (compact) {
-                        row.label = "Slot " + std::to_string(slot) + " · Disk //c 5.25\" " + std::to_string(bay + 1);
+                        row.label = "Slot " + std::to_string(slot) + "," + std::to_string(bay + 1) + " · Disk //c 5.25\"";
                         row.pictureAspect = 0.43f;
                     }
                     row.loaded = disk->isDiskLoaded(bay);
@@ -48,14 +51,16 @@ void MainWindow::renderDriveRackWindow() {
                     if (info.kindLabel.empty() && info.typeKey.empty() && !info.loaded) continue;
                     DrivePicture row;
                     row.slot = slot; row.bay = bay;
-                    row.kind = info.typeKey == "35" || info.kindLabel.find("3.5") != std::string::npos
+                    row.kind = info.acceptsSony35OrHdv ? Kind::Generic :
+                               info.typeKey == "35" || info.kindLabel.find("3.5") != std::string::npos
                         ? Kind::Floppy35 : info.typeKey == "hdv" || info.blockCount > 1600 ||
                           info.kindLabel.find("HD") != std::string::npos ? Kind::HardDisk : Kind::Generic;
                     if (row.kind == Kind::Floppy35) row.pictureAspect = 0.45f;
                     if (row.kind == Kind::HardDisk) row.pictureAspect = 0.40f;
                     const char* name = row.kind == Kind::Floppy35 ? "UniDisk 3.5\"" :
                                        row.kind == Kind::HardDisk ? "ProDOS HD" : "Drive";
-                    row.label = "Slot " + std::to_string(slot) + " · " + name + " " + std::to_string(bay + 1);
+                    // Slot,drive the way ProDOS names a device (S6,D1 → "Slot 6,1").
+                    row.label = "Slot " + std::to_string(slot) + "," + std::to_string(bay + 1) + " · " + name;
                     row.loaded = info.loaded; row.busy = info.busy; row.path = info.path;
                     row.writeProtected = info.fileWriteProtected;
                     drives.push_back(std::move(row));
@@ -91,6 +96,19 @@ void MainWindow::renderDriveRackWindow() {
         if (a.slot != b.slot) return a.slot > b.slot;
         return a.bay < b.bay;
     });
+    return drives;
+}
+
+bool MainWindow::isCompactDriveProfile() const {
+    return activeProfile == pom2::SystemProfile::AppleIIc ||
+           activeProfile == pom2::SystemProfile::AppleIIcPAL ||
+           activeProfile == pom2::SystemProfile::AppleIIcPlus;
+}
+
+void MainWindow::renderDriveRackWindow() {
+    using Kind = pom2::DrivePictureKind;
+    const bool compact = isCompactDriveProfile();
+    auto drives = collectDrivePictures();
     for (auto& drive : drives)
         if (drive.kind == Kind::DiskII)
             drive.texture = compact ? retroArtwork_.driveIIc(drive.loaded, drive.busy)
@@ -105,31 +123,71 @@ void MainWindow::renderDriveRackWindow() {
     driveRackHitFrame_ = ImGui::GetFrameCount();
     if (result.manage)
         show(pom2::PanelId::Media) = true;
-    for (const auto& action : result.actions) {
-        const auto& drive = drives.at(action.driveIndex);
-        if (action.type == pom2::DriveRackAction::Type::Insert) {
-            driveRackPickerProfile_ = activeProfile;
-            driveRackFilePicker_.open(drive);
-            continue;
-        }
-        if (action.type == pom2::DriveRackAction::Type::Mount) {
-            insertDriveRackImage(drive, action.path);
-            continue;
-        }
-        pom2::StorageCoordinator::MediaCommandResult command;
-        if (action.type == pom2::DriveRackAction::Type::ToggleWrite)
-            command = storageCoordinator_->setMediaNotch(*controller, drive.path, !drive.writeProtected);
-        else if (drive.slot < 0)
-            command = storageCoordinator_->ejectDisk35(*controller, *settings, drive.bay, true);
-        else if (drive.kind == Kind::DiskII)
-            command = storageCoordinator_->ejectDiskII(*controller, *settings, drive.slot, drive.bay);
-        else
-            command = storageCoordinator_->ejectMediaBay(*controller, *settings, drive.slot, drive.bay);
-        tapeStatusMessage = command.ok
-            ? (action.type == pom2::DriveRackAction::Type::Eject ? "Disk ejected" : "Disk write protection updated")
-            : command.error;
-        tapeStatusUntil = lastFrameTime + 4.0;
+    for (const auto& action : result.actions)
+        runDriveRackAction(drives.at(action.driveIndex), action.type, action.path);
+}
+
+void MainWindow::renderFileMenuDrives() {
+    using Kind = pom2::DrivePictureKind;
+    const auto drives = collectDrivePictures();
+    if (drives.empty()) {
+        ImGui::TextDisabled("No drive in this machine");
+        return;
     }
+    for (const auto& drive : drives) {
+        const char* icon = drive.kind == Kind::HardDisk ? ICON_FA_HARD_DRIVE
+                                                        : ICON_FA_FLOPPY_DISK;
+        const std::string id = "##drive" + std::to_string(drive.slot) + "_" +
+                               std::to_string(drive.bay);
+        if (!drive.loaded) {
+            const std::string label = std::string(icon) + "  " + drive.label +
+                                      "  â  Insertâ¦" + id;
+            if (ImGui::MenuItem(label.c_str()))
+                runDriveRackAction(drive, pom2::DriveRackAction::Type::Insert);
+            continue;
+        }
+        const std::string name = std::filesystem::path(drive.path).filename().string();
+        const std::string label = std::string(icon) + "  " + drive.label + "  â  " +
+                                  name + id;
+        if (ImGui::BeginMenu(label.c_str())) {
+            if (ImGui::MenuItem(ICON_FA_EJECT "  Eject"))
+                runDriveRackAction(drive, pom2::DriveRackAction::Type::Eject);
+            if (ImGui::MenuItem(ICON_FA_LOCK "  Write-protected", nullptr, drive.writeProtected))
+                runDriveRackAction(drive, pom2::DriveRackAction::Type::ToggleWrite);
+            ImGui::EndMenu();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", drive.path.c_str());
+    }
+}
+
+// One drive action, wherever it was asked for (the rack's picture, the File
+// menu). Insert opens the rack's file picker on that drive.
+void MainWindow::runDriveRackAction(const pom2::DrivePicture& drive,
+                                    pom2::DriveRackAction::Type type,
+                                    const std::string& path) {
+    using Kind = pom2::DrivePictureKind;
+    if (type == pom2::DriveRackAction::Type::Insert) {
+        driveRackPickerProfile_ = activeProfile;
+        driveRackFilePicker_.open(drive);
+        return;
+    }
+    if (type == pom2::DriveRackAction::Type::Mount) {
+        insertDriveRackImage(drive, path);
+        return;
+    }
+    pom2::StorageCoordinator::MediaCommandResult command;
+    if (type == pom2::DriveRackAction::Type::ToggleWrite)
+        command = storageCoordinator_->setMediaNotch(*controller, drive.path, !drive.writeProtected);
+    else if (drive.slot < 0)
+        command = storageCoordinator_->ejectDisk35(*controller, *settings, drive.bay, true);
+    else if (drive.kind == Kind::DiskII)
+        command = storageCoordinator_->ejectDiskII(*controller, *settings, drive.slot, drive.bay);
+    else
+        command = storageCoordinator_->ejectMediaBay(*controller, *settings, drive.slot, drive.bay);
+    tapeStatusMessage = command.ok
+        ? (type == pom2::DriveRackAction::Type::Eject ? "Disk ejected" : "Disk write protection updated")
+        : command.error;
+    tapeStatusUntil = lastFrameTime + 4.0;
 }
 
 bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path) {

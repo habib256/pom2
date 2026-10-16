@@ -87,6 +87,12 @@ public:
     /// `$20`). Independent of `hasMedia()`: an empty UniDisk is still a
     /// UniDisk, an ejected HDV is still a hard disk.
     virtual bool     isUnidisk35()    const = 0;
+    /// The mounted medium's process-unique identity (`Disk35Image::mountId`,
+    /// `Block512Backing::mountId`); 0 = unknown, which skips the check. A
+    /// pending WRITE remembers it, so its data packet cannot land on a disk
+    /// swapped in since — including from a snapshot FILE, whose identity
+    /// belongs to another process and never matches.
+    virtual uint64_t mediaIdentity()  const { return 0; }
 };
 
 class SmartPortBusDevice {
@@ -230,6 +236,8 @@ private:
     bool    staleWrite_   = false;
     uint8_t pendingCmd_   = 0;
     uint32_t pendingBlock_ = 0;
+    /// `mediaIdentity()` of the pending WRITE's unit when it was taken.
+    uint64_t pendingMedia_ = 0;
 
     // Reply side.
     std::vector<uint8_t> reply_;

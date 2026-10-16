@@ -48,7 +48,32 @@ StorageCoordinator::mountHdvIntoFreeBay(EmulationController& controller,
             blockTarget = true;
         } else if (auto* sp = cards.primarySmartPort) {
             unitCount = sp->unitCount();
-            for (int b = 0; b < unitCount; ++b) {
+            // Unit 1 is the boot unit, on every machine this card serves:
+            // the //c firmware's boot call at $C52D-$C536 names unit 1 only
+            // (param block $C570 = 01 50 00 08 00 00), and the synthetic
+            // $Cn20 boot of a //e card reads drive 1 of the slot. The loop
+            // below skips a unit that is not HDV-typed, so with unit 1 an
+            // EMPTY 3.5" bay the first hard disk landed in unit 2 and the
+            // machine never booted it ("Check Disk Drive." on a //c), while
+            // "Mount + boot" (mountHdv, bay 0) retyped unit 1 and worked.
+            // So when nothing on the chain holds a medium yet, an empty
+            // non-HDV unit 1 is retyped and takes the disk. With a medium
+            // anywhere, the user has a boot volume (or is building a chain
+            // around one) and the next free HDV unit is still the answer.
+            bool anyLoaded = false;
+            for (int b = 0; b < unitCount && !anyLoaded; ++b)
+                if (const SmartPortUnit* u = sp->unit(static_cast<std::size_t>(b)))
+                    anyLoaded = u->isLoaded();
+            const SmartPortUnit* u0 = unitCount > 0 ? sp->unit(0) : nullptr;
+            bool u0TakesHdv = false;
+            if (u0)
+                for (const auto& option : sp->bayTypeOptions(0))
+                    if (option.first == SmartPortHdvUnit::kKindKey) u0TakesHdv = true;
+            if (!anyLoaded && u0 && !u0->isLoaded() && u0TakesHdv &&
+                u0->kindKey() != SmartPortHdvUnit::kKindKey) {
+                slot = sp->getSlot(); bay = 0; needsType = true;
+            }
+            for (int b = 0; b < unitCount && slot < 0; ++b) {
                 const SmartPortUnit* u = sp->unit(static_cast<std::size_t>(b));
                 if (!u) { slot = sp->getSlot(); bay = b; needsType = true; break; }
                 if (u->kindKey() == SmartPortHdvUnit::kKindKey && !u->isLoaded()) {

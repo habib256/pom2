@@ -128,7 +128,10 @@ public:
     bool flushSmartPortDisk(int unit);
     /// Cold boot directly at the boot ROM of the card in `slot` ($Cn00).
     /// Returns false unless that slot's ROM carries the ProDOS boot
-    /// signature ($Cn01=$20, $Cn03=$00, $Cn05=$03). Slot 6 is bootDisk().
+    /// signature ($Cn01=$20, $Cn03=$00, $Cn05=$03), with RAM untouched; and
+    /// false, after the cold boot, when the machine maps its own firmware
+    /// over that page out of reset (slot 3 on a //e, slots other than 5 on a
+    /// //c). Slot 6 is bootDisk().
     bool bootSlot(int slot);
 
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled

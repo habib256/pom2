@@ -135,17 +135,21 @@ def lock_still_open(lines, fn_start, call_idx):
     if 'StateAccess' in signature:
         return fn_start + 1
 
-    lock = None
-    lock_col = 0
-    for j in range(call_idx - 1, fn_start - 1, -1):
-        code = lines[j].split('//')[0]
+    # EVERY preceding lock, nearest first — not just the nearest one. A
+    # closed one-line scope (`auto cb = [&]{ auto s = c->lockState(); };`)
+    # sitting after a real, still-held `auto st = c->lockState();` used to
+    # end the search and hide the outer lock.
+    for lock in range(call_idx - 1, fn_start - 1, -1):
+        code = lines[lock].split('//')[0]
         cols = [code.find(t) for t in ('lockState()', 'stateMutex()')]
         cols = [c for c in cols if c >= 0]
-        if cols:
-            lock, lock_col = j, max(cols)
-            break
-    if lock is None:
-        return None
+        if cols and scope_open_at(lines, lock, max(cols), call_idx):
+            return lock + 1
+    return None
+
+
+def scope_open_at(lines, lock, lock_col, call_idx):
+    """True when the lock taken at (lock, lock_col) is still held at call_idx."""
     # Count braces CHARACTER by character, not per line. `} else {` closes the
     # lock's block and opens another, netting zero — a per-line counter never
     # sees the depth go negative and reports a scope that has in fact ended.
@@ -163,8 +167,8 @@ def lock_still_open(lines, fn_start, call_idx):
             elif ch == '}':
                 depth -= 1
                 if depth < 0:
-                    return None      # scope closed before the call
-    return lock + 1
+                    return False     # scope closed before the call
+    return True
 
 bad = 0
 checked = 0

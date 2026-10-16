@@ -294,6 +294,9 @@ public:
     const std::string& path()      const { return path_; }
     const std::string& hostFolder() const { return hostFolder_; }
     const std::string& lastError() const { return lastError_; }
+    /// This mount's process-unique identity (0 = nothing loaded). Unlike
+    /// `mountGeneration_` it survives a move from a freshly loaded object.
+    uint64_t mountId() const { return loaded_ ? mountId_ : 0; }
 
     bool isWriteProtected()   const { return wpHeader_ || hostReadOnly_; }
     /// The medium's OWN lock: the 2IMG header's locked bit, and nothing
@@ -361,6 +364,7 @@ private:
     std::vector<std::pair<uint32_t, uint64_t>> backgroundVersions_;
     std::vector<uint64_t> blockVersions_;
     uint64_t mountGeneration_ = 0, backgroundGeneration_ = 0;
+    uint64_t mountId_ = 0;   // process-unique per load (mountId()); 0 = empty
     std::chrono::steady_clock::time_point nextWriteBack_{};
     std::string persistenceError_;
     void markDirty(uint32_t blk);

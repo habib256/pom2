@@ -190,9 +190,9 @@ MainWindow::MainWindow(bool forceIIPlus)
               [this] { stopSlotNetworkWorkers(); },
               [this] {
                   display->setChatMauveCard(nullptr);
-                  // Same rule for the Videx Videoterm's picture source: the
+                  // Same rule for the card picture source (Videoterm, VidHD): the
                   // card is about to be destroyed with the rest of the bus.
-                  display->setVidexCard(nullptr);
+                  display->setCardVideoSource(nullptr);
               },
               [this] {
                   aiServer->attach(controller.get(), display.get(),
@@ -611,6 +611,9 @@ MainWindow::MainWindow(bool forceIIPlus)
             settings->getBool("nsclock_enable", true));
         controller->noSlotClock().setSlot(
             settings->getInt("nsclock_slot", 1));
+        // Zip Chip in the CPU socket (ZipChip.h) — off by default.
+        controller->zipChip().setBootFast(settings->getBool("zip_chip_boot_fast", true));
+        controller->setZipChipInstalled(settings->getBool("zip_chip", false));
         // Composite-NTSC shader params (saved under ntsc_*). We can't
         // call ntscFx->setParams() yet because the postprocessor is
         // lazy-constructed in drawScreenImage; stash them into a
@@ -733,6 +736,18 @@ MainWindow::MainWindow(bool forceIIPlus)
             // chrome.
             if (!romLoaded_) show(pom2::PanelId::Welcome) = true;
         }
+        // Seed screen + Drives side by side, including visitors whose old
+        // browser layout predates the drive rack. Subsequent visits retain
+        // their docking adjustments through imgui.ini.
+        if (!settings->getBool("wasm_screen_drives_layout", false)) {
+            hideAllPanels();
+            show(pom2::PanelId::Drives) = true;
+            if (!romLoaded_) show(pom2::PanelId::Welcome) = true;
+            dockSeeded_ = true;
+            pendingDockLayout_ = DockLayout::Emulation;
+            dockLayoutRequested_ = true;
+            settings->setBool("wasm_screen_drives_layout", true);
+        }
 #endif
     }
 
@@ -768,7 +783,7 @@ MainWindow::MainWindow(bool forceIIPlus)
             image.setWriteBackEnabled(wb);
             const auto path = settings->getString("disk35_path_" + suffix, "");
             const bool mounted = !path.empty() && fs::is_regular_file(path, ec) &&
-                                 controller->mount35(drive, path);
+                                 controller->mount35(drive, path, /*click=*/false);
             // Migrate on EVERY path, the empty / missing / failed ones too:
             // skipping it left a legacy `false` on the drive for good, and
             // every disk mounted there later came up write-protected with no
@@ -835,7 +850,13 @@ MainWindow::MainWindow(bool forceIIPlus)
         if (saved != activeProfile) {
             // Saved choice differs from auto-probe — re-run the full
             // profile machinery (slots will replug, ROMs reload, etc.).
+            // A RESTORE, not a choice: nothing to persist. It also runs
+            // before main() can call setKioskMode, so `!settingsReadOnly()`
+            // was still true and a `--kiosk` launch wrote state.cfg (bug
+            // hunt 2026-10-16). The normal exit persists the profile anyway.
+            restoringSavedProfile_ = true;
             applyProfile(saved);
+            restoringSavedProfile_ = false;
         } else {
             // Same profile but the user might have selected a non-default
             // CPU mode override. Apply it.
@@ -1175,6 +1196,8 @@ void MainWindow::applyDockLayout(DockLayout preset)
             break;
 
         case DockLayout::Emulation:
+            focusDefaultDrives_ = true;
+            dock("Drives", right);
             dock("Disk Library", right);
             dock("Cassette Deck", right);
             dock("Floppy Emu (BMOW)", right);
@@ -1328,6 +1351,7 @@ void MainWindow::render()
         tb.memoryGridVisible  = show(pom2::PanelId::MemGrid);
         tb.activeProfile      = activeProfile;
         tb.hasPrimaryDiskCard = (primaryDiskII() != nullptr);
+        tb.videoMenuItems = [this] { renderColorPipelineItems(); };
         tb.charRomLocale      = charRomLocale;
         auto isMonoHiRes = [](Apple2Display::HiResMode m) {
             return m == Apple2Display::HiResMode::MonoWhite ||

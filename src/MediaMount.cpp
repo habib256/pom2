@@ -146,6 +146,14 @@ bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
         }
     }
 
+    // Save the OUTGOING disk now, unlocked, through the floppy autosave:
+    // `installDisk` flushes a dirty outgoing medium inline, a sector
+    // re-encode + write + fsync with `stateMutex` held (CLAUDE.md's standing
+    // rule; bug hunt 2026-10-16). Normally a no-op; a failure here is not
+    // fatal — the inline flush stays the fallback and still refuses the
+    // swap when the medium cannot be saved.
+    { std::string ignored; (void)ctrl.syncFloppyMedia(ignored); }
+
     // Phase 2 — the lock, held only for the swap. Same mutex the CPU worker
     // takes around softSwitchAccess: installing rebuilds the drive's track
     // buffers, so it must not race the LSS.

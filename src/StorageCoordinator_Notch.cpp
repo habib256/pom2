@@ -21,6 +21,7 @@
 #include "SmartPortCard.h"
 #include "SmartPortUnit.h"
 
+#include <mutex>
 #include <set>
 #include <string>
 #include <utility>
@@ -113,12 +114,21 @@ StorageCoordinator::setMediaNotch(EmulationController& controller,
 /// (the test suite, a kiosk) has nothing to migrate.
 bool StorageCoordinator::migrateLegacyWriteBack(
     bool keyValue, const std::vector<std::string>& paths,
-    std::vector<std::string>& warnings)
+    std::vector<std::string>& warnings, const std::string& key)
 {
     if (keyValue || !pom2::mediaWritableByDefault()) return keyValue;
+    static std::mutex migratedMutex;
+    static std::set<std::string> migrated;   // keys whose disk took the notch
+    if (!key.empty()) {
+        std::lock_guard<std::mutex> lk(migratedMutex);
+        if (migrated.count(key)) return true;    // done; the flag reverts
+    }
     bool allNotched = true;
+    bool anyPath = false;
     for (const auto& p : paths) {
-        if (p.empty() || pom2::mediaFileIsReadOnly(p)) continue;
+        if (p.empty()) continue;
+        anyPath = true;
+        if (pom2::mediaFileIsReadOnly(p)) continue;
         std::string err;
         if (pom2::setMediaNotch(p, true, err)) {
             pom2::log().info("Media",
@@ -129,6 +139,12 @@ bool StorageCoordinator::migrateLegacyWriteBack(
             warnings.push_back("could not write-protect " + p + " (" + err +
                                "); keeping write-back off for this session");
         }
+    }
+    // Only a migration that reached a disk counts: an empty bay keeps the key
+    // live for the disk a later restore finds there.
+    if (!key.empty() && anyPath && allNotched) {
+        std::lock_guard<std::mutex> lk(migratedMutex);
+        migrated.insert(key);
     }
     return allNotched;
 }

@@ -41,12 +41,17 @@ constexpr uint8_t  kDriverOff  = 0x58;
 constexpr uint8_t  kReadOff    = 0x6E;
 constexpr uint8_t  kWriteOff   = 0x9C;
 constexpr uint8_t  kStatusOff  = 0xD0;
-constexpr uint8_t  kHaltOff    = 0xE8;   // boot-failure halt loop
+/// Boot failure, part 1: the autostart-scan test, in the gap
+/// between the signature and the boot routine ($Cn08-$Cn1F, all 24 bytes
+/// used) — see buildRom().
+constexpr uint8_t  kBootFailOff = 0x08;
+/// Boot failure, part 2: restore the I/O hooks, print "ERR", cold BASIC.
+constexpr uint8_t  kBootMsgOff = 0xE3;
 /// The ProDOS entry ($CnFF points here, not at the dispatch): latch ProDOS's
 /// unit byte into $C0n6 so the card knows which drive, then JMP to the
-/// dispatch. It lives in the free bytes above the halt loop because the
-/// dispatch region is exactly full (22 of 22).
-constexpr uint8_t  kEntryOff   = 0xEB;
+/// dispatch. It lives in the free bytes above the boot-failure message
+/// because the dispatch region is exactly full (22 of 22).
+constexpr uint8_t  kEntryOff   = 0xF2;
 
 // Block-level I/O trace, gated by POM2_TRACE_HDV=1 (mirrors the env-var
 // diagnostics in DiskIICard.cpp / Memory.cpp). One line per 512-byte block
@@ -106,10 +111,18 @@ bool ProDOSHardDiskCard::loadImageFromBytes(std::vector<uint8_t> bytes,
                                             const std::string& label,
                                             const std::string& hostFolder)
 {
-    // Drive 1 only: a synthesised host-folder volume is the boot volume.
-    const bool ok = backings_[0].loadFromBytes(std::move(bytes), label, hostFolder);
-    lastError_ = ok ? std::string{} : backings_[0].lastError();
-    if (ok) mediumChanged(0);
+    // Drive 1: a synthesised host-folder volume is the boot volume.
+    return loadDriveFromBytes(0, std::move(bytes), label, hostFolder);
+}
+
+bool ProDOSHardDiskCard::loadDriveFromBytes(int drive, std::vector<uint8_t> bytes,
+                                            const std::string& label,
+                                            const std::string& hostFolder)
+{
+    if (!validDrive(drive)) { lastError_ = "no such drive"; return false; }
+    const bool ok = backings_[drive].loadFromBytes(std::move(bytes), label, hostFolder);
+    lastError_ = ok ? std::string{} : backings_[drive].lastError();
+    if (ok) mediumChanged(drive);
     return ok;
 }
 
@@ -185,6 +198,7 @@ pom2::MediaBayInfo ProDOSHardDiskCard::bayInfo(int bay) const
     info.supportsWriteBack = b.canWriteBack();
     info.persistenceState  = b.persistenceState();
     info.persistenceError  = b.persistenceError();
+    info.mountId           = b.mountId();
     return info;
 }
 
@@ -371,14 +385,15 @@ void ProDOSHardDiskCard::buildRom()
 
     // ── Layout ──────────────────────────────────────────────────────────
     //   $Cn00..$Cn07  ProDOS signature + the PR#n entry
+    //   $Cn08..$Cn1F  boot failure: continue the autostart scan?
     //   $Cn20..$Cn44  boot
     //   $Cn45..$Cn57  shared error tail  ($27 / $28 / $2B)
     //   $Cn58..$Cn6D  ProDOS driver dispatch
     //   $Cn6E..$Cn96  read block
     //   $Cn9C..$CnCB  write block
     //   $CnD0..$CnE2  STATUS
-    //   $CnE8..$CnEA  boot-failure halt
-    //   $CnEB..$CnF2  ProDOS entry: latch the drive, JMP dispatch
+    //   $CnE3..$CnF1  boot failure: SETVID/SETKBD, "ERR", JMP $E000
+    //   $CnF2..$CnF9  ProDOS entry: latch the drive, JMP dispatch
     //   $CnFE..$CnFF  capability + driver-entry bytes
     //
     // Every address in the page below is a LABEL. The dispatch's three
@@ -394,11 +409,22 @@ void ProDOSHardDiskCard::buildRom()
     // The signature bytes ProDOS scans for are $Cn01/$Cn03/$Cn05/$Cn07, and
     // $Cn01 doubles as the JMP's low byte — which is exactly why boot lives
     // at $Cn20 and not somewhere more convenient.
+    //
+    // $Cn07 = $3C, the Disk II's own byte, exactly as AppleWin's HDD firmware
+    // does it (firmware/HDD/hddrvr.a65, `start`: LDA #$20 / LDA #$00 /
+    // LDA #$03 / LDA #$3C, with the note "$Cn07 should be $00 for a SmartPort
+    // Interface, but changing this means that it won't autoboot on ][, ][+
+    // and unenhanced IIe"). The autostart scan of those machines compares
+    // FOUR bytes ($FABA: LDY #$07), the enhanced //e only three (LDY #$05);
+    // the old $01 made an Unenhanced //e walk straight past a bootable HDV.
+    // ProDOS 8 only asks $Cn07 whether the device is a SmartPort ($00); any
+    // other value is a plain block device driven through $CnFF, which this
+    // card is. The CFFA ships $3C for the same reason.
     a.region("entry", 0x00, 0x08)
      .jmp("boot")                 // $Cn01 = $20 falls out of the JMP operand
      .poke(0x03, 0x00)            // ProDOS signature byte
      .poke(0x05, 0x03)            // ProDOS signature byte
-     .poke(0x07, 0x01);           // non-zero: plain block device, not SmartPort
+     .poke(0x07, 0x3C);           // autostart-bootable; non-zero: not SmartPort
 
     a.region("boot", kBootOff, kErrNoDev)
      .emit({ 0xA9, 0x01,       // LDA #$01        ; read command
@@ -417,7 +443,37 @@ void ProDOSHardDiskCard::buildRom()
      .emit({ 0xA2, kUnitNumber,// LDX #unit
              0xA9, 0x00,       // LDA #$00
              0x4C, 0x01, 0x08 })                  // JMP $0801
-     .label("bootErr").jmp("halt");
+     .label("bootErr").jmp("bootFail");
+
+    // ── Boot failure ($Cn08) ───────────────────────────────────────────
+    // An empty bay (or a block 0 that will not read) used to park the CPU in
+    // a JMP-to-self, so a //e with an empty HDV card in slot 7 never reached
+    // the Disk II in slot 6: the autostart scan runs $C7 → $C1 and stops at
+    // the first slot that signs. The real Liron firmware answers this case
+    // (roms/liron.rom $E90-$ED3, its $CE90 bank): SETVID, SETKBD, then
+    //     LDX $00 / BNE err / LDX $01 / CPX $07F8 / BNE err / JMP $FABA
+    // — $00 = 0 and $01 = $07F8 = $Cn is exactly what the scan loop at
+    // $FAB4-$FAD2 leaves behind when it JMP ($0000)s into a slot, so the card
+    // hands control back to the loop, which DECs $01 and tries the next slot
+    // down. AppleWin's HDD firmware does the same job more bluntly
+    // (`BootSlot6: jmp slot6`). Anything else — PR#n, a direct boot — prints
+    // an error and goes to BASIC (`JMP $E000`).
+    //
+    // One check the Liron does not need: the opcode at $FABA must be the
+    // scan's `LDY #imm` ($A0). A Liron's code lives in its own card; this
+    // page can be entered on any ROM, and on a //c (`LDA $AC`) or an
+    // original Apple ][ $FABA is not the scan loop at all.
+    a.region("bootFail", kBootFailOff, kBootOff)
+     .emit({ 0xA6, 0x00 })            // LDX $00
+     .branch(0xD0, "bootMsgJ")        // BNE → not the scan
+     .emit({ 0xA6, 0x01,              // LDX $01
+             0xEC, 0xF8, 0x07 })      // CPX $07F8
+     .branch(0xD0, "bootMsgJ")
+     .emit({ 0xAD, 0xBA, 0xFA,        // LDA $FABA
+             0xC9, 0xA0 })            // CMP #$A0   ; LDY #imm = the scan
+     .branch(0xD0, "bootMsgJ")
+     .emit({ 0x4C, 0xBA, 0xFA })      // JMP $FABA  ; next slot down
+     .label("bootMsgJ").jmp("bootMsg");
 
     // ── Shared error tail ($Cn45) ──────────────────────────────────────
     // Three codes, one exit. Both transfer routines branch here instead of
@@ -560,7 +616,7 @@ void ProDOSHardDiskCard::buildRom()
     // READ and WRITE already gave. Only bit 7 is tested here: bit 5 is about
     // whatever block was last selected and has nothing to do with STATUS, so
     // `BIT` (N = bit 7, V = bit 6) is exactly the right instruction.
-    a.region("status", kStatusOff, kHaltOff)
+    a.region("status", kStatusOff, kBootMsgOff)
      .emit({ 0x2C, statReg, 0xC0 })   // BIT $C0n3   ; N = no media
      .branch(0x10, "statusOk")        // BPL statusOk
      .emit({ 0xA9, 0x28,              // LDA #$28  no device connected
@@ -573,12 +629,19 @@ void ProDOSHardDiskCard::buildRom()
              0x18,              // CLC
              0x60 });           // RTS
 
-    // Boot failure: a plain infinite loop. Monitor routines are deliberately
-    // avoided — a failed HD boot must be safe even if the main ROM is not
-    // fully initialised yet.
-    a.region("halt", kHaltOff, kHaltOff + 3).jmp("halt");
+    // Boot failure, not entered from the scan: put the I/O hooks back first
+    // (after PR#n, CSW points at THIS page and COUT would reboot it), then
+    // the Monitor's CROUT + PRERR ("ERR" + bell) and Applesoft's cold start,
+    // like the Liron's message path ends in `JMP $E000`. All four are fixed
+    // Monitor/BASIC entry points on every Apple II ROM.
+    a.region("bootMsg", kBootMsgOff, kEntryOff)
+     .emit({ 0x20, 0x93, 0xFE,        // JSR $FE93  SETVID
+             0x20, 0x89, 0xFE,        // JSR $FE89  SETKBD
+             0x20, 0x8E, 0xFD,        // JSR $FD8E  CROUT
+             0x20, 0x2D, 0xFF,        // JSR $FF2D  PRERR
+             0x4C, 0x00, 0xE0 });     // JMP $E000  BASIC
 
-    // ── ProDOS entry ($CnEB) ───────────────────────────────────────────
+    // ── ProDOS entry ($CnF2) ───────────────────────────────────────────
     // ProDOS passes the unit in $43: bits 6-4 the slot, bit 7 the DRIVE. The
     // card has two (2026-09-11), so the drive bit has to reach it before
     // anything else does — and STATUS, READ and WRITE all start by asking

@@ -31,6 +31,7 @@
 #include "FujiNetCardFactory.h"
 #include "AppleParallelCard.h"
 #include "VidexVideotermCard.h"
+#include "VidHDCard.h"
 #include "GrapplerCard.h"
 #include "GrapplerClassicCard.h"
 #include "LeChatMauveCard.h"
@@ -48,6 +49,8 @@
 #include "SoftCardZ80.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
+#include "SlinkyCard.h"
+#include "SamCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
 #include "WorkstationCard.h"
@@ -179,6 +182,7 @@ int main()
     expectLiveKey(std::make_unique<GrapplerClassicCard>(3), "grappler1");
     expectLiveKey(std::make_unique<AppleParallelCard>(3), "pic");
     expectLiveKey(std::make_unique<VidexVideotermCard>(3), "videoterm");
+    expectLiveKey(std::make_unique<VidHDCard>(3), "vidhd");
     expectLiveKey(std::make_unique<ClockCard>(3), "clock");
     expectLiveKey(std::make_unique<SoftCardZ80>(), "softcard");
     expectLiveKey(std::make_unique<LeChatMauveCard>(3), "chatmauve");
@@ -200,6 +204,8 @@ int main()
     expectLiveKey(std::make_unique<pom2::WorkstationCard>(3), "workstation");
     expectLiveKey(std::make_unique<pom2::FourPlayCard>(3), "4play");
     expectLiveKey(std::make_unique<pom2::TranswarpCard>(3), "transwarp");
+    expectLiveKey(std::make_unique<pom2::SlinkyCard>(3), "slinky");
+    expectLiveKey(std::make_unique<pom2::SamCard>(3), "sam");
     expectLiveKey(std::make_unique<pom2::LironCard>(3), "liron");
 
     // Every catalog key a live card can carry must round-trip. Keys with no
@@ -272,6 +278,23 @@ int main()
     const auto& iiplus = slots.resolve(settings, pom2::SystemProfile::AppleIIPlus);
     assert(iiplus[3] == "videoterm");
     assert(slots.dedupCleared(3).empty());
+
+    // The VidHD is the mirror case: a //e card (its SHR lives in aux RAM),
+    // kept on every slotted //e, dropped on the ][ / ][+ and remembered.
+    settings.setString("slot_3_card", "vidhd");
+    for (auto profile : { pom2::SystemProfile::AppleIIeUnenhanced,
+                          pom2::SystemProfile::AppleIIe,
+                          pom2::SystemProfile::AppleIIePAL }) {
+        const auto& plan = slots.resolve(settings, profile);
+        assert(plan[3] == "vidhd");
+        assert(slots.dedupCleared(3).empty());
+    }
+    for (auto profile : { pom2::SystemProfile::AppleII,
+                          pom2::SystemProfile::AppleIIPlus }) {
+        const auto& plan = slots.resolve(settings, profile);
+        assert(plan[3].empty());
+        assert(slots.dedupCleared(3) == "vidhd");
+    }
 
     // A live failure/absence must never erase the effective request. This is
     // the contract that preserves a CFFA assignment while its ROM is missing.

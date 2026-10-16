@@ -613,7 +613,16 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
             --jq '.jobs[] | select(.conclusion == "failure") | "- " + .name + ": " + ([.steps[] | select(.conclusion == "failure") | .name] | join(", "))' \
             >> "$body_file" || printf 'Job details unavailable; see the run above.\n' >> "$body_file"
-          if gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed > "$log_file"; then
+          # Per failed JOB, not per run: this job runs inside the same run,
+          # which is still in progress, and `gh run view --log-failed` refuses
+          # an in-progress run ("logs will be available when it is complete"),
+          # so the excerpts never appeared. A finished job's log is served.
+          failed_ids=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "failure") | .id' || true)
+          for id in $failed_ids; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" >> "$log_file" || true
+          done
+          if [ -s "$log_file" ]; then
             python3 - "$log_file" "$body_file" <<'PY'
           import re, sys
           lines = []

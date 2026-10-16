@@ -18,7 +18,7 @@
 // the memory map, driving the REAL firmware ROM's view of the card:
 //   - 4 KB firmware ROM loads; per-slot $CnXX image visible at $C700 (slot 7)
 //   - ProDOS/SmartPort boot signature $Cn01/03/05/07 = $20/$00/$03/$3C
-//     (CFFA is F8-autobootable, unlike the synthetic HDV's $Cn07=$01)
+//     (CFFA is F8-autobootable: $Cn07=$3C, like the synthetic HDV card since 2026-10-16)
 //   - $C0nX → ATA decode (8↔16-bit data latch, taskfile regs): READ a sector
 //     and WRITE a sector round-trip through AtaBlockDevice via Memory I/O.
 //

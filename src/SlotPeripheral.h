@@ -90,6 +90,15 @@ public:
     virtual uint8_t expansionRomRead (uint16_t /*offset*/) { return 0xFF; }
     virtual void    expansionRomWrite(uint16_t /*offset*/, uint8_t /*v*/) {}
 
+    /// Side-effect-free twins of `slotRomRead` / `expansionRomRead`, for the
+    /// debugger and memory viewer (`Memory::peekCpuView`): the byte the CPU
+    /// would fetch, with nothing latched or clocked. False = this card cannot
+    /// answer without an action (MMIO in the page) — the viewer then shows
+    /// its flat mirror. Only cards whose ROM a //c punches through its forced
+    /// INTCXROM need them today (`exposesIicOnboardRom`).
+    virtual bool peekSlotRom(uint8_t /*low8*/, uint8_t& /*out*/) const { return false; }
+    virtual bool peekExpansionRom(uint16_t /*offset*/, uint8_t& /*out*/) const { return false; }
+
     /// Does this card drive the shared $C800-$CFFF (/IOSTB) window at all?
     /// MAME `a2bus.h:145`: `virtual bool take_c800() const { return false; }`
     /// — "override and return true if your card can take over the /IOSTB
@@ -306,6 +315,14 @@ protected:
     /// it (standalone test harnesses). Read the pointer once at plug/reset;
     /// dereferencing it per instruction is one load, no call.
     const uint64_t* busCycleCounter() const;
+
+    /// The //e's auxiliary 64 KB as the CPU currently sees it — the bank
+    /// RAMWRT / 80STORE write, i.e. the selected RamWorks bank
+    /// (`Memory::auxData`). For a card that OBSERVES aux RAM the way a
+    /// video card watches the bus go by (VidHD's Super Hi-Res, VidHDCard.h).
+    /// Read-only; nullptr when the card is not plugged or its bus has no
+    /// Memory behind it. Stable for the Memory's lifetime.
+    const uint8_t* busAuxRam() const;
 
 private:
     friend class SlotBus;

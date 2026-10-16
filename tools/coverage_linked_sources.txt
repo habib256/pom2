@@ -116,6 +116,7 @@ src/TnfsMedia.cpp
 src/TranswarpCard.cpp
 src/UthernetCard.cpp
 src/UthernetIICard.cpp
+src/VidHDCard.cpp
 src/VidexVideotermCard.cpp
 src/W5100Device.cpp
 src/W5100HostSockets.cpp

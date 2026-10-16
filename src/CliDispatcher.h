@@ -119,9 +119,10 @@ struct CliPlan {
     /// GUI and `--kiosk` mode.
     std::string                     bootDiskPath;
 
-    /// `--prodos-folder <path>` synthesises a read-only /HOST/ ProDOS
-    /// block volume from a host directory and mounts it before the optional
-    /// positional boot disk starts.
+    /// `--prodos-folder <path>` synthesises a /HOST/ ProDOS block volume
+    /// from a host directory (guest writes go back to the folder) and mounts
+    /// it — drive 1 of an HDV card, or drive 2 beside a positional HDV. It
+    /// has no boot blocks, so nothing boots from it.
     std::string                     prodosFolderPath;
 
     /// `--kiosk`: launch chrome-free, full-screen, with no menus/panels —

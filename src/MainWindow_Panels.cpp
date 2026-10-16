@@ -34,6 +34,7 @@
 // the god-object does not get to grow by 250 lines of table.
 
 #include "AudioCoordinator.h"
+#include "IconsFontAwesome6.h"
 #include "DevicePanelCoordinator.h"
 #include "MainWindow.h"
 #include "PrinterCoordinator.h"
@@ -263,12 +264,70 @@ void MainWindow::registerPanelDraws()
 
 // ── View 1: menu rows ────────────────────────────────────────────────────
 
+namespace {
+
+/// The menu glyph of each panel (Font Awesome 6, merged into the UI font in
+/// main.cpp). Menus only — the palette searches titles and stays plain text.
+/// Kept beside panelMenuItem rather than in PanelCatalog.h, which is data
+/// every test links and has no business pulling the icon font's macros.
+const char* panelIcon(pom2::PanelId id)
+{
+    using P = pom2::PanelId;
+    switch (id) {
+    case P::DiskLibrary:   return ICON_FA_BOOK_OPEN;
+    case P::SlotConfig:    return ICON_FA_MICROCHIP;
+    case P::Rewind:        return ICON_FA_CLOCK_ROTATE_LEFT;
+    case P::Drives:        return ICON_FA_FLOPPY_DISK;
+    case P::Media:         return ICON_FA_LAYER_GROUP;
+    case P::DiskII:        return ICON_FA_FLOPPY_DISK;
+    case P::Disk35:        return ICON_FA_FLOPPY_DISK;
+    case P::Hdv:           return ICON_FA_HARD_DRIVE;
+    case P::SmartPort:     return ICON_FA_SITEMAP;
+    case P::FloppyEmu:     return ICON_FA_SD_CARD;
+    case P::Cassette:      return ICON_FA_TAPE;
+    case P::Mixer:         return ICON_FA_SLIDERS;
+    case P::Mockingboard:  return ICON_FA_MUSIC;
+    case P::Phasor:        return ICON_FA_MUSIC;
+    case P::EchoPlus:      return ICON_FA_MICROPHONE;
+    case P::Keyboard:      return ICON_FA_KEYBOARD;
+    case P::Joystick:      return ICON_FA_GAMEPAD;
+    case P::Mouse:         return ICON_FA_COMPUTER_MOUSE;
+    case P::Printer:       return ICON_FA_PRINT;
+    case P::ImageWriter:   return ICON_FA_IMAGES;
+    case P::Ssc:           return ICON_FA_PLUG;
+    case P::Ethernet:      return ICON_FA_ETHERNET;
+    case P::FujiNet:       return ICON_FA_WIFI;
+    case P::ChatMauve:     return ICON_FA_PALETTE;
+    case P::NoSlotClock:   return ICON_FA_CLOCK;
+    case P::Crt:           return ICON_FA_TV;
+    case P::Voxel:         return ICON_FA_CUBES;
+    case P::VoxelSettings: return ICON_FA_CUBE;
+    case P::MemViewer:     return ICON_FA_MEMORY;
+    case P::Debugger:      return ICON_FA_BUG;
+    case P::MemBar:        return ICON_FA_CHART_SIMPLE;
+    case P::MemBarH:       return ICON_FA_CHART_BAR;
+    case P::MemGrid:       return ICON_FA_TABLE_CELLS;
+    case P::HgrPaint:      return ICON_FA_PAINTBRUSH;
+    case P::HgrSprite:     return ICON_FA_PEN_RULER;
+    case P::AiControl:     return ICON_FA_ROBOT;
+    case P::Welcome:       return ICON_FA_CIRCLE_QUESTION;
+    case P::RomStatus:     return ICON_FA_MICROCHIP;
+    case P::Abstraction:   return ICON_FA_DIAGRAM_PROJECT;
+    case P::Count:         break;
+    }
+    return "";
+}
+
+}  // namespace
+
 void MainWindow::panelMenuItem(pom2::PanelId id)
 {
     if (panels_.hidden(id)) return;
     const pom2::PanelInfo& info = pom2::panelInfo(id);
     const bool enabled = panels_.available(id);
-    const std::string label = panels_.title(id);
+    // The icon prefix leaves the ImGui ID stable per panel (it is part of a
+    // label that was already unique), and a missing glyph font shows '?'.
+    const std::string label = std::string(panelIcon(id)) + "  " + panels_.title(id);
 
     if (!enabled) ImGui::BeginDisabled();
     ImGui::MenuItem(label.c_str(), info.shortcut, &panels_.visible(id));

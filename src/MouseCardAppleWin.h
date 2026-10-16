@@ -183,7 +183,9 @@ public:
     std::string_view name() const override { return kCardName; }
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
-    uint8_t slotRomRead(uint8_t low8) override;
+    uint8_t slotRomRead(uint8_t low8) override { return romByte(low8); }
+    bool    peekSlotRom(uint8_t low8, uint8_t& out) const override
+    { out = romByte(low8); return true; }
     void    advanceCycles(int cycles) override;
     void    onReset() override;
     void    onPlug() override;
@@ -208,6 +210,7 @@ public:
     bool    exposesIicOnboardRom() const override { return slotRomLoaded; }
 
 private:
+    uint8_t romByte(uint8_t low8) const;
     int      slot_;
     MC6821   pia;
     std::array<uint8_t, 0x800> slotRom{};

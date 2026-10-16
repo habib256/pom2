@@ -61,6 +61,7 @@
 #include "Sony35Drive.h"
 #include "Disk35Image.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -329,6 +330,33 @@ int main()
         if (restored.loadSnapshotState(v1.data(), v1.size()) != v1.size() ||
             restored.mediaMask() != 0x05)
             fail("an XSP1 port blob no longer loads");
+    }
+
+    // A port section that names itself ('XSP2') but does not parse is a
+    // corrupt blob: the MEX restore must refuse it, not load it with a reset
+    // port (bug hunt 2026-10-16).
+    {
+        Memory mem;
+        M6502  cpu(&mem);
+        pom2::IWMDevice iwm;
+        mem.setCpu(&cpu);
+        mem.setIWM(&iwm);
+        mem.setIWMAuthoritative(true);
+        mem.setIIEMode(true);
+        pom2::IIcExternalSmartPort port(&mem.slotBus());
+        mem.setExternalSmartPort(&port);
+        if (!mem.loadAppleIIRom(rom.c_str(), /*pickLowerHalf=*/true))
+            fail("//c ROM did not load");
+        std::vector<uint8_t> blob;
+        mem.appendSnapshotState(blob);
+        if (!mem.loadSnapshotState(blob.data(), blob.size()))
+            fail("a clean //c MEX blob no longer loads");
+        const uint8_t tag[4] = {'X', 'S', 'P', '2'};
+        const auto at = std::search(blob.begin(), blob.end(), tag, tag + 4);
+        if (at == blob.end() || blob.end() - at < 8) fail("no XSP2 section in the MEX blob");
+        std::fill(at + 4, at + 8, uint8_t{0xFF});        // IWM length: past the end
+        if (mem.loadSnapshotState(blob.data(), blob.size()))
+            fail("a corrupt port section was accepted");
     }
 
     // A. Internal 5.25" boots; the external 3.5" is a data volume.

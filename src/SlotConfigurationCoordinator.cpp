@@ -25,6 +25,7 @@
 #include "FujiNetCard.h"
 #include "AppleParallelCard.h"
 #include "VidexVideotermCard.h"
+#include "VidHDCard.h"
 #include "GrapplerCard.h"
 #include "GrapplerClassicCard.h"
 #include "LeChatMauveCard.h"
@@ -39,6 +40,8 @@
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
 #include "SlotBus.h"
+#include "SamCard.h"
+#include "SlinkyCard.h"
 #include "SmartPortCard.h"
 #include "SoftCardZ80.h"
 #include "SuperSerialCard.h"
@@ -83,6 +86,7 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const GrapplerClassicCard*>(&peripheral)) return "grappler1";
     if (dynamic_cast<const AppleParallelCard*>(&peripheral)) return "pic";
     if (dynamic_cast<const VidexVideotermCard*>(&peripheral)) return "videoterm";
+    if (dynamic_cast<const VidHDCard*>(&peripheral)) return "vidhd";
     if (dynamic_cast<const ClockCard*>(&peripheral)) return "clock";
     if (dynamic_cast<const SoftCardZ80*>(&peripheral)) return "softcard";
     if (dynamic_cast<const LeChatMauveCard*>(&peripheral)) return "chatmauve";
@@ -111,6 +115,8 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const pom2::FourPlayCard*>(&peripheral)) return "4play";
     if (dynamic_cast<const pom2::TranswarpCard*>(&peripheral))
         return "transwarp";
+    if (dynamic_cast<const pom2::SlinkyCard*>(&peripheral)) return "slinky";
+    if (dynamic_cast<const pom2::SamCard*>(&peripheral)) return "sam";
     return {};
 }
 
@@ -201,6 +207,23 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
                 std::string(cfg.displayName) +
                 " (the Videx Videoterm is a ][ / ][+ card; this machine's "
                 "80 columns are built in); user setting kept");
+            dedupCleared_[slot] = effectivePlan_[slot];
+            effectivePlan_[slot].clear();
+            continue;
+        }
+
+        // The VidHD is the //e's card: it reads its Super Hi-Res from the
+        // //e's aux RAM, which a ][ / ][+ does not have (AppleWin mirrors the
+        // paging switches into a card-side RAM there; POM2 does not), and a
+        // //c-class machine has no slot to put it in. Dropped and
+        // remembered the same way as the Videoterm above.
+        if (effectivePlan_[slot] == "vidhd" &&
+            (!cfg.iieMode || cfg.noPhysicalSlots)) {
+            log().info("Slots",
+                "Slot " + std::to_string(slot) + " left empty on " +
+                std::string(cfg.displayName) +
+                " (the VidHD reads Super Hi-Res from a //e's aux RAM; it "
+                "needs a //e with expansion slots); user setting kept");
             dedupCleared_[slot] = effectivePlan_[slot];
             effectivePlan_[slot].clear();
             continue;
