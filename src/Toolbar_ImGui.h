@@ -36,6 +36,7 @@
 #include "SystemProfile.h"
 
 #include <cstdint>
+#include <functional>
 
 namespace pom2 {
 
@@ -66,6 +67,10 @@ public:
         // recording is on AND there is history to scrub.
         bool          rewindEnabled       = false;
         bool          rewindHasFrames     = false;
+        /// The video button's popup body: the host's own colour-pipeline
+        /// menu items (the Display menu draws the same function), so the two
+        /// cannot list different modes. Empty → the button is not drawn.
+        std::function<void()> videoMenuItems;
     };
 
     struct Result {

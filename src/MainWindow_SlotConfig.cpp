@@ -51,6 +51,7 @@
 #include "FloppyEmu_ImGui.h"
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
+#include "SamCard.h"
 #include "EmulationController.h"
 #include "FujiNetCard.h"
 #include "FujiNetCardFactory.h"
@@ -59,6 +60,7 @@
 #include "GrapplerCard.h"
 #include "LeChatMauveCard.h"
 #include "VidexVideotermCard.h"
+#include "VidHDCard.h"
 #include "Logger.h"
 #include "Memory.h"
 #include "Mockingboard.h"
@@ -123,6 +125,11 @@ bool MainWindow::setSlotCardFromCli(int slot, const std::string& key,
                 "80 columns are built in";
         return false;
     }
+    if (key == "vidhd" && !cfg.iieMode) {
+        error = "the VidHD reads Super Hi-Res from a //e's aux RAM; this "
+                "machine has none";
+        return false;
+    }
     const std::string settingKey = pom2::slotCardSettingKey(cfg, slot);
     const std::string previous = settings->getString(settingKey, "");
     settings->setString(settingKey, key);
@@ -156,6 +163,13 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     // on what is actually there, and the panel reads it separately.
     const auto& plan = slotConfigCoordinator_->resolve(*settings, activeProfile);
     for (int s = 1; s <= 7; ++s) slotCards[s] = plan[s];
+
+    // Every card is rebuilt below, and a drive that was spinning goes with
+    // its card without ever sending the motor-off its spin loop waits for:
+    // the hum looped on after a profile switch or a Slot Config apply (bug
+    // hunt 2026-10-16). Both mechanical-sound sources start silent.
+    controller->floppySound525().reset();
+    controller->floppySound35().reset();
 
     // ── Per-card construction helpers. Each one populates the matching
     //    raw `*Card` member pointer (non-owning) for the rest of MainWindow
@@ -547,6 +561,20 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         st.memory().slotBus().plug(s, std::move(card));
     };
 
+    auto plugSam = [&](int s) {
+        // S.A.M. 8-bit DAC: no ROM. The CPU pointer gives each DAC write its
+        // sub-instruction cycle stamp (SamCard.h).
+        auto card = std::make_unique<pom2::SamCard>(s);
+        card->setSampleRate(controller->audio().getActualSampleRate());
+        card->setCpu(&st.cpu());
+        const auto mix = audioCoordinator_->restoreCardSettings(
+            *settings, pom2::AudioCoordinator::CardKind::Sam, s, 0.7f);
+        card->setVolume(mix.volume);
+        card->setMuted (mix.muted);
+        registerAudioSource(card->audioSource());
+        st.memory().slotBus().plug(s, std::move(card));
+    };
+
     auto plugEchoPlusTms = [&](int s) {
         // Street Electronics Echo+ AS ACTUALLY SHIPPED — 2×AY-3-8913 +
         // TMS5220. Scaffold only: register decode is present so software
@@ -758,8 +786,9 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "phasor")      plugPhasor(s);
         else if (kind == "echoplus")    plugEchoPlus(s);
         else if (kind == "echoplus_tms") plugEchoPlusTms(s);
+        else if (kind == "sam")         plugSam(s);
         else if (kind == "grappler")    plugGrappler(s);
-        else if (kind == "grappler1" || kind == "pic") {
+        else if (kind == "grappler1" || kind == "pic" || kind == "slinky") {
             auto made = slotCardFactory_->create(
                 { kind, s, cpuIsCmosForSlots, activeProfile });
             if (!made.warning.empty())
@@ -778,7 +807,19 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             if (made) {
                 auto* videx = static_cast<VidexVideotermCard*>(made.card.get());
                 st.memory().slotBus().plug(s, std::move(made.card));
-                display->setVidexCard(videx);
+                display->setCardVideoSource(videx);
+            }
+        }
+        else if (kind == "vidhd") {
+            // VidHD: the same display seam as the Videoterm (the resolver
+            // keeps it off every non-//e plan, so the two never meet). The
+            // card reads aux RAM through the bus it is plugged into.
+            auto made = slotCardFactory_->create(
+                { kind, s, cpuIsCmosForSlots, activeProfile });
+            if (made) {
+                auto* vidhd = static_cast<VidHDCard*>(made.card.get());
+                st.memory().slotBus().plug(s, std::move(made.card));
+                display->setCardVideoSource(vidhd);
             }
         }
         else if (kind == "workstation") plugWorkstation(s);

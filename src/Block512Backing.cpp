@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "Block512Backing.h"
+#include "MediaAutosave.h"
 #include "MediaNotch.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
@@ -285,6 +286,7 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     dirtyBlocks_.assign(blockCount(), false);
     blockVersions_.assign(blockCount(), 0);
     ++mountGeneration_;
+    mountId_ = pom2::nextMediaCaptureSeq();
     persistenceError_.clear();
     nextWriteBack_ = {};
     anyDirty_ = false;
@@ -324,6 +326,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     dirtyBlocks_.assign(blockCount(), false);
     blockVersions_.assign(blockCount(), 0);
     ++mountGeneration_;
+    mountId_ = pom2::nextMediaCaptureSeq();
     persistenceError_.clear();
     nextWriteBack_ = {};
     anyDirty_ = false;
@@ -337,6 +340,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
 void Block512Backing::eject()
 {
     ++mountGeneration_;
+    mountId_ = 0;
     blockVersions_.clear();
     persistenceError_.clear();
     nextWriteBack_ = {};

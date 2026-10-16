@@ -169,8 +169,12 @@ int main() {
         pom2::StorageCoordinator storage;
         assert(storage.restoreMediaFromSettings(controller.memory().slotBus(), bootSettings).ok());
         if (profile != SystemProfile::AppleII)
+            // The S7 HDV signs $Cn07 = $3C (AppleWin's HDD firmware does too),
+            // so the four-byte autostart of the ][+ and the Unenhanced //e
+            // boots it as well as the Enhanced //e's three-byte one
+            // (2026-10-16; before, only the Enhanced machines reached it).
             expect(bootMarker(controller), profile == SystemProfile::AppleIIcPlus ? 0x55 :
-                   (profile == SystemProfile::AppleIIe || profile == SystemProfile::AppleIIePAL ? 0x33 : 0x11),
+                   (cfg.noPhysicalSlots ? 0x11 : 0x33),
                    ("resolved storage boot " + std::string(pom2::profileKey(profile))).c_str());
         assert(bootSettings.getString("slot_7_card") == "hdv");
     }

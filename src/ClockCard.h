@@ -120,6 +120,7 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override { return rom[low8]; }
+    bool    peekSlotRom(uint8_t low8, uint8_t& out) const override { out = rom[low8]; return true; }
     // //c-class profiles force INTCXROM on, masking every slot ROM with
     // the internal IORom — which means ProDOS's slot scan never sees the
     // $08/$28/$58/$70 ThunderClock signature at $Cs00/02/04/06. Punch
@@ -181,6 +182,7 @@ public:
     // Populated only when a 2 KB Thunderware U9 dump is loaded — the synth
     // ROM and the 256 B variant leave it empty (open bus).
     uint8_t expansionRomRead(uint16_t offset) override;
+    bool    peekExpansionRom(uint16_t offset, uint8_t& out) const override;
     /// MAME `a2thunderclock.cpp:73` `take_c800() const override { return true; }`
     /// — the ThunderClock+ drives /IOSTB, but only when the 2 KB Thunderware
     /// EPROM is actually loaded. With the synthetic ROM, or with the 256-byte

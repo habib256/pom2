@@ -24,7 +24,7 @@ an explicit request before scheduling.
 | [CARDS-006](#cards-006) | 🧊 | Frozen | Apple II SCSI / High-Speed SCSI + CHD |
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
-| [CARDS-009](#cards-009) | 🧊 | Frozen | Slinky / RamFAST RAM disk |
+| [CARDS-009](#cards-009) | ✅ | Done | Slinky RAM disk (Memory Expansion Card) — RamFAST not done |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-012](#cards-012) | 🟡 | To verify | SSC fallback page and DOS 3.3 `PR#n` |
 | [CARDS-013](#cards-013) | 🟢 | To verify | `$C800` owner across Ctrl-Reset |
@@ -302,13 +302,15 @@ driver loaded from `$C800`; only that residue remains.
 
 ## CARDS-009 — Slinky / RamFAST RAM disk
 
-**Priority:** 🧊 · **State:** Frozen.
+**Priority:** ✅ · **State:** Done (2026-10-16, explicit user request).
 
-**Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1824).
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1824). Original dates and estimates are retained below.
-
-- 🧊 **Slinky / RamFAST RAM disk** — limited utility vs RamWorks III.
+- ✅ **Slinky** — `SlinkyCard` (catalog `slinky`), MAME `a2memexp.cpp` registers
+  and Apple's real 341-0344A firmware; ProDOS mounts it as a RAM disk. Pinned
+  `slinky_card`. → [DEV § Slinky](../../DEV.md#memory-expansion-card--slinky-slinkycard).
+  RamFactor shares the register model but is not modelled (no ROM shipped).
+- 🧊 **RamFAST** (a SCSI card with a RAM cache, not a RAM disk) — still frozen.
 
 <a id="cards-010"></a>
 

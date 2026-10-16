@@ -272,22 +272,15 @@ int main(int argc, char* argv[])
     if (!plan)         return 1;
 
 #ifdef __EMSCRIPTEN__
-    // WASM default experience: //c+ profile booting Total Replay from the
-    // floppyemu/ bundle. //c+ comes up at 4× (defaultCyclesPerFrame =
-    // 68180), which is what feels right in a browser — the plain //c
-    // lands at 1× and disk-turbo is off by default. The browser has no
-    // CLI, so we inject these as if the user had typed `--preset iic+
-    // <hdv>`. Gate on a TRULY default plan (no preset AND no disk path)
-    // so `?preset=ii+&nodisk=1` (shell.html) actually drops to BASIC —
-    // pre-gate, the preset injection respected the URL but the disk
-    // injection didn't, so II+ landed with a 32 MiB HDV it can't mount
-    // instead of `]`.
+    // Match shell.html when a host supplies no arguments: PAL Apple //c
+    // booting the bundled DIX disk. An explicit preset or disk stays intact,
+    // including ?preset=ii+&nodisk=1 for a BASIC-only launch.
     const bool wasmPlanWasDefault =
         (plan->preset == pom2::CliPreset::Default) &&
         plan->bootDiskPath.empty();
     if (wasmPlanWasDefault) {
-        plan->preset       = pom2::CliPreset::AppleIIcPlus;
-        plan->bootDiskPath = "floppyemu/Total Replay v6.1.hdv";
+        plan->preset       = pom2::CliPreset::AppleIIcPAL;
+        plan->bootDiskPath = "bundled_disks/DIX-fix.po";
     }
 #endif
 
@@ -1111,7 +1104,14 @@ int main(int argc, char* argv[])
 
         if (c.cliBootCountdown > 0 && --c.cliBootCountdown == 0) {
             std::string err;
-            if (!c.prodosFolderPath.empty() &&
+            // A boot HDV and the folder both wanted drive 1 of the same HDV
+            // card, and the boot disk — mounted second — replaced the folder
+            // (bug hunt 2026-10-16). Boot the HDV first; the folder takes
+            // drive 2, which ProDOS lists as S<n>,D2.
+            const bool folder = !c.prodosFolderPath.empty();
+            const bool hdvBoot = folder && !c.bootDiskPath.empty() &&
+                classifyDiskForSlot(c.bootDiskPath) == DiskSlotClass::Hdv;
+            if (folder && !hdvBoot &&
                 !c.mainWindow->mountProDOSFolder(c.prodosFolderPath, err)) {
                 pom2::log().warn("CLI", "ProDOS folder mount failed: " + err);
             }
@@ -1120,12 +1120,17 @@ int main(int argc, char* argv[])
                 // Only true when there WAS a folder: `--blank-disk` alone
                 // also runs this step now, and used to log a mount that
                 // never happened.
-                if (!c.prodosFolderPath.empty())
+                if (folder)
                     pom2::log().info("CLI", "ProDOS host folder mounted without boot disk");
             } else if (c.mainWindow->insertAndBootImage(c.bootDiskPath, err)) {
                 pom2::log().info("CLI", "booted disk: " + c.bootDiskPath);
             } else {
                 pom2::log().warn("CLI", "disk boot failed: " + err);
+            }
+            err.clear();
+            if (hdvBoot &&
+                !c.mainWindow->mountProDOSFolder(c.prodosFolderPath, err, 1)) {
+                pom2::log().warn("CLI", "ProDOS folder mount failed: " + err);
             }
             if (!c.blankDiskPath.empty()) {
                 std::string made, berr;

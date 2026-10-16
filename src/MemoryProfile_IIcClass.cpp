@@ -388,8 +388,18 @@ size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
         // republishes the active drive), head-select second (MAME does the
         // ss_w at the END of recalc_active_device, apple2e.cpp:804).
         size_t used = kMigBlobBytes + kMigBlobTail;
-        if (extPort_ && n > used)
-            used += extPort_->loadSnapshotState(data + used, n - used);
+        if (extPort_ && n > used) {
+            const size_t port = extPort_->loadSnapshotState(data + used, n - used);
+            // A section that NAMES itself the port ('XSP1'/'XSP2',
+            // IIcExternalSmartPort.cpp) but does not parse is a corrupt blob,
+            // not an absent one: refuse it, so the file's up-front check
+            // rejects the snapshot instead of loading it with a reset port
+            // (bug hunt 2026-10-16).
+            if (port == 0 && n - used >= 3 && data[used] == 'X' &&
+                data[used + 1] == 'S' && data[used + 2] == 'P')
+                return 0;
+            used += port;
+        }
         const bool hasSel35 = n - used >= 4 &&
                               std::memcmp(data + used, kSel35Magic, 3) == 0;
         if (hasSel35) {

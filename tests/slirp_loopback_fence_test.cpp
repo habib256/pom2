@@ -301,9 +301,38 @@ void testDhcpStillWorks()
 
 }  // namespace
 
+// 5 — the virtual DNS server: libslirp re-dials 10.0.2.3 on the host's
+//     resolver keeping the guest's port, and that resolver may be 127.0.0.1.
+//     Anything but port 53 is refused at the frame (bug hunt 2026-10-16).
+//     Counted on framesDropped(): the host's DNS setup decides whether an
+//     unfenced frame would reach a listener, so a reach test passes vacuously.
+void testVirtualDnsOnlyServesPort53()
+{
+    const uint32_t vdns = htonl(0x0A000203);
+    for (const bool allow : {false, true}) {
+        SlirpOptions options;
+        options.allowHostLoopback = allow;
+        auto backend = makeSlirpBackend("pom2test", options);
+        assert(backend);
+        const auto before = backend->framesDropped();
+        const auto syn  = guestFrame(vdns, 6503, false);
+        const auto dgm  = guestFrame(vdns, 6503, true);
+        const auto dns  = guestFrame(vdns, 53, true);
+        backend->transmit(syn.data(), static_cast<int>(syn.size()));
+        backend->transmit(dgm.data(), static_cast<int>(dgm.size()));
+        assert(backend->framesDropped() == before + (allow ? 0 : 2) &&
+               "a frame to 10.0.2.3 on a non-DNS port got through the fence");
+        backend->transmit(dns.data(), static_cast<int>(dns.size()));
+        assert(backend->framesDropped() == before + (allow ? 0 : 2) &&
+               "a DNS query to 10.0.2.3:53 was refused");
+    }
+    std::puts("  10.0.2.3 answers port 53 only unless loopback is opted in");
+}
+
 int main()
 {
     std::puts("slirp_loopback_fence");
+    testVirtualDnsOnlyServesPort53();
     testGuestCannotReachHostLoopback();
     testOptInStillReachesLoopback();
     testDhcpStillWorks();

@@ -61,7 +61,14 @@ public:
     void     setHostWriteProtected(bool on) override { img_.setHostWriteProtected(on); }
     bool     isWriteBackEnabled() const override { return img_.isWriteBackEnabled(); }
     void     setWriteBackEnabled(bool on) override { img_.setWriteBackEnabled(on); }
-    bool     saveDirty() override { return img_.saveDirty(); }
+    /// Copies the image's error on failure, as eject()/loadImage() do —
+    /// otherwise lastError() reported a stale load error (or nothing).
+    bool     saveDirty() override
+    {
+        if (img_.saveDirty()) return true;
+        lastError_ = img_.lastError();
+        return false;
+    }
     bool     hasUnsavedChanges() const override { return img_.hasUnsavedChanges(); }
     AutosavedMedium* autosavedMedium() override { return &img_; }
 

@@ -1,6 +1,6 @@
 // The ProDOS HD card's second drive — 2026-09-11.
 //
-// A plain ProDOS block device ($Cn07 = $01) names a unit by slot and ONE
+// A plain ProDOS block device ($Cn07 != $00, i.e. not SmartPort) names a unit by slot and ONE
 // drive bit — bit 7 of $43 — so two drives is its ceiling (the AppleWin HDD
 // card's HDD1 / HDD2); eight is a SmartPort card's business. The card had
 // one. Its driver entry now latches ProDOS's unit byte into $C0n6 before

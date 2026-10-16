@@ -618,8 +618,11 @@ SP by 3 (faked-BRK reset semantic).
 Boot priority is executed by the system ROM, not derived from the drive rack.
 `boot_configuration` runs all nine profiles with real ROMs and distinct boot
 sector markers. Original II has no autostart; II+ and unenhanced IIe scan
-7 down to 1 with the four-byte signature (including `$Cn07=$3C`); Enhanced
-IIe accepts the three-byte dispatch signature and therefore HDV cards too.
+7 down to 1 with the four-byte signature (including `$Cn07=$3C`, which the
+HDV card and the CFFA carry); Enhanced IIe accepts the three-byte dispatch
+signature and therefore SmartPort cards too. A synthetic HDV/SmartPort card
+with nothing to boot hands the scan on to the next slot down — see
+[§ HDV boot failure](#hdv--smartport-synthetic-firmware-boot-failure).
 The supplied SmartPort-capable //c ROM tries S6D1 then S5, not S6D2. The
 //c+ tries Sony mechanisms in physical order, external SmartPort, then the
 first 5.25-inch drive. PAL uses the same priorities as its NTSC counterpart.
@@ -670,7 +673,8 @@ owner compared over every INTCXROM × SLOTC3ROM state). Pinned in
 
 Pure software renderer into 280×192 (or 560×192 in IIe 80-col, or a
 card's own picture — 720×216 for a Videx Videoterm, see
-[§ Videx Videoterm](#videx-videoterm-videxvideotermcard)
+[§ Videx Videoterm](#videx-videoterm-videxvideotermcard), 640×400 for a
+VidHD's Super Hi-Res, see [§ VidHD](#vidhd-vidhdcard)
 ) RGBA. Reads `Memory::getDisplayState()` (mutex copy) + flat RAM.
 UI uploads via `glTex(Sub)Image2D`. Text flash via
 `frame_number() & 0x10` (MAME parity).
@@ -1197,7 +1201,8 @@ rule (`cardVidexVideotern.go:131-139`). POM2: `VidexVideotermCard::ownsScreen`
   every other switch, folds it into `applyIdleSwitchOverride` (a paused
   machine poked from the debugger), and puts it in the static-text skip key,
   which compares the struct wholesale.
-- **`Apple2Display::setVidexCard(CardVideoSource*)`** — non-owning, set by
+- **`Apple2Display::setCardVideoSource(CardVideoSource*)`** (was
+  `setVidexCard`; renamed when the VidHD joined it) — non-owning, set by
   `MainWindow_SlotConfig.cpp`'s dispatch, cleared by the slot-rebuild
   pre-clear hook in `MainWindow.cpp` next to `setChatMauveCard(nullptr)`. In
   `render()`, right after the published state is known, `renderCardPicture`
@@ -1252,6 +1257,76 @@ Ctrl-Reset → AN0 clear, 40 columns), plus the catalog sweeps
 a raster-accurate CRTC (a mid-frame R12/R13 write shows next frame); the
 Videoterm's optional soft-switch hardware beyond the TEXT+AN0 rule; the
 other character sets; the //e-era "Videx UltraTerm" (`a2ultraterm`).
+
+### VidHD (`VidHDCard`)
+
+*(2026-10-16, DISPLAY-001)* Catalog key `vidhd`, label "VidHD (Super
+Hi-Res)". Blue Shift's VidHD shows the Apple IIgs Super Hi-Res modes on a
+//e; it adds no 65816 and no Toolbox, so this is a **display** extension and
+nothing more. No MAME device exists: a port of AppleWin's partial model
+(`source/VidHD.cpp`, the SHR scanner `updateScreenSHR` /
+`getVideoScannerAddressSHR` in `source/NTSC.cpp` :905-912 + :1866-1895, the
+`IOWrite_C02x` / `IOWrite_C03x` hooks in `source/Memory.cpp` :622-650), with
+the line painter taken from pom2gs's VGC (`drawShrLine`, `rgb12`). No ROM.
+
+**Bus.** Reads of `$C0n0/1/2` answer `$24 $EA $4C` (AppleWin `IORead`, bytes
+from the card's firmware) — what detection code looks for; every other
+`$C0nX` access is unclaimed (the floating bus). The card's registers are
+**not** in its slot: it latches the motherboard WRITES to `$C022`
+SCREENCOLOR, `$C029` NEWVIDEO, `$C034` BORDERCOLOR and `$C035` SHADOW.
+`Memory::softSwitchAccess` forwards exactly those four, write-only, through
+`SlotBus::broadcastVideoSwitchWrite` → `onVideoSoftSwitchWrite` (the Chat
+Mauve's channel), one test inside the existing `$C02x` and `$C03x` branches —
+nothing on the RAM path (PERFORMANCE §§ 8.2/8.5). The motherboard's own
+meaning survives: `$C02x` still toggles the cassette output (ROMBANK on a
+//c), `$C03x` still clicks the speaker. No read-back (AppleWin: "VidHD has no
+support for reading the IIgs video registers"). A bus reset clears NEWVIDEO.
+
+**Picture.** SHR is on while NEWVIDEO bits 7 and 6 are both set (AppleWin
+`IsSHR`), and then `ownsScreen()` holds whatever TEXT / MIXED / AN0 say. It
+goes through the same `CardVideoSource` seam as the Videoterm (the display
+holds one pointer; the resolver keeps the Videoterm off every //e and the
+VidHD off everything else, so they never meet). 640 × 400: 200 SHR lines,
+each painted on two rows. Memory is the //e's AUX RAM — a IIgs shadows bank
+`$E1` from there: line *y* at `$2000 + 160·y`, its SCB at `$9D00 + y`, the
+palette at `$9E00 + 32·(SCB & $0F)`, 16 little-endian `$0RGB` words, each
+4-bit component × 17. SCB bit 7 = 640 mode: four 2-bit dots per byte, MSB
+pair first, palette quarters 8, 12, 0, 4 (IIgs HW Ref table 4-21); else 320
+mode, high nibble first, each dot doubled, and with SCB bit 5 (colour fill)
+index 0 repeats the previous dot's colour (the line starts from entry 0, as
+in pom2gs). Painted whole each frame, not raster-raced.
+
+**Which aux RAM.** The bank the CPU has selected — the one RAMWRT / 80STORE
+writes, i.e. the RamWorks bank in use (AppleWin reads `memaux`, the active
+bank). `Memory`'s `aux` array *is* that bank in place (a RamWorks switch
+memcpys into it), so the pointer is stable: `Memory` installs it on its slot
+bus (`SlotBus::setAuxRamRef`, beside the cycle-counter ref) and a plugged
+card reads it through `SlotPeripheral::busAuxRam()`. No Memory dependency in
+the card, nothing new on `Apple2Display.cpp`'s link lines. A standalone test
+card takes `setAuxRamOverride`.
+
+**Where.** Any slot 1-7 of a //e-class profile with slots.
+`SlotConfigurationCoordinator::resolve` drops a saved `vidhd` on a ][ / ][+
+(AppleWin mirrors the paging switches into a card-side aux RAM there; POM2
+does not) and on the //c family (no slots), keeping the key the way it does
+for the Videoterm on a //e; the picker greys it out and `--slot` refuses it.
+
+**Snapshot.** `"VDHD"` v1: magic, version, the four registers. AppleWin also
+saves its ][+ memory mode, which POM2 has no use for.
+
+**Not modelled.** The IIgs text and border colours (SCREENCOLOR and
+BORDERCOLOR are latched and snapshotted, never painted — there is no border
+in the picture), SHADOW's meaning, B&W DHGR (NEWVIDEO bit 5), the VidHD's own
+extended text modes (80×45, 120×67, 240×135) and their colours, its
+enable/disable switch, SHR raster effects (an SCB or palette change mid-frame
+shows next frame), and the ][ / ][+ aux mirror. A mono monitor setting does
+not tint the SHR picture. The picture keeps the 4:3 on-screen box like every
+other frame.
+
+Pinned: `vidhd_card` (detection bytes, the four registers off real bus
+writes, reset, 320 / 320 + fill / 640 pixels written through `$C005`,
+the RamWorks bank, the publish through `Apple2Display`, snapshot), plus the
+catalog sweeps `card_snapshot_contract` and `slot_configuration_coordinator`.
 
 ### Static-text frame skip (`TextFrameKey`)
 
@@ -2392,6 +2467,36 @@ stamp — a rewind — as the first step of a new timeline (a click, not a
 seek buzz). Pinned in `device_clock_fanout`, `audio_coordinator`,
 `floppy_sound_smoke`.
 
+### S.A.M. 8-bit DAC (`SamCard`, `Dac8Audio`)
+
+*(2026-10-16.)* Don't Ask Software's S.A.M. card, ported from MAME
+`src/devices/bus/a2bus/a2sam.cpp` — the whole card is one line there:
+`write_c0nx(...) { m_dac->write(data); }` (:44). Any write to `$C0n0-$C0nF`
+latches an unsigned 8-bit DAC; no ROM, no reads, nothing in `$Cn00`/`$C800`.
+The speech is computed by the S.A.M. software on the 6502 and streamed to the
+port, so the card's fidelity is the write timing.
+
+- **Level** — MAME `DAC_8BIT_R2R` (`sound/dac.h:237`): `dac_mapper_unsigned`
+  maps code/256 onto `[-1, +1]` (`dac.cpp:28-33`, `:77-78`), routed at 0.5
+  (`a2sam.cpp:56`): `level = 0.5 · (2·code/256 − 1)`.
+- **emuCycles** — each write is stamped with the bus cycle counter plus the
+  in-flight instruction's cycle (`SamCard::deviceSelectWrite`), queued, and
+  rendered by `Dac8Audio` as the exact time-average of the zero-order-held
+  level over each output sample's CPU-cycle span (box filter). The cursor
+  follows SpeakerDevice's rules (trail by 100 ms, snap forward on a resume,
+  snap back after a resynced stall). `setCpuClock` comes through the usual
+  slot fan-out.
+- **DC** — an idle DAC sits at code `$00` (−0.5); a first-order DC blocker
+  with SpeakerDevice's pole keeps that off the mix. Tests disable it.
+- **Mixer** — `AudioCoordinator::CardKind::Sam`, per-slot keys
+  `sam_slotN_volume` / `_muted`, shown as "S.A.M." in the mixer.
+- **Snapshot** — none on purpose: nothing a program can read back, and the
+  next sample restores the level.
+
+Pinned by `sam_card` (levels; writes at cycles 1000/1015/1030 landing in
+samples 100/101/103 at 10 cycles per sample, the mid-sample average; the bus
+path through a real 6502; DC decay; reset).
+
 ## TransWarp (Applied Engineering)
 
 **Sampled per chunk** *(2026-09-09)*. Both frame loops
@@ -2509,6 +2614,55 @@ therefore reads the recorded `shadowing_` flag (never derives it from
 difference, so the window and the flag agree; otherwise the next
 `engageShadow()` captures the card's own ROM as `displaced_`. Pinned in
 `transwarp_card`.
+
+## Zip Chip (CPU socket, `ZipChip`)
+
+*(2026-10-16.)* Zip Technologies' accelerator, which replaces the 6502 in its
+socket — so it is not a slot card. Ported from MAME `src/mame/apple/apple2e.cpp`,
+the "4 MHz Zip Chip" CPU type of `apple2_sysconfig_accel` (:3862-3872), the
+same code that runs the //c Plus's licensed built-in Zip.
+
+**Seam.** `CpuSocketAccelerator.h` (abstract, header-only, so the dozens of
+targets linking `Memory.cpp` gain no link dependency). Memory calls it on the
+`$C000-$C0FF` slow path only — reads in `memReadSlowBody`, writes in
+`memWrite`, both just before the soft-switch dispatch — and only while
+`iieMode && !iicProfile_` (`Memory::activeAccel`). The RAM fast path is
+untouched (PERFORMANCE §§ 8.2/8.5). `Memory::cpuSpeedMultiplier()` = the
+SlotBus (TransWarp) multiplier × the chip's; the controller's three chunk
+sites sample it there, so the emuCycles fan-out (`applyAcceleratorClock`)
+works unchanged and the AYs/6522s stay on the stock bus clock.
+
+**Registers** (`c000_w` :2562-2648, `c000_r` :2237-2281): `$C05A` ×4 `$5A`
+unlocks, `$A5` locks, anything else (unlocked) stops; `$C05B` goes; `$C05C`
+slot/speaker slow-down mask; `$C05E` bit 7 disables the delays; `$C05F` game
+I/O flags. Unlocked reads: `$C058`=`$C0`, `$C059`=`$20`, `$C05A/D/F`=`$00`,
+`$C05B` status, `$C05C` mask, `$C05E` STATEREG-like. **Writes always reach
+the motherboard** (MAME `do_io` on each), so AN0-AN3 work locked or not; an
+unlocked + fast *read* skips the annunciator (MAME's "executes from cache").
+
+**Speed.** 4 MHz (:1315) or stock; 52 ms at 1 MHz after a masked slot's
+`$C0nX` (:1565-1569), 5 ms after a speaker toggle (mask bit 0, :1914) or a
+PTRIG read (game-I/O bit 6, :2044). Reset (:1527-1545): locked, mask `$E4`,
+game-I/O `$40`. Delays are emuCycles deadlines against the stock clock
+(`setStockClockHz`, set from `setVideoStandard`).
+
+**Divergences (stated in `ZipChip.h`).** MAME cancels an unlock on any
+intervening write; POM2 sees I/O-page writes only (watching RAM writes would
+put a branch on the fast path). `$C05B` bit 7 ticks every 512 emulated
+cycles. Boot speed defaults to fast (`zip_chip_boot_fast`; MAME's config
+defaults to Standard and calls itself an approximation of the chip's own
+Esc/space boot logic). `$C05D` speed select is not modelled — MAME has no case
+for it, so nothing is invented.
+
+**UI.** Machine ▸ "Zip Chip (4 MHz, CPU socket)", key `zip_chip` (default
+off), owned by `EmulationController::setZipChipInstalled`. Snapshot: a Memory
+trailer section (the chip has no slot). The //c Plus keeps its fixed 4×
+profile budget; wiring its built-in Zip registers is a possible follow-up.
+
+Pinned by `zip_chip` (lock/unlock incl. a cancelled sequence, AN0 through
+locked and unlocked accesses, the register reads, `$C05A`/`$C05B` visible in
+the cycles a frame burns and in `emulatedCpuClockHz`, the slot-6 window, the
+delay disable, reset, and the ][+ gate).
 
 ## Slot bus & IRQ aggregation
 
@@ -3347,15 +3501,16 @@ Q7L/Q7H.
 
 **Boot signature** (Apple II Ref Manual Appx C): `$Cn00` starts with
 `$20 ?? $00 $03` at offsets 1/3/5 (JSR dispatch trio). `$Cn07`
-identifies Disk II (`$3C`), SmartPort (`$00`), or the HDV card's
-non-removable ProDOS block interface (`$01`). II+/unenhanced IIe
+identifies Disk II (`$3C`), SmartPort (`$00`), or a plain ProDOS block
+interface (anything else — the synthetic SmartPort stub reads `$01`, the
+HDV card `$3C` like AppleWin's). II+/unenhanced IIe
 autostart requires `$Cn07=$3C`; Enhanced IIe checks only the first
-three signature bytes and can auto-boot HDV. The scan runs from slot
+three signature bytes. The scan runs from slot
 7 down to slot 1, independently of the Drive Rack's display order.
 
 `bootFromSlot()` validates the JSR trio so clicking "Boot" on a
 non-bootable card warns + falls back to `coldBoot`. `$Cn07=$3C` is
-NOT validated — would reject HDV.
+NOT validated — would reject a SmartPort card.
 
 **Drive switching** via `selectDrive(int)` mirrors MAME
 `machine/wozfdc.cpp:264-291`. When motor active: flush in-flight
@@ -3645,12 +3800,12 @@ off 6  write   drive select: bit 7 = drive 2 (ProDOS's $43, verbatim)
 
 **Two drives** *(2026-09-11)*. The card had one image; it has drive 1 and
 drive 2 now, the AppleWin HDD card's shape — and the ceiling of a plain
-`$Cn07=$01` block device, because ProDOS names a unit by slot and one
+(non-SmartPort, `$Cn07≠$00`) block device, because ProDOS names a unit by slot and one
 drive bit, and ProDOS 8 2.4 remaps units 3+ onto other slots only for a
 SmartPort card (`SmartPortCard`, up to eight HDV units, is where eight
-hard disks live). `$CnFF` now points at an 8-byte entry at `$CnEB` —
-`LDA $43 / STA $C0n6 / JMP dispatch`, in the free bytes above the halt
-loop, because the dispatch region is exactly full — and the boot path goes
+hard disks live). `$CnFF` now points at an 8-byte entry at `$CnF2` —
+`LDA $43 / STA $C0n6 / JMP dispatch`, in the free bytes above the
+boot-failure message, because the dispatch region is exactly full — and the boot path goes
 through it too. `$CnFE` is `$17`: bits 5-4 = one extra volume, which is
 what makes ProDOS install `S<n>,D2` (measured: at `$07` it lists D1 only).
 Drive 2 is therefore in DEVLST from boot, empty until mounted, and a disk
@@ -3673,10 +3828,37 @@ carry clear *and* the accumulator zero (WRITE and STATUS load `#$00` too).
 History: CHANGELOG 2026-09-09 (bug hunt #14).
 
 `deviceSelectRead/Write` move bytes via host `memcpy` — no GCR, no
-flux. `$Cn07=$01` (plain ProDOS block; SmartPort's ID is `$00`); JSR
-trio `$Cn01/03/05 = $20/$00/$03`. Enhanced IIe autostart accepts
-this signature; II+/unenhanced IIe requires explicit `PR#n` /
-`bootFromSlot` for this card.
+flux. `$Cn07=$3C` *(2026-10-16; was `$01`)* — AppleWin's HDD firmware
+signs the same way (`firmware/HDD/hddrvr.a65`, `start`: `LDA #$20 /
+LDA #$00 / LDA #$03 / LDA #$3C`) so the four-byte autostart of the II+ and
+the Unenhanced //e boots it; ProDOS 8 only treats `$00` as SmartPort, so
+the card stays a plain block device driven through `$CnFF`. JSR trio
+`$Cn01/03/05 = $20/$00/$03`. Pinned by `hdv_boot_scan`.
+
+#### HDV / SmartPort synthetic firmware: boot failure
+
+*(2026-10-16)* Both synthetic `$Cn20` boot routines (`ProDOSHardDiskCard`,
+`SmartPortCard`) used to park in a `JMP`-to-self when block 0 would not
+read — an empty bay, typically. On a //e the autostart scan
+(`$FAB4-$FAD2`) stops at the first slot that signs, so an empty HDV or
+SmartPort card in slot 7 meant the Disk II in slot 6 was never tried.
+They now do what the real Liron firmware does (`roms/liron.rom`
+`$E90-$ED3`, i.e. its `$CE90`): `LDX $00 / BNE err / LDX $01 /
+CPX $07F8 / BNE err / JMP $FABA` — `$00=0`, `$01=$07F8=$Cn` is exactly
+the state the scan leaves when it `JMP ($0000)`s into a slot, and `$FABA`
+re-enters the loop, which DECs `$01` and tries the slot below. POM2 adds
+one test the Liron does not need: the byte at `$FABA` must be `$A0` (the
+scan's `LDY #imm`); on a //c it is `LDA $AC` and on the original Apple ][
+not code at all. Otherwise: restore CSW/KSW (after `PR#n` CSW points at
+the card), CROUT, Monitor `PRERR` ("ERR" + bell), `JMP $E000` — the
+Liron's message path also ends in BASIC. Layout: the HDV card's scan test
+fills `$Cn08-$Cn1F` and the message sits at `$CnE3`; SmartPortCard keeps
+its `$Cn` page (the gaps are Liron identity bytes) and puts the scan test
+in its `$C800` bank at `$CD30`, as a subroutine — on a //c the card window
+closes at the first foreign `$C0xx` access, so the Monitor calls are made
+from the `$Cn` page, never from `$C800`. On the 32 KB //c and //c+ none of
+this runs (the machine's own `$C500` firmware is the controller). Pinned by
+`hdv_boot_scan`.
 
 **Trade-off**: mounts `.hdv`/`.2mg` directly (MAME accepts only
 CHD/raw), no card-ROM dump needed; cannot execute real CFFA/SCSI
@@ -4316,7 +4498,7 @@ survivors still reconstruct, a full abandon restarts on a keyframe) and
 `rewind_transport` case 6 (a bare `setMode(Running)` ends the scrub and the
 ring shrinks then stays monotonic). Both verified falsifiable.
 
-**UI** (`Rewind_ImGui`): Devices ▸ "Rewind". Record toggle, a timeline
+**UI** (`Rewind_ImGui`): Machine ▸ "Rewind". Record toggle, a timeline
 slider, |< / << hold / <| / |> / resume transport, history-length
 slider, and `F6` = hold-to-rewind-live from anywhere (polled in
 `MainWindow::render`, survives ImGui capture, no-op when recording is
@@ -5736,6 +5918,41 @@ Pinned by `fourplay_card`: the bit layout including the active-low bit, four
 independent players, out-of-range players ignored rather than smearing into a
 neighbour, offsets 4-15 reading `$FF`, and the whole thing again through a
 real `SlotBus` at `$C0C0-$C0CF`.
+
+### Memory Expansion Card — "Slinky" (`SlinkyCard`)
+
+*(2026-10-16.)* Apple's 670-0024, ported from MAME
+`src/devices/bus/a2bus/a2memexp.cpp` (`a2bus_memexpapple_device`). 1 MB behind
+a 24-bit address latch: `$C0n0-$C0n2` set the pointer (and reload the live
+pointer from the latch), `$C0n3` reads/writes RAM with auto-increment carried
+back into `$C0n0-$C0n2`, `$C0n2` reads with its high nibble forced to `$F`
+(`m_bankhior`), `$C0n4-$C0nF` are plain latches (:166-232). Mask `$FFFFF`
+(:130): MAME models only the 1 MB board, so no size setting — how a partly
+populated card aliases is not sourced.
+
+**Firmware: the real ROM, no fallback.** Apple 341-0344A
+(`roms/slinky_341-0344a.bin`, 4 KB, CRC32 `1e994e17`, MAME's ROM_LOAD).
+`$Cn00` page = `rom[n·$100 + low]` (seven per-slot copies, :238-247); the
+card takes `$C800` and serves `rom[$800 + off]` (:253-260). It is a
+SmartPort/ProDOS block driver (`$Cn07` = `$00`, `$CnFF` = entry) that formats
+and serves the RAM itself, so ProDOS mounts a RAM disk with no driver
+install (AppleWorks' RAM-disk support rides on the same thing). ROM-gated in
+`SlotCardFactory`; the hand-written `SlotRomAsm` fallback was dropped because
+the ROM ships and a synthetic one would have had to invent the volume layout.
+
+**RamFactor.** MAME's `a2bus_ramfactor_device` is the same register model
+(8 MB mask, no forced nibble, 8 KB ROM banked by `$C0nF` bit 0), so Slinky
+software runs on both. Not modelled: no RamFactor ROM is shipped.
+
+**State.** Volatile, like the board (no battery): never written to a file;
+reset clears the latches, not the RAM (:155-159). Snapshot/rewind carry it
+**sparsely** — only 256-byte pages that differ from the `$FF` power-on fill —
+so an idle card costs ~30 bytes a frame. Not an irreversible write, so the
+rewind rule does not apply.
+
+Pinned by `slinky_card` (registers; then the real ROM's STATUS / WRITE / READ
+through `$CnFF` on a 6502, with the block found in the card's RAM — skips
+without the ROM) and `card_snapshot_contract`.
 
 ### Apple II Workstation Card (`WorkstationCard`)
 

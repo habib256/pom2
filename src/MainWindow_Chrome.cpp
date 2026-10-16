@@ -313,51 +313,71 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "media.ejectall") { ejectAllDisks(); return; }
 }
 
+// The colour-pipeline picks: the Display menu and the toolbar's video popup
+// both draw this, so they list the same modes with the same rules.
+void MainWindow::renderColorPipelineItems()
+{
+    const Apple2Display::HiResMode cur = display->getHiResMode();
+    auto pipeItem = [&](const char* label, const char* tip,
+                        Apple2Display::HiResMode m) {
+        if (ImGui::MenuItem(label, nullptr, cur == m))
+            setDisplayPipeline(display.get(), m);
+        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    };
+    pipeItem("NTSC (MAME)", "7-bit artifact LUT — the canonical composite look.",
+             Apple2Display::HiResMode::ColorNTSC);
+    pipeItem("NTSC (MAME) — medium",
+             "composite_color_mode 1: biases 4-dot colour runs (uglier 40-col text).",
+             Apple2Display::HiResMode::ColorCompMedium);
+    pipeItem("NTSC (MAME) — 4-bit square",
+             "composite_color_mode 2: each 4-dot nibble → palette index, sharp edges.",
+             Apple2Display::HiResMode::ColorComp4Bit);
+    pipeItem("Composite (OpenEmulator, GPU)",
+             "True subcarrier demodulation in a GLSL shader (presets under Effect layers).",
+             Apple2Display::HiResMode::ColorCompositeOE);
+    pipeItem("Composite (OpenEmulator, CPU)",
+             "Same OpenEmulator demodulation computed on the CPU into the\n"
+             "framebuffer — no GLSL shader. Works without a GL shader path\n"
+             "and lets you A/B the two. CRT effect layers still apply.",
+             Apple2Display::HiResMode::ColorCompositeOECpu);
+
+    // AppleWin NTSC — only the TV (50% line-blur) sub-mode is exposed
+    // (the Monitor / Idealized variants were dropped). Flat entry that
+    // forces the Tv sub-mode and selects the pipeline.
+    if (ImGui::MenuItem("AppleWin NTSC (TV 50% line blur)", nullptr,
+                        cur == Apple2Display::HiResMode::ColorAppleWin)) {
+        display->setAppleWinSubMode(Apple2Display::AppleWinSubMode::Tv);
+        setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorAppleWin);
+    }
+
+    // RGB card — clean Péritel decode, two distinct grays. Greyed out
+    // when no Le Chat Mauve card is plugged in slot 7.
+    ImGui::BeginDisabled(
+        !devicePanelCoordinator_->captureInventory().chatMauvePlugged());
+    pipeItem("RGB card — Le Chat Mauve", nullptr,
+             Apple2Display::HiResMode::ChatMauveRGB);
+    ImGui::EndDisabled();
+
+    pipeItem("Monochrome — White",      nullptr, Apple2Display::HiResMode::MonoWhite);
+    pipeItem("Monochrome — Green (P31)", nullptr, Apple2Display::HiResMode::MonoGreen);
+    pipeItem("Monochrome — Amber",      nullptr, Apple2Display::HiResMode::MonoAmber);
+}
+
 void MainWindow::renderMenuBar()
 {
     if (!ImGui::BeginMainMenuBar()) return;
 
     if (ImGui::BeginMenu("File")) {
         panelMenuItem(pom2::PanelId::DiskLibrary);
+        // Every drive of the machine, the Drives window's own list and
+        // actions (collectDrivePictures / runDriveRackAction): it used to
+        // offer the primary Disk II's drive 1 and the primary HDV only, so a
+        // second drive, a 3.5" bay or a Liron unit was unreachable from here.
+        // Each action goes through the coordinator, which also clears or
+        // writes the persisted path key with the medium.
+        ImGui::SeparatorText("Drives");
+        renderFileMenuDrives();
         ImGui::Separator();
-        // Disk II (slot 6) — frequent action, lifted out of the old
-        // Hardware kitchen-sink. Panel still exposes its own insert/eject
-        // buttons; this is the keyboard-friendly path.
-        ImGui::BeginDisabled(primaryDiskII() == nullptr);
-        if (ImGui::MenuItem("Insert disk image (.dsk / .do / .po / .nib / .woz)...")) {
-            diskPanel->insertDialogOpen = true;
-            if (diskPanel->dialogPath.empty()) diskPanel->dialogPath = "disks_5.4/";
-        }
-        if (ImGui::MenuItem("Eject disk", nullptr, false,
-                            primaryDiskII() && primaryDiskII()->isDiskLoaded())) {
-            // Through the coordinator so the persisted disk_path_slotN key is
-            // cleared with the medium. Ejecting from this menu used to leave
-            // the path behind, and the next launch re-mounted the disk the
-            // user had just ejected.
-            const int slot = primaryDiskII()->getSlot();
-            const auto r = storageCoordinator_->ejectDiskII(
-                *controller, *settings, slot, 0);
-            tapeStatusMessage = r.ok ? "Disk ejected"
-                                     : "Disk eject failed: " + r.error;
-            tapeStatusUntil   = lastFrameTime + 4.0;
-        }
-        ImGui::EndDisabled();
-        ImGui::Separator();
-        ImGui::BeginDisabled(primaryHdvCard() == nullptr);
-        if (ImGui::MenuItem("Mount HDV image (.hdv / .2mg)...")) {
-            hdvPanel->mountDialogOpen = true;
-            if (hdvPanel->dialogPath.empty()) hdvPanel->dialogPath = "hdv/";
-        }
-        if (ImGui::MenuItem("Eject HDV", nullptr, false,
-                            primaryHdvCard() && primaryHdvCard()->isImageLoaded())) {
-            const int slot = primaryHdvCard()->getSlot();
-            const auto r = storageCoordinator_->ejectMediaBay(
-                *controller, *settings, slot, 0);
-            tapeStatusMessage = r.ok ? "HDV ejected"
-                                     : "HDV eject failed: " + r.error;
-            tapeStatusUntil   = lastFrameTime + 4.0;
-        }
-        ImGui::EndDisabled();
         ImGui::BeginDisabled(!primaryHdvCard() || !primaryHdvCard()->isImageLoaded());
         // Label reflects where the user actually has the card plugged.
         const std::string bootHdvLabel = "Boot HDV (slot " +
@@ -579,8 +599,40 @@ void MainWindow::renderMenuBar()
                     "and use the on-screen //e keyboard for the Apple keys.\n"
                     "Windows AltGr never presses them either way.");
         }
+        {
+            // Zip Chip — an accelerator in the 6502 SOCKET, not a slot card,
+            // so it is a machine option rather than a Slot Config row.
+            bool zip = controller->zipChipInstalled();
+            if (ImGui::MenuItem("Zip Chip (4 MHz, CPU socket)", nullptr, &zip)) {
+                controller->setZipChipInstalled(zip);
+                settings->setBool("zip_chip", zip);
+                settings->save();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Zip Technologies' 4 MHz accelerator, seated in the CPU socket.\n"
+                    "//e-class machines with slots only (the //c Plus has its own).\n"
+                    "Software controls it at $C05A-$C05F (unlock, speed, slow-down\n"
+                    "mask); it drops to 1 MHz around disk and speaker accesses.");
+            bool bootFast;
+            {
+                auto st = controller->lockState();
+                bootFast = controller->zipChip().bootFast();
+            }
+            if (ImGui::MenuItem("Zip Chip: start at 4 MHz", nullptr, &bootFast)) {
+                {
+                    auto st = controller->lockState();
+                    controller->zipChip().setBootFast(bootFast);
+                }
+                settings->setBool("zip_chip_boot_fast", bootFast);
+                settings->save();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Select the Zip Chip speed after the next reset.");
+        }
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::SlotConfig);
+        panelMenuItem(pom2::PanelId::Rewind);
         ImGui::EndMenu();
     }
 
@@ -592,14 +644,22 @@ void MainWindow::renderMenuBar()
         // palette and the settings round-trip also held. They live in
         // PanelCatalog.h now; this menu says only which groups it shows and
         // in what order.
+        //
+        // Grouped by what the device IS to the user (2026-10-16): storage,
+        // sound, input, printing/serial, network, then the cards that fit
+        // none of those. Rewind is not a device — it moved to Machine.
         ImGui::SeparatorText("Storage");
         panelMenuGroup(pom2::PanelGroup::DevStorage);
         ImGui::SeparatorText("Sound");
         panelMenuGroup(pom2::PanelGroup::DevSound);
-        ImGui::SeparatorText("Ports & cards");
-        panelMenuGroup(pom2::PanelGroup::DevPorts);
-        ImGui::SeparatorText("Inspectors & tools");
-        panelMenuGroup(pom2::PanelGroup::DevInspectors);
+        ImGui::SeparatorText("Input");
+        panelMenuGroup(pom2::PanelGroup::DevInput);
+        ImGui::SeparatorText("Printers & serial");
+        panelMenuGroup(pom2::PanelGroup::DevPrinting);
+        ImGui::SeparatorText("Network");
+        panelMenuGroup(pom2::PanelGroup::DevNetwork);
+        ImGui::SeparatorText("Other cards");
+        panelMenuGroup(pom2::PanelGroup::DevOther);
         ImGui::EndMenu();
     }
 
@@ -637,50 +697,7 @@ void MainWindow::renderMenuBar()
         // shared effect stack downstream of every pipeline).
         ImGui::Separator();
         ImGui::TextDisabled("Color pipeline");
-        const Apple2Display::HiResMode cur = display->getHiResMode();
-        auto pipeItem = [&](const char* label, const char* tip,
-                            Apple2Display::HiResMode m) {
-            if (ImGui::MenuItem(label, nullptr, cur == m))
-                setDisplayPipeline(display.get(), m);
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        pipeItem("NTSC (MAME)", "7-bit artifact LUT — the canonical composite look.",
-                 Apple2Display::HiResMode::ColorNTSC);
-        pipeItem("NTSC (MAME) — medium",
-                 "composite_color_mode 1: biases 4-dot colour runs (uglier 40-col text).",
-                 Apple2Display::HiResMode::ColorCompMedium);
-        pipeItem("NTSC (MAME) — 4-bit square",
-                 "composite_color_mode 2: each 4-dot nibble → palette index, sharp edges.",
-                 Apple2Display::HiResMode::ColorComp4Bit);
-        pipeItem("Composite (OpenEmulator, GPU)",
-                 "True subcarrier demodulation in a GLSL shader (presets under Effect layers).",
-                 Apple2Display::HiResMode::ColorCompositeOE);
-        pipeItem("Composite (OpenEmulator, CPU)",
-                 "Same OpenEmulator demodulation computed on the CPU into the\n"
-                 "framebuffer — no GLSL shader. Works without a GL shader path\n"
-                 "and lets you A/B the two. CRT effect layers still apply.",
-                 Apple2Display::HiResMode::ColorCompositeOECpu);
-
-        // AppleWin NTSC — only the TV (50% line-blur) sub-mode is exposed
-        // (the Monitor / Idealized variants were dropped). Flat entry that
-        // forces the Tv sub-mode and selects the pipeline.
-        if (ImGui::MenuItem("AppleWin NTSC (TV 50% line blur)", nullptr,
-                            cur == Apple2Display::HiResMode::ColorAppleWin)) {
-            display->setAppleWinSubMode(Apple2Display::AppleWinSubMode::Tv);
-            setDisplayPipeline(display.get(), Apple2Display::HiResMode::ColorAppleWin);
-        }
-
-        // RGB card — clean Péritel decode, two distinct grays. Greyed out
-        // when no Le Chat Mauve card is plugged in slot 7.
-        ImGui::BeginDisabled(
-            !devicePanelCoordinator_->captureInventory().chatMauvePlugged());
-        pipeItem("RGB card — Le Chat Mauve", nullptr,
-                 Apple2Display::HiResMode::ChatMauveRGB);
-        ImGui::EndDisabled();
-
-        pipeItem("Monochrome — White",      nullptr, Apple2Display::HiResMode::MonoWhite);
-        pipeItem("Monochrome — Green (P31)", nullptr, Apple2Display::HiResMode::MonoGreen);
-        pipeItem("Monochrome — Amber",      nullptr, Apple2Display::HiResMode::MonoAmber);
+        renderColorPipelineItems();
         ImGui::EndMenu();
     }
 

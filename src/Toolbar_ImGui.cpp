@@ -173,29 +173,20 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
 
     const Palette& pal = palette();
 
-    // ── Power group ───────────────────────────────────────────────────
-    // Power-cycle (cold boot, wipes RAM) + soft reset (Ctrl-Reset).
-    // Hard reset is keyboard-only (F12) — was redundant in the toolbar
-    // (effectively the same UX as soft reset for most users, the
-    // distinction matters for the few users who reach for it).
-    //
-    // Power-cycle is the only destructive control in this row, so it is the
-    // only one wearing the danger colour; reset stays neutral.
+    // ── Power ─────────────────────────────────────────────────────────
+    // Power-cycle (cold boot, wipes RAM). The only destructive control in
+    // this row, so the only one wearing the danger colour. The two resets
+    // sit with the video controls, left of the colour toggle (2026-10-16).
     if (iconButton({ ICON_FA_POWER_OFF,    "ColdBoot",
                      "Power-cycle (wipe RAM + cold boot)", pal.danger })) {
         r.requestColdBoot = true;
-    }
-    ImGui::SameLine();
-    if (iconButton({ ICON_FA_ROTATE_LEFT,  "SoftReset",
-                     "Reset (Ctrl-Reset / F11)" })) {
-        r.requestSoftReset = true;
     }
 
     verticalRule();
 
     // ── Run group ─────────────────────────────────────────────────────
     // Rewind sits on the opposite side of Pause from Step: hold it to replay
-    // backwards (same gesture as F6 / the Devices ▸ Rewind bar). Enabled only
+    // backwards (same gesture as F6 / the Machine ▸ Rewind bar). Enabled only
     // when there's recorded history; iconButton can't report "held", so it's
     // drawn inline to read IsItemActive().
     {
@@ -210,8 +201,8 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
         // recording"), which is the half IsItemHovered() could never show.
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("%s", canRewind
-                ? "Hold to rewind (live) — also F6, or Devices \xe2\x96\xb8 Rewind"
-                : "Rewind: turn on recording in Devices \xe2\x96\xb8 Rewind");
+                ? "Hold to rewind (live) — also F6, or Machine \xe2\x96\xb8 Rewind"
+                : "Rewind: turn on recording in Machine \xe2\x96\xb8 Rewind");
         ImGui::SameLine();
     }
 
@@ -354,6 +345,32 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
     // Both insert AND eject-all now live in the Disk Library panel
     // (multi-source picker with boot-on-click + header-row "Eject All")
     // — kept out of the toolbar to avoid two ways to do the same thing.
+
+    // ── Resets ───────────────────────────────────────────────────────
+    // Soft = Ctrl-Reset (RAM and, on a ][+, the display survive); hard also
+    // wipes the CPU registers and, on a //e-class machine, the MMU.
+    if (iconButton({ ICON_FA_ROTATE_LEFT,  "SoftReset",
+                     "Reset (Ctrl-Reset / F11)" })) {
+        r.requestSoftReset = true;
+    }
+    ImGui::SameLine();
+    if (iconButton({ ICON_FA_ARROWS_ROTATE, "HardReset",
+                     "Hard reset (F12) â also clears CPU registers" })) {
+        r.requestHardReset = true;
+    }
+    ImGui::SameLine();
+
+    // ── Video pipeline ───────────────────────────────────────────────
+    if (snap.videoMenuItems) {
+        if (iconButton({ ICON_FA_TV, "VideoPipeline",
+                         "Video: colour pipeline (also Display menu)" }))
+            ImGui::OpenPopup("##POM2ToolbarVideo");
+        if (ImGui::BeginPopup("##POM2ToolbarVideo")) {
+            snap.videoMenuItems();
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+    }
 
     // ── Display color / monochrome toggle ────────────────────────────
     // One-click flip between color and B&W phosphor. The host remembers

@@ -77,6 +77,13 @@ PDF, screen dump, print history *(`printer_plan_2`'s remaining phases are
 unscheduled; the `ImageWriter.cpp` file-size debt is still owed as a **ratchet**
 obligation)* · ThunderClock+ and No-Slot Clock · Mouse Card, both models ·
 Joystick / paddles / 4play *(**4play is complete** — mark it so)* · TransWarp ·
+**Memory Expansion "Slinky"**, **Zip Chip** and **S.A.M. DAC** *(2026-10-16,
+moved out of the parked tail on the user's explicit request, each with its
+named software: the Slinky is ProDOS 8's RAM disk and AppleWorks' expanded
+desktop, on Apple's real 341-0344A firmware; the Zip Chip is general
+acceleration plus the Zip Chip control utilities that drive `$C05A-$C05F`;
+the S.A.M. DAC is what the S.A.M. speech software streams to. Pinned
+`slinky_card`, `zip_chip`, `sam_card`)* ·
 Videx Videoterm *(2026-09-29; ROM-gated, ][ / ][+ only)* ·
 Rewind + snapshot *("redo" and writable-WOZ undo closed as won't-do)* ·
 Debugger and memory panels · AI control server + SDK *(a break here is urgent —
@@ -99,7 +106,7 @@ registry, theme, docking, palette · WASM build · Packaging.
 | 🧊 **PostScript by delegation** | Delegates to a host Ghostscript; document the dependency, no in-process renderer |
 | 🧊 **WASM browser extras** (file picker, touch input, worklet latency, 50 Hz RAF) | Open since the WASM build landed; the demo is blocked on G1, not on code |
 | 🧊 **Apple ][ Original (1977) profile** | No profile-specific test, no corpus title, no report. Do not chase rev-0 quirks |
-| 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + 8-bit DAC + Apple II VGA + E-Z Color | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
+| 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
 
 ## Standing rulings
 

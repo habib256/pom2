@@ -63,8 +63,10 @@ enum class PanelGroup {
     Machine,        ///< Machine menu
     DevStorage,     ///< Devices ▸ Storage
     DevSound,       ///< Devices ▸ Sound
-    DevPorts,       ///< Devices ▸ Ports & cards
-    DevInspectors,  ///< Devices ▸ Inspectors & tools
+    DevInput,       ///< Devices ▸ Input
+    DevPrinting,    ///< Devices ▸ Printers & serial
+    DevNetwork,     ///< Devices ▸ Network
+    DevOther,       ///< Devices ▸ Other cards
     Display,        ///< Display menu
     View,           ///< View menu
     Tools,          ///< Tools menu
@@ -133,8 +135,11 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "show_slot_config", nullptr,
   "One card per slot, plugged and unplugged live. Built-in slots on the\n"
   "//c-class profiles are locked and say why.", /*defaultOpen=*/true },
+{ PanelId::Rewind, "panel.rewind", "Rewind (time-travel)", PanelGroup::Machine,
+  "show_rewind", "F6",
+  "Scrub back through machine state. Hold F6 to rewind live." },
 
-// ── Devices ▸ Storage ───────────────────────────────────────────────────
+// ── Devices ▸ Storage ─────────────────────────────────────────────────────
 { PanelId::Drives, "panel.drives", "Drives", PanelGroup::DevStorage,
   "show_drives", nullptr,
   "All configured drives, stacked vertically with their mounted media and activity.", true },
@@ -143,12 +148,6 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "Every internal drive and mountable bay in one place. Mount / Insert /\n"
   "Eject act immediately — the card-per-slot list is Machine \xe2\x86\x92 Slot\n"
   "Configuration." },
-{ PanelId::FloppyEmu, "panel.floppyemu", "Floppy Emu (BMOW)", PanelGroup::DevStorage,
-  "show_floppy_emu", nullptr,
-  "BMOW Floppy Emu: SD-card image browser + OLED, emulated." },
-{ PanelId::Cassette, "panel.cassette", "Cassette deck", PanelGroup::DevStorage,
-  "show_cassette", nullptr,
-  "Load/save tape images (.wav) on II/II+/IIe." },
 { PanelId::DiskII, "panel.diskii", "Disk II (slot 6)", PanelGroup::DevStorage,
   "show_disk_panel", nullptr,
   "5.25\" drive panel: insert / eject / write-protect, drive LEDs." },
@@ -161,11 +160,17 @@ inline constexpr PanelInfo kPanelCatalog[] = {
 { PanelId::SmartPort, "panel.smartport", "SmartPort Configuration", PanelGroup::DevStorage,
   "show_smartport_panel", nullptr,
   "SmartPort units behind a Liron-class card (3.5\" + HDV volumes)." },
-{ PanelId::FujiNet, "panel.fujinet", "FujiNet", PanelGroup::DevStorage,
-  "show_fujinet_panel", nullptr,
-  "FujiNet relay: transport, attached devices and call counters." },
+{ PanelId::FloppyEmu, "panel.floppyemu", "Floppy Emu (BMOW)", PanelGroup::DevStorage,
+  "show_floppy_emu", nullptr,
+  "BMOW Floppy Emu: SD-card image browser + OLED, emulated." },
+{ PanelId::Cassette, "panel.cassette", "Cassette deck", PanelGroup::DevStorage,
+  "show_cassette", nullptr,
+  "Load/save tape images (.wav) on II/II+/IIe." },
 
-// ── Devices ▸ Sound ─────────────────────────────────────────────────────
+// ── Devices ▸ Sound ───────────────────────────────────────────────────────
+{ PanelId::Mixer, "panel.mixer", "Audio Mixer", PanelGroup::DevSound,
+  "show_mixer", nullptr,
+  "Per-source volume: speaker, Mockingboard/Phasor, speech, floppy." },
 { PanelId::Mockingboard, "panel.mockingboard", "Mockingboard (VIA + AY state)", PanelGroup::DevSound,
   "show_mockingboard", nullptr,
   "Mockingboard A/C: live 6522 VIA + AY-3-8910 PSG register view." },
@@ -175,42 +180,43 @@ inline constexpr PanelInfo kPanelCatalog[] = {
 { PanelId::EchoPlus, "panel.echoplus", "Echo+", PanelGroup::DevSound,
   "show_echoplus", nullptr,
   "Echo/Cricket SSI263 speech chip state." },
-{ PanelId::Mixer, "panel.mixer", "Audio Mixer", PanelGroup::DevSound,
-  "show_mixer", nullptr,
-  "Per-source volume: speaker, Mockingboard/Phasor, speech, floppy." },
 
-// ── Devices ▸ Ports & cards ─────────────────────────────────────────────
-{ PanelId::Ssc, "panel.ssc", "Super Serial", PanelGroup::DevPorts,
-  "show_ssc", nullptr,
-  "6551 ACIA serial port + telnet bridge (modem / printer)." },
-{ PanelId::Ethernet, "panel.ethernet", "Ethernet", PanelGroup::DevPorts,
-  "show_ethernet", nullptr,
-  "Uthernet I / II state: host transport, MAC, W5100 sockets." },
-{ PanelId::Printer, "panel.printer", "Printer", PanelGroup::DevPorts,
-  "show_printer", nullptr,
-  "Parallel printer card \xe2\x86\x92 text spool (.txt)." },
-{ PanelId::ImageWriter, "panel.imagewriter", "ImageWriter II (printout)", PanelGroup::DevPorts,
-  "show_imagewriter", nullptr,
-  "Rendered ImageWriter II output: pages, colour ribbon, PNG export." },
-{ PanelId::ChatMauve, "panel.chatmauve", "Le Chat Mauve (slot 7)", PanelGroup::DevPorts,
-  "show_chatmauve", nullptr,
-  "Le Chat Mauve RGB / Eve video card controls." },
-{ PanelId::Joystick, "panel.joystick", "Joystick", PanelGroup::DevPorts,
-  "show_joystick", nullptr,
-  "Analog paddles / joystick mapping + push-buttons." },
-{ PanelId::Keyboard, "panel.keyboard", "Apple Keyboard", PanelGroup::DevPorts,
+// ── Devices ▸ Input ───────────────────────────────────────────────────────
+{ PanelId::Keyboard, "panel.keyboard", "Apple Keyboard", PanelGroup::DevInput,
   "show_keyboard", nullptr,
   "Clickable keyboard with a skin selected for the active machine.\n"
   "Includes Open-Apple, Option/Solid-Apple and Reset controls.", /*defaultOpen=*/true },
-
-// ── Devices ▸ Inspectors & tools ────────────────────────────────────────
-{ PanelId::Rewind, "panel.rewind", "Rewind (time-travel)", PanelGroup::DevInspectors,
-  "show_rewind", "F6",
-  "Scrub back through machine state. Hold F6 to rewind live." },
-{ PanelId::Mouse, "panel.mouse", "Mouse Inspector", PanelGroup::DevInspectors,
+{ PanelId::Joystick, "panel.joystick", "Joystick", PanelGroup::DevInput,
+  "show_joystick", nullptr,
+  "Analog paddles / joystick mapping + push-buttons." },
+{ PanelId::Mouse, "panel.mouse", "Mouse Inspector", PanelGroup::DevInput,
   "show_mouse_inspector", nullptr,
   "Apple II Mouse Card state + host-cursor sync diagnostics." },
-{ PanelId::NoSlotClock, "panel.nsclock", "No-Slot Clock (DS1216E)", PanelGroup::DevInspectors,
+
+// ── Devices ▸ Printers & serial ───────────────────────────────────────────
+{ PanelId::Printer, "panel.printer", "Printer", PanelGroup::DevPrinting,
+  "show_printer", nullptr,
+  "Parallel printer card \xe2\x86\x92 text spool (.txt)." },
+{ PanelId::ImageWriter, "panel.imagewriter", "ImageWriter II (printout)", PanelGroup::DevPrinting,
+  "show_imagewriter", nullptr,
+  "Rendered ImageWriter II output: pages, colour ribbon, PNG export." },
+{ PanelId::Ssc, "panel.ssc", "Super Serial", PanelGroup::DevPrinting,
+  "show_ssc", nullptr,
+  "6551 ACIA serial port + telnet bridge (modem / printer)." },
+
+// ── Devices ▸ Network ─────────────────────────────────────────────────────
+{ PanelId::Ethernet, "panel.ethernet", "Ethernet", PanelGroup::DevNetwork,
+  "show_ethernet", nullptr,
+  "Uthernet I / II state: host transport, MAC, W5100 sockets." },
+{ PanelId::FujiNet, "panel.fujinet", "FujiNet", PanelGroup::DevNetwork,
+  "show_fujinet_panel", nullptr,
+  "FujiNet relay: transport, attached devices and call counters." },
+
+// ── Devices ▸ Other cards ─────────────────────────────────────────────────
+{ PanelId::ChatMauve, "panel.chatmauve", "Le Chat Mauve (slot 7)", PanelGroup::DevOther,
+  "show_chatmauve", nullptr,
+  "Le Chat Mauve RGB / Eve video card controls." },
+{ PanelId::NoSlotClock, "panel.nsclock", "No-Slot Clock (DS1216E)", PanelGroup::DevOther,
   "show_nsclock", nullptr,
   "Dallas DS1216E real-time clock hidden under the Monitor ROM." },
 

@@ -15,7 +15,7 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [DISPLAY-001](#display-001) | 🟡 | To verify | VidHD on Apple IIe — SHR display support. |
+| [DISPLAY-001](#display-001) | 🟡 | Landed (2026-10-16), hardware check owed | VidHD on Apple IIe — SHR display support. |
 | [DISPLAY-011](#display-011) | 🟡 | To verify | Le Chat Mauve — what is left after P0-P2 |
 | [DISPLAY-012](#display-012) | 🟡 | To verify | Bug hunt #15's display residue |
 | [DISPLAY-002](#display-002) | 🟢 | To verify | Golden coverage gaps |
@@ -32,9 +32,19 @@ an explicit request before scheduling.
 
 ## DISPLAY-001 — VidHD on Apple IIe — SHR display support.
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Landed 2026-10-16 (`VidHDCard`, catalog `vidhd`); a reference image from real hardware is still owed.
 
 **Acceptance criterion (after revalidation):** Render VidHD SHR on the IIe with documented register behavior and a reference image or hardware-derived test.
+
+**Status (2026-10-16).** Ported from AppleWin's partial model: the `$C0n0-2`
+signature, `$C022/$C029/$C034/$C035` latched off motherboard writes, SHR
+(NEWVIDEO `$C0`) painted 640×400 from the CPU's aux bank in 320, 320 + fill
+and 640 modes through the display's `CardVideoSource` seam; //e-class slotted
+profiles only. Register behaviour is documented in
+[DEV § VidHD](../../DEV.md#vidhd-vidhdcard) and pinned by `vidhd_card`
+against hand-computed pixels — not yet against a real VidHD capture. Still
+open: IIgs text/border colours, the VidHD's extended text modes, the ][+ aux
+mirror, mid-frame SCB/palette changes.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1072). Original dates and estimates are retained below.
 

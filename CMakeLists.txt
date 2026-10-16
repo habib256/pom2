@@ -308,6 +308,7 @@ set(SOURCES
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EmulationController.cpp
+    src/ZipChip.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
@@ -382,6 +383,7 @@ set(SOURCES
     src/GrapplerClassicCard.cpp
     src/Hd6845Crtc.cpp
     src/VidexVideotermCard.cpp
+    src/VidHDCard.cpp
     src/AppleParallelCard.cpp
     src/CentronicsPrinter.cpp
     src/NtscPostProcessor.cpp
@@ -418,6 +420,9 @@ set(SOURCES
     src/SlotBus.cpp
     src/FourPlayCard.cpp
     src/TranswarpCard.cpp
+    src/SlinkyCard.cpp
+    src/SamCard.cpp
+    src/Dac8Audio.cpp
     src/Scc8530Device.cpp
     src/WorkstationCard.cpp
     src/Cs8900aDevice.cpp
@@ -514,6 +519,7 @@ set(POM2_DEVICES_SOURCES
     src/GrapplerClassicCard.cpp
     src/Hd6845Crtc.cpp
     src/VidexVideotermCard.cpp
+    src/VidHDCard.cpp
     src/AppleParallelCard.cpp
     src/CentronicsPrinter.cpp
     src/LeChatMauveCard.cpp
@@ -531,6 +537,9 @@ set(POM2_DEVICES_SOURCES
     src/ProDOSHardDiskCard.cpp
     src/FourPlayCard.cpp
     src/TranswarpCard.cpp
+    src/SlinkyCard.cpp
+    src/SamCard.cpp
+    src/Dac8Audio.cpp
     src/Scc8530Device.cpp
     src/SmartPort35Unit.cpp
     src/SmartPortCard.cpp
@@ -707,6 +716,7 @@ set(POM2_MACHINE_HEADERS
     src/Apple2VideoDecode.h
     src/AppleKeyLatch.h
     src/CpuClock.h
+    src/CpuSocketAccelerator.h
     src/MemoryProfile.h
     src/MemoryWatchSink.h
     src/PaddleInputs.h
@@ -728,6 +738,7 @@ set(POM2_MACHINE_SOURCES
     src/SmartPortHub.cpp
     src/Sony35Drive.cpp
     src/NoSlotClock.cpp
+    src/ZipChip.cpp
     src/SlotBus.cpp
     src/SpeakerDevice.cpp
     src/SystemProfile.cpp
@@ -907,6 +918,7 @@ set(HEADERS
     src/CardVideoSource.h
     src/Hd6845Crtc.h
     src/VidexVideotermCard.h
+    src/VidHDCard.h
     src/AppleParallelCard.h
     src/CentronicsPrinter.h
     src/PhasorCard.h
@@ -937,6 +949,11 @@ set(HEADERS
     src/Cs8900aDevice.h
     src/FourPlayCard.h
     src/TranswarpCard.h
+    src/SlinkyCard.h
+    src/ZipChip.h
+    src/CpuSocketAccelerator.h
+    src/SamCard.h
+    src/Dac8Audio.h
     src/Scc8530Device.h
     src/WorkstationCard.h
     src/UthernetCard.h
@@ -1376,6 +1393,7 @@ set(POM2_CORE_SOURCES
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EmulationController.cpp
+    src/ZipChip.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
@@ -1415,6 +1433,7 @@ set(POM2_CORE_SOURCES
     src/GrapplerClassicCard.cpp
     src/Hd6845Crtc.cpp
     src/VidexVideotermCard.cpp
+    src/VidHDCard.cpp
     src/AppleParallelCard.cpp
     src/CentronicsPrinter.cpp
     src/PhasorCard.cpp
@@ -1436,6 +1455,9 @@ set(POM2_CORE_SOURCES
     src/SlotBus.cpp
     src/FourPlayCard.cpp
     src/TranswarpCard.cpp
+    src/SlinkyCard.cpp
+    src/SamCard.cpp
+    src/Dac8Audio.cpp
     src/Scc8530Device.cpp
     src/WorkstationCard.cpp
     src/Cs8900aDevice.cpp
@@ -1620,6 +1642,7 @@ add_executable(pom2_headless
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/EmulationController.cpp
+    src/ZipChip.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/Block512Backing.cpp

@@ -103,6 +103,12 @@ inline constexpr CardType kCardTypes[] = {
     // roms/videx_videoterm_char_normal.bin. Not offered on a //e-class
     // machine: its 80 columns are built in. MAME `a2videoterm`.
     { "videoterm",    "Videx Videoterm 80-column" },
+    // VidHD (Blue Shift, 2018) — the IIgs Super Hi-Res modes on a //e: the
+    // card latches $C029 NEWVIDEO (and $C022/$C034/$C035) off the bus and,
+    // with SHR on, shows 320/640 x 200 read from aux RAM $2000-$9FFF. No ROM.
+    // //e-class machines with slots only (the ][+ needs an aux mirror POM2
+    // does not model). Port of AppleWin `source/VidHD.cpp`.
+    { "vidhd",        "VidHD (Super Hi-Res)" },
     { "clock",        "Clock (ProDOS)"    },
     // Uthernet I (a2RetroSystems) — CS8900A Ethernet NIC. Raw frames
     // only: the Apple-side stack (IP65, Contiki, ADTPro-ethernet) does
@@ -175,6 +181,15 @@ inline constexpr CardType kCardTypes[] = {
     // Speeds the machine's own 6502 to 3.5x (or 1.75x on the half-speed
     // DIP). MAME `bus/a2bus/transwarp.cpp` port.
     { "transwarp",    "TransWarp accelerator (Applied Engineering)" },
+    // Apple II Memory Expansion Card (670-0024, "Slinky") — 1 MB behind a
+    // 24-bit auto-incrementing address latch at $C0n0-$C0n3; its 341-0344A
+    // firmware serves the RAM to ProDOS as a RAM disk. Needs
+    // roms/slinky_341-0344a.bin. MAME `bus/a2bus/a2memexp.cpp` port.
+    { "slinky",       "Memory Expansion (Slinky RAM disk)" },
+    // Don't Ask Software S.A.M. — any write to $C0nX drives an 8-bit DAC;
+    // the S.A.M. software synthesises speech on the 6502 and streams the
+    // samples. No ROM. MAME `bus/a2bus/a2sam.cpp` port.
+    { "sam",          "SAM (8-bit DAC speech)" },
 };
 
 /// Human-readable label for a card key (falls back to the key itself).

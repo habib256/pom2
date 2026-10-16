@@ -234,10 +234,11 @@ public:
     MediaCommandResult mountMediaBay(EmulationController& controller,
                                      Settings& settings, int slot, int bay,
                                      const std::string& path) const;
+    /// `bay` != 0 needs a two-drive `ProDOSHardDiskCard`.
     MediaCommandResult mountBlockBytes(
         EmulationController& controller, Settings& settings, int slot,
         std::vector<std::uint8_t> bytes, const std::string& label,
-        const std::string& hostFolder) const;
+        const std::string& hostFolder, int bay = 0) const;
     MediaCommandResult ejectMediaBay(EmulationController& controller,
                                      Settings& settings, int slot,
                                      int bay) const;
@@ -289,9 +290,14 @@ public:
     /// flag to keep — the default when every file took the notch, the old
     /// `false` when the host refused (with a warning). No-op under a
     /// protected process default. Shared with the on-board 3.5" restore.
+    /// `key` (the settings key read) makes it once PER PROCESS: the restore
+    /// re-runs on every profile switch and Slot Apply, the store still says
+    /// `false` until quit, and re-notching a disk the user had unprotected
+    /// meanwhile was silent (bug hunt 2026-10-16).
     static bool migrateLegacyWriteBack(bool keyValue,
                                        const std::vector<std::string>& paths,
-                                       std::vector<std::string>& warnings);
+                                       std::vector<std::string>& warnings,
+                                       const std::string& key = std::string());
     RoutedMediaCommandResult convertDisk35WozToPo(
         EmulationController& controller, Settings& settings,
         int drive, bool onboard = false) const;

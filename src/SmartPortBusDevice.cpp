@@ -199,6 +199,7 @@ void SmartPortBusDevice::abortTransaction()
     replyExposed_ = false;
     pendingWrite_ = false;
     staleWrite_   = false;
+    pendingMedia_ = 0;
     pendingCmd_   = 0;
     pendingUnit_  = 0;
     pendingBlock_ = 0;
@@ -380,6 +381,7 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
     // on the block a long-abandoned WRITE named.
     pendingWrite_ = false;
     staleWrite_   = false;
+    pendingMedia_ = 0;
     pendingCmd_   = 0;
     pendingUnit_  = 0;
     pendingBlock_ = 0;
@@ -407,6 +409,8 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
         pendingWrite_ = true;
         pendingUnit_  = dev;
         pendingBlock_ = block;
+        const SmartPortBusUnit* target = unitFor(dev);
+        pendingMedia_ = target ? target->mediaIdentity() : 0;
         // Remember the command for the reply's sake: CONTROL and the
         // character WRITE are accepted and discarded.
         progress_.commandByte = cmd;
@@ -527,7 +531,11 @@ void SmartPortBusDevice::serveWriteData(const std::vector<uint8_t>& body)
     // The disk the command was addressed to is not the one in the drive now:
     // this block belongs to the medium that left. Refused, and SAID so — a
     // reply keeps the handshake going; silence would hang the host.
-    if (stale)                             { buildReply(kErrIo, nullptr, 0, false); return; }
+    // `mediaChanged` only sees a drive going empty or full; a disk swapped
+    // for another between two polls — or a snapshot FILE restored over a
+    // different disk (bug hunt 2026-10-16) — shows only in the identity.
+    if (stale || (pendingMedia_ != 0 && u->mediaIdentity() != pendingMedia_))
+                                           { buildReply(kErrIo, nullptr, 0, false); return; }
     if (pendingBlock_ >= u->blockCount())  { buildReply(kErrBadBlock, nullptr, 0, false); return; }
     if (u->writeProtected())               { buildReply(kErrWriteProt, nullptr, 0, false); return; }
     if (body.size() < kBlockBytes)         { buildReply(kErrIo, nullptr, 0, false); return; }
@@ -595,7 +603,11 @@ namespace {
 // bytes of the owner's tail, put them in ids_[4..7] and returned an offset
 // four bytes too far. 'SPB2' carries the table's LENGTH, so both shapes are
 // delimited by the blob itself.
-constexpr uint8_t kBusBlobMagic  [4] = { 'S', 'P', 'B', '2' };
+// 'SPB3' appends the pending WRITE's medium identity (8 bytes) after the
+// table. A v1/v2 blob restored with a WRITE pending cannot prove its disk is
+// the one in the drive, so that WRITE comes back stale.
+constexpr uint8_t kBusBlobMagic  [4] = { 'S', 'P', 'B', '3' };
+constexpr uint8_t kBusBlobMagicV2[4] = { 'S', 'P', 'B', '2' };
 constexpr uint8_t kBusBlobMagicV1[4] = { 'S', 'P', 'B', '1' };
 constexpr int     kBusBlobV1Ids      = 4;
 void put16(std::vector<uint8_t>& o, std::size_t v)
@@ -628,6 +640,7 @@ void SmartPortBusDevice::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(static_cast<uint8_t>(assigned_));
     out.push_back(static_cast<uint8_t>(kMaxUnits));   // id-table length
     for (int i = 0; i < kMaxUnits; ++i) out.push_back(ids_[static_cast<std::size_t>(i)]);
+    for (int k = 0; k < 8; ++k) out.push_back(static_cast<uint8_t>(pendingMedia_ >> (8 * k)));
 }
 
 std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size_t n)
@@ -636,7 +649,8 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     // transaction (see LironCard::loadSnapshotState).
     if (!data || n < 4) return 0;
     const bool v1 = std::memcmp(data, kBusBlobMagicV1, 4) == 0;
-    if (!v1 && std::memcmp(data, kBusBlobMagic, 4) != 0) return 0;
+    const bool v2 = std::memcmp(data, kBusBlobMagicV2, 4) == 0;
+    if (!v1 && !v2 && std::memcmp(data, kBusBlobMagic, 4) != 0) return 0;
     busReset();
     std::size_t i = 4;
     auto need = [&](std::size_t k) { return i + k <= n; };
@@ -688,6 +702,14 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     // host numbered no longer fits, so renumber at the next INIT rather than
     // answer for half of it.
     if (stored > kMaxUnits) { ids_.fill(0); assigned_ = 0; }
+    if (v1 || v2) {
+        if (pendingWrite_) staleWrite_ = true;     // no identity to check
+    } else {
+        if (!need(8)) { busReset(); return 0; }
+        pendingMedia_ = 0;
+        for (int k = 0; k < 8; ++k)
+            pendingMedia_ |= static_cast<uint64_t>(data[i++]) << (8 * k);
+    }
     if (assigned_ > 0 && ids_[static_cast<std::size_t>(assigned_ - 1)] == 0)
         assigned_ = 0;                          // a truncated table: renumber at the next INIT
     return i;

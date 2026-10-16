@@ -374,6 +374,46 @@ int main()
         assert(std::memcmp(retried.data() + 10 * kBlk, blkD4.data(), kBlk) == 0);
     }
 
+    // The undo is keyed on the MOUNT, not the bay. Phase 2 runs unlocked, so
+    // the bay may hold another disk by the time a failed commit is undone;
+    // marking THAT one dirty (SmartPortCard/LironCard::restoreFlushBayDirty
+    // did) left the captured disk's writes with no flag anywhere.
+    {
+        const fs::path imgA = base / "lineage_a.po";
+        const fs::path imgB = base / "lineage_b.po";
+        writeFile(imgA, makeRawImage());
+        writeFile(imgB, makeRawImage());
+
+        pom2::Disk35Image d;
+        assert(d.loadFile(imgA.string()));
+        d.setWriteBackEnabled(true);
+        const std::vector<std::uint8_t> blkE5(kBlk, 0xE5);
+        assert(d.writeBlock(3, blkE5.data()));
+        pom2::Disk35Image::PendingWriteBack capture = d.takeWriteBack();
+        assert(capture.valid && capture.lineage != 0);
+
+        assert(d.restoreDirtyFor(capture.lineage) && "same mount: undo applies");
+        assert(d.hasUnsavedChanges());
+        assert(d.saveDirty());
+
+        assert(d.writeBlock(4, blkE5.data()));
+        capture = d.takeWriteBack();
+        assert(capture.valid);
+        assert(d.loadFile(imgB.string()));               // swapped meanwhile
+        assert(!d.restoreDirtyFor(capture.lineage) && "another disk: no undo");
+        assert(!d.hasUnsavedChanges());
+        assert(!d.restoreDirtyFor(0));
+
+        // mountId: per LOAD, not per file — eject-all's phase 3 relies on it
+        // to leave a re-mount of the same file alone.
+        const std::uint64_t idB = d.mountId();
+        assert(idB != 0);
+        assert(d.loadFile(imgB.string()));
+        assert(d.mountId() != 0 && d.mountId() != idB);
+        d.eject();
+        assert(d.mountId() == 0);
+    }
+
     fs::remove_all(base);
     std::printf("OK disk35_atomic_save (rename-replace, 2IMG envelope kept%s, "
                 "write-back opt-out no-ops)\n",

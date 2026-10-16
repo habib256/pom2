@@ -158,7 +158,8 @@ void testMemoryTrailerCarriesIwm()
     std::vector<uint8_t> iwmBlob;
     iwm.appendSnapshotState(iwmBlob);
     const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 11)
-                            + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0);
+                            + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0)
+                            + (4 + 0);   // the Zip Chip section (2026-10-16)
     pom2::IWMDevice iwm3;
     Memory mem3;
     mem3.setIWM(&iwm3);
@@ -363,7 +364,8 @@ void testThirdSonySnapshot()
     assert(third.track() != originalTrack);
     assert(mem.loadSnapshotState(blob.data(), blob.size()));
     assert(third.track() == originalTrack);
-    blob.resize(blob.size() - sonyBlob.size() - 4);
+    // Drop the (empty) Zip Chip section that follows it, then the Sony's.
+    blob.resize(blob.size() - 4 - sonyBlob.size() - 4);
     assert(mem.loadSnapshotState(blob.data(), blob.size()));
     std::printf("  ok: third Sony snapshot and historical trailer compatibility\n");
 }

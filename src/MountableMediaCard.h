@@ -73,6 +73,14 @@ struct MediaBayInfo
     // units: empty / 3.5" / HDV). Block cards have a fixed kind → false.
     bool        supportsTypeSelect = false;
     std::string typeKey;          // current bay type key ("" / "35" / "hdv")
+    // An EMPTY bay that takes a 3.5" or a ProDOS HDV, chosen by the file
+    // (a Liron unit). The Drives rack used to infer the kind from
+    // `kindLabel`, read "…SmartPort HD" as hard-disk only, and refused 800K.
+    bool        acceptsSony35OrHdv = false;
+    // Process-unique identity of the mounted medium (0 = none or unknown).
+    // A new load draws a new one even for the same file, so an unlocked
+    // phase 2 can tell its disk from one mounted while it ran.
+    uint64_t    mountId = 0;
 };
 
 class MountableMediaCard
@@ -192,8 +200,12 @@ public:
 
     /// Phase-2 FAILURE undo for `prepareFlushBay`, `stateMutex` held: re-mark
     /// the bay dirty so the medium (still mounted — a flush never ejects) is
-    /// saved again on the next attempt.
-    virtual void restoreFlushBayDirty(int /*bay*/) {}
+    /// saved again on the next attempt. Only when the bay still holds the
+    /// mount `lineage` names (`PendingBayFlush::lineage`): phase 2 runs
+    /// unlocked, and a disk swapped in meanwhile must not take the undo — it
+    /// used to, marking the NEWCOMER dirty while the captured disk's writes,
+    /// whose flag the capture had retired, were gone with it.
+    virtual void restoreFlushBayDirty(int /*bay*/, uint64_t /*lineage*/) {}
 
     /// Phase 1 of a two-phase EJECT, with `stateMutex` held: lift out what
     /// the save-on-eject would write, WITHOUT touching the medium. Leaving it

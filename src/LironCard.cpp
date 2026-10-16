@@ -501,6 +501,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
         info.supportsWriteBack = blk.canWriteBack();
         info.persistenceState  = blk.persistenceState();
         info.persistenceError  = blk.persistenceError();
+        info.mountId           = blk.mountId();
         return info;
     }
     const Disk35Image& img = images_[b];
@@ -509,6 +510,8 @@ MediaBayInfo LironCard::bayInfo(int bay) const
     info.lastError         = img.lastError().empty() ? blk.lastError() : img.lastError();
     info.blockCount        = img.isLoaded() ? Disk35Image::kBlockCount : 0;
     info.loaded            = img.isLoaded();
+    info.acceptsSony35OrHdv = !img.isLoaded();
+    info.mountId           = img.mountId();
     info.writeProtected    = img.isWriteProtected();
     info.fileWriteProtected = img.isFileWriteProtected();
     info.writeBackEnabled  = img.isWriteBackEnabled();
@@ -680,10 +683,10 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
     return true;
 }
 
-void LironCard::restoreFlushBayDirty(int bay)
+void LironCard::restoreFlushBayDirty(int bay, uint64_t lineage)
 {
     if (bay < 0 || bay >= kMaxUnits) return;
-    images_[static_cast<std::size_t>(bay)].restoreDirty();
+    (void)images_[static_cast<std::size_t>(bay)].restoreDirtyFor(lineage);
 }
 
 bool LironCard::flushBay(int bay, std::string& errOut)

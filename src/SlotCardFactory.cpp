@@ -31,8 +31,10 @@
 #include "WorkstationCard.h"
 #include "SlotPeripheral.h"
 #include "SmartPortCard.h"
+#include "SlinkyCard.h"
 #include "SuperSerialCard.h"
 #include "VidexVideotermCard.h"
+#include "VidHDCard.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -267,6 +269,45 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
             (card->alternateIsDerived() ? std::string(" (inverse set derived)")
                                         : " + " + alt);
         card->onReset();
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "vidhd") {
+        // VidHD: no ROM to load (the detection bytes are hard-wired,
+        // VidHDCard.h). Its picture reaches the monitor through the
+        // display's CardVideoSource seam, wired by the caller.
+        auto card = std::make_unique<VidHDCard>(request.slot);
+        card->onReset();
+        result.status = "no ROM needed";
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "slinky") {
+        // Apple Memory Expansion Card. ROM-gated like the CFFA: the 341-0344A
+        // firmware IS the RAM-disk driver, and a card without it would be a
+        // $Cn page ProDOS finds and cannot use (SlinkyCard.h).
+        const std::string rom = locate_(SlinkyCard::kRomPath);
+        std::vector<uint8_t> bytes;
+        if (!rom.empty()) {
+            std::ifstream f(rom, std::ios::binary);
+            bytes.resize(SlinkyCard::kRomBytes + 1);
+            f.read(reinterpret_cast<char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+            bytes.resize(static_cast<std::size_t>(f.gcount()));
+        }
+        auto card = std::make_unique<SlinkyCard>(request.slot);
+        if (!card->loadRom(bytes)) {
+            result.warningCategory = "Slinky";
+            result.warning = "Memory Expansion card requested in slot " +
+                std::to_string(request.slot) + " but " +
+                SlinkyCard::kRomPath + " (4 KB) is missing or the wrong size"
+                " — slot left empty";
+            return result;
+        }
+        result.resourcePath = rom;
+        result.status = "loaded: " + rom;
         result.card = std::move(card);
         return result;
     }

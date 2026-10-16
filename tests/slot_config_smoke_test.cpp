@@ -132,7 +132,7 @@ void testHdvAtSlot(int slot)
     assert(mem.memRead(base + 0x01) == 0x20);
     assert(mem.memRead(base + 0x03) == 0x00);
     assert(mem.memRead(base + 0x05) == 0x03);
-    assert(mem.memRead(base + 0x07) == 0x01);
+    assert(mem.memRead(base + 0x07) == 0x3C); // II+/unenhanced //e autostart
     // $CnFE = $07, not $03: bit 2 is "the device can be written to"
     // (ProDOS 8 TN.PDOS.021). It read $03 — status + read, i.e. READ-ONLY —
     // while the driver has always implemented command $02, so every

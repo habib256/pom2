@@ -125,6 +125,10 @@ public:
     /// next to the cycle source; a standalone bus leaves it null.
     void setCycleCounterRef(const uint64_t* p) { cycleCounterRef_ = p; }
     const uint64_t* cycleCounterRef() const { return cycleCounterRef_; }
+    /// Memory's auxiliary 64 KB (the CPU's selected bank), for a card that
+    /// observes it (`SlotPeripheral::busAuxRam`). Null on a standalone bus.
+    void setAuxRamRef(const uint8_t* p) { auxRamRef_ = p; }
+    const uint8_t* auxRamRef() const { return auxRamRef_; }
     /// Start (or restart, clearing it) logging `slot`, keeping at most
     /// `capacity` entries; past it the oldest go and `accessLogDropped`
     /// counts them. Logging costs one mask test per slot access when off.
@@ -322,6 +326,7 @@ private:
     std::array<AccessLog, kSlotCount> accessLogs_{};
     CycleSourceFn cycleSource_;
     const uint64_t* cycleCounterRef_ = nullptr;
+    const uint8_t*  auxRamRef_ = nullptr;
     void logAccess(int slot, uint16_t addr, uint8_t value, bool write)
     {
         if ((accessLogMask_ >> slot) & 1u) recordAccess(slot, addr, value, write);

@@ -28,6 +28,11 @@
 #include <utility>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 void writeLe32(std::ofstream& output, std::uint32_t value)
@@ -180,12 +185,70 @@ void testSmartPort(const std::string& sourceDir)
     assert(core.insertSmartPortDisk(0, imagePath));
     assert(blockOnHost(8, 0x33));
 
+#ifndef _WIN32
+    // A failed flush names ITS cause. SmartPort35Unit::saveDirty never copied
+    // the image's error, so lastError() replayed the last failed LOAD (here
+    // "cannot open …missing.po") or the generic fallback. A read-only
+    // directory refuses the atomic replace's sibling temp; root ignores that.
+    if (geteuid() != 0) {
+        const std::string dir = "pom2_core_api_ro";
+        const std::string roImage = dir + "/disk.po";
+        (void)mkdir(dir.c_str(), 0755);
+        writeBoot800K(roImage);
+        pom2::Core ro = makeSmartPortCore(sourceDir);
+        assert(ro.attachSmartPort(5));
+        assert(ro.insertSmartPortDisk(0, roImage));
+        assert(!ro.insertSmartPortDisk(0, "pom2_core_api_missing.po"));
+        ro.write(0xC0D0, 0x00);
+        ro.write(0xC0D1, 10);
+        ro.write(0xC0D2, 0x00);
+        for (int i = 0; i < 512; ++i) ro.write(0xC0D3, 0xEE);
+        assert(chmod(dir.c_str(), 0555) == 0);
+        assert(!ro.flushSmartPortDisk(0));
+        const std::string err = ro.lastError();
+        assert(chmod(dir.c_str(), 0755) == 0);
+        assert(err.find("missing") == std::string::npos);
+        assert(err.find("pom2tmp") != std::string::npos);
+        assert(ro.ejectSmartPortDisk(0));            // writable again: saves
+        assert(std::remove(roImage.c_str()) == 0);
+        assert(rmdir(dir.c_str()) == 0);
+    }
+#endif
+
     // So does an eject.
     writeBlock(9, 0x55);
     assert(core.ejectSmartPortDisk(0));
     assert(!core.smartPortDiskInserted(0));
     assert(blockOnHost(9, 0x55));
     assert(!core.bootSlot(4));                       // nothing in slot 4
+
+    // The signature is checked on the page the CPU will RUN, not only on the
+    // card: a //e leaves reset with SLOTC3ROM off, so a card in slot 3 is
+    // hidden behind the internal 80-column firmware ($C300 holds no trio).
+    {
+        pom2::Core slot3 = makeSmartPortCore(sourceDir);
+        assert(slot3.attachSmartPort(3));
+        assert(slot3.insertSmartPortDisk(0, imagePath));
+        assert(!slot3.bootSlot(3));
+        assert(slot3.lastError().find("not visible") != std::string::npos);
+    }
+
+    // A //c forces INTCXROM and shows a slot-5 card only while ARMED, the
+    // arm every reset clears. Unarmed, the CPU ran the //c's own $C500.
+    {
+        pom2::Core iic({
+            pom2::CpuModel::CMOS65C02,
+            pom2::VideoTiming::NTSC,
+            true,
+        });
+        assert(iic.loadRom(sourceDir + "/roms/apple2c-32Kv0.rom"));
+        assert(iic.attachSmartPort(5));
+        assert(iic.insertSmartPortDisk(0, imagePath));
+        assert(iic.bootSlot(5));
+        iic.run(400000);
+        assert(iic.read(0x0300) == 0xA5);
+        assert(iic.read(0x0301) == 0x50);
+    }
 
     assert(std::remove(imagePath.c_str()) == 0);
 }

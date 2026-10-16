@@ -24,6 +24,7 @@
 #include "SlotPeripheral.h"
 #include "SuperSerialCard.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -62,9 +63,20 @@ bool parseOnOff(const std::string& v, bool& out)
 
 bool parseByte(const std::string& v, uint8_t& out)
 {
+    // 0x.. / $.. hex or plain decimal, the whole token. Base 0 read a
+    // leading 0 as OCTAL (`dsw1=010` → 8) and let whitespace and '+' in.
+    std::string digits = v;
+    int base = 10;
+    if (digits.size() > 2 && digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X')) {
+        digits.erase(0, 2); base = 16;
+    } else if (digits.size() > 1 && digits[0] == '$') {
+        digits.erase(0, 1); base = 16;
+    }
+    if (digits.empty() || !std::isxdigit(static_cast<unsigned char>(digits[0])))
+        return false;
     char* end = nullptr;
-    const long n = std::strtol(v.c_str(), &end, 0);   // 0x.. or decimal
-    if (end == v.c_str() || *end != '\0' || n < 0 || n > 0xFF) return false;
+    const long n = std::strtol(digits.c_str(), &end, base);
+    if (*end != '\0' || n < 0 || n > 0xFF) return false;
     out = static_cast<uint8_t>(n);
     return true;
 }

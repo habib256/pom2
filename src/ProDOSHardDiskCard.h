@@ -104,6 +104,11 @@ public:
     bool loadImageFromBytes(std::vector<uint8_t> bytes,
                             const std::string& label,
                             const std::string& hostFolder = std::string{}) override;
+    /// Same, into either drive — drive 2 holds a host folder next to a boot
+    /// HDV in drive 1 (`--prodos-folder dir game.hdv`).
+    bool loadDriveFromBytes(int drive, std::vector<uint8_t> bytes,
+                            const std::string& label,
+                            const std::string& hostFolder = std::string{});
     bool ejectImage() override { return ejectDrive(0); }
     /// Two-phase eject (MountableMediaCard). MOVES out the payload the
     /// save-on-eject policy in ejectImage() would write — dirty flags are

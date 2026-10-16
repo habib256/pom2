@@ -31,6 +31,7 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "NoSlotClock.h"
+#include "ZipChip.h"
 #include "RewindBuffer.h"
 #include "SmartPortHub.h"
 #include "Sony35Drive.h"
@@ -116,6 +117,11 @@ public:
     /// recording when that bank is selected; the MAME bank stays silent
     /// here (a Disk II insert never clicked — startup restore must not thunk).
     void noteFloppyLatch(bool inserting);
+    /// The 3.5" insert/eject click for a SLOT-CARD bay (Liron, SmartPort
+    /// 3.5" unit). The on-board Sony drives click from `Sony35Drive::
+    /// emitInsertClick`; card bays had no sound path at all. Unlike the 5.25"
+    /// lid it plays on every bank — the 3.5" mechanism always clicks.
+    void noteFloppy35Latch(bool inserting);
     AudioDevice&       audio()       { return *audioDev; }
     pom2::IWMDevice&   iwm()         { return *iwmDev; }
     pom2::SmartPortHub& smartPortHub() { return *hub; }
@@ -124,6 +130,12 @@ public:
     /// (battery-backed on real hardware) state machine survives profile
     /// switches and CPU resets.
     pom2::NoSlotClock&  noSlotClock() { return *noSlotClock_; }
+    /// Zip Chip in the 6502 socket (ZipChip.h). Installed or not is a host
+    /// setting (`zip_chip`); Memory consults it only on //e-class machines
+    /// with slots. setZipChipInstalled takes stateMutex and resets the chip.
+    pom2::ZipChip& zipChip() { return zipChip_; }
+    void setZipChipInstalled(bool on);
+    bool zipChipInstalled() const { return zipInstalled_.load(); }
     static constexpr int kSony35Drives = 3;
     /// Physical external mechanisms persist when their media is ejected.
     /// Caller holds stateMutex (or is restoring before the worker starts).
@@ -142,7 +154,9 @@ public:
     /// change flip-flop. Returns true on success; on failure the
     /// drive is left empty and the image's `lastError()` carries the
     /// reason.
-    bool mount35(int idx, const std::string& path);
+    /// `click` false for a RESTORE (startup, CLI preload): the insert click
+    /// belongs to a user's insert, and the restore clicked on every launch.
+    bool mount35(int idx, const std::string& path, bool click = true);
 
     /// Unmount whatever is in 3.5" drive `idx` (0/1/2). No-op when empty.
     ///
@@ -518,6 +532,8 @@ private:
     std::unique_ptr<pom2::SmartPortHub> hub;
     std::unique_ptr<pom2::IIcExternalSmartPort> extSmartPort_;   // plain //c rear port
     std::unique_ptr<pom2::NoSlotClock>  noSlotClock_;
+    pom2::ZipChip      zipChip_;
+    std::atomic<bool>  zipInstalled_{false};
 
     pom2::RewindBuffer rewind_;
     /// Last `pom2::mediaWriteEpoch()` value the ring was reconciled against

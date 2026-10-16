@@ -60,6 +60,11 @@ const uint64_t* SlotPeripheral::busCycleCounter() const
     return bus_ ? bus_->cycleCounterRef() : nullptr;
 }
 
+const uint8_t* SlotPeripheral::busAuxRam() const
+{
+    return bus_ ? bus_->auxRamRef() : nullptr;
+}
+
 void SlotPeripheral::assertIrq(bool asserted)
 {
     if (asserted == irqAsserted_) return;

@@ -161,7 +161,9 @@ void MouseCardAppleWin::deviceSelectWrite(uint8_t low4, uint8_t v)
     pia.write(static_cast<uint8_t>(low4 & 0x03), v);
 }
 
-uint8_t MouseCardAppleWin::slotRomRead(uint8_t low8)
+// Pure: the PIA's bank bits select the page, nothing is clocked or latched,
+// so the debugger's peek and the CPU's fetch share it.
+uint8_t MouseCardAppleWin::romByte(uint8_t low8) const
 {
     // AppleWin SetSlotRom: bank = (m_by6821B << 7) & 0x0700. POM2 reads
     // the bank on demand instead of memcpy'ing into peripheral ROM.

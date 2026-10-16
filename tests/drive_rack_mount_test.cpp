@@ -2,6 +2,8 @@
 #include "DriveRackMount.h"
 #include "DiskIICard.h"
 #include "EmulationController.h"
+#include "FloppySoundDevice.h"
+#include "LironCard.h"
 #include "Memory.h"
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
@@ -11,6 +13,7 @@
 #include "StorageCoordinator.h"
 #include <cassert>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -85,6 +88,57 @@ int main() {
             auto* card = dynamic_cast<ProDOSHardDiskCard*>(state.memory().slotBus().peripheral(7));
             assert(!card->bayInfo(0).loaded && card->bayInfo(1).path == hd2);
         }
+    }
+    // An empty Liron unit takes a 3.5" OR an HDV, chosen by the file. Its
+    // label ("…or SmartPort HD") used to make the rack call it a hard disk
+    // and refuse every 800K image.
+    {
+        EmulationController controller;
+        pom2::Settings settings;
+        settings.setReadOnly(true);
+        pom2::StorageCoordinator storage;
+        {
+            auto state = controller.lockState();
+            state.memory().slotBus().plug(2, std::make_unique<pom2::LironCard>(2));
+            auto* liron = dynamic_cast<pom2::LironCard*>(state.memory().slotBus().peripheral(2));
+            assert(liron->bayInfo(0).acceptsSony35OrHdv);
+        }
+        // The 3.5" click: a Liron bay had no sound path at all (bug hunt
+        // 2026-10-16). Counted on the 3.5" source's queue — no audio thread
+        // drains it here. Needs the bundled MAME samples to make a sound.
+        std::string samples;
+        for (const char* d : {"roms/floppy_samples", "../roms/floppy_samples",
+                              "../../roms/floppy_samples"})
+            if (fs::is_directory(d)) { samples = d; break; }
+        const bool clicks = !samples.empty() &&
+            controller.floppySound35().loadSamples(samples,
+                FloppySoundDevice::FormFactor::FF35);
+        const auto queued = [&] { return controller.floppySound35().queuedCommandCount(); };
+        pom2::DrivePicture target;
+        target.slot = 2; target.bay = 0; target.kind = pom2::DrivePictureKind::Generic;
+        std::string error;
+        assert(!pom2::mountEmptyDrive(controller, settings, storage, target, floppy, error));
+        const int beforeInsert = queued();
+        assert(pom2::mountEmptyDrive(controller, settings, storage, target, floppy35, error));
+        if (clicks) assert(queued() == beforeInsert + 1 && "a 3.5\" insert in a Liron bay was silent");
+        target.bay = 1;
+        const auto hd3 = image("liron.hdv", 16384);
+        const int beforeHd = queued();
+        const bool hdOk = pom2::mountEmptyDrive(controller, settings, storage, target, hd3, error);
+        if (!hdOk) std::fprintf(stderr, "liron hdv: %s\n", error.c_str());
+        assert(hdOk);
+        if (clicks) assert(queued() == beforeHd && "an HDV in a Liron bay clicked like a floppy");
+        {
+            auto state = controller.lockState();
+            auto* liron = dynamic_cast<pom2::LironCard*>(state.memory().slotBus().peripheral(2));
+            assert(liron->bayInfo(0).loaded && liron->bayInfo(0).path == floppy35);
+            assert(!liron->bayInfo(0).acceptsSony35OrHdv);
+            assert(liron->bayInfo(1).loaded && liron->bayInfo(1).path == hd3);
+        }
+        const int beforeEject = queued();
+        assert(storage.ejectMediaBay(controller, settings, 2, 0).ok);
+        if (clicks) assert(queued() == beforeEject + 1 && "a 3.5\" eject from a Liron bay was silent");
+        if (!clicks) std::puts("note: no floppy samples, 3.5\" click not checked");
     }
     fs::remove_all(scratch);
 }

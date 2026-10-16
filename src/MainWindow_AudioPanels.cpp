@@ -283,6 +283,7 @@ void MainWindow::renderAudioMixerWindow()
             case AC::CardKind::Phasor:          name = "Phasor";    idTag = "phasor"; break;
             case AC::CardKind::EchoPlus:        name = "Echo+";     idTag = "echop";  break;
             case AC::CardKind::EchoPlusTms5220: name = "Echo+ TMS"; idTag = "echotms";break;
+            case AC::CardKind::Sam:             name = "S.A.M.";    idTag = "sam";    break;
         }
         const std::string lbl =
             std::string(name) + " (S" + std::to_string(card.slot) + ")";

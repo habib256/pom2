@@ -148,6 +148,15 @@ int main()
         check(b.saveDirty(), "saveDirty() is a clean no-op");
         check(firstByteOfBlock(p, 2) == 0x11, "the file is untouched");
         unprotect(p);
+
+        // mountId is per LOAD, not per file (eject-all's phase-3 check).
+        const uint64_t first = b.mountId();
+        check(first != 0, "a mounted backing has a mount id");
+        check(b.loadImage(p.string()), "the same file mounts again");
+        check(b.mountId() != 0 && b.mountId() != first,
+              "a re-mount of the same file is a new mount");
+        b.eject();
+        check(b.mountId() == 0, "an empty backing has no mount id");
     }
 
     // ── 2. A 2IMG the header itself locks ────────────────────────────────

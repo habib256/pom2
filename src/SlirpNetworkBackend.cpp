@@ -185,6 +185,23 @@ public:
         const uint8_t* d = frame + kEthHeader + 16;                 // dst IP
         if (d[0] == 127 || d[0] == 0) return true;
         if (d[0] == 169 && d[1] == 254) return true;
+        // The virtual DNS server 10.0.2.3: libslirp re-dials a connection to
+        // it on the HOST's resolver, keeping the guest's port — and that
+        // resolver is 127.0.0.1 under dnsmasq / unbound / several VPN
+        // clients, so 10.0.2.3:6503 would reach POM2's own AI server. Only
+        // port 53 is DNS; a fragment past the first carries no port, so it
+        // cannot prove it is DNS either (bug hunt 2026-10-16).
+        if (d[0] == 10 && d[1] == 0 && d[2] == 2 && d[3] == 3) {
+            const uint8_t* ip = frame + kEthHeader;
+            const uint8_t proto = ip[9];
+            if (proto != 6 && proto != 17) return false;          // ICMP etc.
+            const int ihl = (ip[0] & 0x0F) * 4;
+            const int fragOffset = ((ip[6] & 0x1F) << 8) | ip[7];
+            if (fragOffset != 0 || ihl < 20 || len < kEthHeader + ihl + 4)
+                return true;
+            const int dport = (ip[ihl + 2] << 8) | ip[ihl + 3];
+            return dport != 53;
+        }
         return false;
     }
 

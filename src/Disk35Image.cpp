@@ -79,6 +79,9 @@ bool Disk35Image::loadFile(const std::string& imgPath)
         return false;
     }
     *this = std::move(replacement);
+    // Named at once, not on the first capture: `mountId()` must tell this
+    // mount from the next even when it never wrote.
+    lineage_ = nextMediaCaptureSeq();
     return true;
 }
 

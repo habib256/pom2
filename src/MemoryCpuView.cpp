@@ -68,6 +68,28 @@ uint8_t Memory::peekCpuView(uint16_t addr) const
         if (!internal && c3 && !slotC3)               internal = true;
         if (!internal && intC8Rom && addr >= 0xC800)  internal = true;
         if (internal) {
+            // A card the //c lets through its forced INTCXROM, in memRead's
+            // order (Memory.cpp, the internal branch of memReadSlowBody): an
+            // awake Mockingboard 4c, then the bank-1 alt firmware, then the
+            // bank-0 punch for a card that exposesIicOnboardRom (the
+            // AppleWin-HLE mouse at $C400, the ClockCard, the ARMED $C500
+            // stub), then that stub's $C800 bank while its window is open.
+            // The view used to stop at the internal ROM, so the debugger
+            // disassembled the //c's own mouse / SmartPort firmware while
+            // the CPU ran the card's (bug hunt 2026-10-16). Each card is
+            // asked through peekSlotRom / peekExpansionRom, which latch
+            // nothing; a card that cannot answer shows the flat mirror.
+            const auto cardPeek = [&](const SlotPeripheral* p, bool expansion) {
+                uint8_t out = 0;
+                const bool ok = expansion
+                    ? p->peekExpansionRom(static_cast<uint16_t>(addr - 0xC800), out)
+                    : p->peekSlotRom(static_cast<uint8_t>(addr & 0xFF), out);
+                return ok ? out : mem[addr];
+            };
+            const bool slotPage = addr >= 0xC100 && addr <= 0xC7FF;
+            if (iicProfile_ && iicExpansionAwake_ && slotPage)
+                if (const SlotPeripheral* p = slots.peripheralForIicRomPage((addr >> 8) & 7))
+                    return cardPeek(p, false);
             // //c-class bank-1 alt firmware. The //c+ MIG windows
             // ($CC00-$CCFF / $CE00-$CEFF) are excluded on purpose: migRead
             // walks a RAM page cursor and flips 3.5" head select, so it is
@@ -77,6 +99,21 @@ uint8_t Memory::peekCpuView(uint16_t addr) const
                 uint8_t out = 0;
                 if (iicProfile_->internalRomRead(addr, 0xFF, out)) return out;
             }
+            if (iicProfile_ && slotPage) {
+                const int slot = (addr >> 8) & 0x07;
+                const bool armOk = (slot != 5) ||
+                    (iicSmartPortArmed_ && !iicProfile_->servesExternalSmartPort());
+                if (armOk)
+                    if (const SlotPeripheral* p = slots.peripheral(slot);
+                        p && p->exposesIicOnboardRom())
+                        return cardPeek(p, false);
+            }
+            if (iicProfile_ && addr >= 0xC800 && addr <= 0xCFFE &&
+                !intC8Rom && iicSmartPortArmed_ && iicCardWindow_ &&
+                slots.getActiveExpansionSlot() == 5)
+                if (const SlotPeripheral* p = slots.peripheral(5);
+                    p && p->exposesIicOnboardRom())
+                    return cardPeek(p, true);
             return internalIORom[addr - 0xC000];
         }
     }
