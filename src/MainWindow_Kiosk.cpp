@@ -61,6 +61,35 @@
 // make/break bookkeeping is needed (unlike a scancode make/break scheme). Arrows use
 // the II's control codes (←=$08 →=$15 ↑=$0B ↓=$0A).
 namespace {
+#ifndef __EMSCRIPTEN__
+GLFWmonitor* monitorContainingWindow(GLFWwindow* window)
+{
+    GLFWmonitor* best = glfwGetPrimaryMonitor();
+    if (!window) return best;
+
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    glfwGetWindowPos(window, &wx, &wy);
+    glfwGetWindowSize(window, &ww, &wh);
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    std::int64_t bestOverlap = 0;
+    for (int i = 0; monitors && i < count; ++i) {
+        int mx = 0, my = 0, mw = 0, mh = 0;
+        glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+        const std::int64_t overlapW = std::max(0, std::min(wx + ww, mx + mw) -
+                                                 std::max(wx, mx));
+        const std::int64_t overlapH = std::max(0, std::min(wy + wh, my + mh) -
+                                                 std::max(wy, my));
+        const std::int64_t overlap = overlapW * overlapH;
+        if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            best = monitors[i];
+        }
+    }
+    return best;
+}
+#endif
+
 struct KioskKey { const char* label; uint8_t ascii; };
 const KioskKey kKioskKeys[] = {
     {"1",'1'},{"2",'2'},{"3",'3'},{"4",'4'},{"5",'5'},
@@ -952,7 +981,10 @@ void MainWindow::setKioskModeRuntime(bool k)
             // user gets an un-maximized window of the maximized size, which
             // most WMs then reposition somewhere unexpected.
             captureWindowGeometryNow();
-            GLFWmonitor* mon = glfwGetPrimaryMonitor();
+            // Match the current window, including maximized windows and
+            // monitors placed at negative virtual-desktop coordinates.
+            // If it straddles two screens, use the one containing most of it.
+            GLFWmonitor* mon = monitorContainingWindow(window);
             const GLFWvidmode* vm = mon ? glfwGetVideoMode(mon) : nullptr;
             if (mon && vm) {
                 glfwSetWindowMonitor(window, mon, 0, 0,
@@ -961,7 +993,7 @@ void MainWindow::setKioskModeRuntime(bool k)
                 // No monitor info (headless/odd WM): stay windowed but
                 // still enter the chrome-free path — the user asked for it.
                 pom2::log().warn("Kiosk",
-                    "no primary monitor / video mode — kiosk stays windowed");
+                    "no monitor / video mode — kiosk stays windowed");
             }
 #endif
         }
