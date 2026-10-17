@@ -169,7 +169,7 @@ still does not exist in `tests/` (owned by
 
 ### RELEASE-006 — G5-13 · The transports at 0 %
 
-**Priority:** 🟠 · **State:** To verify / decision pending.
+**Priority:** 🟠 · **State:** CI guard implemented; passing Linux run pending.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-480).
 
@@ -189,6 +189,12 @@ still does not exist in `tests/` (owned by
 `tools/check_ctest_skips.sh:25`). The release workflow's `quality` job does
 install `libslirp-dev` (`.github/workflows/release.yml:144`) and runs the full
 ctest, so the test runs at release time — without a skip guard there.
+
+**Implementation 2026-10-17:** the push CI Linux job now installs
+`libslirp-dev`, checks its pkg-config module, and rejects either CTest skip
+shape for `slirp_loopback_fence`. The skip guard's self-test and the real
+loopback test pass locally with libslirp 4.9.3. A CI run of this change is
+still required for the acceptance criterion.
 
 <a id="release-005"></a>
 
@@ -216,7 +222,7 @@ ctest, so the test runs at release time — without a skip guard there.
 
 ### RELEASE-007 — Windows ships a binary against which no test has ever run.
 
-**Priority:** 🔴 · **State:** To verify / decision pending.
+**Priority:** 🔴 · **State:** Verified on current main; rerun for the 1.0 candidate.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-516).
 
@@ -232,6 +238,14 @@ ctest, so the test runs at release time — without a skip guard there.
   state is neither.
   *(Line numbers on 2026-10-06: `ci.yml:426-433`, `release.yml:753`; still
   `-DPOM2_ENABLE_TESTS=OFF`.)*
+
+**Revalidation 2026-10-17:** CI at `fe429ca` configures
+`POM2_ENABLE_TESTS=ON` and `POM2_PORTABLE_TESTS_ONLY=ON` under MSVC, then
+builds and runs the portable core subset. The [Windows job in run
+39058911350](https://github.com/habib256/pom2/actions/runs/39058911350/job/117472621424)
+passed **11/11 tests, no skips**. This satisfies the core subset criterion;
+the release packaging job still builds the shipping binary with tests off,
+so the actual 1.0 package needs its candidate smoke check.
 
 <a id="release-010"></a>
 

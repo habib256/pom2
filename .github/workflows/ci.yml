@@ -63,7 +63,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev libslirp-dev
+          pkg-config --exists slirp
 
       - name: Fetch Dear ImGui (pinned)
         run: |
@@ -275,8 +276,9 @@ jobs:
           ctest --output-on-failure --parallel $(nproc) | tee ctest-console.log
 
       # A skip on a tree that carries its ROMs and media means something the
-      # test needs went missing (TODO G5-15). Host-dependent skips (no GL, no
-      # libslirp) are allowlisted in the script, with their reason.
+      # test needs went missing (TODO G5-15). The two GL tests are allowed to
+      # skip here because the separate software-GL job runs them under Xvfb.
+      # libslirp is installed above, so its loopback test must run here.
       - name: No unexpected test skips
         run: |
           tools/check_ctest_skips.sh --self-test

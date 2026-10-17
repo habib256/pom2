@@ -22,17 +22,15 @@ ALLOW=$(printf '%s\n' \
   $'iic_onboard_smartport_smoke\tPOM2_TRACE_HDV' \
   $'crt_glass_resample\t*' \
   $'crt_barrel_view\t*' \
-  $'slirp_loopback_fence\t*' \
   $'videx_videoterm_boot\t*' )
 # videx_videoterm_boot is the one ROM-gated test whose dumps are deliberately
 # NOT in the tree: the Videoterm firmware and character ROMs are third-party
 # and are fetched at run time (ROM Status → RetroBIOS a2vidtrm.zip), pending
 # the legal-payload gate (TODO G1). The card itself stays covered on CI by
 # videx_videoterm_bus / _render / _snapshot, which use synthetic ROMs.
-# The three before it depend on the HOST, not on the tree: the two CRT tests need
-# an OpenGL context (the main Linux leg has none; the `gl-software` job gives
-# them one and requires that they RUN) and
-# slirp_loopback_fence needs libslirp, which the CI image does not install.
+# The two CRT tests depend on an OpenGL context (the main Linux leg has none;
+# the `gl-software` job gives them one and requires that they run). The main
+# Linux job installs libslirp, so slirp_loopback_fence may not skip.
 
 scan() {  # scan <LastTest.log> → "test<TAB>line" for every printed skip
     awk '
@@ -67,6 +65,12 @@ self_test() {
     printf '1/1 Test #198: crt_barrel_view ...***Skipped   0.00 sec\n' > "$tmp/console"
     bash "$here" "$tmp/b" "$tmp/console" >/dev/null || { echo "self-test FAILED: a host-dependent skip was refused in one of its two shapes"; exit 1; }
     echo '  ok: a host-dependent skip passes in both its shapes'
+    printf '1/1 Testing: slirp_loopback_fence\nOutput:\nSKIP: built without libslirp\nTest Passed.\n' > "$L"
+    printf '1/1 Test #7: slirp_loopback_fence ...***Skipped   0.00 sec\n' > "$tmp/console"
+    if bash "$here" "$tmp/b" "$tmp/console" >/dev/null; then
+        echo "self-test FAILED: a libslirp skip passed"; exit 1
+    fi
+    echo '  ok: the libslirp test must run'
     rm "$L"
     if bash "$here" "$tmp/b" >/dev/null 2>&1; then echo "self-test FAILED: a missing log passed"; exit 1; fi
     echo '  ok: no log is a failure'

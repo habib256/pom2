@@ -73,8 +73,18 @@ scan() {  # scan get|set → sorted unique keys; calls may span lines
             'while (/\b'"$1"'(?:String|Bool|Int|Float|Double)\s*\(\s*"([A-Za-z0-9_]+)"/g) { print "$1\n" }' \
         | sort -u || true
 }
-READ=$(scan get)
-WRITE=$(scan set)
+# VSDrive builds per-drive and per-slot keys in different call sites. Map the
+# literal forms to the same family before comparing reads with writes:
+# path1/path2 and read_only1/read_only2 are generated from their prefixes on
+# write; enabled_slot<N> is read as enabled + "_slot" + N.
+normalize_vsdrive_keys() {
+    sed -E \
+        -e 's/^vsdrive_path[12]$/vsdrive_path/' \
+        -e 's/^vsdrive_read_only[12]$/vsdrive_read_only/' \
+        -e 's/^vsdrive_enabled_slot$/vsdrive_enabled/' | sort -u
+}
+READ=$(scan get | normalize_vsdrive_keys)
+WRITE=$(scan set | normalize_vsdrive_keys)
 if [ -z "$READ" ] && [ -z "$WRITE" ]; then
     echo "check_settings_keys: no settings calls found under $ROOT/src" >&2
     exit 2
