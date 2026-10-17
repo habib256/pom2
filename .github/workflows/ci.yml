@@ -63,8 +63,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev libslirp-dev
-          pkg-config --exists slirp
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev
 
       - name: Fetch Dear ImGui (pinned)
         run: |
@@ -197,7 +196,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
+            libslirp-dev libglib2.0-dev
+          pkg-config --exists slirp
 
       # Dear ImGui is gitignored (setup_imgui.sh normally clones it). POM2 needs
       # the `docking` branch at a PINNED commit — docking is absent from master

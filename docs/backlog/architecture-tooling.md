@@ -88,7 +88,7 @@ CI's Linux job.
 
 ## ARCH-009 — No test drives the ImGui panels, so a UI-thread deadlock fails nothing
 
-**Priority:** 🟠 · **State:** To verify.
+**Priority:** 🟠 · **State:** Ethernet panel seam covered locally; CI pending.
 
 **Acceptance criterion (after revalidation):** Run headless ImGui frames during card replug and coordinator capture, detecting recursive-lock deadlocks without timeouts.
 
@@ -106,6 +106,15 @@ CI's Linux job.
   **Still open**: `tests/frontend_device_panel_concurrency`, a headless ImGui
   frame driven while cards are replugged. That is the only thing that closes
   the class rather than scanning for it. *1 d.*
+
+**Implementation 2026-10-17:**
+`tests/frontend_device_panel_concurrency_test.cpp` now renders real
+`Uthernet_ImGui` frames from `DevicePanelCoordinator` snapshots while a second
+thread swaps Uthernet I/II cards. It covers both a snapshot rendered after its
+card is destroyed and captures racing with slot changes. Five local CTest
+runs passed. This covers the Ethernet panel seam; direct `MainWindow` panel
+routes and other card panels remain outside this harness. CI evidence is
+pending.
 
 <a id="arch-003"></a>
 

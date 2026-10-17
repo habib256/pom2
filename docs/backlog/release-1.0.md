@@ -143,7 +143,7 @@ entry covers the implementation.
 
 ### RELEASE-004 — G5-10 · A CI leg with software GL
 
-**Priority:** 🟠 · **State:** To verify / decision pending.
+**Priority:** 🟠 · **State:** GL verified; Ethernet panel concurrency CI pending.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-457).
 
@@ -164,6 +164,14 @@ entry covers the implementation.
 (`.github/workflows/ci.yml` `gl-software`). `frontend_device_panel_concurrency`
 still does not exist in `tests/` (owned by
 [ARCH-009](architecture-tooling.md#arch-009)).
+
+**Implementation 2026-10-17:** The new headless ImGui Ethernet panel test
+renders 120 frames while Uthernet cards are replugged; five local runs pass.
+The [software-GL job at `0243edc`](https://github.com/habib256/pom2/actions/runs/39061181410/job/117479619496)
+passed under Xvfb with its skip check enabled.
+The complete test job must run this new case in CI before this gate can be
+signed off. Scope and remaining frontend routes are recorded in
+[ARCH-009](architecture-tooling.md#arch-009).
 
 <a id="release-006"></a>
 

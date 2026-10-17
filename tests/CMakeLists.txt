@@ -9056,6 +9056,19 @@ target_include_directories(test_drive_rack_interaction PRIVATE ${CMAKE_SOURCE_DI
 add_test(NAME drive_rack_interaction COMMAND test_drive_rack_interaction)
 set_tests_properties(drive_rack_interaction PROPERTIES TIMEOUT 10)
 
+# The coordinator's snapshots must stay renderable after a concurrent slot
+# rebuild destroys the card they describe. No GL context is needed here.
+pom2_add_headless_test(test_frontend_device_panel_concurrency
+    NAME frontend_device_panel_concurrency TIMEOUT 30
+    SOURCES frontend_device_panel_concurrency_test.cpp
+            ${CMAKE_SOURCE_DIR}/src/Uthernet_ImGui.cpp
+            ${IMGUI_DIR}/imgui.cpp
+            ${IMGUI_DIR}/imgui_draw.cpp
+            ${IMGUI_DIR}/imgui_tables.cpp
+            ${IMGUI_DIR}/imgui_widgets.cpp
+    INCLUDE_DIRECTORIES ${IMGUI_DIR}
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_drive_rack_mount
     NAME drive_rack_mount TIMEOUT 20
     SOURCES drive_rack_mount_test.cpp ${CMAKE_SOURCE_DIR}/src/DriveRackMount.cpp
