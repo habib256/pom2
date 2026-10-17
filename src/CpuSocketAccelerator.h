@@ -65,6 +65,7 @@ public:
     virtual void onReset(uint64_t now) = 0;
 
     virtual void appendSnapshotState(std::vector<uint8_t>& out) const = 0;
+    virtual bool validateSnapshotState(const uint8_t*, std::size_t) const { return false; }
     virtual bool loadSnapshotState(const uint8_t* data, std::size_t len) = 0;
 };
 

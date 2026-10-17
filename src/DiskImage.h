@@ -234,6 +234,12 @@ public:
         static_cast<std::size_t>(kTracks) * kNibblesPerTrack + kTracks;
     void appendMediaSnapshot(std::vector<uint8_t>& out) const;
     void loadMediaSnapshot(const uint8_t* data, std::size_t len);
+    /// Self-contained, physically protected media (DRO1 or DWO1).
+    /// RAM-only; loading creates a detached medium with no writable host path.
+    bool appendReadOnlySession(std::vector<uint8_t>& out, std::string& error) const;
+    bool loadReadOnlySession(const uint8_t* data, size_t len, std::string& error);
+    size_t sessionStorageBytes() const;
+    bool hasPendingWriteBack() const { return anyDirty || bool(autosave_.inFlight()); }
 
     // ── LSS bit-cell stream ─────────────────────────────────────────────
     //
@@ -703,7 +709,7 @@ private:
     /// stream from its own TMAP entry, so disks that bury protection
     /// data on quarter- or half-tracks (Spiradisc, RWTS18, Locksmith
     /// Fast Copy) decode correctly.
-    bool loadWoz(const std::string& imgPath);
+    bool loadWozBytes(std::vector<uint8_t> bytes, const std::string& imgPath);
 
     /// Decode one track's nibble buffer back into 16 × 256-byte logical
     /// sectors. Returns true if any sector was successfully decoded.

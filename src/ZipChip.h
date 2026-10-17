@@ -102,6 +102,7 @@ public:
     void   onReset(uint64_t now) override;
     void   appendSnapshotState(std::vector<uint8_t>& out) const override;
     bool   loadSnapshotState(const uint8_t* data, std::size_t len) override;
+    bool   validateSnapshotState(const uint8_t* data, std::size_t len) const override;
 
     /// The machine's stock clock (NTSC 1.0227 / PAL 1.0156 MHz): the 4 MHz
     /// multiplier and the millisecond delays are derived from it.

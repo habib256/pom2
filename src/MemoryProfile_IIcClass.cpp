@@ -350,6 +350,29 @@ void IIcClassProfile::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(mig35Sel_ ? 1 : 0);
 }
 
+size_t IIcClassProfile::validateSnapshotState(const uint8_t* data, size_t n) const
+{
+    if (!data || n < kMigBlobBytes || std::memcmp(data, kMigBlobMagic, 4)) return 0;
+    if (n == kMigBlobBytes) return kMigBlobBytes;
+    if (n < kMigBlobBytes + kMigBlobTail) return 0; // torn ROMBANK/routing tail
+    size_t used = kMigBlobBytes + kMigBlobTail;
+    if (extPort_ && n > used) {
+        if (n - used < 3 && std::memcmp(data + used, "XSP", n - used) == 0)
+            return 0; // torn external-port tag
+        const size_t port = extPort_->validateSnapshotState(data + used, n - used);
+        if (port > n - used) return 0;
+        if (port == 0 && n - used >= 3 && data[used] == 'X' &&
+            data[used + 1] == 'S' && data[used + 2] == 'P') return 0;
+        used += port;
+    }
+    if (n > used && n - used < 4 &&
+        std::memcmp(data + used, kSel35Magic, n - used) == 0)
+        return 0; // recognized S35 tail without its complete select byte
+    if (n - used >= 4 && std::memcmp(data + used, kSel35Magic, 3) == 0)
+        used += 4;
+    return used;
+}
+
 size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
 {
     // Identify the blob BEFORE resetting anything: the external port used
@@ -358,6 +381,9 @@ size_t IIcClassProfile::loadSnapshotState(const uint8_t* data, size_t n)
     // then rejected two lines later.
     if (data == nullptr || n < kMigBlobBytes) return 0;
     if (std::memcmp(data, kMigBlobMagic, 4) != 0) return 0;
+    // A recognized but corrupt nested SmartPort section must not reset the
+    // live port or change MIG/ROMBANK before reporting failure.
+    if (validateSnapshotState(data, n) == 0) return 0;
     if (extPort_) extPort_->reset();   // re-filled below when the blob has it
     // migRead/migWrite index `migRam_[migPage_ + (offset & 0x1F)]`, so a
     // corrupt page pointer would read past the array. `& 0x7FF` alone is

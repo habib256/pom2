@@ -35,6 +35,8 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "SystemProfile.h"
+#include "TestTempPath.h"
 
 #include <cassert>
 #include <cstdint>
@@ -243,6 +245,27 @@ void testResolveSaveTapePath()
           "an empty path stays empty");
 }
 
+void testSessionActions()
+{
+    EmulationController ctrl;
+    ctrl.setMachineId(pom2::snapshotMachineId(pom2::SystemProfile::AppleIIPlus));
+    const std::string path = pom2test::tempPath("pom2-cli-roundtrip.pom2session");
+    { auto st = ctrl.lockState(); st.cpu().setProgramCounter(0x2468); }
+    pom2::CliAction save{}; save.kind = pom2::CliAction::Kind::SessionSave; save.pathS = path;
+    pom2::runDeferredActions({save}, ctrl);
+    check(fs::exists(path), "--session-save writes the bundle");
+    { auto st = ctrl.lockState(); st.cpu().setProgramCounter(0x1357); }
+    pom2::CliAction load{}; load.kind = pom2::CliAction::Kind::SessionLoad; load.pathS = path;
+    pom2::runDeferredActions({load}, ctrl);
+    { auto st = ctrl.lockState(); check(st.cpu().getProgramCounter() == 0x2468, "--session-load restores the bundle"); }
+    load.pathS += ".missing";
+    pom2::CliAction run{}; run.kind = pom2::CliAction::Kind::Run; run.addressI = 0x2000;
+    pom2::runDeferredActions({load, run}, ctrl);
+    { auto st = ctrl.lockState(); check(st.cpu().getProgramCounter() == 0x2468, "failed --session-load stops subsequent actions"); }
+    std::error_code ec;
+    fs::remove(path, ec);
+}
+
 }  // namespace
 
 int main()
@@ -253,6 +276,7 @@ int main()
     testLoadAboveCfffMustReadBack();
     testHealthySequenceStillRuns();
     testResolveSaveTapePath();
+    testSessionActions();
 
     if (failures) {
         std::printf("cli_runner: %d failure(s)\n", failures);

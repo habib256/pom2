@@ -58,11 +58,18 @@ public:
     void setExternalSmartPort(pom2::SmartPortBusPort* port) override { extPort_ = port; }
     bool servesExternalSmartPort() override;
     bool isIIcPlus() const override { return isPlus_; }
+    void appendSnapshotFirmware(std::vector<uint8_t>& out) const override
+    {
+        out.push_back(hasAltBank_ ? 1 : 0);
+        if (hasAltBank_)
+            out.insert(out.end(), altFirmware_.begin(), altFirmware_.end());
+    }
 
     /// //c+ MIG state (page pointer + 2 KB RAM) for snapshot / rewind.
     /// Without these the MIG falls out of a rewind and the IWM freezes
     /// on //c-class profiles — pinned by `iwm_mig_snapshot`.
     void   appendSnapshotState(std::vector<uint8_t>& out) const override;
+    size_t validateSnapshotState(const uint8_t* data, size_t n) const override;
     size_t loadSnapshotState(const uint8_t* data, size_t n) override;
 
 private:

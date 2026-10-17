@@ -223,8 +223,7 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
     };
     // Magic-based formats have no fixed length — a 2IMG carries a header, a
     // payload and an optional comment — so they are recognised by signature
-    // instead. (WOZ has its own MacBinary handling in loadWoz; accepting it
-    // here too costs nothing and keeps this one rule.)
+    // instead. All loaders consume this detected, unwrapped payload.
     auto magicAfterStrip = [&]() {
         if (totalLen < 128 + 4) return false;
         const uint8_t* q = bytes.data() + 128;
@@ -745,9 +744,8 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath)
     sectorsPerTrack_ = kSectorsPerTrack;   // 13s loader overrides; reset on re-mount
     switch (det.kind) {
         case ImageKind::Woz:
-            // loadWoz reopens the file itself; refactor to take a buffer
-            // is deferred to a follow-up commit (touches the WOZ parser).
-            ok = loadWoz(imgPath);
+            // Decode the already detected payload; no second file open.
+            ok = loadWozBytes(std::vector<uint8_t>(payload, payload + payloadLen), imgPath);
             break;
         case ImageKind::Nib232k:
             ok = loadNibFromBuffer(payload, payloadLen,
@@ -941,48 +939,13 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath, SectorOrder order)
 // over TMAP for a populated slot), so per-quarter-track bit data used by
 // protections like David-DOS or Locksmith is preserved — see the loader
 // body below.
-bool DiskImage::loadWoz(const std::string& imgPath)
+bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPath)
 {
-    std::ifstream f(imgPath, std::ios::binary);
-    if (!f) {
-        lastError = "Cannot open " + imgPath;
+    if (buf.size() < 12 || buf.size() > 16u * 1024u * 1024u) {
+        lastError = "WOZ payload truncated or too large";
         loaded = false; return false;
     }
-    f.seekg(0, std::ios::end);
-    const auto fileSize = static_cast<size_t>(f.tellg());
-    f.seekg(0, std::ios::beg);
-    if (fileSize < 12) {
-        lastError = "WOZ file truncated (" + std::to_string(fileSize) + " bytes)";
-        loaded = false; return false;
-    }
-    std::vector<uint8_t> buf(fileSize);
-    f.read(reinterpret_cast<char*>(buf.data()),
-           static_cast<std::streamsize>(fileSize));
-    if (!f) {
-        lastError = "Short read on " + imgPath;
-        loaded = false; return false;
-    }
-
-    // MacBinary-wrapped WOZ: detectFormat found the magic 128 bytes in,
-    // but this loader re-reads the file from scratch and used to demand
-    // the magic at offset 0 — wrapped WOZs never loaded at all. Slice
-    // the header off; loadFile()'s generic envelope capture re-attaches
-    // it for write-back, and every chunk offset below stays relative to
-    // the WOZ payload.
-    if (fileSize > 140 && std::memcmp(buf.data(), "WOZ", 3) != 0 &&
-        (std::memcmp(buf.data() + 128, "WOZ1", 4) == 0 ||
-         std::memcmp(buf.data() + 128, "WOZ2", 4) == 0)) {
-        // Keep the data fork only (u32 BE at header bytes 83-86): the
-        // spec's padding to 128 and any resource fork sat inside the CRC32
-        // range, so every properly padded wrapped WOZ failed its CRC (bug
-        // hunt 2026-10-16). detectFormat puts the rest in the trailer.
-        const std::size_t fork = (std::size_t(buf[83]) << 24) | (std::size_t(buf[84]) << 16) |
-                                 (std::size_t(buf[85]) << 8)  |  std::size_t(buf[86]);
-        buf.erase(buf.begin(), buf.begin() + 128);
-        if (fork > 0 && fork < buf.size()) buf.resize(fork);
-    }
-    // Size of the WOZ payload actually in `buf` (differs from fileSize
-    // when the MacBinary strip above ran) — every bound below uses this.
+    // The caller has already stripped any MacBinary envelope.
     const size_t wozSize = buf.size();
 
     const bool isWoz1 = std::memcmp(buf.data(), "WOZ1", 4) == 0;

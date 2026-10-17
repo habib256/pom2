@@ -166,6 +166,7 @@ public:
                iicProfile_->servesExternalSmartPort();
     }
     bool isIIcPlus() const { return iicProfile_ && iicProfile_->isIIcPlus(); }
+    bool isIIcClass() const { return iicProfile_ != nullptr; }
 
     /// //c-class on-board SmartPort "armed" gate. The slot-5 SmartPort
     /// firmware stub is punched through the INTCXROM mask at $C500-$C5FF
@@ -893,8 +894,16 @@ public:
     // soft-switches (iieMemMode), the LC latch flags, and DisplayState.
     /// Append a self-describing, versioned blob of the extended state.
     void appendSnapshotState(std::vector<uint8_t>& out);
+    /// File-snapshot environment identity (versioned, RAM-only capture).
+    /// Configuration and canonical firmware, independent of soft switches,
+    /// watchpoints and the currently selected firmware/RamWorks bank.
+    void appendSnapshotEnvironment(std::vector<uint8_t>& out) const;
+    /// Validate extended state without changing RAM, devices, IRQs, caches or
+    /// beam events. Used before applying untrusted file/session snapshots.
+    bool validateSnapshotState(const uint8_t* data, size_t n,
+                               uint32_t* savedRamWorksBanks = nullptr) const;
     /// Restore extended state from a blob produced by appendSnapshotState.
-    /// Parses defensively (returns false on a malformed/short buffer) and
+    /// Refuses malformed/short buffers without changing live state, and is
     /// best-effort on a RamWorks bank-count mismatch — it lifts only the
     /// saved CURRENT bank, so up to 8 MB of the blob is silently dropped.
     /// `savedRamWorksBanks`, when non-null, reports the bank count the blob
@@ -915,6 +924,8 @@ public:
     std::string recentIoReadSummary() const;
 
 private:
+    // Extended-state wire version, shared by capture, apply and preflight.
+    static constexpr uint8_t kMemStateBlobVersion = 1;
     void noteIoRead(uint16_t a) {
         if (!ioReadTrace_) return;
         ioReadRing_[ioReadRingPos_ % kIoReadRing] = a;

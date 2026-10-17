@@ -125,6 +125,11 @@ void MainWindow::renderCommandPalette()
 
     const auto mode = controller->getMode();
 
+#ifndef __EMSCRIPTEN__
+    add("session.save", "File", "Save session...");
+    add("session.open", "File", "Open session...");
+#endif
+
     // ── Machine ──────────────────────────────────────────────────────────
     add("machine.run",      "Machine", "Run", "",
         mode != EmulationController::Mode::Running);
@@ -239,6 +244,11 @@ void MainWindow::renderCommandPalette()
 void MainWindow::runCommand(const std::string& id)
 {
     auto toggle = [](bool& f) { f = !f; };
+
+#ifndef __EMSCRIPTEN__
+    if (id == "session.save") { sessionFilePicker_.open(true); return; }
+    if (id == "session.open") { sessionFilePicker_.open(false); return; }
+#endif
 
     // Machine
     if (id == "machine.run")        { controller->setMode(EmulationController::Mode::Running); return; }
@@ -368,6 +378,11 @@ void MainWindow::renderMenuBar()
     if (!ImGui::BeginMainMenuBar()) return;
 
     if (ImGui::BeginMenu("File")) {
+#ifndef __EMSCRIPTEN__
+        if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
+        if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
+        ImGui::Separator();
+#endif
         panelMenuItem(pom2::PanelId::DiskLibrary);
         // Every drive of the machine, the Drives window's own list and
         // actions (collectDrivePictures / runDriveRackAction): it used to

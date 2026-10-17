@@ -10,6 +10,101 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-17 — Protected WOZ/FLUX sessions and menu encoding
+
+Session v2 embeds canonical protected WOZ1/WOZ2/FLUX payloads, retaining
+quarter-tracks, variable bit lengths, optimal timing and sub-cell transitions.
+Restored disks stay detached and physically protected. The WOZ decoder now
+consumes the already-read unwrapped bytes, so session restore needs no source
+file. V1 archives remain readable; unknown versions and nested malformed
+WOZ are refused before core restore. File, record and expanded-media budgets
+bound allocations. Writable media remains outside session support.
+
+The File menu's drive separator and Insert ellipsis, plus the hard-reset
+hint, contained doubly encoded UTF-8. Their original Unicode characters are
+restored, fixing the visible garbled sequences.
+
+## 2026-10-17 — Desktop session save/open workflow
+
+File > Save session / Open session and command-palette actions now expose
+`.pom2session` without the CLI or HTTP server. The native chooser falls back
+to a path field when unavailable, appends the suffix on extensionless saves
+and asks before replacing a file. Cancelling leaves state untouched; errors
+retain the path and dialogue for correction. The operation uses the same
+configuration/media checks and unlocked I/O as the controller adapter.
+Browser builds hide these host-filesystem actions.
+
+`session_file_picker` drives real ImGui buttons with a controlled picker and
+the actual controller/file adapter: cancel, save, load, overwrite confirmation,
+corrupt input and unavailable native backend.
+
+## 2026-10-17 — Resumable read-only Disk II sessions
+
+`.pom2session` now packages CPU/RAM, card state and embedded protected floppy
+contents. Initial support is II/II+/IIe with Disk II, Mockingboard A/C or
+Sound II and SNES MAX. It restores after removing the original image, and
+keeps the loaded disks detached from host files. Matching configuration and
+ROMs are required; unsupported cards, WOZ, writable/dirty media, pending
+write-back/ejects, tapes and onboard 3.5-inch media are refused explicitly.
+
+`--session-save/load` and local `POST /session/save|load` expose the complete
+path. The bounded, versioned archive has distinct magic and a CRC32. Card
+and media preparation happens before core restore; IWM rebinding does not
+flush or re-anchor the restored state. File I/O and checksum work run outside
+the machine lock; failed saves keep the previous bundle intact.
+
+Regression: `session_snapshot` covers source-independent restore, Disk II
+read continuity, CPU resume, 13-sector/nibble images and invalid-state
+refusals. CLI and HTTP regressions exercise the entry points. It is the
+eleventh portable CI case. Automatic configuration reconstruction, writable
+or WOZ sessions, other cards and a dedicated GUI chooser remain open.
+See [session format and usage](docs/session-format.md).
+
+## 2026-10-17 — Snapshot validation no longer changes the live machine
+
+MEX semantic validation used to apply the candidate and restore a private
+checkpoint before deciding whether a file could load. Even a refused file
+therefore cleared beam events and could reset a //c SmartPort transaction,
+drive cache or open write arc. Restoring serialized bytes could not undo
+those effects.
+
+Extended memory now has a preflight parser that checks geometry, framing
+and all nested device payloads without applying them. The file loader uses
+it before touching the CPU or a DMA claimant; direct Memory loads preflight
+too. The //c profile and external port reject malformed nested state before
+resetting their live transactions. Existing old/trailer-less snapshots still
+load, and valid RamWorks configuration mismatches retain the direct loader's
+documented best-effort behavior (file loads continue to refuse mismatches).
+
+Regression: `snapshot_preflight` corrupts each of nine nested sections,
+truncates core/framing/payloads, tests invalid geometry and checks that
+registers, memory, IRQs, DMA, video edges and external-port state survive.
+It is the tenth portable CI test. Complete sessions still need a manifest,
+card firmware/state and coherent media contents.
+
+MIG preflight also rejects partial ROMBANK fields and torn XSP/S35 tags
+instead of accepting them as old layouts. The detached port decoder and
+the portable test fixture keep their large IWM buffers off the stack.
+
+## 2026-10-17 — Snapshot firmware and configuration preflight
+
+A profile name alone does not identify a running machine: loading a snapshot
+against another revision of the same ROM, a different character generator,
+or a different PAL/NTSC configuration could resume against incompatible
+firmware. File captures now include a versioned `ENV` section containing
+canonical firmware bytes and memory/video configuration. The loader checks
+it, and CPU mode, before even the reversible MEX validation pass. Incompatible
+loads preserve pending video edges and active DMA as well as RAM/registers.
+TransWarp shadowing is resolved back to the displaced motherboard ROM for
+this comparison; merely switching //c ROMBANK does not change identity.
+
+Older files without ENV remain loadable with a compatibility warning.
+The outer file version stays v2, rewind carries no ENV, and slot/media state
+remains excluded: this is a prerequisite for complete sessions, not their
+implementation. Regression: `snapshot_environment`, including malformed and
+reordered metadata, alternate-bank-only ROM updates, character ROM changes,
+watchpoints, legacy files and TransWarp shadow transitions.
+
 ## 2026-10-17 — Phasor dual SSI263AP speech
 
 The Phasor's two speech chips were absent: a completed native phoneme never

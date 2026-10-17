@@ -204,6 +204,8 @@ void printUsage()
         "  --trace-brk                (accepted, not yet wired in M6502)\n"
         "  --play / --rec / --rewind  Cassette transport\n"
         "  --snapshot-save <path>     Write snapshot\n"
+        "  --session-save <path>      Write supported cards and read-only disks (.pom2session)\n"
+        "  --session-load <path>      Restore session on matching machine/cards\n"
         "\n"
         "  -h, --help                 Show this and exit\n"
         "  -v, --version              Print the version and exit\n");
@@ -583,6 +585,13 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         else if (a == "--snapshot-load") {
             const char* v = needArg(i, "--snapshot-load"); if (!v) return std::nullopt;
             CliAction act{}; act.kind = CliAction::Kind::SnapshotLoad; act.pathS = v;
+            plan.deferredActions.push_back(std::move(act));
+        }
+        else if (a == "--session-save" || a == "--session-load") {
+            const char* v = needArg(i, a.c_str()); if (!v) return std::nullopt;
+            CliAction act{};
+            act.kind = a == "--session-save" ? CliAction::Kind::SessionSave : CliAction::Kind::SessionLoad;
+            act.pathS = v;
             plan.deferredActions.push_back(std::move(act));
         }
         else if (!a.empty() && a[0] != '-') {

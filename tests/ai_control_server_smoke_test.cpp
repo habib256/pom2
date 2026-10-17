@@ -43,6 +43,7 @@
 #include "MouseCard.h"
 #include "SlotBus.h"
 #include "SnapshotIO.h"
+#include "SystemProfile.h"
 #include "ProDOSHardDiskCard.h"
 #include "GrapplerCard.h"
 #include "SuperSerialCard.h"
@@ -1090,6 +1091,38 @@ void testAuthHardening(EmulationController& /*ctrl*/, pom2::AiControlServer& srv
     std::puts("  auth hardening (host/CORS/backoff): OK");
 }
 
+void testSessionEndpoints(EmulationController& ctrl)
+{
+    const std::string name = "test_session_api_" + std::to_string(::getpid()) + ".pom2session";
+    assert(!std::filesystem::exists(name));
+    const auto oldId = ctrl.machineId();
+    uint16_t oldPc;
+    {
+        auto st = ctrl.lockState();
+        oldPc = st.cpu().getProgramCounter();
+        st.cpu().setProgramCounter(0x1234);
+    }
+    ctrl.setMachineId(pom2::snapshotMachineId(pom2::SystemProfile::AppleIIPlus));
+    auto post = [&](const std::string& path, const std::string& body) {
+        return oneShot(kTestPort, "POST " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: " +
+                       std::to_string(body.size()) + "\r\n\r\n" + body);
+    };
+    HttpResponse r = post("/session/save", "{\"path\":\"" + name + "\"}");
+    if (r.status != 200) std::fprintf(stderr, "session save: %s\n", r.body.c_str());
+    assert(r.status == 200);
+    { auto st = ctrl.lockState(); st.cpu().setProgramCounter(0x5678); }
+    r = post("/session/load", "{\"path\":\"" + name + "\"}");
+    assert(r.status == 200);
+    { auto st = ctrl.lockState(); assert(st.cpu().getProgramCounter() == 0x1234); st.cpu().setProgramCounter(oldPc); }
+    r = post("/session/save", "{\"path\":\"wrong.pom2snap\"}");
+    assert(r.status == 400);
+    r = oneShot(kTestPort, "GET /session/save HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 405);
+    std::filesystem::remove(name);
+    ctrl.setMachineId(oldId);
+    std::puts("  session save/load and suffix/method gates: OK");
+}
+
 } // namespace
 
 int main()
@@ -1107,6 +1140,7 @@ int main()
     const bool started = srv.start(kTestPort);
     assert(started && "AiControlServer failed to bind its ephemeral test port");
 
+    testSessionEndpoints(ctrl);
     testStatusEndpoint   (ctrl, srv);
     testDiskSync         (ctrl, srv);
     testDuplicateDiskInsertRefused(ctrl, srv, display);

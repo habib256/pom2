@@ -263,11 +263,18 @@ configure_file(
     @ONLY)
 
 set(SOURCES
+    src/SessionArchive.cpp
+    src/SessionSnapshot.cpp
+    src/SessionFiles.cpp
+    src/DiskImage_Session.cpp
+    src/DiskIICard_Session.cpp
     src/M6502.cpp
     src/Z80.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
+    src/MemorySnapshotEnvironment.cpp
+    src/MemorySnapshotValidation.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -295,6 +302,8 @@ set(SOURCES
     src/DiskController_ImGui.cpp
     src/DriveRack_ImGui.cpp
     src/DriveRackFilePicker.cpp
+    src/SessionFilePicker.cpp
+    src/MainWindow_SessionFiles.cpp
     src/DriveRackMount.cpp
     src/MainWindow_DriveRack.cpp
     src/DiskIICard.cpp
@@ -508,6 +517,7 @@ set(POM2_DEVICES_HEADERS
 )
 
 set(POM2_DEVICES_SOURCES
+    src/DiskIICard_Session.cpp
     src/CffaCard.cpp
     src/ClockCard.cpp
     src/Cs8900aDevice.cpp
@@ -569,12 +579,15 @@ set(POM2_DEVICES_SOURCES
 # FujiNetNetwork interfaces, and makeFujiNetCard (RUNTIME) is the only place
 # that names SpOverSlipLink or FujiNetNetDevice.
 set(POM2_FOUNDATION_SOURCES
+    src/SessionArchive.cpp
     src/CharRomDump.cpp
     src/ChildProcess.cpp
     src/SerialPort.cpp
 )
 
 set(POM2_FOUNDATION_HEADERS
+    src/SessionArchive.h
+    src/SessionIO.h
     src/DriveSoundPolicy.h
     src/MediaWritePolicy.h
     src/MediaNotch.h
@@ -599,6 +612,7 @@ set(POM2_FRONTEND_HEADERS
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
     src/NativeFileDialog.h
+    src/SessionFilePicker.h
     src/DevicePanelCoordinator.h
     src/HostOpenFiles.h
     src/IconsFontAwesome6.h
@@ -662,6 +676,8 @@ set(POM2_FRONTEND_SOURCES
     src/DiskController_ImGui.cpp
     src/DriveRack_ImGui.cpp
     src/DriveRackFilePicker.cpp
+    src/SessionFilePicker.cpp
+    src/MainWindow_SessionFiles.cpp
     src/DriveRackMount.cpp
     src/MainWindow_DriveRack.cpp
     src/DiskLibrary_ImGui.cpp
@@ -735,6 +751,8 @@ set(POM2_MACHINE_SOURCES
     src/Z80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
+    src/MemorySnapshotEnvironment.cpp
+    src/MemorySnapshotValidation.cpp
     src/MemoryProfile_IIcClass.cpp
     src/AppleWinNtsc.cpp
     src/CassetteDevice.cpp
@@ -756,6 +774,7 @@ set(POM2_MEDIA_HEADERS
 )
 
 set(POM2_MEDIA_SOURCES
+    src/DiskImage_Session.cpp
     src/AtaBlockDevice.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
@@ -768,6 +787,8 @@ set(POM2_MEDIA_SOURCES
 )
 
 set(POM2_RUNTIME_HEADERS
+    src/SessionSnapshot.h
+    src/SessionFiles.h
     src/PrinterRender.h
     src/AiControlJson.h
     src/PrinterPortControl.h
@@ -795,6 +816,8 @@ set(POM2_RUNTIME_HEADERS
 )
 
 set(POM2_RUNTIME_SOURCES
+    src/SessionSnapshot.cpp
+    src/SessionFiles.cpp
     src/AiControlServer.cpp
     src/AiControlServer_Printer.cpp
     src/PrinterPortControl.cpp
@@ -847,6 +870,10 @@ pom2_enforce_source_layers(${CMAKE_CURRENT_SOURCE_DIR})
 pom2_enforce_mainwindow_line_limit(${CMAKE_CURRENT_SOURCE_DIR} 2000)
 
 set(HEADERS
+    src/SessionArchive.h
+    src/SessionSnapshot.h
+    src/SessionFiles.h
+    src/SessionIO.h
     src/M6502.h
     src/Z80.h
     src/SoftCardZ80.h
@@ -1361,11 +1388,18 @@ if(NOT EMSCRIPTEN)
 # The core sources, shared by the installable SDK archive and the
 # assertion-enabled test twin. One list so the two cannot drift.
 set(POM2_CORE_SOURCES
+    src/SessionArchive.cpp
+    src/SessionSnapshot.cpp
+    src/SessionFiles.cpp
+    src/DiskImage_Session.cpp
+    src/DiskIICard_Session.cpp
     src/M6502.cpp
     src/Z80.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
+    src/MemorySnapshotEnvironment.cpp
+    src/MemorySnapshotValidation.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1669,6 +1703,8 @@ add_executable(pom2_headless
     src/MachineSnapshot.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
+    src/MemorySnapshotEnvironment.cpp
+    src/MemorySnapshotValidation.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1743,6 +1779,8 @@ add_executable(pom2_bench
     src/M6502.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
+    src/MemorySnapshotEnvironment.cpp
+    src/MemorySnapshotValidation.cpp
     src/CharRomDump.cpp
     src/MemoryWatch.cpp
     src/Keyboard.cpp

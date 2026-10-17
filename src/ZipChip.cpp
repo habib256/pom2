@@ -161,11 +161,18 @@ void ZipChip::appendSnapshotState(std::vector<uint8_t>& out) const
     byteio::putU64(out, slowUntil_);
 }
 
-bool ZipChip::loadSnapshotState(const uint8_t* data, std::size_t len)
+bool ZipChip::validateSnapshotState(const uint8_t* data, std::size_t len) const
 {
     if (!data || len < kSnapBytes) return false;
     byteio::Reader r(data, len);
-    if (r.u32() != kSnapMagic || r.u16() != kSnapVersion) return false;
+    return r.u32() == kSnapMagic && r.u16() == kSnapVersion;
+}
+
+bool ZipChip::loadSnapshotState(const uint8_t* data, std::size_t len)
+{
+    if (!validateSnapshotState(data, len)) return false;
+    byteio::Reader r(data, len);
+    (void)r.u32(); (void)r.u16();
     unlocked_     = r.u8() != 0;
     stage_        = r.u8() & 3;
     fast_         = r.u8() != 0;

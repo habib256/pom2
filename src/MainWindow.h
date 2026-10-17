@@ -40,6 +40,7 @@
 #include "SlotConnectors.h" // pom2::ConnectorSection member (Slot Config)
 #include "RetroArtwork.h"
 #include "DriveRackFilePicker.h"
+#include "SessionFilePicker.h"
 
 #include "imgui.h"  // ImU32 / ImVec2 used in struct MemRegion + member types
 
@@ -562,6 +563,7 @@ private:
     bool         monitorArtworkEnabled = true;
     pom2::RetroArtwork retroArtwork_;
     pom2::DriveRackFilePicker driveRackFilePicker_;
+    pom2::SessionFilePicker sessionFilePicker_;
     std::vector<pom2::DriveRackHit> driveRackHits_;
     int driveRackHitFrame_ = -1;
     pom2::SystemProfile driveRackPickerProfile_{};
@@ -669,7 +671,7 @@ private:
     /// Execute a palette command by id. Single dispatch point — the
     /// palette itself has no idea what any command does.
     void runCommand(const std::string& id);
-    /// Open the palette (Ctrl+Shift+P, or Tools â¸ Command palette).
+    /// Open the palette (Ctrl+Shift+P, or Tools ▸ Command palette).
     void openCommandPalette();
     void applyDockLayout(DockLayout preset);
 
@@ -1390,6 +1392,7 @@ private:
     void driveRewindHold(bool held);
     void renderTapeFileDialogs();
     void renderPasteFileDialog();
+    void renderSessionFileDialog();
     void updateAutoTurbo();
     void renderDiskPanelWindow();
     void renderDiskFileDialog();

@@ -114,10 +114,16 @@ void IIcMouse::loadSnapshotState(const uint8_t* p, size_t n)
     (void)loadIicMouseState(p, n);
 }
 
-bool IIcMouse::loadIicMouseState(const uint8_t* p, size_t n)
+bool IIcMouse::validateIicMouseState(const uint8_t* p, size_t n) const
 {
     if (!p || n != 19 || std::memcmp(p, "IOU1", 4) || p[14] >= 65) return false;
     for (int i=4; i<14; ++i) if (p[i] > 1) return false;
+    return true;
+}
+
+bool IIcMouse::loadIicMouseState(const uint8_t* p, size_t n)
+{
+    if (!validateIicMouseState(p, n)) return false;
     enabled_=p[4]; xEdge_=p[5]; yEdge_=p[6]; x0_=p[7]; y0_=p[8];
     x1_=p[9]; y1_=p[10]; xIrq_=p[11]; yIrq_=p[12]; phase_=p[14];
     auto signed16 = [](int v) { return v >= 32768 ? v-65536 : v; };

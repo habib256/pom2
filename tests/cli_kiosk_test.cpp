@@ -557,6 +557,7 @@ void testRemainingFlagsTable()
                     "--prodos-folder", "hostdir",
                     "--play", "--rec", "--rewind", "--trace-brk",
                     "--snapshot-save", "s1.snap", "--snapshot-load", "s0.snap",
+                    "--session-save", "game.pom2session", "--session-load", "other.pom2session",
                     "--rgb-card-invert-bit7=off"}, help);
     assert(p.has_value() && !help);
     assert(p->initialTapePath == "game.wav" && p->initialTapeAutoPlay);
@@ -572,13 +573,18 @@ void testRemainingFlagsTable()
     assert(p->rgbCardInvertBit7.has_value() && !*p->rgbCardInvertBit7);
 
     const std::vector<K> want = { K::Paste, K::PlayTape, K::RecTape, K::RewindTape,
-                                  K::TraceBrk, K::SnapshotSave, K::SnapshotLoad };
+                                  K::TraceBrk, K::SnapshotSave, K::SnapshotLoad,
+                                  K::SessionSave, K::SessionLoad };
     assert(p->deferredActions.size() == want.size());
     for (std::size_t i = 0; i < want.size(); ++i)
         assert(p->deferredActions[i].kind == want[i] && "deferred actions keep CLI order");
     assert(p->deferredActions[0].pathS == "keys.txt");
     assert(p->deferredActions[5].pathS == "s1.snap");
     assert(p->deferredActions[6].pathS == "s0.snap");
+    assert(p->deferredActions[7].pathS == "game.pom2session");
+    assert(p->deferredActions[8].pathS == "other.pom2session");
+    assert(!parse({"POM2", "--session-save"}, help));
+    assert(!parse({"POM2", "--session-load"}, help));
 
     // Every display spelling the usage text and the parser accept.
     const std::vector<std::pair<const char*, pom2::CliDisplayMode>> modes = {

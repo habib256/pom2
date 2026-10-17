@@ -178,6 +178,12 @@ public:
     explicit TranswarpCard(int slot);
 
     std::string_view name() const override { return "TransWarp (Applied Engineering)"; }
+    bool peekDisplacedRom(uint16_t addr, uint8_t& out) const override
+    {
+        if (!shadowing_ || addr < 0xF000) return false;
+        out = displaced_[addr - 0xF000];
+        return true;
+    }
 
     // ─── Configuration (the physical DIP blocks) ─────────────────────────
     void    setDsw1(uint8_t v) { dsw1_ = v; }

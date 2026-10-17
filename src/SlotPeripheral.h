@@ -98,6 +98,10 @@ public:
     /// INTCXROM need them today (`exposesIicOnboardRom`).
     virtual bool peekSlotRom(uint8_t /*low8*/, uint8_t& /*out*/) const { return false; }
     virtual bool peekExpansionRom(uint16_t /*offset*/, uint8_t& /*out*/) const { return false; }
+    /// If this card temporarily replaced motherboard ROM in Memory's flat
+    /// mirror, return the displaced byte without changing the mapping.
+    /// Used only for durable snapshot identity, never on the CPU bus path.
+    virtual bool peekDisplacedRom(uint16_t /*addr*/, uint8_t& /*out*/) const { return false; }
 
     /// Does this card drive the shared $C800-$CFFF (/IOSTB) window at all?
     /// MAME `a2bus.h:145`: `virtual bool take_c800() const { return false; }`
@@ -135,6 +139,7 @@ public:
     // On-board IOU state belongs in Memory's file snapshots as well as
     // rewind. Ordinary expansion cards leave these hooks empty.
     virtual void saveIicMouseState(std::vector<uint8_t>&) const {}
+    virtual bool validateIicMouseState(const uint8_t*, size_t) const { return true; }
     virtual bool loadIicMouseState(const uint8_t*, size_t) { return true; }
 
     /// Rewind / snapshot hooks. `appendSnapshotState` serializes the card's

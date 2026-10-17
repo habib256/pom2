@@ -65,6 +65,8 @@ public:
     /// flight. Absent from a blob → the port starts clean (the pre-snapshot
     /// behaviour); `loadSnapshotState` returns the bytes consumed, 0 if none.
     virtual void appendSnapshotState(std::vector<uint8_t>& /*out*/) const {}
+    virtual std::size_t validateSnapshotState(const uint8_t*, std::size_t) const
+    { return 0; }
     virtual std::size_t loadSnapshotState(const uint8_t* /*data*/, std::size_t /*n*/)
     { return 0; }
 

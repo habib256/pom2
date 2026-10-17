@@ -34,6 +34,10 @@
 //   "MEM"      main 64 KB RAM (restored through writable[] — ROM preserved)
 //   "MEX"      (v2) aux RAM + Language-Card RAM + RamWorks banks + paging
 //              soft-switches (iieMemMode) + LC latch flags + DisplayState
+//   "ENV"      optional v1 environment: canonical motherboard/character
+//              firmware, alternate //c bank, memory geometry and PAL/NTSC.
+//              Captured for files, not rewind; checked before live mutation.
+//              Its presence does NOT add card state or media to the file.
 //   "SLOT0".."SLOT7"   per-slot peripheral payloads (each card decides)
 //
 // (A "CASS" cassette section was once listed here but never implemented —
@@ -44,7 +48,7 @@
 // don't appear at all.
 //
 // No compression, no checksum (yet — could be a v2 sweetener). The file
-// is small (~64 KB + slot payloads) and the use case is "snapshot now,
+// is small (~200 KB for stock IIe) and the use case is "snapshot now,
 // reload now" rather than archival cold storage.
 //
 // Both classes have a file backend (the original) AND an in-memory backend:

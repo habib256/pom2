@@ -29,6 +29,7 @@
 #include "ThreadGuard.h"
 #include "M6502.h"
 #include "MachineSnapshot.h"
+#include "SessionFiles.h"
 #include "Memory.h"
 #include "SocketUtil.h"
 #include "MouseCard.h"
@@ -781,6 +782,8 @@ void AiControlServer::handleClient(socket_t fd)
     if (req.path == "/eject")                return handleDiskEject(fd, req);
     if (req.path == "/snapshot/save")        return handleSnapshotSave(fd, req);
     if (req.path == "/snapshot/load")        return handleSnapshotLoad(fd, req);
+    if (req.path == "/session/save")         return handleSnapshotSave(fd, req);
+    if (req.path == "/session/load")         return handleSnapshotLoad(fd, req);
     if (req.path == "/speed")                return handleSpeed(fd, req);
     if (req.path == "/screen.ppm")           return handleScreen(fd, req);
     if (req.path == "/mouse")                return handleMouse(fd, req);
@@ -1454,12 +1457,13 @@ void AiControlServer::handleSnapshotSave(socket_t fd, const Request& req)
     // with snapshot bytes — `safeCwdRelativePath` only checks cwd
     // containment, not extension. The load path is read-only and the
     // magic-byte check rejects non-snapshots, so loads stay permissive.
-    constexpr const char* kSaveExt = ".pom2snap";
-    constexpr size_t      kSaveExtLen = 9;
+    const bool session = req.path == "/session/save";
+    const std::string kSaveExt = session ? ".pom2session" : ".pom2snap";
+    const size_t kSaveExtLen = kSaveExt.size();
     if (path.size() <= kSaveExtLen ||
         path.compare(path.size() - kSaveExtLen, kSaveExtLen, kSaveExt) != 0) {
         sendJsonError(fd, 400,
-            "path must end with \".pom2snap\" — refusing to write snapshot "
+            "path must end with \"" + kSaveExt + "\" — refusing to write snapshot "
             "bytes over an unrelated file (received \"" + path + "\")");
         return;
     }
@@ -1478,10 +1482,16 @@ void AiControlServer::handleSnapshotSave(socket_t fd, const Request& req)
         safe->compare(safe->size() - kSaveExtLen, kSaveExtLen, kSaveExt) != 0) {
         sendJsonError(fd, 400,
             "path resolves to \"" + *safe +
-            "\", which does not end with \".pom2snap\" — refused");
+            "\", which does not end with \"" + kSaveExt + "\" — refused");
         return;
     }
 
+    if (session) {
+        std::string error;
+        if (!pom2::saveSessionFile(*ctrl_, *safe, error)) { sendJsonError(fd, 400, error); return; }
+        sendJsonOk(fd, "{\"path\":\"" + jsonEscape(*safe) + "\"}");
+        return;
+    }
     // Serialise under the lock, WRITE outside it. The capture is RAM-only —
     // CPU regs, 64 KiB main RAM, the MEX extended state — and takes
     // microseconds; the file write and its two fsyncs are what used to hold
@@ -1524,6 +1534,12 @@ void AiControlServer::handleSnapshotLoad(socket_t fd, const Request& req)
         return;
     }
 
+    if (req.path == "/session/load") {
+        std::string error;
+        if (!pom2::loadSessionFile(*ctrl_, *safe, error)) { sendJsonError(fd, 400, error); return; }
+        sendJsonOk(fd, "{\"path\":\"" + jsonEscape(*safe) + "\"}");
+        return;
+    }
     // Read the whole file BEFORE taking the lock, then parse from memory. The
     // file-backed reader pulls its bytes lazily from inside
     // restoreMachineState(), so constructing it here and restoring under the

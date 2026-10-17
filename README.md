@@ -200,6 +200,19 @@ from release packages.
 Hold **F6** to rewind, or open **Rewind (time-travel)** to move back through
 recent execution and resume. Snapshots let you save and reload a machine state.
 
+File snapshots restore CPU, RAM and memory/display switches. New captures
+check the motherboard and character ROMs, memory configuration and PAL/NTSC
+standard before loading; older files load with a compatibility warning.
+Cards, mounted media and external connections are not restored by `.pom2snap`
+files.
+
+For supported II/II+/IIe configurations, `.pom2session` additionally bundles
+Disk II read-only disks (including WOZ/FLUX), Mockingboard and SNES MAX state. Use desktop
+**File > Save session... / Open session...**, `--session-save` / `--session-load`
+or the local `/session/save` and
+`/session/load` API. Loading requires matching ROMs and cards; unsupported
+devices are refused. See [resumable sessions](docs/session-format.md).
+
 Disk saves and external devices have their own history: rewind cannot undo a
 write already saved to disk or an action performed by a connected FujiNet.
 

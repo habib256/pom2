@@ -176,6 +176,7 @@ public:
 
     bool hasLoadedTape() const { return loadedTapeReady; }
     bool hasRecordedTape() const { return !recordedDurations.empty(); }
+    bool isRecordingArmed() const { return recordingStarted; }
     bool isPlaybackActive() const { return playbackActive; }
     bool isPlaybackArmed()  const { return playbackArmed; }
     bool isRewinding()      const { return rewinding; }
