@@ -202,6 +202,15 @@ void MainWindow::persistSession(bool flushMedia)
         settings->setBool("ssc_listening" + sk, ssc->isListening());
         settings->setInt ("ssc_port"      + sk, ssc->getPort());
         settings->setBool("ssc_raw_mode"  + sk, ssc->rawMode());
+        settings->setBool("vsdrive_enabled" + sk, ssc->vsDriveActive());
+        if (ssc->vsDriveActive()) {
+            for (int drive = 0; drive < 2; ++drive) {
+                settings->setString("vsdrive_path" + std::to_string(drive + 1) + sk,
+                                    ssc->vsDrivePath(drive));
+                settings->setBool("vsdrive_read_only" + std::to_string(drive + 1) + sk,
+                                  ssc->vsDriveReadOnly(drive));
+            }
+        }
         settings->setBool("ssc_printer_tap" + sk, ssc->printerTap());
         settings->setString("ssc_cable" + sk,
                             SuperSerialCard::cableKey(ssc->cable()));

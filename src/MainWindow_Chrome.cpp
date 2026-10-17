@@ -323,8 +323,7 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "media.ejectall") { ejectAllDisks(); return; }
 }
 
-// The colour-pipeline picks: the Display menu and the toolbar's video popup
-// both draw this, so they list the same modes with the same rules.
+// The colour-pipeline picks for the Display menu.
 void MainWindow::renderColorPipelineItems()
 {
     const Apple2Display::HiResMode cur = display->getHiResMode();

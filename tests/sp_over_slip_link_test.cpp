@@ -398,6 +398,54 @@ void testTimeoutAndRecovery()
     link.stop();
 }
 
+void testRemoteFujiDirectoryCanOutlastLocalIoBudget()
+{
+    SpOverSlipLink link;
+    link.setTimeoutMs(120);
+    const uint16_t port = startLink(link);
+    FakePeer peer(port, [&](const std::vector<uint8_t>& req,
+                            std::vector<uint8_t>& wire) {
+        if ((req[1] == kSpControl &&
+             (req[6] == 0xF9 || req[6] == 0xF7 || req[6] == 0xF6 ||
+              req[6] == 0xF5 || req[6] == 0xE4)) ||
+            (req[1] == kSpStatus && req[6] == 0xF6))
+            std::this_thread::sleep_for(std::chrono::milliseconds(350));
+        standardHandler(req, wire);
+    });
+    assert(waitFor([&] { return link.deviceCount() == 2; }));
+    const uint8_t host = 1;
+    assert(link.control(1, 0xF9, &host, 1).ok());
+    assert(link.control(1, 0xF7, &host, 1).ok());
+    assert(link.control(1, 0xF6, &host, 1).ok());
+    assert(link.status(1, 0xF6).ok());
+    assert(link.control(1, 0xE4, &host, 1).ok());
+    assert(link.control(1, 0xF5, nullptr, 0).ok());
+    assert(link.readBlock(1, 2).ok());
+    peer.stop();
+    link.stop();
+}
+
+void testMountedFujiImageCanReadSlowNetworkBlocks()
+{
+    SpOverSlipLink link;
+    link.setTimeoutMs(120);
+    const uint16_t port = startLink(link);
+    FakePeer peer(port, [&](const std::vector<uint8_t>& req,
+                            std::vector<uint8_t>& wire) {
+        if (req[1] == kSpReadBlock)
+            std::this_thread::sleep_for(std::chrono::milliseconds(350));
+        standardHandler(req, wire);
+    });
+    assert(waitFor([&] { return link.deviceCount() == 2; }));
+    const uint8_t image[2] = {0, 1};
+    assert(link.control(1, 0xF8, image, sizeof image).ok());
+    const auto block = link.readBlock(1, 2);
+    assert(block.ok() && block.data.size() == 512);
+    assert(link.stats().timeouts == 0);
+    peer.stop();
+    link.stop();
+}
+
 // ── A peer that never answers is dropped, not paid for on every call ────
 //
 // The bug this pins is not "a call can time out" — testTimeoutAndRecovery
@@ -483,17 +531,29 @@ void testGuestResetNotifiesDevices()
     SpOverSlipLink link;
     const uint16_t port = startLink(link);
 
-    FakePeer peer(port, standardHandler);
+    FakePeer peer(port, [](const std::vector<uint8_t>& req,
+                           std::vector<uint8_t>& wire) {
+        if (req[1] == kSpStatus && req[6] == 0x03 && req[3] == 2) {
+            pushResponse(wire, req[0], 0x00,
+                         makeDib("FUJINET", 0, kSpTypeFuji, 0));
+        } else {
+            standardHandler(req, wire);
+        }
+    });
     assert(waitFor([&] { return link.deviceCount() == 2; }));
 
     link.notifyGuestReset();
 
-    // Both units must have been told, with control code $00 — that is what
-    // makes a modem hang up and a printer eject on Ctrl-Reset.
+    // Reset the disk, but never send $00 to FujiNet's own control unit:
+    // its firmware treats that as REBOOT and drops the CONFIG boot disk.
     int controls = 0;
-    for (const auto& req : peer.seen())
-        if (req.size() >= 11 && req[1] == kSpControl && req[6] == 0x00) ++controls;
-    assert(controls == 2);
+    for (const auto& req : peer.seen()) {
+        if (req.size() >= 11 && req[1] == kSpControl && req[6] == 0x00) {
+            assert(req[3] == 1);
+            ++controls;
+        }
+    }
+    assert(controls == 1);
 
     peer.stop();
     link.stop();
@@ -787,6 +847,8 @@ int main()
     testReadWriteBlock();
     testStaleResponseDiscarded();
     testTimeoutAndRecovery();
+    testRemoteFujiDirectoryCanOutlastLocalIoBudget();
+    testMountedFujiImageCanReadSlowNetworkBlocks();
     testSilentPeerIsDroppedRatherThanPaidForEveryCall();
     testNoPeer();
     testGuestResetNotifiesDevices();

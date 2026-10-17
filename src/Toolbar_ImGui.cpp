@@ -25,6 +25,7 @@
 // already depends on imgui_internal.h for the same family of helpers.
 #include "imgui_internal.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 
@@ -173,109 +174,6 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
 
     const Palette& pal = palette();
 
-    // ── Power ─────────────────────────────────────────────────────────
-    // Power-cycle (cold boot, wipes RAM). The only destructive control in
-    // this row, so the only one wearing the danger colour. The two resets
-    // sit with the video controls, left of the colour toggle (2026-10-16).
-    if (iconButton({ ICON_FA_POWER_OFF,    "ColdBoot",
-                     "Power-cycle (wipe RAM + cold boot)", pal.danger })) {
-        r.requestColdBoot = true;
-    }
-
-    verticalRule();
-
-    // ── Run group ─────────────────────────────────────────────────────
-    // Rewind sits on the opposite side of Pause from Step: hold it to replay
-    // backwards (same gesture as F6 / the Machine ▸ Rewind bar). Enabled only
-    // when there's recorded history; iconButton can't report "held", so it's
-    // drawn inline to read IsItemActive().
-    {
-        const bool canRewind = snap.rewindEnabled && snap.rewindHasFrames;
-        ImGui::BeginDisabled(!canRewind);
-        char lbl[64];
-        std::snprintf(lbl, sizeof(lbl), "%s##RewindHold", ICON_FA_BACKWARD_FAST);
-        ImGui::Button(lbl);
-        if (ImGui::IsItemActive()) r.requestRewindHeld = true;
-        ImGui::EndDisabled();
-        // The interesting half of this tooltip is the disabled one ("turn on
-        // recording"), which is the half IsItemHovered() could never show.
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", canRewind
-                ? "Hold to rewind (live) — also F6, or Machine \xe2\x96\xb8 Rewind"
-                : "Rewind: turn on recording in Machine \xe2\x96\xb8 Rewind");
-        ImGui::SameLine();
-    }
-
-    // Running → amber pause glyph ("click to stop"); paused → green play
-    // glyph ("click to go"). The colour tracks the ACTION, matching every
-    // media transport the user already knows.
-    const char* runIcon = snap.isRunning
-        ? ICON_FA_CIRCLE_PAUSE : ICON_FA_CIRCLE_PLAY;
-    const char* runTip  = snap.isRunning
-        ? "Pause (CPU stops at next instruction boundary)"
-        : "Run (resume CPU from current PC)";
-    if (iconButton({ runIcon, "PauseToggle", runTip,
-                     snap.isRunning ? pal.warn : pal.ok })) {
-        r.requestPauseToggle = true;
-    }
-    ImGui::SameLine();
-    if (iconButton({ ICON_FA_FORWARD_STEP, "Step",
-                     "Single-instruction step (only useful when paused)" },
-                   !snap.isRunning)) {
-        r.requestStep = true;
-    }
-
-    verticalRule();
-
-    // ── Speed selector ───────────────────────────────────────────────
-    // Combo: 1× / 2× / 4× / MAX. The current speed sticks to whichever
-    // bucket the cyclesPerFrame value rounds into; off-bucket values
-    // (the user typed a custom speed) read as
-    // "custom" with no checkmark. The buckets follow the active video
-    // standard (1× = 17045 @60 Hz NTSC, 20313 @50 Hz PAL) so "1×" is the
-    // machine's real clock on both.
-    const VideoTiming& vt = pom2VideoTiming(snap.videoStandard);
-    // 1× is the MACHINE's stock speed, not the video standard's nominal: the
-    // //c+ ships a 4× accelerator soldered on and its profile carries
-    // defaultCyclesPerFrame = 68180. Bucketed off `vt`, a stock //c+ read as
-    // "4×" and picking "1× (1.02 MHz)" un-soldered it for the session.
-    const int kSpeed1x  = pom2::profileConfig(snap.activeProfile).defaultCyclesPerFrame;
-    const int kSpeed2x  = kSpeed1x * 2;
-    const int kSpeed4x  = kSpeed1x * 4;
-    static constexpr int kSpeedMax = 1'000'000;
-    const double mhz1x =
-        static_cast<double>(kSpeed1x) * vt.refreshHz / 1e6;
-    const char* speedLabel = "Speed";
-    if      (snap.cyclesPerFrame == kSpeed1x)  speedLabel = ICON_FA_GAUGE_SIMPLE " 1×";
-    else if (snap.cyclesPerFrame == kSpeed2x)  speedLabel = ICON_FA_GAUGE      " 2×";
-    else if (snap.cyclesPerFrame == kSpeed4x)  speedLabel = ICON_FA_GAUGE_HIGH " 4×";
-    else if (snap.cyclesPerFrame == kSpeedMax) speedLabel = ICON_FA_BOLT       " MAX";
-    else                                        speedLabel = ICON_FA_GAUGE      " …";
-    // Widest collapsed label is the icon + "MAX".
-    ImGui::SetNextItemWidth(comboWidth(ICON_FA_BOLT " MAX"));
-    if (ImGui::BeginCombo("##POM2ToolbarSpeed", speedLabel)) {
-        char lbl[64];
-        std::snprintf(lbl, sizeof lbl,
-                      ICON_FA_GAUGE_SIMPLE " 1× (%.2f MHz)", mhz1x);
-        if (ImGui::Selectable(lbl, snap.cyclesPerFrame == kSpeed1x))
-            r.setCyclesPerFrame = kSpeed1x;
-        std::snprintf(lbl, sizeof lbl,
-                      ICON_FA_GAUGE       " 2× (%.2f MHz)", mhz1x * 2);
-        if (ImGui::Selectable(lbl, snap.cyclesPerFrame == kSpeed2x))
-            r.setCyclesPerFrame = kSpeed2x;
-        std::snprintf(lbl, sizeof lbl,
-                      ICON_FA_GAUGE_HIGH  " 4× (%.2f MHz)", mhz1x * 4);
-        if (ImGui::Selectable(lbl, snap.cyclesPerFrame == kSpeed4x))
-            r.setCyclesPerFrame = kSpeed4x;
-        if (ImGui::Selectable(ICON_FA_BOLT       " MAX (uncapped)",
-                              snap.cyclesPerFrame == kSpeedMax))
-            r.setCyclesPerFrame = kSpeedMax;
-        ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emulation speed");
-
-    verticalRule();
-
     // ── Profile selector ─────────────────────────────────────────────
     // Short-label combo. Switching = full cold reset under the hood
     // (the host calls `applyProfile()`), so the user picks rarely.
@@ -339,12 +237,35 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
         }
     }
 
-    verticalRule();
+    // Center the CPU controls as one group. Use the same widths ImGui uses
+    // for these icon buttons and the speed combo, so changing the UI scale
+    // or font keeps the group centered in the toolbar.
+    const auto buttonWidth = [](const char* icon) {
+        return ImGui::CalcTextSize(icon).x +
+               2.0f * ImGui::GetStyle().FramePadding.x;
+    };
+    const float cpuWidth = buttonWidth(ICON_FA_POWER_OFF)
+                         + buttonWidth(ICON_FA_ROTATE_LEFT)
+                         + buttonWidth(ICON_FA_ARROWS_ROTATE)
+                         + buttonWidth(ICON_FA_BACKWARD_FAST)
+                         + buttonWidth(snap.isRunning ? ICON_FA_CIRCLE_PAUSE
+                                                      : ICON_FA_CIRCLE_PLAY)
+                         + buttonWidth(ICON_FA_FORWARD_STEP)
+                         + comboWidth(ICON_FA_BOLT " MAX")
+                         + 6.0f * ImGui::GetStyle().ItemSpacing.x;
+    const float contentCenter = (ImGui::GetWindowContentRegionMin().x +
+                                 ImGui::GetWindowContentRegionMax().x) * 0.5f;
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                  contentCenter - cpuWidth * 0.5f));
 
-    // ── Disk shortcuts ───────────────────────────────────────────────
-    // Both insert AND eject-all now live in the Disk Library panel
-    // (multi-source picker with boot-on-click + header-row "Eject All")
-    // — kept out of the toolbar to avoid two ways to do the same thing.
+    // ── Power and resets ─────────────────────────────────────────────
+    // Power-cycle wipes RAM, so its icon keeps the danger colour.
+    if (iconButton({ ICON_FA_POWER_OFF,    "ColdBoot",
+                     "Power-cycle (wipe RAM + cold boot)", pal.danger })) {
+        r.requestColdBoot = true;
+    }
+    ImGui::SameLine();
 
     // ── Resets ───────────────────────────────────────────────────────
     // Soft = Ctrl-Reset (RAM and, on a ][+, the display survive); hard also
@@ -360,17 +281,97 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
     }
     ImGui::SameLine();
 
-    // ── Video pipeline ───────────────────────────────────────────────
-    if (snap.videoMenuItems) {
-        if (iconButton({ ICON_FA_TV, "VideoPipeline",
-                         "Video: colour pipeline (also Display menu)" }))
-            ImGui::OpenPopup("##POM2ToolbarVideo");
-        if (ImGui::BeginPopup("##POM2ToolbarVideo")) {
-            snap.videoMenuItems();
-            ImGui::EndPopup();
-        }
+    // ── Run group ─────────────────────────────────────────────────────
+    // Rewind sits on the opposite side of Pause from Step: hold it to replay
+    // backwards (same gesture as F6 / the Machine ▸ Rewind bar). Enabled only
+    // when there's recorded history; iconButton can't report "held", so it's
+    // drawn inline to read IsItemActive().
+    {
+        const bool canRewind = snap.rewindEnabled && snap.rewindHasFrames;
+        ImGui::BeginDisabled(!canRewind);
+        char lbl[64];
+        std::snprintf(lbl, sizeof(lbl), "%s##RewindHold", ICON_FA_BACKWARD_FAST);
+        ImGui::Button(lbl);
+        if (ImGui::IsItemActive()) r.requestRewindHeld = true;
+        ImGui::EndDisabled();
+        // The interesting half of this tooltip is the disabled one ("turn on
+        // recording"), which is the half IsItemHovered() could never show.
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", canRewind
+                ? "Hold to rewind (live) — also F6, or Machine \xe2\x96\xb8 Rewind"
+                : "Rewind: turn on recording in Machine \xe2\x96\xb8 Rewind");
         ImGui::SameLine();
     }
+
+    // Running → amber pause glyph ("click to stop"); paused → green play
+    // glyph ("click to go"). The colour tracks the ACTION, matching every
+    // media transport the user already knows.
+    const char* runIcon = snap.isRunning
+        ? ICON_FA_CIRCLE_PAUSE : ICON_FA_CIRCLE_PLAY;
+    const char* runTip  = snap.isRunning
+        ? "Pause (CPU stops at next instruction boundary)"
+        : "Run (resume CPU from current PC)";
+    if (iconButton({ runIcon, "PauseToggle", runTip,
+                     snap.isRunning ? pal.warn : pal.ok })) {
+        r.requestPauseToggle = true;
+    }
+    ImGui::SameLine();
+    if (iconButton({ ICON_FA_FORWARD_STEP, "Step",
+                     "Single-instruction step (only useful when paused)" },
+                   !snap.isRunning)) {
+        r.requestStep = true;
+    }
+
+    ImGui::SameLine();
+
+    // ── Speed selector ───────────────────────────────────────────────
+    // Combo: 1× / 2× / 4× / MAX. The current speed sticks to whichever
+    // bucket the cyclesPerFrame value rounds into; off-bucket values
+    // (the user typed a custom speed) read as
+    // "custom" with no checkmark. The buckets follow the active video
+    // standard (1× = 17045 @60 Hz NTSC, 20313 @50 Hz PAL) so "1×" is the
+    // machine's real clock on both.
+    const VideoTiming& vt = pom2VideoTiming(snap.videoStandard);
+    // 1× is the MACHINE's stock speed, not the video standard's nominal: the
+    // //c+ ships a 4× accelerator soldered on and its profile carries
+    // defaultCyclesPerFrame = 68180. Bucketed off `vt`, a stock //c+ read as
+    // "4×" and picking "1× (1.02 MHz)" un-soldered it for the session.
+    const int kSpeed1x  = pom2::profileConfig(snap.activeProfile).defaultCyclesPerFrame;
+    const int kSpeed2x  = kSpeed1x * 2;
+    const int kSpeed4x  = kSpeed1x * 4;
+    static constexpr int kSpeedMax = 1'000'000;
+    const double mhz1x =
+        static_cast<double>(kSpeed1x) * vt.refreshHz / 1e6;
+    const char* speedLabel = "Speed";
+    if      (snap.cyclesPerFrame == kSpeed1x)  speedLabel = ICON_FA_GAUGE_SIMPLE " 1×";
+    else if (snap.cyclesPerFrame == kSpeed2x)  speedLabel = ICON_FA_GAUGE      " 2×";
+    else if (snap.cyclesPerFrame == kSpeed4x)  speedLabel = ICON_FA_GAUGE_HIGH " 4×";
+    else if (snap.cyclesPerFrame == kSpeedMax) speedLabel = ICON_FA_BOLT       " MAX";
+    else                                        speedLabel = ICON_FA_GAUGE      " …";
+    // Widest collapsed label is the icon + "MAX".
+    ImGui::SetNextItemWidth(comboWidth(ICON_FA_BOLT " MAX"));
+    if (ImGui::BeginCombo("##POM2ToolbarSpeed", speedLabel)) {
+        char lbl[64];
+        std::snprintf(lbl, sizeof lbl,
+                      ICON_FA_GAUGE_SIMPLE " 1× (%.2f MHz)", mhz1x);
+        if (ImGui::Selectable(lbl, snap.cyclesPerFrame == kSpeed1x))
+            r.setCyclesPerFrame = kSpeed1x;
+        std::snprintf(lbl, sizeof lbl,
+                      ICON_FA_GAUGE       " 2× (%.2f MHz)", mhz1x * 2);
+        if (ImGui::Selectable(lbl, snap.cyclesPerFrame == kSpeed2x))
+            r.setCyclesPerFrame = kSpeed2x;
+        std::snprintf(lbl, sizeof lbl,
+                      ICON_FA_GAUGE_HIGH  " 4× (%.2f MHz)", mhz1x * 4);
+        if (ImGui::Selectable(lbl, snap.cyclesPerFrame == kSpeed4x))
+            r.setCyclesPerFrame = kSpeed4x;
+        if (ImGui::Selectable(ICON_FA_BOLT       " MAX (uncapped)",
+                              snap.cyclesPerFrame == kSpeedMax))
+            r.setCyclesPerFrame = kSpeedMax;
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emulation speed");
+
+    verticalRule();
 
     // ── Display color / monochrome toggle ────────────────────────────
     // One-click flip between color and B&W phosphor. The host remembers
@@ -395,21 +396,6 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
     if (iconButton({ ICON_FA_CAMERA,       "Screenshot",
                      "Save screenshot to ./screenshot_NNN.ppm  (F9)" })) {
         r.requestScreenshot = true;
-    }
-    ImGui::SameLine();
-    {
-        // Memory Map Grid is a toggle — accent face + accent glyph while the
-        // grid is visible so the state is obvious without hovering.
-        ToggleStyle t;
-        t.begin(snap.memoryGridVisible);
-        if (iconButton({ ICON_FA_BORDER_ALL, "MemGrid",
-                         snap.memoryGridVisible
-                             ? "MemoryGrid viewer (visible — click to hide)"
-                             : "MemoryGrid viewer (click to show)",
-                         snap.memoryGridVisible ? pal.accent : 0 })) {
-            r.requestMemoryGridToggle = true;
-        }
-        t.end();
     }
     ImGui::SameLine();
     // Full screen = kiosk. Deliberately NOT a ToggleStyle button: the

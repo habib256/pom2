@@ -6588,8 +6588,12 @@ one by hand, and terminates its whole **process group** on exit — killing only
 the direct child leaves grandchildren holding the loopback port, which is what
 would make the *next* POM2 session fail to bind 1985. POM2 does not touch the
 helper's `fnconfig.ini` (WiFi credentials live there, and the firmware's Apple
-default for Bus-over-IP is already 127.0.0.1:1985). Vendoring the firmware into
-POM2's build was considered and rejected — see docs/fujinet_plan.md § 8.
+default for Bus-over-IP is already 127.0.0.1:1985). Desktop packages now
+include SHA-256-pinned upstream FujiNet-PC Apple v1.5.2 binaries where upstream
+publishes them (macOS arm64/x64, Windows x64, Linux x64). POM2 copies the
+selected runtime to per-user data before starting it, preserving writable
+configuration and SD storage. Vendoring the firmware source into POM2's build
+was considered and rejected — see docs/fujinet_plan.md § 8.
 
 **Driving it against a real peer — what bites** (measured 2026-08-21, against
 the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
@@ -6667,7 +6671,7 @@ the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
   thousand. That line plus the per-call trace localised the printer-unit
   crash below in a single run.
 - **POM2's own guest-reset broadcast was killing the peer.**
-  `notifyGuestReset()` sends Control $00 to every device — the courtesy the
+  `notifyGuestReset()` sends Control $00 to ordinary devices — the courtesy the
   spec asks for, so a modem drops its line and a printer ejects its page. The
   printer unit ABORTS on it (below), and POM2 sends that broadcast on EVERY
   guest reset, so every Ctrl-Reset and every boot killed the FujiNet a moment
@@ -6676,7 +6680,9 @@ the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
   loads and then cannot fetch — and none of those point at a reset that
   happened seconds earlier. The printer is now skipped in the broadcast, and
   a guest-issued reset to it is answered locally: `isPrinter()` matches on the
-  DIB name, so a fixed firmware needs no change here.
+  DIB name, so a fixed firmware needs no change here. FujiNet's own control
+  unit is skipped too: its CONTROL $00 means REBOOT, which disconnects the
+  CONFIG boot disk during an Apple II reset.
 - **A `CONTROL` to the peer's PRINTER unit kills it** (upstream). The packet
   is byte-identical in shape to the ones the neighbouring units answer
   normally, yet the peer aborts out of `Request::from_packet`. Same unit

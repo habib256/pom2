@@ -27,7 +27,7 @@ uint32_t crc32(const uint8_t* data, size_t n)
 bool encodeSessionArchive(const SessionArchive& session, std::vector<uint8_t>& out,
                           std::string& error)
 {
-    if ((session.version != 1 && session.version != 2) || !session.machineId || session.core.size() > 17u * 1024u * 1024u ||
+    if ((session.version < 1 || session.version > 3) || !session.machineId || session.core.size() > 17u * 1024u * 1024u ||
         session.configuration.size() > 64) {
         error = "invalid session machine/core/configuration"; return false;
     }
@@ -48,7 +48,8 @@ bool encodeSessionArchive(const SessionArchive& session, std::vector<uint8_t>& o
     sessionio::blob(payload, session.core);
     for (const auto& slot : session.slots) {
         if (slot.identity.size() > 16384 || slot.state.size() > cardLimit ||
-            uint8_t(slot.kind) > uint8_t(SessionArchive::Card::SnesMax) ||
+            uint8_t(slot.kind) > uint8_t(session.version >= 3 ? SessionArchive::Card::Clock
+                                                              : SessionArchive::Card::SnesMax) ||
             (slot.kind == SessionArchive::Card::Empty &&
              (!slot.identity.empty() || !slot.state.empty()))) {
             error = "invalid session card record"; return false;
@@ -82,7 +83,7 @@ bool decodeSessionArchive(const std::vector<uint8_t>& bytes, SessionArchive& out
     r.pos = 8;
     SessionArchive staged;
     staged.version = r.u32();
-    if (staged.version != 1 && staged.version != 2) { error = "unsupported session version"; return false; }
+    if (staged.version < 1 || staged.version > 3) { error = "unsupported session version"; return false; }
     const size_t cardLimit = staged.version == 1 ? 1024u * 1024u : kMaxSessionCardBytes;
     staged.machineId = r.u32();
     const uint32_t payload = r.u32();
@@ -99,7 +100,8 @@ bool decodeSessionArchive(const std::vector<uint8_t>& bytes, SessionArchive& out
     }
     for (auto& slot : staged.slots) {
         slot.kind = SessionArchive::Card(r.u8());
-        if (uint8_t(slot.kind) > uint8_t(SessionArchive::Card::SnesMax) ||
+        if (uint8_t(slot.kind) > uint8_t(staged.version >= 3 ? SessionArchive::Card::Clock
+                                                             : SessionArchive::Card::SnesMax) ||
             !r.blob(slot.identity, 16384) || !r.blob(slot.state, cardLimit) ||
             (slot.kind == SessionArchive::Card::Empty &&
              (!slot.identity.empty() || !slot.state.empty()))) {

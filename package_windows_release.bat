@@ -54,6 +54,8 @@ REM
 REM bash comes from Git for Windows, which every GitHub windows-latest runner
 REM has on PATH. Forward slashes: bash does not take the backslash form.
 bash packaging/stage_data.sh "dist/POM2-Windows" || goto :nobash
+python packaging/fujinet/stage.py --target windows --dest "dist/POM2-Windows" || goto :fail
+python packaging/fujinet/stage.py --target windows --dest "dist/POM2-Windows" --verify || goto :fail
 
 REM --- docs -----------------------------------------------------------------
 copy /y README.md    "%STAGE%\" >nul || goto :fail

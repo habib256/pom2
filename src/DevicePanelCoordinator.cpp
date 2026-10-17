@@ -30,8 +30,10 @@
 #include "SystemProfile.h"
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
+#include "SuperSerialTcpTransport.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
+#include "VsDriveTransport.h"
 
 #include <exception>
 #include <string>
@@ -258,6 +260,11 @@ DevicePanelCoordinator::captureSerialCards() const
         snapshot.listening = card->isListening();
         snapshot.connected = card->clientConnected();
         snapshot.rawMode = card->rawMode();
+        snapshot.vsDriveActive = card->vsDriveActive();
+        for (int drive = 0; drive < 2; ++drive) {
+            snapshot.vsDrivePaths[drive] = card->vsDrivePath(drive);
+            snapshot.vsDriveReadOnly[drive] = card->vsDriveReadOnly(drive);
+        }
         snapshot.printerTap = card->printerTap();
         snapshot.mode = static_cast<std::uint8_t>(card->mode());
         snapshot.dsw1 = card->dipSwitch1();
@@ -314,6 +321,43 @@ DevicePanelCoordinator::applySerial(const SerialCommand& command)
     // setTransport alone, all UI-thread. A card that DOES hand the CPU
     // thread a pointer into its transport (FujiNet's transact()) must not
     // copy this shape without that mutex.
+    if (command.requestStopVsDrive && card->vsDriveActive()) {
+        card->stopListening();
+        card->setTransport(makeSuperSerialTcpTransport(*card, command.slot));
+        card->setModemLinesTied(false);
+        card->setRawMode(false);
+        settings_.setBool("vsdrive_enabled_slot" + std::to_string(command.slot), false);
+    }
+    if (command.requestStartVsDrive) {
+        result.startAttempted = true;
+        auto transport = makeVsDriveTransport(*card, command.vsDrivePaths,
+                                              result.error, command.vsDriveReadOnly);
+        if (!transport) return result;
+        card->stopListening();
+        card->setTransport(std::move(transport));
+        {
+            auto state = controller_.lockState();
+            card->setRawMode(true);
+            card->setModemLinesTied(true);
+            card->setPrinterTap(false);
+            card->setCable(SuperSerialCard::Cable::NullModem);
+            if (!card->builtInPort())
+                card->setMode(SuperSerialCard::Mode::Communications);
+        }
+        result.startSucceeded = card->startListening(0);
+        if (!result.startSucceeded) result.error = "Could not start VSDrive host.";
+        if (result.startSucceeded) {
+            const std::string suffix = "_slot" + std::to_string(command.slot);
+            settings_.setBool("vsdrive_enabled" + suffix, true);
+            for (int drive = 0; drive < 2; ++drive)
+                settings_.setString("vsdrive_path" + std::to_string(drive + 1) + suffix,
+                                    command.vsDrivePaths[drive]);
+            for (int drive = 0; drive < 2; ++drive)
+                settings_.setBool("vsdrive_read_only" + std::to_string(drive + 1) + suffix,
+                                  card->vsDriveReadOnly(drive));
+        }
+        return result;
+    }
     if (command.requestStop) {
         try {
             card->stopListening();

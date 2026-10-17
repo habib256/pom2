@@ -45,6 +45,8 @@
 #include "MouseGrab.h"
 #include "MouseSync.h"
 #include "FourPlayCard.h"
+#include "FujiNetCard.h"
+#include "FujiNetConfigHostClick.h"
 #include "SnesMaxCard.h"
 #include "PaddleInputs.h"
 #include "Pom2Theme.h"
@@ -58,6 +60,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -220,8 +223,9 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
                 setKioskModeRuntime(true);
                 setMouseGrab(true);
             } else {
-                // Alt+Enter keeps fullscreen and only toggles mouse capture.
-                toggleMouseGrab();
+                // The kiosk exit releases the grab before restoring the
+                // window, just as it does for F10 and Ctrl+Alt+F.
+                setKioskModeRuntime(false);
             }
         }
         return;
@@ -642,6 +646,34 @@ void MainWindow::onMouseMove(double x, double y)
     mouseAppleX = static_cast<uint8_t>(mouseAppleX + dxApple);
     mouseAppleY = static_cast<uint8_t>(mouseAppleY + dyApple);
     pushMouse(mouseAppleX, mouseAppleY, mouseButtonHeld);
+}
+
+void MainWindow::activateFujiNetConfigHost(int row)
+{
+    // FujiNet's Apple II CONFIG is a text application. Its Host List accepts
+    // 1..8 to select a row and Return to browse it, but has no mouse driver.
+    // pasteText preserves digit/Return ordering through the keyboard FIFO;
+    // two queueKey calls would overwrite the first latch.
+    std::optional<char> hostKey;
+    {
+        auto state = controller->lockState();
+        auto& mem = state.memory();
+        bool fujinetPresent = false;
+        for (int slot = 1; slot <= 7; ++slot)
+            fujinetPresent |= dynamic_cast<pom2::FujiNetCard*>(
+                mem.slotBus().peripheral(slot)) != nullptr;
+        if (fujinetPresent) {
+            const auto videoState = mem.getDisplayState();
+            hostKey = pom2::fujinet_config::hostKeyAtRow(
+                [&](int addr) { return mem.peekMainRam(
+                    static_cast<uint16_t>(addr)); }, row,
+                videoState.textMode, videoState.page2,
+                videoState.eightyCol);
+        }
+    }
+    if (!hostKey) return;
+    const char keys[2] = {*hostKey, '\r'};
+    controller->memory().pasteText(keys, sizeof(keys));
 }
 
 void MainWindow::onMouseButton(int button, int action)

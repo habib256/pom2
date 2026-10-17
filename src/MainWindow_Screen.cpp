@@ -567,6 +567,15 @@ void MainWindow::drawScreenImage()
     // hidden screen window cannot leave a stale `true` behind.
     const bool screenHovered = ImGui::IsItemHovered();
     screenHovered_ = screenHovered;
+    if (screenHovered && !mouseGrabbed_ &&
+        ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        const float height = screenRectMax.y - screenRectMin.y;
+        if (height > 0.0f) {
+            const int row = static_cast<int>(
+                (ImGui::GetMousePos().y - screenRectMin.y) * 24.0f / height);
+            activateFujiNetConfigHost(row);
+        }
+    }
     if (bezel) {
         const ImVec2 bodyMin(screenRectMin.x - margin.x, screenRectMin.y - margin.y);
         ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(bezel),

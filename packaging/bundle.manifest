@@ -26,6 +26,10 @@
 #                          against files AND directories inside a copied `dir`
 #
 # Paths are relative to the repository root. Blank lines and #-comments ignored.
+# FujiNet-PC Apple is a platform-specific executable downloaded, hash-checked
+# and staged by packaging/fujinet/stage.py after this generic asset manifest.
+# Release jobs run that script's --verify check as a separate package gate.
+# Browser builds cannot run a host executable, so it is never preloaded there.
 
 # ─── Firmware and dumps ─────────────────────────────────────────────────────
 # The full tree: system ROMs, character generators, peripheral card dumps, and

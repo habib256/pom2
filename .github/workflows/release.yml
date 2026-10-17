@@ -297,7 +297,10 @@ jobs:
           echo "OK: packaged AppImage launches"
 
       - name: Verify the package payload (manifest present, nothing leaked)
-        run: packaging/stage_data.sh --verify squashfs-root/usr/share/POM2
+        run: |
+          packaging/stage_data.sh --verify squashfs-root/usr/share/POM2
+          python3 packaging/fujinet/stage.py --target linux-x64 \
+            --dest squashfs-root/usr/share/POM2 --verify
 
       - name: Boot smoke — the packaged binary runs an Apple II and draws a frame
         env:
@@ -698,7 +701,10 @@ jobs:
           echo "OK: packaged .app binary launches"
 
       - name: Verify the package payload (manifest present, nothing leaked)
-        run: packaging/stage_data.sh --verify dist/POM2.app/Contents/Resources
+        run: |
+          packaging/stage_data.sh --verify dist/POM2.app/Contents/Resources
+          python3 packaging/fujinet/stage.py --target macos \
+            --dest dist/POM2.app/Contents/Resources --verify
 
       - name: Boot smoke — the packaged binary runs an Apple II and draws a frame
         env:
@@ -805,7 +811,10 @@ jobs:
 
       - name: Verify the package payload (manifest present, nothing leaked)
         shell: bash
-        run: packaging/stage_data.sh --verify dist/POM2-Windows
+        run: |
+          packaging/stage_data.sh --verify dist/POM2-Windows
+          python packaging/fujinet/stage.py --target windows \
+            --dest dist/POM2-Windows --verify
 
       - name: Boot smoke — the packaged binary runs an Apple II and draws a frame
         shell: bash

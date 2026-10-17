@@ -38,8 +38,8 @@
 // Capture is entered and left by deliberate gestures, the ones
 // every VM viewer and PC emulator already trains into the user's fingers:
 // **Ctrl+Alt+G**, or a click on the **middle button (wheel)**. Both TOGGLE.
-// **Alt+Enter** toggles full screen captured / full screen with a free pointer,
-// including when there is no Mouse Card.
+// **Alt+Enter** enters full screen with capture, then returns to the windowed
+// interface with a free pointer, including when there is no Mouse Card.
 //
 // A left click deliberately does NOT capture. It used to, which is the
 // classic "click the screen to give the guest your mouse" contract, but it
@@ -80,7 +80,7 @@ inline bool isToggleChord(int key, int mods)
     return key == kKeyG && (mods & kModControl) != 0 && (mods & kModAlt) != 0;
 }
 
-/// Alt+Enter toggles full screen with capture / full screen with a free pointer.
+/// Alt+Enter toggles between full screen with capture and a free windowed UI.
 /// The caller consumes every edge so no Return reaches the guest.
 /// Only PRESS changes the mode.
 inline bool isFullscreenChord(int key, int mods)

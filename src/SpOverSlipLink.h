@@ -54,7 +54,8 @@
 //
 // `transact()` and every typed call run on the CPU thread, inside a SmartPort
 // call, under EmulationController's stateMutex — blocking, bounded by
-// `timeoutMs()` (250 ms by default). See docs/fujinet_plan.md § 9 for why
+// `timeoutMs()` (250 ms by default for local calls; TNFS operations get 5 s).
+// See docs/fujinet_plan.md § 9 for why
 // blocking there is the right answer and not a compromise.
 //
 // The worker thread only acquires and releases peers, and enumerates devices
@@ -213,7 +214,8 @@ private:
     /// peerLostLocked() is only ever reached with it held.
     ///
     /// This exists because a bounded stall repeated without bound is not
-    /// bounded. `transact()` waits up to `timeoutMs_` (250 ms default) inside
+    /// bounded. `transact()` waits up to `timeoutMs_` (250 ms default for
+    /// local calls, 5 s for TNFS operations) inside
     /// a SmartPort call, on the CPU thread, holding the emulator's stateMutex
     /// — so a peer that ACCEPTS writes but never answers used to cost that
     /// much per call, for every call, forever: a ProDOS boot became a string
@@ -275,6 +277,7 @@ private:
     SlipFramer                 rx_;            ///< guarded by callMtx_
     uint8_t                    sequence_ = 0;  ///< guarded by callMtx_
     std::vector<uint8_t>       txBuf_;         ///< guarded by callMtx_
+    bool                       imageMounted_ = false; ///< guarded by callMtx_
 
     mutable std::mutex         stateMtx_;      ///< guards devices_/lastError_
     std::vector<SpDevice>      devices_;

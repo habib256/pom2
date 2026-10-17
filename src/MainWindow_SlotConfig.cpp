@@ -360,7 +360,9 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // above — see `startDeferredSscListeners`, which the three callers
         // run once the lock is released and while the worker is still
         // stopped.
-        if (settings->getBool("ssc_listening" + sk, listenDefault)) {
+        if (settings->getBool("vsdrive_enabled" + sk, false)) {
+            pendingSscListeners_.push_back({s, 0}); // 0 = internal VSDrive host
+        } else if (settings->getBool("ssc_listening" + sk, listenDefault)) {
             const int portDefault = legacyPrimary
                 ? settings->getInt("ssc_port", SuperSerialCard::kDefaultPort)
                 : SuperSerialCard::kDefaultPort;

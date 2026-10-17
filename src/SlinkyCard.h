@@ -103,6 +103,10 @@ public:
     /// Adopt the 4 KB 341-0344A image. Refuses any other size.
     bool loadRom(const std::vector<uint8_t>& bytes);
     bool romLoaded() const { return romLoaded_; }
+    // Session topology binds to the exact firmware image, including the
+    // per-slot pages that a ProDOS RAM-disk driver may later execute.
+    void appendSessionIdentity(std::vector<uint8_t>& out) const
+    { if (romLoaded_) out.insert(out.end(), rom_.begin(), rom_.end()); }
 
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;

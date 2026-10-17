@@ -1348,10 +1348,8 @@ void MainWindow::render()
         tb.isStopped          = (mode == EmulationController::Mode::Stopped);
         tb.cyclesPerFrame     = controller->getCyclesPerFrame();
         tb.videoStandard      = controller->getVideoStandard();
-        tb.memoryGridVisible  = show(pom2::PanelId::MemGrid);
         tb.activeProfile      = activeProfile;
         tb.hasPrimaryDiskCard = (primaryDiskII() != nullptr);
-        tb.videoMenuItems = [this] { renderColorPipelineItems(); };
         tb.charRomLocale      = charRomLocale;
         auto isMonoHiRes = [](Apple2Display::HiResMode m) {
             return m == Apple2Display::HiResMode::MonoWhite ||
@@ -1403,7 +1401,6 @@ void MainWindow::render()
         if (tr.setCyclesPerFrame > 0)
             controller->setCyclesPerFrame(tr.setCyclesPerFrame);
         if (tr.setProfileRequested)    applyProfile(tr.setProfile);
-        if (tr.requestMemoryGridToggle) show(pom2::PanelId::MemGrid) = !show(pom2::PanelId::MemGrid);
         // Same entry point as F10 and the View menu item, so the three
         // routes into kiosk cannot drift apart.
         if (tr.requestKioskToggle)      toggleKioskMode();
@@ -1500,6 +1497,7 @@ void MainWindow::render()
     // whether or not its window is open), the About box, the status bar and
     // the palette overlay, which must stay last so it draws above everything.
     renderPanels(deltaSeconds);
+    servicePendingFujiNetBoot();
 
     // The printer keeps consuming its card's spool with every window shut —
     // without this a //c printing with the panel closed parked every byte in

@@ -104,6 +104,7 @@ public:
         bool requestStart      = false;
         bool requestStop       = false;
         bool requestDropPeer   = false;
+        bool requestBootConfig = false;
         bool requestRescan     = false;   ///< re-enumerate serial devices
         bool requestOpenWebUi  = false;   ///< TCP mode only
 
@@ -126,6 +127,7 @@ private:
     bool                  serialPathPrimed_ = false;
     std::array<char, 512> helperPathBuf_{};
     bool                  helperPathPrimed_ = false;
+    std::string           helperPathMirrored_;
 };
 
 } // namespace pom2

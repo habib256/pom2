@@ -65,9 +65,19 @@ VERSION="${POM2_VERSION:-$(sed -n 's/^project(pom2_imgui VERSION \([0-9.]*\).*/\
 [ -n "$VERSION" ] || VERSION="0.0"
 log "Packaging POM2 v${VERSION} (${ARCH})"
 
+if [ "$ARCH" = "x86_64" ]; then
+    python3 packaging/fujinet/stage.py --target linux-x64 --dest "$BUILD_DIR"
+    python3 packaging/fujinet/stage.py --target linux-x64 \
+        --dest "$BUILD_DIR" --verify
+fi
+
 # ─── Stage the AppDir via the real install rules ────────────────────────────
 rm -rf "$APPDIR"
 DESTDIR="$PWD/$APPDIR" cmake --install "$BUILD_DIR" >/dev/null
+if [ "$ARCH" = "x86_64" ]; then
+    python3 packaging/fujinet/stage.py --target linux-x64 \
+        --dest "$APPDIR/usr/share/POM2" --verify
+fi
 
 # AppImage requires the desktop file + icon at the AppDir ROOT as well as in
 # usr/share; appimagetool reads the root copies for the .desktop metadata.

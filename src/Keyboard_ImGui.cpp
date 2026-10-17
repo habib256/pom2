@@ -23,6 +23,7 @@
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
 
+#include <algorithm>
 #include <cstdint>   // intptr_t for the ImTextureID cast — libc++ pulls it
                      // in transitively, libstdc++ does not (CI, GCC).
 #include <cstring>
@@ -125,21 +126,23 @@ Keyboard_ImGui::render(bool* open, unsigned int texture, int texW, int texH,
     }
 
     // ── The keyboard ────────────────────────────────────────────────────
+    const ImVec2 regionStart = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     // Replacement //c photos may have another pixel ratio. Keep the same
     // displayed proportions as the //e, including the fractional hitboxes.
     const float aspect = skin.displayAspect > 0.0f ? 1.0f / skin.displayAspect
         : static_cast<float>(texH) / static_cast<float>(texW);
-    // Fit inside the region on BOTH axes: driving off width alone made the
-    // photo overflow a short window.
-    float drawW = avail.x;
-    float drawH = drawW * aspect;
-    const float roomH = avail.y;
-    if (drawH > roomH && roomH > 32.0f) {
-        drawH = roomH;
-        drawW = drawH / aspect;
+    // Keep the picture inside the space below the controls and center it in
+    // both directions. The same origin also anchors every key hotspot.
+    if (avail.x <= 0.0f || avail.y <= 0.0f) {
+        ImGui::End();
+        return ev;
     }
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float drawW = std::min(avail.x, avail.y / aspect);
+    const float drawH = drawW * aspect;
+    const ImVec2 p0(regionStart.x + (avail.x - drawW) * 0.5f,
+                    regionStart.y + (avail.y - drawH) * 0.5f);
+    ImGui::SetCursorScreenPos(p0);
     const ImVec2 size(drawW, drawH);
     ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(texture)), size);
     const bool imageHovered = ImGui::IsItemHovered();

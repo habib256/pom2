@@ -10,6 +10,37 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-17 — FujiNet CONFIG boot from the panel
+
+The macOS, Windows x64 and Linux x64 desktop packages now stage the official
+FujiNet-PC Apple v1.5.2 runtime and CONFIG disk from SHA-256 pinned archives.
+POM2 finds the bundled copy automatically, installs it into per-user storage
+on first use so its configuration is writable, and launches it from there.
+Bundled media excludes the Apple /// ROM and DOS 3.3 boot tracks unused by
+POM2. Linux ARM retains physical FujiNet board support; upstream has no
+FujiNet-PC Apple ARM binary in the stable release.
+
+The FujiNet panel can boot its attached drive 1, which runs the firmware's
+CONFIG menu when CONFIG boot is enabled. POM2 launches a selected FujiNet-PC
+program from its own folder so the stock `fnconfig.ini` and `autorun.po` are
+found. Guest resets no longer send CONTROL $00 to FujiNet's control unit:
+the firmware treats that command as REBOOT and dropped the link before the
+menu loaded. Verified with FujiNet-PC Apple v1.5.2, including keyboard
+navigation from Host List to the CONFIG settings screen.
+The Boot button stays available before connection and when the CONFIG disk
+reports zero blocks. It starts the link and helper when needed, then waits
+for FujiNet before booting.
+
+## 2026-10-17 — Slinky RAM and ThunderClock+ in resumable sessions
+
+Session v3 saves the Apple Memory Expansion Card's sparse RAM and register
+state, binding restore to its exact 4 KB firmware. Detached validation rejects
+malformed card state before changing CPU or memory. V1 and v2 sessions remain
+readable; their card-kind vocabulary is preserved. ThunderClock+ serial,
+time-offset and TP/IRQ state is also restored, bound to the card's actual
+slot/expansion ROM bytes. Implausible clock offsets and timer states are
+refused before core restoration.
+
 ## 2026-10-17 — Protected WOZ/FLUX sessions and menu encoding
 
 Session v2 embeds canonical protected WOZ1/WOZ2/FLUX payloads, retaining

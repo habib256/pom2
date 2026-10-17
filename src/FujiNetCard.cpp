@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 namespace pom2 {
 
@@ -115,9 +116,16 @@ bool FujiNetCard::startHelper(const std::string& exePath, std::string& errOut)
                  "PATH as 'fujinet'";
         return false;
     }
-    // No arguments: the firmware takes its Bus-over-IP target from its own
-    // fnconfig.ini, whose Apple default is already 127.0.0.1:1985.
-    return helper_.start(exe, {}, std::string{}, errOut);
+    // FujiNet-PC's fnconfig.ini, data/autorun.po and SD/ are beside its
+    // executable. Inheriting POM2's working directory makes a stock release
+    // start without its CONFIG disk (or fail before it connects at all).
+    const std::filesystem::path absolute = std::filesystem::absolute(exe);
+    const auto parent = absolute.parent_path();
+    const bool bundledRuntime =
+        std::filesystem::exists(parent / "fnconfig.ini") &&
+        std::filesystem::exists(parent / "data" / "autorun.po");
+    return helper_.start(absolute.string(), {},
+                         bundledRuntime ? parent.string() : std::string{}, errOut);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
