@@ -199,10 +199,11 @@ install `libslirp-dev` (`.github/workflows/release.yml:144`) and runs the full
 ctest, so the test runs at release time — without a skip guard there.
 
 **Implementation 2026-10-17:** the push CI Linux job now installs
-`libslirp-dev`, checks its pkg-config module, and rejects either CTest skip
-shape for `slirp_loopback_fence`. The skip guard's self-test and the real
-loopback test pass locally with libslirp 4.9.3. A CI run of this change is
-still required for the acceptance criterion.
+`libslirp-dev` and `libglib2.0-dev`, checks the pkg-config module, and rejects
+either CTest skip shape for `slirp_loopback_fence`. The release `quality` job
+now does the same. The skip guard's self-test and the real loopback test pass
+locally with libslirp 4.9.3. A passing CI run of the change is still required
+for the acceptance criterion.
 
 <a id="release-005"></a>
 

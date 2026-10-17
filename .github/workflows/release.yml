@@ -141,7 +141,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev libslirp-dev
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
+            libslirp-dev libglib2.0-dev
+          pkg-config --modversion slirp
 
       - name: Fetch Dear ImGui (pinned commit)
         run: tools/fetch_imgui_pinned.sh
@@ -160,7 +162,12 @@ jobs:
 
       - name: Run complete test suite
         working-directory: build-quality
-        run: ctest --output-on-failure --parallel $(nproc)
+        run: |
+          set -o pipefail
+          ctest --output-on-failure --parallel $(nproc) | tee ctest-console.log
+
+      - name: No unexpected test skips
+        run: tools/check_ctest_skips.sh build-quality build-quality/ctest-console.log
 
   # ---------------------------------------------------------------- Linux ----
   # Built INSIDE the pinned bionic (glibc 2.27) image so the AppImage runs on
