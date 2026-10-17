@@ -10,6 +10,13 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-17 — Full screen follows the window's monitor
+
+Alt+Enter and the other runtime full-screen controls now enter kiosk mode on
+the monitor containing most of the window. Previously the switch always used
+the primary monitor, moving a window on a second screen across the desktop.
+The saved window position is still restored when leaving full screen.
+
 ## 2026-10-17 — FujiNet CONFIG boot from the panel
 
 The macOS, Windows x64 and Linux x64 desktop packages now stage the official
