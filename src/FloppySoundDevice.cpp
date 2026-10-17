@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "FloppySoundDevice.h"
+#include "VirtualIISoundCatalog.h"
 #include "CpuClock.h"
 #include "Logger.h"
 
@@ -163,6 +164,12 @@ bool FloppySoundDevice::loadOneWav(const std::string& path, Sample& out)
     return !out.data.empty();
 }
 
+bool FloppySoundDevice::canDecodeSample(const std::string& path)
+{
+    Sample sample;
+    return loadOneWav(path, sample);
+}
+
 bool FloppySoundDevice::loadViiFile(const std::string& dir, const char* rel,
                                     Sample& out, bool loop)
 {
@@ -192,36 +199,27 @@ bool FloppySoundDevice::loadVirtualII(const std::string& dir, std::string* error
     // Drop the ready flag before replacing the vectors. The callback
     // acquire-loads it before touching `vii_`, same publish as loadSamples.
     viiReady_.store(false, std::memory_order_release);
-    struct Entry { ViiIdx idx; const char* rel; bool loop; bool required; };
-    static constexpr Entry kFiles[] = {
-        { VII_ROTATION, "lecteur/Disk Rotation.wav",  true,  true  },
-        { VII_BOOT,     "lecteur/Boot.wav",           false, false },
-        { VII_ARM,      "lecteur/Move arm.aiff",      false, true  },
-        { VII_INSERT,   "lecteur/Disk Insertion.aiff",false, true  },
-        { VII_EJECT,    "lecteur/Disk Removal.aiff",  false, true  },
-        { VII_IOERR,    "lecteur/I-O Error.wav",      false, false },
-        { VII_POP_ON,   "interface/PopOn2.aiff",      false, false },
-        { VII_POP_OFF,  "interface/PopOff2.aiff",     false, false },
-    };
+    static_assert(VII_COUNT == pom2::kVirtualIISoundAssets.size());
     int loaded = 0;
     bool requiredOk = true;
-    for (const auto& e : kFiles) {
+    for (std::size_t i = 0; i < pom2::kVirtualIISoundAssets.size(); ++i) {
+        const auto& e = pom2::kVirtualIISoundAssets[i];
         Sample s;
-        if (loadViiFile(dir, e.rel, s, e.loop)) {
-            vii_[e.idx] = std::move(s);
+        if (loadViiFile(dir, e.path, s, e.loop)) {
+            vii_[i] = std::move(s);
             ++loaded;
         } else {
-            vii_[e.idx] = Sample{};
+            vii_[i] = Sample{};
             if (e.required) {
                 requiredOk = false;
                 if (error) {
                     if (!error->empty()) *error += "\n";
-                    *error += std::string("Missing or unreadable: ") + e.rel +
+                    *error += std::string("Missing or unreadable: ") + e.path +
                               " (a .wav alternative is also accepted)";
                 }
             }
             pom2::log().warn("FloppySound",
-                std::string("Virtual ][ missing: ") + dir + "/" + e.rel);
+                std::string("Virtual ][ missing: ") + dir + "/" + e.path);
         }
     }
     viiReady_.store(requiredOk, std::memory_order_release);

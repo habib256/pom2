@@ -430,9 +430,12 @@ void testMountedFujiImageCanReadSlowNetworkBlocks()
     SpOverSlipLink link;
     link.setTimeoutMs(120);
     const uint16_t port = startLink(link);
+    std::atomic<bool> muteBlocks{false};
     FakePeer peer(port, [&](const std::vector<uint8_t>& req,
                             std::vector<uint8_t>& wire) {
-        if (req[1] == kSpReadBlock)
+        if (req[1] == kSpReadBlock && muteBlocks.load()) return;
+        if (req[1] == kSpReadBlock ||
+            (req[1] == kSpControl && req[6] == 0xE9))
             std::this_thread::sleep_for(std::chrono::milliseconds(350));
         standardHandler(req, wire);
     });
@@ -442,6 +445,23 @@ void testMountedFujiImageCanReadSlowNetworkBlocks()
     const auto block = link.readBlock(1, 2);
     assert(block.ok() && block.data.size() == 512);
     assert(link.stats().timeouts == 0);
+
+    // A different disk keeps the short local budget even while disk 1 is
+    // mounted. After unmount, disk 1 does too. Unmount itself can be slow.
+    muteBlocks = true;
+    const auto t0 = std::chrono::steady_clock::now();
+    assert(!link.readBlock(2, 0).replied);
+    const auto otherMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    assert(otherMs < 1000);
+    muteBlocks = false;
+    assert(link.control(1, 0xE9, image, 1).ok());
+    muteBlocks = true;
+    const auto t1 = std::chrono::steady_clock::now();
+    assert(!link.readBlock(1, 0).replied);
+    const auto unmountedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t1).count();
+    assert(unmountedMs < 1000);
     peer.stop();
     link.stop();
 }

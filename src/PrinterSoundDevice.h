@@ -94,6 +94,7 @@ public:
     /// instead of scheduling grains. The recording is commercial and lives
     /// only in the local `roms/virtual_ii_sons/` tree.
     bool loadSample(const std::string& wavPath);
+    static bool canDecodeSample(const std::string& wavPath);
     bool sampleReady() const { return loopReady_.load(std::memory_order_acquire); }
     void setSampled(bool on);
     bool sampled() const { return useLoop_.load(std::memory_order_acquire); }

@@ -257,7 +257,8 @@ void MainWindow::registerPanelDraws()
             romStatusPanel = std::make_unique<pom2::RomStatus_ImGui>();
         romStatusPanel->render(
             &show(P::RomStatus),
-            std::string(pom2::profileConfig(activeProfile).displayName));
+            std::string(pom2::profileConfig(activeProfile).displayName),
+            settings->getString("mechanical_sound_path", ""));
     });
     draw(P::Abstraction,  [this] { renderAbstractionPanel(); });
 }

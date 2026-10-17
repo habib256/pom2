@@ -61,6 +61,12 @@ int main()
     put(source / "fnconfig.ini", "original");
     put(source / "data" / "autorun.po", "CONFIG");
 
+    // A crash during an earlier first-run copy can leave the old fixed
+    // staging path behind. It must not prevent the next launch.
+    const fs::path stale = root / "user" / "fujinet-pc-APPLE" /
+        "v1.5.2" / (std::string(tag) + ".staging");
+    put(stale / "partial", "keep");
+
     std::string path, error;
     if (!pom2::prepareBundledFujiNet(path, error) || !error.empty()) {
         std::cerr << "first prepare failed: " << error << '\n';
@@ -74,6 +80,7 @@ int main()
 #endif
     if (read(installed.parent_path() / "data" / "autorun.po") != "CONFIG")
         return 2;
+    if (read(stale / "partial") != "keep") return 5;
     put(installed.parent_path() / "fnconfig.ini", "user changes");
     if (!pom2::prepareBundledFujiNet(path, error) ||
         read(installed.parent_path() / "fnconfig.ini") != "user changes")

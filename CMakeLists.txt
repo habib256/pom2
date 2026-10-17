@@ -510,6 +510,7 @@ set(POM2_DEVICES_HEADERS
     src/FujiNetNetwork.h
     src/SlotBusClock.h
     src/FujiNetTransport.h
+    src/VirtualIISoundCatalog.h
     src/MountableMediaCard.h
     src/PascalPrinterRom.h
     src/ProDOSBlockCard.h
@@ -929,6 +930,7 @@ set(HEADERS
     src/BlockWriteBackExecutor.h
     src/MediaAutosave.h
     src/FloppySoundDevice.h
+    src/VirtualIISoundCatalog.h
     src/FloppySoundSink.h
     src/HdvController_ImGui.h
     src/JoystickInput.h

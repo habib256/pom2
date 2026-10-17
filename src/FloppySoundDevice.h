@@ -112,6 +112,9 @@ public:
     bool loadVirtualII(const std::string& dir, std::string* error = nullptr);
     bool virtualIIReady() const { return viiReady_.load(std::memory_order_acquire); }
 
+    /// Check a recording with the same decoder and limits as the loader.
+    static bool canDecodeSample(const std::string& path);
+
     void setBank(Bank b);
     Bank bank() const { return bank_.load(std::memory_order_acquire); }
 
@@ -390,7 +393,7 @@ private:
     std::atomic<double> cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
 
     // ─── Helpers ────────────────────────────────────────────────────────
-    bool loadOneWav(const std::string& path, Sample& out);
+    static bool loadOneWav(const std::string& path, Sample& out);
     bool loadViiFile(const std::string& dir, const char* rel, Sample& out, bool loop);
 
     /// Audio-thread wipe of every voice. A bank change calls it before

@@ -70,6 +70,7 @@
 #include "SpTransport.h"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -277,7 +278,7 @@ private:
     SlipFramer                 rx_;            ///< guarded by callMtx_
     uint8_t                    sequence_ = 0;  ///< guarded by callMtx_
     std::vector<uint8_t>       txBuf_;         ///< guarded by callMtx_
-    bool                       imageMounted_ = false; ///< guarded by callMtx_
+    std::array<bool, 8>        imageMounted_{}; ///< FujiNet disk slots, guarded by callMtx_
 
     mutable std::mutex         stateMtx_;      ///< guards devices_/lastError_
     std::vector<SpDevice>      devices_;

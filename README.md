@@ -176,6 +176,8 @@ mode keeps MAME sounds for 3½-inch drives; manual bank selection is available.
 
 In **Audio Mixer**, choose **Import sounds...**, enter your sound-folder path,
 and click **Validate and use**. Restart POM2 to activate the recordings.
+**Help → ROM Status → Virtual II recordings** shows which files POM2 finds in
+that folder, including accepted `.wav` alternatives.
 
 Required files, relative to that folder:
 

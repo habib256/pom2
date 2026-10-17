@@ -1,25 +1,45 @@
 # POM2 — TODO
 
-Reorganised 2026-10-05 · **v0.9.4 → 1.0**.
-This is the planning index. Detailed tasks live in `docs/backlog/`; dated
-reports and decisions have their own documents.
+Action queue updated 2026-10-17 · **v0.9.4 → 1.0**.
+This page answers what to do next. Detailed tasks and acceptance criteria live
+in `docs/backlog/`; dated reports and decisions have their own documents.
 
 The requested non-IIgs emulator comparison work is tracked in
 [the implementation report](docs/audits/non-iigs-parity-2026-10-17.md),
 including implemented changes and the remaining hardware/product projects.
 
-## Priorities
+## Action queue
 
-Priorities below are inherited from the previous TODO. Historical reports
-must be reproduced on current main before they become implementation work.
+This is a short ordering of the next actions, not a second task record. The
+linked domain entry owns the task's state, evidence and acceptance criterion.
+Recheck dated claims against current main before implementing a reported gap.
+Move an item when its next action or dependency changes.
 
-| Order | Work | Completion criterion | Details |
-|---|---|---|---|
-| 1 | Distribution decisions | Record the repository-history decision and terms/provenance for the two photographs. | [G1](docs/backlog/release-1.0.md#g1) |
-| 2 | Platform evidence | Obtain Windows test evidence or document its limitation; record ARM/Pi and Intel macOS validation. | [G6](docs/backlog/release-1.0.md#g6) |
-| 3 | Remaining validation seams | Verify nightly alerts, GL/UI concurrency, browser persistence and libslirp transport. | [G5](docs/backlog/release-1.0.md#g5) |
-| 4 | Corpus validation | Run DIX first; record remaining protected-disk and real //c hardware observations. | [Validation](docs/backlog/validation.md) |
-| 5 | Candidate release | Complete checks against the actual 1.0 build, including packages and first launch. | [Checklist](docs/backlog/release-1.0.md#candidate-release-checklist) |
+### Now — unblock the 1.0 candidate
+
+| Task | Next action |
+|---|---|
+| [RELEASE-001](docs/backlog/release-1.0.md#release-001) | Record the decision on commercial media still present in Git history, then align repository and release distribution with it. |
+| [RELEASE-002](docs/backlog/release-1.0.md#release-002) | Obtain the origin and redistribution terms of the two shipped photographs from their owner; record them in `THIRD-PARTY.md`. |
+| [RELEASE-004](docs/backlog/release-1.0.md#release-004) | Land the Ethernet panel concurrency test, capture its CI result, then decide whether other panel routes need the same harness. |
+| [RELEASE-006](docs/backlog/release-1.0.md#release-006) | Land the Linux CI libslirp guard and record a passing run with no loopback-test skip. |
+
+### Next — complete the remaining evidence
+
+| Task | Next action |
+|---|---|
+| [VALIDATION-002](docs/backlog/validation.md#validation-002) | Boot DIX with the documented PAL profile and slot map; record menu and demo results before other corpus titles. |
+| [RELEASE-005](docs/backlog/release-1.0.md#release-005) | Automate a browser setting write, persistence, reload and readback. |
+| [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
+| [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |
+
+### Later — sign off the candidate
+
+Once the gates above are resolved, run the
+[candidate release checklist](docs/backlog/release-1.0.md#candidate-release-checklist)
+against the actual 1.0 build, including packages, first launch and data
+durability. Other domain work stays post-1.0 unless a release gate or a
+current core defect brings it forward.
 
 ## Release 1.0
 
@@ -37,9 +57,8 @@ candidate verification still has to run.
 
 ## Backlog by domain
 
-Domain work is **post-1.0 by default**, unless a release gate names it or a
-current report affects a core subsystem. Each file separates items to verify
-from frozen work and retains links to the original evidence.
+Each file separates items to verify from frozen work and retains links to the
+original evidence.
 
 | Domain | Details |
 |---|---|

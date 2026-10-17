@@ -28,6 +28,7 @@
 #include "LeChatMauve_ImGui.h"
 #include "NtscPostProcessor.h"
 #include "SystemProfile.h"
+#include "VirtualIISoundCatalog.h"
 #include "imgui.h"
 
 
@@ -371,7 +372,8 @@ MainWindow::MainWindow(bool forceIIPlus)
         if (dir.empty() || !fs::is_directory(dir)) continue;
         const bool drives = controller->floppySound525().loadVirtualII(dir);
         (void)controller->floppySound35().loadVirtualII(dir);
-        const std::string printerWav = dir + "/imprimante/Matrix Printer.wav";
+        const std::string printerWav =
+            (fs::path(dir) / pom2::kVirtualIIPrinterSound).string();
         if (fs::is_regular_file(printerWav))
             (void)printerSound->loadSample(printerWav);
         if (drives) break;

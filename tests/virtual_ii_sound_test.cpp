@@ -121,6 +121,16 @@ int main()
                 return fail("required recording absent from import diagnostic");
     }
     writeWav(root / "lecteur/Disk Rotation.wav", tone(400, 8000));
+    {
+        std::ofstream bad(root / "lecteur/Disk Rotation.aiff",
+                          std::ios::binary);
+        bad << "corrupt audio";
+    }
+    if (FloppySoundDevice::canDecodeSample(
+            (root / "lecteur/Disk Rotation.aiff").string()) ||
+        !FloppySoundDevice::canDecodeSample(
+            (root / "lecteur/Disk Rotation.wav").string()))
+        return fail("ROM Status audio probe disagrees with the decoder");
     writeWav(root / "lecteur/Boot.wav", tone(48, 24000));
     writeWav(root / "lecteur/Move arm.wav", tone(800, 20000, 200));
     writeWav(root / "lecteur/Disk Insertion.wav", tone(200, 10000));
@@ -280,6 +290,15 @@ int main()
     printer.setVolume(1.0f);
     if (!printer.loadSample((root / "imprimante/Matrix Printer.wav").string()))
         return fail("matrix recording did not load");
+    {
+        const auto broken = root / "imprimante/Broken Printer.wav";
+        std::ofstream bad(broken, std::ios::binary);
+        bad << "corrupt audio";
+        bad.close();
+        if (pom2::PrinterSoundDevice::canDecodeSample(broken.string()) ||
+            printer.loadSample(broken.string()) || !printer.sampleReady())
+            return fail("invalid later printer recording replaced a valid one");
+    }
     printer.setSampled(true);
     printer.strike(9);
     if (printer.activeGrains() != 0)

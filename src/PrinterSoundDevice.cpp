@@ -76,6 +76,30 @@ constexpr double kAttackSeconds = 0.0008;
 /// ramp target.
 constexpr double kEnvFloor = 0.0001;
 
+bool decodePrinterSample(const std::string& path, std::vector<float>& data,
+                         uint32_t& rate)
+{
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
+    ma_decoder dec;
+    if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS)
+        return false;
+    rate = dec.outputSampleRate;
+    ma_uint64 total = 0;
+    if (ma_decoder_get_length_in_pcm_frames(&dec, &total) != MA_SUCCESS ||
+        total < 2 || total > 20ull * 192000ull) {
+        ma_decoder_uninit(&dec);
+        return false;
+    }
+    data.assign(static_cast<size_t>(total), 0.0f);
+    ma_uint64 got = 0;
+    const ma_result result =
+        ma_decoder_read_pcm_frames(&dec, data.data(), total, &got);
+    ma_decoder_uninit(&dec);
+    if (result != MA_SUCCESS && result != MA_AT_END) return false;
+    data.resize(static_cast<size_t>(got));
+    return data.size() >= 8;
+}
+
 } // namespace
 
 // ── Biquads (RBJ cookbook) ───────────────────────────────────────────────
@@ -271,32 +295,13 @@ void PrinterSoundDevice::power(bool on)
 
 bool PrinterSoundDevice::loadSample(const std::string& wavPath)
 {
-    loopReady_.store(false, std::memory_order_release);
-    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
-    ma_decoder dec;
-    if (ma_decoder_init_file(wavPath.c_str(), &cfg, &dec) != MA_SUCCESS) {
+    std::vector<float> data;
+    uint32_t rate = 0;
+    if (!decodePrinterSample(wavPath, data, rate)) {
         pom2::log().warn("PrinterSound", "Virtual ][ sample missing: " + wavPath);
         return false;
     }
-    const uint32_t rate = dec.outputSampleRate;
-    ma_uint64 total = 0;
-    if (ma_decoder_get_length_in_pcm_frames(&dec, &total) != MA_SUCCESS || total < 2) {
-        ma_decoder_uninit(&dec);
-        return false;
-    }
-    // The stock take is ~15 s. A corrupt header must not allocate gigabytes.
-    constexpr ma_uint64 kMax = 20ull * 192000ull;
-    if (total > kMax) {
-        ma_decoder_uninit(&dec);
-        return false;
-    }
-    std::vector<float> data(static_cast<size_t>(total), 0.0f);
-    ma_uint64 got = 0;
-    const ma_result r = ma_decoder_read_pcm_frames(&dec, data.data(), total, &got);
-    ma_decoder_uninit(&dec);
-    if (r != MA_SUCCESS && r != MA_AT_END) return false;
-    data.resize(static_cast<size_t>(got));
-    if (data.size() < 8) return false;
+    loopReady_.store(false, std::memory_order_release);
     // Same wrap blend the floppy motor uses, so a 15 s loop does not tick.
     const size_t n = data.size();
     const size_t window = std::min<size_t>(132, n / 4);
@@ -312,6 +317,13 @@ bool PrinterSoundDevice::loadSample(const std::string& wavPath)
     loopReady_.store(true, std::memory_order_release);
     pom2::log().info("PrinterSound", "loaded Virtual ][ matrix sample " + wavPath);
     return true;
+}
+
+bool PrinterSoundDevice::canDecodeSample(const std::string& wavPath)
+{
+    std::vector<float> data;
+    uint32_t rate = 0;
+    return decodePrinterSample(wavPath, data, rate);
 }
 
 void PrinterSoundDevice::setSampled(bool on)

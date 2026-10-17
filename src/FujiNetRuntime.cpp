@@ -1,5 +1,6 @@
 #include "FujiNetRuntime.h"
 
+#include "AtomicFileReplace.h"
 #include "ResourcePaths.h"
 
 #include <filesystem>
@@ -75,18 +76,12 @@ bool prepareBundledFujiNet(std::string& executable, std::string& error)
         return true;
     }
 
-    // Never copy directly into the live directory. If POM2 exits halfway
-    // through, a later launch must not mistake a partial CONFIG disk for a
-    // usable runtime. Also leave a user's pre-existing partial directory
-    // untouched instead of deleting its possibly edited configuration.
+    // Never copy directly into the live directory. A unique sibling lets a
+    // later launch retry after a crash without deleting the old partial
+    // staging tree or colliding with another POM2 process.
     std::error_code ec;
     if (fs::exists(target, ec)) {
         error = "Incomplete FujiNet runtime at " + target.string();
-        return false;
-    }
-    const fs::path staging = target.string() + ".staging";
-    if (fs::exists(staging, ec)) {
-        error = "Incomplete FujiNet staging directory at " + staging.string();
         return false;
     }
     fs::create_directories(root, ec);
@@ -94,6 +89,16 @@ bool prepareBundledFujiNet(std::string& executable, std::string& error)
         error = "Cannot create FujiNet data directory: " + ec.message();
         return false;
     }
+    fs::path staging;
+    do {
+        staging = tempSiblingPath(target);
+        if (fs::exists(staging, ec)) continue; // possible PID reuse after a crash
+        if (ec) {
+            error = "Cannot inspect FujiNet staging path: " + ec.message();
+            return false;
+        }
+        break;
+    } while (true);
     fs::copy(source, staging, fs::copy_options::recursive, ec);
     if (ec || !complete(staging)) {
         error = "Cannot copy bundled FujiNet runtime: " +
@@ -104,10 +109,14 @@ bool prepareBundledFujiNet(std::string& executable, std::string& error)
     }
     fs::rename(staging, target, ec);
     if (ec) {
-        error = "Cannot activate bundled FujiNet runtime: " + ec.message();
         std::error_code cleanupError;
         fs::remove_all(staging, cleanupError);
-        return false;
+        // Another POM2 may have completed the same first-run install while
+        // this copy was in progress. Use its complete runtime in that case.
+        if (!complete(target)) {
+            error = "Cannot activate bundled FujiNet runtime: " + ec.message();
+            return false;
+        }
     }
     executable = (target / exeName()).string();
     return true;

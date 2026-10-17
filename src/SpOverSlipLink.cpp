@@ -154,7 +154,7 @@ void SpOverSlipLink::stop()
             transport_.reset();
         }
         rx_.reset();
-        imageMounted_ = false;
+        imageMounted_.fill(false);
         return;
     }
     stopFlag_.store(true);
@@ -200,7 +200,7 @@ void SpOverSlipLink::stop()
     // the next peer after a stop/start, costing that peer one whole frame.
     // Safe here — the worker is joined, so no other thread is inside the link.
     rx_.reset();
-    imageMounted_ = false;
+    imageMounted_.fill(false);
 
     std::lock_guard<std::mutex> lk(stateMtx_);
     devices_.clear();
@@ -401,7 +401,7 @@ void SpOverSlipLink::peerLostLocked()
     }
 
     consecutiveTimeouts_ = 0;      // a replacement peer starts with a clean slate
-    imageMounted_ = false;
+    imageMounted_.fill(false);
     // Devices first, socket second. isConnected() reads the transport and
     // deviceCount() reads devices_ under a different mutex, so the order
     // here is the only thing that keeps an observer from seeing "not
@@ -525,6 +525,7 @@ bool isRemoteFujiCall(uint8_t command, uint8_t code)
         return code == 0xF6 || code == 0xE5; // READ_DIR_ENTRY/POSITION
     if (command != kSpControl) return false;
     return (code >= 0xF5 && code <= 0xF9) // close/read/open dir, mount image/host
+        || code == 0xE9             // unmount image can close a TNFS file
         || (code >= 0xE4 && code <= 0xE7) // seek/position, unmount, new disk
         || code == 0xD8 || code == 0xD7;  // copy file, mount all
 }
@@ -594,8 +595,10 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
     const int configuredMs = timeoutMs_.load();
     // After CONFIG mounts an image, its SmartPort block requests may read a
     // TNFS file. They need the same network budget as directory operations.
-    const bool networkCall = isRemoteFujiCall(command, fields[0]) ||
-        (imageMounted_ && (command == kSpReadBlock || command == kSpWriteBlock));
+    const bool blockIo = command == kSpReadBlock || command == kSpWriteBlock;
+    const bool mountedBlockIo = blockIo && unit >= 1 && unit <= imageMounted_.size() &&
+        imageMounted_[unit - 1];
+    const bool networkCall = isRemoteFujiCall(command, fields[0]) || mountedBlockIo;
     const int budgetMs = networkCall
         ? std::max(configuredMs, kRemoteFujiTimeoutMs) : configuredMs;
     t->setWriteDeadlineMs(budgetMs);
@@ -693,8 +696,15 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
                 out.status  = f[1];
                 consecutiveTimeouts_ = 0;    // the peer is answering again
                 out.data.assign(f.begin() + kResponseHeaderBytes, f.end());
-                if (out.status == 0 && command == kSpControl && fields[0] == 0xF8)
-                    imageMounted_ = true;
+                if (out.status == 0 && command == kSpControl) {
+                    // FujiNet control lists have a two-byte length prefix.
+                    // Mount/unmount name disk slots 0..7 in their first byte.
+                    if ((fields[0] == 0xF8 || fields[0] == 0xE9) &&
+                        dataLen >= 3 && data[2] < imageMounted_.size())
+                        imageMounted_[data[2]] = fields[0] == 0xF8;
+                    else if (fields[0] == 0xD7) // MOUNT ALL
+                        imageMounted_.fill(true);
+                }
                 if (traceEnabled())
                     log().info("FujiNet",
                                "<- " + std::string(commandName(command)) +

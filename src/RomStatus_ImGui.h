@@ -25,7 +25,7 @@
 // every ROM POM2 probes, in probe order, resolved against the live
 // ResourcePaths search roots.
 //
-// Three sources feed it, and none is duplicated here:
+// The panel reads the same sources as the emulated machine and audio mixer:
 //   * machine firmware + character generator — read from `profileConfig()`
 //     for every profile, so a new profile appears with no edit;
 //   * the hand-pickable locale fonts — `CharRomCatalog.h`, the list behind
@@ -33,6 +33,9 @@
 //     this is the one place the whole set is visible);
 //   * peripheral cards — `RomCatalog.h`, which mirrors the per-card probe
 //     lists at their plug sites.
+//   * MAME floppy samples — the bank loaded from `roms/floppy_samples/`;
+//   * Virtual II recordings — `VirtualIISoundCatalog.h`, shared with the
+//     loader; these are optional local audio assets, not firmware ROMs.
 //
 // Host-side only: it stats files and hashes bytes, touches no emulator
 // state, and takes no lock. Scanning is done on demand (open / Rescan),
@@ -69,7 +72,8 @@ public:
     /// close button clears it). `activeProfileName` is highlighted in the
     /// machine-firmware table so the user can see at a glance whether the
     /// machine they are running is on an exact dump or a fallback.
-    void render(bool* open, const std::string& activeProfileName);
+    void render(bool* open, const std::string& activeProfileName,
+                const std::string& virtualIISoundPath);
 
 private:
     // ─── One probed file ────────────────────────────────────────────────
@@ -83,6 +87,7 @@ private:
         std::uint64_t size = 0;
         std::uint32_t crc  = 0;
         bool          found = false;
+        bool          unreadableAudio = false;
         bool          sizeOk = true;    ///< False only when a size is required.
         bool          crcKnown = false; ///< A reference CRC exists…
         bool          crcOk = false;    ///< …and it matches.
@@ -95,6 +100,7 @@ private:
         std::string            name;
         std::string            note;      ///< What happens when it's absent.
         std::string            crcLabel;  ///< What the reference CRC means.
+        std::string            baseDir;   ///< Optional asset root for relative labels.
         std::size_t            requiredSize = 0;
         std::vector<FileState> files;
         int                    usedIndex = -1;   ///< First that resolved.
@@ -105,7 +111,7 @@ private:
         bool                   fallback = false;
         /// What absence means, for the catalogued card ROMs: "missing" alone
         /// hid whether the card still ran one level down (TODO G5-15).
-        enum class Missing { Unknown, Degraded, Unavailable, Unused };
+        enum class Missing { Unknown, Degraded, Unavailable, Unused, Optional };
         Missing                missingEffect = Missing::Unknown;
     };
 
@@ -120,6 +126,9 @@ private:
     /// ROMs, but the same user-supplied-asset failure mode: missing means
     /// a mechanical sound silently never plays.
     std::vector<Probe> sounds_;
+    std::vector<Probe> virtualII_; ///< User-supplied Virtual II recordings.
+    std::string        virtualIIPath_;
+    std::string        virtualIIRoot_;
     std::vector<std::string> searchRoots_;
     std::string        romDir_;    ///< First search root that has a roms/.
     bool               scanned_ = false;
@@ -143,7 +152,7 @@ private:
 
     void   startRetroBiosFetch();
     void   pollFetchJoin();
-    void   scanProbe(Probe& p);
+    void   scanProbe(Probe& p, bool decodeAudio = false);
     void   renderTable(const char* id, std::vector<Probe>& rows,
                        const std::string& highlight);
     static std::uint32_t crc32File(const std::string& path,

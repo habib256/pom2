@@ -22,10 +22,13 @@
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
 #include "CharRomCatalog.h"
+#include "FloppySoundDevice.h"
+#include "PrinterSoundDevice.h"
 #include "RomCatalog.h"
 #include "RomFetch.h"
 #include "SystemProfile.h"
 #include "ThreadGuard.h"
+#include "VirtualIISoundCatalog.h"
 
 #include "imgui.h"
 
@@ -72,6 +75,22 @@ std::string humanSize(std::uint64_t n)
         std::snprintf(buf, sizeof(buf), "%llu B",
                       static_cast<unsigned long long>(n));
     return buf;
+}
+
+std::string wavAlternative(const std::string& path)
+{
+    constexpr const char* suffix = ".aiff";
+    if (path.size() < 5 || path.compare(path.size() - 5, 5, suffix) != 0)
+        return {};
+    return path.substr(0, path.size() - 5) + ".wav";
+}
+
+bool virtualIIFileDecodes(const fs::path& root, const std::string& path)
+{
+    if (FloppySoundDevice::canDecodeSample((root / path).string())) return true;
+    const std::string alternative = wavAlternative(path);
+    return !alternative.empty() &&
+           FloppySoundDevice::canDecodeSample((root / alternative).string());
 }
 
 }  // namespace
@@ -163,24 +182,31 @@ std::uint32_t RomStatus_ImGui::crc32File(const std::string& path,
     return c ^ 0xFFFFFFFFu;
 }
 
-void RomStatus_ImGui::scanProbe(Probe& p)
+void RomStatus_ImGui::scanProbe(Probe& p, bool decodeAudio)
 {
     p.usedIndex = -1;
     for (std::size_t i = 0; i < p.files.size(); ++i) {
         FileState& fsx = p.files[i];
-        fsx.resolved = pom2::findResource(fsx.candidate);
+        fsx.resolved = pom2::findResource(p.baseDir.empty()
+            ? fsx.candidate
+            : (fs::path(p.baseDir) / fsx.candidate).string());
         fsx.found    = !fsx.resolved.empty();
+        fsx.unreadableAudio = false;
         fsx.size     = 0;
         fsx.crc      = 0;
         fsx.sizeOk   = true;
         fsx.crcOk    = false;
         if (!fsx.found) continue;
+        if (decodeAudio)
+            fsx.unreadableAudio =
+                !FloppySoundDevice::canDecodeSample(fsx.resolved);
         fsx.crc    = crc32File(fsx.resolved, fsx.size);
         fsx.sizeOk = (p.requiredSize == 0) ||
                      (fsx.size == static_cast<std::uint64_t>(p.requiredSize));
         // `crcOk` needs the catalogue's reference value, which only the
         // caller has — rescan() fills it in right after this returns.
-        if (p.usedIndex < 0) p.usedIndex = static_cast<int>(i);
+        if (p.usedIndex < 0 && !fsx.unreadableAudio)
+            p.usedIndex = static_cast<int>(i);
     }
     p.fallback = (p.usedIndex > 0);
 }
@@ -192,6 +218,8 @@ void RomStatus_ImGui::rescan()
     locale_.clear();
     cards_.clear();
     sounds_.clear();
+    virtualII_.clear();
+    virtualIIRoot_.clear();
     searchRoots_.clear();
     romDir_.clear();
     missingRequired_ = 0;
@@ -286,6 +314,76 @@ void RomStatus_ImGui::rescan()
         }
     }
 
+    // Virtual II's recordings are local user assets. Match the Audio
+    // Mixer's directory order, preferring the first complete drive bank;
+    // alternatives with .wav are as valid as the original .aiff files.
+    std::string firstExisting;
+    std::vector<std::string> inspectedVirtualDirs;
+    const std::array<std::string, 4> virtualDirs{
+        virtualIIPath_, "roms/virtual_ii_sons",
+        "../roms/virtual_ii_sons", "../../roms/virtual_ii_sons"};
+    for (const auto& candidate : virtualDirs) {
+        if (candidate.empty()) continue;
+        const std::string resolved = pom2::findResource(candidate);
+        std::error_code ec;
+        if (resolved.empty() || !fs::is_directory(resolved, ec)) continue;
+        inspectedVirtualDirs.push_back(resolved);
+        if (firstExisting.empty()) firstExisting = resolved;
+        bool complete = true;
+        for (const auto& asset : kVirtualIISoundAssets)
+            if (asset.required && !virtualIIFileDecodes(resolved, asset.path))
+                complete = false;
+        if (complete) { virtualIIRoot_ = resolved; break; }
+    }
+    if (virtualIIRoot_.empty())
+        virtualIIRoot_ = !firstExisting.empty() ? firstExisting
+            : !virtualIIPath_.empty() ? virtualIIPath_ : "roms/virtual_ii_sons";
+
+    for (const auto& asset : kVirtualIISoundAssets) {
+        Probe p;
+        p.group = "Virtual II recordings";
+        p.name = fs::path(asset.path).stem().string();
+        p.note = asset.required
+            ? "The Virtual II drive bank needs this recording; POM2 uses "
+              "MAME drive sounds when the required set is incomplete."
+            : "Optional recording; the rest of the bank remains usable.";
+        p.missingEffect = asset.required ? Probe::Missing::Degraded
+                                         : Probe::Missing::Optional;
+        p.baseDir = virtualIIRoot_;
+        p.files.emplace_back(asset.path);
+        const std::string alternative = wavAlternative(asset.path);
+        if (!alternative.empty()) p.files.emplace_back(alternative);
+        scanProbe(p, true);
+        p.fallback = false; // .wav is an accepted format, not a degraded ROM.
+        virtualII_.push_back(std::move(p));
+    }
+    Probe printer;
+    printer.group = "Virtual II recordings";
+    printer.name = "Matrix Printer";
+    printer.note = "Optional printer recording; synthetic printer audio remains available.";
+    printer.missingEffect = Probe::Missing::Optional;
+    // The startup loop can load the printer from an earlier, incomplete
+    // drive folder, and each later folder replaces it. Probe those visited
+    // folders in reverse to show the last usable candidate.
+    for (auto it = inspectedVirtualDirs.rbegin();
+         it != inspectedVirtualDirs.rend(); ++it)
+        printer.files.emplace_back((fs::path(*it) / kVirtualIIPrinterSound).string());
+    if (printer.files.empty())
+        printer.files.emplace_back(
+            (fs::path(virtualIIRoot_) / kVirtualIIPrinterSound).string());
+    scanProbe(printer);
+    printer.usedIndex = -1;
+    for (std::size_t i = 0; i < printer.files.size(); ++i) {
+        auto& file = printer.files[i];
+        if (!file.found) continue;
+        file.unreadableAudio =
+            !PrinterSoundDevice::canDecodeSample(file.resolved);
+        if (!file.unreadableAudio && printer.usedIndex < 0)
+            printer.usedIndex = static_cast<int>(i);
+    }
+    printer.fallback = false;
+    virtualII_.push_back(std::move(printer));
+
     // ── Peripheral cards, from the catalogue.
     for (const auto& e : pom2::romCatalog()) {
         Probe p;
@@ -346,9 +444,12 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
         // one nothing reads is not even that; only "the card is gone" is red.
         const bool softMissing = !have &&
             (p.missingEffect == Probe::Missing::Degraded ||
-             p.missingEffect == Probe::Missing::Unused);
+             p.missingEffect == Probe::Missing::Unused ||
+             p.missingEffect == Probe::Missing::Optional);
         const ImVec4 missingCol =
-            p.missingEffect == Probe::Missing::Unused ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+            (p.missingEffect == Probe::Missing::Unused ||
+             p.missingEffect == Probe::Missing::Optional)
+                ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
           : p.missingEffect == Probe::Missing::Degraded ? colWarn() : colBad();
         ImGui::TextColored(bad ? colBad() : (have ? (p.fallback ? colWarn() : colOk())
                                                   : missingCol),
@@ -386,6 +487,9 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
             case Probe::Missing::Unused:
                 ImGui::TextDisabled("missing (not used)");
                 break;
+            case Probe::Missing::Optional:
+                ImGui::TextDisabled("missing (optional)");
+                break;
             case Probe::Missing::Unknown:
                 ImGui::TextColored(colBad(), "missing");
                 break;
@@ -397,6 +501,7 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
             for (std::size_t i = 0; i < p.files.size(); ++i) {
                 const FileState& f = p.files[i];
                 ImGui::BulletText("%s — %s", f.candidate.c_str(),
+                                  f.unreadableAudio ? "unreadable audio" :
                                   f.found ? "found" : "not found");
                 if (f.found && !f.resolved.empty()) {
                     ImGui::SameLine();
@@ -470,7 +575,8 @@ void RomStatus_ImGui::renderTable(const char* id, std::vector<Probe>& rows,
     ImGui::EndTable();
 }
 
-void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName)
+void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
+                             const std::string& virtualIISoundPath)
 {
     // Reap a finished fetch worker even when the panel is CLOSED. This is the
     // only place the thread is ever joined, and closing the window while a
@@ -478,6 +584,10 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName)
     // outlived the panel with nobody left to notice it had finished.
     pollFetchJoin();
     if (!open || !*open) return;
+    if (virtualIIPath_ != virtualIISoundPath) {
+        virtualIIPath_ = virtualIISoundPath;
+        scanned_ = false;
+    }
     if (!scanned_) rescan();
 
     ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
@@ -601,6 +711,11 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName)
             bucket.push_back(p);
         }
         flush();
+    }
+    if (ImGui::CollapsingHeader("Virtual II recordings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled("Local audio files checked in: %s", virtualIIRoot_.c_str());
+        ImGui::TextDisabled("These user-supplied recordings are not included in POM2 packages.");
+        renderTable("##virtualii", virtualII_, std::string());
     }
     if (ImGui::CollapsingHeader("Peripheral cards")) {
         // The catalogue is already grouped; draw one table per group so the
