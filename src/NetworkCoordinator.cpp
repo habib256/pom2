@@ -19,6 +19,7 @@
 #include "ChildProcess.h"
 #include "EmulationController.h"
 #include "FujiNetCard.h"
+#include "FujiNetRuntime.h"
 #include "Memory.h"
 #include "SerialPort.h"
 #include "SlotBus.h"
@@ -109,6 +110,19 @@ void NetworkCoordinator::applyFujiNetPanel(
     // Host-side first: scanning /dev must not happen under the machine lock.
     if (r.requestRescan) rescanSerialDevices();
     if (r.helperPathChanged) setHelperPath(r.helperPathTo);
+
+    // The packaged firmware has writable configuration and SD storage. Copy
+    // it to the user's data directory BEFORE acquiring the machine lock;
+    // even a small runtime tree can take long enough to freeze the CPU/UI.
+    std::string helperExecutable = helperPath_;
+    std::string prepareError;
+    if (r.requestHelperStart || r.requestHelperRestart) {
+        const bool missingOverride = !helperExecutable.empty() &&
+            ChildProcess::findOnPath(helperExecutable).empty();
+        if (helperExecutable.empty() ||
+            (missingOverride && !bundledFujiNetExecutable().empty()))
+            prepareBundledFujiNet(helperExecutable, prepareError);
+    }
 
     // The card is resolved ONCE, under the lock, and the two host objects it
     // owns — the link and the helper process — are then driven with the lock
@@ -227,14 +241,16 @@ void NetworkCoordinator::applyFujiNetPanel(
             // section at all.
             auto state = controller.lockState();
             auto* card = findFujiNet(state.memory().slotBus());
-            if (card) {
+            if (card && prepareError.empty()) {
                 std::string err;
-                if (!card->startHelper(helperPath_, err))
+                if (!card->startHelper(helperExecutable, err))
                     helperMessage = err;
                 else if (r.requestHelperRestart)
                     helperMessage = "FujiNet program restarted.";
             }
         }
+
+        if (!prepareError.empty()) helperMessage = prepareError;
 
         if (startFailed)             status_ = startError;
         else if (r.requestStart)     status_.clear();
@@ -256,8 +272,11 @@ void NetworkCoordinator::setHelperPath(std::string path)
 {
     helperPath_ = std::move(path);
     // An empty configured path means "find the stock `fujinet` on PATH".
-    helperResolved_ = ChildProcess::findOnPath(
-        helperPath_.empty() ? std::string("fujinet") : helperPath_);
+    helperResolved_ = helperPath_.empty()
+        ? bundledFujiNetExecutable()
+        : ChildProcess::findOnPath(helperPath_);
+    if (helperResolved_.empty() && helperPath_.empty())
+        helperResolved_ = ChildProcess::findOnPath("fujinet");
 }
 
 } // namespace pom2

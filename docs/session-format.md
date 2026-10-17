@@ -1,4 +1,4 @@
-# Resumable sessions (v2; v1 compatible)
+# Resumable sessions (v3; v1/v2 compatible)
 
 `.pom2session` bundles CPU/RAM state, supported card state and embedded
 read-only floppy contents. It complements `.pom2snap`, whose contract remains
@@ -11,9 +11,12 @@ dropping its cards and disks.
 - Apple II, II+ and IIe, including PAL and RamWorks, with the same profile,
   motherboard/character ROMs, memory configuration and No-Slot Clock settings
   selected before loading.
-- Any combination of Disk II, Mockingboard A/C, Mockingboard Sound II and
-  SNES MAX in the same slots. Disk II's four PROM images and configuration
-  must match. Empty slots must match as well.
+- Any combination of Disk II, Mockingboard A/C, Mockingboard Sound II,
+  SNES MAX, Slinky RAM expansion and ThunderClock+ in the same slots. Disk
+  II's four PROM images and configuration, Slinky's 4 KB firmware, and the
+  clock card's slot/expansion ROM bytes must match. Empty slots must match
+  as well. Slinky's sparse 1 MB RAM and the clock's in-progress serial and
+  timer state are included; host wall-clock time continues advancing.
 - Clean, physically write-protected 5.25-inch media: DOS/ProDOS
   sector images, 13-sector images and nibble images, including normalized
   supported wrappers. Both drives of every Disk II are embedded as nibble
@@ -29,7 +32,7 @@ Reopen the bundle explicitly on subsequent launches. It does not recreate the
 machine configuration automatically or persist an active session at shutdown.
 Host gamepad input, mixer settings and window layout stay live.
 
-Unsupported cards, //c and //c+, socket accelerators, writable/dirty
+Other unsupported cards, //c and //c+, socket accelerators, writable/dirty
 floppies, pending eject/write-back operations, cassette content/recording
 and loaded onboard 3.5-inch media cause refusal. No unsupported device is
 silently omitted. Flush or save outgoing dirty media before loading a bundle.
@@ -77,7 +80,7 @@ All integers are little-endian; maximum file size is 32 MiB.
 | Field | Encoding |
 |---|---|
 | Magic | Eight bytes, `POM2SESS` |
-| Version | u32, currently 2; versions 1 and 2 accepted |
+| Version | u32, currently 3; versions 1, 2 and 3 accepted |
 | Machine identity | Nonzero u32 profile identity |
 | Payload size | u32, exactly file size minus 24 |
 | Controller configuration | u32 length + bytes (up to 64) |
@@ -85,7 +88,8 @@ All integers are little-endian; maximum file size is 32 MiB.
 | Eight slot records | u8 kind + length-prefixed identity (up to 16 KiB) + state (within the 32 MiB file limit; 1 MiB in v1) |
 | CRC32 | u32 IEEE reversed-polynomial CRC over all preceding bytes |
 
-Slot kinds are 0 empty, 1 Disk II, 2 Mockingboard A/C, 3 Sound II, 4 SNES MAX.
+Slot kinds are 0 empty, 1 Disk II, 2 Mockingboard A/C, 3 Sound II, 4 SNES MAX,
+5 Slinky and 6 ThunderClock+ (both v3 only).
 Slot 0 must be empty; the language card lives in the core memory snapshot.
 CRC detects damage, not intentional forgery. The loader still validates all
 lengths, type/firmware matches and nested state after checksum verification.
@@ -105,7 +109,9 @@ including its own CRC when nonzero, without opening a host path. The full
 file still has a 32 MiB cap; larger sessions are refused, not truncated.
 Decoded media storage across slots is limited to 128 MiB. Version 1 keeps
 its original limits and rejects WOZ records; old read-only nibble sessions
-remain loadable. New saves use version 2, which older v1 readers refuse.
+remain loadable. Version 2 WOZ sessions also remain loadable. New saves use
+version 3, which binds Slinky state to the exact 4 KB ROM image and the clock
+to its slot/expansion ROM bytes. Older readers refuse the new version.
 
 
 Capture copies state under the controller lock; encoding, CRC and file I/O

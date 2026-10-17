@@ -309,6 +309,21 @@ void SuperSerialCard::setTransport(std::unique_ptr<pom2::SuperSerialTransport> t
     listening = transport_ && transport_->isListening();
 }
 
+bool SuperSerialCard::vsDriveActive() const
+{
+    return transport_ && transport_->isVsDrive() && transport_->isListening();
+}
+
+std::string SuperSerialCard::vsDrivePath(int drive) const
+{
+    return transport_ ? transport_->vsDrivePath(drive) : std::string{};
+}
+
+bool SuperSerialCard::vsDriveReadOnly(int drive) const
+{
+    return transport_ && transport_->vsDriveReadOnly(drive);
+}
+
 // ── Transport hooks ─────────────────────────────────────────────────────
 //
 // Moved verbatim out of runWorker(): the filtering, the delivery fan-out and

@@ -50,8 +50,12 @@
 #include "SuperSerialCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
+#include "VsDriveTransport.h"
 
 #include "imgui.h"
+
+#include <array>
+#include <cstring>
 
 // Ethernet (Uthernet I / II). Snapshot-under-lock → render → dispatch
 // actions under the lock again, the LeChatMauve_ImGui pattern. The card
@@ -123,8 +127,8 @@ void MainWindow::renderSscPanelWindow()
         const bool connected = ssc.connected;
 
         ImGui::Text("Status: %s%s",
-            listening ? "listening" : "stopped",
-            connected ? " — client connected" : "");
+            ssc.vsDriveActive ? "VSDrive active" : (listening ? "listening" : "stopped"),
+            connected && !ssc.vsDriveActive ? " — client connected" : "");
         ImGui::SameLine();
         ImGui::TextDisabled("(slot %d)", slot);
 
@@ -146,6 +150,7 @@ void MainWindow::renderSscPanelWindow()
         ImGui::EndDisabled();
         ImGui::TextDisabled("Telnet bridge unavailable in the browser build.");
 #else
+        if (ssc.vsDriveActive) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(120);
         ImGui::InputInt("TCP port", &portDraft, 0, 0);
         if (portDraft < 1)     portDraft = 1;
@@ -163,7 +168,10 @@ void MainWindow::renderSscPanelWindow()
             if (ImGui::Button("Stop listener")) cmd.requestStop = true;
         }
 
-        if (listening) {
+        if (ssc.vsDriveActive) ImGui::EndDisabled();
+        if (ssc.vsDriveActive) {
+            ImGui::TextWrapped("Internal VSDrive host is using this serial port.");
+        } else if (listening) {
             ImGui::TextWrapped("Connect from a host terminal:");
             ImGui::TextWrapped("  telnet 127.0.0.1 %d", ssc.port);
             ImGui::TextWrapped("In the Apple II:  PR#%d  (or IN#%d for input)",
@@ -177,10 +185,12 @@ void MainWindow::renderSscPanelWindow()
 
         ImGui::Separator();
         bool raw = ssc.rawMode;
+        if (ssc.vsDriveActive) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Raw mode (8-bit binary)", &raw)) {
             cmd.requestRawMode = true;
             cmd.rawMode = raw;
         }
+        if (ssc.vsDriveActive) ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
@@ -190,6 +200,69 @@ void MainWindow::renderSscPanelWindow()
                               "XMODEM / Kermit / ADTPro / any binary protocol.");
         }
 
+        // ADTPro VSDrive protocol, served locally by the emulated serial
+        // port. The guest still needs its VDrive driver (A2FileCommander
+        // installs one); this panel selects the host's two ProDOS images.
+        {
+            using PathBuffers = std::array<std::array<char, 1024>, 2>;
+            static std::map<int, PathBuffers> pathDrafts;
+            static std::map<int, std::array<bool, 2>> readOnlyDrafts;
+            static uint32_t pathSeedGen = 0;
+            if (pathSeedGen != mediaPanelSeedGen_) {
+                pathSeedGen = mediaPanelSeedGen_;
+                pathDrafts.clear();
+                readOnlyDrafts.clear();
+            }
+            auto [pathIt, inserted] = pathDrafts.try_emplace(slot);
+            if (inserted) {
+                for (int drive = 0; drive < 2; ++drive) {
+                    const std::string key = "vsdrive_path" +
+                        std::to_string(drive + 1) + "_slot" + std::to_string(slot);
+                    const std::string path = ssc.vsDriveActive
+                        ? ssc.vsDrivePaths[drive]
+                        : (settings ? settings->getString(key, "") : "");
+                    std::strncpy(pathIt->second[drive].data(), path.c_str(),
+                                 pathIt->second[drive].size() - 1);
+                    readOnlyDrafts[slot][drive] = ssc.vsDriveActive
+                        ? ssc.vsDriveReadOnly[drive]
+                        : (settings && settings->getBool(
+                            "vsdrive_read_only" + std::to_string(drive + 1) +
+                            "_slot" + std::to_string(slot), false));
+                }
+            }
+            ImGui::Separator();
+            ImGui::Text("VSDrive (ADTPro protocol, two ProDOS volumes)");
+            for (int drive = 0; drive < 2; ++drive) {
+                ImGui::SetNextItemWidth(260.0f);
+                const std::string label = "Drive " + std::to_string(drive + 1);
+                ImGui::InputText(label.c_str(), pathIt->second[drive].data(),
+                                 pathIt->second[drive].size());
+                ImGui::SameLine();
+                ImGui::PushID(drive);
+                ImGui::Checkbox("Read only", &readOnlyDrafts[slot][drive]);
+                ImGui::PopID();
+            }
+#ifdef __EMSCRIPTEN__
+            ImGui::BeginDisabled();
+#endif
+            if (ssc.vsDriveActive) {
+                if (ImGui::Button("Stop VSDrive")) cmd.requestStopVsDrive = true;
+            } else if (ImGui::Button("Start VSDrive")) {
+                cmd.requestStartVsDrive = true;
+                for (int drive = 0; drive < 2; ++drive) {
+                    cmd.vsDrivePaths[drive] = pathIt->second[drive].data();
+                    cmd.vsDriveReadOnly[drive] = readOnlyDrafts[slot][drive];
+                }
+            }
+#ifdef __EMSCRIPTEN__
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("VSDrive host unavailable in the browser build.");
+#endif
+            ImGui::SameLine();
+            ImGui::TextDisabled("Uses the serial port in raw communications mode.");
+        }
+
+        if (ssc.vsDriveActive) ImGui::BeginDisabled();
         bool tap = ssc.printerTap;
         if (ImGui::Checkbox("Feed ImageWriter printer", &tap)) {
             cmd.requestPrinterTap = true;
@@ -254,11 +327,12 @@ void MainWindow::renderSscPanelWindow()
                                   "inactive too and no byte leaves the card.");
             }
         }
+        if (ssc.vsDriveActive) ImGui::EndDisabled();
 
         ImGui::Separator();
-        ImGui::Text("RX (telnet → A2): %llu B",
+        ImGui::Text("RX (host → A2): %llu B",
             static_cast<unsigned long long>(ssc.bytesRx));
-        ImGui::Text("TX (A2 → telnet): %llu B",
+        ImGui::Text("TX (A2 → host): %llu B",
             static_cast<unsigned long long>(ssc.bytesTx));
 
         if (ImGui::CollapsingHeader("Recent traffic")) {
@@ -309,8 +383,9 @@ void MainWindow::renderSscPanelWindow()
     if (!cmd.empty()) {
         const auto r = devicePanelCoordinator_->applySerial(cmd);
         if (r.startAttempted && !r.startSucceeded) {
-            tapeStatusMessage = "SSC slot " + std::to_string(cmd.slot) +
-                                ": bind failed (port busy?)";
+            tapeStatusMessage = r.error.empty()
+                ? "SSC slot " + std::to_string(cmd.slot) + ": bind failed (port busy?)"
+                : "VSDrive: " + r.error;
             tapeStatusUntil   = lastFrameTime + 4.0;
         }
     }
@@ -1031,6 +1106,34 @@ void MainWindow::startDeferredSscListeners()
         auto* card = dynamic_cast<SuperSerialCard*>(
             controller->memory().slotBus().peripheral(slot));
         if (!card) continue;
+        if (port == 0) {
+#ifndef __EMSCRIPTEN__
+            const std::string suffix = "_slot" + std::to_string(slot);
+            std::array<std::string, 2> paths{
+                settings->getString("vsdrive_path1" + suffix, ""),
+                settings->getString("vsdrive_path2" + suffix, "")};
+            std::array<bool, 2> readOnly{
+                settings->getBool("vsdrive_read_only1" + suffix, false),
+                settings->getBool("vsdrive_read_only2" + suffix, false)};
+            std::string error;
+            auto transport = pom2::makeVsDriveTransport(*card, paths, error, readOnly);
+            if (!transport) {
+                pom2::log().warn("VSDrive", "slot " + std::to_string(slot) +
+                                  ": " + error);
+                continue;
+            }
+            card->setTransport(std::move(transport));
+            card->setRawMode(true);
+            card->setModemLinesTied(true);
+            if (!card->builtInPort())
+                card->setMode(SuperSerialCard::Mode::Communications);
+            card->setPrinterTap(false);
+            if (!card->startListening(0))
+                pom2::log().warn("VSDrive", "slot " + std::to_string(slot) +
+                                  ": host did not start");
+#endif
+            continue;
+        }
         if (!card->startListening(port))
             pom2::log().warn("SSC", "slot " + std::to_string(slot) +
                              ": listener not started on port " +
@@ -1158,5 +1261,46 @@ void MainWindow::renderFujiNetPanelWindow()
 
     // The web-UI button has no portable "open a URL" helper in POM2, so the
     // coordinator surfaces the address on the status line instead.
-    networkCoordinator_->applyFujiNetPanel(*controller, r);
+    auto command = r;
+    if (r.requestBootConfig) {
+        pendingFujiNetBootSlot_ = snap.slot;
+        pendingFujiNetBootUntil_ = lastFrameTime + 15.0;
+        if (!snap.connected) {
+            if (snap.transport == pom2::FujiNet_ImGui::Transport::Off &&
+                !command.transportChanged) {
+                command.transportChanged = true;
+                command.transportTo = pom2::FujiNet_ImGui::Transport::Tcp;
+            }
+            if (!snap.running) command.requestStart = true;
+            if ((command.transportChanged
+                    ? command.transportTo == pom2::FujiNet_ImGui::Transport::Tcp
+                    : snap.transport == pom2::FujiNet_ImGui::Transport::Tcp) &&
+                !snap.helperRunning)
+                command.requestHelperStart = true;
+            tapeStatusMessage = "Waiting for FujiNet to connect...";
+            tapeStatusUntil = lastFrameTime + 15.0;
+        }
+    }
+    networkCoordinator_->applyFujiNetPanel(*controller, command);
+}
+
+void MainWindow::servicePendingFujiNetBoot()
+{
+    if (!pendingFujiNetBootSlot_) return;
+
+    const auto snap = networkCoordinator_->captureFujiNetPanel(*controller);
+    if (!snap.plugged || snap.slot != pendingFujiNetBootSlot_) {
+        tapeStatusMessage = "FujiNet boot cancelled: card was removed.";
+    } else if (snap.connected) {
+        const bool booted = controller->bootFromSlot(snap.slot);
+        tapeStatusMessage = booted
+            ? "Booting FujiNet drive 1 (CONFIG when enabled)."
+            : "Could not boot FujiNet slot " + std::to_string(snap.slot);
+    } else if (lastFrameTime >= pendingFujiNetBootUntil_) {
+        tapeStatusMessage = "FujiNet did not connect. Check the link and program.";
+    } else {
+        return;
+    }
+    pendingFujiNetBootSlot_ = 0;
+    tapeStatusUntil = lastFrameTime + 6.0;
 }

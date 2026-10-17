@@ -91,6 +91,12 @@ if [ "$RUN_TESTS" = 1 ]; then
     ( cd "$BUILD_DIR" && ctest --output-on-failure -j"$JOBS" )
 fi
 
+if [ "$ARCH" = "x86_64" ]; then
+    python3 packaging/fujinet/stage.py --target linux-x64 --dest "$BUILD_DIR"
+    python3 packaging/fujinet/stage.py --target linux-x64 \
+        --dest "$BUILD_DIR" --verify
+fi
+
 # ─── 1. Relocatable tarball (manual staging for a clean, prefix-free tree) ──
 STAGE="${BUILD_DIR}/stage/POM2-v${VERSION}-linux-${ARCH}"
 log "Staging relocatable bundle → ${STAGE}"

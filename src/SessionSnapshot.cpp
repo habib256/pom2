@@ -1,12 +1,14 @@
 // POM2 — GPL-3.0-or-later
 #include "SessionSnapshot.h"
 #include "DiskIICard.h"
+#include "ClockCard.h"
 #include "Ay3_8910.h"
 #include "MachineSnapshot.h"
 #include "Memory.h"
 #include "Mockingboard.h"
 #include "NoSlotClock.h"
 #include "SnesMaxCard.h"
+#include "SlinkyCard.h"
 #include "SnapshotIO.h"
 
 #include <array>
@@ -41,6 +43,23 @@ bool safeMockingboardState(const Blob& bytes, bool speech)
     }
     return true;
 }
+bool safeClockState(const Blob& bytes)
+{
+    // CLK1: six shift bytes, edge/mode latches, offset, three timer words,
+    // and three boolean lines. The card's rewind loader accepts larger
+    // blobs and clamps invalid timers; a session requires exact state.
+    if (bytes.size() != 36 || bytes[0] != 'C' || bytes[1] != 'L' ||
+        bytes[2] != 'K' || bytes[3] != '1' || bytes[11] > 7 ||
+        bytes[12] > 1 || bytes[33] > 1 || bytes[34] > 1 || bytes[35] > 1)
+        return false;
+    uint64_t offset = 0;
+    for (int i = 0; i < 8; ++i) offset |= uint64_t(bytes[13 + i]) << (8 * i);
+    constexpr uint64_t kMaxOffset = 400ull * 366 * 24 * 60 * 60;
+    if (offset > kMaxOffset && offset < UINT64_MAX - kMaxOffset) return false;
+    uint32_t rate = 0;
+    for (int i = 0; i < 4; ++i) rate |= uint32_t(bytes[21 + i]) << (8 * i);
+    return rate == 0 || rate == 32 || rate == 64 || rate == 256 || rate == 2048;
+}
 bool configuration(Memory& memory, Blob& out, std::string& error)
 {
     if (memory.isIIcClass() || memory.cpuSocketAccelerator()) {
@@ -60,6 +79,25 @@ bool describe(SlotPeripheral* card, SessionArchive::Slot& out, std::string& erro
     } else if (auto* mb = dynamic_cast<MockingboardCard*>(card)) {
         out.kind = mb->getVariant() == MockingboardCard::Variant::AC ? Card::Mockingboard : Card::SoundII;
     } else if (dynamic_cast<SnesMaxCard*>(card)) out.kind = Card::SnesMax;
+    else if (auto* slinky = dynamic_cast<SlinkyCard*>(card)) {
+        if (!slinky->romLoaded()) { error = "sessions require the Slinky firmware"; return false; }
+        out.kind = Card::Slinky;
+        slinky->appendSessionIdentity(out.identity);
+    }
+    else if (auto* clock = dynamic_cast<ClockCard*>(card)) {
+        out.kind = Card::Clock;
+        out.identity.push_back(clock->takesC800() ? 1 : 0);
+        uint8_t value = 0;
+        for (int i = 0; i < 256; ++i) {
+            clock->peekSlotRom(uint8_t(i), value);
+            out.identity.push_back(value);
+        }
+        if (clock->takesC800())
+            for (int i = 0; i < 0x800; ++i) {
+                clock->peekExpansionRom(uint16_t(i), value);
+                out.identity.push_back(value);
+            }
+    }
     else { error = "sessions do not support card: " + std::string(card->name()); return false; }
     return true;
 }
@@ -99,7 +137,7 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
                     uint32_t machineId, std::string& error)
 {
     Blob config;
-    if (session.version != 1 && session.version != 2) {
+    if (session.version < 1 || session.version > 3) {
         error = "unsupported session version"; return false;
     }
     const size_t cardLimit = session.version == 1 ? 1024u * 1024u : kMaxSessionCardBytes;
@@ -122,6 +160,9 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
         SessionArchive::Slot live;
         if (!describe(card, live, error)) return false;
         const auto& record = session.slots[slot];
+        if (session.version < 3 && (record.kind == Card::Slinky || record.kind == Card::Clock)) {
+            error = "this card requires session format version 3"; return false;
+        }
         if (record.state.size() > cardLimit || record.identity.size() > 16384) {
             error = "session card record is too large"; return false;
         }
@@ -140,7 +181,11 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
                 error = "session media expansion exceeds 128 MiB"; return false;
             }
         } else {
-            if (record.kind != Card::SnesMax &&
+            if (record.kind == Card::Clock && !safeClockState(record.state)) {
+                error = "invalid session clock state"; return false;
+            }
+            if (record.kind != Card::SnesMax && record.kind != Card::Slinky &&
+                record.kind != Card::Clock &&
                 !safeMockingboardState(record.state, record.kind == Card::SoundII)) {
                 error = "invalid session Mockingboard register/timer state"; return false;
             }
@@ -149,6 +194,8 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
             // clamped/partial/foreign blobs cannot enter a live session.
             std::unique_ptr<SlotPeripheral> validator;
             if (record.kind == Card::SnesMax) validator = std::make_unique<SnesMaxCard>(slot);
+            else if (record.kind == Card::Slinky) validator = std::make_unique<SlinkyCard>(slot);
+            else if (record.kind == Card::Clock) validator = std::make_unique<ClockCard>(slot);
             else validator = std::make_unique<MockingboardCard>(slot,
                 record.kind == Card::SoundII ? MockingboardCard::Variant::SoundII : MockingboardCard::Variant::AC);
             const double hz = pom2VideoTiming(memory.videoStandard()).cpuClockHz;

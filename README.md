@@ -207,7 +207,8 @@ Cards, mounted media and external connections are not restored by `.pom2snap`
 files.
 
 For supported II/II+/IIe configurations, `.pom2session` additionally bundles
-Disk II read-only disks (including WOZ/FLUX), Mockingboard and SNES MAX state. Use desktop
+Disk II read-only disks (including WOZ/FLUX), Mockingboard, SNES MAX, Slinky
+RAM and ThunderClock+ state. Use desktop
 **File > Save session... / Open session...**, `--session-save` / `--session-load`
 or the local `/session/save` and
 `/session/load` API. Loading requires matching ROMs and cards; unsupported
@@ -243,7 +244,7 @@ text, graphics and colour, with PNG and multi-page PDF export.
 
 | Key or action | What it does |
 |---|---|
-| **Alt+Enter** / Alt+keypad Enter | Enter fullscreen with mouse capture; subsequent presses toggle capture while staying fullscreen |
+| **Alt+Enter** / Alt+keypad Enter | Switch between fullscreen with mouse capture and the windowed interface with a free pointer |
 | **F10** / **Ctrl+Alt+F** | Switch between fullscreen and the windowed interface |
 | **Ctrl+Alt+G** / middle mouse button | Toggle mouse capture for an installed Mouse Card |
 | **F6**, held | Rewind |
@@ -312,6 +313,14 @@ assign images to its eight SmartPort bays. To use its floppy role, configure
 Disk II in another slot (usually slot 6) and mount the floppy image there.
 The CFFA3000's CF/USB file browser and automatic virtual-slot assignment
 are not emulated. Floppy Emu remains a separate device with its own panel.
+To serve VSDrive volumes, put a Super Serial Card in a free slot (slot 2 is
+the usual choice), open **Super Serial**, enter one or two raw ProDOS-order
+image paths (`.po` or `.hdv`), and select **Start VSDrive**. POM2 then serves
+the ADTPro VSDrive block protocol locally on that card; the Apple II program
+still needs a VSDrive driver, such as the one in A2 File Cmd. Writes go to
+the selected image files unless **Read only** is selected. Stop VSDrive before
+changing their paths. The selected paths and active state are restored with
+the session.
 Some programs expect specific slots: DIX, for example, needs its Mockingboard
 moved to slot 4. The //c family's built-in devices are locked to their hardware
 positions. Profile changes reset the machine and remount disks where possible.
@@ -364,9 +373,19 @@ For card keys, firmware details and implementation notes, see
   Uthernet I and raw Ethernet modes require libslirp, included in the ARM64,
   Raspberry Pi and Pi 400 Linux packages. Source builds can enable it with
   `-DPOM2_ENABLE_SLIRP=ON` when the library is available.
-- **FujiNet:** POM2 relays to a FujiNet desktop build or a physical USB board.
-  It does not emulate the FujiNet itself. Use an II+ / //e profile; the relay
-  normally occupies slot 7. See `POM2 --help` for connection options.
+- **FujiNet:** The macOS, Windows x64 and Linux x64 desktop packages include
+  [FujiNet-PC Apple v1.5.2](https://github.com/FujiNetWIFI/fujinet-firmware/releases/tag/v1.5.2)
+  and its CONFIG disk. POM2 relays SmartPort calls to that program or a
+  physical USB board. Use an II+ / //e profile, add the FujiNet card in slot 7,
+  then open **FujiNet** and select **Boot FujiNet / CONFIG**. The button starts
+  the TCP link and bundled program, waits for FujiNet to connect, then boots
+  its first drive. The bundled program is copied to POM2's per-user data
+  directory before launch so its configuration and SD card remain writable.
+  To use a physical USB board, select the serial transport instead. Linux ARM
+  packages have no bundled FujiNet-PC binary because upstream supplies none;
+  a physical board can still be used. The bundled program requires macOS 14+
+  on Apple Silicon, macOS 15+ on Intel, or Ubuntu 22.04 compatible libraries
+  on Linux x64. See `POM2 --help` for connection options.
 - **Workstation Card:** Apple's firmware boots and passes its diagnostics.
   A LocalTalk network and AppleShare netboot are not implemented.
 - **//c and //c+:** SmartPort units are supported; the //c+ also boots through

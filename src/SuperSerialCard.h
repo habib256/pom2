@@ -211,6 +211,9 @@ public:
 
     bool isListening()      const { return listening; }
     bool clientConnected()  const { return connected;  }
+    bool vsDriveActive() const;
+    std::string vsDrivePath(int drive) const;
+    bool vsDriveReadOnly(int drive) const;
     uint16_t getPort()      const { return port;       }
     uint64_t bytesRx()      const { return rxCount;    }
     uint64_t bytesTx()      const { return txCount;    }

@@ -3,9 +3,11 @@
 #include "SessionFiles.h"
 #include "SessionSnapshot.h"
 #include "DiskIICard.h"
+#include "ClockCard.h"
 #include "EmulationController.h"
 #include "Mockingboard.h"
 #include "SnesMaxCard.h"
+#include "SlinkyCard.h"
 #include "SnapshotIO.h"
 #include "SystemProfile.h"
 #include "TestTempPath.h"
@@ -159,6 +161,12 @@ void malformed()
     assert(oldArchive.version == 1);
     { auto state = f.ctrl.lockState();
       assert(pom2::restoreSession(oldArchive, state.cpu(), state.memory(), f.ctrl.machineId(), f.error)); }
+    legacy.version = 2;
+    assert(pom2::encodeSessionArchive(legacy, oldBytes, f.error));
+    assert(pom2::decodeSessionArchive(oldBytes, oldArchive, f.error));
+    assert(oldArchive.version == 2);
+    { auto state = f.ctrl.lockState();
+      assert(pom2::restoreSession(oldArchive, state.cpu(), state.memory(), f.ctrl.machineId(), f.error)); }
 
     Blob bytes;
     assert(pom2::encodeSessionArchive(good, bytes, f.error));
@@ -239,6 +247,139 @@ void writableRefusal()
     f.disk->setWriteBackEnabled(false); // fixture changes must never reach its source
 }
 
+void slinkySessions()
+{
+    auto fixture = std::make_unique<Fixture>();
+    auto& f = *fixture;
+    Blob rom(pom2::SlinkyCard::kRomBytes, 0xA5);
+    auto card = std::make_unique<pom2::SlinkyCard>(2);
+    assert(card->loadRom(rom));
+    auto* slinky = card.get();
+    {
+        auto state = f.ctrl.lockState();
+        state.memory().slotBus().plug(2, std::move(card));
+        slinky->deviceSelectWrite(0, 0x34);
+        slinky->deviceSelectWrite(1, 0x12);
+        slinky->deviceSelectWrite(2, 0x07);
+        slinky->deviceSelectWrite(3, 0x5A);
+        slinky->deviceSelectWrite(0, 0x34); // reload the saved pointer
+    }
+    const auto saved = f.capture();
+    assert(saved.version == 3);
+    assert(saved.slots[2].kind == SessionArchive::Card::Slinky);
+    assert(saved.slots[2].identity == rom);
+    Blob encoded;
+    SessionArchive decoded;
+    assert(pom2::encodeSessionArchive(saved, encoded, f.error));
+    assert(pom2::decodeSessionArchive(encoded, decoded, f.error));
+    {
+        auto state = f.ctrl.lockState();
+        state.cpu().setProgramCounter(0x3333);
+        slinky->deviceSelectWrite(3, 0x11);
+        assert(slinky->ramAt(0x71234) == 0x11);
+        assert(pom2::restoreSession(decoded, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+        assert(state.cpu().getProgramCounter() == 0x2000);
+        assert(slinky->ramAt(0x71234) == 0x5A);
+        assert(slinky->livePointer() == 0x71234);
+
+        // A malformed sparse page record must be rejected before core/RAM
+        // changes. The outer archive remains well-formed and checksummed.
+        auto corrupt = decoded;
+        corrupt.slots[2].state.push_back(0);
+        const auto pc = state.cpu().getProgramCounter();
+        assert(!pom2::restoreSession(corrupt, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+        assert(state.cpu().getProgramCounter() == pc);
+        assert(slinky->ramAt(0x71234) == 0x5A);
+
+        rom[0] ^= 1;
+        assert(slinky->loadRom(rom));
+        assert(!pom2::restoreSession(decoded, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+        assert(state.cpu().getProgramCounter() == pc);
+        rom[0] ^= 1;
+        assert(slinky->loadRom(rom));
+    }
+    // Older formats retain their exact card-kind vocabulary.
+    auto legacy = saved;
+    legacy.version = 2;
+    assert(!pom2::encodeSessionArchive(legacy, encoded, f.error));
+    { auto state = f.ctrl.lockState();
+      assert(!pom2::restoreSession(legacy, state.cpu(), state.memory(), f.ctrl.machineId(), f.error)); }
+
+    // A populated 1 MB card exceeds v1's 1 MB per-card record limit once
+    // sparse page indices are included. V3 must carry the whole RAM disk.
+    {
+        auto state = f.ctrl.lockState();
+        for (uint32_t page = 0; page < 4096; ++page) {
+            const uint32_t address = page * 256;
+            slinky->deviceSelectWrite(0, uint8_t(address));
+            slinky->deviceSelectWrite(1, uint8_t(address >> 8));
+            slinky->deviceSelectWrite(2, uint8_t(address >> 16));
+            slinky->deviceSelectWrite(3, uint8_t(page % 254));
+        }
+    }
+    const auto full = f.capture();
+    assert(full.slots[2].state.size() > 1024u * 1024u);
+    assert(pom2::encodeSessionArchive(full, encoded, f.error));
+    assert(pom2::decodeSessionArchive(encoded, decoded, f.error));
+    { auto state = f.ctrl.lockState();
+      assert(pom2::restoreSession(decoded, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+      assert(slinky->ramAt(0xFFF00) == 31); }
+}
+
+void clockSessions()
+{
+    auto fixture = std::make_unique<Fixture>();
+    auto& f = *fixture;
+    auto card = std::make_unique<ClockCard>(1);
+    auto* clock = card.get();
+    Blob expected;
+    {
+        auto state = f.ctrl.lockState();
+        clock->setCpuClock(pom2VideoTiming(state.memory().videoStandard()).cpuClockHz);
+        state.memory().slotBus().plug(1, std::move(card));
+        clock->deviceSelectWrite(0, 0x20); // TP 64 Hz, STB low
+        clock->deviceSelectWrite(0, 0x24); // latch timer
+        clock->deviceSelectWrite(0, 0x40); // enable IRQ
+        clock->advanceCycles(18000);
+        assert(clock->tpRateHz() == 64 && clock->slotIrqAsserted());
+        clock->appendSnapshotState(expected);
+    }
+    const auto saved = f.capture();
+    assert(saved.slots[1].kind == SessionArchive::Card::Clock);
+    assert(saved.slots[1].state == expected);
+    assert(saved.slots[1].identity.size() == (clock->takesC800() ? 2305u : 257u));
+    Blob encoded;
+    SessionArchive decoded;
+    assert(pom2::encodeSessionArchive(saved, encoded, f.error));
+    assert(pom2::decodeSessionArchive(encoded, decoded, f.error));
+    {
+        auto state = f.ctrl.lockState();
+        clock->onReset();
+        state.cpu().setProgramCounter(0x3333);
+        assert(!clock->slotIrqAsserted());
+        assert(pom2::restoreSession(decoded, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+        Blob restored;
+        clock->appendSnapshotState(restored);
+        assert(restored == expected && clock->slotIrqAsserted());
+        assert(state.cpu().getProgramCounter() == 0x2000);
+
+        auto reject = [&](SessionArchive bad) {
+            const auto pc = state.cpu().getProgramCounter();
+            Blob before, after;
+            clock->appendSnapshotState(before);
+            assert(!pom2::restoreSession(bad, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+            clock->appendSnapshotState(after);
+            assert(before == after && state.cpu().getProgramCounter() == pc);
+        };
+        auto bad = saved; bad.slots[1].identity[1] ^= 1; reject(bad);
+        bad = saved; bad.slots[1].state[21] = 0x01; reject(bad); // impossible TP rate
+        bad = saved;
+        for (int i = 0; i < 8; ++i) bad.slots[1].state[13 + i] = 0x7F;
+        reject(bad); // absurd time offset
+        bad = saved; bad.slots[1].state[25] ^= 1; reject(bad); // timer/clock mismatch
+    }
+}
+
 // Small synthetic tracks, including distinct quarter-tracks and raw FLUX
 // deltas. No downloaded/protected software is needed for this regression.
 Blob sessionWoz(bool v2, bool flux, uint8_t timing)
@@ -307,7 +448,14 @@ void wozSessions()
             f.disk->deviceSelectRead(0xC);
         }
         const auto original = f.capture();
-        assert(original.version == 2);
+        assert(original.version == 3);
+        auto previous = original; previous.version = 2;
+        Blob previousBytes;
+        SessionArchive previousDecoded;
+        assert(pom2::encodeSessionArchive(previous, previousBytes, f.error));
+        assert(pom2::decodeSessionArchive(previousBytes, previousDecoded, f.error));
+        { auto state = f.ctrl.lockState();
+          assert(pom2::restoreSession(previousDecoded, state.cpu(), state.memory(), f.ctrl.machineId(), f.error)); }
         assert(pom2::saveSessionFile(f.ctrl, f.bundle, f.error));
         auto trace = [&] {
             Blob result;
@@ -395,6 +543,8 @@ int main()
     }
     malformed();
     writableRefusal();
+    slinkySessions();
+    clockSessions();
     diskFormats();
     wozSessions();
     std::puts("session_snapshot: all ok");

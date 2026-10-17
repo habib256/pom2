@@ -33,6 +33,7 @@
 #include "Uthernet_ImGui.h"
 
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -78,6 +79,9 @@ public:
         bool listening = false;
         bool connected = false;
         bool rawMode = false;
+        bool vsDriveActive = false;
+        std::array<std::string, 2> vsDrivePaths{};
+        std::array<bool, 2> vsDriveReadOnly{};
         bool printerTap = false;
         /// SW1:5-6 as `SuperSerialCard::Mode`; meaningless on a built-in port.
         std::uint8_t mode = 0;
@@ -98,6 +102,10 @@ public:
         std::uint16_t port = 0;
         bool requestStart = false;
         bool requestStop = false;
+        bool requestStartVsDrive = false;
+        bool requestStopVsDrive = false;
+        std::array<std::string, 2> vsDrivePaths{};
+        std::array<bool, 2> vsDriveReadOnly{};
         bool requestRawMode = false;
         bool rawMode = false;
         bool requestPrinterTap = false;
@@ -111,7 +119,8 @@ public:
 
         bool empty() const noexcept
         {
-            return !requestStart && !requestStop && !requestRawMode &&
+            return !requestStart && !requestStop && !requestStartVsDrive &&
+                   !requestStopVsDrive && !requestRawMode &&
                    !requestPrinterTap && !requestMode && !requestCable;
         }
     };
@@ -120,6 +129,7 @@ public:
         bool cardFound = false;
         bool startAttempted = false;
         bool startSucceeded = false;
+        std::string error;
     };
 
     DevicePanelCoordinator(EmulationController& controller, Settings& settings);

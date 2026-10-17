@@ -453,6 +453,7 @@ set(SOURCES
     src/SpTcpTransport.cpp
     src/SpSerialTransport.cpp
     src/FujiNetCard.cpp
+    src/FujiNetRuntime.cpp
     src/FujiNetCardFactory.cpp
     src/FujiNetNetDevice.cpp
     src/FujiNet_ImGui.cpp
@@ -465,6 +466,8 @@ set(SOURCES
     src/SpeakerDevice.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
+    src/VsDriveProtocol.cpp
+    src/VsDriveTransport.cpp
     src/SystemProfile.cpp
     src/CommandPalette_ImGui.cpp
     src/Pom2Theme.cpp
@@ -497,10 +500,12 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Architecture.cmake)
 
 set(POM2_DEVICES_HEADERS
+    src/Cffa3000Card.h
     src/Ay3_8910.h
     src/AyEventRing.h
     src/AyPsgSynth.h
     src/FujiNetCard.h
+    src/FujiNetRuntime.h
     src/FujiNetLink.h
     src/FujiNetNetwork.h
     src/SlotBusClock.h
@@ -527,6 +532,7 @@ set(POM2_DEVICES_SOURCES
     src/EchoPlusTMS5220Card.cpp
     src/FloppyEmuDevice.cpp
     src/FujiNetCard.cpp
+    src/FujiNetRuntime.cpp
     src/GrapplerCard.cpp
     src/GrapplerClassicCard.cpp
     src/Hd6845Crtc.cpp
@@ -608,6 +614,7 @@ set(POM2_FOUNDATION_HEADERS
 )
 
 set(POM2_FRONTEND_HEADERS
+    src/FujiNetConfigHostClick.h
     src/AudioCoordinator.h
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
@@ -811,6 +818,8 @@ set(POM2_RUNTIME_HEADERS
     src/SpOverSlipLink.h
     src/SpTransport.h
     src/SuperSerialTcpTransport.h
+    src/VsDriveProtocol.h
+    src/VsDriveTransport.h
     src/ThreadGuard.h
     src/W5100NameResolver.h
 )
@@ -854,6 +863,8 @@ set(POM2_RUNTIME_SOURCES
     src/SpSerialTransport.cpp
     src/SpTcpTransport.cpp
     src/SuperSerialTcpTransport.cpp
+    src/VsDriveProtocol.cpp
+    src/VsDriveTransport.cpp
     src/W5100HostSockets.cpp
     src/W5100NameResolver.cpp
     src/hgrpaint/HgrFont.cpp
@@ -897,6 +908,7 @@ set(HEADERS
     src/CassetteDevice.h
     src/CassetteDeck_ImGui.h
     src/CffaCard.h
+    src/Cffa3000Card.h
     src/CharRomCatalog.h
     src/RomFetch.h
     src/ProfileSwitch.h
@@ -1519,6 +1531,7 @@ set(POM2_CORE_SOURCES
     src/SpTcpTransport.cpp
     src/SpSerialTransport.cpp
     src/FujiNetCard.cpp
+    src/FujiNetRuntime.cpp
     src/FujiNetCardFactory.cpp
     src/FujiNetNetDevice.cpp
     src/SmartPortHdvUnit.cpp
@@ -1527,6 +1540,8 @@ set(POM2_CORE_SOURCES
     src/SpeakerDevice.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
+    src/VsDriveProtocol.cpp
+    src/VsDriveTransport.cpp
     src/SystemProfile.cpp
     src/AppleIIeKeyboardLayout.cpp
     src/KeyboardSkin.cpp
@@ -1956,6 +1971,17 @@ foreach(_pom2_pair ${POM2_BUNDLE_FILES})
                 RENAME "${_pom2_dst_name}")
     endif()
 endforeach()
+
+# FujiNet-PC is a native, platform-specific third-party program, staged from
+# SHA-256 pinned upstream archives into the build tree by the Linux packagers.
+# It is intentionally outside bundle.manifest (which also feeds WASM preload).
+# OPTIONAL keeps ordinary source builds and their tests offline; release
+# scripts fetch and verify it before invoking cmake --install / CPack.
+if(UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/fujinet-pc-APPLE/"
+            DESTINATION "${POM2_DATADIR}/fujinet-pc-APPLE"
+            OPTIONAL)
+endif()
 
 # Docs + desktop integration.
 install(FILES README.md CHANGELOG.md DEV.md TODO.md LICENSE

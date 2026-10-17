@@ -25,35 +25,41 @@ int main() {
     pom2::Keyboard_ImGui keyboard;
     bool open = true;
     auto profile = SystemProfile::AppleIIc;
+    ImVec2 windowSize(1000, 520);
     auto frame = [&] {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2(1000, 520));
+        ImGui::SetWindowSize("###appleKeyboard", windowSize);
         const bool isCompact = pom2::keyboardSkin(profile).compact;
         auto event = keyboard.render(&open, 1, isCompact ? 1774 : 2578,
                                      isCompact ? 887 : 908, "", pom2::keyboardSkin(profile));
         ImGui::Render();
         return event;
     };
-    frame(); frame();
     // Measure the textured image in the actual draw output. End() restores
     // the parent window's last item, so GetItemRectMin() cannot identify it.
     ImVec2 origin(1100, 650), end(0, 0);
-    const auto* draw = ImGui::GetDrawData();
-    for (const auto* list : draw->CmdLists) {
-        for (const auto& command : list->CmdBuffer) {
-            if (command.GetTexID() != 1) continue;
-            for (unsigned i = 0; i < command.ElemCount; ++i) {
-                const auto& point = list->VtxBuffer[command.VtxOffset +
-                    list->IdxBuffer[command.IdxOffset + i]].pos;
-                origin.x = std::min(origin.x, point.x);
-                origin.y = std::min(origin.y, point.y);
-                end.x = std::max(end.x, point.x);
-                end.y = std::max(end.y, point.y);
+    auto measureImage = [&] {
+        origin = ImVec2(1100, 650);
+        end = ImVec2(0, 0);
+        const auto* draw = ImGui::GetDrawData();
+        for (const auto* list : draw->CmdLists) {
+            for (const auto& command : list->CmdBuffer) {
+                if (command.GetTexID() != 1) continue;
+                for (unsigned i = 0; i < command.ElemCount; ++i) {
+                    const auto& point = list->VtxBuffer[command.VtxOffset +
+                        list->IdxBuffer[command.IdxOffset + i]].pos;
+                    origin.x = std::min(origin.x, point.x);
+                    origin.y = std::min(origin.y, point.y);
+                    end.x = std::max(end.x, point.x);
+                    end.y = std::max(end.y, point.y);
+                }
             }
         }
-    }
-    assert(end.x > origin.x && end.y > origin.y);
+        assert(end.x > origin.x && end.y > origin.y);
+    };
+    frame(); frame();
+    measureImage();
     assert(std::abs((end.x - origin.x) / (end.y - origin.y) - 2578.0f / 908.0f) < 0.001f);
     auto click = [&](float x, float y) {
         io.AddMousePosEvent(origin.x + x * (end.x - origin.x),
@@ -76,12 +82,39 @@ int main() {
     assert(event.key && event.key->action == pom2::KeyAction::Return);
     event = click(0.180f, 0.867f);
     assert(!event.key); // empty recess beside Open-Apple
+    // A short, wide window leaves space on both sides of the photo.
+    windowSize = ImVec2(1000, 290);
+    frame(); frame();
+    measureImage();
+    assert(std::abs((origin.x + end.x) * 0.5f - windowSize.x * 0.5f) < 1.0f);
+    event = click(0.960f, 0.330f);
+    assert(event.key && event.key->base == '\\');
+    windowSize = ImVec2(500, 300);
+    frame(); frame();
+    measureImage();
+    assert(std::abs((origin.x + end.x) * 0.5f - windowSize.x * 0.5f) < 1.0f);
+    event = click(0.930f, 0.510f);
+    assert(event.key && event.key->action == pom2::KeyAction::Return);
+    // A tall window leaves equal space above and below the photo, after the
+    // title and latch row have taken their space.
+    windowSize = ImVec2(900, 620);
+    frame(); frame();
+    measureImage();
+    const auto& style = ImGui::GetStyle();
+    const float pictureTop = style.WindowPadding.y + 2.0f * ImGui::GetFrameHeight()
+                           + style.ItemSpacing.y;
+    const float pictureBottom = windowSize.y - style.WindowPadding.y;
+    assert(std::abs((origin.y + end.y) * 0.5f -
+                    (pictureTop + pictureBottom) * 0.5f) < 3.0f);
+    event = click(0.930f, 0.510f);
+    assert(event.key && event.key->action == pom2::KeyAction::Return);
     // A live machine change selects the other geometry, with the same
     // displayed proportions. This position is Caps Lock on the //e and
     // backquote on the current //c image.
     keyboard.releaseAll();
     profile = SystemProfile::AppleIIe;
     frame();
+    measureImage();
     click(0.114f, 0.867f);
     assert(!keyboard.latches().caps && !keyboard.latches().solidApple);
     ImGui::DestroyContext();

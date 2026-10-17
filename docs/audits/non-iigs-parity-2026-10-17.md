@@ -26,6 +26,7 @@ implemented in this pass from outstanding hardware/product projects.
 | Resumable sessions v1 | Distinct `.pom2session` archive with configuration/firmware checks, bounded records, CRC32 and embedded read-only non-WOZ Disk II media. II/II+/IIe, Mockingboard/Sound II and SNES MAX; CLI and local API save/load. Original image files are not needed on restore. | `session_snapshot`, CLI parser/runner and HTTP server smoke; [scope and format](../session-format.md) |
 | Desktop session workflow | File menu and command palette save/open sessions through the native chooser or manual path fallback; extensionless saves append the suffix, existing destinations require confirmation and errors remain available for correction. | `session_file_picker`: real ImGui clicks with controller save/load, cancellation, overwrite, malformed input and unavailable native backend |
 | Session WOZ media | Session v2 embeds canonical protected WOZ1/WOZ2/FLUX media without host paths; preserves quarter-tracks and timing and reads v1 sessions. | `session_snapshot`, WOZ loaders/timing/write-back and MacBinary regressions |
+| Session Slinky/clock state | Session v3 carries sparse 1 MB Slinky RAM, ThunderClock+ serial/time/TP state, exact firmware identities and detached validation before restore. v1/v2 sessions remain readable. | `session_snapshot`, `slinky_card`, `clock_card_smoke` |
 
 SNES MAX references: MAME
 [`snesmax.cpp`](https://github.com/mamedev/mame/blob/master/src/devices/bus/a2bus/snesmax.cpp)
@@ -38,7 +39,7 @@ as already named in `W5100Device.h`.
 
 | Work | Concrete remaining requirement |
 |---|---|
-| Complete sessions | A usable v2 bundle (v1 compatible) now restores supported cards and embedded read-only Disk II disks, including WOZ/FLUX on a matching II/II+/IIe configuration, with desktop menu/palette and native/path dialogs. Still required: automatic configuration reconstruction, writable/block/3.5-inch media, //c-class sessions, other cards/transports and tapes. Browser session import/export also remains open. `.pom2snap` keeps its separate CPU/RAM contract. |
+| Complete sessions | A v3 bundle (v1/v2 compatible) restores supported cards, Slinky RAM, ThunderClock+ and embedded read-only Disk II disks, including WOZ/FLUX on a matching II/II+/IIe configuration, with desktop menu/palette and native/path dialogs. Still required: automatic configuration reconstruction, writable/block/3.5-inch media, //c-class sessions, other cards/transports and tapes. Browser session import/export also remains open. `.pom2snap` keeps its separate CPU/RAM contract. |
 | Development tools | Bank-aware breakpoints/watches/profiles, source mappings, assembler/IDE and richer script integration. Current profiling is by 16-bit PC and can combine different banks. |
 | Speech/audio | Actual TMS5220 Echo+ audio, complete SSI263 inflection/articulation, older SSI263P silicon behavior and physical/reference validation. Phasor dual SSI263AP speech is now implemented separately (see the 2026-10-17 changelog); analog routing fidelity remains open. |
 | Video | Complete VidHD/Le Chat Mauve behaviors and beam-timed state; independently captured hardware images. Reproduce old split reports before implementing speculative fixes. |
@@ -199,3 +200,21 @@ Include, size, CTest skip and whitespace guards passed. Logs are
 362-case suite, MSVC execution or a new protected-software/hardware corpus.
 Writable-session persistence, //c, block/3.5-inch media, other devices and
 automatic configuration reconstruction remain open.
+
+### Follow-up: Slinky RAM and ThunderClock+ sessions
+
+Session v3 adds the Slinky RAM expansion and ThunderClock+ cards. The archive stores Slinky's sparse
+1 MB RAM and register state, binds the slot to the exact 4 KB ROM, and checks
+the state on a detached card before applying the core snapshot. The clock's
+in-progress serial, user offset, TP timer and IRQ state are bound to its ROM
+bytes; implausible offsets and timer values are refused. Version 1
+nibble sessions and version 2 WOZ/FLUX sessions still decode and restore;
+the older versions refuse the new card kind. The session test verifies
+restored RAM and pointer state, clock IRQ/serial state, firmware mismatch,
+malformed payload refusal without live mutation, a fully populated 1 MB card,
+and both legacy formats.
+
+The native `POM2` build passed. Six targeted tests passed:
+`session_snapshot`, `session_file_picker`, `snapshot_environment`,
+`snapshot_preflight`, `slinky_card` and `clock_card_smoke`. Include and file-size guards plus
+`git diff --check` passed. This does not claim a full suite or Windows run.

@@ -17,9 +17,9 @@
 // Toolbar_ImGui — quick-access button bar pinned just below the menu bar.
 //
 // Surfaces the actions that the user reaches for many times per session
-// (power-cycle, reset, pause, step, speed, profile switch, screenshot,
-// disk insert / eject, memory viewer) so they stop being buried in
-// three different menus. Same snapshot+Result-of-user-actions pattern
+// (power-cycle, reset, pause, step, speed, profile switch, screenshot)
+// so they stop being buried in three different menus. Same
+// snapshot+Result-of-user-actions pattern
 // as the other `*_ImGui` panels: the host (`MainWindow`) builds a
 // `Snapshot` under `stateMutex`, the toolbar reads it (no live emulator
 // touch) and returns a `Result` for the host to apply.
@@ -36,7 +36,6 @@
 #include "SystemProfile.h"
 
 #include <cstdint>
-#include <functional>
 
 namespace pom2 {
 
@@ -51,7 +50,6 @@ public:
         // cyclesPerFrame (17045 NTSC / 20313 PAL) — a hardcoded 17045 made
         // "1×" run a PAL machine at 852 kHz (−16 %).
         VideoStandard videoStandard      = VideoStandard::NTSC;
-        bool          memoryGridVisible  = false;
         SystemProfile activeProfile      = SystemProfile::AppleIIPlus;
         // Enable / disable hint for the disk button(s).
         bool          hasPrimaryDiskCard = false;
@@ -67,10 +65,6 @@ public:
         // recording is on AND there is history to scrub.
         bool          rewindEnabled       = false;
         bool          rewindHasFrames     = false;
-        /// The video button's popup body: the host's own colour-pipeline
-        /// menu items (the Display menu draws the same function), so the two
-        /// cannot list different modes. Empty → the button is not drawn.
-        std::function<void()> videoMenuItems;
     };
 
     struct Result {
@@ -82,7 +76,6 @@ public:
         bool requestStep             = false;   // single-instruction step
         bool requestScreenshot       = false;
         bool requestInsertDisk       = false;   // open Insert-disk popup
-        bool requestMemoryGridToggle = false;
         // Full screen IS kiosk mode — there is no separate full-screen view
         // (same action as the View menu item and F10). The toolbar is not
         // drawn in kiosk, so this button only ever means "enter".

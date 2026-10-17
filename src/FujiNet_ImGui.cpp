@@ -83,8 +83,9 @@ FujiNet_ImGui::Result FujiNet_ImGui::render(const char* title, bool& open,
         ImGui::TextWrapped(
             "No FujiNet card is plugged. Add \"FujiNet (SP over SLIP)\" to a "
             "slot in Slot Configuration — slot 7 is the usual choice, because "
-            "the autostart scan reaches it before the Disk II in slot 6, so "
-            "the machine boots straight into FujiNet's CONFIG.");
+            "the autostart scan reaches it before the Disk II in slot 6. "
+            "When FujiNet is attached before boot, its CONFIG disk starts "
+            "automatically if enabled.");
         ImGui::End();
         return r;
     }
@@ -218,9 +219,9 @@ FujiNet_ImGui::Result FujiNet_ImGui::render(const char* title, bool& open,
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(
             "The emulated 6502 is parked inside its JSR for the whole round "
-            "trip, so this is how long the machine stalls when the FujiNet "
-            "stops answering. Loopback replies in microseconds and a real "
-            "board in a few milliseconds; 250 ms leaves ample headroom.");
+            "trip. This timeout applies to local SmartPort calls; TNFS host "
+            "mounts, directory access and mounted-image block I/O get up "
+            "to 5 seconds so a slow server does not disconnect FujiNet.");
 
     // ── Controls ──────────────────────────────────────────────────────────
     if (snap.running) {
@@ -244,6 +245,14 @@ FujiNet_ImGui::Result FujiNet_ImGui::render(const char* title, bool& open,
         ImGui::SetTooltip("The FujiNet web UI needs an IP; over serial there "
                           "is none. Use the board's own WiFi address.");
 
+    if (ImGui::Button("Boot FujiNet / CONFIG")) r.requestBootConfig = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Boot FujiNet drive 1 in slot %d. With CONFIG boot "
+                          "enabled in FujiNet, this opens its Apple II menu. "
+                          "The link starts and waits for FujiNet if needed.", snap.slot);
+    if (!snap.connected)
+        ImGui::TextDisabled("Boot will wait for the FujiNet program or USB board.");
+
     ImGui::Separator();
 
     // ── Helper process ────────────────────────────────────────────────────
@@ -251,20 +260,21 @@ FujiNet_ImGui::Result FujiNet_ImGui::render(const char* title, bool& open,
     // there is nothing on the host to launch.
     if (snap.transport == Transport::Tcp) {
         ImGui::TextUnformatted("FujiNet program");
-        if (!helperPathPrimed_) {
+        if (!helperPathPrimed_ || helperPathMirrored_ != snap.helperPath) {
             std::snprintf(helperPathBuf_.data(), helperPathBuf_.size(), "%s",
                           snap.helperPath.c_str());
             helperPathPrimed_ = true;
+            helperPathMirrored_ = snap.helperPath;
         }
         ImGui::SetNextItemWidth(320);
         if (ImGui::InputTextWithHint("##helperPath",
                                      snap.helperResolved.empty()
                                          ? "path to a FujiNet desktop build"
                                          : snap.helperResolved.c_str(),
-                                     helperPathBuf_.data(), helperPathBuf_.size(),
-                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                     helperPathBuf_.data(), helperPathBuf_.size())) {
             r.helperPathChanged = true;
             r.helperPathTo      = helperPathBuf_.data();
+            helperPathMirrored_ = r.helperPathTo;
         }
         ImGui::SameLine();
         if (snap.helperRunning) {
@@ -291,8 +301,8 @@ FujiNet_ImGui::Result FujiNet_ImGui::render(const char* title, bool& open,
         } else if (snap.helperExitCode > 0) {
             ImGui::TextDisabled("Last run exited with code %d.", snap.helperExitCode);
         } else if (snap.helperPath.empty() && snap.helperResolved.empty()) {
-            ImGui::TextDisabled("None found on PATH. Leave empty to auto-detect "
-                                "a program named 'fujinet'.");
+            ImGui::TextDisabled("No FujiNet program found. Set its path or "
+                                "connect a USB board.");
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(

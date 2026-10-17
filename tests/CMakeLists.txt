@@ -4837,6 +4837,11 @@ target_include_directories(test_mouse_grab_policy PRIVATE ${CMAKE_SOURCE_DIR}/sr
 add_test(NAME mouse_grab_policy COMMAND test_mouse_grab_policy)
 set_tests_properties(mouse_grab_policy PROPERTIES TIMEOUT 5)
 
+add_executable(test_fujinet_config_host_click fujinet_config_host_click_test.cpp)
+target_include_directories(test_fujinet_config_host_click PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME fujinet_config_host_click COMMAND test_fujinet_config_host_click)
+set_tests_properties(fujinet_config_host_click PROPERTIES TIMEOUT 5)
+
 
 # ─── MouseCard quadrature edge smoke test ───────────────────────────────
 # Pins MouseCard::updateAxis against MAME mouse.cpp's update_axis<>: each
@@ -5690,6 +5695,36 @@ endif()
 
 add_test(NAME ssc_acia_smoke COMMAND test_ssc_acia)
 set_tests_properties(ssc_acia_smoke PROPERTIES TIMEOUT 5)
+
+# ADTPro VSDrive packet framing and block persistence, as spoken by
+# a2filecmd's vsdrive.s driver.
+add_executable(test_vsdrive_protocol
+    vsdrive_protocol_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/VsDriveProtocol.cpp)
+target_include_directories(test_vsdrive_protocol PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME vsdrive_protocol COMMAND test_vsdrive_protocol)
+set_tests_properties(vsdrive_protocol PROPERTIES TIMEOUT 5)
+
+add_executable(test_vsdrive_serial
+    vsdrive_serial_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/VsDriveProtocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/VsDriveTransport.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialTcpTransport.cpp
+    ${POM2_TEST_CORE_SOURCES})
+target_include_directories(test_vsdrive_serial PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_vsdrive_serial PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_vsdrive_serial PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_vsdrive_serial PRIVATE winmm ws2_32)
+endif()
+add_test(NAME vsdrive_serial COMMAND test_vsdrive_serial)
+set_tests_properties(vsdrive_serial PROPERTIES TIMEOUT 10)
 
 # ─── The telnet keyboard bridge is a terminal, not a clipboard (hunt #14) ─
 # Control bytes reach $C000 (Ctrl-C, $08, ESC), ENTER is one CR even under
@@ -7153,12 +7188,19 @@ add_test(NAME sp_over_slip_link COMMAND test_sp_over_slip_link
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(sp_over_slip_link PROPERTIES TIMEOUT 60)
 
+add_executable(test_fujinet_runtime
+    fujinet_runtime_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/FujiNetRuntime.cpp)
+target_include_directories(test_fujinet_runtime PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME fujinet_runtime COMMAND test_fujinet_runtime)
+
 # 4. The card: a real 6502 through the synthesised slot ROM, against the
 # same fake peer. Pins the stack fixup (including the page-1 wrap), the
 # boot path with and WITHOUT a peer, and the I/O-page buffer refusal.
 add_executable(test_fujinet_card
     fujinet_card_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/FujiNetCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/FujiNetRuntime.cpp
     ${CMAKE_SOURCE_DIR}/src/FujiNetCardFactory.cpp
     ${CMAKE_SOURCE_DIR}/src/FujiNetNetDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp

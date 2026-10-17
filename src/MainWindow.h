@@ -849,6 +849,8 @@ private:
     std::string tapeStatusMessage;
     double      tapeStatusUntil = 0.0;
     double      lastFrameTime   = 0.0;
+    int         pendingFujiNetBootSlot_ = 0;
+    double      pendingFujiNetBootUntil_ = 0.0;
 
     // Paste-from-file dialog state.
     bool        showPasteFileDialog = false;
@@ -1369,6 +1371,7 @@ private:
     void renderMenuBar();
     void renderStatusBar();
     void renderScreenWindow();
+    void activateFujiNetConfigHost(int row);
     /// Draw the Apple II framebuffer texture into the current ImGui
     /// window's content region, scaled + centred (letterboxed) to preserve
     /// the 4:3 aspect. Shared by the normal screen window and the kiosk
@@ -1419,6 +1422,7 @@ private:
     void renderHdvFileDialog();
     void renderSmartPortPanelWindow();
     void renderFujiNetPanelWindow();
+    void servicePendingFujiNetBoot();
 
     /// Machine ▸ "Print screen": snapshot the framebuffer and hand the
     /// printer the ESC G bit-image stream a period driver would have sent.

@@ -359,7 +359,8 @@ for the first `Status`/DIB sweep to time out because the board is still booting
 
 **`transact()`.** Called on the CPU thread. Sends the request through whichever
 `SpTransport` is live, waits for a response with a bounded timeout (**default
-250 ms**, configurable 50 ms – 5 s), decodes frames, and **discards any
+250 ms** for local calls, configurable 50 ms – 5 s; 5 s for TNFS host and
+directory operations), decodes frames, and **discards any
 response whose sequence number does not match the request** — the spec's stated
 purpose for the sequence number, and the reason a reset mid-call cannot desync
 the link permanently. On timeout it returns a failure the card turns into
@@ -576,11 +577,13 @@ Each of these is small and independent once Phase 1 lands.
 
 ## 8. Phase 3 — helper process (and why NOT embedded firmware)
 
-**Status: shipped 2026-08-10, by a different route than this section
-proposed.** The user-visible goal — *do not make the user start a second
-program by hand* — is met by POM2 launching and reaping an EXISTING FujiNet
-desktop binary (`ChildProcess`, `FujiNetCard::startHelper`). The firmware is
-**not** vendored, and the rest of this section is why.
+**Status: revised 2026-10-17.** POM2 still launches and reaps the FujiNet-PC
+Apple program as a separate process (`ChildProcess`, `FujiNetCard::startHelper`).
+Desktop packages now include official v1.5.2 binaries where upstream publishes
+them; `packaging/fujinet/stage.py` pins archive hashes. The runtime is copied
+to per-user storage before launch so `fnconfig.ini` and `SD/` remain writable.
+The firmware source and build system are still not vendored; the rest of this
+section explains that distinction.
 
 **What vendoring actually costs, measured rather than guessed.** The reference
 implementation's recipe (`fujinet-go-apple2-desktop`,
@@ -635,8 +638,10 @@ that coupling is brittle. It also complicates the release packaging
 relay against a separately-installed FujiNet desktop build gives 100 % of
 the functionality with 0 % of that maintenance burden.
 
-Revisit only if user feedback says "having to install a second program is the
-blocker".
+That user feedback arrived in October 2026. Bundling upstream's released
+executables avoids the source-build coupling described above. Linux ARM has
+no stable upstream FujiNet-PC Apple executable, so that package still uses a
+physical FujiNet board or a separately built desktop peer.
 
 ## 9. Threading and the frame-hitch budget
 
@@ -665,7 +670,9 @@ to machine state, for the duration of the round trip.
    the CPU while a call is in flight would need the ROM to poll a completion
    register, which changes the guest-visible protocol and breaks the "any
    FujiNet software works unmodified" promise.
-2. **Default timeout = 250 ms**, panel-configurable from 50 ms to 5 s. That is
+2. **Default local timeout = 250 ms**, panel-configurable from 50 ms to 5 s.
+   TNFS host and directory operations get 5 s because remote servers can take
+   seconds to answer. The local budget is
    ~50× headroom over a real USB round trip while keeping a dead peer to a
    quarter-second stall — one dropped frame's worth of pain, once, instead of
    a full second.
@@ -794,7 +801,7 @@ catch a regression; write them first.
 
 ## 13. Risks and gotchas
 
-No open questions remain: the timeout is settled at 250 ms
+No open questions remain: the local timeout is settled at 250 ms
 ([9](#9-threading-and-the-frame-hitch-budget)) and the USB CDC transport is in
 Phase 1 ([6.3](#63-serialport-and-the-usb-cdc-acm-transport)). What follows is
 what will bite during implementation.

@@ -29,6 +29,7 @@
 #define POM2_SUPER_SERIAL_TRANSPORT_H
 
 #include <cstdint>
+#include <string>
 
 namespace pom2 {
 
@@ -48,6 +49,9 @@ public:
 
     virtual bool isListening() const = 0;
     virtual uint16_t port() const = 0;
+    virtual bool isVsDrive() const { return false; }
+    virtual std::string vsDrivePath(int) const { return {}; }
+    virtual bool vsDriveReadOnly(int) const { return false; }
 };
 
 } // namespace pom2

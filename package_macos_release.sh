@@ -66,6 +66,12 @@ sed "s/@POM2_VERSION@/${VERSION}/g" packaging/macos/Info.plist.in \
 # it; stage_data.sh both stages and verifies, so a package that lost a font or
 # gained a deny-listed folder fails here rather than reaching a user.
 packaging/stage_data.sh "$APP/Contents/Resources"
+python3 packaging/fujinet/stage.py --target macos --dest "$APP/Contents/Resources"
+python3 packaging/fujinet/stage.py --target macos --dest "$APP/Contents/Resources" --verify
+for arch in macos-arm64 macos-x64; do
+    codesign --force --sign - \
+        "$APP/Contents/Resources/fujinet-pc-APPLE/$arch/fujinet"
+done
 
 # ResourcePaths probes <exe>/.. (= Contents/) and <exe>/../share/POM2. Give the
 # Apple layout a home by ALSO exposing Resources/ under the name the FHS probe
