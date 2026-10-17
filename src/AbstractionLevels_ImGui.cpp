@@ -223,6 +223,11 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "isomorphic to MAME's cs0_r/cs0_w",
       "The ATA layer skips DMA / IRQ / SMART; CHD backing is phase 2.",
       "CffaCard.*, AtaBlockDevice.*" },
+    { "cffa3", "Storage", "CFFA3000 (SmartPort)", AbsLevel::H1,
+      "Synthetic SmartPort firmware serves eight disk-image units; the "
+      "optional floppy slot uses a separate Disk II card",
+      "AVR firmware, dynamic slot RAM, CF/USB menus and slot ghosting are "
+      "outside this block-level model.", "Cffa3000Card.h, SmartPortCard.*" },
     { "hdv", "Storage", "ProDOS HDV card", AbsLevel::H1,
       "Hand-assembled 256 B slot ROM + an invented 4-register streaming port; "
       "block moves are a host memcpy. No GCR, no flux, no ATA",

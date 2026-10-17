@@ -69,6 +69,9 @@ inline constexpr CardType kCardTypes[] = {
     // emulated ATA chip (vs the synthetic "hdv"). Needs roms/cffa20ee02.bin
     // (6502) or cffa20eec02.bin (65C02); hidden from the picker when absent.
     { "cffa",         "CFFA 2.0 (IDE)"    },
+    // The CFFA3000 uses an AVR and RAM-backed firmware, not the CFFA 2.0
+    // ATA registers. Its SmartPort side is provided at block level.
+    { "cffa3",        "CFFA3000 (SmartPort)" },
     // SmartPort 3.5" — Apple Disk 3.5 Controller card (the "Liron" /
     // 670-0186). Brings 2× ProDOS block units (3.5" 800K or HDV) to a //e
     // or II+ via the standard ProDOS block-device protocol, no IWM.
