@@ -19,6 +19,7 @@
 #include "SlotPeripheral.h"
 
 #include <cstring>
+#include <memory>
 
 namespace pom2 {
 
@@ -215,7 +216,22 @@ void IIcExternalSmartPort::appendSnapshotState(std::vector<uint8_t>& out) const
         out.push_back(static_cast<uint8_t>(mediaMask_ >> (8 * k)));
 }
 
+std::size_t IIcExternalSmartPort::validateSnapshotState(const uint8_t* data, std::size_t n) const
+{
+    // The port owns no host resources. A detached decoder can use the exact
+    // load path without resetting the live IWM, bus transaction or line state.
+    // IWM owns a 512 KiB flux buffer: keep it off the browser's 1 MiB stack.
+    auto staged = std::make_unique<IIcExternalSmartPort>(nullptr, slot_);
+    return staged->applySnapshotState(data, n);
+}
+
 std::size_t IIcExternalSmartPort::loadSnapshotState(const uint8_t* data, std::size_t n)
+{
+    if (validateSnapshotState(data, n) == 0) return 0;
+    return applySnapshotState(data, n);
+}
+
+std::size_t IIcExternalSmartPort::applySnapshotState(const uint8_t* data, std::size_t n)
 {
     // Magic first, reset second: a blob that is not ours must leave the
     // live port exactly as it was (see LironCard::loadSnapshotState).

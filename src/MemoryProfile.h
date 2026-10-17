@@ -86,6 +86,9 @@ public:
     virtual void setExternalSmartPort(pom2::SmartPortBusPort* /*port*/) {}
     /// The //c+ (MIG + shared IWM), as opposed to the plain //c.
     virtual bool isIIcPlus() const { return false; }
+    /// Canonical additional firmware for snapshot compatibility checks.
+    /// Must not read the bus, alter ROMBANK, or include volatile state.
+    virtual void appendSnapshotFirmware(std::vector<uint8_t>&) const {}
     /// True while the machine's own firmware is serving slot 5 over that
     /// port — Memory must then leave the real $C500 page alone.
     virtual bool servesExternalSmartPort() { return false; }
@@ -96,6 +99,8 @@ public:
     /// contract is "append nothing, accept nothing" so profiles without
     /// state need no override. Called from `Memory::appendSnapshotState`.
     virtual void appendSnapshotState(std::vector<uint8_t>& out) const { (void)out; }
+    /// Same framing/semantic checks as load, with no live-state mutation.
+    virtual size_t validateSnapshotState(const uint8_t*, size_t) const { return 0; }
     /// Consume a blob produced by `appendSnapshotState`. Returns the number
     /// of bytes consumed, or 0 if the blob is absent/unrecognised — older
     /// snapshots simply lack the section and keep the live values.

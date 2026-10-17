@@ -146,7 +146,8 @@ public:
     /// carried. Self-describing (magic + version); an unrecognised or
     /// truncated blob leaves the live chip untouched and returns false.
     void appendSnapshotState(std::vector<uint8_t>& out) const;
-    bool loadSnapshotState(const uint8_t* data, std::size_t len);
+    /// commit=false only validates; live shifters/cursors remain unchanged.
+    bool loadSnapshotState(const uint8_t* data, std::size_t len, bool commit = true);
 
 private:
     void    loadClockSnapshot();

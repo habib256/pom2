@@ -162,6 +162,15 @@ public:
     /// Plus that scans for sync-gap-shifted byte boundaries).
     bool loadLssRom(const std::string& path);
     bool hasLssRom() const { return p6RomLoaded; }
+    struct SessionRestore {
+        std::vector<uint8_t> runtime;
+        std::array<std::unique_ptr<DiskImage>, 2> media;
+    };
+    void appendSessionIdentity(std::vector<uint8_t>& out) const;
+    bool appendSessionState(std::vector<uint8_t>& out, std::string& error) const;
+    bool prepareSessionState(const uint8_t* data, size_t len,
+                             SessionRestore& out, std::string& error, bool allowWoz = false) const;
+    void applySessionState(SessionRestore&& prepared);
     /// Is the bit-level LSS actually driving the head right now? Distinct
     /// from `hasLssRom()`: a mounted WOZ forces the bit-level path even with
     /// no `diskii_p6.rom` on disk (the embedded default P6 suffices), and

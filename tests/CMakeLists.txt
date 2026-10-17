@@ -89,6 +89,8 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -993,6 +995,38 @@ if(WIN32)
 endif()
 add_test(NAME snapshot_identity_guard COMMAND test_snapshot_identity_guard)
 set_tests_properties(snapshot_identity_guard PROPERTIES TIMEOUT 20)
+
+# Durable snapshots must reject firmware/configuration mismatches before
+# even reversible live-state validation, preserving DMA and video events.
+add_executable(test_snapshot_environment
+    snapshot_environment_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/TranswarpCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_snapshot_environment PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_snapshot_environment PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_snapshot_environment PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_snapshot_environment PRIVATE winmm)
+endif()
+add_test(NAME snapshot_environment COMMAND test_snapshot_environment)
+set_tests_properties(snapshot_environment PROPERTIES TIMEOUT 20)
+
+add_executable(test_session_snapshot session_snapshot_test.cpp)
+target_link_libraries(test_session_snapshot PRIVATE pom2_core_test)
+add_test(NAME session_snapshot COMMAND test_session_snapshot)
+set_tests_properties(session_snapshot PROPERTIES TIMEOUT 30)
+
+add_executable(test_snapshot_preflight snapshot_preflight_test.cpp)
+target_link_libraries(test_snapshot_preflight PRIVATE pom2_core_test)
+add_test(NAME snapshot_preflight COMMAND test_snapshot_preflight)
+set_tests_properties(snapshot_preflight PROPERTIES TIMEOUT 30)
 
 
 # ─── Rewind delta codec + keyframes (rewind Phase 2) ──────────────────────
@@ -2225,6 +2259,8 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5286,6 +5322,7 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
+target_link_libraries(test_cli_runner PRIVATE pom2_core_test)
 target_include_directories(test_cli_runner PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_BINARY_DIR}/generated   # Version.h, for CliDispatcher's --version
@@ -5335,6 +5372,8 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5381,6 +5420,8 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5431,6 +5472,8 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5479,6 +5522,8 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5528,6 +5573,8 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5577,6 +5624,8 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -5723,6 +5772,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
+target_link_libraries(test_ai_control_server PRIVATE pom2_core_test)
 target_include_directories(test_ai_control_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${IMGUI_DIR}     # miniaudio.h location for FloppySoundDevice
@@ -6034,6 +6084,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
+target_link_libraries(test_ai_mouse_hle_probe PRIVATE pom2_core_test)
 target_include_directories(test_ai_mouse_hle_probe PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${IMGUI_DIR}     # miniaudio.h location for FloppySoundDevice
@@ -6975,6 +7026,8 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -8208,6 +8261,8 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
@@ -8552,6 +8607,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
+target_link_libraries(test_ai_control_mem_bank PRIVATE pom2_core_test)
 target_include_directories(test_ai_control_mem_bank PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${IMGUI_DIR})     # miniaudio.h location for FloppySoundDevice
@@ -8933,6 +8989,18 @@ add_test(NAME ay_mame_parity COMMAND test_ay_mame_parity)
 set_tests_properties(ay_mame_parity PROPERTIES TIMEOUT 15)
 
 # Real ImGui input frames: clicking an empty drive picture selects that bay.
+add_executable(test_session_file_picker
+    session_file_picker_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SessionFilePicker.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(test_session_file_picker PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+target_link_libraries(test_session_file_picker PRIVATE pom2_core_test)
+add_test(NAME session_file_picker COMMAND test_session_file_picker)
+set_tests_properties(session_file_picker PROPERTIES TIMEOUT 15)
+
 add_executable(test_drive_rack_interaction
     drive_rack_interaction_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DriveRackFilePicker.cpp

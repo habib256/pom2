@@ -355,7 +355,7 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(
     }
     ImGui::SameLine();
     if (iconButton({ ICON_FA_ARROWS_ROTATE, "HardReset",
-                     "Hard reset (F12) â also clears CPU registers" })) {
+                     "Hard reset (F12) — also clears CPU registers" })) {
         r.requestHardReset = true;
     }
     ImGui::SameLine();

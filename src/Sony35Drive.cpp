@@ -1012,13 +1012,15 @@ void Sony35Drive::appendSnapshotState(std::vector<uint8_t>& out) const
     byteio::putU64(out, lastStrobeCycle_);
 }
 
-bool Sony35Drive::loadSnapshotState(const uint8_t* data, std::size_t len)
+bool Sony35Drive::loadSnapshotState(const uint8_t* data, std::size_t len, bool commit)
 {
+    if (!data) return false;
     byteio::Reader r(data, len);
     if (!r.has(4 + 2 + 4 + 8)) return false;
     if (r.u32() != kSonySnapMagic) return false;
     const uint16_t version = r.u16();
     if (version == 0 || version > kSonySnapVersionMax) return false;
+    if (!commit) return true;
 
     const uint8_t flags = r.u8();
     motorOn_      = (flags & 0x01) != 0;

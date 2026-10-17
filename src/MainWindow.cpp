@@ -1508,6 +1508,7 @@ void MainWindow::render()
 
     renderTapeFileDialogs();
     renderPasteFileDialog();
+    renderSessionFileDialog();
     renderHdvFileDialog();
     renderDiskFileDialog();
     renderDisk35FileDialog();

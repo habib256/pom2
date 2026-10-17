@@ -94,6 +94,8 @@ struct CliAction {
         RewindTape,    // (no args)         : cassette REW
         SnapshotSave,  // pathS             : write current state to .snap
         SnapshotLoad,  // pathS             : restore from .snap
+        SessionSave,   // pathS             : save supported machine/cards/media
+        SessionLoad,   // pathS             : restore a .pom2session bundle
     };
 
     Kind        kind;

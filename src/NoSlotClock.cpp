@@ -223,13 +223,15 @@ void NoSlotClock::appendSnapshotState(std::vector<uint8_t>& out) const
     byteio::putU64(out, clockShift_);
 }
 
-bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len)
+bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len, bool commit)
 {
+    if (!data) return false;
     byteio::Reader r(data, len);
     if (!r.has(4 + 2 + 4 + 8)) return false;
     if (r.u32() != kNscSnapMagic) return false;
     const uint16_t version = r.u16();
     if (version == 0 || version > kNscSnapVersionMax) return false;
+    if (!commit) return true;
 
     writeEnabled_ = r.u8() != 0;
     readingClock_ = r.u8() != 0;

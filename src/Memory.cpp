@@ -845,9 +845,6 @@ void Memory::ramWorksSwapToBank(uint8_t newBank)
     std::memcpy(auxLcHigh.data(),  curr + 0x12000,   0x2000);
 }
 
-// Extended-state blob layout version. Bump if the field order below changes.
-static constexpr uint8_t kMemStateBlobVersion = 1;
-
 void Memory::appendSnapshotState(std::vector<uint8_t>& out)
 {
     auto putU8  = [&](uint8_t v) { out.push_back(v); };
@@ -1065,6 +1062,9 @@ void Memory::resetVideoEventLogForClockJump()
 bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
                               uint32_t* savedRamWorksBanks)
 {
+    // Direct callers (including rewind) need the same all-or-nothing
+    // refusal as files. This scans headers/device state, not RAM contents.
+    if (!validateSnapshotState(data, n, savedRamWorksBanks)) return false;
     // Default the report to "stock aux, no RamWorks": a blob that never
     // reaches the bank field (too short, malformed) must not look like a
     // 128-bank capture to the caller that decides whether to refuse it.

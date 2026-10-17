@@ -290,7 +290,8 @@ public:
     // instead, so a rewind can never cross one — see
     // `EmulationController::noteMediaWrite`.
     void appendSnapshotState(std::vector<uint8_t>& out) const;
-    bool loadSnapshotState(const uint8_t* data, std::size_t len);
+    /// commit=false validates without clearing caches or the open write arc.
+    bool loadSnapshotState(const uint8_t* data, std::size_t len, bool commit = true);
 
 private:
     /// Drop the medium and ring the mechanism — the tail of a firmware

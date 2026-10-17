@@ -25,6 +25,7 @@
 #include "AtomicFileReplace.h"
 #include "EmulationController.h"
 #include "MachineSnapshot.h"
+#include "SessionFiles.h"
 #include "SnapshotIO.h"
 #include "SystemProfile.h"
 #include "Logger.h"
@@ -229,6 +230,16 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 emu.rewindTape();
                 pom2::log().info("CLI", "--rewind: tape rewound");
                 break;
+            case CliAction::Kind::SessionSave:
+            case CliAction::Kind::SessionLoad: {
+                std::string error;
+                const bool save = a.kind == CliAction::Kind::SessionSave;
+                const bool success = save ? saveSessionFile(emu, a.pathS, error)
+                                          : loadSessionFile(emu, a.pathS, error);
+                if (!success) { pom2::log().error("Session", error); ok = false; }
+                else pom2::log().info("Session", std::string(save ? "saved " : "loaded ") + a.pathS);
+                break;
+            }
             case CliAction::Kind::SnapshotSave: {
                 // Same machinery as the AI server's POST /snapshot/save
                 // (AiControlServer::handleSnapshotSave): CPU + 64 KiB RAM

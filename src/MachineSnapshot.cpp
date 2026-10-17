@@ -37,6 +37,13 @@ namespace pom2 {
 void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
                          bool includeSlots)
 {
+    // A durable capture can outlive a ROM or machine-configuration change.
+    // Rewind stays lean: its ring is cleared on configuration changes.
+    if (!includeSlots) {
+        std::vector<uint8_t> environment;
+        mem.appendSnapshotEnvironment(environment);
+        w.writeSection("ENV", environment.data(), environment.size());
+    }
     // CPU: PC(2) A X Y P SP cpuMode (6) + absolute cycle counter (8) +
     // STP halt latch (1) = 17 B. IRQ/NMI lines are transient and
     // self-correct within a frame, so they are not persisted (see
@@ -285,9 +292,24 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
     bool haveCpu = false;
     bool haveMem = false;
     bool haveMex = false;
+    bool haveEnvironment = false;
+    std::vector<uint8_t> environment;
+    std::vector<uint8_t> cpuPayload;
     while (r.nextSection(name, len)) {
         if (parseSlotSection(name))
             return { false, "snapshot SLOT sections are rewind-only" };
+        if (name == "ENV") {
+            if (haveEnvironment)
+                return { false, "snapshot contains duplicate ENV sections" };
+            // Largest supported environment is under 54 KiB (dual-bank
+            // character ROM + both //c firmware banks). Bound before alloc.
+            if (len < 8 || len > 64u * 1024u)
+                return { false, "snapshot ENV section has an invalid length" };
+            haveEnvironment = true;
+            environment.resize(len);
+            r.readBytes(environment.data(), len);
+            continue;
+        }
         if (name == "CPU") {
             if (haveCpu) return { false, "snapshot contains duplicate CPU sections" };
             if (len != 16 && len != 17)
@@ -313,6 +335,7 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         }
         std::vector<uint8_t> payload(len);
         if (len) r.readBytes(payload.data(), payload.size());
+        if (name == "CPU") cpuPayload = payload;
         stagedWriter.writeSection(name, payload.data(), payload.size());
     }
     if (!r.good()) {
@@ -321,6 +344,36 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
     }
     if (!haveCpu || !haveMem)
         return { false, "snapshot must contain one valid CPU and MEM section" };
+    // These checks, like the MEX preflight below, precede live mutation:
+    // an incompatible file must not reset video events, IRQs or DMA state.
+    if (cpuPayload[7] > 1)
+        return { false, "snapshot CPU mode is invalid" };
+    const bool savedCmos = cpuPayload[7] != 0;
+    if (savedCmos != (cpu.getCpuMode() == M6502::CpuMode::CMOS))
+        return { false, savedCmos
+            ? "snapshot was taken on a 65C02 machine; this one runs an NMOS 6502"
+            : "snapshot was taken on an NMOS 6502 machine; this one runs a 65C02" };
+    if (haveEnvironment) {
+        std::vector<uint8_t> live;
+        mem.appendSnapshotEnvironment(live);
+        if (environment[0] != live[0])
+            return { false, "snapshot ENV version is unsupported" };
+        if (environment[1] != live[1] || environment[3] != 0)
+            return { false, "snapshot memory/character-ROM configuration differs from this machine" };
+        if (environment[2] != live[2])
+            return { false, "snapshot PAL/NTSC video standard differs from this machine" };
+        uint32_t banks = 0;
+        for (int i = 0; i < 4; ++i)
+            banks |= static_cast<uint32_t>(environment[4 + i]) << (i * 8);
+        if (banks != mem.ramWorksBanks())
+            return { false, "snapshot RamWorks geometry differs; set ramworks_banks=" +
+                            std::to_string(banks) + " and restart before loading it" };
+        if (environment != live)
+            return { false, "snapshot firmware differs from this machine (system, internal I/O, character ROM or alternate bank); load the matching ROMs first" };
+    } else {
+        pom2::log().warn("Snapshot",
+            "legacy snapshot has no ENV section: firmware and PAL/NTSC compatibility cannot be verified");
+    }
     // MEX is the ONLY carrier of the IIe paging mode, the language-card
     // latches, all 64 KB of aux RAM, the RamWorks banks and the display state.
     // Without it, restore replaces main RAM, the CPU and the clock while every
@@ -344,12 +397,9 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
     if (!stagedWriter.finish())
         return { false, "cannot stage snapshot for validation" };
 
-    // Memory's MEX parser includes optional, length-prefixed device state and
-    // can therefore reject a blob whose outer section framing is valid.  Run
-    // that semantic check before touching CPU state or resetting a live DMA
-    // claimant.  The parser is currently apply-oriented, so immediately put
-    // back a private MEX checkpoint; this affects no SLOT/host resources and
-    // makes a rejected file observationally transactional to the machine.
+    // Semantically validate MEX without applying it. A live apply/rollback
+    // discarded pending video edges, drive caches and SmartPort transactions
+    // even when the caller was told that loading the file failed.
     if (haveMex) {
         std::vector<uint8_t> candidateMex;
         SnapshotReader mexReader(staged.data(), staged.size());
@@ -359,15 +409,10 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             if (len) mexReader.readBytes(candidateMex.data(), len);
             break;
         }
-        std::vector<uint8_t> oldMex;
-        mem.appendSnapshotState(oldMex);
         uint32_t snapBanks = 1;
-        const bool valid = mem.loadSnapshotState(candidateMex.data(),
-                                                 candidateMex.size(),
-                                                 &snapBanks);
-        const bool restored = mem.loadSnapshotState(oldMex.data(), oldMex.size());
-        if (!restored)
-            return { false, "snapshot MEX validation checkpoint could not be restored" };
+        const bool valid = mem.validateSnapshotState(candidateMex.data(),
+                                                     candidateMex.size(),
+                                                     &snapBanks);
         if (!valid)
             return { false, "snapshot MEX section truncated or malformed" };
         // RamWorks geometry is machine CONFIGURATION, not state, and nothing
@@ -390,9 +435,9 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         }
     }
 
-    // MEX's nested device payload is semantic rather than framing-only. Keep
-    // one reversible memory checkpoint for that final validation/apply. Slot
-    // state is deliberately excluded, so rollback cannot hang up a live NIC.
+    // Preflight should make apply infallible. Retain a defensive checkpoint
+    // for unexpected implementation failures, without involving host-backed
+    // SLOT state or replaying a live NIC connection.
     std::vector<uint8_t> rollback;
     {
         SnapshotWriter w(rollback);
@@ -413,9 +458,8 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         // where the live session left them. Logged on the file path only; the
         // rewind ring restores slots and never reaches here.
         pom2::log().info("Snapshot",
-            "restored CPU + RAM. Card state (disk heads, sound chips, "
-            "printer, network) is NOT part of a .pom2snap file and keeps its "
-            "live values — only Rewind restores it.");
+            "restored CPU + RAM snapshot core. Standalone .pom2snap files "
+            "exclude card state; a session loader restores supported cards separately.");
         return result;
     }
 

@@ -4445,6 +4445,71 @@ with POM1. Captures CPU + RAM + soft-switch display state. **Disk II
 deliberately excluded** — would need mounted-image identity + head
 position + dirty bits per track.
 
+**Firmware/configuration preflight** (2026-10-17). File-style captures now
+write an optional `ENV` section with its own v1 payload. The outer format
+stays v2. `MemorySnapshotEnvironment.cpp` records exact bytes rather than a
+hash: canonical protected motherboard ROM, internal I/O ROM, normalized
+character ROM and the alternate //c firmware bank. It also records memory
+mode, character-generator flags, RamWorks geometry and PAL/NTSC. Bus reads
+are never used; ROMBANK, paging, selected aux bank and debugger watchpoints
+do not affect identity. TransWarp exposes displaced motherboard bytes through
+`peekDisplacedRom`, so engaging/releasing its shadow does not change identity.
+
+The file restore stages the entire stream and checks ENV, CPU mode and MEX
+semantics before changing live state. Duplicate, oversized, unsupported or incompatible ENV
+sections are refused even when placed after CPU/MEM/MEX. `snapshot_environment`
+pins preservation of CPU/RAM/MEX, an active DMA claimant and pending beam
+events on these refusals. Files without ENV remain loadable with an explicit
+warning; their firmware/video compatibility cannot be established. ENV is
+identity metadata, not authentication, a whole-configuration manifest, card
+firmware identity or a complete session bundle. Rewind omits it entirely.
+
+`MemorySnapshotValidation.cpp` traverses the core layout, bounds RamWorks to
+128 coherent 80 KiB banks, validates the selected bank and visits all nine
+optional device sections. It skips RAM payloads rather than copying them.
+IWM, Sony and No-Slot Clock loaders have a no-commit path; mouse and Zip
+expose shared validation gates. The //c profile validates its nested external
+port before resetting anything. The port decodes into a detached instance
+with no slot bus or host resources, keeping the exact same parser semantics
+without touching the live transaction. Direct Memory and port loads also
+preflight before applying; a rejected decode leaves RAM, IRQs, video edges,
+drive caches and in-flight port state untouched. A defensive file-level
+checkpoint remains for unexpected implementation failures, not validation.
+`snapshot_preflight` covers each nested failure, truncated frames, geometry
+disagreement, repeated valid validation, valid restore and atomic direct
+profile/port refusals. This test also runs in the portable CI subset.
+
+**Read-only Disk II sessions v1** (2026-10-17). `.pom2session` is a separate,
+checksummed container, exposed through `--session-save/load` and the local
+`/session/save` and `/session/load` routes. `SessionArchive` bounds and decodes
+the envelope; `SessionSnapshot` checks the matching II/II+/IIe configuration,
+slot topology and firmware, then stages detached Disk II/media and
+Mockingboard/SNES MAX state before the core restore. Disk II clocks and VIA
+counters also receive semantic bounds; canonical serialization alone cannot
+reject pathological timer values. `SessionFiles` copies under the controller
+lock and performs CRC/file I/O outside it. Embedded disks are clean,
+physically write-protected non-WOZ nibble tracks, independent of their original
+paths. Unsupported devices and outgoing dirty media are refused. See
+[session-format.md](docs/session-format.md) for the supported configuration,
+wire layout and remaining restrictions. This adds neither automatic machine
+recreation. Desktop File-menu and command-palette actions use
+`SessionFilePicker` and `MainWindow_SessionFiles`: selection and overwrite
+confirmation run without the machine lock, then the controller adapter
+executes the operation. Native cancellation does not open the manual path
+fallback; errors retain the dialog and path. The GUI does not change the
+running/paused mode. Browser builds hide the host-filesystem actions.
+
+**Protected WOZ sessions v2**. Archives now write version 2 and continue to
+read v1. `DWO1` media records carry canonical WOZ bytes, while `DRO1` keeps
+the nibble representation. `DiskImage::loadWozBytes` is shared with the
+ordinary image loader; neither nested restore nor the canonical media
+payload needs a host filename. It retains sparse quarter-tracks, bit timing
+and native FLUX transitions. Both file/slot lengths and expanded media
+storage are bounded. Restored media are always physically protected, even
+when the original protection came from the host notch. Writable sessions
+still need their own persistence/lifecycle policy.
+
+
 **The header carries a machine identity** (2026-09-06). The 32-bit word
 after `version` was written as a reserved 0 and read back with
 `(void)readU32()`, so nothing in a snapshot said WHICH Apple it came

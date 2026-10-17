@@ -141,13 +141,13 @@ void MainWindow::renderFileMenuDrives() {
                                std::to_string(drive.bay);
         if (!drive.loaded) {
             const std::string label = std::string(icon) + "  " + drive.label +
-                                      "  â  Insertâ¦" + id;
+                                      "  —  Insert…" + id;
             if (ImGui::MenuItem(label.c_str()))
                 runDriveRackAction(drive, pom2::DriveRackAction::Type::Insert);
             continue;
         }
         const std::string name = std::filesystem::path(drive.path).filename().string();
-        const std::string label = std::string(icon) + "  " + drive.label + "  â  " +
+        const std::string label = std::string(icon) + "  " + drive.label + "  —  " +
                                   name + id;
         if (ImGui::BeginMenu(label.c_str())) {
             if (ImGui::MenuItem(ICON_FA_EJECT "  Eject"))

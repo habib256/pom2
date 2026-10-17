@@ -29,6 +29,9 @@
 //                   mirror preserved)
 //   MEX   v2 blob   aux RAM + Language-Card RAM + RamWorks banks + paging
 //                   soft-switches + DisplayState
+//   ENV   optional  versioned firmware/configuration identity, written when
+//                   includeSlots=false and checked before a file load can
+//                   touch live state. Older files load with a warning.
 //   SLOTn optional  per-card volatile state (e.g. DiskIICard head/LSS) —
 //                   written ONLY when captureMachineState(includeSlots=true).
 //
@@ -38,8 +41,8 @@
 // `/snapshot` path passes false, keeping its documented "disk/slot state
 // deliberately excluded" (CLAUDE.md) file contract — an archival snapshot
 // can outlive a media swap, where a stale head position would mismatch.
-// restoreMachineState always applies any SLOTn sections it finds (none in an
-// AI-control file), so a rewind blob and a file blob load through one path.
+// restoreMachineState applies SLOTn only on its trusted rewind path;
+// transactional external loads reject them to protect host-backed devices.
 // The functions take a SnapshotWriter/Reader so the caller chooses the
 // backend (file for /snapshot, in-memory vector for rewind).
 
@@ -56,8 +59,8 @@ namespace pom2 {
 class SnapshotWriter;
 class SnapshotReader;
 
-/// Serialize the machine state into `w` (CPU + MEM + MEX, and per-slot
-/// SLOTn sections when `includeSlots` is true — see the header note).
+/// Serialize CPU + MEM + MEX into `w`, plus ENV for file-style captures or
+/// SLOTn sections when `includeSlots` is true — see the header note.
 void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
                          bool includeSlots = false);
 
@@ -68,7 +71,7 @@ struct RestoreResult {
 
 /// Apply the CPU / MEM / MEX sections found in `r` to `cpu` + `mem`.
 /// Tolerant by design (mirrors the original AI-control loader):
-///   • CPU honoured only at the full 16-byte length — a short, crafted
+///   • CPU honoured only at a full 16/17-byte length — a short, crafted
 ///     section is skipped (the "round 10 #3" over-read hardening).
 ///   • MEM honoured only at exactly 0x10000 bytes, restored through
 ///     Memory::restoreMainRam so the ROM mirror is preserved.
@@ -76,10 +79,13 @@ struct RestoreResult {
 ///     ok == false so HTTP callers can surface a 400. RewindBuffer feeds its
 ///     own data and never hits this.
 /// Unknown / wrong-length sections are skipped (forward compatibility).
-/// With `transactional=true` (the default for files/API input), the complete
-/// CPU, memory and slot state is checkpointed and restored if a later section
-/// is malformed. Rewind uses false for its trusted in-memory frames to avoid
-/// duplicating a full snapshot on every scrub.
+/// With `transactional=true` (the default for files/API input), ENV and CPU
+/// compatibility are checked before live mutation, SLOT sections are refused,
+/// and MEX is validated before applying CPU/memory. A defensive checkpoint
+/// covers unexpected apply failures. Older files
+/// without ENV cannot verify firmware/video compatibility and log a warning.
+/// Rewind uses false for its trusted in-memory frames to avoid duplicating a
+/// full snapshot on every scrub.
 RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
                                   bool transactional = true);
 

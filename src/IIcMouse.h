@@ -19,6 +19,7 @@ public:
     void loadSnapshotState(const uint8_t* data, size_t n) override;
     void saveIicMouseState(std::vector<uint8_t>& out) const override { appendSnapshotState(out); }
     bool loadIicMouseState(const uint8_t* data, size_t n) override;
+    bool validateIicMouseState(const uint8_t* data, size_t n) const override;
     bool hostDrained() const { return countX_ == 0 && countY_ == 0; }
 private:
     int firmwareSlot_ = 4; // //c+ moves the firmware entry table/screen holes to port 7
