@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// ProDOSVolume — synthesise a read-only ProDOS volume image (block array)
+// ProDOSVolume — synthesise a guest-writable ProDOS volume image (block array)
 // from the contents of a host folder.
 //
 // Layout produced:
@@ -27,14 +27,12 @@
 //                  complete synthesised volume.
 //   Following     File data + sapling index blocks, allocated sequentially.
 //
-// Scope (MVP):
-//   * Flat directory only — sub-directories of the host folder are skipped.
-//   * Up to 51 files (volume directory limit). Excess are skipped.
-//   * Files ≤ 128 KB — supports seedling (≤ 512 B) and sapling (1 idx +
-//     up to 256 data blocks). Tree files (> 128 KB) are skipped with a
-//     warning. Covers virtually every Apple II program.
-//   * File type guessed from host extension; defaults to BIN ($06).
-//   * Aux type = 0 (no metadata to derive from).
+// Scope:
+//   * Recursive subdirectories (bounded depth and symlink-cycle detection).
+//   * Up to 51 root entries (the ProDOS root directory limit).
+//   * Seedling, sapling and tree files, up to the 24-bit EOF limit (16 MiB-1).
+//   * File type guessed from extension, or explicit NAME#TTAAAA metadata.
+//     Applesoft defaults to aux $0801; other untagged files default to 0.
 //   * Names sanitised to ProDOS conventions (uppercased ASCII, A-Z/0-9/.,
 //     starts with a letter, ≤ 15 chars; collisions get .1/.2/… suffixes).
 //
@@ -57,7 +55,7 @@ struct ProDOSBuildResult {
     bool        ok = false;
     std::string error;
     std::size_t filesIncluded = 0;
-    std::size_t filesSkipped  = 0;     // > 128 KB, name unsanitisable, or overflow
+    std::size_t filesSkipped  = 0;     // > 24-bit EOF, unsafe name, or directory overflow
     std::size_t totalBlocks   = 0;
 };
 
@@ -112,14 +110,13 @@ struct ProDOSDecodeResult {
 };
 
 /// Reverse of `buildVolumeFromFolder`: walk a synthesised volume's directory
-/// blocks (2..5) and write every seedling/sapling file back into `hostFolder`
+/// blocks (2..5) and write every seedling/sapling/tree file into `hostFolder`
 /// using the inverse of the file_type → extension mapping. Files in the
 /// folder that are *absent* from the volume are LEFT UNTOUCHED — never
 /// deleted. Existing files whose bytes already match the volume are skipped
 /// (no write, no mtime bump). Seedling, sapling AND tree files are decoded —
-/// the build side only ever emits the first two, but the volume carries free
-/// slack and ProDOS promotes a file past 128 KB to a tree on its own, so a
-/// guest can grow one. `hostFolder` is created if missing.
+/// both directions support all three storage types, including guest-grown
+/// files. `hostFolder` is created if missing.
 ///
 /// The image is guest-writable RAM, so its directory graph is untrusted: a
 /// subdir entry's key_pointer may alias an ancestor block and turn the walk

@@ -120,6 +120,39 @@ public:
         return false;
     }
 
+    bool listen(uint16_t port) override
+    {
+        if (kind_ != W5100SocketKind::Tcp) return false;
+        if (!setListenerBindPolicy(fd_)) return false;
+        sockaddr_in local{};
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        local.sin_port = hostToNet16(port);
+        return ::bind(fd_, reinterpret_cast<sockaddr*>(&local),
+                      static_cast<socklen_c>(sizeof(local))) == 0 &&
+               ::listen(fd_, 1) == 0;
+    }
+
+    W5100ConnectResult accept(uint32_t& address, uint16_t& port) override
+    {
+        sockaddr_in peer{};
+        socklen_c size = sizeof(peer);
+        socket_t client = ::accept(fd_, reinterpret_cast<sockaddr*>(&peer), &size);
+        if (!isValidSocket(client))
+            return errWouldBlock(lastSocketError()) ? W5100ConnectResult::InProgress
+                                                    : W5100ConnectResult::Failed;
+        disableSigpipe(client);
+        if (!setNonBlocking(client)) {
+            closeHostSocket(client);
+            return W5100ConnectResult::Failed;
+        }
+        closeHostSocket(fd_);
+        fd_ = client;
+        address = peer.sin_addr.s_addr;
+        port = peer.sin_port;
+        return W5100ConnectResult::Connected;
+    }
+
     W5100ReceiveResult receive(uint8_t* data, std::size_t capacity) override
     {
         W5100ReceiveResult out;

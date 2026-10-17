@@ -195,7 +195,7 @@ inline constexpr uint8_t kW5100SnDnsNameCpty  =
 inline constexpr uint8_t kW5100SnSrClosed      = 0x00;
 inline constexpr uint8_t kW5100SnSrInit        = 0x13;
 /// The rest of the datasheet's TCP status ladder (§5.2.2 "Sn_SR"). POM2 does
-/// not reach LISTEN / the four closing states — a host socket does that
+/// not expose the four intermediate closing states — a host socket does that
 /// bookkeeping — but the values are named so no code invents its own and so a
 /// reader can tell "not modelled" from "not known".
 inline constexpr uint8_t kW5100SnSrListen      = 0x14;

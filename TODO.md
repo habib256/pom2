@@ -4,6 +4,10 @@ Reorganised 2026-10-05 · **v0.9.4 → 1.0**.
 This is the planning index. Detailed tasks live in `docs/backlog/`; dated
 reports and decisions have their own documents.
 
+The requested non-IIgs emulator comparison work is tracked in
+[the implementation report](docs/audits/non-iigs-parity-2026-10-17.md),
+including implemented changes and the remaining hardware/product projects.
+
 ## Priorities
 
 Priorities below are inherited from the previous TODO. Historical reports

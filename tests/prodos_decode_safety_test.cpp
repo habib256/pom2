@@ -225,7 +225,7 @@ int main()
         assert(fs::exists(root / "F1") && fs::exists(root / "F2"));
     }
 
-    // A host file the build HID from the volume (>128 KB) is not the
+    // A host file the build HID from the volume (>24-bit ProDOS EOF) is not the
     // guest's new file of the same name: the decode must not overwrite it
     // (bug hunt 2026-09-29 — `BSAVE PHOTO` replaced a 200 KB photo.bin).
     {
@@ -233,8 +233,10 @@ int main()
         const fs::path guest  = base / "hidden_guest";
         fs::create_directories(served);
         fs::create_directories(guest);
+        constexpr std::uintmax_t kHiddenBytes = 0x1000000;
         { std::FILE* f = std::fopen((served / "photo.bin").string().c_str(), "wb");
-          std::string big(200000, 'H'); std::fwrite(big.data(), 1, big.size(), f); std::fclose(f); }
+          std::fputc('H', f); std::fclose(f); }
+        fs::resize_file(served / "photo.bin", kHiddenBytes); // sparse, no large allocation
         { std::FILE* f = std::fopen((served / "a.txt").string().c_str(), "wb");
           std::fwrite("hello", 1, 5, f); std::fclose(f); }
         std::vector<std::uint8_t> vol;
@@ -250,7 +252,7 @@ int main()
         assert(pom2::buildVolumeFromFolder(guest.string(), "HOST", after).ok);
         const auto r = pom2::decodeVolumeToFolder(after, served.string(), &mountTime);
         assert(r.ok);
-        assert(fs::file_size(served / "photo.bin") == 200000 &&
+        assert(fs::file_size(served / "photo.bin") == kHiddenBytes &&
                "the guest's new PHOTO overwrote a host file it never saw");
         bool saved = false;               // the guest's file landed beside it
         for (const auto& de : fs::directory_iterator(served))

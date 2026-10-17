@@ -15,8 +15,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Ssi263 — Silicon Systems Inc. SSI263A phoneme speech synthesiser.
-// Shared between MockingboardCard (Sound II variant — 1 or 2 SSI263s
-// at $Cs40 / $Cs60) and EchoPlusCard (standalone). The chip plays one
+// Shared between PhasorCard (two SSI263APs), MockingboardCard
+// (Sound II variant — one SSI263,
+// selected by slot address bit 6) and EchoPlusCard (standalone). The chip plays one
 // of 62 phonemes for a duration determined by its rate/duration
 // registers, then signals the host (A/!R bit going high in the
 // readback + an IRQ edge per the configured mode).
@@ -48,7 +49,7 @@
 //
 // IRQ wiring (host card decides):
 //
-//   * Mockingboard C: A/!R drives CA1 on VIA1. The VIA latches an
+//   * Mockingboard C: enabled A/!R drives CA1 on VIA2. The VIA latches an
 //     interrupt when CA1 sees the configured edge.
 //   * Echo+ / Phasor speech: A/!R drives the slot IRQ line directly,
 //     bypassing any 6522.
@@ -62,12 +63,12 @@
 // ------------
 // The 62-phoneme PCM blob (ported from AppleWin) is linked in via
 // `Ssi263PhonemeData.cpp`; `fillAudio()` renders audible speech by
-// resampling the 22050 Hz source to the host rate, scaled by the AMP
-// register. (An earlier revision shipped without the PCM data — the
+// grouping PCM by DUR on a 22050 Hz native output grid, then resampling to
+// the host rate, scaled by AMP. (An earlier revision shipped without the PCM data — the
 // register/IRQ machine alone — which is why some host-card comments
 // still referenced "silent v1" speech.) Host cards mix it in their
-// AudioSrc: EchoPlusCard and MockingboardCard (Sound II) both call
-// fillAudio() under their card mutex.
+// AudioSrc: EchoPlusCard calls fillAudio(), MockingboardCard (Sound II)
+// calls fillAudioTimed(), both under their card mutex.
 
 #ifndef POM2_SSI263_H
 #define POM2_SSI263_H
@@ -123,7 +124,9 @@ public:
     static constexpr uint8_t FILTER_FREQ_SILENCE = 0xFF;
 
     // ─── State accessors ─────────────────────────────────────────────────
-    void reset();
+    // SSI263AP: warm reset clears FILFREQ; power-on uses the observed FF.
+    // Callers modelling a board without chip /RESET retain their own policy.
+    void reset(bool powerCycle = true);
 
     /// Read a register. Side effect: returns current status byte with
     /// bit 7 = A/!R. Mockingboard-faithful: only register $03 (or any
@@ -134,20 +137,20 @@ public:
     /// Write a register. Side effects:
     ///   - Writes to $00..$02 de-assert IRQ + clear A/!R (CPU
     ///     acknowledged the request).
-    ///   - Write to $00 (DURPHON) starts a new phoneme: latch the
-    ///     mode + phoneme code, compute the duration in cycles from
+    ///   - Write to $00 (DURPHON) starts a new phoneme: store the
+    ///     duration + phoneme code, compute the duration in cycles from
     ///     the current rate + duration mode, arm the playback timer.
     ///   - Write to $03 (CTTRAMP) toggles CTL: setting bit 7 puts
     ///     the chip in power-down (silences audio + de-asserts IRQ);
     ///     clearing bit 7 (H→L transition) exits power-down and
-    ///     starts the loaded phoneme.
+    ///     latches mode/IRQ enable from DURPHON and starts the loaded phoneme.
     /// Returns true if A/!R was just cleared (caller may need to
     /// drop the IRQ line in that case).
     bool write(uint8_t reg, uint8_t val);
 
-    /// Advance the playback counter by `cycles` 1.0227 MHz ticks.
-    /// Returns true if A/!R transitioned 0 → 1 this slice (caller
-    /// fires the IRQ edge).
+    /// Advance the repeating phoneme timer by CPU cycles at the live clock.
+    /// Returns true for a new enabled IRQ request. Completion still sets
+    /// D7 status when IRQ is disabled; an unacknowledged request is sticky.
     bool advance(int cycles);
 
     /// Queue a control write on the AUDIO timeline — bug hunt #19.
@@ -163,6 +166,10 @@ public:
     /// then applies each change at its own sample position.
     ///
     /// Caller holds the card mutex (the chip is not internally locked).
+    // Seed the replay bank BEFORE the first CPU-side write. Otherwise a
+    // first render can hear the producer's future CTL/amplitude immediately.
+    // Holds no lock; caller uses the card mutex as for the write/event pair.
+    void prepareTimedPlayback();
     void queuePlaybackEvent(uint8_t reg, uint8_t val, uint64_t cycle);
 
     /// Render `frameCount` samples, applying the queued playback events at
@@ -174,12 +181,10 @@ public:
 
     // ─── Readable state ──────────────────────────────────────────────────
     bool    aRequest()       const { return aRequest_; }
-    bool    irqEnabled()     const { return ((durPhon_ & DURATION_MODE_MASK) >> DURATION_MODE_SHIFT)
-                                                                   != MODE_IRQ_DISABLED; }
+    bool    irqEnabled()     const { return irqEnabled_; }
     bool    powerDown()      const { return (cttrAmp_ & CONTROL_MASK) != 0; }
     uint8_t currentPhoneme() const { return durPhon_ & PHONEME_MASK; }
-    SsiMode currentMode()    const { return static_cast<SsiMode>(
-                                       (durPhon_ & DURATION_MODE_MASK) >> DURATION_MODE_SHIFT); }
+    SsiMode currentMode()    const { return mode_; }
     uint8_t amplitude()      const { return cttrAmp_ & AMPLITUDE_MASK; }
     uint8_t articulation()   const { return (cttrAmp_ & ARTICULATION_MASK) >> 4; }
     uint8_t rate()           const { return (rateInf_ & RATE_MASK) >> 4; }
@@ -191,10 +196,7 @@ public:
     /// it therefore lasts 3.5x / 4x as many CPU cycles. Set by the owning
     /// card's `setCpuClock`; the power-on value is the NTSC nominal. Not
     /// serialised: it is a property of the machine, not of the chip.
-    void    setCpuClockHz(double hz)
-    {
-        if (hz > 0.0) cpuClockHz_ = static_cast<int64_t>(hz + 0.5);
-    }
+    void    setCpuClockHz(double hz);
 
     /// Direct peek into a register (no A/!R overlay) — for the UI panel.
     uint8_t peekRegister(uint8_t reg) const;
@@ -203,7 +205,8 @@ public:
     // The 5 latched registers + the phoneme playback cursor/timing. The
     // 62-phoneme PCM blob is static data, not state. Restores speech to its
     // exact mid-utterance position so a rewind doesn't blip.
-    static constexpr std::size_t kSnapshotBytes = 30;
+    static constexpr std::size_t kSnapshotBytesV1 = 30;
+    static constexpr std::size_t kSnapshotBytes = 31;
     void appendSnapshot(std::vector<uint8_t>& o) const
     {
         byteio::putU8(o, durPhon_); byteio::putU8(o, inflect_);
@@ -217,10 +220,14 @@ public:
         uint32_t accumBits = 0;
         std::memcpy(&accumBits, &resampleAccum_, sizeof(accumBits));
         byteio::putU32(o, accumBits);
+        // Append-only: preserve the old register/cursor offsets. Parent
+        // cards version their envelopes to distinguish the new byte.
+        byteio::putU8(o, static_cast<uint8_t>(mode_) | (irqEnabled_ ? 0x04 : 0));
     }
-    void loadSnapshot(const uint8_t* d)   // caller ensures >= kSnapshotBytes
+    void loadSnapshot(const uint8_t* d, std::size_t len = kSnapshotBytes)
     {
-        byteio::Reader r(d, kSnapshotBytes);
+        if (!d || len < kSnapshotBytesV1) return;
+        byteio::Reader r(d, len);
         durPhon_ = r.u8(); inflect_ = r.u8(); rateInf_ = r.u8();
         cttrAmp_ = r.u8(); filFreq_ = r.u8();
         phonemeRemainingCycles_ = static_cast<int>(r.u32());
@@ -230,6 +237,23 @@ public:
         playbackOffset_ = static_cast<std::size_t>(r.u64());
         const uint32_t accumBits = r.u32();
         std::memcpy(&resampleAccum_, &accumBits, sizeof(accumBits));
+        if (len >= kSnapshotBytes) {
+            const uint8_t state = r.u8();
+            mode_ = static_cast<SsiMode>(state & 0x03);
+            irqEnabled_ = (state & 0x04) != 0;
+        } else {
+            // Old blobs derived IRQ enable directly from DURPHON. They
+            // cannot recover a prior function when DUR=00; use the usual
+            // transitioned-inflection function with interrupts disabled.
+            const uint8_t dur = (durPhon_ & DURATION_MODE_MASK) >> DURATION_MODE_SHIFT;
+            irqEnabled_ = dur != MODE_IRQ_DISABLED;
+            mode_ = irqEnabled_ ? static_cast<SsiMode>(dur)
+                                : MODE_PHONEME_TRANSITIONED_INFLECTION;
+            // Legacy one-shot timers stopped at completion. Resume the
+            // repeating phoneme from a new period if its phase was lost.
+            if (!powerDown() && phonemeRemainingCycles_ == 0)
+                phonemeRemainingCycles_ = computePhonemeDurationCycles();
+        }
         // The cursor pair (phoneme, offset) is restored from the blob
         // without cross-validation: an offset from a long phoneme landing
         // on a short one reads the NEXT phoneme's PCM (see the matching
@@ -239,7 +263,7 @@ public:
         // ~2^30 iterations on a corrupt large value, on the realtime thread.
         if (!(resampleAccum_ >= 0.0f && resampleAccum_ < 1.0f))
             resampleAccum_ = 0.0f;
-        // The queue is not in the blob (kSnapshotBytes is unchanged). A
+        // The queue is not in the blob. A
         // restore that left it intact applied events from a future the
         // blob had just abandoned. Re-prime from the latched registers
         // on the next fillAudioTimed — the comment on aPrimed_ above.
@@ -269,7 +293,7 @@ private:
     /// Render with an EXPLICIT register pair, so the timed path can render
     /// the chip as it was at a past cycle rather than as it is now.
     void renderSamples(float* output, int frameCount, uint32_t sampleRate,
-                       uint8_t cttrAmp, uint8_t filFreq);
+                       uint8_t cttrAmp, uint8_t filFreq, uint8_t durPhon, SsiMode mode);
     /// Apply one queued event to the audio-side shadow state.
     void applyPlaybackEvent(uint8_t reg, uint8_t val);
 
@@ -279,11 +303,12 @@ private:
     // stay at CPU-NOW. These follow them through the stamped queue, so what
     // the audio thread renders at sample N is the chip as it stood at the
     // CPU cycle that sample covers. Derived state — deliberately NOT in the
-    // snapshot blob (`kSnapshotBytes` is unchanged); a restore re-primes
+    // snapshot blob; a restore re-primes
     // them from the latched registers.
     uint8_t aCttrAmp_ = 0;
     uint8_t aDurPhon_ = 0;
     uint8_t aFilFreq_ = 0;
+    SsiMode aMode_ = MODE_IRQ_DISABLED;
     bool    aPrimed_  = false;
     struct CtlEvent { uint64_t cycle; uint8_t reg; uint8_t val; };
     /// Fixed capacity, allocated once: the audio thread pops from this, and
@@ -292,18 +317,20 @@ private:
     AyEventRing<CtlEvent> ctlEvents_{kMaxCtlEvents};
 
     // Latched register values (last write).
-    uint8_t durPhon_ = 0;
+    uint8_t durPhon_ = 0xC0;
     uint8_t inflect_ = 0;
     uint8_t rateInf_ = 0;
-    uint8_t cttrAmp_ = 0;
-    uint8_t filFreq_ = 0;
+    uint8_t cttrAmp_ = CONTROL_MASK;
+    uint8_t filFreq_ = FILTER_FREQ_SILENCE;
+    SsiMode mode_ = MODE_IRQ_DISABLED;
+    bool irqEnabled_ = false;
 
     // Playback timing — countdown in CPU cycles to the end of the
-    // current phoneme. Zero = not playing / phoneme finished.
+    // current phoneme period. Zero = not playing / power-down.
     int phonemeRemainingCycles_ = 0;
 
     // A/!R flag — high when the chip is requesting the next phoneme
-    // (i.e. the current one is done OR the chip is in power-down).
+    // (the current phoneme completed; power-down clears this flag).
     bool aRequest_ = false;
 
     uint32_t phonemeWriteCount_ = 0;
@@ -332,10 +359,10 @@ private:
     int64_t cpuClockHz_     = static_cast<int64_t>(POM2_CPU_CLOCK_HZ);
 
     /// Compute the phoneme duration in CPU cycles based on the current
-    /// `durPhon_` (mode + phoneme) and `rateInf_` (rate). AppleWin's
-    /// formula (SSI263.cpp ~line 290):
-    ///   ms = (((16 - (rate>>4)) * 4096) / 1023) * (4 - (dur>>6))
-    /// converted to cycles with the live CPU clock (setCpuClockHz).
+    /// phoneme's PCM length and DUR consumption, with frame mode forcing
+    /// DUR=3, converted from native output frames to the live CPU clock.
+    /// Uses AppleWin Update()'s primary audio path for both sound and IRQ;
+    /// RATEINF/inflection synthesis remains outside this PCM model.
     int computePhonemeDurationCycles() const;
 };
 

@@ -42,6 +42,7 @@
 
 #include "CassetteDevice.h"
 #include "Debugger.h"
+#include "DebuggerSymbols.h"
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -1113,6 +1114,220 @@ void testResetClearsTheLatchedStop()
     std::printf("  ok: every reset verb drops the latched stop\n");
 }
 
+// Inline parameters deliberately move the return address, and the callee
+// temporarily empties the stack while doing so. Neither PC+3 nor SP equality
+// alone is a valid step-over implementation.
+void testStepOverInlineParameters()
+{
+    for (const uint8_t stack : { uint8_t{0xFF}, uint8_t{0x01} }) {
+        EmulationController ctrl;
+        {
+            auto st = ctrl.lockState();
+            const uint8_t caller[] = {0x20, 0x00, 0x09, 0x00, 0x00, 0x00, 0xA9, 0xEE};
+            // PLA/TAX/PLA/TAY temporarily restore SP. Add 3 to the return
+            // address with carry, then push it back and call a nested RTS.
+            const uint8_t callee[] = {
+                0x68, 0x18, 0x69, 0x03, 0xAA, 0x68, 0x69, 0x00,
+                0x48, 0x8A, 0x48, 0x20, 0x20, 0x09, 0x60
+            };
+            for (size_t i = 0; i < sizeof(caller); ++i) st.memory().memWrite(0x0800 + i, caller[i]);
+            for (size_t i = 0; i < sizeof(callee); ++i) st.memory().memWrite(0x0900 + i, callee[i]);
+            st.memory().memWrite(0x0920, 0xE6); // INC $40
+            st.memory().memWrite(0x0921, 0x40);
+            st.memory().memWrite(0x0922, 0x60);
+            st.memory().memWrite(0x0040, 0);
+            st.cpu().setProgramCounter(0x0800);
+            st.cpu().setStackPointer(stack);
+        }
+        ctrl.debugStepOver();
+        ctrl.tickFrame();
+        auto st = ctrl.lockState();
+        assert(ctrl.getMode() == EmulationController::Mode::Stopped);
+        if (st.cpu().getProgramCounter() != 0x0806)
+            std::fprintf(stderr, "inline step: initial SP=%02X PC=%04X SP=%02X hit=%d\n",
+                         stack, st.cpu().getProgramCounter(), st.cpu().getStackPointer(),
+                         static_cast<int>(ctrl.debugger().lastHit().reason));
+        assert(st.cpu().getProgramCounter() == 0x0806);
+        assert(st.cpu().getStackPointer() == stack);
+        assert(st.memory().peekCpuView(0x40) == 1);
+        assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::StepOver);
+    }
+}
+
+void testStepOverReturnInterrupt()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    pom2::Debugger dbg;
+    mem.memWrite(0x0800, 0x20); mem.memWrite(0x0801, 0x00); mem.memWrite(0x0802, 0x09);
+    mem.memWrite(0x0900, 0x60);
+    mem.memWrite(0x0A00, 0x40); // NMI handler: RTI
+    const uint8_t vector[] = {0x00, 0x0A};
+    mem.loadRomBytes(vector, 2, 0xFFFA);
+    cpu.setProgramCounter(0x0800);
+    cpu.setStackPointer(0xFF);
+    dbg.setStepOver(cpu, mem);
+    cpu.setDebugHook(&dbg);
+    cpu.run(6); // JSR
+    cpu.setNMI(); // Interrupt before the outer RTS really executes.
+    cpu.run(100);
+    assert(dbg.stopRequested());
+    assert(cpu.getProgramCounter() == 0x0803);
+    assert(cpu.getStackPointer() == 0xFF);
+}
+
+void testConditionalBreakpointsAndSymbols()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    pom2::Debugger dbg;
+    mem.memWrite(0x0800, 0xE8); // INX; JMP $0800
+    mem.memWrite(0x0801, 0x4C); mem.memWrite(0x0802, 0x00); mem.memWrite(0x0803, 0x08);
+    cpu.setProgramCounter(0x0800);
+    cpu.setXRegister(0);
+    dbg.addConditionalBreakpoint(0x0800,
+        {pom2::Debugger::Register::X, pom2::Debugger::Compare::Equal, 3}, cpu);
+    cpu.setDebugHook(&dbg);
+    cpu.run(1000);
+    assert(dbg.stopRequested() && cpu.getXRegister() == 3);
+    assert(cpu.getProgramCounter() == 0x0800);
+    using D = pom2::Debugger;
+    const D::Compare comparisons[] = {D::Compare::Equal, D::Compare::NotEqual,
+        D::Compare::Less, D::Compare::LessEqual, D::Compare::Greater, D::Compare::GreaterEqual};
+    for (const auto comparison : comparisons) {
+        for (uint16_t value = 2; value <= 4; ++value) {
+            dbg.clearForTimeJump();
+            dbg.addConditionalBreakpoint(0x0800, {D::Register::X, comparison, value}, cpu);
+            const bool expected = comparison == D::Compare::Equal ? 3 == value :
+                comparison == D::Compare::NotEqual ? 3 != value :
+                comparison == D::Compare::Less ? 3 < value :
+                comparison == D::Compare::LessEqual ? 3 <= value :
+                comparison == D::Compare::Greater ? 3 > value : 3 >= value;
+            assert(dbg.onInstruction(0x0800) == expected);
+        }
+    }
+    dbg.clearForTimeJump();
+    dbg.addConditionalBreakpoint(0x0800, {D::Register::X, D::Compare::Equal, 1, 1}, cpu);
+    assert(dbg.onInstruction(0x0800));
+    dbg.addBreakpoint(0x0800);
+    assert(dbg.conditions().empty());
+    dbg.addConditionalBreakpoint(0x0800, {}, cpu);
+    dbg.removeBreakpoint(0x0800);
+    assert(dbg.conditions().empty() && !dbg.armed());
+
+    pom2::DebuggerSymbols symbols;
+    std::string error;
+    assert(symbols.load("0800 START\nal 000900 .callee\nEND = $0A00\nLAST EQU 0B00 ; comment\n", error));
+    uint16_t address = 0;
+    assert(symbols.size() == 4);
+    assert(symbols.resolve("START", address) && address == 0x0800);
+    assert(symbols.resolve(".callee", address) && address == 0x0900);
+    assert(symbols.resolve("$1234", address) && address == 0x1234);
+    assert(symbols.label(0x0A00) == "END");
+    assert(!symbols.load("al 010000 .banked", error));
+    assert(symbols.size() == 4 && symbols.label(0x0800) == "START");
+    assert(!symbols.load("0800 START\n0801 START", error));
+    assert(!symbols.resolve("10000", address));
+    assert(!symbols.resolve("0800garbage", address));
+}
+
+void testStepOverRecursiveReturn()
+{
+    EmulationController ctrl;
+    {
+        auto st = ctrl.lockState();
+        const uint8_t caller[] = {0x20, 0x00, 0x09, 0x60};
+        const uint8_t callee[] = {0xCA, 0xF0, 0x04, 0x20, 0x00, 0x08, 0x60};
+        for (size_t n = 0; n < sizeof(caller); ++n) st.memory().memWrite(0x0800 + n, caller[n]);
+        for (size_t n = 0; n < sizeof(callee); ++n) st.memory().memWrite(0x0900 + n, callee[n]);
+        st.memory().memWrite(0x0907, 0x60);
+        st.cpu().setProgramCounter(0x0800);
+        st.cpu().setStackPointer(0xFF);
+        st.cpu().setXRegister(2);
+    }
+    ctrl.debugStepOver();
+    ctrl.tickFrame();
+    auto st = ctrl.lockState();
+    assert(ctrl.getMode() == EmulationController::Mode::Stopped);
+    assert(st.cpu().getProgramCounter() == 0x0803 && st.cpu().getStackPointer() == 0xFF);
+    assert(st.cpu().getXRegister() == 0);
+}
+
+void testProfilerHistoryAndStepOut()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    pom2::Debugger dbg;
+    mem.memWrite(0x0800, 0xEA);
+    mem.memWrite(0x0801, 0x4C); mem.memWrite(0x0802, 0x00); mem.memWrite(0x0803, 0x08);
+    cpu.setProgramCounter(0x0800);
+    dbg.setProfiling(true);
+    dbg.setHistoryEnabled(true);
+    assert(dbg.armed());
+    cpu.setDebugHook(&dbg);
+    assert(cpu.run(500) == 500);
+    const auto profile = dbg.profile();
+    assert(profile.size() == 2);
+    assert(profile[0].pc == 0x0801 && profile[0].visits == 100 && profile[0].cycles == 300);
+    assert(profile[1].pc == 0x0800 && profile[1].visits == 100 && profile[1].cycles == 200);
+    assert(dbg.history().size() == 200);
+    cpu.run(1000);
+    auto history = dbg.history();
+    assert(history.size() == 256 && history.back().pc == 0x0801 && history.back().nextPc == 0x0800);
+    for (size_t i = 1; i < history.size(); ++i)
+        assert(history[i - 1].nextPc == history[i].pc);
+    dbg.addBreakpoint(0x0800);
+    const auto before = dbg.profile();
+    assert(cpu.run(100) == 0);
+    assert(dbg.profile()[0].visits == before[0].visits); // stopped instructions are not counted
+    dbg.clearForTimeJump();
+    assert(dbg.history().empty() && dbg.profile().empty());
+    dbg.clearBreakpoints();
+    dbg.setProfiling(false); dbg.setHistoryEnabled(false);
+    assert(!dbg.armed());
+
+    EmulationController ctrl;
+    {
+        auto st = ctrl.lockState();
+        const uint8_t code[] = {0x20, 0x00, 0x09, 0xEA};
+        for (size_t n = 0; n < sizeof(code); ++n) st.memory().memWrite(0x0800 + n, code[n]);
+        st.memory().memWrite(0x0900, 0xE8); st.memory().memWrite(0x0901, 0x60);
+        st.cpu().setProgramCounter(0x0800);
+        st.cpu().setStackPointer(0xFF);
+        st.cpu().setXRegister(0);
+        st.cpu().run(6);
+        assert(st.cpu().getProgramCounter() == 0x0900);
+    }
+    ctrl.debugStepOut();
+    ctrl.tickFrame();
+    auto st = ctrl.lockState();
+    assert(ctrl.getMode() == EmulationController::Mode::Stopped);
+    assert(st.cpu().getProgramCounter() == 0x0803 && st.cpu().getXRegister() == 1);
+    assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::StepOut);
+}
+
+void testWatchpointResumeKeepsNextBreakpoint()
+{
+    EmulationController ctrl;
+    {
+        auto st = ctrl.lockState();
+        st.memory().memWrite(0x0800, 0x85); st.memory().memWrite(0x0801, 0x40);
+        st.memory().memWrite(0x0802, 0xEA);
+        st.cpu().setProgramCounter(0x0800);
+        ctrl.debugger().setWatchpoint(0x40, pom2::Debugger::Write);
+        ctrl.debugger().addBreakpoint(0x0802);
+        ctrl.syncDebugHook();
+    }
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::WatchWrite);
+    { auto st = ctrl.lockState(); ctrl.debugResume(); }
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::Breakpoint);
+    assert(ctrl.debugger().lastHit().pc == 0x0802);
+}
+
 int main()
 {
     testBreakpointBookkeeping();
@@ -1135,6 +1350,12 @@ int main()
     testBootFromSlotResetsTheCassetteCpuSide();
     testResetClearsTheLatchedStop();
     testStepOverDecodesTheCpuView();
+    testStepOverInlineParameters();
+    testStepOverReturnInterrupt();
+    testStepOverRecursiveReturn();
+    testConditionalBreakpointsAndSymbols();
+    testProfilerHistoryAndStepOut();
+    testWatchpointResumeKeepsNextBreakpoint();
     std::printf("debugger: all assertions passed\n");
     return 0;
 }

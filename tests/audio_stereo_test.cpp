@@ -302,8 +302,8 @@ uint8_t phMakePb(bool selPrimary, bool selSecondary)
     pb &= ~0x01;                                    // BC1 = 0
     pb &= ~0x02;                                    // BDIR = 0
     pb |= 0x04;                                     // /RESET = 1
-    if (selPrimary)   pb &= ~0x08; else pb |= 0x08; // PB3 active-low
-    if (selSecondary) pb &= ~0x10; else pb |= 0x10; // PB4 active-low
+    if (selPrimary)   pb &= ~0x10; else pb |= 0x10; // PB4 active-low
+    if (selSecondary) pb &= ~0x08; else pb |= 0x08; // PB3 active-low
     return pb;
 }
 

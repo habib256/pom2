@@ -17,14 +17,12 @@
 // PhasorCard smoke test — pins the observable surfaces of the
 // dual-mode Phasor card:
 //
-//   1. VIA address decode — MAME `a2bus_phasor_device::read_cnxx` /
-//      `write_cnxx` (`a2mockingboard.cpp:312-337` / `:365-390`): decode
-//      is gated to $00-$1F and $80-$9F in BOTH modes. Mockingboard mode
-//      selects VIA1 below $80 and VIA2 above; Phasor-native mode uses
+//   1. VIA address decode — AppleWin 6c579da5bd94, full-page aliases:
+//      Mockingboard mode selects VIA1 below $80 and VIA2 above; native uses
 //      `via_sel = ((off & 0x80) >> 6) | ((off & 0x10) >> 4)` so
 //      $00-$0F → none, $10-$1F → VIA1, $80-$8F → VIA2, $90-$9F → BOTH
 //      (write broadcast; read ORs the two bytes). Undecoded reads
-//      return 0.
+//      float. Echo+ maps every window to VIA2; undefined modes select none.
 //   2. Mode soft-switch ($C0(8+s)X) — boots in PH_Mockingboard, a
 //      device-select read/write at $C0(8+s)D transitions to PH_Phasor
 //      (mode=5), $C0(8+s)8 clears back to PH_Mockingboard (mode=0).
@@ -34,8 +32,8 @@
 //      strobes; the secondary AYs (AY1, AY3) stay untouched even when
 //      the chip-select bits (PB3/PB4) say otherwise.
 //   4. Phasor-native routing — in PH_Phasor the active-low chip-select
-//      decode `chip_sel = (~(pb >> 3)) & 3` honours PB3 (primary) and
-//      PB4 (secondary): primary-only writes hit AY0 (not AY1);
+//      decode honours PB4 (primary) and PB3 (secondary):
+//      primary-only writes hit AY0 (not AY1);
 //      secondary-only hit AY1 (not AY0); broadcast hits both. VIA2's
 //      strobes land on the AY2/AY3 pair. (Strobed through the VIA1
 //      window at $10-$1F per the native decode above.)
@@ -60,7 +58,7 @@
 namespace {
 
 // Build a Port B byte: BC1=bc1, BDIR=bdir, /RESET=1 (chip running),
-// PB3=cs0 (primary select, active LOW so pass 0 to select), PB4=cs1
+// PB4=cs0 (primary select, active LOW so pass 0 to select), PB3=cs1
 // (secondary select), other bits = 1.
 uint8_t makePb(bool bc1, bool bdir, bool selPrimary, bool selSecondary)
 {
@@ -68,8 +66,8 @@ uint8_t makePb(bool bc1, bool bdir, bool selPrimary, bool selSecondary)
     if (bc1)        pb |= 0x01; else pb &= ~0x01;
     if (bdir)       pb |= 0x02; else pb &= ~0x02;
     pb |= 0x04;                                   // /RESET=1 (no reset)
-    if (selPrimary)   pb &= ~0x08; else pb |= 0x08; // PB3 active-low
-    if (selSecondary) pb &= ~0x10; else pb |= 0x10; // PB4 active-low
+    if (selPrimary)   pb &= ~0x10; else pb |= 0x10; // PB4 active-low
+    if (selSecondary) pb &= ~0x08; else pb |= 0x08; // PB3 active-low
     return pb;
 }
 
@@ -112,11 +110,8 @@ void doLatchWrite(PhasorCard& card, int viaIdx, uint8_t pb,
 void testViaLayout()
 {
     PhasorCard card(4);
-    // MB-compat mode (power-up). MAME decode (`a2mockingboard.cpp:
-    // 312-337`): VIA1 at $00-$1F (reg = low4, $10-$1F mirror), VIA2 at
-    // $80-$9F, everything else ($20-$7F, $A0-$FF) undecoded in BOTH
-    // modes. Distinct T1 latches written to VIA1 vs VIA2 must come
-    // back separate.
+    // MB-compat mode: A7 selects the VIA over the whole slot-ROM page
+    // (AppleWin 6c579da5bd94 Mockingboard.cpp:683-692).
     card.slotRomWrite(pom2::Via6522::VIA_T1LL,        0x34);
     card.slotRomWrite(pom2::Via6522::VIA_T1LH,        0x12);
     card.slotRomWrite(0x80 + pom2::Via6522::VIA_T1LL, 0x78);
@@ -131,14 +126,13 @@ void testViaLayout()
     // $90-$9F mirrors VIA2 in MB mode.
     card.slotRomWrite(0x90 + pom2::Via6522::VIA_T1LL, 0xCD);
     assert(card.peekViaRegister(1, pom2::Via6522::VIA_T1LL) == 0xCD);
-    // OUT of range: $40-$4F was a VIA1 mirror in the pre-MAME-parity
-    // decode — MAME gates it off. Write dropped, read returns 0.
+    // Upper aliases are decoded too; MAME's smaller range gate omitted them.
     card.slotRomWrite(0x40 + pom2::Via6522::VIA_T1LL, 0x99);
-    assert(card.peekViaRegister(0, pom2::Via6522::VIA_T1LL) == 0xAB);
-    assert(card.slotRomRead(0x40 + pom2::Via6522::VIA_T1LL) == 0x00);
-    assert(card.slotRomRead(0xA0 + pom2::Via6522::VIA_T1LL) == 0x00);
+    assert(card.peekViaRegister(0, pom2::Via6522::VIA_T1LL) == 0x99);
+    assert(card.slotRomRead(0x40 + pom2::Via6522::VIA_T1LL) == 0x99);
+    assert(card.slotRomRead(0xA0 + pom2::Via6522::VIA_T1LL) == 0xCD);
 
-    std::printf("  ok: dual-VIA register layout + MAME range-gated decode\n");
+    std::printf("  ok: dual-VIA register layout and full-page aliases\n");
 }
 
 void testNativeViaDecode()
@@ -149,11 +143,11 @@ void testNativeViaDecode()
 
     // Native via_sel = ((off & 0x80) >> 6) | ((off & 0x10) >> 4)
     // (MAME `a2mockingboard.cpp:319,373`):
-    //   $00-$0F → no VIA. Write dropped, read 0.
+    //   $00-$0F → no VIA. Write dropped, read floating bus.
     card.slotRomWrite(0x00 + pom2::Via6522::VIA_T1LL, 0x11);
     assert(card.peekViaRegister(0, pom2::Via6522::VIA_T1LL) == 0xFF);
     assert(card.peekViaRegister(1, pom2::Via6522::VIA_T1LL) == 0xFF);
-    assert(card.slotRomRead(0x00 + pom2::Via6522::VIA_T1LL) == 0x00);
+    assert(card.slotRomRead(0x00 + pom2::Via6522::VIA_T1LL) == 0xFF);
 
     //   $10-$1F → VIA1 only.
     card.slotRomWrite(0x10 + pom2::Via6522::VIA_T1LL, 0x22);
@@ -245,13 +239,13 @@ void testPhasorNativeRouting()
     card.deviceSelectWrite(0xD, 0);
     assert(card.mode() == PhasorCard::PH_Phasor);
 
-    // VIA1 → AY0 only (PB3 low, PB4 high).
+    // VIA1 → AY0 only (PB4 low, PB3 high).
     const uint8_t pbPri = makePb(0, 0, /*pri*/1, /*sec*/0);
     doLatchWrite(card, 0, pbPri, /*reg*/0, /*data*/0xAA);
     assert(card.getAyRegister(0, 0) == 0xAA);
     assert(card.getAyRegister(1, 0) == 0x00);
 
-    // VIA1 → AY1 only (PB3 high, PB4 low).
+    // VIA1 → AY1 data only (PB4 high, PB3 low; LATCH addresses both).
     const uint8_t pbSec = makePb(0, 0, /*pri*/0, /*sec*/1);
     doLatchWrite(card, 0, pbSec, /*reg*/1, /*data*/0xBB);
     assert(card.getAyRegister(0, 1) == 0x00);
@@ -842,8 +836,164 @@ void testAyBusUndrivenSelectsFloatHigh()
 
 } // namespace
 
+void testResetAlwaysReachesBothAys()
+{
+    // AppleWin 6c579da5bd94 Mockingboard.cpp AY8913_Reset and GH#1197:
+    // PB2 directly drives both AY reset pins, including in compatibility
+    // mode where the secondary chip cannot otherwise be addressed.
+    for (bool native : {false, true}) {
+        for (int via = 0; via < 2; ++via) {
+            for (int selects = 0; selects < 4; ++selects) {
+                PhasorCard card(4);
+                card.deviceSelectWrite(0x05, 0);
+                for (int pair = 0; pair < 2; ++pair) {
+                    const auto both = makePb(false, false, true, true);
+                    doLatchWrite(card, pair, both, 8, 15);
+                    doLatchWrite(card, pair, both, 13, 10);
+                }
+                if (!native) card.deviceSelectWrite(0x08, 0);
+                const uint8_t base = viaBase(card, via);
+                card.slotRomWrite(base, static_cast<uint8_t>(selects << 3));
+                for (int ay = 0; ay < 4; ++ay) {
+                    const bool reset = ay / 2 == via;
+                    if (card.getAyRegister(ay, 8) != (reset ? 0 : 15) ||
+                        card.getAyRegister(ay, 13) != (reset ? 0 : 10)) {
+                        std::fprintf(stderr,
+                            "Phasor reset scope: native=%d via=%d selects=%d ay=%d\n",
+                            native, via, selects, ay);
+                        std::abort();
+                    }
+                }
+            }
+        }
+    }
+    std::puts("  ok: PB2 resets both AYs in native and compatibility modes");
+}
+
+void testNativeGalHardwareRouting()
+{
+    // AppleWin 6c579da5bd94 Mockingboard.cpp:237-262,285-286:
+    // PB4 selects primary; PB3 selects secondary. A secondary address
+    // latch selects/latches both; a primary latch deselects secondary.
+    for (int pair = 0; pair < 2; ++pair) {
+        PhasorCard card(4);
+        card.deviceSelectWrite(0x0D, 0);
+        const uint8_t base = pair ? 0x80 : 0x10;
+        card.slotRomWrite(base + 3, 0xFF);
+        card.slotRomWrite(base + 2, 0xFF);
+        auto command = [&](uint8_t select, uint8_t function, uint8_t data) {
+            card.slotRomWrite(base, select | 4);
+            card.slotRomWrite(base + 1, data);
+            card.slotRomWrite(base, select | 4 | function);
+            card.slotRomWrite(base, select | 4);
+        };
+        command(0x08, 3, 8); // primary latch
+        command(0x08, 2, 10);
+        assert(card.getAyRegister(pair * 2, 8) == 10 && "PB4 must select the primary AY");
+        assert(card.getAyRegister(pair * 2 + 1, 8) == 0);
+        command(0x10, 3, 9); // secondary latch copies address to primary
+        command(0x10, 2, 7);
+        command(0x08, 2, 13); // primary WRITE also hits selected secondary
+        assert(card.getAyRegister(pair * 2, 9) == 13);
+        assert(card.getAyRegister(pair * 2 + 1, 9) == 13);
+        command(0x08, 3, 10); // primary latch deselects secondary
+        command(0x10, 2, 2);  // cannot write secondary until re-latched
+        assert(card.getAyRegister(pair * 2 + 1, 9) == 13);
+        std::vector<uint8_t> state;
+        card.appendSnapshotState(state);
+        command(0x10, 3, 9); // reselect both, then restore deselection
+        card.loadSnapshotState(state.data(), state.size());
+        command(0x10, 2, 1);
+        assert(card.getAyRegister(pair * 2 + 1, 9) == 13 && "snapshot lost GAL deselection");
+
+        // Selecting both on WRITE must not deliver the secondary store
+        // twice through the primary's GAL route (R13 retriggers each time).
+        command(0x10, 3, 13);
+        const auto primaryWrites = card.getAyWriteCount(pair * 2);
+        const auto secondaryWrites = card.getAyWriteCount(pair * 2 + 1);
+        command(0, 2, 8);
+        assert(card.getAyWriteCount(pair * 2) == primaryWrites + 1);
+        assert(card.getAyWriteCount(pair * 2 + 1) == secondaryWrites + 1);
+
+        // Build different R8 contents while both GAL selections are active.
+        command(0x08, 3, 8);
+        command(0x08, 2, 10);
+        command(0x10, 3, 8);
+        command(0x10, 2, 21);
+        card.slotRomWrite(base + 3, 0); // DDRA input for PSG reads
+        for (auto select : {0x08, 0x10, 0x00, 0x18}) {
+            card.slotRomWrite(base, select | 4);
+            card.slotRomWrite(base, select | 5);
+            const auto expected = select == 0x10 ? 21 : select == 0x18 ? 255 : 31;
+            assert(card.slotRomRead(base + 1) == expected && "GAL read must OR driven AY outputs or float high");
+        }
+    }
+}
+
+void testFullPageViaDecodeAndEcho()
+{
+    static constexpr int masks[3][16] = {
+        {1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2},
+        {0,1,0,1,0,1,0,1,2,3,2,3,2,3,2,3},
+        {2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2},
+    };
+    for (int mode = 0; mode < 8; ++mode) {
+        const int row = mode == 0 ? 0 : mode == 5 ? 1 : mode == 7 ? 2 : -1;
+        for (int window = 0; window < 16; ++window) {
+            PhasorCard card(4);
+            card.deviceSelectWrite(0x08 | mode, 0);
+            const int selected = row < 0 ? 0 : masks[row][window];
+            const auto address = static_cast<uint8_t>(window * 16 + 6);
+            card.slotRomWrite(address, 0x37);
+            assert(card.peekViaRegister(0, 6) == ((selected & 1) ? 0x37 : 0xFF));
+            assert(card.peekViaRegister(1, 6) == ((selected & 2) ? 0x37 : 0xFF));
+            const bool speech = mode == 5 && !(address & 0x90) && (address & 0x60);
+            assert(card.slotRomRead(address) == (selected ? 0x37 : speech ? 0x7F : 0xFF));
+        }
+    }
+    PhasorCard echo(4);
+    echo.deviceSelectWrite(0x0F, 0);
+    echo.slotRomWrite(0xE3, 0xFF);
+    echo.slotRomWrite(0xE2, 0xFF);
+    auto command = [&](int select, int function, int data) {
+        echo.slotRomWrite(0xE0, select | 4);
+        echo.slotRomWrite(0xE1, data);
+        echo.slotRomWrite(0xE0, select | 4 | function);
+        echo.slotRomWrite(0xE0, select | 4);
+    };
+    command(8, 3, 8); // independent primary/secondary latches in Echo+ mode
+    command(16, 3, 9);
+    command(8, 2, 15);
+    command(16, 2, 7);
+    assert(echo.getAyRegister(2, 8) == 15 && echo.getAyRegister(3, 9) == 7);
+    assert(echo.getAyRegister(0, 8) == 0 && echo.getAyRegister(1, 9) == 0);
+}
+
+// Native SSI request bypasses the VIA interrupt enables.
+void testPhasorSpeechRequest()
+{
+    PhasorCard card(4);
+    card.deviceSelectWrite(0x0D, 0);
+    card.slotRomWrite(0x40, 0xC2);
+    card.slotRomWrite(0x44, 0x80);
+    card.slotRomWrite(0x43, 0x0F);
+    assert((card.slotRomRead(0x40) & 0x80) == 0);
+    card.advanceCycles(1000000);
+    assert(card.isIrqAsserted());
+    assert((card.slotRomRead(0x40) & 0x80) != 0);
+    card.slotRomWrite(0x41, 0);
+    assert(!card.isIrqAsserted());
+}
+
+void testPhasorSpeechCases();
+
 int main()
 {
+    testPhasorSpeechRequest();
+    testPhasorSpeechCases();
+    testNativeGalHardwareRouting();
+    testFullPageViaDecodeAndEcho();
+    testResetAlwaysReachesBothAys();
     std::printf("PhasorCard smoke test\n");
     testAyBusUndrivenSelectsFloatHigh();
     testViaLayout();

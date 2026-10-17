@@ -1266,6 +1266,42 @@ static void testLossyHostNamesRoundTripInPlace()
     std::printf("prodos_volume_smoke: lossy host names round-trip in place OK\n");
 }
 
+static void testTreeFilesBuildAndRoundTrip()
+{
+    for (const size_t size : {size_t{131072}, size_t{131073}, size_t{262157}, size_t{0xFFFFFF}}) {
+        const fs::path source = makeTempDir("tree_build");
+        const fs::path destination = makeTempDir("tree_build_roundtrip");
+        std::vector<uint8_t> data(size);
+        for (size_t i = 0; i < size; ++i) data[i] = static_cast<uint8_t>(i * 17 + i / 512);
+        writeFile(source / "large.bin", data);
+        std::vector<uint8_t> image;
+        const auto built = pom2::buildVolumeFromFolder(source.string(), "HOST", image);
+        assert(built.ok && built.filesIncluded == 1 && built.filesSkipped == 0);
+        const uint8_t* entry = image.data() + 2 * 512 + 4 + 39;
+        assert((entry[0] >> 4) == (size <= 131072 ? 2 : 3));
+        assert(rd24(entry + 0x15) == size);
+        const size_t blocks = (size + 511) / 512;
+        assert(rd16(entry + 0x13) == blocks + (size <= 131072 ? 1 : 1 + (blocks + 255) / 256));
+        const auto decoded = pom2::decodeVolumeToFolder(image, destination.string());
+        assert(decoded.ok && decoded.filesWritten == 1 && decoded.filesUnsaved == 0);
+        std::ifstream input(destination / "LARGE.bin", std::ios::binary);
+        const std::vector<uint8_t> actual((std::istreambuf_iterator<char>(input)), {});
+        assert(actual == data);
+        std::error_code ec;
+        fs::remove_all(source, ec);
+        fs::remove_all(destination, ec);
+    }
+    // A file at exactly 16 MiB cannot be represented by the 24-bit EOF.
+    const fs::path source = makeTempDir("tree_too_big");
+    { std::ofstream file(source / "oversize.bin", std::ios::binary);
+      file.seekp(0xFFFFFF); file.put('x'); }
+    std::vector<uint8_t> image;
+    const auto built = pom2::buildVolumeFromFolder(source.string(), "HOST", image);
+    assert(built.ok && built.filesIncluded == 0 && built.filesSkipped == 1);
+    std::error_code ec;
+    fs::remove_all(source, ec);
+}
+
 int main()
 {
     testEmptyFolder();
@@ -1283,6 +1319,7 @@ int main()
     testDeviceNamesNeverEnterTheVolume();
     testUnsavedEntryFailsTheDecode();
     testTreeFileDecodes();
+    testTreeFilesBuildAndRoundTrip();
     testDecodeRefusesToWriteThroughASymlink();
     testLeadingDotNamesRefused();
     testTypeAndAuxSurviveTheWriteBack();

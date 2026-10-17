@@ -27,14 +27,21 @@ constexpr uint8_t kVersion  = 1;
 constexpr std::size_t kBlobBytes = 4 + 1 + 4;
 } // namespace
 
-uint8_t VidHDCard::deviceSelectRead(uint8_t low4)
+uint8_t VidHDCard::slotRomRead(uint8_t low8)
 {
-    // AppleWin VidHD.cpp:68-79 — the detection bytes, then IO_Null.
-    switch (low4) {
-        case 0: return 0x24;
-        case 1: return 0xEA;
-        case 2: return 0x4C;
-        default: return openBus();
+    // AppleWin 6c579da5bd94, VidHD.cpp InitializeIO(): IORead is the
+    // IOReadCx handler (Memory.h RegisterIoHandler), not IOReadC0.
+    uint8_t value;
+    return peekSlotRom(low8, value) ? value : openBus();
+}
+
+bool VidHDCard::peekSlotRom(uint8_t low8, uint8_t& out) const
+{
+    switch (low8) {
+        case 0: out = 0x24; return true;
+        case 1: out = 0xEA; return true;
+        case 2: out = 0x4C; return true;
+        default: return false;
     }
 }
 

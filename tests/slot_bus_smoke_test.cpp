@@ -287,6 +287,13 @@ int main()
     // Reset does NOT clear the expansion latch (intentional invariant).
     assert(bus.getActiveExpansionSlot() == 6);
 
+    // Power loss drops the expansion latch. Cards without a dedicated
+    // power-cycle override still receive their usual reset callback.
+    bus.reset(/*powerCycle=*/true);
+    assert(card->resetCount == 2);
+    assert(bus.getActiveExpansionSlot() == -1);
+    (void)bus.slotRomRead(0xC600);
+
     // Unplug clears latch when active slot is removed.
     auto removed = bus.unplug(6);
     assert(removed != nullptr);

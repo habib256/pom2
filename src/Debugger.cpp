@@ -17,6 +17,7 @@
 // Run-control debugger — see Debugger.h for the design and the locking rule.
 
 #include "Debugger.h"
+#include "Memory.h"
 
 #include <algorithm>
 
@@ -41,6 +42,7 @@ void Debugger::ensureWpBits()
 
 void Debugger::addBreakpoint(uint16_t addr)
 {
+    conditions_.erase(addr);
     ensureBpBits();
     uint8_t& byte = bpBits_[addr >> 3];
     const uint8_t bit = static_cast<uint8_t>(1u << (addr & 7));
@@ -51,6 +53,7 @@ void Debugger::addBreakpoint(uint16_t addr)
 
 void Debugger::removeBreakpoint(uint16_t addr)
 {
+    conditions_.erase(addr);
     if (bpBits_.empty()) return;
     uint8_t& byte = bpBits_[addr >> 3];
     const uint8_t bit = static_cast<uint8_t>(1u << (addr & 7));
@@ -67,6 +70,7 @@ void Debugger::toggleBreakpoint(uint16_t addr)
 
 void Debugger::clearBreakpoints()
 {
+    conditions_.clear();
     // Freed rather than zeroed: an un-armed debugger should hold no memory,
     // and `armed()` keying off the count means the CPU goes back to its fast
     // loop the moment the last breakpoint goes.
@@ -79,6 +83,41 @@ bool Debugger::hasBreakpoint(uint16_t addr) const
 {
     if (bpBits_.empty()) return false;
     return (bpBits_[addr >> 3] >> (addr & 7)) & 1u;
+}
+
+void Debugger::addConditionalBreakpoint(uint16_t addr, Condition condition,
+                                        const M6502& cpu)
+{
+    addBreakpoint(addr);
+    conditionCpu_ = &cpu;
+    conditions_[addr] = condition;
+}
+
+bool Debugger::conditionMatches(uint16_t addr) const
+{
+    const auto found = conditions_.find(addr);
+    if (found == conditions_.end()) return true;
+    if (!conditionCpu_) return false;
+    const Condition& c = found->second;
+    uint16_t value = 0;
+    switch (c.reg) {
+        case Register::A: value = conditionCpu_->getAccumulator(); break;
+        case Register::X: value = conditionCpu_->getXRegister(); break;
+        case Register::Y: value = conditionCpu_->getYRegister(); break;
+        case Register::P: value = conditionCpu_->getStatusRegister(); break;
+        case Register::SP: value = conditionCpu_->getStackPointer(); break;
+        case Register::PC: value = conditionCpu_->getProgramCounter(); break;
+    }
+    value &= c.mask;
+    switch (c.compare) {
+        case Compare::Equal: return value == c.value;
+        case Compare::NotEqual: return value != c.value;
+        case Compare::Less: return value < c.value;
+        case Compare::LessEqual: return value <= c.value;
+        case Compare::Greater: return value > c.value;
+        case Compare::GreaterEqual: return value >= c.value;
+    }
+    return false;
 }
 
 std::vector<uint16_t> Debugger::breakpoints() const
@@ -145,11 +184,88 @@ std::vector<Debugger::Watch> Debugger::watchpoints() const
 
 void Debugger::setTransient(uint16_t addr, Reason reason)
 {
+    stepCpu_ = nullptr;
     transientAddr_   = addr;
     transientReason_ = reason;
     // Released last, so a CPU worker that observes the flag set also observes
     // the address and reason that go with it.
     transientArmed_.store(true, std::memory_order_release);
+}
+
+void Debugger::setStepOver(M6502& cpu, const Memory& memory)
+{
+    stepCpu_ = &cpu;
+    stepMemory_ = &memory;
+    stepStack_ = cpu.getStackPointer();
+    stepReturning_ = false;
+    transientReason_ = Reason::StepOver;
+    transientArmed_.store(true, std::memory_order_release);
+}
+
+void Debugger::setStepOut(M6502& cpu, const Memory& memory)
+{
+    setStepOver(cpu, memory);
+    stepStack_ = static_cast<uint8_t>(cpu.getStackPointer() + 2);
+    transientReason_ = Reason::StepOut;
+}
+
+void Debugger::setProfiling(bool enabled)
+{
+    if (enabled && profile_.empty()) profile_.resize(kAddressSpace);
+    profiling_ = enabled;
+}
+
+void Debugger::setHistoryEnabled(bool enabled)
+{
+    if (enabled && history_.empty()) history_.resize(256);
+    historyEnabled_ = enabled;
+}
+
+void Debugger::clearMeasurements()
+{
+    std::fill(profile_.begin(), profile_.end(), ProfileEntry{});
+    historyHead_ = historyCount_ = 0;
+}
+
+void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
+{
+    if (cycles <= 0) return;
+    if (profiling_) {
+        auto& entry = profile_[pc];
+        entry.pc = pc;
+        ++entry.visits;
+        entry.cycles += static_cast<uint64_t>(cycles);
+    }
+    if (historyEnabled_) {
+        history_[historyHead_] = {pc, cpu.getProgramCounter(), cpu.getAccumulator(),
+            cpu.getXRegister(), cpu.getYRegister(), cpu.getStatusRegister(),
+            cpu.getStackPointer(), cycles};
+        historyHead_ = (historyHead_ + 1) % history_.size();
+        historyCount_ = std::min(historyCount_ + 1, history_.size());
+    }
+}
+
+std::vector<Debugger::ProfileEntry> Debugger::profile(std::size_t limit) const
+{
+    std::vector<ProfileEntry> out;
+    for (const auto& entry : profile_)
+        if (entry.visits) out.push_back(entry);
+    std::sort(out.begin(), out.end(), [](const ProfileEntry& a, const ProfileEntry& b) {
+        return a.cycles != b.cycles ? a.cycles > b.cycles : a.pc < b.pc;
+    });
+    if (out.size() > limit) out.resize(limit);
+    return out;
+}
+
+std::vector<Debugger::TraceEntry> Debugger::history() const
+{
+    std::vector<TraceEntry> out;
+    out.reserve(historyCount_);
+    if (!historyCount_) return out;
+    const std::size_t first = (historyHead_ + history_.size() - historyCount_) % history_.size();
+    for (std::size_t i = 0; i < historyCount_; ++i)
+        out.push_back(history_[(first + i) % history_.size()]);
+    return out;
 }
 
 void Debugger::clearTransient()
@@ -170,6 +286,7 @@ void Debugger::clearForTimeJump()
     resumeSkip_      = 0;
     curPc_           = 0;
     hit_             = {};
+    clearMeasurements();
 }
 
 // ── The hot hooks ────────────────────────────────────────────────────────
@@ -187,6 +304,22 @@ bool Debugger::onInstruction(uint16_t pc)
     // otherwise have no way to name the instruction responsible.
     curPc_ = pc;
 
+    bool transientHit = false;
+    if (transientArmed_.load(std::memory_order_acquire)) {
+        if (stepCpu_) {
+            const uint8_t sp = stepCpu_->getStackPointer();
+            // Do not stop just because a callee temporarily pops its return
+            // address to inspect inline arguments. Wait for the outer RTS.
+            // Keep this latch through an IRQ/NMI between RTS and its target.
+            transientHit = stepReturning_ && sp == stepStack_;
+            if (!transientHit && sp == static_cast<uint8_t>(stepStack_ - 2) &&
+                stepMemory_->peekCpuView(pc) == 0x60)
+                stepReturning_ = true;
+        } else {
+            transientHit = pc == transientAddr_;
+        }
+    }
+
     // Resuming from a stop: the PC still points at the instruction that
     // stopped us, so without this the same breakpoint fires forever and Run
     // does nothing. One instruction of amnesty, cleared on use.
@@ -196,8 +329,7 @@ bool Debugger::onInstruction(uint16_t pc)
     }
     resumeSkipArmed_ = false;
 
-    if (transientArmed_.load(std::memory_order_acquire) &&
-        pc == transientAddr_) {
+    if (transientHit) {
         // Transients are one-shot by construction — step-over must not leave
         // a breakpoint behind at the return address.
         const Reason why = transientReason_;
@@ -205,7 +337,7 @@ bool Debugger::onInstruction(uint16_t pc)
         hit_ = { why, pc, 0, 0 };
         return true;
     }
-    if (bpCount_ && hasBreakpoint(pc)) {
+    if (bpCount_ && hasBreakpoint(pc) && conditionMatches(pc)) {
         hit_ = { Reason::Breakpoint, pc, 0, 0 };
         return true;
     }

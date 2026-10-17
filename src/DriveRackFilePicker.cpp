@@ -1,6 +1,7 @@
 // POM2 — GPL-3.0-or-later
 #include "DriveRackFilePicker.h"
 #include "ResourcePaths.h"
+#include "NativeFileDialog.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cctype>
@@ -54,7 +55,20 @@ void DriveRackFilePicker::complete(bool ok, const std::string& error) {
     closing_ = ok; error_ = error;
 }
 std::optional<DriveRackSelection> DriveRackFilePicker::render() {
-    if (opening_) { ImGui::OpenPopup("Insert disk into drive"); opening_ = false; }
+    if (opening_) {
+        opening_ = false;
+        if (nativeFileDialogAvailable()) {
+            std::string picked;
+            const auto status = nativeFileDialog(false, "Insert disk into " + target_.label,
+                "dsk,do,po,nib,woz,2mg,hdv,d13,image", directory_, "", picked);
+            if (status == FileDialogResult::Cancelled) return {};
+            ImGui::OpenPopup("Insert disk into drive");
+            if (status == FileDialogResult::Selected) {
+                browse(fs::path(picked).parent_path().string());
+                return DriveRackSelection{target_, picked};
+            }
+        } else ImGui::OpenPopup("Insert disk into drive");
+    }
     ImGui::SetNextWindowSize(ImVec2(650, 520), ImGuiCond_FirstUseEver);
     if (!ImGui::BeginPopupModal("Insert disk into drive", nullptr, ImGuiWindowFlags_NoSavedSettings)) return {};
     if (closing_) { ImGui::CloseCurrentPopup(); closing_ = false; ImGui::EndPopup(); return {}; }

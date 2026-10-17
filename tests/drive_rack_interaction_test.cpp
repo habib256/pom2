@@ -1,6 +1,17 @@
 // POM2 — GPL-3.0-or-later
 #include "DriveRack_ImGui.h"
 #include "DriveRackFilePicker.h"
+#include "NativeFileDialog.h"
+
+// Keep this ImGui-input harness deterministic and headless. Native chooser
+// protocol/backend checks are separate from the in-app browser interaction.
+namespace pom2 {
+bool nativeFileDialogAvailable() { return false; }
+FileDialogResult nativeFileDialog(bool, const std::string&, const std::string&,
+    const std::string&, const std::string&, std::string&) {
+    return FileDialogResult::Unavailable;
+}
+}
 #include "imgui.h"
 #include <cassert>
 #include <vector>

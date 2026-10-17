@@ -60,6 +60,7 @@ const char* w5100StatusName(uint8_t status)
     switch (status) {
     case kW5100SnSrClosed:      return "CLOSED";
     case kW5100SnSrInit:        return "INIT";
+    case kW5100SnSrListen:      return "LISTEN";
     case kW5100SnSrSynSent:     return "SYNSENT";
     case kW5100SnSrEstablished: return "ESTABLISHED";
     case kW5100SnSrUdp:         return "UDP";

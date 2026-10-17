@@ -22,12 +22,15 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "NativeFileDialog.h"
 
 #include "imgui.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <filesystem>
 
 namespace pom2 {
 
@@ -84,6 +87,11 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.hit      = ctrl.debugger().lastHit();
         snap.breakpoints = ctrl.debugger().breakpoints();
         snap.watchpoints = ctrl.debugger().watchpoints();
+        snap.conditions = ctrl.debugger().conditions();
+        snap.profiling = ctrl.debugger().profiling();
+        snap.historyEnabled = ctrl.debugger().historyEnabled();
+        snap.profile = ctrl.debugger().profile();
+        snap.history = ctrl.debugger().history();
         // The PAGED view, not mem.data(). The flat mirror is main-bank only,
         // so on a //e running out of aux, out of a RamWorks bank or out of
         // language-card RAM the panel disassembled bytes the CPU never
@@ -114,6 +122,78 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     ImGui::Separator();
     drawRegisters(snap);
     ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Symbols")) {
+        ImGui::SetNextItemWidth(420);
+        ImGui::InputText("File##symbols", symbolPath_, sizeof(symbolPath_));
+        ImGui::SameLine();
+        if (nativeFileDialogAvailable()) {
+            if (ImGui::Button("Browse##symbols")) {
+                std::string picked;
+                if (nativeFileDialog(false, "Load debugger symbols", "sym,lbl,txt", "", "", picked) == FileDialogResult::Selected) {
+                    if (picked.size() < sizeof(symbolPath_))
+                        std::snprintf(symbolPath_, sizeof(symbolPath_), "%s", picked.c_str());
+                    else symbolStatus_ = "The selected path is too long.";
+                }
+            }
+            ImGui::SameLine();
+        }
+        if (ImGui::Button("Load symbols")) {
+            // File I/O stays outside stateMutex. Bound allocation before read.
+            std::ifstream input(std::filesystem::u8path(symbolPath_), std::ios::binary | std::ios::ate);
+            const auto size = input ? input.tellg() : std::streampos{-1};
+            if (size < 0 || size > 4 * 1024 * 1024) {
+                symbolStatus_ = "Cannot read symbol file (maximum 4 MiB).";
+            } else {
+                std::string text(static_cast<size_t>(size), '\0');
+                input.seekg(0);
+                if (!text.empty()) input.read(text.data(), static_cast<std::streamsize>(text.size()));
+                if (!input) symbolStatus_ = "Symbol file read failed.";
+                else if (symbols_.load(text, symbolStatus_))
+                    symbolStatus_ = std::to_string(symbols_.size()) + " symbols loaded.";
+            }
+        }
+        ImGui::TextWrapped("AppleWin .sym, VICE/cc65 labels and NAME = $address. Use labels in the breakpoint field.");
+        ImGui::TextWrapped("%s", symbolStatus_.c_str());
+    }
+
+    if (ImGui::CollapsingHeader("Profiler and execution history")) {
+        if (ImGui::Checkbox("Profile CPU steps", &snap.profiling)) {
+            auto st = ctrl.lockState();
+            ctrl.debugger().setProfiling(snap.profiling);
+            ctrl.syncDebugHook();
+        }
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Keep last 256 steps", &snap.historyEnabled)) {
+            auto st = ctrl.lockState();
+            ctrl.debugger().setHistoryEnabled(snap.historyEnabled);
+            ctrl.syncDebugHook();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear measurements")) {
+            auto st = ctrl.lockState();
+            ctrl.debugger().clearMeasurements();
+        }
+        ImGui::TextWrapped("Cycles include IRQ/NMI entry steps. History shows registers after each step. Reset and rewind clear measurements.");
+        ImGui::BeginChild("##measurements", ImVec2(0, 140), true);
+        if (ImGui::BeginTable("##profile", 4)) {
+            ImGui::TableSetupColumn("Address"); ImGui::TableSetupColumn("Symbol");
+            ImGui::TableSetupColumn("Visits"); ImGui::TableSetupColumn("Cycles");
+            ImGui::TableHeadersRow();
+            for (const auto& entry : snap.profile) {
+                ImGui::TableNextRow(); ImGui::TableNextColumn();
+                ImGui::Text("$%04X", entry.pc); ImGui::TableNextColumn();
+                ImGui::TextUnformatted(symbols_.label(entry.pc).c_str()); ImGui::TableNextColumn();
+                ImGui::Text("%llu", static_cast<unsigned long long>(entry.visits)); ImGui::TableNextColumn();
+                ImGui::Text("%llu", static_cast<unsigned long long>(entry.cycles));
+            }
+            ImGui::EndTable();
+        }
+        for (const auto& entry : snap.history)
+            ImGui::Text("$%04X -> $%04X A:%02X X:%02X Y:%02X P:%02X SP:%02X (%d cycles)",
+                entry.pc, entry.nextPc, entry.a, entry.x, entry.y, entry.p, entry.sp, entry.cycles);
+        ImGui::EndChild();
+    }
 
     // Disassembly left, breakpoints right.
     const float rightWidth = 210.0f;
@@ -154,8 +234,9 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
                           "Stopped: breakpoint at $%04X.", snap.hit.pc);
             break;
         case Debugger::Reason::StepOver:
+        case Debugger::Reason::StepOut:
             std::snprintf(msg, sizeof(msg),
-                          "Stopped: stepped over the call, back at $%04X.",
+                          "Stopped: returned from the call to $%04X.",
                           snap.hit.pc);
             break;
         case Debugger::Reason::RunToCursor:
@@ -208,6 +289,8 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
     if (ImGui::Button("Step Over", ImVec2(90, 0))) ctrl.debugStepOver();
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (F8)");
+    ImGui::SameLine();
+    if (ImGui::Button("Step Out")) ctrl.debugStepOut();
     ImGui::SameLine();
     ImGui::BeginDisabled(!cursorValid_);
     if (ImGui::Button("Run To Cursor", ImVec2(120, 0)))
@@ -278,7 +361,8 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
                           "%02X ", snap.memory[(addr + b) & 0xFFFF]);
 
         char line[96];
-        std::snprintf(line, sizeof(line), "$%04X  %-9s %s", addr, bytes, mnem.c_str());
+        const std::string label = symbols_.label(addr);
+        std::snprintf(line, sizeof(line), "$%04X  %-9s %s %s", addr, bytes, mnem.c_str(), label.c_str());
 
         if (isPc)      ImGui::PushStyleColor(ImGuiCol_Text, kPcColour);
         else if (isBp) ImGui::PushStyleColor(ImGuiCol_Text, kBreakColour);
@@ -302,19 +386,42 @@ void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
 
     ImGui::SetNextItemWidth(70);
     const bool entered = ImGui::InputText("##bpaddr", bpEntry_, sizeof(bpEntry_),
-                                          ImGuiInputTextFlags_CharsHexadecimal |
                                           ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     const bool add = ImGui::Button("Add") || entered;
     if (add && bpEntry_[0]) {
-        unsigned v = 0;
-        if (std::sscanf(bpEntry_, "%x", &v) == 1) {
+        uint16_t v = 0, value = 0;
+        if (symbols_.resolve(bpEntry_, v) &&
+            (!conditionEnabled_ || DebuggerSymbols::address(conditionValue_, value))) {
             auto st = ctrl.lockState();
-            ctrl.debugger().addBreakpoint(static_cast<uint16_t>(v & 0xFFFF));
+            if (conditionEnabled_) {
+                Debugger::Condition condition;
+                condition.reg = static_cast<Debugger::Register>(conditionRegister_);
+                condition.compare = static_cast<Debugger::Compare>(conditionCompare_);
+                condition.value = value;
+                ctrl.debugger().addConditionalBreakpoint(v, condition, st.cpu());
+            } else {
+                ctrl.debugger().addBreakpoint(v);
+            }
             ctrl.syncDebugHook();
+            symbolStatus_.clear();
+            bpEntry_[0] = '\0';
+        } else {
+            symbolStatus_ = "Unknown address/label or invalid condition value.";
         }
-        bpEntry_[0] = '\0';
     }
+    ImGui::Checkbox("Conditional", &conditionEnabled_);
+    if (conditionEnabled_) {
+        ImGui::SetNextItemWidth(55);
+        ImGui::Combo("##conditionRegister", &conditionRegister_, "A\0X\0Y\0P\0SP\0PC\0");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(55);
+        ImGui::Combo("##conditionCompare", &conditionCompare_, "==\0!=\0<\0<=\0>\0>=\0");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(55);
+        ImGui::InputText("##conditionValue", conditionValue_, sizeof(conditionValue_), ImGuiInputTextFlags_CharsHexadecimal);
+    }
+    if (!symbolStatus_.empty()) ImGui::TextWrapped("%s", symbolStatus_.c_str());
 
     if (snap.breakpoints.empty()) {
         ImGui::TextColored(kDimColour, "none");
@@ -336,6 +443,14 @@ void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
                 followPc_ = false;      // jumping to a breakpoint means "look here"
             }
             ImGui::PopID();
+            const auto condition = snap.conditions.find(bp);
+            if (condition != snap.conditions.end()) {
+                static const char* registers[] = {"A", "X", "Y", "P", "SP", "PC"};
+                static const char* operators[] = {"==", "!=", "<", "<=", ">", ">="};
+                const auto& c = condition->second;
+                ImGui::Text("  %s %s $%04X", registers[static_cast<int>(c.reg)],
+                    operators[static_cast<int>(c.compare)], c.value);
+            }
         }
         ImGui::Separator();
         if (ImGui::Button("Clear all")) {

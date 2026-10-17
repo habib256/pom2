@@ -1269,9 +1269,12 @@ nothing more. No MAME device exists: a port of AppleWin's partial model
 `IOWrite_C02x` / `IOWrite_C03x` hooks in `source/Memory.cpp` :622-650), with
 the line painter taken from pom2gs's VGC (`drawShrLine`, `rgb12`). No ROM.
 
-**Bus.** Reads of `$C0n0/1/2` answer `$24 $EA $4C` (AppleWin `IORead`, bytes
-from the card's firmware) — what detection code looks for; every other
-`$C0nX` access is unclaimed (the floating bus). The card's registers are
+**Bus.** Reads of `$Cn00/01/02` answer `$24 $EA $4C` (AppleWin `IORead`, bytes
+from the card's firmware). `InitializeIO` registers this as `IOReadCx`,
+not `IOReadC0` (`Memory.h` `RegisterIoHandler`, AppleWin `6c579da5bd94`).
+Other slot-ROM bytes and every `$C0nX` read return the floating bus; no
+`$C800` window is claimed. On a //e, slot 3 detection requires external
+slot ROM selected (`$C00B`). The card's registers are
 **not** in its slot: it latches the motherboard WRITES to `$C022`
 SCREENCOLOR, `$C029` NEWVIDEO, `$C034` BORDERCOLOR and `$C035` SHADOW.
 `Memory::softSwitchAccess` forwards exactly those four, write-only, through
@@ -2102,15 +2105,24 @@ MAME-verbatim reference: all 16 envelope shapes, the LFSR's first 1 024
 outputs and its 131 071 period, tone at period 0, all 64 R7 mixer values,
 the read masks byte for byte, the volume table within 1 dB, the
 band-limiting budget, the stereo fold-down. History: CHANGELOG 2026-09-09
-(bug hunt #16). Open, with the numbers in
-TODO: the "AppleWin parity" duration formula `(16-rate)*4096/1023*(4-dur)`
-is a mis-citation (it lives in a `LOG_SSI263B` debug line; AppleWin's real
-duration is the PCM length, and DUR scales it as 1/(DUR+1)); the power-on
-state differs from AppleWin's observed `$C0`/silence (a detection routine
-that powers up with a single CTL=0 and waits for the IRQ hangs); the
+(bug hunt #16). The SSI duration/PCM path now follows AppleWin's primary
+audio consumption loop, including CTL-latched frame mode. Still open: the
 `EchoPlusTMS5220Card` address map is wrong against MAME's own
-`a2bus_echoplus_device`; the Phasor carries no SSI263 where the real card
-has two.
+`a2bus_echoplus_device`. Phasor now carries both SSI263APs: A6/A5 select
+primary/secondary writes in native and compatibility modes, independently
+of VIA aliases. Native reads require A7=A4=0, expose D7 over floating low
+bits and follow AppleWin secondary precedence when both are selected.
+Native requests OR directly into the slot IRQ; compatibility routes primary
+to VIA2.CA1 and secondary to VIA1.CA1. Echo+ hides access and speech IRQ
+while the oscillators and audio continue. PHS v3 appends both speech
+snapshots, accepts legacy v1/v2 with silent speech defaults and preflights
+all section lengths before replacing live state. The AP warm-reset filter
+value is zero, versus FF at power-on; the older P silicon reset quirk is
+not implemented. Both fixed-PCM voices share the PSG replay cursor and
+are summed in mono with headroom; this does not establish physical analog
+levels or stereo routing. `phasor_speech_cases.cpp` pins the decode, clock,
+IRQ, reset, snapshot and future-audio contracts against AppleWin
+6c579da5bd9460ebf7c6051a6d635efbd1375c85.
 
 **No MAME reference**: MAME does NOT implement the SSI263 (verified
 2026-05-27 — no `ssi263*` file in `src/devices/sound`). The canonical
@@ -2124,7 +2136,7 @@ $00 DURPHON  bits 7:6 = mode (00=IRQ disabled, 01=frame imm. infl.,
                               10=phon. imm. infl., 11=phon. trans. infl.)
              bits 5:0 = phoneme code (0..63; 62 defined)
 $01 INFLECT  inflection value
-$02 RATEINF  bits 7:4 = rate (playback speed)
+$02 RATEINF  bits 7:4 = rate (not synthesized by the PCM model)
              bits 3:0 = inflection low
 $03 CTTRAMP  bit 7    = CTL (1 = power-down/silent; 0 = run)
              bits 6:4 = articulation
@@ -2140,24 +2152,88 @@ de-asserts IRQ). Writes to $03 (CTTRAMP) or $04 (FILFREQ) do not ack.
 CTL H→L transition (power-down exit) restarts the loaded phoneme
 without bumping `phonemeWriteCount`. CTL L→H clears A/!R + silences.
 
-**Phoneme duration formula** (AppleWin parity):
-```
-ms = ((16 - (rate>>4)) * 4096 / 1023) * (4 - (dur>>6))
-cycles = ms * cpuClockHz / 1000      (live CPU clock, Ssi263::setCpuClockHz)
-```
-Range (at 1.0227 MHz): ~4 ms fastest (rate=15, dur=3 → ~4090 cyc), ~256 ms slowest
-(rate=0, dur=0 → ~262k cyc). Pinned by `ssi263_smoke`.
+**Duration and PCM share one native frame count.** Reference: AppleWin
+[`SSI263.cpp` at `6c579da5bd94`](https://github.com/AppleWin/AppleWin/blob/6c579da5bd9460ebf7c6051a6d635efbd1375c85/source/SSI263.cpp):
+POM2 uses the primary `Update()` PCM loop for both audio and IRQ timing,
+rather than the old `SSI_Output()` logging formula or the different DUR+1
+debugger/full-speed fallback. If the latched function is frame mode, the
+effective DUR is 3; otherwise it is the current DURPHON high two bits.
 
-`MODE_IRQ_DISABLED` (mode 00) suppresses the **host IRQ only** — A/!R
-(D7) is still asserted on phoneme completion (AppleWin `SSI263.cpp`
-~line 724: D7 is raised regardless of the DR1:0 mode bits; only
-power-down holds it low). So polling drivers that select mode 00 and
-watch the D7 status bit to detect phoneme-complete still work. On
-completion the duration counter parks at 0 (it does not re-tick), so
-the chip is quiescent until the next DURPHON write — it does **not**
-"repeat". `Ssi263::advance()` returns `irqEnabled()` (gates the host
-IRQ edge) but always sets `aRequest_`. Pinned by `ssi263_smoke`
-(`testIrqDisabledMode`).
+For N source samples, the native 22050 Hz output-frame count F is:
+
+| Effective DUR | PCM operation | F |
+|---|---|---|
+| 0 | One source sample per frame | N |
+| 1 | Skip source offsets 3, 8, 13, ... | N - floor((N+1)/5) |
+| 2 | Average pairs | ceil(N/2) |
+| 3 | Average groups of four | ceil(N/4) |
+
+The DUR=1 pattern follows the literal upstream counter: skipped samples do
+not increment its mod-4 read counter, so this is 5 source samples per 4
+output frames, not the previously documented 4/3 ratio. AMP scaling is
+truncated per source sample before integer averaging, as upstream. A final
+incomplete group outputs silence. PA uses entry 0's length with zero data.
+
+The IRQ period is `ceil(F * cpuClockHz / 22050)` CPU cycles, rounded only
+at the final conversion. Playback repeats on the same native frame grid.
+Host resampling remains sample-hold; RATEINF pitch/inflection and
+articulation are not synthesized. The arbitrary DirectSound lead-out and
+host-buffer latency are not added to guest IRQ timing. An active CPU clock
+change rescales remaining cycles to preserve real time. Old snapshots keep
+their stored CPU countdown/source offset; no layout change is needed.
+
+`ssi263_phoneme_map` compares all 64 codes × 4 DUR values × frame/phoneme
+functions × 3 clocks against an independent transcription of upstream's
+read/average/skip loop, plus all 15 nonzero amplitudes. `ssi263_smoke` pins
+the request boundary and mid-phoneme clock changes; `ssi263_speech_timeline`
+checks that a future CTL frame-mode change reaches audio at its stamp.
+
+**Silence preserves PCM position.** AMP=0 and FILFREQ=$FF suppress the
+output without pausing or rewinding playback, on both the immediate and
+cycle-stamped paths. This follows AppleWin's `Update()` amplitude scaling
+and PCM consumption (lines 605-654 at the revision above).
+`ssi263_phoneme_map` compares each silent interval against an audible twin,
+including a phoneme wrap at 22.05/44.1/48 kHz. Host-card mute is separately
+ramped over 5 ms and also leaves playback running.
+
+**Mode and IRQ latches.** A CTL falling edge latches the function and IRQ
+enable from DURPHON. DUR=00 disables IRQ without changing the previous
+function; subsequent DURPHON writes while running do not alter these
+latches. Power-on follows AppleWin's observed default DURPHON=$C0,
+FILFREQ=$FF, CTL=1. The first CTL=0 starts the loaded pause and enables
+requests, so a detector can await an IRQ without first writing DURPHON.
+
+**Sound II warm reset.** Mockingboard-C does not connect the bus RESET
+line to SSI263 pin 18 (AppleWin at the revision above, introductory
+hardware notes and `Reset()`:930-956). Ctrl-Reset resets its VIA/AY pair
+but preserves speech registers, repeat phase, D7, queued stores and the
+shared audio cursor. VIA IFR/IER clear independently; a retained SSI
+request does not fabricate a new CA1 edge. `SlotBus::reset(true)` invokes
+`onPowerCycle()` on cold boot/boot-from-slot, resetting speech and clearing
+the expansion-ROM latch; other cards default to their existing reset hook.
+`ssi263_speech_timeline` compares uninterrupted audio twins at 22.05/44.1/
+48 kHz across consecutive resets and a queued phoneme change, checks the
+next request boundary, and verifies cold silence. This board-specific
+policy does not claim Phasor SSI263P/AP or Cricket reset parity.
+
+Phonemes repeat until replaced or powered down. A request stays asserted
+until acknowledged through DURPHON/INFLECT/RATEINF (or CTL=1); INFLECT and
+RATEINF acknowledgements preserve the repeat phase. Skipped complete
+periods are folded with integer arithmetic rather than an unbounded loop.
+The period length follows the native PCM frame count above.
+
+With IRQ disabled, D7 status still reports completion, but Sound II's
+VIA2.CA1 does not latch. To poll VIA IFR, enable SSI IRQ and leave VIA
+IER.CA1 disabled. This follows AppleWin's `SetSpeechIRQ()`; the old claim
+that mode 00 must set IFR.CA1 confused D7 status with the enabled output.
+
+The SSI snapshot appends one latch byte (31 bytes, formerly 30). Sound II
+uses MBS v3; Cricket/Echo uses EP v2. Readers retain MBS v1/v2 and EP v1
+support: missing latches are reconstructed from the old DUR-derived policy,
+and a completed legacy one-shot timer starts a new repeat period. The lost
+phase/function cannot be recovered from old data. Truncated new envelopes
+are rejected before any chip changes. Pinned by `ssi263_smoke`,
+`ssi263_speech_timeline`, `mockingboard_smoke` and `echoplus_card_smoke`.
 
 #### MockingboardCard Variant::SoundII
 
@@ -2301,13 +2377,23 @@ AY hardware as Mockingboard (verbatim from `Via6522.h` + `Ay3_8910.h`,
 extracted 2026-05-27 specifically so the two cards share the same VIA
 timing + AY register-bank decoder).
 
+**AY reset wiring.** PB2 drives both AY reset pins for its VIA pair in
+every mode, including Mockingboard compatibility, regardless of PB3/PB4.
+AppleWin `6c579da5bd94`, `Mockingboard.cpp:253,331-335`, records this hardware
+correction to MAME's native-only secondary reset; see
+[AppleWin #1197](https://github.com/AppleWin/AppleWin/issues/1197).
+Both register banks and audio generators reset through the stamped queue.
+`phasor_card_smoke` checks both VIAs, both modes and all four select masks;
+`phasor_timeline` compares a compatibility reset against a native reset
+after returning to native mode, with an audible secondary chip.
+
 Address map (s = slot, slotHi = $C0+s):
 
 ```
-$Cs00..$Cs0F   VIA1   (drives AY1 / AY2)
-$Cs10..$Cs7F   VIA1 mirrors (partial decode)
-$Cs80..$Cs8F   VIA2   (drives AY3 / AY4)
-$Cs90..$CsFF   VIA2 mirrors
+MB mode:      A7 selects VIA1 / VIA2 over the whole $Cs00-$CsFF page
+Native mode:  A4 selects VIA1, A7 selects VIA2; both set broadcasts to both
+Echo+ mode:   every 16-byte window maps VIA2 (AY3 / AY4)
+Other modes:  no VIA selected
 $C0(8+s)0..F   Mode soft-switch (responds to BOTH reads and writes)
 ```
 
@@ -2319,23 +2405,40 @@ $C0(8+s)0..F   Mode soft-switch (responds to BOTH reads and writes)
 - Power-up = `PH_Mockingboard` (0). Canonical writes:
   - `$C0(8+s)8` → mode = 0 = MB compat
   - `$C0(8+s)D` → mode = 5 = Phasor native
-  - `$C0(8+s)F` → mode = 7 = EchoPlus (acknowledged, routed as native
-    in v1)
+  - `$C0(8+s)F` → mode = 7 = EchoPlus
 
-**Chip-select decode** (Phasor native only):
+**Chip-select decode** (native and Echo+):
 ```
 chip_sel = (~(port_b >> 3)) & 3
   0  no AY selected      (PB3=1, PB4=1)
-  1  primary AY only     (PB3=0, PB4=1)  → VIA1: AY1; VIA2: AY3
-  2  secondary AY only   (PB3=1, PB4=0)  → VIA1: AY2; VIA2: AY4
+  1  secondary AY        (PB3=0, PB4=1)  → VIA1: AY2; VIA2: AY4
+  2  primary AY          (PB3=1, PB4=0)  → VIA1: AY1; VIA2: AY3
   3  BOTH AYs broadcast  (PB3=0, PB4=0)
 ```
+
+AppleWin's hardware notes at `6c579da5bd94`, `Mockingboard.cpp:237-262`,
+define the native GAL behavior beyond those pins: a secondary LATCH
+addresses/selects both AYs, a primary LATCH deselects secondary, and a
+primary READ/WRITE also reaches a still-selected secondary. Simultaneous
+reads OR the driven bytes; an undriven read floats high. Both selected
+WRITE paths are deduplicated so an envelope store retriggers once per AY.
+Echo+ keeps independent address latches. GAL deselection uses reserved
+bit 6 of each AY latch byte, retaining PHS v1/v2 snapshot offsets. Older
+blobs have no deselection bit; their next LATCH establishes the hardware
+state. `phasor_card_smoke` pins the GAL, snapshot and 128 page/mode cases.
 
 In `PH_Mockingboard` mode the chip-select bits are **ignored**: each
 VIA always drives its primary AY only (AY1 / AY3), and the secondary
 AYs (AY2 / AY4) stay silent — matching the real card's compat
 default. This is what lets a vanilla Mockingboard music driver run
 unchanged on a Phasor.
+
+Echo+ sends the second VIA's two AYs to both speakers (AppleWin
+`Mockingboard.cpp:576-584`). A routing flag shares the stamped clock event,
+so MB-to-Echo transitions arrive at the audio cursor even though both modes
+use a 1x clock. Host mute preserves generator, filter and event progress;
+`phasor_timeline` checks muted/audible twins in all three modes, stereo
+duplication and a future Echo transition.
 
 **Clock scaling**. `clockScale() == 2` in `PH_Phasor`; 1 in MB /
 EchoPlus. The audio synth multiplies the AY input clock by this
@@ -4198,17 +4301,17 @@ bank, the MAME click otherwise).
 
 `prodos_folder/`. `ProDOSVolume` synthesises a ProDOS volume (guest-writable in RAM; persisting back to the folder stays an **opt-in** — the one medium that did not turn writable by default on 2026-09-08, because syncing a guest DELETE into someone's real directory is a different hazard from touching an image file).
 Blocks 0-1 boot (zeroed), 2-5 vol-dir key + 3 ext (51 entries max),
-block 6 bitmap (4096 blocks = 2 MB cap), 7+ data + sapling indexes.
+block 6 onwards bitmap (one block per 4096 volume blocks), followed by data
+and file indexes. The volume limit is 65535 blocks.
 
-Scope: flat dir; ≤ 51 files; ≤ 128 KB per file on the **build** side
-(seedling + sapling); type from extension (a `.bas` gets aux `$0801`, the
+Scope: recursive directories, ≤ 51 root entries (the ProDOS root limit),
+seedling/sapling/tree files up to the 24-bit EOF limit (16 MiB minus one).
+Both build and decode support all three. Type from extension (a `.bas` gets aux `$0801`, the
 address BASIC.SYSTEM writes) or from a CiderPress `NAME#TTAAAA` tag;
 filenames sanitised to `A-Z/0-9/.`, a collision keeping its known extension
 (`hello.bas` + `hello.txt` → `HELLO` + `HELLO.TXT`) before falling back to
-`.1/.2`. The **decode** side also
-handles tree (`$3`) files (`kStorageTree`, `ProDOSVolume.cpp:1342-1428`)
-— the guest has free blocks now, so a file it grows past 128 KB becomes a
-tree and used to be skipped on the way back out, silently.
+`.1/.2`. Tree files use a master index and one sapling index per 256 data
+blocks; import keeps total staged payload bounded by the volume capacity.
 
 Wiring: HDV slot 5 panel's Library shows `[host folder] prodos_folder/`
 entry. Click → `buildVolumeFromFolder` →
@@ -4421,6 +4524,17 @@ option). P1c (a longer, `$C0nX`-heavy history over eight seeds) added two:
 the Liron syncs SEL into the enabled mechanism after every access too
 (`syncHeadSelect`), and the AppleWin mouse no longer clamps the restored
 position (POSMOUSE may park it outside the window, as in AppleWin).
+
+Since 2026-10-17 Liron writes `LIR2`, requiring its complete IWM, SmartPort
+bus, two mechanism, clock and full media-mask sections. Every section is
+validated before reset, wiring callbacks or drive/cache changes. The IWM's
+`commit=false` parse validates without a 512 KiB scratch-device copy;
+detached bus/mechanism probes validate the remaining nested blobs. LIR1
+still accepts the known historical optional-tail boundaries. If its card
+clock is absent, the restored IWM's CPU-cycle anchor supplies it. New
+truncations and malformed nested magic/lengths leave live state untouched.
+`card_snapshot_contract` checks those cases, LIR1 migration and now fails
+any catalog hybrid restoration instead of emitting a warning.
 
 `RewindBuffer.{h,cpp}` (storage) + `Rewind_ImGui.{h,cpp}` (UI) +
 `EmulationController` transport — the MicroM8-style rewind: continuous
@@ -6871,19 +6985,16 @@ in a mutex-guarded mailbox that `poll()` folds into the cache on the CPU
 thread, so the guest's retry (every practical client retries a failed
 connect) succeeds instantly. Toggle: `uthernet2_virtual_dns`.
 
-**What is deliberately not implemented.** `LISTEN` is in the W5100 command
-set but POM2 does not open a host listener for it: an inbound connection
-cannot reach the guest through either supported transport (libslirp is
-outbound-only without explicit port forwarding). It no longer just logs,
-though — leaving `Sn_SR` at `SOCK_INIT` made a server driver spin forever
-with nothing to time out on. `listenSocket()` (`W5100Device.cpp:690-701`)
-warns, then `clearSocket(i)` (→ `SOCK_CLOSED`) and raises TIMEOUT in
-`Sn_IR`: the datasheet §5.2.3 failure every W5100 server loop already
-handles. The warning is said **once per socket** (`listenWarned`,
-`W5100Device.h:373`) — the refusal is precisely what makes the canonical
-`socket(); listen();` server loop spin, and the loop was paying one
-unbuffered log line plus a socket/close per lap, on the CPU worker under
-`stateMutex`. Note `Sn_PORT` **is** bound on the host socket for **UDP**
+**Local inbound TCP.** Since 2026-10-17, `LISTEN` opens a nonblocking
+desktop listener on `127.0.0.1:Sn_PORT` under `uthernet_allow_loopback`.
+Ports below 1024 and POM2's reserved 1985/6502/6503 remain refused.
+INIT → LISTEN → ESTABLISHED fills DIPR/DPORT and raises CON; the accepted
+stream uses the normal TCP rings. Revoking loopback closes a pending
+listener on the next poll. Unsupported/denied/busy requests still return
+CLOSED + TIMEOUT and warn once per socket/reset. Snapshots close listeners
+and connections; they cannot restore a host TCP session.
+LAN-interface mapping, host-port translation and libslirp forwarding remain
+unimplemented. Note `Sn_PORT` **is** bound on the host socket for **UDP**
 (IPRAW/MACRAW never reach that path — they go
 through the `NetworkBackend`, not a host socket) — and deliberately not for a TCP client, because
 WIZnet drivers reuse one fixed source port and the second connect would hit
@@ -9757,8 +9868,29 @@ overwritten; `setMode(Stopped)` cancels `stepsPending`; every resume in
 
 ### Debugger (`Debugger.h/.cpp`, `Debugger_ImGui.*`)
 
-Breakpoints, single-step, step-over, run-to-cursor, and a stop reason. What it
-is *for* is not the end user: it is the instrument POM2 is debugged with.
+Breakpoints, register predicates, single-step, frame-aware step-over/out,
+run-to-cursor, symbols, per-PC cycle profiling and a 256-step register history.
+The panel serves both application development and POM2 diagnostics.
+
+The 2026-10-17 additions follow actual RTS/stack frames: inline ProDOS and
+SmartPort arguments do not have a PC+3 return target. A temporary restoration
+of SP while a callee examines inline data is not mistaken for a return.
+Recursion, stack wrap and interrupts around RTS are covered by `debugger`.
+The frame loop also rechecks run mode between chunks, so a one-shot stop
+cannot detach itself and then run the rest of a browser frame.
+
+Symbols accept `0800 NAME`, VICE/cc65 `al 000800 .NAME`, `NAME = $0800` and
+`NAME EQU 0800`. Import is transactional, bounded to 4 MiB and 65536 labels;
+addresses beyond 16 bits are rejected. Labels appear in the listing and can
+be used in breakpoint entry. Conditions compare A/X/Y/P/SP/PC with
+`==`, `!=`, `<`, `<=`, `>` or `>=`.
+
+Profiling/history are opt-in and keep the hook attached while enabled.
+Completed-step hooks exist only on the debugged CPU loop. Profiling includes
+IRQ/NMI-entry-only steps and combines different banks at the same 16-bit PC;
+history shows post-step registers. A reset/rewind clears measurements, while
+user breakpoints/conditions survive. Source-level debugging and bank-aware
+conditions are still separate work.
 
 Before it, every parity hunt paid for a throwaway trace / dump / probe binary
 because there was no way to stop a running machine and look at it (the

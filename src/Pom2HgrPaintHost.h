@@ -49,6 +49,11 @@ class Pom2HgrPaintHost : public hgrpaint::IHgrPaintHost
 public:
     explicit Pom2HgrPaintHost(EmulationController* emu);
     ~Pom2HgrPaintHost() override;
+    bool nativeFilePickerAvailable() const override;
+    bool pickFilePath(bool forSave, const std::string& title,
+        const std::string& filterDesc, const std::string& extCsv,
+        const std::string& defaultDir, const std::string& defaultName,
+        std::string& outPath) override;
 
     void pokeByte(uint16_t addr, uint8_t value) override;
     void beginBatch() override;
@@ -122,6 +127,7 @@ private:
     std::unique_ptr<LeChatMauveCard> chatMauve_;
     ScratchMode scratchMode_ = ScratchMode::Hgr;
     bool scratchStaged_ = false;           // soft switches staged at least once
+    bool nativePickerUnavailable_ = false; // distinguish failure from cancellation
     int canvasPipe_ = 0;                   // index into canvasPipelines()
 };
 

@@ -36,7 +36,7 @@ an explicit request before scheduling.
 
 **Acceptance criterion (after revalidation):** Render VidHD SHR on the IIe with documented register behavior and a reference image or hardware-derived test.
 
-**Status (2026-10-16).** Ported from AppleWin's partial model: the `$C0n0-2`
+**Status (2026-10-17).** Ported from AppleWin's partial model: the `$Cn00-02`
 signature, `$C022/$C029/$C034/$C035` latched off motherboard writes, SHR
 (NEWVIDEO `$C0`) painted 640×400 from the CPU's aux bank in 320, 320 + fill
 and 640 modes through the display's `CardVideoSource` seam; //e-class slotted
@@ -45,6 +45,11 @@ profiles only. Register behaviour is documented in
 against hand-computed pixels — not yet against a real VidHD capture. Still
 open: IIgs text/border colours, the VidHD's extended text modes, the ][+ aux
 mirror, mid-frame SCB/palette changes.
+
+The 2026-10-17 card audit corrected the detection window from `$C0nX` to
+the slot ROM `$CnXX`, following AppleWin's actual `InitializeIO` handler
+registration. `vidhd_card` pins all seven slot signatures, floating-bus
+fallback and the absence of a C800 claim, as well as the SHR painter.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1072). Original dates and estimates are retained below.
 

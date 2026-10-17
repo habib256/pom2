@@ -842,6 +842,7 @@ void EmulationController::tickFrame()
 #endif
     for (double doneBase = 0.0; doneBase < static_cast<double>(budget); ) {
         std::lock_guard<std::mutex> lk(stateMtx);
+        if (mode.load() != Mode::Running) break;
         const double mul = std::max(1e-3, mem.cpuSpeedMultiplier());
         // Keep the clock the emuCycles consumers are told on the SAME
         // granularity as the speed the chunk is actually run at — see
@@ -985,7 +986,7 @@ void EmulationController::coldBoot()
     mem.setIicSmartPortArmed(false);   // reboot → //c sees its real $C500 firmware
     mem.clearRam();
     mem.resetSoftSwitches();
-    mem.slotBus().reset();
+    mem.slotBus().reset(/*powerCycle=*/true);
     if (spk)    spk->reset();   // F-1-3: parity with hardReset
     if (iwmDev) iwmDev->reset();
     if (hub)    hub->reset();
@@ -1030,7 +1031,7 @@ bool EmulationController::bootFromSlot(int slot)
     mem.setIicSmartPortArmed(slot == 5);
     mem.clearRam();
     mem.resetSoftSwitches();
-    mem.slotBus().reset();
+    mem.slotBus().reset(/*powerCycle=*/true);
     if (spk)    spk->reset();
     if (iwmDev) iwmDev->reset();
     if (hub)    hub->reset();
@@ -1495,19 +1496,13 @@ void EmulationController::syncDebugHook()
 
 void EmulationController::debugResume()
 {
-    // Amnesty for exactly one instruction at the current PC. Without it Run
-    // would re-trigger the breakpoint the machine is standing on and nothing
-    // would ever move.
-    //
-    // KNOWN LIMIT (bug hunt #4): the amnesty is unconditional, so it also
-    // suppresses a breakpoint the user placed at the resume PC when the stop
-    // that brought us here was NOT that breakpoint — a watchpoint or a
-    // step-over transient stops at the boundary AFTER the access, and if a
-    // real breakpoint happens to sit at that next instruction it is skipped
-    // once. Making it conditional means remembering which pc the last stop
-    // belonged to; the cost of the bug is one missed stop the user can
-    // reproduce by pressing Run again, so it is documented, not guessed at.
-    debugger_->armResumeFrom(processor.getProgramCounter());
+    // Only a PC breakpoint has already stopped BEFORE this instruction.
+    // A watchpoint stopped AFTER its instruction, and must not suppress a
+    // different breakpoint on the next instruction.
+    const auto hit = debugger_->lastHit();
+    if (hit.reason == pom2::Debugger::Reason::Breakpoint &&
+        hit.pc == processor.getProgramCounter())
+        debugger_->armResumeFrom(hit.pc);
     debugger_->clearHit();
 }
 
@@ -1522,7 +1517,6 @@ void EmulationController::debugStepInstruction()
 
 void EmulationController::debugStepOver()
 {
-    uint16_t resumeAt = 0;
     bool     over     = false;
     {
         std::lock_guard<std::mutex> lk(stateMtx);
@@ -1544,23 +1538,12 @@ void EmulationController::debugStepOver()
         // resolves with no side effect (Memory.h), and it is the view the
         // Disasm panel already lists from (snapshotCpuView) — the two agree.
         //
-        // KNOWN LIMIT (bug hunt #4, item #27): the transient goes at pc + 3,
-        // which assumes the callee returns to the byte after the JSR. A great
-        // deal of Apple II code does not — ProDOS MLI (`JSR $BF00` + a command
-        // byte and a two-byte parameter pointer), the SmartPort dispatch, and
-        // every "inline parameter" convention pop the return address, skip
-        // their operands and RTS past them. Stepping over one of those arms a
-        // transient at an address the machine never reaches, so the step-over
-        // silently becomes a Run and the user has to press Stop. Fixing it
-        // properly means stopping on "SP back above the value it had at the
-        // JSR", which needs the stack pointer at the hook — i.e. handing
-        // `Debugger` an `M6502*` and testing SP inside `onInstruction`, on the
-        // per-instruction path the performance contract guards. Deliberately
-        // deferred; documented here rather than half-done.
+        // Track the actual outer RTS: ProDOS/SmartPort callees adjust the
+        // stacked return address to skip inline parameters. PC+3 is not a
+        // return target, and recursion can reach it in a different frame.
         if (mem.peekCpuView(pc) == 0x20) {
-            resumeAt = static_cast<uint16_t>(pc + 3);
             over     = true;
-            debugger_->setTransient(resumeAt, pom2::Debugger::Reason::StepOver);
+            debugger_->setStepOver(processor, mem);
             debugResume();
             syncDebugHook();
         } else {
@@ -1569,6 +1552,17 @@ void EmulationController::debugStepOver()
     }
     if (over) setMode(Mode::Running);
     else      requestStep(1);
+}
+
+void EmulationController::debugStepOut()
+{
+    {
+        std::lock_guard<std::mutex> lk(stateMtx);
+        debugger_->setStepOut(processor, mem);
+        debugResume();
+        syncDebugHook();
+    }
+    setMode(Mode::Running);
 }
 
 void EmulationController::debugRunToCursor(uint16_t addr)

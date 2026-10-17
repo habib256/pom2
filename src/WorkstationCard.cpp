@@ -382,7 +382,16 @@ void WorkstationCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // `version >= 3` here, the way Transwarp gates `displaced_`.
     const uint8_t version = r.u8();
     if (version == 0 || version > kSnapshotVersion) return;
-    if (!r.has(kRamBytes + 2 + 5 + 1 + 16 + 4 + 4 + 3 + 1 + 8)) return;
+    constexpr std::size_t kFixedBytes = kRamBytes + 2 + 5 + 1 + 16 + 4 + 4 + 3 + 1 + 8;
+    if (!r.has(kFixedBytes)) return;
+    // The SCC is the only variable-length section. Its parser commits
+    // atomically, so let it refuse a malformed tail BEFORE replacing any
+    // RAM/CPU/latch state. The fixed section above has no remaining failure
+    // paths. Its callback may republish IRQ here; no card CPU runs during
+    // restore, and the complete restored IRQ is published again below.
+    const std::size_t sccOffset = r.pos + kFixedBytes;
+    if (!scc_.restoreSnapshot(data + sccOffset, len - sccOffset)) return;
+    const bool restoredSccInt = sccInt_;
 
     std::memcpy(ram_.data(), data + r.pos, kRamBytes);
     r.pos += kRamBytes;
@@ -414,21 +423,14 @@ void WorkstationCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     entropy_    = r.u8();
     postFailed_ = r.u8() != 0;
 
-    sccInt_ = r.u8() != 0;
+    (void)r.u8(); // legacy redundant SCC line; the chip's restored output wins
+    sccInt_ = restoredSccInt;
     // Same shape: the live invariant is `sccAcc_ < cpuClockHz_` (it is a
     // remainder, `sccAcc_ %= cpuClockHz_`). A blob carrying more than that
     // makes the very next `sccAcc_ / cpuClockHz_` hand the SCC a tick count
     // in the billions.
     sccAcc_ = r.u64();
     if (cpuClockHz_ == 0 || sccAcc_ >= cpuClockHz_) sccAcc_ = 0;
-    // The chip carries its own blob. If it refuses one — foreign, short,
-    // newer — the card is left with a chip its firmware will reprogram
-    // rather than with half a restore.
-    if (!scc_.restoreSnapshot(data + r.pos, len - r.pos)) {
-        scc_.reset();
-        sccInt_ = false;
-        sccAcc_ = 0;
-    }
     updateIrqLine();
 }
 

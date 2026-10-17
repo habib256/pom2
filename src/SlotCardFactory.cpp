@@ -35,6 +35,7 @@
 #include "SuperSerialCard.h"
 #include "VidexVideotermCard.h"
 #include "VidHDCard.h"
+#include "SnesMaxCard.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -273,6 +274,10 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         return result;
     }
 
+    if (request.key == "snesmax") {
+        result.card = std::make_unique<SnesMaxCard>(request.slot);
+        return result;
+    }
     if (request.key == "vidhd") {
         // VidHD: no ROM to load (the detection bytes are hard-wired,
         // VidHDCard.h). Its picture reaches the monitor through the

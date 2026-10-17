@@ -40,9 +40,8 @@ constexpr std::size_t kVolDirEntriesKN   = 13;       // entries in blocks 3, 4, 
 constexpr std::size_t kVolDirTotalSlots  = kVolDirEntriesK0 + 3 * kVolDirEntriesKN;  // 51
 constexpr std::size_t kEntryLength       = 39;
 constexpr std::size_t kSaplingMaxBytes   = 131072;   // 256 blocks × 512
-// A tree file: one master index of 256 index blocks of 256 data blocks.
-// 32 MB is also ProDOS's own file ceiling (eof is 24-bit).
-constexpr std::size_t kTreeMaxBytes      = 256 * kSaplingMaxBytes;
+// A tree file has a master index, but EOF is 24-bit: at most 16 MiB - 1.
+constexpr std::size_t kTreeMaxBytes      = 0xFFFFFF;
 constexpr std::size_t kBootBlocks        = 2;
 constexpr std::size_t kVolDirBlocks      = 4;
 constexpr std::size_t kBitmapBlock       = 6;
@@ -477,8 +476,8 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
             out.push_back(std::move(he));
             continue;
         }
-        if (he.size > kSaplingMaxBytes) {
-            he.skipReason = "oversized file (>128 KB)";
+        if (he.size > kTreeMaxBytes) {
+            he.skipReason = "oversized file (>16 MiB - 1)";
             out.push_back(std::move(he));
             continue;
         }
@@ -518,7 +517,8 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
 void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
                     std::size_t depth, ProDOSBuildResult& result,
                     const fs::path& root,
-                    std::unordered_set<std::string>& visited)
+                    std::unordered_set<std::string>& visited,
+                    std::size_t& stagedBytes)
 {
     if (depth > kMaxRecursionDepth) {
         pom2::log().warn("ProDOSVol",
@@ -565,7 +565,8 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
         if (he.isDir) {
             auto sub = std::make_unique<PreparedDir>();
             sub->prodosName = he.prodosName;
-            scanHostFolder(he.path, *sub, depth + 1, result, root, visited);
+            scanHostFolder(he.path, *sub, depth + 1, result, root, visited, stagedBytes);
+            if (!result.error.empty()) return;
             sub->numDirBlocks = numDirBlocksFor(sub->order.size());
             dir.order.push_back({true, dir.subdirs.size()});
             dir.subdirs.push_back(std::move(sub));
@@ -579,6 +580,10 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             continue;
         }
         const std::size_t fsize = static_cast<std::size_t>(he.size);
+        if (fsize > kMaxVolumeBlocks * kBlockBytes - stagedBytes) {
+            result.error = "host folder exceeds the ProDOS volume capacity";
+            return;
+        }
         PreparedFile pf;
         pf.data.resize(fsize);
         if (fsize > 0) {
@@ -590,6 +595,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
                 continue;
             }
         }
+        stagedBytes += fsize;
         pf.fileType   = he.fileType;
         pf.auxType    = he.auxType;
         pf.prodosName = he.prodosName;
@@ -598,9 +604,10 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             pf.dataBlocks  = 1;
             pf.indexBlocks = 0;
         } else {
-            pf.storageType = kStorageSapling;
             pf.dataBlocks  = (fsize + kBlockBytes - 1) / kBlockBytes;
-            pf.indexBlocks = 1;
+            pf.storageType = fsize <= kSaplingMaxBytes ? kStorageSapling : kStorageTree;
+            pf.indexBlocks = fsize <= kSaplingMaxBytes ? 1 :
+                1 + (pf.dataBlocks + 255) / 256;
         }
         ++result.filesIncluded;
         dir.order.push_back({false, dir.files.size()});
@@ -658,19 +665,32 @@ void writeFileData(std::vector<std::uint8_t>& image, PreparedFile& f,
         }
         markBitmapUsed(image, db, db + 1);
     } else {
-        const std::size_t idxBlk = nextBlock++;
-        f.firstBlock = idxBlk;
-        markBitmapUsed(image, idxBlk, idxBlk + 1);
-        std::uint8_t* idx = blockPtr(idxBlk);
+        const bool tree = f.storageType == kStorageTree;
+        const std::size_t master = tree ? nextBlock++ : 0;
+        if (tree) markBitmapUsed(image, master, master + 1);
+        std::uint8_t* idx = nullptr;
         for (std::size_t i = 0; i < f.dataBlocks; ++i) {
+            if (i % 256 == 0) {
+                const std::size_t idxBlk = nextBlock++;
+                markBitmapUsed(image, idxBlk, idxBlk + 1);
+                idx = blockPtr(idxBlk);
+                if (tree) {
+                    const std::size_t group = i / 256;
+                    blockPtr(master)[group] = static_cast<uint8_t>(idxBlk);
+                    blockPtr(master)[256 + group] = static_cast<uint8_t>(idxBlk >> 8);
+                } else {
+                    f.firstBlock = idxBlk;
+                }
+            }
             const std::size_t db = nextBlock++;
-            idx[i]       = static_cast<std::uint8_t>(db & 0xFF);
-            idx[256 + i] = static_cast<std::uint8_t>((db >> 8) & 0xFF);
+            idx[i % 256]       = static_cast<std::uint8_t>(db & 0xFF);
+            idx[256 + i % 256] = static_cast<std::uint8_t>((db >> 8) & 0xFF);
             const std::size_t off = i * kBlockBytes;
             const std::size_t len = std::min<std::size_t>(kBlockBytes, f.data.size() - off);
             std::memcpy(blockPtr(db), f.data.data() + off, len);
             markBitmapUsed(image, db, db + 1);
         }
+        if (tree) f.firstBlock = master;
     }
 }
 
@@ -788,8 +808,10 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
         fs::path served = fs::weakly_canonical(fs::path(hostFolder), cec);
         if (cec) served = fs::path(hostFolder);
         std::unordered_set<std::string> visited;
-        scanHostFolder(hostFolder, root, /*depth=*/0, result, served, visited);
+        std::size_t stagedBytes = 0;
+        scanHostFolder(hostFolder, root, /*depth=*/0, result, served, visited, stagedBytes);
     }
+    if (!result.error.empty()) return result;
     root.firstDirBlock = 2;
     root.numDirBlocks  = kVolDirBlocks;        // vol dir always 4 blocks (51 slots)
 

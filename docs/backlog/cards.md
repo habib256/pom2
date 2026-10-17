@@ -9,6 +9,9 @@ record the result. If already resolved, remove the active entry and link its
 resolution in the changelog. Frozen work requires a named software need or
 an explicit request before scheduling.
 
+Current implementation review: [all extension cards, 2026-10-17](../audits/extension-cards-2026-10-17.md).
+It separates reproduced defects, tested contracts and remaining hardware limits.
+
 <a id="historical-findings"></a>
 
 ## Task index

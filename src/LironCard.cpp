@@ -300,7 +300,7 @@ void LironCard::onReset()
 // (older build) still loads.
 
 namespace {
-constexpr uint8_t kLironBlobMagic[4] = { 'L', 'I', 'R', '1' };
+constexpr uint8_t kLironBlobMagic[4] = { 'L', 'I', 'R', '2' };
 }
 
 void LironCard::appendSnapshotState(std::vector<uint8_t>& out) const
@@ -340,12 +340,57 @@ void LironCard::appendSnapshotState(std::vector<uint8_t>& out) const
 
 void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
-    // Identify the blob BEFORE touching the card. `onReset()` used to run
-    // first, so a foreign or absent section (another card's SLOTn blob,
-    // an older build's) wiped a live Liron mid-transaction instead of being
-    // ignored — the contract MachineSnapshot documents is that a card
-    // tolerates a blob it does not recognise by leaving itself alone.
-    if (!data || len < 8 || std::memcmp(data, kLironBlobMagic, 4) != 0) return;
+    // LIR2 requires the mechanism/clock/media tails. LIR1 predates those
+    // tails and accepts their known historical boundaries. Versioning is
+    // necessary: a truncated new blob must not masquerade as an old one.
+    if (!data || len < 8 || std::memcmp(data, "LIR", 3) != 0) return;
+    const bool legacy = data[3] == '1';
+    if (!legacy && data[3] != '2') return;
+    std::size_t i = 4;
+    const auto read32 = [&]() {
+        uint32_t v = 0;
+        for (int k = 0; k < 4; ++k) v |= static_cast<uint32_t>(data[i++]) << (8 * k);
+        return v;
+    };
+    const std::size_t iwmLen = read32();
+    if (iwmLen > len - i || (!legacy && iwmLen == 0)) return;
+    if (iwmLen && !iwm_.loadSnapshotState(data + i, iwmLen, /*commit=*/false)) return;
+    i += iwmLen;
+    const std::size_t busOffset = i;
+    SmartPortBusDevice busProbe;
+    const std::size_t busLen = busProbe.loadSnapshotState(data + i, len - i);
+    if (!busLen || busLen > len - i) return;
+    i += busLen;
+    if (len - i < 2) return;
+    const int act = static_cast<int>(data[i++]) - 1;
+    unsigned mediaMask = data[i++];
+    std::array<std::size_t, kDrives> mechOffset{}, mechLength{};
+    // All boundaries are checked before onReset, IWM callbacks, or any
+    // drive/cache mutation. Probes have no attached media or host wiring.
+    const bool mechanisms = i < len;
+    if (!legacy && !mechanisms) return;
+    if (mechanisms) {
+        Sony35Drive mechanismProbe;
+        for (int d = 0; d < kDrives; ++d) {
+            if (len - i < 4) return;
+            mechLength[d] = read32();
+            if (mechLength[d] > len - i) return;
+            mechOffset[d] = i;
+            if (mechLength[d] &&
+                !mechanismProbe.loadSnapshotState(data + i, mechLength[d])) return;
+            i += mechLength[d];
+        }
+    }
+    const bool hasClock = len - i >= 8;
+    if ((!legacy && len - i < 12) || (len != i && !hasClock)) return;
+    uint64_t clock = cycles_;
+    if (hasClock) {
+        clock = 0;
+        for (int k = 0; k < 8; ++k) clock |= static_cast<uint64_t>(data[i++]) << (8 * k);
+    }
+    if (len - i >= 4) mediaMask = read32();
+    else if (len != i) return;
+
     onReset();
     // From here on, re-pointing the IWM at a drive is part of the restore,
     // not a wiring event (IWMDevice::setRestoring). Cleared on every exit.
@@ -354,46 +399,16 @@ void LironCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         explicit RestoreScope(IWMDevice& i) : iwm(i) { iwm.setRestoring(true); }
         ~RestoreScope() { iwm.setRestoring(false); }
     } restoreScope(iwm_);
-    std::size_t i = 4, iwmLen = 0;
-    for (int k = 0; k < 4; ++k) iwmLen |= static_cast<std::size_t>(data[i + k]) << (8 * k);
-    i += 4;
-    if (iwmLen > len - i) return;
-    if (iwmLen && !iwm_.loadSnapshotState(data + i, iwmLen)) { onReset(); return; }
-    i += iwmLen;
-    const std::size_t busLen = bus_.loadSnapshotState(data + i, len - i);
-    if (busLen == 0) { onReset(); return; }
-    i += busLen;
-    if (i + 2 > len) { onReset(); return; }
-    const int act = static_cast<int>(data[i++]) - 1;
+    if (iwmLen) (void)iwm_.loadSnapshotState(data + 8, iwmLen);
+    (void)bus_.loadSnapshotState(data + busOffset, busLen);
     active_ = (act >= 0 && act < kDrives) ? act : -1;
-    busMediaMask_ = data[i++];
-    // Optional per-bay mechanism tail. Absent (older blob) → the live
-    // mechanisms are left alone, which is the pre-2026-09-06 behaviour.
-    for (int d = 0; d < kDrives && i + 4 <= len; ++d) {
-        std::size_t mechLen = 0;
-        for (int k = 0; k < 4; ++k)
-            mechLen |= static_cast<std::size_t>(data[i + k]) << (8 * k);
-        i += 4;
-        if (mechLen > len - i) break;
-        if (mechLen)
-            drives_[static_cast<std::size_t>(d)].loadSnapshotState(data + i, mechLen);
-        i += mechLen;
-    }
-    // Card clock (see appendSnapshotState). Absent in an older blob, which
-    // then keeps the live counter — the pre-2026-09-08 behaviour.
-    if (i + 8 <= len) {
-        uint64_t c = 0;
-        for (int k = 0; k < 8; ++k)
-            c |= static_cast<uint64_t>(data[i + k]) << (8 * k);
-        cycles_ = c;
-        i += 8;
-    }
-    if (i + 4 <= len) {
-        unsigned m = 0;
-        for (int k = 0; k < 4; ++k) m |= static_cast<unsigned>(data[i + k]) << (8 * k);
-        busMediaMask_ = m;
-        i += 4;
-    }
+    busMediaMask_ = mediaMask;
+    for (int d = 0; d < kDrives; ++d)
+        if (mechLength[d]) (void)drives_[d].loadSnapshotState(data + mechOffset[d], mechLength[d]);
+    // Old LIR1 predates the card-clock tail. Its nested IWM already stores
+    // the same CPU-cycle anchor; derive it rather than keeping live time and
+    // handing the next tick the entire abandoned rewind depth.
+    cycles_ = hasClock ? clock : iwm_.emuCycles();
     retargetIwm();
 }
 

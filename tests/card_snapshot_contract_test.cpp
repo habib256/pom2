@@ -47,6 +47,7 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "FourPlayCard.h"
+#include "SnesMaxCard.h"
 #include "AppleParallelCard.h"
 #include "GrapplerCard.h"
 #include "GrapplerClassicCard.h"
@@ -74,6 +75,7 @@
 #include "SlotPeripheral.h"
 
 #include <cassert>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -215,11 +217,10 @@ void check(const Entry& e)
         auto c = e.make();
         drive(*c, 0x99u);
         Blob before = cap(*c);
-        // Three outcomes are legal for a truncated blob: leave the card
-        // alone (the rule the header states), apply the captured state, or —
-        // for a card that resets before it can finish framing its own
-        // nested sections (LironCard) — come back at power-up. What is NOT
-        // legal is a hybrid of the live card and the blob.
+        // A complete legacy prefix may apply captured/default state; other
+        // prefixes must leave live state alone. A hybrid is never legal.
+        // Liron's versioned captures additionally require strict unchanged
+        // state for every truncation (testLironAtomicRejection below).
         auto rc = e.make(); drive(*rc, 0x99u); rc->onReset();
         const Blob fresh = cap(*rc);
         for (size_t n = 0; n < ba.size(); ++n) {
@@ -228,15 +229,9 @@ void check(const Entry& e)
             d->loadSnapshotState(ba.data(), n);      // truncated
             Blob after = cap(*d);
             if (after != before && after != ba && after != fresh) {
-                // WARN, not a failure: a card only ever sees a truncated
-                // blob from a hand-crafted file, and MachineSnapshot refuses
-                // SLOT sections on the file path entirely (allowSlots=false),
-                // so nothing reachable produces one. LironCard is the known
-                // case — it resets before it has finished framing its nested
-                // bus section. Left visible so a NEW card does not quietly
-                // join it.
-                std::printf("  %-22s P3 warn: truncation to %zu/%zu is a hybrid state\n",
+                std::printf("  %-22s P3 FAIL: truncation to %zu/%zu is a hybrid state\n",
                             e.name, n, ba.size());
+                ++failures;
                 break;
             }
         }
@@ -289,8 +284,58 @@ void check(const Entry& e)
 
 }  // namespace
 
+void testLironAtomicRejection()
+{
+    pom2::LironCard saved(5), live(5);
+    drive(saved, 0x1234567u);
+    drive(live, 0x99u);
+    const Blob blob = cap(saved), before = cap(live);
+    assert(blob != before);
+    for (std::size_t n = 0; n < blob.size(); ++n) {
+        live.loadSnapshotState(blob.data(), n);
+        if (cap(live) != before) {
+            std::fprintf(stderr, "Liron truncated snapshot changed live state at %zu/%zu\n", n, blob.size());
+            assert(false);
+        }
+    }
+    assert(blob[3] == '2');
+    const auto get32 = [&](std::size_t at) {
+        uint32_t v = 0;
+        for (int k = 0; k < 4; ++k) v |= static_cast<uint32_t>(blob[at + k]) << (8 * k);
+        return v;
+    };
+    const std::size_t iwmBytes = get32(4), busAt = 8 + iwmBytes;
+    pom2::SmartPortBusDevice probe;
+    const auto mandatory = busAt + probe.loadSnapshotState(blob.data() + busAt, blob.size() - busAt) + 2;
+    std::size_t next = mandatory;
+    std::vector<std::size_t> corruptAt{4, 8, busAt};
+    for (int drive = 0; drive < pom2::LironCard::kDrives; ++drive) {
+        corruptAt.push_back(next);     // mechanism length
+        corruptAt.push_back(next + 4); // mechanism magic
+        next += 4 + get32(next);
+    }
+    for (auto at : corruptAt) {
+        Blob malformed = blob;
+        malformed[at] = 0xFF;
+        live.loadSnapshotState(malformed.data(), malformed.size());
+        assert(cap(live) == before && "malformed nested Liron section mutated live state");
+    }
+    // Known LIR1 layouts: no mechanism tail, mechanisms only, then clock,
+    // then the full media mask. New captures always require all sections.
+    for (auto bytes : {mandatory, next, next + 8, next + 12}) {
+        Blob legacy(blob.begin(), blob.begin() + bytes);
+        legacy[3] = '1';
+        pom2::LironCard restored(5);
+        restored.loadSnapshotState(legacy.data(), legacy.size());
+        const auto migrated = cap(restored);
+        assert(std::equal(blob.begin() + 4, blob.begin() + mandatory, migrated.begin() + 4));
+        if (bytes == blob.size()) assert(migrated == blob);
+    }
+}
+
 int main()
 {
+    testLironAtomicRejection();
     std::vector<Entry> cards = {
         { "DiskIICard",        [] { return std::unique_ptr<SlotPeripheral>(new DiskIICard(6)); } },
         { "ProDOSHardDisk",    [] { return std::unique_ptr<SlotPeripheral>(new ProDOSHardDiskCard(7)); } },
@@ -307,6 +352,7 @@ int main()
         { "MouseCardAppleWin", [] { return std::unique_ptr<SlotPeripheral>(new MouseCardAppleWin(4)); } },
         { "MouseCard",         [] { return std::unique_ptr<SlotPeripheral>(new MouseCard(4)); } },
         { "FourPlayCard",      [] { return std::unique_ptr<SlotPeripheral>(new FourPlayCard(4)); } },
+        { "SnesMaxCard",       [] { return std::unique_ptr<SlotPeripheral>(new SnesMaxCard(4)); } },
         { "TranswarpCard",     [] { return std::unique_ptr<SlotPeripheral>(new TranswarpCard(3)); } },
         { "SlinkyCard",        [] { return std::unique_ptr<SlotPeripheral>(new SlinkyCard(4)); } },
         { "SamCard",           [] { return std::unique_ptr<SlotPeripheral>(new SamCard(4)); } },
@@ -367,6 +413,7 @@ int main()
         {"mockingboard", "MockingboardAC"}, {"mockingboard_c", "MockingboardSndII"},
         {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},
         {"workstation", "WorkstationCard"}, {"4play", "FourPlayCard"},
+        {"snesmax", "SnesMaxCard"},
         {"transwarp", "TranswarpCard"},
         {"slinky", "SlinkyCard"}, {"sam", "SamCard"},
         {"grappler1", "GrapplerClassic"}, {"pic", "AppleParallel"},

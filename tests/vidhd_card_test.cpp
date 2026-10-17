@@ -18,7 +18,7 @@
 // No ROM: a //e-mode Memory with the card in slot 3, driven only through the
 // guest's own bus accesses.
 //
-//   1. detection: $C0B0-$C0B2 read $24 $EA $4C; $C0B3 is the floating bus
+//   1. detection: $C300-$C302 read $24 $EA $4C; $C0BX is the floating bus
 //   2. STA $C029 #$C1 turns SHR on (the display publishes 640 × 400 whatever
 //      TEXT says), #$00 turns it off, a bus reset clears NEWVIDEO; $C022,
 //      $C034, $C035 latch; a READ of $C029 latches nothing; $C030 still
@@ -84,6 +84,28 @@ std::vector<uint32_t> paint(const VidHDCard& c)
 
 int main()
 {
+    // Every supported physical slot, with a bus value that cannot be
+    // mistaken for a hard-coded $FF. The card has no C800 ownership.
+    {
+        SlotBus bus;
+        bus.setFloatingBusSource([] { return uint8_t{0xA5}; });
+        for (int slot = 1; slot <= 7; ++slot) {
+            auto card = std::make_unique<VidHDCard>(slot);
+            auto* p = card.get();
+            bus.plug(slot, std::move(card));
+            const uint16_t page = static_cast<uint16_t>(0xC000 + slot * 0x100);
+            expect(bus.slotRomRead(page) == 0x24 && bus.slotRomRead(page + 1) == 0xEA &&
+                   bus.slotRomRead(page + 2) == 0x4C, "slot-relative VidHD signature");
+            expect(bus.slotRomRead(page + 3) == 0xA5, "unclaimed ROM bytes float");
+            expect(bus.deviceSelectRead(static_cast<uint16_t>(0xC080 + slot * 16)) == 0xA5,
+                   "unclaimed device-select bytes float");
+            expect(bus.getActiveExpansionSlot() == -1, "VidHD never claims C800");
+            uint8_t value = 0;
+            expect(p->peekSlotRom(0, value) && value == 0x24, "debugger sees the signature");
+            expect(!p->peekSlotRom(3, value), "debugger leaves unimplemented ROM undecoded");
+            bus.unplug(slot);
+        }
+    }
     Memory mem;
     mem.setIIEMode(true);
     pom2::SlotCardFactory factory;
@@ -94,9 +116,20 @@ int main()
     mem.slotBus().plug(3, std::move(made.card));
 
     // ── 1. detection ────────────────────────────────────────────────────
-    expect(mem.memRead(0xC0B0) == 0x24, "$C0n0 reads $24");
-    expect(mem.memRead(0xC0B1) == 0xEA, "$C0n1 reads $EA");
-    expect(mem.memRead(0xC0B2) == 0x4C, "$C0n2 reads $4C");
+    // AppleWin InitializeIO registers IORead as IOReadCx, not IOReadC0
+    // (Memory.h RegisterIoHandler). On a //e, select external slot 3 ROM.
+    mem.memWrite(0xC00B, 0);
+    expect(mem.memRead(0xC300) == 0x24, "$Cn00 reads $24");
+    expect(mem.memRead(0xC301) == 0xEA, "$Cn01 reads $EA");
+    expect(mem.memRead(0xC302) == 0x4C, "$Cn02 reads $4C");
+    expect(mem.slotBus().getActiveExpansionSlot() == -1,
+           "VidHD detection does not claim C800 expansion ROM");
+    expect(mem.memRead(0xC303) == mem.memRead(0xC403),
+           "unimplemented slot ROM bytes return the floating bus");
+    expect(mem.memRead(0xC0B0) == mem.memRead(0xC0C0) &&
+           mem.memRead(0xC0B1) == mem.memRead(0xC0C1) &&
+           mem.memRead(0xC0B2) == mem.memRead(0xC0C2),
+           "device-select reads do not expose a false VidHD signature");
     expect(mem.memRead(0xC0B3) == mem.memRead(0xC0C3),
            "$C0n3 reads what an empty slot's $C0n3 reads (the floating bus)");
 

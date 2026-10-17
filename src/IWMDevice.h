@@ -177,7 +177,9 @@ public:
     /// Returns false (and leaves the device untouched) on a truncated or
     /// unrecognised blob. `disk_`, `sony_` and the callbacks are host
     /// wiring — never serialized, re-installed by the caller.
-    bool loadSnapshotState(const uint8_t* data, size_t n);
+    /// commit=false validates the complete blob without changing state or
+    /// publishing wiring callbacks, for owners with nested snapshot sections.
+    bool loadSnapshotState(const uint8_t* data, size_t n, bool commit = true);
     /// While set, `setSony35` / `setFloppy` / `releaseSony35` only REBIND:
     /// no sync, no flush of the write window, no revolution re-anchor, no
     /// motor edge. A restore re-points the IWM at the drive the blob names,

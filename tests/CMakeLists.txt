@@ -22,6 +22,15 @@
 # test would print "OK" regardless of whether its checks actually held.
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-UNDEBUG>)
 
+# Select a self-contained native core subset without configuring/downloading
+# the POSIX-only harnesses. CI exercises this exact entry point under MSVC.
+option(POM2_PORTABLE_TESTS_ONLY "Configure only portable core regressions" OFF)
+if(POM2_PORTABLE_TESTS_ONLY)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Test.cmake)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2PortableTests.cmake)
+    return()
+endif()
+
 # Download through a temporary file and verify the digest only after a
 # successful transfer. CMake's file(DOWNLOAD EXPECTED_HASH ...) reports a
 # failed transfer as a fatal configure error before STATUS can be inspected,
@@ -5084,7 +5093,10 @@ set_tests_properties(grappler_card_smoke PROPERTIES TIMEOUT 5)
 # ignored), and Phasor-native chip-select decode (PB3/PB4 active-low).
 add_executable(test_phasor_card
     phasor_card_smoke_test.cpp
+    phasor_speech_cases.cpp
     ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_phasor_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -5106,6 +5118,8 @@ add_test(NAME phasor_card_smoke COMMAND test_phasor_card)
 add_executable(test_phasor_timeline
     phasor_timeline_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_phasor_timeline PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7518,6 +7532,11 @@ endforeach()
 if(TARGET pom2_core_test)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Test.cmake)
 
+pom2_add_headless_test(test_snesmax_card
+    NAME snesmax_card TIMEOUT 20 PORTABLE
+    SOURCES snesmax_card_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_printer_coordinator
     NAME printer_coordinator TIMEOUT 20
     SOURCES printer_coordinator_test.cpp
@@ -7915,6 +7934,13 @@ pom2_add_headless_test(test_ssc_tcp_transport
     NAME ssc_tcp_transport TIMEOUT 30
     SOURCES ssc_tcp_transport_test.cpp
     LINK_LIBRARIES pom2_core_test)
+
+if(UNIX AND NOT APPLE)
+    pom2_add_headless_test(test_native_file_dialog
+        NAME native_file_dialog TIMEOUT 20
+        SOURCES native_file_dialog_test.cpp ${CMAKE_SOURCE_DIR}/src/NativeFileDialog.cpp
+        LINK_LIBRARIES pom2_core_test)
+endif()
 endif()
 
 # ─── Super Serial panel boundary ────────────────────────────────────────

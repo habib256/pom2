@@ -59,10 +59,11 @@ std::vector<float> renderCode(uint8_t code, int n)
 {
     Ssi263 chip;
     chip.reset();
+    chip.write(Ssi263::REG_FILFREQ, 0x80);
     chip.write(Ssi263::REG_CTTRAMP, 0x0F);                        // CTL=0, amp=15
     chip.write(Ssi263::REG_RATEINF, 0x00);                        // slowest rate
     chip.write(Ssi263::REG_DURPHON,
-               static_cast<uint8_t>(0x80 | (code & 0x3F)));       // mode 10
+               static_cast<uint8_t>(code & 0x3F)); // DUR=0, uncompressed PCM
     std::vector<float> buf(static_cast<size_t>(n), 0.0f);
     chip.fillAudio(buf.data(), n, pd::kPhonemeSampleRateHz);
     return buf;
@@ -162,6 +163,7 @@ void testFilterFreqDecodesOnA2Alone()
     for (uint8_t reg = 4; reg <= 7; ++reg) {
         Ssi263 chip;
         chip.reset();
+        chip.write(Ssi263::REG_FILFREQ, 0x80);
         chip.write(Ssi263::REG_CTTRAMP, 0x0F);
         chip.write(Ssi263::REG_RATEINF, 0x00);
         chip.write(Ssi263::REG_DURPHON, 0x80 | 0x05);
@@ -194,14 +196,156 @@ void testFilterFreqDecodesOnA2Alone()
     std::printf("  ok: registers 4..7 all decode as FILFREQ (A2-only decode)\n");
 }
 
+// AppleWin SSI263.cpp Update(): AMP=0 and FILFREQ=$FF zero the
+// contribution, but still consume PCM. Compare against an audible twin
+// across a complete loop, at native and resampled rates, on both paths.
+void testSilentPlaybackAdvances()
+{
+    int failures = 0;
+    for (uint32_t sr : {22050u, 44100u, 48000u}) {
+        for (bool timed : {false, true}) {
+            for (bool filter : {false, true}) {
+                Ssi263 chip, reference;
+                chip.reset();
+                reference.reset();
+                uint64_t cursor = 0;
+                auto write = [&](Ssi263& target, uint8_t reg, uint8_t value) {
+                    target.write(reg, value);
+                    if (timed) target.queuePlaybackEvent(reg, value, cursor);
+                };
+                for (auto* target : {&chip, &reference}) {
+                    write(*target, Ssi263::REG_FILFREQ, 0x80);
+                    write(*target, Ssi263::REG_DURPHON, 0x0A);
+                    write(*target, Ssi263::REG_CTTRAMP, 0x0F);
+                }
+                auto render = [&](Ssi263& target, std::vector<float>& out) {
+                    if (timed)
+                        target.fillAudioTimed(out.data(), static_cast<int>(out.size()),
+                                              sr, static_cast<double>(cursor), 1.0);
+                    else
+                        target.fillAudio(out.data(), static_cast<int>(out.size()), sr);
+                };
+                std::vector<float> pre(173), refPre(173);
+                render(chip, pre);
+                render(reference, refPre);
+                cursor += pre.size();
+
+                const uint8_t reg = filter ? Ssi263::REG_FILFREQ : Ssi263::REG_CTTRAMP;
+                write(chip, reg, filter ? Ssi263::FILTER_FREQ_SILENCE : 0x00);
+                const auto silentFrames = pd::kPhonemeInfo[8].length * sr /
+                                          pd::kPhonemeSampleRateHz + 137;
+                std::vector<float> silent(silentFrames, 0.25f), refSilent(silentFrames);
+                render(chip, silent);
+                render(reference, refSilent);
+                for (float sample : silent) assert(sample == 0.25f);
+                cursor += silentFrames;
+
+                write(chip, reg, filter ? 0x80 : 0x0F);
+                std::vector<float> resumed(512), expected(512);
+                render(chip, resumed);
+                render(reference, expected);
+                assert(rms(expected) > 0.005);
+                if (resumed != expected) {
+                    std::fprintf(stderr, "SSI263 silent playback froze: rate=%u timed=%d filter=%d\n",
+                                 sr, timed, filter);
+                    ++failures;
+                }
+            }
+        }
+    }
+    assert(failures == 0);
+    std::puts("  ok: zero amplitude and silent filter preserve PCM position");
+}
+
+// Independent native-rate oracle: the PCM-consumption loop in AppleWin
+// 6c579da5bd94 SSI263.cpp:613-660. Keep the literal read/average/skip
+// sequence here rather than restating the production indexing formula.
+std::vector<float> appleWinFrames(int code, int dur, int amp)
+{
+    const int index = code <= 1 ? 0 : code - 2;
+    const auto& info = pd::kPhonemeInfo[index];
+    const int group = dur <= 1 ? 1 : dur == 2 ? 2 : 4;
+    std::vector<float> frames;
+    unsigned pos = 0, mod4 = 0;
+    int sum = 0, count = 0;
+    while (pos < info.length) {
+        const int sample = code == 0 ? 0 : static_cast<int16_t>(pd::kPhonemeData[info.offset + pos]);
+        sum += static_cast<int>(sample * (static_cast<double>(amp) / 15.0));
+        ++pos;
+        if (++count == group) {
+            frames.push_back(static_cast<float>(sum / group) / 32768.0f);
+            sum = count = 0;
+        }
+        mod4 = (mod4 + 1) & 3;
+        if (dur == 1 && mod4 == 3 && pos < info.length) ++pos;
+    }
+    // Update() zero-fills the final output slot if an incomplete averaging
+    // group exhausted the source before it could produce a sample.
+    if (count) frames.push_back(0.0f);
+    return frames;
+}
+
+void testDurationsAndPcmShareTheOracle()
+{
+    for (bool frameMode : {false, true}) {
+        for (int code = 0; code < 64; ++code) {
+            for (int dur = 0; dur < 4; ++dur) {
+                const auto expected = appleWinFrames(code, frameMode ? 3 : dur, 15);
+                for (int clock : {1015625, 1022727, 3579545}) {
+                    Ssi263 chip;
+                    chip.reset();
+                    chip.setCpuClockHz(clock);
+                    chip.write(Ssi263::REG_FILFREQ, 0x80);
+                    chip.write(Ssi263::REG_DURPHON, frameMode ? 0x40 : 0xC0);
+                    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+                    chip.write(Ssi263::REG_DURPHON, static_cast<uint8_t>((dur << 6) | code));
+                    const int period = static_cast<int>((expected.size() * clock + 22049) / 22050);
+                    if (chip.phonemeRemainingCycles() != period) {
+                        std::fprintf(stderr, "SSI263 duration mismatch: frame=%d code=%02X DUR=%d clock=%d got=%d expected=%d\n",
+                                     frameMode, code, dur, clock, chip.phonemeRemainingCycles(), period);
+                        std::abort();
+                    }
+                    assert(!chip.advance(period - 1));
+                    assert(chip.advance(1));
+                    // RATEINF has no speed effect in AppleWin's audio path.
+                    chip.write(Ssi263::REG_RATEINF, 0xF0);
+                    chip.write(Ssi263::REG_DURPHON, static_cast<uint8_t>((dur << 6) | code));
+                    assert(chip.phonemeRemainingCycles() == period);
+                    std::vector<float> actual(expected.size() * 2 + 17);
+                    chip.fillAudio(actual.data(), static_cast<int>(actual.size()), 22050);
+                    for (size_t i = 0; i < actual.size(); ++i)
+                        assert(actual[i] == expected[i % expected.size()]);
+                }
+            }
+        }
+    }
+    // Non-maximal AMP must be quantized before averaging, as in Update().
+    for (int amp = 1; amp <= 15; ++amp) {
+        for (int dur = 0; dur < 4; ++dur) {
+            Ssi263 chip;
+            chip.reset();
+            chip.write(Ssi263::REG_FILFREQ, 0x80);
+            chip.write(Ssi263::REG_CTTRAMP, static_cast<uint8_t>(amp));
+            chip.write(Ssi263::REG_DURPHON, static_cast<uint8_t>((dur << 6) | 0x0A));
+            const auto expected = appleWinFrames(0x0A, dur, amp);
+            std::vector<float> actual(expected.size());
+            chip.fillAudio(actual.data(), static_cast<int>(actual.size()), 22050);
+            assert(actual == expected);
+        }
+    }
+    std::puts("  ok: PCM and IRQ duration match AppleWin's audio consumption for all codes/DUR/modes/clocks");
+}
+
 } // namespace
 
 int main()
 {
     std::printf("Ssi263 phoneme-map / FILFREQ-decode test\n");
+    testDurationsAndPcmShareTheOracle();
     testEveryCodeMapsToAppleWinsEntry();
     testTopTwoCodesAreNotSilent();
     testFilterFreqDecodesOnA2Alone();
+    testSilentPlaybackAdvances();
     std::printf("PASS\n");
     return 0;
 }

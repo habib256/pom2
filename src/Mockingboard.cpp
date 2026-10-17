@@ -305,6 +305,7 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         bool     timelineBroke    = false;
         // …and did the CHIPS go with it? invalidateAyTimeline(bool).
         bool     breakResetsGens  = true;
+        bool     breakResetsCursor = true;
         // NOTE: `pending` is NOT cleared unless the timeline broke — it is
         // a jitter buffer that carries un-rendered writes over to the next
         // callback.
@@ -328,6 +329,8 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
                 pending.clear();
                 timelineBroke = true;
                 breakResetsGens = parent->ayBreakResetsGens_;
+                breakResetsCursor = parent->ayBreakResetsCursor_;
+                parent->ayBreakResetsCursor_ = false;
             }
             // Take the emuCycles-stamped register writes under the same
             // lock, APPENDING to whatever the last callback could not
@@ -347,11 +350,9 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // merged or dropped). A PB2 reset still resyncs the whole bank
         // from the CPU side, since that path zeroes registers wholesale.
         if (!regsPrimed || timelineBroke) {
-            // A break is a genuine discontinuity, so the live CPU-side
-            // bank — not the dropped backlog — is the truth at the new
-            // anchor point. Zeroing the cursor hands the re-anchor below
-            // its `starved` branch, which is the same code path a
-            // pause/resume or a disk-turbo burst already takes.
+            // Resync the AY bank after a break. Rewind and power cycle
+            // also re-anchor the cursor; a Sound II warm reset keeps it
+            // continuous because the speech chip never saw RESET.
             std::memcpy(liveRegs, regSnap, sizeof(liveRegs));
             regsPrimed = true;
             if (timelineBroke) {
@@ -364,8 +365,10 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
                 // seek of a scrub. See invalidateAyTimeline(bool).
                 if (breakResetsGens)
                     for (int ci = 0; ci < 2; ++ci) chip[ci].resetGenerators();
-                audioCursor = 0;
-                cursorFrac  = 0.0;
+                if (breakResetsCursor) {
+                    audioCursor = 0;
+                    cursorFrac  = 0.0;
+                }
             }
         }
         // LIVE clock, not the NTSC constant: under PAL the CPU produces
@@ -564,13 +567,9 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
 
         const float gainTarget = isMuted ? 0.0f : vol;
         if (!gainPrimed) { gainRamp = gainTarget; gainPrimed = true; }
-        // Muted AND already faded: nothing to render. Otherwise fall
-        // through and let the ramp below walk the gain down to zero.
-        if (isMuted && gainRamp <= 0.0001f) {
-            gainRamp = 0.0f;
-            silence();
-            return;
-        }
+        // Mute changes output gain only. Keep the PSG generators, speech
+        // cursor and stamped queues advancing even after the fade reaches
+        // zero, so unmute resumes the same instant as an audible card.
         const float gainStep =
             1.0f / (kGainRampSeconds * static_cast<float>(sr));
 
@@ -743,7 +742,7 @@ MockingboardCard::MockingboardCard(int slotNum, Variant variant)
         ssi_ = std::make_unique<pom2::Ssi263>();
     }
     audio_  = std::make_unique<AudioSrc>(this);
-    onReset();
+    onPowerCycle();
 }
 
 MockingboardCard::~MockingboardCard() = default;
@@ -765,8 +764,8 @@ void MockingboardCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
     using namespace pom2::byteio;
     std::lock_guard<std::mutex> lk(mtx);
-    // ver 2 since 2026-07-30: the VIA sections gained a byte (portAIn).
-    putU8(out, 'M'); putU8(out, 'B'); putU8(out, 'S'); putU8(out, 2);  // magic + ver
+    // v2 adds VIA portAIn; v3 adds SSI263 latched mode/IRQ state.
+    putU8(out, 'M'); putU8(out, 'B'); putU8(out, 'S'); putU8(out, ssi_ ? 3 : 2);
     putU8(out, static_cast<uint8_t>(variant_));
     uint8_t present = 0;
     if (via_[0]) present |= 0x01;
@@ -792,9 +791,11 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // 2026-07-30 for the AY read-bus latch). The layout change must bump
     // this byte, or an old snapshot's every later field shifts by one.
     const uint8_t blobVer = r.u8();
-    if (blobVer != 1 && blobVer != 2) return;
+    if (blobVer != 1 && blobVer != 2 && blobVer != 3) return;
     const std::size_t viaBytes = (blobVer >= 2)
         ? pom2::Via6522::kSnapshotBytes : pom2::Via6522::kSnapshotBytesV1;
+    const std::size_t ssiBytes = blobVer >= 3
+        ? pom2::Ssi263::kSnapshotBytes : pom2::Ssi263::kSnapshotBytesV1;
     (void)r.u8();                       // variant — informational
     const uint8_t present = r.u8();
     const std::size_t required = 6 +
@@ -802,7 +803,7 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         ((present & 0x02) ? viaBytes : 0) +
         ((present & 0x04) ? pom2::Ay3_8910::kSnapshotBytes : 0) +
         ((present & 0x08) ? pom2::Ay3_8910::kSnapshotBytes : 0) +
-        ((present & 0x10) ? pom2::Ssi263::kSnapshotBytes : 0);
+        ((present & 0x10) ? ssiBytes : 0);
     if (len < required) return;          // validate before mutating any chip
     auto loadVia = [&](std::unique_ptr<pom2::Via6522>& v) -> bool {
         if (v) v->loadSnapshot(r.p + r.pos, viaBytes);
@@ -815,8 +816,8 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         return true;
     };
     auto loadSsi = [&]() -> bool {
-        if (ssi_) ssi_->loadSnapshot(r.p + r.pos);
-        r.pos += pom2::Ssi263::kSnapshotBytes;
+        if (ssi_) ssi_->loadSnapshot(r.p + r.pos, ssiBytes);
+        r.pos += ssiBytes;
         return true;
     };
     // A restore re-anchors the machine at a cycle that is almost always in
@@ -851,12 +852,25 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 
 void MockingboardCard::onReset()
 {
+    resetCard(false);
+}
+
+void MockingboardCard::onPowerCycle()
+{
+    resetCard(true);
+}
+
+void MockingboardCard::resetCard(bool powerCycle)
+{
     std::lock_guard<std::mutex> lk(mtx);
     via_[0]->reset();
     via_[1]->reset();
     ay_[0]->reset();
     ay_[1]->reset();
-    if (ssi_) ssi_->reset();
+    // Mockingboard-C RESET is not connected to SSI263 !PD/!RST pin 18.
+    // AppleWin 6c579da5bd94 SSI263.cpp:40-44,930-956 documents continued
+    // speech on Ctrl-Reset. Only removing power resets this chip here.
+    if (ssi_ && powerCycle) ssi_->reset();
     assertIrq(false);
     // Re-anchor the lazy-sync clock to "now" so a freshly reset card
     // doesn't run a giant catch-up on its first MMIO access.
@@ -872,7 +886,11 @@ void MockingboardCard::onReset()
     // and replayed them straight over the zeroed bank, so F12 / a profile
     // switch left the card droning its last note. `invalidateAyTimeline`
     // purges BOTH sides.
-    invalidateAyTimeline();
+    // The speech queue survives a warm reset, so keep its shared audio
+    // cursor while flushing AY writes and resetting the PSG generators.
+    // Preserve an earlier, unconsumed rewind/power-cycle cursor reset.
+    const bool resetCursor = powerCycle || !ssi_ || ayBreakResetsCursor_;
+    invalidateAyTimeline(/*resetChips=*/true, resetCursor);
     // BUMP, don't zero. The audio thread resyncs its own register bank
     // only when this counter CHANGES; zeroing it was a no-op whenever it
     // was already 0 (a driver that never strobes PB2 low), so F12 / cold
@@ -1189,9 +1207,10 @@ void MockingboardCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
 }
 
 // Declare the cycle-stamped event stream discontinuous. Caller holds mtx.
-void MockingboardCard::invalidateAyTimeline(bool resetChips)
+void MockingboardCard::invalidateAyTimeline(bool resetChips, bool resetCursor)
 {
     ayBreakResetsGens_ = resetChips;
+    ayBreakResetsCursor_ = resetCursor;
     ayEvents_.clear();
     // `latestAyEventCycle_` is half of the cursor's `producerNow`. Leaving
     // a pre-rewind value in it would hold `producerNow` at the OLD
@@ -1207,19 +1226,14 @@ void MockingboardCard::advanceCycles(int cycles)
     if (cycles <= 0) return;
     std::lock_guard<std::mutex> lk(mtx);
     // Tick the SSI263 (Sound II only) and surface A/!R end-of-phoneme
-    // to VIA1.CA1 — real card wires SSI263.A/!R inverted into CA1, so
+    // to VIA2.CA1 — real card wires SSI263.A/!R inverted into CA1, so
     // a 0→1 of A/!R = negative edge on CA1, matching PCR.0 == 0 (the
     // default config used by stock Sound II drivers).
     //
-    // Watch the PIN, not `advance()`'s return value. That return is the
-    // HOST-IRQ edge — gated by the chip's own DR1:0 — which is the right
-    // answer for the Echo+/Phasor wiring, where A/!R drives the slot line
-    // directly and there is no 6522 in between. On a Sound II there is one,
-    // and the gate belongs to IER, not to DR1:0. Wiring the strobe to the
-    // mode bits left a driver in the polled mode (DR1:0 = 00, where the chip
-    // still raises A/!R — Ssi263.h) with nothing to poll: $Cn4x READS go to
-    // the VIA, so IFR.CA1 is the only window onto the pin, and it never
-    // latched.
+    // AppleWin SSI263.cpp at 6c579da5bd94:806-838, SetSpeechIRQ(): the
+    // latched SSI enableInts gates CA1, while D7 status is set regardless.
+    // IER independently controls whether the VIA's CA1 request reaches
+    // the CPU. Polling IFR requires SSI IRQ enabled and VIA IER disabled.
     if (ssi_) {
         const bool arBefore = ssi_->aRequest();
         (void)ssi_->advance(cycles);
@@ -1231,7 +1245,8 @@ void MockingboardCard::advanceCycles(int cycles)
         // speech chip". POM2 latched it in VIA1 until 2026-09-12, so a stock
         // driver that enables IER.CA1 on $Cn8E and services $Cn8D never saw
         // the phoneme-done interrupt and stalled after its first sound.
-        if (!arBefore && ssi_->aRequest()) via_[1]->setCa1NegativeEdge();
+        if (!arBefore && ssi_->aRequest() && ssi_->irqEnabled())
+            via_[1]->setCa1NegativeEdge();
     }
     if (cpu_) {
         // Lazy-sync path: any cycles already accounted for via MMIO accesses

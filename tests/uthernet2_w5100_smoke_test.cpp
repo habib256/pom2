@@ -929,14 +929,12 @@ void testSocketInterruptRegister()
     std::printf("  Sn_IR OK (CON / SEND_OK / RECV, write-1-to-clear)\n");
 }
 
-// LISTEN is not supported, and "not supported" must be a FAILURE the guest
-// can see. Leaving Sn_SR at SOCK_INIT is the one answer a server loop cannot
-// act on — it polls for SOCK_LISTEN or a timeout and gets neither.
+// Disabled inbound mode is a guest-visible failure, not a stuck INIT state.
 void testListenIsAnHonestFailure()
 {
     UthernetIICard card(3);
     card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
-    card.chip().setAllowLoopback(true);
+    card.chip().setAllowLoopback(false);
     const uint16_t base = socketBase(0);
 
     writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrTcp);
@@ -952,6 +950,62 @@ void testListenIsAnHonestFailure()
            pom2::kW5100SnIrTimeout);
 
     std::printf("  LISTEN answers SOCK_CLOSED + TIMEOUT\n");
+}
+
+void testListenAcceptsLocalConnection()
+{
+    // Reserve a kernel-selected port, then release it for the guest listener.
+    int reservation = ::socket(AF_INET, SOCK_STREAM, 0);
+    assert(reservation >= 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    assert(::bind(reservation, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
+    socklen_t length = sizeof(address);
+    assert(::getsockname(reservation, reinterpret_cast<sockaddr*>(&address), &length) == 0);
+    ::close(reservation);
+
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
+    const uint16_t base = socketBase(0);
+    writeAt(card, base + pom2::kW5100SnMr, pom2::kW5100SnMrTcp);
+    writeWordAt(card, base + pom2::kW5100SnPort0, ntohs(address.sin_port));
+    writeAt(card, base + pom2::kW5100SnCr, pom2::kW5100SnCrOpen);
+    writeAt(card, base + pom2::kW5100SnCr, pom2::kW5100SnCrListen);
+    assert(readAt(card, base + pom2::kW5100SnSr) == pom2::kW5100SnSrListen);
+    int client = ::socket(AF_INET, SOCK_STREAM, 0);
+    assert(client >= 0);
+    assert(::connect(client, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
+    for (int n = 0; n < 200 && card.chip().socketInfo(0).status != pom2::kW5100SnSrEstablished; ++n) {
+        card.chip().poll();
+        ::usleep(1000);
+    }
+    assert(card.chip().socketInfo(0).status == pom2::kW5100SnSrEstablished);
+    assert(readAt(card, base + pom2::kW5100SnIr) & pom2::kW5100SnIrCon);
+    const char inbound[] = "guest server";
+    assert(::send(client, inbound, sizeof(inbound), 0) == sizeof(inbound));
+    uint16_t pending = 0;
+    for (int n = 0; n < 200 && !pending; ++n) {
+        pending = readWordAt(card, base + pom2::kW5100SnRxRsr0);
+        if (!pending) ::usleep(1000);
+    }
+    assert(pending == sizeof(inbound));
+    for (size_t n = 0; n < sizeof(inbound); ++n)
+        assert(readAt(card, pom2::kW5100RxBase + n) == static_cast<uint8_t>(inbound[n]));
+    const char outbound[] = "reply";
+    for (size_t n = 0; n < sizeof(outbound); ++n)
+        writeAt(card, pom2::kW5100TxBase + n, outbound[n]);
+    writeWordAt(card, base + pom2::kW5100SnTxWr0, sizeof(outbound));
+    writeAt(card, base + pom2::kW5100SnCr, pom2::kW5100SnCrSend);
+    pollfd ready{client, POLLIN, 0};
+    assert(::poll(&ready, 1, 2000) > 0);
+    char reply[sizeof(outbound)]{};
+    assert(::recv(client, reply, sizeof(reply), MSG_WAITALL) == sizeof(reply));
+    assert(std::memcmp(reply, outbound, sizeof(reply)) == 0);
+    ::close(client);
+    writeAt(card, base + pom2::kW5100SnCr, pom2::kW5100SnCrClose);
+    assert(!card.chip().socketInfo(0).hasHostSocket);
 }
 
 // A TCP client reconnecting from a FIXED Sn_PORT must succeed.
@@ -1077,6 +1131,7 @@ int main()
     testSendInSockInitKeepsTheRing();
     testSocketInterruptRegister();
     testListenIsAnHonestFailure();
+    testListenAcceptsLocalConnection();
     testFixedLocalPortReconnects();
     testCommonRegisterWritesStick();
     testRestoreClearsRingPointersAndKeepsTheDnsSetting();

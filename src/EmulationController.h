@@ -94,10 +94,11 @@ public:
     void debugStepInstruction();
 
     /// Run until control returns past the current instruction — a step OVER.
-    /// For a JSR that is the address after it; for anything else this is an
+    /// For a JSR follow its outer RTS (including inline data); otherwise an
     /// ordinary single step, because there is nothing to step over. Takes
     /// `stateMutex` itself.
     void debugStepOver();
+    void debugStepOut();
 
     /// Run until the PC reaches `addr`, then stop. Takes `stateMutex` itself.
     void debugRunToCursor(uint16_t addr);

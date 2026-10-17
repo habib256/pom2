@@ -62,6 +62,18 @@ public:
 
     bool writable() const override { return writableResult; }
 
+    bool listen(uint16_t port) override {
+        ++listenCount;
+        lastBindPort = port;
+        return listenResult;
+    }
+    W5100ConnectResult accept(uint32_t& address, uint16_t& port) override {
+        ++acceptCount;
+        address = acceptAddress;
+        port = acceptPort;
+        return acceptResult;
+    }
+
     bool bind(uint16_t port) override
     {
         ++bindCount;
@@ -113,6 +125,12 @@ public:
     bool writableResult = true;
     W5100SendMode lastSendMode = W5100SendMode::Addressed;
     bool bindResult = true;
+    bool listenResult = false;
+    W5100ConnectResult acceptResult = W5100ConnectResult::InProgress;
+    uint32_t acceptAddress = 0;
+    uint16_t acceptPort = 0;
+    int listenCount = 0;
+    int acceptCount = 0;
     uint16_t lastBindPort = 0;
     int bindCount = 0;
     int connectCount = 0;

@@ -406,7 +406,7 @@ jobs:
         run: ctest --output-on-failure --parallel 3
 
   windows:
-    name: Windows build (no packaging)
+    name: Windows build + portable core tests (no packaging)
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -423,15 +423,16 @@ jobs:
       - name: Install GLFW via vcpkg (manifest mode, static triplet)
         run: vcpkg install --triplet x64-windows-static
 
-      # Tests OFF, matching release.yml: the suite has never been built for
-      # MSVC and turning it on here would report a backlog of test-code
-      # portability work as a CI failure on unrelated commits. The application
-      # is what ships on Windows and the application is what this proves.
+      # Configure a bounded portable subset; POSIX-only harnesses remain on
+      # Linux/macOS. Assertions stay enabled even for the Release binaries.
       - name: Configure + build
         shell: cmd
         run: |
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=OFF
-          cmake --build build --config Release --parallel 3
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=ON -DPOM2_PORTABLE_TESTS_ONLY=ON
+          cmake --build build --config Release --parallel 3 --target pom2_imgui test_cpu_cycle_count test_bus_fastpath test_memory_cpu_view test_pal_timing test_debugger test_w5100_socket_seam test_vidhd_card test_snesmax_card
+
+      - name: Run portable core tests
+        run: ctest --test-dir build -C Release --output-on-failure --no-tests=error --parallel 2
 
   # ── Nightly sanitizers ───────────────────────────────────────────────────
   # POM2_SANITIZE has been a CMake option for a while and CI never once used
