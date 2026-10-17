@@ -300,12 +300,15 @@ void SlotBus::broadcastVideoSwitchWrite(uint16_t addr, uint8_t value)
     for (auto& s : slots) if (s) s->onVideoSoftSwitchWrite(addr, value);
 }
 
-void SlotBus::reset()
+void SlotBus::reset(bool powerCycle)
 {
-    for (auto& s : slots) if (s) s->onReset();
-    // Note: we deliberately do NOT clear activeExpansionSlot — Apple II
-    // hardware reset doesn't drop the expansion-ROM enable, the latch is
-    // cleared only by $CFFF or by losing the slot's $CnXX access.
+    for (auto& s : slots) {
+        if (!s) continue;
+        if (powerCycle) s->onPowerCycle();
+        else s->onReset();
+    }
+    // RESET retains the expansion-ROM enable; removing slot power does not.
+    if (powerCycle) activeExpansionSlot = -1;
 }
 
 void SlotBus::clear()

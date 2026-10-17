@@ -34,19 +34,126 @@ namespace {
 
 using pom2::Ssi263;
 
+void testControlLatchesModeAndIrq()
+{
+    Ssi263 chip;
+    chip.reset();
+    // Hardware-observed initial DURPHON=$C0; IRQ mode is latched only
+    // when CTL falls. A detector can simply wake the chip and await D7.
+    assert(chip.peekRegister(Ssi263::REG_DURPHON) == 0xC0);
+    assert(chip.peekRegister(Ssi263::REG_FILFREQ) == 0xFF);
+    assert(!chip.irqEnabled());
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+    assert(chip.irqEnabled());
+    assert(chip.currentMode() == Ssi263::MODE_PHONEME_TRANSITIONED_INFLECTION);
+    assert(chip.advance(chip.phonemeRemainingCycles()));
+
+    // Changing DUR while running changes phoneme timing, not the latched
+    // interrupt enable or function. A subsequent CTL falling edge with
+    // DUR=00 disables interrupts while preserving the previous function.
+    chip.write(Ssi263::REG_DURPHON, 0x05);
+    assert(chip.irqEnabled());
+    assert(chip.currentMode() == Ssi263::MODE_PHONEME_TRANSITIONED_INFLECTION);
+    assert(chip.advance(chip.phonemeRemainingCycles()));
+    assert(chip.write(Ssi263::REG_CTTRAMP, 0x8F));
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+    assert(!chip.irqEnabled());
+    assert(chip.currentMode() == Ssi263::MODE_PHONEME_TRANSITIONED_INFLECTION);
+    assert(!chip.advance(chip.phonemeRemainingCycles()));
+    assert(chip.aRequest());  // D7 is pollable even with IRQ disabled.
+
+    chip.write(Ssi263::REG_DURPHON, 0x85);
+    assert(!chip.irqEnabled());
+    chip.write(Ssi263::REG_CTTRAMP, 0x8F);
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+    assert(chip.irqEnabled());
+    assert(chip.currentMode() == Ssi263::MODE_PHONEME_IMMEDIATE_INFLECTION);
+    std::puts("  ok: CTL falling edge latches mode/IRQ, DUR=00 retains function");
+}
+
+void testRepeatedRequestsKeepTheirPhase()
+{
+    Ssi263 chip;
+    chip.reset();
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+    chip.write(Ssi263::REG_DURPHON, 0xC5);
+    const int period = chip.phonemeRemainingCycles();
+    assert(chip.advance(period + 7));
+    assert(chip.phonemeRemainingCycles() == period - 7);
+    // Without acknowledgement the request is sticky, but playback and
+    // the repeat timer keep running. Skip several complete periods.
+    assert(!chip.advance(period * 3 + 11));
+    assert(chip.aRequest());
+    assert(chip.phonemeRemainingCycles() == period - 18);
+    assert(chip.write(Ssi263::REG_INFLECT, 0x00));
+    assert(!chip.advance(period - 19));
+    assert(!chip.aRequest());
+    assert(chip.advance(1));
+    assert(chip.aRequest());
+    // RATEINF also acknowledges without restarting the active phoneme.
+    assert(chip.write(Ssi263::REG_RATEINF, 0x00));
+    assert(!chip.advance(period - 1));
+    assert(chip.advance(1));
+    chip.write(Ssi263::REG_CTTRAMP, 0x8F);
+    assert(!chip.advance(period * 10));
+    assert(!chip.aRequest());
+    std::puts("  ok: repeated phoneme requests survive INFLECT/RATEINF acknowledgement");
+}
+
+void testLatchedModeSnapshot()
+{
+    Ssi263 chip;
+    chip.reset();
+    chip.write(Ssi263::REG_DURPHON, 0x85);
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);  // latch function 2 / IRQ enabled
+    chip.write(Ssi263::REG_DURPHON, 0x05); // register no longer describes mode
+    chip.advance(17);
+    std::vector<uint8_t> blob;
+    chip.appendSnapshot(blob);
+    Ssi263 restored;
+    restored.reset();
+    restored.loadSnapshot(blob.data());
+    assert(restored.currentMode() == Ssi263::MODE_PHONEME_IMMEDIATE_INFLECTION);
+    assert(restored.irqEnabled());
+    assert(restored.phonemeRemainingCycles() == chip.phonemeRemainingCycles());
+    assert(restored.advance(restored.phonemeRemainingCycles()));
+    chip.write(Ssi263::REG_CTTRAMP, 0x8F);
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F); // latch DUR=00, preserve function 2
+    chip.write(Ssi263::REG_DURPHON, 0xC5);
+    blob.clear();
+    chip.appendSnapshot(blob);
+    restored.loadSnapshot(blob.data());
+    assert(!restored.irqEnabled());
+    assert(restored.currentMode() == Ssi263::MODE_PHONEME_IMMEDIATE_INFLECTION);
+    assert(!restored.advance(restored.phonemeRemainingCycles()));
+
+    // A legacy one-shot completion has no repeat phase or mode latch.
+    // Migrate its DUR-derived IRQ policy and restart a complete period.
+    blob.resize(Ssi263::kSnapshotBytesV1);
+    std::fill(blob.begin() + 5, blob.begin() + 9, 0); // old completed timer
+    blob[9] = 1; // request already pending
+    restored.loadSnapshot(blob.data(), blob.size());
+    assert(restored.irqEnabled());
+    assert(restored.currentMode() == Ssi263::MODE_PHONEME_TRANSITIONED_INFLECTION);
+    assert(restored.aRequest());
+    assert(restored.phonemeRemainingCycles() > 0);
+    restored.write(Ssi263::REG_INFLECT, 0);
+    assert(restored.advance(restored.phonemeRemainingCycles()));
+    std::puts("  ok: snapshot preserves a mode different from DURPHON bits");
+}
+
 void testResetState()
 {
     Ssi263 chip;
     chip.reset();
-    // Reset puts the chip in power-down (CTL=1) with everything else
-    // cleared. A/!R low; no playback in progress.
+    // Typical power-on: CTL=1, DUR=$C0, FILFREQ=$FF. A/!R is low.
     assert(chip.powerDown());
     assert(!chip.aRequest());
-    assert(chip.peekRegister(Ssi263::REG_DURPHON) == 0);
+    assert(chip.peekRegister(Ssi263::REG_DURPHON) == 0xC0);
     assert(chip.peekRegister(Ssi263::REG_INFLECT) == 0);
     assert(chip.peekRegister(Ssi263::REG_RATEINF) == 0);
     assert(chip.peekRegister(Ssi263::REG_CTTRAMP) == Ssi263::CONTROL_MASK);
-    assert(chip.peekRegister(Ssi263::REG_FILFREQ) == 0);
+    assert(chip.peekRegister(Ssi263::REG_FILFREQ) == 0xFF);
     assert(chip.phonemeWriteCount() == 0);
     assert(chip.phonemeRemainingCycles() == 0);
 
@@ -65,7 +172,7 @@ void testPhonemePlaysAndIrqs()
     chip.write(Ssi263::REG_CTTRAMP, 0x0F);
     assert(!chip.powerDown());
 
-    // Configure a fast phoneme: rate = 15, dur mode = 3 → ~4 ms.
+    // Configure DUR=3 (four source samples per native output frame).
     chip.write(Ssi263::REG_RATEINF, Ssi263::RATE_MASK);   // rate=15
     // Write DURPHON: mode=11 (transitioned inflection), phoneme=$05.
     chip.write(Ssi263::REG_DURPHON,
@@ -89,7 +196,7 @@ void testPhonemePlaysAndIrqs()
     edge = chip.advance(rest);
     assert(edge);
     assert(chip.aRequest());
-    assert(chip.phonemeRemainingCycles() == 0);
+    assert(chip.phonemeRemainingCycles() > 0); // next repeating period
 
     // Reads see A/!R = 1.
     assert(chip.read(0) == 0x80);
@@ -248,9 +355,9 @@ void testIrqDisabledMode()
 {
     Ssi263 chip;
     chip.reset();
-    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
     // Mode = MODE_IRQ_DISABLED (bits 7:6 = 00).
     chip.write(Ssi263::REG_DURPHON, 0x05);
+    chip.write(Ssi263::REG_CTTRAMP, 0x0F);
     assert(chip.currentMode() == Ssi263::MODE_IRQ_DISABLED);
     assert(!chip.irqEnabled());
 
@@ -274,6 +381,7 @@ void testAudioRenderNonSilent()
 {
     Ssi263 chip;
     chip.reset();
+    chip.write(Ssi263::REG_FILFREQ, 0x80);
     chip.write(Ssi263::REG_CTTRAMP, 0x0F);     // exit power-down, amp=15
     // Slow phoneme so playback runs throughout the buffer.
     chip.write(Ssi263::REG_RATEINF, 0x00);     // rate=0
@@ -320,31 +428,49 @@ void testAudioRenderNonSilent()
     std::printf("  ok: phoneme audio non-silent; power-down + $FF filter silence\n");
 }
 
-void testDurationFormulaBounds()
+void testDurationFollowsPcmLength()
 {
     Ssi263 chip;
     chip.reset();
     chip.write(Ssi263::REG_CTTRAMP, 0x0F);
 
-    // Fastest: rate=15, dur mode=3 → (16-15)*4096/1023 * (4-3) ≈ 4 ms ≈ 4090 cyc.
+    // Pause uses entry 0's PCM length, even though it renders silence.
+    // DUR=3 consumes groups of four; RATEINF does not drive PCM speed.
     chip.write(Ssi263::REG_RATEINF, 0xF0);
     chip.write(Ssi263::REG_DURPHON, 0xC0);     // mode=11
     const int fastest = chip.phonemeRemainingCycles();
-    assert(fastest > 0 && fastest < 10000);
+    assert(fastest > 30000 && fastest < 32000);
 
-    // Slowest: rate=0, dur mode=0 → 16*4096/1023 * 4 ≈ 256 ms ≈ 262k cyc.
+    // DUR=0 consumes one source sample per native output frame.
     chip.write(Ssi263::REG_RATEINF, 0x00);
-    // dur mode = 00 also means MODE_IRQ_DISABLED — that's fine for
-    // duration math; we're just checking the formula not IRQ.
+    // The IRQ mode is still latched as 3; this changes duration only.
     chip.write(Ssi263::REG_DURPHON, 0x00);
     const int slowest = chip.phonemeRemainingCycles();
-    assert(slowest > 200000 && slowest < 300000);
+    assert(slowest > 120000 && slowest < 125000);
 
-    // Slowest must be many times longer than fastest.
-    assert(slowest > fastest * 20);
+    assert(std::abs(slowest - fastest * 4) <= 3); // cycle-rounding bound
 
-    std::printf("  ok: duration formula bounds (%d cyc fastest, %d cyc slowest)\n",
+    std::printf("  ok: PCM duration (%d cyc DUR=3, %d cyc DUR=0)\n",
                 fastest, slowest);
+}
+
+void testClockChangePreservesRemainingTime()
+{
+    for (int nextClock : {1015625, 3579545}) {
+        Ssi263 chip;
+        chip.reset();
+        chip.setCpuClockHz(1022727);
+        chip.write(Ssi263::REG_CTTRAMP, 0x0F);
+        chip.write(Ssi263::REG_DURPHON, 0xCA);
+        chip.advance(chip.phonemeRemainingCycles() / 3);
+        const int before = chip.phonemeRemainingCycles();
+        chip.setCpuClockHz(nextClock);
+        const int expected = static_cast<int>((static_cast<int64_t>(before) * nextClock + 1022726) / 1022727);
+        assert(chip.phonemeRemainingCycles() == expected);
+        assert(!chip.advance(expected - 1));
+        assert(chip.advance(1));
+    }
+    std::puts("  ok: CPU clock changes preserve the active phoneme's remaining real time");
 }
 
 } // namespace
@@ -385,6 +511,7 @@ void testSnapshotClampsPlaybackCursor()
     // Live chip, mid-way through the LONGEST phoneme.
     Ssi263 live;
     live.reset();
+    live.write(Ssi263::REG_FILFREQ, 0x80);
     live.write(Ssi263::REG_CTTRAMP, 0x0F);       // powered up, amp 15
     live.write(Ssi263::REG_RATEINF, 0x00);
     live.write(Ssi263::REG_DURPHON,
@@ -420,6 +547,7 @@ void testSnapshotClampsPlaybackCursor()
     // Reference: the same phoneme rendered from its start.
     Ssi263 ref;
     ref.reset();
+    ref.write(Ssi263::REG_FILFREQ, 0x80);
     ref.write(Ssi263::REG_CTTRAMP, 0x0F);
     ref.write(Ssi263::REG_RATEINF, 0x00);
     ref.write(Ssi263::REG_DURPHON,
@@ -478,6 +606,9 @@ void testResetDropsQueuedPlayback()
 int main()
 {
     std::printf("Ssi263 chip smoke test\n");
+    testControlLatchesModeAndIrq();
+    testRepeatedRequestsKeepTheirPhase();
+    testLatchedModeSnapshot();
     testResetState();
     testPhonemePlaysAndIrqs();
     testAckClearsRequest();
@@ -485,7 +616,8 @@ int main()
     testCtlRestartRewindsPlaybackCursor();
     testIrqDisabledMode();
     testAudioRenderNonSilent();
-    testDurationFormulaBounds();
+    testDurationFollowsPcmLength();
+    testClockChangePreservesRemainingTime();
     testSnapshotClampsPlaybackCursor();
     testResetDropsQueuedPlayback();
     std::printf("PASS\n");

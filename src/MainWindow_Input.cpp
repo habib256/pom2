@@ -45,6 +45,7 @@
 #include "MouseGrab.h"
 #include "MouseSync.h"
 #include "FourPlayCard.h"
+#include "SnesMaxCard.h"
 #include "PaddleInputs.h"
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
@@ -708,6 +709,10 @@ void MainWindow::renderPasteFileDialog()
 
 void MainWindow::pollJoystickAndPushToMemory()
 {
+    bool snesMaxInstalled = false;
+    for (int slot = 1; slot <= 7; ++slot)
+        snesMaxInstalled |= dynamic_cast<pom2::SnesMaxCard*>(controller->memory().slotBus().peripheral(slot)) != nullptr;
+    joystick->setSnesMaxMode(snesMaxInstalled);
     joystick->poll();
     joystick->autoBindIfUnconfigured();
 
@@ -725,7 +730,7 @@ void MainWindow::pollJoystickAndPushToMemory()
                 pom2::log().info(
                     "Joystick", "bound #" + std::to_string(hi + 1) + " '" +
                     joystick->activeName() + "' gamepad-mapped=" +
-                    (gp ? "yes (Start opens kiosk disk menu)"
+                    (gp ? (snesMaxInstalled ? "yes (SNES MAX owns Start/Select; F1 opens the menu)" : "yes (Start opens kiosk disk menu)")
                         : "no (use F1 for the kiosk disk menu)"));
             } else {
                 pom2::log().info("Joystick", "no pad bound");
@@ -759,11 +764,14 @@ void MainWindow::pollJoystickAndPushToMemory()
     if (kioskMenuWasOpen_ && !menuActive && play.valid) kioskSwallowPad_ = true;
     kioskMenuWasOpen_ = menuActive;
     if (kioskSwallowPad_) {
-        const bool anyHeld = play.valid
+        bool anyHeld = play.valid
             ? (play.button0 || play.button1 || play.dpadUp || play.dpadDown ||
                play.dpadLeft || play.dpadRight)
             : (joystick->buttonDown(0) || joystick->buttonDown(1) ||
                joystick->buttonDown(2));
+        if (snesMaxInstalled)
+            for (int player = 0; player < 2; ++player)
+                anyHeld |= joystick->deviceState(player).snesButtons != 0;
         if (!anyHeld) kioskSwallowPad_ = false;
     }
     const bool suppressGame = menuActive || kioskSwallowPad_;
@@ -772,9 +780,9 @@ void MainWindow::pollJoystickAndPushToMemory()
         auto st = controller->lockState();
         Memory& mem = st.memory();
         for (int i = 0; i < 4; ++i)
-            mem.setPaddle(i, menuActive ? 128 : joystick->paddleValue(i));
+            mem.setPaddle(i, (menuActive || snesMaxInstalled) ? 128 : joystick->paddleValue(i));
 
-        if (suppressGame) {
+        if (suppressGame || snesMaxInstalled) {
             for (int i = 0; i < 3; ++i) mem.setPaddleButton(i, false);
         } else if (play.valid) {
             // Gamepad-mapped: only Cross/Circle are Apple game-port buttons;
@@ -821,6 +829,17 @@ void MainWindow::pollJoystickAndPushToMemory()
         break;   // one card is the whole point; a second would fight it
     }
 
+    // SNES MAX owns both pads, including Start/Select. Its atomic host input
+    // remains separate from the card's guest-visible serial/latch state.
+    for (int slot = 1; slot <= 7; ++slot) {
+        auto* snes = dynamic_cast<pom2::SnesMaxCard*>(controller->memory().slotBus().peripheral(slot));
+        if (!snes) continue;
+        for (int player = 0; player < 2; ++player) {
+            const auto& dev = joystick->deviceState(player);
+            snes->setButtons(player, dev.present && !suppressGame ? dev.snesButtons : 0);
+        }
+    }
+
     // Keyboard routing for the digital controls — outside stateMutex, since
     // queueKey has its own keyboard lock. Only in-game (menu closed, swallow
     // drained) and only for a gamepad-mapped pad whose layout we can trust.
@@ -831,7 +850,7 @@ void MainWindow::pollJoystickAndPushToMemory()
     // reference across the two, as this function used to, is what made the
     // split invisible.
     Memory& mem = controller->memory();
-    if (suppressGame || !play.valid) {
+    if (suppressGame || snesMaxInstalled || !play.valid) {
         // Drop the auto-repeat history so a direction still held from menu
         // navigation re-arms cleanly (press-then-delay) once released.
         for (bool& h : padArrowHeld_) h = false;

@@ -198,9 +198,10 @@ public:
     int iicRomWindowPage() const override { return 4; }
     void    advanceCycles(int cycles) override;
     void    onReset() override;
+    void    onPowerCycle() override;
     void    onUnplug() override;
     // Rewind/snapshot: VIA + AY register/timer state (the audible music
-    // state). SSI263 speech state is NOT captured (rare during a rewind).
+    // state), including the Sound II SSI263 registers/timer/PCM cursor.
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
 
@@ -282,6 +283,7 @@ public:
     Diagnostics captureDiagnostics() const;
 
 private:
+    void resetCard(bool powerCycle);
     /// Caller holds `mtx` — the body of `peekViaRegister`, split out so the
     /// whole card can be captured under one acquisition.
     uint8_t peekViaRegisterLocked(int chip, int reg) const;
@@ -388,8 +390,11 @@ private:
     /// by `kMaxAyEvents`.
     uint32_t ayQueueGen_ = 0;
     /// Did the CHIPS go with the last timeline break? See
-    /// invalidateAyTimeline(bool). Audio thread reads it under `mtx`.
+    /// invalidateAyTimeline(). Audio thread reads it under `mtx`.
     bool     ayBreakResetsGens_ = true;
+    /// Pending cursor reset, consumed under mtx by the audio callback.
+    /// A Sound II warm reset leaves the speech timeline continuous.
+    bool     ayBreakResetsCursor_ = true;
     /// Edge state for the /RESET strobe, per chip. `applyControl` reports
     /// `ResetOnly` on EVERY VIA write while PB2 is held low, and a driver
     /// can leave it low for many writes; only the falling edge is an
@@ -407,7 +412,7 @@ private:
     /// restore, where the registers are restored and the generators must
     /// keep running — re-seeding them there re-attacked every envelope the
     /// guest had not re-triggered, once per seek of a scrub.
-    void invalidateAyTimeline(bool resetChips = true);
+    void invalidateAyTimeline(bool resetChips = true, bool resetCursor = true);
 
     // Cross-thread guard. CPU thread takes it for VIA reads/writes and
     // for `advanceCycles`; audio thread takes it briefly to snapshot

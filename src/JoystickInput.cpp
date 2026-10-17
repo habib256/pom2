@@ -82,6 +82,7 @@ void JoystickInput::poll()
         d.name.clear();
         d.axis.fill(0.0f);
         d.buttons.fill(false);
+        d.snesButtons = 0;
 
         if (browserPads <= 0 || h >= browserPads) continue;
 
@@ -100,11 +101,19 @@ void JoystickInput::poll()
             d.buttons[i] = (i < gp.numButtons) &&
                            (gp.digitalButton[i] || gp.analogButton[i] >= 0.5);
         }
+        // W3C standard Gamepad layout, in SNES serial order.
+        const int snesMap[] = {0, 2, 8, 9, 12, 13, 14, 15, 1, 3, 4, 5};
+        for (int bit = 0; bit < 12; ++bit) {
+            const int button = snesMap[bit];
+            if (button < gp.numButtons && (gp.digitalButton[button] || gp.analogButton[button] >= 0.5))
+                d.snesButtons |= static_cast<uint16_t>(1u << bit);
+        }
     }
 #else
     for (int h = 0; h < kHostCount; ++h) {
         const int jid = GLFW_JOYSTICK_1 + h;
         DeviceState& d = devices[h];
+        d.snesButtons = 0;
         if (!glfwJoystickPresent(jid)) {
             d.present = false;
             d.name.clear();
@@ -129,6 +138,15 @@ void JoystickInput::poll()
                       mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_Y],
                       mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_X],
                       mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y]};
+            const int snesMap[] = {GLFW_GAMEPAD_BUTTON_A, GLFW_GAMEPAD_BUTTON_X,
+                GLFW_GAMEPAD_BUTTON_BACK, GLFW_GAMEPAD_BUTTON_START,
+                GLFW_GAMEPAD_BUTTON_DPAD_UP, GLFW_GAMEPAD_BUTTON_DPAD_DOWN,
+                GLFW_GAMEPAD_BUTTON_DPAD_LEFT, GLFW_GAMEPAD_BUTTON_DPAD_RIGHT,
+                GLFW_GAMEPAD_BUTTON_B, GLFW_GAMEPAD_BUTTON_Y,
+                GLFW_GAMEPAD_BUTTON_LEFT_BUMPER, GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER};
+            for (int bit = 0; bit < 12; ++bit)
+                if (mapped.buttons[snesMap[bit]] == GLFW_PRESS)
+                    d.snesButtons |= static_cast<uint16_t>(1u << bit);
         }
 
         int btnCount = 0;
@@ -180,6 +198,7 @@ void JoystickInput::poll()
 
         nav_.menu     = edge(GLFW_GAMEPAD_BUTTON_START);
         nav_.select   = edge(GLFW_GAMEPAD_BUTTON_BACK);
+        if (snesMaxMode_) nav_.menu = nav_.select = false;
         nav_.confirm  = edge(GLFW_GAMEPAD_BUTTON_A);
         nav_.cancel   = edge(GLFW_GAMEPAD_BUTTON_B);
         nav_.up       = edge(GLFW_GAMEPAD_BUTTON_DPAD_UP)    || stickUpEdge;

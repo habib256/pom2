@@ -49,15 +49,8 @@
 // slot 4 + Echo+ at slot 2 (or vice versa) — the Apple II's standard
 // "Mockingboard handles music, Echo+ handles speech" combo.
 //
-// Audio status (v1)
-// -----------------
-// The chip's register state machine + IRQ timing are complete (see
-// `Ssi263.h`). Audio output is silent in this commit — the 62-phoneme
-// PCM blob lives in a follow-up commit so the user can explicitly
-// decide whether to import AppleWin's data (LGPL implications) or
-// regenerate via espeak. Games that detect Echo+ via the SSI263
-// register fingerprint will see the card and exercise their speech
-// drivers correctly; they just won't speak yet.
+// Audio uses the imported 62-phoneme PCM data (see Ssi263.h), with a
+// 5 ms host gain ramp. Muting leaves the chip's playback timeline running.
 
 #ifndef POM2_ECHO_PLUS_CARD_H
 #define POM2_ECHO_PLUS_CARD_H
@@ -86,7 +79,7 @@ public:
 
     void setCpu(M6502* cpu) { cpu_ = cpu; }
 
-    /// Inner AudioSource (silent v1 — see header). The caller registers
+    /// Inner PCM AudioSource. The caller registers
     /// it with AudioDevice the same way Mockingboard / Phasor do.
     AudioSource* audioSource() override;
 

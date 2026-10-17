@@ -34,8 +34,8 @@ uint8_t makePb()
     uint8_t pb = 0xFF;
     pb &= ~0x03;      // BC1 / BDIR low (inactive)
     pb |=  0x04;      // /RESET released
-    pb &= ~0x08;      // primary AY selected (active low)
-    pb |=  0x10;      // secondary deselected
+    pb &= ~0x10;      // primary AY selected (active low, PB4)
+    pb |=  0x08;      // secondary deselected (PB3)
     return pb;
 }
 

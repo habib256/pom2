@@ -15,8 +15,7 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [UI-002](#ui-002) | 🟠 | To verify | No native file picker. |
-| [UI-001](#ui-001) | 🟡 | To verify | Step-over is a temp breakpoint at `PC + 3`, which never fires for the Apple II's dominant call convention |
+| [UI-002](#ui-002) | 🟡 | Partial: native chooser added | Native picker integration and platform verification |
 | [UI-003](#ui-003) | 🟡 | To verify | Bug hunt #16's debugger residue |
 | [UI-004](#ui-004) | 🟢 | To verify | Deeper guided tutorials |
 | [UI-006](#ui-006) | 🟢 | To verify | Airier default layout |
@@ -28,39 +27,22 @@ an explicit request before scheduling.
 
 ## UI-002 — No native file picker.
 
-**Priority:** 🟠 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial, 2026-10-17.
 
 **Acceptance criterion (after revalidation):** Use the native open/save dialog and verify cancellation, chosen paths and fallback behavior on supported hosts.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-905). Original dates and estimates are retained below.
 
-- 🟠 **No native file picker.** Every "open"/"save as" in POM2 is an ImGui
-  browser over the working tree. Reviewed 2026-09-07 and **declined for now**:
-  no host-dialog helper exists anywhere in the tree, so this is a new
-  dependency (portal/AppKit/Win32 per platform) rather than a fix. Worth doing,
-  but as a scoped feature with its own platform matrix — not as part of a bug
-  hunt. `Pom2HgrPaintHost` therefore still does not override `pickFilePath`,
-  and there is no sprite catalogue to reach because POM2 ships no sprites.
+`NativeFileDialog` provides AppKit, Win32 and external zenity/kdialog
+backends, with ImGui fallback when unavailable. Integrated into drive
+insertion, HGR/DHGR paint/sprite open/save and debugger-symbol selection.
+Cancellation is distinguished from backend unavailability.
 
-<a id="ui-001"></a>
+Remaining: extend other standalone file/export panels and obtain interactive
+cancel/open/save evidence on every OS. Windows is not validated by a macOS build.
 
-## UI-001 — Step-over is a temp breakpoint at `PC + 3`, which never fires for the Apple II's dominant call convention
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Step over ProDOS/SmartPort inline parameters and nested calls without leaving the machine running indefinitely.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-835). Original dates and estimates are retained below.
-
-- 🟡 **Step-over is a temp breakpoint at `PC + 3`, which never fires for the
-  Apple II's dominant call convention** (bug hunt #4). `JSR $BF00 / DB cmd /
-  DW params` returns to `pc + 6`, and the SmartPort `$Cn00` dispatch is the
-  same shape, so the transient lands on a parameter byte no opcode fetch ever
-  reads — and Step Over has already set the machine Running, so it runs free
-  until the user presses Stop. Recursion has the mirror problem. The honest fix
-  needs the stack pointer inside `M6502DebugHook::onInstruction`, which is the
-  per-instruction path `docs/PERFORMANCE.md` §§ 8.2/8.5 guards; the limit is
-  documented at the site instead.
+UI-001 (inline-argument step-over) was corrected on 2026-10-17; see CHANGELOG
+and the expanded `debugger` regression suite.
 
 <a id="ui-003"></a>
 

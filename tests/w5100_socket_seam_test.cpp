@@ -439,6 +439,7 @@ std::string captureStderr(void (*fn)(W5100Device&), W5100Device& device)
     close(pipeFds[0]);
     return out;
 }
+#endif
 
 void listenLoop(W5100Device& device)
 {
@@ -448,7 +449,6 @@ void listenLoop(W5100Device& device)
         device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
     }
 }
-#endif
 
 // ── Case 7: LISTEN's refusal is said ONCE, not once per lap ───────────────
 //
@@ -488,6 +488,68 @@ void testListenWarnsOncePerSocket()
     assert(device.socketInfo(0).status == kW5100SnSrClosed);
 
     std::printf("  LISTEN refusal logged once per socket: OK\n");
+}
+
+void testListenAcceptAndPolicy()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+    device.writeValueAt(socketReg(0, kW5100SnPort0), 0x20);
+    device.writeValueAt(socketReg(0, kW5100SnPort1), 0x00);
+    openTcpSocket(device, 0);
+    fake->lastSocket->listenResult = true;
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    assert(device.socketInfo(0).status == kW5100SnSrClosed); // opt-in required
+    device.setAllowLoopback(true);
+    openTcpSocket(device, 0);
+    auto* host = fake->lastSocket;
+    host->listenResult = true;
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    assert(device.socketInfo(0).status == kW5100SnSrListen);
+    assert(host->listenCount == 1 && host->lastBindPort == 8192);
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrListen);
+    const uint8_t ip[4] = {127, 0, 0, 1}, port[2] = {0xAB, 0xCD};
+    std::memcpy(&host->acceptAddress, ip, sizeof(ip));
+    std::memcpy(&host->acceptPort, port, sizeof(port));
+    host->acceptResult = W5100ConnectResult::Connected;
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+    assert(device.socketInfo(0).remotePort == 0xABCD);
+    for (int n = 0; n < 4; ++n)
+        assert(device.readValueAt(socketReg(0, kW5100SnDipr0 + n)) == ip[n]);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrCon);
+    // All prohibited host ports remain prohibited for TCP servers too.
+    for (const uint16_t forbidden : {uint16_t{0}, uint16_t{80}, uint16_t{1985}, uint16_t{6502}, uint16_t{6503}}) {
+        device.writeValueAt(socketReg(0, kW5100SnPort0), forbidden >> 8);
+        device.writeValueAt(socketReg(0, kW5100SnPort1), forbidden & 0xFF);
+        openTcpSocket(device, 0);
+        fake->lastSocket->listenResult = true;
+        device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+        assert(device.socketInfo(0).status == kW5100SnSrClosed);
+        assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+    }
+    // An accept failure closes the listener and reaches guest timeout handling.
+    device.writeValueAt(socketReg(0, kW5100SnPort0), 0x20);
+    device.writeValueAt(socketReg(0, kW5100SnPort1), 0);
+    openTcpSocket(device, 0);
+    fake->lastSocket->listenResult = true;
+    fake->lastSocket->acceptResult = W5100ConnectResult::Failed;
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+    openTcpSocket(device, 0);
+    fake->lastSocket->listenResult = true;
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    assert(device.socketInfo(0).status == kW5100SnSrListen);
+    device.setAllowLoopback(false);
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(!device.socketInfo(0).hasHostSocket);
 }
 
 // ── Case 8: raw guest bytes never reach the host resolver ─────────────────
@@ -574,6 +636,7 @@ int main()
     testDiscardedDatagramKeepsTheSocket();
     testLocalPortPolicy();
     testListenWarnsOncePerSocket();
+    testListenAcceptAndPolicy();
     testVirtualDnsNamesAreValidated();
     std::printf("OK\n");
     return 0;

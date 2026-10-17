@@ -78,6 +78,13 @@ public:
     /// refused the port (already in use), which is not fatal — the socket
     /// still works outbound.
     virtual bool bind(uint16_t /*port*/) { return true; }
+
+    /// Local TCP server. Listen on loopback only; port is host byte order.
+    /// accept replaces the listening handle with the accepted stream and
+    /// returns its peer in network byte order. Every operation is nonblocking.
+    virtual bool listen(uint16_t /*port*/) { return false; }
+    virtual W5100ConnectResult accept(uint32_t& /*address*/, uint16_t& /*port*/)
+    { return W5100ConnectResult::Failed; }
 };
 
 class W5100SocketFactory

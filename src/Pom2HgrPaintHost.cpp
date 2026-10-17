@@ -26,6 +26,7 @@
 #include "LeChatMauveCard.h"
 #include "Logger.h"
 #include "Memory.h"
+#include "NativeFileDialog.h"
 
 #include <algorithm>
 #include <cstring>
@@ -54,6 +55,22 @@
 #if defined(__GNUC__) || defined(__clang__)
 #  pragma GCC diagnostic pop
 #endif
+
+bool Pom2HgrPaintHost::nativeFilePickerAvailable() const
+{
+    return !nativePickerUnavailable_ && pom2::nativeFileDialogAvailable();
+}
+
+bool Pom2HgrPaintHost::pickFilePath(bool forSave, const std::string& title,
+    const std::string& filterDesc, const std::string& extCsv,
+    const std::string& defaultDir, const std::string& defaultName,
+    std::string& outPath)
+{
+    (void)filterDesc;
+    const auto result = pom2::nativeFileDialog(forSave, title, extCsv, defaultDir, defaultName, outPath);
+    nativePickerUnavailable_ = result == pom2::FileDialogResult::Unavailable;
+    return result == pom2::FileDialogResult::Selected;
+}
 
 namespace {
 

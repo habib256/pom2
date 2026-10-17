@@ -22,6 +22,7 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "FourPlayCard.h"
+#include "SnesMaxCard.h"
 #include "FujiNetCard.h"
 #include "AppleParallelCard.h"
 #include "VidexVideotermCard.h"
@@ -113,6 +114,7 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const pom2::WorkstationCard*>(&peripheral))
         return "workstation";
     if (dynamic_cast<const pom2::FourPlayCard*>(&peripheral)) return "4play";
+    if (dynamic_cast<const pom2::SnesMaxCard*>(&peripheral)) return "snesmax";
     if (dynamic_cast<const pom2::TranswarpCard*>(&peripheral))
         return "transwarp";
     if (dynamic_cast<const pom2::SlinkyCard*>(&peripheral)) return "slinky";

@@ -23,23 +23,30 @@
 //
 //   * 2 × 6522 VIAs (identical to Mockingboard's 2-VIA layout)
 //   * 4 × AY-3-8913 PSGs (vs Mockingboard's 2)
+//   * 2 × SSI263AP speech chips (primary VIA2, secondary VIA1)
 //   * Mode register (3 bits) driven by reads/writes to $C0(8+s)X
 //
-// Address map (s = slot number) — MAME `a2bus_phasor_device::read_cnxx`
-// / `write_cnxx` (`a2mockingboard.cpp:312-337` / `:365-390`): the decode
-// is gated to offsets $00-$1F and $80-$9F in BOTH modes; the VIA select
-// depends on the mode (see PhasorCard::viaSelect):
+// Address map (s = slot number) — AppleWin hardware model, pinned at
+// 6c579da5bd94 Mockingboard.cpp:683-692,780-790. VIA selection depends
+// on the mode (see PhasorCard::viaSelect):
 //
 //   Mockingboard-compat mode:
-//     $Cs00..$Cs1F   VIA1   (reg = low 4 bits; $10-$1F mirror)
-//     $Cs80..$Cs9F   VIA2   (reg = low 4 bits; $90-$9F mirror)
+//     $Cs00..$Cs7F   VIA1   (reg = low 4 bits)
+//     $Cs80..$CsFF   VIA2   (reg = low 4 bits)
 //   Phasor-native mode (via_sel = ((off & $80) >> 6) | ((off & $10) >> 4)):
 //     $Cs00..$Cs0F   no VIA (undecoded)
 //     $Cs10..$Cs1F   VIA1
 //     $Cs80..$Cs8F   VIA2
 //     $Cs90..$Cs9F   BOTH   (write broadcast; read = OR of both bytes)
-//   Everything else ($20-$7F, $A0-$FF): undecoded — writes dropped,
-//   reads return 0 (MAME parity).
+//   The native A7/A4 decode repeats over the whole page (AppleWin
+//   6c579da5bd94 Mockingboard.cpp:683-692), without MAME's range gate.
+//   Echo+ mode: every 16-byte window maps VIA2. Undefined modes select none.
+//   Native SSI reads: $Cs20..2F secondary, $Cs40..4F primary,
+//   $Cs60..6F both (reference secondary precedence). Only D7 is driven.
+//   SSI writes in native/compat modes select primary on A6, secondary on
+//   A5 across the full page, independently of simultaneous VIA selection.
+//   Native speech IRQ is direct; compat routes primary/secondary via CA1
+//   on VIA2/VIA1. Echo+ hides speech access/IRQ but playback continues.
 //   $C0(8+s)0..F     Mode soft-switch (see below)
 //
 // 6522 → AY wiring (per VIA, same as Mockingboard):
@@ -50,15 +57,19 @@
 //   Port B bit 2      → AY /RESET (active LOW)
 //   Port B bit 3..4   → CHIP-SELECT (Phasor-native only — see below)
 //
-// Chip-select decode (Phasor-native mode, MAME `phasor.cpp`):
+// Chip-select decode (native/Echo+, hardware notes in AppleWin GH#1192):
 //
 //     chip_sel = (~(port_b >> 3)) & 3
 //
 //   chip_sel:
 //      0  none selected   (e.g. PB[4:3] = 0b11 → both bits high → nothing)
-//      1  primary AY      (VIA1 → AY1; VIA2 → AY3)
-//      2  secondary AY    (VIA1 → AY2; VIA2 → AY4)
-//      3  BOTH AYs        (broadcast — writes go to both, reads ambiguous)
+//      1  secondary AY    (PB3 low: VIA1 → AY2; VIA2 → AY4)
+//      2  primary AY      (PB4 low: VIA1 → AY1; VIA2 → AY3)
+//      3  BOTH AYs        (reads OR the driven bytes)
+// Native GAL: secondary LATCH addresses/selects both AYs; primary LATCH
+// deselects secondary. Primary READ/WRITE also reaches a selected secondary.
+// Echo+ retains independent latches. GAL deselection uses reserved bit 6
+// of the AY latch byte, preserving snapshot offsets and v1/v2 compatibility.
 //
 // In Mockingboard-compat mode, PB3..7 are ignored: VIA1 always drives
 // AY1, VIA2 always drives AY3 (AY2 / AY4 stay silent — they're the
@@ -73,8 +84,7 @@
 //   Resulting mode values:
 //     PH_Mockingboard = 0      (compat)
 //     PH_Phasor       = 5      (native; written via $C0(8+s)D after clear)
-//     PH_EchoPlus     = 7      (single-VIA / dual-AY broadcast variant —
-//                              ACKNOWLEDGED but treated as Phasor for v1)
+//     PH_EchoPlus     = 7      (VIA2 / dual AY, mirrored to both speakers)
 //
 //   Initial mode at reset = PH_Mockingboard. Power-up software can
 //   switch via the canonical $C0(8+s)8 (force MB) → $C0(8+s)5 (set bits
@@ -113,6 +123,7 @@
 #include "AudioSource.h"
 #include "SlotBusClock.h"
 #include "SlotPeripheral.h"
+#include "Ssi263.h"
 #include "Via6522.h"
 
 #include <cstdint>
@@ -146,8 +157,7 @@ public:
     void setCpu(M6502* cpu) { cpu_ = cpu; }
 
     /// Inner AudioSource — the caller (MainWindow) registers it with
-    /// AudioDevice. v1 emits silence; the actual 4-AY mix is a
-    /// follow-up.
+    /// AudioDevice. Four PSGs plus two SSI263AP voices on one cycle cursor.
     AudioSource* audioSource() override;
 
     void setSampleRate(uint32_t hz);
@@ -171,8 +181,9 @@ public:
     /// MockingboardCard::setStandardClock.
     void    setStandardClock(double hz) override;
     void    onReset()  override;
+    void    onPowerCycle() override;
     void    onUnplug() override;
-    // Rewind/snapshot: the 2 VIAs + 4 AYs register/timer state.
+    // Rewind/snapshot: VIAs, AYs and both SSI263AP chips (PHS v3).
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
 
@@ -186,7 +197,7 @@ public:
     uint8_t getAyRegister(int chip, int reg) const;
     /// Direct peek into a VIA register without side effects (chip 0..1).
     uint8_t peekViaRegister(int chip, int reg) const;
-    /// Slot IRQ contribution (OR of both VIAs).
+    /// Slot IRQ contribution (VIAs plus native speech requests).
     bool isIrqAsserted() const { return slotIrqAsserted(); }
 
     /// Telemetry: per-VIA write count, per-AY write count (incremented
@@ -242,6 +253,8 @@ private:
     // 2 VIAs + 4 AYs. VIA0 drives AY0/AY1, VIA1 drives AY2/AY3.
     std::unique_ptr<pom2::Via6522>  via_[2];
     std::unique_ptr<pom2::Ay3_8910> ay_[4];
+    // Primary speech is tied to VIA2, secondary to VIA1. Fixed AP silicon.
+    pom2::Ssi263 ssi_[2];
     std::unique_ptr<AudioSrc>       audio_;
 
     // Last-sync cycle for lazy VIA timer catch-up. Same protocol as
@@ -252,6 +265,7 @@ private:
     void syncToCpuCycle();
     void syncToCpuCycleAt(uint64_t now);
     void advanceVias(uint64_t cpuCycles);
+    void resetCard(bool powerCycle);
 
     // Telemetry counters.
     uint32_t viaWriteCount_[2]  = {0, 0};
@@ -290,6 +304,8 @@ private:
     /// out at 3996 Hz BEFORE the switch's own cycle was reached. Stamped
     /// like every other AY event, it lands where it happened.
     static constexpr uint8_t kRegClockScale = 0xFE;
+    // Its queued value also carries Echo+ stereo routing in bit 7. Compat
+    // and Echo+ have equal clocks, but their routing changes at the stamp.
     struct AyRegEvent {
         uint64_t cycle;
         uint8_t  chip;
@@ -315,16 +331,16 @@ private:
     /// had not re-triggered, once per seek of a scrub.
     void invalidateAyTimeline(bool resetChips = true);
 
-    // MAME-parity slot-ROM VIA select: bit 0 = VIA1, bit 1 = VIA2, 0 =
+    // Slot-ROM VIA select: bit 0 = VIA1, bit 1 = VIA2, 0 =
     // undecoded. See the comment block above the definition for the
-    // exact MAME `via_sel` + range-gate semantics. Caller holds mtx_.
+    // Full-page address-bit decode and Echo+ aliases. Caller holds mtx_.
     int viaSelect(uint8_t low8) const;
 
     // Dispatch a VIA Port B change to the AY pair attached to that VIA,
     // honouring the current mode + chip-select decode.
     void onViaPortBChange(int viaIdx);
 
-    // Re-evaluate slot IRQ (OR of both VIAs' irqOut).
+    // Re-evaluate slot IRQ (VIAs plus native speech requests).
     void updateIrq();
 
     // Apply the soft-switch mode-update rule to `offset` (low 4 bits of

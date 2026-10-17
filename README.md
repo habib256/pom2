@@ -210,6 +210,11 @@ Mapped gamepads use the left stick for `PDL(0/1)` and the right stick for
 controls. Unmapped desktop joysticks use their raw X/Y axes and leave the extra
 paddles centred.
 
+With a **SNES MAX** card installed, the first two mapped gamepads feed its
+two SNES ports (D-pad, four face buttons, Select/Start and shoulder buttons).
+They stop driving the Apple game port and keyboard shortcuts. Use **F1/F2**
+for kiosk controls: the pads' Start/Select now belong to the guest.
+
 The clickable **Apple Keyboard** selects the //c photo for //c, //c PAL and
 //c+ machines, and the //e photo for other profiles. Both skins use the same
 2578 × 908 image dimensions, with their own clickable key positions. It lets
@@ -322,11 +327,11 @@ these machines so versatile.
 | **Memory** | Language Card, IIe auxiliary memory and RamWorks III up to 8 MB |
 | **Sound** | Speaker, cassette, Mockingboard A/C, Mockingboard C with SSI263 speech, Phasor, Cricket / Echo; stereo mixing and mono output |
 | **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0 and Floppy Emu |
-| **Input and printing** | Mouse Card, joysticks/paddles, 4play, Super Serial, parallel interfaces and ImageWriter II |
+| **Input and printing** | Mouse Card, joysticks/paddles, 4play, SNES MAX, Super Serial, parallel interfaces and ImageWriter II |
 | **Expansion** | Microsoft SoftCard Z80, TransWarp, Videx Videoterm, clocks and Apple II Workstation Card |
 | **Connections** | Uthernet I/II, FujiNet relay, TNFS disk downloads and a ProDOS host-folder volume |
 | **Creative tools** | HGR/DHGR Paint Editor, HGR Sprite Editor, screenshots and print exports |
-| **Inspection** | Memory viewer, debugger, snapshots and an optional AI-control HTTP API |
+| **Inspection** | Memory viewer, debugger with symbols, conditional breakpoints, step over/out, profiling and execution history; snapshots and an optional AI-control HTTP API |
 
 For card keys, firmware details and implementation notes, see
 [CLAUDE.md](CLAUDE.md) and [DEV.md](DEV.md).
@@ -335,6 +340,9 @@ For card keys, firmware details and implementation notes, see
 <summary>Networking and a few hardware boundaries</summary>
 
 - **Uthernet II:** TCP/UDP use host sockets on desktop Linux, macOS and Windows.
+  With `uthernet_allow_loopback=true`, `LISTEN` accepts local TCP clients at
+  `127.0.0.1` on the guest's chosen port (1024+; 1985/6502/6503 excluded).
+  LAN listening/port forwarding is not implemented.
   Uthernet I and raw Ethernet modes require libslirp, included in the ARM64,
   Raspberry Pi and Pi 400 Linux packages. Source builds can enable it with
   `-DPOM2_ENABLE_SLIRP=ON` when the library is available.

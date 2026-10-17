@@ -2326,11 +2326,11 @@ int M6502::run(int maxCycles)
     // workloads — see docs/PERFORMANCE.md § Debugger hooks.
     if (debugHook_) {
         while (running && cyclesExecuted < maxCycles) {
-            // Checked BEFORE the instruction, so a breakpoint stops with the
-            // PC still on it: the instruction has not run, and the register
-            // dump the user reads is the state going in, not coming out.
+            // Stop before execution; instrumentation stays off the fast loop.
             if (debugHook_->onInstruction(programCounter)) break;
+            const uint16_t pcBefore = programCounter;
             step();
+            debugHook_->onStepCompleted(*this, pcBefore, cycles);
             cyclesExecuted += cycles;
             // A watchpoint fires mid-instruction and cannot un-do the access,
             // so it halts at the first instruction boundary after it. The

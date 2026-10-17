@@ -663,39 +663,28 @@ void W5100Device::connectSocket(size_t i)
 #endif
 }
 
-// LISTEN is in the W5100 command set but POM2 does not open a host
-// listener for it: an inbound connection cannot reach the guest through
-// either supported transport (libslirp is outbound-only without explicit
-// port forwarding, and there is no host-side port to bind that the user
-// asked for). Report the command as unhandled rather than pretending.
-//
-// "Unhandled" has to be a documented FAILURE, not silence. Leaving Sn_SR at
-// SOCK_INIT is the one answer a server guest cannot act on: the datasheet
-// (§5.1 "Sn_CR") says LISTEN moves the socket to SOCK_LISTEN, so a driver
-// polls for either that or a timeout and gets neither — it spins forever with
-// no error to report to its user. POM2's policy is therefore the failure the
-// chip itself would produce if the connection never came: Sn_SR back to
-// SOCK_CLOSED with TIMEOUT set in Sn_IR (§5.2.3), which every W5100 server
-// loop already handles.
-//
-// ONCE PER SOCKET PER RESET, and that matters as much as the answer itself.
-// The canonical W5100 server loop is `socket(); listen();` retried until it
-// succeeds, so answering CLOSED + TIMEOUT makes the driver go round again —
-// and every lap cost one unbuffered `log().warn` plus a socket open and close,
-// on the CPU thread, under the emulator's stateMutex. The guest spins either
-// way (there is no inbound path to give it), but it now spins quietly instead
-// of writing to stderr thousands of times a second with the machine and the
-// window stopped behind each write. The flag is deliberately NOT cleared by
-// clearSocket(): the loop re-OPENs before each LISTEN, so an OPEN that cleared
-// it would warn exactly as often as no flag at all.
+// A local listener is opt-in. Unsupported transports, denied ports and bind
+// failures answer CLOSED + TIMEOUT rather than stranding a guest in INIT.
+// Warn once per socket/reset so a guest retry loop cannot flood the log.
 void W5100Device::listenSocket(size_t i)
 {
+    Socket& s = sockets_[i];
+    const uint16_t port = readNetworkWord(s.registerAddress + kW5100SnPort0);
+    // WIZnet W5100 datasheet, Sn_CR LISTEN / Sn_SR: INIT -> LISTEN ->
+    // ESTABLISHED + CON. Bind locally only, under the existing loopback
+    // opt-in; preserve the local-port fence used by UDP.
+    if (s.status == kW5100SnSrInit && s.host && allowLoopback_ &&
+        localPortAllowed(port) && s.host->listen(port)) {
+        setSocketStatus(i, kW5100SnSrListen);
+        return;
+    }
     const bool warned = sockets_[i].listenWarned;
     clearSocket(i);
     sockets_[i].listenWarned = true;
     if (!warned) {
         log().warn("W5100", "socket " + std::to_string(i) +
-                            ": LISTEN is not supported (no inbound path) — "
+                            ": LISTEN is not supported for this socket/port "
+                            "(requires loopback enabled and a free allowed port) — "
                             "answering SOCK_CLOSED + TIMEOUT (said once per "
                             "socket until the chip is reset)");
     }
@@ -1702,6 +1691,31 @@ void W5100Device::poll()
         if (!sockets_[i].pendingTx.empty()) flushPendingTx(i);
 
         Socket& s = sockets_[i];
+        if (s.host && s.status == kW5100SnSrListen) {
+            if (!allowLoopback_) {
+                clearSocket(i);
+                raiseSocketIrq(i, kW5100SnIrTimeout);
+                continue;
+            }
+            uint32_t address = 0;
+            uint16_t port = 0;
+            const auto accepted = s.host->accept(address, port);
+            if (accepted == W5100ConnectResult::Connected) {
+                uint8_t ipBytes[4], portBytes[2];
+                std::memcpy(ipBytes, &address, sizeof(ipBytes));
+                std::memcpy(portBytes, &port, sizeof(portBytes));
+                for (int n = 0; n < 4; ++n)
+                    setMem(s.registerAddress + kW5100SnDipr0 + n, ipBytes[n]);
+                for (int n = 0; n < 2; ++n)
+                    setMem(s.registerAddress + kW5100SnDport0 + n, portBytes[n]);
+                setSocketStatus(i, kW5100SnSrEstablished);
+                raiseSocketIrq(i, kW5100SnIrCon);
+            } else if (accepted == W5100ConnectResult::Failed) {
+                clearSocket(i);
+                raiseSocketIrq(i, kW5100SnIrTimeout);
+            }
+            continue;
+        }
         if (!s.host || s.status != kW5100SnSrSynSent) continue;
 
         // Zero timeout: this runs on the emulation thread, so it polls and

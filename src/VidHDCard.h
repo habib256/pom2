@@ -23,7 +23,7 @@
 // What the card is, at the level POM2 models:
 //
 //   • A detection signature. AppleWin `VidHDCard::IORead` (VidHD.cpp:68-79):
-//     READS of $C0n0 / $C0n1 / $C0n2 answer $24 $EA $4C — bytes the real
+//     READS of $Cn00 / $Cn01 / $Cn02 answer $24 $EA $4C — bytes the real
 //     card's firmware carries — and every other device-select access is an
 //     unclaimed read (`IO_Null`, the floating bus).
 //   • Four IIgs video registers latched off the motherboard bus — the card
@@ -118,7 +118,9 @@ public:
 
     // ─── SlotPeripheral ─────────────────────────────────────────────────
     std::string_view name() const override { return "VidHD"; }
-    uint8_t deviceSelectRead(uint8_t low4) override;
+    uint8_t deviceSelectRead(uint8_t /*low4*/) override { return openBus(); }
+    uint8_t slotRomRead(uint8_t low8) override;
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override;
     void    onVideoSoftSwitchWrite(uint16_t addr, uint8_t value) override;
     void    onReset() override { newVideo_ = 0; }   // VidHD.cpp:57-61
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;

@@ -473,6 +473,7 @@ void testSoundIISpeechAudio()
     mb.setSampleRate(44100);
     mb.setVolume(1.0f);
     mb.setMuted(false);
+    mb.slotRomWrite(0x44, 0x80);          // leave power-on filter silence
 
     // Trigger a phoneme: power up with amp=15, slow rate, phoneme $05.
     mb.slotRomWrite(0x43, 0x0F);          // CTTRAMP: CTL=0, amp=15
@@ -596,28 +597,43 @@ void testUndrivenResetPinFloatsHigh()
     assert(card.getAyWriteCount(0) == 1);
 }
 
-// ─── Sound II: A/!R reaches CA1 even in the polled mode ──────────────────
-//
-// CA1 is fed from the SSI263's A/!R PIN. The strobe used to follow
-// `Ssi263::advance()`'s return value — the HOST-IRQ edge, gated by the
-// chip's own DR1:0 — so in mode 00 (host IRQ suppressed, A/!R still raised
-// on completion) IFR.CA1 never latched. $Cn4x READS go to the VIA on a
-// Sound II, so IFR.CA1 was the only window onto the pin and a polling
-// driver stalled on its first phoneme. The gate belongs to IER.
-//
-// The CA1 in question is the SECOND 6522's, at $Cn80 (see the variant
-// test above for the AppleWin wiring).
-void testARequestLatchesCa1InPolledMode()
+// AppleWin SetSpeechIRQ gates VIA2.CA1 on SSI enableInts, independently
+// of the pollable D7 status. With SSI IRQ enabled, IER alone decides
+// whether the VIA request becomes a CPU IRQ (or is polled through IFR).
+void testSsiModeGatesCa1()
 {
     MockingboardCard mb(4, MockingboardCard::Variant::SoundII);
+    mb.slotRomWrite(0x40, 0x05);              // request IRQ-disabled mode
     mb.slotRomWrite(0x43, 0x0F);              // CTTRAMP: CTL=0, amp=15
     mb.slotRomWrite(0x42, 0xF0);              // RATEINF: rate=15 (fast)
-    mb.slotRomWrite(0x40, 0x05);              // DURPHON: mode=00, phon=5
-    assert((mb.peekViaRegister(1, 0x0D) & 0x02) == 0);   // IFR.CA1 clear
-    for (int i = 0; i < 200 && (mb.peekViaRegister(1, 0x0D) & 0x02) == 0; ++i)
-        mb.advanceCycles(1000);
-    assert((mb.peekViaRegister(1, 0x0D) & 0x02) != 0 &&
-           "A/!R must latch IFR.CA1 in the polled mode (DR1:0 = 00)");
+    mb.slotRomWrite(0x40, 0x05);              // start fresh phoneme
+    mb.slotRomWrite(0x8E, 0x82);              // VIA2 IER.CA1 enabled
+    MockingboardCard::Ssi263Snap snap;
+    assert(mb.snapshotSsi263(&snap));
+    mb.advanceCycles(snap.phonemeRemainingCycles);
+    assert(mb.snapshotSsi263(&snap));
+    assert(snap.aRequest && !snap.irqEnabled);
+    assert((mb.peekViaRegister(1, 0x0D) & 0x02) == 0);
+    assert(!mb.isIrqAsserted());
+
+    mb.slotRomWrite(0x43, 0x8F);
+    mb.slotRomWrite(0x40, 0xC5);
+    mb.slotRomWrite(0x43, 0x0F);              // latch IRQ-enabled mode
+    assert(mb.snapshotSsi263(&snap));
+    mb.advanceCycles(snap.phonemeRemainingCycles);
+    assert((mb.peekViaRegister(1, 0x0D) & 0x02) != 0);
+    assert(mb.isIrqAsserted());
+    // Clearing VIA IFR alone cannot acknowledge the SSI's held request.
+    mb.slotRomWrite(0x8D, 0x02);
+    assert(!mb.isIrqAsserted());
+    assert(mb.snapshotSsi263(&snap));
+    mb.advanceCycles(snap.phonemeRemainingCycles);
+    assert(!mb.isIrqAsserted());
+    // Acknowledge SSI through INFLECT, then the next repeat requests again.
+    mb.slotRomWrite(0x41, 0x00);
+    assert(mb.snapshotSsi263(&snap));
+    mb.advanceCycles(snap.phonemeRemainingCycles);
+    assert(mb.isIrqAsserted());
 }
 
 // An accelerator speeds the 6502, not the slot bus's phase 0. The AYs'
@@ -728,8 +744,7 @@ int main()
                                 std::printf("accelerator vs phase 0  OK\n");
     testUndrivenResetPinFloatsHigh();
                                 std::printf("PB2 /RESET floats high  OK\n");
-    testARequestLatchesCa1InPolledMode();
-                                std::printf("A/!R -> CA1 polled .... OK\n");
+    testSsiModeGatesCa1();        std::printf("SSI IRQ mode -> CA1 ... OK\n");
     testAyBusUndrivenBitsFloatHigh();
                                 std::printf("AY bus float-high ..... OK\n");
     testAyRegisterWrite();      std::printf("AY register write ..... OK\n");

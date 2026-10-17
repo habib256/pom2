@@ -16,8 +16,6 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [AUDIO-011](#audio-011) | 🟠 | To verify | Bug hunt #16's speech residue |
-| [AUDIO-001](#audio-001) | 🟡 | To verify | Echo+ still cuts mute in one buffer and allocates on the audio thread. |
-| [AUDIO-002](#audio-002) | 🟡 | To verify | Sound II stops `fillAudioTimed` once the mute ramp reaches ~0. |
 | [AUDIO-003](#audio-003) | 🟡 | To verify | Compare Mockingboard output level with MAME |
 | [AUDIO-005](#audio-005) | 🟢 | To verify | Analog output stage. |
 | [AUDIO-006](#audio-006) | 🟢 | To verify | Mutex contention. |
@@ -31,68 +29,51 @@ an explicit request before scheduling.
 
 ## AUDIO-011 — Bug hunt #16's speech residue
 
-**Priority:** 🟠 · **State:** To verify.
+**Priority:** 🟠 · **State:** Partly resolved (2026-10-17); remaining features below.
 
-**Acceptance criterion (after revalidation):** Verify SSI duration, reset/IRQ and Phasor speech claims independently against a stated oracle; do not schedule the frozen TMS card rewrite implicitly.
+**Acceptance criterion:** Verify the remaining SSI waveform/reset and
+Phasor speech behavior against a stated oracle; do not schedule the frozen
+TMS card rewrite implicitly.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1952). Original dates and estimates are retained below.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1952),
+[DEV SSI263](../../DEV.md#ssi263--echo-street-electronics), CHANGELOG 2026-10-17.
 
-- 🟠 **Bug hunt #16's speech residue** *(2026-09-09; read, not fixed —
-  each a design change, not a patch)*: (1) the SSI263 duration formula
-  `ms = ((16-rate)*4096/1023)*(4-dur)` is a mis-citation — it exists once in
-  AppleWin inside `#if LOG_SSI263B`, a debug line; the real duration is the
-  PCM length (40 / 120 / 153 ms) and `UpdateAccurateLength` scales by
-  1/(DUR+1), the inverse of `(4−DUR)`; at rate 15 / dur 3 POM2 plays 88 of
-  2 656 samples. (2) Power-on state: AppleWin observed `$C0` (mode 11) and
-  FILFREQ silence; POM2 resets to mode 00 = IRQ disabled, so a detection
-  routine that powers up with one CTL=0 and waits for the phoneme IRQ
-  (mb-audit, Willy Byte) hangs — `ssi263_smoke::testResetState` encodes the
-  current values, so this is a ruling; AppleWin also latches `enableInts`
-  on the CTL edge and repeats a finished phoneme with an IRQ each time.
-  (3) `EchoPlusTMS5220Card` contradicts MAME's `a2bus_echoplus_device`:
-  the TMS5220 is at `$C0n0` (idle `$7F`) and the two AYs sit behind a VIA1
-  with PB3/PB4 as chip selects — a card rewrite. (4) The Phasor carries no
-  SSI263 where the real card has two (`$Cn40`/`$Cn20`). *2-3 d for the lot.*
+Resolved against AppleWin `6c579da5bd94`: power-on DURPHON=$C0/FILFREQ=$FF,
+CTL-latched mode/IRQ selection, repeated requests, Sound II's SSI enable
+gate on VIA2.CA1, silent playback continuity and PCM-derived durations.
+Both timer and renderer now use the primary `Update()` read/average/skip
+loop. The old debug-log formula and the differing debugger fallback are
+not timing oracles. All 64 codes, four DUR values, two function classes and
+three CPU clocks have independent waveform/duration checks; future CTL
+mode events and mid-phoneme acceleration changes are pinned too.
+Sound II now preserves its disconnected SSI263 across bus RESET while
+clearing VIA/AY state, including pending audio events and CA1 request
+behavior. Cold boots use a separate power-cycle hook and clear speech.
+The separate Phasor PSG pass corrected native GAL selection/latch/read
+routing, full-page VIA decode, Echo+ single-VIA/stereo operation and host
+mute continuity, with AppleWin hardware notes and timeline regressions.
+
+Remaining:
+
+- SSI RATEINF/inflection, articulation and analog waveform synthesis are
+  not modelled by the fixed PCM table. Phasor now uses the SSI263AP reset
+  contract from AppleWin; the older SSI263P reset quirk and Cricket reset
+  behavior still need a hardware/firmware comparison.
+- Phasor now implements both SSI263APs, address aliases, native direct
+  IRQ/compatibility CA1 routing, cycle-stamped audio and PHS v3 rewind.
+  Its mono speech sum with headroom is a mixing approximation; physical
+  output levels/routing still need independent hardware measurements.
+- Hidden/frozen `echoplus_tms` remains a provisional, silent TMS5220/AY
+  scaffold whose decode needs a separate MAME/schematic-based rewrite.
 
 <a id="audio-001"></a>
-
-## AUDIO-001 — Echo+ still cuts mute in one buffer and allocates on the audio thread.
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Render Echo mute transitions through a 5 ms gain ramp with no callback allocation after preparation.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1159). Original dates and estimates are retained below.
-
-- 🟡 **Echo+ still cuts mute in one buffer and allocates on the audio
-  thread.** `EchoPlusCard::fillAudioBuffer` (`EchoPlusCard.cpp:49-53`)
-  returns immediately when muted — no 5 ms `gainRamp`, unlike MB/Phasor —
-  and `scratch.resize` still lives in the callback (`:38-41`) where
-  Mockingboard reserved `speechScratch` in `setSampleRate`. Hunt #19 closed
-  those two on the cards that have a PSG; Echo+ has the same comments and
-  not the reserve.
-  *Revalidated 2026-10-06:* still true; the early return is now
-  `src/EchoPlusCard.cpp:53` and the `scratch.resize` `:61-62`.
-
 <a id="audio-002"></a>
 
-## AUDIO-002 — Sound II stops `fillAudioTimed` once the mute ramp reaches ~0.
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Keep the SSI playback timeline advancing while muted; unmute must not replay a burst of queued phonemes.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1166). Original dates and estimates are retained below.
-
-- 🟡 **Sound II stops `fillAudioTimed` once the mute ramp reaches ~0.**
-  `Mockingboard.cpp:580-583` returns after the ramp, so `ctlEvents_` is no
-  longer drained. The CPU keeps `queuePlaybackEvent`; the ring fills, then
-  `clear` + `aPrimed_=false`. Unmute dumps a burst of phonemes at sample 0
-  — the same class of dropout hunt #20 closed for the PCM cursor. The
-  mute tests cover MB/Phasor amplitude, not the SSI timeline.
-  *Revalidated 2026-10-06:* the muted-and-faded early return is still there,
-  now at `src/Mockingboard.cpp:568-573`, ahead of the `fillAudioTimed` call
-  (`:596`).
+AUDIO-001 and AUDIO-002 were reproduced and resolved on 2026-10-17:
+mute preserves speech playback time on Cricket/Echo and Sound II, and the
+Cricket/Echo callback applies a 5 ms gain ramp without scratch allocation.
+See [CHANGELOG](../../CHANGELOG.md#2026-10-17--speech-keeps-its-place-while-muted)
+and `ssi263_speech_timeline` for the audible-reference regression.
 
 <a id="audio-003"></a>
 

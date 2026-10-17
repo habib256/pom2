@@ -21,6 +21,8 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,8 +35,8 @@ uint8_t makePb(bool bc1, bool bdir, bool selPrimary, bool selSecondary)
     if (bc1)  pb |= 0x01; else pb &= ~0x01;
     if (bdir) pb |= 0x02; else pb &= ~0x02;
     pb |= 0x04;                                   // /RESET released
-    if (selPrimary)   pb &= ~0x08; else pb |= 0x08;
-    if (selSecondary) pb &= ~0x10; else pb |= 0x10;
+    if (selPrimary)   pb &= ~0x10; else pb |= 0x10;
+    if (selSecondary) pb &= ~0x08; else pb |= 0x08;
     return pb;
 }
 
@@ -124,10 +126,208 @@ double measurePwm(bool native)
     return measured / kExpectedHz;
 }
 
+void testCompatibilityResetClearsHiddenAudio()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    PhasorCard card(4), reference(4);
+    for (auto* target : {&card, &reference}) {
+        target->setCpu(&cpu);
+        target->setSampleRate(kSr);
+        target->setVolume(1.0f);
+        target->deviceSelectWrite(0x05, 0);
+        // Broadcast writes to both AYs: PB3=PB4=0, PB2=1.
+        target->slotRomWrite(0x13, 0xFF);
+        target->slotRomWrite(0x12, 0xFF);
+        for (auto [reg, value] : {std::pair<uint8_t, uint8_t>{0, 73},
+                                  {1, 0}, {7, 0x3E}, {8, 15}}) {
+            target->slotRomWrite(0x11, reg);
+            target->slotRomWrite(0x10, 7);
+            target->slotRomWrite(0x10, 4);
+            target->slotRomWrite(0x11, value);
+            target->slotRomWrite(0x10, 6);
+            target->slotRomWrite(0x10, 4);
+        }
+    }
+    std::vector<float> actual(245), expected(245);
+    double beforeEnergy = 0.0;
+    for (int block = 0; block < 30; ++block) {
+        mem.advanceCycles(5682);
+        // Keep both producers synced without altering a timer/IRQ latch.
+        (void)card.slotRomRead(0x12);
+        (void)reference.slotRomRead(0x12);
+        if (block == 6) {
+            // Equal-cycle reset on the same pins, one while AY2 is hidden.
+            card.deviceSelectWrite(0x08, 0);
+            card.slotRomWrite(0x00, 0x18); // /RESET low, neither AY selected
+            reference.slotRomWrite(0x10, 0x18);
+            card.deviceSelectWrite(0x05, 0);
+        }
+        card.audioSource()->fillAudioBuffer(actual.data(), 245);
+        reference.audioSource()->fillAudioBuffer(expected.data(), 245);
+        assert(actual == expected && "compatibility reset retained hidden AY audio");
+        if (block < 6)
+            for (float v : actual) beforeEnergy += v * v;
+    }
+    assert(beforeEnergy > 0.01 && "reset audio fixture must start audible");
+}
+
+void testRejectedSnapshotPreservesAudio(bool native)
+{
+    for (int invalid = 0; invalid < 4; ++invalid) {
+        Memory mem;
+        M6502 cpu(&mem);
+        PhasorCard card(4), reference(4);
+        for (auto* target : {&card, &reference}) {
+            target->setCpu(&cpu);
+            target->setSampleRate(kSr);
+            target->setVolume(1.0f);
+            if (native) {
+                target->deviceSelectWrite(0x08, 0);
+                target->deviceSelectWrite(0x05, 0);
+            }
+            ayWrite(*target, 0, 0, 100);
+            ayWrite(*target, 0, 7, 0x3E);
+            ayWrite(*target, 0, 8, 15);
+        }
+        std::vector<float> actual(245), expected(245);
+        card.audioSource()->fillAudioBuffer(actual.data(), 245);
+        reference.audioSource()->fillAudioBuffer(expected.data(), 245);
+        assert(actual == expected);
+        // Leave a future volume write queued while the audio cursor is
+        // behind CPU-now. Rejecting a blob must preserve that backlog and
+        // the currently audible tone, not re-prime from CPU's zero volume.
+        mem.advanceCycles(60000);
+        ayWrite(card, 0, 8, 0);
+        ayWrite(reference, 0, 8, 0);
+        std::vector<uint8_t> blob;
+        card.appendSnapshotState(blob);
+        switch (invalid) {
+            case 0: blob.clear(); break;
+            case 1: blob[0] = 'X'; break;
+            case 2: blob[3] = 99; break;
+            case 3: blob.pop_back(); break;
+        }
+        card.loadSnapshotState(blob.data(), blob.size());
+        double energy = 0.0;
+        for (int block = 0; block < 8; ++block) {
+            card.audioSource()->fillAudioBuffer(actual.data(), 245);
+            reference.audioSource()->fillAudioBuffer(expected.data(), 245);
+            for (float sample : expected) energy += sample * sample;
+            if (actual != expected) {
+                std::fprintf(stderr, "rejected Phasor snapshot changed audio: native=%d case=%d block=%d\n",
+                             native, invalid, block);
+                std::abort();
+            }
+        }
+        assert(energy > 0.01);
+    }
+}
+
 }  // namespace
+
+bool testEchoStereo()
+{
+    PhasorCard echo(4);
+    echo.setSampleRate(kSr);
+    echo.setVolume(1.0f);
+    echo.deviceSelectWrite(0x0F, 0);
+    ayWrite(echo, 1, 0, 73);
+    ayWrite(echo, 1, 7, 0x3E);
+    ayWrite(echo, 1, 8, 15);
+    std::vector<float> left(2048), right(2048);
+    echo.audioSource()->fillAudioBufferStereo(left.data(), right.data(), 2048);
+    double energy = 0;
+    for (float v : right) energy += v * v;
+    if (left != right || energy < 0.01) {
+        std::fprintf(stderr, "Phasor Echo+ must output the second VIA pair to BOTH speakers\n");
+        return false;
+    }
+    // A future compat->Echo change has the SAME clock scale, but changes
+    // routing at its stamp; it must not change earlier audio buffers.
+    Memory mem;
+    M6502 cpu(&mem);
+    PhasorCard queued(4);
+    queued.setCpu(&cpu);
+    queued.setSampleRate(kSr);
+    queued.setVolume(1.0f);
+    ayWrite(queued, 1, 0, 73);
+    ayWrite(queued, 1, 7, 0x3E);
+    ayWrite(queued, 1, 8, 15);
+    left.resize(245); right.resize(245);
+    queued.audioSource()->fillAudioBufferStereo(left.data(), right.data(), 245);
+    mem.advanceCycles(60000);
+    queued.deviceSelectWrite(0x0F, 0);
+    double lateEnergy = 0;
+    for (int block = 0; block < 18; ++block) {
+        // Feed the producer too: a stopped CPU intentionally leaves the
+        // jitter buffer's final half-burst pending rather than outrunning it.
+        mem.advanceCycles(5682);
+        (void)queued.slotRomRead(0x82);
+        queued.audioSource()->fillAudioBufferStereo(left.data(), right.data(), 245);
+        for (int i = 0; i < 245; ++i) {
+            if (block < 7 && left[i] != 0) {
+                std::fprintf(stderr, "Echo+ routing arrived early: block=%d sample=%d value=%g\n", block, i, left[i]);
+                return false;
+            }
+            if (block > 12) lateEnergy += left[i] * left[i];
+        }
+    }
+    if (lateEnergy <= 0.01) std::fprintf(stderr, "queued Echo+ routing never arrived: energy=%g\n", lateEnergy);
+    return lateEnergy > 0.01;
+}
+
+bool testMutedPhasorContinuity()
+{
+    for (int mode : {0, 5, 7}) {
+        Memory mem;
+        M6502 cpu(&mem);
+        PhasorCard card(4), reference(4);
+        for (auto* target : {&card, &reference}) {
+            target->setCpu(&cpu);
+            target->setSampleRate(kSr);
+            target->setVolume(1.0f);
+            target->deviceSelectWrite(0x08 | mode, 0);
+            ayWrite(*target, 0, 0, 73);
+            ayWrite(*target, 0, 7, 0x3E);
+            ayWrite(*target, 0, 8, 15);
+        }
+        std::vector<float> actual(257), expected(257);
+        float gain = 1;
+        const float step = 1.0f / (0.005f * kSr);
+        for (int block = 0; block < 26; ++block) {
+            mem.advanceCycles(5960);
+            const auto address = viaBase(card, 0) + 2;
+            (void)card.slotRomRead(address);
+            (void)reference.slotRomRead(address);
+            if (block == 7) {
+                ayWrite(card, 0, 0, 51);
+                ayWrite(reference, 0, 0, 51);
+            }
+            const bool muted = block >= 2 && block < 15;
+            card.setMuted(muted);
+            card.audioSource()->fillAudioBuffer(actual.data(), 257);
+            reference.audioSource()->fillAudioBuffer(expected.data(), 257);
+            for (int i = 0; i < 257; ++i) {
+                gain = muted ? std::max(0.0f, gain - step) : std::min(1.0f, gain + step);
+                if (std::abs(actual[i] - expected[i] * gain) > 1e-7f) {
+                    std::fprintf(stderr, "Phasor mute paused audio: mode=%d block=%d sample=%d\n", mode, block, i);
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 
 int main()
 {
+    const bool mute = testMutedPhasorContinuity();
+    const bool echo = testEchoStereo();
+    assert(mute && echo);
+    testCompatibilityResetClearsHiddenAudio();
+    testRejectedSnapshotPreservesAudio(false);
+    testRejectedSnapshotPreservesAudio(true);
     const double a = measurePwm(false);
     const double b = measurePwm(true);
     assert(a > 0.90 && a < 1.10 && "MB-compat: the writes did not land at their cycle stamp");

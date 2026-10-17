@@ -28,6 +28,7 @@
 #include "EchoPlusTMS5220Card.h"
 #include "FujiNetCard.h"
 #include "FourPlayCard.h"
+#include "SnesMaxCard.h"
 #include "FujiNetCardFactory.h"
 #include "AppleParallelCard.h"
 #include "VidexVideotermCard.h"
@@ -203,6 +204,7 @@ int main()
     // showed a pending change that could not be applied away.
     expectLiveKey(std::make_unique<pom2::WorkstationCard>(3), "workstation");
     expectLiveKey(std::make_unique<pom2::FourPlayCard>(3), "4play");
+    expectLiveKey(std::make_unique<pom2::SnesMaxCard>(3), "snesmax");
     expectLiveKey(std::make_unique<pom2::TranswarpCard>(3), "transwarp");
     expectLiveKey(std::make_unique<pom2::SlinkyCard>(3), "slinky");
     expectLiveKey(std::make_unique<pom2::SamCard>(3), "sam");

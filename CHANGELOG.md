@@ -10,6 +10,224 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-17 — Phasor dual SSI263AP speech
+
+The Phasor's two speech chips were absent: a completed native phoneme never
+raised IRQ and generated no audio. Both SSI263APs now decode the full-page
+A6/A5 write aliases, drive D7 on native reads, route native requests directly
+to IRQ and compatibility requests to the corresponding VIA CA1. Echo mode
+hides speech access without stopping playback. AP warm reset and power-on
+have distinct filter defaults; older P silicon behavior remains pending.
+
+PHS v3 captures both chips, accepts old speech-less snapshots with silent
+defaults and validates all section lengths before touching state. Speech
+replays on the PSG cycle cursor, including first-buffer future writes.
+Shared SSI audio now honors FILFREQ aliases 5-7 as the register bank does.
+The two fixed-PCM voices use a mono sum with headroom; analog routing,
+inflection and articulation still need a separate fidelity pass.
+
+Regression: `phasor_card_smoke` / `phasor_speech_cases.cpp`; oracle AppleWin
+6c579da5bd9460ebf7c6051a6d635efbd1375c85 (MAME has no SSI263 model).
+
+## 2026-10-17 — Non-IIgs parity: debugger, SNES MAX, local TCP and host files
+
+- Step Over follows the outer RTS and stack frame, including inline
+  ProDOS/SmartPort arguments, recursion, stack wrap and interrupt entry.
+  Added Step Out. The single-threaded frame loop now honors a one-shot
+  debugger stop; watchpoint resume no longer skips the next PC breakpoint.
+- Added register-conditional breakpoints, transactional symbol imports,
+  per-PC CPU-step profiling and the last 256 post-step register states.
+  Instrumentation stays off the ordinary CPU loop when disabled.
+- Added the SNES MAX two-controller card, its seven-clock latch and serial
+  protocol, catalog/factory/topology integration, host mappings and rewind
+  state. Mapped gamepads' Start/Select reach the guest; kiosk uses F1/F2.
+- Uthernet II can accept local TCP via `LISTEN` when loopback is enabled.
+  The listener binds `127.0.0.1:Sn_PORT`; existing port restrictions remain.
+  It reports LISTEN/ESTABLISHED, peer IP/port and CON, and uses the existing
+  send/receive rings. LAN mapping is still pending.
+- ProDOS host-folder import now creates tree files up to the 24-bit EOF
+  limit (16 MiB minus one), rather than skipping everything above 128 KiB.
+  Indexes, allocation bitmap, full-size round trips and the upper bound are
+  covered by `prodos_volume_smoke`.
+- Added native file choosers for drive insertion, paint/sprite editors and
+  debugger symbols: AppKit, Win32 and zenity/kdialog, with unavailable-backend
+  fallback and cancellation handling. Interactive platform checks remain.
+- Added an eight-case portable test configuration and enabled it in Windows
+  CI. Local success is not evidence of MSVC execution; that CI run is pending.
+
+Scope, tests and remaining projects:
+[non-IIgs parity report](docs/audits/non-iigs-parity-2026-10-17.md).
+
+## 2026-10-17 — Liron restores atomically; Phasor GAL and Echo+ routing
+
+Liron reset a live card before framing its nested snapshot sections, so an
+8-byte truncation destroyed live state and later truncations produced mixed
+IWM/bus/mechanism timelines. New `LIR2` captures require the whole mechanism,
+clock and media-mask tail. Every nested parser validates before reset or
+wiring callbacks: the IWM has a non-committing parse, and detached probes
+validate the bus/mechanisms. Known LIR1 layouts still load; a missing card
+clock is derived from the restored IWM anchor. Regressions cover every new
+prefix, nested corruptions, old layouts and round trips. The catalog test
+now fails every hybrid restoration instead of warning.
+
+The Phasor GAL also differed from hardware observations in AppleWin
+`6c579da5bd94` (`Mockingboard.cpp:237-262,285-286`,
+[issue #1192](https://github.com/AppleWin/AppleWin/issues/1192)). PB4 selects
+primary and PB3 secondary. Native secondary LATCH addresses/selects both;
+primary LATCH deselects secondary; primary READ/WRITE includes a selected
+secondary. Reads OR actual drivers, and broadcast stores reach each AY
+once. A reserved AY-latch bit preserves GAL deselection across existing
+PHS snapshot layouts. Full-page VIA decode replaces the narrow MAME range
+gate; Echo+ maps VIA2 throughout the page and retains independent latches.
+
+Further fidelity checks reproduced Phasor host mute pausing the synth and
+Echo+ playing its pair on one speaker. Mute now advances generators,
+filters and queues throughout silence. Echo+ mirrors the second pair to
+both speakers; routing is stamped with the clock event even for a same-rate
+MB-to-Echo change. Tests compare audible/muted twins in all three modes,
+pin stereo duplication and delayed mode changes, exercise all 128 mode/page
+combinations, and verify GAL reads, write counts and snapshot continuity.
+
+The subsequent complete run also caught a ProDOS decode-safety fixture
+which still used a 200 KB file to represent an excluded host file. With
+tree-file support added concurrently, that file now fits. The fixture uses
+a sparse file beyond ProDOS's 24-bit EOF instead and retains both safety
+assertions: preserve the hidden host file and save the guest collision
+under another name.
+
+## 2026-10-17 — Phasor reset reaches hidden AY; Workstation restore stays whole
+
+Phasor's PB2 reset cleared the secondary AY only in native/Echo mode.
+In Mockingboard compatibility it retained old registers and audio state,
+so an earlier tone survived reset and returned with native mode. Both AY
+reset pins are wired directly to PB2 in every mode, independently of
+chip selection (AppleWin `6c579da5bd94`, Mockingboard.cpp:253,331-335;
+[hardware finding #1197](https://github.com/AppleWin/AppleWin/issues/1197)).
+The reset now reaches both register banks and both stamped audio generators.
+Tests exercise both VIAs, native/compatibility modes and all select masks,
+and compare continuing audio against an equivalent native reset.
+
+The subsequent general bug hunt reproduced Workstation snapshots applying
+RAM/CPU state before discovering a truncated or foreign nested SCC blob.
+The SCC parser now refuses that tail before the fixed card state changes;
+it already guarantees atomic rejection internally. Regressions cover every
+SCC-tail truncation, bad SCC magic/version, unchanged live state on refusal
+and valid round trips. The catalog snapshot test treats a Workstation hybrid
+as a failure rather than a warning. Snapshot bytes and versions are unchanged.
+
+## 2026-10-17 — Sound II speech survives Ctrl-Reset
+
+Sound II treated every bus reset as speech power loss. Mockingboard-C's
+RESET is disconnected from SSI263 pin 18 (AppleWin `6c579da5bd94`,
+SSI263.cpp hardware notes and Reset:930-956). Warm resets now preserve
+speech registers, repeating requests, queued writes and PCM position while
+resetting VIA/AY state. The shared audio cursor stays continuous so queued
+phoneme changes retain their sample boundary. A retained D7 request does
+not manufacture a VIA CA1 edge after reset.
+
+Cold boot and boot-from-slot instead dispatch a slot power-cycle hook,
+resetting speech and dropping the expansion-ROM latch. Other cards inherit
+their existing reset behavior. Regressions first reproduced warm speech
+loss at 22.05/44.1/48 kHz and the retained expansion latch on power loss;
+they also cover consecutive resets, pending speech writes, CA1 acknowledge/
+repeat timing and cold silence. Phasor/Cricket reset variants remain open.
+
+## 2026-10-17 — SSI263 durations follow the PCM actually played
+
+The SSI timer used a debug-log formula while audio looped the raw PCM at
+one fixed speed. It could request the next phoneme after 4 ms despite
+playing a roughly 120 ms source. Timer and renderer now share AppleWin's
+primary audio consumption rules (`6c579da5bd94`, SSI263.cpp:613-660): raw
+samples for DUR=0, the literal skip pattern for DUR=1, averaged pairs for
+DUR=2 and groups of four for DUR=3. Latched frame mode forces DUR=3.
+The pause uses entry 0's length, as upstream. IRQ periods come from the
+native output-frame count, converted once to CPU cycles; active clock
+changes preserve remaining real time.
+
+The DUR=1 counter skips offsets 3, 8, 13, ... (5 source samples per 4
+frames), not the earlier documentation's 4/3 ratio. AMP is quantized before
+averaging, and the timed renderer latches frame mode at the queued CTL
+edge rather than at CPU-now. Snapshot field layouts stay unchanged.
+
+An independent read/average/skip transcription checks all 64 codes × four
+DUR values × frame/phoneme functions × three clocks, including repeat
+boundaries and RATEINF independence, plus all 15 nonzero AMP values.
+The regression failed on the old formula. Physical inflection/articulation
+and chip-variant warm-reset behavior remain outside this PCM model.
+
+## 2026-10-17 — Ignored Phasor snapshots preserve pending audio
+
+`PhasorCard::loadSnapshotState` invalidated its audio timeline before
+checking the snapshot header and length. A null, foreign or truncated blob
+was ignored by the register parser but still dropped queued AY writes and
+re-primed audio from CPU-now state, causing an audible discontinuity.
+Validation now precedes changes to the audio generation and reset-held
+flags. `phasor_timeline` compares the following samples with an untouched
+twin for all four rejection cases in compatibility/native modes; the
+null-blob case failed on the first audio block before the fix.
+
+## 2026-10-17 — VidHD detection uses the slot ROM window
+
+VidHD's `$24 $EA $4C` detection signature was exposed at `$C0n0-2`, while
+AppleWin's `InitializeIO` registers its reader for `$Cn00-02`. Software
+scanning slot ROM could not detect the card. The signature and debugger
+peek now use the slot-ROM window; other slot-ROM bytes and all device-
+select reads float, and VidHD still claims no C800 ROM. `vidhd_card`
+reproduced the failure and checks slots 1-7 plus the //e slot-3 ROM switch.
+
+## 2026-10-17 — SSI263 CTL-latched IRQ modes and repeated requests
+
+The SSI263 now latches its function and interrupt enable on CTL H-to-L,
+rather than deriving them from every DURPHON store. DUR=00 disables IRQ
+while retaining the previous function. Typical power-on DURPHON=$C0 and
+FILFREQ=$FF follow AppleWin's observed reset state; waking the chip alone
+can now produce the request used by detection routines.
+
+Phoneme requests repeat after INFLECT/RATEINF acknowledgement without
+losing repeat phase. Sound II gates VIA2.CA1 on the SSI interrupt latch:
+D7 status still reports completion when disabled, but cannot raise a VIA
+request. This corrects the earlier test's conflation of status and output.
+Period length remains the documented legacy duration approximation.
+
+The new latch byte is versioned through MBS v3 and EP v2 snapshots; MBS
+v1/v2 and EP v1 still load, with DUR-derived legacy state and a fresh repeat
+period if the old timer had stopped. Tests cover latch/IRQ changes,
+repeated acknowledgements, both slot IRQ paths, old formats and atomic
+rejection of truncated blobs. Reference: AppleWin `6c579da5bd94`,
+`SSI263.cpp` Write/SetDeviceModeAndInts/SetSpeechIRQ/RepeatPhoneme and
+`SSI263.h` ResetState.
+
+## 2026-10-17 — SSI263 silent registers preserve phoneme phase
+
+A guest write of AMP=0 or FILFREQ=$FF paused the shared SSI263 PCM cursor,
+so speech resumed at an old position when the driver restored sound.
+Both now set the output gain to zero while PCM continues to advance and
+loop, matching AppleWin's SSI263 `Update()` at `6c579da5bd94:605-654`.
+Power-down still suppresses playback; CTL H-to-L restarts the phoneme.
+
+`ssi263_phoneme_map` compares the resumed samples with an audible twin
+across a phoneme wrap at 22.05/44.1/48 kHz, with and without stamped events;
+all twelve combinations failed before the correction. An exact boundary
+test also confirms that stamped writes already apply on the first sample
+starting at or after their cycle, including across callbacks; no timing
+change was needed there. The legacy duration formula's misleading
+AppleWin-parity attribution is corrected; duration/mode work remains
+tracked under AUDIO-011.
+
+## 2026-10-17 — Speech keeps its place while muted
+
+Muting a Sound II card stopped its audio cursor after the gain faded to
+zero, leaving SSI263 events queued and replaying stale speech on unmute.
+The Mockingboard now keeps its PSG generators and speech timeline running
+at zero output gain. Cricket/Echo had the same playback freeze plus an
+abrupt mute/volume step; its callback now renders directly into the output
+without scratch allocation and applies the same 5 ms gain ramp.
+
+Resolves AUDIO-001 and AUDIO-002. `ssi263_speech_timeline` compares muted
+cards against continuously audible twins, including phoneme writes during
+mute and volume changes, at 44.1/48 kHz and on Sound II's mono/stereo paths.
+The regression fails against both original mute paths.
+
 ## 2026-10-16 — Browser opens an Apple //c with DIX and docked drives
 
 Both the browser shell and the no-argument WASM fallback now select a PAL

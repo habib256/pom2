@@ -246,9 +246,9 @@ public:
     }
 
     /// Apple II RESET line — calls onReset() on every plugged card.
-    /// Does NOT touch activeExpansionSlot (matches hardware: RESET
-    /// doesn't lift the expansion-ROM enable line).
-    void reset();
+    /// A cold boot passes true to dispatch onPowerCycle() instead.
+    /// RESET retains activeExpansionSlot; a power cycle clears it.
+    void reset(bool powerCycle = false);
 
     /// Unplug every card. Each is given an `onUnplug()` callback first.
     /// `activeExpansionSlot` is also cleared. Used by MainWindow's

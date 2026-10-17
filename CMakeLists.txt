@@ -419,6 +419,7 @@ set(SOURCES
     src/hgrsprite/HgrSpriteEditor.cpp
     src/SlotBus.cpp
     src/FourPlayCard.cpp
+    src/SnesMaxCard.cpp
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
     src/SamCard.cpp
@@ -467,10 +468,11 @@ set(SOURCES
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
     src/HostOpenFiles.cpp
+    src/NativeFileDialog.cpp
     src/main.cpp
 )
 if(APPLE)
-    list(APPEND SOURCES src/HostOpenFiles_mac.mm)
+    list(APPEND SOURCES src/HostOpenFiles_mac.mm src/NativeFileDialog_mac.mm)
 endif()
 
 # ─── Architecture layers ──────────────────────────────────────────────────
@@ -536,6 +538,7 @@ set(POM2_DEVICES_SOURCES
     src/PrinterCard.cpp
     src/ProDOSHardDiskCard.cpp
     src/FourPlayCard.cpp
+    src/SnesMaxCard.cpp
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
     src/SamCard.cpp
@@ -595,6 +598,7 @@ set(POM2_FRONTEND_HEADERS
     src/AudioCoordinator.h
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
+    src/NativeFileDialog.h
     src/DevicePanelCoordinator.h
     src/HostOpenFiles.h
     src/IconsFontAwesome6.h
@@ -709,6 +713,7 @@ set(POM2_FRONTEND_SOURCES
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
     src/HostOpenFiles.cpp
+    src/NativeFileDialog.cpp
     src/main.cpp
 )
 
@@ -770,6 +775,7 @@ set(POM2_RUNTIME_HEADERS
     src/Apple2Display_Internal.h
     include/pom2/core.hpp
     src/Debugger.h
+    src/DebuggerSymbols.h
     # MediaMount.h is pure contract — one <string> include and forward
     # declarations — but its implementation reaches DiskIICard and
     # EmulationController, so the pair is runtime. Nothing below the frontend
@@ -948,6 +954,7 @@ set(HEADERS
     src/SlirpNetworkBackend.h
     src/Cs8900aDevice.h
     src/FourPlayCard.h
+    src/SnesMaxCard.h
     src/TranswarpCard.h
     src/SlinkyCard.h
     src/ZipChip.h
@@ -1317,7 +1324,7 @@ else()
         # TCP/UDP sockets, the SSC telnet bridge and the AI control server all
         # go through it, on top of the htons/ntohs framing helpers that were
         # the only reason to link it before. See src/SocketCompat.h.
-        target_link_libraries(${PROJECT_NAME} winmm ws2_32)
+        target_link_libraries(${PROJECT_NAME} winmm ws2_32 comdlg32)
     endif()
 
     if(APPLE)
@@ -1454,6 +1461,7 @@ set(POM2_CORE_SOURCES
     src/Settings.cpp
     src/SlotBus.cpp
     src/FourPlayCard.cpp
+    src/SnesMaxCard.cpp
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
     src/SamCard.cpp

@@ -38,6 +38,7 @@
 #define POM2_DEBUGGER_IMGUI_H
 
 #include "Debugger.h"
+#include "DebuggerSymbols.h"
 
 #include <cstdint>
 #include <string>
@@ -69,6 +70,10 @@ private:
         Debugger::Hit hit{};
         std::vector<uint16_t> breakpoints;
         std::vector<Debugger::Watch> watchpoints;
+        std::map<uint16_t, Debugger::Condition> conditions;
+        bool profiling = false, historyEnabled = false;
+        std::vector<Debugger::ProfileEntry> profile;
+        std::vector<Debugger::TraceEntry> history;
         /// 64 KiB of main RAM, copied so the disassembly can be laid out
         /// after the lock is released.
         std::vector<uint8_t> memory;
@@ -86,7 +91,14 @@ private:
     bool      followPc_    = true;
     /// Address typed into the "add breakpoint" box, as text so a half-typed
     /// value does not jump the view.
-    char      bpEntry_[8]  = {0};
+    char      bpEntry_[256]  = {0};
+    bool conditionEnabled_ = false;
+    int conditionRegister_ = 0;
+    int conditionCompare_ = 0;
+    char conditionValue_[8] = {"00"};
+    char symbolPath_[1024] = {};
+    DebuggerSymbols symbols_;
+    std::string symbolStatus_;
     /// Same, for the watchpoint box. Separate storage so typing in one does
     /// not clear the other.
     char      wpEntry_[8]  = {0};

@@ -26,7 +26,7 @@ an explicit request before scheduling.
 | [NETWORK-008](#network-008) | 🟢 | To verify | [FujiNet] embedded firmware |
 | [NETWORK-013](#network-013) | 🟢 | Shipped (verify) | W5100 name resolution is still inline |
 | [NETWORK-009](#network-009) | 🧊 | Frozen | Uthernet I has no host transport on Windows |
-| [NETWORK-010](#network-010) | 🧊 | Frozen | Uthernet II inbound (`LISTEN`) |
+| [NETWORK-010](#network-010) | 🟡 | Partial: local TCP implemented | Uthernet II inbound (`LISTEN`) |
 | [NETWORK-012](#network-012) | 🧊 | Frozen | Uthernet I on WASM |
 
 <a id="network-001"></a>
@@ -289,21 +289,18 @@ CHANGELOG entry names the lift; record one when this entry is removed.
 
 ## NETWORK-010 — Uthernet II inbound (`LISTEN`)
 
-**Priority:** 🧊 · **State:** Frozen.
+**Priority:** 🟡 · **State:** Local TCP implemented 2026-10-17; LAN mapping remains open.
 
-**Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
+The user explicitly requested the remaining non-IIgs parity work. Desktop
+W5100 sockets now accept `LISTEN` on `127.0.0.1:Sn_PORT` when
+`uthernet_allow_loopback` is enabled. INIT → LISTEN → ESTABLISHED publishes
+the peer IP/port and CON interrupt; receive/send use the existing TCP rings.
+Ports below 1024, 1985, 6502 and 6503 remain refused. Cancel/close/reset
+release the socket; denied/failed requests retain CLOSED + TIMEOUT.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1926). Original dates and estimates are retained below.
-
-- 🧊 **Uthernet II inbound (`LISTEN`)** — the W5100 `LISTEN` command is
-  decoded but unimplemented: neither transport can route an inbound
-  connection to the guest (libslirp is outbound-only without explicit
-  port forwarding). Needs a user-configured host port to bind plus a
-  slirp `hostfwd`-style mapping. The *refusal* is now cheap: it demotes to
-  `SOCK_CLOSED` + TIMEOUT and warns once per socket instead of once per lap
-  of the server loop it provokes (2026-09-07 — the loop was paying an
-  unbuffered log line and a socket/close per iteration on the CPU worker,
-  under `stateMutex`). *1 d.*
+Checks: `w5100_socket_seam` covers pending accept, success, failure and port
+policy; `uthernet2_w5100_smoke` includes an actual inbound TCP exchange.
+Remaining: explicit LAN-interface/host-port configuration and libslirp forwarding.
 
 <a id="network-012"></a>
 

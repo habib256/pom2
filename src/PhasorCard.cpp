@@ -49,6 +49,10 @@ constexpr double kAyClockHz      = static_cast<double>(POM2_CPU_CLOCK_HZ);
 using pom2::ay::kVolumeTable;
 
 constexpr int kAyNumRegs = pom2::Ay3_8910::kAyNumRegs;
+// Phasor GAL selection is distinct from AY register-address validity.
+// Use a reserved latch bit so existing AY snapshot byte offsets stay fixed.
+// Old snapshots leave it clear (selected); the next LATCH establishes it.
+constexpr uint8_t kGalDeselected = 0x40;
 
 }  // namespace
 
@@ -150,6 +154,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     /// applyEvent when it moves so the render loop re-derives its per-sample
     /// tick rate mid-buffer.
     int  liveClockScale  = 1;
+    bool liveEchoStereo = false;
     bool clockScaleDirty = false;
     /// Smoothed output gain — see the note in MockingboardCard::AudioSrc.
     float gainRamp = 0.0f;
@@ -159,8 +164,9 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     void applyEvent(const PhasorCard::AyRegEvent& e)
     {
         if (e.reg == PhasorCard::kRegClockScale) {
-            const int s = (e.val >= 1) ? e.val : 1;
+            const int s = (e.val & 0x7F) >= 1 ? (e.val & 0x7F) : 1;
             if (s != liveClockScale) { liveClockScale = s; clockScaleDirty = true; }
+            liveEchoStereo = (e.val & 0x80) != 0;
             return;
         }
         if (e.chip >= 4) return;
@@ -187,6 +193,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         return true;
     }
 
+    std::vector<float> speechScratch;
+
     void render(float* left, float* right, int frameCount)
     {
         if (frameCount <= 0) return;
@@ -209,6 +217,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         uint32_t resetCountSnap[4];
         uint32_t envWriteCountSnap[4];
         int      clockScaleSnap = 1;
+        bool     echoStereoSnap = false;
         uint64_t latestEventCycle = 0;
         uint64_t cpuNowSnap       = 0;
         bool     timelineBroke    = false;
@@ -223,6 +232,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 envWriteCountSnap[ci] = parent->ayEnvWriteCount_[ci];
             }
             clockScaleSnap = parent->clockScale();
+            echoStereoSnap = parent->mode_ == PH_EchoPlus;
             cpuNowSnap = parent->lastSyncCycle_;
             if (parent->ayQueueGen_ != lastSeenQueueGen) {
                 lastSeenQueueGen = parent->ayQueueGen_;
@@ -251,6 +261,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             // A break (or the first fill) re-anchors on the CPU-side truth,
             // which is where the live mode is too.
             liveClockScale = clockScaleSnap;
+            liveEchoStereo = echoStereoSnap;
         }
         const double cyclesPerSample =
             cpuClockHz.load(std::memory_order_relaxed) / static_cast<double>(sr);
@@ -287,11 +298,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
 
         const float gainTarget = isMuted ? 0.0f : vol;
         if (!gainPrimed) { gainRamp = gainTarget; gainPrimed = true; }
-        if (isMuted && gainRamp <= 0.0001f) {
-            gainRamp = 0.0f;
-            silence();
-            return;
-        }
+        // Host mute changes only the gain. Keep generators, filters and
+        // queued mode/register events advancing through the silent interval.
         const float gainStep =
             1.0f / (kGainRampSeconds * static_cast<float>(sr));
 
@@ -324,6 +332,17 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         deriveTicks();
         dcL.setRate(sr);
         dcR.setRate(sr);
+
+        // The reference renders SSI voices in mono. Keep both on the same
+        // emulated-cycle cursor as the PSGs; host mute affects only final gain.
+        speechScratch.resize(static_cast<std::size_t>(frameCount));
+        std::fill(speechScratch.begin(), speechScratch.end(), 0.0f);
+        {
+            std::lock_guard<std::mutex> lk(parent->mtx_);
+            for (auto& speech : parent->ssi_)
+                speech.fillAudioTimed(speechScratch.data(), frameCount, sr,
+                    static_cast<double>(audioCursor) + cursorFrac, cyclesPerSample);
+        }
 
         for (int i = 0; i < frameCount; ++i) {
             // The cursor walks the emulated clock one output sample at a
@@ -395,8 +414,10 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
                 gainRamp = std::min(gainTarget, gainRamp + gainStep);
             else if (gainRamp > gainTarget)
                 gainRamp = std::max(gainTarget, gainRamp - gainStep);
-            const float l = dcL.process(side[0] * (1.0f / 6.0f)) * gainRamp;
-            const float r = dcR.process(side[1] * (1.0f / 6.0f)) * gainRamp;
+            // Echo+ mirrors the second VIA's pair to both speakers.
+            // AppleWin 6c579da5bd94 Mockingboard.cpp:576-584.
+            const float l = dcL.process((liveEchoStereo ? side[1] : side[0]) * (1.0f / 6.0f) + 0.5f * speechScratch[i]) * gainRamp;
+            const float r = dcR.process(side[1] * (1.0f / 6.0f) + 0.5f * speechScratch[i]) * gainRamp;
             if (right) { left[i] = l; right[i] = r; }
             else       { left[i] = 0.5f * (l + r); }
         }
@@ -422,7 +443,7 @@ PhasorCard::PhasorCard(int slotNum)
     via_[1] = std::make_unique<pom2::Via6522>();
     for (int i = 0; i < 4; ++i) ay_[i] = std::make_unique<pom2::Ay3_8910>();
     audio_  = std::make_unique<AudioSrc>(this);
-    onReset();
+    onPowerCycle();
 }
 
 PhasorCard::~PhasorCard() = default;
@@ -433,33 +454,30 @@ void PhasorCard::onUnplug()
 }
 
 // ─── Rewind / snapshot ──────────────────────────────────────────────────────
-// The 2 VIAs + 4 AYs register/timer state plus the Phasor mode soft-switch
+// The VIAs, AYs and SSI263APs plus the Phasor mode soft-switch
 // (it changes address decode + AY clock scale). Self-describing blob.
 void PhasorCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
     using namespace pom2::byteio;
     std::lock_guard<std::mutex> lk(mtx_);
-    // ver 2 since 2026-07-30: the VIA sections gained a byte (portAIn).
-    putU8(out, 'P'); putU8(out, 'H'); putU8(out, 'S'); putU8(out, 2);  // magic + ver
+    // v3 adds two SSI263 sections; v2 added VIA portAIn.
+    putU8(out, 'P'); putU8(out, 'H'); putU8(out, 'S'); putU8(out, 3);  // magic + ver
     putU8(out, static_cast<uint8_t>(mode_));
     uint8_t present = 0;
     if (via_[0]) present |= 0x01;
     if (via_[1]) present |= 0x02;
     for (int i = 0; i < 4; ++i) if (ay_[i]) present |= static_cast<uint8_t>(0x04 << i);
+    present |= 0xC0; // v3: primary and secondary SSI263AP sections
     putU8(out, present);
     if (via_[0]) via_[0]->appendSnapshot(out);
     if (via_[1]) via_[1]->appendSnapshot(out);
     for (int i = 0; i < 4; ++i) if (ay_[i]) ay_[i]->appendSnapshot(out);
+    for (const auto& chip : ssi_) chip.appendSnapshot(out);
 }
 
 void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     std::lock_guard<std::mutex> lk(mtx_);
-    // The banks change out of band here — but the CHIPS do not go with the
-    // timeline: a restore hands them back their registers, and their
-    // generators must carry on (see invalidateAyTimeline(bool)).
-    invalidateAyTimeline(/*resetChips=*/false);
-    ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     pom2::byteio::Reader r(data, len);
     if (!r.has(6)) return;
     if (r.u8() != 'P' || r.u8() != 'H' || r.u8() != 'S') return;
@@ -467,7 +485,7 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // 2026-07-30 for the AY read-bus latch). The layout change must bump
     // this byte, or an old snapshot's every later field shifts by one.
     const uint8_t blobVer = r.u8();
-    if (blobVer != 1 && blobVer != 2) return;
+    if (blobVer != 1 && blobVer != 2 && blobVer != 3) return;
     const std::size_t viaBytes = (blobVer >= 2)
         ? pom2::Via6522::kSnapshotBytes : pom2::Via6522::kSnapshotBytesV1;
     // Range, not a whitelist of the three NAMED modes. `applyModeSwitch`
@@ -475,10 +493,9 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // clear-then-OR), so every value 0-7 is a state the guest can latch — one
     // READ of $C0n1 leaves it at 1. Rejecting the un-named values threw away
     // the WHOLE blob (both 6522s, all four AYs, the timers and the IRQ line)
-    // and left the card sitting on its live state through every rewind frame,
-    // silently. The AY routing already treats anything that is not
-    // PH_Phasor / PH_Mockingboard as the Echo+-style broadcast, so an
-    // intermediate value restores to exactly the machine that captured it.
+    // and left the card sitting on its live state through every rewind frame.
+    // Undefined values select no VIA but still retain a real mode latch;
+    // restoring one must reproduce the machine that captured it.
     const uint8_t mode = r.u8();
     if (mode > PH_EchoPlus) return;   // 0-7 is all applyModeSwitch can latch
     const uint8_t present = r.u8();
@@ -487,7 +504,14 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         ((present & 0x02) ? viaBytes : 0);
     for (int i = 0; i < 4; ++i)
         if (present & (0x04 << i)) required += pom2::Ay3_8910::kSnapshotBytes;
+    if (blobVer >= 3)
+        for (int i = 0; i < 2; ++i)
+            if (present & (0x40 << i)) required += pom2::Ssi263::kSnapshotBytes;
     if (len < required) return;          // validate before mutating any chip
+    // Only an accepted restore can replace the audio timeline. An ignored
+    // foreign/short blob must preserve queued writes and reset strobes too.
+    invalidateAyTimeline(/*resetChips=*/false);
+    ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     mode_ = static_cast<Mode>(mode);
     auto loadVia = [&](std::unique_ptr<pom2::Via6522>& v) -> bool {
         if (v) v->loadSnapshot(r.p + r.pos, viaBytes);
@@ -503,6 +527,16 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if ((present & 0x02) && !loadVia(via_[1])) return;
     for (int i = 0; i < 4; ++i)
         if ((present & (0x04 << i)) && !loadAy(ay_[i])) return;
+
+    for (int i = 0; i < 2; ++i) {
+        if (blobVer >= 3 && (present & (0x40 << i))) {
+            ssi_[i].loadSnapshot(r.p + r.pos);
+            r.pos += pom2::Ssi263::kSnapshotBytes;
+        } else {
+            // Legacy snapshots predate speech; discard live future speech.
+            ssi_[i].reset();
+        }
+    }
 
     // ── Re-anchor the derived state the restore just invalidated ────────
     // Three things the Phasor was missing that MockingboardCard already
@@ -530,11 +564,15 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     updateIrq();
 }
 
-void PhasorCard::onReset()
+void PhasorCard::onReset() { resetCard(false); }
+void PhasorCard::onPowerCycle() { resetCard(true); }
+
+void PhasorCard::resetCard(bool powerCycle)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     invalidateAyTimeline();   // the CPU-side banks change out of band here
     ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
+    for (auto& chip : ssi_) chip.reset(powerCycle);
     via_[0]->reset();
     via_[1]->reset();
     for (int i = 0; i < 4; ++i) ay_[i]->reset();
@@ -601,6 +639,7 @@ void PhasorCard::setCpuClock(double hz)
     if (audio_) audio_->cpuClockHz.store(hz, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(mtx_);
     busClock_.setCpuClock(hz);
+    for (auto& chip : ssi_) chip.setCpuClockHz(hz);
 }
 
 // Slot phase 0: the AYs' CLOCK pin and the 6522s' timer clock, which an
@@ -617,6 +656,16 @@ void PhasorCard::setStandardClock(double hz)
 // Caller holds `mtx_`.
 void PhasorCard::advanceVias(uint64_t cpuCycles)
 {
+    // Independent speech oscillator: CPU-clock conversion, never native AY 2x.
+    // AppleWin 6c579da5bd94 SSI263.cpp:806-844: MB CA1, native direct IRQ.
+    const int speechCycles = static_cast<int>(std::min<uint64_t>(cpuCycles, 0x7FFFFFFF));
+    for (int i = 0; i < 2; ++i) {
+        const bool request = ssi_[i].aRequest();
+        ssi_[i].advance(speechCycles);
+        if (mode_ == PH_Mockingboard && !request && ssi_[i].aRequest()
+            && ssi_[i].irqEnabled())
+            via_[1 - i]->setCa1NegativeEdge();
+    }
     const uint64_t ticks = busClock_.busTicks(cpuCycles);
     // The VIAs' `advance()` takes an int; clamp to a sane upper bound
     // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
@@ -676,34 +725,15 @@ void PhasorCard::syncToCpuCycleAt(uint64_t now)
     updateIrq();
 }
 
-// ─── VIA select decode — MAME a2bus_phasor_device parity ─────────────────
-//
-// MAME `a2mockingboard.cpp:312-337` (read_cnxx) / `:365-390` (write_cnxx):
-//
-//   if (m_native)
-//       via_sel = ((offset & 0x80) >> 6) | ((offset & 0x10) >> 4);
-//   else
-//       via_sel = (offset & 0x80) ? 2 : 1;
-//   if ((offset < 0x20) || (offset >= 0x80 && offset < 0xa0)) { ... }
-//
-// bit 0 of via_sel selects VIA1, bit 1 selects VIA2; reads OR the selected
-// VIAs' bytes together, writes broadcast to every selected VIA. The range
-// gate applies in BOTH modes, so:
-//
-//   Mockingboard mode:  $00-$1F → VIA1, $80-$9F → VIA2, rest → none.
-//   Native mode:        $00-$0F → none, $10-$1F → VIA1,
-//                       $80-$8F → VIA2, $90-$9F → BOTH (broadcast).
-//
-// MAME's `m_native` flag is set by any $C0(8+s)X access with address bit 0
-// high; POM2's richer mode_ soft-switch reaches PH_Phasor (5) / PH_EchoPlus
-// (7) the same way — both have bit 0 set — so "native" maps to
-// `mode_ != PH_Mockingboard`, consistent with the AY routing decode.
-// Caller must hold mtx_.
+// Full-page VIA selection. Caller holds mtx_.
 int PhasorCard::viaSelect(uint8_t low8) const
 {
-    if (!(low8 < 0x20 || (low8 >= 0x80 && low8 < 0xA0))) return 0;
+    // AppleWin 6c579da5bd94 Mockingboard.cpp:683-692,780-790.
+    // Decode the address bits over the whole page, without MAME's range
+    // gate. Echo+ maps the second VIA into every 16-byte window.
     if (mode_ == PH_Mockingboard) return (low8 & 0x80) ? 0x2 : 0x1;
-    return ((low8 & 0x80) >> 6) | ((low8 & 0x10) >> 4);
+    if (mode_ == PH_Phasor) return ((low8 & 0x80) >> 6) | ((low8 & 0x10) >> 4);
+    return mode_ == PH_EchoPlus ? 0x2 : 0;
 }
 
 // ─── Slot ROM ($Cs00-$CsFF) — dual VIA decode ────────────────────────────
@@ -712,13 +742,18 @@ uint8_t PhasorCard::slotRomRead(uint8_t low8)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     syncToCpuCycle();
-    // MAME read_cnxx: OR together every selected VIA's byte; an
-    // undecoded offset returns 0 (`a2mockingboard.cpp:312-337` — `ret`
-    // starts at 0 and the range gate skips the reads entirely).
+    // SSI263 drives D7 only. Other bits retain the floating bus value.
     const int viaSel = viaSelect(low8);
     uint8_t out = 0;
     if (viaSel & 0x1) out |= via_[0]->read(low8 & 0x0F);
     if (viaSel & 0x2) out |= via_[1]->read(low8 & 0x0F);
+    if (!viaSel) out = openBus();
+    // AppleWin 6c579da5bd94 Mockingboard.cpp:698-711. Read selects require
+    // A7=A4=0. At $60 both select: follow reference secondary precedence.
+    if (mode_ == PH_Phasor && !(low8 & 0x90) && (low8 & 0x60)) {
+        if (low8 & 0x40) out = (out & 0x7F) | ssi_[0].read(low8 & 7);
+        if (low8 & 0x20) out = (out & 0x7F) | ssi_[1].read(low8 & 7);
+    }
     updateIrq();
     return out;
 }
@@ -727,8 +762,7 @@ void PhasorCard::slotRomWrite(uint8_t low8, uint8_t v)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     syncToCpuCycle();
-    // MAME write_cnxx: broadcast to every selected VIA; undecoded
-    // offsets are dropped (`a2mockingboard.cpp:365-390`).
+    // Broadcast to every selected VIA; undecoded offsets are dropped.
     const int viaSel = viaSelect(low8);
     for (int chip = 0; chip < 2; ++chip) {
         if (!(viaSel & (1 << chip))) continue;
@@ -736,6 +770,16 @@ void PhasorCard::slotRomWrite(uint8_t low8, uint8_t v)
         ++viaWriteCount_[chip];
         // Port A / Port B output change triggers AY routing.
         if (events & 0x03) onViaPortBChange(chip);
+    }
+    // Write selects are A6/A5 alone, including aliases sharing a VIA.
+    // AppleWin 6c579da5bd94 Mockingboard.cpp:800-819.
+    if (mode_ == PH_Mockingboard || mode_ == PH_Phasor) {
+        for (int i = 0; i < 2; ++i) {
+            if (!(low8 & (i == 0 ? 0x40 : 0x20))) continue;
+            ssi_[i].prepareTimedPlayback();
+            ssi_[i].write(low8 & 7, v);
+            ssi_[i].queuePlaybackEvent(low8 & 7, v, lastSyncCycle_);
+        }
     }
     updateIrq();
 }
@@ -773,13 +817,23 @@ void PhasorCard::applyModeSwitch(uint8_t offset)
     // very next fill, which is the bug all over again.
     syncToCpuCycle();
     const int before = clockScale();
+    const bool wasEcho = mode_ == PH_EchoPlus;
+    const Mode oldMode = mode_;
     uint8_t m = static_cast<uint8_t>(mode_);
     if (offset & 0x8) m &= ~0x7;      // bit 3 clears mode bits 2:0
     m |= (offset & 0x7);              // OR in low 3 bits
     mode_ = static_cast<Mode>(m);
+    // Re-publish a pending request when changing its interrupt route.
+    // AppleWin SSI263.cpp:852-869 (SetCardMode).
+    if (mode_ != oldMode && mode_ == PH_Mockingboard)
+        for (int i = 0; i < 2; ++i)
+            if (ssi_[i].aRequest() && ssi_[i].irqEnabled() && !ssi_[i].powerDown())
+                via_[1 - i]->setCa1NegativeEdge();
+    updateIrq();
     const int after = clockScale();
-    if (after != before)
-        queueAyEvent(0, kRegClockScale, static_cast<uint8_t>(after));
+    const bool echo = mode_ == PH_EchoPlus;
+    if (after != before || echo != wasEcho)
+        queueAyEvent(0, kRegClockScale, static_cast<uint8_t>(after | (echo ? 0x80 : 0)));
 }
 
 // ─── AY routing ──────────────────────────────────────────────────────────
@@ -801,14 +855,11 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     // pair and reported "select BOTH" where the board selects neither.
     const uint8_t pb = v.readPortB();
 
-    // /RESET (PB2 low) is handled BEFORE the chip-select decode. MAME's
-    // a2bus_phasor via_out_b resets the AY pair outside the chip_sel
-    // computation: `m_ay1->reset_w(); if (m_native) m_ay2->reset_w();` — so
-    // a reset strobe is never gated by PB3/PB4. In Mockingboard-compat mode
-    // only the primary AY resets; in Phasor-native mode the whole pair does.
-    // The old code routed reset through the chip-select mask, leaving the
-    // secondary chip with stale register/LFSR/envelope state whenever native
-    // software pulses /RESET without re-asserting the per-chip select bits.
+    // PB2 directly drives BOTH AY /RESET pins, independently of mode and
+    // chip select. AppleWin 6c579da5bd94 Mockingboard.cpp:253,331-335 and
+    // GH#1197 document the hardware correction to MAME's native-only reset
+    // of the secondary chip. In compatibility mode it is hidden, not immune
+    // to reset: otherwise its old tone returns when native mode is restored.
     if ((pb & pom2::Ay3_8910::kPbBitReset) == 0) {
         // Stamp only the FALLING edge, exactly as MockingboardCard's
         // ResetOnly branch does with `ayResetHeld_`. `onViaPortBChange` runs
@@ -823,13 +874,11 @@ void PhasorCard::onViaPortBChange(int viaIdx)
             ayResetHeld_[ayBase] = true;
             queueAyEvent(ayBase, kRegAyReset, 0);
         }
-        if (mode_ != PH_Mockingboard) {
-            ay_[ayBase + 1]->reset();
-            ++ayResetCount_[ayBase + 1];
-            if (!ayResetHeld_[ayBase + 1]) {
-                ayResetHeld_[ayBase + 1] = true;
-                queueAyEvent(ayBase + 1, kRegAyReset, 0);
-            }
+        ay_[ayBase + 1]->reset();
+        ++ayResetCount_[ayBase + 1];
+        if (!ayResetHeld_[ayBase + 1]) {
+            ayResetHeld_[ayBase + 1] = true;
+            queueAyEvent(ayBase + 1, kRegAyReset, 0);
         }
         return;
     }
@@ -844,16 +893,30 @@ void PhasorCard::onViaPortBChange(int viaIdx)
         // stays silent on MB-mode software).
         targetMask = 0b01;
     } else {
-        // Phasor native (and EchoPlus, treated identically for routing):
-        // chip_sel = ~(pb >> 3) & 3 — active-low select on PB3..PB4.
-        //   0 → no chip   |  1 → primary
-        //   2 → secondary |  3 → BOTH (broadcast)
-        const uint8_t chipSel = static_cast<uint8_t>((~pb >> 3) & 0x3);
-        targetMask = chipSel;
+        // Hardware-confirmed primary=PB4, secondary=PB3, active low.
+        // AppleWin 6c579da5bd94 Mockingboard.cpp:237-262,285-286.
+        targetMask = ((pb & 0x10) ? 0 : 1) | ((pb & 0x08) ? 0 : 2);
     }
 
+    const int command = pb & 3;
+    if (mode_ == PH_Phasor) {
+        // Native GAL: secondary LATCH addresses both AYs. Primary
+        // READ/WRITE also reaches secondary if its last latch selected it.
+        // A primary LATCH deselects secondary until a secondary LATCH.
+        if (command == 3 && (targetMask & 2)) targetMask |= 1;
+        if ((command == 1 || command == 2) && (targetMask & 1) &&
+            !(ay_[ayBase + 1]->latchedAddr & kGalDeselected)) targetMask |= 2;
+    }
+    uint8_t readBus = 0;
+    bool readDriven = false;
+
     auto routeOne = [&](int chipIdx) {
+        const auto latch = ay_[chipIdx]->latchedAddr;
+        if (mode_ == PH_Phasor && command != 3 && (latch & kGalDeselected)) return;
+        if (command == 1 && (latch & pom2::Ay3_8910::kDeselected)) return;
         const auto res = ay_[chipIdx]->applyControl(pa, pb);
+        if (mode_ == PH_Phasor && command == 3 && pa < 16 && chipIdx == ayBase)
+            ay_[ayBase + 1]->latchedAddr |= kGalDeselected;
         if (res == pom2::Ay3_8910::ApplyResult::Wrote) {
             ++ayWriteCount_[chipIdx];
             // R13 (envelope shape) — bump the env-write counter so the
@@ -867,22 +930,17 @@ void PhasorCard::onViaPortBChange(int viaIdx)
             // The stamped event the audio thread replays at this cycle.
             queueAyEvent(chipIdx, reg, ay_[chipIdx]->regs[reg]);
         } else if (res == pom2::Ay3_8910::ApplyResult::Read) {
-            // Same AY read-bus latch as the Mockingboard: the chip drives
-            // the selected register onto the bus and the card latches it
-            // onto the driving VIA's port-A input. Phasor mode detectors
-            // write-then-read an AY register to identify the board.
-            // The driving VIA is the one this call is about. `chipIdx` is
-            // `ayBase` or `ayBase + 1` and `ayBase` came from `viaIdx`
-            // (2 AYs per VIA), so the old `chipIdx >> 1` re-derivation
-            // only shadowed the parameter with its own value (-Wshadow).
-            if (viaIdx >= 0 && viaIdx < 2)
-                via_[viaIdx]->setPortAInput(ay_[chipIdx]->busOut);
+            // Native simultaneous reads are the OR-sum, not the byte from
+            // whichever chip was visited last (AppleWin GH#1192).
+            readBus |= ay_[chipIdx]->busOut;
+            readDriven = true;
         } else if (res == pom2::Ay3_8910::ApplyResult::ResetOnly) {
             ++ayResetCount_[chipIdx];
         }
     };
     if (targetMask & 0b01) routeOne(ayBase);
     if (targetMask & 0b10) routeOne(ayBase + 1);
+    if (command == 1) v.setPortAInput(readDriven ? readBus : 0xFF);
 }
 
 // ─── Cycle pacing + IRQ ──────────────────────────────────────────────────
@@ -934,7 +992,10 @@ void PhasorCard::advanceCycles(int cycles)
 
 void PhasorCard::updateIrq()
 {
-    const bool combined = via_[0]->irqOut() || via_[1]->irqOut();
+    bool combined = via_[0]->irqOut() || via_[1]->irqOut();
+    if (mode_ == PH_Phasor)
+        for (const auto& chip : ssi_)
+            combined |= chip.aRequest() && chip.irqEnabled() && !chip.powerDown();
     assertIrq(combined);
 }
 

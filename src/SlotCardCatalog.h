@@ -145,12 +145,12 @@ inline constexpr CardType kCardTypes[] = {
     // Mockingboard "C" Sound II — A/C base + SSI263A speech synth at
     // $C(s)40-$C(s)44. Drives speech in Ultima IV/V, Wasteland, Bard's
     // Tale, Crime Wave, Hudson Hawk, etc. (any title that targets the
-    // Sound II variant). A/!R wired to VIA1.CA1 → IRQ-driven phoneme
+    // Sound II variant). A/!R wired to VIA2.CA1 → IRQ-driven phoneme
     // dequeue. Phoneme PCM ported from AppleWin (GPL3 compat).
     { "mockingboard_c", "Mockingboard C (Sound II)" },
     // Phasor (Applied Engineering) — dual-mode successor to Mockingboard.
     // Starts in MB-compat mode (2 active AYs), software-switchable to
-    // native (4 AYs, 12 voices, doubled chip clock). Audio synth = TODO.
+    // native (4 AYs, 12 voices, doubled chip clock), with stamped PSG audio.
     { "phasor",       "Phasor (AE)"       },
     // Cricket / Echo-class SSI263 card — standalone SSI263 speech synth
     // at $Cs00-$Cs04. Historically shipped under the "Echo+" label in
@@ -175,6 +175,7 @@ inline constexpr CardType kCardTypes[] = {
     // $C0nX. The Apple game port is analogue and carries two paddles; this
     // is how an Apple II gets four players.
     { "4play",        "4play — 4 digital joysticks (Lukazi)" },
+    { "snesmax",      "SNES MAX — 2 SNES gamepads (Lukazi)" },
     // TransWarp (Applied Engineering, 1986) — 3.58 MHz accelerator. No slot
     // ROM, no $C0nX window and no way to detect it by reading: it is
     // controlled entirely through $C072/$C074, which it snoops off the bus.

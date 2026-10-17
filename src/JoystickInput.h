@@ -49,6 +49,7 @@ public:
         std::string name;
         std::array<float, kAxes>    axis{};       // -1..+1
         std::array<bool,  kButtons> buttons{};
+        uint16_t snesButtons = 0; // B,Y,Select,Start,Up,Down,Left,Right,A,X,L,R
     };
 
     // UI navigation edges, derived from the bound pad's *standard* gamepad
@@ -121,6 +122,7 @@ public:
 
     /// Refresh state from GLFW. Call once per UI frame.
     void poll();
+    void setSnesMaxMode(bool enabled) { snesMaxMode_ = enabled; }
 
     /// First-call auto-bind: if no host is bound yet and at least one is
     /// present, attach the first present host. Lets the emulator "just
@@ -210,6 +212,7 @@ private:
     int  navPrevStickX_   = 0;
     bool navPrevValid_    = false;
     bool activeIsGamepad_ = false;   // bound pad has a standard mapping
+    bool snesMaxMode_ = false;       // Start/Select belong to the guest card
 };
 
 #endif // POM2_JOYSTICK_INPUT_H

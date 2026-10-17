@@ -168,6 +168,35 @@ void testSnapshotRoundTrip()
     std::printf("  ok: SSI263 state snapshot round-trip\n");
 }
 
+void testLatchedIrqAndRepeat()
+{
+    EchoPlusCard card;
+    card.slotRomWrite(0, 0x85);
+    card.slotRomWrite(3, 0x0F);       // latch function 2, enable IRQ
+    card.slotRomWrite(0, 0x05);      // mode does not change until CTL edge
+    auto snap = card.snapshotChip();
+    assert(snap.mode == 2 && snap.irqEnabled);
+    card.advanceCycles(snap.phonemeRemainingCycles);
+    assert(card.isIrqAsserted());
+    card.slotRomWrite(1, 0x00);      // acknowledge through INFLECT
+    assert(!card.isIrqAsserted());
+    snap = card.snapshotChip();
+    card.advanceCycles(snap.phonemeRemainingCycles - 1);
+    assert(!card.isIrqAsserted());
+    card.advanceCycles(1);
+    assert(card.isIrqAsserted());
+
+    card.slotRomWrite(3, 0x8F);      // power down drops slot IRQ
+    assert(!card.isIrqAsserted());
+    card.slotRomWrite(3, 0x0F);      // latch DUR=00: disable IRQ, retain function
+    snap = card.snapshotChip();
+    assert(snap.mode == 2 && !snap.irqEnabled);
+    card.advanceCycles(snap.phonemeRemainingCycles);
+    assert(card.slotRomRead(0) == 0x80); // status remains pollable
+    assert(!card.isIrqAsserted());
+    std::puts("  ok: latched IRQ mode and repeated requests reach the slot line");
+}
+
 } // namespace
 
 int main()
@@ -177,6 +206,7 @@ int main()
     testIrqWiring();
     testReadAcknowledgement();
     testSnapshotRoundTrip();
+    testLatchedIrqAndRepeat();
     std::printf("PASS\n");
     return 0;
 }

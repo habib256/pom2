@@ -1023,7 +1023,7 @@ void IWMDevice::appendSnapshotState(std::vector<uint8_t>& out) const
     putU8(writeDataLoaded_ ? 1 : 0);
 }
 
-bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n)
+bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n, bool commit)
 {
     if (data == nullptr || n < 4) return false;
     const bool v1 = std::memcmp(data, kIwmBlobMagicV1, 4) == 0;
@@ -1148,6 +1148,8 @@ bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n)
         if (nextTicks > nowTicks &&
             nextTicks - nowTicks > kRevolutionTicks) return false;
     }
+
+    if (!commit) return true;
 
     now_             = nowV;
     revStart35_      = revV;

@@ -59,6 +59,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <vector>
 
 namespace pom2 {
@@ -74,6 +75,7 @@ public:
         WatchWrite,     ///< an armed address was written
         StepOver,       ///< the transient breakpoint a step-over installs
         RunToCursor,    ///< the transient breakpoint run-to-cursor installs
+        StepOut,        ///< the current subroutine has returned
     };
 
     struct Hit {
@@ -93,6 +95,18 @@ public:
     void toggleBreakpoint(uint16_t addr);
     void clearBreakpoints();
     bool hasBreakpoint(uint16_t addr) const;
+    enum class Register { A, X, Y, P, SP, PC };
+    enum class Compare { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual };
+    struct Condition {
+        Register reg = Register::A;
+        Compare compare = Compare::Equal;
+        uint16_t value = 0;
+        uint16_t mask = 0xFFFF;
+    };
+    /// One register predicate per PC breakpoint. Unconditional add replaces
+    /// an existing predicate; CPU lifetime must include the debugger's.
+    void addConditionalBreakpoint(uint16_t addr, Condition condition, const M6502& cpu);
+    const std::map<uint16_t, Condition>& conditions() const { return conditions_; }
     /// Sorted, for the UI list. O(64K) — a UI-frame operation, never hot.
     std::vector<uint16_t> breakpoints() const;
     std::size_t breakpointCount() const { return bpCount_; }
@@ -110,6 +124,24 @@ public:
     /// after a JSR) and run-to-cursor. A transient at an address that also
     /// carries a real breakpoint leaves the real one alone.
     void setTransient(uint16_t addr, Reason reason);
+    /// Follow the actual outer RTS, including inline arguments, recursion and
+    /// stack wrap. Only the debugged loop consults the CPU/memory references.
+    void setStepOver(M6502& cpu, const Memory& memory);
+    void setStepOut(M6502& cpu, const Memory& memory);
+    struct ProfileEntry { uint16_t pc; uint64_t visits; uint64_t cycles; };
+    struct TraceEntry {
+        uint16_t pc, nextPc;
+        uint8_t a, x, y, p, sp;
+        int cycles;
+    };
+    void setProfiling(bool enabled);
+    void setHistoryEnabled(bool enabled);
+    bool profiling() const { return profiling_; }
+    bool historyEnabled() const { return historyEnabled_; }
+    void clearMeasurements();
+    std::vector<ProfileEntry> profile(std::size_t limit = 20) const;
+    std::vector<TraceEntry> history() const;
+    void onStepCompleted(const M6502& cpu, uint16_t pc, int cycles) override;
     /// Disarm without firing. Safe to call from a thread that does NOT hold
     /// `stateMutex` — the only member of this class for which that is true,
     /// and deliberately so: `EmulationController::setMode(Mode::Stopped)` is
@@ -124,7 +156,7 @@ public:
     // ── State the CPU and Memory consult ─────────────────────────────────
     /// Anything at all to check. False → the CPU stays on its fast loop.
     bool armed() const {
-        return bpCount_ || wpCount_ ||
+        return bpCount_ || wpCount_ || profiling_ || historyEnabled_ ||
                transientArmed_.load(std::memory_order_relaxed);
     }
     /// Watchpoints specifically — what Memory gates its hook on.
@@ -184,6 +216,15 @@ public:
 private:
     void ensureBpBits();
     void ensureWpBits();
+    bool conditionMatches(uint16_t addr) const;
+    std::map<uint16_t, Condition> conditions_;
+    const M6502* conditionCpu_ = nullptr;
+    bool profiling_ = false;
+    bool historyEnabled_ = false;
+    std::vector<ProfileEntry> profile_;
+    std::vector<TraceEntry> history_;
+    std::size_t historyHead_ = 0;
+    std::size_t historyCount_ = 0;
 
     // 64 Ki addresses, one bit each = 8 KiB. Flat, O(1), no allocation on the
     // check path, and it fits in L1 alongside everything else the CPU loop
@@ -199,6 +240,10 @@ private:
 
     uint16_t transientAddr_   = 0;
     Reason   transientReason_ = Reason::None;
+    M6502* stepCpu_ = nullptr;
+    const Memory* stepMemory_ = nullptr;
+    uint8_t stepStack_ = 0;
+    bool stepReturning_ = false;
     /// Atomic, alone among this class's members, because Stop clears it from
     /// the UI thread while the CPU worker may be reading it in
     /// `onInstruction`. Everything else here is guarded by `stateMutex`

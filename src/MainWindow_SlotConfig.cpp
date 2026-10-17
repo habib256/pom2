@@ -823,6 +823,10 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             }
         }
         else if (kind == "workstation") plugWorkstation(s);
+        else if (kind == "snesmax") {
+            auto made = slotCardFactory_->create({kind, s, cpuIsCmosForSlots, activeProfile});
+            if (made) st.memory().slotBus().plug(s, std::move(made.card));
+        }
         else if (kind == "4play")       plugFourPlay(s);
         else if (kind == "transwarp")   plugTranswarp(s);
         else if (kind == "uthernet")    plugUthernet(s);

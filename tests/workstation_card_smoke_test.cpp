@@ -246,6 +246,31 @@ int main()
     card.scc().reset();                     // and scramble the chip
     assert(card.scc().txRate(A) != rateBefore);
 
+    // The card header and CPU/RAM can be complete while its nested SCC
+    // blob is truncated or foreign. Refuse the WHOLE restore in that case.
+    // Otherwise this mixes saved RAM/CPU with a reset/live serial chip.
+    {
+        std::vector<uint8_t> live, scc;
+        card.appendSnapshotState(live);
+        card.scc().appendSnapshot(scc);
+        const auto sccOffset = live.size() - scc.size();
+        assert(live != blob);
+        for (std::size_t n = sccOffset; n < blob.size(); ++n) {
+            card.loadSnapshotState(blob.data(), n);
+            std::vector<uint8_t> after;
+            card.appendSnapshotState(after);
+            assert(after == live && "truncated SCC partially restored the Workstation card");
+        }
+        for (std::size_t field : {sccOffset, sccOffset + 4}) {
+            auto malformed = blob;
+            malformed[field] = 0xFF; // SCC magic / unknown SCC version
+            card.loadSnapshotState(malformed.data(), malformed.size());
+            std::vector<uint8_t> after;
+            card.appendSnapshotState(after);
+            assert(after == live && "foreign SCC partially restored the Workstation card");
+        }
+    }
+
     card.loadSnapshotState(blob.data(), blob.size());
     assert(card.cardPc() == pcBefore);
     assert(card.cardRam(0x0200) == ramBefore);

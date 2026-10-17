@@ -21,9 +21,8 @@
 #include "M6502.h"
 
 #include <algorithm>
-#include <vector>
 
-// ─── AudioSrc — silent placeholder until phoneme PCM data is imported ──
+// ─── AudioSrc — SSI263 PCM with host gain smoothing ────────────────────
 
 struct EchoPlusCard::AudioSrc : public AudioSource, public RateAware
 {
@@ -35,10 +34,10 @@ struct EchoPlusCard::AudioSrc : public AudioSource, public RateAware
     std::atomic<float>    volume     { 0.7f };
     std::atomic<bool>     muted      { false };
 
-    // Render scratch — member, not a per-callback local: this runs on the
-    // realtime audio thread, where a heap allocation per buffer tick is
-    // the canonical source of underruns. Audio-thread-only.
-    std::vector<float> scratch;
+    // Host gain only: muting must never pause the chip's playback cursor.
+    // Audio-thread-only, with the same 5 ms ramp as the Mockingboard.
+    float gainRamp = 0.0f;
+    bool gainPrimed = false;
 
     void setSampleRate(uint32_t hz) override
     {
@@ -50,22 +49,25 @@ struct EchoPlusCard::AudioSrc : public AudioSource, public RateAware
     {
         if (frameCount <= 0) return;
         std::fill_n(output, frameCount, 0.0f);
-        if (muted.load(std::memory_order_relaxed)) return;
-        const float vol = volume.load(std::memory_order_relaxed);
+        const float target = muted.load(std::memory_order_relaxed)
+            ? 0.0f : volume.load(std::memory_order_relaxed);
         const uint32_t sr = sampleRate.load(std::memory_order_relaxed);
+        if (!gainPrimed) { gainRamp = target; gainPrimed = true; }
+        const float step = 1.0f / (0.005f * static_cast<float>(sr));
         // Render under the parent mutex so the chip's playback cursor
-        // is consistent with CPU-thread register writes. Render into a
-        // temp buffer + scale by master volume so the chip's own
+        // is consistent with CPU-thread register writes. Render directly
+        // into the output, without callback allocation, so the chip's own
         // amplitude register stays in `Ssi263::fillAudio` (single
         // source of truth for chip-side scaling).
-        if (scratch.size() < static_cast<size_t>(frameCount))
-            scratch.resize(static_cast<size_t>(frameCount));
-        std::fill_n(scratch.begin(), frameCount, 0.0f);
         {
             std::lock_guard<std::mutex> lk(parent->mtx_);
-            parent->ssi_.fillAudio(scratch.data(), frameCount, sr);
+            parent->ssi_.fillAudio(output, frameCount, sr);
         }
-        for (int i = 0; i < frameCount; ++i) output[i] = scratch[i] * vol;
+        for (int i = 0; i < frameCount; ++i) {
+            if (gainRamp < target) gainRamp = std::min(target, gainRamp + step);
+            if (gainRamp > target) gainRamp = std::max(target, gainRamp - step);
+            output[i] *= gainRamp;
+        }
     }
 };
 
@@ -191,17 +193,20 @@ void EchoPlusCard::appendSnapshotState(std::vector<uint8_t>& out) const
     std::lock_guard<std::mutex> lk(mtx_);
     // 3-byte tag + the chip's fixed blob, so a foreign/old blob is
     // rejected cleanly in load (length + tag gate).
-    out.push_back('E'); out.push_back('P'); out.push_back(1);
+    out.push_back('E'); out.push_back('P'); out.push_back(2);
     ssi_.appendSnapshot(out);
 }
 
 void EchoPlusCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
-    if (len < 3 + pom2::Ssi263::kSnapshotBytes) return;
-    if (data[0] != 'E' || data[1] != 'P' || data[2] != 1) return;
+    if (len < 3) return;
+    if (data[0] != 'E' || data[1] != 'P' || (data[2] != 1 && data[2] != 2)) return;
+    const auto chipBytes = data[2] == 2
+        ? pom2::Ssi263::kSnapshotBytes : pom2::Ssi263::kSnapshotBytesV1;
+    if (len < 3 + chipBytes) return;
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        ssi_.loadSnapshot(data + 3);
+        ssi_.loadSnapshot(data + 3, chipBytes);
     }
     // Re-derive the slot IRQ line from the restored A/!R + enable state
     // (same post-restore refresh Mockingboard does for its chips).

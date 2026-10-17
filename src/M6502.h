@@ -32,6 +32,7 @@
 /// Costs nothing when unset — `M6502::run` picks between two loops once per
 /// call, so an un-armed hook is a branch per 4096-cycle chunk, not per
 /// instruction. See Debugger.h.
+class M6502;
 class M6502DebugHook
 {
 public:
@@ -40,6 +41,9 @@ public:
     /// the CPU with `pc` unchanged, so the instruction has not run and a
     /// later resume re-tries it.
     virtual bool onInstruction(uint16_t pc) = 0;
+    /// Debugged loop only. State is AFTER the step; cycles include a possible
+    /// interrupt-entry-only step. Never called for an instruction stopped before execution.
+    virtual void onStepCompleted(const M6502&, uint16_t, int) {}
 };
 
 class M6502
