@@ -17,6 +17,7 @@
 // SlotCardFactory ROM policy and deterministic resource-adapter contract.
 
 #include "CffaCard.h"
+#include "Cffa3000Card.h"
 #include "DiskIICard.h"
 #include "GrapplerCard.h"
 #include "MouseCard.h"
@@ -24,6 +25,7 @@
 #include "ProDOSHardDiskCard.h"
 #include "SlotCardFactory.h"
 #include "SmartPortCard.h"
+#include "SmartPortHdvUnit.h"
 
 #include <cassert>
 #include <chrono>
@@ -160,6 +162,20 @@ int main()
 
     const auto smartPort = factory.create(request("smartport35", 5));
     assert(dynamic_cast<pom2::SmartPortCard*>(smartPort.card.get()));
+
+    const auto cffa3 = missing.create(request("cffa3", 7));
+    auto* cffa3Card = dynamic_cast<pom2::Cffa3000Card*>(cffa3.card.get());
+    assert(cffa3Card && cffa3Card->unitCount() == 8);
+    assert(cffa3Card->takesC800() && !cffa3Card->romLayoutError());
+    const auto cffa3Image = temp / "cffa3-unit8.hdv";
+    writeSizedFile(cffa3Image, 8 * 512);
+    auto unit8 = std::make_unique<pom2::SmartPortHdvUnit>();
+    assert(unit8->loadImage(cffa3Image.string()));
+    cffa3Card->setUnit(7, std::move(unit8));
+    assert(cffa3Card->smartPortBusUnitCount() == 8);
+    auto* busUnit8 = cffa3Card->smartPortBusUnit(7);
+    std::uint8_t block[512]{};
+    assert(busUnit8 && busUnit8->readBlock(0, block));
 
     // A stateful fake makes the AppleWin probe fail once, then exposes the
     // same slot ROM to the faithful implementation. This deterministically

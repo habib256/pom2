@@ -679,7 +679,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         st.memory().slotBus().plug(s, std::move(card));
     };
 
-    auto plugSmartPort35 = [&](int s) {
+    auto plugSmartPort35 = [&](int s, const std::string& kind) {
         // Liron-class card. Each unit's type + image is restored from
         // settings (smartport_slotN_unitK_*) so per-card mixes (e.g.
         // unit 0 = 3.5", unit 1 = HDV) survive across launches. When
@@ -693,7 +693,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // (project_iic_smartport_boot). That is why Request carries the
         // profile.
         auto made = slotCardFactory_->create(
-            { "smartport35", s, cpuIsCmosForSlots, activeProfile });
+            { kind, s, cpuIsCmosForSlots, activeProfile });
         if (!made) return;
         auto* card = static_cast<pom2::SmartPortCard*>(made.card.get());
         // Mechanical sound: route to the dedicated 3.5" sound bank. Block-level
@@ -831,7 +831,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "transwarp")   plugTranswarp(s);
         else if (kind == "uthernet")    plugUthernet(s);
         else if (kind == "uthernet2")   plugUthernetII(s);
-        else if (kind == "smartport35") plugSmartPort35(s);
+        else if (kind == "smartport35" || kind == "cffa3")
+            plugSmartPort35(s, kind);
         else if (kind == "liron")       plugLiron(s);
         else if (kind == "fujinet")     plugFujiNet(s);
         else {

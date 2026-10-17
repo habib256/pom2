@@ -17,6 +17,7 @@
 #include "SlotConfigurationCoordinator.h"
 
 #include "CffaCard.h"
+#include "Cffa3000Card.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
 #include "EchoPlusCard.h"
@@ -78,6 +79,7 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const DiskIICard*>(&peripheral)) return "diskii";
     if (dynamic_cast<const ProDOSHardDiskCard*>(&peripheral)) return "hdv";
     if (dynamic_cast<const pom2::CffaCard*>(&peripheral)) return "cffa";
+    if (dynamic_cast<const pom2::Cffa3000Card*>(&peripheral)) return "cffa3";
     if (dynamic_cast<const pom2::SmartPortCard*>(&peripheral))
         return "smartport35";
     if (dynamic_cast<const pom2::LironCard*>(&peripheral)) return "liron";
@@ -128,7 +130,7 @@ bool SlotConfigurationCoordinator::isMultiInstance(
     const std::string& cardKey) noexcept
 {
     // Storage cards: their media and settings models are per-slot.
-    if (cardKey == "diskii" || cardKey == "cffa" ||
+    if (cardKey == "diskii" || cardKey == "cffa" || cardKey == "cffa3" ||
         cardKey == "smartport35" || cardKey == "liron")
         return true;
     // Sound cards, since 2026-09-12 (bug hunt #19). TRIBU — the Unreeeal

@@ -17,6 +17,7 @@
 #include "SlotCardFactory.h"
 
 #include "CffaCard.h"
+#include "Cffa3000Card.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
 #include "AppleParallelCard.h"
@@ -148,6 +149,12 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         result.resourcePath = rom;
         result.status = "loaded: " + rom;
         result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "cffa3") {
+        result.card = std::make_unique<Cffa3000Card>(request.slot);
+        result.status = "SmartPort block service (8 units)";
         return result;
     }
 

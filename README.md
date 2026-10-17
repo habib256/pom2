@@ -294,6 +294,11 @@ in slot 5 and the 5¼-inch controller in slot 6, over saved expansion choices.
 The //c+ adds its physical Sony drives; //c PAL also forces its RGB adapter.
 
 **Machine → Slot Configuration** lets you change cards and mount or boot disks.
+For CFFA3000 storage, choose `cffa3` in a free slot (usually slot 7) and
+assign images to its eight SmartPort bays. To use its floppy role, configure
+Disk II in another slot (usually slot 6) and mount the floppy image there.
+The CFFA3000's CF/USB file browser and automatic virtual-slot assignment
+are not emulated. Floppy Emu remains a separate device with its own panel.
 Some programs expect specific slots: DIX, for example, needs its Mockingboard
 moved to slot 4. The //c family's built-in devices are locked to their hardware
 positions. Profile changes reset the machine and remount disks where possible.
@@ -326,7 +331,7 @@ these machines so versatile.
 | **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7, Le Chat Mauve RGB and VidHD Super Hi-Res on a //e |
 | **Memory** | Language Card, IIe auxiliary memory and RamWorks III up to 8 MB |
 | **Sound** | Speaker, cassette, Mockingboard A/C, Mockingboard C with SSI263 speech, Phasor, Cricket / Echo; stereo mixing and mono output |
-| **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0 and Floppy Emu |
+| **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0, CFFA3000 SmartPort HLE and Floppy Emu |
 | **Input and printing** | Mouse Card, joysticks/paddles, 4play, SNES MAX, Super Serial, parallel interfaces and ImageWriter II |
 | **Expansion** | Microsoft SoftCard Z80, TransWarp, Videx Videoterm, clocks and Apple II Workstation Card |
 | **Connections** | Uthernet I/II, FujiNet relay, TNFS disk downloads and a ProDOS host-folder volume |
