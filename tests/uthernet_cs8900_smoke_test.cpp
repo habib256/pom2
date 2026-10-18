@@ -44,7 +44,8 @@
 //     Reading RxEvent stages a frame; RxStatus/RxLength/payload then read
 //     out through RXTXDATA in the datasheet's H/L order.
 //   * The address filter — `cs8900a.cpp:410-489`. A frame for somebody
-//     else's MAC is dropped unless promiscuous mode is on.
+//     else's MAC is dropped unless promiscuous mode is on. The I/G bit is
+//     bit 0 of the first octet; SerRxON must reject pre-enable traffic.
 //   * Snapshot round-trip through the SlotPeripheral hooks.
 
 #include "NetworkBackend.h"
@@ -379,6 +380,63 @@ void testAddressFilter()
     assert(card.chip().queuedFrames() == 1);
 
     std::printf("  address filter OK\n");
+}
+
+void testMulticastUsesGroupBit()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    enableTxRx(card);
+    // Accept hashed multicast only; neither promiscuous nor hashed unicast.
+    writePpWord(card, kPpCcRxCtl, 0x0305);
+    for (uint16_t addr = 0x0150; addr < 0x0158; addr += 2)
+        writePpWord(card, addr, 0xFFFF);
+
+    const std::array<uint8_t, 6> group = { 0x01, 0x00, 0x5E, 0x00, 0x00, 0x01 };
+    const auto multicast = makeFrame(group, kOurMac, 64, 0x71);
+    raw->transmit(multicast.data(), static_cast<int>(multicast.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1 &&
+           "the I/G bit is bit 0 of the first destination octet");
+
+    const std::array<uint8_t, 6> individual = { 0x80, 0x00, 0x5E, 0x00, 0x00, 0x01 };
+    const auto unicast = makeFrame(individual, kOurMac, 64, 0x72);
+    raw->transmit(unicast.data(), static_cast<int>(unicast.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1 &&
+           "bit 7 alone does not make an address multicast");
+
+    std::printf("  multicast I/G bit OK\n");
+}
+
+void testDisabledReceiverDropsIncomingFrames()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    acceptEverything(card);
+    assert(!card.chip().receiverEnabled());
+
+    const auto early = makeFrame(kOurMac, kOurMac, 64, 0x81);
+    raw->transmit(early.data(), static_cast<int>(early.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 0 &&
+           "SerRxON clear must ignore incoming frames");
+
+    enableTxRx(card);
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 0 &&
+           "a frame received while disabled must not reappear later");
+
+    const auto late = makeFrame(kOurMac, kOurMac, 64, 0x82);
+    raw->transmit(late.data(), static_cast<int>(late.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    std::printf("  disabled receiver drops incoming frames\n");
 }
 
 void testSnapshotRoundTrip()
@@ -848,6 +906,8 @@ int main()
     testTransmitLengthBounds();
     testReceivePath();
     testAddressFilter();
+    testMulticastUsesGroupBit();
+    testDisabledReceiverDropsIncomingFrames();
     testSnapshotRoundTrip();
     testSnapshotCorruptTxStateIsClamped();
     testMacSurvivesCardReset();

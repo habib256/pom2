@@ -362,7 +362,10 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
 
     if (*hashed) {
         *hashIndex = hashReg;
-        if (buffer[0] & 0x80) {
+        // Ethernet transmits the least-significant bit of the first
+        // destination octet first. That I/G bit distinguishes group from
+        // individual addresses (CS8900A datasheet, DA filtering section).
+        if (buffer[0] & 0x01) {
             *multicast = true;
             // A multicast that fits the hash filter reports as multicast,
             // not hashed — the status word formats are mutually exclusive.
@@ -452,6 +455,11 @@ void Cs8900aDevice::pumpBackend()
     for (int i = 0; i < 32; ++i) {
         const int len = backend_->receive(buf, sizeof(buf));
         if (len <= 0) break;
+
+        // LineCTL.SerRxON gates the physical receiver. Consume and discard
+        // packets seen while it is clear; leaving them in the host backend
+        // would replay pre-enable traffic when the guest turns reception on.
+        if (!rxEnabled_) continue;
 
         // Pre-filter exactly as MAME's recv_start_cb does
         // (`cs8900a.cpp:1483-1512`) so rejected traffic never queues.

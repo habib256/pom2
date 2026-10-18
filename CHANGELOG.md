@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Uthernet I receive filter corrections
+
+The CS8900A now classifies multicast addresses by the Ethernet I/G bit in
+the first destination octet. It also discards frames received while
+`LineCTL.SerRxON` is clear, so old traffic does not reappear when the guest
+enables reception. Both defects were reproduced through the Uthernet card's
+guest registers and loopback backend before correction.
+
 ## 2026-10-17 — Full screen follows the window's monitor
 
 Alt+Enter and the other runtime full-screen controls now enter kiosk mode on

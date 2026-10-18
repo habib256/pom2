@@ -207,6 +207,15 @@ the CS8900A still tests `buffer[0] & 0x80` (`src/Cs8900aDevice.cpp:365`).
 that does not reply (`src/SpOverSlipLink.cpp:866-905`), which bounds the dead-peer
 case but not a live peer with many units.
 
+**Bug hunt 2026-10-18:** The CS8900A multicast classifier and receive-enable
+gate were reproduced and fixed. A frame with first destination octet `$01`
+was rejected as unicast while `$80` could pass as multicast; the chip uses
+bit 0 for the individual/group distinction. Separately, frames arriving
+with `LineCTL.SerRxON` clear were queued and appeared after the guest enabled
+the receiver. `uthernet_cs8900_smoke` fails on each reverted defect and now
+checks that pre-enable frames are discarded. The other findings in this entry
+remain to verify independently.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`
