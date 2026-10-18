@@ -40,6 +40,7 @@
 #include <cassert>
 #include <cstdio>
 #include <fstream>
+#include <string>
 #include <vector>
 #include "TestTempPath.h"
 
@@ -166,6 +167,26 @@ int main()
         mem.memWrite(0xC0D1, 0x00);
         for (size_t i = 0; i < 16; ++i)
             assert(mem.memRead(0xC0D2) == static_cast<uint8_t>(i ^ 0x5A));
+    }
+
+    // A 2IMG header cannot extend into its own data window. The floppy and
+    // 3.5-inch loaders reject this; the HDV loader used to mount it anyway.
+    {
+        auto valid = twoImgHeader(2, 64, 2 * kBlk);
+        valid.insert(valid.end(), 2 * kBlk, 0x5A);
+        const std::string good = pom2test::tempPath("pom2_hdv_good_header.2mg");
+        const std::string bad = pom2test::tempPath("pom2_hdv_overlap_header.2mg");
+        writeFile(good, valid);
+        auto overlapping = valid;
+        overlapping[8] = 128;  // declared header length > data offset 64
+        writeFile(bad, overlapping);
+
+        ProDOSHardDiskCard card;
+        assert(card.loadImage(good));
+        assert(!card.loadImage(bad));
+        assert(card.getLastError().find("data window") != std::string::npos);
+        assert(card.getImagePath() == good && card.getBlockCount() == 2 &&
+               "an invalid replacement must leave the mounted HDV intact");
     }
 
     std::printf("HDV mass-storage smoke: OK\n");

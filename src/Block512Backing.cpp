@@ -212,6 +212,8 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
         };
         const uint32_t format = rd32(12);
         const uint32_t flags  = rd32(16);
+        const uint16_t headerLen = static_cast<uint16_t>(bytes[8]) |
+                                   (static_cast<uint16_t>(bytes[9]) << 8);
         const uint32_t off    = rd32(24);
         const uint32_t len    = rd32(28);
         if (format != 1) {
@@ -220,10 +222,14 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
             pom2::log().warn("HDV", lastError_);
             return false;
         }
-        if (off < 64 || off > bytes.size() ||
+        // The offset must follow the declared header. Otherwise bytes the
+        // container calls header become guest-visible disk blocks.
+        if (off < 64 || off < headerLen || off > bytes.size() ||
             len == 0 || static_cast<size_t>(off) + len > bytes.size()) {
-            lastError_ = "2IMG header points outside the file (offset=" +
-                         std::to_string(off) + ", length=" + std::to_string(len) + ")";
+            lastError_ = "Invalid 2IMG data window (header=" +
+                         std::to_string(headerLen) + ", offset=" +
+                         std::to_string(off) + ", length=" +
+                         std::to_string(len) + ")";
             pom2::log().warn("HDV", lastError_);
             return false;
         }

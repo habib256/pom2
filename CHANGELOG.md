@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Reject overlapping 2IMG headers in HDV images
+
+The HDV 2IMG loader ignored the header-length field. It could mount a file
+whose declared header extended into the block-data window, exposing header
+bytes as guest disk data. The loader now requires the data offset to follow
+the declared header. A regression test verifies that the malformed image is
+refused and that a previously mounted disk remains in place.
+
 ## 2026-10-18 — Protect 3.5-inch WOZ exports from temp collisions and overwrites
 
 Converting a 3.5-inch WOZ to a writable `.po` reused the fixed temporary name
