@@ -222,6 +222,13 @@ environment filter removes `LD_LIBRARY_PATH`. The `fujinet_card` and
 `child_process` tests failed before each fix and pass afterward. Other
 findings in this entry remain open for independent verification.
 
+**Bug hunt 2026-10-18 (PacketPage reset):** The CS8900A reset now restores
+`packetPagePtr_` to `$3000`, including after SelfCtl RESET. Before the fix,
+the next PacketPage data access used the previous driver's address and
+auto-increment flag. `uthernet_cs8900_smoke` failed on the stale pointer and
+now covers both reset paths. Snapshot counters and the other findings above
+remain open.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

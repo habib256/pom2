@@ -77,6 +77,7 @@ constexpr uint8_t kPpDataHi   = 0xD;
 constexpr uint16_t kPpProductId = 0x0000;
 constexpr uint16_t kPpCcRxCtl   = 0x0104;
 constexpr uint16_t kPpCcLineCtl = 0x0112;
+constexpr uint16_t kPpCcSelfCtl = 0x0114;
 constexpr uint16_t kPpSeRxEvent = 0x0124;
 constexpr uint16_t kPpSeSelfSt  = 0x0136;
 constexpr uint16_t kPpSeBusSt   = 0x0138;
@@ -214,6 +215,27 @@ void testPacketPagePointer()
     assert(card.chip().packetPagePointer() == 0xB002);
 
     std::printf("  PacketPage pointer OK\n");
+}
+
+void testPacketPagePointerResets()
+{
+    pom2::UthernetCard card(3);
+    setPpPointer(card, 0x8412);
+    assert(card.chip().packetPagePointer() == 0xB412);
+
+    card.onReset();
+
+    // A reset restores the documented signature, including the absence of
+    // auto-increment. A stale pointer sends the next data-port access to an
+    // arbitrary register left by the previous driver.
+    assert(card.chip().packetPagePointer() == 0x3000);
+    assert(card.deviceSelectRead(kPpPtrLo) == 0x00);
+    assert(card.deviceSelectRead(kPpPtrHi) == 0x30);
+
+    // SelfCtl RESET takes the same reset path after its register write.
+    writePpWord(card, kPpCcSelfCtl, 0x0055);
+    assert(card.chip().packetPagePointer() == 0x3000);
+    std::printf("  PacketPage pointer resets to $3000\n");
 }
 
 void testRegisterSelfAddress()
@@ -901,6 +923,7 @@ int main()
     std::printf("Uthernet I / CS8900A smoke test\n");
     testPowerOnDefaults();
     testPacketPagePointer();
+    testPacketPagePointerResets();
     testRegisterSelfAddress();
     testTransmitHandshake();
     testTransmitLengthBounds();

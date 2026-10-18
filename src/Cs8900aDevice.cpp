@@ -244,6 +244,11 @@ void Cs8900aDevice::reset()
 
     ioRegs_.fill(0);
     std::fill(packetPage_.begin(), packetPage_.end(), 0);
+    // The PacketPage Pointer is an I/O port, outside packetPage_. A bus or
+    // software reset restores its signature value (datasheet §3.3.3).
+    packetPagePtr_ = 0x3000;
+    ioRegs_[kIoPpPtr] = loByte(packetPagePtr_);
+    ioRegs_[kIoPpPtr + 1] = hiByte(packetPagePtr_);
 
     // Per datasheet p.19 unless stated otherwise. ProductID is stored
     // little-endian-reversed exactly as MAME does: 0x0900630E.
