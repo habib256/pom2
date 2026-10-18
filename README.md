@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🍏 POM2 v0.9.7 — Apple II Emulator
+# 🍏 POM2 v0.9.7 — Apple II Family Emulator
 
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 
@@ -9,7 +9,8 @@
 ### A floppy disk. A glowing screen. One more game.
 
 Play, explore and create on the Apple II — on your desktop or in your browser.
-Nine machine profiles, from the original Apple ][ to the //c Plus.
+POM2 is written in modern C++ with a Dear ImGui interface and cycle-accurate
+6502/65C02 cores.
 
 [![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
 
@@ -19,7 +20,7 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 
 </div>
 
-**[Start playing](#start-playing) · [Why POM2?](#why-pom2) ·
+**[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
 [Bundled disks](#bundled-disks) · [Build it](#build-it)**
 
 > **v0.9.7:** [What's new](docs/releases/v0.9.7.md) ·
@@ -60,21 +61,39 @@ one of the included disks.
 New to the Apple II? At the BASIC prompt, type `PRINT "HELLO, APPLE II!"`
 and press Return.
 
-## Why POM2?
+## Technical overview
 
-- **Find your Apple II.** Nine profiles cover the ][, ][+, //e, //c and //c+
-  families, including PAL variants. Choose the machine your software expects.
-- **Feel the machine.** Cycle-aware video, CRT and RGB display choices, drive
-  sounds, the speaker and expansion-card audio bring games and demos to life.
-- **Explore your collection.** Drag disks into the drive rack, browse images,
-  use protected WOZ/FLUX media and mount supported 3.5-inch MOOF disks.
-- **Keep going.** Rewind recent execution or save a supported machine and its
-  read-only disks in a `.pom2session` file.
-- **Go further.** Configure cards, use a gamepad, print with ImageWriter II,
-  inspect memory and debug 6502 code. Kiosk mode fills the screen for play.
+- **Machines and memory.** Nine profiles span the Apple ][, ][+, unenhanced
+  and enhanced //e, //c, //c Plus and three PAL variants. POM2 emulates the
+  6502/65C02, Language Card, //e auxiliary memory and RamWorks III. Expansion
+  options include the SoftCard Z80, Slinky RAM, TransWarp and Zip Chip.
+- **Video.** Text 40/80, lo-res, hi-res and their double-resolution modes
+  follow mode changes during a scanline. Choose composite NTSC, AppleWin,
+  monochrome or CRT rendering; Le Chat Mauve/Video-7 RGB, Videx Videoterm,
+  VidHD and a 3D voxel view add other ways to see the machine.
+- **Sound and input.** The speaker, cassette, drive sounds, stereo Mockingboard
+  A/C, //c Mockingboard 4c, Phasor, SSI263 speech and S.A.M. DAC share the
+  mixer. Mouse, paddles, gamepads, 4play and SNES MAX are supported. Serial
+  and parallel cards connect to an ImageWriter emulator with PNG/PDF export.
+- **Storage.** Disk II, Sony 3½-inch, SmartPort/Liron, HDV, CFFA 2.0,
+  CFFA3000 SmartPort, SuperDrive and Floppy Emu handle `.dsk`, `.do`, `.d13`,
+  `.po`, `.nib`, `.2mg`, `.woz`, `.moof` and `.hdv`. Writable 5¼-inch WOZ 2.1
+  includes FLUX tracks; 3½-inch WOZ and MOOF captures remain read-only.
+  SuperDrive exposes 400/800K GCR and 1.44 MB MFM images as ProDOS blocks.
+- **Files and tools.** The shared ProDOS host folder preserves type/aux type
+  in portable `NAME#TTAAAA` names, offers opt-in TXT line-ending conversion
+  and saves concurrent edits in `.pom2-conflicts/`. Disk Library search,
+  rewind, snapshots, a memory viewer, symbol-aware debugger, conditional
+  breakpoints and CPU profiling support both play and development.
+- **Connections and browser.** Desktop builds offer Uthernet I/II, FujiNet
+  relay, TNFS and VSDrive. The WebAssembly build stores settings and layout in
+  IndexedDB; its //c starts with a Mockingboard 4c and pauses while the tab is
+  hidden. Host socket networking is unavailable in the browser.
 
-For the machine list, hardware details, disk-write behavior, shortcuts and
-advanced setup, see the [user guide](docs/USER-GUIDE.md).
+Some cards expose a high-level service instead of running every original chip
+or firmware. See the [LLE/HLE matrix](docs/lle_vs_hle.md) for each card's
+emulation level and the [user guide](docs/USER-GUIDE.md) for compatibility,
+write-back rules and setup.
 
 ## Bundled disks
 

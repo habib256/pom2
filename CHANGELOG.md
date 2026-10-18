@@ -12,6 +12,13 @@ marker and the previous one.
 
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
+## 2026-10-18 — Show POM2's technical scope in the README
+
+The short README now maps machine profiles, video, audio, storage, development
+tools and browser support in one compact overview. It links to the LLE/HLE
+matrix for card-level boundaries. The summary keeps TXT conversion opt-in and
+browser IndexedDB persistence scoped to settings and layout.
+
 ## 2026-10-18 — Fit the browser //c's Mockingboard and pause hidden tabs
 
 The WebAssembly //c profiles now fit a Mockingboard 4c by default on their
