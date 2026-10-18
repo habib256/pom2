@@ -288,7 +288,7 @@ bool Disk35Image::exportRawTo(const std::string& outPath,
     }
     // Same temp-then-rename discipline as saveDirty: a partial 800 KB write
     // must never be left behind looking like a mountable image.
-    const std::string tmp = outPath + ".pom2tmp";
+    const std::string tmp = tempSiblingPath(outPath).string();
     // …and the same temp-path scrutiny as `saveDirty` below: the target was
     // just checked for existence, but the sibling temp name was not, and a
     // symlink there would send the 800 KB write somewhere else entirely.
@@ -311,14 +311,13 @@ bool Disk35Image::exportRawTo(const std::string& outPath,
             return false;
         }
     }
-    // A converted image is a NEW file, not a write-back, but it earns the
-    // same durability: the user is about to mount it and let a program write
-    // its configuration into it.
-    ec.clear();
-    (void)syncFileContents(tmp, ec);
-    ec.clear();
-    if (!replaceFileAtomic(tmp, outPath, ec)) {
-        errOut = "cannot create " + outPath + ": " + ec.message();
+    // A converted image is a NEW file. The exclusive publisher flushes it
+    // before making it visible and refuses a destination created meanwhile.
+    if (!publishNewFileAtomic(tmp, outPath, ec)) {
+        if (ec == std::errc::file_exists)
+            errOut = outPath + " already exists";
+        else
+            errOut = "cannot create " + outPath + ": " + ec.message();
         std::error_code rmEc;
         std::filesystem::remove(tmp, rmEc);
         return false;

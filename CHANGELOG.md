@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Protect 3.5-inch WOZ exports from temp collisions and overwrites
+
+Converting a 3.5-inch WOZ to a writable `.po` reused the fixed temporary name
+`<output>.pom2tmp`, so an export could truncate or consume another attempt's
+file. It also checked that the destination was absent before writing, then
+used a replacing rename: a file created during the export could be silently
+overwritten. Exports now use unique sibling temporaries and publish with an
+exclusive filesystem operation. Tests cover the old temporary name and a
+destination that appears before publication.
+
 ## 2026-10-18 — Reject wrong-track Disk II address fields on write-back
 
 The sector-image write-back decoder checked an address field's checksum but

@@ -114,6 +114,23 @@ int main()
     assert(!ec);
     assert(readFile(fresh) == freshBytes);
 
+    // An export target can appear after its initial exists() check. The
+    // publish itself must refuse to overwrite it and leave the temp intact.
+    const fs::path exclusive = dir / "exclusive.po";
+    const fs::path exclusiveTmp = dir / "exclusive.po.pom2tmp";
+    writeFile(exclusiveTmp, freshBytes);
+    writeFile(exclusive, oldBytes);  // created while the export was writing
+    ec.clear();
+    assert(!pom2::publishNewFileAtomic(exclusiveTmp, exclusive, ec));
+    assert(ec == std::errc::file_exists);
+    assert(readFile(exclusive) == oldBytes);
+    assert(readFile(exclusiveTmp) == freshBytes);
+    fs::remove(exclusive, ec);
+    ec.clear();
+    assert(pom2::publishNewFileAtomic(exclusiveTmp, exclusive, ec));
+    assert(!ec && !fs::exists(exclusiveTmp));
+    assert(readFile(exclusive) == freshBytes);
+
     // ── 3. An empty payload is still a legal save ───────────────────────
     // (ProDOSVolume exports 0-byte guest files; the flush must not choke.)
     const fs::path zero    = dir / "zero.bin";

@@ -42,6 +42,12 @@
 #  include <cerrno>
 #  include <fcntl.h>
 #  include <unistd.h>
+#  ifdef __APPLE__
+#    include <sys/stdio.h>
+#  elif defined(__linux__)
+#    include <linux/fs.h>
+#    include <sys/syscall.h>
+#  endif
 #endif
 
 namespace pom2 {
@@ -370,6 +376,59 @@ inline bool replaceFileAtomic(const std::filesystem::path& from,
     syncParentDirectory(dest); // ...then the directory entry that names them
     return true;
 #endif
+}
+
+/// Publish a finished temporary as a NEW file. The existence check and the
+/// publish are one filesystem operation, so another export cannot create the
+/// destination between a caller's earlier check and this commit.
+inline bool publishNewFileAtomic(const std::filesystem::path& from,
+                                 const std::filesystem::path& to,
+                                 std::error_code& ec)
+{
+    if (!syncFileContents(from, ec)) return false;
+#ifdef _WIN32
+    if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        ec = std::error_code(static_cast<int>(GetLastError()),
+                             std::system_category());
+        return false;
+    }
+#else
+#  ifdef __APPLE__
+    if (::renameatx_np(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(),
+                       RENAME_EXCL) != 0) {
+        if (errno != ENOTSUP && errno != ENOSYS && errno != EINVAL) {
+            ec = std::error_code(errno, std::generic_category());
+            return false;
+        }
+        // Older filesystems may lack exclusive rename; link() below still
+        // publishes atomically and refuses an existing destination.
+    } else {
+        ec.clear();
+        syncParentDirectory(to);
+        return true;
+    }
+#  elif defined(__linux__) && defined(SYS_renameat2)
+    if (::syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD,
+                  to.c_str(), RENAME_NOREPLACE) == 0) {
+        ec.clear();
+        syncParentDirectory(to);
+        return true;
+    }
+    if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP) {
+        ec = std::error_code(errno, std::generic_category());
+        return false;
+    }
+#  endif
+    if (::link(from.c_str(), to.c_str()) != 0) {
+        ec = std::error_code(errno, std::generic_category());
+        return false;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(from, ignored);
+    syncParentDirectory(to);
+#endif
+    ec.clear();
+    return true;
 }
 
 /// `replaceFileAtomic` for a media image: carries `to`'s CURRENT permissions

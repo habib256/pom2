@@ -157,11 +157,20 @@ void testConvertToPo()
     const fs::path p = writeTemp("pom2_woz35_convert.woz", buildWoz(tracks));
     const fs::path out = fs::temp_directory_path() / "pom2_woz35_convert.po";
     std::error_code ec; fs::remove(out, ec);
+    // An export's temporary must be unique to this call. A file left at the
+    // old fixed name belongs to another attempt and must remain untouched.
+    const fs::path legacyTmp = out.string() + ".pom2tmp";
+    { std::ofstream f(legacyTmp, std::ios::binary | std::ios::trunc); f << "keep"; }
 
     pom2::Disk35Image woz;
     assert(woz.loadFile(p.string()));
     std::string err;
     assert(woz.exportRawTo(out.string(), err) && "export must succeed");
+    {
+        std::ifstream f(legacyTmp, std::ios::binary);
+        assert(std::string((std::istreambuf_iterator<char>(f)), {}) == "keep" &&
+               "export must not consume another attempt's fixed temp name");
+    }
     assert(fs::file_size(out, ec) == pom2::Disk35Image::kBytesPerImage &&
            "a converted 3.5\" image is exactly 819200 bytes");
 
@@ -192,7 +201,7 @@ void testConvertToPo()
     assert(again.readBlock(9, got));
     assert(std::memcmp(got, mark, 512) == 0 && "the write must be durable");
 
-    fs::remove(p, ec); fs::remove(out, ec);
+    fs::remove(p, ec); fs::remove(out, ec); fs::remove(legacyTmp, ec);
     std::printf("  ok: WOZ converts to an identical, writable .po\n");
 }
 
