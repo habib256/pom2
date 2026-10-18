@@ -1368,8 +1368,15 @@ void W5100Device::macForAddress(uint32_t ipv4, MacAddress& out)
         // Broadcast is both the correct answer for 255.255.255.255 and
         // the right fallback while a real card's ARP is outstanding.
         std::memset(mac.b, 0xFF, sizeof(mac.b));
-        if (ipv4 != 0xFFFFFFFFu && backend_) {
-            const uint32_t subnet = readAddress(kW5100Subr0);
+        const uint32_t subnet = readAddress(kW5100Subr0);
+        const uint32_t hostMask = ~subnet;
+        // A local directed broadcast also uses the Ethernet broadcast
+        // address. /31 and /32 have no broadcast host number.
+        const bool localBroadcast =
+            (hostMask & (hostMask - 1)) != 0 &&
+            (ipv4 & subnet) == (source & subnet) &&
+            (ipv4 & hostMask) == hostMask;
+        if (ipv4 != 0xFFFFFFFFu && !localBroadcast && backend_) {
             if ((ipv4 & subnet) == (source & subnet)) {
                 backend_->resolveMac(ipv4, mac);          // same subnet
             } else {

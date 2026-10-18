@@ -26,7 +26,7 @@
 //     This is the path every period IRC / telnet / FTP client takes, and
 //     it needs no NetworkBackend at all, which is the whole point of the
 //     Uthernet II: it works with no libslirp and no privileges.
-//   * MACRAW — against a LoopbackNetworkBackend, no real network.
+//   * MACRAW/IPRAW — against a LoopbackNetworkBackend, no real network.
 //
 // What this gates:
 //
@@ -45,6 +45,8 @@
 //     (`Uthernet2.cpp:844-895`, `:704-745`, `:520-547`).
 //   * MACRAW framing — `Uthernet2.cpp:661-680`. The in-band length
 //     INCLUDES the two length bytes.
+//   * IPRAW subnet broadcast — the destination MAC is Ethernet broadcast,
+//     while a regular address in the same subnet still resolves individually.
 //   * Snapshot round-trip, including the rule that a live TCP socket must
 //     come back CLOSED rather than pretending to still be connected.
 //
@@ -518,6 +520,58 @@ void testMacRaw()
            "and the common IR must reflect socket 0");
 
     std::printf("  MACRAW OK (%zu-byte frame round-tripped)\n", frame.size());
+}
+
+void testIpRawUsesBroadcastMacForSubnetBroadcast()
+{
+    UthernetIICard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+
+    const uint8_t source[] = { 10, 0, 2, 15 };
+    const uint8_t subnet[] = { 255, 255, 255, 0 };
+    const uint8_t destination[] = { 10, 0, 2, 255 };
+    for (int i = 0; i < 4; ++i) {
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100Sipr0 + i), source[i]);
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100Subr0 + i), subnet[i]);
+    }
+
+    const uint16_t base = socketBase(0);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrIpRaw);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnProto), 1);  // ICMP
+    for (int i = 0; i < 4; ++i)
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDipr0 + i), destination[i]);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrOpen);
+    assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnSr)) ==
+           pom2::kW5100SnSrIpRaw);
+
+    const uint8_t payload[8] = { 8, 0, 0, 0, 0, 1, 0, 1 };
+    for (size_t i = 0; i < sizeof(payload); ++i)
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100TxBase + i), payload[i]);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0), sizeof(payload));
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    assert(raw->queued() == 1);
+
+    uint8_t frame[pom2::kMaxEthFrame]{};
+    const int len = raw->receive(frame, sizeof(frame));
+    assert(len >= 42);
+    for (int i = 0; i < 6; ++i)
+        assert(frame[i] == 0xFF && "subnet broadcast used a unicast MAC");
+    assert(std::memcmp(frame + 30, destination, 4) == 0);
+
+    // An ordinary address in the same subnet still resolves individually.
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDipr0 + 3), 42);
+    for (size_t i = 0; i < sizeof(payload); ++i)
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100TxBase + sizeof(payload) + i),
+                payload[i]);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0),
+                2 * sizeof(payload));
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    assert(raw->receive(frame, sizeof(frame)) >= 42);
+    const uint8_t expectedMac[6] = { 0x02, 0x00, 10, 0, 2, 42 };
+    assert(std::memcmp(frame, expectedMac, sizeof(expectedMac)) == 0);
+    std::printf("  IPRAW subnet broadcast uses Ethernet broadcast\n");
 }
 
 void testSnapshotRoundTrip()
@@ -1149,6 +1203,7 @@ int main()
     testBufferCarve();
     testTcpSession();
     testMacRaw();
+    testIpRawUsesBroadcastMacForSubnetBroadcast();
     testSnapshotRoundTrip();
     testHalfCloseWait();
     testSendAfterPeerResetSurvives();

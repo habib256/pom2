@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Send W5100 IPRAW subnet broadcasts as Ethernet broadcasts
+
+Uthernet II now maps a local subnet-directed broadcast such as
+`10.0.2.255/24` to `FF:FF:FF:FF:FF:FF` in IPRAW mode. Previously the generic
+MAC resolver invented an individual address for it, so peers would not see
+the broadcast. [RFC 919](https://www.rfc-editor.org/rfc/rfc919) specifies
+that a broadcast on the local network uses the hardware broadcast address.
+The card test covers the directed broadcast and an ordinary unicast on the
+same subnet.
+
 ## 2026-10-18 — Honor CS8900A BufferCRC on receive
 
 Uthernet I now reconstructs the Ethernet CRC when `RxCFG.BufferCRC` is set,
