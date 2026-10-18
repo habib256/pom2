@@ -1320,7 +1320,7 @@ int main()
         assert(disk35Storage.mountDisk35(
             disk35Controller, disk35Settings, 0, tempWoz.string()).ok);
         disk35 = disk35Storage.captureDisk35(disk35Controller);
-        assert(disk35.drives[0].isWoz);
+        assert(disk35.drives[0].isBitstream);
         assert(disk35.drives[0].convertTargetPath == tempPo.string());
         const auto converted = disk35Storage.convertDisk35WozToPo(
             disk35Controller, disk35Settings, 0);

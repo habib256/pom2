@@ -6206,6 +6206,16 @@ target_include_directories(test_woz35_load PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME woz35_load COMMAND test_woz35_load)
 set_tests_properties(woz35_load PROPERTIES TIMEOUT 30)
 
+add_executable(test_moof35_load
+    moof35_load_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+)
+target_include_directories(test_moof35_load PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME moof35_load COMMAND test_moof35_load)
+set_tests_properties(moof35_load PROPERTIES TIMEOUT 30)
+
 # ─── HGR sprite blit (the byte layer under the sprite editor) ─────────────
 # `HgrSpriteBlit.h` has always documented itself as "unit-tests standalone
 # (hgr_sprite_blit_smoke)"; POM2 never had that test, and hgrsprite/ was the

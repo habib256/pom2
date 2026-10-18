@@ -15,8 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Disk35Image — Sony 800K 3.5" disk image holder for the //c+ internal
-// drive and the SmartPort daisy-chain port. Loads `.po`, `.2mg` and
-// raw 819 200-byte images and exposes a flat block-array view
+// drive and the SmartPort daisy-chain port. Loads `.po`, `.2mg`, 800K
+// `.woz`/`.moof`, and raw 819 200-byte images; exposes a flat block view
 // (`getBlock(idx) -> 512 bytes`, 1600 blocks total) to the
 // `Sony35Drive` consumer.
 //
@@ -74,6 +74,7 @@ public:
         Raw800k,       // bare 819 200-byte payload (.po, .dsk-as-prodos)
         TwoImg800k,    // .2mg with 2IMG header wrapping a 819 200 payload
         Woz35,         // WOZ2 flux dump, GCR-decoded to blocks at load
+        Moof35,        // MOOF 800K GCR bitstream/flux, decoded read-only
     };
 
     Disk35Image() = default;
@@ -81,8 +82,9 @@ public:
     /// Load a 3.5" image. Accepts:
     ///  * 819 200-byte raw images (assumed ProDOS block order)
     ///  * 2IMG-wrapped 819 200-byte ProDOS images
-    ///  * WOZ2 flux dumps of 800K disks (`INFO.disk_type == 2`), which are
-    ///    GCR-decoded to blocks once, here, through the same `Sony35Gcr`
+    ///  * WOZ2 and MOOF 800K GCR bitstreams or flux captures
+    ///    (`INFO.disk_type == 2`), GCR-decoded to blocks once through the
+    ///    same `Sony35Gcr`
     ///    walk the drive uses — POM2 has no GCR *encoder*, so a flux image
     ///    has nothing to be mounted as otherwise. Such an image is always
     ///    write-protected: handing blocks back would mean re-encoding the
@@ -185,7 +187,7 @@ public:
     /// (`.po`), leaving the source file untouched. Returns false and fills
     /// `errOut` on failure.
     ///
-    /// This is the way OUT of a read-only 3.5" WOZ. A WOZ mounts write-
+    /// This is the way out of a read-only 3.5" WOZ or MOOF. It mounts write-
     /// protected because POM2 has the Sony GCR *decoder* but no encoder, so
     /// there is nothing to fold guest writes back into (see `loadFile`) —
     /// but the decode already produced exactly the 1600 blocks a `.po`
@@ -198,12 +200,12 @@ public:
     bool isWriteProtected() const {
         return fileWriteProtected_ || hostReadOnly_ || !writeBackEnabled_;
     }
-    /// The medium's OWN lock: the 2IMG header bit, or a WOZ (no encoder).
+    /// The medium's OWN lock: the 2IMG header bit, or WOZ/MOOF (no encoder).
     /// Distinct from `isWriteProtected()`, which also carries the notch
     /// and the write-back opt-out. `takeWriteBack` gates on this plus
     /// `writeBackEnabled_`, not the notch — see Block512Backing::isMediumLocked.
     bool isMediumLocked() const { return fileWriteProtected_; }
-    /// The medium's own protection: the 2IMG lock flag, a WOZ (always), or
+    /// The medium's own protection: the 2IMG lock flag, WOZ/MOOF (always), or
     /// the notch — the host file's read-only bit (MediaNotch.h).
     bool isFileWriteProtected() const { return fileWriteProtected_ || hostReadOnly_; }
     void setWriteBackEnabled(bool on) { writeBackEnabled_ = on; }
@@ -217,8 +219,9 @@ private:
     bool loadFileUnchecked(const std::string& path);
     /// The atomic temp + rename itself, for `commitWriteBack`.
     static bool writeWholeFile(const PendingWriteBack& pending, std::string& error);
-    /// WOZ2 chunk walk + GCR decode into `blocks_`. See the .cpp.
-    bool loadWoz(const std::vector<uint8_t>& buf, const std::string& path);
+    /// WOZ2/MOOF chunk walk + GCR decode into `blocks_`. See the .cpp.
+    bool loadBitstream(const std::vector<uint8_t>& buf, const std::string& path,
+                       bool moof);
 
     bool         loaded_              = false;
     bool         dirty_               = false;

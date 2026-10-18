@@ -964,7 +964,7 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
     // ignoring it (the most common case is dropping a ROM or a .zip).
     tapeStatusMessage =
         "Dropped file not a disk image "
-        "(.dsk/.do/.d13/.po/.nib/.woz/.hdv/.2mg)";
+        "(.dsk/.do/.d13/.po/.nib/.woz/.moof/.hdv/.2mg)";
     tapeStatusUntil = lastFrameTime + 4.0;
 }
 

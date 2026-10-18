@@ -70,13 +70,13 @@ void renderDriveBlock(int                                       driveIdx,
         // reason it is. Otherwise the user ticks write-back, gets refused,
         // and has no way to tell that this particular format simply cannot
         // take writes — which is exactly how "why can't I save?" starts.
-        if (drv.isWoz) {
+        if (drv.isBitstream) {
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 155, 100, 255));
             ImGui::TextWrapped(
-                "Read-only because it is a 3.5\" WOZ: POM2 decodes Sony GCR "
+                "Read-only because it is a 3.5\" WOZ/MOOF: POM2 decodes Sony GCR "
                 "but cannot re-encode it, so there is nothing to write guest "
                 "changes back into. Convert to a .po to make it writable — "
-                "the WOZ is left untouched as your master.");
+                "the original image is left untouched.");
             ImGui::PopStyleColor();
         }
     } else {
@@ -89,7 +89,7 @@ void renderDriveBlock(int                                       driveIdx,
     }
 
     // ── Buttons row ─────────────────────────────────────────────────────
-    if (ImGui::Button("Mount .po / .2mg / .woz...")) {
+    if (ImGui::Button("Mount .po / .2mg / .woz / .moof...")) {
         r.openMountDialog         = true;
         r.openMountDialogForDrive = driveIdx;
     }
@@ -100,7 +100,7 @@ void renderDriveBlock(int                                       driveIdx,
     }
     ImGui::EndDisabled();
 
-    if (drv.diskLoaded && drv.isWoz) {
+    if (drv.diskLoaded && drv.isBitstream) {
         ImGui::SameLine();
         ImGui::BeginDisabled(drv.convertTargetPath.empty());
         if (ImGui::Button("Convert to writable .po..."))
@@ -108,8 +108,8 @@ void renderDriveBlock(int                                       driveIdx,
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
-                "Writes the decoded 800K payload next to the WOZ as\n"
-                "%s\nand mounts it here with write-back on. The .woz is\n"
+                "Writes the decoded 800K payload beside the image as\n"
+                "%s\nand mounts it here with write-back on. The original is\n"
                 "not modified, and an existing file is never overwritten.",
                 drv.convertTargetPath.empty()
                     ? "(no free filename)"
@@ -127,7 +127,7 @@ void renderDriveBlock(int                                       driveIdx,
         r.newWriteBack[driveIdx]           = !protect;
     }
     ImGui::EndDisabled();
-    if (drv.diskLoaded && !drv.isWoz) {
+    if (drv.diskLoaded && !drv.isBitstream) {
         ImGui::SameLine();
         if (drv.writeProtected)
             ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f), "WRITE-PROTECTED");
@@ -205,7 +205,7 @@ Disk35Controller_ImGui::FrameResult Disk35Controller_ImGui::render(
                         "right-click: more options)");
 
     if (snap.library.empty()) {
-        ImGui::TextDisabled("  (drop .po / .2mg / .woz files into disks_3.5/ to populate)");
+        ImGui::TextDisabled("  (drop .po / .2mg / .woz / .moof files into disks_3.5/ to populate)");
     } else {
         // Match the Disk II library height — same panel layout, same
         // breathing room for one-click access without scrolling unless

@@ -1584,7 +1584,7 @@ void MainWindow::renderDisk35PanelWindow()
         dst.persistenceError  = src.persistenceError;
         dst.writeBackEnabled  = src.writeBackEnabled;
         dst.fileWriteProtected = src.fileWriteProtected;
-        dst.isWoz             = src.isWoz;
+        dst.isBitstream       = src.isBitstream;
     }
 
     // Convert-target names stay memoised HERE rather than taken from the
@@ -1595,7 +1595,7 @@ void MainWindow::renderDisk35PanelWindow()
     // only changes when the medium changes, so the path is the whole key.
     for (int i = 0; i < 3; ++i) {
         auto& s = snap.drives[i];
-        if (!s.isWoz) { convertSrc_[i].clear(); convertDst_[i].clear(); continue; }
+        if (!s.isBitstream) { convertSrc_[i].clear(); convertDst_[i].clear(); continue; }
         if (convertSrc_[i] != s.diskPath) {
             convertSrc_[i] = s.diskPath;
             convertDst_[i] = freePoNameFor(s.diskPath);
@@ -1624,13 +1624,13 @@ void MainWindow::renderDisk35PanelWindow()
                 }
                 if (!entry.is_regular_file(ec)) continue;
                 const std::string ext = entry.path().extension().string();
-                if (ext != ".po" && ext != ".2mg" && ext != ".woz") continue;
+                if (ext != ".po" && ext != ".2mg" && ext != ".woz" && ext != ".moof") continue;
                 const auto sz = entry.file_size(ec);
                 if (ec) continue;
                 // 800K raw or 2IMG-wrapped (header + 819 200). A `.woz` is
                 // FLUX, so its size says nothing about the payload — the
                 // 3.5" loader decodes it and refuses a 5.25" one by name.
-                if (ext != ".woz" &&
+                if (ext != ".woz" && ext != ".moof" &&
                     sz != 819200 && sz != 819200 + 64 &&
                     !(sz > 819200 && sz < 819200 + 4096)) continue;
                 pom2::Disk35Controller_ImGui::LibraryEntry e;
@@ -1753,7 +1753,7 @@ void MainWindow::renderDisk35FileDialog()
         const auto& listing = mediaDirListing(
             "disks_3.5",
             { "disks_3.5", "../disks_3.5", "../../disks_3.5" },
-            { ".po", ".2mg", ".woz" }, /*recursive=*/false);
+            { ".po", ".2mg", ".woz", ".moof" }, /*recursive=*/false);
         if (!listing.dir.empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("%s/", listing.dir.c_str());

@@ -176,7 +176,7 @@ public:
         /// The disk's own protection (tab / 2IMG lock / WOZ), without the
         /// process default folded in — what the panel's notch tick shows.
         bool fileWriteProtected = false;
-        bool isWoz = false;
+        bool isBitstream = false;
         std::string convertTargetPath;
     };
 

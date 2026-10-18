@@ -3188,6 +3188,7 @@ DiskSlotClass classifyDiskForSlot(const std::string& path)
     // is a property of the DUMP. Sending an 800K 3.5" WOZ to the Disk II
     // (which is what a bare `.woz` rule did) fails at mount time with an
     // error about the wrong drive.
+    if (ext == ".moof") return DiskSlotClass::Sony35;
     if (ext == ".woz") {
         std::ifstream f(path, std::ios::binary);
         char hdr[12] = {};

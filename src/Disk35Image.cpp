@@ -179,12 +179,14 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
     // Read-only by construction: giving the blocks back would mean
     // re-encoding GCR into the original flux, which POM2 cannot do. The
     // user's dump is therefore never at risk from a write-back.
-    if (n >= 12 && buf[0] == 'W' && buf[1] == 'O' && buf[2] == 'Z' &&
-        (buf[3] == '1' || buf[3] == '2'))
+    const bool moof = n >= 12 &&
+        std::memcmp(buf.data(), "MOOF\xFF\x0A\x0D\x0A", 8) == 0;
+    if (moof || (n >= 12 && buf[0] == 'W' && buf[1] == 'O' &&
+                 buf[2] == 'Z' && (buf[3] == '1' || buf[3] == '2')))
     {
-        if (!loadWoz(buf, imgPath)) return false;
+        if (!loadBitstream(buf, imgPath, moof)) return false;
         fileWriteProtected_ = true;
-        kind_   = ImageKind::Woz35;
+        kind_   = moof ? ImageKind::Moof35 : ImageKind::Woz35;
         loaded_ = true;
         dirty_  = false;
         return true;
@@ -498,17 +500,35 @@ MediumPersistence Disk35Image::persistence() const
 // and TRKS (160 x 8-byte entries: startBlock u16, blockCount u16, bitCount
 // u32, data at startBlock*512). WOZ1's TRKS is a different, fixed-size shape
 // and its 3.5" support is not a thing in the wild, so only WOZ2 is decoded.
-bool Disk35Image::loadWoz(const std::vector<uint8_t>& buf,
-                          const std::string& imgPath)
+bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
+                                const std::string& imgPath, bool moof)
 {
-    if (buf[3] != '2') {
+    if (!moof && buf[3] != '2') {
         lastError_ = "Disk35Image: " + imgPath +
                      " is WOZ1; only WOZ2 3.5\" images are supported";
         return false;
     }
 
-    std::size_t infoOff = 0, tmapOff = 0, trksOff = 0;
-    std::size_t infoLen = 0, tmapLen = 0, trksLen = 0;
+    // The MOOF header stores CRC32 of all chunks. Zero is the format's
+    // explicit "not calculated" value, also used by synthetic fixtures.
+    if (moof) {
+        const uint32_t expected = rd32(buf.data() + 8);
+        if (expected != 0) {
+            uint32_t crc = 0xFFFFFFFFu;
+            for (std::size_t i = 12; i < buf.size(); ++i) {
+                crc ^= buf[i];
+                for (int bit = 0; bit < 8; ++bit)
+                    crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
+            }
+            if (~crc != expected) {
+                lastError_ = "Disk35Image: MOOF CRC32 mismatch in " + imgPath;
+                return false;
+            }
+        }
+    }
+
+    std::size_t infoOff = 0, tmapOff = 0, trksOff = 0, fluxOff = 0;
+    std::size_t infoLen = 0, tmapLen = 0, trksLen = 0, fluxLen = 0;
     for (std::size_t i = 12; i + 8 <= buf.size();) {
         const uint32_t len = rd32(buf.data() + i + 4);
         const std::size_t payload = i + 8;
@@ -516,18 +536,34 @@ bool Disk35Image::loadWoz(const std::vector<uint8_t>& buf,
         if (!std::memcmp(buf.data() + i, "INFO", 4)) { infoOff = payload; infoLen = len; }
         if (!std::memcmp(buf.data() + i, "TMAP", 4)) { tmapOff = payload; tmapLen = len; }
         if (!std::memcmp(buf.data() + i, "TRKS", 4)) { trksOff = payload; trksLen = len; }
+        if (!std::memcmp(buf.data() + i, "FLUX", 4)) { fluxOff = payload; fluxLen = len; }
         i = payload + len;
     }
-    if (!infoOff || infoLen < 2 || !tmapOff || tmapLen < 160 || !trksOff) {
-        lastError_ = "Disk35Image: " + imgPath + " has no usable WOZ2 "
+    if (!infoOff || infoLen < (moof ? 44u : 2u) ||
+        !tmapOff || tmapLen < 160 || !trksOff || trksLen < 160 * 8) {
+        lastError_ = "Disk35Image: " + imgPath + " has no usable " +
+                     (moof ? "MOOF" : "WOZ2") + " "
                      "INFO/TMAP/TRKS chunks";
         return false;
     }
     const uint8_t diskType = buf[infoOff + 1];          // 1 = 5.25", 2 = 3.5"
     if (diskType != 2) {
-        lastError_ = "Disk35Image: " + imgPath + " is a 5.25\" WOZ "
-                     "(INFO.disk_type " + std::to_string(diskType) +
-                     "); mount it as a Disk II image";
+        lastError_ = "Disk35Image: " + imgPath + " has unsupported " +
+                     (moof ? "MOOF" : "WOZ") + " disk type " +
+                     std::to_string(diskType) +
+                     (moof ? " (only 800K GCR/type 2 is supported)"
+                           : " (5.25-inch images belong in Disk II)");
+        return false;
+    }
+    const uint8_t bitTiming = moof ? buf[infoOff + 4] : 16;
+    if (moof && (buf[infoOff] < 1 || bitTiming < 8 || bitTiming > 64)) {
+        lastError_ = "Disk35Image: invalid MOOF INFO version or bit timing";
+        return false;
+    }
+    const bool hasFlux = moof && rd16(buf.data() + infoOff + 40) != 0 &&
+                         rd16(buf.data() + infoOff + 42) != 0;
+    if (hasFlux && (!fluxOff || fluxLen < 160)) {
+        lastError_ = "Disk35Image: MOOF declares FLUX but has no FLUX map";
         return false;
     }
 
@@ -548,7 +584,9 @@ bool Disk35Image::loadWoz(const std::vector<uint8_t>& buf,
     std::size_t expandedBytes = 0;
 
     for (int slot = 0; slot < 160; ++slot) {
-        const uint8_t ti = buf[tmapOff + slot];
+        const uint8_t fluxIndex = hasFlux ? buf[fluxOff + slot] : 0xFF;
+        const bool fluxTrack = fluxIndex != 0xFF;
+        const uint8_t ti = fluxTrack ? fluxIndex : buf[tmapOff + slot];
         if (ti == 0xFF) continue;                        // unformatted
         const std::size_t e = trksOff + static_cast<std::size_t>(ti) * 8;
         if (e + 8 > trksOff + trksLen) continue;
@@ -562,16 +600,40 @@ bool Disk35Image::loadWoz(const std::vector<uint8_t>& buf,
         if (off >= buf.size() || len > buf.size() - off) continue;
         // Aggregate budget: 160 slots may all point at the same TRK, so a
         // per-track cap alone still lets the file multiply the work by 160.
-        if (bitCount > kMaxExpandedBytes - expandedBytes) break;
-        expandedBytes += bitCount;
+        std::vector<uint8_t> cells;
+        if (fluxTrack) {
+            // MOOF FLUX entries use the TRK bitCount field as a BYTE count.
+            // Each byte is a 125 ns delta; 255 continues the current delta.
+            if (bitCount > len) continue;
+            uint64_t totalTicks = 0;
+            for (uint32_t j = 0; j < bitCount; ++j) totalTicks += buf[off + j];
+            const uint64_t cellCount =
+                (totalTicks + bitTiming / 2) / bitTiming;
+            if (!cellCount || cellCount > kMaxTrackBits ||
+                cellCount > kMaxExpandedBytes - expandedBytes) continue;
+            expandedBytes += static_cast<std::size_t>(cellCount);
+            cells.assign(static_cast<std::size_t>(cellCount), 0);
+            uint64_t tick = 0;
+            for (uint32_t j = 0; j < bitCount; ++j) {
+                const uint8_t delta = buf[off + j];
+                tick += delta;
+                // The final delta closes the circular track at its index.
+                if (delta == 255 || j + 1 == bitCount) continue;
+                const uint64_t cell = (tick + bitTiming / 2) / bitTiming;
+                if (cell < cellCount) cells[static_cast<std::size_t>(cell)] = 1;
+            }
+        } else {
+            if (bitCount > len * 8u ||
+                bitCount > kMaxExpandedBytes - expandedBytes) continue;
+            expandedBytes += bitCount;
+            cells = sony35::cellsFromPackedBits(buf.data() + off, len, bitCount);
+        }
 
         // The track is a CIRCLE. Walking it once leaves the sector that
         // straddles the seam undecodable — worth ~1 sector per track-side,
         // which is a lot of missing blocks. Walk it once plus an overlap so
         // a wrap-crossing sector appears whole; duplicates are dropped by
         // `seen` below.
-        std::vector<uint8_t> cells =
-            sony35::cellsFromPackedBits(buf.data() + off, len, bitCount);
         const std::size_t once = cells.size();
         if (once == 0) continue;
         // Reserve, then append from an INDEX range rather than from
@@ -591,7 +653,7 @@ bool Disk35Image::loadWoz(const std::vector<uint8_t>& buf,
                               /*expectTrack=*/track,
             [&](int tr, int head, int sec, const uint8_t* data) {
                 const int bi = sony35::blockIndexFor(tr, head, sec);
-                if (bi < 0 || bi >= kBlockCount || seen[bi]) return;
+                if (head != slot % 2 || bi < 0 || bi >= kBlockCount || seen[bi]) return;
                 std::memcpy(blocks_.data() +
                                 static_cast<std::size_t>(bi) * kBlockBytes,
                             data, kBlockBytes);
@@ -605,7 +667,7 @@ bool Disk35Image::loadWoz(const std::vector<uint8_t>& buf,
         // still worth mounting, and saying WHICH is the difference between
         // "POM2 can't read this" and "this dump has holes".
         pom2::log().warn("Disk35",
-            "WOZ " + imgPath + ": decoded " + std::to_string(decoded) +
+            (moof ? "MOOF " : "WOZ ") + imgPath + ": decoded " + std::to_string(decoded) +
             " of " + std::to_string(kBlockCount) +
             " blocks; the rest read as zeros");
     }

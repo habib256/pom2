@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Mount MOOF 800K GCR images
+
+The 3.5-inch drive now opens `.moof` images containing 800K Sony GCR tracks,
+including tracks selected through a MOOF FLUX map. It validates nonzero CRCs,
+decodes sectors to the existing 800K block model, and keeps the original image
+read-only. The conversion action exports the decoded blocks to a writable
+`.po`. The disk library, file pickers, drag-and-drop routing, and Floppy Emu
+3.5-inch modes now recognize the extension. MOOF 400K and MFM images are
+reported as unsupported because the current drive model cannot represent them.
+
 ## 2026-10-18 — Reject overlapping 2IMG headers in HDV images
 
 The HDV 2IMG loader ignored the header-length field. It could mount a file

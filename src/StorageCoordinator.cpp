@@ -305,7 +305,8 @@ void copyDisk35ImageState(
     target.persistenceError = image.persistence().error;
     target.writeBackEnabled = image.isWriteBackEnabled();
     target.fileWriteProtected = image.isFileWriteProtected();
-    target.isWoz = image.kind() == Disk35Image::ImageKind::Woz35;
+    target.isBitstream = image.kind() == Disk35Image::ImageKind::Woz35 ||
+                         image.kind() == Disk35Image::ImageKind::Moof35;
 }
 
 /// How `ejectAllMedia` names one bay in a failure line. Preserved verbatim
@@ -1189,7 +1190,7 @@ StorageCoordinator::Disk35Snapshot StorageCoordinator::captureDisk35(
         }
     }
     for (auto& drive : snapshot.drives) {
-        if (drive.isWoz) drive.convertTargetPath = freePoNameFor(drive.path);
+        if (drive.isBitstream) drive.convertTargetPath = freePoNameFor(drive.path);
     }
     return snapshot;
 }
@@ -1397,13 +1398,14 @@ StorageCoordinator::convertDisk35WozToPo(
             imageSnapshot = controller.disk35(drive);
         }
     }
-    if (imageSnapshot.kind() != Disk35Image::ImageKind::Woz35) {
-        result.error = "that drive does not hold a 3.5-inch WOZ";
+    if (imageSnapshot.kind() != Disk35Image::ImageKind::Woz35 &&
+        imageSnapshot.kind() != Disk35Image::ImageKind::Moof35) {
+        result.error = "that drive does not hold a 3.5-inch WOZ/MOOF";
         return result;
     }
     result.outputPath = freePoNameFor(imageSnapshot.path());
     if (result.outputPath.empty()) {
-        result.error = "no free .po filename beside the WOZ";
+        result.error = "no free .po filename beside the WOZ/MOOF";
         return result;
     }
     if (!imageSnapshot.exportRawTo(result.outputPath, result.error))

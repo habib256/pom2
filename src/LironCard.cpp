@@ -489,7 +489,7 @@ bool looksLike35(const std::string& path)
 {
     std::string ext = std::filesystem::path(path).extension().string();
     for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (ext == ".woz") return true;
+    if (ext == ".woz" || ext == ".moof") return true;
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     return !ec && size <= 1024u * 1024u;

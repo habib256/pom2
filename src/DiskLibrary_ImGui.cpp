@@ -65,7 +65,7 @@ bool accept35(const std::string& ext, uint64_t sz) {
     // payload, so it cannot be sniffed by size and is offered to BOTH bays.
     // The loaders sort it out and say which they wanted — `Disk35Image`
     // refuses a 5.25" WOZ by name, `DiskImage` refuses a 3.5" one.
-    if (ext == ".woz") return true;
+    if (ext == ".woz" || ext == ".moof") return true;
     // Disk35Image takes a bare 800K payload under .po, .dsk and .image alike.
     if ((ext == ".dsk" || ext == ".image") && sz == 819200) return true;
     if (ext != ".po" && ext != ".2mg") return false;
@@ -98,7 +98,7 @@ bool acceptHdv(const std::string& ext, uint64_t sz) {
 bool acceptFloppyEmu(const std::string& ext, uint64_t sz) {
     (void)sz;
     return ext == ".dsk" || ext == ".do"  || ext == ".po"  || ext == ".nib"
-        || ext == ".woz" || ext == ".d13" || ext == ".2mg" || ext == ".hdv";
+        || ext == ".woz" || ext == ".moof" || ext == ".d13" || ext == ".2mg" || ext == ".hdv";
 }
 
 // Case-insensitive substring scan — `needle` should already be lower-

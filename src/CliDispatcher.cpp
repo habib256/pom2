@@ -129,7 +129,7 @@ void printUsage()
         "Usage: POM2 [options] [disk-image]\n"
         "\n"
         "  disk-image                 Mount + boot a disk (.dsk/.do/.po/.nib/\n"
-        "                              .woz/.d13/.hdv/.2mg). Slot is auto-picked\n"
+        "                              .woz/.moof/.d13/.hdv/.2mg). Slot is auto-picked\n"
         "                              from type. Boots under the saved profile.\n"
         "                              May be a TNFS URL — tnfs://host[:port]/\n"
         "                              path/image.po — which is fetched into a\n"

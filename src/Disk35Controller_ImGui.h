@@ -54,18 +54,18 @@ public:
         int         track              = 0;       // 0..79
         bool        side1              = false;   // false = head 0
         bool        writeProtected     = true;
-        /// True when this drive holds a `.woz`. A 3.5" WOZ is ALWAYS
+        /// True when this drive holds a `.woz` or `.moof`. Both are ALWAYS
         /// write-protected — POM2 decodes Sony GCR but cannot encode it, so
         /// guest writes would have nothing to be folded back into. The panel
         /// says so in those words and offers the conversion instead of
         /// leaving the user to wonder which of the write-protect reasons
         /// applies to them.
-        bool        isWoz              = false;
+        bool        isBitstream        = false;
         /// Where "Convert to writable .po" would write, already de-duplicated
-        /// against existing files. Empty when the drive holds no WOZ.
+        /// against existing files. Empty without a WOZ/MOOF image.
         std::string convertTargetPath;
         bool        writeBackEnabled   = true;   // process default (MediaWritePolicy.h), not a UI toggle
-        bool        fileWriteProtected = false;  // the disk's own protection: tab / 2IMG lock / WOZ
+        bool        fileWriteProtected = false;  // the disk's own protection: tab / 2IMG lock / WOZ/MOOF
         bool        hasUnsavedChanges  = false;   // a sector has been written
         std::string persistenceState, persistenceError;   // MediaAutosave.h
         std::string diskPath;
@@ -102,7 +102,7 @@ public:
         // modal at the end of the frame.
         bool                openMountDialog          = false;
         int                 openMountDialogForDrive  = 0;
-        /// Convert this drive's read-only WOZ to a writable `.po` and mount
+        /// Convert this drive's read-only WOZ/MOOF to a writable `.po` and mount
         /// the copy in its place. -1 = not requested.
         int                 requestConvertDrive      = -1;
     };

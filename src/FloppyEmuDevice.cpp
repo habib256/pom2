@@ -143,7 +143,7 @@ bool FloppyEmuDevice::acceptsFile(const std::string& filename) const
         case FloppyEmuMode::Disk35:
         case FloppyEmuMode::Unidisk35:
             return ext == ".dsk" || ext == ".do" || ext == ".po" ||
-                   ext == ".2mg";
+                   ext == ".moof" || ext == ".woz" || ext == ".2mg";
         case FloppyEmuMode::SmartportHD:
             return ext == ".po" || ext == ".hdv" || ext == ".2mg";
     }

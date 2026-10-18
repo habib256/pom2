@@ -363,6 +363,7 @@ void testClassifier()
     assert(classifyDiskForSlot(makeFile(dir, "a.do",  143360)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "a.nib", 232960)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "a.woz", 200000)) == DiskSlotClass::Floppy525);
+    assert(classifyDiskForSlot(makeFile(dir, "a.moof", 200000)) == DiskSlotClass::Sony35);
     assert(classifyDiskForSlot(makeFile(dir, "a.d13", 116480)) == DiskSlotClass::Floppy525);
     // .po @ 143360 = 5.25" ProDOS; @ 800K = 3.5".
     assert(classifyDiskForSlot(makeFile(dir, "p525.po", 143360)) == DiskSlotClass::Floppy525);
