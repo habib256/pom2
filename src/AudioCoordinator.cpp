@@ -189,6 +189,10 @@ AudioCoordinator::captureMixerCards() const
             snapshot.volume = echo->getVolume();
             snapshot.muted = echo->isMuted();
             source = echo->audioSource();
+        } else if (auto* speechCard = cardAt<EchoPlusTMS5220Card>(bus, slot)) {
+            snapshot.kind = CardKind::EchoPlusTms5220;
+            snapshot.volume = speechCard->getVolume(); snapshot.muted = speechCard->isMuted();
+            source = speechCard->audioSource();
         } else if (auto* sam = cardAt<SamCard>(bus, slot)) {
             snapshot.kind = CardKind::Sam;
             snapshot.volume = sam->getVolume();
@@ -238,7 +242,10 @@ bool AudioCoordinator::applyMixerCard(const MixerCardCommand& command)
             }
             break;
         case CardKind::EchoPlusTms5220:
-            break; // scaffold card has no AudioSource yet
+            if (auto* card = cardAt<EchoPlusTMS5220Card>(bus, command.slot)) {
+                card->setVolume(command.volume); card->setMuted(command.muted); return true;
+            }
+            break;
         case CardKind::Sam:
             if (auto* card = cardAt<SamCard>(bus, command.slot)) {
                 card->setVolume(command.volume);

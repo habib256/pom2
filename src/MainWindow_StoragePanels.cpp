@@ -195,6 +195,15 @@ void MainWindow::renderDiskPanelWindow()
             snap.persistenceState  = persisted.state;
             snap.persistenceError  = persisted.error;
             snap.fileWriteProtected = card->isFileWriteProtected();
+            for (int d = 0; d < 2; ++d) {
+                auto& flux = snap.flux[d];
+                flux.loaded = card->isDiskLoaded(d);
+                if (!flux.loaded) continue;
+                flux.quarterTrack = card->getQuarterTrack(d);
+                flux.period = card->driveImage(d).trackPeriod(flux.quarterTrack);
+                flux.position = card->getFluxPosition(d);
+                flux.transitions = card->driveImage(d).fluxEvents(flux.quarterTrack);
+            }
         }
         snap.turboWhileMotor = diskTurboWhileMotor;
         snap.turboActive     = diskTurboActive;

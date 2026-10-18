@@ -1340,6 +1340,13 @@ void SuperSerialCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(tdrHeldByte_);
 }
 
+bool SuperSerialCard::sessionIdle() const
+{
+    if (isListening() || clientConnected() || vsDriveActive()) return false;
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    return rxBuf.empty() && txBuf.empty() && telnetReply_.empty();
+}
+
 void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     if (data == nullptr || len < 14 ||

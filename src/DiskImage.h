@@ -238,8 +238,12 @@ public:
     /// RAM-only; loading creates a detached medium with no writable host path.
     bool appendReadOnlySession(std::vector<uint8_t>& out, std::string& error) const;
     bool loadReadOnlySession(const uint8_t* data, size_t len, std::string& error);
+    bool appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const;
+    bool loadSessionMedia(const uint8_t* data, size_t len, std::string& error, bool allowWritable);
+    bool sessionCaptureReady() const { return !autosave_.inFlight(); }
+    bool isSessionMedia() const { return detachedSession_; }
     size_t sessionStorageBytes() const;
-    bool hasPendingWriteBack() const { return anyDirty || bool(autosave_.inFlight()); }
+    bool hasPendingWriteBack() const { return (anyDirty && !detachedSession_) || bool(autosave_.inFlight()); }
 
     // ── LSS bit-cell stream ─────────────────────────────────────────────
     //
@@ -496,6 +500,7 @@ private:
     std::string lastError;
     bool writeBackEnabled = pom2::mediaWritableByDefault();   // see MediaWritePolicy.h
     bool anyDirty = false;
+    bool detachedSession_ = false; // guest writes stay in RAM, never a host-file target
 
     pom2::MediaAutosave autosave_;
     uint64_t lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed

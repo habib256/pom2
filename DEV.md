@@ -2107,8 +2107,7 @@ the read masks byte for byte, the volume table within 1 dB, the
 band-limiting budget, the stereo fold-down. History: CHANGELOG 2026-09-09
 (bug hunt #16). The SSI duration/PCM path now follows AppleWin's primary
 audio consumption loop, including CTL-latched frame mode. Still open: the
-`EchoPlusTMS5220Card` address map is wrong against MAME's own
-`a2bus_echoplus_device`. Phasor now carries both SSI263APs: A6/A5 select
+`EchoPlusTMS5220Card` now follows MAME's VIA/PSG and C0n0 TMS5220C map. Phasor now carries both SSI263APs: A6/A5 select
 primary/secondary writes in native and compatibility modes, independently
 of VIA aliases. Native reads require A7=A4=0, expose D7 over floating low
 bits and follow AppleWin secondary precedence when both are selected.
@@ -2312,41 +2311,31 @@ register banks.
 
 #### EchoPlusTMS5220Card
 
-`EchoPlusTMS5220Card` (`EchoPlusTMS5220Card.h/.cpp`) — Street Electronics
-ECHO+ **as actually shipped**: 2× AY-3-8913 PSGs + TMS5220 LPC speech
-chip. Distinct from the SSI263-based `EchoPlusCard` above. Settings
-key `"echoplus_tms"`, default slot 2 — **hidden from the Slot Config
-picker since 2026-09-08** (the TMS5220 decoder does not exist, so the card
-is silent; TODO's scope ruling closed P3-2 as "hide"). A `slot_N_card`
-key still plugs it.
+Street Electronics Echo+ uses a TSP5220C at `$C0n0` and one 6522 VIA,
+mirrored throughout `$Cs00-$CsFF`. PB0/PB1 are BC1/BDIR, PB2 is active-low
+reset, and PB3/PB4 select AY1/AY2. This replaces the former fictional direct
+AY register ports. MAME reference: `a2mockingboard.cpp:210-219,307-310,
+360-363,453-474,585-607`. The card is selectable as `echoplus_tms`.
 
-**v1 scaffold — chip cores deferred.** The card registers on the slot
-bus with a stub register decode at $Cs00-$Cs0F so software that probes
-for the chipset finds something coherent (not open bus). TMS5220 LPC
-decoding (chirp ROM, K-parameter interpolation, energy/pitch tables)
-and AY synth are both stubs — audio is silent. The provisional address
-map (pin to markadev's schematic on next pass):
+`Tms5220.cpp` ports MAME's TMS5220C interpolation, chirp/noise excitation,
+10-stage lattice and analog DAC clipping. The 16-byte FIFO starts at the
+ninth byte and advances at 8 kHz independently of the host audio backend.
+Rate control, repeat, silence and stop frames are supported. Echo+ has no
+external VSM, so ROM reads float high. Command writes use MAME's immediate
+host interface; physical /WS-/READY pin delay is not modeled.
 
-```
-$Cs00  TMS5220 status / data (rd = status, wr = command/data byte)
-$Cs01  TMS5220 stop / reset
-$Cs04-05  AY-3-8913 #1 (address latch / data write)
-$Cs06-07  AY-3-8913 #2 (address latch / data write)
-$Cs08-FF  open bus
-```
+Both AYs use the shared band-limited synthesis core. CPU-cycle stamps drive
+sample production; AY1 is left, AY2 right, with speech centered. The bounded
+PCM backlog drops its oldest samples during turbo; callbacks only consume
+samples and never advance hardware. VIA and AY clocks stay at the standard
+slot clock under acceleration. Mixer volume/mute settings are per slot.
 
-Source: markadev/AppleII-RevEng/Street-Electronics-Corp-ECHO+ (index.md
-states "two AY-3-8913 Programmable Sound Generator chips and a TMS5220
-Speech Synthesizer chip").
-
-**Snapshot/rewind** (added 2026-08-17, bug hunt 8). Being a scaffold does
-not exempt it: the stub decode is *read back* by the guest — `$Cs00`
-returns the TMS status and `$Cs04-$Cs07` the selected AY register — so the
-card serializes TMS status + last write, both address latches and both full
-AY-3-8913 banks, magic-tagged (`'E' 'T' 'S'` + version) and validated whole
-before it mutates a chip, exactly like `MockingboardCard` / `PhasorCard`.
-Without it a rewind put the guest back on registers from the timeline it had
-just left. Pinned by `card_snapshot_state`.
+ETS v2 snapshots preserve FIFO bits, interpolation/filter latches, VIA state,
+AY registers/generators and fractional clocks. The host PCM queue is discarded
+on restore. The former ETS v1 provisional hardware map is not reconstructed.
+Tests: `tms5220`, `echoplus_tms5220`, `card_snapshot_state`,
+`card_snapshot_contract` and `audio_coordinator`. No physical board audio
+capture or independent analog output calibration is claimed.
 
 ### Phasor (Applied Engineering)
 
@@ -4496,6 +4485,52 @@ checkpoint remains for unexpected implementation failures, not validation.
 `snapshot_preflight` covers each nested failure, truncated frames, geometry
 disagreement, repeated valid validation, valid restore and atomic direct
 profile/port refusals. This test also runs in the portable CI subset.
+
+**Block sessions v6** (2026-10-18). `Block512Backing_Session` encodes
+nonzero or dirty 512-byte blocks in strictly increasing order (max 65536
+blocks per medium, 128 MiB expanded across a session). `SessionIIc` embeds
+HDV units in mixed SmartPort chains and both backings of ProDOS HDV cards;
+slot ROM identity and canonical runtime replay validate the card before any
+live state changes. Background operations and outstanding captured payloads
+prevent capture/replacement. Restored backings are detached regardless of
+future write policy, so explicit save, detach, background polling and card
+destruction cannot write source files. `session_block_media` covers sparse
+32 MiB geometry, dirty zero/nonzero blocks, 2IMG locks, malformed records,
+partial byte/block transfers and rollback; the browser persistence smoke
+also restores a source-free HDV from IndexedDB. Dense archives above the
+32 MiB envelope are refused; host folders and CFFA/ATA remain excluded.
+
+**Writable floppy sessions v5** (2026-10-18). `DiskImage_SessionWritable`
+and `Disk35Image_Session` wrap current media in `DMS` records with original
+protection/write-enable flags. Dirty capture is allowed without touching the
+source. Disk II's WOZ repack runs on a deep copy; the 3.5-inch capture serializer
+already operates on immutable backing. Disk II also carries 35 write-framing
+records and normalizes runtime path hashes. Detached-media state is separate
+from guest write protection: all take-writeback and autosave paths refuse to
+submit a detached image, while new writes enter subsequent session captures.
+Restore still refuses outgoing dirty host media. The panels show RAM/session
+persistence explicitly. `session_writable_media`, `session_snapshot`,
+`session_iic` and the Chrome persistence smoke cover the behavior.
+
+**//c sessions v4 and MFM capture writes** (2026-10-18). `SessionIIc`
+stages built-in serial, IOU mouse, RGB and SmartPort state on detached devices;
+onboard Sony media occupy a virtual archive record, never a physical slot.
+`Disk35Image_Session` decodes embedded protected media without file I/O. The
+existing MEX sections retain IWM, MIG routing/RAM, ROM bank and external bus
+transactions. SmartPort transfer hashes are rebased to the private media name,
+so partial reads and WRITE buffers survive. Pending storage work and active
+serial transports are refused. `session_iic` exercises all three //c profiles,
+source-file removal, byte-identical recapture and failed-restore atomicity.
+
+`Disk35Mfm` shares the existing CRC-checked MFM decoder between load,
+projection refresh and write-field discovery. SuperDrive writes replace the
+512-byte data field, its CRC and the following clock bit for every valid copy
+of a sector, including index-crossing ID/data pairs. Other transitions retain
+their exact 125 ns times. Missing sectors fail without synthesizing a track;
+this is a block-service write into a capture, not a SWIM implementation.
+`moof35_load` checks deleted-data marks, both heads, inner tracks, FLUX reload,
+clock continuity, metadata and protection. `disk35_flux_write` retains the
+native GCR/atomic persistence coverage.
 
 **Read-only Disk II sessions v1** (2026-10-17). `.pom2session` is a separate,
 checksummed container, exposed through `--session-save/load` and the local

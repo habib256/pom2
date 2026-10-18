@@ -33,6 +33,7 @@ void Block512Backing::collectWriteBack()
 const char* Block512Backing::persistenceState() const
 {
     if (!loaded_) return "unmounted";
+    if (detachedSession_) return "session";
     if (synth_) {
         if (!persistenceError_.empty()) return "error";
         if (!writeBack_) return anyDirty_ ? "off (guest edits in memory)" : "off";
@@ -50,7 +51,7 @@ Block512Backing::pollWriteBack(bool force)
 {
     collectWriteBack();
     // Host-folder synchronization has its own opt-in and conflict policy.
-    if (!writeBackExecutor_ || !loaded_ || synth_ || !anyDirty_ || !writeBack_ ||
+    if (detachedSession_ || !writeBackExecutor_ || !loaded_ || synth_ || !anyDirty_ || !writeBack_ ||
         isMediumLocked() || !supportsWriteBack_)
         return backgroundWrite_;
     const auto now = std::chrono::steady_clock::now();

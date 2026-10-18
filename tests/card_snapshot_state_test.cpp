@@ -280,48 +280,28 @@ void testClockShiftRegister()
 void testEchoPlusTms5220Registers()
 {
     EchoPlusTMS5220Card a(2);
-    a.slotRomWrite(0x00, 0x5A);          // TMS data byte (tracked)
-    a.slotRomWrite(0x04, 0x07);          // AY#1 address latch → R7
-    a.slotRomWrite(0x05, 0x3E);          // AY#1 R7 = $3E
-    a.slotRomWrite(0x06, 0x0B);          // AY#2 address latch → R11
-    a.slotRomWrite(0x07, 0xC4);          // AY#2 R11 = $C4
-    assert(a.slotRomRead(0x04) == 0x3E);
-    assert(a.slotRomRead(0x06) == 0xC4);
-
-    std::vector<uint8_t> blob;
-    a.appendSnapshotState(blob);
-    assert(!blob.empty());
-
-    EchoPlusTMS5220Card b(2);
-    b.loadSnapshotState(blob.data(), blob.size());
-    // Guest-visible read-back must come across…
-    assert(b.slotRomRead(0x04) == 0x3E);
-    assert(b.slotRomRead(0x06) == 0xC4);
-    assert(b.slotRomRead(0x00) == a.slotRomRead(0x00));
-    // …and re-serialising must reproduce the blob, which is the only way to
-    // assert the private halves (the selected-register latches, the last TMS
-    // write, the rest of both banks) travelled too.
-    std::vector<uint8_t> blob2;
-    b.appendSnapshotState(blob2);
-    assert(blob2 == blob);
-
-    EchoPlusTMS5220Card c(2);
-    std::vector<uint8_t> fresh;
-    c.appendSnapshotState(fresh);
-    c.loadSnapshotState(kForeign.data(), kForeign.size());
-    std::vector<uint8_t> blob3;
-    c.appendSnapshotState(blob3);
-    assert(blob3 == fresh);              // foreign blob ignored
-    // A TRUNCATED own-format blob must be ignored whole, not applied halfway.
-    EchoPlusTMS5220Card d(2);
-    std::vector<uint8_t> freshD;
-    d.appendSnapshotState(freshD);
-    d.loadSnapshotState(blob.data(), blob.size() - 1);
-    std::vector<uint8_t> blob4;
-    d.appendSnapshotState(blob4);
-    assert(blob4 == freshD);
-
-    std::printf("  ok: Echo+ (TMS5220) status + both AY banks round-trip\n");
+    a.slotRomWrite(3, 0xFF); a.slotRomWrite(2, 0xFF);
+    auto writeAy = [&](int chip, uint8_t reg, uint8_t value) {
+        const uint8_t select = uint8_t(8 << chip);
+        a.slotRomWrite(0, select | 4); a.slotRomWrite(1, reg);
+        a.slotRomWrite(0, select | 7); a.slotRomWrite(0, select | 4);
+        a.slotRomWrite(1, value); a.slotRomWrite(0, select | 6); a.slotRomWrite(0, select | 4);
+    };
+    writeAy(0, 7, 0x3E); writeAy(1, 11, 0xC4);
+    a.deviceSelectWrite(0, 0x60);
+    for (int i = 0; i < 9; ++i) a.deviceSelectWrite(0, 0);
+    std::vector<uint8_t> state;
+    a.appendSnapshotState(state);
+    EchoPlusTMS5220Card b(2); b.loadSnapshotState(state.data(), state.size());
+    assert(b.snapshot().ayRegs[0][7] == 0x3E);
+    assert(b.snapshot().ayRegs[1][11] == 0xC4);
+    assert(b.deviceSelectRead(0) == a.deviceSelectRead(0));
+    std::vector<uint8_t> roundTrip; b.appendSnapshotState(roundTrip); assert(state == roundTrip);
+    b.loadSnapshotState(state.data(), state.size() - 1);
+    roundTrip.clear(); b.appendSnapshotState(roundTrip); assert(state == roundTrip);
+    state[3] = 99; b.loadSnapshotState(state.data(), state.size());
+    std::vector<uint8_t> refused; b.appendSnapshotState(refused); assert(refused == roundTrip);
+    std::printf("  ok: Echo+ TMS5220 FIFO + VIA + both AY banks round-trip\n");
 }
 
 

@@ -289,7 +289,7 @@ void appendOnboardDisk35SettingUpdates(std::vector<SettingUpdate>& updates,
 /// A bay's whole-file flush as the image's commit payload, capture order kept.
 Disk35Image::PendingWriteBack imagePayload(MountableMediaCard::PendingBayFlush&& f)
 {
-    return {true, std::move(f.path), std::move(f.bytes), f.seq, f.lineage};
+    return {true, std::move(f.path), std::move(f.bytes), f.seq, f.lineage, {}};
 }
 
 void copyDisk35ImageState(

@@ -44,6 +44,12 @@ public:
     };
 
     struct DriveSnapshot {
+        struct FluxTrack {
+            bool loaded = false;
+            int quarterTrack = 0, period = 0, position = 0;
+            std::vector<int> transitions;
+        };
+        std::array<FluxTrack, 2> flux;
         bool        bootRomLoaded = false;
         bool        diskLoaded    = false;
         bool        motorOn       = false;
@@ -101,6 +107,11 @@ public:
     // Menu-bar "Insert disk…" shortcut flips `insertDialogOpen` directly.
     bool        insertDialogOpen = false;
     std::string dialogPath;
+private:
+    void renderFlux(const DriveSnapshot& snap);
+    int fluxDrive_ = 0;
+    bool fluxFollow_ = true;
+    float fluxOffset_ = 0;
 };
 
 } // namespace pom2

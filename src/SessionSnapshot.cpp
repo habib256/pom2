@@ -1,5 +1,6 @@
 // POM2 — GPL-3.0-or-later
 #include "SessionSnapshot.h"
+#include "SessionIIc.h"
 #include "DiskIICard.h"
 #include "ClockCard.h"
 #include "Ay3_8910.h"
@@ -62,8 +63,8 @@ bool safeClockState(const Blob& bytes)
 }
 bool configuration(Memory& memory, Blob& out, std::string& error)
 {
-    if (memory.isIIcClass() || memory.cpuSocketAccelerator()) {
-        error = "sessions support II/II+/IIe without a socket accelerator"; return false;
+    if (memory.cpuSocketAccelerator()) {
+        error = "sessions do not support a socket accelerator"; return false;
     }
     const auto* clock = memory.getNoSlotClock();
     out = {1, uint8_t(clock != nullptr), uint8_t(clock && clock->isEnabled()),
@@ -98,7 +99,7 @@ bool describe(SlotPeripheral* card, SessionArchive::Slot& out, std::string& erro
                 out.identity.push_back(value);
             }
     }
-    else { error = "sessions do not support card: " + std::string(card->name()); return false; }
+    else return describeIIcSessionDevice(card, out, error);
     return true;
 }
 }
@@ -112,6 +113,7 @@ bool captureSession(SessionArchive& out, M6502& cpu, Memory& memory,
     if (!configuration(memory, staged.configuration, error)) return false;
     size_t mediaBytes = 0;
     if (memory.slotBus().peripheral(0)) { error = "sessions require an empty slot 0"; return false; }
+    if (memory.isIIcClass() && !captureSessionSonyMedia(memory, staged.slots[0], mediaBytes, error)) return false;
     for (int slot = 1; slot <= 7; ++slot) {
         auto* card = memory.slotBus().peripheral(slot);
         auto& record = staged.slots[slot];
@@ -124,6 +126,8 @@ bool captureSession(SessionArchive& out, M6502& cpu, Memory& memory,
                 error = "session media expansion exceeds 128 MiB"; return false;
             }
             if (!disk->appendSessionState(record.state, error)) return false;
+        } else if (uint8_t(record.kind) > uint8_t(Card::Clock)) {
+            if (!captureIIcSessionDevice(card, record.state, mediaBytes, error)) return false;
         } else card->appendSnapshotState(record.state);
     }
     SnapshotWriter writer(staged.core, machineId);
@@ -137,7 +141,7 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
                     uint32_t machineId, std::string& error)
 {
     Blob config;
-    if (session.version < 1 || session.version > 3) {
+    if (session.version < 1 || session.version > 6) {
         error = "unsupported session version"; return false;
     }
     const size_t cardLimit = session.version == 1 ? 1024u * 1024u : kMaxSessionCardBytes;
@@ -149,17 +153,28 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
         error = "session machine/clock configuration differs; select the matching configuration first";
         return false;
     }
-    if (memory.slotBus().peripheral(0) || session.slots[0].kind != Card::Empty ||
-        !session.slots[0].identity.empty() || !session.slots[0].state.empty()) {
+    if (memory.slotBus().peripheral(0)) { error = "sessions require an empty slot 0"; return false; }
+    std::array<std::unique_ptr<DiskIICard::SessionRestore>, 8> disks;
+    std::array<std::unique_ptr<SlotPeripheral>, 8> devices;
+    SessionSonyMedia sonyMedia;
+    size_t mediaBytes = 0;
+    if (memory.isIIcClass()) {
+        if (session.version < 4) { error = "//c sessions require format version 4"; return false; }
+        if (!prepareSessionSonyMedia(memory, session.slots[0], sonyMedia, mediaBytes, error, session.version >= 5)) return false;
+    } else if (session.slots[0].kind != Card::Empty || !session.slots[0].identity.empty() || !session.slots[0].state.empty()) {
         error = "sessions require an empty slot 0"; return false;
     }
-    std::array<std::unique_ptr<DiskIICard::SessionRestore>, 8> disks;
-    size_t mediaBytes = 0;
     for (int slot = 1; slot <= 7; ++slot) {
         auto* card = memory.slotBus().peripheral(slot);
         SessionArchive::Slot live;
         if (!describe(card, live, error)) return false;
         const auto& record = session.slots[slot];
+        if (session.version < 6 && record.kind == Card::HardDisk) {
+            error = "HDV sessions require format version 6"; return false;
+        }
+        if (session.version < 4 && uint8_t(record.kind) > uint8_t(Card::Clock)) {
+            error = "this device requires session format version 4"; return false;
+        }
         if (session.version < 3 && (record.kind == Card::Slinky || record.kind == Card::Clock)) {
             error = "this card requires session format version 3"; return false;
         }
@@ -174,12 +189,14 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
         if (auto* disk = dynamic_cast<DiskIICard*>(card)) {
             disks[slot] = std::make_unique<DiskIICard::SessionRestore>();
             if (!disk->prepareSessionState(record.state.data(), record.state.size(), *disks[slot], error,
-                                          session.version >= 2))
+                                          session.version >= 2, session.version >= 5))
                 return false;
             for (const auto& media : disks[slot]->media) mediaBytes += media->sessionStorageBytes();
             if (mediaBytes > 128u * 1024u * 1024u) {
                 error = "session media expansion exceeds 128 MiB"; return false;
             }
+        } else if (uint8_t(record.kind) > uint8_t(Card::Clock)) {
+            if (!prepareIIcSessionDevice(card, record, slot, devices[slot], mediaBytes, error, session.version >= 5, session.version >= 6)) return false;
         } else {
             if (record.kind == Card::Clock && !safeClockState(record.state)) {
                 error = "invalid session clock state"; return false;
@@ -223,10 +240,12 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
     SnapshotReader reader(session.core.data(), session.core.size());
     const auto result = restoreMachineState(reader, cpu, memory);
     if (!result.ok) { error = result.error; return false; }
+    applySessionSonyMedia(memory, sonyMedia);
     for (int slot = 1; slot <= 7; ++slot) {
         auto* card = memory.slotBus().peripheral(slot);
         if (!card) continue;
         if (disks[slot]) static_cast<DiskIICard*>(card)->applySessionState(std::move(*disks[slot]));
+        else if (devices[slot]) applyIIcSessionDevice(card, devices[slot].get());
         else {
             const auto& state = session.slots[slot].state;
             card->loadSnapshotState(state.data(), state.size());

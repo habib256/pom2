@@ -336,7 +336,8 @@ bool Sony35Drive::isInserted() const
 int Sony35Drive::cellsPerRev() const
 {
     if (image_ && (image_->kind() == Disk35Image::ImageKind::Moof35 ||
-                   image_->kind() == Disk35Image::ImageKind::Moof400k))
+                   image_->kind() == Disk35Image::ImageKind::Moof400k ||
+                   image_->kind() == Disk35Image::ImageKind::Woz35))
         if (const auto* cells = image_->originalBitCells(track_, side1_ ? 1 : 0))
             return static_cast<int>(cells->size());
     return kCellsPerRev[zoneForTrack(track_)];
@@ -350,13 +351,14 @@ int64_t Sony35Drive::cyclesPerRev() const
 int64_t Sony35Drive::cyclesPerRevFor(int track, int head) const
 {
     if (image_ && (image_->kind() == Disk35Image::ImageKind::Moof35 ||
-                   image_->kind() == Disk35Image::ImageKind::Moof400k)) {
+                   image_->kind() == Disk35Image::ImageKind::Moof400k ||
+                   image_->kind() == Disk35Image::ImageKind::Woz35)) {
         if (const auto* cells = image_->originalBitCells(track, head)) {
             // MOOF's INFO timing is in 125 ns units. The captured bit count
             // defines the length of the loop, including nonstandard tracks.
             const int64_t clock = static_cast<int64_t>(standardClockHz_ + 0.5);
-            const int64_t numerator = static_cast<int64_t>(cells->size()) *
-                                      image_->bitTiming125ns() * clock;
+            const int64_t numerator = static_cast<int64_t>(image_->trackPeriod125ns(track, head) ?
+                                      image_->trackPeriod125ns(track, head) : cells->size() * image_->bitTiming125ns()) * clock;
             return std::max<int64_t>(1, (numerator + 4000000) / 8000000);
         }
     }
@@ -480,7 +482,24 @@ void Sony35Drive::writeFlux(int64_t startTick, int64_t endTick,
         cachedCyclesPerRev_ <= 0) {
         return;
     }
-    if (endTick <= startTick) return;
+    if (endTick <= startTick || count < 0 || count > (1 << 20) || (count && !fluxes)) return;
+    if (image_->isBitstream()) {
+        const int64_t period = int64_t(cachedCyclesPerRev_) * POM2_IWM_TICKS_PER_CPU_CYCLE;
+        const uint32_t ticks = image_->trackPeriod125ns(trk, head) ? image_->trackPeriod125ns(trk, head) :
+            uint32_t((int64_t(cachedCyclesPerRev_) * 8000000 + int64_t(standardClockHz_ / 2)) / int64_t(standardClockHz_));
+        const int64_t begin = uint64_t(endTick) - uint64_t(startTick) > uint64_t(period) ? endTick - period : startTick;
+        const int64_t rel = ((begin % period - revStartTick % period) % period + period) % period;
+        const int64_t origin = (rel * ticks + period / 2) / period;
+        const int64_t end = origin + ((endTick - begin) * ticks + period / 2) / period;
+        std::vector<int64_t> transitions;
+        transitions.reserve(size_t(count));
+        for (int i = 0; i < count; ++i)
+            if (fluxes[i] >= begin && fluxes[i] < endTick)
+                transitions.push_back(origin + ((fluxes[i] - begin) * ticks + period / 2) / period);
+        if (image_->writeFlux125ns(trk, head, origin, end, transitions.data(), int(transitions.size()), ticks))
+            invalidateCache();
+        return;
+    }
 
     const int     n      = cachedCellsPerRev_;
     // Same timeline as the read side: IWM ticks (CpuClock.h).
@@ -594,6 +613,8 @@ void Sony35Drive::ensureCacheFor(int track, int head) const
         image_->kind() == Disk35Image::ImageKind::Moof400k) {
         if (const auto* original = image_->originalBitCells(track, head))
             cells_ = *original;
+    } else if (image_->isBitstream()) {
+        cells_.assign(size_t(kCellsPerRev[zoneForTrack(track)]), 0);
     } else {
         buildTrackBits(*image_, track, head, cells_);
     }
@@ -605,6 +626,21 @@ void Sony35Drive::ensureCacheFor(int track, int head) const
 int64_t Sony35Drive::nextTransition(int64_t fromTick,
                                     int64_t revStartTick) const
 {
+    if (image_) {
+        const int head = side1_ ? 1 : 0;
+        if (const auto* events = image_->originalFluxTicks(track_, head)) {
+            if (events->empty()) return INT64_MAX;
+            const int64_t period = cyclesPerRevFor(track_, head) * POM2_IWM_TICKS_PER_CPU_CYCLE;
+            const uint32_t sourcePeriod = image_->trackPeriod125ns(track_, head);
+            const int64_t rel = fromTick - revStartTick;
+            const int64_t revolution = rel >= 0 ? rel / period : -((-rel + period - 1) / period);
+            const int64_t pos = rel - revolution * period;
+            auto time = [&](uint32_t tick) { return (int64_t(tick) * period + sourcePeriod / 2) / sourcePeriod; };
+            const auto event = std::upper_bound(events->begin(), events->end(), pos,
+                [&](int64_t value, uint32_t tick) { return value < time(tick); });
+            return revStartTick + revolution * period + (event == events->end() ? period + time(events->front()) : time(*event));
+        }
+    }
     ensureCache();
     if (transitionCells_.empty()) return INT64_MAX;
 

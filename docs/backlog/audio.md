@@ -63,8 +63,9 @@ Remaining:
   IRQ/compatibility CA1 routing, cycle-stamped audio and PHS v3 rewind.
   Its mono speech sum with headroom is a mixing approximation; physical
   output levels/routing still need independent hardware measurements.
-- Hidden/frozen `echoplus_tms` remains a provisional, silent TMS5220/AY
-  scaffold whose decode needs a separate MAME/schematic-based rewrite.
+- `echoplus_tms` now implements the real VIA/PSG decode and TMS5220C
+  FIFO/LPC synthesis (2026-10-18). Independent board audio and analog output
+  calibration remain open; see [DEV](../../DEV.md#echoplustms5220card).
 
 <a id="audio-001"></a>
 <a id="audio-002"></a>

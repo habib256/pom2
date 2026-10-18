@@ -33,6 +33,7 @@
 // they are among the few things allowed to reach memory without `stateMutex`.
 
 #include "MainWindow.h"
+#include "BrowserFiles.h"
 
 #include "AppleKeyLatch.h"
 #include "EmulationController.h"
@@ -719,6 +720,12 @@ void MainWindow::renderPasteFileDialog()
     }
     if (ImGui::BeginPopupModal("Paste from file", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+#ifdef __EMSCRIPTEN__
+        if (ImGui::Button("Choose text file..."))
+            pom2::chooseBrowserFile(pom2::BrowserFileKind::Text);
+        ImGui::TextUnformatted(pasteDialogPath.empty() ? "Choose an Applesoft listing or text file." : "Text file selected.");
+        ImGui::TextUnformatted("Up to 4096 characters are queued; longer files report truncation.");
+#else
         ImGui::TextUnformatted("Path to a text file (Applesoft listing, etc.)");
         char buf[512] = {0};
         std::snprintf(buf, sizeof(buf), "%s", pasteDialogPath.c_str());
@@ -727,6 +734,7 @@ void MainWindow::renderPasteFileDialog()
             pasteDialogPath = buf;
         else
             pasteDialogPath = buf;
+#endif
         ImGui::Checkbox("Auto-uppercase", &pasteAutoUppercase);
         ImGui::Separator();
         if (ImGui::Button("Paste", ImVec2(120, 0))) {

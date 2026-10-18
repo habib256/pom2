@@ -421,6 +421,7 @@ int main()
         {"mouse", "MouseCard"}, {"mouseaw", "MouseCardAppleWin"},
         {"mockingboard", "MockingboardAC"}, {"mockingboard_c", "MockingboardSndII"},
         {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},
+        {"echoplus_tms", "EchoPlusTMS"},
         {"workstation", "WorkstationCard"}, {"4play", "FourPlayCard"},
         {"snesmax", "SnesMaxCard"},
         {"transwarp", "TranswarpCard"},

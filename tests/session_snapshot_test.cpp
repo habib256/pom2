@@ -235,7 +235,7 @@ void writableRefusal()
     auto state = f.ctrl.lockState();
     f.disk->driveImage(0).setHostWriteProtected(false);
     SessionArchive out;
-    assert(!pom2::captureSession(out, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+    assert(pom2::captureSession(out, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
     // A dirty outgoing disk must not disappear when loading an older session.
     const uint8_t old = f.disk->driveImage(0).nibbleAt(0, 0);
     f.disk->driveImage(0).writeNibbleAt(0, 0, old ^ 1);
@@ -265,7 +265,7 @@ void slinkySessions()
         slinky->deviceSelectWrite(0, 0x34); // reload the saved pointer
     }
     const auto saved = f.capture();
-    assert(saved.version == 3);
+    assert(saved.version == 6);
     assert(saved.slots[2].kind == SessionArchive::Card::Slinky);
     assert(saved.slots[2].identity == rom);
     Blob encoded;
@@ -448,7 +448,7 @@ void wozSessions()
             f.disk->deviceSelectRead(0xC);
         }
         const auto original = f.capture();
-        assert(original.version == 3);
+        assert(original.version == 6);
         auto previous = original; previous.version = 2;
         Blob previousBytes;
         SessionArchive previousDecoded;
@@ -509,6 +509,41 @@ void wozSessions()
     }
 }
 
+void writableWozSessions()
+{
+    for (bool flux : {false, true}) {
+        auto fixture = std::make_unique<Fixture>(MockingboardCard::Variant::AC, true);
+        auto& f = *fixture;
+        const auto path = pom2test::tempPath("pom2-session-writable.woz");
+        auto source = sessionWoz(true, flux, 32); source[22] = 0;
+        { std::ofstream file(path, std::ios::binary); file.write(reinterpret_cast<const char*>(source.data()), source.size()); }
+        auto state = f.ctrl.lockState();
+        assert(f.disk->insertDisk(path)); f.disk->setWriteBackEnabled(true);
+        const int qt = flux ? 1 : 0;
+        const int64_t ticks[] = {16, 32, 48};
+        f.disk->driveImage(0).writeFlux(qt, 0, 64, 3, ticks, 0);
+        pom2::SessionArchive saved, again;
+        const auto expected = f.disk->driveImage(0).fluxEvents(qt);
+        assert(pom2::captureSession(saved, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+        assert(f.disk->driveImage(0).hasUnsavedChanges());
+        f.disk->driveImage(0).eject();
+        std::filesystem::remove(path);
+        if (!pom2::restoreSession(saved, state.cpu(), state.memory(), f.ctrl.machineId(), f.error)) {
+            std::fprintf(stderr, "writable WOZ: %s\n", f.error.c_str()); assert(false);
+        }
+        assert(!f.disk->driveImage(0).isWriteProtected());
+        assert(f.disk->driveImage(0).fluxEvents(qt) == expected);
+        assert(pom2::captureSession(again, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
+        Blob a, b; assert(pom2::encodeSessionArchive(saved, a, f.error));
+        assert(pom2::encodeSessionArchive(again, b, f.error) && a == b);
+        const int64_t more[] = {80, 96};
+        f.disk->driveImage(0).writeFlux(qt, 64, 112, 2, more, 0);
+        assert(f.disk->driveImage(0).hasUnsavedChanges());
+        assert(f.disk->driveImage(0).saveDirty());
+        assert(!std::filesystem::exists("(session disk)"));
+    }
+}
+
 void diskFormats()
 {
     for (bool nib : {false, true}) {
@@ -547,5 +582,6 @@ int main()
     clockSessions();
     diskFormats();
     wozSessions();
+    writableWozSessions();
     std::puts("session_snapshot: all ok");
 }

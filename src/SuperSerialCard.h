@@ -403,6 +403,8 @@ public:
     /// had drifted to.
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
+    /// Archival sessions cannot replay an external connection or queued I/O.
+    bool sessionIdle() const;
 
 private:
     int slot;

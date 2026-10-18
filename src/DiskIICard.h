@@ -169,7 +169,8 @@ public:
     void appendSessionIdentity(std::vector<uint8_t>& out) const;
     bool appendSessionState(std::vector<uint8_t>& out, std::string& error) const;
     bool prepareSessionState(const uint8_t* data, size_t len,
-                             SessionRestore& out, std::string& error, bool allowWoz = false) const;
+                             SessionRestore& out, std::string& error, bool allowWoz = false,
+                             bool allowWritable = false) const;
     void applySessionState(SessionRestore&& prepared);
     /// Is the bit-level LSS actually driving the head right now? Distinct
     /// from `hasLssRom()`: a mounted WOZ forces the bit-level path even with
@@ -327,6 +328,12 @@ public:
     /// $C0nA / $C0nB access (0 = drive 1, 1 = drive 2).
     int  getActiveDrive() const { return activeDrive; }
     int  getTrackPosition(int drive = 0) const { return validDrive(drive) ? trackPos[drive] : 0; }
+    /// Cursor in the LSS-cycle coordinates of fluxEvents(); caller holds state lock.
+    int getFluxPosition(int drive = 0) const {
+        if (!validDrive(drive) || revolutionStartLssCycle[drive] == kNeverRev) return 0;
+        const int period = images[drive].trackPeriod(headQuarterTrack[drive]);
+        return period > 0 ? int((lssCycle - uint64_t(revolutionStartLssCycle[drive])) % uint64_t(period)) : 0;
+    }
     bool hasUnsavedChanges(int drive = 0) const { return validDrive(drive) && images[drive].hasUnsavedChanges(); }
     /// Both drives, for the background autosave (MediaAutosave.h). A burst
     /// the controller has not folded into the image yet is simply picked up

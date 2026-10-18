@@ -584,12 +584,13 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     };
 
     auto plugEchoPlusTms = [&](int s) {
-        // Street Electronics Echo+ AS ACTUALLY SHIPPED — 2×AY-3-8913 +
-        // TMS5220. Scaffold only: register decode is present so software
-        // detects the card, but the LPC core + AY synth are deferred.
-        // Audio is silent. See EchoPlusTMS5220Card.h for the chipset
-        // sourcing notes.
         auto card = std::make_unique<EchoPlusTMS5220Card>(s);
+        card->setCpu(&st.cpu());
+        card->setSampleRate(controller->audio().getActualSampleRate());
+        const auto mix = audioCoordinator_->restoreCardSettings(
+            *settings, pom2::AudioCoordinator::CardKind::EchoPlusTms5220, s, 0.7f);
+        card->setVolume(mix.volume); card->setMuted(mix.muted);
+        registerAudioSource(card->audioSource());
         st.memory().slotBus().plug(s, std::move(card));
     };
 

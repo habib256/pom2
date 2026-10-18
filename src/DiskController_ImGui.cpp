@@ -93,6 +93,8 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
                     snap.halfTrack);
         ImGui::Text("Buffer pos: %d / 6656", snap.trackPos);
         ImGui::TextWrapped("Image: %s", snap.diskPath.c_str());
+        if (snap.persistenceState == "session")
+            ImGui::TextWrapped("Session disk: changes stay in RAM. Save a session to retain them.");
         // Say WHY the guest sees a read-only disk. Without this the app
         // just reports "disk is write-protected" and nothing connects that
         // to a host checkbox — Print Shop refusing to save its own Setup
@@ -136,12 +138,13 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
     ImGui::Separator();
 
     // ─── Buttons ─────────────────────────────────────────────────────────
+    renderFlux(snap);
     if (ImGui::Button("Insert .dsk...")) {
         insertDialogOpen = true;
         if (dialogPath.empty()) dialogPath = "disks_5.4/";
     }
     ImGui::SameLine();
-    ImGui::BeginDisabled(!snap.diskLoaded);
+    ImGui::BeginDisabled(!snap.diskLoaded || snap.persistenceState == "session");
     if (ImGui::Button("Eject")) {
         r.requestEject = true;
     }
@@ -181,7 +184,7 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
     // and cannot be unticked here (that flag is in the image, not on the
     // sleeve). The host applies it through StorageCoordinator::setMediaNotch.
     bool protect = snap.fileWriteProtected;
-    ImGui::BeginDisabled(!snap.diskLoaded);
+    ImGui::BeginDisabled(!snap.diskLoaded || snap.persistenceState == "session");
     if (ImGui::Checkbox("Write-protected (the notch on this disk)", &protect)) {
         r.writeBackToggleChanged = true;   // host: setMediaNotch(diskPath, protect)
         r.writeBackNewValue      = !protect;
@@ -200,6 +203,7 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
     } else if (snap.hasUnsavedChanges) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                           snap.persistenceState == "session" ? "(save in session)" :
                            snap.persistenceState == "disabled" ? "(unsaved)"
                                                               : "(saving to file)");
     }

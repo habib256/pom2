@@ -72,23 +72,29 @@ and press Return.
   monochrome or CRT rendering; Le Chat Mauve/Video-7 RGB, Videx Videoterm,
   VidHD and a 3D voxel view add other ways to see the machine.
 - **Sound and input.** The speaker, cassette, drive sounds, stereo Mockingboard
-  A/C, //c Mockingboard 4c, Phasor, SSI263 speech and S.A.M. DAC share the
+  A/C, //c Mockingboard 4c, Phasor, SSI263 and Echo+ TMS5220C speech, and S.A.M. DAC share the
   mixer. Mouse, paddles, gamepads, 4play and SNES MAX are supported. Serial
   and parallel cards connect to an ImageWriter emulator with PNG/PDF export.
 - **Storage.** Disk II, Sony 3½-inch, SmartPort/Liron, HDV, CFFA 2.0,
   CFFA3000 SmartPort, SuperDrive and Floppy Emu handle `.dsk`, `.do`, `.d13`,
   `.po`, `.nib`, `.2mg`, `.woz`, `.moof` and `.hdv`. Writable 5¼-inch WOZ 2.1
-  includes FLUX tracks; 3½-inch WOZ and MOOF captures remain read-only.
+  includes FLUX tracks; 3½-inch GCR WOZ/MOOF captures support native IWM flux writes. SuperDrive block
+  writes splice CRC-valid sectors in MFM MOOF captures; GCR block services
+  require export to a raw image.
   SuperDrive exposes 400/800K GCR and 1.44 MB MFM images as ProDOS blocks.
 - **Files and tools.** The shared ProDOS host folder preserves type/aux type
   in portable `NAME#TTAAAA` names, offers opt-in TXT line-ending conversion
   and saves concurrent edits in `.pom2-conflicts/`. Disk Library search,
   rewind, snapshots, a memory viewer, symbol-aware debugger, conditional
-  breakpoints and CPU profiling support both play and development.
+  breakpoints, an interactive 6502/65C02 assembler, Disk II flux inspection
+  and CPU profiling support both play and development.
 - **Connections and browser.** Desktop builds offer Uthernet I/II, FujiNet
   relay, TNFS and VSDrive. The WebAssembly build stores settings and layout in
-  IndexedDB; its //c starts with a Mockingboard 4c and pauses while the tab is
-  hidden. Host socket networking is unavailable in the browser.
+  IndexedDB and offers text upload, session import/export and optional
+  [automatic resume for supported sessions](docs/session-format.md#using-it). Writable floppy and HDV sessions
+  retain unsaved data and further guest writes in RAM, preserving source files.
+  Its //c starts with a Mockingboard 4c and pauses while the tab is hidden.
+  Host socket networking is unavailable in the browser.
 
 Some cards expose a high-level service instead of running every original chip
 or firmware. See the [LLE/HLE matrix](docs/lle_vs_hle.md) for each card's

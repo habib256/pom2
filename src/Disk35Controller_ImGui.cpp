@@ -65,19 +65,17 @@ void renderDriveBlock(int                                       driveIdx,
                     drv.track, drv.side1 ? 1 : 0,
                     drv.writeProtected ? "(write-protected)" : "");
         ImGui::TextWrapped("Image: %s", drv.diskPath.c_str());
-        // A 3.5" WOZ is write-protected for a reason that has nothing to do
-        // with the checkbox below or with the image's own flags, so say which
-        // reason it is. Otherwise the user ticks write-back, gets refused,
-        // and has no way to tell that this particular format simply cannot
-        // take writes — which is exactly how "why can't I save?" starts.
+        if (drv.persistenceState == "session")
+            ImGui::TextWrapped("Session disk: changes stay in RAM. Save a session to retain them.");
+        // Explain which guest write path can update a captured track.
         if (drv.isBitstream) {
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 155, 100, 255));
             ImGui::TextWrapped(
-                "Read-only because it is a 3.5\" WOZ/MOOF: POM2 decodes Sony GCR "
-                "but cannot re-encode it, so there is nothing to write guest "
-                "changes back into. Convert decoded sectors to a writable "
-                ".po if needed; protected track patterns cannot be copied "
-                "to .po. The original image is left untouched.");
+                "WOZ/MOOF captures support physical GCR writes through the IWM. "
+                "SuperDrive block writes update existing valid MFM sectors. "
+                "GCR SmartPort block mounts require conversion to .po. "
+                "Conversion does not preserve "
+                "protected track patterns.");
             ImGui::PopStyleColor();
         }
     } else {
@@ -95,7 +93,7 @@ void renderDriveBlock(int                                       driveIdx,
         r.openMountDialogForDrive = driveIdx;
     }
     ImGui::SameLine();
-    ImGui::BeginDisabled(!drv.diskLoaded);
+    ImGui::BeginDisabled(!drv.diskLoaded || drv.persistenceState == "session");
     if (ImGui::Button("Eject")) {
         r.requestEject[driveIdx] = true;
     }
@@ -123,7 +121,7 @@ void renderDriveBlock(int                                       driveIdx,
     // protection and flipping it changes the file's read-only bit, so the
     // disk stays protected in any drive. Host: setMediaNotch(path, protect).
     bool protect = drv.fileWriteProtected;
-    ImGui::BeginDisabled(!drv.diskLoaded);
+    ImGui::BeginDisabled(!drv.diskLoaded || drv.persistenceState == "session");
     if (ImGui::Checkbox("Write-protected (the tab on this disk)", &protect)) {
         r.requestWriteBackToggle[driveIdx] = true;
         r.newWriteBack[driveIdx]           = !protect;
@@ -146,6 +144,7 @@ void renderDriveBlock(int                                       driveIdx,
     } else if (drv.hasUnsavedChanges) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                           drv.persistenceState == "session" ? "(save in session)" :
                            drv.persistenceState == "disabled" ? "(unsaved)"
                                                               : "(saving to file)");
     }

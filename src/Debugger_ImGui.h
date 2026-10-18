@@ -85,6 +85,7 @@ private:
     void drawBreakpointList(EmulationController& ctrl, const Snapshot& snap);
     void drawWatchpointList(EmulationController& ctrl, const Snapshot& snap);
     void drawStopBanner(const Snapshot& snap);
+    void drawAssembler(EmulationController& ctrl, const Snapshot& snap);
 
     /// Disassembly origin. Follows the PC unless the user has scrolled away.
     uint16_t  viewAddr_    = 0;
@@ -99,6 +100,9 @@ private:
     char symbolPath_[1024] = {};
     DebuggerSymbols symbols_;
     std::string symbolStatus_;
+    char assemblyAddress_[8] = {"0300"};
+    char assemblySource_[128] = {"LDA #$00"};
+    std::string assemblyStatus_;
     /// Same, for the watchpoint box. Separate storage so typing in one does
     /// not clear the other.
     char      wpEntry_[8]  = {0};

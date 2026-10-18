@@ -187,11 +187,10 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "The real chip is an analog formant synth. AppleWin's blob is the only "
       "extant reference — MAME has no SSI263 at all.",
       "Ssi263.*, Ssi263PhonemeData.*" },
-    { "tms5220", "Audio", "Echo+ TMS5220 (scaffold)", AbsLevel::H1,
-      "Stub register decode at $Cs00-$Cs0F, enough for driver detection",
-      "The LPC10 decoder (chirp ROM + K-parameter interpolation) and the "
-      "AY-3-8913 synth are not written yet — ~3-5 d.",
-      "EchoPlusTMS5220Card.*" },
+    { "tms5220", "Audio", "Echo+ TMS5220C + 2xAY", AbsLevel::L1,
+      "TMS5220C FIFO, LPC interpolation, chirp/noise, lattice filter and DAC; single VIA and two AY8913s",
+      "C0n0 commands are accepted immediately; analog board levels and physical hardware captures remain unvalidated.",
+      "EchoPlusTMS5220Card.*, EchoPlusTMS5220Snapshot.cpp, Tms5220.*" },
     { "floppysnd", "Audio", "Floppy mechanical sounds", AbsLevel::H2,
       "Host sample playback driven by emuCycles-stamped phase strobes",
       "There is nothing on the bus to model — it is literally acoustics.",

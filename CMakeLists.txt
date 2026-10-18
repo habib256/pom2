@@ -265,8 +265,11 @@ configure_file(
 set(SOURCES
     src/SessionArchive.cpp
     src/SessionSnapshot.cpp
+    src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/BrowserSessionStore.cpp
     src/DiskImage_Session.cpp
+    src/DiskImage_SessionWritable.cpp
     src/DiskIICard_Session.cpp
     src/M6502.cpp
     src/Z80.cpp
@@ -298,18 +301,24 @@ set(SOURCES
     src/ClockCard.cpp
     src/Disassembler6502.cpp
     src/Disk35Image.cpp
+    src/Disk35Image_Bitstream.cpp
+    src/Disk35Image_Session.cpp
     src/Disk35Controller_ImGui.cpp
     src/DiskController_ImGui.cpp
+    src/DiskFlux_ImGui.cpp
     src/DriveRack_ImGui.cpp
     src/DriveRackFilePicker.cpp
     src/SessionFilePicker.cpp
     src/MainWindow_SessionFiles.cpp
+    src/BrowserFiles.cpp
     src/DriveRackMount.cpp
     src/MainWindow_DriveRack.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/Debugger.cpp
     src/Debugger_ImGui.cpp
+    src/Debugger_Assembler.cpp
+    src/Assembler6502.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/DiskImage.cpp
@@ -317,6 +326,8 @@ set(SOURCES
     src/DiskLibrary_ImGui.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
+    src/EchoPlusTMS5220Snapshot.cpp
+    src/Tms5220.cpp
     src/EmulationController.cpp
     src/ZipChip.cpp
     src/EmulationController_Storage.cpp
@@ -328,6 +339,7 @@ set(SOURCES
     src/SmartPortHub.cpp
     src/Sony35Gcr.cpp
     src/Sony35Drive.cpp
+    src/Sony35Drive_Session.cpp
     src/CharRomCatalog.cpp
     src/CharRomDump.cpp
     src/JoystickInput.cpp
@@ -410,6 +422,7 @@ set(SOURCES
     src/Ssi263PhonemeData.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
+    src/Block512Backing_Session.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
     src/ResourcePaths.cpp
@@ -501,6 +514,7 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Architecture.cmake)
 
 set(POM2_DEVICES_HEADERS
+    src/Tms5220Tables.h
     src/Cffa3000Card.h
     src/Ay3_8910.h
     src/AyEventRing.h
@@ -532,6 +546,8 @@ set(POM2_DEVICES_SOURCES
     src/DiskIICard_Cycles.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
+    src/EchoPlusTMS5220Snapshot.cpp
+    src/Tms5220.cpp
     src/FloppyEmuDevice.cpp
     src/FujiNetCard.cpp
     src/FujiNetRuntime.cpp
@@ -653,6 +669,7 @@ set(POM2_FRONTEND_HEADERS
 set(POM2_FRONTEND_SOURCES
     src/AudioCoordinator.cpp
     src/Debugger_ImGui.cpp
+    src/Debugger_Assembler.cpp
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_MiscPanels.cpp
@@ -683,10 +700,12 @@ set(POM2_FRONTEND_SOURCES
     src/CliRunner.cpp
     src/Disk35Controller_ImGui.cpp
     src/DiskController_ImGui.cpp
+    src/DiskFlux_ImGui.cpp
     src/DriveRack_ImGui.cpp
     src/DriveRackFilePicker.cpp
     src/SessionFilePicker.cpp
     src/MainWindow_SessionFiles.cpp
+    src/BrowserFiles.cpp
     src/DriveRackMount.cpp
     src/MainWindow_DriveRack.cpp
     src/DiskLibrary_ImGui.cpp
@@ -743,6 +762,7 @@ set(POM2_FRONTEND_SOURCES
 )
 
 set(POM2_MACHINE_HEADERS
+    src/Opcode6502.h
     src/Apple2VideoDecode.h
     src/AppleKeyLatch.h
     src/CpuClock.h
@@ -754,6 +774,7 @@ set(POM2_MACHINE_HEADERS
 )
 
 set(POM2_MACHINE_SOURCES
+    src/Assembler6502.cpp
     src/Keyboard.cpp
     src/MemoryWatch.cpp
     src/M6502.cpp
@@ -769,6 +790,7 @@ set(POM2_MACHINE_SOURCES
     src/IWMDevice.cpp
     src/SmartPortHub.cpp
     src/Sony35Drive.cpp
+    src/Sony35Drive_Session.cpp
     src/NoSlotClock.cpp
     src/ZipChip.cpp
     src/SlotBus.cpp
@@ -777,6 +799,8 @@ set(POM2_MACHINE_SOURCES
 )
 
 set(POM2_MEDIA_HEADERS
+    src/Disk35Mfm.h
+    src/Disk35Bitstream.h
     src/AtomicFileReplace.h
     src/MediaAutosave.h
     src/TwoImg.h
@@ -784,10 +808,14 @@ set(POM2_MEDIA_HEADERS
 
 set(POM2_MEDIA_SOURCES
     src/DiskImage_Session.cpp
+    src/DiskImage_SessionWritable.cpp
     src/AtaBlockDevice.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
+    src/Block512Backing_Session.cpp
     src/Disk35Image.cpp
+    src/Disk35Image_Bitstream.cpp
+    src/Disk35Image_Session.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
     src/ProDOSVolume.cpp
@@ -798,6 +826,7 @@ set(POM2_MEDIA_SOURCES
 
 set(POM2_RUNTIME_HEADERS
     src/SessionSnapshot.h
+    src/SessionIIc.h
     src/SessionFiles.h
     src/PrinterRender.h
     src/AiControlJson.h
@@ -829,7 +858,9 @@ set(POM2_RUNTIME_HEADERS
 
 set(POM2_RUNTIME_SOURCES
     src/SessionSnapshot.cpp
+    src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/BrowserSessionStore.cpp
     src/AiControlServer.cpp
     src/AiControlServer_Printer.cpp
     src/PrinterPortControl.cpp
@@ -886,6 +917,7 @@ pom2_enforce_mainwindow_line_limit(${CMAKE_CURRENT_SOURCE_DIR} 2000)
 set(HEADERS
     src/SessionArchive.h
     src/SessionSnapshot.h
+    src/SessionIIc.h
     src/SessionFiles.h
     src/SessionIO.h
     src/M6502.h
@@ -1217,6 +1249,7 @@ if(EMSCRIPTEN)
         "-sFORCE_FILESYSTEM=1"
         "-lidbfs.js"
         "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS','ccall','cwrap']"
+        "--pre-js" "${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
         "--shell-file" "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html"
     )
     # Preload the package payload into POM2.data. Each clause maps an on-disk
@@ -1283,6 +1316,9 @@ if(EMSCRIPTEN)
         list(APPEND POM2_WASM_LINK "SHELL:--exclude-file ${_pom2_pat}")
     endforeach()
     target_link_options(${PROJECT_NAME} PRIVATE ${POM2_WASM_LINK})
+    set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html")
     # Match shell.html's <canvas id="canvas"> ID convention.
     set_target_properties(${PROJECT_NAME} PROPERTIES
         OUTPUT_NAME "POM2"
@@ -1406,8 +1442,11 @@ if(NOT EMSCRIPTEN)
 set(POM2_CORE_SOURCES
     src/SessionArchive.cpp
     src/SessionSnapshot.cpp
+    src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/BrowserSessionStore.cpp
     src/DiskImage_Session.cpp
+    src/DiskImage_SessionWritable.cpp
     src/DiskIICard_Session.cpp
     src/M6502.cpp
     src/Z80.cpp
@@ -1441,6 +1480,8 @@ set(POM2_CORE_SOURCES
     src/ClockCard.cpp
     src/Disassembler6502.cpp
     src/Disk35Image.cpp
+    src/Disk35Image_Bitstream.cpp
+    src/Disk35Image_Session.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/Debugger.cpp
@@ -1450,6 +1491,8 @@ set(POM2_CORE_SOURCES
     src/DiskImageWozFlux.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
+    src/EchoPlusTMS5220Snapshot.cpp
+    src/Tms5220.cpp
     src/EmulationController.cpp
     src/ZipChip.cpp
     src/EmulationController_Storage.cpp
@@ -1460,6 +1503,7 @@ set(POM2_CORE_SOURCES
     src/SmartPortHub.cpp
     src/Sony35Gcr.cpp
     src/Sony35Drive.cpp
+    src/Sony35Drive_Session.cpp
     src/CharRomCatalog.cpp
     src/CharRomDump.cpp
     src/LeChatMauveCard.cpp
@@ -1505,6 +1549,7 @@ set(POM2_CORE_SOURCES
     src/Ssi263PhonemeData.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
+    src/Block512Backing_Session.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
     src/ResourcePaths.cpp
@@ -1700,6 +1745,8 @@ add_executable(pom2_headless
     src/CassetteDevice.cpp
     src/ClockCard.cpp
     src/Disk35Image.cpp
+    src/Disk35Image_Bitstream.cpp
+    src/Disk35Image_Session.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
     src/DiskIICard.cpp
@@ -1710,6 +1757,7 @@ add_executable(pom2_headless
     src/BlockWriteBackExecutor.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
+    src/Block512Backing_Session.cpp
     src/ProDOSVolume.cpp
     src/IIcExternalSmartPort.cpp
     src/SmartPortBusDevice.cpp
@@ -1719,6 +1767,7 @@ add_executable(pom2_headless
     src/SmartPortHub.cpp
     src/Sony35Gcr.cpp
     src/Sony35Drive.cpp
+    src/Sony35Drive_Session.cpp
     src/LeChatMauveCard.cpp
     src/M6502.cpp
     src/MachineSnapshot.cpp
@@ -1791,6 +1840,8 @@ add_executable(pom2_bench
     src/AudioDevice.cpp
     src/CassetteDevice.cpp
     src/Disk35Image.cpp
+    src/Disk35Image_Bitstream.cpp
+    src/Disk35Image_Session.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskImage.cpp
@@ -1814,6 +1865,7 @@ add_executable(pom2_bench
     src/SnapshotIO.cpp
     src/Sony35Gcr.cpp
     src/Sony35Drive.cpp
+    src/Sony35Drive_Session.cpp
     src/SpeakerDevice.cpp
 )
 target_include_directories(pom2_bench PRIVATE
@@ -1991,7 +2043,7 @@ if(UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
 endif()
 
 # Docs + desktop integration.
-install(FILES README.md CHANGELOG.md DEV.md TODO.md LICENSE
+install(FILES README.md CHANGELOG.md DEV.md TODO.md LICENSE THIRD-PARTY.md
         DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(FILES packaging/POM2.desktop
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")

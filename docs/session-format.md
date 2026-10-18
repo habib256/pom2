@@ -1,14 +1,14 @@
-# Resumable sessions (v3; v1/v2 compatible)
+# Resumable sessions (v6; v1–v5 compatible)
 
 `.pom2session` bundles CPU/RAM state, supported card state and embedded
-read-only floppy contents. It complements `.pom2snap`, whose contract remains
+floppy and HDV contents, including unsaved writes. It complements `.pom2snap`, whose contract remains
 CPU/RAM without slot restoration. Both formats deliberately have different
 magic bytes: loading a session as a snapshot must fail rather than silently
 dropping its cards and disks.
 
 ## Supported configuration
 
-- Apple II, II+ and IIe, including PAL and RamWorks, with the same profile,
+- Apple II, II+, IIe, //c, //c PAL and //c+, including RamWorks where applicable, with the same profile,
   motherboard/character ROMs, memory configuration and No-Slot Clock settings
   selected before loading.
 - Any combination of Disk II, Mockingboard A/C, Mockingboard Sound II,
@@ -17,7 +17,7 @@ dropping its cards and disks.
   clock card's slot/expansion ROM bytes must match. Empty slots must match
   as well. Slinky's sparse 1 MB RAM and the clock's in-progress serial and
   timer state are included; host wall-clock time continues advancing.
-- Clean, physically write-protected 5.25-inch media: DOS/ProDOS
+- Read-only or writable 5.25-inch media: DOS/ProDOS
   sector images, 13-sector images and nibble images, including normalized
   supported wrappers. Both drives of every Disk II are embedded as nibble
   tracks, preserving their guest-visible bytes and sector geometry.
@@ -26,16 +26,39 @@ dropping its cards and disks.
   lengths, nonstandard bit timing and sub-cell flux transitions survive.
   Supported MacBinary wrappers are stripped during the original mount.
 
-Restored disks are detached and permanently write-protected. No original
-disk filename is reopened or written; the drive label is `(session disk)`.
-Reopen the bundle explicitly on subsequent launches. It does not recreate the
-machine configuration automatically or persist an active session at shutdown.
+- On //c-class machines, both built-in serial ACIAs, the IOU mouse,
+  Mockingboard 4c and Le Chat Mauve adapter are included. Serial ports must
+  be idle, without listeners/connections or queued transport bytes.
+- Read-only or writable 400K/800K media in the onboard Sony mechanisms
+  and SmartPort 3.5-inch units are embedded, including WOZ/MOOF captures.
+  The SmartPort chain geometry and unit types must match; transfer buffers,
+  partially consumed reads and the external-port transaction are restored.
+
+- Version 6 adds both drives of ProDOS HDV cards and HDV units in mixed
+  SmartPort chains. Raw and 2IMG block contents, protection flags, dirty
+  blocks and partial transfers survive without reopening source files.
+  The ProDOS card's slot ROM must match. SmartPort still requires the
+  built-in firmware; external Liron firmware is unsupported.
+
+Restored disks are detached from host files; the drive label is `(session disk)`.
+Version 5 writable media retain their guest-visible protection/write-enable
+state and accept further writes in RAM. Save another session (or keep browser
+automatic resume enabled) to retain these changes. Autosave, flush and eject
+never write a detached disk to the original file or to the private label.
+The drive panels identify this mode. Read-only records from older formats
+remain permanently protected. No original disk filename is reopened by the
+session decoder.
+Reopen the bundle explicitly on subsequent launches, or enable the browser
+automatic-resume option described below. A bundle does not recreate the
+machine configuration automatically.
 Host gamepad input, mixer settings and window layout stay live.
 
-Other unsupported cards, //c and //c+, socket accelerators, writable/dirty
-floppies, pending eject/write-back operations, cassette content/recording
-and loaded onboard 3.5-inch media cause refusal. No unsupported device is
-silently omitted. Flush or save outgoing dirty media before loading a bundle.
+Other unsupported cards, socket accelerators, pending eject/write-back
+operations, host-folder volumes, CFFA/ATA cards, active serial transports
+and cassette content/recording cause refusal. No unsupported device is
+silently omitted. A snapshot can capture unsaved floppy writes without
+flushing them. Before loading, outgoing dirty host-backed media must still
+be flushed or saved; outgoing detached session media can be rolled back.
 
 ## Using it
 
@@ -46,8 +69,25 @@ selector where available and offers a path field otherwise. Save appends
 file. Cancelling leaves the machine and destination untouched. A failed
 operation keeps the path and error visible for correction. Opening resumes
 the saved state in the currently selected matching configuration; it does
-not change the running/paused mode. These desktop actions are hidden in the
-browser build, which does not expose host filesystem paths.
+not change the running/paused mode.
+
+In the browser, **File > Save session...** downloads a `.pom2session` archive;
+**File > Open session...** opens the browser file selector. The same machine,
+firmware and card restrictions apply. Imports are bounded
+at 32 MiB and validated before live state is replaced.
+
+**File > Automatic resume > Resume this machine on reload** opts the current
+supported configuration into checkpoints every ten seconds and on page hide.
+The archive and running/stopped mode are stored under the existing IndexedDB
+mount. Startup restores after the initial boot actions have settled. Hiding a
+running tab saves its intended running mode, rather than the temporary pause
+introduced by tab visibility. Disabling the option removes its enable marker;
+the previous archive remains available. An unsupported configuration, a
+corrupt archive or failed save suspends checkpointing and leaves an error in
+the menu; retry explicitly after correcting the configuration. Failed restore
+never falls back to a CPU/RAM-only snapshot. The default browser //c topology
+and writable floppy images are supported. IndexedDB flushes are asynchronous: an
+abrupt browser termination may lose changes since the last completed flush.
 
 After selecting a supported configuration, use:
 
@@ -80,7 +120,7 @@ All integers are little-endian; maximum file size is 32 MiB.
 | Field | Encoding |
 |---|---|
 | Magic | Eight bytes, `POM2SESS` |
-| Version | u32, currently 3; versions 1, 2 and 3 accepted |
+| Version | u32, currently 5; versions 1 through 5 accepted |
 | Machine identity | Nonzero u32 profile identity |
 | Payload size | u32, exactly file size minus 24 |
 | Controller configuration | u32 length + bytes (up to 64) |
@@ -89,8 +129,16 @@ All integers are little-endian; maximum file size is 32 MiB.
 | CRC32 | u32 IEEE reversed-polynomial CRC over all preceding bytes |
 
 Slot kinds are 0 empty, 1 Disk II, 2 Mockingboard A/C, 3 Sound II, 4 SNES MAX,
-5 Slinky and 6 ThunderClock+ (both v3 only).
-Slot 0 must be empty; the language card lives in the core memory snapshot.
+5 Slinky and 6 ThunderClock+ (v3+), 7 built-in serial, 8 IOU mouse,
+9 Le Chat Mauve, 10 SmartPort and 11 onboard Sony media (v4+),
+and 12 ProDOS HDV (v6+).
+Slot 0 carries kind 11 on //c-class machines and remains empty otherwise;
+no actual peripheral may occupy slot 0. The language card lives in the core
+memory snapshot. The Sony record contains three presence bytes followed by
+three media blobs, one for each wired mechanism (v4). Version 5 follows
+each media blob with a Sony write-state blob. SmartPort records contain
+runtime state followed by fourteen media blobs; the identity binds the unit
+count, controller mode and empty/3.5-inch/HDV bay topology (HDV requires v6).
 CRC detects damage, not intentional forgery. The loader still validates all
 lengths, type/firmware matches and nested state after checksum verification.
 Disk II timelines and VIA counters receive semantic bounds as well, so an
@@ -100,8 +148,7 @@ overflow a signed timer on the next advance.
 Disk II state contains its existing runtime blob followed by two embedded
 media blobs. A media blob is `DRO1`, a presence byte, then (when present)
 sectors-per-track, sector order and nibble-format bytes plus 35 × 6656 raw
-nibbles. Empty blobs are exactly five bytes. No host paths, dirty flags or
-write-back jobs enter the archive.
+nibbles. Empty blobs are exactly five bytes. No host paths or write-back jobs enter the archive.
 
 Version 2 adds `DWO1` followed by the original canonical WOZ bytes, bounded
 at 16 MiB per WOZ payload. The normal WOZ decoder validates these in memory,
@@ -110,9 +157,61 @@ file still has a 32 MiB cap; larger sessions are refused, not truncated.
 Decoded media storage across slots is limited to 128 MiB. Version 1 keeps
 its original limits and rejects WOZ records; old read-only nibble sessions
 remain loadable. Version 2 WOZ sessions also remain loadable. New saves use
-version 3, which binds Slinky state to the exact 4 KB ROM image and the clock
-to its slot/expansion ROM bytes. Older readers refuse the new version.
+version 6. Version 3 binds Slinky state to the exact 4 KB ROM image and the
+clock to its slot/expansion ROM bytes. Version 4 adds //c-class devices and
+protected 3.5-inch media. Version 5 adds writable/dirty media and their
+write framing. Older readers refuse the new version.
 
+A 3.5-inch media blob starts with `D35` and byte 1, a type byte (0 empty,
+1 raw 400K, 2 raw 800K, 3 raw 1.44M, 4 WOZ2, 5 MOOF), then a u32-length
+payload. Captures retain their canonical container, bounded at 16 MiB;
+raw/2IMG images store their decoded blocks without host paths or wrappers.
+All restored media acquire a private `(session disk)` name and host notch.
+SmartPort runtime media hashes are rebased to that name so an in-progress
+transfer survives without referring to the source path.
+
+
+Version 5 writable/modified media use `DMS` + byte 1, a protection byte,
+then a u32-length legacy media payload (`DRO1` / `DWO1` / `D35` + byte 1).
+Protection bits 0, 1 and 2 preserve the container lock, host notch and
+write-enable policy. Unknown bits and attempts to clear a capture's own
+header lock are rejected. Disk II appends a u32-length framing blob:
+35 records of 32 bytes (next cycle u64, nibble index i32, shift byte u8,
+shift count u8, origin u64, next cell i32, held-valid/bit u8/u8, held cell i32).
+The decoder bounds clocks, indices and shift counts before applying them.
+This retains partial nibble/cell writes across controller flush boundaries.
+Sony write state (`SWS` + byte 1) carries the active write gate, latched
+track/head, write cursor tick/cell, cached track/head/revolution period and
+length-prefixed 0/1 cells. Raw GCR blocks do not yet contain an incomplete
+written sector; this cache and cursor let the next IWM window continue it.
+Only write-related caches are included, with a 1 MiB cap per mechanism.
+The cache is restored after the core MEX and media commit without issuing
+mechanical events. Legacy v4 records retain the prior mechanism contract.
+
+Disk II's nibble runtime path hashes are rebased to the private medium name,
+like SmartPort hashes, so the embedded write state can resume.
+
+Capture serializes current WOZ/MOOF tracks using a private copy; it neither
+changes the source's dirty flags nor submits file I/O or advances its
+irreversible-write epoch. Restored writable disks carry an explicit RAM-only
+persistence mode, which gates every take-writeback/autosave path regardless of
+future write-enable or notch changes. Their data enter subsequent checkpoints.
+
+Version 6 block media use `BMS` + byte 1, flags u8 (header lock, host notch,
+write-enable in bits 0–2), loaded u8, block count u32 and record count u32.
+Each record is block index u32, dirty u8 and 512 payload bytes. Records must
+be strictly increasing, within geometry, and either dirty or nonzero. Omitted
+blocks are zero; dirty zero blocks remain explicit. Geometry is bounded at
+65536 blocks (32 MiB), with the same aggregate 128 MiB expansion limit.
+2IMG container metadata is omitted after decoding; its protection flag is
+preserved. ProDOS HDV records contain a runtime blob and two media blobs.
+SmartPort uses these block records in HDV bays and existing floppy records
+elsewhere. The complete archive still has a 32 MiB ceiling: dense HDVs or
+large combinations can exceed it and are refused without truncation.
+Host folders are not serialized. Pending background or captured host commits
+prevent capture/replacement until their payloads are released. Restored block
+volumes suppress autosave, explicit flush, detach commits and destructor
+write-back even if the write-enable policy is subsequently changed.
 
 Capture copies state under the controller lock; encoding, CRC and file I/O
 run unlocked. Load reads/checksums/decodes unlocked, then rechecks the live
@@ -130,3 +229,20 @@ media and verifies corruption/type/firmware/dirty-media refusals. WOZ checks
 cover both drives, sparse quarter-tracks, non-byte-aligned bit lengths,
 nonstandard timing, FLUX transitions, host-notch protection, records above
 1 MiB, unchanged recapture, legacy v1 restore and invalid nested WOZ data.
+
+`session_iic` covers NTSC/PAL //c and //c+, built-in ACIA/IOU/4c/RGB state,
+SmartPort partial reads, onboard media, missing source files, checkpoint
+reloads, capture media and non-mutating rejection of malformed records.
+
+`session_writable_media` covers dirty Disk II and raw/captured 3.5-inch media,
+partial nibble writes, absent host writes, repeated checkpoint rollback and
+legacy refusal. Writable WOZ/FLUX and combined //c+ media are covered by
+`session_snapshot` and `session_iic`. The Chrome smoke mounts a writable nibble
+image, checkpoints it, deletes its source and compares the complete archive
+after IndexedDB reload.
+
+`session_block_media` additionally checks sparse 32 MiB HDVs, both ProDOS
+HDV drives, mixed SmartPort chains, partial transfers, source independence,
+2IMG locks, dirty zero blocks, malformed-record atomicity and dense-image
+refusal. The Chrome persistence smoke compares whole archives after deleting
+both floppy and HDV source files and reloading their IndexedDB checkpoints.

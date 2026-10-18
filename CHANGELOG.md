@@ -10,6 +10,120 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Detached HDV volumes in resumable sessions
+
+Session v6 embeds both ProDOS HDV drives and HDV units in mixed SmartPort
+chains, preserving block geometry, protection policies, dirty blocks and
+partial transfers. Sparse nonzero/dirty block records retain the last block
+of a 32 MiB volume without filling a 32 MiB session archive. Dense archives
+over that limit are explicitly refused. Restored volumes stay in RAM across
+flush, autosave, detach and destruction; source files and 2IMG wrappers are
+never rewritten by restoration. Host-folder synchronization remains excluded.
+Every outstanding host write payload blocks capture/replacement, including
+explicit captures not owned by the background writer. Legacy sessions remain
+readable; older readers reject v6. Drive panels identify session persistence.
+Validation: ten targeted session/storage tests pass, native and WebAssembly
+builds succeed, and Chrome restores byte-identical floppy/HDV checkpoints
+from IndexedDB after their source files are deleted.
+
+## 2026-10-18 — Writable floppy sessions without host-file rollback
+
+Session v5 captures writable and modified Disk II, onboard Sony and SmartPort
+3.5-inch media. A restored writable disk retains its guest protection state
+and accepts writes in RAM. Its explicit session persistence mode blocks all
+host writeback, including autosave, flush and eject; subsequent checkpoints
+retain its new contents. Original image paths are never restored as write
+targets. The media panels explain that these changes belong to the session.
+
+WOZ/MOOF captures serialize current track data on a private copy, preserving
+unsaved writes without changing the live disk's dirty flags or irreversible
+write epoch. Disk II also saves per-track partial-byte/cell framing and rebases
+nibble snapshot identities, so a write split across checkpoints continues
+correctly. Sony raw-GCR partial-sector cell caches, cursor and latched write
+head are also preserved rather than regenerated from incomplete blocks. In-flight host commits/ejects still refuse capture, and loading may
+not discard outgoing dirty host media. v1–v4 sessions remain readable.
+
+Validation: 19 targeted CTests, native and WebAssembly builds, include/file-size
+guards and the Chrome persistence smoke. Chrome checkpoints a writable nibble
+disk, deletes its source, reloads IndexedDB and compares the complete archive
+byte-for-byte. Native tests also continue partial Disk II nibble writes and
+Sony raw-GCR write windows, and verify no detached autosave is submitted.
+
+## 2026-10-18 — //c sessions and MFM capture writes
+
+Session v4 supports //c, //c PAL and //c+ with the built-in serial ACIAs,
+IOU mouse, Mockingboard 4c, RGB adapter and protected 3.5-inch media, including
+onboard Sony drives and SmartPort units. IWM/MIG/bus state and partial
+SmartPort transfers resume without reopening the original image paths.
+Detached preflight rejects malformed records before changing the live machine;
+active serial transports, writable/dirty media and HDV units remain excluded.
+Browser automatic resume now accepts the default //c topology. v1–v3 sessions
+remain readable on their matching configurations.
+
+SuperDrive writes now update existing CRC-valid MFM sectors in MOOF captures.
+Data/CRC and the following MFM clock are spliced into the original track;
+other 125 ns transitions, metadata, disk type and header/notch protection
+survive. Index-crossing ID/data fields and duplicate valid sectors are handled.
+Missing/corrupt sectors fail instead of inventing a new format. This extends
+the existing block interface; SWIM component emulation remains a separate task.
+
+Validation: `session_iic`, `session_snapshot`, `browser_session_store`,
+`moof35_load` and `disk35_flux_write`, plus thirteen storage/snapshot
+regressions (18 passed); native and WebAssembly builds. The Chrome smoke
+enables automatic resume through the //c UI, pauses, reloads IndexedDB and
+compares the complete recaptured archive byte-for-byte.
+
+## 2026-10-18 — Echo+ LPC audio and native 3.5-inch capture writes
+
+Echo+ now exposes the actual single VIA and its two AY8913s at `$Cs00`, with
+TMS5220C status/data at `$C0n0`. MAME's BSD-licensed LPC interpolation,
+chirp/noise, lattice and DAC path replaces the silent scaffold. CPU-cycle
+production keeps speech running without an audio callback; AYs remain at the
+slot clock under acceleration. The mixer offers stereo PSGs and centered
+speech with volume/mute. ETS v2 restores FIFO bits, filter/generator latches
+and fractional clocks. The card is visible in the picker; physical /WS-/READY
+pin timing and independent analog board calibration remain open.
+
+Native Sony/IWM GCR writes now splice WOZ/MOOF transitions in 125 ns units.
+Writes preserve the rest of the circular track, unrelated sides and aliases,
+unknown metadata, timing and the source container. Write-back emits a valid
+FLUX map/CRC and reuses private track allocations; errors keep dirty media
+mounted. Block projections are refreshed lazily from actual GCR. GCR SmartPort
+block mounts still require raw `.po` conversion; MFM writes are covered above. SuperDrive/SWIM and full CFFA3000 hardware are
+separate open projects.
+
+Validation: native macOS and WebAssembly builds; fifteen targeted CTest
+regressions (audio, native flux persistence, atomic save/eject/remount,
+autosave, storage coordination and snapshot contracts), plus a strengthened
+Echo+ voiced-state continuation and actual CPU/VIA timing check. The standalone
+TMS5220C tests also pass AddressSanitizer/UndefinedBehaviorSanitizer. No
+physical card capture, complete SWIM/CFFA3000 implementation or complete
+browser session/device matrix is claimed.
+
+## 2026-10-18 — Interactive assembler, Disk II flux inspection and browser sessions
+
+The debugger now assembles numeric 6502/65C02 instructions using the same
+opcode descriptors as disassembly. Preview bytes before patching stopped RAM;
+branch offsets, operand widths and CPU availability are checked. Disk II
+inspection adds per-drive head position, a full-revolution transition-density
+plot and a zoomed timeline with the real controller angular cursor.
+
+The browser now offers text-file upload for keyboard paste and session archive
+import/export. File sizes are bounded and session validation remains mandatory.
+Optional automatic resume checkpoints supported session configurations through
+IndexedDB, including the intended running/stopped mode across tab visibility.
+Errors suspend checkpointing instead of silently dropping unsupported devices.
+The existing session scope still excludes //c, unsupported cards, writable
+media, block/3.5-inch media and tapes. This change does not implement SWIM,
+CFFA3000 hardware, TMS5220 synthesis or 3.5-inch flux writing.
+
+Validation: native macOS and WebAssembly builds; eleven targeted CTest cases,
+including session round trips, checkpoint corruption/I/O refusal, assembler
+encodings, debugger/disassembler and Disk II flux regressions. Chrome smoke
+checks a real text-file chooser/upload, tab pause/resume and settings surviving
+an IndexedDB reload. Browser checkpoint mode/restore is covered by the native
+store regression; no claim of a complete browser device/session matrix.
+
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
 ## 2026-10-18 — Show POM2's technical scope in the README

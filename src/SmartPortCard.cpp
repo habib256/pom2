@@ -1347,6 +1347,11 @@ bool SmartPortCard::prepareFlushBay(int bay, PendingBayFlush& out,
     auto* u35 = dynamic_cast<SmartPort35Unit*>(u);
     if (!u35) return false;
     Disk35Image::PendingWriteBack pending = u35->image().takeWriteBack();
+    if (!pending.error.empty()) {
+        errOut = pending.error;
+        u35->image().restoreDirtyFor(pending.lineage);
+        return false;
+    }
     out.valid = pending.valid;
     out.seq   = pending.seq;
     out.lineage = pending.lineage;

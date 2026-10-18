@@ -4,6 +4,9 @@
 #include "SmartPort35Unit.h"
 #include "Woz35Fixture.h"
 
+#include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <cassert>
 #include <cstring>
 #include <filesystem>
@@ -71,7 +74,7 @@ void testBitstreamAndExport()
     drive.ssW(true);
     assert(drive.debugCellStream() == tracks[1]);
     image.setWriteBackEnabled(true);
-    assert(image.isWriteProtected());
+    assert(!image.isWriteProtected() && image.isBlockWriteProtected());
     for (int track : {0, 16})
         for (int head = 0; head < 2; ++head)
             for (int s = 0; s < sectorsFor(track); ++s) {
@@ -347,6 +350,125 @@ void testMfm1440k()
     fs::remove(path, ec); fs::remove(out, ec);
 }
 
+void testMfmCaptureWrites()
+{
+    for (size_t rotate : {size_t(0), size_t(1000), size_t(8500)}) {
+        std::vector<std::vector<uint8_t>> tracks(160);
+        for (int slot : {0, 1, 158, 159}) {
+            auto& cells = tracks[size_t(slot)];
+            cells.insert(cells.end(), 640, 0);
+            for (int s = 1; s <= 18; ++s) {
+                const uint8_t id[] = {uint8_t(slot / 2), uint8_t(slot % 2), uint8_t(s), 2};
+                putMfmField(cells, 0xFE, id, 4);
+                uint8_t payload[512]; fillBlock(payload, slot * 18 + s - 1);
+                putMfmField(cells, s == 1 ? 0xF8 : 0xFB, payload, 512);
+                cells.insert(cells.end(), 256, 0);
+            }
+            std::rotate(cells.begin(), cells.begin() + rotate, cells.end());
+        }
+        auto bytes = makeMoof(tracks, 3); bytes[24] = 8;
+        const std::vector<uint8_t> metadata{'M','E','T','A',4,0,0,0,'k','e','e','p'};
+        bytes.insert(bytes.end(), metadata.begin(), metadata.end());
+        const auto path = writeTemp("pom2_moof35_mfm_write.moof", bytes);
+        pom2::Disk35Image image; image.setMfmCapable(true); image.setWriteBackEnabled(true);
+        assert(image.loadFile(path.string()) && !image.isBlockWriteProtected());
+        assert(image.blockIndexFor(79, 1, 17) == 2879);
+        uint8_t want[512], got[512];
+        for (int slot : {0, 1, 158, 159}) {
+            fillBlock(want, 9000 + slot);
+            assert(image.writeBlock(uint32_t(slot * 18), want));
+            assert(image.readBlock(uint32_t(slot * 18), got));
+            assert(std::memcmp(got, want, 512) == 0);
+            // Compare every clock/data cell with an independent encoding,
+            // including the first clock after the new CRC low byte.
+            std::vector<uint8_t> field;
+            putMfmField(field, 0xF8, want, 512);
+            auto expected = tracks[size_t(slot)];
+            const size_t fieldStart = 640 + 352;
+            auto set = [&](size_t at, uint8_t bit) {
+                expected[(at + expected.size() - rotate) % expected.size()] = bit;
+            };
+            for (size_t i = 256; i < field.size(); ++i) set(fieldStart + i, field[i]);
+            set(fieldStart + field.size(), uint8_t(!field.back()));
+            assert(*image.originalBitCells(slot / 2, slot % 2) == expected);
+        }
+        const auto beforeMissing = *image.originalFluxTicks(0, 0);
+        assert(!image.writeBlock(36, want)); // no track 1 in this capture
+        assert(*image.originalFluxTicks(0, 0) == beforeMissing);
+        assert(image.saveDirty()); // packed tracks become exact 125 ns flux
+        pom2::Disk35Image reloaded; reloaded.setMfmCapable(true); reloaded.setWriteBackEnabled(true);
+        assert(reloaded.loadFile(path.string()));
+        for (int slot : {0, 1, 158, 159}) for (int s = 0; s < 18; ++s) {
+            fillBlock(want, s ? slot * 18 + s : 9000 + slot);
+            assert(reloaded.readBlock(uint32_t(slot * 18 + s), got));
+            assert(std::memcmp(got, want, 512) == 0); // also verifies new data CRCs
+        }
+        reloaded.setHostWriteProtected(true);
+        std::vector<uint8_t> archived;
+        std::string sessionError;
+        assert(reloaded.appendReadOnlySession(archived, sessionError));
+        pom2::Disk35Image restored; restored.setMfmCapable(true);
+        assert(restored.loadReadOnlySession(archived.data(), archived.size(), sessionError));
+        fillBlock(want, 9159);
+        assert(restored.readBlock(159 * 18, got) && std::memcmp(want, got, 512) == 0);
+        reloaded.setHostWriteProtected(false);
+        // A second write starts from a FLUX capture. Keep an off-grid
+        // transition in the leading gap byte-for-byte through that splice.
+        if (!rotate) {
+            const int64_t tick = 101;
+            assert(reloaded.writeFlux125ns(0, 0, 100, 102, &tick, 1, 0));
+            fillBlock(want, 12345);
+            assert(reloaded.writeBlock(0, want));
+            assert(std::binary_search(reloaded.originalFluxTicks(0, 0)->begin(),
+                                      reloaded.originalFluxTicks(0, 0)->end(), 101));
+            assert(reloaded.saveDirty());
+            pom2::SmartPortCard port(5); port.setSuperDriveMode(true);
+            port.setUnit(0, std::make_unique<pom2::SmartPort35Unit>());
+            auto* unit = dynamic_cast<pom2::SmartPort35Unit*>(port.unit(0));
+            assert(unit && unit->loadImage(path.string()));
+            unit->setWriteBackEnabled(true);
+            assert(unit->readBlock(0, got) && std::memcmp(got, want, 512) == 0);
+            port.deviceSelectWrite(0, 0); port.deviceSelectWrite(1, 17); port.deviceSelectWrite(2, 0);
+            fillBlock(want, 777);
+            for (auto byte : want) port.deviceSelectWrite(3, byte);
+            assert(unit->saveDirty());
+            assert(unit->readBlock(17, got) && std::memcmp(got, want, 512) == 0);
+            unit->setHostWriteProtected(true);
+            assert(unit->isWriteProtected() && !unit->writeBlock(17, got));
+        }
+        std::ifstream file(path, std::ios::binary);
+        const std::vector<uint8_t> saved{std::istreambuf_iterator<char>(file), {}};
+        assert(std::search(saved.begin(), saved.end(), metadata.begin(), metadata.end()) != saved.end());
+        bytes[22] = 1; // MOOF's own write-protect bit is authoritative
+        writeTemp("pom2_moof35_mfm_write.moof", bytes);
+        assert(image.loadFile(path.string()) && image.isBlockWriteProtected());
+        assert(!image.writeBlock(0, want));
+        std::error_code ec; fs::remove(path, ec);
+    }
+}
+
+void testMfmFullGeometryBudget()
+{
+    std::vector<std::vector<uint8_t>> tracks(160);
+    for (int slot = 0; slot < 160; ++slot) {
+        const uint8_t id[] = {uint8_t(slot / 2), uint8_t(slot % 2), 1, 2};
+        uint8_t block[512]; fillBlock(block, slot);
+        putMfmField(tracks[size_t(slot)], 0xFE, id, 4);
+        putMfmField(tracks[size_t(slot)], 0xFB, block, 512);
+        tracks[size_t(slot)].resize(200000); // 300 rpm, 1 us cells
+    }
+    auto bytes = makeMoof(tracks, 3); bytes[24] = 8;
+    const auto path = writeTemp("pom2_moof35_full_mfm.moof", bytes);
+    pom2::Disk35Image image; image.setMfmCapable(true);
+    assert(image.loadFile(path.string()));
+    for (int slot = 0; slot < 160; ++slot) {
+        uint8_t want[512], got[512]; fillBlock(want, slot);
+        assert(image.readBlock(uint32_t(slot * 18), got));
+        assert(std::memcmp(want, got, 512) == 0);
+    }
+    std::error_code ec; fs::remove(path, ec);
+}
+
 void testWrongHeadIsIgnored()
 {
     std::vector<uint8_t> payload(12 * 512);
@@ -405,6 +527,8 @@ int main()
     testUnsupportedDiskTypes();
     testSingleSided400k();
     testMfm1440k();
+    testMfmCaptureWrites();
+    testMfmFullGeometryBudget();
     testWrongHeadIsIgnored();
     testCrcMismatch();
 }

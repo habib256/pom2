@@ -14,28 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Disk35Image — Sony 800K 3.5" disk image holder for the //c+ internal
-// drive and the SmartPort daisy-chain port. Loads `.po`, `.2mg`, 800K
-// `.woz`/`.moof`, and raw 819 200-byte images; exposes a flat block view
-// (`getBlock(idx) -> 512 bytes`, 1600 blocks total) to the
-// `Sony35Drive` consumer.
-//
-// Phase 1 scope (this file): block storage + 2IMG header support. The
-// Sony zoned GCR encoding (5 zones × 16 tracks, 12/11/10/9/8 sectors
-// per track, 4:4 GCR) that the IWM bit-cell walker needs to clock out
-// is Phase 2 — when that lands, `expandTrackBits(qt)` will be added
-// alongside the existing 5.25" path in `DiskImage`. We keep this file
-// separate from `DiskImage` because the on-disk physics is different
-// enough (variable-rate flux, 80 tracks × 2 sides, no quarter-track
-// stepping) that fusing them would tangle two state machines.
-//
-// MAME source-of-truth references (for the Phase 2 encoder):
-//   * `src/lib/formats/ap_dsk35.cpp`     — block ↔ GCR sector encoder
-//   * `src/devices/imagedev/floppy.cpp`  — 3.5" zone constants
-//   * `src/devices/machine/applefdintf.cpp::add_35`
-//
-// The image is read/write under user opt-in via `setWriteBackEnabled`.
-// Write-back rewrites the .po payload (preserving the 2IMG envelope).
+// Disk35Image — 400K/800K GCR and 1.44M MFM block images plus WOZ/MOOF
+// captures. Native GCR writes preserve 125 ns flux timing and container
+// metadata; GCR block services require conversion to a raw writable image.
+// MFM block writes splice existing CRC-valid sectors. All writes use the ordered two-phase
+// persistence path; the medium's header and host notch remain authoritative.
 
 #ifndef POM2_DISK35_IMAGE_H
 #define POM2_DISK35_IMAGE_H
@@ -50,6 +33,7 @@
 #include <vector>
 
 namespace pom2 {
+struct Disk35Bitstream;
 
 class Disk35Image final : public AutosavedMedium
 {
@@ -79,11 +63,11 @@ public:
         Raw800k,       // bare 819 200-byte payload (.po, .dsk-as-prodos)
         TwoImg800k,    // .2mg with 2IMG header wrapping a 819 200 payload
         Woz35,         // WOZ2 flux dump, GCR-decoded to blocks at load
-        Moof35,        // MOOF 800K GCR bitstream/flux, decoded read-only
+        Moof35,        // MOOF 800K GCR bitstream/flux
         Moof400k,      // MOOF 400K single-sided GCR bitstream/flux
         Raw400k,       // bare 409 600-byte payload
         TwoImg400k,    // 2IMG-wrapped 400K payload
-        Moof1440k,     // MOOF 1.44M MFM bitstream/flux, decoded read-only
+        Moof1440k,     // MOOF 1.44M MFM bitstream/flux with sector splicing
         Raw1440k,      // bare 1 474 560-byte MFM payload
         TwoImg1440k,   // 2IMG-wrapped 1.44M payload
     };
@@ -93,16 +77,32 @@ public:
     /// Load a 3.5" image. Accepts 400K and 800K GCR raw/2IMG payloads,
     /// WOZ2 800K GCR, and MOOF 400K/800K GCR. When `mfmCapable_` is set by
     /// a SuperDrive-class unit, also accepts 1.44M raw/2IMG and MOOF MFM.
-    /// Bitstream images are decoded to blocks but remain read-only: writing
-    /// them would require rebuilding the original flux capture.
+    /// GCR captures allow native flux writes; block writes require export.
+    /// MFM block writes splice existing CRC-valid sectors.
     /// On failure, returns false and populates `lastError`.
     bool loadFile(const std::string& path);
 
     /// Original MOOF bit cells for the physical track and head. Null when
     /// this is a block image, or when the MOOF track is unformatted. The
-    /// returned storage is immutable for the lifetime of this mount.
+    /// returned view is valid until the next write/mount under the machine lock.
     const std::vector<uint8_t>* originalBitCells(int track, int head) const;
     uint8_t bitTiming125ns() const { return moofBitTiming_; }
+    const std::vector<uint32_t>* originalFluxTicks(int track, int head) const;
+    uint32_t trackPeriod125ns(int track, int head) const;
+    /// Splice a circular interval without quantizing untouched capture data.
+    /// `start/end/transitions` share a 125 ns clock whose index is zero.
+    bool writeFlux125ns(int track, int head, int64_t start, int64_t end,
+                        const int64_t* transitions, int count, uint32_t period);
+    // Self-contained, physically protected media for archival sessions.
+    bool appendReadOnlySession(std::vector<uint8_t>& out, std::string& error) const;
+    bool loadReadOnlySession(const uint8_t* data, size_t size, std::string& error);
+    bool appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const;
+    bool loadSessionMedia(const uint8_t* data, size_t size, std::string& error, bool allowWritable);
+    bool sessionCaptureReady() const { return !autosave_.inFlight(); }
+    bool sessionReplaceable() const { return (!dirty_ || detachedSession_) && !autosave_.inFlight(); }
+    bool isSessionMedia() const { return detachedSession_; }
+    size_t sessionStorageBytes() const;
+    bool isBlockWriteProtected() const { return isWriteProtected() || (isBitstream() && kind_ != ImageKind::Moof1440k); }
 
     /// Discard the loaded image.
     void eject();
@@ -165,6 +165,7 @@ public:
         /// replaces a file a newer one reached. 0 = "treat as newest".
         uint64_t             seq = 0;
         uint64_t             lineage = 0;   ///< the mount it came from
+        std::string          error{};      ///< serialization refused; preserve dirty state
     };
 
     /// Phase 1, WITH the lock: serialise what `saveDirty()` would write and
@@ -208,24 +209,20 @@ public:
     /// (`.po`), leaving the source file untouched. Returns false and fills
     /// `errOut` on failure.
     ///
-    /// This is the way out of a read-only 3.5" WOZ or MOOF. It mounts write-
-    /// protected because POM2 has the Sony GCR *decoder* but no encoder, so
-    /// there is nothing to fold guest writes back into (see `loadFile`) —
-    /// but the decode already produced exactly the 1600 blocks a `.po`
-    /// holds, so converting costs nothing and the result is fully writable.
-    /// The user keeps the capture as an archival master and works on a copy.
-    /// Only decoded sectors reach the .po; protected track patterns do not.
+    /// GCR block services cannot splice decoded sector changes into a
+    /// preserved capture. MFM writes update existing valid sectors directly. Export creates a writable raw volume; tags and
+    /// protection patterns are discarded, while the capture stays untouched.
     bool exportRawTo(const std::string& outPath, std::string& errOut) const;
 
     bool isWriteProtected() const {
         return fileWriteProtected_ || hostReadOnly_ || !writeBackEnabled_;
     }
-    /// The medium's OWN lock: the 2IMG header bit, or WOZ/MOOF (no encoder).
+    /// The medium's OWN lock: the container header bit.
     /// Distinct from `isWriteProtected()`, which also carries the notch
     /// and the write-back opt-out. `takeWriteBack` gates on this plus
     /// `writeBackEnabled_`, not the notch — see Block512Backing::isMediumLocked.
     bool isMediumLocked() const { return fileWriteProtected_; }
-    /// The medium's own protection: the 2IMG lock flag, WOZ/MOOF (always), or
+    /// The medium's own protection: the container lock flag or
     /// the notch — the host file's read-only bit (MediaNotch.h).
     bool isFileWriteProtected() const { return fileWriteProtected_ || hostReadOnly_; }
     void setWriteBackEnabled(bool on) { writeBackEnabled_ = on; }
@@ -242,9 +239,13 @@ private:
     /// WOZ2/MOOF chunk walk + GCR decode into `blocks_`. See the .cpp.
     bool loadBitstream(const std::vector<uint8_t>& buf, const std::string& path,
                        bool moof);
+    bool serializeBitstream(std::vector<uint8_t>& bytes, std::string& error) const;
+    void refreshDecodedTrack(int slot) const;
+    bool writeMfmBlock(uint32_t idx, const uint8_t* in);
 
     bool         loaded_              = false;
     bool         dirty_               = false;
+    bool         detachedSession_     = false;
     MediaAutosave autosave_;
     uint64_t      lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed
     bool         writeBackEnabled_    = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
@@ -259,10 +260,12 @@ private:
     // allocated because file-scope members > 800 KB would push the
     // class out of the typical cache-line-friendly small-object range
     // for the controller wiring.
-    std::vector<uint8_t> blocks_;
+    mutable std::vector<uint8_t> blocks_;
+    mutable std::array<bool, kTracks * kSides> decodedTrackDirty_{};
 
     using TrackCells = std::array<std::vector<uint8_t>, kTracks * kSides>;
-    std::shared_ptr<const TrackCells> moofCells_;
+    std::shared_ptr<TrackCells> moofCells_;
+    std::shared_ptr<Disk35Bitstream> bitstream_;
     uint8_t moofBitTiming_ = 0;
 
     // Captured 2IMG header verbatim so saveDirty re-emits a valid
