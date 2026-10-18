@@ -432,7 +432,8 @@ uint16_t Cs8900aDevice::receiveFrame()
             continue;
         }
 
-        retVal |= 0x0100;                       // RxOK
+        if (!crcError && len >= kMinRxLength && rawLen <= kMaxRxLength)
+            retVal |= 0x0100;                   // RxOK only for valid frames
         retVal |= multicast ? 0x0200 : 0;
         if (!multicast) retVal |= hashed ? 0x0040 : 0;
 
@@ -735,11 +736,15 @@ void Cs8900aDevice::latchInterruptStatusQueue()
     // that DISCARDS it, and the ISQ must not do that behind the driver's back
     // while it is still draining the payload through RXTXDATA.
     if (rxEnabled_ && rxState_ != kRxGotFrame && !frameQueue_.empty()) {
+        const uint64_t receivedBefore = framesReceived_;
         const uint16_t rx = receiveFrame();
         ppWrite16(kPpRxStatus,  rx);
         ppWrite16(kPpSeRxEvent, rx);
-        if (rx & 0x0100) {
-            value = rx;                       // RxOK — a frame really landed
+        // An accepted runt or CRC/length-error frame is still a receive
+        // event. Inspect whether a frame was staged, rather than RxOK or
+        // status bits whose positions overlap the hash-index format.
+        if (framesReceived_ != receivedBefore) {
+            value = rx;
             // ONE staged frame, TWO ways of noticing it. The ISQ has now
             // popped a frame the driver has not read RxEvent for, and a
             // direct RxEvent read is an "implied skip" that pops the NEXT

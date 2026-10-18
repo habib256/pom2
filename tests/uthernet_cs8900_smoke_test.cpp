@@ -438,12 +438,42 @@ void testReceiveStatusAcceptanceBits()
     card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
     assert(card.chip().queuedFrames() == 1);
 
+    const uint16_t goodEvent = readPpWord(card, kPpSeRxEvent);
+    assert((goodEvent & 0x0100) != 0);
+
     // RuntA authorizes a short frame independently of RxOKA.
     writePpWord(card, kPpCcRxCtl, 0x2405);
     raw->transmit(runt.data(), static_cast<int>(runt.size()));
     card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
-    assert(card.chip().queuedFrames() == 2);
+    assert(card.chip().queuedFrames() == 1);
+    const uint16_t runtEvent = readPpWord(card, kPpSeRxEvent);
+    assert((runtEvent & 0x2000) != 0);  // Runt
+    assert((runtEvent & 0x0100) == 0);  // invalid length is not RxOK
     std::printf("  RxOKA and RuntA gate accepted frames\n");
+}
+
+void testRuntIsVisibleThroughIsq()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    writePpWord(card, kPpCcRxCtl, 0x2405);  // IndividualA + RuntA
+
+    const auto runt = makeFrame(kOurMac, kOurMac, 60, 0x93);
+    raw->transmit(runt.data(), static_cast<int>(runt.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+
+    const uint16_t event = readPpWord(card, 0x0120);  // ISQ
+    assert((event & 0x2000) != 0);
+    assert((event & 0x0100) == 0);
+    assert(card.chip().queuedFrames() == 0);
+    // The direct RxEvent read must report the frame ISQ just staged.
+    assert(readPpWord(card, kPpSeRxEvent) == event);
+    std::printf("  ISQ announces accepted runt frames\n");
 }
 
 void testMulticastUsesGroupBit()
@@ -1035,6 +1065,7 @@ int main()
     testReceivePath();
     testAddressFilter();
     testReceiveStatusAcceptanceBits();
+    testRuntIsVisibleThroughIsq();
     testMulticastUsesGroupBit();
     testDisabledReceiverDropsIncomingFrames();
     testSnapshotRoundTrip();

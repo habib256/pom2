@@ -10,6 +10,13 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Report accepted runt frames correctly
+
+Uthernet I no longer marks an accepted short frame as `RxOK`. It reports the
+`Runt` status and makes that event visible through the CS8900A interrupt
+status queue. Previously a direct event read claimed the short frame was
+valid; dropping `RxOK` alone would have hidden it from ISQ polling drivers.
+
 ## 2026-10-18 — Honor CS8900A receive acceptance bits
 
 The CS8900A now applies the `RxCTL` frame-status acceptance bits after the

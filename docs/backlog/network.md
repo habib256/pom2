@@ -254,6 +254,11 @@ destination-address filter. The Uthernet I test failed with `RxOKA` clear
 before the fix. CRC-error acceptance remains limited by the host backend,
 which supplies frames after CRC validation.
 
+**Bug hunt 2026-10-18 (runt status):** An accepted short frame now sets the
+`Runt` status without `RxOK`, and ISQ reports that frame even though `RxOK`
+is clear. The direct-event test failed on the incorrect `RxOK` bit before
+the fix; a separate ISQ test guards delivery to polling drivers.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`
