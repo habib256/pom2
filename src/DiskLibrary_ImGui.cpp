@@ -698,6 +698,81 @@ void DiskLibrary_ImGui::renderTab(
     ImGui::EndChild();
 }
 
+void DiskLibrary_ImGui::renderAllTab(const CurrentlyMounted& mounted, Result& r)
+{
+    const bool showSizeDate = !(lists_ && lists_->hideSizeDate);
+    const std::vector<std::string> marks35 = {
+        mounted.disk35Internal, mounted.disk35External,
+        mounted.disk35ExternalSecond };
+    std::vector<std::string> marksHdv;
+    for (const auto& h : mounted.hdvs) marksHdv.push_back(h.path);
+    std::vector<std::string> marksEmu = mounted.diskII;
+    marksEmu.insert(marksEmu.end(), marks35.begin(), marks35.end());
+    marksEmu.insert(marksEmu.end(), marksHdv.begin(), marksHdv.end());
+
+    struct Group {
+        const char* label;
+        const std::vector<Entry>* entries;
+        const std::vector<std::string>* marks;
+        void (DiskLibrary_ImGui::*onLeft)(const std::string&, Result&);
+        void (DiskLibrary_ImGui::*onContext)(const std::string&, int, Result&);
+    };
+    const Group groups[] = {
+        {"5.25-inch", &disk525_, &mounted.diskII, &DiskLibrary_ImGui::on525Left,
+            &DiskLibrary_ImGui::on525Ctx},
+        {"3.5-inch", &disk35_, &marks35, &DiskLibrary_ImGui::on35Left,
+            &DiskLibrary_ImGui::on35Ctx},
+        {"Hard disks", &hdv_, &marksHdv, &DiskLibrary_ImGui::onHdvLeft,
+            &DiskLibrary_ImGui::onHdvCtx},
+        {"Floppy Emu", &floppyEmu_, &marksEmu,
+            &DiskLibrary_ImGui::onFloppyEmuLeft,
+            &DiskLibrary_ImGui::onFloppyEmuCtx}
+    };
+
+    ImGui::BeginChild("##library_all", ImVec2(0, 0), true,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    const int columns = showSizeDate ? 3 : 1;
+    if (ImGui::BeginTable("##library_all_grid", columns,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+            ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        if (showSizeDate) {
+            ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+            ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+        }
+        ImGui::TableHeadersRow();
+        std::size_t total = 0;
+        for (const auto& group : groups) {
+            std::vector<const Entry*> hits;
+            for (const auto& entry : *group.entries)
+                if (passesFilter(entry.displayName)) hits.push_back(&entry);
+            if (hits.empty()) continue;
+            total += hits.size();
+            std::sort(hits.begin(), hits.end(), [](const Entry* a, const Entry* b) {
+                return a->displayName < b->displayName;
+            });
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            const RowContext ctx{group.marks, group.onLeft, group.onContext,
+                                 showSizeDate};
+            if (ImGui::TreeNodeEx(group.label,
+                    ImGuiTreeNodeFlags_SpanAllColumns |
+                    ImGuiTreeNodeFlags_DefaultOpen,
+                    "%s (%zu)", group.label, hits.size())) {
+                for (const Entry* entry : hits) renderRow(*entry, nullptr, ctx, r);
+                ImGui::TreePop();
+            }
+        }
+        if (total == 0) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("No images match this search.");
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
 DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     const char*               title,
     bool&                     open,
@@ -803,6 +878,10 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     // ── Tabs ───────────────────────────────────────────────────────────
     if (ImGui::BeginTabBar("##library_tabs", ImGuiTabBarFlags_Reorderable)) {
         char tabLabel[64];
+        if (ImGui::BeginTabItem("All media")) {
+            renderAllTab(mounted, r);
+            ImGui::EndTabItem();
+        }
         std::snprintf(tabLabel, sizeof(tabLabel),
                       ICON_FA_FLOPPY_DISK " 5.25\"  (%zu)", disk525_.size());
         if (ImGui::BeginTabItem(tabLabel)) {

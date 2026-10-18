@@ -12,6 +12,16 @@ marker and the previous one.
 
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
+## 2026-10-18 — Put the browser demo and the media catalogue first
+
+The README now opens with a direct WebAssembly demo button. The Disk Library
+has an **All media** tab that searches its existing 5.25-inch, 3.5-inch, hard
+disk and Floppy Emu catalogue together. Results remain grouped by medium so
+ambiguous images retain each drive's mount actions. The ProDOS host-folder
+guide now states the portable `NAME#TTAAAA` type/aux convention and the
+conservative host-newer conflict rule. Miniatures and OS file associations
+are tracked separately for the next catalogue pass.
+
 ## 2026-10-18 — Make ProDOS host-folder exchange easier to inspect
 
 The synthesised volume now carries host modification times and read-only

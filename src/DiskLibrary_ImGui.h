@@ -39,10 +39,8 @@
 // Emu *is*), a library click classifies the file like every other tab.
 //
 // Filesystem scan happens here (mtime + size sniff for size-bucketed
-// dispatch), so the per-card panels can drop their own scans once this
-// ships. A "Refresh" button forces an immediate re-scan; otherwise the
-// scan runs once per frame (cheap — directory entries are cached by
-// the OS).
+// dispatch). The "All media" tab searches the four cached groups together;
+// a Refresh button forces a new scan.
 
 #ifndef POM2_DISK_LIBRARY_IMGUI_H
 #define POM2_DISK_LIBRARY_IMGUI_H
@@ -282,6 +280,10 @@ private:
                                                             int mountedMask,
                                                             Result&),
                    Result&                                 r);
+
+    /// One search over all four cached media groups. Each row keeps its
+    /// group's mount and context actions, including ambiguous WOZ targets.
+    void renderAllTab(const CurrentlyMounted& mounted, Result& r);
 
     void on525Left   (const std::string& path, Result& r);
     void on525Ctx    (const std::string& path, int mountedMask, Result& r);

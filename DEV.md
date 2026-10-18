@@ -4330,6 +4330,13 @@ kept; a differing guest version is written under `.pom2-conflicts/`, with a
 numeric suffix if another distinct guest version already exists. That hidden
 tree is excluded from the next volume scan. The synth persistence label
 describes pending guest edits, not the state of external host files.
+This uses a portable filename contract: plain extensions only for type/aux
+pairs they uniquely represent, `NAME#TTAAAA` for every other pair. No platform
+extended attributes are needed. The conflict test is intentionally conservative:
+mtime newer than the mount stamp plus different bytes produces a volume copy,
+even when the guest did not edit that particular file. This favors retaining
+data over guessing the two sides' intent; `.pom2-conflicts/` needs manual
+review and guest deletions are not mirrored.
 
 **The volume has free blocks, and the mount stamp is refreshed** *(2026-09-07)*.
 Two defects that together made a host folder read-only in practice while
@@ -8709,6 +8716,12 @@ need a fixed height instead.
 
 `DiskLibrary_ImGui`. Was a flat list of ~950 rows carrying full relative paths,
 with Size and Date columns in prime position.
+
+The **All media** tab searches the same four cached scans as the individual
+5.25-inch, 3.5-inch, HDV and Floppy Emu tabs. Results are grouped by medium,
+so each row keeps its original mount/boot/context behavior; an ambiguous WOZ
+can appear in both drive groups. The common search box filters each group by
+relative path, and an empty search shows the full grouped catalogue.
 
 **Real nested tree.** Two bugs were fixed getting here, both worth remembering:
 

@@ -51,6 +51,10 @@ current core defect brings it forward.
 G2–G4 implementation work is recorded as closed in the prior report;
 candidate verification still has to run.
 
+For the Disk Library follow-up, the requested order is
+[miniatures](docs/backlog/ui-debugger.md#ui-009), then
+[desktop file associations](docs/backlog/ui-debugger.md#ui-010).
+
 <a id="backlog"></a>
 
 ## Backlog by domain

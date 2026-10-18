@@ -2,13 +2,16 @@
 
 # 🍏 POM2 v0.9.7 — Apple II Emulator
 
+[![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
+
+**Live demo — one click, no installation.**
+
 ### A floppy disk. A glowing screen. One more game.
 
 Play, explore and create on the Apple II — on your desktop or in your browser.
 Nine machine profiles, from the original Apple ][ to the //c Plus.
 
 [![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
-[![Play in your browser](https://img.shields.io/badge/Play-in%20your%20browser-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 
 ![POM2 running Wilderness on a PAL Apple //c, with a Monitor II frame, keyboard and drive controls](pic/POM2-default-desktop.png)
 

@@ -22,6 +22,8 @@ an explicit request before scheduling.
 | [UI-007](#ui-007) | 🟢 | To verify — premise false on 2026-10-06 | `isDuplicate` flags cffa/smartport35 duplicates |
 | [UI-005](#ui-005) | 🧊 | Frozen | MicroM8-style 3D voxel view ("Voxel Cube") |
 | [UI-008](#ui-008) | 🧊 | Frozen | On-screen touchscreen / virtual joystick |
+| [UI-009](#ui-009) | 🟢 | Ready for design | Disk Library miniatures |
+| [UI-010](#ui-010) | 🟢 | Ready for design | OS file associations for disk images |
 
 <a id="ui-002"></a>
 
@@ -152,3 +154,24 @@ Slot Config window, then remove this entry.
   joystick for mobile WASM builds (separate from raw touch routing). Two
   thumb-sticks + Open/Solid Apple buttons. Inspired by microM8 / A2TS.
   *2 d.*
+
+<a id="ui-009"></a>
+
+## UI-009 — Disk Library miniatures
+
+**Priority:** 🟢 · **State:** Ready for design (after the shared catalogue/search view).
+
+**Acceptance criterion:** Decide whether a thumbnail is user-supplied cover art
+or a captured guest screen, then display it without loading every disk or
+blocking the library's scan. Missing art must leave a readable text row.
+
+<a id="ui-010"></a>
+
+## UI-010 — OS file associations for disk images
+
+**Priority:** 🟢 · **State:** Ready for design (after the shared catalogue/search view).
+
+**Acceptance criterion:** Register supported image extensions in each desktop
+package, open a disk from the host file manager into the correct drive, and
+verify behavior on macOS, Windows and Linux without overriding another app's
+default association.
