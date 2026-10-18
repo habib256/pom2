@@ -6955,6 +6955,11 @@ pinned; `Skip_1` and the PacketPage frame-buffer window are left as MAME
 parity, with no oracle to arbitrate them. Details that each disarm the ISQ
 when wrong (round 3):
 
+**2026-10-18 correction:** The CS8900A datasheet §4.4.6 and §5.2.5
+identifies `RxCFG.Skip_1` as a committed receive-frame discard. That part of
+the preceding MAME-parity note is superseded; the PacketPage window note
+remains historical context.
+
 - **`RxMISS` is BufEvent bit 10, not bit 9.** `kBufEventRxMiss = 0x0400`
   (`Cs8900aDevice.cpp:91`); bit 9 (`$0200`) is `TxUnderrun`.
 - **BufEvent and RxMISS clear on read**, on the way *out* of the access so

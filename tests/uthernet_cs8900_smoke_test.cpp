@@ -75,6 +75,7 @@ constexpr uint8_t kPpDataHi   = 0xD;
 
 // PacketPage addresses used below.
 constexpr uint16_t kPpProductId = 0x0000;
+constexpr uint16_t kPpCcRxCfg   = 0x0102;
 constexpr uint16_t kPpCcRxCtl   = 0x0104;
 constexpr uint16_t kPpCcLineCtl = 0x0112;
 constexpr uint16_t kPpCcSelfCtl = 0x0114;
@@ -501,6 +502,69 @@ void testQueuedFrameKeepsArrivalFilterDecision()
     assert(card.chip().framesFiltered() == 0);
     assert(readPpWord(card, 0x0402) == frame.size());
     std::printf("  queued frames keep their arrival filter decision\n");
+}
+
+void testRxSkipDiscardsOnlyCommittedReceive()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    const auto first = makeFrame(kOurMac, kOurMac, 64, 0x31);
+    const auto second = makeFrame(kOurMac, kOurMac, 64, 0x72);
+    raw->transmit(first.data(), static_cast<int>(first.size()));
+    raw->transmit(second.data(), static_cast<int>(second.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 2);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(card.chip().rxState() == 1);
+    assert(card.chip().queuedFrames() == 1);
+
+    // Skip_1 is RxCFG bit 6: discard this committed receive frame, not
+    // the waiting frame or a concurrent transmit handshake.
+    writePpWord(card, 0x0144, 0x00C9);
+    writePpWord(card, 0x0146, static_cast<uint16_t>(first.size()));
+    (void)readPpWord(card, kPpSeBusSt);
+    assert(card.chip().txState() == 3);
+    writePpWord(card, kPpCcRxCfg, 0x0043);
+    assert((readPpWord(card, kPpCcRxCfg) & 0x0040) == 0);
+    assert(card.chip().rxState() == 0);
+    assert(card.deviceSelectRead(kRxTxDataHi) == 0);
+    assert(card.chip().queuedFrames() == 1);
+    assert(card.chip().txState() == 3);
+
+    for (size_t i = 0; i < first.size(); ++i)
+        card.deviceSelectWrite((i & 1) ? kRxTxDataHi : kRxTxDataLo, first[i]);
+    assert(card.chip().framesSent() == 1);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(card.chip().queuedFrames() == 0);
+    assert(readPpWord(card, 0x0412) ==
+           static_cast<uint16_t>(second[14] | (second[15] << 8)));
+
+    // The same skip must invalidate an ISQ-staged frame. Otherwise the next
+    // direct RxEvent read repeats its discarded status instead of advancing.
+    pom2::UthernetCard isqCard(3);
+    auto isqBackend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* isqRaw = isqBackend.get();
+    isqCard.setBackend(std::move(isqBackend));
+    programMac(isqCard, kOurMac);
+    enableTxRx(isqCard);
+    acceptOwnMac(isqCard);
+    isqRaw->transmit(first.data(), static_cast<int>(first.size()));
+    isqRaw->transmit(second.data(), static_cast<int>(second.size()));
+    isqCard.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert((readPpWord(isqCard, 0x0120) & 0x0100) != 0);
+    writePpWord(isqCard, kPpCcRxCfg, 0x0043);
+    assert(isqCard.chip().rxState() == 0);
+    assert((readPpWord(isqCard, kPpSeRxEvent) & 0x0100) != 0);
+    assert(isqCard.chip().queuedFrames() == 0);
+    assert(readPpWord(isqCard, 0x0412) ==
+           static_cast<uint16_t>(second[14] | (second[15] << 8)));
+    std::printf("  RxCFG.Skip_1 discards only the committed receive frame\n");
 }
 
 void testMulticastUsesGroupBit()
@@ -1094,6 +1158,7 @@ int main()
     testReceiveStatusAcceptanceBits();
     testRuntIsVisibleThroughIsq();
     testQueuedFrameKeepsArrivalFilterDecision();
+    testRxSkipDiscardsOnlyCommittedReceive();
     testMulticastUsesGroupBit();
     testDisabledReceiverDropsIncomingFrames();
     testSnapshotRoundTrip();

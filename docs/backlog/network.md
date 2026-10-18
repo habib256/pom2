@@ -265,6 +265,13 @@ filters an accepted frame a second time when the guest reads `RxEvent`.
 frame, so later `RxCTL` or IA writes cannot discard it or alter its status.
 The register-level test failed before the fix with both settings changed.
 
+**Bug hunt 2026-10-18 (RxCFG Skip_1):** A write to `RxCFG.Skip_1` now frees
+the committed receive frame; it no longer cancels an in-progress transmit.
+The [CS8900A datasheet](https://www.futurlec.com/Datasheet/Others/CS8900A.pdf)
+§4.4.6 and §5.2.5 resolve the earlier MAME-parity uncertainty. The smoke
+test failed before the fix and now checks both the next queued frame and the
+transmit handshake.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

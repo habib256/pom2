@@ -228,6 +228,12 @@ Things we will not do unless explicitly requested + clear ROI.
   DIPs, and should not: it would invent a DIP→divisor mapping and rate-limit
   every `PR#n`. These stay open only as *stated limits*.
 
+  **Update 2026-10-18:** The [CS8900A datasheet](https://www.futurlec.com/Datasheet/Others/CS8900A.pdf)
+  §4.4.6 and §5.2.5 supplies the missing oracle for `RxCFG.Skip_1`: it
+  discards a committed *receive* frame. The model and regression test now
+  follow that specification; the earlier MAME-parity exception for this bit
+  is superseded.
+
 - 🟢 **SSI263 / Echo+ placement is a guess beyond MAME.** MAME centres
   the Mockingboard's speech chip and gives the Echo+ TMS5220 a
   `front_center` speaker, which is what POM2 does; where a *pair* of

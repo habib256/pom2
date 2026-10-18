@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Correct CS8900A RxCFG Skip_1
+
+Uthernet I now uses `RxCFG.Skip_1` to discard the committed receive frame.
+Previously it aborted a transmit handshake instead, following a mistake in
+the MAME model. The [CS8900A datasheet](https://www.futurlec.com/Datasheet/Others/CS8900A.pdf)
+§4.4.6 and §5.2.5 specify the receive behavior. The smoke test reproduces
+both effects and confirms the next queued frame remains available.
+
 ## 2026-10-18 — Keep queued CS8900A receive decisions stable
 
 Uthernet I now records each accepted frame's address classification when it

@@ -607,10 +607,16 @@ void Cs8900aDevice::sideEffectsWritePp(uint16_t ppAddress, bool oddAddress)
 
     switch (ppAddress) {
     case kPpCcRxCfg:
-        // Skip_1: drop the partial TX frame and re-arm the transmitter.
+        // Skip_1 frees the committed receive frame (datasheet §4.4.6 and
+        // §5.2.5). A frame still waiting in the queue is not committed.
         if (content & 0x40) {
-            if (txState_ != kTxIdle) txState_ = kTxIdle;
-            setTransmitter(txEnabled_);
+            if (rxState_ == kRxGotFrame) {
+                rxState_ = kRxIdle;
+                rxBuffer_ = kPpRxStatus;
+                rxCount_ = 0;
+                rxLength_ = 0;
+                isqStagedFrame_ = false;
+            }
             // "Act once" bit — clears itself.
             content = static_cast<uint16_t>(content & ~0x40);
             ppWrite16(ppAddress, content);
