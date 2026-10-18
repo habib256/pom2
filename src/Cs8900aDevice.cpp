@@ -347,6 +347,19 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
     // be classified. (MAME asserts; we reject.)
     if (length < 6) return false;
 
+    // RxCTL has a second, independent acceptance filter for frame status.
+    // The backend supplies frames after host CRC validation, so only length
+    // classes are available here: RxOKA for valid lengths, RuntA for short
+    // frames and ExtradataA for long ones. Passing the DA filter alone is
+    // insufficient to put a frame in the receive buffer.
+    if (length < kMinRxLength) {
+        if ((recvControl_ & 0x2000) == 0) return false;
+    } else if (length > kMaxRxLength) {
+        if ((recvControl_ & 0x4000) == 0) return false;
+    } else if (!recvCorrect_) {
+        return false;
+    }
+
     if (std::memcmp(buffer, mac_.data(), 6) == 0) {
         *correctMac = true;
         // Even when "individual address" is off, the address may still

@@ -411,6 +411,41 @@ void testAddressFilter()
     std::printf("  address filter OK\n");
 }
 
+void testReceiveStatusAcceptanceBits()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+
+    const auto good = makeFrame(kOurMac, kOurMac, 64, 0x91);
+    const auto runt = makeFrame(kOurMac, kOurMac, 60, 0x92);
+    // IndividualA alone passes the address filter, but no acceptance bit
+    // authorizes either a valid frame or a runt.
+    writePpWord(card, kPpCcRxCtl, 0x0405);
+    raw->transmit(good.data(), static_cast<int>(good.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 0);
+
+    // RxOKA accepts the valid frame, but does not accept a runt.
+    writePpWord(card, kPpCcRxCtl, 0x0505);
+    raw->transmit(good.data(), static_cast<int>(good.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    raw->transmit(runt.data(), static_cast<int>(runt.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+
+    // RuntA authorizes a short frame independently of RxOKA.
+    writePpWord(card, kPpCcRxCtl, 0x2405);
+    raw->transmit(runt.data(), static_cast<int>(runt.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 2);
+    std::printf("  RxOKA and RuntA gate accepted frames\n");
+}
+
 void testMulticastUsesGroupBit()
 {
     pom2::UthernetCard card(3);
@@ -999,6 +1034,7 @@ int main()
     testTransmitLengthBounds();
     testReceivePath();
     testAddressFilter();
+    testReceiveStatusAcceptanceBits();
     testMulticastUsesGroupBit();
     testDisabledReceiverDropsIncomingFrames();
     testSnapshotRoundTrip();

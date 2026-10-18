@@ -10,6 +10,13 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Honor CS8900A receive acceptance bits
+
+The CS8900A now applies the `RxCTL` frame-status acceptance bits after the
+destination-address filter. Previously a matching destination was queued even
+when `RxOKA` was clear, and a short frame was queued without `RuntA`. The
+Uthernet I test covers valid and short frames with each bit enabled or clear.
+
 ## 2026-10-18 — Read staged Uthernet I frames through PacketPage
 
 The CS8900A PacketPage data window now returns the staged receive status,

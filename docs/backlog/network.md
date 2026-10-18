@@ -248,6 +248,12 @@ PacketPage data window now return the staged receive location at
 test failed on a zero `RxStatus` before the fix and now confirms these values
 match the RXTXDATA stream. Other findings above remain to verify.
 
+**Bug hunt 2026-10-18 (RxCTL status acceptance):** `RxOKA` now gates frames
+with valid lengths, while `RuntA` gates short frames independently of the
+destination-address filter. The Uthernet I test failed with `RxOKA` clear
+before the fix. CRC-error acceptance remains limited by the host backend,
+which supplies frames after CRC validation.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`
