@@ -86,9 +86,10 @@ an explicit request before scheduling.
 The original report also named missing FORMAT/INIT parameter-count checks.
 Reproduced and fixed 2026-10-12, along with INIT accepting nonzero units;
 see [CHANGELOG](../../CHANGELOG.md). `liron_smartport_dispatch` covers the
-guest-visible error codes and valid calls. The report's remaining WOZ 2.1
-FLUX-track, 400K and DiskCopy 4.2 restrictions still need revalidation and
-documentation; they were not tested by that protocol regression.
+guest-visible error codes and valid calls. 5.25-inch WOZ 2.1 FLUX tracks now
+support write-back with a save/reload regression. The report's remaining 400K
+and DiskCopy 4.2 restrictions still need revalidation and documentation;
+they were not tested by that protocol regression.
 
 <a id="storage-003"></a>
 

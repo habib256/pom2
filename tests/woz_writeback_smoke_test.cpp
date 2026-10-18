@@ -488,8 +488,131 @@ bool testSharedTrkQuarterTracksAlias()
     return true;
 }
 
+std::vector<uint8_t> buildFluxWoz(bool protectedInfo = false)
+{
+    auto woz = buildMinimalWoz2({}, 200);
+    // Standard WOZ2 layout: INFO payload 20, TMAP payload 88,
+    // TRKS headers 256, track block 1536, FLUX chunk 2048.
+    woz[20] = 3;             // INFO version 3 (WOZ 2.1)
+    woz[22] = protectedInfo ? 1 : 0;
+    woz[66] = 4;             // FLUX chunk at block 4
+    woz[68] = 1;             // largest flux track: one block
+    woz[88] = 0xFF;          // FLUX, not TMAP, owns qt 0
+    woz[260] = 9;            // 9 delta bytes in TRKS entry 0
+    const std::array<uint8_t, 9> flux = {
+        33, 33, 31,         // events at 33, 66 and 97 ticks
+        255, 255, 255, 255, 255, 228 // wrap: period 1600 ticks
+    };
+    std::copy(flux.begin(), flux.end(), woz.begin() + 1536);
+    woz.insert(woz.end(), {'F','L','U','X'});
+    putU32LE(woz, 160);
+    std::vector<uint8_t> map(160, 0xFF);
+    map[0] = map[1] = 0;    // two quarter tracks, one physical surface
+    woz.insert(woz.end(), map.begin(), map.end());
+    return woz;
+}
+
+bool testFluxWriteBackRoundTrip()
+{
+    const auto path = writeTempFile(buildFluxWoz(), "flux");
+    DiskImage img;
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: load FLUX: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    img.setWriteBackEnabled(true);
+    if (img.isWriteProtected() || img.trackPeriod(0) != 400) {
+        std::printf("FAIL: writable FLUX loaded as protected or wrong period\n");
+        return false;
+    }
+    int64_t pulse = 109;
+    img.writeFlux(0, 100, 120, 1, &pulse);
+    pulse = 149;
+    img.writeFlux(1, 140, 160, 1, &pulse);
+    const std::vector<int> expected{8, 16, 24, 109, 149};
+    if (img.fluxEvents(0) != expected || img.fluxEvents(1) != expected) {
+        std::printf("FAIL: FLUX aliases diverged before save\n"); return false;
+    }
+    if (!img.saveDirty()) {
+        std::printf("FAIL: save FLUX: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    const auto saved = readWholeFile(path);
+    if (saved[1536] != 33 || saved[1537] != 33 || saved[1538] != 31 ||
+        saved[260] <= 9 || saved[2048] != 'F') {
+        std::printf("FAIL: FLUX deltas/header/chunk not preserved\n"); return false;
+    }
+    DiskImage reloaded;
+    if (!reloaded.loadFile(path) || reloaded.fluxEvents(0) != expected ||
+        reloaded.fluxEvents(1) != expected) {
+        std::printf("FAIL: FLUX save/reload lost transition\n"); return false;
+    }
+    const auto wp = writeTempFile(buildFluxWoz(true), "flux_wp");
+    DiskImage protectedImage;
+    if (!protectedImage.loadFile(wp) || !protectedImage.isWriteProtected()) {
+        std::printf("FAIL: INFO write protect ignored for FLUX\n"); return false;
+    }
+    protectedImage.setWriteBackEnabled(true);
+    protectedImage.writeFlux(0, 100, 120, 1, &pulse);
+    if (protectedImage.hasUnsavedChanges()) {
+        std::printf("FAIL: protected FLUX accepted write\n"); return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    fs::remove(wp, ec);
+    std::printf("  ok: FLUX ticks, alias, save/reload, and INFO protection\n");
+    return true;
+}
+
+bool testFluxSlotGrowth()
+{
+    auto source = buildFluxWoz();
+    source[260] = 0; source[261] = 2; // 512 delta bytes
+    std::fill(source.begin() + 1536, source.begin() + 2047, 4);
+    source[2047] = 36;               // 2080 ticks = 520 LSS cycles
+    const auto path = writeTempFile(source, "flux_grow");
+    DiskImage img;
+    if (!img.loadFile(path) || img.trackPeriod(0) != 520) {
+        std::printf("FAIL: load dense FLUX\n"); return false;
+    }
+    img.setWriteBackEnabled(true);
+    std::vector<int64_t> pulses;
+    for (int i = 0; i < 513; ++i) pulses.push_back(i);
+    img.writeFlux(0, 0, 520, static_cast<int>(pulses.size()), pulses.data());
+    if (!img.saveDirty()) {
+        std::printf("FAIL: grow FLUX: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    const auto saved = readWholeFile(path);
+    if (saved[256] != 4 || saved[258] != 2 ||
+        saved[260] != 2 || saved[261] != 2 ||
+        saved[66] != 6 || saved[3072] != 'F') {
+        std::printf("FAIL: grown TRKS/INFO/FLUX offsets\n"); return false;
+    }
+    DiskImage reloaded;
+    if (!reloaded.loadFile(path) || reloaded.fluxEvents(0).size() != 513 ||
+        reloaded.fluxEvents(1).size() != 513) {
+        std::printf("FAIL: grown FLUX does not reload\n"); return false;
+    }
+    img.writeFlux(1, 10, 11, 0, nullptr); // save again via the alias
+    if (!img.saveDirty()) {
+        std::printf("FAIL: second save after FLUX growth\n"); return false;
+    }
+    DiskImage twice;
+    if (!twice.loadFile(path) || twice.fluxEvents(0).size() != 512 ||
+        twice.fluxEvents(1).size() != 512) {
+        std::printf("FAIL: second FLUX save lost the grown slot\n"); return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    std::printf("  ok: FLUX TRKS allocation grows across FLUX chunk\n");
+    return true;
+}
+
 int main()
 {
+    if (!testFluxWriteBackRoundTrip()) return 1;
+    if (!testFluxSlotGrowth()) return 1;
     if (!testSharedTrkQuarterTracksAlias()) return 1;
     if (!testWoz1WriteBackRoundTrip())  return 1;
     if (!testWoz2WriteBackRoundTrip())  return 1;

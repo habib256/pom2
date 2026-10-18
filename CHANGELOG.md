@@ -12,6 +12,16 @@ marker and the previous one.
 
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
+## 2026-10-18 — Write WOZ 2.1 FLUX tracks
+
+Writable 5.25-inch WOZ 2.1 images no longer become write protected just
+because they contain FLUX tracks. Disk II writes splice the original 125 ns
+transition positions, preserving timing outside each write window. Save-back
+encodes the flux deltas, updates TRKS byte counts, and expands a full track
+allocation while keeping the FLUX chunk address valid. Shared quarter-track
+maps and the INFO write-protect flag remain honored. `woz_writeback_smoke`
+covers save/reload and allocation growth.
+
 ## 2026-10-18 — Make the README a short entry point
 
 The repository README now leads with the emulator, a direct way to try it,

@@ -1114,6 +1114,9 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    for (auto& ticks : wozQtFluxTicks) ticks.clear();
+    wozQtFluxPeriodTicks.fill(0);
+    wozQtFluxHeaderOff.fill(0);
 
     // FLUX FIDX lookup: when WOZ2 v2.1+ provides a FLUX chunk, each
     // quarter-track may carry a flux delta stream that overrides the
@@ -1171,15 +1174,17 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // `(total_ticks + 31) / 32` cells with a 1 at every cell that
     // contains at least one flux event, so trackBitLength /
     // trackPeriod / bitAt continue to return sensible values.
-    // Sub-cell precision is preserved in fluxStream and read by the
-    // LSS via `getNextTransition` without going through bitStream.
+    // Exact 125 ns positions are kept for writes; the read path sees
+    // their 500 ns LSS-cycle projection in fluxStream.
     auto loadFluxTrack = [&](int qt, uint8_t fidx) -> bool {
         const size_t hdrOff = trksOff + static_cast<size_t>(fidx) * 8;
         const size_t trksEnd = trksOff + trksLen;
         if (hdrOff > trksEnd || trksEnd - hdrOff < 8) return false;
         const uint32_t startBlock = readU16LE(hdrOff + 0);
+        const uint32_t blockCount = readU16LE(hdrOff + 2);
         const uint32_t trackSize  = readU32LE(hdrOff + 4);
-        if (startBlock == 0 || trackSize == 0 ||
+        if (startBlock == 0 || blockCount == 0 || trackSize == 0 ||
+            trackSize > static_cast<size_t>(blockCount) * 512 ||
             trackSize > kMaxFluxTrackBytes) return false;
         const size_t dataOff = static_cast<size_t>(startBlock) * 512;
         if (dataOff > wozSize ||
@@ -1201,15 +1206,18 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             static_cast<size_t>((periodLss + cyc - 1) / cyc);
         if (cellCount == 0 || cellCount > kMaxTrackBits) return false;
         const size_t allocation = cellCount +
-            static_cast<size_t>(trackSize) * sizeof(int);
+            static_cast<size_t>(trackSize) * 2 * sizeof(int);
         if (allocation > kMaxExpandedBytes - expandedBytes) return false;
         expandedBytes += allocation;
 
         auto& bits = bitStream[qt];
         auto& flux = fluxStream[qt];
+        auto& ticks = wozQtFluxTicks[qt];
         bits.assign(cellCount, 0);
         flux.clear();
         flux.reserve(trackSize);          // upper bound
+        ticks.clear();
+        ticks.reserve(trackSize);
 
         uint64_t cpos = 0;                // cumulative ticks
         for (uint32_t i = 0; i < trackSize; ++i) {
@@ -1217,6 +1225,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             cpos += step;
             if (step != 0xFF && i != trackSize - 1) {
                 const int64_t lssCycle = static_cast<int64_t>(cpos / 4);
+                ticks.push_back(static_cast<int>(cpos));
                 flux.push_back(static_cast<int>(lssCycle));
                 const size_t cell = static_cast<size_t>(lssCycle / cyc);
                 if (cell < bits.size()) bits[cell] = 1;
@@ -1233,6 +1242,10 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         // was off by the whole obt/32 ratio — either way the flux
         // timeline slipped against the angular wrap every revolution.
         fluxQtPeriodLss[qt] = static_cast<int>(periodLss);
+        wozQtFluxPeriodTicks[qt] = static_cast<int>(totalTicks);
+        wozQtFluxHeaderOff[qt] = hdrOff;
+        wozQtByteOff[qt] = dataOff;
+        wozQtByteLen[qt] = static_cast<size_t>(blockCount) * 512;
         return true;
     };
 
@@ -1373,11 +1386,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // splice modified bitStream[qt] back into these bytes and rewrite
     // the file in one shot. `buf` is no longer needed after this.
     wozRaw = std::move(buf);
-    // POM2 can read WOZ 2.1 FLUX tracks but cannot serialise their delta
-    // streams yet. Mark the whole medium physically WP when any such track
-    // is active; accepting writes and later skipping byteLen==0 reported a
-    // successful save while discarding every modification on that track.
-    if (populatedFluxSlots > 0) fileWriteProtected = true;
+    // FLUX tracks retain their original tick positions for lossless splices.
     // fileWriteProtected is folded into isWriteProtected(); WOZ now
     // participates in the same writeBackEnabled / fileWriteProtected
     // gate as .dsk/.nib (the `wozFormat ||` blanket was removed when
@@ -1424,6 +1433,9 @@ void DiskImage::eject()
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    for (auto& ticks : wozQtFluxTicks) ticks.clear();
+    wozQtFluxPeriodTicks.fill(0);
+    wozQtFluxHeaderOff.fill(0);
     autosave_.reset();
     lineage_ = 0;
 }
@@ -2079,6 +2091,11 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
     // non-fileWriteProtected image can still splice in-memory for unit tests.)
     if (isFileWriteProtected()) return;
     if (wozFormat) {
+        if (wozQtFluxPeriodTicks[qt] != 0) {
+            writeWozFlux(qt, startLssCycle, endLssCycle, count,
+                         transitions, revolutionStart);
+            return;
+        }
         // WOZ canonical storage = bitStream[qt]. The flux→bit-cell
         // conversion is the same cell-window logic as the non-WOZ path
         // (PULSE timestamp / 8 → cell index), but we splice straight
@@ -2851,7 +2868,7 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
         // splice so a refusal leaves `wozRaw` untouched too.
         std::vector<int> unsplicable;
         for (int qt = 0; qt < kQuarterTracks; ++qt) {
-            if (!wozQtDirty[qt]) continue;
+            if (!wozQtDirty[qt] || wozQtFluxPeriodTicks[qt] != 0) continue;
             const size_t bitCnt = wozQtBitCount[qt];
             if (wozQtByteLen[qt] == 0 || bitCnt == 0 ||
                 bitStream[qt].size() < bitCnt ||
@@ -2862,9 +2879,12 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
         if (!unsplicable.empty())
             return reportUnsplicableWoz(unsplicable, lastError);
 
+        if (!applyWozFluxWriteBack()) return false;
+
         int dirtyQts = 0;
         for (int qt = 0; qt < kQuarterTracks; ++qt) {
             if (!wozQtDirty[qt]) continue;
+            if (wozQtFluxPeriodTicks[qt] != 0) { ++dirtyQts; continue; }
             const size_t byteOff = wozQtByteOff[qt];
             const size_t bitCnt  = wozQtBitCount[qt];
             const auto&  bits    = bitStream[qt];

@@ -556,6 +556,14 @@ private:
     std::array<size_t, kQuarterTracks> wozQtByteLen  {};
     std::array<size_t, kQuarterTracks> wozQtBitCount {};
     std::array<bool,   kQuarterTracks> wozQtDirty    {};
+    // WOZ 2.1 FLUX keeps original 125 ns positions outside write windows.
+    std::array<std::vector<int>, kQuarterTracks> wozQtFluxTicks{};
+    std::array<int, kQuarterTracks> wozQtFluxPeriodTicks{};
+    std::array<size_t, kQuarterTracks> wozQtFluxHeaderOff{};
+    void writeWozFlux(int qt, int64_t start, int64_t end, int count,
+                      const int64_t* transitions, int64_t revolutionStart);
+    bool applyWozFluxWriteBack();
+    bool growWozFluxSlot(int qt, size_t bytesNeeded);
     void expandTrackBits(int qt) const;
 
     // Lazy per-quarter-track flux event cache (sorted ascending, in

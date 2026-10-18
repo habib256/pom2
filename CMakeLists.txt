@@ -313,6 +313,7 @@ set(SOURCES
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/DiskImage.cpp
+    src/DiskImageWozFlux.cpp
     src/DiskLibrary_ImGui.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
@@ -788,6 +789,7 @@ set(POM2_MEDIA_SOURCES
     src/Block512Backing_WriteBack.cpp
     src/Disk35Image.cpp
     src/DiskImage.cpp
+    src/DiskImageWozFlux.cpp
     src/ProDOSVolume.cpp
     src/ResourcePaths.cpp
     src/SnapshotIO.cpp
@@ -1445,6 +1447,7 @@ set(POM2_CORE_SOURCES
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/DiskImage.cpp
+    src/DiskImageWozFlux.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EmulationController.cpp
@@ -1698,6 +1701,7 @@ add_executable(pom2_headless
     src/ClockCard.cpp
     src/Disk35Image.cpp
     src/DiskImage.cpp
+    src/DiskImageWozFlux.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/EmulationController.cpp
@@ -1790,6 +1794,7 @@ add_executable(pom2_bench
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskImage.cpp
+    src/DiskImageWozFlux.cpp
     src/FloppySoundDevice.cpp
     src/IWMDevice.cpp
     src/LeChatMauveCard.cpp

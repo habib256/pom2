@@ -2961,7 +2961,7 @@ durable path (§ Write-back commit), never an in-place `trunc`.
 | `.d13` 116 480 (13-sector, 5-and-3) | 5.25" `DiskImage` | ✅ | ✅ | `d13_roundtrip_smoke` |
 | `.2mg` wrapping DOS / ProDOS / nib | 5.25" `DiskImage` | ✅ | ✅ | `disk_2mg_writeback_smoke` (header + trailer preserved byte-for-byte) |
 | `.woz` 5.25" (WOZ1 / WOZ2, bit cells) | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke` — dirty quarter-tracks spliced back, header CRC32 zeroed per Applesauce 2.1 |
-| `.woz` 5.25" **carrying FLUX tracks** | 5.25" `DiskImage` | ✅ | ❌ **by design** | forced WP at load: POM2 cannot serialise delta streams, and accepting writes would report a successful save while discarding them |
+| `.woz` 5.25" **carrying FLUX tracks** | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke`: preserves untouched 125 ns flux positions, encodes delta bytes, grows full TRKS slots, updates the FLUX chunk offset, and honors INFO write protection |
 | `.po` / `.2mg` 819 200 (800 K) | 3.5" `Disk35Image` | ✅ | ✅ | `disk35_atomic_save` (both kinds; 2IMG envelope preserved) |
 | `.dsk` / `.image` 819 200 (800 K) | 3.5" `Disk35Image` | ✅ | ✅ | `disk35_atomic_save` — writability comes from the FILE, never the extension (the old "read-only by convention" rule overrode the user's own opt-in) |
 | `.woz` 3.5" (`INFO.disk_type = 2`) | 3.5" `Disk35Image` | ✅ | ❌ **by design** — but see *Convert* | `woz35_load::testWriteProtected` — giving blocks back would mean re-encoding the user's flux, which POM2 cannot do. **Convert to writable `.po`**: the 3.5" panel offers it on any mounted WOZ (`Disk35Image::exportRawTo` via `StorageCoordinator::convertDisk35WozToPo`, behind `MainWindow::convertWoz35ToPo`). The decode already produced the 1600 blocks a `.po` holds, so the copy costs nothing, mounts with write-back on, and the `.woz` is left untouched as the master |
@@ -2979,7 +2979,7 @@ of them alone makes a medium read-only: the process write-back default
 since 2026-09-08**, `POM2_MEDIA_WRITE_DEFAULT=protected` flips it), the 2IMG
 header's write-protect flag, the host file being read-only on disk (the
 notch — what every media panel's tick flips, § The notch), and a per-format "physically WP" rule (the
-two ❌ rows above). `isWriteProtected()` folds them together, so nothing
+3.5" WOZ row above). `isWriteProtected()` folds them together, so nothing
 can be written by accident and nothing is silently dropped.
 
 Note what is NOT in that list: the file's **extension**. A physical-WP
@@ -2987,10 +2987,9 @@ rule outranks `setWriteBackEnabled`, so a convention there would refuse a
 user's write-back silently; conventions belong in what a *user* sets, not
 in what the format layer decides for them.
 
-**The two ❌ rows are refusals, not gaps.** Both are cases where POM2
-could accept the write and lose it at flush — the failure mode that
-forecloses on the user's only copy. Refusing at mount is the honest
-behaviour; re-encoding flux is the work that would lift either.
+**The remaining ❌ row is a refusal, not a gap.** A 3.5" WOZ could accept a
+write and lose it at flush. Refusing at mount avoids that loss; encoding its
+GCR/flux representation is the work that would lift it.
 
 ### DiskImage
 
@@ -3008,8 +3007,9 @@ uniform one hides the relocation.
 Every real image gives a whole track two or three TMAP slots
 (`fastloader.woz`: `TMAP[3] = TMAP[4] = TMAP[5] = 1`), and `loadWoz`
 unpacks each slot into its own `bitStream[qt]`, so `writeFlux` mirrors
-every changed cell into the aliases (same `wozQtByteOff` / bit count / size;
-FLUX slots have bit count 0 and never alias) and drops their flux caches.
+every changed cell into the aliases (same `wozQtByteOff` / bit count / size)
+and drops their flux caches. FLUX slots use their own tick-accurate writer,
+which mirrors all transitions to quarter-tracks sharing the same TRKS entry.
 Pinned in `woz_writeback_smoke` with a shared-TRK image.
 
 143 360-byte 5.25": `.dsk`/`.do` (DOS 3.3 skew) or `.po` (ProDOS).

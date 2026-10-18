@@ -105,6 +105,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
     ${CMAKE_SOURCE_DIR}/src/SnapshotIO.cpp
     ${CMAKE_SOURCE_DIR}/src/SpeakerDevice.cpp
@@ -813,6 +814,7 @@ add_executable(test_iicplus_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -840,6 +842,7 @@ add_executable(test_iic_boot_trace
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -869,6 +872,7 @@ add_executable(test_iic_nodisk_boot_trace
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -898,6 +902,7 @@ add_executable(test_choplifter_iie_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1473,6 +1478,7 @@ add_executable(test_media_write_default
     media_write_default_test.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2070,6 +2076,7 @@ set_tests_properties(chatmauve_dot_rules PROPERTIES TIMEOUT 30)
 add_executable(test_disk_image
     disk_image_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_image PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2080,6 +2087,7 @@ set_tests_properties(disk_image_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_wp
     disk_wp_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_wp PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME disk_wp COMMAND test_disk_wp)
@@ -2093,6 +2101,7 @@ set_tests_properties(disk_wp PROPERTIES TIMEOUT 5)
 add_executable(test_disk_media_state
     disk_media_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2110,6 +2119,7 @@ target_include_directories(test_disk_media_state PRIVATE ${CMAKE_SOURCE_DIR}/src
 add_executable(test_two_phase_mount
     two_phase_mount_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2151,6 +2161,7 @@ set_tests_properties(disk_media_state PROPERTIES TIMEOUT 10)
 add_executable(test_d13_roundtrip
     d13_roundtrip_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_d13_roundtrip PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME d13_roundtrip_smoke COMMAND test_d13_roundtrip)
@@ -2163,6 +2174,7 @@ set_tests_properties(d13_roundtrip_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_skew_sniff
     disk_skew_sniff_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_skew_sniff PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2176,6 +2188,7 @@ set_tests_properties(disk_skew_sniff_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_macbinary
     disk_macbinary_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_macbinary PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2189,6 +2202,7 @@ set_tests_properties(disk_macbinary_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_cnib2
     disk_cnib2_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_cnib2 PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2203,6 +2217,7 @@ set_tests_properties(disk_cnib2_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_2mg
     disk_2mg_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_2mg PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2218,6 +2233,7 @@ set_tests_properties(disk_2mg_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_2mg_writeback
     disk_2mg_writeback_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_2mg_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2233,6 +2249,7 @@ set_tests_properties(disk_2mg_writeback_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_refuse
     disk_refuse_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_refuse PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2249,6 +2266,7 @@ set_tests_properties(disk_refuse_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_diskii_lss
     diskii_lss_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2300,6 +2318,7 @@ set_tests_properties(diskii_lss_smoke PROPERTIES TIMEOUT 10)
 add_executable(test_mame_lss_parity
     mame_lss_parity_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2333,6 +2352,7 @@ set_tests_properties(mame_lss_parity_smoke PROPERTIES TIMEOUT 10)
 add_executable(test_disk_writeback
     disk_writeback_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2350,6 +2370,7 @@ set_tests_properties(disk_writeback_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_disk_write_controller
     disk_write_controller_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2374,6 +2395,7 @@ set_tests_properties(disk_write_controller_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_woz_load
     woz_load_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2408,6 +2430,7 @@ set_tests_properties(woz_load_smoke PROPERTIES TIMEOUT 10)
 add_executable(test_woz_bit_timing
     woz_bit_timing_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_woz_bit_timing PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -2630,6 +2653,7 @@ endif()
 add_executable(test_disk_drive2
     disk_drive2_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2667,6 +2691,7 @@ set_tests_properties(disk_drive2_smoke PROPERTIES TIMEOUT 10)
 add_executable(test_disk_boot
     disk_boot_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2701,6 +2726,7 @@ set_tests_properties(disk_boot_smoke PROPERTIES TIMEOUT 30)
 add_executable(test_dos32_boot_trace
     dos32_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2735,6 +2761,7 @@ set_tests_properties(dos32_boot_trace PROPERTIES TIMEOUT 60)
 add_executable(test_dos33_save
     dos33_save_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2769,6 +2796,7 @@ set_tests_properties(dos33_save_smoke PROPERTIES TIMEOUT 60)
 add_executable(test_diskii_format
     diskii_format_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2806,6 +2834,7 @@ set_tests_properties(diskii_format_smoke PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE
 add_executable(test_diskii_unformatted
     diskii_unformatted_disk_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2844,6 +2873,7 @@ set_tests_properties(diskii_unformatted_disk PROPERTIES
 add_executable(test_diskii_write_integrity
     diskii_write_integrity_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2878,6 +2908,7 @@ set_tests_properties(diskii_write_integrity PROPERTIES
 add_executable(test_prodos_save
     prodos_save_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2912,6 +2943,7 @@ set_tests_properties(prodos_save_smoke PROPERTIES TIMEOUT 90)
 add_executable(test_sector_order
     sector_order_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2946,6 +2978,7 @@ set_tests_properties(sector_order_smoke PROPERTIES
 add_executable(test_no_slot_clock_prodos_driver
     no_slot_clock_prodos_driver_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2977,6 +3010,7 @@ set_tests_properties(no_slot_clock_prodos_driver PROPERTIES
 add_executable(c2plus_boot_probe EXCLUDE_FROM_ALL
     c2plus_boot_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -3006,6 +3040,7 @@ add_executable(copy2plus_boot_dump EXCLUDE_FROM_ALL
     copy2plus_boot_dump.cpp
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -3060,6 +3095,7 @@ add_test(NAME iie_c8xx_smoke COMMAND test_iie_c8xx)
 add_executable(iic_a2fc_printer_port_probe EXCLUDE_FROM_ALL
     iic_a2fc_printer_port_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -3075,6 +3111,7 @@ endif()
 add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     hdv_boot_dump.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -3719,6 +3756,7 @@ set_tests_properties(drol_pageflip_render PROPERTIES TIMEOUT 5)
 add_executable(test_drol_probe
     drol_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -3743,6 +3781,7 @@ endif()
 add_executable(test_diskii_motor_coast
     diskii_motor_coast_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -3775,6 +3814,7 @@ add_executable(test_purplesoft_eve_screens
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -3806,6 +3846,7 @@ add_executable(test_extasie_mouse_probe
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -3839,6 +3880,7 @@ add_executable(test_purplesoft_eve_probe
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4175,6 +4217,7 @@ add_executable(test_bus_fastpath
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -4203,6 +4246,7 @@ add_executable(test_memory_cpu_view
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -4941,6 +4985,7 @@ set_tests_properties(mouse_card_absolute_sync PROPERTIES TIMEOUT 60)
 add_executable(test_slot_config
     slot_config_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -5284,6 +5329,7 @@ add_executable(test_cli_kiosk
     cli_kiosk_test.cpp
     ${CMAKE_SOURCE_DIR}/src/CliDispatcher.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 # CliDispatcher.cpp includes the generated Version.h (`--version`).
 target_include_directories(test_cli_kiosk PRIVATE
@@ -5390,6 +5436,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -5438,6 +5485,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -5490,6 +5538,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -5540,6 +5589,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -5591,6 +5641,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -5642,6 +5693,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -5789,6 +5841,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
@@ -5838,6 +5891,7 @@ set_tests_properties(ai_control_server_smoke PROPERTIES TIMEOUT 15)
 add_executable(test_woz_writeback
     woz_writeback_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_woz_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -5853,6 +5907,7 @@ set_tests_properties(woz_writeback_smoke PROPERTIES TIMEOUT 5)
 add_executable(hero_probe EXCLUDE_FROM_ALL
     hero_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -6038,6 +6093,7 @@ set_tests_properties(disk_writeflux_anchor PROPERTIES TIMEOUT 10)
 add_executable(test_disk_writeflux_framing
     disk_writeflux_framing_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_disk_writeflux_framing PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME disk_writeflux_framing COMMAND test_disk_writeflux_framing)
@@ -6662,6 +6718,7 @@ add_executable(test_iic_diskii_no_iwm_conflict
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_iic_diskii_no_iwm_conflict PRIVATE
     ${CMAKE_SOURCE_DIR}/src ${POM2_GENERATED_DIR})
@@ -6720,6 +6777,7 @@ set_tests_properties(iic_printer_port PROPERTIES TIMEOUT 240)
 add_executable(iicplus_boot_probe EXCLUDE_FROM_ALL
     iicplus_boot_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -6746,6 +6804,7 @@ endif()
 add_executable(test_iic_plus_boot_write
     iic_plus_boot_write_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -7091,6 +7150,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -7528,6 +7588,7 @@ set_tests_properties(apple_key_latch PROPERTIES TIMEOUT 5)
 add_executable(test_fuzz_disk_image
     fuzz_disk_image_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
@@ -8223,6 +8284,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -8259,6 +8321,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -8295,6 +8358,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -8333,6 +8397,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -8443,6 +8508,7 @@ set_tests_properties(smartport_unit_visibility PROPERTIES TIMEOUT 10)
 add_executable(test_diskii_write_burst
     diskii_write_burst_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -8466,6 +8532,7 @@ set_tests_properties(diskii_write_burst PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 7
 add_executable(test_woz_nibble_write
     woz_nibble_write_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
 )
 target_include_directories(test_woz_nibble_write PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME woz_nibble_write COMMAND test_woz_nibble_write)
@@ -8696,6 +8763,7 @@ set_tests_properties(ai_control_mem_bank PROPERTIES TIMEOUT 15)
 add_executable(test_diskii_track_reach_weak
     diskii_track_reach_weak_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -8726,6 +8794,7 @@ set_tests_properties(diskii_track_reach_weak PROPERTIES TIMEOUT 20)
 add_executable(test_disk_protection_signals
     disk_protection_signals_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
