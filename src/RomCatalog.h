@@ -99,15 +99,15 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
         // ─── Storage cards ────────────────────────────────────────────────
         { "Storage cards", "Liron / SmartPort controller (4 KB)",
           { "roms/liron.rom" }, 4096, 0, "",
-          "SmartPortCard presents a synthetic identity instead of the real "
-          "firmware. Blocks still work; the $Cn0D dispatch does not.",
+          "The SmartPort block card uses synthetic firmware; the separate "
+          "Liron/IWM card cannot plug without this ROM.",
           RomMissingEffect::Degraded },
         { "Storage cards",
           "Apple II 3.5\" Disk Controller / SuperDrive (341-0438-A)",
           { "roms/341-0438-a.bin" }, 32768, 0xC73FF25Bu,
           "MAME a2superdrive (CRC c73ff25b)",
-          "Not used by POM2 yet — kept for the MAME apple2eefr oracle "
-          "(-slN superdrive) and a future SuperDrive card port.",
+          "POM2's SuperDrive slot uses a synthetic ProDOS block service and "
+          "does not execute this ROM. Kept for the MAME oracle.",
           RomMissingEffect::Unused },
         { "Reference dumps (oracle only)",
           "//e international keyboard decode ROM (342-0326-A, FR)",

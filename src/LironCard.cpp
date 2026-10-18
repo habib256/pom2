@@ -16,6 +16,7 @@
 
 #include "LironCard.h"
 
+#include "DiskImage.h"
 #include "FloppySoundSink.h"
 #include "Logger.h"
 #include "ResourcePaths.h"
@@ -483,13 +484,17 @@ void LironCard::onPhases(uint8_t phases)
 
 namespace {
 /// Is this file a 3.5" disk rather than a hard disk? The file decides, not a
-/// type selector: a `.woz` is flux, and an 800K image is what `Disk35Image`
-/// takes. Anything past 1 MiB is a hard disk without reading a byte of it.
+/// type selector: a `.woz` is flux, while `.hdv` always names a hard disk
+/// even when its payload has the same 800K size as a 3.5-inch floppy.
+/// A 2IMG declares its payload size in the header; its file size may include
+/// an arbitrarily long trailer. Other images past 1 MiB are hard disks.
 bool looksLike35(const std::string& path)
 {
     std::string ext = std::filesystem::path(path).extension().string();
     for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".hdv") return false;
     if (ext == ".woz" || ext == ".moof") return true;
+    if (ext == ".2mg") return classifyDiskForSlot(path) == DiskSlotClass::Sony35;
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     return !ec && size <= 1024u * 1024u;

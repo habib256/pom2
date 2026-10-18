@@ -252,15 +252,15 @@ void MainWindow::renderAbstractionPanel()
                "bitstream-level copy protection.");
     row("diskimage", primaryDiskII() ? Live::Active : Live::NotPlugged);
     row("cffa", plugged("cffa")        ? Live::Active : Live::NotPlugged);
+    row("cffa3", plugged("cffa3")      ? Live::Active : Live::NotPlugged);
     row("hdv",  plugged("hdv")         ? Live::Active : Live::NotPlugged);
-    degradable("smartportcard", plugged("smartport35") || plugged("superdrive"),
+    row("superdrive", plugged("superdrive") ? Live::Active : Live::NotPlugged);
+    row("liron", plugged("liron") ? Live::Active : Live::NotPlugged);
+    degradable("smartportcard", plugged("smartport35"),
                primarySmartPortCard() && primarySmartPortCard()->isLironRomLoaded(),
                pom2::AbsLevel::H1,
-               plugged("superdrive")
-                   ? "SuperDrive ProDOS block service; SWIM registers and "
-                     "the card's 65C02 firmware are not emulated."
-                   : "roms/liron.rom absent — the slot page and the $C800 bank are "
-                     "POM2's synthetic firmware instead of the real Liron ROM.");
+               "roms/liron.rom absent — the slot page and the $C800 bank are "
+               "POM2's synthetic firmware instead of the real Liron ROM.");
     {
         const bool iicClass =
             activeProfile == pom2::SystemProfile::AppleIIc ||
@@ -303,12 +303,16 @@ void MainWindow::renderAbstractionPanel()
         const auto hi = display->getHiResMode();
         const bool oe = (hi == Apple2Display::HiResMode::ColorCompositeOE ||
                          hi == Apple2Display::HiResMode::ColorCompositeOECpu);
+        const bool colour = hi != Apple2Display::HiResMode::MonoWhite &&
+                            hi != Apple2Display::HiResMode::MonoGreen &&
+                            hi != Apple2Display::HiResMode::MonoAmber &&
+                            hi != Apple2Display::HiResMode::ChatMauveRGB;
         row("oe",  oe ? Live::Active : Live::NotPlugged,
             oe ? "Signal-level demodulation of the 14.318 MHz 1-bit stream."
                : "Pick a Composite (OpenEmulator) mode in Display to run it.");
-        row("lut", oe ? Live::NotPlugged : Live::Active,
-            oe ? "" : "Artifact colours are read from a table; no signal is "
-                      "synthesised.");
+        row("lut", colour && !oe ? Live::Active : Live::NotPlugged,
+            colour && !oe ? "Artifact colours are read from a table; no signal "
+                            "is synthesised." : "Colour LUT bypassed.");
     }
     row("chatmauve", devicePanelCoordinator_->captureInventory().chatMauvePlugged()
                          ? Live::Active : Live::NotPlugged);
@@ -454,9 +458,12 @@ void MainWindow::renderAbstractionPanel()
                        "show anything the table has no entry for.";
         const auto hi = display->getHiResMode();
         t.selected   = (hi == Apple2Display::HiResMode::ColorCompositeOE ||
-                        hi == Apple2Display::HiResMode::ColorCompositeOECpu)
-                           ? 0 : 1;
-        t.note       = "Mono modes are neither — they bypass colour entirely.";
+                        hi == Apple2Display::HiResMode::ColorCompositeOECpu) ? 0
+                     : (hi == Apple2Display::HiResMode::MonoWhite ||
+                        hi == Apple2Display::HiResMode::MonoGreen ||
+                        hi == Apple2Display::HiResMode::MonoAmber ||
+                        hi == Apple2Display::HiResMode::ChatMauveRGB) ? -1 : 1;
+        t.note       = "Mono and RGB modes bypass both composite colour paths.";
         snap.toggles.push_back(std::move(t));
     }
 

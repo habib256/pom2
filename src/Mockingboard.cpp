@@ -121,7 +121,9 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
     MockingboardCard* parent;
 
     std::atomic<uint32_t> sampleRate { kAudioSampleRate };
-    std::atomic<float>    volume     { 0.5f };       // pre-mix gain
+    // With the /3 per-side chip sum, 0.35 matches MAME's routed AY level
+    // for a single full-scale tone. Saved user mixer values still override it.
+    std::atomic<float>    volume     { 0.35f };      // pre-mix gain
     std::atomic<bool>     muted      { false };
     /// Emulated CPU clock for the emuCycles replay cursor — retuned by
     /// MockingboardCard::setCpuClock on a PAL/NTSC switch.

@@ -228,6 +228,11 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "optional floppy slot uses a separate Disk II card",
       "AVR firmware, dynamic slot RAM, CF/USB menus and slot ghosting are "
       "outside this block-level model.", "Cffa3000Card.h, SmartPortCard.*" },
+    { "superdrive", "Storage", "SuperDrive (ProDOS block service)", AbsLevel::H1,
+      "A SmartPort-compatible block service exposes 1.44 MB images through "
+      "the slot; the 341-0438-A card ROM is not executed",
+      "SWIM registers and the card's 65C02 firmware are not emulated.",
+      "SmartPortCard.*" },
     { "hdv", "Storage", "ProDOS HDV card", AbsLevel::H1,
       "Hand-assembled 256 B slot ROM + an invented 4-register streaming port; "
       "block moves are a host memcpy. No GCR, no flux, no ATA",
@@ -241,6 +246,11 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "Full Liron LLE needs the IWM bit-shifter AND the UniDisk drive-side "
       "65C02 — out of scope.",
       "SmartPortCard.*" },
+    { "liron", "Storage", "Liron 3.5-inch controller", AbsLevel::L2,
+      "The real 4 KB ROM executes over an IWM device and boots through the "
+      "SmartPort bus protocol",
+      "The UniDisk drive-side 65C02 is represented by a protocol responder.",
+      "LironCard.*, SmartPortBusDevice.*" },
     { "iicsp", "Storage", "//c-class on-board SmartPort", AbsLevel::H1,
       "A $C500-$C5FF hole punched through the //c's forced INTCXROM, armed "
       "only by an explicit GUI/CLI boot — plus the stub's $C800 expansion "
@@ -525,7 +535,8 @@ AbstractionLevels_ImGui::render(bool* open, const Snapshot& snap)
                 const ToggleState& t   = *pit->second.t;
                 const int          idx = pit->second.idx;
                 const ToggleOption& me = (idx == 0) ? t.low : t.high;
-                const bool switchable  = (t.selected >= 0);
+                const bool switchable  = (t.selected >= 0 ||
+                                          t.id == AbsToggle::CompositeVideo);
                 if (t.selected == idx) {
                     ImGui::TextColored(u32(pal.ok), ICON_FA_CHECK " in use");
                     if (ImGui::IsItemHovered() && !me.why.empty())

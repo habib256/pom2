@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [AUDIO-011](#audio-011) | 🟠 | To verify | Bug hunt #16's speech residue |
-| [AUDIO-003](#audio-003) | 🟡 | To verify | Compare Mockingboard output level with MAME |
+| [AUDIO-003](#audio-003) | 🟡 | Partial: nominal single-tone balance calibrated | Compare Mockingboard output level with MAME |
 | [AUDIO-005](#audio-005) | 🟢 | To verify | Analog output stage. |
 | [AUDIO-006](#audio-006) | 🟢 | To verify | Mutex contention. |
 | [AUDIO-007](#audio-007) | 🟢 | To verify | Mute drops the queue. |
@@ -79,7 +79,7 @@ and `ssi263_speech_timeline` for the audible-reference regression.
 
 ## AUDIO-003 — Compare Mockingboard output level with MAME
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial (2026-10-18); reference recording still needed.
 
 **Acceptance criterion (after revalidation):** Measure the same AY register stream through both output chains and record gain and bass response relative to the speaker.
 
@@ -101,6 +101,22 @@ Those are different scalings, and a card that sits low against the speaker
 and disk channels reads as thin. Wants a numbers-first comparison of POM2's
 end-to-end output level against MAME's for the same register stream, not more
 tuning inside `AyPsgSynth.h`. → `CHANGELOG.md` 2026-08-02.
+
+**2026-10-18 calibration:** The original "card sits low" diagnosis was not
+confirmed for a single full-scale tone. At shipped defaults, POM2's AY and
+speaker were almost equal in RMS. MAME's Apple II configuration routes AY
+channels at 0.5 and the speaker at 0.4; its AY resistor model (1 kOhm load,
+Westcott table) gives levels 0.0590383 and 0.2987533 at amplitudes 0 and
+15. A 50%-duty tone therefore gives an AY/speaker RMS ratio of 0.2996. The
+new `audio_stereo` check renders both POM2 chains at their defaults and
+measures 0.2940. The speaker nominal amplitude is 0.4; new Mockingboard
+instances default to 0.35, while saved volume values remain authoritative.
+`speaker_audio_quality` and `mockingboard_audio_quality` remain green.
+
+The comparison is against MAME's published signal model and routes, not a
+captured MAME WAV: the local MAME installation lacks the Apple IIe ROM set.
+Keep the broader item open for a same-program recording and a listening or
+hardware check before changing bass response or speech balance.
 
 <a id="audio-005"></a>
 

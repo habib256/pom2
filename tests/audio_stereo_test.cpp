@@ -43,6 +43,7 @@
 #include "AudioDevice.h"
 #include "Mockingboard.h"
 #include "PhasorCard.h"
+#include "SpeakerDevice.h"
 
 #include <cassert>
 #include <cmath>
@@ -400,6 +401,43 @@ void testCardThroughMixer()
     std::puts("OK card_through_mixer");
 }
 
+// MAME's Apple II routes a 0/1 speaker at 0.4 and each AY channel at 0.5.
+// Its AY level-0/15 voltages, computed from ay8910.cpp's 1 kOhm load and
+// Westcott resistor table, are 0.0590382871 and 0.2987533131. A 50%-duty
+// tone therefore has RMS 0.0599287565, versus 0.2 for the speaker. Exercise
+// both POM2 output chains at their shipped defaults, not just their gains.
+void testDefaultCardSpeakerBalance()
+{
+    constexpr int frames = 4410;
+    MockingboardCard card(4);
+    card.setSampleRate(44100);
+    mbToneOnChip(card, 0, 0x0100); // ~250 Hz, one channel at amplitude 15
+    std::vector<float> left(frames), right(frames);
+    assert(card.audioSource()->fillAudioBufferStereo(
+        left.data(), right.data(), frames));
+
+    SpeakerDevice speaker;
+    speaker.setSampleRate(44100);
+    for (int edge = 0; edge < 50; ++edge)
+        speaker.recordToggle(static_cast<uint64_t>(
+            edge * POM2_CPU_CLOCK_HZ / 500.0));
+    std::vector<float> spk(frames);
+    speaker.fillAudioBuffer(spk.data(), frames);
+
+    auto tailRms = [](const std::vector<float>& samples) {
+        double energy = 0.0;
+        for (int i = frames / 2; i < frames; ++i)
+            energy += static_cast<double>(samples[i]) * samples[i];
+        return std::sqrt(energy / (frames / 2));
+    };
+    const double ay = tailRms(left);
+    const double sp = tailRms(spk);
+    const double mameRatio = 0.0599287565 / 0.2;
+    std::printf("  default AY/speaker: %.4f / %.4f = %.4f (MAME %.4f)\n",
+                ay, sp, ay / sp, mameRatio);
+    assert(std::abs(ay / sp - mameRatio) < 0.03);
+}
+
 }  // namespace
 
 int main()
@@ -412,6 +450,7 @@ int main()
     testMockingboardMonoFoldDown();
     testPhasorPairPan();
     testCardThroughMixer();
+    testDefaultCardSpeakerBalance();
     std::puts("All stereo audio tests passed.");
     return 0;
 }

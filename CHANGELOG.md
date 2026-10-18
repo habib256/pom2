@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Calibrate the default Mockingboard and speaker balance
+
+For a single full-scale AY tone, MAME's Apple II routes each AY output at
+0.5 and the 1-bit speaker at 0.4. Its AY resistor model gives an AY-to-speaker
+RMS ratio of about 0.300 for this controlled signal. POM2's default mix was
+close to 1.0: the card and speaker were almost equally loud. The speaker's
+nominal amplitude is now 0.4 and the Mockingboard's fresh-card gain is 0.35;
+the measured POM2 ratio is 0.294. Existing saved card-volume choices still
+override the new card default. The targeted audio tests pin the ratio and
+speaker signal quality. This is a source-model calibration; a MAME WAV and
+physical-board listening comparison are still useful for complex material.
+
 ## 2026-10-18 — Feed MOOF tracks directly to the Apple II 3.5-inch controller
 
 The earlier MOOF loader decoded sectors to 800K blocks, then the Sony drive

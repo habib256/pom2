@@ -48,7 +48,7 @@ int main()
         const double alias = rms(render(rate, POM2_CPU_CLOCK_HZ / (2.0 * halfPeriod)));
         std::printf("%u Hz: tone %.6f, ultrasonic alias %.6f (%.2f dB)\n",
                     rate, tone, alias, 20 * std::log10(alias / tone));
-        assert(tone > 0.05 && tone < 0.15);
+        assert(tone > 0.17 && tone < 0.23);
         assert(alias / tone < 0.002);
     }
 

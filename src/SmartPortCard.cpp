@@ -346,6 +346,18 @@ void SmartPortCard::setUnitCount(int n)
     if (n < 2) n = 2;
     if (n > static_cast<int>(kMaxUnits)) n = static_cast<int>(kMaxUnits);
     if (n & 1) ++n;                      // ProDOS drives come in pairs
+    // A selected bay can become invisible while a byte stream is in flight.
+    // Discard its partial transfer, but keep the selection so subsequent data
+    // accesses report no device instead of silently targeting another bay.
+    if (n < unitCount_) {
+        for (size_t u = static_cast<size_t>(n); u < kMaxUnits; ++u) {
+            streamOffset_[u] = 0;
+            writeBufPrimed_[u] = false;
+            readCacheValid_[u] = false;
+            ioError_[u] = false;
+        }
+        if (activeUnit_ >= static_cast<size_t>(n)) spPushPages_ = 0;
+    }
     unitCount_ = n;
 }
 
@@ -467,7 +479,8 @@ uint8_t SmartPortCard::blockCountByte(int which) const
     // device after booting from another slot — the //c "Disk II + on-board
     // SmartPort" garble (see project_iic_smartport_boot).
     const SmartPortUnit* u =
-        (activeUnit_ < kMaxUnits) ? units_[activeUnit_].get() : nullptr;
+        (activeUnit_ < static_cast<size_t>(unitCount_))
+        ? units_[activeUnit_].get() : nullptr;
     uint32_t blocks = (u && u->isLoaded()) ? u->blockCount() : 0u;
     // ProDOS STATUS returns a 16-bit count: an exactly-32 MiB volume
     // (65536 blocks — Block512Backing::kMaxBlocks deliberately admits
@@ -552,7 +565,7 @@ void SmartPortCard::noteIoError(size_t u)
 
 uint8_t SmartPortCard::statusByte() const
 {
-    const SmartPortUnit* u = (activeUnit_ < kMaxUnits)
+    const SmartPortUnit* u = (activeUnit_ < static_cast<size_t>(unitCount_))
         ? units_[activeUnit_].get() : nullptr;
     uint8_t s = (u && u->isLoaded()) ? 0x00 : 0x80;
     if (!u || u->isWriteProtected()) s |= 0x40;
@@ -563,6 +576,10 @@ uint8_t SmartPortCard::statusByte() const
 uint8_t SmartPortCard::readDataByte()
 {
     const size_t u = activeUnit_;
+    if (u >= static_cast<size_t>(unitCount_)) {
+        noteIoError(u);
+        return 0xFF;
+    }
     SmartPortUnit* unit = units_[u].get();
     if (!unit || !unit->isLoaded()) {
         // No unit / no media: latch the error so the ROM routine returns
@@ -604,6 +621,10 @@ uint8_t SmartPortCard::readDataByte()
 void SmartPortCard::writeDataByte(uint8_t v)
 {
     const size_t u = activeUnit_;
+    if (u >= static_cast<size_t>(unitCount_)) {
+        noteIoError(u);
+        return;
+    }
     SmartPortUnit* unit = units_[u].get();
     if (!unit || !unit->isLoaded()) {
         // Same as readDataByte: a write to an empty bay must error, not

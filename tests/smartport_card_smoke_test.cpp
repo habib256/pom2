@@ -417,6 +417,42 @@ bool testIoErrorSoundsOnce()
     return true;
 }
 
+bool testShrinkHidesSelectedUnit()
+{
+    const std::string path = writeSyntheticPo("hidden", 0x73);
+    auto unit = std::make_unique<pom2::SmartPort35Unit>();
+    if (!unit->loadImage(path)) return false;
+    unit->setWriteBackEnabled(true);
+    auto* mounted = unit.get();
+    pom2::SmartPortCard card(5);
+    card.setUnitCount(4);
+    card.setUnit(3, std::move(unit));
+    writeReg(card, 0x0, 3);
+    writeReg(card, 0x1, 0);
+    writeReg(card, 0x2, 0);
+    if (readReg(card, 0x3) != 0x73) return false;
+
+    card.setUnitCount(2);
+    if ((readReg(card, 0x4) & 0x80) == 0 ||
+        readReg(card, 0x5) != 0 || readReg(card, 0x6) != 0 ||
+        readReg(card, 0x3) != 0xFF) {
+        std::puts("FAIL: selected unit remains readable after count shrinks");
+        return false;
+    }
+    if ((readReg(card, 0x4) & 0x01) == 0) {
+        std::puts("FAIL: hidden unit read did not report an I/O error");
+        return false;
+    }
+    for (size_t i = 0; i < kBlockBytes; ++i) writeReg(card, 0x3, 0xCC);
+    uint8_t block[kBlockBytes];
+    if (!mounted->readBlock(0, block) || block[0] != 0x73) {
+        std::puts("FAIL: hidden unit accepted a streamed write");
+        return false;
+    }
+    fs::remove(path);
+    return true;
+}
+
 } // anon namespace
 
 int main() {
@@ -428,5 +464,6 @@ int main() {
     ok &= testBlockCountClamp();
     ok &= testAccessLed();
     ok &= testIoErrorSoundsOnce();
+    ok &= testShrinkHidesSelectedUnit();
     return ok ? 0 : 1;
 }

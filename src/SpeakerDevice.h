@@ -106,7 +106,9 @@ private:
     // CPU clock the reconstruction assumes. Runtime (not constexpr) so PAL
     // profiles can retune it; audio thread reads, UI/worker thread writes.
     std::atomic<double>     cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
-    static constexpr float  kSquareAmp    = 0.18f;     // headroom vs cassette mix
+    // MAME's Apple II speaker route is 0.4 (apple2e.cpp / apple2.cpp).
+    // Keep the same nominal level so the AY-to-speaker balance is measurable.
+    static constexpr float  kSquareAmp    = 0.4f;
     static constexpr float  kCatchUpSecs  = 0.10f;     // snap forward if behind
     static constexpr size_t kMaxEvents    = 16384;     // ~750 ms at 22 kHz toggles
     // 4× oversampling × 64-tap Blackman-windowed sinc.

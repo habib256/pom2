@@ -53,13 +53,10 @@ Markdown file cannot:
 
 The catalog is static data mirroring the master table below. **Edit the two
 together**: the doc carries the evidence, the panel carries the conclusion.
-As of 2026-10-06 the catalog (`AbstractionLevels_ImGui.cpp:120-357`) is a
-subset of this table — it has no rows for the Liron card, the SmartPort bus,
+The catalog (`AbstractionLevels_ImGui.cpp`) is a
+subset of this table — it has no rows for the SmartPort bus,
 the //c external port, the Grappler 1981, the PIC, the Videoterm, TransWarp,
-the Workstation Card, 4play, the printer sound or PostScript — and three of
-its rows lag the code: `ssc` still says synthetic firmware, `printercard`
-(and its Switch tooltip) still says the Pascal block is absent, and
-`chatmauve` still says the RVB Graph is absent.
+the Workstation Card, 4play, the printer sound or PostScript.
 
 ## The two axes
 
@@ -122,6 +119,7 @@ whenever a ROM dump exists but the chip behind it does not need to.
 | **SmartPortHub / Sony35Drive** | **L0/L1** | Zoned GCR, LSTRB register strobes, DSKCHG latch polarity per MAME `floppy.cpp:560/672/723` | — |
 | **CFFA 2.0** (`CffaCard` + `AtaBlockDevice`) | **L2** | **Real 4 KB firmware dump executes** over an ATA taskfile model isomorphic to MAME's `cs0_r/cs0_w` | ATA layer skips DMA / IRQ / SMART; CHD backing is phase 2 |
 | **CFFA3000** (`Cffa3000Card`) | **H1** | Synthetic SmartPort firmware with eight configurable image units, using the existing block and media stack | The AVR firmware, dynamic slot RAM, CF/USB browser, and automatic virtual Disk II slot are not emulated. Configure an ordinary Disk II card in another slot for floppy images. This is distinct from CFFA 2.0's ATA hardware. |
+| **SuperDrive slot** (`superdrive`, `SmartPortCard`) | **H1** | Synthetic ProDOS block service for 1.44 MB images | The 341-0438-A ROM, SWIM registers and card 65C02 do not execute |
 | **HDV card** (`ProDOSHardDiskCard`) | **H1** | Hand-assembled 256 B slot ROM + an invented 4-register streaming port; `deviceSelectRead/Write` = host `memcpy`. No GCR, no flux, no ATA | Deliberate: mounts `.hdv`/`.2mg` directly with **no card ROM dump required** |
 | **SmartPort card** (`SmartPortCard`, Liron-class) | **L2** (the live Abstraction Levels panel says L2; this table used to say "H1 + L2 veneer", which described the same thing in two letters) | The whole 256 B slot page **and** the full 2 KB `$C800` bank come from `roms/liron.rom`; only the HLE service entries (`$Cn00-02`, `$Cn0A-12`, `$Cn20-E2`) are overlaid, routing to POM2's own `$CE00` 6502 SmartPort handler; block moves are host memcpy. Both public entries now open with the real firmware's `BIT $CFFF` — see the case study | Full Liron LLE needs the IWM bit-shifter **and** the UniDisk drive-side 65C02 — out of scope |
 | **SmartPort bus** (`SmartPortBusDevice`) | **H2 — the protocol, answered** | The UniDisk 3.5's side of the SmartPort bus at the byte level: REQ/ACK on PH0/SENSE, sync + `$C3` frame, 7-byte header, odd section + seven-byte groups with bit-7 markers, 4-and-4 checksum, `$C8`; INIT / STATUS (+DIB type `$01` subtype `$00` for a UniDisk, `$02`/`$20` for an HDV, empty or not) / READ / WRITE served from any block backing. Read out of `roms/liron.rom` with POM2's own disassembler; the //c's bank 1 is the same code | The drive-side 65C02 is not emulated: the protocol is the contract, and both firmwares that speak it boot through it (`liron_boot35`, `iic_external_smartport`) |

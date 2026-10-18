@@ -248,7 +248,9 @@ void RomStatus_ImGui::rescan()
                   "generic dump resolves, and warns that it may not match.";
         for (const auto& c : cfg.romProbeOrder) m.files.emplace_back(c);
         scanProbe(m);
-        if (m.usedIndex < 0) ++missingRequired_;
+        if (m.usedIndex < 0 ||
+            !m.files[static_cast<std::size_t>(m.usedIndex)].sizeOk)
+            ++missingRequired_;
         machine_.push_back(std::move(m));
 
         Probe c;
@@ -257,7 +259,9 @@ void RomStatus_ImGui::rescan()
         c.note  = "Text mode renders from the built-in fallback glyphs.";
         for (const auto& cc : cfg.charRomProbeOrder) c.files.emplace_back(cc);
         scanProbe(c);
-        if (c.usedIndex < 0) ++missingOptional_;
+        if (c.usedIndex < 0 ||
+            !c.files[static_cast<std::size_t>(c.usedIndex)].sizeOk)
+            ++missingOptional_;
         charRom_.push_back(std::move(c));
     }
 
@@ -278,7 +282,9 @@ void RomStatus_ImGui::rescan()
         p.requiredSize = e.size ? e.size : (e.isIIeClass ? 4096u : 2048u);
         p.files.emplace_back(e.path);
         scanProbe(p);
-        if (p.usedIndex < 0) ++missingOptional_;
+        if (p.usedIndex < 0 ||
+            !p.files[static_cast<std::size_t>(p.usedIndex)].sizeOk)
+            ++missingOptional_;
         locale_.push_back(std::move(p));
     }
 
@@ -407,7 +413,10 @@ void RomStatus_ImGui::rescan()
         // Re-evaluate the reference CRC now that the bytes are hashed.
         for (auto& f : p.files)
             if (f.found && f.crcKnown) f.crcOk = (f.crc == e.knownCrc);
-        if (p.usedIndex < 0) ++missingOptional_;
+        if (p.missingEffect != Probe::Missing::Unused &&
+            (p.usedIndex < 0 ||
+             !p.files[static_cast<std::size_t>(p.usedIndex)].sizeOk))
+            ++missingOptional_;
         cards_.push_back(std::move(p));
     }
 
@@ -614,16 +623,17 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
 
     if (missingRequired_ > 0)
         ImGui::TextColored(colBad(), ICON_FA_CIRCLE_XMARK
-                           " %d profile%s cannot load its firmware.",
+                           " %d profile%s missing usable firmware.",
                            missingRequired_, missingRequired_ == 1 ? "" : "s");
     if (missingOptional_ > 0)
         ImGui::TextColored(colWarn(), ICON_FA_TRIANGLE_EXCLAMATION
-                           " %d optional ROM%s missing — hover a row to see "
-                           "what that costs.",
-                           missingOptional_, missingOptional_ == 1 ? " is" : "s are");
+                           " %d optional ROM or sample%s missing or invalid — "
+                           "hover a row for the impact.",
+                           missingOptional_, missingOptional_ == 1 ? "" : "s");
     if (missingRequired_ == 0 && missingOptional_ == 0)
         ImGui::TextColored(colOk(), ICON_FA_CIRCLE_CHECK
-                           " Every ROM POM2 knows about is present.");
+                           " Firmware and optional ROMs/samples are available "
+                           "(reference dumps and Virtual II recordings excluded).");
 
     ImGui::Spacing();
     if (ImGui::Button(ICON_FA_ARROW_ROTATE_RIGHT " Rescan")) rescan();

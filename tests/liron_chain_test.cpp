@@ -261,6 +261,31 @@ int main()
     {
         pom2::LironCard card(5);
         std::string err;
+        const fs::path smallHdv = scratch / "small-800k.hdv";
+        std::error_code copyError;
+        fs::copy_file(boot35, smallHdv, fs::copy_options::overwrite_existing,
+                      copyError);
+        if (copyError) fail("create 800K HDV: " + copyError.message());
+        else {
+            if (!card.mountBay(3, smallHdv.string(), err))
+                fail("mount 800K HDV: " + err);
+            else if (card.bayInfo(3).kindLabel != "ProDOS HDV" ||
+                     !card.blockBackings()[3]->isLoaded())
+                fail("800K .hdv was mounted as a 3.5-inch floppy");
+        }
+        const fs::path wrapped35 = scratch / "long-trailer-800k.2mg";
+        copyError.clear();
+        fs::copy_file(boot35, wrapped35, fs::copy_options::overwrite_existing,
+                      copyError);
+        if (!copyError) fs::resize_file(wrapped35, 2u * 1024u * 1024u, copyError);
+        if (copyError) fail("create long-trailer 2IMG: " + copyError.message());
+        else {
+            if (!card.mountBay(3, wrapped35.string(), err))
+                fail("mount long-trailer 2IMG: " + err);
+            else if (card.bayInfo(3).kindLabel != pom2::SmartPort35Unit::kKindLabel ||
+                     card.blockBackings()[3]->isLoaded())
+                fail("800K 2IMG with a long trailer was mounted as a hard disk");
+        }
         if (!card.mountBay(3, volumes[0], err)) fail("mount a 3.5\" in unit 3: " + err);
         if (card.bayInfo(3).kindLabel != pom2::SmartPort35Unit::kKindLabel) fail("unit 3 is not a 3.5\"");
         if (!card.mountBay(3, volumes[1], err)) fail("mount a hard disk over it: " + err);
