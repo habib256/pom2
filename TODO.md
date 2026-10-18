@@ -21,8 +21,6 @@ Move an item when its next action or dependency changes.
 |---|---|
 | [RELEASE-001](docs/backlog/release-1.0.md#release-001) | Record the decision on commercial media still present in Git history, then align repository and release distribution with it. |
 | [RELEASE-002](docs/backlog/release-1.0.md#release-002) | Obtain the origin and redistribution terms of the two shipped photographs from their owner; record them in `THIRD-PARTY.md`. |
-| [RELEASE-004](docs/backlog/release-1.0.md#release-004) | Land the Ethernet panel concurrency test, capture its CI result, then decide whether other panel routes need the same harness. |
-| [RELEASE-006](docs/backlog/release-1.0.md#release-006) | Land the Linux CI libslirp guard and record a passing run with no loopback-test skip. |
 
 ### Next — complete the remaining evidence
 

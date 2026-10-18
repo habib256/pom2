@@ -42,6 +42,7 @@
 // the 68705 loader halving the mouse's timer. And every key of the slot
 // catalog must map to an entry here, so a new card cannot be left out.
 #include "CffaCard.h"
+#include "Cffa3000Card.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
 #include "EchoPlusCard.h"
@@ -340,6 +341,7 @@ int main()
         { "DiskIICard",        [] { return std::unique_ptr<SlotPeripheral>(new DiskIICard(6)); } },
         { "ProDOSHardDisk",    [] { return std::unique_ptr<SlotPeripheral>(new ProDOSHardDiskCard(7)); } },
         { "CffaCard",          [] { return std::unique_ptr<SlotPeripheral>(new CffaCard(7)); } },
+        { "Cffa3000Card",      [] { return std::unique_ptr<SlotPeripheral>(new Cffa3000Card(7)); } },
         { "SmartPortCard",     [] { return std::unique_ptr<SlotPeripheral>(new SmartPortCard(5)); } },
         { "LironCard",         [] { return std::unique_ptr<SlotPeripheral>(new LironCard(5)); } },
         { "MockingboardAC",    [] { return std::unique_ptr<SlotPeripheral>(new MockingboardCard(4)); } },
@@ -403,6 +405,7 @@ int main()
     // Every catalog key is covered by an entry above.
     const std::map<std::string, std::string> keyToEntry = {
         {"diskii", "DiskIICard"}, {"hdv", "ProDOSHardDisk"}, {"cffa", "CffaCard"},
+        {"cffa3", "Cffa3000Card"},
         {"smartport35", "SmartPortCard"}, {"liron", "LironCard"},
         {"ssc", "SuperSerialCard"}, {"printer", "PrinterCard"},
         {"grappler", "GrapplerCard"}, {"clock", "ClockCard"},

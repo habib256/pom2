@@ -685,6 +685,9 @@ jobs:
           echo "WASM artifacts OK:"
           ls -lh wasm/POM2.wasm wasm/POM2.js wasm/index.html
 
+      - name: Boot in Chrome and verify settings survive reload
+        run: node --experimental-websocket tools/wasm_persistence_smoke.mjs
+
       - name: Upload the WASM bundle
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:

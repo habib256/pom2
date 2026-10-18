@@ -21,6 +21,7 @@
 // lived as mutable policy in MainWindow.cpp.
 
 #include "CffaCard.h"
+#include "Cffa3000Card.h"
 #include "ClockCard.h"
 #include "Settings.h"
 #include "DiskIICard.h"
@@ -176,6 +177,7 @@ int main()
     expectLiveKey(std::make_unique<DiskIICard>(3), "diskii");
     expectLiveKey(std::make_unique<ProDOSHardDiskCard>(3), "hdv");
     expectLiveKey(std::make_unique<pom2::CffaCard>(3), "cffa");
+    expectLiveKey(std::make_unique<pom2::Cffa3000Card>(3), "cffa3");
     expectLiveKey(std::make_unique<pom2::SmartPortCard>(3), "smartport35");
     expectLiveKey(std::make_unique<SuperSerialCard>(3), "ssc");
     expectLiveKey(std::make_unique<PrinterCard>(3), "printer");

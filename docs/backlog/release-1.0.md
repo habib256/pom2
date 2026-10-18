@@ -143,7 +143,7 @@ entry covers the implementation.
 
 ### RELEASE-004 — G5-10 · A CI leg with software GL
 
-**Priority:** 🟠 · **State:** GL verified; Ethernet panel concurrency CI pending.
+**Priority:** 🟠 · **State:** Verified for the Ethernet panel seam.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-457).
 
@@ -169,15 +169,21 @@ still does not exist in `tests/` (owned by
 renders 120 frames while Uthernet cards are replugged; five local runs pass.
 The [software-GL job at `0243edc`](https://github.com/habib256/pom2/actions/runs/39061181410/job/117479619496)
 passed under Xvfb with its skip check enabled.
-The complete test job must run this new case in CI before this gate can be
-signed off. Scope and remaining frontend routes are recorded in
+Scope and remaining frontend routes are recorded in
 [ARCH-009](architecture-tooling.md#arch-009).
+
+**CI evidence 2026-10-17:** In [run 39063373838](https://github.com/habib256/pom2/actions/runs/39063373838),
+the Mesa/Xvfb job passed without skips and the full Linux job ran
+`frontend_device_panel_concurrency` successfully. Other panel routes warrant
+separate coverage under ARCH-009; the release gate's Ethernet seam is covered.
+The overall run was red because two card catalog tests omitted `cffa3`, fixed
+in the following change.
 
 <a id="release-006"></a>
 
 ### RELEASE-006 — G5-13 · The transports at 0 %
 
-**Priority:** 🟠 · **State:** CI guard implemented; passing Linux run pending.
+**Priority:** 🟠 · **State:** Verified in Linux CI without skip.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-480).
 
@@ -202,8 +208,12 @@ ctest, so the test runs at release time — without a skip guard there.
 `libslirp-dev` and `libglib2.0-dev`, checks the pkg-config module, and rejects
 either CTest skip shape for `slirp_loopback_fence`. The release `quality` job
 now does the same. The skip guard's self-test and the real loopback test pass
-locally with libslirp 4.9.3. A passing CI run of the change is still required
-for the acceptance criterion.
+locally with libslirp 4.9.3. The CI result is recorded below.
+
+**CI evidence 2026-10-17:** [Run 39063373838](https://github.com/habib256/pom2/actions/runs/39063373838)
+installed libslirp and GLib, then ran `slirp_loopback_fence` successfully in
+2.04 seconds. The overall run was red on unrelated `cffa3` catalog test
+omissions, fixed in the following change.
 
 <a id="release-005"></a>
 
@@ -214,6 +224,12 @@ for the acceptance criterion.
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-473).
 
 **Acceptance criterion:** Boot the browser module, write a setting, persist it, reload and recover the value in an automated check.
+
+**Implementation 2026-10-18:** `tools/wasm_persistence_smoke.mjs` serves the
+built bundle to headless Chrome, waits for the first frame, writes a setting
+to `state.cfg`, waits for the IDBFS flush, reloads the page, and reads it
+back. The local browser run passes; the check now runs in the WASM CI job.
+CI evidence from the new workflow run is pending.
 
 - 🟢 **G5-12 · WASM CI is compile-only.** *≈1 d.* The job builds and checks
   three files are non-empty; it never boots the module, never touches
