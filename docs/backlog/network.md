@@ -272,6 +272,12 @@ The [CS8900A datasheet](https://www.futurlec.com/Datasheet/Others/CS8900A.pdf)
 test failed before the fix and now checks both the next queued frame and the
 transmit handshake.
 
+**Bug hunt 2026-10-18 (empty RxEvent):** Reading `RxEvent` with no queued
+successor now leaves the committed frame's `RxStatus` intact in PacketPage
+and RXTXDATA. Previously the empty event value `$0004` overwrote it while
+`rxState_` still exposed the frame. The register-level test failed on the
+stale status before the fix.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Preserve CS8900A RxStatus on an empty RxEvent
+
+Uthernet I no longer overwrites the committed frame's `RxStatus` with
+`$0004` when the guest reads `RxEvent` and no newer frame is waiting. The
+[CS8900A datasheet](https://www.mouser.com/ds/2/76/cs8900a_f5-1160167.pdf)
+distinguishes the frame's buffered `RxStatus` from the event register. The
+smoke test failed before the fix and checks PacketPage and RXTXDATA reads.
+
 ## 2026-10-18 — Correct CS8900A RxCFG Skip_1
 
 Uthernet I now uses `RxCFG.Skip_1` to discard the committed receive frame.

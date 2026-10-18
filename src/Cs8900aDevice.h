@@ -54,8 +54,9 @@
 // $0124 pulls the next accepted frame out of the queue into PacketPage
 // $0400 and flips `rxState_` to GOT_FRAME (`cs8900a.cpp:938-980`). The
 // host then reads RxStatus, RxLength and the payload back through
-// RXTXDATA. Reading RxEvent again before the payload is drained is an
-// "implied skip" and discards it — that is real hardware behaviour.
+// RXTXDATA. Reading RxEvent again before the payload is drained can be an
+// "implied skip" when another frame is ready; an empty event leaves the
+// committed frame's RxStatus intact.
 //
 // What POM2 changes vs MAME
 // -------------------------

@@ -780,8 +780,8 @@ void Cs8900aDevice::sideEffectsReadPp(uint16_t ppAddress, bool oddAddress)
         break;
 
     case kPpSeRxEvent: {
-        // Reading RxEvent before the staged frame is fully drained is an
-        // "implied skip" — the pending frame is lost. MAME treats EVERY
+        // Reading RxEvent before the staged frame is fully drained can be
+        // an "implied skip" when another frame is available. MAME treats EVERY
         // completed status read as a new one, including re-reading the
         // same half ("L, L, L or H, H, H", cs8900a.cpp:942-979), so a
         // repeated same-half read pops the next frame too. Do NOT "fix"
@@ -799,10 +799,11 @@ void Cs8900aDevice::sideEffectsReadPp(uint16_t ppAddress, bool oddAddress)
 
         if ((accessMask & rxEventReadMask_) != 0) {
             if (rxEnabled_) {
+                const bool hasNextFrame = !frameQueue_.empty();
                 const uint16_t retVal = receiveFrame();
-                // RxStatus buffers the value; RxEvent re-evaluates on
-                // every read. Both get the same word here.
-                ppWrite16(kPpRxStatus,   retVal);
+                // RxStatus belongs to the committed frame. An empty event
+                // must not overwrite its status while the guest reads it.
+                if (hasNextFrame) ppWrite16(kPpRxStatus, retVal);
                 ppWrite16(kPpSeRxEvent,  retVal);
             }
             rxEventReadMask_ = accessMask;

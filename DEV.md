@@ -6941,8 +6941,9 @@ and skipping a step must emit nothing — pinned:
 
 **Receive is polled.** Reading RxEvent (`$0124`) pops the next accepted
 frame into PacketPage and flips to `GOT_FRAME`. Reading RxEvent *again*
-before the payload is drained is an "implied skip" that discards it —
-real hardware behaviour, modelled. Payload readback order is the
+before the payload is drained can be an "implied skip" when another frame
+is waiting; an empty event leaves the committed `RxStatus` intact. Payload
+readback order is the
 datasheet's: RxStatus H/L, RxLength H/L, then payload L/H per word.
 
 **The ISQ is synthesised** *(2026-09-07)* from the event registers, so the

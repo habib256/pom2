@@ -374,6 +374,35 @@ void testReceivePath()
     std::printf("  RX path OK (%u bytes recovered)\n", length);
 }
 
+void testEmptyRxEventKeepsCommittedFrameStatus()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    const auto frame = makeFrame(kOurMac, kOurMac, 64, 0xA1);
+    raw->transmit(frame.data(), static_cast<int>(frame.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    const uint16_t event = readPpWord(card, kPpSeRxEvent);
+    assert((event & 0x0500) == 0x0500);
+    assert(card.chip().queuedFrames() == 0);
+
+    // RxEvent has no new frame to report. Its empty value must not replace
+    // the RxStatus of the frame still committed in the receive buffer.
+    assert(readPpWord(card, kPpSeRxEvent) == 0x0004);
+    assert(card.chip().rxState() == 1);
+    assert(readPpWord(card, 0x0400) == event);
+    const uint8_t statusHi = card.deviceSelectRead(kRxTxDataHi);
+    const uint8_t statusLo = card.deviceSelectRead(kRxTxDataLo);
+    assert(static_cast<uint16_t>(statusLo | (statusHi << 8)) == event);
+    assert(readPpWord(card, 0x0402) == frame.size());
+    std::printf("  empty RxEvent preserves the committed RxStatus\n");
+}
+
 void testAddressFilter()
 {
     pom2::UthernetCard card(3);
@@ -1154,6 +1183,7 @@ int main()
     testTransmitHandshake();
     testTransmitLengthBounds();
     testReceivePath();
+    testEmptyRxEventKeepsCommittedFrameStatus();
     testAddressFilter();
     testReceiveStatusAcceptanceBits();
     testRuntIsVisibleThroughIsq();
