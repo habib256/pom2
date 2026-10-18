@@ -278,15 +278,13 @@ private:
 
     // ── Guest memory helpers ──────────────────────────────────────────────
     // Everything goes through Memory so the current paging state decides
-    // whether an address means main or aux RAM. Accesses to the I/O page are
-    // REFUSED: a "memory" read of $C0xx would toggle soft switches as a side
-    // effect, so a malformed parameter list could flip the machine's video
-    // mode or bank state instead of merely failing.
+    // whether an address means main or aux RAM. Accesses to $C000-$CFFF are
+    // refused: the range maps soft switches, slot ROM and expansion ROM.
     uint8_t  readGuest(uint16_t addr) const;
     void     writeGuest(uint16_t addr, uint8_t v);
     uint16_t readGuest16(uint16_t addr) const;
     /// Copy `n` bytes from the response into guest RAM at `addr`. Returns
-    /// false (and copies nothing) if the range would cross the I/O page.
+    /// false (and copies nothing) if the range touches peripheral space.
     bool     writeGuestBlock(uint16_t addr, const uint8_t* p, std::size_t n);
     bool     readGuestBlock(uint16_t addr, uint8_t* p, std::size_t n) const;
     static bool rangeIsSafe(uint16_t addr, std::size_t n);

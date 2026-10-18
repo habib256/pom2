@@ -216,6 +216,12 @@ the receiver. `uthernet_cs8900_smoke` fails on each reverted defect and now
 checks that pre-enable frames are discarded. The other findings in this entry
 remain to verify independently.
 
+**Bug hunt 2026-10-18 (continued):** FujiNet's buffer guard now rejects
+`$C000-$CFFF`, including slot and expansion ROM, and the POSIX helper
+environment filter removes `LD_LIBRARY_PATH`. The `fujinet_card` and
+`child_process` tests failed before each fix and pass afterward. Other
+findings in this entry remain open for independent verification.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

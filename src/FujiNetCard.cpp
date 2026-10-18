@@ -277,12 +277,12 @@ uint8_t FujiNetCard::slotRomRead(uint8_t low8) { return rom_[low8]; }
 bool FujiNetCard::rangeIsSafe(uint16_t addr, std::size_t n)
 {
     if (n == 0) return true;
-    // Refuse anything touching the I/O page: reading $C0xx as if it were
-    // memory toggles soft switches, so a malformed parameter list could flip
-    // video mode or bank state instead of merely failing.
+    // $C000-$CFFF is the peripheral window, not guest RAM. $C0xx accesses
+    // toggle soft switches; $C1xx-$C7xx reaches card ROM handlers; $CFFF
+    // deselects expansion ROM. A transfer must not touch any of them.
     const uint32_t end = static_cast<uint32_t>(addr) + n - 1;
     if (end > 0xFFFF) return false;                 // would wrap
-    if (addr <= 0xC0FF && end >= 0xC000) return false;
+    if (addr <= 0xCFFF && end >= 0xC000) return false;
     return true;
 }
 
@@ -313,7 +313,7 @@ bool FujiNetCard::writeGuestBlock(uint16_t addr, const uint8_t* p, std::size_t n
             char hex[8];
             std::snprintf(hex, sizeof(hex), "%04X", addr);
             log().warn("FujiNet", std::string("refused a SmartPort transfer "
-                                              "through the I/O page (buffer $") +
+                                              "through the peripheral window (buffer $") +
                                       hex + ")");
         }
         return false;
@@ -466,7 +466,8 @@ void FujiNetCard::handleSmartPortCall()
         // kSpRead clamps to the guest's own `count` — but STATUS has no count
         // in its parameter list, so `n` was whatever the relay sent. The link
         // layer accepts a 70 KB frame (SlipFramer::kMaxFrameBytes), and
-        // rangeIsSafe only refuses the I/O page, so one 3-byte STATUS request
+        // rangeIsSafe only refuses the peripheral window, so one 3-byte
+        // STATUS request
         // with payload=$0300 could have the peer overwrite $0300-$BFFF —
         // 48 896 bytes — where the guest expects 25 (a DIB) or 4 (general
         // status). The transferred count reported back in Y/X is 16 bits

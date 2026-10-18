@@ -727,6 +727,48 @@ void testIoPageBufferRefused()
     std::printf("  ok: a buffer inside $C0xx is refused, soft switches untouched\n");
 }
 
+void testCardRomBufferRefused()
+{
+    Machine m;
+    m.startLink();
+    FakePeer peer(m.port, standardHandler);
+    assert(waitFor([&] { return m.card->link().deviceCount() == 2; }));
+
+    // These addresses are peripheral ROM windows, not RAM. A successful
+    // STATUS would report bytes transferred even though they never land in
+    // a guest buffer; $CFFF can also deselect expansion ROM as a side effect.
+    for (const uint16_t buffer : { uint16_t(0xC700), uint16_t(0xC800),
+                                   uint16_t(0xCFFF) }) {
+        m.mem.memWrite(0x0310, 0x03);
+        m.mem.memWrite(0x0311, 0x01);
+        m.mem.memWrite(0x0312, static_cast<uint8_t>(buffer));
+        m.mem.memWrite(0x0313, static_cast<uint8_t>(buffer >> 8));
+        m.mem.memWrite(0x0314, 0x00);
+        placeSmartPortCall(m, kSpStatus, 0x0310);
+        m.run(20000);
+
+        assert(m.cpu->getProgramCounter() == 0x0306);
+        assert(m.cpu->getAccumulator() == kSpIoError);
+        assert((m.cpu->getStatusRegister() & M6502::Status::C) != 0);
+    }
+
+    // Reading a WRITE BLOCK source from card ROM must fail before the relay
+    // receives a block containing firmware bytes instead of guest data.
+    const auto callsBefore = m.card->transportLink().stats().calls;
+    m.mem.memWrite(0x0312, 0x00);
+    m.mem.memWrite(0x0313, 0xC7);
+    m.mem.memWrite(0x0315, 0x00);
+    m.mem.memWrite(0x0316, 0x00);
+    placeSmartPortCall(m, kSpWriteBlock, 0x0310);
+    m.run(20000);
+    assert(m.cpu->getAccumulator() == kSpIoError);
+    assert(m.card->transportLink().stats().calls == callsBefore);
+
+    peer.stop();
+    m.card->transportLink().stop();
+    std::printf("  ok: card and expansion ROM cannot be transfer buffers\n");
+}
+
 void testControlListCannotWrapAddressSpace()
 {
     Machine m;
@@ -870,6 +912,7 @@ int main()
     testBuiltInNetworkDoesNotShadowThePeer();
     testForwardedCallWithoutPeerIsNoDevice();
     testIoPageBufferRefused();
+    testCardRomBufferRefused();
     testControlListCannotWrapAddressSpace();
     testSnapshotBlob();
     testPrinterTap();

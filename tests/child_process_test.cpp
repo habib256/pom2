@@ -391,9 +391,9 @@ void testFindOnPathIgnoresWritableDirs()
     fs::remove_all(evil, ec);
 }
 
-// ── 7c. The child does not inherit GS_OPTIONS / DYLD_* / LD_PRELOAD ──────
+// ── 7c. The child does not inherit Ghostscript or loader overrides ─────────
 //
-// `execv()` hands the child POM2's whole environment. Ghostscript reads
+// `execve()` would hand the child POM2's whole environment. Ghostscript reads
 // GS_OPTIONS as extra COMMAND LINE arguments, so a `-dNOSAFER` sitting in the
 // launching shell's environment cancelled the `-dSAFER` PostScriptRender
 // passes explicitly — the flag that keeps a guest-authored PostScript job off
@@ -405,16 +405,18 @@ void testChildEnvironmentIsScrubbed()
     ::setenv("GS_OPTIONS", "-dNOSAFER", 1);
     ::setenv("GS_LIB", "/tmp/evil", 1);
     ::setenv("LD_PRELOAD", "/tmp/evil.so", 1);
+    ::setenv("LD_LIBRARY_PATH", "/tmp/pom2-untrusted-libraries", 1);
     ::setenv("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib", 1);
     ::setenv("POM2_CHILD_ENV_KEEP", "kept", 1);
 
     ChildProcess p;
     std::string err;
-    // Exit 0 only when all four are gone AND the ordinary one survived.
+    // Exit 0 only when all overrides are gone AND the ordinary one survived.
     assert(p.start("/bin/sh",
                    { "-c",
                      "[ -z \"$GS_OPTIONS\" ] && [ -z \"$GS_LIB\" ] && "
                      "[ -z \"$LD_PRELOAD\" ] && "
+                     "[ -z \"$LD_LIBRARY_PATH\" ] && "
                      "[ -z \"$DYLD_INSERT_LIBRARIES\" ] && "
                      "[ \"$POM2_CHILD_ENV_KEEP\" = kept ]" },
                    "", err));
@@ -429,6 +431,7 @@ void testChildEnvironmentIsScrubbed()
     ::unsetenv("GS_OPTIONS");
     ::unsetenv("GS_LIB");
     ::unsetenv("LD_PRELOAD");
+    ::unsetenv("LD_LIBRARY_PATH");
     ::unsetenv("DYLD_INSERT_LIBRARIES");
     ::unsetenv("POM2_CHILD_ENV_KEEP");
 }

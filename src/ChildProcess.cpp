@@ -203,7 +203,8 @@ namespace {
 ///     flag is that a guest-authored PostScript job cannot touch the host
 ///     filesystem; a variable inherited from the launching shell silently
 ///     turned it off.
-///   * `LD_PRELOAD` / `DYLD_*` — the dynamic loader's code-injection knobs.
+///   * `LD_PRELOAD` / `LD_AUDIT` / `LD_LIBRARY_PATH` / `DYLD_*` — dynamic
+///     loader overrides that can redirect the helper to untrusted code.
 ///
 /// Everything else (PATH, HOME, locale, XDG_*, the display) is kept: the
 /// helpers are ordinary desktop programs and a sanitised-to-nothing
@@ -212,7 +213,7 @@ bool environmentVarIsUnsafe(const char* entry)
 {
     static const char* kExactPrefixes[] = {
         "GS_OPTIONS=", "GS_LIB=", "GS_FONTPATH=", "GS_DEVICE=",
-        "LD_PRELOAD=", "LD_AUDIT=",
+        "LD_PRELOAD=", "LD_AUDIT=", "LD_LIBRARY_PATH=",
     };
     for (const char* p : kExactPrefixes) {
         if (std::strncmp(entry, p, std::strlen(p)) == 0) return true;

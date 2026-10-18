@@ -10,6 +10,15 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — FujiNet guest buffer and helper environment fixes
+
+SmartPort transfers now reject the full `$C000-$CFFF` peripheral window.
+Previously a STATUS call could report success after writing to card or
+expansion ROM instead of guest RAM; `$CFFF` could also change expansion ROM
+selection. The FujiNet card test now exercises both transfer directions.
+POSIX helper launches also remove `LD_LIBRARY_PATH` from the inherited
+environment, alongside the existing loader and Ghostscript overrides.
+
 ## 2026-10-18 — Uthernet I receive filter corrections
 
 The CS8900A now classifies multicast addresses by the Ethernet I/G bit in
