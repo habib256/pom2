@@ -579,6 +579,47 @@ void testGuestResetNotifiesDevices()
     link.stop();
 }
 
+void testGuestResetHasAggregateCourtesyBudget()
+{
+    SpOverSlipLink link;
+    const uint16_t port = startLink(link);
+
+    FakePeer peer(port, [](const std::vector<uint8_t>& req,
+                           std::vector<uint8_t>& wire) {
+        if (req[1] == kSpInit) {
+            pushResponse(wire, req[0], req[3] <= 16 ? 0x00 : 0x01);
+        } else if (req[1] == kSpStatus && req[6] == 0x03) {
+            pushResponse(wire, req[0], 0x00, makeDib("SD", 0x1234, 0x02, 0x20));
+        } else if (req[1] == kSpControl && req[6] == 0x00) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            pushResponse(wire, req[0], 0x00);
+        } else {
+            standardHandler(req, wire);
+        }
+    });
+    assert(waitFor([&] { return link.deviceCount() == 16; }));
+
+    const auto start = std::chrono::steady_clock::now();
+    link.notifyGuestReset();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+    assert(elapsed < 900 &&
+           "guest reset waited for every slow unit despite its courtesy budget");
+    int controls = 0;
+    for (const auto& req : peer.seen())
+        if (req.size() >= 11 && req[1] == kSpControl && req[6] == 0x00) {
+            assert(req.size() == 13 && req[11] == 0 && req[12] == 0);
+            ++controls;
+        }
+    assert(controls >= 1 && controls < 16);
+    assert(link.isConnected());
+    assert(link.status(1, 0).ok() &&
+           "a late reset response disrupted the next guest call");
+
+    peer.stop();
+    link.stop();
+}
+
 // ── stop() must be safe with a peer attached and mid-poll ────────────────
 void testCleanShutdown()
 {
@@ -872,6 +913,7 @@ int main()
     testSilentPeerIsDroppedRatherThanPaidForEveryCall();
     testNoPeer();
     testGuestResetNotifiesDevices();
+    testGuestResetHasAggregateCourtesyBudget();
     testCleanShutdown();
     testStatusReadsAreSafeAgainstStop();
     testIdlePeerDeathIsNoticed();

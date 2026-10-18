@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Bound FujiNet reset notifications
+
+The SP-over-SLIP link now gives the whole reset notification sweep a 400 ms
+budget, shared across devices. Previously a slow but responsive 16-unit peer
+made guest reset wait for every control round trip; a 32-unit chain could
+multiply that delay further. A fake-peer test reproduces the stall and checks
+that a late reset reply cannot corrupt the next guest request.
+
 ## 2026-10-18 — Accept three-byte CS8900A transmit requests
 
 Uthernet I now accepts `TxLength=3`, the chip's documented minimum, and

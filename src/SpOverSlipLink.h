@@ -181,9 +181,9 @@ public:
 
     /// Guest reset. Bumps the sequence number so a response in flight for the
     /// pre-reset request can never be mistaken for an answer to the next one,
-    /// then tells every enumerated device (Control code $00) so a modem drops
-    /// its connection and a printer ejects its partial page — the behaviour
-    /// the spec asks the Apple II side to provide.
+    /// then sends bounded Control code $00 notifications to ordinary devices
+    /// so a modem can drop its connection without holding guest reset for
+    /// one timeout per unit.
     void notifyGuestReset() override;
 
     /// Move the sequence number on and drop any half-decoded frame, WITHOUT
@@ -200,7 +200,8 @@ private:
     /// timeout or a dead peer.
     Response transact(uint8_t command, uint8_t paramCount, uint8_t unit,
                       const uint8_t fields[5],
-                      const uint8_t* data, std::size_t dataLen);
+                      const uint8_t* data, std::size_t dataLen,
+                      int maxBudgetMs = 0);
 
     void workerLoop();
     void enumerateDevices();

@@ -535,7 +535,8 @@ constexpr int kRemoteFujiTimeoutMs = 5000;
 SpOverSlipLink::Response
 SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
                          const uint8_t fields[5],
-                         const uint8_t* data, std::size_t dataLen)
+                         const uint8_t* data, std::size_t dataLen,
+                         int maxBudgetMs)
 {
     Response out;
 
@@ -599,8 +600,9 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
     const bool mountedBlockIo = blockIo && unit >= 1 && unit <= imageMounted_.size() &&
         imageMounted_[unit - 1];
     const bool networkCall = isRemoteFujiCall(command, fields[0]) || mountedBlockIo;
-    const int budgetMs = networkCall
+    int budgetMs = networkCall
         ? std::max(configuredMs, kRemoteFujiTimeoutMs) : configuredMs;
+    if (maxBudgetMs > 0) budgetMs = std::min(budgetMs, maxBudgetMs);
     t->setWriteDeadlineMs(budgetMs);
 
     // ARMED BEFORE THE WRITE, and that is the whole point of "one budget".
@@ -909,13 +911,15 @@ void SpOverSlipLink::notifyGuestReset()
 
     if (!isConnected()) return;
 
-    // The courtesy half: tell ordinary devices the machine reset, so a modem drops
-    // its connection and a printer ejects a partial page (the spec asks the
-    // Apple II side to send Control code $00 for exactly this).
+    // The courtesy half: tell ordinary devices the machine reset, so a modem
+    // drops its connection (the spec asks the Apple II side to send Control
+    // code $00 for this; the printer exception is explained below).
     //
-    // Bounded on purpose: if the FIRST device does not answer, the peer is
-    // gone and there is no point stalling the reset for every remaining unit.
-    // A live peer answers each of these in microseconds.
+    // This courtesy must not hold the CPU thread for one timeout PER unit.
+    // A slow but responsive chain can contain 32 devices, so cap the whole
+    // sweep and pass each call only the time still available.
+    constexpr auto kCourtesyBudget = std::chrono::milliseconds(400);
+    const auto deadline = std::chrono::steady_clock::now() + kCourtesyBudget;
     const auto list = devices();
     for (const auto& d : list) {
         // NOT the printer. Sending it the reset the spec asks for ABORTS the
@@ -940,7 +944,16 @@ void SpOverSlipLink::notifyGuestReset()
         // peripheral reset courtesy. Sending it on every Apple II reset
         // disconnects the peer precisely while its CONFIG disk is booting.
         if (d.isPrinter() || d.type == kSpTypeFuji) continue;
-        const Response r = control(d.unit, 0x00, nullptr, 0);
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if (remaining <= 0) break;
+        // A zero-length SmartPort control list still has its two-byte length
+        // prefix on the wire, just like control().
+        const uint8_t fields[5] = { 0, 0, 0, 0, 0 };
+        const uint8_t emptyList[2] = { 0, 0 };
+        const Response r = transact(kSpControl, 0x03, d.unit, fields,
+                                    emptyList, sizeof emptyList,
+                                    static_cast<int>(remaining));
         if (!r.replied) break;
     }
 }

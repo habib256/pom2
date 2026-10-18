@@ -299,6 +299,12 @@ backend output disagreed with [the datasheet](https://www.farnell.com/datasheets
 §4.4.11 and Table 34. The smoke test failed at the three-byte handshake
 before the fix and checks both padding modes afterward.
 
+**Bug hunt 2026-10-18 (reset courtesy latency):** `notifyGuestReset()` now
+shares a 400 ms budget across its device-control notifications. A responsive
+16-unit fake peer taking 80 ms per control previously stalled guest reset for
+over a second. The regression test checks the aggregate bound and confirms
+that the next guest request ignores a late reply from the sweep.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`
