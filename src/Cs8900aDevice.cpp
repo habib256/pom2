@@ -102,11 +102,13 @@ constexpr uint16_t kPpPtrAutoIncrFlag = 0x8000;
 constexpr uint16_t kPpPtrFlagMask     = 0xF000;
 constexpr uint16_t kPpPtrAddrMask     = 0x0FFF;
 
-// CS8900A transmit and receive limits; the host transport has its own floor.
+// CS8900A transmit limits include the frame as supplied by the guest. Receive
+// limits in the datasheet include the four-byte FCS, which the backend omits.
 constexpr int kMaxTxLength = 1518;
 constexpr int kMinTxLength = 3;
-constexpr int kMaxRxLength = 1518;
-constexpr int kMinRxLength = 64;
+constexpr int kMaxRxLength = 1514;
+constexpr int kMinRxLength = 60;
+constexpr int kAbsoluteMinRxLength = 4;
 
 constexpr uint8_t  loByte(uint16_t x) { return static_cast<uint8_t>(x & 0xFF); }
 constexpr uint8_t  hiByte(uint16_t x) { return static_cast<uint8_t>((x >> 8) & 0xFF); }
@@ -344,10 +346,9 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
     *hashed = false; *hashIndex = 0; *correctMac = false;
     *broadcast = false; *multicast = false;
 
-    // Even with RuntA set, the chip always discards frames shorter than
-    // eight bytes (datasheet §4.4.8). This also ensures the six-byte
-    // destination address below is available.
-    if (length < 8) return false;
+    // The eight-byte absolute wire minimum includes an FCS. The backend
+    // removes it, so four data bytes are the smallest possible runt.
+    if (length < kAbsoluteMinRxLength) return false;
 
     // RxCTL has a second, independent acceptance filter for frame status.
     // The backend supplies frames after host CRC validation, so only length
@@ -361,6 +362,9 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
     } else if (!recvCorrect_) {
         return false;
     }
+
+    // A truncated destination address can only pass in promiscuous mode.
+    if (length < 6) return recvPromiscuous_;
 
     if (std::memcmp(buffer, mac_.data(), 6) == 0) {
         *correctMac = true;
@@ -456,7 +460,7 @@ void Cs8900aDevice::pumpBackend()
 {
     if (!backend_) return;
 
-    uint8_t buf[kMaxRxLength];
+    uint8_t buf[kMaxEthFrame];
     // Bounded per call so a busy link can't stall the CPU thread inside
     // one advanceCycles(); leftovers are picked up on the next tick.
     for (int i = 0; i < 32; ++i) {

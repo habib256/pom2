@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Classify CS8900A receive lengths without FCS
+
+The Ethernet backend supplies frames without their four-byte FCS, but the
+CS8900A receive path compared those lengths with wire limits that include it.
+This made valid 60-byte frames look like runts and missed oversized frames
+between 1515 and 1518 data bytes. The receive limits now use 60–1514 data
+bytes; shorter accepted frames report Runt and longer ones report Extradata.
+The eight-byte absolute wire floor corresponds to four backend bytes.
+Tests cover both limits, a four-byte promiscuous runt and the RxLength value.
+
 ## 2026-10-18 — Bound FujiNet reset notifications
 
 The SP-over-SLIP link now gives the whole reset notification sweep a 400 ms
@@ -29,11 +39,12 @@ bytes, padding at three and an unpadded runt when `TxPadDis` is set.
 
 ## 2026-10-18 — Reject undersized CS8900A receive runts
 
-Uthernet I now drops incoming frames shorter than eight bytes even when
-`RxCTL.RuntA` is enabled. Previously a frame containing only a matching
-destination address and one more byte could be queued as a runt. The
+The chip's eight-byte absolute receive floor in the
 [CS8900A datasheet](https://www.farnell.com/datasheets/88476.pdf) §4.4.8
-requires the eight-byte floor. The smoke test covers seven and eight bytes.
+includes the FCS. The original fix applied that floor directly to the
+FCS-free backend bytes; the receive-length correction above now applies the
+equivalent four-byte backend floor. The address filter handles truncated
+destination addresses without reading past them.
 
 ## 2026-10-18 — Fix CS8900A hash-filter receive status
 

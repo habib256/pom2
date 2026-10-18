@@ -479,7 +479,7 @@ void testReceiveStatusAcceptanceBits()
     enableTxRx(card);
 
     const auto good = makeFrame(kOurMac, kOurMac, 64, 0x91);
-    const auto runt = makeFrame(kOurMac, kOurMac, 60, 0x92);
+    const auto runt = makeFrame(kOurMac, kOurMac, 59, 0x92);
     // IndividualA alone passes the address filter, but no acceptance bit
     // authorizes either a valid frame or a runt.
     writePpWord(card, kPpCcRxCtl, 0x0405);
@@ -520,7 +520,7 @@ void testRuntIsVisibleThroughIsq()
     enableTxRx(card);
     writePpWord(card, kPpCcRxCtl, 0x2405);  // IndividualA + RuntA
 
-    const auto runt = makeFrame(kOurMac, kOurMac, 60, 0x93);
+    const auto runt = makeFrame(kOurMac, kOurMac, 59, 0x93);
     raw->transmit(runt.data(), static_cast<int>(runt.size()));
     card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
     assert(card.chip().queuedFrames() == 1);
@@ -534,7 +534,54 @@ void testRuntIsVisibleThroughIsq()
     std::printf("  ISQ announces accepted runt frames\n");
 }
 
-void testRuntMinimumEightBytes()
+void testReceiveFrameLengthsExcludeFcs()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    // The backend supplies no FCS: 60 data bytes make a valid 64-byte
+    // wire frame, while 1515 data bytes exceed the 1518-byte wire limit.
+    const auto minimum = makeFrame(kOurMac, kOurMac, 60, 0x94);
+    transmitFrame(card, minimum);
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(readPpWord(card, 0x0402) == 60);
+
+    const auto maximum = makeFrame(kOurMac, kOurMac, 1514, 0x95);
+    raw->transmit(maximum.data(), static_cast<int>(maximum.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(readPpWord(card, 0x0402) == 1514);
+
+    writePpWord(card, kPpCcRxCtl, 0x4405);  // IndividualA + ExtradataA
+    const auto oversized = makeFrame(kOurMac, kOurMac, 1515, 0x96);
+    raw->transmit(oversized.data(), static_cast<int>(oversized.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    const uint16_t extraEvent = readPpWord(card, kPpSeRxEvent);
+    assert((extraEvent & 0x4000) != 0);
+    assert((extraEvent & 0x0100) == 0);
+    assert(readPpWord(card, 0x0402) == 1514);
+
+    writePpWord(card, kPpCcRxCtl, 0x2085);  // PromiscuousA + RuntA
+    const std::vector<uint8_t> tiny = { 0x02, 0x11, 0x22, 0x33 };
+    raw->transmit(tiny.data(), static_cast<int>(tiny.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x2000) != 0);
+    assert(readPpWord(card, 0x0402) == tiny.size());
+
+    std::printf("  receive lengths exclude backend FCS\n");
+}
+
+void testRuntMinimumAddressBytes()
 {
     pom2::UthernetCard card(3);
     auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
@@ -545,19 +592,13 @@ void testRuntMinimumEightBytes()
     writePpWord(card, kPpCcRxCtl, 0x2405);  // IndividualA + RuntA
 
     std::vector<uint8_t> tiny(kOurMac.begin(), kOurMac.end());
-    tiny.push_back(0x11);  // 7 bytes: destination matches, still too short
-    raw->transmit(tiny.data(), static_cast<int>(tiny.size()));
-    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
-    assert(card.chip().queuedFrames() == 0);
-    assert(card.chip().framesFiltered() == 1);
-
-    tiny.push_back(0x22);  // 8 bytes: smallest runt the chip can retain
+    tiny.push_back(0x11);  // 7 data bytes, 11 on wire with FCS
     raw->transmit(tiny.data(), static_cast<int>(tiny.size()));
     card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
     assert(card.chip().queuedFrames() == 1);
     assert(readPpWord(card, kPpSeRxEvent) == 0x2404);
     assert(readPpWord(card, 0x0402) == tiny.size());
-    std::printf("  runts below eight bytes are discarded\n");
+    std::printf("  seven-byte runt is accepted with its FCS-free length\n");
 }
 
 void testQueuedFrameKeepsArrivalFilterDecision()
@@ -713,7 +754,7 @@ void testHashFilteredRxEventFormat()
     // A runt that passes the same address filter uses the ordinary error
     // status word; the alternate hash-index format requires RxOK.
     writePpWord(card, kPpCcRxCtl, 0x2205);  // RuntA + MulticastA
-    const auto runt = makeFrame(group, kOurMac, 60, 0x43);
+    const auto runt = makeFrame(group, kOurMac, 59, 0x43);
     raw->transmit(runt.data(), static_cast<int>(runt.size()));
     card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
     assert(card.chip().queuedFrames() == 1);
@@ -1283,7 +1324,8 @@ int main()
     testAddressFilter();
     testReceiveStatusAcceptanceBits();
     testRuntIsVisibleThroughIsq();
-    testRuntMinimumEightBytes();
+    testReceiveFrameLengthsExcludeFcs();
+    testRuntMinimumAddressBytes();
     testQueuedFrameKeepsArrivalFilterDecision();
     testRxSkipDiscardsOnlyCommittedReceive();
     testMulticastUsesGroupBit();
