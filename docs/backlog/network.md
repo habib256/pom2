@@ -286,6 +286,12 @@ and individual frames shifted it into the `Hashed` bit. Table 26 of the
 an accepted runt uses the ordinary error status. Fixed register-level
 vectors cover all three cases.
 
+**Bug hunt 2026-10-18 (minimum receive length):** `RuntA` now accepts
+frames from eight bytes upward, while shorter frames are always discarded
+as specified by [RxCTL in the datasheet](https://www.farnell.com/datasheets/88476.pdf).
+The loopback test reproduced acceptance of seven bytes before the fix and
+checks that eight bytes still produce a Runt event.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

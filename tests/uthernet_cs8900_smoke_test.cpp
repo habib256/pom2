@@ -506,6 +506,32 @@ void testRuntIsVisibleThroughIsq()
     std::printf("  ISQ announces accepted runt frames\n");
 }
 
+void testRuntMinimumEightBytes()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    writePpWord(card, kPpCcRxCtl, 0x2405);  // IndividualA + RuntA
+
+    std::vector<uint8_t> tiny(kOurMac.begin(), kOurMac.end());
+    tiny.push_back(0x11);  // 7 bytes: destination matches, still too short
+    raw->transmit(tiny.data(), static_cast<int>(tiny.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 0);
+    assert(card.chip().framesFiltered() == 1);
+
+    tiny.push_back(0x22);  // 8 bytes: smallest runt the chip can retain
+    raw->transmit(tiny.data(), static_cast<int>(tiny.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert(readPpWord(card, kPpSeRxEvent) == 0x2404);
+    assert(readPpWord(card, 0x0402) == tiny.size());
+    std::printf("  runts below eight bytes are discarded\n");
+}
+
 void testQueuedFrameKeepsArrivalFilterDecision()
 {
     pom2::UthernetCard card(3);
@@ -1229,6 +1255,7 @@ int main()
     testAddressFilter();
     testReceiveStatusAcceptanceBits();
     testRuntIsVisibleThroughIsq();
+    testRuntMinimumEightBytes();
     testQueuedFrameKeepsArrivalFilterDecision();
     testRxSkipDiscardsOnlyCommittedReceive();
     testMulticastUsesGroupBit();

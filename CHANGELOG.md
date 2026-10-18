@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Reject undersized CS8900A receive runts
+
+Uthernet I now drops incoming frames shorter than eight bytes even when
+`RxCTL.RuntA` is enabled. Previously a frame containing only a matching
+destination address and one more byte could be queued as a runt. The
+[CS8900A datasheet](https://www.farnell.com/datasheets/88476.pdf) §4.4.8
+requires the eight-byte floor. The smoke test covers seven and eight bytes.
+
 ## 2026-10-18 — Fix CS8900A hash-filter receive status
 
 Uthernet I now encodes hash-filtered receive events with `Hashed` in bit 9

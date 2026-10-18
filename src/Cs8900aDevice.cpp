@@ -343,9 +343,10 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
     *hashed = false; *hashIndex = 0; *correctMac = false;
     *broadcast = false; *multicast = false;
 
-    // The destination address alone is 6 octets — anything shorter can't
-    // be classified. (MAME asserts; we reject.)
-    if (length < 6) return false;
+    // Even with RuntA set, the chip always discards frames shorter than
+    // eight bytes (datasheet §4.4.8). This also ensures the six-byte
+    // destination address below is available.
+    if (length < 8) return false;
 
     // RxCTL has a second, independent acceptance filter for frame status.
     // The backend supplies frames after host CRC validation, so only length
