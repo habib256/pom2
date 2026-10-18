@@ -20,7 +20,7 @@ an explicit request before scheduling.
 | [STORAGE-010](#storage-010) | 🟡 | To verify | Bug hunt #16's Disk II read residue |
 | [STORAGE-011](#storage-011) | 🟡 | To verify | SmartPort image-format restrictions |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
-| [STORAGE-004](#storage-004) | 🟢 | To verify | `decodeTrack` trusts the address field |
+| [STORAGE-004](#storage-004) | ✅ | Done | `decodeTrack` trusts the address field |
 | [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
@@ -120,7 +120,7 @@ documentation; they were not tested by that protocol regression.
 
 ## STORAGE-004 — `decodeTrack` trusts the address field
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** ✅ · **State:** Done (2026-10-18).
 
 **Acceptance criterion (after revalidation):** Test malformed track address fields without unsafe indexing or corrupted decode results.
 
@@ -141,7 +141,8 @@ documentation; they were not tested by that protocol regression.
 `src/DiskImage.h:713`). The address-field checksum is validated since
 21dfaf3 (bug hunt #5, 2026-09-08): a field whose `vol ^ trk ^ sec` does
 not match is skipped (`src/DiskImage.cpp:2546-2550`). The TRACK byte is
-still ignored in favour of the buffer index — that half remains open.
+now checked against the physical track being saved (2026-10-18). A regression
+test covers valid wrong-track headers in both 16- and 13-sector write-back.
 
 <a id="storage-006"></a>
 

@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Reject wrong-track Disk II address fields on write-back
+
+The sector-image write-back decoder checked an address field's checksum but
+ignored its track number. A valid header naming another track could therefore
+route the following data field into an unrelated sector of the current track's
+`.dsk` or `.d13` file. Both 16- and 13-sector decoders now accept only headers
+for the physical track being saved; sectors behind rejected headers retain
+their original file bytes. A regression test reproduces the former overwrite
+with a valid wrong-track header in both formats.
+
 ## 2026-10-18 — Keep HTTP Disk II inserts off the worker stack
 
 The AI control server's `/disk` insertion handler still placed a roughly

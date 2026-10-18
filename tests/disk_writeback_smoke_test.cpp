@@ -312,6 +312,55 @@ int main()
         std::printf("disk_writeback: bad address checksum routes nothing OK\n");
     }
 
+    // A valid checksum does not make an address field from a different
+    // track belong to this track. Otherwise sector 5's data can overwrite
+    // sector 3 in the current sector image merely by changing its header.
+    for (const bool is13 : {false, true}) {
+        const fs::path p = tmpFile(is13 ? "wrong-track.d13" : "wrong-track.dsk");
+        std::vector<uint8_t> before(is13 ? DiskImage::kBytesPerImage13
+                                         : DiskImage::kBytesPerImage);
+        for (std::size_t i = 0; i < before.size(); ++i)
+            before[i] = static_cast<uint8_t>((i / 256u) * 7u + (i & 0xFFu));
+        {
+            std::ofstream out(p, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(before.data()),
+                      static_cast<std::streamsize>(before.size()));
+        }
+        DiskImage img;
+        assert(img.loadFile(p.string()));
+        img.setWriteBackEnabled(true);
+        const auto d44 = [](uint8_t a, uint8_t b) {
+            return static_cast<uint8_t>(((a << 1) | 1) & b);
+        };
+        int found = -1;
+        for (int i = 0; i + 14 < DiskImage::kNibblesPerTrack; ++i) {
+            if (img.nibbleAt(1, i) != 0xD5 || img.nibbleAt(1, i + 1) != 0xAA ||
+                img.nibbleAt(1, i + 2) != (is13 ? 0xB5 : 0x96)) continue;
+            if (d44(img.nibbleAt(1, i + 7), img.nibbleAt(1, i + 8)) == 5) {
+                found = i;
+                break;
+            }
+        }
+        assert(found >= 0);
+        const uint8_t volume = d44(img.nibbleAt(1, found + 3),
+                                    img.nibbleAt(1, found + 4));
+        const auto write44 = [&](int offset, uint8_t value) {
+            img.writeNibbleAt(1, found + offset,
+                              static_cast<uint8_t>((value >> 1) | 0xAA));
+            img.writeNibbleAt(1, found + offset + 1,
+                              static_cast<uint8_t>(value | 0xAA));
+        };
+        write44(5, 2);                         // header claims track 2
+        write44(7, 3);                         // misroute sector 5 to 3
+        write44(9, static_cast<uint8_t>(volume ^ 2 ^ 3));
+        assert(img.saveDirty());
+        std::ifstream in(p, std::ios::binary);
+        const std::vector<uint8_t> after((std::istreambuf_iterator<char>(in)), {});
+        assert(after == before &&
+               "a valid header for another track must not relocate a sector");
+        fs::remove(p);
+    }
+
     // Reject a sparse hostile image before allocating from its apparent size.
     {
         fs::path p = tmpFile("oversized.woz");

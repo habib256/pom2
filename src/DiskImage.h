@@ -717,16 +717,16 @@ private:
     /// left untouched in `outSectors` (which the caller pre-fills with
     /// the existing file content so unmodified sectors persist).
     bool decodeTrack(int track, uint8_t outSectors[kSectorsPerTrack][kSectorBytes]) const
-    { return track >= 0 && track < kTracks && decodeNibbles(tracks[track], outSectors); }
-    static bool decodeNibbles(const TrackBuffer& buf,
+    { return track >= 0 && track < kTracks && decodeNibbles(tracks[track], track, outSectors); }
+    static bool decodeNibbles(const TrackBuffer& buf, int expectedTrack,
                               uint8_t outSectors[kSectorsPerTrack][kSectorBytes]);
 
     /// 13-sector (5-and-3) decoder, inverse of writeDataField13. Used by
     /// saveDirty for .d13/.dsk write-back. outSectors indexed by the
     /// address-field sector number (0..12).
     bool decodeTrack13(int track, uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]) const
-    { return track >= 0 && track < kTracks && decodeNibbles13(tracks[track], outSectors); }
-    static bool decodeNibbles13(const TrackBuffer& buf,
+    { return track >= 0 && track < kTracks && decodeNibbles13(tracks[track], track, outSectors); }
+    static bool decodeNibbles13(const TrackBuffer& buf, int expectedTrack,
                                 uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]);
 };
 

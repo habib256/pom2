@@ -2497,7 +2497,7 @@ void DiskImage::writeDataField13(uint8_t*& dst, const uint8_t* src)
 
 // ── Decoder ─────────────────────────────────────────────────────────────
 
-bool DiskImage::decodeNibbles(const TrackBuffer& buf,
+bool DiskImage::decodeNibbles(const TrackBuffer& buf, int expectedTrack,
                               uint8_t outSectors[kSectorsPerTrack][kSectorBytes])
 {
     bool decodedAny = false;
@@ -2518,7 +2518,8 @@ bool DiskImage::decodeNibbles(const TrackBuffer& buf,
                 uint8_t pair[2] = { at(i + 3 + k * 2), at(i + 4 + k * 2) };
                 addr[k] = decode4and4(pair);
             }
-            // Route on the header only when it checks out. RWTS does
+            // Route on the header only when it checks out and names the
+            // physical track being saved. RWTS does
             // (Beneath Apple DOS: chk = vol ^ trk ^ sec), and
             // Sony35Gcr::decodeSectors already does on the 3.5" side. Without
             // it ONE bad nibble in a sector number silently relocated the
@@ -2529,7 +2530,8 @@ bool DiskImage::decodeNibbles(const TrackBuffer& buf,
             // from the file. The DE AA epilogue is deliberately NOT checked:
             // some .nib dumps carry non-standard epilogues that decode fine
             // today, and the checksum is what routes.
-            if (static_cast<uint8_t>(addr[0] ^ addr[1] ^ addr[2]) != addr[3]) {
+            if (static_cast<uint8_t>(addr[0] ^ addr[1] ^ addr[2]) != addr[3] ||
+                addr[1] != expectedTrack) {
                 curSector = -1;
                 i += 13;
                 continue;
@@ -2598,7 +2600,7 @@ bool DiskImage::decodeNibbles(const TrackBuffer& buf,
     return decodedAny;
 }
 
-bool DiskImage::decodeNibbles13(const TrackBuffer& buf,
+bool DiskImage::decodeNibbles13(const TrackBuffer& buf, int expectedTrack,
                                 uint8_t outSectors[kSectorsPerTrack13][kSectorBytes])
 {
     bool decodedAny = false;
@@ -2615,10 +2617,11 @@ bool DiskImage::decodeNibbles13(const TrackBuffer& buf,
                 uint8_t pair[2] = { at(i + 3 + k * 2), at(i + 4 + k * 2) };
                 addr[k] = decode4and4(pair);
             }
-            // Same checksum gate as decodeTrack (writeAddressField13 writes
-            // volume ^ track ^ sector too): an unverified header must not
-            // route a data field into the wrong sector of the file.
-            if (static_cast<uint8_t>(addr[0] ^ addr[1] ^ addr[2]) != addr[3]) {
+            // Same checksum and track gates as the 16-sector decoder
+            // (writeAddressField13 writes volume ^ track ^ sector too): an
+            // invalid header must not route data into the wrong file sector.
+            if (static_cast<uint8_t>(addr[0] ^ addr[1] ^ addr[2]) != addr[3] ||
+                addr[1] != expectedTrack) {
                 curSector = -1;
                 i += 13;
                 continue;
@@ -3037,8 +3040,8 @@ bool DiskImage::commitWriteBack(PendingWriteBack&& pending, std::string& error)
             for (int p = 0; p < perTrack; ++p)
                 std::memcpy(sectors[p], fileSector(t, p), kSectorBytes);
             const bool ok = is13
-                ? decodeNibbles13(pending.trackNibbles[i], sectors)
-                : decodeNibbles(pending.trackNibbles[i], sectors);
+                ? decodeNibbles13(pending.trackNibbles[i], t, sectors)
+                : decodeNibbles(pending.trackNibbles[i], t, sectors);
             if (!ok) { undecodable.push_back(t); continue; }
             for (int p = 0; p < perTrack; ++p)
                 std::memcpy(fileSector(t, p), sectors[p], kSectorBytes);
