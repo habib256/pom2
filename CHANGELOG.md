@@ -10,6 +10,15 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Fix CS8900A hash-filter receive status
+
+Uthernet I now encodes hash-filtered receive events with `Hashed` in bit 9
+and the six-bit hash index in bits 10–15, for both multicast and individual
+addresses. Previously multicast events lost the index, while individual
+events shifted it one bit too low. Accepted runts use the ordinary error
+status format. The [CS8900A datasheet](https://www.farnell.com/datasheets/88476.pdf)
+Table 26 defines these formats; the smoke test covers each case.
+
 ## 2026-10-18 — Preserve CS8900A RxStatus on an empty RxEvent
 
 Uthernet I no longer overwrites the committed frame's `RxStatus` with

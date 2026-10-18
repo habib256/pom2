@@ -278,6 +278,14 @@ and RXTXDATA. Previously the empty event value `$0004` overwrote it while
 `rxState_` still exposed the frame. The register-level test failed on the
 stale status before the fix.
 
+**Bug hunt 2026-10-18 (hash receive status):** The CS8900A now reports
+`Hashed` in bit 9 and the hash-table index in bits 10–15 for accepted
+multicast and individual frames. Multicast previously discarded the index,
+and individual frames shifted it into the `Hashed` bit. Table 26 of the
+[datasheet](https://www.farnell.com/datasheets/88476.pdf) also confirms that
+an accepted runt uses the ordinary error status. Fixed register-level
+vectors cover all three cases.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

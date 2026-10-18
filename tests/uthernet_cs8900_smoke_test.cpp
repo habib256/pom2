@@ -625,6 +625,48 @@ void testMulticastUsesGroupBit()
     std::printf("  multicast I/G bit OK\n");
 }
 
+void testHashFilteredRxEventFormat()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    enableTxRx(card);
+    for (uint16_t addr = 0x0150; addr < 0x0158; addr += 2)
+        writePpWord(card, addr, 0xFFFF);
+
+    // CRC-32 hash indices are 54 for 01:00:5e:00:00:01 and 34 for
+    // 04:00:5e:00:00:01. Bits 15..10 carry that six-bit index, bit 9
+    // reports Hashed, and bit 6 reports an individual-address hash.
+    const std::array<uint8_t, 6> group = { 0x01, 0x00, 0x5E, 0x00, 0x00, 0x01 };
+    const std::array<uint8_t, 6> individual = { 0x04, 0x00, 0x5E, 0x00, 0x00, 0x01 };
+    writePpWord(card, kPpCcRxCtl, 0x0305);  // RxOKA + MulticastA
+    const auto multicast = makeFrame(group, kOurMac, 64, 0x41);
+    raw->transmit(multicast.data(), static_cast<int>(multicast.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert(readPpWord(card, kPpSeRxEvent) ==
+           static_cast<uint16_t>(0x0304 | (54 << 10)));
+
+    writePpWord(card, kPpCcRxCtl, 0x0145);  // RxOKA + IAHashA
+    const auto unicast = makeFrame(individual, kOurMac, 64, 0x42);
+    raw->transmit(unicast.data(), static_cast<int>(unicast.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert(readPpWord(card, kPpSeRxEvent) ==
+           static_cast<uint16_t>(0x0344 | (34 << 10)));
+
+    // A runt that passes the same address filter uses the ordinary error
+    // status word; the alternate hash-index format requires RxOK.
+    writePpWord(card, kPpCcRxCtl, 0x2205);  // RuntA + MulticastA
+    const auto runt = makeFrame(group, kOurMac, 60, 0x43);
+    raw->transmit(runt.data(), static_cast<int>(runt.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+    assert(readPpWord(card, kPpSeRxEvent) == 0x2004);
+    std::printf("  hash-filtered RxEvent index and flags OK\n");
+}
+
 void testDisabledReceiverDropsIncomingFrames()
 {
     pom2::UthernetCard card(3);
@@ -1190,6 +1232,7 @@ int main()
     testQueuedFrameKeepsArrivalFilterDecision();
     testRxSkipDiscardsOnlyCommittedReceive();
     testMulticastUsesGroupBit();
+    testHashFilteredRxEventFormat();
     testDisabledReceiverDropsIncomingFrames();
     testSnapshotRoundTrip();
     testSnapshotCorruptTxStateIsClamped();

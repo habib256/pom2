@@ -385,9 +385,6 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
         // individual addresses (CS8900A datasheet, DA filtering section).
         if (buffer[0] & 0x01) {
             *multicast = true;
-            // A multicast that fits the hash filter reports as multicast,
-            // not hashed — the status word formats are mutually exclusive.
-            *hashed = false;
             return recvMulticast_ || recvPromiscuous_;
         }
         return recvHashFilter_ || recvPromiscuous_;
@@ -418,14 +415,17 @@ uint16_t Cs8900aDevice::receiveFrame()
 
         constexpr bool crcError = false;   // the host stack already checked FCS
 
-        if (!crcError && len >= kMinRxLength && rawLen <= kMaxRxLength)
-            retVal |= 0x0100;                   // RxOK only for valid frames
-        retVal |= frame.multicast ? 0x0200 : 0;
-        if (!frame.multicast) retVal |= frame.hashed ? 0x0040 : 0;
+        const bool rxOk = !crcError && len >= kMinRxLength &&
+                          rawLen <= kMaxRxLength;
+        if (rxOk) retVal |= 0x0100;
 
-        if (frame.hashed) {
-            // Second status format: hash index in bits 9..14.
-            retVal |= static_cast<uint16_t>((frame.hashIndex & 0x3F) << 9);
+        if (frame.hashed && rxOk) {
+            // Hashed is bit 9, while the six-bit table index occupies
+            // bits 10..15. IAHash (bit 6) distinguishes individual from
+            // multicast hash matches (datasheet Table 26).
+            retVal |= 0x0200;
+            if (!frame.multicast) retVal |= 0x0040;
+            retVal |= static_cast<uint16_t>((frame.hashIndex & 0x3F) << 10);
         } else {
             retVal |= frame.correctMac ? 0x0400 : 0;
             retVal |= frame.broadcast  ? 0x0800 : 0;
