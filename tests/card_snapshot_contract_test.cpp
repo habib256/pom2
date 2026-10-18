@@ -343,6 +343,11 @@ int main()
         { "CffaCard",          [] { return std::unique_ptr<SlotPeripheral>(new CffaCard(7)); } },
         { "Cffa3000Card",      [] { return std::unique_ptr<SlotPeripheral>(new Cffa3000Card(7)); } },
         { "SmartPortCard",     [] { return std::unique_ptr<SlotPeripheral>(new SmartPortCard(5)); } },
+        { "SuperDrive",        [] {
+            auto card = std::make_unique<SmartPortCard>(5);
+            card->setSuperDriveMode(true);
+            return card;
+        } },
         { "LironCard",         [] { return std::unique_ptr<SlotPeripheral>(new LironCard(5)); } },
         { "MockingboardAC",    [] { return std::unique_ptr<SlotPeripheral>(new MockingboardCard(4)); } },
         { "MockingboardSndII", [] { return std::unique_ptr<SlotPeripheral>(new MockingboardCard(4, MockingboardCard::Variant::SoundII)); } },
@@ -406,7 +411,8 @@ int main()
     const std::map<std::string, std::string> keyToEntry = {
         {"diskii", "DiskIICard"}, {"hdv", "ProDOSHardDisk"}, {"cffa", "CffaCard"},
         {"cffa3", "Cffa3000Card"},
-        {"smartport35", "SmartPortCard"}, {"liron", "LironCard"},
+        {"smartport35", "SmartPortCard"}, {"superdrive", "SuperDrive"},
+        {"liron", "LironCard"},
         {"ssc", "SuperSerialCard"}, {"printer", "PrinterCard"},
         {"grappler", "GrapplerCard"}, {"clock", "ClockCard"},
         {"uthernet", "UthernetCard"}, {"uthernet2", "UthernetIICard"},
@@ -439,7 +445,8 @@ int main()
 
     for (auto& e : cards) { std::printf("[%s]\n", e.name); check(e); }
     std::printf("\n%d failures\n", failures);
-    assert(failures == 0);
+    // Return normally so stdio flushes the card-specific diagnostics in CI.
+    if (failures != 0) return 1;
     std::printf("card_snapshot_contract: OK\n");
     return 0;
 }
