@@ -10,6 +10,36 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
+
+## 2026-10-18 — Make the README a short entry point
+
+The repository README now leads with the emulator, a direct way to try it,
+platform downloads and a first disk. Detailed controls, hardware limits,
+storage behavior and build instructions live in `docs/USER-GUIDE.md`, linked
+from the shorter page. The old setup and attribution details remain reachable.
+
+## 2026-10-18 — Add a SuperDrive block interface on the enhanced Apple IIe
+
+The `superdrive` slot card accepts 400K and 800K GCR plus 1.44 MB MFM MOOF
+images through a ProDOS block interface. It also mounts compatible `.po` and
+`.2mg` images. The regular SmartPort/Liron and //c+ Sony paths continue to
+reject 1.44 MB MFM media. Direct SWIM chip programming and execution of the
+card's 65C02 ROM are not implemented. The 400K/1.44 MB image and ProDOS boot
+paths have dedicated tests.
+
+## 2026-10-18 — Refresh the bundled A2 File Cmd for the next POM2 release
+
+The curated 32 MB ProDOS XL disk now contains A2 File Cmd v0.9.8 (6502
+edition), replacing v0.9.6 in desktop packages and the WebAssembly preload.
+The asset matches the upstream v0.9.8 SHA-256. Its release restores Return's
+automatic routing for recognized SYS and BASIC files and accepts S-C
+Assembler text with repeated control characters. The package manifest, disk
+library README and shipped checksum list all point to the same image.
+The bundled Micro-Sokoban disk is restored to its published v1.2 bytes after
+the checksum check exposed a modified copy in the tree.
+POM2's tagged v0.9.6 release notes remain a record of that older package.
+
 ## 2026-10-18 — Calibrate the default Mockingboard and speaker balance
 
 For a single full-scale AY tone, MAME's Apple II routes each AY output at

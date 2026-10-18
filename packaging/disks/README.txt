@@ -1,9 +1,9 @@
-POM2 v0.9.6 — bundled disks
+POM2 v0.9.7 — bundled disks
 
-A2FILECMD-PRODOS-XL-0.9.6.2mg — A2FC XL v0.9.6 (6502 edition).
-Source: https://github.com/habib256/a2filecmd/releases/tag/v0.9.6
+A2FILECMD-PRODOS-XL-0.9.8.2mg — A2FC XL v0.9.8 (6502 edition).
+Source: https://github.com/habib256/a2filecmd/releases/tag/v0.9.8
 Mount in a ProDOS hard-disk bay (HDV / SmartPort), then boot that slot.
-The 6502 edition also runs on II/II+; enhanced 65C02 machines are supported.
+Requires 128 KB and 80 columns; runs on unenhanced and enhanced IIe profiles.
 
 DIX-fix.po — French Touch anthology with POM2's 12-byte menu patch.
 Source: https://github.com/Fr3nchT0uch/DIX

@@ -111,6 +111,10 @@ public:
     const std::string& path()      const { return path_; }
     const std::string& lastError() const { return lastError_; }
     ImageKind   kind()             const { return kind_; }
+    bool isBitstream() const {
+        return kind_ == ImageKind::Woz35 || kind_ == ImageKind::Moof35 ||
+               kind_ == ImageKind::Moof400k || kind_ == ImageKind::Moof1440k;
+    }
     void setMfmCapable(bool capable) { mfmCapable_ = capable; }
     bool isMfmCapable() const { return mfmCapable_; }
     uint32_t blockCount() const { return static_cast<uint32_t>(blocks_.size() / kBlockBytes); }

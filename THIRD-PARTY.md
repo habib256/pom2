@@ -72,7 +72,7 @@ known origin. (Filed in [`docs/backlog/release-1.0.md` § G1](docs/backlog/relea
 
 | Disk | Licence | Source |
 |---|---|---|
-| A2FC XL v0.9.6 (6502 edition) | GPL-3.0 | [A2FileCommander](https://github.com/habib256/a2filecmd/releases/tag/v0.9.6) |
+| A2FC XL v0.9.8 (6502 edition) | GPL-3.0 | [A2FileCommander](https://github.com/habib256/a2filecmd/releases/tag/v0.9.8) |
 | DIX-fix | GPL-3.0 | [French Touch DIX](https://github.com/Fr3nchT0uch/DIX/); reproduced with `tools/make_dix_fix.py`. Browser default disk. |
 | ChromaBreak 1.0 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.0) |
 | Micro-Sokoban 1.2 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/1.2) |

@@ -305,11 +305,7 @@ void copyDisk35ImageState(
     target.persistenceError = image.persistence().error;
     target.writeBackEnabled = image.isWriteBackEnabled();
     target.fileWriteProtected = image.isFileWriteProtected();
-    target.isBitstream = image.kind() == Disk35Image::ImageKind::Woz35 ||
-                         image.kind() == Disk35Image::ImageKind::Moof35 ||
-                         image.kind() == Disk35Image::ImageKind::Moof400k;
-    target.isBitstream = target.isBitstream ||
-                         image.kind() == Disk35Image::ImageKind::Moof1440k;
+    target.isBitstream = image.isBitstream();
 }
 
 /// How `ejectAllMedia` names one bay in a failure line. Preserved verbatim
@@ -1401,10 +1397,7 @@ StorageCoordinator::convertDisk35WozToPo(
             imageSnapshot = controller.disk35(drive);
         }
     }
-    if (imageSnapshot.kind() != Disk35Image::ImageKind::Woz35 &&
-        imageSnapshot.kind() != Disk35Image::ImageKind::Moof35 &&
-        imageSnapshot.kind() != Disk35Image::ImageKind::Moof400k &&
-        imageSnapshot.kind() != Disk35Image::ImageKind::Moof1440k) {
+    if (!imageSnapshot.isBitstream()) {
         result.error = "that drive does not hold a 3.5-inch WOZ/MOOF";
         return result;
     }
