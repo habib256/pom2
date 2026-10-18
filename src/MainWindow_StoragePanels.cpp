@@ -1632,7 +1632,11 @@ void MainWindow::renderDisk35PanelWindow()
                 // 3.5" loader decodes it and refuses a 5.25" one by name.
                 if (ext != ".woz" && ext != ".moof" &&
                     sz != 819200 && sz != 819200 + 64 &&
-                    !(sz > 819200 && sz < 819200 + 4096)) continue;
+                    !(sz > 819200 && sz < 819200 + 4096) &&
+                    sz != 409600 && sz != 409600 + 64 &&
+                    !(sz > 409600 && sz < 409600 + 4096) &&
+                    sz != 1474560 && sz != 1474560 + 64 &&
+                    !(sz > 1474560 && sz < 1474560 + 4096)) continue;
                 pom2::Disk35Controller_ImGui::LibraryEntry e;
                 e.displayName = fs::relative(entry.path(), root, ec).string();
                 if (e.displayName.empty()) e.displayName = name;

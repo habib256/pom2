@@ -64,6 +64,10 @@ public:
     static constexpr int      kBlockBytes   = 512;
     static constexpr int      kBlockCount   = 1600;
     static constexpr uint32_t kBytesPerImage = kBlockCount * kBlockBytes; // 819200
+    static constexpr int      kBlockCount400 = 800;
+    static constexpr uint32_t kBytesPerImage400 = kBlockCount400 * kBlockBytes;
+    static constexpr int      kBlockCount1440 = 2880;
+    static constexpr uint32_t kBytesPerImage1440 = kBlockCount1440 * kBlockBytes;
 
     /// MAME `ap_dsk35.cpp:apple35_sectors_per_track[]` — count of
     /// physical sectors on the given 3.5" track number (0..79). The 5
@@ -76,20 +80,21 @@ public:
         TwoImg800k,    // .2mg with 2IMG header wrapping a 819 200 payload
         Woz35,         // WOZ2 flux dump, GCR-decoded to blocks at load
         Moof35,        // MOOF 800K GCR bitstream/flux, decoded read-only
+        Moof400k,      // MOOF 400K single-sided GCR bitstream/flux
+        Raw400k,       // bare 409 600-byte payload
+        TwoImg400k,    // 2IMG-wrapped 400K payload
+        Moof1440k,     // MOOF 1.44M MFM bitstream/flux, decoded read-only
+        Raw1440k,      // bare 1 474 560-byte MFM payload
+        TwoImg1440k,   // 2IMG-wrapped 1.44M payload
     };
 
     Disk35Image() = default;
 
-    /// Load a 3.5" image. Accepts:
-    ///  * 819 200-byte raw images (assumed ProDOS block order)
-    ///  * 2IMG-wrapped 819 200-byte ProDOS images
-    ///  * WOZ2 and MOOF 800K GCR bitstreams or flux captures
-    ///    (`INFO.disk_type == 2`), GCR-decoded to blocks once through the
-    ///    same `Sony35Gcr`
-    ///    walk the drive uses — POM2 has no GCR *encoder*, so a flux image
-    ///    has nothing to be mounted as otherwise. Such an image is always
-    ///    write-protected: handing blocks back would mean re-encoding the
-    ///    original flux.
+    /// Load a 3.5" image. Accepts 400K and 800K GCR raw/2IMG payloads,
+    /// WOZ2 800K GCR, and MOOF 400K/800K GCR. When `mfmCapable_` is set by
+    /// a SuperDrive-class unit, also accepts 1.44M raw/2IMG and MOOF MFM.
+    /// Bitstream images are decoded to blocks but remain read-only: writing
+    /// them would require rebuilding the original flux capture.
     /// On failure, returns false and populates `lastError`.
     bool loadFile(const std::string& path);
 
@@ -106,8 +111,13 @@ public:
     const std::string& path()      const { return path_; }
     const std::string& lastError() const { return lastError_; }
     ImageKind   kind()             const { return kind_; }
+    void setMfmCapable(bool capable) { mfmCapable_ = capable; }
+    bool isMfmCapable() const { return mfmCapable_; }
+    uint32_t blockCount() const { return static_cast<uint32_t>(blocks_.size() / kBlockBytes); }
+    int headCount() const { return blockCount() == kBlockCount400 ? 1 : 2; }
+    int blockIndexFor(int track, int head, int sector) const;
 
-    /// Read 512 bytes from block `idx` (0..1599). Returns true on
+    /// Read 512 bytes from block `idx` (0..blockCount()-1). Returns true on
     /// success. Out-of-range or no-image-loaded → false (out is
     /// untouched).
     bool readBlock (uint32_t idx, uint8_t out[kBlockBytes]) const;
@@ -237,6 +247,7 @@ private:
     bool         fileWriteProtected_  = false;   // header / format says so
     bool         hostReadOnly_        = false;   // the notch (MediaNotch.h)
     ImageKind    kind_                = ImageKind::Unknown;
+    bool         mfmCapable_          = false;
     std::string  path_;
     std::string  lastError_;
 

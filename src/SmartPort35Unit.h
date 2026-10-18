@@ -76,6 +76,7 @@ public:
     /// underlying image (e.g. for tracks-changed indicators). Borrowed.
     Disk35Image& image() { return img_; }
     const Disk35Image& image() const { return img_; }
+    void setMfmCapable(bool capable) { img_.setMfmCapable(capable); }
 
 private:
     Disk35Image img_;

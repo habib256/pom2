@@ -57,6 +57,76 @@ uint32_t rd32(const uint8_t* p) {
            (static_cast<uint32_t>(p[3]) << 24);
 }
 
+uint16_t mfmCrc(uint16_t crc, uint8_t byte)
+{
+    crc ^= static_cast<uint16_t>(byte) << 8;
+    for (int bit = 0; bit < 8; ++bit)
+        crc = static_cast<uint16_t>((crc << 1) ^ ((crc & 0x8000u) ? 0x1021u : 0u));
+    return crc;
+}
+
+uint16_t mfmWord(const std::vector<uint8_t>& cells, std::size_t pos)
+{
+    uint16_t word = 0;
+    for (int bit = 0; bit < 16; ++bit)
+        word = static_cast<uint16_t>((word << 1) | cells[pos + bit]);
+    return word;
+}
+
+uint8_t mfmByte(const std::vector<uint8_t>& cells, std::size_t pos)
+{
+    uint8_t byte = 0;
+    for (int bit = 1; bit < 16; bit += 2)
+        byte = static_cast<uint8_t>((byte << 1) | cells[pos + bit]);
+    return byte;
+}
+
+template<class Sector>
+void decodeMfmTrack(const std::vector<uint8_t>& cells, int track, int head,
+                    Sector&& sector)
+{
+    if (cells.size() < 16 * 530) return;
+    // A1 with a deliberately missing MFM clock is 0x4489. Three such
+    // words precede both ID and data marks; scanning bit by bit tolerates
+    // arbitrary index positions in captured MOOF tracks.
+    int pendingSector = -1;
+    for (std::size_t pos = 0; pos + 16 * 4 < cells.size(); ++pos) {
+        if (mfmWord(cells, pos) != 0x4489 ||
+            mfmWord(cells, pos + 16) != 0x4489 ||
+            mfmWord(cells, pos + 32) != 0x4489) continue;
+        const std::size_t markPos = pos + 48;
+        const uint8_t mark = mfmByte(cells, markPos);
+        if (mark == 0xFE && markPos + 16 * 7 <= cells.size()) {
+            uint8_t id[6];
+            for (int i = 0; i < 6; ++i) id[i] = mfmByte(cells, markPos + 16 * (i + 1));
+            uint16_t crc = 0xFFFF;
+            for (int i = 0; i < 3; ++i) crc = mfmCrc(crc, 0xA1);
+            crc = mfmCrc(crc, mark);
+            for (int i = 0; i < 4; ++i) crc = mfmCrc(crc, id[i]);
+            pendingSector = (id[0] == track && id[1] == head && id[2] >= 1 &&
+                             id[2] <= 18 && id[3] == 2 &&
+                             id[4] == uint8_t(crc >> 8) &&
+                             id[5] == uint8_t(crc)) ? id[2] : -1;
+        } else if ((mark == 0xFB || mark == 0xF8) && pendingSector > 0 &&
+                   markPos + 16 * 515 <= cells.size()) {
+            uint8_t data[512];
+            uint16_t crc = 0xFFFF;
+            for (int i = 0; i < 3; ++i) crc = mfmCrc(crc, 0xA1);
+            crc = mfmCrc(crc, mark);
+            for (int i = 0; i < 512; ++i) {
+                data[i] = mfmByte(cells, markPos + 16 * (i + 1));
+                crc = mfmCrc(crc, data[i]);
+            }
+            const uint8_t high = mfmByte(cells, markPos + 16 * 513);
+            const uint8_t low = mfmByte(cells, markPos + 16 * 514);
+            if (high == uint8_t(crc >> 8) && low == uint8_t(crc))
+                sector(pendingSector, data);
+            pendingSector = -1;
+        }
+        pos += 47; // the three sync words cannot start another field
+    }
+}
+
 }  // namespace
 
 int Disk35Image::sectorsForTrack(int track)
@@ -64,6 +134,15 @@ int Disk35Image::sectorsForTrack(int track)
     // MAME `ap_dsk35.cpp` zone schedule: 5 zones of 16 tracks each.
     if (track < 0 || track >= kTracks) return 0;
     return kSectorsPerTrackByZone[track / 16];
+}
+
+int Disk35Image::blockIndexFor(int track, int head, int sector) const
+{
+    if (track < 0 || track >= kTracks || head < 0 || head >= headCount() ||
+        sector < 0 || sector >= sectorsForTrack(track)) return -1;
+    int index = 0;
+    for (int t = 0; t < track; ++t) index += headCount() * sectorsForTrack(t);
+    return index + head * sectorsForTrack(track) + sector;
 }
 
 bool Disk35Image::loadFile(const std::string& imgPath)
@@ -74,6 +153,7 @@ bool Disk35Image::loadFile(const std::string& imgPath)
     if (!saveDirty()) return false;
     Disk35Image replacement;
     replacement.writeBackEnabled_ = writeBackEnabled_;
+    replacement.mfmCapable_ = mfmCapable_;
     if (!replacement.loadFileUnchecked(imgPath)) {
         lastError_ = replacement.lastError_;
         return false;
@@ -100,7 +180,7 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
         lastError_ = "Disk35Image: empty file " + imgPath;
         return false;
     }
-    // Raw media is 800 KiB.  Allow wrappers/trailers ample headroom, while
+    // Raw media is at most 1.44 MiB. Allow wrappers/trailers ample headroom, while
     // rejecting sparse/hostile files before allocating from their length.
     constexpr std::streamsize kMaxDisk35ImageBytes = 16 * 1024 * 1024;
     if (sz > kMaxDisk35ImageBytes) {
@@ -123,8 +203,7 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
     hostReadOnly_ = hostReadOnly;
     const std::size_t n = buf.size();
 
-    // Detect 2IMG-wrapped 800K. Same header layout as 5.25"; we just
-    // require the payload size to be 819 200 bytes.
+    // Detect 2IMG-wrapped 400K, 800K or SuperDrive 1.44M payloads.
     if (n >= 64 &&
         buf[0] == '2' && buf[1] == 'I' && buf[2] == 'M' && buf[3] == 'G')
     {
@@ -141,15 +220,16 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
             lastError_ = "Disk35Image: malformed 2IMG header in " + imgPath;
             return false;
         }
-        // format 1 = ProDOS block-ordered. 800K disks use this.
+        // format 1 = ProDOS block order.
         if (format != 1) {
             lastError_ = "Disk35Image: 2IMG format " + std::to_string(format) +
                          " not supported for 3.5\" disks (need ProDOS=1)";
             return false;
         }
-        if (dataLen != kBytesPerImage) {
-            lastError_ = "Disk35Image: 2IMG ProDOS payload must be " +
-                         std::to_string(kBytesPerImage) + " bytes, got " +
+        if (dataLen != kBytesPerImage && dataLen != kBytesPerImage400 &&
+            !(mfmCapable_ && dataLen == kBytesPerImage1440)) {
+            lastError_ = "Disk35Image: 2IMG ProDOS payload must be 400K or 800K"
+                         " (1.44M requires a SuperDrive), got " +
                          std::to_string(dataLen);
             return false;
         }
@@ -163,7 +243,8 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
         // Flags-word semantics live in TwoImg.h (shared with DiskImage
         // and Block512Backing).
         fileWriteProtected_ = pom2::twoImgWriteProtected(flags);
-        kind_   = ImageKind::TwoImg800k;
+        kind_   = dataLen == kBytesPerImage400 ? ImageKind::TwoImg400k :
+                  dataLen == kBytesPerImage1440 ? ImageKind::TwoImg1440k : ImageKind::TwoImg800k;
         loaded_ = true;
         dirty_  = false;
         return true;
@@ -186,14 +267,18 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
     {
         if (!loadBitstream(buf, imgPath, moof)) return false;
         fileWriteProtected_ = true;
-        kind_   = moof ? ImageKind::Moof35 : ImageKind::Woz35;
+        kind_   = moof ? (blocks_.size() == kBytesPerImage400 ? ImageKind::Moof400k
+                           : blocks_.size() == kBytesPerImage1440 ? ImageKind::Moof1440k
+                                                                  : ImageKind::Moof35)
+                       : ImageKind::Woz35;
         loaded_ = true;
         dirty_  = false;
         return true;
     }
 
-    // Bare 800K payload (.po, .dsk, .image).
-    if (n == kBytesPerImage) {
+    // Bare ProDOS-order payload (.po, .dsk, .image).
+    if (n == kBytesPerImage || n == kBytesPerImage400 ||
+        (mfmCapable_ && n == kBytesPerImage1440)) {
         // Cheap "looks like ProDOS" sniff: block 2 should be the volume
         // directory key block. Not authoritative — non-ProDOS 800K disks
         // (rare; Pascal, ProFile) load anyway, but we warn.
@@ -223,16 +308,20 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
         // still require that opt-in, which is off by default, plus a
         // host file that is actually writable.
         fileWriteProtected_ = false;
-        kind_   = ImageKind::Raw800k;
+        kind_   = n == kBytesPerImage400 ? ImageKind::Raw400k :
+                  n == kBytesPerImage1440 ? ImageKind::Raw1440k : ImageKind::Raw800k;
         loaded_ = true;
         dirty_  = false;
         return true;
     }
 
+    if (n == kBytesPerImage1440 && !mfmCapable_) {
+        lastError_ = "Disk35Image: 1.44M MFM requires an Apple IIe SuperDrive controller";
+        return false;
+    }
     lastError_ = "Disk35Image: " + imgPath +
-                 " is not an 800K 3.5\" image (size " + std::to_string(n) +
-                 ", expected " + std::to_string(kBytesPerImage) +
-                 " or 2IMG-wrapped)";
+                 " is not a supported 400K/800K/1.44M 3.5\" image (size " +
+                 std::to_string(n) + ")";
     return false;
 }
 
@@ -256,14 +345,14 @@ void Disk35Image::eject()
 
 bool Disk35Image::readBlock(uint32_t idx, uint8_t out[kBlockBytes]) const
 {
-    if (!loaded_ || idx >= kBlockCount) return false;
+    if (!loaded_ || idx >= blockCount()) return false;
     std::memcpy(out, blocks_.data() + idx * kBlockBytes, kBlockBytes);
     return true;
 }
 
 const std::vector<uint8_t>* Disk35Image::originalBitCells(int track, int head) const
 {
-    if (!loaded_ || kind_ != ImageKind::Moof35 ||
+    if (!loaded_ || (kind_ != ImageKind::Moof35 && kind_ != ImageKind::Moof400k) ||
         !moofCells_ || track < 0 || track >= kTracks ||
         head < 0 || head >= kSides) return nullptr;
     const auto& cells = (*moofCells_)[static_cast<std::size_t>(track * 2 + head)];
@@ -272,7 +361,7 @@ const std::vector<uint8_t>* Disk35Image::originalBitCells(int track, int head) c
 
 bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
 {
-    if (!loaded_ || idx >= kBlockCount) return false;
+    if (!loaded_ || idx >= blockCount()) return false;
     if (isWriteProtected()) return false;
     std::memcpy(blocks_.data() + idx * kBlockBytes, in, kBlockBytes);
     dirty_ = true;
@@ -287,8 +376,9 @@ bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
 bool Disk35Image::exportRawTo(const std::string& outPath,
                              std::string& errOut) const
 {
-    if (!loaded_ || blocks_.size() != kBytesPerImage) {
-        errOut = "no 800K image loaded";
+    if (!loaded_ || (blocks_.size() != kBytesPerImage && blocks_.size() != kBytesPerImage400 &&
+                     blocks_.size() != kBytesPerImage1440)) {
+        errOut = "no 400K, 800K or 1.44M image loaded";
         return false;
     }
     // Refuse to overwrite: the caller picks the name, and silently replacing
@@ -557,12 +647,18 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
                      "INFO/TMAP/TRKS chunks";
         return false;
     }
-    const uint8_t diskType = buf[infoOff + 1];          // 1 = 5.25", 2 = 3.5"
-    if (diskType != 2) {
+    const uint8_t diskType = buf[infoOff + 1];
+    const bool singleSide = moof && diskType == 1;
+    const bool mfm = moof && diskType == 3;
+    if (mfm && !mfmCapable_) {
+        lastError_ = "Disk35Image: 1.44M MFM requires an Apple IIe SuperDrive controller";
+        return false;
+    }
+    if (diskType != 2 && !singleSide && !mfm) {
         lastError_ = "Disk35Image: " + imgPath + " has unsupported " +
                      (moof ? "MOOF" : "WOZ") + " disk type " +
                      std::to_string(diskType) +
-                     (moof ? " (only 800K GCR/type 2 is supported)"
+                     (moof ? " (only 400K/800K GCR and 1.44M MFM are supported)"
                            : " (5.25-inch images belong in Disk II)");
         return false;
     }
@@ -578,9 +674,11 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         return false;
     }
 
-    blocks_.assign(kBytesPerImage, 0);
+    const int expectedBlocks = singleSide ? kBlockCount400 :
+                               mfm ? kBlockCount1440 : kBlockCount;
+    blocks_.assign(static_cast<std::size_t>(expectedBlocks) * kBlockBytes, 0);
     auto originalTracks = moof ? std::make_shared<TrackCells>() : nullptr;
-    std::vector<uint8_t> seen(kBlockCount, 0);
+    std::vector<uint8_t> seen(expectedBlocks, 0);
     int decoded = 0;
 
     // Caps on what a FILE may make this loader allocate and chew through.
@@ -596,6 +694,7 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
     std::size_t expandedBytes = 0;
 
     for (int slot = 0; slot < 160; ++slot) {
+        if (singleSide && (slot & 1)) continue;
         const uint8_t fluxIndex = hasFlux ? buf[fluxOff + slot] : 0xFF;
         const bool fluxTrack = fluxIndex != 0xFF;
         const uint8_t ti = fluxTrack ? fluxIndex : buf[tmapOff + slot];
@@ -644,6 +743,23 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         if (moof && !cells.empty())
             (*originalTracks)[static_cast<std::size_t>(slot)] = cells;
 
+        if (mfm) {
+            const int track = slot / 2;
+            const int head = slot % 2;
+            const std::size_t overlap = std::min<std::size_t>(cells.size(), 9000);
+            cells.reserve(cells.size() + overlap);
+            for (std::size_t k = 0; k < overlap; ++k) cells.push_back(cells[k]);
+            decodeMfmTrack(cells, track, head, [&](int sector, const uint8_t* data) {
+                const int bi = (track * 2 + head) * 18 + sector - 1;
+                if (bi < 0 || bi >= expectedBlocks || seen[bi]) return;
+                std::memcpy(blocks_.data() + static_cast<std::size_t>(bi) * kBlockBytes,
+                            data, kBlockBytes);
+                seen[bi] = 1;
+                ++decoded;
+            });
+            continue;
+        }
+
         // The track is a CIRCLE. Walking it once leaves the sector that
         // straddles the seam undecodable — worth ~1 sector per track-side,
         // which is a lot of missing blocks. Walk it once plus an overlap so
@@ -667,8 +783,8 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         sony35::decodeSectors(sony35::nibblesFromCells(cells),
                               /*expectTrack=*/track,
             [&](int tr, int head, int sec, const uint8_t* data) {
-                const int bi = sony35::blockIndexFor(tr, head, sec);
-                if (head != slot % 2 || bi < 0 || bi >= kBlockCount || seen[bi]) return;
+                const int bi = blockIndexFor(tr, head, sec);
+                if (head != slot % 2 || bi < 0 || bi >= expectedBlocks || seen[bi]) return;
                 std::memcpy(blocks_.data() +
                                 static_cast<std::size_t>(bi) * kBlockBytes,
                             data, kBlockBytes);
@@ -677,14 +793,19 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
             });
     }
 
-    if (decoded < kBlockCount) {
+    if (decoded < expectedBlocks) {
         // Report rather than refuse: a dump with a few unreadable sectors is
         // still worth mounting, and saying WHICH is the difference between
         // "POM2 can't read this" and "this dump has holes".
         pom2::log().warn("Disk35",
             (moof ? "MOOF " : "WOZ ") + imgPath + ": decoded " + std::to_string(decoded) +
-            " of " + std::to_string(kBlockCount) +
+            " of " + std::to_string(expectedBlocks) +
             " blocks; the rest read as zeros");
+    }
+    if (decoded == 0 && mfm) {
+        lastError_ = "Disk35Image: " + imgPath +
+                     " yielded no CRC-valid MFM sectors";
+        return false;
     }
     if (decoded == 0 && !moof) {
         lastError_ = "Disk35Image: " + imgPath +

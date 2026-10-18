@@ -80,8 +80,8 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const ProDOSHardDiskCard*>(&peripheral)) return "hdv";
     if (dynamic_cast<const pom2::CffaCard*>(&peripheral)) return "cffa";
     if (dynamic_cast<const pom2::Cffa3000Card*>(&peripheral)) return "cffa3";
-    if (dynamic_cast<const pom2::SmartPortCard*>(&peripheral))
-        return "smartport35";
+    if (const auto* card = dynamic_cast<const pom2::SmartPortCard*>(&peripheral))
+        return card->isSuperDriveMode() ? "superdrive" : "smartport35";
     if (dynamic_cast<const pom2::LironCard*>(&peripheral)) return "liron";
     if (dynamic_cast<const SuperSerialCard*>(&peripheral)) return "ssc";
     if (dynamic_cast<const PrinterCard*>(&peripheral)) return "printer";
@@ -131,7 +131,7 @@ bool SlotConfigurationCoordinator::isMultiInstance(
 {
     // Storage cards: their media and settings models are per-slot.
     if (cardKey == "diskii" || cardKey == "cffa" || cardKey == "cffa3" ||
-        cardKey == "smartport35" || cardKey == "liron")
+        cardKey == "smartport35" || cardKey == "superdrive" || cardKey == "liron")
         return true;
     // Sound cards, since 2026-09-12 (bug hunt #19). TRIBU — the Unreeeal
     // Superhero 3 tribute in the tracked corpus — is a TWO-CARD release:

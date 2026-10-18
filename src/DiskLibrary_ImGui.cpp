@@ -45,7 +45,7 @@ namespace fs = std::filesystem;
 bool accept525(const std::string& ext, uint64_t sz) {
     // An 800K `.dsk` is a Sony 3.5" payload, not a 5.25" one — accept35
     // takes it, matching classifyDiskForSlot.
-    if (ext == ".dsk" && sz == 819200) return false;
+    if (ext == ".dsk" && (sz == 819200 || sz == 409600 || sz == 1474560)) return false;
     if (ext == ".dsk" || ext == ".do" || ext == ".nib" || ext == ".woz"
         || ext == ".d13")
         return true;
@@ -56,7 +56,7 @@ bool accept525(const std::string& ext, uint64_t sz) {
     // 2IMG-wrapped 5.25" floppy (common Asimov format). Anything .2mg
     // below the 800K Sony size is a 5.25" candidate — the DiskImage
     // loader validates the payload precisely. Mirrors classifyDiskForSlot.
-    if (ext == ".2mg" && sz < 819200) return true;
+    if (ext == ".2mg" && sz < 409600) return true;
     return false;
 }
 
@@ -67,11 +67,16 @@ bool accept35(const std::string& ext, uint64_t sz) {
     // refuses a 5.25" WOZ by name, `DiskImage` refuses a 3.5" one.
     if (ext == ".woz" || ext == ".moof") return true;
     // Disk35Image takes a bare 800K payload under .po, .dsk and .image alike.
-    if ((ext == ".dsk" || ext == ".image") && sz == 819200) return true;
+    if ((ext == ".dsk" || ext == ".image") &&
+        (sz == 819200 || sz == 409600 || sz == 1474560)) return true;
     if (ext != ".po" && ext != ".2mg") return false;
     // 800 K = 1600 × 512 = 819 200. 2IMG envelope adds ≤ 4 KB.
     return sz == 819200 || sz == 819200 + 64
-        || (sz > 819200 && sz < 819200 + 4096);
+        || (sz > 819200 && sz < 819200 + 4096)
+        || sz == 409600 || sz == 409600 + 64
+        || (sz > 409600 && sz < 409600 + 4096)
+        || sz == 1474560 || sz == 1474560 + 64
+        || (sz > 1474560 && sz < 1474560 + 4096);
 }
 
 bool acceptHdv(const std::string& ext, uint64_t sz) {

@@ -29,7 +29,7 @@ SmartPort35Unit::~SmartPort35Unit()
 
 uint32_t SmartPort35Unit::blockCount() const
 {
-    return img_.isLoaded() ? 1600u : 0u;   // 800 K / 512 B
+    return img_.isLoaded() ? img_.blockCount() : 0u;
 }
 
 bool SmartPort35Unit::readBlock(uint32_t idx, uint8_t* out) const
@@ -55,6 +55,7 @@ bool SmartPort35Unit::loadImage(const std::string& path)
     }
     Disk35Image replacement;
     replacement.setWriteBackEnabled(img_.isWriteBackEnabled());
+    replacement.setMfmCapable(img_.isMfmCapable());
     if (!replacement.loadFile(path)) {
         lastError_ = replacement.lastError();
         return false;

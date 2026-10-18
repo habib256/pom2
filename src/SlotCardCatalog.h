@@ -76,6 +76,7 @@ inline constexpr CardType kCardTypes[] = {
     // 670-0186). Brings 2× ProDOS block units (3.5" 800K or HDV) to a //e
     // or II+ via the standard ProDOS block-device protocol, no IWM.
     { "smartport35",  "SmartPort (UniDisk intelligent / HD)",   CardScope::Core },
+    { "superdrive",   "Apple IIe SuperDrive (1.44M block interface)" },
     // The same controller as silicon: the real 4 KB Liron EPROM executing
     // over a real IWM, its 3.5" drives answered as intelligent UniDisks on
     // the SmartPort bus (SmartPortBusDevice). Needs roms/liron.rom; slot

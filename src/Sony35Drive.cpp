@@ -167,20 +167,6 @@ inline void rawW(std::vector<uint8_t>& cells, int n, uint32_t value)
     }
 }
 
-// Block index inside the `.po` payload for (track, head, logicalSec).
-// MAME `apple_gcr_format::load` (ap_dsk35.cpp:366-386): blocks are
-// laid out linearly by track, then by head, then by logical sector.
-// On 800K the count per (track,head) is 12 - (track/16) blocks.
-int blockIndexFor(int track, int head, int logicalSec)
-{
-    int idx = 0;
-    for (int t = 0; t < track; ++t) {
-        idx += 2 * sectorsForTrack35(t);
-    }
-    idx += head * sectorsForTrack35(track);
-    return idx + logicalSec;
-}
-
 // Build the bit-cell stream for one (track, head) pair using the
 // Sony 800K GCR layout. Verbatim port of MAME
 // `flopimg.cpp:2017-2106 build_mac_track_gcr`. The output is one bit
@@ -189,6 +175,7 @@ void buildTrackBits(const Disk35Image& img,
                     int track, int head,
                     std::vector<uint8_t>& cells)
 {
+    if (head >= img.headCount()) { cells.clear(); return; }
     const int zone     = zoneForTrack(track);
     const int sectors  = sectorsForTrack35(track);
     const int cellsRev = kCellsPerRev[zone];
@@ -234,12 +221,12 @@ void buildTrackBits(const Disk35Image& img,
     std::array<uint8_t, 12 * 512> sectorData{};
     for (int phys = 0; phys < sectors; ++phys) {
         const int logical = physicalToLogical(phys);
-        const int blkIdx  = blockIndexFor(track, head, logical);
+        const int blkIdx  = img.blockIndexFor(track, head, logical);
         img.readBlock(static_cast<uint32_t>(blkIdx),
                       sectorData.data() + phys * 512);
     }
 
-    constexpr uint8_t kSonyFormatByte = 0x22;   // double-sided Mac/A2 800K
+    const uint8_t kSonyFormatByte = img.headCount() == 1 ? 0x02 : 0x22;
     for (int s = 0; s < sectors; ++s) {
         const int logicalSec = physicalToLogical(s);
 
@@ -348,7 +335,8 @@ bool Sony35Drive::isInserted() const
 
 int Sony35Drive::cellsPerRev() const
 {
-    if (image_ && image_->kind() == Disk35Image::ImageKind::Moof35)
+    if (image_ && (image_->kind() == Disk35Image::ImageKind::Moof35 ||
+                   image_->kind() == Disk35Image::ImageKind::Moof400k))
         if (const auto* cells = image_->originalBitCells(track_, side1_ ? 1 : 0))
             return static_cast<int>(cells->size());
     return kCellsPerRev[zoneForTrack(track_)];
@@ -361,7 +349,8 @@ int64_t Sony35Drive::cyclesPerRev() const
 
 int64_t Sony35Drive::cyclesPerRevFor(int track, int head) const
 {
-    if (image_ && image_->kind() == Disk35Image::ImageKind::Moof35) {
+    if (image_ && (image_->kind() == Disk35Image::ImageKind::Moof35 ||
+                   image_->kind() == Disk35Image::ImageKind::Moof400k)) {
         if (const auto* cells = image_->originalBitCells(track, head)) {
             // MOOF's INFO timing is in 125 ns units. The captured bit count
             // defines the length of the loop, including nonstandard tracks.
@@ -439,9 +428,9 @@ int Sony35Drive::decodeAndCommit(int track, int head) const
             // Accepted: every check above passed, so this sector really was
             // read back out of what the head just wrote.
             ++sectorsDecoded_;
-            const int blkIdx = sony35::blockIndexFor(tr, head, sec);
+            const int blkIdx = image_->blockIndexFor(tr, head, sec);
             if (blkIdx < 0 ||
-                blkIdx >= static_cast<int>(Disk35Image::kBlockCount)) return;
+                blkIdx >= static_cast<int>(image_->blockCount())) return;
             // Only write if the block actually differs — avoids dirtying
             // the image when the firmware just re-writes the same data.
             uint8_t existing[Disk35Image::kBlockBytes];
@@ -597,8 +586,12 @@ void Sony35Drive::ensureCacheFor(int track, int head) const
     cachedHead_  = head;
     if (!isInserted()) return;
     if (track < 0 || track >= 80) return;
+    if (image_->kind() == Disk35Image::ImageKind::Moof1440k ||
+        image_->kind() == Disk35Image::ImageKind::Raw1440k ||
+        image_->kind() == Disk35Image::ImageKind::TwoImg1440k) return;
 
-    if (image_->kind() == Disk35Image::ImageKind::Moof35) {
+    if (image_->kind() == Disk35Image::ImageKind::Moof35 ||
+        image_->kind() == Disk35Image::ImageKind::Moof400k) {
         if (const auto* original = image_->originalBitCells(track, head))
             cells_ = *original;
     } else {

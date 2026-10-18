@@ -253,11 +253,14 @@ void MainWindow::renderAbstractionPanel()
     row("diskimage", primaryDiskII() ? Live::Active : Live::NotPlugged);
     row("cffa", plugged("cffa")        ? Live::Active : Live::NotPlugged);
     row("hdv",  plugged("hdv")         ? Live::Active : Live::NotPlugged);
-    degradable("smartportcard", plugged("smartport35"),
+    degradable("smartportcard", plugged("smartport35") || plugged("superdrive"),
                primarySmartPortCard() && primarySmartPortCard()->isLironRomLoaded(),
                pom2::AbsLevel::H1,
-               "roms/liron.rom absent — the slot page and the $C800 bank are "
-               "POM2's synthetic firmware instead of the real Liron ROM.");
+               plugged("superdrive")
+                   ? "SuperDrive ProDOS block service; SWIM registers and "
+                     "the card's 65C02 firmware are not emulated."
+                   : "roms/liron.rom absent — the slot page and the $C800 bank are "
+                     "POM2's synthetic firmware instead of the real Liron ROM.");
     {
         const bool iicClass =
             activeProfile == pom2::SystemProfile::AppleIIc ||
@@ -268,7 +271,7 @@ void MainWindow::renderAbstractionPanel()
                        "reset disarms it." : "");
         row("iwm", activeProfile == pom2::SystemProfile::AppleIIcPlus
                        ? Live::Active : Live::NotPlugged);
-        row("sony35", (iicClass || plugged("smartport35"))
+        row("sony35", (iicClass || plugged("smartport35") || plugged("superdrive"))
                        ? Live::Active : Live::NotPlugged);
     }
     row("prodosvol", Live::NotApplicable);

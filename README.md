@@ -310,6 +310,13 @@ in slot 5 and the 5¼-inch controller in slot 6, over saved expansion choices.
 The //c+ adds its physical Sony drives; //c PAL also forces its RGB adapter.
 
 **Machine → Slot Configuration** lets you change cards and mount or boot disks.
+For 1.44 MB MOOF or ProDOS `.po`/`.2mg` images on an enhanced Apple IIe, select
+`superdrive` in a free slot, then choose a 3.5-inch media unit and mount the
+image. The card provides the ProDOS block interface and accepts 400K/800K GCR
+and 1.44 MB MFM images. The 1.44 MB path emulates the card's block service;
+direct programming of the original SWIM chip and execution of its 65C02 ROM
+are not implemented. The regular SmartPort/Liron and //c+ Sony drives reject
+1.44 MB MFM media.
 For CFFA3000 storage, choose `cffa3` in a free slot (usually slot 7) and
 assign images to its eight SmartPort bays. To use its floppy role, configure
 Disk II in another slot (usually slot 6) and mount the floppy image there.

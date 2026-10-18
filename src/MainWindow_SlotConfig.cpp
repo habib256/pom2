@@ -833,7 +833,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "transwarp")   plugTranswarp(s);
         else if (kind == "uthernet")    plugUthernet(s);
         else if (kind == "uthernet2")   plugUthernetII(s);
-        else if (kind == "smartport35" || kind == "cffa3")
+        else if (kind == "smartport35" || kind == "superdrive" || kind == "cffa3")
             plugSmartPort35(s, kind);
         else if (kind == "liron")       plugLiron(s);
         else if (kind == "fujinet")     plugFujiNet(s);

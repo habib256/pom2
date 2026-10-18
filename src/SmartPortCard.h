@@ -117,6 +117,8 @@ public:
     /// address, soft-switch trampolines). All units start empty;
     /// the host plugs / replaces units via `setUnit`.
     explicit SmartPortCard(int slot);
+    void setSuperDriveMode(bool enabled);
+    bool isSuperDriveMode() const { return superDriveMode_; }
 
     int getSlot() const { return slot_; }
 
@@ -186,7 +188,9 @@ public:
     bool isLironRomLoaded() const { return lironLoaded_; }
 
     // ── SlotPeripheral interface ────────────────────────────────────────
-    std::string_view name() const override { return "SmartPort"; }
+    std::string_view name() const override {
+        return superDriveMode_ ? "Apple IIe SuperDrive (block interface)" : "SmartPort";
+    }
 
     /// True when the hand-assembled slot ROM did not assemble — a region
     /// over budget, two regions overlapping, a branch that cannot reach its
@@ -282,6 +286,7 @@ private:
     // — block setup ($C0n1/2) writes to the active unit's register pair.
     size_t   activeUnit_                 = 0;
     int      unitCount_                  = kDefaultUnits;   // see setUnitCount
+    bool     superDriveMode_             = false;
     std::array<uint16_t, kMaxUnits> selectedBlock_{};
     std::array<size_t,   kMaxUnits> streamOffset_{};
     std::array<std::array<uint8_t, kBlockBytes>, kMaxUnits> readCache_{};

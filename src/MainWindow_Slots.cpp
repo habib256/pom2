@@ -265,7 +265,7 @@ void MainWindow::renderSlotConfigPanel()
         auto absEntryFor = [](const std::string& key) -> const pom2::AbsEntry* {
             if (key.empty()) return nullptr;
             const char* id = key.c_str();
-            if (key == "smartport35")    id = "smartportcard";
+            if (key == "smartport35" || key == "superdrive") id = "smartportcard";
             else if (key == "printer")   id = "printercard";
             else if (key == "mockingboard_c") id = "mockingboard";
             else if (key == "phasor")    id = "mockingboard";

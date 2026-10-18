@@ -6217,6 +6217,12 @@ target_link_libraries(test_moof35_load PRIVATE pom2_core_test)
 add_test(NAME moof35_load COMMAND test_moof35_load)
 set_tests_properties(moof35_load PROPERTIES TIMEOUT 30)
 
+add_executable(test_superdrive_prodos_boot superdrive_prodos_boot_test.cpp)
+target_include_directories(test_superdrive_prodos_boot PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_superdrive_prodos_boot PRIVATE pom2_core_test)
+add_test(NAME superdrive_prodos_boot COMMAND test_superdrive_prodos_boot)
+set_tests_properties(superdrive_prodos_boot PROPERTIES TIMEOUT 90)
+
 # ─── HGR sprite blit (the byte layer under the sprite editor) ─────────────
 # `HgrSpriteBlit.h` has always documented itself as "unit-tests standalone
 # (hgr_sprite_blit_smoke)"; POM2 never had that test, and hgrsprite/ was the

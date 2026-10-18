@@ -83,6 +83,14 @@ SmartPortCard::SmartPortCard(int slot)
     buildRom();
 }
 
+void SmartPortCard::setSuperDriveMode(bool enabled)
+{
+    superDriveMode_ = enabled;
+    for (auto& unit : units_)
+        if (auto* disk = dynamic_cast<SmartPort35Unit*>(unit.get()))
+            disk->setMfmCapable(enabled);
+}
+
 bool SmartPortCard::loadLironRom(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);
@@ -123,6 +131,8 @@ SmartPortCard::setUnit(size_t idx, std::unique_ptr<SmartPortUnit> u)
     writeBufPrimed_[idx] = false;
     auto old = std::move(units_[idx]);
     units_[idx] = std::move(u);
+    if (auto* disk = dynamic_cast<SmartPort35Unit*>(units_[idx].get()))
+        disk->setMfmCapable(superDriveMode_);
     return old;
 }
 

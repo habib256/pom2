@@ -349,9 +349,18 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         return result;
     }
 
-    if (request.key == "smartport35") {
+    if (request.key == "smartport35" || request.key == "superdrive") {
+        if (request.key == "superdrive" &&
+            request.profile != SystemProfile::AppleIIe &&
+            request.profile != SystemProfile::AppleIIePAL) {
+            result.warningCategory = "SuperDrive";
+            result.warning = "Apple IIe SuperDrive requires an enhanced Apple IIe profile";
+            return result;
+        }
         auto card = std::make_unique<SmartPortCard>(request.slot);
-        if (!profileConfig(request.profile).noPhysicalSlots) {
+        card->setSuperDriveMode(request.key == "superdrive");
+        if (request.key == "smartport35" &&
+            !profileConfig(request.profile).noPhysicalSlots) {
             const std::string rom = locate_("roms/liron.rom");
             if (!rom.empty()) {
                 card->loadLironRom(rom);

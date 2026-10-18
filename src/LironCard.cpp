@@ -523,7 +523,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
     info.kindLabel         = img.isLoaded() ? "UniDisk 3.5 (intelligent SmartPort, 800K)" : "UniDisk intelligent or SmartPort HD";
     info.path              = img.path();
     info.lastError         = img.lastError().empty() ? blk.lastError() : img.lastError();
-    info.blockCount        = img.isLoaded() ? Disk35Image::kBlockCount : 0;
+    info.blockCount        = img.isLoaded() ? img.blockCount() : 0;
     info.loaded            = img.isLoaded();
     info.acceptsSony35OrHdv = !img.isLoaded();
     info.mountId           = img.mountId();
@@ -594,6 +594,10 @@ bool LironCard::mountBay(int bay, const std::string& path, std::string& errOut)
             // Small but not an 800K 3.5" (a 140K or 400K ProDOS volume, say):
             // a block device takes any whole number of blocks.
             errOut = img.lastError();
+            std::string ext = std::filesystem::path(path).extension().string();
+            for (char& c : ext)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext == ".moof" || ext == ".woz") return false;
         }
     }
     if (!as35) {

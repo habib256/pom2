@@ -333,6 +333,10 @@ void test2mgHeaderClassification()
     // only for large comments, and any comment ≥ 4 KB was refused outright.
     assert(classifyDiskForSlot(make2mg(dir, "c35.2mg", 819200, 5000))
            == DiskSlotClass::Sony35);
+    assert(classifyDiskForSlot(make2mg(dir, "c400.2mg", 409600, 5000))
+           == DiskSlotClass::Sony35);
+    assert(classifyDiskForSlot(make2mg(dir, "c1440.2mg", 1474560, 5000))
+           == DiskSlotClass::Sony35);
     // Hard-disk payload + comment: `sz % 512` and `(sz - 64) % 512` both
     // non-zero → the old rules returned Unknown and the drop was refused.
     assert(classifyDiskForSlot(make2mg(dir, "chd.2mg", 4u * 1024 * 1024, 100))
@@ -368,6 +372,8 @@ void testClassifier()
     // .po @ 143360 = 5.25" ProDOS; @ 800K = 3.5".
     assert(classifyDiskForSlot(makeFile(dir, "p525.po", 143360)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "p35.po",  819200)) == DiskSlotClass::Sony35);
+    assert(classifyDiskForSlot(makeFile(dir, "p400.po", 409600)) == DiskSlotClass::Sony35);
+    assert(classifyDiskForSlot(makeFile(dir, "p1440.po", 1474560)) == DiskSlotClass::Sony35);
     assert(classifyDiskForSlot(makeFile(dir, "m35.2mg", 819200)) == DiskSlotClass::Sony35);
     // HDV: 512-aligned. A `.hdv` is a hard disk at ANY size — including
     // EXACTLY 800K (1600 blocks). Regression: the old `> 819200` bound dropped
@@ -383,6 +389,7 @@ void testClassifier()
     // them to the 5.25" loader made a droppable disk fail with a message
     // that listed only 5.25" sizes.
     assert(classifyDiskForSlot(makeFile(dir, "big.dsk",   819200)) == DiskSlotClass::Sony35);
+    assert(classifyDiskForSlot(makeFile(dir, "single.dsk", 409600)) == DiskSlotClass::Sony35);
     assert(classifyDiskForSlot(makeFile(dir, "s.image",   819200)) == DiskSlotClass::Sony35);
     assert(classifyDiskForSlot(makeFile(dir, "small.dsk", 143360)) == DiskSlotClass::Floppy525);
     // Unknown: wrong extension, wrong size, or missing file.

@@ -3232,7 +3232,7 @@ DiskSlotClass classifyDiskForSlot(const std::string& path)
             const uint64_t len = *payload;
             if (len == 143360 || len == 232960 || len == 223440)
                 return DiskSlotClass::Floppy525;   // ProDOS/DOS floppy, or NIB
-            if (len == 819200)
+            if (len == 819200 || len == 409600 || len == 1474560)
                 return DiskSlotClass::Sony35;
             if (len >= 512 && (len % 512) == 0)
                 return DiskSlotClass::Hdv;
@@ -3251,18 +3251,23 @@ DiskSlotClass classifyDiskForSlot(const std::string& path)
     // listing only 5.25" sizes.
     if (ext == ".dsk" || ext == ".do" || ext == ".nib"
         || ext == ".d13") {
-        if (ext == ".dsk" && sz == 819200) return DiskSlotClass::Sony35;
+        if (ext == ".dsk" && (sz == 819200 || sz == 409600 || sz == 1474560))
+            return DiskSlotClass::Sony35;
         return DiskSlotClass::Floppy525;
     }
     if (ext == ".po" && (sz == 143360 || sz == 143360 + 64))
         return DiskSlotClass::Floppy525;
-    if (ext == ".2mg" && sz < 819200)
+    if (ext == ".2mg" && sz < 409600)
         return DiskSlotClass::Floppy525;
 
     // 800K Sony 3.5" — mirrors accept35() (819200 ± 2IMG header slack).
     if ((ext == ".po" || ext == ".2mg" || ext == ".image") &&
         (sz == 819200 || sz == 819200 + 64 ||
-         (sz > 819200 && sz < 819200 + 4096)))
+         (sz > 819200 && sz < 819200 + 4096) ||
+         sz == 409600 || sz == 409600 + 64 ||
+         (sz > 409600 && sz < 409600 + 4096) ||
+         sz == 1474560 || sz == 1474560 + 64 ||
+         (sz > 1474560 && sz < 1474560 + 4096)))
         return DiskSlotClass::Sony35;
 
     // ProDOS hard disk. A `.hdv` is UNAMBIGUOUSLY a hard-disk volume (AppleWin
