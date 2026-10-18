@@ -1320,7 +1320,8 @@ private:
     /// Route an HDV image to the ProDOSHardDiskCard or a SmartPort card's
     /// unit 0, auto-creating a SmartPortHdvUnit if needed. `bootSlotOut`
     /// receives the slot to boot from.
-    bool routeMountHdv(const std::string& path, int& bootSlotOut, std::string& errOut);
+    bool routeMountHdv(const std::string& path, int& bootSlotOut,
+                       std::string& errOut, std::string* noticeOut = nullptr);
     /// The active HDV-class block device for the HDV Library / turbo / eject —
     /// prefers the MAME-faithful CffaCard when plugged, else the synthetic
     /// ProDOSHardDiskCard. nullptr when neither is present.

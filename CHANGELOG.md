@@ -12,6 +12,17 @@ marker and the previous one.
 
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
+## 2026-10-18 — Keep concurrent ProDOS conflict copies distinct
+
+The conflict-copy writer checked that a numbered destination was free, then
+used replacing rename. Two POM2 sessions flushing the same shared folder
+could both choose that name and the later one overwrite the earlier guest
+copy. Conflict copies now use exclusive atomic publication and retry the next
+number on a collision. A concurrent two-writer regression checks that both
+versions survive. Replacing a shared volume through the Disk Library also
+shows the conflict notice; that path previously discarded the coordinator's
+notice even though the HDV panel displayed it.
+
 ## 2026-10-18 — Put the browser demo and the media catalogue first
 
 The README now opens with a direct WebAssembly demo button. The Disk Library

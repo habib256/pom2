@@ -549,15 +549,17 @@ void MainWindow::renderDiskLibraryWindow()
         const std::string path = r.requestHdvMountAndBoot;
         int bootSlot = 0;
         std::string err;
-        if (routeMountHdv(path, bootSlot, err)) {
+        std::string notice;
+        if (routeMountHdv(path, bootSlot, err, &notice)) {
             const bool booted = pom2::bootMountedMedia(*controller, bootSlot, 0, err);
             tapeStatusMessage = "Library: HDV (slot " +
                 std::to_string(bootSlot) +
                 (booted ? ") booted: " : ") mounted, did not boot: ") + (booted ? path : err);
+            if (!notice.empty()) tapeStatusMessage += " " + notice;
         } else {
             tapeStatusMessage = "Library: HDV mount failed: " + err;
         }
-        tapeStatusUntil = lastFrameTime + 4.0;
+        tapeStatusUntil = lastFrameTime + (notice.empty() ? 4.0 : 10.0);
     }
     if (!r.requestHdvMountOnly.empty()) {
         // ADDS the volume into the first free bay (2026-09-08); the old

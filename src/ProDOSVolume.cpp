@@ -1024,14 +1024,14 @@ inline std::uint32_t rd24(const std::uint8_t* p)
            static_cast<std::uint32_t>(p[2]) << 16;
 }
 
-// Atomic overwrite: write to `dest`.tmp then rename — no torn file even on
-// crash. Distinguishes a real write, an identical no-op, and an I/O failure so
-// the caller never reports a failed guest-file export as successfully saved.
-enum class FileWriteResult { Unchanged, Written, Error };
+// Atomic write: stage a sibling temporary, then replace the destination or
+// publish a new file exclusively for conflict copies. The exclusive path
+// refuses a competing writer instead of overwriting that writer's copy.
+enum class FileWriteResult { Unchanged, Written, Exists, Error };
 
 FileWriteResult writeFileAtomic(const fs::path& dest,
                                 const std::vector<std::uint8_t>& bytes,
-                                std::string& err)
+                                std::string& err, bool createOnly = false)
 {
     std::error_code ec;
     if (fs::exists(dest, ec)) {
@@ -1047,7 +1047,9 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
                 if (in && have == bytes) return FileWriteResult::Unchanged;
             }
         }
+        if (createOnly) return FileWriteResult::Exists;
     }
+    if (ec) { err = "cannot inspect " + dest.string() + ": " + ec.message(); return FileWriteResult::Error; }
     // Unique per process + per call — a fixed `<dest>.tmp` is the name every
     // POM2 instance picks, and two flushing the same host folder truncated
     // each other's in-flight write. See tempSiblingPath().
@@ -1090,10 +1092,18 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
             fs::permissions(tmp, perms, sec);
         }
     }
-    if (!replaceFileAtomic(tmp, dest, ec)) {
+    const bool published = createOnly
+        ? publishNewFileAtomic(tmp, dest, ec)
+        : replaceFileAtomic(tmp, dest, ec);
+    if (!published) {
         std::error_code ignored;
         fs::remove(tmp, ignored);
-        err = "cannot replace " + dest.string() + ": " + ec.message();
+        std::error_code existsEc;
+        if (createOnly && (ec == std::errc::file_exists ||
+                           fs::exists(dest, existsEc)))
+            return FileWriteResult::Exists;
+        err = std::string(createOnly ? "cannot publish " : "cannot replace ") +
+              dest.string() + ": " + ec.message();
         return FileWriteResult::Error;
     }
     return FileWriteResult::Written;
@@ -1661,31 +1671,25 @@ void decodeOneDir(DecodeWalk& w,
                         return;
                     }
                     fs::path copy;
+                    std::string conflictError;
                     for (unsigned suffix = 0; suffix < 10000; ++suffix) {
                         const fs::path candidate = suffix == 0 ? baseCopy :
                             fs::path(baseCopy.string() + "." + std::to_string(suffix));
                         if (!destStaysInsideRoot(w, candidate)) break;
-                        std::error_code sec;
-                        const bool exists = fs::exists(candidate, sec);
-                        if (sec) break;
-                        if (!exists) { copy = candidate; break; }
-                        if (fs::file_size(candidate, sec) != data.size() || sec)
-                            continue;
-                        std::ifstream current(candidate, std::ios::binary);
-                        std::vector<std::uint8_t> saved(data.size());
-                        current.read(reinterpret_cast<char*>(saved.data()),
-                                     static_cast<std::streamsize>(data.size()));
-                        if (current && saved == data) { copy = candidate; break; }
+                        const auto saved = writeFileAtomic(
+                            candidate, data, conflictError, true);
+                        if (saved == FileWriteResult::Error) {
+                            r.error = conflictError;
+                            w.ioFailed = true;
+                            return;
+                        }
+                        if (saved != FileWriteResult::Exists) {
+                            copy = candidate;
+                            break;
+                        }
                     }
                     if (copy.empty()) {
                         r.error = "cannot reserve a conflict copy for " + hostName;
-                        w.ioFailed = true;
-                        return;
-                    }
-                    std::string conflictError;
-                    if (writeFileAtomic(copy, data, conflictError) ==
-                        FileWriteResult::Error) {
-                        r.error = conflictError;
                         w.ioFailed = true;
                         return;
                     }

@@ -1621,6 +1621,7 @@ add_executable(test_prodos_volume
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
 )
 target_include_directories(test_prodos_volume PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_prodos_volume PRIVATE Threads::Threads)
 
 add_test(NAME prodos_volume_smoke COMMAND test_prodos_volume)
 set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)

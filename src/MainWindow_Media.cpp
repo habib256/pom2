@@ -216,8 +216,9 @@ bool MainWindow::routeMount35(int driveIdx, const std::string& path,
 }
 
 bool MainWindow::routeMountHdv(const std::string& path, int& bootSlotOut,
-                               std::string& errOut)
+                               std::string& errOut, std::string* noticeOut)
 {
+    if (noticeOut) noticeOut->clear();
     // On //c-class the cffa/hdv slot cards are ROM-masked by the forced
     // INTCXROM and can't boot ($Cn00 reads internal ROM, not the card) —
     // the only bootable block device is the on-board SmartPort (slot 5),
@@ -242,6 +243,7 @@ bool MainWindow::routeMountHdv(const std::string& path, int& bootSlotOut,
             const int slot = dev->getSlot();
             const auto r = storageCoordinator_->mountMediaBay(
                 *controller, *settings, slot, 0, path);
+            if (noticeOut) *noticeOut = r.notice;
             if (!r.ok) {
                 errOut = r.error;
                 hdvStatus = "no image mounted";

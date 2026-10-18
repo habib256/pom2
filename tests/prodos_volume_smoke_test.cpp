@@ -36,6 +36,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -1388,10 +1389,45 @@ static void testHostConflictKeepsBothCopies()
     fs::remove_all(source, ec);
 }
 
+static void testConcurrentConflictCopiesNeverReplaceEachOther()
+{
+    const fs::path source = makeTempDir("conflict_concurrent");
+    writeFile(source / "NOTES.txt", {'o','l','d','!'});
+    std::vector<std::uint8_t> first;
+    assert(pom2::buildVolumeFromFolder(source.string(), "HOST", first).ok);
+    const auto* entry = first.data() + 2 * 512 + 4 + 39;
+    const std::size_t payload = rd16(entry + 0x11) * 512;
+    first[2 * 512 + 4 + 39 + 0x15] = 5;
+    auto second = first;
+    std::memcpy(first.data() + payload, "apple", 5);
+    std::memcpy(second.data() + payload, "cider", 5);
+    writeFile(source / "NOTES.txt", {'h','o','s','t','!'});
+    const auto mountStamp = fs::last_write_time(source / "NOTES.txt") -
+                            std::chrono::hours(24);
+    pom2::ProDOSDecodeResult a, b;
+    std::thread writerA([&] {
+        a = pom2::decodeVolumeToFolder(first, source.string(), &mountStamp);
+    });
+    std::thread writerB([&] {
+        b = pom2::decodeVolumeToFolder(second, source.string(), &mountStamp);
+    });
+    writerA.join();
+    writerB.join();
+    assert(a.ok && b.ok && a.filesConflicted == 1 && b.filesConflicted == 1);
+    assert(slurp(source / "NOTES.txt") == "host!");
+    std::set<std::string> copies;
+    for (const auto& file : fs::directory_iterator(source / ".pom2-conflicts"))
+        copies.insert(slurp(file.path()));
+    assert((copies == std::set<std::string>{"apple", "cider"}));
+    std::error_code ec;
+    fs::remove_all(source, ec);
+}
+
 int main()
 {
     testFolderTextModeAndMetadata();
     testHostConflictKeepsBothCopies();
+    testConcurrentConflictCopiesNeverReplaceEachOther();
     testEmptyFolder();
     testSeedlingAndSapling();
     testNameSanitisationAndCollisions();
