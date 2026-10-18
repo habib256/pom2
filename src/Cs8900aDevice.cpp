@@ -139,7 +139,7 @@ uint32_t crc32Ieee(const uint8_t* data, size_t len)
 // Snapshot blob framing — see SlotPeripheral::appendSnapshotState for why
 // every card must tag its own magic + version.
 constexpr uint32_t kSnapMagic   = 0x38393041;  // 'A908'
-constexpr uint16_t kSnapVersion = 1;
+constexpr uint16_t kSnapVersion = 2;
 
 void putU16(std::vector<uint8_t>& out, uint16_t v)
 {
@@ -1089,6 +1089,10 @@ void Cs8900aDevice::appendSnapshotState(std::vector<uint8_t>& out) const
     putU64(out, framesSent_);
     putU64(out, framesReceived_);
     putU64(out, framesFiltered_);
+    // RxMISS is read-to-clear. Save both the lifetime count shown by the UI
+    // and the baseline of the guest-visible register's pending delta.
+    putU64(out, framesMissed_);
+    putU64(out, rxMissReported_);
     // The inbound frame queue is deliberately NOT saved: it mirrors host
     // network state that has moved on by the time a rewind replays, and
     // a stale queue would re-deliver packets the guest already consumed.
@@ -1098,13 +1102,17 @@ void Cs8900aDevice::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     // Fixed part: magic(4) + version(2) + mac(6) + hash(8) + ioregs(16)
     //           + packetpage(4096) + 2+2+1 + 6*2 + 1+1+2 + 3*8
-    constexpr std::size_t kExpected =
+    // Version 2 appends two RxMISS counters. Version 1 snapshots remain
+    // readable; only their unread RxMISS register can recover old misses.
+    constexpr std::size_t kExpectedV1 =
         4 + 2 + 6 + 8 + kIoRegisterCount + kPacketPageSize +
         2 + 2 + 1 + 12 + 1 + 1 + 2 + 24;
 
-    if (len < kExpected) return;
+    if (len < kExpectedV1) return;
     if (getU32(data) != kSnapMagic) return;
-    if (getU16(data + 4) != kSnapVersion) return;
+    const uint16_t version = getU16(data + 4);
+    if (version != 1 && version != kSnapVersion) return;
+    if (version == kSnapVersion && len < kExpectedV1 + 16) return;
 
     std::size_t p = 6;
     std::memcpy(mac_.data(), data + p, 6);                    p += 6;
@@ -1138,7 +1146,17 @@ void Cs8900aDevice::loadSnapshotState(const uint8_t* data, std::size_t len)
 
     framesSent_     = getU64(data + p); p += 8;
     framesReceived_ = getU64(data + p); p += 8;
-    framesFiltered_ = getU64(data + p);
+    framesFiltered_ = getU64(data + p); p += 8;
+    if (version == kSnapVersion) {
+        framesMissed_ = getU64(data + p); p += 8;
+        rxMissReported_ = getU64(data + p);
+        // A hand-edited snapshot must not underflow noteMissedFrame's delta.
+        if (rxMissReported_ > framesMissed_)
+            rxMissReported_ = framesMissed_;
+    } else {
+        framesMissed_ = ppRead16(kPpSeRxMiss) >> 6;
+        rxMissReported_ = 0;
+    }
 
     // The inbound queue is not saved (see appendSnapshotState), so its byte
     // accounting starts empty with it — and with no queue there is no frame

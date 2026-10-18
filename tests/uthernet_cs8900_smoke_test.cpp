@@ -526,10 +526,10 @@ void testSnapshotCorruptTxStateIsClamped()
     const size_t txLengthAt = base + 8;
     const size_t txStateAt  = base + 12;
     const size_t rxStateAt  = base + 13;
-    // Everything after the states: rxEventReadMask(2) + three counters (8
+    // Everything after the states: rxEventReadMask(2) + five counters (8
     // each). Asserted so a layout change fails HERE rather than silently
     // corrupting some other field and passing.
-    assert(blob.size() == base + 14 + 2 + 24 &&
+    assert(blob.size() == base + 14 + 2 + 40 &&
            "snapshot layout moved — fix the offsets above");
 
     auto putU16At = [&blob](size_t at, uint16_t v) {
@@ -716,6 +716,69 @@ void testRxQueueIsByteBoundedAndCountsMisses()
     assert(got[14] == static_cast<uint8_t>(0x10 + 14));   // seed 0x10 = frame 0
 
     std::printf("  RX queue byte-bounded, drops newest, counts RxMISS\n");
+}
+
+void testRxMissSurvivesSnapshot()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    const auto frame = makeFrame(kOurMac, kOurMac, 1024, 0x51);
+    for (int i = 0; i < 6; ++i) {
+        raw->transmit(frame.data(), static_cast<int>(frame.size()));
+        card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert(card.chip().framesMissed() == 2);
+
+    std::vector<uint8_t> blob;
+    card.appendSnapshotState(blob);
+    // The previous chip format had no lifetime/baseline pair. Its pending
+    // register still gives a coherent starting point for future misses.
+    std::vector<uint8_t> legacy = blob;
+    legacy[6 + 4] = 1;  // chip version; card header is six bytes
+    legacy.resize(legacy.size() - 16);
+    pom2::UthernetCard fromLegacy(3);
+    fromLegacy.loadSnapshotState(legacy.data(), legacy.size());
+    assert(fromLegacy.chip().framesMissed() == 2);
+    assert((readPpWord(fromLegacy, kPpSeRxMiss) >> 6) == 2);
+
+    pom2::UthernetCard restored(3);
+    auto restoredBackend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* restoredRaw = restoredBackend.get();
+    restored.setBackend(std::move(restoredBackend));
+    restored.loadSnapshotState(blob.data(), blob.size());
+    assert(restored.chip().framesMissed() == 2);
+
+    // The queue itself is host state and starts empty after restore. The next
+    // missed frame must extend the two unread misses in the saved register.
+    for (int i = 0; i < 5; ++i) {
+        restoredRaw->transmit(frame.data(), static_cast<int>(frame.size()));
+        restored.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert(restored.chip().framesMissed() == 3);
+    assert((readPpWord(restored, kPpSeRxMiss) >> 6) == 3);
+
+    // After a read cleared RxMISS, a second snapshot must retain the lifetime
+    // total while counting only NEW misses in the register.
+    blob.clear();
+    restored.appendSnapshotState(blob);
+    pom2::UthernetCard again(3);
+    auto againBackend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* againRaw = againBackend.get();
+    again.setBackend(std::move(againBackend));
+    again.loadSnapshotState(blob.data(), blob.size());
+    assert(again.chip().framesMissed() == 3);
+    for (int i = 0; i < 5; ++i) {
+        againRaw->transmit(frame.data(), static_cast<int>(frame.size()));
+        again.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert((readPpWord(again, kPpSeRxMiss) >> 6) == 1);
+    std::printf("  RxMISS lifetime and read baseline survive snapshot\n");
 }
 
 // The ISQ latch and a direct RxEvent read describe ONE staged frame.
@@ -937,6 +1000,7 @@ int main()
     testInterruptStatusQueue();
     testTxEventReportsTxOk();
     testRxQueueIsByteBoundedAndCountsMisses();
+    testRxMissSurvivesSnapshot();
     testIsqStagedFrameSurvivesTheRxEventRead();
     testBufEventAndRxMissClearOnRead();
     testTxOkWithoutBackend();

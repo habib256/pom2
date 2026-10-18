@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Preserve Uthernet I receive misses across snapshots
+
+CS8900A snapshots now save the lifetime count of missed receive frames and
+the last value reported through the read-to-clear `RxMISS` register. Before
+this, restoring a snapshot kept the register's pending count but reset the
+underlying counters, so the status panel lost its history and the next miss
+replaced the pending count. The new chip format can still read older snapshots.
+
 ## 2026-10-18 — CS8900A PacketPage reset value
 
 Bus and software resets now restore the PacketPage pointer to `$3000`, as

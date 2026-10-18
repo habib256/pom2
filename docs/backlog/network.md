@@ -226,8 +226,14 @@ findings in this entry remain open for independent verification.
 `packetPagePtr_` to `$3000`, including after SelfCtl RESET. Before the fix,
 the next PacketPage data access used the previous driver's address and
 auto-increment flag. `uthernet_cs8900_smoke` failed on the stale pointer and
-now covers both reset paths. Snapshot counters and the other findings above
-remain open.
+now covers both reset paths. Other findings above remain open.
+
+**Bug hunt 2026-10-18 (RxMISS snapshot):** The chip snapshot now stores
+`framesMissed_` and `rxMissReported_`. Previously the saved `RxMISS` register
+could say two misses were pending while the underlying total had reset to
+zero; the next miss then reported one. The test reproduces this and covers
+both the pending and read-cleared states. Version 1 chip snapshots remain
+readable, with their pending `RxMISS` value as the recoverable starting count.
 
 <a id="network-006"></a>
 
