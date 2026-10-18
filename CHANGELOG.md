@@ -10,6 +10,13 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Keep queued CS8900A receive decisions stable
+
+Uthernet I now records each accepted frame's address classification when it
+arrives. Changing `RxCTL` or the individual address before reading `RxEvent`
+no longer silently drops that frame or changes its status. The smoke test
+reproduced the lost frame before the fix and checks `RxOK` and `IndividualA`.
+
 ## 2026-10-18 — Report accepted runt frames correctly
 
 Uthernet I no longer marks an accepted short frame as `RxOK`. It reports the

@@ -403,46 +403,32 @@ uint16_t Cs8900aDevice::receiveFrame()
     uint16_t retVal = 0x0004;   // RxEvent's own register number
     uint8_t buffer[kMaxRxLength];
 
-    bool ready = false;
-    while (!ready) {
-        ready = true;   // assume we'll find a good frame
-
-        if (frameQueue_.empty()) break;
-
-        const std::vector<uint8_t> frame = std::move(frameQueue_.front());
+    if (!frameQueue_.empty()) {
+        QueuedFrame frame = std::move(frameQueue_.front());
         frameQueue_.pop_front();
-        queueBytes_ -= std::min(queueBytes_, frame.size());
+        queueBytes_ -= std::min(queueBytes_, frame.bytes.size());
         // Keep the true length for the status word: MAME computes the
         // Extradata bit (0x4000) from the pre-clamp length and discards
         // the octets beyond MAX_RXLEN afterwards. Clamping first made the
         // bit dead code.
-        const int rawLen = static_cast<int>(frame.size());
+        const int rawLen = static_cast<int>(frame.bytes.size());
         int len = rawLen;
         if (len > kMaxRxLength) len = kMaxRxLength;
-        std::memcpy(buffer, frame.data(), static_cast<size_t>(len));
+        std::memcpy(buffer, frame.bytes.data(), static_cast<size_t>(len));
 
-        bool hashed = false, correctMac = false, broadcast = false, multicast = false;
-        int  hashIndex = 0;
         constexpr bool crcError = false;   // the host stack already checked FCS
-
-        if (!shouldAccept(buffer, len, &hashed, &hashIndex,
-                          &correctMac, &broadcast, &multicast)) {
-            ++framesFiltered_;
-            ready = false;      // try the next frame
-            continue;
-        }
 
         if (!crcError && len >= kMinRxLength && rawLen <= kMaxRxLength)
             retVal |= 0x0100;                   // RxOK only for valid frames
-        retVal |= multicast ? 0x0200 : 0;
-        if (!multicast) retVal |= hashed ? 0x0040 : 0;
+        retVal |= frame.multicast ? 0x0200 : 0;
+        if (!frame.multicast) retVal |= frame.hashed ? 0x0040 : 0;
 
-        if (hashed) {
+        if (frame.hashed) {
             // Second status format: hash index in bits 9..14.
-            retVal |= static_cast<uint16_t>((hashIndex & 0x3F) << 9);
+            retVal |= static_cast<uint16_t>((frame.hashIndex & 0x3F) << 9);
         } else {
-            retVal |= correctMac ? 0x0400 : 0;
-            retVal |= broadcast  ? 0x0800 : 0;
+            retVal |= frame.correctMac ? 0x0400 : 0;
+            retVal |= frame.broadcast  ? 0x0800 : 0;
             retVal |= crcError   ? 0x1000 : 0;
             retVal |= (len    < kMinRxLength) ? 0x2000 : 0;
             retVal |= (rawLen > kMaxRxLength) ? 0x4000 : 0;
@@ -501,7 +487,9 @@ void Cs8900aDevice::pumpBackend()
             continue;
         }
         queueBytes_ += static_cast<size_t>(len);
-        frameQueue_.emplace_back(buf, buf + len);
+        frameQueue_.push_back({ std::vector<uint8_t>(buf, buf + len),
+                                hashed, hashIndex, correctMac, broadcast,
+                                multicast });
     }
 }
 

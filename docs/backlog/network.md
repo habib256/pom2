@@ -259,6 +259,12 @@ which supplies frames after CRC validation.
 is clear. The direct-event test failed on the incorrect `RxOK` bit before
 the fix; a separate ISQ test guards delivery to polling drivers.
 
+**Bug hunt 2026-10-18 (queued receive decision):** The CS8900A no longer
+filters an accepted frame a second time when the guest reads `RxEvent`.
+`pumpBackend()` retains the arrival-time address classification with the
+frame, so later `RxCTL` or IA writes cannot discard it or alter its status.
+The register-level test failed before the fix with both settings changed.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

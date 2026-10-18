@@ -247,7 +247,15 @@ private:
     /// (`cs8900a.cpp:399`, `:942-979`).
     int rxEventReadMask_ = 3;
 
-    std::deque<std::vector<uint8_t>> frameQueue_;
+    struct QueuedFrame {
+        std::vector<uint8_t> bytes;
+        bool hashed = false;
+        int hashIndex = 0;
+        bool correctMac = false;
+        bool broadcast = false;
+        bool multicast = false;
+    };
+    std::deque<QueuedFrame> frameQueue_;
     /// Bytes held in `frameQueue_` — what kMaxFrameQueueBytes bounds.
     size_t   queueBytes_ = 0;
     /// Frames the chip had no room for, as RxMISS counts them. Lifetime

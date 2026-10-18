@@ -476,6 +476,33 @@ void testRuntIsVisibleThroughIsq()
     std::printf("  ISQ announces accepted runt frames\n");
 }
 
+void testQueuedFrameKeepsArrivalFilterDecision()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+
+    const auto frame = makeFrame(kOurMac, kOurMac, 64, 0x94);
+    raw->transmit(frame.data(), static_cast<int>(frame.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert(card.chip().queuedFrames() == 1);
+
+    // The receive decision and IA status belong to the arrival, even if the
+    // driver reprograms both the filter and its address before reading.
+    writePpWord(card, kPpCcRxCtl, 0x0005);
+    programMac(card, { 0x02, 0x66, 0x77, 0x88, 0x99, 0xAA });
+    const uint16_t event = readPpWord(card, kPpSeRxEvent);
+    assert((event & 0x0500) == 0x0500);  // RxOK + IndividualA
+    assert(card.chip().framesReceived() == 1);
+    assert(card.chip().framesFiltered() == 0);
+    assert(readPpWord(card, 0x0402) == frame.size());
+    std::printf("  queued frames keep their arrival filter decision\n");
+}
+
 void testMulticastUsesGroupBit()
 {
     pom2::UthernetCard card(3);
@@ -1066,6 +1093,7 @@ int main()
     testAddressFilter();
     testReceiveStatusAcceptanceBits();
     testRuntIsVisibleThroughIsq();
+    testQueuedFrameKeepsArrivalFilterDecision();
     testMulticastUsesGroupBit();
     testDisabledReceiverDropsIncomingFrames();
     testSnapshotRoundTrip();
