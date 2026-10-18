@@ -865,9 +865,13 @@ uint16_t Cs8900aDevice::readRegister(uint16_t ppAddress) const
         if (ppAddress >= 0x15E) return 0x0300;
     } else if (ppAddress < 0x400) {
         return 0x0300;
+    } else if (ppAddress >= kPpRxStatus && ppAddress < kPpTxFrameLoc) {
+        // The receive location begins with RxStatus and RxLength, followed
+        // by the staged frame. The PacketPage data window exposes those
+        // values as well as the sequential RXTXDATA port.
+        return value;
     } else {
-        // RX ($0400-$09FF) and TX ($0A00-$0FFF) frame buffers are not
-        // register-readable — only the RXTXDATA window reaches them.
+        // The transmit frame location is write-only.
         return 0x0000;
     }
 

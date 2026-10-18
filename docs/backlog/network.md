@@ -242,6 +242,12 @@ note is not reachable through current card callers: both provide a 1518-byte
 buffer, the maximum frame size the backend admits. Other findings above
 remain to verify independently.
 
+**Bug hunt 2026-10-18 (PacketPage receive location):** Reads through the
+PacketPage data window now return the staged receive location at
+`$0400-$09FF`, including `RxStatus`, `RxLength` and frame bytes. The receive
+test failed on a zero `RxStatus` before the fix and now confirms these values
+match the RXTXDATA stream. Other findings above remain to verify.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

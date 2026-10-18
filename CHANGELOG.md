@@ -10,6 +10,13 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Read staged Uthernet I frames through PacketPage
+
+The CS8900A PacketPage data window now returns the staged receive status,
+length and frame bytes from `$0400-$09FF`. Previously it always returned
+zero for this range, even while the RXTXDATA port could read the frame. The
+Uthernet I receive test checks both views of the same packet.
+
 ## 2026-10-18 — W5100 socket register writeback
 
 Uthernet II now retains guest writes to each socket's destination MAC

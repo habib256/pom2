@@ -346,6 +346,13 @@ void testReceivePath()
     assert((rxEvent & 0x0400) != 0);   // IA match
     assert(card.chip().queuedFrames() == 0);
 
+    // The staged receive location is also visible through PacketPage. The
+    // status and length must describe the same frame as RXTXDATA below.
+    assert(readPpWord(card, 0x0400) == rxEvent);
+    assert(readPpWord(card, 0x0402) == frame.size());
+    assert(readPpWord(card, 0x0404) ==
+           static_cast<uint16_t>(frame[0] | (frame[1] << 8)));
+
     // Drain through RXTXDATA in the datasheet's order: RxStatus H then L,
     // RxLength H then L, then payload L/H per word.
     const uint8_t statusHi = card.deviceSelectRead(kRxTxDataHi);
