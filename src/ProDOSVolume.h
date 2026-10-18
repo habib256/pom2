@@ -68,7 +68,8 @@ struct ProDOSBuildResult {
 /// host folders produce a valid empty volume (no files), not an error.
 ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
                                         const std::string& volumeName,
-                                        std::vector<std::uint8_t>& outImage);
+                                        std::vector<std::uint8_t>& outImage,
+                                        bool convertText = false);
 
 struct ProDOSDecodeResult {
     bool        ok = false;
@@ -88,6 +89,9 @@ struct ProDOSDecodeResult {
     /// nothing ever retried. A save that did not save everything is a failed
     /// save, and the user has to be able to see which file to rename.
     std::size_t filesUnsaved  = 0;
+    /// Host changed since mount: guest copy stored under .pom2-conflicts.
+    std::size_t filesConflicted = 0;
+    std::vector<std::string> conflictNames;
     /// The first few names behind `filesUnsaved`, for the error text.
     std::vector<std::string> unsavedNames;
     std::size_t dirsCreated   = 0;
@@ -127,9 +131,10 @@ struct ProDOSDecodeResult {
 /// directory budget; both report through `dirsSkipped` / `aborted`.
 /// `preserveNewerThan` (optional): the volume snapshot's mount time. A host
 /// file whose mtime is LATER was edited on the host while the volume was
-/// mounted — the snapshot's copy is stale, so the file is preserved (warned
-/// + counted in `filesSkipped`) instead of silently reverted. Pass nullptr
-/// for the legacy overwrite-everything behaviour.
+/// mounted. The host file is preserved; a differing volume copy is stored in
+/// `.pom2-conflicts/`, with numbered names for distinct later copies. Both
+/// outcomes are counted in `filesSkipped`. Pass nullptr for the legacy
+/// overwrite-everything behaviour.
 ///
 /// `stickyPreserved` (optional): host files already preserved earlier in the
 /// same mount. They stay preserved whatever their mtime, and every file this
@@ -140,7 +145,8 @@ ProDOSDecodeResult decodeVolumeToFolder(
     const std::vector<std::uint8_t>& image,
     const std::string& hostFolder,
     const std::filesystem::file_time_type* preserveNewerThan = nullptr,
-    std::set<std::string>* stickyPreserved = nullptr);
+    std::set<std::string>* stickyPreserved = nullptr,
+    bool convertText = false);
 
 /// True iff `name` (a directory-entry name decoded from an untrusted volume
 /// image) is safe to use as a single host path component. The image is

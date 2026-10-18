@@ -1103,6 +1103,7 @@ void MainWindow::renderHdvPanelWindow()
         snap.hasUnsavedChanges = primaryHdvCard()->hasUnsavedChanges();
         snap.supportsWriteBack = primaryHdvCard()->canWriteBack();
         snap.isSynthVolume     = primaryHdvCard()->isSynthVolumeMounted();
+        snap.textConversion    = primaryHdvCard()->backing().hostFolderTextConversion();
         snap.persistenceState  = primaryHdvCard()->backing().persistenceState();
         snap.persistenceError  = primaryHdvCard()->backing().persistenceError();
     }
@@ -1166,9 +1167,10 @@ void MainWindow::renderHdvPanelWindow()
         const auto r = storageCoordinator_->ejectMediaBay(
             *controller, *settings, primaryHdvCard()->getSlot(), 0);
         if (r.ok) hdvStatus = "no image mounted";
-        tapeStatusMessage = r.ok ? "HDV ejected"
-                                 : "HDV eject failed: " + r.error;
-        tapeStatusUntil   = lastFrameTime + 4.0;
+        tapeStatusMessage = r.ok
+            ? (r.notice.empty() ? "HDV ejected" : "HDV ejected: " + r.notice)
+            : "HDV eject failed: " + r.error;
+        tapeStatusUntil   = lastFrameTime + (r.notice.empty() ? 4.0 : 10.0);
     }
     if (result.requestBoot && primaryHdvCard()) {
         bootHdvImage();
@@ -1185,7 +1187,8 @@ void MainWindow::renderHdvPanelWindow()
             // an HDV) and ProDOS then sees /HOST/ as a second drive.
             const std::string hostDir = path.substr(sentinel.size());
             std::vector<std::uint8_t> bytes;
-            auto br = pom2::buildVolumeFromFolder(hostDir, "HOST", bytes);
+            auto br = pom2::buildVolumeFromFolder(
+                hostDir, "HOST", bytes, hdvPanel->convertHostFolderText);
             if (!br.ok) {
                 tapeStatusMessage = "ProDOS synth failed: " + br.error;
                 tapeStatusUntil   = lastFrameTime + 5.0;
@@ -1199,7 +1202,7 @@ void MainWindow::renderHdvPanelWindow()
             const auto mounted = storageCoordinator_->mountBlockBytes(
                 *controller, *settings, primaryHdvCard()->getSlot(),
                 std::move(bytes), std::string("[host folder] ") + hostDir,
-                hostDir);
+                hostDir, 0, hdvPanel->convertHostFolderText);
             const bool ok = mounted.ok;
             if (ok) {
                 hdvPath   = path;
@@ -1278,7 +1281,8 @@ void MainWindow::renderHdvPanelWindow()
         if (path.rfind(sentinel, 0) == 0) {
             const std::string hostDir = path.substr(sentinel.size());
             std::vector<std::uint8_t> bytes;
-            auto br = pom2::buildVolumeFromFolder(hostDir, "HOST", bytes);
+            auto br = pom2::buildVolumeFromFolder(
+                hostDir, "HOST", bytes, hdvPanel->convertHostFolderText);
             if (!br.ok) {
                 tapeStatusMessage = "ProDOS synth failed: " + br.error;
                 tapeStatusUntil   = lastFrameTime + 5.0;
@@ -1290,7 +1294,7 @@ void MainWindow::renderHdvPanelWindow()
             const auto mounted = storageCoordinator_->mountBlockBytes(
                 *controller, *settings, primaryHdvCard()->getSlot(),
                 std::move(bytes), std::string("[host folder] ") + hostDir,
-                hostDir);
+                hostDir, 0, hdvPanel->convertHostFolderText);
             ok = mounted.ok;
             if (ok) {
                 hdvPath   = path;

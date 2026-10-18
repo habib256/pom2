@@ -4320,6 +4320,17 @@ boots ProDOS elsewhere, then `/HOST/` appears as slot 5 drive
 (`CAT,S5,D1`). Guest writes land in RAM; with write-back ON they decode back into the folder on eject/quit — host files edited AFTER the mount are preserved (mount-time stamp carried in `PendingWriteBack`), never silently reverted to the snapshot. Pinned:
 `prodos_volume_smoke_test`.
 
+The build copies host modification time into both ProDOS file dates and maps
+host read-only mode to ProDOS access `$01` (otherwise `$E3`). Type and aux
+type already round-trip through extension or `#TTAAAA` names. The panel's
+opt-in TXT mode converts only type `$04`: host LF/CRLF to guest CR, guest CR
+to host LF. The mode is captured with each mounted backing so changing the
+checkbox only affects the next mount. On write-back, a host-newer file is
+kept; a differing guest version is written under `.pom2-conflicts/`, with a
+numeric suffix if another distinct guest version already exists. That hidden
+tree is excluded from the next volume scan. The synth persistence label
+describes pending guest edits, not the state of external host files.
+
 **The volume has free blocks, and the mount stamp is refreshed** *(2026-09-07)*.
 Two defects that together made a host folder read-only in practice while
 presenting itself as writable:

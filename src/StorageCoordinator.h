@@ -145,6 +145,7 @@ public:
     struct MediaCommandResult {
         bool ok = false;
         std::string error;
+        std::string notice;
     };
 
     struct EjectAllResult {
@@ -238,7 +239,8 @@ public:
     MediaCommandResult mountBlockBytes(
         EmulationController& controller, Settings& settings, int slot,
         std::vector<std::uint8_t> bytes, const std::string& label,
-        const std::string& hostFolder, int bay = 0) const;
+        const std::string& hostFolder, int bay = 0,
+        bool convertText = false) const;
     MediaCommandResult ejectMediaBay(EmulationController& controller,
                                      Settings& settings, int slot,
                                      int bay) const;

@@ -1302,8 +1302,96 @@ static void testTreeFilesBuildAndRoundTrip()
     fs::remove_all(source, ec);
 }
 
+static void testFolderTextModeAndMetadata()
+{
+    const fs::path source = makeTempDir("txt_mode");
+    const fs::path output = makeTempDir("txt_mode_out");
+    writeFile(source / "NOTES.txt", {'a','\n','b','\r','\n','c','\r'});
+    writeFile(source / "RAW.bin", {'a','\n','b'});
+    std::vector<std::uint8_t> image;
+    assert(pom2::buildVolumeFromFolder(source.string(), "HOST", image, true).ok);
+    auto entry = [&](const char* name) -> const std::uint8_t* {
+        const size_t len = std::strlen(name);
+        for (int block = 2; block <= 5; ++block)
+            for (int slot = 0; slot < 13; ++slot) {
+                const auto* e = image.data() + block * 512 + 4 + slot * 39;
+                if ((e[0] & 15) == len && std::memcmp(e + 1, name, len) == 0)
+                    return e;
+            }
+        return nullptr;
+    };
+    const auto* txt = entry("NOTES");
+    const auto* raw = entry("RAW");
+    assert(txt && raw && txt[0x10] == 0x04 && raw[0x10] == 0x06);
+    assert(rd24(txt + 0x15) == 6);
+    const auto* txtData = image.data() + rd16(txt + 0x11) * 512;
+    const auto* rawData = image.data() + rd16(raw + 0x11) * 512;
+    assert(std::memcmp(txtData, "a\rb\rc\r", 6) == 0);
+    assert(std::memcmp(rawData, "a\nb", 3) == 0);
+    assert(rd16(txt + 0x18) != 0 && rd16(txt + 0x21) != 0);
+    const auto decoded = pom2::decodeVolumeToFolder(
+        image, output.string(), nullptr, nullptr, true);
+    assert(decoded.ok && slurp(output / "NOTES.txt") == "a\nb\nc\n");
+    assert(slurp(output / "RAW.bin") == "a\nb");
+
+    std::vector<std::uint8_t> untouched;
+    assert(pom2::buildVolumeFromFolder(source.string(), "HOST", untouched).ok);
+    assert(untouched[rd16(txt + 0x11) * 512 + 1] == '\n');
+
+#ifndef _WIN32
+    std::error_code permEc;
+    fs::permissions(source / "RAW.bin", fs::perms::owner_read,
+                    fs::perm_options::replace, permEc);
+    assert(!permEc);
+    assert(pom2::buildVolumeFromFolder(source.string(), "HOST", image, true).ok);
+    assert(entry("RAW")[0x1E] == 0x01);
+#endif
+    std::error_code ec;
+    fs::remove_all(source, ec);
+    fs::remove_all(output, ec);
+}
+
+static void testHostConflictKeepsBothCopies()
+{
+    const fs::path source = makeTempDir("conflict_both");
+    writeFile(source / "NOTES.txt", {'o','l','d','!'});
+    std::vector<std::uint8_t> image;
+    assert(pom2::buildVolumeFromFolder(source.string(), "HOST", image).ok);
+    const auto* e = image.data() + 2 * 512 + 4 + 39;
+    assert(std::memcmp(e + 1, "NOTES", 5) == 0);
+    std::memcpy(image.data() + rd16(e + 0x11) * 512, "guest", 5);
+    auto* editable = image.data() + 2 * 512 + 4 + 39;
+    editable[0x15] = 5;
+    writeFile(source / "NOTES.txt", {'h','o','s','t','!'});
+    const auto mountStamp = fs::last_write_time(source / "NOTES.txt") -
+                            std::chrono::hours(24);
+    std::set<std::string> sticky;
+    const auto result = pom2::decodeVolumeToFolder(
+        image, source.string(), &mountStamp, &sticky);
+    assert(result.ok && result.filesConflicted == 1);
+    assert(slurp(source / "NOTES.txt") == "host!");
+    assert(slurp(source / ".pom2-conflicts" / "NOTES.txt") == "guest");
+    const auto repeated = pom2::decodeVolumeToFolder(
+        image, source.string(), &mountStamp, &sticky);
+    assert(repeated.ok && repeated.filesConflicted == 1);
+    assert(!fs::exists(source / ".pom2-conflicts" / "NOTES.txt.1"));
+    std::memcpy(image.data() + rd16(e + 0x11) * 512, "newer", 5);
+    const auto changed = pom2::decodeVolumeToFolder(
+        image, source.string(), &mountStamp, &sticky);
+    assert(changed.ok && changed.filesConflicted == 1);
+    assert(slurp(source / ".pom2-conflicts" / "NOTES.txt") == "guest");
+    assert(slurp(source / ".pom2-conflicts" / "NOTES.txt.1") == "newer");
+    std::vector<std::uint8_t> next;
+    const auto built = pom2::buildVolumeFromFolder(source.string(), "HOST", next);
+    assert(built.ok && built.filesIncluded == 1);
+    std::error_code ec;
+    fs::remove_all(source, ec);
+}
+
 int main()
 {
+    testFolderTextModeAndMetadata();
+    testHostConflictKeepsBothCopies();
     testEmptyFolder();
     testSeedlingAndSapling();
     testNameSanitisationAndCollisions();

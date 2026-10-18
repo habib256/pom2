@@ -47,6 +47,7 @@ public:
         bool        supportsWriteBack = false;
         std::string persistenceState, persistenceError;
         bool        isSynthVolume     = false;
+        bool        textConversion    = false;
         std::vector<LibraryEntry> library;
     };
 
@@ -75,6 +76,7 @@ public:
     // shortcut flips `mountDialogOpen` directly.
     bool        mountDialogOpen = false;
     std::string dialogPath;
+    bool        convertHostFolderText = false;
 };
 
 } // namespace pom2

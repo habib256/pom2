@@ -288,6 +288,7 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     }
     supportsWriteBack_ = true;
     synth_      = false;
+    hostTextConversion_ = false;
     hostFolder_.clear();
     dirtyBlocks_.assign(blockCount(), false);
     blockVersions_.assign(blockCount(), 0);
@@ -320,6 +321,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     dataOffset_ = 0;
     dataLength_ = image_.size();
     synth_      = !hostFolder.empty();
+    hostTextConversion_ = false;
     hostFolder_ = hostFolder;
     // Stamp the snapshot: the write-back decode preserves host files whose
     // mtime is later than this (edited on the host while mounted).
@@ -359,6 +361,7 @@ void Block512Backing::eject()
     hostFolder_.clear();
     loaded_ = false;
     synth_  = false;
+    hostTextConversion_ = false;
     supportsWriteBack_ = false;
     wpHeader_ = false;
     hostReadOnly_ = false;
@@ -467,6 +470,7 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
         out.synthImage   = image_;
         out.hasMountTime = hasMountTime_;
         out.mountTime    = mountTime_;
+        out.textConversion = hostTextConversion_;
         out.preserved    = preserved_;
     } else {
         // The file case only needs the blocks that actually changed, which
@@ -500,7 +504,8 @@ void Block512Backing::restoreDirty(const std::vector<uint32_t>& indices)
 
 bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
                                       std::string& error,
-                                      std::filesystem::file_time_type* newMountTime)
+                                      std::filesystem::file_time_type* newMountTime,
+                                      std::string* notice)
 {
     if (!pending.valid) return true;
     // No machine state is accessed here. Serialize full read/modify/rename
@@ -520,7 +525,8 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         }
         pom2::ProDOSDecodeResult r = pom2::decodeVolumeToFolder(
             pending.synthImage, pending.hostFolder,
-            pending.hasMountTime ? &pending.mountTime : nullptr, sticky);
+            pending.hasMountTime ? &pending.mountTime : nullptr, sticky,
+            pending.textConversion);
         // Published BEFORE the failure return: a failed pass has usually
         // still written part of the tree, and those files carry the decode's
         // stamp. Returning early left the caller with nothing to adopt.
@@ -530,6 +536,9 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
             pom2::log().warn("HDV", "Synth folder write-back failed: " + error);
             return false;
         }
+        if (notice && r.filesConflicted != 0)
+            *notice = std::to_string(r.filesConflicted) +
+                " conflict(s): guest copies in .pom2-conflicts/";
         pom2::log().info("HDV", "Synth folder write-back: " +
                                 std::to_string(r.filesWritten) + " file(s) → " +
                                 pending.hostFolder);

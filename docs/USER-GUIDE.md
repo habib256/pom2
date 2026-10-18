@@ -311,6 +311,23 @@ floppyemu/    Floppy Emu media (created on first run)
 roms/         System and peripheral firmware
 ```
 
+### Share a ProDOS folder
+
+Put files in `prodos_folder/`, then mount its **[host folder]** entry from the
+HDV panel. It appears to ProDOS as `/HOST/`. Host modification times and
+read-only permissions are reflected in the volume; ProDOS file type and aux
+type come from extensions or `NAME#TTAAAA` names. Enable **Convert host-folder
+TXT line endings on next mount** to exchange ProDOS TXT (`$04`) files as CR
+inside the Apple II and LF on the host. The option is off by default and
+does not change binary files.
+
+Guest edits are held in memory until ejection or quit. Enable **Sync to host
+folder (on eject)** in the HDV panel to save them. The panel reports pending
+guest edits and the mounted text mode. If a host file changes during a mount,
+the host version stays in place and the guest version is saved in the hidden
+`.pom2-conflicts/` folder. Repeated distinct conflicts get numbered copies;
+review them manually. Files deleted by the guest are left on the host.
+
 Screenshots and printouts go into POM2's per-user data directory:
 
 | System | Data directory |

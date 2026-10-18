@@ -12,6 +12,19 @@ marker and the previous one.
 
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
+## 2026-10-18 — Make ProDOS host-folder exchange easier to inspect
+
+The synthesised volume now carries host modification times and read-only
+permissions in file entries, alongside the existing file type and aux type.
+The HDV panel offers an opt-in TXT line-ending mode: LF/CRLF on the host becomes
+CR in ProDOS, and guest CR becomes host LF. Other file types stay byte-exact.
+The panel reports whether guest writes are pending, and the mode active for
+the current mount. When a host file was edited after mounting, write-back
+keeps it and places the guest version in hidden `.pom2-conflicts/`; distinct
+later conflicts retain numbered copies. Eject reports the conflict count.
+Host-folder write-back remains opt-in and guest deletions do not remove host
+files.
+
 ## 2026-10-18 — Write WOZ 2.1 FLUX tracks
 
 Writable 5.25-inch WOZ 2.1 images no longer become write protected just

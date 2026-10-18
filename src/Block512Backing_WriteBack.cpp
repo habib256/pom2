@@ -33,7 +33,11 @@ void Block512Backing::collectWriteBack()
 const char* Block512Backing::persistenceState() const
 {
     if (!loaded_) return "unmounted";
-    if (synth_) return "manual";
+    if (synth_) {
+        if (!persistenceError_.empty()) return "error";
+        if (!writeBack_) return anyDirty_ ? "off (guest edits in memory)" : "off";
+        return anyDirty_ ? "pending eject/quit" : "no guest edits pending";
+    }
     if (!persistenceError_.empty()) return "error";
     if (backgroundWrite_ && backgroundGeneration_ == mountGeneration_)
         return "saving";

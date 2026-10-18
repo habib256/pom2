@@ -95,7 +95,10 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
             ImGui::TextDisabled("(read-only — 2MG WP flag set)");
         }
         if (!snap.persistenceState.empty())
-            ImGui::Text("Host file: %s", snap.persistenceState.c_str());
+            ImGui::Text("%s: %s", snap.isSynthVolume ? "Folder sync" : "Host file",
+                        snap.persistenceState.c_str());
+        if (snap.isSynthVolume)
+            ImGui::TextDisabled("Concurrent edits: host kept; guest copy in .pom2-conflicts/");
         if (!snap.persistenceError.empty())
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
                                "Save failed: %s", snap.persistenceError.c_str());
@@ -135,6 +138,11 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
     ImGui::TextUnformatted("Library:");
     ImGui::SameLine();
     ImGui::TextDisabled("(left-click: mount + boot — right-click: mount only)");
+    ImGui::Checkbox("Convert host-folder TXT line endings on next mount",
+                    &convertHostFolderText);
+    if (snap.isSynthVolume)
+        ImGui::TextDisabled("Mounted text conversion: %s",
+            snap.textConversion ? "on" : "off");
 
     if (snap.library.empty()) {
         ImGui::TextDisabled("  (drop .hdv / .2mg files into hdv/ to populate)");

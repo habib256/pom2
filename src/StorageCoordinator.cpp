@@ -747,7 +747,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
 StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
     EmulationController& controller, Settings& settings, int slot,
     std::vector<std::uint8_t> bytes, const std::string& label,
-    const std::string& hostFolder, int bay) const
+    const std::string& hostFolder, int bay, bool convertText) const
 {
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
@@ -809,7 +809,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
             if (sameFolderDirty) {
                 std::vector<std::uint8_t> fresh;
                 const auto rebuilt = pom2::buildVolumeFromFolder(
-                    hostFolder, synthVolumeName(bytes), fresh);
+                    hostFolder, synthVolumeName(bytes), fresh, convertText);
                 if (!rebuilt.ok)
                     return commandError(
                         "host folder could not be re-read after its "
@@ -834,8 +834,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
         const bool loaded = bay == 0
             ? card->loadImageFromBytes(std::move(bytes), label, hostFolder)
             : twoDrive->loadDriveFromBytes(bay, std::move(bytes), label, hostFolder);
-        if (!loaded)
-            return commandError(card->getLastError());
+        if (!loaded) return commandError(card->getLastError());
+        if (twoDrive && !hostFolder.empty()) twoDrive->backing(bay).setHostFolderTextConversion(convertText);
         (void)appendMediaBaySettingUpdates(
             updates, *peripheral, slot, bay,
             autoHdvSlot_, autoSmartPortSlot_);
@@ -930,7 +930,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     if (twoPhase && pending.valid) {
         const std::vector<std::uint32_t> captured = pending.dirtyIndices;
         std::string error;
-        if (!Block512Backing::commitWriteBack(std::move(pending), error)) {
+        if (!Block512Backing::commitWriteBack(std::move(pending), error, nullptr, &result.notice)) {
             // Put the captured dirty set back so the still-mounted medium is
             // dirty again and a retry re-captures it (pre-split behaviour: a
             // failed save loses nothing). Re-resolved: the bus can be

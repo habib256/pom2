@@ -221,6 +221,7 @@ public:
         /// silently reverting them to the snapshot's stale copy.
         bool                  hasMountTime = false;
         std::filesystem::file_time_type mountTime{};
+        bool                  textConversion = false;
         /// Synth case: the mount's set of preserved host files, shared
         /// with the backing so a preservation outlives the pass (see
         /// `decodeVolumeToFolder`'s `stickyPreserved`).
@@ -282,7 +283,8 @@ public:
     static bool commitWriteBack(PendingWriteBack&& pending,
                                 std::string& error,
                                 std::filesystem::file_time_type* newMountTime
-                                    = nullptr);
+                                    = nullptr,
+                                std::string* notice = nullptr);
 
     /// Undo a `takeWriteBack` whose commit failed: re-mark its captured
     /// blocks dirty (merging with any block dirtied since). Out-of-range
@@ -324,6 +326,9 @@ public:
     void setHostWriteProtected(bool on) { hostReadOnly_ = on; }
     bool isHostWriteProtected() const   { return hostReadOnly_; }
     bool isSynthVolume()      const { return synth_; }
+    void setHostFolderTextConversion(bool enabled)
+    { hostTextConversion_ = synth_ && enabled; }
+    bool hostFolderTextConversion() const { return hostTextConversion_; }
     bool isWriteBackEnabled() const { return writeBack_; }
     void setWriteBackEnabled(bool on) { writeBack_ = on; }
     bool canWriteBack()       const { return supportsWriteBack_ && !isWriteProtected(); }
@@ -384,6 +389,7 @@ private:
     bool    hostReadOnly_      = false;   // the notch — host file read-only
     bool    supportsWriteBack_ = false;
     bool    synth_             = false;
+    bool    hostTextConversion_ = false;
     /// Synth volumes: when the host-folder snapshot was taken (see
     /// PendingWriteBack::mountTime).
     bool    hasMountTime_      = false;

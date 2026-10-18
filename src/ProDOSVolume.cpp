@@ -19,7 +19,10 @@
 #include "Logger.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -79,6 +82,8 @@ struct PreparedFile {
     std::string                 prodosName;
     std::uint8_t                fileType   = 0;
     std::uint16_t               auxType    = 0;
+    std::array<std::uint8_t, 4>  modified{};
+    std::uint8_t                access = 0xE3;
     std::vector<std::uint8_t>   data;
     std::uint8_t                storageType = kStorageSeedling;
     std::size_t                 dataBlocks  = 0;
@@ -86,6 +91,58 @@ struct PreparedFile {
     // Filled at layout: keyPointer (= seedling data block, sapling index block).
     std::size_t                 firstBlock  = 0;
 };
+
+// ProDOS TXT uses CR line endings. Only type $04 is transformed, and only
+// when the folder mount explicitly enables text exchange.
+void convertTextNewlines(std::vector<std::uint8_t>& data, bool toProDOS)
+{
+    std::vector<std::uint8_t> out;
+    out.reserve(data.size());
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        if (toProDOS) {
+            if (data[i] == '\r' && i + 1 < data.size() && data[i + 1] == '\n')
+                ++i;
+            if (data[i] == '\n' || data[i] == '\r') out.push_back('\r');
+            else out.push_back(data[i]);
+        } else {
+            if (data[i] == '\r' && i + 1 < data.size() && data[i + 1] == '\n')
+                ++i;
+            if (data[i] == '\r' || data[i] == '\n') out.push_back('\n');
+            else out.push_back(data[i]);
+        }
+    }
+    data.swap(out);
+}
+
+std::array<std::uint8_t, 4> prodosTimeFromHost(const fs::path& path)
+{
+    std::array<std::uint8_t, 4> out{};
+    std::error_code ec;
+    const auto fileTime = fs::last_write_time(path, ec);
+    if (ec) return out;
+    const auto systemTime = std::chrono::time_point_cast<
+        std::chrono::system_clock::duration>(
+        fileTime - fs::file_time_type::clock::now() +
+        std::chrono::system_clock::now());
+    const std::time_t seconds = std::chrono::system_clock::to_time_t(systemTime);
+    std::tm local{};
+#ifdef _WIN32
+    if (localtime_s(&local, &seconds) != 0) return out;
+#else
+    if (!localtime_r(&seconds, &local)) return out;
+#endif
+    const int year = local.tm_year + 1900;
+    if (year < 1940 || year > 2039) return out;
+    const std::uint16_t date = static_cast<std::uint16_t>(
+        ((year % 100) << 9) | ((local.tm_mon + 1) << 5) | local.tm_mday);
+    const std::uint16_t time = static_cast<std::uint16_t>(
+        (local.tm_hour << 8) | local.tm_min);
+    out[0] = static_cast<std::uint8_t>(date);
+    out[1] = static_cast<std::uint8_t>(date >> 8);
+    out[2] = static_cast<std::uint8_t>(time);
+    out[3] = static_cast<std::uint8_t>(time >> 8);
+    return out;
+}
 
 struct PreparedDir;
 
@@ -281,12 +338,12 @@ void writeFileEntry(std::uint8_t* dst, const PreparedFile& f,
     put16(dst + 0x11, keyPointer);
     put16(dst + 0x13, blocksUsed);
     put24(dst + 0x15, eof);
-    // creation date_time = 0 (no metadata)
+    std::copy(f.modified.begin(), f.modified.end(), dst + 0x18);
     dst[0x1C] = 0;     // version
     dst[0x1D] = 0;     // min_version
-    dst[0x1E] = 0xE3;  // access: full
+    dst[0x1E] = f.access;
     put16(dst + 0x1F, f.auxType);
-    // last_mod date_time = 0
+    std::copy(f.modified.begin(), f.modified.end(), dst + 0x21);
     put16(dst + 0x25, headerPointer);
 }
 
@@ -518,7 +575,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
                     std::size_t depth, ProDOSBuildResult& result,
                     const fs::path& root,
                     std::unordered_set<std::string>& visited,
-                    std::size_t& stagedBytes)
+                    std::size_t& stagedBytes, bool convertText)
 {
     if (depth > kMaxRecursionDepth) {
         pom2::log().warn("ProDOSVol",
@@ -565,7 +622,8 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
         if (he.isDir) {
             auto sub = std::make_unique<PreparedDir>();
             sub->prodosName = he.prodosName;
-            scanHostFolder(he.path, *sub, depth + 1, result, root, visited, stagedBytes);
+            scanHostFolder(he.path, *sub, depth + 1, result, root, visited,
+                           stagedBytes, convertText);
             if (!result.error.empty()) return;
             sub->numDirBlocks = numDirBlocksFor(sub->order.size());
             dir.order.push_back({true, dir.subdirs.size()});
@@ -599,14 +657,23 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
         pf.fileType   = he.fileType;
         pf.auxType    = he.auxType;
         pf.prodosName = he.prodosName;
-        if (fsize <= kBlockBytes) {
+        pf.modified = prodosTimeFromHost(he.path);
+        std::error_code pec;
+        const auto perms = fs::status(he.path, pec).permissions();
+        if (!pec && (perms & (fs::perms::owner_write | fs::perms::group_write |
+                              fs::perms::others_write)) == fs::perms::none)
+            pf.access = 0x01;
+        if (convertText && pf.fileType == 0x04)
+            convertTextNewlines(pf.data, true);
+        const std::size_t payloadSize = pf.data.size();
+        if (payloadSize <= kBlockBytes) {
             pf.storageType = kStorageSeedling;
             pf.dataBlocks  = 1;
             pf.indexBlocks = 0;
         } else {
-            pf.dataBlocks  = (fsize + kBlockBytes - 1) / kBlockBytes;
-            pf.storageType = fsize <= kSaplingMaxBytes ? kStorageSapling : kStorageTree;
-            pf.indexBlocks = fsize <= kSaplingMaxBytes ? 1 :
+            pf.dataBlocks  = (payloadSize + kBlockBytes - 1) / kBlockBytes;
+            pf.storageType = payloadSize <= kSaplingMaxBytes ? kStorageSapling : kStorageTree;
+            pf.indexBlocks = payloadSize <= kSaplingMaxBytes ? 1 :
                 1 + (pf.dataBlocks + 255) / 256;
         }
         ++result.filesIncluded;
@@ -793,7 +860,8 @@ std::size_t totalBlocksForTree(const PreparedDir& dir, bool isVolumeRoot)
 
 ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
                                         const std::string& volumeName,
-                                        std::vector<std::uint8_t>& outImage)
+                                        std::vector<std::uint8_t>& outImage,
+                                        bool convertText)
 {
     ProDOSBuildResult result;
 
@@ -809,7 +877,8 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
         if (cec) served = fs::path(hostFolder);
         std::unordered_set<std::string> visited;
         std::size_t stagedBytes = 0;
-        scanHostFolder(hostFolder, root, /*depth=*/0, result, served, visited, stagedBytes);
+        scanHostFolder(hostFolder, root, /*depth=*/0, result, served, visited,
+                       stagedBytes, convertText);
     }
     if (!result.error.empty()) return result;
     root.firstDirBlock = 2;
@@ -1083,6 +1152,7 @@ struct DecodeWalk {
     const fs::file_time_type*         newerThan   = nullptr;
     /// Files preserved earlier in this mount (see decodeVolumeToFolder).
     std::set<std::string>*            sticky      = nullptr;
+    bool                              convertText = false;
     /// Newest mtime this walk actually wrote, for the fallback path only —
     /// see noteWriteTime and completedAt.
     fs::file_time_type                newest{};
@@ -1474,6 +1544,8 @@ void decodeOneDir(DecodeWalk& w,
                         "tree file truncated on decode: " + name);
                 }
             }
+            if (w.convertText && fileType == 0x04)
+                convertTextNewlines(data, false);
 
             // Compose the host filename. `rawName` keeps the entry's exact
             // spelling for the identity lookup (the build can mint a trailing
@@ -1559,11 +1631,70 @@ void decodeOneDir(DecodeWalk& w,
                 const bool sticky = w.sticky && w.sticky->count(key) != 0;
                 if (sticky || (!mec && mtime > *w.newerThan)) {
                     if (w.sticky) w.sticky->insert(key);
-                    pom2::log().warn("ProDOSVol",
-                        "decode: preserving host-newer file " +
-                        probe.filename().string() +
-                        " (edited on the host after the volume was mounted;"
-                        " the volume's stale copy was NOT written)");
+                    if (renameFrom.empty()) {
+                        std::error_code sec;
+                        if (fs::file_size(probe, sec) == data.size() && !sec) {
+                            std::ifstream current(probe, std::ios::binary);
+                            std::vector<std::uint8_t> hostBytes(data.size());
+                            current.read(reinterpret_cast<char*>(hostBytes.data()),
+                                         static_cast<std::streamsize>(data.size()));
+                            if (current && hostBytes == data) continue;
+                        }
+                    }
+                    // Keep BOTH versions. The guest copy is written under a
+                    // hidden sibling tree so the next folder scan does not
+                    // turn it into another ProDOS directory entry.
+                    std::error_code relEc;
+                    const fs::path relative = fs::relative(
+                        fs::path(hostFolder), w.rootReal, relEc);
+                    const fs::path baseCopy = w.rootReal / ".pom2-conflicts" /
+                        relative / hostName;
+                    if (relEc || !destStaysInsideRoot(w, baseCopy)) {
+                        noteUnsaved(r, name);
+                        ++r.filesSkipped;
+                        continue;
+                    }
+                    fs::create_directories(baseCopy.parent_path(), relEc);
+                    if (relEc) {
+                        r.error = "cannot create conflict folder: " + relEc.message();
+                        w.ioFailed = true;
+                        return;
+                    }
+                    fs::path copy;
+                    for (unsigned suffix = 0; suffix < 10000; ++suffix) {
+                        const fs::path candidate = suffix == 0 ? baseCopy :
+                            fs::path(baseCopy.string() + "." + std::to_string(suffix));
+                        if (!destStaysInsideRoot(w, candidate)) break;
+                        std::error_code sec;
+                        const bool exists = fs::exists(candidate, sec);
+                        if (sec) break;
+                        if (!exists) { copy = candidate; break; }
+                        if (fs::file_size(candidate, sec) != data.size() || sec)
+                            continue;
+                        std::ifstream current(candidate, std::ios::binary);
+                        std::vector<std::uint8_t> saved(data.size());
+                        current.read(reinterpret_cast<char*>(saved.data()),
+                                     static_cast<std::streamsize>(data.size()));
+                        if (current && saved == data) { copy = candidate; break; }
+                    }
+                    if (copy.empty()) {
+                        r.error = "cannot reserve a conflict copy for " + hostName;
+                        w.ioFailed = true;
+                        return;
+                    }
+                    std::string conflictError;
+                    if (writeFileAtomic(copy, data, conflictError) ==
+                        FileWriteResult::Error) {
+                        r.error = conflictError;
+                        w.ioFailed = true;
+                        return;
+                    }
+                    ++r.filesConflicted;
+                    if (r.conflictNames.size() < 4)
+                        r.conflictNames.push_back(name);
+                    pom2::log().warn("ProDOSVol", "host kept " +
+                        probe.string() + "; guest copy stored at " +
+                        copy.string());
                     ++r.filesSkipped;
                     continue;
                 }
@@ -1659,7 +1790,8 @@ ProDOSDecodeResult decodeVolumeToFolder(
     const std::vector<std::uint8_t>& image,
     const std::string& hostFolder,
     const std::filesystem::file_time_type* preserveNewerThan,
-    std::set<std::string>* stickyPreserved)
+    std::set<std::string>* stickyPreserved,
+    bool convertText)
 {
     ProDOSDecodeResult r;
 
@@ -1682,7 +1814,7 @@ ProDOSDecodeResult decodeVolumeToFolder(
     }
 
     DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, r, false,
-                     preserveNewerThan, stickyPreserved, {},
+                     preserveNewerThan, stickyPreserved, convertText, {},
                      fs::file_time_type::clock::now(), {} };
     // Resolved ONCE, before anything is written: every destination is checked
     // back against this. `create_directories` above has just made sure the
