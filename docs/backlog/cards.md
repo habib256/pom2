@@ -23,7 +23,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-005](#cards-005) | 🟡 | To verify | Nothing asserts the real ClockCard ROM path is taken |
 | [CARDS-011](#cards-011) | 🟡 | To verify | Ghostscript unreachable on a stock Apple Silicon Homebrew |
 | [CARDS-002](#cards-002) | 🧊 | Frozen | Apple II Workstation Card — it boots, it is identified, and there is no network on the other end. |
-| [CARDS-004](#cards-004) | 🧊 | Frozen | EchoPlusTMS5220Card (real Echo+) |
+| [CARDS-004](#cards-004) | ✅ | Implemented | EchoPlusTMS5220Card (real Echo+) |
 | [CARDS-006](#cards-006) | 🧊 | Frozen | Apple II SCSI / High-Speed SCSI + CHD |
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
@@ -229,26 +229,13 @@ driver loaded from `$C800`; only that residue remains.
 
 ## CARDS-004 — EchoPlusTMS5220Card (real Echo+)
 
-**Priority:** 🧊 · **State:** Frozen.
+**State:** Implemented 2026-10-18 after the explicit request to complete the
+remaining features. The previous hide ruling applied to the silent scaffold.
 
-**Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1787). Original dates and estimates are retained below.
-
-- 🧊 **EchoPlusTMS5220Card (real Echo+)** — catalog scaffold
-  `echoplus_tms`: SlotPeripheral + stub register decode at
-  $Cs00-$Cs0F, enough for detection.
-  Remaining: TMS5220 LPC10 decoder (chirp ROM + K-parameter
-  interpolation) and AY-3-8913 audio synth — the shared AY core it
-  needs already exists (`src/AyPsgSynth.h`, extracted 2026-08-01,
-  see [Audio]). *~3-5 d.*
-  **Ruling [R2](../decisions/project-scope.md#standing-rulings) is answered by the scope ruling: hide.**
-  Taking it out of the README table and the picker is a
-  [G3](release-1.0.md#g3) item; the chip itself is closed as won't-do.
-  *Revalidated 2026-10-06:* the picker half is done — `echoplus_tms` is
-  hidden from the picker since 2026-09-08 and a saved key still plugs it
-  (`src/SlotCardCatalog.h:158-161`). The README's Audio row still lists
-  "Echo+ TMS5220 scaffold".
+The catalog now offers the actual VIA/two-AY/TMS5220C card, with FIFO-paced
+LPC synthesis and stereo audio. ETS v2 preserves generator/filter state and
+fractional clocks. See [DEV](../../DEV.md#echoplustms5220card) for the hardware
+map, reference, tests and remaining pin-timing/analog validation limits.
 
 <a id="cards-006"></a>
 

@@ -10,11 +10,11 @@
 
 namespace pom2 {
 namespace {
-bool controllerDevicesSupported(EmulationController& ctrl, std::string& error)
+bool controllerDevicesSupported(EmulationController& ctrl, bool iic, std::string& error)
 {
-    for (int drive = 0; drive < 3; ++drive)
+    if (!iic) for (int drive = 0; drive < 3; ++drive)
         if (ctrl.disk35(drive).isLoaded()) {
-            error = "sessions do not capture onboard 3.5-inch media; eject it first";
+            error = "onboard 3.5-inch session media require a //c-class profile";
             return false;
         }
     if (ctrl.cassette().hasLoadedTape() || ctrl.cassette().hasRecordedTape() ||
@@ -38,7 +38,7 @@ bool saveSessionFile(EmulationController& ctrl, const std::string& path, std::st
     SessionArchive captured;
     {
         auto state = ctrl.lockState();
-        if (!controllerDevicesSupported(ctrl, error) ||
+        if (!controllerDevicesSupported(ctrl, state.memory().isIIcClass(), error) ||
             !captureSession(captured, state.cpu(), state.memory(), ctrl.machineId(), error)) return false;
     }
     std::vector<uint8_t> bytes;
@@ -54,7 +54,7 @@ bool loadSessionFile(EmulationController& ctrl, const std::string& path, std::st
     SessionArchive prepared;
     if (!readSnapshotFileBytes(path, bytes, error) || !decodeSessionArchive(bytes, prepared, error)) return false;
     auto state = ctrl.lockState();
-    if (!controllerDevicesSupported(ctrl, error) ||
+    if (!controllerDevicesSupported(ctrl, state.memory().isIIcClass(), error) ||
         !restoreSession(prepared, state.cpu(), state.memory(), ctrl.machineId(), error)) return false;
     ctrl.noteTimeJump();
     ctrl.rewind().clear();

@@ -1,6 +1,7 @@
 // POM2 — GPL-3.0-or-later
 #include "SessionFilePicker.h"
 #include "NativeFileDialog.h"
+#include "BrowserFiles.h"
 #include "imgui.h"
 
 #include <cstdio>
@@ -12,7 +13,16 @@ void SessionFilePicker::open(bool save)
 {
     save_ = save; opening_ = true; closing_ = false; replacing_ = false;
     error_.clear();
+#ifdef __EMSCRIPTEN__
+    if (!save) {
+        opening_ = false;
+        chooseBrowserFile(BrowserFileKind::Session);
+        return;
+    }
+    if (!path_[0]) setPath("/tmp/session.pom2session");
+#else
     if (!path_[0]) setPath("session.pom2session");
+#endif
 }
 bool SessionFilePicker::setPath(const std::string& path)
 {
@@ -46,6 +56,26 @@ std::optional<SessionFileSelection> SessionFilePicker::submit(bool replace)
 }
 std::optional<SessionFileSelection> SessionFilePicker::render()
 {
+#ifdef __EMSCRIPTEN__
+    if (opening_) {
+        opening_ = false;
+        return SessionFileSelection{true, "/tmp/session.pom2session"};
+    }
+    if (error_.empty()) return {};
+    ImGui::OpenPopup("Session export");
+    std::optional<SessionFileSelection> selected;
+    if (ImGui::BeginPopupModal("Session export", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", error_.c_str());
+        if (ImGui::Button("Retry")) {
+            selected = SessionFileSelection{true, "/tmp/session.pom2session"};
+            error_.clear(); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) { error_.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    return selected;
+#else
     bool submitPicked = false;
     if (opening_) {
         opening_ = false;
@@ -67,8 +97,9 @@ std::optional<SessionFileSelection> SessionFilePicker::render()
         closing_ = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return {};
     }
     ImGui::TextUnformatted(save_ ? "Save session" : "Open session");
-    ImGui::TextWrapped("II/II+/IIe with protected Disk II media (including WOZ), "
-        "Mockingboard and SNES MAX. Select the same profile, ROMs and cards before loading.");
+    ImGui::TextWrapped("II/II+/IIe or //c with floppy media (including WOZ/MOOF), "
+        "supported cards and idle built-in serial ports. Select the same profile, ROMs and cards before loading.");
+    ImGui::TextWrapped("Restored writable disks keep changes in RAM; save a session to retain them.");
     if (!save_) ImGui::TextWrapped("Loading replaces the current CPU, memory and supported device state.");
     std::optional<SessionFileSelection> selection;
     if (submitPicked) selection = submit();
@@ -93,5 +124,6 @@ std::optional<SessionFileSelection> SessionFilePicker::render()
     }
     ImGui::EndPopup();
     return selection;
+#endif
 }
 }

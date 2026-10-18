@@ -47,7 +47,7 @@ public:
     std::string_view kindLabel() const override { return kKindLabel; }
 
     bool     isLoaded()         const override { return img_.isLoaded(); }
-    bool     isWriteProtected() const override { return img_.isWriteProtected(); }
+    bool     isWriteProtected() const override { return img_.isBlockWriteProtected(); }
     uint32_t blockCount()       const override;
     bool     readBlock (uint32_t idx, uint8_t* out) const override;
     bool     writeBlock(uint32_t idx, const uint8_t* in) override;

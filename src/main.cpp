@@ -236,6 +236,8 @@ constexpr double kBrowserPersistSeconds = 10.0;
 extern "C" EMSCRIPTEN_KEEPALIVE void pom2_persist_now()
 {
     if (!gPersistTarget) return;
+    gPersistTarget->checkpointBrowserSession(gPageHidden ? gResumeAfterVisibility :
+        gPersistTarget->emul().getMode() == EmulationController::Mode::Running);
     gPersistTarget->persistSession();
     pom2::flushPersistentStateNow();
 }
@@ -1105,6 +1107,7 @@ int main(int argc, char* argv[])
         /// loop (main() never returns under simulate_infinite_loop).
         const char*         imguiIniPath;
         double              lastPersistSeconds;
+        bool browserSessionInitialized = false;
 #endif
     } frameCtx{
         window, &mainWindow, plan->bootDiskPath, plan->prodosFolderPath,
@@ -1205,6 +1208,22 @@ int main(int argc, char* argv[])
             glfwSetWindowShouldClose(c.window, GLFW_TRUE);
         }
 
+#ifdef __EMSCRIPTEN__
+        if (!c.browserSessionInitialized && c.cliBootCountdown <= 0 && c.hostOpenGrace == 0) {
+            auto& emu = c.mainWindow->emul();
+            // Restore the intended mode first, then apply tab visibility.
+            // A page loaded in the background must neither run hidden nor
+            // turn a saved manual pause into a visibility-owned resume.
+            if (gPageHidden && gResumeAfterVisibility)
+                emu.setMode(EmulationController::Mode::Running);
+            c.mainWindow->restoreBrowserSession();
+            if (gPageHidden) {
+                gResumeAfterVisibility = emu.getMode() == EmulationController::Mode::Running;
+                if (gResumeAfterVisibility) emu.setMode(EmulationController::Mode::Stopped);
+            }
+            c.browserSessionInitialized = true;
+        }
+#endif
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -1241,6 +1260,8 @@ int main(int argc, char* argv[])
             const double now = emscripten_get_now() / 1000.0;
             if (now - c.lastPersistSeconds >= kBrowserPersistSeconds) {
                 c.lastPersistSeconds = now;
+                c.mainWindow->checkpointBrowserSession(gPageHidden ? gResumeAfterVisibility :
+                    c.mainWindow->emul().getMode() == EmulationController::Mode::Running);
                 c.mainWindow->persistSession();
             }
         }

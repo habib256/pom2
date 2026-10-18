@@ -98,6 +98,10 @@ public:
     /// or eject() so the //c+ firmware's "media changed" SmartPort
     /// probe latches the new state.
     void notifyMediaChange();
+    /// Session media were replaced while mechanism state stayed unchanged.
+    void invalidateSessionCache() const { invalidateCache(); }
+    void appendSessionWriteState(std::vector<uint8_t>& out) const;
+    bool loadSessionWriteState(const uint8_t* data, size_t len, bool commit = true);
 
     /// True iff a disk is currently inserted (slot wired AND image
     /// loaded inside it). Out-of-line to avoid pulling Disk35Image's

@@ -183,12 +183,12 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
         // read-only bit, so it travels with the image. The host applies it
         // through setMediaNotch before the panel's other actions.
         bool protect = u.fileWriteProtected;
-        if (!typeAllowsMount || !u.loaded) ImGui::BeginDisabled();
+        if (!typeAllowsMount || !u.loaded || u.persistenceState == "session") ImGui::BeginDisabled();
         if (ImGui::Checkbox("Write-protected (the notch on this medium)", &protect)) {
             a.writeBackChanged = true;
             a.writeBackOn      = !protect;
         }
-        if (!typeAllowsMount || !u.loaded) ImGui::EndDisabled();
+        if (!typeAllowsMount || !u.loaded || u.persistenceState == "session") ImGui::EndDisabled();
         if (u.loaded) {
             ImGui::SameLine();
             if (u.writeProtected)
@@ -197,7 +197,9 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
                 ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "WRITABLE");
         }
 
-        if (u.loaded && !u.persistenceState.empty())
+        if (u.loaded && u.persistenceState == "session")
+            ImGui::TextWrapped("Session disk: changes stay in RAM. Save a session to retain them.");
+        else if (u.loaded && !u.persistenceState.empty())
             ImGui::Text("Host file: %s", u.persistenceState.c_str());
         if (!u.persistenceError.empty())
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),

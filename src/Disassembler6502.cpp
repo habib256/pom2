@@ -15,29 +15,12 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "Disassembler6502.h"
+#include "Opcode6502.h"
 
 #include <cstdio>
 
 namespace pom2 {
 namespace {
-
-// 6502 addressing modes for disassembly formatting
-enum AddrMode {
-    AM_IMP, AM_IMM, AM_ZP, AM_ZPX, AM_ZPY,
-    AM_ABS, AM_ABX, AM_ABY, AM_IND,
-    AM_IZX, AM_IZY, AM_REL,
-    // 65C02 additions:
-    AM_ACC,   // accumulator, rendered "INC A"
-    AM_IZP,   // (zp)        — 2 bytes
-    AM_IAX,   // (abs,X)     — 3 bytes  (JMP)
-    AM_ZPR,   // zp,rel      — 3 bytes  (BBR/BBS): "$zz,$tttt"
-    AM_BRK    // BRK         — 2 bytes: the $00 opcode + its signature byte
-};
-
-struct OpcodeInfo {
-    const char* mnemonic;
-    AddrMode mode;
-};
 
 // Complete 6502 opcode table (256 entries). Unofficial / illegal opcodes
 // are rendered as "???" so a decoded byte is always traceable, but their
@@ -187,6 +170,11 @@ OpcodeInfo cmosInfo(uint8_t op)
 }
 
 } // namespace
+
+OpcodeInfo describeOpcode6502(uint8_t opcode, bool cmos)
+{
+    return cmos ? cmosInfo(opcode) : opcodeInfo[opcode];
+}
 
 std::string disassemble6502(const uint8_t* mem, uint16_t pc, int& instrLen, bool cmos)
 {

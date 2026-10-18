@@ -87,7 +87,11 @@ The original report also named missing FORMAT/INIT parameter-count checks.
 Reproduced and fixed 2026-10-12, along with INIT accepting nonzero units;
 see [CHANGELOG](../../CHANGELOG.md). `liron_smartport_dispatch` covers the
 guest-visible error codes and valid calls. 5.25-inch WOZ 2.1 FLUX tracks now
-support write-back with a save/reload regression. The report's remaining 400K
+support write-back with a save/reload regression. Native 3.5-inch GCR
+WOZ/MOOF writes also preserve 125 ns timing and container metadata
+(2026-10-18, `disk35_flux_write`). MFM MOOF block writes now splice existing CRC-valid
+sectors and preserve untouched 125 ns transitions (`moof35_load`); GCR HLE
+block mounts still require raw conversion. The report's remaining 400K
 and DiskCopy 4.2 restrictions still need revalidation and documentation;
 they were not tested by that protocol regression.
 

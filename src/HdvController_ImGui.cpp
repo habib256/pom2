@@ -35,13 +35,14 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
     }
 
     // ─── Card status ────────────────────────────────────────────────────
+    const bool writable = snap.persistenceState == "session" ? !snap.writeProtected : snap.supportsWriteBack;
     // Header status LED: grey empty / green mounted / yellow write-protected.
     pom2::statusLed(snap.imageLoaded,
-                    snap.imageLoaded && !snap.supportsWriteBack,
+                    snap.imageLoaded && !writable,
                     /*error=*/false,
                     snap.imageLoaded ? snap.imagePath.c_str() : "No image mounted");
     ImGui::TextUnformatted(snap.imageLoaded
-        ? (snap.supportsWriteBack ? "Mounted" : "Mounted (write-protected)")
+        ? (writable ? "Mounted" : "Mounted (write-protected)")
         : "Empty");
     // The ProDOS block-device ROM is built into the card (no external
     // .rom file to load) — flag it so the user knows nothing else is
@@ -56,7 +57,7 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
         ImGui::Text("Blocks: %zu (~%.1f MB)",
                     snap.blockCount,
                     (snap.blockCount * 512.0) / (1024.0 * 1024.0));
-        if (snap.supportsWriteBack) {
+        if (writable) {
             // Two polarities on purpose. A disk image is writable by default
             // (2026-09-08) and the tick is the user's visible opt-OUT; a host
             // FOLDER stays an opt-in, because syncing a guest DELETE back
@@ -73,7 +74,7 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
                 // bit, so the protection travels with the image. Host:
                 // setMediaNotch(imagePath, protect).
                 bool protect = snap.writeProtected;
-                ImGui::BeginDisabled(!snap.imageLoaded);
+                ImGui::BeginDisabled(!snap.imageLoaded || snap.persistenceState == "session");
                 if (ImGui::Checkbox("Write-protected (the lock on this image)", &protect)) {
                     r.writeBackToggleChanged = true;
                     r.writeBackNewValue      = !protect;
@@ -89,12 +90,15 @@ HdvController_ImGui::FrameResult HdvController_ImGui::render(
             }
             if (snap.hasUnsavedChanges) {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "(unsaved)");
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                                   snap.persistenceState == "session" ? "(save in session)" : "(unsaved)");
             }
         } else {
             ImGui::TextDisabled("(read-only — 2MG WP flag set)");
         }
-        if (!snap.persistenceState.empty())
+        if (snap.persistenceState == "session")
+            ImGui::TextWrapped("Session disk: changes stay in RAM. Save a session to retain them.");
+        else if (!snap.persistenceState.empty())
             ImGui::Text("%s: %s", snap.isSynthVolume ? "Folder sync" : "Host file",
                         snap.persistenceState.c_str());
         if (snap.isSynthVolume)

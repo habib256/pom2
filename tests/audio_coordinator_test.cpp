@@ -96,9 +96,10 @@ int main()
     assert(inventory.primaryMockingboardSlot() == 6);
 
     const auto mixer = audio.captureMixerCards();
-    assert(mixer.size() == 4); // TMS scaffold has no AudioSource yet
+    assert(mixer.size() == 5); // Echo+ now contributes speech and PSG audio.
     assert(mixer[0].slot == 2 && near(mixer[0].volume, 0.25f));
-    assert(mixer[3].slot == 6 && near(mixer[3].volume, 0.65f));
+    assert(mixer[3].slot == 5 && near(mixer[3].volume, 0.7f));
+    assert(mixer[4].slot == 6 && near(mixer[4].volume, 0.65f));
 
     const auto mb = audio.captureMockingboard();
     assert(mb.plugged && mb.slot == 6 && mb.hasSsi);

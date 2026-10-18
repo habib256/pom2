@@ -377,11 +377,10 @@ void MainWindow::renderMenuBar()
     if (!ImGui::BeginMainMenuBar()) return;
 
     if (ImGui::BeginMenu("File")) {
-#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
         if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
+        renderBrowserSessionMenu();
         ImGui::Separator();
-#endif
         panelMenuItem(pom2::PanelId::DiskLibrary);
         // Every drive of the machine, the Drives window's own list and
         // actions (collectDrivePictures / runDriveRackAction): it used to
@@ -475,13 +474,8 @@ void MainWindow::renderMenuBar()
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Paste from clipboard", "Ctrl+V"))
             pasteFromClipboard();
-#ifndef __EMSCRIPTEN__
-        // "Paste from file" reads a host text file; the browser build has no
-        // host filesystem (only the read-only bundled MEMFS), and nothing
-        // pasteable ships in it. Clipboard paste above still works in WASM.
         if (ImGui::MenuItem("Paste from file..."))
             showPasteFileDialog = true;
-#endif
         ImGui::Separator();
         const size_t pending = controller->memory().pendingPasteSize();
         ImGui::BeginDisabled(pending == 0);

@@ -297,7 +297,7 @@ private:
         /// code (chains of eight) and was written against the raw flag.
         bool writeProtected() const override
         {
-            if (disk()) return img_->isWriteProtected();
+            if (disk()) return img_->isBlockWriteProtected();
             if (!hard()) return true;
             return blk_->isWriteProtected() || !blk_->isWriteBackEnabled();
         }

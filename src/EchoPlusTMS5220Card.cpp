@@ -1,155 +1,154 @@
-// POM2 Apple II Emulator
-// Copyright (C) 2026 VERHILLE Arnaud
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-// EchoPlusTMS5220Card — see header for the chipset overview + scaffold
-// status. Audio synth and the LPC core are deferred; this file ships the
-// SlotPeripheral surface only.
-
+// POM2 — GPL-3.0-or-later. Hardware map: MAME a2mockingboard.cpp:453-474,585-607.
 #include "EchoPlusTMS5220Card.h"
-
+#include "M6502.h"
 #include "ByteIO.h"
-
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
-EchoPlusTMS5220Card::EchoPlusTMS5220Card(int slot) : slot_(slot)
-{
-    onReset();
+struct EchoPlusTMS5220Card::AudioSrc : AudioSource, RateAware {
+    EchoPlusTMS5220Card& card;
+    explicit AudioSrc(EchoPlusTMS5220Card& c) : card(c) {}
+    void setSampleRate(uint32_t hz) override { card.setSampleRate(hz); }
+    void fillAudioBuffer(float* out, int count) override {
+        std::lock_guard<std::mutex> lock(card.mtx_);
+        for (int i = 0; i < count; ++i) {
+            const float sample = card.pcm_.empty() ? 0 : (card.pcm_.front()[0] + card.pcm_.front()[1]) * 0.5f;
+            if (!card.pcm_.empty()) card.pcm_.pop_front();
+            out[i] = card.muted_ ? 0 : sample * card.volume_;
+        }
+    }
+    bool fillAudioBufferStereo(float* left, float* right, int count) override {
+        std::lock_guard<std::mutex> lock(card.mtx_);
+        for (int i = 0; i < count; ++i) {
+            const auto sample = card.pcm_.empty() ? std::array<float, 2>{} : card.pcm_.front();
+            if (!card.pcm_.empty()) card.pcm_.pop_front();
+            left[i] = card.muted_ ? 0 : sample[0] * card.volume_;
+            right[i] = card.muted_ ? 0 : sample[1] * card.volume_;
+        }
+        return true;
+    }
+};
+EchoPlusTMS5220Card::EchoPlusTMS5220Card(int slot) : audio_(std::make_unique<AudioSrc>(*this)), slot_(slot) { onReset(); }
+EchoPlusTMS5220Card::~EchoPlusTMS5220Card() = default;
+AudioSource* EchoPlusTMS5220Card::audioSource() { return audio_.get(); }
+void EchoPlusTMS5220Card::onReset() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    speech_.reset(); via_.reset();
+    for (int i = 0; i < 2; ++i) { ay_[i].reset(); synth_[i] = {}; }
+    pcm_.clear(); viaPhase_ = speechPhase_ = samplePhase_ = 0;
+    lastSpeech_ = -1; lastWrite_ = 0;
+    lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    assertIrq(false);
 }
-
-void EchoPlusTMS5220Card::onReset()
-{
-    std::lock_guard<std::mutex> lk(mtx_);
-    // TMS5220 power-on / reset status. MAME `tms5220.cpp:894-907`
-    // (status_read): status byte = TS<<7 | BL<<6 | BE<<5 (low 5 bits
-    // open bus). Reset sets `m_buffer_empty = m_buffer_low = true`
-    // (`tms5220.cpp:1771`), and the flag logic agrees: BL is active
-    // whenever fifo_count <= 8 and BE whenever fifo_count == 0
-    // (`update_fifo_status_and_ints`, `tms5220.cpp:754-790`) — an empty
-    // FIFO is by definition also "low". So idle = TS=0, BL=1, BE=1 =
-    // 0x60. (An earlier scaffold reported BE-only 0x20; a driver
-    // FIFO-pacing on BL=1 "ready for the next byte" would then poll
-    // $Cs00 forever.) Drivers that poll `LDA $Cs00 / BMI ...` still see
-    // "not talking" (TS=0) and fall through their wait loops.
-    tmsStatus_    = 0x60;          // BL=1 | BE=1, TS=0
-    tmsLastWrite_ = 0x00;
+void EchoPlusTMS5220Card::onUnplug() { onReset(); }
+void EchoPlusTMS5220Card::setCpu(M6502* cpu) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    cpu_ = cpu; lastCycle_ = cpu ? cpu->getCycleCountNow() : 0;
+}
+void EchoPlusTMS5220Card::setCpuClock(double hz) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (std::isfinite(hz) && hz >= 100000 && hz <= 1000000000) {
+        sync(); cpuHz_ = hz; if (!busClockSet_) busHz_ = hz;
+    }
+}
+void EchoPlusTMS5220Card::setStandardClock(double hz) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (std::isfinite(hz) && hz >= 100000 && hz <= 10000000) {
+        sync(); busHz_ = hz; busClockSet_ = true;
+    }
+}
+void EchoPlusTMS5220Card::setSampleRate(uint32_t hz) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (hz < 8000 || hz > 192000 || hz == rate_) return;
+    rate_ = hz; samplePhase_ = 0; pcm_.clear();
+}
+void EchoPlusTMS5220Card::setVolume(float v) { std::lock_guard<std::mutex> l(mtx_); volume_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0; }
+float EchoPlusTMS5220Card::getVolume() const { std::lock_guard<std::mutex> l(mtx_); return volume_; }
+void EchoPlusTMS5220Card::setMuted(bool v) { std::lock_guard<std::mutex> l(mtx_); muted_ = v; }
+bool EchoPlusTMS5220Card::isMuted() const { std::lock_guard<std::mutex> l(mtx_); return muted_; }
+void EchoPlusTMS5220Card::sync() {
+    if (!cpu_) return;
+    syncAt(cpu_->getCycleCountNow() + 1);
+}
+void EchoPlusTMS5220Card::syncAt(uint64_t now) {
+    if (now > lastCycle_) advance(now - lastCycle_);
+    else if (lastCycle_ - now > 1024) pcm_.clear();
+    lastCycle_ = now;
+}
+void EchoPlusTMS5220Card::advanceCycles(int cycles) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    // Memory has advanced its counter, while M6502 still carries the
+    // instruction's cycles. Apply the same correction as Mockingboard.
+    if (cpu_ && cycles > 0) {
+        const uint64_t now = cpu_->getCycleCountNow();
+        syncAt(now >= uint64_t(cycles) ? now - uint64_t(cycles) : 0);
+    }
+    else if (cycles > 0) { advance(uint64_t(cycles)); lastCycle_ += uint64_t(cycles); }
+}
+void EchoPlusTMS5220Card::advance(uint64_t cycles) {
+    const double ticks = double(cycles) * busHz_ / cpuHz_ + viaPhase_;
+    const auto whole = uint64_t(ticks);
+    viaPhase_ = ticks - double(whole);
+    for (uint64_t left = whole; left;) {
+        const int batch = int(std::min<uint64_t>(left, 1000000));
+        via_.advance(batch); left -= uint64_t(batch);
+    }
+    assertIrq(via_.irqOut());
+    double left = double(cycles);
+    while (left > 0) {
+        const double delta = std::min({left, (1 - speechPhase_) * cpuHz_ / 8000,
+                                            (1 - samplePhase_) * cpuHz_ / rate_});
+        speechPhase_ += delta * 8000 / cpuHz_;
+        samplePhase_ += delta * rate_ / cpuHz_;
+        left -= delta;
+        if (speechPhase_ >= 1 - 1e-10) {
+            speechPhase_ = std::max(0.0, speechPhase_ - 1);
+            speech_.process(&lastSpeech_, 1);
+        }
+        if (samplePhase_ >= 1 - 1e-10) {
+            samplePhase_ = std::max(0.0, samplePhase_ - 1);
+            const float step = float(busHz_ / (8 * rate_));
+            const float psgLeft = pom2::ay::renderChipSample(synth_[0], ay_[0].regs, step, 1 / step);
+            const float psgRight = pom2::ay::renderChipSample(synth_[1], ay_[1].regs, step, 1 / step);
+            const float speech = lastSpeech_ == -1 ? 0 : float(lastSpeech_) / 32768;
+            pcm_.push_back({std::clamp(speech * 0.7f + psgLeft / 6, -1.0f, 1.0f),
+                            std::clamp(speech * 0.7f + psgRight / 6, -1.0f, 1.0f)});
+            if (pcm_.size() > 8192) pcm_.pop_front();
+        }
+    }
+}
+uint8_t EchoPlusTMS5220Card::deviceSelectRead(uint8_t offset) {
+    std::lock_guard<std::mutex> lock(mtx_); sync();
+    return offset == 0 ? uint8_t(0x1F | speech_.status()) : 0;
+}
+void EchoPlusTMS5220Card::deviceSelectWrite(uint8_t offset, uint8_t value) {
+    std::lock_guard<std::mutex> lock(mtx_); sync();
+    if (!offset) { lastWrite_ = value; speech_.write(value); }
+}
+uint8_t EchoPlusTMS5220Card::slotRomRead(uint8_t offset) {
+    std::lock_guard<std::mutex> lock(mtx_); sync();
+    const auto result = via_.read(offset & 15); assertIrq(via_.irqOut()); return result;
+}
+void EchoPlusTMS5220Card::slotRomWrite(uint8_t offset, uint8_t value) {
+    std::lock_guard<std::mutex> lock(mtx_); sync();
+    if (via_.write(offset & 15, value) & 3) applyPsgControl();
+    assertIrq(via_.irqOut());
+}
+void EchoPlusTMS5220Card::applyPsgControl() {
+    const auto pb = via_.readPortB(), pa = via_.readPortA();
     for (int i = 0; i < 2; ++i) {
-        ay_[i].reset();
-        aySelected_[i] = 0;
+        if ((pb & 4) && !(pb & (8 << i))) continue;
+        const auto result = ay_[i].applyControl(pa, pb);
+        if (result == pom2::Ay3_8910::ResetOnly) synth_[i] = {};
+        if (result == pom2::Ay3_8910::Wrote && ay_[i].latchedAddr == 13) synth_[i].envRetrigger = true;
+        if (result == pom2::Ay3_8910::Read) via_.setPortAInput(ay_[i].busOut);
     }
 }
-
-uint8_t EchoPlusTMS5220Card::slotRomRead(uint8_t low8)
-{
-    std::lock_guard<std::mutex> lk(mtx_);
-    switch (low8) {
-    case 0x00:                      // TMS5220 status
-        return tmsStatus_;
-    case 0x01:                      // TMS5220 reset acknowledge — open bus
-        return 0xFF;
-    case 0x04:                      // AY-3-8913 #1 data read (R[selected])
-    case 0x05:
-        return ay_[0].regs[aySelected_[0] & 0x0F];
-    case 0x06:                      // AY-3-8913 #2 data read
-    case 0x07:
-        return ay_[1].regs[aySelected_[1] & 0x0F];
-    default:
-        return 0xFF;
-    }
-}
-
-void EchoPlusTMS5220Card::slotRomWrite(uint8_t low8, uint8_t v)
-{
-    std::lock_guard<std::mutex> lk(mtx_);
-    switch (low8) {
-    case 0x00:                      // TMS5220 data byte
-        // Accept and drop — no LPC core yet. Track the last byte for the
-        // diagnostic snapshot so a debug panel can confirm software is
-        // pushing data at us.
-        tmsLastWrite_ = v;
-        break;
-    case 0x01:                      // TMS5220 reset / stop
-        tmsStatus_ = 0x60;          // back to idle: BL|BE set, TS clear
-                                    // (MAME tms5220.cpp:1771 reset state)
-        break;
-    case 0x04:                      // AY-3-8913 #1 address latch (low nibble)
-        aySelected_[0] = v & 0x0F;
-        break;
-    case 0x05:                      // AY-3-8913 #1 data write
-        ay_[0].regs[aySelected_[0] & 0x0F] = v;
-        break;
-    case 0x06:                      // AY-3-8913 #2 address latch
-        aySelected_[1] = v & 0x0F;
-        break;
-    case 0x07:                      // AY-3-8913 #2 data write
-        ay_[1].regs[aySelected_[1] & 0x0F] = v;
-        break;
-    default:
-        break;                      // open bus
-    }
-}
-
-// ─── Rewind / snapshot state ────────────────────────────────────────────────
-// Layout: 'E' 'T' 'S' ver(1) | tmsStatus | tmsLastWrite | aySel0 | aySel1 |
-//         AY#1 (Ay3_8910::kSnapshotBytes) | AY#2. The AY blocks carry the full
-// register bank the card exposes at $Cs04-$Cs07, so a restore puts back what a
-// read-back would see. Same shape as MockingboardCard / PhasorCard: validate
-// the whole length BEFORE touching a chip, so a short blob leaves the card
-// untouched rather than half-restored.
-namespace {
-constexpr std::size_t kEchoTmsHeaderBytes = 8;
-}
-
-void EchoPlusTMS5220Card::appendSnapshotState(std::vector<uint8_t>& out) const
-{
-    using namespace pom2::byteio;
-    std::lock_guard<std::mutex> lk(mtx_);
-    putU8(out, 'E'); putU8(out, 'T'); putU8(out, 'S'); putU8(out, 1);
-    putU8(out, tmsStatus_);
-    putU8(out, tmsLastWrite_);
-    putU8(out, aySelected_[0]);
-    putU8(out, aySelected_[1]);
-    ay_[0].appendSnapshot(out);
-    ay_[1].appendSnapshot(out);
-}
-
-void EchoPlusTMS5220Card::loadSnapshotState(const uint8_t* data, std::size_t len)
-{
-    std::lock_guard<std::mutex> lk(mtx_);
-    pom2::byteio::Reader r(data, len);
-    if (!r.has(kEchoTmsHeaderBytes)) return;
-    if (r.u8() != 'E' || r.u8() != 'T' || r.u8() != 'S') return;
-    if (r.u8() != 1) return;
-    if (len < kEchoTmsHeaderBytes + 2 * pom2::Ay3_8910::kSnapshotBytes) return;
-    tmsStatus_     = r.u8();
-    tmsLastWrite_  = r.u8();
-    aySelected_[0] = r.u8() & 0x0F;
-    aySelected_[1] = r.u8() & 0x0F;
-    for (int i = 0; i < 2; ++i) {
-        ay_[i].loadSnapshot(r.p + r.pos);
-        r.pos += pom2::Ay3_8910::kSnapshotBytes;
-    }
-}
-
-EchoPlusTMS5220Card::Snap EchoPlusTMS5220Card::snapshot() const
-{
-    std::lock_guard<std::mutex> lk(mtx_);
-    Snap s{};
-    s.tmsStatus    = tmsStatus_;
-    s.tmsLastWrite = tmsLastWrite_;
-    for (int i = 0; i < 2; ++i)
-        std::memcpy(s.ayRegs[i], ay_[i].regs, sizeof(ay_[i].regs));
-    return s;
+EchoPlusTMS5220Card::Snap EchoPlusTMS5220Card::snapshot() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto copy = speech_;
+    Snap result{}; result.tmsStatus = copy.status(); result.tmsLastWrite = lastWrite_;
+    for (int i = 0; i < 2; ++i) std::memcpy(result.ayRegs[i], ay_[i].regs, 16);
+    return result;
 }

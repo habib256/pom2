@@ -699,6 +699,11 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
     // capture. Nothing dirty (or write-back off) is a successful no-op with
     // `valid == false`, exactly as `flushBay` returning true is.
     Disk35Image::PendingWriteBack pending = img.takeWriteBack();
+    if (!pending.error.empty()) {
+        errOut = pending.error;
+        img.restoreDirtyFor(pending.lineage);
+        return false;
+    }
     out.valid = pending.valid;
     out.seq   = pending.seq;
     out.lineage = pending.lineage;

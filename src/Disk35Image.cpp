@@ -14,17 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Disk35Image — Phase 1 implementation. Block storage + 2IMG envelope
-// passthrough. Sony GCR encoding (the Phase 2 work) is not here yet
-// — the bytes round-trip the file system but the IWM cannot clock
-// them out as flux transitions until that lands.
-//
-// MAME line refs:
-//   * 2IMG header decode mirrors `DiskImage.cpp` (POM2's existing 5.25"
-//     2IMG path), itself a faithful port of the 2IMG spec used by MAME
-//     `ap_dsk35.cpp` for ProDOS .2mg loads.
+// Disk35Image — block projections and immutable capture source loading.
+// Native GCR flux splicing/serialization lives in Disk35Image_Bitstream.cpp.
 
 #include "Disk35Image.h"
+#include "Disk35Bitstream.h"
+#include "Disk35Mfm.h"
 #include "MediaNotch.h"
 
 #include "Block512Backing.h"
@@ -57,75 +52,6 @@ uint32_t rd32(const uint8_t* p) {
            (static_cast<uint32_t>(p[3]) << 24);
 }
 
-uint16_t mfmCrc(uint16_t crc, uint8_t byte)
-{
-    crc ^= static_cast<uint16_t>(byte) << 8;
-    for (int bit = 0; bit < 8; ++bit)
-        crc = static_cast<uint16_t>((crc << 1) ^ ((crc & 0x8000u) ? 0x1021u : 0u));
-    return crc;
-}
-
-uint16_t mfmWord(const std::vector<uint8_t>& cells, std::size_t pos)
-{
-    uint16_t word = 0;
-    for (int bit = 0; bit < 16; ++bit)
-        word = static_cast<uint16_t>((word << 1) | cells[pos + bit]);
-    return word;
-}
-
-uint8_t mfmByte(const std::vector<uint8_t>& cells, std::size_t pos)
-{
-    uint8_t byte = 0;
-    for (int bit = 1; bit < 16; bit += 2)
-        byte = static_cast<uint8_t>((byte << 1) | cells[pos + bit]);
-    return byte;
-}
-
-template<class Sector>
-void decodeMfmTrack(const std::vector<uint8_t>& cells, int track, int head,
-                    Sector&& sector)
-{
-    if (cells.size() < 16 * 530) return;
-    // A1 with a deliberately missing MFM clock is 0x4489. Three such
-    // words precede both ID and data marks; scanning bit by bit tolerates
-    // arbitrary index positions in captured MOOF tracks.
-    int pendingSector = -1;
-    for (std::size_t pos = 0; pos + 16 * 4 < cells.size(); ++pos) {
-        if (mfmWord(cells, pos) != 0x4489 ||
-            mfmWord(cells, pos + 16) != 0x4489 ||
-            mfmWord(cells, pos + 32) != 0x4489) continue;
-        const std::size_t markPos = pos + 48;
-        const uint8_t mark = mfmByte(cells, markPos);
-        if (mark == 0xFE && markPos + 16 * 7 <= cells.size()) {
-            uint8_t id[6];
-            for (int i = 0; i < 6; ++i) id[i] = mfmByte(cells, markPos + 16 * (i + 1));
-            uint16_t crc = 0xFFFF;
-            for (int i = 0; i < 3; ++i) crc = mfmCrc(crc, 0xA1);
-            crc = mfmCrc(crc, mark);
-            for (int i = 0; i < 4; ++i) crc = mfmCrc(crc, id[i]);
-            pendingSector = (id[0] == track && id[1] == head && id[2] >= 1 &&
-                             id[2] <= 18 && id[3] == 2 &&
-                             id[4] == uint8_t(crc >> 8) &&
-                             id[5] == uint8_t(crc)) ? id[2] : -1;
-        } else if ((mark == 0xFB || mark == 0xF8) && pendingSector > 0 &&
-                   markPos + 16 * 515 <= cells.size()) {
-            uint8_t data[512];
-            uint16_t crc = 0xFFFF;
-            for (int i = 0; i < 3; ++i) crc = mfmCrc(crc, 0xA1);
-            crc = mfmCrc(crc, mark);
-            for (int i = 0; i < 512; ++i) {
-                data[i] = mfmByte(cells, markPos + 16 * (i + 1));
-                crc = mfmCrc(crc, data[i]);
-            }
-            const uint8_t high = mfmByte(cells, markPos + 16 * 513);
-            const uint8_t low = mfmByte(cells, markPos + 16 * 514);
-            if (high == uint8_t(crc >> 8) && low == uint8_t(crc))
-                sector(pendingSector, data);
-            pendingSector = -1;
-        }
-        pos += 47; // the three sync words cannot start another field
-    }
-}
 
 }  // namespace
 
@@ -139,7 +65,8 @@ int Disk35Image::sectorsForTrack(int track)
 int Disk35Image::blockIndexFor(int track, int head, int sector) const
 {
     if (track < 0 || track >= kTracks || head < 0 || head >= headCount() ||
-        sector < 0 || sector >= sectorsForTrack(track)) return -1;
+        sector < 0 || sector >= (blockCount() == kBlockCount1440 ? 18 : sectorsForTrack(track))) return -1;
+    if (blockCount() == kBlockCount1440) return (track * 2 + head) * 18 + sector;
     int index = 0;
     for (int t = 0; t < track; ++t) index += headCount() * sectorsForTrack(t);
     return index + head * sectorsForTrack(track) + sector;
@@ -257,16 +184,15 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
     // uses to fold guest-written tracks back into the image. So a `.woz` is
     // decoded ONCE here, at load, and mounts as an ordinary 800K volume.
     //
-    // Read-only by construction: giving the blocks back would mean
-    // re-encoding GCR into the original flux, which POM2 cannot do. The
-    // user's dump is therefore never at risk from a write-back.
+    // Keep capture timing for physical GCR writes and MFM sector splicing.
+    // GCR HLE block services require raw export; MFM updates valid data fields.
     const bool moof = n >= 12 &&
         std::memcmp(buf.data(), "MOOF\xFF\x0A\x0D\x0A", 8) == 0;
     if (moof || (n >= 12 && buf[0] == 'W' && buf[1] == 'O' &&
                  buf[2] == 'Z' && (buf[3] == '1' || buf[3] == '2')))
     {
         if (!loadBitstream(buf, imgPath, moof)) return false;
-        fileWriteProtected_ = true;
+
         kind_   = moof ? (blocks_.size() == kBytesPerImage400 ? ImageKind::Moof400k
                            : blocks_.size() == kBytesPerImage1440 ? ImageKind::Moof1440k
                                                                   : ImageKind::Moof35)
@@ -329,11 +255,14 @@ void Disk35Image::eject()
 {
     loaded_              = false;
     dirty_               = false;
+    detachedSession_     = false;
     fileWriteProtected_  = false;
     hostReadOnly_        = false;
     kind_                = ImageKind::Unknown;
     blocks_.clear();
     moofCells_.reset();
+    bitstream_.reset();
+    decodedTrackDirty_.fill(false);
     moofBitTiming_ = 0;
     twoImgHeaderRaw_.clear();
     twoImgTrailerRaw_.clear();
@@ -346,13 +275,22 @@ void Disk35Image::eject()
 bool Disk35Image::readBlock(uint32_t idx, uint8_t out[kBlockBytes]) const
 {
     if (!loaded_ || idx >= blockCount()) return false;
+    if (bitstream_ && kind_ == ImageKind::Moof1440k) refreshDecodedTrack(int(idx / 18));
+    else if (bitstream_) for (int track = 0; track < 80; ++track) {
+        const int first = blockIndexFor(track, 0, 0);
+        const int count = sectorsForTrack(track);
+        if (first >= 0 && idx >= uint32_t(first) && idx < uint32_t(first + count * headCount())) {
+            refreshDecodedTrack(track * 2 + int((idx - uint32_t(first)) / uint32_t(count)));
+            break;
+        }
+    }
     std::memcpy(out, blocks_.data() + idx * kBlockBytes, kBlockBytes);
     return true;
 }
 
 const std::vector<uint8_t>* Disk35Image::originalBitCells(int track, int head) const
 {
-    if (!loaded_ || (kind_ != ImageKind::Moof35 && kind_ != ImageKind::Moof400k) ||
+    if (!loaded_ || !isBitstream() ||
         !moofCells_ || track < 0 || track >= kTracks ||
         head < 0 || head >= kSides) return nullptr;
     const auto& cells = (*moofCells_)[static_cast<std::size_t>(track * 2 + head)];
@@ -362,7 +300,8 @@ const std::vector<uint8_t>* Disk35Image::originalBitCells(int track, int head) c
 bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
 {
     if (!loaded_ || idx >= blockCount()) return false;
-    if (isWriteProtected()) return false;
+    if (isBlockWriteProtected()) return false;
+    if (kind_ == ImageKind::Moof1440k) return writeMfmBlock(idx, in);
     std::memcpy(blocks_.data() + idx * kBlockBytes, in, kBlockBytes);
     dirty_ = true;
     autosave_.noteWrite();
@@ -376,6 +315,7 @@ bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
 bool Disk35Image::exportRawTo(const std::string& outPath,
                              std::string& errOut) const
 {
+    for (int slot = 0; slot < 160; ++slot) refreshDecodedTrack(slot);
     if (!loaded_ || (blocks_.size() != kBytesPerImage && blocks_.size() != kBytesPerImage400 &&
                      blocks_.size() != kBytesPerImage1440)) {
         errOut = "no 400K, 800K or 1.44M image loaded";
@@ -462,13 +402,16 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
     // dropped the only copy. A chmod-read-only file still accepts the
     // temp-sibling rename (AtomicFileReplace.h). A medium locked at
     // mount (WOZ / 2IMG header) can hold no dirty block at all.
-    if (!writeBackEnabled_ || fileWriteProtected_) return out;
+    if (detachedSession_ || !writeBackEnabled_ || fileWriteProtected_) return out;
 
     out.valid = true;
     out.seq   = nextMediaCaptureSeq();
     if (lineage_ == 0) lineage_ = nextMediaCaptureSeq();
     out.lineage = lineage_;
     out.path  = path_;
+    if (bitstream_) {
+        serializeBitstream(out.bytes, out.error);
+    } else {
     out.bytes.reserve(twoImgHeaderRaw_.size() + blocks_.size() +
                       twoImgTrailerRaw_.size());
     out.bytes.insert(out.bytes.end(),
@@ -476,6 +419,7 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
     out.bytes.insert(out.bytes.end(), blocks_.begin(), blocks_.end());
     out.bytes.insert(out.bytes.end(),
                      twoImgTrailerRaw_.begin(), twoImgTrailerRaw_.end());
+    }
     // The move half of "move out": retire the flag under the caller's lock,
     // atomically with the capture. A block the guest writes while phase 2
     // runs unlocked re-dirties the medium and is NOT in this payload — it
@@ -490,6 +434,7 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
 {
     error.clear();
     if (!pending.valid) return true;
+    if (!pending.error.empty()) { error = pending.error; return false; }
     // In capture order: the background autosave and the explicit eject /
     // flush paths commit from different threads (MediaAutosave.h).
     return commitMediaInOrder(pending.path, pending.lineage, pending.seq, error,
@@ -566,7 +511,7 @@ std::shared_ptr<MediaCommitOperation>
 Disk35Image::pollAutosave(MediaCommitExecutor& executor, bool force)
 {
     if (autosave_.collect("Disk35")) dirty_ = false;
-    const bool pending = loaded_ && dirty_ && writeBackEnabled_ &&
+    const bool pending = !detachedSession_ && loaded_ && dirty_ && writeBackEnabled_ &&
                          !fileWriteProtected_;
     if (!autosave_.due(pending, force)) return autosave_.inFlight();
     PendingWriteBack capture = takeWriteBack();
@@ -589,7 +534,8 @@ MediumPersistence Disk35Image::persistence() const
     p.pending = loaded_ && dirty_;
     p.path    = path_;
     p.state   = autosave_.state(loaded_, dirty_,
-                                writeBackEnabled_ && !fileWriteProtected_);
+                                writeBackEnabled_ && !fileWriteProtected_ && !detachedSession_);
+    if (detachedSession_) p.state = "session";
     p.error   = autosave_.error();
     return p;
 }
@@ -640,7 +586,7 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         if (!std::memcmp(buf.data() + i, "FLUX", 4)) { fluxOff = payload; fluxLen = len; }
         i = payload + len;
     }
-    if (!infoOff || infoLen < (moof ? 44u : 2u) ||
+    if (!infoOff || infoLen < (moof ? 44u : 3u) ||
         !tmapOff || tmapLen < 160 || !trksOff || trksLen < 160 * 8) {
         lastError_ = "Disk35Image: " + imgPath + " has no usable " +
                      (moof ? "MOOF" : "WOZ2") + " "
@@ -662,13 +608,16 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
                            : " (5.25-inch images belong in Disk II)");
         return false;
     }
-    const uint8_t bitTiming = moof ? buf[infoOff + 4] : 16;
+    const uint8_t bitTiming = moof ? buf[infoOff + 4] :
+        infoLen >= 40 && buf[infoOff + 39] ? buf[infoOff + 39] : 16;
     if (moof && (buf[infoOff] < 1 || bitTiming < 8 || bitTiming > 64)) {
         lastError_ = "Disk35Image: invalid MOOF INFO version or bit timing";
         return false;
     }
-    const bool hasFlux = moof && rd16(buf.data() + infoOff + 40) != 0 &&
-                         rd16(buf.data() + infoOff + 42) != 0;
+    const size_t fluxFields = moof ? 40 : 46;
+    const bool hasFlux = infoLen >= fluxFields + 4 && (moof || buf[infoOff] >= 3) &&
+                         rd16(buf.data() + infoOff + fluxFields) != 0 &&
+                         rd16(buf.data() + infoOff + fluxFields + 2) != 0;
     if (hasFlux && (!fluxOff || fluxLen < 160)) {
         lastError_ = "Disk35Image: MOOF declares FLUX but has no FLUX map";
         return false;
@@ -677,7 +626,9 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
     const int expectedBlocks = singleSide ? kBlockCount400 :
                                mfm ? kBlockCount1440 : kBlockCount;
     blocks_.assign(static_cast<std::size_t>(expectedBlocks) * kBlockBytes, 0);
-    auto originalTracks = moof ? std::make_shared<TrackCells>() : nullptr;
+    auto originalTracks = std::make_shared<TrackCells>();
+    auto backing = std::make_shared<Disk35Bitstream>();
+    backing->moof = moof; backing->raw = buf;
     std::vector<uint8_t> seen(expectedBlocks, 0);
     int decoded = 0;
 
@@ -690,7 +641,7 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
     // emulator's state mutex across the call, so the CPU worker and the whole
     // UI are frozen for the duration. A real 3.5" track is ~75 000 bits.
     constexpr uint32_t    kMaxTrackBits     = 1u << 20;    // 12x the real thing
-    constexpr std::size_t kMaxExpandedBytes = 64u << 20;
+    const std::size_t kMaxExpandedBytes = (mfm ? 192u : 64u) << 20;
     std::size_t expandedBytes = 0;
 
     for (int slot = 0; slot < 160; ++slot) {
@@ -698,7 +649,7 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         const uint8_t fluxIndex = hasFlux ? buf[fluxOff + slot] : 0xFF;
         const bool fluxTrack = fluxIndex != 0xFF;
         const uint8_t ti = fluxTrack ? fluxIndex : buf[tmapOff + slot];
-        if (ti == 0xFF) continue;                        // unformatted
+        if (ti >= 160) continue;                        // unformatted
         const std::size_t e = trksOff + static_cast<std::size_t>(ti) * 8;
         if (e + 8 > trksOff + trksLen) continue;
         const uint32_t startBlk = rd16(buf.data() + e);
@@ -721,27 +672,33 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
             const uint64_t cellCount =
                 (totalTicks + bitTiming / 2) / bitTiming;
             if (!cellCount || cellCount > kMaxTrackBits ||
-                cellCount > kMaxExpandedBytes - expandedBytes) continue;
-            expandedBytes += static_cast<std::size_t>(cellCount);
+                cellCount * 5 > kMaxExpandedBytes - expandedBytes) continue;
+            expandedBytes += static_cast<std::size_t>(cellCount) * 5;
             cells.assign(static_cast<std::size_t>(cellCount), 0);
+            if (totalTicks <= UINT32_MAX) backing->periods[slot] = uint32_t(totalTicks);
             uint64_t tick = 0;
             for (uint32_t j = 0; j < bitCount; ++j) {
                 const uint8_t delta = buf[off + j];
                 tick += delta;
                 // The final delta closes the circular track at its index.
                 if (delta == 255 || j + 1 == bitCount) continue;
+                if (tick < totalTicks) backing->transitions[slot].push_back(uint32_t(tick));
                 const uint64_t cell = (tick + bitTiming / 2) / bitTiming;
                 if (cell < cellCount) cells[static_cast<std::size_t>(cell)] = 1;
             }
         } else {
             if (bitCount > len * 8u ||
-                bitCount > kMaxExpandedBytes - expandedBytes) continue;
-            expandedBytes += bitCount;
+                uint64_t(bitCount) * 5 > kMaxExpandedBytes - expandedBytes) continue;
+            expandedBytes += size_t(bitCount) * 5;
             cells = sony35::cellsFromPackedBits(buf.data() + off, len, bitCount);
         }
 
-        if (moof && !cells.empty())
-            (*originalTracks)[static_cast<std::size_t>(slot)] = cells;
+        (*originalTracks)[static_cast<std::size_t>(slot)] = cells;
+        if (!fluxTrack) {
+            backing->periods[slot] = uint32_t(cells.size() * bitTiming);
+            for (size_t cell = 0; cell < cells.size(); ++cell)
+                if (cells[cell]) backing->transitions[slot].push_back(uint32_t(cell * bitTiming));
+        }
 
         if (mfm) {
             const int track = slot / 2;
@@ -749,7 +706,7 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
             const std::size_t overlap = std::min<std::size_t>(cells.size(), 9000);
             cells.reserve(cells.size() + overlap);
             for (std::size_t k = 0; k < overlap; ++k) cells.push_back(cells[k]);
-            decodeMfmTrack(cells, track, head, [&](int sector, const uint8_t* data) {
+            mfm35::decodeMfmTrack(cells, track, head, [&](int sector, const uint8_t* data, size_t) {
                 const int bi = (track * 2 + head) * 18 + sector - 1;
                 if (bi < 0 || bi >= expectedBlocks || seen[bi]) return;
                 std::memcpy(blocks_.data() + static_cast<std::size_t>(bi) * kBlockBytes,
@@ -807,12 +764,12 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
                      " yielded no CRC-valid MFM sectors";
         return false;
     }
-    if (decoded == 0 && !moof) {
+    if (decoded == 0 && !moof && !hasFlux) {
         lastError_ = "Disk35Image: " + imgPath +
                      " yielded no Sony GCR sectors (not an 800K 3.5\" disk?)";
         return false;
     }
-    if (moof) {
+    {
         bool anyTrack = false;
         for (const auto& track : *originalTracks)
             if (!track.empty()) { anyTrack = true; break; }
@@ -823,6 +780,8 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         }
         moofCells_ = std::move(originalTracks);
         moofBitTiming_ = bitTiming;
+        fileWriteProtected_ = buf[infoOff + 2] != 0;
+        bitstream_ = std::move(backing);
     }
     return true;
 }

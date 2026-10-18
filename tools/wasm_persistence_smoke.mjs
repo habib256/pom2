@@ -3,7 +3,7 @@
 // It uses Chrome DevTools directly, so no browser automation package is needed.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,8 +32,11 @@ async function chromeBinary() {
   const candidates = [process.env.CHROME_BIN, 'google-chrome', 'chromium',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
   for (const candidate of candidates.filter(Boolean)) {
-    if (!candidate.includes('/')) return candidate; // resolved through PATH
-    try { await access(candidate); return candidate; } catch { /* next */ }
+    const locations = candidate.includes('/') ? [candidate]
+      : (process.env.PATH || '').split(path.delimiter).map(dir => path.join(dir, candidate));
+    for (const location of locations) {
+      try { await access(location); return location; } catch { /* next */ }
+    }
   }
   throw new Error('Set CHROME_BIN to a Chrome or Chromium executable');
 }
@@ -111,18 +114,54 @@ try {
   };
   await send('Page.enable');
   await send('Runtime.enable');
-  const base = `http://127.0.0.1:${server.address().port}/?nodisk=1`;
-  const navigate = async suffix => {
+  const base = `http://127.0.0.1:${server.address().port}/`;
+  const navigate = async (suffix, disk) => {
     const loaded = event('Page.loadEventFired');
-    await send('Page.navigate', { url: `${base}&visit=${suffix}` });
+    await send('Page.navigate', { url: `${base}?${disk ? 'disk=' + encodeURIComponent(disk) : 'nodisk=1'}&visit=${suffix}` });
     await loaded;
     await waitFor(() => evaluate(
       "document.getElementById('bootSplash')?.classList.contains('hidden')"),
     `POM2 first frame (${suffix})`);
   };
 
+  // ImGui's coordinates are canvas pixels; CSS scales the canvas on small
+  // displays. Include motion before buttons so the GLFW backend sees hover.
+  const mouse = async (type, x, y) => {
+    const rect = await evaluate(`(() => {
+      const c = document.querySelector('canvas'), r = c.getBoundingClientRect();
+      return {x:r.x, y:r.y, scale:r.width/c.width};
+    })()`);
+    await send('Input.dispatchMouseEvent', {type, x:rect.x+x*rect.scale,
+      y:rect.y+y*rect.scale, button:'left', clickCount:1});
+  };
+  const click = async (x, y) => {
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await mouse(type, x, y);
+    await sleep(150);
+  };
+  const checkpoint = () => evaluate(`(() => {
+    const fs = Module.FS;
+    const marker = fs.readFile('/persistent/browser-resume.enabled', {encoding:'utf8'});
+    const index = marker.trim().split('\\n')[1];
+    const file = index === '0' ? 'browser-resume.pom2session' : 'browser-resume-next.pom2session';
+    const bytes = fs.readFile('/persistent/' + file);
+    return {marker, version:bytes[8], bytes:Array.from(bytes)};
+  })()`);
+
   await navigate('write');
   assert.equal(await evaluate("typeof Module.FS?.syncfs"), 'function');
+  // Exercise a real browser chooser and File.arrayBuffer -> MEMFS -> C++
+  // callback. DevTools supplies a local fixture instead of user interaction.
+  await send('Page.setInterceptFileChooserDialog', { enabled: true });
+  const listing = path.join(profile, 'listing.txt');
+  await writeFile(listing, '10 PRINT "POM2"\r\n20 END\r\n');
+  const opened = event('Page.fileChooserOpened');
+  await send('Runtime.evaluate', { expression: 'Module.pom2ChooseFile(0)', userGesture: true });
+  const chooser = await opened;
+  await send('DOM.setFileInputFiles', { files: [listing], backendNodeId: chooser.backendNodeId });
+  await waitFor(() => evaluate('!Module.pom2FilePickerActive'), 'text file upload');
+  assert.equal(await evaluate("Module.FS.readFile('/uploads/listing.txt', {encoding:'utf8'})"),
+    '10 PRINT "POM2"\r\n20 END\r\n');
+  assert.equal(await evaluate("document.querySelectorAll('input[type=file]').length"), 0);
   assert.equal(await evaluate('Module._pom2_browser_running()'), 1,
     'the browser //c did not start running');
   await evaluate(`(() => {
@@ -146,6 +185,18 @@ try {
   await evaluate("window.dispatchEvent(new Event('pageshow'))");
   assert.equal(await evaluate('Module._pom2_browser_running()'), 1,
     'the visible page did not resume');
+  // Enable the real UI option on the browser's default //c + 4c topology.
+  await click(20, 10); // File
+  await mouse('mouseMoved', 90, 78); // Automatic resume
+  await sleep(600);
+  await click(400, 78); // Resume this machine on reload
+  await waitFor(() => evaluate("Module.FS.analyzePath('/persistent/browser-resume.enabled').exists"),
+    '//c automatic checkpoint');
+  assert.equal((await checkpoint()).version, 6);
+  // A manually paused session must stay paused after a real tab reload.
+  await click(110, 10); // Machine
+  await click(150, 58); // Pause
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'manual pause');
   const initialSettings = await evaluate(
     "Module.FS.readFile('/persistent/state.cfg', { encoding: 'utf8' })");
   assert.match(initialSettings, /^iic_expansion_card=mockingboard$/m,
@@ -169,17 +220,121 @@ try {
     `Module.FS.readFile('/persistent/state.cfg', { encoding: 'utf8' }).includes('wasm_smoke_setting=${marker}')`);
   assert(afterFlush, 'setting disappeared during IDBFS flush');
 
+  const expectedCheckpoint = await checkpoint();
+  assert.match(expectedCheckpoint.marker, /^stopped\n[01]\n$/);
   await navigate('read');
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), '//c paused session restore');
+  await evaluate('Module._pom2_persist_now()');
+  const restoredCheckpoint = await checkpoint();
+  assert(Buffer.from(restoredCheckpoint.bytes).equals(Buffer.from(expectedCheckpoint.bytes)),
+    '//c CPU/RAM/card state changed across automatic resume');
   const saved = await evaluate(
     "Module.FS.readFile('/persistent/state.cfg', { encoding: 'utf8' })");
   assert(saved.includes(`wasm_smoke_setting=${marker}`),
     'setting disappeared after page reload');
-  console.log('WASM browser: //c Mockingboard, tab pause/resume, persistence and reload passed');
+  // Exercise a writable physical floppy, then restore solely from IndexedDB:
+  // the original image is deleted before reloading the paused checkpoint.
+  await click(20, 10);
+  await mouse('mouseMoved', 90, 78);
+  await sleep(600);
+  await click(400, 78); // disable the previous empty-machine checkpoint
+  assert.equal(await evaluate("Module.FS.analyzePath('/persistent/browser-resume.enabled').exists"), false);
+  await evaluate(`(() => {
+    Module.FS.writeFile('/persistent/session-writable.nib', new Uint8Array(35*6656).fill(0xAA));
+    Module.pom2StateDirty = true;
+  })()`);
+  await waitFor(() => evaluate('!Module.pom2FlushInFlight && !Module.pom2StateDirty'), 'writable fixture persistence');
+  await navigate('writable', '/persistent/session-writable.nib');
+  // Positional media boot is deferred for 30 frames after the splash.
+  await waitFor(() => evaluate(`(() => {
+    Module._pom2_persist_now();
+    return Module.FS.readFile('/persistent/state.cfg', {encoding:'utf8'}).includes('/persistent/session-writable.nib');
+  })()`), 'positional floppy mount');
+  await click(110, 10); await click(150, 58);
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'writable floppy pause');
+  await click(20, 10); await mouse('mouseMoved', 90, 78); await sleep(600); await click(400, 78);
+  await waitFor(() => evaluate("Module.FS.analyzePath('/persistent/browser-resume.enabled').exists"),
+    'writable floppy checkpoint');
+  await evaluate('Module._pom2_persist_now()');
+  const writable = await checkpoint();
+  assert.match(writable.marker, /^stopped\n[01]\n$/);
+  const archive = Buffer.from(writable.bytes);
+  let pos = 20;
+  const skip = () => { const length = archive.readUInt32LE(pos); pos += 4; const start = pos; pos += length; return {start, length}; };
+  skip(); skip(); // configuration and CPU/RAM core
+  let media;
+  for (let slot = 0; slot < 8; ++slot) {
+    const kind = archive[pos++]; skip(); const state = skip();
+    if (kind === 1) {
+      const runtimeLength = archive.readUInt32LE(state.start);
+      const start = state.start + 4 + runtimeLength + 4;
+      media = archive.subarray(start, start + 5);
+    }
+  }
+  assert(media && media.subarray(0, 4).equals(Buffer.from([68,77,83,1])),
+    'the writable Disk II did not enter the session archive');
+  assert.equal(media[4], 4, 'the checkpoint did not preserve writable media policy');
+  await evaluate(`(() => {
+    Module.FS.unlink('/persistent/session-writable.nib');
+    Module.pom2StateDirty = true;
+  })()`);
+  await waitFor(() => evaluate('!Module.pom2FlushInFlight && !Module.pom2StateDirty'), 'source removal persistence');
+  await navigate('writable-resume');
+  try {
+    await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'writable floppy restore', 15000);
+  } catch (error) {
+    await click(20, 10); await mouse('mouseMoved', 90, 78); await sleep(600);
+    const shot = await send('Page.captureScreenshot', {format:'png'});
+    await writeFile(path.join(os.tmpdir(), 'pom2-writable-resume-failure.png'), Buffer.from(shot.data, 'base64'));
+    console.error(await evaluate("Module.FS.readFile('/persistent/browser-resume.enabled',{encoding:'utf8'})"));
+    throw error;
+  }
+  assert.equal(await evaluate("Module.FS.analyzePath('/persistent/session-writable.nib').exists"), false);
+  await evaluate('Module._pom2_persist_now()');
+  assert(Buffer.from((await checkpoint()).bytes).equals(archive),
+    'writable disk/CPU state changed across source-free browser resume');
+  // Repeat with a SmartPort HDV. Its source is removed before reload too.
+  await click(20, 10); await mouse('mouseMoved', 90, 78); await sleep(600); await click(400, 78);
+  await evaluate(`(() => {
+    const bytes = new Uint8Array(4*1024*1024); bytes[bytes.length-1] = 0xA6;
+    Module.FS.writeFile('/persistent/session-block.hdv', bytes);
+    Module.pom2StateDirty = true;
+  })()`);
+  await waitFor(() => evaluate('!Module.pom2FlushInFlight && !Module.pom2StateDirty'), 'HDV fixture persistence');
+  await navigate('hdv', '/persistent/session-block.hdv');
+  await waitFor(() => evaluate(`(() => {
+    Module._pom2_persist_now();
+    return Module.FS.readFile('/persistent/state.cfg', {encoding:'utf8'}).includes('/persistent/session-block.hdv');
+  })()`), 'positional HDV mount');
+  await click(110, 10); await click(150, 58);
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'HDV pause');
+  await click(20, 10); await mouse('mouseMoved', 90, 78); await sleep(600); await click(400, 78);
+  await waitFor(() => evaluate("Module.FS.analyzePath('/persistent/browser-resume.enabled').exists"), 'HDV checkpoint');
+  await evaluate('Module._pom2_persist_now()');
+  const hdvCheckpoint = await checkpoint();
+  assert.match(hdvCheckpoint.marker, /^stopped\n[01]\n$/);
+  const hdvArchive = Buffer.from(hdvCheckpoint.bytes);
+  assert(hdvArchive.includes(Buffer.from([66,77,83,1])), 'HDV sparse blocks missing from checkpoint');
+  assert(hdvArchive.length < 1024*1024, 'sparse HDV was archived at full size');
+  await evaluate(`(() => {
+    Module.FS.unlink('/persistent/session-block.hdv'); Module.pom2StateDirty = true;
+  })()`);
+  await waitFor(() => evaluate('!Module.pom2FlushInFlight && !Module.pom2StateDirty'), 'HDV source removal');
+  await navigate('hdv-resume');
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'source-free HDV restore', 15000);
+  await evaluate('Module._pom2_persist_now()');
+  assert(Buffer.from((await checkpoint()).bytes).equals(hdvArchive),
+    'HDV/CPU/SmartPort state changed across source-free browser resume');
+  console.log('WASM browser: text upload, //c Mockingboard, tab pause/resume, persistence and exact //c/floppy/HDV checkpoint reload passed');
 } finally {
   socket?.close();
-  if (browser && browser.exitCode === null) {
+  if (browser && browser.exitCode === null && browser.signalCode === null) {
+    const exited = new Promise(resolve => browser.once('exit', resolve));
     browser.kill();
-    await new Promise(resolve => browser.once('exit', resolve));
+    const forceExit = setTimeout(() => browser.kill('SIGKILL'), 2000);
+    forceExit.unref();
+    await exited;
+    clearTimeout(forceExit);
   }
   server.close();
   await rm(profile, { recursive: true, force: true, maxRetries: 5,

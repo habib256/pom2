@@ -18,6 +18,37 @@ The first desktop launch uses an enhanced PAL //e. Choose another machine in
 Library**. Selecting a profile resets the emulated machine. **F10** toggles
 fullscreen. For an empty disk drive, the Applesoft prompt is ready for BASIC.
 
+The **Debugger > Assemble instruction** section accepts one 6502/65C02
+instruction at a time. Stop the CPU, enter a hexadecimal address and a mnemonic
+such as `LDA #$00`, then choose **Assemble and advance**. The byte preview uses
+the selected CPU mode; out-of-range branches are rejected. Operands accept
+`$hex`, `%binary` and decimal; four hex digits force absolute addressing.
+Patches target RAM below `$C000` through the current CPU write mapping.
+
+Select **Echo+ (TMS5220 + 2xAY)** in a free slot for the real Street
+Electronics speech/music card. Its TMS5220C speech is distinct from the
+Cricket/SSI263 card; both music chips and speech appear in the mixer.
+
+Native IWM drives can now write GCR WOZ/MOOF captures while retaining flux
+timing and unrelated tracks/metadata. Header and file write protection still
+apply. SuperDrive writes update existing CRC-valid sectors in 1.44 MB
+MFM MOOF captures, preserving the rest of the track and container. GCR
+SmartPort block mounts remain protected; use
+`.po` conversion for block editing.
+
+The Disk II panel's **Magnetic transitions and head** section shows either
+drive's quarter-track head position, transition density over a revolution and
+a zoomed transition timeline. The angular cursor follows controller time.
+Sector images display reconstructed flux rather than an original capture.
+
+In the browser, **Edit > Paste from file... > Choose text file...** uploads a
+text listing through the browser selector. Choose **Paste** to queue it at the
+Apple II keyboard. Files up to 1 MiB are accepted; the existing paste queue
+limit is 4096 characters and truncation is reported. **File > Save/Open
+session...** now transfers session archives through browser downloads/uploads.
+See [session support and automatic resume](session-format.md#using-it) for
+supported configurations and IndexedDB checkpoint behavior.
+
 ## Make it yours
 
 ### The glow of the screen
@@ -95,13 +126,20 @@ standard before loading; older files load with a compatibility warning.
 Cards, mounted media and external connections are not restored by `.pom2snap`
 files.
 
-For supported II/II+/IIe configurations, `.pom2session` additionally bundles
-Disk II read-only disks (including WOZ/FLUX), Mockingboard, SNES MAX, Slinky
-RAM and ThunderClock+ state. Use desktop
+For supported II/II+/IIe and //c-class configurations, `.pom2session` additionally bundles
+floppy media, including unsaved writes, WOZ/FLUX and 3.5-inch WOZ/MOOF,
+Mockingboard, SNES MAX, Slinky RAM and ThunderClock+ state. On //c-class
+machines it also restores the built-in ACIAs, IOU mouse, RGB adapter,
+onboard Sony media and SmartPort transfers. Session v6 also embeds both
+ProDOS HDV drives and HDV units in SmartPort chains, including dirty blocks.
+Sparse volumes up to 32 MiB fit when the full archive stays within 32 MiB;
+host-folder volumes and CFFA/ATA cards remain unsupported. Use desktop
 **File > Save session... / Open session...**, `--session-save` / `--session-load`
 or the local `/session/save` and
 `/session/load` API. Loading requires matching ROMs and cards; unsupported
-devices are refused. See [resumable sessions](session-format.md).
+devices are refused. Restored writable disks keep further changes in RAM;
+save a new session or use automatic resume to retain them. Their original
+files are not overwritten by a restore. See [resumable sessions](session-format.md).
 
 Disk saves and external devices have their own history: rewind cannot undo a
 write already saved to disk or an action performed by a connected FujiNet.

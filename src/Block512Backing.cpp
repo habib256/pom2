@@ -286,6 +286,7 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
             "Image file is not writable on disk — mounting "
             "write-protected: " + path);
     }
+    detachedSession_ = false;
     supportsWriteBack_ = true;
     synth_      = false;
     hostTextConversion_ = false;
@@ -320,6 +321,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     headerBytes_.clear();
     dataOffset_ = 0;
     dataLength_ = image_.size();
+    detachedSession_ = false;
     synth_      = !hostFolder.empty();
     hostTextConversion_ = false;
     hostFolder_ = hostFolder;
@@ -359,6 +361,7 @@ void Block512Backing::eject()
     dataLength_ = 0;
     path_.clear();
     hostFolder_.clear();
+    detachedSession_ = false;
     loaded_ = false;
     synth_  = false;
     hostTextConversion_ = false;
@@ -439,7 +442,7 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
     // `isMediumLocked()`, not `isWriteProtected()`: the notch can be flipped
     // on a MOUNTED image and must not strand blocks the guest already wrote.
     // See the comment on Block512Backing::isMediumLocked.
-    if (!loaded_ || !anyDirty_ || !writeBack_
+    if (detachedSession_ || !loaded_ || !anyDirty_ || !writeBack_
         || isMediumLocked() || !supportsWriteBack_) {
         return out;                      // valid = false → nothing to commit
     }
@@ -449,6 +452,7 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
         out.commitTicket->barrier = writeBackExecutor_->reserve(commitTail_);
         commitTail_ = out.commitTicket->barrier;
     }
+    out.captureReservation = pendingWrites_;
     out.valid      = true;
     out.synth      = synth_;
     out.path       = path_;

@@ -26,11 +26,22 @@ bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& erro
 {
     std::vector<uint8_t> b, runtime;
     appendSnapshotState(runtime);
+    // D2S1 v4's fixed controller header is followed by two optional nibble
+    // captures. Bind their path hashes to the private session medium name.
+    size_t pos = 83;
+    uint64_t identity = 14695981039346656037ULL;
+    for (unsigned char c : std::string("(session disk)")) { identity ^= c; identity *= 1099511628211ULL; }
+    for (int d = 0; d < kDriveCount; ++d) {
+        if (runtime[pos++]) {
+            for (int i = 0; i < 8; ++i) runtime[pos + size_t(i)] = uint8_t(identity >> (i * 8));
+            pos += 8 + DiskImage::kMediaSnapshotBytes;
+        }
+    }
     pom2::sessionio::blob(b, runtime);
     for (int d = 0; d < kDriveCount; ++d) {
         std::vector<uint8_t> media;
-        if (!images[d].appendReadOnlySession(media, error)) return false;
-        if (!ejecting_[d].expired() || images[d].hasPendingWriteBack()) {
+        if (!images[d].appendSessionMedia(media, error)) return false;
+        if (!ejecting_[d].expired() || !images[d].sessionCaptureReady()) {
             error = "Disk II eject/write-back is still pending"; return false;
         }
         pom2::sessionio::blob(b, media);
@@ -40,7 +51,7 @@ bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& erro
 }
 
 bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
-                                    SessionRestore& out, std::string& error, bool allowWoz) const
+                                    SessionRestore& out, std::string& error, bool allowWoz, bool allowWritable) const
 {
     for (int d = 0; d < kDriveCount; ++d)
         if (images[d].hasPendingWriteBack() ||
@@ -60,10 +71,10 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
     validator->iwmHost_ = iwmHost_;
     for (int d = 0; d < kDriveCount; ++d) {
         std::vector<uint8_t> media;
-        if (!r.blob(media, allowWoz ? 16u * 1024u * 1024u + 4 : 256u * 1024u)) {
+        if (!r.blob(media, allowWoz ? 16u * 1024u * 1024u + 4096 : 256u * 1024u)) {
             error = "invalid session Disk II media length"; return false;
         }
-        if (!validator->images[d].loadReadOnlySession(media.data(), media.size(), error)) return false;
+        if (!validator->images[d].loadSessionMedia(media.data(), media.size(), error, allowWritable)) return false;
         if (!allowWoz && validator->images[d].isWoz()) {
             error = "WOZ media requires session version 2"; return false;
         }

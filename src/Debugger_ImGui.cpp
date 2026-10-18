@@ -122,6 +122,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     ImGui::Separator();
     drawRegisters(snap);
     ImGui::Separator();
+    drawAssembler(ctrl, snap);
 
     if (ImGui::CollapsingHeader("Symbols")) {
         ImGui::SetNextItemWidth(420);

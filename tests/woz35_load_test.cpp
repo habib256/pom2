@@ -124,13 +124,13 @@ void testWriteProtected()
     // Even with write-back explicitly enabled: there is no GCR encoder, so
     // handing blocks back to a .woz is not something POM2 can honour.
     img.setWriteBackEnabled(true);
-    assert(img.isWriteProtected());
+    assert(!img.isWriteProtected() && img.isBlockWriteProtected());
     uint8_t junk[512] = {};
     assert(!img.writeBlock(0, junk));
     assert(!img.hasUnsavedChanges());
 
     std::error_code ec; fs::remove(p, ec);
-    std::printf("  ok: a WOZ mounts read-only, writes refused\n");
+    std::printf("  ok: WOZ permits native flux writes; block writes remain protected\n");
 }
 
 // The way OUT of the read-only WOZ above: convert to a .po. Pinned because

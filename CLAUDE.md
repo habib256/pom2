@@ -196,7 +196,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | AY PSG audio-thread synth (shared: generators, mixer, band-limiting, DC) | `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard) |
 | SSI263 speech chip | `Ssi263.h/.cpp` + `Ssi263PhonemeData.h/.cpp` | [§ SSI263](DEV.md#ssi263--echo-street-electronics) |
 | Cricket / Echo (SSI263) — catalog `echoplus` | `EchoPlusCard.h/.cpp` | [§ EchoPlusCard](DEV.md#echopluscard-cricket--ssi263-class--catalog-echoplus) |
-| Echo+ (TMS5220 + 2×AY, silent scaffold) — settings key `echoplus_tms`, **hidden from the picker** (a saved key still plugs it) | `EchoPlusTMS5220Card.h/.cpp` | [§ EchoPlusTMS5220Card](DEV.md#echoplustms5220card) |
+| Echo+ (TMS5220C LPC + 2×AY, single VIA) — catalog `echoplus_tms` | `EchoPlusTMS5220Card.h/.cpp` | [§ EchoPlusTMS5220Card](DEV.md#echoplustms5220card) |
 | Grappler+ (Orange Micro, ROM-gated) — catalog `grappler` | `GrapplerCard.h/.cpp` | [§ Grappler+](DEV.md#grappler-orange-micro) |
 | Grappler (1981) — `grappler1` · Apple Parallel Interface — `pic` (ROM-gated; their printer is a `CentronicsPrinter`) | `GrapplerClassicCard.*`, `AppleParallelCard.*`, `CentronicsPrinter.*` | [printer-detection §§ 8-9](docs/printer-detection.md#8-grappler-1981) |
 | Printer side of a slot, read/set from outside (CLI, HTTP, library) + per-slot bus-access log + stream→PNG | `PrinterPortControl.*`, `SlotBus.h` (`enableAccessLog`), `PrinterRender.*`, `AiControlServer_Printer.cpp` | [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |

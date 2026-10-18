@@ -28,6 +28,7 @@
 // declared. `SystemProfile` is reachable via an opaque enum-class
 // forward decl, no SystemProfile.h needed here.
 
+#include "BrowserSessionStore.h"
 #include "M6502.h"
 #include "Apple2Display.h"  // HiResMode (toolbar color/mono toggle remembers submode)
 #include "Mat4.h"           // pom2::OrbitCamera member (3D voxel view)
@@ -214,6 +215,8 @@ public:
     /// Finder opens auto-route and boot the first recognised disk image.
     void onFileDrop(int count, const char** paths, bool atPointer = false);
     void processDriveRackFileDrop();
+    void restoreBrowserSession();
+    void checkpointBrowserSession(bool running);
 
     // HDV helper — cold-boot through the slot-5 ProDOS block-device ROM.
     // Public so main() can drive it from `POM2_AUTO_BOOT_HDV` for headless
@@ -1397,6 +1400,8 @@ private:
     void renderTapeFileDialogs();
     void renderPasteFileDialog();
     void renderSessionFileDialog();
+    void renderBrowserSessionMenu();
+    pom2::BrowserSessionStore browserSession_;
     void updateAutoTurbo();
     void renderDiskPanelWindow();
     void renderDiskFileDialog();

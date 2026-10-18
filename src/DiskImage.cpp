@@ -1418,7 +1418,7 @@ void DiskImage::eject()
     twoImgHeaderRaw.clear();
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
-    hostReadOnly_      = false;
+    hostReadOnly_ = detachedSession_ = false;
     optimalBitTiming = 32;   // WOZ2 INFO value must not leak into the next image
     path.clear();
     // Half-framed nibble / destination slot from the ejected medium must not
@@ -2822,7 +2822,7 @@ bool reportUnsplicableWoz(const std::vector<int>& qts, std::string& lastError)
 
 bool DiskImage::saveDirty()
 {
-    if (!loaded || !anyDirty || !writeBackEnabled || fileWriteProtected) {
+    if (detachedSession_ || !loaded || !anyDirty || !writeBackEnabled || fileWriteProtected) {
         return true;   // nothing to save, save disabled, or header WP — no error
     }
     // Composed from the two-phase pair so there is ONE copy of the write
@@ -2845,7 +2845,7 @@ bool DiskImage::saveDirty()
 bool DiskImage::takeWriteBack(PendingWriteBack& out)
 {
     out = PendingWriteBack{};
-    if (!loaded || !anyDirty || !writeBackEnabled || fileWriteProtected)
+    if (detachedSession_ || !loaded || !anyDirty || !writeBackEnabled || fileWriteProtected)
         return true;
 
     // .woz: splice each dirty quarter-track's bit cells back into wozRaw
@@ -3086,7 +3086,7 @@ DiskImage::pollAutosave(pom2::MediaCommitExecutor& executor, bool force)
         wozQtDirty.fill(false);
         anyDirty = false;
     }
-    const bool pending = loaded && anyDirty && writeBackEnabled &&
+    const bool pending = !detachedSession_ && loaded && anyDirty && writeBackEnabled &&
                          !fileWriteProtected;
     if (!autosave_.due(pending, force)) return autosave_.inFlight();
     auto capture = std::make_shared<PendingWriteBack>();
@@ -3109,7 +3109,8 @@ pom2::MediumPersistence DiskImage::persistence() const
     p.pending = loaded && anyDirty;
     p.path    = path;
     p.state   = autosave_.state(loaded, anyDirty,
-                                writeBackEnabled && !fileWriteProtected);
+                                writeBackEnabled && !fileWriteProtected && !detachedSession_);
+    if (detachedSession_) p.state = "session";
     p.error   = autosave_.error();
     return p;
 }

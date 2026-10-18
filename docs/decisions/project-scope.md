@@ -94,7 +94,7 @@ registry, theme, docking, palette · WASM build · Packaging.
 
 | Subsystem | Why frozen |
 |---|---|
-| 🧊 **Echo+ TMS5220** (`echoplus_tms`) | A stub kept for detection; nobody writes the TMS5220. **Closes P3-2 as *hide*** → G3 |
+| **Echo+ TMS5220** (`echoplus_tms`) — reopened and implemented 2026-10-18 | The explicit request to complete the remaining features supersedes the former hide ruling. The VIA/two-AY/TMS5220C audio implementation is documented in [DEV](../../DEV.md#echoplustms5220card). |
 | 🧊 **Apple II Workstation Card** | Steps 2 and 3 are ❌ with no network on the other end; it buys an alternative transport for PostScript the SSC already carries, and doubles emulation cost while plugged. **Close items 2 and 3** |
 | 🧊 **Zilog Z8530 SCC** | Its only consumer is the card above; SDLC is datasheet-derived with no MAME oracle. `scc8530_smoke` stays as a build guard |
 | 🧊 **Uthernet I + libslirp backend** | No Windows transport (vcpkg's port drags glib into CI), none on WASM, and absent from the .dmg and the x86_64 AppImage. Uthernet II covers the need everywhere with no dependency. **Close both transport items** |
@@ -128,8 +128,10 @@ Decisions, not work. Do not re-litigate without new evidence.
   unit and the Disk II already answered; `SmartPortHdvUnit` was aligned. The
   HDV-class *cards* keep their in-session-writable policy, and DEV.md states
   the divergence. Pinned by `media_contract`.
-- **R2 · Echo+ TMS5220: ship or hide.** A detect-only stub in the catalog is the
-  wrong third option. **Answered by the scope ruling: hide** → G3.
+- **R2 · Echo+ TMS5220: ship or hide.** The former silent scaffold was hidden.
+  The 2026-10-18 explicit implementation request reopened it; the actual
+  VIA/two-AY/TMS5220C audio implementation now ships in the catalog. Physical
+  pin timing and independent analog board calibration remain open.
 - **R3 · One `Config`** (env → CLI → Settings → defaults), consistent `pom2::`
   namespace (255/336 files today, up from 163/233). Hygiene for the second
   contributor. Post-1.0.

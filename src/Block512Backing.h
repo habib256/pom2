@@ -207,6 +207,7 @@ public:
         /// Set by `takeDetachWriteBack` only: the backing refuses a new
         /// image for as long as this lives (see there).
         std::shared_ptr<const int> reservation;
+        std::shared_ptr<const int> captureReservation;
         bool                  valid      = false;  ///< false → phase 2 no-ops
         bool                  synth      = false;
         std::string           path;               ///< file case
@@ -269,6 +270,12 @@ public:
     { writeBackExecutor_ = std::move(executor); }
     std::shared_ptr<WriteBackOperation> pollWriteBack(bool force = false);
     const char* persistenceState() const;
+    // Session media are detached from host files, including after policy changes.
+    bool sessionCaptureReady() const { return !backgroundWrite_ && detachReservation_.expired() && pendingWrites_.use_count() == 1; }
+    bool sessionReplaceable() const { return sessionCaptureReady() && (!anyDirty_ || detachedSession_); }
+    bool appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const;
+    bool loadSessionMedia(const uint8_t* data, size_t size, std::string& error);
+    void swapSessionMedia(Block512Backing& prepared);
     const std::string& persistenceError() const { return persistenceError_; }
 
     /// Phase 2, to be called WITHOUT the lock: perform the deferred write.
@@ -363,6 +370,7 @@ private:
     /// True, with `lastError_` set, while a detached payload is alive.
     bool refusedWhileDetaching();
     std::weak_ptr<const int> detachReservation_;
+    std::shared_ptr<const int> pendingWrites_ = std::make_shared<const int>(0);
     std::shared_ptr<WriteBackExecutor> writeBackExecutor_;
     std::shared_ptr<CommitBarrier> commitTail_;
     std::shared_ptr<WriteBackOperation> backgroundWrite_;
@@ -399,6 +407,7 @@ private:
     std::string path_;
     std::string lastError_;
     bool    loaded_ = false;
+    bool    detachedSession_ = false;
 
     static constexpr uint32_t kBusyHysteresisFrames = 8;
     mutable std::atomic<uint32_t> activityTicks_{0};
