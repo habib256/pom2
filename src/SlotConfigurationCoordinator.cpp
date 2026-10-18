@@ -149,7 +149,8 @@ bool SlotConfigurationCoordinator::isMultiInstance(
 
 const SlotConfigurationCoordinator::CardMap&
 SlotConfigurationCoordinator::resolve(const Settings& settings,
-                                      SystemProfile profile)
+                                      SystemProfile profile,
+                                      bool browserDefaults)
 {
     effectivePlan_.fill({});
     dedupCleared_.fill({});
@@ -159,8 +160,15 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
         // slot 3, and must not inherit its card.
         const std::string key = slotCardSettingKey(profileCfg, slot);
         const bool ownKey = key.rfind("slot_", 0) != 0;
+        // The browser opens on a //c, where demos need the CPU-socket
+        // Mockingboard 4c. Only a missing key gets this default: an explicit
+        // empty value means the visitor removed the card and must survive a
+        // reload. Desktop //c profiles keep their existing empty default.
+        const bool browserIicHeader = browserDefaults &&
+            profileCfg.noPhysicalSlots && slot == 3;
         effectivePlan_[slot] = settings.getString(
-            key, ownKey ? std::string() : std::string(kDefaultCards[slot]));
+            key, browserIicHeader ? std::string("mockingboard") :
+                 ownKey ? std::string() : std::string(kDefaultCards[slot]));
     }
 
     // Compatibility with the old clock checkbox. An explicit per-slot value

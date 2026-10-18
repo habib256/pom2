@@ -1158,6 +1158,12 @@ void EmulationController::requestStep(int n)
 
 void EmulationController::setMode(Mode m)
 {
+#ifdef __EMSCRIPTEN__
+    // A tab can spend minutes hidden. On resume, pace the first RAF from a
+    // fresh clock instead of treating the hidden interval as guest time.
+    if (m == Mode::Running && mode.load() == Mode::Stopped)
+        lastTickWall_ = {};
+#endif
     // Clear the parked flag the instant we leave Stopped, on the *setter*
     // thread — not later on the worker. Otherwise a resume→rescrub burst
     // (rewindEndAndResume → rewindBeginScrub) could read a stale `true` left

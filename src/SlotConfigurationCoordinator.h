@@ -57,7 +57,8 @@ public:
     /// Rebuild the effective plan from settings, then apply machine-profile
     /// fixtures and the single-instance policy. Also discards any stale draft.
     /// Index zero stays empty.
-    const CardMap& resolve(const Settings& settings, SystemProfile profile);
+    const CardMap& resolve(const Settings& settings, SystemProfile profile,
+                           bool browserDefaults = false);
 
     const CardMap& effectivePlan() const noexcept { return effectivePlan_; }
 

@@ -87,6 +87,24 @@ int main()
     assert(defaults[6] == "diskii");
     assert(defaults[7] == "chatmauve");
 
+    // Browser //c profiles start with the CPU-socket 4c fitted. A saved
+    // empty setting is an explicit removal, not a missing key.
+    pom2::Settings browserSettings;
+    pom2::SlotConfigurationCoordinator browserSlots;
+    for (auto profile : {pom2::SystemProfile::AppleIIc,
+                         pom2::SystemProfile::AppleIIcPAL,
+                         pom2::SystemProfile::AppleIIcPlus}) {
+        const auto& browserIic = browserSlots.resolve(browserSettings, profile, true);
+        assert(browserIic[3] == "mockingboard");
+        assert(browserIic[4] == "iicmouse");
+    }
+    assert(browserSlots.resolve(browserSettings, pom2::SystemProfile::AppleIIc)[3].empty());
+    browserSettings.setString("iic_expansion_card", "");
+    assert(browserSlots.resolve(browserSettings, pom2::SystemProfile::AppleIIcPAL, true)[3].empty());
+    browserSettings.setString("iic_expansion_card", "mockingboard");
+    assert(browserSlots.resolve(browserSettings, pom2::SystemProfile::AppleIIcPAL, true)[3] ==
+           "mockingboard");
+
     // Staged edits have an explicit owner and cannot mutate the plan used to
     // build the current machine until settings are deliberately committed.
     slots.draft()[1] = "clock";
@@ -179,6 +197,9 @@ int main()
     expectLiveKey(std::make_unique<pom2::CffaCard>(3), "cffa");
     expectLiveKey(std::make_unique<pom2::Cffa3000Card>(3), "cffa3");
     expectLiveKey(std::make_unique<pom2::SmartPortCard>(3), "smartport35");
+    auto superDrive = std::make_unique<pom2::SmartPortCard>(3);
+    superDrive->setSuperDriveMode(true);
+    expectLiveKey(std::move(superDrive), "superdrive");
     expectLiveKey(std::make_unique<SuperSerialCard>(3), "ssc");
     expectLiveKey(std::make_unique<PrinterCard>(3), "printer");
     expectLiveKey(std::make_unique<GrapplerCard>(3), "grappler");

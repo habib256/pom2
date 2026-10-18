@@ -174,9 +174,19 @@
     } catch (e) { /* runtime not up yet, or already torn down */ }
   };
   document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'hidden') pom2PersistNow();
+    const hidden = document.visibilityState === 'hidden';
+    if (Module._pom2_set_page_visible)
+      Module._pom2_set_page_visible(hidden ? 0 : 1);
+    if (hidden) pom2PersistNow();
   });
-  window.addEventListener('pagehide', pom2PersistNow);
+  window.addEventListener('pagehide', function() {
+    if (Module._pom2_set_page_visible) Module._pom2_set_page_visible(0);
+    pom2PersistNow();
+  });
+  window.addEventListener('pageshow', function() {
+    if (!document.hidden && Module._pom2_set_page_visible)
+      Module._pom2_set_page_visible(1);
+  });
 
   Module.preRun = (Module.preRun || []);
   Module.preRun.push(function() {

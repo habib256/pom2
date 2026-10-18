@@ -220,6 +220,8 @@ namespace {
 /// about to start; null before that, and never cleared — the browser build
 /// never tears its MainWindow down (see MainWindow_Session.cpp).
 MainWindow* gPersistTarget = nullptr;
+bool gPageHidden = false;
+bool gResumeAfterVisibility = false;
 /// Seconds between two heartbeat persists. The desktop writes this state once,
 /// at exit; the browser has no exit, so it writes it on a clock. Long enough
 /// that an idle tab is doing nothing measurable, short enough that a visitor
@@ -236,6 +238,36 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pom2_persist_now()
     if (!gPersistTarget) return;
     gPersistTarget->persistSession();
     pom2::flushPersistentStateNow();
+}
+
+/// Browser tabs stop receiving regular animation frames when hidden. Park the
+/// guest immediately and resume only a run that visibility itself stopped.
+extern "C" EMSCRIPTEN_KEEPALIVE void pom2_set_page_visible(int visible)
+{
+    if (!gPersistTarget) return;
+    auto& emu = gPersistTarget->emul();
+    if (!visible) {
+        if (gPageHidden) return; // pagehide may follow visibilitychange
+        gPageHidden = true;
+        gResumeAfterVisibility =
+            emu.getMode() == EmulationController::Mode::Running;
+        if (gResumeAfterVisibility)
+            emu.setMode(EmulationController::Mode::Stopped);
+    } else {
+        if (!gPageHidden) return;
+        gPageHidden = false;
+        if (gResumeAfterVisibility &&
+            emu.getMode() == EmulationController::Mode::Stopped)
+            emu.setMode(EmulationController::Mode::Running);
+        gResumeAfterVisibility = false;
+    }
+}
+
+/// Read-only status for the browser smoke test and page diagnostics.
+extern "C" EMSCRIPTEN_KEEPALIVE int pom2_browser_running()
+{
+    return gPersistTarget &&
+           gPersistTarget->emul().getMode() == EmulationController::Mode::Running;
 }
 #endif
 
@@ -1090,6 +1122,7 @@ int main(int argc, char* argv[])
     // never returns here (simulate_infinite_loop), so the pointer stays valid
     // for the life of the tab.
     gPersistTarget = &mainWindow;
+    pom2_set_page_visible(EM_ASM_INT({ return document.hidden ? 0 : 1; }));
 #endif
     auto iterate = [](void* userdata) {
         auto& c = *static_cast<FrameCtx*>(userdata);

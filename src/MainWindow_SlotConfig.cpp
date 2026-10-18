@@ -161,7 +161,13 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     // card does not rewrite it, so a CFFA whose firmware is absent today is
     // still a CFFA in the config tomorrow. The live SlotBus is the authority
     // on what is actually there, and the panel reads it separately.
-    const auto& plan = slotConfigCoordinator_->resolve(*settings, activeProfile);
+#ifdef __EMSCRIPTEN__
+    constexpr bool kBrowserDefaults = true;
+#else
+    constexpr bool kBrowserDefaults = false;
+#endif
+    const auto& plan = slotConfigCoordinator_->resolve(
+        *settings, activeProfile, kBrowserDefaults);
     for (int s = 1; s <= 7; ++s) slotCards[s] = plan[s];
 
     // Every card is rebuilt below, and a drive that was spinning goes with
@@ -674,7 +680,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // coordinator landed: an A/C in slot 2 and a Sound II in slot 4 now
         // come back at the levels the user actually set on each of them.
         const auto mix = audioCoordinator_->restoreCardSettings(
-            *settings, pom2::AudioCoordinator::CardKind::Mockingboard, s, 0.5f);
+            *settings, pom2::AudioCoordinator::CardKind::Mockingboard, s, 0.35f);
         card->setVolume(mix.volume);
         card->setMuted(mix.muted);
         registerAudioSource(card->audioSource());

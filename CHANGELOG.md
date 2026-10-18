@@ -12,6 +12,16 @@ marker and the previous one.
 
 **v0.9.7 marker** — 2026-10-18. Release notes: [v0.9.7](docs/releases/v0.9.7.md).
 
+## 2026-10-18 — Fit the browser //c's Mockingboard and pause hidden tabs
+
+The WebAssembly //c profiles now fit a Mockingboard 4c by default on their
+CPU-socket connector. A saved empty connector setting still removes it, and
+desktop defaults are unchanged. The fresh-card mix now uses the calibrated
+0.35 gain rather than overriding it with the older 0.5 setting. When a browser
+tab becomes hidden, POM2 parks the guest and silences the audio bus; returning
+to it resumes only a machine that visibility itself paused. The browser smoke
+checks the default connector, pause and resume across page lifecycle events.
+
 ## 2026-10-18 — Keep concurrent ProDOS conflict copies distinct
 
 The conflict-copy writer checked that a numbered destination was free, then

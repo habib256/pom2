@@ -123,6 +123,33 @@ try {
 
   await navigate('write');
   assert.equal(await evaluate("typeof Module.FS?.syncfs"), 'function');
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 1,
+    'the browser //c did not start running');
+  await evaluate(`(() => {
+    window.pom2TestVisibility = 'hidden';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true, get: () => window.pom2TestVisibility,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  })()`);
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 0,
+    'switching away from the tab kept the guest running');
+  await evaluate(`(() => {
+    window.pom2TestVisibility = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+  })()`);
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 1,
+    'returning to the tab did not resume the guest');
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 0,
+    'the hidden page kept running');
+  await evaluate("window.dispatchEvent(new Event('pageshow'))");
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 1,
+    'the visible page did not resume');
+  const initialSettings = await evaluate(
+    "Module.FS.readFile('/persistent/state.cfg', { encoding: 'utf8' })");
+  assert.match(initialSettings, /^iic_expansion_card=mockingboard$/m,
+    'the browser //c has no Mockingboard 4c on its internal connector');
   const marker = `wasm_smoke_${Date.now()}`;
   const beforeFlush = await evaluate(`(() => {
     const fs = Module.FS;
@@ -147,7 +174,7 @@ try {
     "Module.FS.readFile('/persistent/state.cfg', { encoding: 'utf8' })");
   assert(saved.includes(`wasm_smoke_setting=${marker}`),
     'setting disappeared after page reload');
-  console.log('WASM browser persistence: first frame, setting write, flush, reload and readback passed');
+  console.log('WASM browser: //c Mockingboard, tab pause/resume, persistence and reload passed');
 } finally {
   socket?.close();
   if (browser && browser.exitCode === null) {
