@@ -45,6 +45,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -91,6 +92,12 @@ public:
     ///    original flux.
     /// On failure, returns false and populates `lastError`.
     bool loadFile(const std::string& path);
+
+    /// Original MOOF bit cells for the physical track and head. Null when
+    /// this is a block image, or when the MOOF track is unformatted. The
+    /// returned storage is immutable for the lifetime of this mount.
+    const std::vector<uint8_t>* originalBitCells(int track, int head) const;
+    uint8_t bitTiming125ns() const { return moofBitTiming_; }
 
     /// Discard the loaded image.
     void eject();
@@ -192,9 +199,8 @@ public:
     /// there is nothing to fold guest writes back into (see `loadFile`) —
     /// but the decode already produced exactly the 1600 blocks a `.po`
     /// holds, so converting costs nothing and the result is fully writable.
-    /// The user keeps the capture as an archival master and works on a copy,
-    /// which is the right split anyway: a WOZ describes flux, and a program
-    /// saving its configuration does not want to be re-mastering flux.
+    /// The user keeps the capture as an archival master and works on a copy.
+    /// Only decoded sectors reach the .po; protected track patterns do not.
     bool exportRawTo(const std::string& outPath, std::string& errOut) const;
 
     bool isWriteProtected() const {
@@ -239,6 +245,10 @@ private:
     // class out of the typical cache-line-friendly small-object range
     // for the controller wiring.
     std::vector<uint8_t> blocks_;
+
+    using TrackCells = std::array<std::vector<uint8_t>, kTracks * kSides>;
+    std::shared_ptr<const TrackCells> moofCells_;
+    uint8_t moofBitTiming_ = 0;
 
     // Captured 2IMG header verbatim so saveDirty re-emits a valid
     // wrapper. Empty when the source was a raw `.po` / `.dsk`.

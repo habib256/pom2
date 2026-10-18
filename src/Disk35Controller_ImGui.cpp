@@ -75,8 +75,9 @@ void renderDriveBlock(int                                       driveIdx,
             ImGui::TextWrapped(
                 "Read-only because it is a 3.5\" WOZ/MOOF: POM2 decodes Sony GCR "
                 "but cannot re-encode it, so there is nothing to write guest "
-                "changes back into. Convert to a .po to make it writable — "
-                "the original image is left untouched.");
+                "changes back into. Convert decoded sectors to a writable "
+                ".po if needed; protected track patterns cannot be copied "
+                "to .po. The original image is left untouched.");
             ImGui::PopStyleColor();
         }
     } else {
@@ -109,8 +110,9 @@ void renderDriveBlock(int                                       driveIdx,
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
                 "Writes the decoded 800K payload beside the image as\n"
-                "%s\nand mounts it here with write-back on. The original is\n"
-                "not modified, and an existing file is never overwritten.",
+                "%s\nand mounts it here with write-back on. Protected\n"
+                "track patterns are not retained in .po. The original is\n"
+                "not modified; existing files are never overwritten.",
                 drv.convertTargetPath.empty()
                     ? "(no free filename)"
                     : drv.convertTargetPath.c_str());

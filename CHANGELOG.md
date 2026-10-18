@@ -10,6 +10,17 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Feed MOOF tracks directly to the Apple II 3.5-inch controller
+
+The earlier MOOF loader decoded sectors to 800K blocks, then the Sony drive
+rebuilt ordinary GCR tracks from those blocks. That discarded the captured
+track layout and any protected or unusual bit patterns. The drive now clocks
+the original MOOF bit cells, including FLUX tracks, to the IWM at the image's
+declared bit timing. Decoded blocks
+remain available for SmartPort access and `.po` export. Unformatted tracks
+stay empty, and a valid GCR MOOF can mount even when no standard sectors can
+be decoded. The supported medium remains the Apple II 800K GCR disk.
+
 ## 2026-10-18 — Mount MOOF 800K GCR images
 
 The 3.5-inch drive now opens `.moof` images containing 800K Sony GCR tracks,

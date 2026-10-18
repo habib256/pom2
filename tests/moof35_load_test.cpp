@@ -1,4 +1,5 @@
 #include "Disk35Image.h"
+#include "Sony35Drive.h"
 #include "Woz35Fixture.h"
 
 #include <cassert>
@@ -54,6 +55,18 @@ void testBitstreamAndExport()
     pom2::Disk35Image image;
     assert(image.loadFile(path.string()));
     assert(image.kind() == pom2::Disk35Image::ImageKind::Moof35);
+    assert(image.originalBitCells(0, 0) &&
+           *image.originalBitCells(0, 0) == tracks[0]);
+    pom2::Sony35Drive drive;
+    drive.setImage(&image);
+    drive.notifyMediaChange();
+    assert(drive.debugCellStream() == tracks[0]);
+    const auto expectedRev =
+        (int64_t(tracks[0].size()) * 16 *
+         int64_t(drive.standardClockHz() + 0.5) + 4000000) / 8000000;
+    assert(drive.cyclesPerRev() == expectedRev);
+    drive.ssW(true);
+    assert(drive.debugCellStream() == tracks[1]);
     image.setWriteBackEnabled(true);
     assert(image.isWriteProtected());
     for (int track : {0, 16})
@@ -114,7 +127,8 @@ void testFluxOverridesTmap()
 
     // Add a second TRKS entry containing flux deltas. FLUX[0] points there,
     // while TMAP[0] still points to the ordinary (all-zero) GCR bitstream.
-    const auto flux = toFlux(encodeTrack(0, 0, wantedPayload.data()));
+    const auto expectedCells = encodeTrack(0, 0, wantedPayload.data());
+    const auto flux = toFlux(expectedCells);
     bytes.resize((bytes.size() + 511) & ~size_t(511));
     const size_t fluxData = bytes.size();
     bytes.insert(bytes.end(), flux.begin(), flux.end());
@@ -137,6 +151,12 @@ void testFluxOverridesTmap()
     const auto path = writeTemp("pom2_moof35_flux.moof", bytes);
     pom2::Disk35Image image;
     assert(image.loadFile(path.string()));
+    assert(image.originalBitCells(0, 0) &&
+           *image.originalBitCells(0, 0) == expectedCells);
+    pom2::Sony35Drive drive;
+    drive.setImage(&image);
+    drive.notifyMediaChange();
+    assert(drive.debugCellStream() == expectedCells);
     uint8_t got[512], want[512];
     fillBlock(want, 0);
     assert(image.readBlock(0, got));
@@ -166,8 +186,18 @@ void testWrongHeadIsIgnored()
     tracks[0] = encodeTrack(0, 1, payload.data()); // TMAP slot 0 is head 0
     const auto path = writeTemp("pom2_moof35_wrong_head.moof", makeMoof(tracks));
     pom2::Disk35Image image;
-    assert(!image.loadFile(path.string()));
-    assert(image.lastError().find("no Sony GCR sectors") != std::string::npos);
+    assert(image.loadFile(path.string()));
+    assert(image.originalBitCells(0, 0) &&
+           *image.originalBitCells(0, 0) == tracks[0]);
+    pom2::Sony35Drive drive;
+    drive.setImage(&image);
+    drive.notifyMediaChange();
+    assert(drive.debugCellStream() == tracks[0]);
+    drive.ssW(true);
+    assert(drive.debugCellStream().empty());
+    uint8_t block[512];
+    assert(image.readBlock(uint32_t(blockIndex(0, 1, 0)), block));
+    for (uint8_t byte : block) assert(byte == 0);
     std::error_code ec; fs::remove(path, ec);
 }
 

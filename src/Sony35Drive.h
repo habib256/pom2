@@ -366,6 +366,7 @@ private:
 
     void ensureCache() const;
     void ensureCacheFor(int track, int head) const;
+    int64_t cyclesPerRevFor(int track, int head) const;
     void rebuildTransitionsFromCells() const;
 
     // ── Write destination, latched at write start (MAME parity) ──────────

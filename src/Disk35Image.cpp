@@ -244,6 +244,8 @@ void Disk35Image::eject()
     hostReadOnly_        = false;
     kind_                = ImageKind::Unknown;
     blocks_.clear();
+    moofCells_.reset();
+    moofBitTiming_ = 0;
     twoImgHeaderRaw_.clear();
     twoImgTrailerRaw_.clear();
     path_.clear();
@@ -257,6 +259,15 @@ bool Disk35Image::readBlock(uint32_t idx, uint8_t out[kBlockBytes]) const
     if (!loaded_ || idx >= kBlockCount) return false;
     std::memcpy(out, blocks_.data() + idx * kBlockBytes, kBlockBytes);
     return true;
+}
+
+const std::vector<uint8_t>* Disk35Image::originalBitCells(int track, int head) const
+{
+    if (!loaded_ || kind_ != ImageKind::Moof35 ||
+        !moofCells_ || track < 0 || track >= kTracks ||
+        head < 0 || head >= kSides) return nullptr;
+    const auto& cells = (*moofCells_)[static_cast<std::size_t>(track * 2 + head)];
+    return cells.empty() ? nullptr : &cells;
 }
 
 bool Disk35Image::writeBlock(uint32_t idx, const uint8_t in[kBlockBytes])
@@ -568,6 +579,7 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
     }
 
     blocks_.assign(kBytesPerImage, 0);
+    auto originalTracks = moof ? std::make_shared<TrackCells>() : nullptr;
     std::vector<uint8_t> seen(kBlockCount, 0);
     int decoded = 0;
 
@@ -629,6 +641,9 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
             cells = sony35::cellsFromPackedBits(buf.data() + off, len, bitCount);
         }
 
+        if (moof && !cells.empty())
+            (*originalTracks)[static_cast<std::size_t>(slot)] = cells;
+
         // The track is a CIRCLE. Walking it once leaves the sector that
         // straddles the seam undecodable — worth ~1 sector per track-side,
         // which is a lot of missing blocks. Walk it once plus an overlap so
@@ -671,10 +686,22 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
             " of " + std::to_string(kBlockCount) +
             " blocks; the rest read as zeros");
     }
-    if (decoded == 0) {
+    if (decoded == 0 && !moof) {
         lastError_ = "Disk35Image: " + imgPath +
                      " yielded no Sony GCR sectors (not an 800K 3.5\" disk?)";
         return false;
+    }
+    if (moof) {
+        bool anyTrack = false;
+        for (const auto& track : *originalTracks)
+            if (!track.empty()) { anyTrack = true; break; }
+        if (!anyTrack) {
+            lastError_ = "Disk35Image: " + imgPath +
+                         " has no usable MOOF tracks";
+            return false;
+        }
+        moofCells_ = std::move(originalTracks);
+        moofBitTiming_ = bitTiming;
     }
     return true;
 }

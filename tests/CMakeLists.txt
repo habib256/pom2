@@ -6213,6 +6213,7 @@ add_executable(test_moof35_load
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
 )
 target_include_directories(test_moof35_load PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_moof35_load PRIVATE pom2_core_test)
 add_test(NAME moof35_load COMMAND test_moof35_load)
 set_tests_properties(moof35_load PROPERTIES TIMEOUT 30)
 

@@ -348,12 +348,30 @@ bool Sony35Drive::isInserted() const
 
 int Sony35Drive::cellsPerRev() const
 {
+    if (image_ && image_->kind() == Disk35Image::ImageKind::Moof35)
+        if (const auto* cells = image_->originalBitCells(track_, side1_ ? 1 : 0))
+            return static_cast<int>(cells->size());
     return kCellsPerRev[zoneForTrack(track_)];
 }
 
 int64_t Sony35Drive::cyclesPerRev() const
 {
-    return cyclesPerRevZone_[zoneForTrack(track_)];
+    return cyclesPerRevFor(track_, side1_ ? 1 : 0);
+}
+
+int64_t Sony35Drive::cyclesPerRevFor(int track, int head) const
+{
+    if (image_ && image_->kind() == Disk35Image::ImageKind::Moof35) {
+        if (const auto* cells = image_->originalBitCells(track, head)) {
+            // MOOF's INFO timing is in 125 ns units. The captured bit count
+            // defines the length of the loop, including nonstandard tracks.
+            const int64_t clock = static_cast<int64_t>(standardClockHz_ + 0.5);
+            const int64_t numerator = static_cast<int64_t>(cells->size()) *
+                                      image_->bitTiming125ns() * clock;
+            return std::max<int64_t>(1, (numerator + 4000000) / 8000000);
+        }
+    }
+    return cyclesPerRevZone_[zoneForTrack(track)];
 }
 
 int64_t Sony35Drive::ticksPerRev() const
@@ -580,9 +598,14 @@ void Sony35Drive::ensureCacheFor(int track, int head) const
     if (!isInserted()) return;
     if (track < 0 || track >= 80) return;
 
-    buildTrackBits(*image_, track, head, cells_);
+    if (image_->kind() == Disk35Image::ImageKind::Moof35) {
+        if (const auto* original = image_->originalBitCells(track, head))
+            cells_ = *original;
+    } else {
+        buildTrackBits(*image_, track, head, cells_);
+    }
     cachedCellsPerRev_  = static_cast<int>(cells_.size());
-    cachedCyclesPerRev_ = cyclesPerRevZone_[zoneForTrack(track)];
+    cachedCyclesPerRev_ = cyclesPerRevFor(track, head);
     rebuildTransitionsFromCells();
 }
 
