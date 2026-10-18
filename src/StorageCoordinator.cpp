@@ -399,7 +399,7 @@ std::string synthVolumeName(const std::vector<std::uint8_t>& bytes)
 /// the inline path did — `adoptImage`/`loadImage` return false when their
 /// `saveDirty()` fails — so the behaviour is unchanged, only the lock is.
 bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
-                      std::string& error)
+                      std::string& error, std::string* notice = nullptr)
 {
     error.clear();
     Block512Backing::PendingWriteBack pending;
@@ -464,7 +464,7 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
 
     const std::vector<std::uint32_t> captured = pending.dirtyIndices;
     std::string commitError;
-    if (Block512Backing::commitWriteBack(std::move(pending), commitError))
+    if (Block512Backing::commitWriteBack(std::move(pending), commitError, nullptr, notice))
         return true;
     // Put the captured dirty set back so the still-mounted medium is dirty
     // again and a retry re-captures it, then refuse the mount.
@@ -688,7 +688,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
     // Still phase 1, still unlocked: the OUTGOING medium's write-back. See
     // flushOutgoingBay — the adopt below does it otherwise, under the lock.
     if (std::string flushError;
-        !flushOutgoingBay(controller, slot, bay, flushError))
+        !flushOutgoingBay(controller, slot, bay, flushError, &result.notice))
         return commandError(std::move(flushError));
     Block512Backing::PreparedImage prepared;
     std::string prepareError;
@@ -796,7 +796,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
                 pending.synth && !hostFolder.empty() &&
                 Block512Backing::sameFile(pending.hostFolder, hostFolder);
             std::string error;
-            if (!Block512Backing::commitWriteBack(std::move(pending), error)) {
+            if (!Block512Backing::commitWriteBack(std::move(pending), error, nullptr, &result.notice)) {
                 auto state = controller.lockState();
                 if (auto* media = dynamic_cast<MountableMediaCard*>(
                         state.memory().slotBus().peripheral(slot)))

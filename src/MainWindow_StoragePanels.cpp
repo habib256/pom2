@@ -1180,7 +1180,7 @@ void MainWindow::renderHdvPanelWindow()
         const std::string sentinel(kProDOSHostSentinel);
 
         if (path.rfind(sentinel, 0) == 0) {
-            // Host-folder mount: synthesise a read-only ProDOS volume from
+            // Host-folder mount: synthesise a ProDOS volume from
             // the folder contents and load it into the slot 5 card. We do
             // NOT auto-boot — block 0 is zero, so the volume isn't
             // bootable. The user boots ProDOS from elsewhere (Disk II or
@@ -1218,6 +1218,7 @@ void MainWindow::renderHdvPanelWindow()
                     "/HOST/ mounted from %s (%zu files, %zu skipped, %zu blocks). Boot ProDOS from another drive.",
                     hostDir.c_str(), br.filesIncluded, br.filesSkipped, br.totalBlocks);
                 tapeStatusMessage = msg;
+                if (!mounted.notice.empty()) tapeStatusMessage += " " + mounted.notice;
                 pom2::log().info("HDV",
                     std::string("Synthesised volume from ") + hostDir +
                     " (" + std::to_string(br.filesIncluded) + " files, " +
@@ -1225,7 +1226,7 @@ void MainWindow::renderHdvPanelWindow()
             } else {
                 tapeStatusMessage = "Synth load failed";
             }
-            tapeStatusUntil = lastFrameTime + 8.0;
+            tapeStatusUntil = lastFrameTime + (mounted.notice.empty() ? 8.0 : 12.0);
             return;
         }
 
@@ -1236,6 +1237,7 @@ void MainWindow::renderHdvPanelWindow()
         // bootFromSlot flips mode to Running.
         bool ok = false;
         std::string err;
+        std::string notice;
         {
             // Through the coordinator: same two-phase read (32 MiB off the
             // lock), plus the hdv_path key written with the mount. The bare
@@ -1247,6 +1249,7 @@ void MainWindow::renderHdvPanelWindow()
                     path);
                 ok  = r.ok;
                 err = r.error;
+                notice = r.notice;
             }
             if (ok) {
                 hdvPath   = path;
@@ -1263,10 +1266,11 @@ void MainWindow::renderHdvPanelWindow()
             tapeStatusMessage = booted ? "Mounting + booting HDV (slot " +
                 std::to_string(primaryHdvCard()->getSlot()) + "): " + path
                 : "Mounted, boot failed: " + err;
+            if (!notice.empty()) tapeStatusMessage += " " + notice;
         } else {
             tapeStatusMessage = "Boot failed: " + err;
         }
-        tapeStatusUntil = lastFrameTime + 4.0;
+        tapeStatusUntil = lastFrameTime + (notice.empty() ? 4.0 : 10.0);
     }
     if (!result.requestMountOnly.empty() && primaryHdvCard()) {
         // Right-click "mount only": swap the image without booting.
@@ -1278,6 +1282,7 @@ void MainWindow::renderHdvPanelWindow()
 
         bool ok = false;
         std::string err;
+        std::string notice;
         if (path.rfind(sentinel, 0) == 0) {
             const std::string hostDir = path.substr(sentinel.size());
             std::vector<std::uint8_t> bytes;
@@ -1296,6 +1301,7 @@ void MainWindow::renderHdvPanelWindow()
                 std::move(bytes), std::string("[host folder] ") + hostDir,
                 hostDir, 0, hdvPanel->convertHostFolderText);
             ok = mounted.ok;
+            notice = mounted.notice;
             if (ok) {
                 hdvPath   = path;
                 hdvStatus = std::string("synth from ") + hostDir;
@@ -1315,6 +1321,7 @@ void MainWindow::renderHdvPanelWindow()
                     path);
                 ok  = r.ok;
                 err = r.error;
+                notice = r.notice;
             }
             if (ok) {
                 hdvPath   = path;
@@ -1327,10 +1334,11 @@ void MainWindow::renderHdvPanelWindow()
             pom2::log().info("HDV",
                 std::string("Library right-click → mount only: ") + path);
             tapeStatusMessage = "Mounted (no boot): " + path;
+            if (!notice.empty()) tapeStatusMessage += " " + notice;
         } else {
             tapeStatusMessage = "Mount failed: " + err;
         }
-        tapeStatusUntil = lastFrameTime + 4.0;
+        tapeStatusUntil = lastFrameTime + (notice.empty() ? 4.0 : 10.0);
     }
 }
 
