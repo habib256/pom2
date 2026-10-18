@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — W5100 socket register writeback
+
+Uthernet II now retains guest writes to each socket's destination MAC
+(`Sn_DHAR`) and maximum segment size (`Sn_MSSR`) registers. These documented
+read/write registers previously ignored writes, so drivers could not read
+their own configuration back. The card test covers all four sockets and reset
+defaults. Host TCP still handles packet segmentation.
+
 ## 2026-10-18 — Preserve Uthernet I receive misses across snapshots
 
 CS8900A snapshots now save the lifetime count of missed receive frames and

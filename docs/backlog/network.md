@@ -235,6 +235,13 @@ zero; the next miss then reported one. The test reproduces this and covers
 both the pending and read-cleared states. Version 1 chip snapshots remain
 readable, with their pending `RxMISS` value as the recoverable starting count.
 
+**Bug hunt 2026-10-18 (W5100 socket registers):** Writes to `Sn_DHAR` and
+`Sn_MSSR` now stick on all four sockets. The register-level test failed before
+the fix and verifies reset defaults afterward. The slirp oversized-front-frame
+note is not reachable through current card callers: both provide a 1518-byte
+buffer, the maximum frame size the backend admits. Other findings above
+remain to verify independently.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

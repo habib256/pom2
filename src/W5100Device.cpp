@@ -1492,6 +1492,15 @@ void W5100Device::writeSocketRegister(uint16_t address, uint8_t value)
     if (i >= kSocketCount) return;
     const uint8_t loc = static_cast<uint8_t>(address & 0xFF);
 
+    // Sn_DHAR is programmed before SEND_MAC; Sn_MSSR is the guest's TCP MSS
+    // setting. Both are ordinary R/W socket registers, including on sockets
+    // 1-3. Silently dropping their writes made readback contradict the chip.
+    if ((loc >= kW5100SnDhar0 && loc <= kW5100SnDhar5) ||
+        loc == kW5100SnMssr0 || loc == kW5100SnMssr1) {
+        setMem(address, value);
+        return;
+    }
+
     switch (loc) {
     case kW5100SnMr:
         setMem(address, value);

@@ -1073,6 +1073,34 @@ void testCommonRegisterWritesStick()
     std::printf("  RTR/RCR/IMR writes stick, PTIMER guarded\n");
 }
 
+void testSocketDestinationMacAndMssWritesStick()
+{
+    UthernetIICard card(3);
+    for (size_t socket = 0; socket < 4; ++socket) {
+        const uint16_t base = socketBase(socket);
+        for (uint8_t octet = 0; octet < 6; ++octet) {
+            const auto addr = static_cast<uint16_t>(
+                base + pom2::kW5100SnDhar0 + octet);
+            const uint8_t macByte = static_cast<uint8_t>(0x10 * socket + octet);
+            writeAt(card, addr, macByte);
+            assert(readAt(card, addr) == macByte);
+        }
+        const uint16_t mss = static_cast<uint16_t>(1200 + socket);
+        writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMssr0), mss);
+        assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMssr0)) == mss);
+    }
+
+    // A chip reset must clear guest programming and reinstate defaults.
+    card.chip().reset(false);
+    for (size_t socket = 0; socket < 4; ++socket) {
+        const uint16_t base = socketBase(socket);
+        for (uint8_t octet = 0; octet < 6; ++octet)
+            assert(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnDhar0 + octet)) == 0xFF);
+        assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMssr0)) == 0);
+    }
+    std::printf("  Sn_DHAR and Sn_MSSR writes stick across all sockets\n");
+}
+
 // A restored socket is demoted to CLOSED — and must not still be ADVERTISING
 // the dead connection's staged data, or the guest's next OPEN stages its
 // request behind bytes that will never leave. And `virtualDns_` is a USER
@@ -1134,6 +1162,7 @@ int main()
     testListenAcceptsLocalConnection();
     testFixedLocalPortReconnects();
     testCommonRegisterWritesStick();
+    testSocketDestinationMacAndMssWritesStick();
     testRestoreClearsRingPointersAndKeepsTheDnsSetting();
     std::printf("PASS\n");
     return 0;
