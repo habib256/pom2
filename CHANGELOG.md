@@ -10,6 +10,15 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Keep HTTP Disk II inserts off the worker stack
+
+The AI control server's `/disk` insertion handler still placed a roughly
+242 KB `DiskImage` on its worker thread's stack. This could exhaust the
+512 KB stack used by secondary threads on macOS, even though the lower
+Disk II insertion functions already allocate their temporary images on the
+heap. The handler now prepares and installs a heap-allocated image. Its
+existing HTTP insertion test covers first insertion and reinsertion.
+
 ## 2026-10-18 — Send W5100 IPRAW subnet broadcasts as Ethernet broadcasts
 
 Uthernet II now maps a local subnet-directed broadcast such as

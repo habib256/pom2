@@ -111,7 +111,10 @@ documentation; they were not tested by that protocol regression.
   bit-stream rebuild and to `writeFlux`, neither per-nibble-hot, but the
   LSS is the emulator's hottest disk code: interleaved best-of-9 on the
   three `pom2_bench` workloads (PERFORMANCE § 8) before and after, or not
-  at all. Until then the NOTE on `class DiskImage` is the only guard.
+  at all. The remaining stack local in the AI control server's `/disk`
+  handler was moved to the heap on 2026-10-18; the class-wide change and
+  broader constrained-stack coverage remain open. Until then the NOTE on
+  `class DiskImage` is the guard for new callers.
 
 <a id="storage-004"></a>
 

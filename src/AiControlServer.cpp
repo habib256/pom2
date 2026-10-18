@@ -1282,9 +1282,11 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         }
     }
 
-    DiskImage   prepared;
+    // The HTTP worker can have a 512 KB stack. Keep the ~242 KB image on the
+    // heap, including while prepareDisk() and installDisk() are on the stack.
+    auto prepared = std::make_unique<DiskImage>();
     std::string errMsg;
-    if (!DiskIICard::prepareDisk(*safe, writeBack, prepared, errMsg)) {
+    if (!DiskIICard::prepareDisk(*safe, writeBack, *prepared, errMsg)) {
         sendJsonError(fd, 400, "insert failed: " + errMsg);
         return;
     }
@@ -1313,7 +1315,7 @@ void AiControlServer::handleDiskInsert(socket_t fd, const Request& req)
         } else if (now != card || now->getSlot() != boundSlot) {
             changed = true;
         } else {
-            ok = now->installDisk(static_cast<int>(drive), std::move(prepared));
+            ok = now->installDisk(static_cast<int>(drive), std::move(*prepared));
             if (!ok) errMsg = now->getLastError(static_cast<int>(drive));
         }
     }
