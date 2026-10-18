@@ -292,6 +292,13 @@ as specified by [RxCTL in the datasheet](https://www.farnell.com/datasheets/8847
 The loopback test reproduced acceptance of seven bytes before the fix and
 checks that eight bytes still produce a Runt event.
 
+**Bug hunt 2026-10-18 (minimum transmit length and padding):** The CS8900A
+now accepts a three-byte transmit request and pads short frames to 60 data
+bytes unless `TxPadDis` is set. The earlier four-byte floor and unpadded
+backend output disagreed with [the datasheet](https://www.farnell.com/datasheets/88476.pdf)
+§4.4.11 and Table 34. The smoke test failed at the three-byte handshake
+before the fix and checks both padding modes afterward.
+
 <a id="network-006"></a>
 
 ## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`

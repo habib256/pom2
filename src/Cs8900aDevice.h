@@ -46,7 +46,7 @@
 //
 // Transmit is a four-step handshake the model tracks in `txState_`
 // (`cs8900a.cpp:210-215`): write TxCMD (→ GOT_CMD), write TxLength
-// (→ GOT_LEN, if 4 <= len <= 1518), read BusST and observe Rdy4TxNOW
+// (→ GOT_LEN, if 3 <= len <= 1518), read BusST and observe Rdy4TxNOW
 // (→ READ_BUSST), then push `len` bytes through RXTXDATA. The last byte
 // releases the frame to the host backend.
 //

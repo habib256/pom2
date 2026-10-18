@@ -71,8 +71,8 @@ struct MacAddress {
     uint8_t b[6] = { 0, 0, 0, 0, 0, 0 };
 };
 
-/// Ethernet frame size bounds, matching the CS8900A datasheet limits that
-/// both cards enforce (MAME `machine/cs8900a.cpp:203-208`).
+/// Host transport bounds. The CS8900A itself accepts a three-byte TxLength
+/// and normally pads it to 60 data bytes before handing it to this backend.
 inline constexpr int kMaxEthFrame = 1518;
 inline constexpr int kMinEthFrame = 4;
 

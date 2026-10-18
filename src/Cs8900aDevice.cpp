@@ -102,8 +102,9 @@ constexpr uint16_t kPpPtrAutoIncrFlag = 0x8000;
 constexpr uint16_t kPpPtrFlagMask     = 0xF000;
 constexpr uint16_t kPpPtrAddrMask     = 0x0FFF;
 
-// `cs8900a.cpp:203-208` — same bounds NetworkBackend advertises.
+// CS8900A transmit and receive limits; the host transport has its own floor.
 constexpr int kMaxTxLength = 1518;
+constexpr int kMinTxLength = 3;
 constexpr int kMaxRxLength = 1518;
 constexpr int kMinRxLength = 64;
 
@@ -518,7 +519,7 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
 {
     if (txState_ != kTxReadBusSt) {
         // Write without a completed TxCMD/TxLength/BusST handshake.
-        // Re-assert the "not ready" status (matters when a < 4 byte
+        // Re-assert the "not ready" status (matters when a < 3 byte
         // transmit was started).
         setTxStatus(false, false);
         return;
@@ -535,11 +536,11 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
 
     if (txCount_ != txLength_) return;
 
-    // The register path bounds TxLength to 4..1518, but a restored
+    // The register path bounds TxLength to 3..1518, but a restored
     // snapshot is untrusted input: re-check against the staging area so
     // no backend is ever handed a length past the PacketPage buffer.
     const bool lengthUsable =
-        txLength_ >= kMinEthFrame && txLength_ <= kMaxEthFrame &&
+        txLength_ >= kMinTxLength && txLength_ <= kMaxEthFrame &&
         static_cast<size_t>(kPpTxFrameLoc) + txLength_ <= packetPage_.size();
 
     if (txEnabled_ && lengthUsable) {
@@ -557,7 +558,18 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
         // the backend test, every such machine hung its Ethernet driver on the
         // first packet instead of merely getting no answers to it.
         if (backend_) {
-            backend_->transmit(&packetPage_[kPpTxFrameLoc], txLength_);
+            // The backend carries Ethernet bytes without the FCS. Unless
+            // TxPadDis is set, the chip pads short host frames to 60 bytes
+            // before appending that CRC (datasheet §4.4.11).
+            const bool pad = (ppRead16(kPpCcTxCmd) & 0x2000) == 0 &&
+                             txLength_ < 60;
+            if (pad) {
+                std::array<uint8_t, 60> padded{};
+                std::memcpy(padded.data(), &packetPage_[kPpTxFrameLoc], txLength_);
+                backend_->transmit(padded.data(), static_cast<int>(padded.size()));
+            } else {
+                backend_->transmit(&packetPage_[kPpTxFrameLoc], txLength_);
+            }
             ++framesSent_;
         }
         ppWrite16(kPpSeTxEvent,
@@ -658,7 +670,7 @@ void Cs8900aDevice::sideEffectsWritePp(uint16_t ppAddress, bool oddAddress)
             const uint16_t txLength  = ppRead16(kPpTxLength);
             const uint16_t txCommand = ppRead16(kPpCcTxCmd);
 
-            if (txLength < 4) {
+            if (txLength < kMinTxLength) {
                 // Too short: report space available but commit nothing.
                 txState_ = kTxIdle;
                 setTxStatus(true, false);

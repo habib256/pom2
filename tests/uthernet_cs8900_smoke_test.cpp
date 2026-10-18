@@ -38,7 +38,7 @@
 //   * The four-step TX handshake — `cs8900a.cpp:839-904`, `:641-701`.
 //     TxCMD → TxLength → observe Rdy4TxNOW in BusST → push bytes. A
 //     write that skips a step must NOT emit a frame.
-//   * TxLength bounds — `cs8900a.cpp:870-888`. < 4 is silently dropped;
+//   * TxLength bounds — the datasheet permits 3 bytes. < 3 is dropped;
 //     > 1518 raises TxBidErr.
 //   * The RX path — `cs8900a.cpp:938-980`, `:491-618`, `:703-765`.
 //     Reading RxEvent stages a frame; RxStatus/RxLength/payload then read
@@ -301,13 +301,41 @@ void testTransmitLengthBounds()
     card.setBackend(std::move(backend));
     enableTxRx(card);
 
-    // < 4 bytes: rejected, and the chip reports "space available, no
+    // < 3 bytes: rejected, and the chip reports "space available, no
     // error" (`cs8900a.cpp:870-878`).
     writePpWord(card, 0x0144, 0x00C9);
     writePpWord(card, 0x0146, 0x0002);
     uint16_t busSt = readPpWord(card, kPpSeBusSt);
     assert((busSt & 0x100) == 0x100);   // Rdy4TxNOW
     assert((busSt & 0x080) == 0);       // no TxBidErr
+
+    // Three bytes are legal. With TxPadDis clear, the chip pads the host
+    // bytes to 60 before the CRC; the backend transports bytes without FCS.
+    writePpWord(card, 0x0144, 0x00C9);
+    writePpWord(card, 0x0146, 0x0003);
+    busSt = readPpWord(card, kPpSeBusSt);
+    assert((busSt & 0x100) != 0);
+    assert(card.chip().txState() == 3);
+    card.deviceSelectWrite(kRxTxDataLo, 0xDE);
+    card.deviceSelectWrite(kRxTxDataHi, 0xAD);
+    card.deviceSelectWrite(kRxTxDataLo, 0xBE);
+    std::array<uint8_t, 64> padded{};
+    const int paddedLen = raw->receive(padded.data(), static_cast<int>(padded.size()));
+    assert(paddedLen == 60);
+    assert(padded[0] == 0xDE && padded[1] == 0xAD && padded[2] == 0xBE);
+    for (int i = 3; i < paddedLen; ++i) assert(padded[static_cast<size_t>(i)] == 0);
+    assert((readPpWord(card, 0x0128) & 0x0100) != 0);  // TxOK
+
+    // TxPadDis leaves a short frame untouched when the guest requests one.
+    const auto runt = makeFrame(kOurMac, kOurMac, 20, 0x4A);
+    writePpWord(card, 0x0144, 0x20C9);
+    writePpWord(card, 0x0146, static_cast<uint16_t>(runt.size()));
+    (void)readPpWord(card, kPpSeBusSt);
+    for (size_t i = 0; i < runt.size(); ++i)
+        card.deviceSelectWrite((i & 1) ? kRxTxDataHi : kRxTxDataLo, runt[i]);
+    assert(raw->receive(padded.data(), static_cast<int>(padded.size())) ==
+           static_cast<int>(runt.size()));
+    assert(std::memcmp(padded.data(), runt.data(), runt.size()) == 0);
 
     // > 1518: rejected WITH TxBidErr (`cs8900a.cpp:879-888`).
     writePpWord(card, 0x0144, 0x00C9);

@@ -10,6 +10,15 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Accept three-byte CS8900A transmit requests
+
+Uthernet I now accepts `TxLength=3`, the chip's documented minimum, and
+pads short frames to 60 data bytes when `TxPadDis` is clear. Previously the
+request was rejected at four bytes and short frames reached the host backend
+without the chip's padding. The [CS8900A datasheet](https://www.farnell.com/datasheets/88476.pdf)
+§4.4.11 and Table 34 specify both behaviors. Tests cover rejection at two
+bytes, padding at three and an unpadded runt when `TxPadDis` is set.
+
 ## 2026-10-18 — Reject undersized CS8900A receive runts
 
 Uthernet I now drops incoming frames shorter than eight bytes even when
