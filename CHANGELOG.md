@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-18 — Honor CS8900A BufferCRC on receive
+
+Uthernet I now reconstructs the Ethernet CRC when `RxCFG.BufferCRC` is set,
+appends its four bytes to the receive buffer and includes them in `RxLength`.
+The host Ethernet backend delivers frames without FCS, so the option
+previously returned the same payload and length whether enabled or not.
+The [CS8900A datasheet](https://www.farnell.com/datasheets/88476.pdf)
+§4.4.6 and §4.6 specify this behavior. The setting is captured when each
+frame arrives, so changing the register before reading RxEvent does not
+change an already received frame. The smoke test checks CRC bytes,
+sequential reads, the maximum frame length and disabling the option.
+
 ## 2026-10-18 — Classify CS8900A receive lengths without FCS
 
 The Ethernet backend supplies frames without their four-byte FCS, but the

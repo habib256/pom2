@@ -404,7 +404,7 @@ bool Cs8900aDevice::shouldAccept(const uint8_t* buffer, int length,
 uint16_t Cs8900aDevice::receiveFrame()
 {
     uint16_t retVal = 0x0004;   // RxEvent's own register number
-    uint8_t buffer[kMaxRxLength];
+    uint8_t buffer[kMaxRxLength + 4];
 
     if (!frameQueue_.empty()) {
         QueuedFrame frame = std::move(frameQueue_.front());
@@ -438,6 +438,15 @@ uint16_t Cs8900aDevice::receiveFrame()
             retVal |= crcError   ? 0x1000 : 0;
             retVal |= (len    < kMinRxLength) ? 0x2000 : 0;
             retVal |= (rawLen > kMaxRxLength) ? 0x4000 : 0;
+        }
+
+        // The backend strips the FCS. BufferCRC asks the chip to expose it
+        // in the receive buffer and count it in RxLength, so reconstruct the
+        // IEEE CRC from the complete host frame before staging the payload.
+        if (frame.bufferCrc) {
+            const uint32_t crc = crc32Ieee(frame.bytes.data(), frame.bytes.size());
+            for (int i = 0; i < 4; ++i)
+                buffer[len++] = static_cast<uint8_t>(crc >> (i * 8));
         }
 
         ppWrite16(kPpRxLength, static_cast<uint16_t>(len));
@@ -495,7 +504,8 @@ void Cs8900aDevice::pumpBackend()
         queueBytes_ += static_cast<size_t>(len);
         frameQueue_.push_back({ std::vector<uint8_t>(buf, buf + len),
                                 hashed, hashIndex, correctMac, broadcast,
-                                multicast });
+                                multicast,
+                                (ppRead16(kPpCcRxCfg) & 0x0800) != 0 });
     }
 }
 

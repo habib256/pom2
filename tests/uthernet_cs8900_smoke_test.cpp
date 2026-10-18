@@ -581,6 +581,53 @@ void testReceiveFrameLengthsExcludeFcs()
     std::printf("  receive lengths exclude backend FCS\n");
 }
 
+void testReceiveBufferCrc()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+    writePpWord(card, kPpCcRxCfg, 0x0803);  // BufferCRC
+
+    const auto frame = makeFrame(kOurMac, kOurMac, 60, 0x97);
+    raw->transmit(frame.data(), static_cast<int>(frame.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(readPpWord(card, 0x0402) == 64);
+    // CRC-32/IEEE for this frame is 0x7B35E596, sent low byte first.
+    assert(readPpWord(card, 0x0404 + 60) == 0xE596);
+    assert(readPpWord(card, 0x0404 + 62) == 0x7B35);
+
+    (void)card.deviceSelectRead(kRxTxDataHi);  // RxStatus high
+    (void)card.deviceSelectRead(kRxTxDataLo);  // RxStatus low
+    const uint8_t lenHi = card.deviceSelectRead(kRxTxDataHi);
+    const uint8_t lenLo = card.deviceSelectRead(kRxTxDataLo);
+    assert(static_cast<uint16_t>(lenLo | (lenHi << 8)) == 64);
+    for (size_t i = 0; i < frame.size(); ++i)
+        assert(card.deviceSelectRead((i & 1) ? kRxTxDataHi : kRxTxDataLo) == frame[i]);
+    const uint8_t expectedCrc[] = { 0x96, 0xE5, 0x35, 0x7B };
+    for (size_t i = 0; i < 4; ++i)
+        assert(card.deviceSelectRead((i & 1) ? kRxTxDataHi : kRxTxDataLo) == expectedCrc[i]);
+
+    const auto maximum = makeFrame(kOurMac, kOurMac, 1514, 0x98);
+    raw->transmit(maximum.data(), static_cast<int>(maximum.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    // Reception has already finished; a later register write cannot remove
+    // the CRC from this queued frame.
+    writePpWord(card, kPpCcRxCfg, 0x0003);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(readPpWord(card, 0x0402) == 1518);
+
+    raw->transmit(frame.data(), static_cast<int>(frame.size()));
+    card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(readPpWord(card, 0x0402) == 60);
+    std::printf("  BufferCRC appends FCS and updates RxLength\n");
+}
+
 void testRuntMinimumAddressBytes()
 {
     pom2::UthernetCard card(3);
@@ -1325,6 +1372,7 @@ int main()
     testReceiveStatusAcceptanceBits();
     testRuntIsVisibleThroughIsq();
     testReceiveFrameLengthsExcludeFcs();
+    testReceiveBufferCrc();
     testRuntMinimumAddressBytes();
     testQueuedFrameKeepsArrivalFilterDecision();
     testRxSkipDiscardsOnlyCommittedReceive();

@@ -255,6 +255,7 @@ private:
         bool correctMac = false;
         bool broadcast = false;
         bool multicast = false;
+        bool bufferCrc = false;
     };
     std::deque<QueuedFrame> frameQueue_;
     /// Bytes held in `frameQueue_` — what kMaxFrameQueueBytes bounds.
