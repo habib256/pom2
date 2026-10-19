@@ -10,9 +10,10 @@ dropping its cards and disks.
 
 ## Supported configuration
 
-- Apple II, II+, IIe, //c, //c PAL and //c+, including RamWorks where applicable, with the recorded profile,
+- All nine [machine profiles](USER-GUIDE.md#choose-your-apple-ii), including
+  the unenhanced/enhanced IIe and PAL variants, with RamWorks where applicable. The profile,
   motherboard/character ROMs, memory configuration and No-Slot Clock settings
-  recorded in the bundle. These replace the active machine when needed.
+  are recorded in the bundle. These replace the active machine when needed.
 - Any combination of Disk II, Mockingboard A/C, Mockingboard Sound II,
   SNES MAX, Slinky RAM expansion and ThunderClock+ in their recorded slots. Disk
   II's four PROM images and configuration, Slinky's 4 KB firmware, and the
@@ -53,6 +54,12 @@ dropping its cards and disks.
 - Program tapes embed their pulse source, cursor, comparator/output state,
   rewind/pause state and recording buffer. Recording can continue after a
   restore without reopening the source. Streamed audio decks remain excluded.
+
+Le Chat Mauve cards are also supported on slotted machines. SmartPort-based
+cards, including CFFA3000 and SuperDrive, preserve their unit topology and
+SuperDrive mode through the SmartPort record; they require POM2's built-in
+firmware rather than an external Liron ROM. CFFA 2.0 uses its separate ATA
+record.
 
 Restored disks are detached from host files; the drive label is `(session disk)`.
 Version 5 writable media retain their guest-visible protection/write-enable
@@ -130,6 +137,27 @@ configured. These routes
 inherit the server's working-directory path fence and request protections.
 Save paths must resolve to `.pom2session`; filesystem writes publish atomically.
 Unknown profile IDs and unsupported devices are refused without replacing the machine.
+
+### Preparing a machine and resolving refusals
+
+The default desktop enhanced PAL //e includes Grappler+ and a Mouse Card;
+neither is supported in a session. In **Machine > Slot Configuration**, remove
+unsupported cards and apply the configuration before saving. The default
+browser //c uses supported built-in devices and Mockingboard 4c.
+
+| Refusal | Action |
+|---|---|
+| Unsupported card | Remove it before capture. Expansion SSC, parallel printer interfaces, Mouse Cards, Videx, VidHD, SoftCard Z80, network and Workstation cards have no session record. The //c IOU mouse is supported. |
+| Serial port not idle | Stop VSDrive/listeners/connections and drain queued transport bytes. Only built-in //c ports are supported, even when an expansion SSC is idle. |
+| Outgoing medium has unsaved changes or pending writes | Let host write-back finish or explicitly sync/save the outgoing medium before loading. Detached session disks can be rolled back without writing their contents to a host file. |
+| Streamed audio deck | Eject it; supported program tapes use embedded pulses. Save or clear an outgoing host cassette recording before replacing it. |
+| Archive exceeds 32 MiB | Reduce the mounted media or their contents. Sparse HDVs omit clean zero blocks, but a dense 32 MiB disk plus machine state exceeds the archive limit. |
+| Session path suffix | Desktop save dialogs append a missing suffix; CLI and HTTP saves require an explicit `.pom2session` destination, including after symlink resolution. |
+
+Automatic resume uses the same capture restrictions. After correcting a refusal,
+choose **File > Automatic resume > Retry with current configuration** if
+checkpointing is suspended. A failed load leaves the active machine intact;
+it does not replace an unsupported device with an empty slot.
 
 ## Wire layout and restoration
 

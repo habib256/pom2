@@ -46,6 +46,18 @@ and bundled-media SHA-256 checks. The [review record](docs/audits/documentation-
 records the details and limits; no new full-suite, remote CI or physical-device
 validation is claimed.
 
+A follow-up source comparison clarifies session refusals (including the default
+desktop's printer/mouse cards), SmartPort-based card coverage and save-path
+suffixes. VSDrive startup settings are distinguished from resumable archives;
+the developer CLI inventory includes session actions. Contributor test commands
+keep the shell at the repository root, and the first-launch guide explains how
+to leave an empty-drive boot loop for BASIC.
+The user guide now records configuration directories and ROM search precedence;
+the SDK documents construction defaults, index conventions and output buffers.
+Raspberry Pi instructions follow the workflow's processor-specific filenames,
+actual PGO disk selection and floating-point hash limits, with runnable repository
+paths and explicit graphical-runtime requirements for the tarball.
+
 ## 2026-10-19 — Bank-aware debugger and source correspondence
 
 Breakpoints (including register conditions), read/write watches, run-to-cursor,

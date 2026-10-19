@@ -10,7 +10,7 @@ that the current candidate has repeated those runs.
 | Subject | Reference |
 |---|---|
 | Installation, controls, machines, media and builds | [User guide](USER-GUIDE.md) |
-| Supported session devices, firmware, detached media and automatic resume | [Session contract](session-format.md) |
+| Supported session devices, firmware, detached media, automatic resume and refusal troubleshooting | [Session contract](session-format.md) |
 | Bank-qualified stops, symbols, profiling and source maps | [Debugger guide](debugger-banks.md) |
 | Rendering algorithms and captured examples | [Graphics comparison](graphics_modes_comparison.md) |
 | Hardware abstraction and intentional limits | [LLE/HLE matrix](lle_vs_hle.md) |

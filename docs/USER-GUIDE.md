@@ -16,7 +16,8 @@ Release downloads include `SHA256SUMS.txt` for integrity checks.
 The first desktop launch uses an enhanced PAL //e. Choose another machine in
 **Machine → Profile**, then drop an image onto the window or open **File → Disk
 Library**. Selecting a profile resets the emulated machine. **F10** toggles
-fullscreen. For an empty disk drive, the Applesoft prompt is ready for BASIC.
+fullscreen. If the machine keeps trying to boot an empty drive, press **F11**
+(Ctrl-Reset) to reach BASIC on an Applesoft-equipped profile.
 
 The **Debugger > Assemble instruction** section accepts one 6502/65C02
 instruction at a time. Stop the CPU, enter a hexadecimal address and a mnemonic
@@ -268,8 +269,11 @@ image paths (`.po` or `.hdv`), and select **Start VSDrive**. POM2 then serves
 the ADTPro VSDrive block protocol locally on that card; the Apple II program
 still needs a VSDrive driver, such as the one in A2 File Cmd. Writes go to
 the selected image files unless **Read only** is selected. Stop VSDrive before
-changing their paths. The selected paths and active state are restored with
-the session.
+changing their paths. Ordinary desktop settings remember the selected paths
+and restart an enabled VSDrive host on the next launch. This is separate from
+`.pom2session`: active VSDrive prevents session capture or replacement, and
+expansion Super Serial Cards are unsupported even when stopped. Only idle
+//c built-in serial ports can be included in a session.
 Some programs expect specific slots: DIX, for example, needs its Mockingboard
 moved to slot 4. The //c family's built-in devices are locked to their hardware
 positions. Profile changes reset the machine and remount disks where possible.
@@ -407,6 +411,26 @@ Replacement ROMs can go in `roms/` under that directory. Firmware and other
 third-party material have their own rights and notices; see
 [THIRD-PARTY.md](../THIRD-PARTY.md).
 
+Settings and docking layout use `state.cfg` and `imgui.ini` in the configuration
+directory:
+
+| System | Configuration directory |
+|---|---|
+| Linux | `~/.config/POM2/` (`XDG_CONFIG_HOME` is honoured) |
+| macOS | `~/Library/Application Support/POM2/` |
+| Windows | `%APPDATA%\POM2\`, falling back to `%LOCALAPPDATA%\POM2\` when the first directory cannot be created or used as a directory |
+| Browser | `/persistent/` in the browser's IndexedDB-backed filesystem |
+
+Ordinary startup settings remember media paths; they do not embed disk contents
+or resume CPU execution. Use a [session archive](session-format.md) for that.
+Desktop kiosk mode leaves settings and layout unchanged. When launched with
+`--kiosk`, this remains true after returning to the windowed interface.
+
+ROM searches prefer the per-user data directory, then locations relative to
+the executable (including `../share/POM2/`), then the working directory and
+its two parents. A per-user ROM override therefore takes precedence over the
+packaged or checkout copy.
+
 ## Command line
 
 ```bash
@@ -440,7 +464,7 @@ F6 and the Rewind panel control machine time-travel.
 
 ### Linux and macOS
 
-You need Git, a C++17 compiler, CMake and GLFW. The setup script installs
+You need Git, a C++17 compiler, CMake 3.16 or newer and GLFW. The setup script installs
 platform dependencies and fetches the pinned Dear ImGui docking revision.
 
 ```bash

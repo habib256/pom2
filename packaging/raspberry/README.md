@@ -30,15 +30,33 @@ two-pass PGO + LTO build on GitHub's **native ARM64 runner**, inside a
 ```sh
 gh workflow run pi400.yml -f mcpu=cortex-a72      # Pi 4 / Pi 400 (default)
 gh workflow run pi400.yml -f mcpu=cortex-a76      # Pi 5
-gh run download <run-id> -n POM2-pi400-aarch64
+gh workflow run pi400.yml -f mcpu=cortex-a53      # Pi 3
+gh run list --workflow pi400.yml
+# Replace RUN_ID with the completed run's numeric ID:
+gh run download RUN_ID -n POM2-pi400-aarch64
 ```
 
-Two packages come out of **one** build, no recompilation:
+The workflow artifact is always named `POM2-pi400-aarch64`; the files inside
+use a processor-specific tag:
+
+| `mcpu` | Target | Filename tag |
+|---|---|---|
+| `cortex-a72` | Pi 4 / Pi 400 | `pi400` |
+| `cortex-a76` | Pi 5 | `pi5` |
+| `cortex-a53` | Pi 3 | `pi3` |
+
+Two packages come out of **one** build, no recompilation. For the default
+Pi 4 / Pi 400 target:
 
 | Package | For |
 |---|---|
 | `POM2-v<ver>-pi400-aarch64.AppImage` | Pi OS **with a desktop** — one clickable file |
 | `POM2-v<ver>-pi400-aarch64.tar.gz` | Pi OS **Lite** cabinet — no FUSE; `sudo tar -xzf … -C /opt/POM2` |
+
+The tarball removes the FUSE requirement; running the graphical emulator
+still requires a GLFW-compatible graphical session and GLES runtime. The
+package does not install a display server or kiosk session. Create the
+destination directory before extracting into `/opt/POM2`.
 
 The tarball is exactly the `cmake --install` tree (`bin/POM2` +
 `share/POM2/{roms,fonts,pic}`), which is what `ResourcePaths` resolves — the
@@ -57,7 +75,8 @@ confirm the PGO binary's output **hashes** still match a plain build's.
 Still supported, and the right thing when you are iterating on the source:
 
 ```sh
-git clone <repo> POM2 && cd POM2
+git clone https://github.com/habib256/pom2.git POM2
+cd POM2
 ./setup_imgui.sh                                   # one-time: deps + pinned imgui
 sudo apt install libglfw3-dev libgles2-mesa-dev    # GLES tier, see below
 packaging/raspberry/build_native_pi.sh --pgo       # 2 passes + LTO, ~40-60 min on a Pi 4
@@ -85,9 +104,14 @@ CI-side script, closes the same ones):
   `Apple2Display` came out of training without a profile.
 
 Training runs `pgo_train.sh`, which sweeps ][+ and //e banners, PAL and NTSC,
-every video pipeline, and a 5.25" boot. If your checkout has no `.dsk` under
-`disks_5.4/`, the script says so loudly: with the Disk II LSS untrained, a
-PGO build can be *slower* than an untrained one on disk-heavy workloads.
+the `mono`, `medium`, `4bit`, `oe`, `oecpu` and `applewin` video pipelines,
+and a 5.25" boot. The disk selector searches `disks_5.4/dsk/*.dsk`, then
+`*.do` in that directory, then `disks_5.4/woz/*.woz`. It does not search
+`bundled_disks/`. If no matching image exists, it warns and skips disk
+training; individual workload failures are also reported as skipped. The
+build checks for hot-source profile files, not successful execution of
+every workload. Copy a suitable disk into a searched directory before
+training to exercise disk-active paths.
 
 Without `--pgo` you still get the `-mcpu` build (worth ~10-20 %):
 
@@ -124,13 +148,19 @@ a desktop setup.
 ## 3. Measure
 
 ```sh
-/opt/POM2/bin/pom2_bench --frames 3000 --quiet                    # CPU + bus
-/opt/POM2/bin/pom2_bench --disk <image>.dsk --frames 900 --quiet  # + Disk II LSS
+POM2_MEDIA_WRITE_DEFAULT=protected /opt/POM2/bin/pom2_bench --frames 3000 --quiet
+POM2_MEDIA_WRITE_DEFAULT=protected /opt/POM2/bin/pom2_bench --disk packaging/disks/MICRO-SOKOBAN.dsk --frames 900 --quiet
 ```
+
+Run these from the checkout root so the second command finds its curated disk.
+For an installed-only setup, pass an absolute path to your own 5.25" image.
 
 The `speed=… MHz (…x)` figure is emulated CPU throughput; `1.0x` is realtime
 for an Apple II. The `ram=` / `fb=` hashes must not change between builds — if
-they do, the faster binary is not the same emulator.
+they do, investigate output identity before accepting the speed result. Use
+identical inputs and options. OE-CPU and AppleWin rendering report `fb=<fp-dependent>`
+rather than a portable framebuffer hash; see the performance guide for its
+floating-point limits.
 
 > Target-Pi hardware evidence is still pending. The on-demand workflow executes
 > the packaged `--help` and `pom2_bench` on a native ARM64 runner; the release

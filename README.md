@@ -137,7 +137,7 @@ keyboard. The [user guide](docs/USER-GUIDE.md#controls) has the full list.
 
 ## Build it
 
-On Linux or macOS, install Git, CMake, a C++17 compiler and GLFW, then:
+On Linux or macOS, install Git, CMake 3.16 or newer, a C++17 compiler and GLFW, then:
 
 ```bash
 git clone https://github.com/habib256/pom2.git

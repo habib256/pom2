@@ -145,6 +145,29 @@ This is a focused integration run, not the full native or browser suite.
 
 ## Remaining evidence and limits
 
+### Follow-up against merged revision `d2f0140`
+
+A further source comparison corrected the omitted session actions in DEV's CLI
+inventory, the VSDrive settings/session ambiguity and the contributor recipe's
+working-directory change. Session instructions now identify unsupported default
+desktop cards, idle built-in versus expansion serial ports, SmartPort-based
+card coverage, save suffixes and recovery from capture/load refusals. The
+first-launch guide explains Ctrl-Reset when an empty drive keeps booting.
+Sources checked include `SessionIIc.cpp`, `SessionMachine.cpp`, `SessionFiles.cpp`,
+`SuperSerialCard.cpp`, `SlotConfigurationCoordinator.cpp`, `BrowserSessionStore.cpp`
+and the CLI/UI settings paths.
+
+All six contributor source guards passed again, as did local Markdown path and
+heading checks and `git diff --check`. These were documentation-only changes;
+no new emulator build, CTest execution or browser run was performed in this pass.
+
+The follow-up also compared `ResourcePaths.cpp`, `Settings.cpp`,
+`include/pom2/core.hpp`, `Pom2Core.cpp`, CMake's minimum version and the Pi
+workflow/build/training scripts. Configuration/output directories, ROM search
+precedence, SDK defaults and buffer/index conventions, Pi filename tags,
+PGO workload selection and benchmark examples were aligned with these sources.
+The Pi tarball still needs a graphical session; it installs no display server.
+
 The review does not establish new physical-card/display/audio fidelity,
 successful remote CI runs, execution on Windows/Pi/Intel Mac, completed
 commercial games or photograph redistribution rights. Those remain explicit

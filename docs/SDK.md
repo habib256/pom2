@@ -19,6 +19,11 @@ actual executed cycles and may overshoot the requested budget at an instruction
 boundary. `CoreConfig` selects CPU silicon, PAL/NTSC timing and IIe memory
 at construction, with an initially empty expansion bus.
 
+The default `CoreConfig{}` selects NMOS 6502, NTSC and non-IIe memory. It does
+not select the desktop's enhanced PAL //e profile. Instances are movable,
+noncopyable and must not be accessed concurrently. `run(0)` or a negative
+budget returns zero without executing an instruction.
+
 `loadRom` and `loadCharacterRom` load the paths supplied by the host; they do
 not run the desktop profile-selection workflow or start execution. Choose the
 construction settings, load firmware, attach devices and then call `coldBoot`
@@ -38,6 +43,16 @@ the next render, move-assignment or destruction invalidates the view. For
 audio, configure the sample rate before running cassette code. Pull either
 the speaker-only stream or the complete stereo mix for a given span of guest
 time, because both consume the same speaker timeline.
+
+Framebuffer pixels are packed as `0xAABBGGRR` in `uint32_t` values; use the
+returned width and height. `pullSpeakerAudio` takes one float per frame;
+`pullAudio` takes two interleaved floats per frame, left then right. Their
+default rate is 44100 Hz. Allocate the caller-owned buffers accordingly.
+
+Disk II drive indices and SmartPort unit indices are **0 and 1**, while
+expansion slot numbers are **1 through 7**. The facade provides one Disk II
+controller in slot 6, one optional SmartPort controller (slot 5 by default),
+and multiple Mockingboards in separate empty slots (slot 4 by default).
 
 The desktop/browser `.pom2session` workflow, automatic machine reconstruction,
 bank-aware debugger and source panel are not methods on this public facade.

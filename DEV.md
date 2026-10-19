@@ -9890,7 +9890,10 @@ intends) with a message naming `$C083`. Pinned in `cli_runner`.
 (Phase-C runner — split out so parser is unit-testable). Three
 phases: **A** parse, **B** pre-boot (preset / ROM / display / speed),
 **C** post-boot deferred actions (`--load addr:file`,
-`--snapshot-load`/`--snapshot-save`, tape ops, paste, run, step).
+`--snapshot-load`/`--snapshot-save`, `--session-load`/`--session-save`,
+tape ops, paste, run, step). Snapshot loads require the matching machine;
+session loads reconstruct it. See [the session contract](docs/session-format.md)
+for supported devices, detached media and refusal conditions.
 
 Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`,
 `--speed`, `--cpu-max`, `--display`, `--ii-plus`/`--ii+`,
@@ -9901,6 +9904,7 @@ external 1, external 2), `--blank-disk [drive:]path`,
 `--prodos-folder dir`, `--load addr:file`,
 `--run`, `--paste`, `--step`, `--play`/`--rec`/`--rewind`,
 `--snapshot-save`/`--snapshot-load`,
+`--session-save`/`--session-load`,
 `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`,
 `--slot N=KEY`, `--printer-port N:k=v,…`,
 `--rgb-card-invert-bit7[=on|off]`, `--trace-brk` (logged no-op),

@@ -12,7 +12,7 @@ The full-suite commands below target Linux/macOS. Windows uses the
 ./setup_imgui.sh                              # once: dependencies + pinned Dear ImGui
 cmake -S . -B build -DPOM2_ENABLE_TESTS=ON
 cmake --build build -j3
-cd build && ctest -j2                          # run from build/; tests find roms/ themselves
+ctest --test-dir build --parallel 2 --output-on-failure
 ```
 
 `cmake --build build --target probes --parallel 3` builds the eyeball tools
