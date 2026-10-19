@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Debugger stops survive DMA hand-back
+
+When a SoftCard releases the bus partway through a slice, the remaining
+6502 budget now uses the common debugger reconciliation and stop handling.
+Previously this return path could leave the controller running after a
+breakpoint, allowing the next slice to consume the hit and execute past it.
+It also skipped clearing resumed hits and detaching an unarmed debug hook.
+The debugger regression reproduces the original missed stop and checks
+toolbar resume and transient cancellation across DMA hand-back.
+
 ## 2026-10-20 — Documentation and integrated help match current code
 
 The [documentation index](docs/README.md) connects user/developer guides,

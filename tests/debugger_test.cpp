@@ -1330,8 +1330,64 @@ void testWatchpointResumeKeepsNextBreakpoint()
 
 #include "debugger_banks_cases.h"
 
+static void testBreakpointAfterDmaRelease()
+{
+    struct ReleasingCard final : SlotPeripheral {
+        bool active = true;
+        std::string_view name() const override { return "DMA release test"; }
+        bool dmaActive() const override { return active; }
+        int dmaRun(int) override { active = false; return 1; }
+    };
+    EmulationController ctrl(AudioDevice::OutputMode::Offline);
+    auto card = std::make_unique<ReleasingCard>();
+    auto* dma = card.get();
+    {
+        auto state = ctrl.lockState();
+        state.memory().writeRamUnchecked(0x0800, 0xE8); // INX must not execute.
+        state.memory().writeRamUnchecked(0x0801, 0x4C); // JMP $0801
+        state.memory().writeRamUnchecked(0x0802, 0x01);
+        state.memory().writeRamUnchecked(0x0803, 0x08);
+        state.cpu().setProgramCounter(0x0800);
+        state.cpu().setXRegister(0);
+        state.memory().slotBus().plug(4, std::move(card));
+        ctrl.debugger().addBreakpoint(0x0800);
+        ctrl.syncDebugHook();
+    }
+    ctrl.setCyclesPerFrame(4096);
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.getMode() == EmulationController::Mode::Stopped);
+    assert(ctrl.cpu().getProgramCounter() == 0x0800);
+    assert(ctrl.cpu().getXRegister() == 0);
+    assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::Breakpoint);
+
+    // Toolbar Run must consume the latched hit even when DMA hands back
+    // the bus in the first slice of the resumed frame.
+    dma->active = true;
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.getMode() == EmulationController::Mode::Running);
+    assert(ctrl.cpu().getProgramCounter() == 0x0801);
+    assert(ctrl.cpu().getXRegister() == 1);
+    assert(!ctrl.debugger().stopRequested());
+
+    // Cancelling the last transient must also detach the CPU hook on hand-back.
+    {
+        auto state = ctrl.lockState();
+        ctrl.debugger().clearBreakpoints();
+        ctrl.debugger().setTransient(0x0900, pom2::Debugger::Reason::RunToCursor);
+        ctrl.syncDebugHook();
+    }
+    ctrl.setMode(EmulationController::Mode::Stopped);
+    dma->active = true;
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(!ctrl.cpu().getDebugHook());
+}
+
 int main()
 {
+    testBreakpointAfterDmaRelease();
     testPhysicalBankRouting();
     testBankBreakpointsAndWatches();
     testBankProfileAcrossSwitchingInstruction();

@@ -48,7 +48,11 @@ an explicit request before scheduling.
 
 **Priority:** 🟡 · **State:** To verify.
 
-**Acceptance criterion (after revalidation):** Verify WAI/STP, DMA stop handling and SSC IRQ behavior against the applicable CPU/firmware model before changing the policy.
+**Acceptance criterion (after revalidation):** Verify WAI/STP and SSC IRQ behavior against the applicable CPU/firmware model before changing the policy.
+
+DMA hand-back stop handling was reproduced and corrected on 2026-10-20;
+the `debugger` regression covers stopping, resuming and hook detachment.
+See [the changelog](../../CHANGELOG.md#2026-10-20--debugger-stops-survive-dma-hand-back).
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2016). Original dates and estimates are retained below.
 
@@ -57,8 +61,7 @@ an explicit request before scheduling.
   `halted` would fix it: wake on the line regardless of I, vector only if
   I=0); `$CB`/`$DB` are WAI/STP on the CMOS table where the Rockwell/GTE
   parts in every shipped Apple execute a 1-cycle NOP — a ruling, not a
-  bug; `runCpuSlice`'s DMA-release tail skips the stop check and the
-  breakpoint reconciliation. *½ day.* **Bug hunt #14's I/O residue**: the
+  bug. **Bug hunt #14's I/O residue**: the
   SSC ships SW2-6 (interrupts) on where MAME's DIP default is off, and its
   RDR read clears `IRQ_RDRF` where MAME's `read_rdr` does not — the
   in-code comment attributing that to MAME is wrong.

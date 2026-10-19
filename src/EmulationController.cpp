@@ -1408,17 +1408,19 @@ int64_t EmulationController::scaledFrameBudget() const
 
 int EmulationController::runCpuSlice(int chunk)
 {
+    int dmaSpent = 0;
     // DMA daisy chain (SoftCard Z80): while a card claims the bus the
     // 6502 stays parked and the card's processor burns the budget. The
     // claimant scan is 8 virtual calls per 4096-cycle chunk — noise.
     if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
-        const int spent = dma->dmaRun(chunk);
+        dmaSpent = dma->dmaRun(chunk);
         // A card that flips off mid-slice returns what it consumed; the
         // remainder of the chunk goes back to the 6502 so the hand-back
         // doesn't cost a whole chunk of dead time.
-        if (spent < chunk && !dma->dmaActive())
-            return spent + processor.run(chunk - spent);
-        return spent;
+        if (dmaSpent >= chunk || dma->dmaActive()) return dmaSpent;
+        chunk -= dmaSpent;
+        // Hand-back uses the common 6502 path below: it must reconcile
+        // debugger state and publish a stop just like an ordinary slice.
     }
     // The hook must not outlive what armed it. `M6502::step` gates its
     // interrupt-entry split on `debugHook_ != nullptr` and NOT on "is
@@ -1465,16 +1467,16 @@ int EmulationController::runCpuSlice(int chunk)
     // the top of every iteration, so parking here stops it within one chunk.
     if (debugger_ && debugger_->stopRequested()) {
         noteDebuggerStop();
-        return spent;
+        return dmaSpent + spent;
     }
     // Symmetric hand-over: the 6502 yields mid-chunk when its $CnXX
     // write grants the bus (the card calls M6502::stop()); give the
     // remainder to the new claimant instead of burning a dead chunk.
     if (spent < chunk) {
         if (SlotPeripheral* dma = mem.slotBus().dmaClaimant())
-            return spent + dma->dmaRun(chunk - spent);
+            return dmaSpent + spent + dma->dmaRun(chunk - spent);
     }
-    return spent;
+    return dmaSpent + spent;
 }
 
 void EmulationController::noteDebuggerStop()
