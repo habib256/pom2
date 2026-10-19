@@ -84,7 +84,7 @@ void diskII() {
     state.cpu().setProgramCounter(0x2345);
     pom2::SessionArchive session;
     assert(pom2::captureSession(session, state.cpu(), state.memory(), ctrl->machineId(), error));
-    assert(session.version == 6 && read(path) == original);
+    assert(session.version == 7 && read(path) == original);
     const auto pc = state.cpu().getProgramCounter();
     assert(!pom2::restoreSession(session, state.cpu(), state.memory(), ctrl->machineId(), error));
     assert(state.cpu().getProgramCounter() == pc); // don't discard outgoing dirty host media

@@ -73,8 +73,8 @@ inline constexpr CardType kCardTypes[] = {
     // ATA registers. Its SmartPort side is provided at block level.
     { "cffa3",        "CFFA3000 (SmartPort)" },
     // SmartPort 3.5" — Apple Disk 3.5 Controller card (the "Liron" /
-    // 670-0186). Brings 2× ProDOS block units (3.5" 800K or HDV) to a //e
-    // or II+ via the standard ProDOS block-device protocol, no IWM.
+    // 670-0186). Exposes 2-14 block units (8 by default, 3.5" or HDV) to
+    // a //e or II+ through ProDOS/SmartPort services, without a card IWM.
     { "smartport35",  "SmartPort (UniDisk intelligent / HD)",   CardScope::Core },
     { "superdrive",   "Apple IIe SuperDrive (1.44M block interface)" },
     // The same controller as silicon: the real 4 KB Liron EPROM executing
@@ -85,8 +85,8 @@ inline constexpr CardType kCardTypes[] = {
     { "liron",        "Liron (UniDisk intelligent / HD, real ROM)" },
     { "ssc",          "Super Serial"      },
     // Printer (parallel) — synthetic card that spools COUT bytes to a host
-    // file (.txt / .pdf). Built-in at slot 1 of //c / //c+, free-slot pick
-    // on II / II+ / //e. No PROM dump needed.
+    // spool for export/rendering. A free-slot pick on II / II+ / //e;
+    // //c-class printer ports use built-in SSCs. No PROM dump needed.
     { "printer",      "Printer (Parallel)" },
     // Grappler+ (Orange Micro) — parallel printer card with a 4 KB ROM
     // providing graphics dump commands (^I G / ^I H). Requires a ROM

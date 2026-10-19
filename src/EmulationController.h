@@ -46,14 +46,18 @@
 #include <thread>
 #include <vector>
 
-namespace pom2 { class StateAccess; }
+namespace pom2 { class StateAccess; class SessionLoadQueue; }
 
 class EmulationController
 {
 public:
     enum class Mode { Stopped, Running, Step };
 
+    // Configure before starting host requests; clear only after closing the queue.
+    void setSessionLoadQueue(std::shared_ptr<pom2::SessionLoadQueue> queue);
+    std::shared_ptr<pom2::SessionLoadQueue> sessionLoadQueue();
     EmulationController();
+    explicit EmulationController(AudioDevice::OutputMode audioMode);
     ~EmulationController();
 
     /// Unchecked access to the emulated state. Correct ONLY on the worker
@@ -101,7 +105,7 @@ public:
     void debugStepOut();
 
     /// Run until the PC reaches `addr`, then stop. Takes `stateMutex` itself.
-    void debugRunToCursor(uint16_t addr);
+    void debugRunToCursor(uint16_t addr, pom2::DebugBank bank = {});
     CassetteDevice&    cassette()    { return *tape; }
     SpeakerDevice&     speaker()     { return *spk; }
     /// 5.25" Disk II mechanical sounds (head step / motor / click).
@@ -136,6 +140,7 @@ public:
     /// with slots. setZipChipInstalled takes stateMutex and resets the chip.
     pom2::ZipChip& zipChip() { return zipChip_; }
     void setZipChipInstalled(bool on);
+    void setZipChipInstalled(const pom2::StateAccess& state, bool on);
     bool zipChipInstalled() const { return zipInstalled_.load(); }
     static constexpr int kSony35Drives = 3;
     /// Physical external mechanisms persist when their media is ejected.
@@ -465,6 +470,8 @@ private:
     friend class pom2::StateAccess;
     Memory                          mem;
     M6502                           processor;
+    std::mutex sessionQueueMutex_;
+    std::shared_ptr<pom2::SessionLoadQueue> sessionQueue_;
     std::unique_ptr<CassetteDevice>    tape;
     std::unique_ptr<SpeakerDevice>     spk;
     std::unique_ptr<FloppySoundDevice> floppy525;

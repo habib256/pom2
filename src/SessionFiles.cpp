@@ -3,6 +3,8 @@
 #include "AtomicFileReplace.h"
 #include "EmulationController.h"
 #include "SessionSnapshot.h"
+#include "SessionMachine.h"
+#include "SessionLoadQueue.h"
 #include "SnapshotIO.h"
 
 #include <filesystem>
@@ -17,11 +19,6 @@ bool controllerDevicesSupported(EmulationController& ctrl, bool iic, std::string
             error = "onboard 3.5-inch session media require a //c-class profile";
             return false;
         }
-    if (ctrl.cassette().hasLoadedTape() || ctrl.cassette().hasRecordedTape() ||
-        ctrl.cassette().isRecordingArmed()) {
-        error = "sessions do not capture cassette tapes; eject/clear the tape first";
-        return false;
-    }
     return true;
 }
 }
@@ -39,7 +36,8 @@ bool saveSessionFile(EmulationController& ctrl, const std::string& path, std::st
     {
         auto state = ctrl.lockState();
         if (!controllerDevicesSupported(ctrl, state.memory().isIIcClass(), error) ||
-            !captureSession(captured, state.cpu(), state.memory(), ctrl.machineId(), error)) return false;
+            !captureSession(captured, state.cpu(), state.memory(), ctrl.machineId(), error) ||
+            !ctrl.cassette().appendSessionState(captured.cassette, error)) return false;
     }
     std::vector<uint8_t> bytes;
     if (!encodeSessionArchive(captured, bytes, error)) return false;
@@ -53,11 +51,16 @@ bool loadSessionFile(EmulationController& ctrl, const std::string& path, std::st
     std::vector<uint8_t> bytes;
     SessionArchive prepared;
     if (!readSnapshotFileBytes(path, bytes, error) || !decodeSessionArchive(bytes, prepared, error)) return false;
-    auto state = ctrl.lockState();
-    if (!controllerDevicesSupported(ctrl, state.memory().isIIcClass(), error) ||
-        !restoreSession(prepared, state.cpu(), state.memory(), ctrl.machineId(), error)) return false;
-    ctrl.noteTimeJump();
-    ctrl.rewind().clear();
-    return true;
+    if (auto queue = ctrl.sessionLoadQueue()) return queue->load(prepared, error);
+    return reconstructSession(ctrl, prepared, error);
 }
+}
+
+void EmulationController::setSessionLoadQueue(std::shared_ptr<pom2::SessionLoadQueue> queue)
+{
+    std::lock_guard<std::mutex> lock(sessionQueueMutex_); sessionQueue_ = std::move(queue);
+}
+std::shared_ptr<pom2::SessionLoadQueue> EmulationController::sessionLoadQueue()
+{
+    std::lock_guard<std::mutex> lock(sessionQueueMutex_); return sessionQueue_;
 }

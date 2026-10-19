@@ -32,7 +32,7 @@
 //                                cpu:{pc,a,x,y,p,sp,cycles}, disks:[...]}
 //   POST /reset               → body {"kind":"soft|hard|cold"} (default hard)
 //   GET  /cpu                 → CPU register dump
-//   POST /cpu                 → body {"pc":?, "a":?, "x":?, "y":?} — set regs
+//   POST /cpu                 → body {"pc":?, "a":?, "x":?, "y":?, "p":?, "sp":?}
 //   GET  /mem?addr=N&len=N[&bank=main|aux|cpu]
 //                             → {"addr":N,"bank":"…","data":"FFEE…"} (hex, len ≤ 4096)
 //                             main = the raw main 64 KiB array (default),
@@ -48,11 +48,16 @@
 //   POST /keyboard            → body {"text":"..."} or {"raw":"..."} — paste
 //   POST /disk                → body {"slot":6,"drive":0,"path":"..."} — insert
 //   POST /eject               → body {"slot":6,"drive":0} — eject
+//   POST /disk/sync           → flush mounted block/floppy media; wait for commits
 //   POST /snapshot/save       → body {"path":"....pom2snap"} — save path MUST
 //                                end with `.pom2snap` so an agent can't
 //                                clobber unrelated files inside cwd.
 //   POST /snapshot/load       → body {"path":"..."} — any cwd-relative file;
 //                                magic-byte check inside rejects non-snapshots.
+//   POST /session/save        → body {"path":"....pom2session"}; atomic bundle save
+//   POST /session/load        → body {"path":"..."}; reconstruct supported machine
+//                                and detached media; see docs/session-format.md.
+//   Printer/slot-log routes and full response shapes are listed in DEV.md.
 //   POST /speed               → body {"cycles_per_frame":N} OR {"preset":"1x|2x|max"}
 //   GET  /screen.ppm          → binary PPM of the live framebuffer
 //   POST /mouse               → body {"dx":?,"dy":?} signed Apple-cursor delta

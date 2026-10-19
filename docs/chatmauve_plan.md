@@ -17,9 +17,9 @@ carries where it comes from, and each gap says what would close it.*
 > [`DEV.md` § Le Chat Mauve](../DEV.md#le-chat-mauve-lechatmauvecard) and
 > the header of `src/LeChatMauveCard.h`.
 
-## 0. In one paragraph
+## 0. Initial model, before the plan (2026-09-01)
 
-POM2 today models **one** Chat Mauve: a Féline-class 2-bit mode latch with
+At the initial assessment, POM2 modelled **one** Chat Mauve: a Féline-class 2-bit mode latch with
 the four Video-7 DHGR interpretations (560 mono / 140 colour / mixed /
 160 chunky), a Video-7-style fg/bg colour TEXT, two "Eve" toggles at
 `$C0B8-$C0BB`, and the palette AppleWin captured off a Féline. That is a
@@ -105,13 +105,10 @@ Eve's switch byte and CPREG; the pixel rules live in `Apple2Display`.
 | Variant selection | one catalog key; `chatmauve_variant` setting (`feline` \| `iic` \| `eve` \| `video7` \| `rvb` — `LeChatMauveCard.cpp:29-35`). Chosen in **Slot Configuration** (a "model" combo under the card's row, staged + applied with the slots) or live in the Chat Mauve panel; //c-class connectors are hardware-fixed to the Adaptateur IIc at plug time | — |
 | Snapshot | blob v3 = latch + switch byte + CPREG; v2's two toggles map onto TXT16 / TXTGREEN. Now **v4** (+ the RVB Graph mode strobe, `LeChatMauveCard.cpp:421-428`) | smoke § 12 |
 
-Not done yet: the dot-clock tap (P6 — mid-line switches still land per
-frame), the //c adapter's inferred-80COL quirk (P5), the RVB Graph (P4),
-the PLA-derived Eve pixel rules (P3), Extasie / Purplesoft screens as
-goldens, a TTL-RGBI palette option.
-*Update 2026-10-06:* the mode latch now beam-races (P6 first rung); the
-RVB Graph exists with its four mode strobes (P4 partial); P3 is closed as
-bounded; Purplesoft's screens are frozen by `purplesoft_eve_screens`.
+The mode latch now beam-races (P6 first rung); RVB Graph exists with its
+four mode strobes (P4 partial); P3 is closed as bounded, rather than waiting
+for an implementation inferred from insufficient PLA evidence.
+Purplesoft's screens are frozen by `purplesoft_eve_screens`.
 Still open: dot-level `$C0Bx`, P5, the RVB Graph's registers, Extasie /
 DIX / PoP goldens, the TTL-RGBI palette.
 
@@ -557,7 +554,9 @@ sentence.
 The "80COL must have been written" detail was NOT added: on the Féline the
 wire is direct and the patent samples the level; the detail is a property
 of the //c adapter's inference and belongs to P5. Extasie / DIX / PoP
-goldens: not yet (no headless boot of those disks).
+goldens remain open. This is a missing reference/golden comparison, not a
+claim that POM2 cannot boot those disks headlessly. Purplesoft's Eve demo
+screens already have their own headless boot/hash test.
 
 *As planned:* The mode latch
 as the patent draws it (already there; add the "80COL must have been

@@ -20,14 +20,12 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 |---|---|---|---|
 | [CARDS-001](#cards-001) | 🟡 | To verify | Reconcile four card abstraction levels with the catalog |
 | [CARDS-003](#cards-003) | 🟡 | To verify | SmartPortCard leftovers, still open |
-| [CARDS-005](#cards-005) | 🟡 | To verify | Nothing asserts the real ClockCard ROM path is taken |
+| [CARDS-005](#cards-005) | 🟡 | Partial: real ROM path covered | ClockCard DOS/Applesoft driver-load coverage |
 | [CARDS-011](#cards-011) | 🟡 | To verify | Ghostscript unreachable on a stock Apple Silicon Homebrew |
 | [CARDS-002](#cards-002) | 🧊 | Frozen | Apple II Workstation Card — it boots, it is identified, and there is no network on the other end. |
-| [CARDS-004](#cards-004) | ✅ | Implemented | EchoPlusTMS5220Card (real Echo+) |
 | [CARDS-006](#cards-006) | 🧊 | Frozen | Apple II SCSI / High-Speed SCSI + CHD |
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
-| [CARDS-009](#cards-009) | ✅ | Done | Slinky RAM disk (Memory Expansion Card) — RamFAST not done |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-012](#cards-012) | 🟡 | To verify | SSC fallback page and DOS 3.3 `PR#n` |
 | [CARDS-013](#cards-013) | 🟢 | To verify | `$C800` owner across Ctrl-Reset |
@@ -42,15 +40,15 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-695). Original dates and estimates are retained below.
 
-They have no row in the doc and no key in `abstractionCatalog()`, so the picker
-shows no level for them. Land both in one commit — they are kept in step by hand.
+The original report found no row or catalog key for these cards. The current
+documentation has all four; the remaining catalog gaps are recorded below.
 
 | Card | Level | The seam to record |
 |---|---|---|
 | `liron` | **L2 firmware + L0 media path, H2 drive** — a composite | The UniDisk's drive-side 65C02 is not emulated; the protocol is the contract. Say explicitly that this is the strictly *lower* sibling of the `smartportcard` L2 veneer, since the picker now shows both |
 | `workstation` | **L0 CPU + L1 SCC, with no transport** | A third failure category, the one the FujiNet's "no peer" row also names: **the network on the other end does not exist.** Level is high; reach is zero |
 | `4play` | **L1 — and complete** | Nothing below the register to model. Needs an explicit *complete* marker, or "L1" reads as "something is missing" |
-| `transwarp` | **L1 registers / host retiming** | The doc's first entry whose abstraction is in the **time domain**. Multiplier sampled once per frame: unbiased in aggregate, wrong about where in a frame the slow cycles land |
+| `transwarp` | **L1 registers / host retiming** (original proposed label) | The documented catalog classification is H1. CPU multiplier is sampled per 4096-cycle chunk, not once per frame (`transwarp_chunk_sampling`) |
 
 **Revalidated 2026-10-06 — half done.** `docs/lle_vs_hle.md` now has a row
 for all four (Liron L2, TransWarp H1, Workstation L0/L1, 4play L1); the
@@ -58,6 +56,11 @@ levels it records differ from the table above for `liron` and `transwarp`.
 `abstractionCatalog()` (`src/AbstractionLevels_ImGui.cpp:119-358`) still has
 no `liron`, `workstation`, `4play` or `transwarp` key, so the picker still
 shows no level for them.
+
+**Code reconciliation 2026-10-19:** The older catalog claim is partly
+superseded: `abstractionCatalog()` now contains `liron` at L2. `workstation`,
+`4play` and `transwarp` still have no catalog row. The document already
+describes all four, so do not schedule their documentation as missing.
 
 <a id="cards-003"></a>
 
@@ -77,30 +80,22 @@ shows no level for them.
 
 <a id="cards-005"></a>
 
-## CARDS-005 — Nothing asserts the real ClockCard ROM path is taken
+## CARDS-005 — ClockCard DOS/Applesoft driver-load coverage
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial: production ROM selection is covered;
+guest-side DOS/Applesoft driver loading remains to verify.
 
-**Acceptance criterion (after revalidation):** Require the real ClockCard ROM path when its dump is present, and exercise driver loading from C800.
+`rom_path_taken` requires the Thunderware U9 dump through the production
+constructor, so a fallback on a complete checkout fails the regression.
+`clock_card_smoke::testC800ClaimFollowsTheEprom` covers expansion-ROM claiming.
+The remaining gap is running the DOS 3.3 / Applesoft driver load from `$C800`
+through guest code, rather than asserting only the ROM identity/bus contract.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1797). Original dates and estimates are retained below.
+**Acceptance criterion:** Exercise that guest driver path with the real EPROM.
 
-- 🟡 **Nothing asserts the real ClockCard ROM path is taken** when the dump
-  is present — `clock_card_smoke` tolerates its absence so CI stays
-  ROM-free, so a regression that silently routed back to the synthetic ROM
-  would fail nothing. Same silent-degradation hole as every other
-  ROM-driven L path (Disk II P6, mouse MCU, Grappler EPROM); →
-  [`docs/lle_vs_hle.md`](../lle_vs_hle.md) § Keeping a level once you
-  have it. **Folded into [G5-15](release-1.0.md#g5)**, with
-  Disk II P6, the mouse MCU and the Grappler EPROM. The DOS 3.3 / Applesoft
-  tools that pull the driver from `$C800` are still untested.
-
-**Revalidated 2026-10-06 — headline shipped.** `rom_path_taken` asserts that
-the ThunderClock+ runs the Thunderware U9 dump, not the synthetic stub
-(`tests/rom_path_taken_test.cpp:101-104`; CHANGELOG *2026-09-17 — G5-15:
-the real ROM path, asserted*). `clock_card_smoke` pins the `$C800` claim
-(`testC800ClaimFollowsTheEprom`) but no test runs the DOS 3.3 / Applesoft
-driver loaded from `$C800`; only that residue remains.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1797),
+`tests/rom_path_taken_test.cpp`, `tests/clock_card_smoke_test.cpp`, and
+[ROM-path policy](../lle_vs_hle.md#keeping-a-level-once-you-have-it).
 
 <a id="cards-011"></a>
 

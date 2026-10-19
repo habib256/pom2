@@ -37,7 +37,7 @@ CharRomFacts normaliseCharRom(uint8_t* bytes, std::size_t size)
 
     // Which 2 KB convention is this? One pass over the inverse+flashing
     // half is enough: the marked dump sets bit 7 on every flashing-range
-    // byte, the Videx dump sets it nowhere.
+    // byte, including in the tracked Videx dump; unmarked inputs do not.
     facts.bit7Marker = false;
     for (std::size_t i = 0; i < 1024; ++i) {
         if (bytes[i] & 0x80) { facts.bit7Marker = true; break; }

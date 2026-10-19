@@ -1477,6 +1477,7 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
         pom2::log().warn("Profile", tapeStatusMessage);
         return;
     }
+    sessionMachineActive_ = false;
     romStatus  = r.romStatus;
     romLoaded_ = r.romLoaded;
     if (r.romLoaded) romPath = r.romPath;
@@ -1648,6 +1649,7 @@ bool MainWindow::restartEmulationTransaction()
         slotRebuildCoordinator_->publishLocked(st);
     }
 
+    sessionMachineActive_ = false;
     pom2::log().info("Slots",
                      "Cold-booted with the new slot mapping (RAM wiped).");
     return true;

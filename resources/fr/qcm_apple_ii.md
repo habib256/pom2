@@ -1,6 +1,6 @@
 # QCM — Connaître la famille Apple II et les profils POM2
 
-Version : 1.0 — 17 juillet 2026  
+Version : 1.1 — vérification des informations POM2 le 20 octobre 2026\
 Public : amateur éclairé, médiateur ou utilisateur de POM2  
 Objectif observable : distinguer les principaux modèles Apple II, associer leurs processeurs et particularités, puis reconnaître les éléments matériels essentiels émulés par POM2.  
 Sources de référence : `README.md` (profils, matériel, stockage), `CLAUDE.md` (profils, chronologie, mémoire et cadences), `src/SystemProfile.h` et `src/SystemProfile.cpp` (définition canonique des modèles).  
@@ -142,12 +142,12 @@ B. `$C030–$C03F`
 C. `$C050–$C057`  
 D. `$C0E0–$C0EF`
 
-### 19. Pourquoi POM2 ne fournit-il pas les ROM système Apple dans son dépôt ?
+### 19. Que contiennent les paquets POM2 pour un démarrage standard ?
 
-A. Elles ne sont pas nécessaires au démarrage  
-B. Elles sont générées automatiquement par le processeur  
-C. Elles restent protégées ; l’utilisateur doit fournir ses propres copies  
-D. Elles ne fonctionnent qu’avec un écran monochrome
+A. Aucun micrologiciel : toutes les ROM doivent être ajoutées avant le premier lancement\
+B. Des ROM générées automatiquement par le processeur\
+C. Les micrologiciels, polices et illustrations prévus par le manifeste de distribution\
+D. Uniquement les ROM de l’Apple IIgs
 
 ### 20. Quelle affirmation décrit le mieux la place de l’Apple IIgs ?
 
@@ -163,7 +163,7 @@ D. C’est une carte d’extension sonore
 3. C. L’Apple IIc date de 1984 ; le II Plus de 1979, le IIe de 1983 et le IIc Plus de 1988.  
 4. B. Le II Plus conserve le NMOS 6502 mais adopte notamment Applesoft BASIC et l’Autostart ROM.  
 5. D. Le « c » renvoie à la conception compacte ; contrairement aux II, II Plus et IIe, le IIc n’expose pas de connecteurs d’extension physiques.  
-6. D. POM2 propose huit profils 8 bits ; l’Apple IIgs 16 bits appartient au projet frère POM2GS.  
+6. D. POM2 propose neuf profils 8 bits ; l’Apple IIgs 16 bits appartient au projet frère POM2GS.\
 7. A. Le IIe de 1983 utilise encore le NMOS 6502 ; choisir 65C02 confond ce modèle avec le IIe Enhanced.  
 8. B. L’amélioration de 1985 apporte le 65C02 et une ROM de caractères incluant MouseText.  
 9. D. Le IIc Plus exécute son 65C02 à environ 4 MHz, contre environ 1 MHz pour les autres profils principaux.  
@@ -176,8 +176,8 @@ D. C’est une carte d’extension sonore
 16. C. La constante nominale est de 1 022 727 Hz, obtenue à partir de 14,31818 MHz divisés par 14.  
 17. C. La page HGR 1 occupe `$2000–$3FFF`; `$0400–$07FF` correspond à la page texte/lo-res 1.  
 18. B. Tout accès dans `$C030–$C03F` bascule l’état du haut-parleur ; `$C050–$C057` sélectionne les modes d’affichage.  
-19. C. Les ROM Apple restent protégées : POM2 émule le matériel mais demande à l’utilisateur de fournir les dumps nécessaires.  
-20. B. L’Apple IIgs repose sur une architecture 16 bits distincte ; il n’est donc pas l’un des huit profils de POM2.
+19. C. Le manifeste de distribution inclut le dossier roms/, les polices et les illustrations nécessaires ; un paquet standard n’exige pas d’ajouter les ROM avant de démarrer. Les conditions de provenance et de distribution sont décrites dans THIRD-PARTY.md.\
+20. B. L’Apple IIgs repose sur une architecture 16 bits distincte ; il n’est donc pas l’un des neuf profils de POM2.
 
 ## Interprétation du score
 

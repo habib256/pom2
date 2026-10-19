@@ -165,3 +165,56 @@ void Memory::snapshotCpuView(uint8_t* out) const
     for (uint32_t a = 0xC000; a < 0x10000u; ++a)
         out[a] = peekCpuView(static_cast<uint16_t>(a));
 }
+
+// Physical identity, resolved before an access can change the mapping.
+// LC segment 0 is the shared $E000-$FFFF region; 1/2 are $D000 banks.
+pom2::DebugBank Memory::debugBank(uint16_t addr, bool write) const
+{
+    using B = pom2::DebugBank;
+    if (flatBus_) return {B::Flat};
+    if (addr < 0xC000) {
+        const bool auxiliary = iieMode && (write ? iieWriteToAux(addr) : iieReadFromAux(addr));
+        return auxiliary ? B{B::Aux, ramWorksBank_} : B{B::Main};
+    }
+    if (addr >= 0xD000) {
+        if (write ? lcWriteEnable : lcReadRam) {
+            const uint8_t segment = addr >= 0xE000 ? 0 : lcBank2Active ? 2 : 1;
+            const bool auxiliary = iieMode && (iieMemMode & MF_ALTZP);
+            return auxiliary ? B{B::AuxLanguage, ramWorksBank_, segment} : B{B::Language,0,segment};
+        }
+        if (write) return {B::Ignored};
+        if (addr >= 0xF000 && (!iicProfile_ || !iicProfile_->debugRomBank())) {
+            uint8_t displaced = 0;
+            for (int slot = 1; slot <= 7; ++slot)
+                if (const auto* card = slots.peripheral(slot); card && card->peekDisplacedRom(addr,displaced))
+                    return {B::Slot,static_cast<uint8_t>(slot)};
+        }
+        return {B::Rom, iicProfile_ ? iicProfile_->debugRomBank() : uint8_t{0}};
+    }
+    if (addr < 0xC100) return {B::Io};
+    const bool c3 = (addr & 0xFF00) == 0xC300;
+    const bool internal = iieMode && ((iicProfile_ && iicProfile_->forcesIntCxRom()) ||
+        (iieMemMode & MF_INTCXROM) || (c3 && !(iieMemMode & MF_SLOTC3ROM)) ||
+        (intC8Rom && addr >= 0xC800));
+    if (internal) {
+        if (iicProfile_ && addr < 0xC800) {
+            const int slot = (addr >> 8) & 7;
+            if (iicExpansionAwake_ && slots.peripheralForIicRomPage(slot))
+                return {B::Slot,static_cast<uint8_t>(slot)};
+            if (!iicProfile_->debugRomBank() && (slot != 5 ||
+                (iicSmartPortArmed_ && !iicProfile_->servesExternalSmartPort())))
+                if (const auto* p = slots.peripheral(slot); p && p->exposesIicOnboardRom())
+                    return {B::Slot,static_cast<uint8_t>(slot)};
+        }
+        if (iicProfile_ && addr >= 0xC800 && addr <= 0xCFFE && !intC8Rom &&
+            iicSmartPortArmed_ && iicCardWindow_ && !iicProfile_->debugRomBank() &&
+            slots.getActiveExpansionSlot() == 5)
+            return {B::Slot,5};
+        if (iicProfile_ && iicProfile_->isIIcPlus() && iicProfile_->debugRomBank() &&
+            ((addr >= 0xCC00 && addr <= 0xCCFF) || (addr >= 0xCE00 && addr <= 0xCEFF)))
+            return {B::Io};
+        return {B::Rom, iicProfile_ ? iicProfile_->debugRomBank() : uint8_t{0}};
+    }
+    const int slot = addr < 0xC800 ? (addr >> 8) & 7 : slots.getActiveExpansionSlot();
+    return slot >= 1 && slot <= 7 ? B{B::Slot,static_cast<uint8_t>(slot)} : B{B::Io};
+}

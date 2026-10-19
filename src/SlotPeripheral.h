@@ -64,6 +64,8 @@ public:
     /// Short human-readable name (e.g. "Disk II", "Language Card", "80col").
     /// Surfaced in the Hardware menu / status bar.
     virtual std::string_view name() const = 0;
+    // A reconstruction must never join a host worker under the state lock.
+    virtual bool sessionReplacementReady() const { return true; }
 
     /// $C0(8+N)X — 16-byte device-select range. `low4` is the low nibble
     /// of the address (0..15). Reads and writes are dispatched separately

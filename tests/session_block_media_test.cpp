@@ -85,7 +85,11 @@ void codec() {
     }
     Block512Backing folder;
     assert(folder.loadFromBytes(Blob(512, 0), "folder", "/not-accessed"));
-    assert(!folder.appendSessionMedia(ignored, error));
+    Blob folderBytes;
+    assert(folder.appendSessionMedia(folderBytes, error));
+    Block512Backing detachedFolder;
+    assert(detachedFolder.loadSessionMedia(folderBytes.data(), folderBytes.size(), error));
+    assert(!detachedFolder.isSynthVolume() && detachedFolder.isLoaded());
     // A locked 2IMG becomes detached blocks, preserving its real header lock.
     Block512Backing container;
     Block512Backing::PreparedImage prepared;
@@ -134,7 +138,7 @@ void roundTrip() {
     std::string error;
     pom2::SessionArchive saved;
     assert(pom2::captureSession(saved, state.cpu(), state.memory(), ctrl.machineId(), error));
-    assert(saved.version == 6);
+    assert(saved.version == 7);
     Blob encoded;
     assert(pom2::encodeSessionArchive(saved, encoded, error) && encoded.size() < (1u << 20));
     // Dirty host media cannot be silently replaced, even with write-back off.

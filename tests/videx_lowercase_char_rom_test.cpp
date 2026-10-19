@@ -23,8 +23,8 @@
 // pins the two things that had to change:
 //
 //   1. The dump's convention. AppleWin's 2 KB `Apple2_Video.rom` uses bit 7
-//      of each byte as the inverse/flash range marker; the Videx dump never
-//      sets bit 7 and needs the range split by offset instead. Getting this
+//      of each byte as the inverse/flash range marker; the tracked Videx dump
+//      also carries it. Only unmarked input uses the offset fallback. Getting this
 //      wrong inverts the whole $00-$7F range and is invisible in normal text.
 //   2. The lowercase test itself, which comes from the Videx manual (§
 //      Discussion of character display): on a stock generator "Characters

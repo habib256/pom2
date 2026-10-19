@@ -1,19 +1,20 @@
 # Smoke tests for POM2.
 #
-# Native-only — Emscripten/WASM is not in scope. Tests are headless: they
-# drive the M6502 + Memory directly without an ImGui context, so they link
-# only the bare emulator core (no GLFW, no OpenGL, no Dear ImGui).
+# Native suite — browser checks run separately through the Chrome smoke tool.
+# Most tests drive the core headlessly; GL/UI tests additionally link the
+# relevant rendering/frontend dependencies. Portable-only mode selects the
+# bounded core subset before configuring the full suite below.
 
 # ─── Probe binaries (build-only, no add_test) ─────────────────────────────
-# Besides the ctest suite this file declares ~25 PROBE executables: eyeball
+# Besides the ctest suite this file declares manual PROBE executables: eyeball
 # tools that dump a screen, a raster trace, an audio A/B or a PPM for a human
 # to look at. They assert nothing reproducible, several need media that is not
-# in the tree, and a few take minutes — so they are deliberately built and
-# never registered with add_test(). Run one by hand:
-#     make dix_menu_raster_probe && ./tests/dix_menu_raster_probe
-# The list is not repeated here (it would drift); a target below with no
-# matching add_test() is a probe by construction, and the five EXCLUDE_FROM_ALL
-# diagnostic dumps have their own section further down.
+# in the tree, and a few take minutes. The aggregate `probes` target builds
+# those currently available; they are not registered with add_test().
+# From the repository root, build and run one explicitly:
+#     cmake --build build --target dix_menu_raster_probe
+#     ./build/tests/dix_menu_raster_probe
+# POM2_PROBE_TARGETS below owns the list; dependency guards can reduce it.
 #
 # CRITICAL: tests use assert() heavily, but the parent CMakeLists builds in
 # Release by default which adds -DNDEBUG (silently stripping every assert).
@@ -9421,6 +9422,12 @@ add_test(NAME echoplus_tms5220 COMMAND test_echoplus_tms5220)
 add_executable(test_disk35_flux_write disk35_flux_write_test.cpp)
 target_link_libraries(test_disk35_flux_write PRIVATE pom2_core_test)
 add_test(NAME disk35_flux_write COMMAND test_disk35_flux_write)
+
+
+add_executable(test_session_machine session_machine_test.cpp)
+target_link_libraries(test_session_machine PRIVATE pom2_core_test)
+add_test(NAME session_machine COMMAND test_session_machine)
+set_tests_properties(session_machine PROPERTIES TIMEOUT 30)
 
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.

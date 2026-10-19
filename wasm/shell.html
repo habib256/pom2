@@ -76,11 +76,12 @@
   // kept pointing at the deleted file, so the demo 404'd on boot).
   // Both knobs are URL-overridable so a deeplink can pick a different
   // profile or disk without rebuilding. The disk path must resolve inside
-  // POM2.data — only roms/, fonts/, pic/ and floppyemu/ ship by default;
+  // POM2.data — roms/, fonts/, named artwork, floppyemu/ and the curated
+  // bundled_disks/ entries ship by default;
   // disks_3.5/ is bundled only when built with --with-data
   // (-DPOM2_WASM_BUNDLE_DISKS=ON):
   //   ?preset=iie&disk=disks_3.5/A2DeskTop-1.5-en_800k.2mg   (needs --with-data)
-  //   ?preset=ii+        (no auto-boot — drops to the BASIC prompt)
+  //   ?preset=ii%2B&nodisk=1  (II+ without a boot image; encode + as %2B)
   //   ?nodisk=1          (keep the preset, skip the disk arg)
   const _qs = new URLSearchParams(window.location.search);
   const _preset = _qs.get('preset') || 'iic-pal';

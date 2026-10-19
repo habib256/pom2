@@ -115,9 +115,9 @@ try {
   await send('Page.enable');
   await send('Runtime.enable');
   const base = `http://127.0.0.1:${server.address().port}/`;
-  const navigate = async (suffix, disk) => {
+  const navigate = async (suffix, disk, preset) => {
     const loaded = event('Page.loadEventFired');
-    await send('Page.navigate', { url: `${base}?${disk ? 'disk=' + encodeURIComponent(disk) : 'nodisk=1'}&visit=${suffix}` });
+    await send('Page.navigate', { url: `${base}?${disk ? 'disk=' + encodeURIComponent(disk) : 'nodisk=1'}&visit=${suffix}${preset ? '&preset=' + encodeURIComponent(preset) : ''}` });
     await loaded;
     await waitFor(() => evaluate(
       "document.getElementById('bootSplash')?.classList.contains('hidden')"),
@@ -192,7 +192,7 @@ try {
   await click(400, 78); // Resume this machine on reload
   await waitFor(() => evaluate("Module.FS.analyzePath('/persistent/browser-resume.enabled').exists"),
     '//c automatic checkpoint');
-  assert.equal((await checkpoint()).version, 6);
+  assert.equal((await checkpoint()).version, 7);
   // A manually paused session must stay paused after a real tab reload.
   await click(110, 10); // Machine
   await click(150, 58); // Pause
@@ -222,12 +222,13 @@ try {
 
   const expectedCheckpoint = await checkpoint();
   assert.match(expectedCheckpoint.marker, /^stopped\n[01]\n$/);
-  await navigate('read');
+  // Start a different profile: automatic resume must reconstruct the //c.
+  await navigate('read', null, 'ii+');
   await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), '//c paused session restore');
   await evaluate('Module._pom2_persist_now()');
   const restoredCheckpoint = await checkpoint();
   assert(Buffer.from(restoredCheckpoint.bytes).equals(Buffer.from(expectedCheckpoint.bytes)),
-    '//c CPU/RAM/card state changed across automatic resume');
+    '//c CPU/RAM/card state changed across cross-profile automatic resume');
   const saved = await evaluate(
     "Module.FS.readFile('/persistent/state.cfg', { encoding: 'utf8' })");
   assert(saved.includes(`wasm_smoke_setting=${marker}`),
@@ -262,6 +263,7 @@ try {
   let pos = 20;
   const skip = () => { const length = archive.readUInt32LE(pos); pos += 4; const start = pos; pos += length; return {start, length}; };
   skip(); skip(); // configuration and CPU/RAM core
+  if (archive.readUInt32LE(8) >= 7) skip(); // embedded cassette
   let media;
   for (let slot = 0; slot < 8; ++slot) {
     const kind = archive[pos++]; skip(); const state = skip();
@@ -325,7 +327,7 @@ try {
   await evaluate('Module._pom2_persist_now()');
   assert(Buffer.from((await checkpoint()).bytes).equals(hdvArchive),
     'HDV/CPU/SmartPort state changed across source-free browser resume');
-  console.log('WASM browser: text upload, //c Mockingboard, tab pause/resume, persistence and exact //c/floppy/HDV checkpoint reload passed');
+  console.log('WASM browser: text upload, //c Mockingboard, tab pause/resume, persistence and exact cross-profile //c/floppy/HDV checkpoint reload passed');
 } finally {
   socket?.close();
   if (browser && browser.exitCode === null && browser.signalCode === null) {

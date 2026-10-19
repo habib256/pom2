@@ -113,6 +113,8 @@ public:
     /// phase + sector word buffer + CHS geometry). Backing media is
     /// host-side and NOT serialized — same policy as every other card.
     /// Raw layout, no magic: the owning card wraps it.
+    bool sessionAdvancesTaskFile() const { return advanceRegs_; }
+    void setSessionAdvancesTaskFile(bool advance) { advanceRegs_ = advance; }
     void appendSnapshotState(std::vector<uint8_t>& out) const;
     /// Restores a blob appendSnapshotState produced. Returns bytes
     /// consumed, or 0 on malformed input (device left untouched).

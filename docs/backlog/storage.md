@@ -20,7 +20,6 @@ an explicit request before scheduling.
 | [STORAGE-010](#storage-010) | 🟡 | To verify | Bug hunt #16's Disk II read residue |
 | [STORAGE-011](#storage-011) | 🟡 | To verify | SmartPort image-format restrictions |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
-| [STORAGE-004](#storage-004) | ✅ | Done | `decodeTrack` trusts the address field |
 | [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
@@ -123,31 +122,18 @@ they were not tested by that protocol regression.
 
 <a id="storage-004"></a>
 
-## STORAGE-004 — `decodeTrack` trusts the address field
+## STORAGE-004 — Track-address validation (resolved)
 
-**Priority:** ✅ · **State:** Done (2026-10-18).
+**State:** Done (2026-10-18); retained here for stable incoming links.
 
-**Acceptance criterion (after revalidation):** Test malformed track address fields without unsafe indexing or corrupted decode results.
+`DiskImage::decodeNibbles` and `decodeNibbles13` validate the address-field
+checksum and require its track byte to match the physical track being saved.
+Valid-checksum headers that name another track are skipped instead of being
+written to the wrong location. Regression cases cover both 16- and 13-sector
+write-back. This is not an active missing-validation task.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1512). Original dates and estimates are retained below.
-
-- 🟢 **`decodeTrack` trusts the address field** *(management audit
-  2026-08-08)* — the write-back decoder reads vol/track/sector/checksum
-  as 4-and-4 but validates none of them: the checksum is discarded, and
-  the address field's TRACK number is ignored in favour of the buffer
-  index. A guest that rewrites a whole track with a different track
-  number in its address fields (sector editors, Locksmith-style
-  copiers) therefore lands its sectors at the wrong file offset. `$D5`
-  is not a legal GCR data byte so a spurious prologue match can't
-  happen, which is why this has never bitten in practice. *~1 h.*
-
-**Revalidated 2026-10-06 — partly shipped.** The decoder is now
-`DiskImage::decodeNibbles` (`decodeTrack` is its per-track wrapper,
-`src/DiskImage.h:713`). The address-field checksum is validated since
-21dfaf3 (bug hunt #5, 2026-09-08): a field whose `vol ^ trk ^ sec` does
-not match is skipped (`src/DiskImage.cpp:2546-2550`). The TRACK byte is
-now checked against the physical track being saved (2026-10-18). A regression
-test covers valid wrong-track headers in both 16- and 13-sector write-back.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1512)
+and [CHANGELOG](../../CHANGELOG.md).
 
 <a id="storage-006"></a>
 

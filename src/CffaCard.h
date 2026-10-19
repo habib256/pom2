@@ -56,6 +56,11 @@ public:
 
     /// Load the 4 KB CFFA firmware EEPROM dump. Must be exactly 4096 bytes.
     bool loadRom(const std::string& path);
+    void appendSessionIdentity(std::vector<uint8_t>& out) const;
+    bool installSessionIdentity(const std::vector<uint8_t>& bytes);
+    bool appendSessionState(std::vector<uint8_t>& out, std::string& error) const;
+    bool prepareSessionState(const std::vector<uint8_t>& bytes, CffaCard& prepared, std::string& error) const;
+    void applySessionState(CffaCard& prepared);
     bool isRomLoaded() const { return romLoaded_; }
 
     /// Image management — forwarded to the ATA device's block backing so the

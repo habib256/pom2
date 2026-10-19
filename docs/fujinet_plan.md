@@ -22,6 +22,15 @@ right answer, what rewind cannot do, and the manual test passes that CI cannot
 run. **What changed during implementation** is recorded in
 [§ 15](#15-what-implementation-changed).
 
+**Current contract note (2026-10-20).** This is a completed design record,
+not a new implementation queue. Runtime configuration and factory wiring are
+described in [DEV](../DEV.md#fujinet-sp-over-slip-relay); unresolved work lives in
+[the network backlog](backlog/network.md). Later fixes include the full
+`$C000-$CFFF` transfer-buffer fence, a shared 400 ms reset-notification budget,
+and the helper environment filter. Old line numbers and pre-fix behavior below
+retain their historical context. The relay still needs an external peer;
+it is not self-contained FujiNet firmware running inside POM2.
+
 ## Table of contents
 
 - [1. Scope and non-goals](#1-scope-and-non-goals)
@@ -359,8 +368,9 @@ for the first `Status`/DIB sweep to time out because the board is still booting
 
 **`transact()`.** Called on the CPU thread. Sends the request through whichever
 `SpTransport` is live, waits for a response with a bounded timeout (**default
-250 ms** for local calls, configurable 50 ms – 5 s; 5 s for TNFS host and
-directory operations), decodes frames, and **discards any
+250 ms** for local calls, configurable 50 ms – 5 s; 5 s for selected remote
+host/directory operations and mounted-image block I/O, subject to an outer
+call-budget cap), decodes frames, and **discards any
 response whose sequence number does not match the request** — the spec's stated
 purpose for the sequence number, and the reason a reset mid-call cannot desync
 the link permanently. On timeout it returns a failure the card turns into
@@ -586,8 +596,9 @@ The firmware source and build system are still not vendored; the rest of this
 section explains that distinction.
 
 **What vendoring actually costs, measured rather than guessed.** The reference
-implementation's recipe (`fujinet-go-apple2-desktop`,
-`tools/fujinet/build-fujinet-desktop.sh`) is **856 lines of bash** that:
+implementation's recipe in the external `fujinet-go-apple2-desktop` checkout
+(path `tools/fujinet/build-fujinet-desktop.sh` there, not in POM2) was recorded
+as **856 lines of bash** that:
 
 - clone and build **mbedTLS 3.6.5 from source** whenever the system copy is not
   3.x (4.x drops `mbedtls/md5.h`, which the firmware includes);
@@ -671,11 +682,11 @@ to machine state, for the duration of the round trip.
    register, which changes the guest-visible protocol and breaks the "any
    FujiNet software works unmodified" promise.
 2. **Default local timeout = 250 ms**, panel-configurable from 50 ms to 5 s.
-   TNFS host and directory operations get 5 s because remote servers can take
-   seconds to answer. The local budget is
-   ~50× headroom over a real USB round trip while keeping a dead peer to a
-   quarter-second stall — one dropped frame's worth of pain, once, instead of
-   a full second.
+   Selected remote host/directory operations and mounted-image block I/O get
+   5 s because remote servers can take seconds to answer. An explicit outer
+   call budget can cap that wait. The 250 ms local default and five-second
+   remote budget can both span multiple display frames; neither removes the
+   `stateMutex` responsiveness limitation.
 
 **What must not block:** `accept()`, connection teardown, and enumeration. Those
 live on the worker thread (`pollAcceptOnce`, 200 ms poll), exactly as the SSC

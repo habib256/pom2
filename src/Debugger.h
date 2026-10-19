@@ -83,12 +83,19 @@ public:
         uint16_t pc     = 0;      ///< PC at the moment of the stop
         uint16_t addr   = 0;      ///< watched address (watchpoints only)
         uint8_t  value  = 0;      ///< byte read or written (watchpoints only)
+        DebugBank pcBank{}, bank{};
         bool     valid() const { return reason != Reason::None; }
     };
 
     /// Watch a read, a write, or both. `None` removes the watchpoint.
     enum Access : uint8_t { None = 0, Read = 1, Write = 2, ReadWrite = 3 };
 
+    /// Bind the live memory once; mapping is only queried on the debug loop.
+    void setMemory(const Memory* memory) { memory_ = memory; }
+    void addBreakpoint(uint16_t addr, DebugBank bank);
+    void removeBreakpoint(uint16_t addr, DebugBank bank);
+    bool hasBreakpoint(uint16_t addr, DebugBank bank) const;
+    std::vector<DebugAddress> bankBreakpoints() const;
     // ── Breakpoints ──────────────────────────────────────────────────────
     void addBreakpoint(uint16_t addr);
     void removeBreakpoint(uint16_t addr);
@@ -106,33 +113,37 @@ public:
     /// One register predicate per PC breakpoint. Unconditional add replaces
     /// an existing predicate; CPU lifetime must include the debugger's.
     void addConditionalBreakpoint(uint16_t addr, Condition condition, const M6502& cpu);
+    void addConditionalBreakpoint(uint16_t addr, Condition condition, const M6502& cpu, DebugBank bank);
+    const std::map<DebugAddress, Condition>& bankConditions() const { return bankConditions_; }
     const std::map<uint16_t, Condition>& conditions() const { return conditions_; }
     /// Sorted, for the UI list. O(64K) — a UI-frame operation, never hot.
     std::vector<uint16_t> breakpoints() const;
-    std::size_t breakpointCount() const { return bpCount_; }
+    std::size_t breakpointCount() const { return bpCount_ + bankBreakpoints_.size(); }
 
     // ── Watchpoints ──────────────────────────────────────────────────────
     void setWatchpoint(uint16_t addr, Access access);
     Access watchpointAt(uint16_t addr) const;
     void clearWatchpoints();
-    struct Watch { uint16_t addr; Access access; };
+    void setWatchpoint(uint16_t addr, Access access, DebugBank bank);
+    struct Watch { uint16_t addr; Access access; DebugBank bank{}; };
     std::vector<Watch> watchpoints() const;
-    std::size_t watchpointCount() const { return wpCount_; }
+    std::size_t watchpointCount() const { return wpCount_ + bankWatches_.size(); }
 
     // ── Transient stops ──────────────────────────────────────────────────
     /// Break once at `addr`, then forget it. Used by step-over (the address
     /// after a JSR) and run-to-cursor. A transient at an address that also
     /// carries a real breakpoint leaves the real one alone.
-    void setTransient(uint16_t addr, Reason reason);
+    void setTransient(uint16_t addr, Reason reason, DebugBank bank = {});
     /// Follow the actual outer RTS, including inline arguments, recursion and
     /// stack wrap. Only the debugged loop consults the CPU/memory references.
     void setStepOver(M6502& cpu, const Memory& memory);
     void setStepOut(M6502& cpu, const Memory& memory);
-    struct ProfileEntry { uint16_t pc; uint64_t visits; uint64_t cycles; };
+    struct ProfileEntry { uint16_t pc; uint64_t visits; uint64_t cycles; DebugBank bank{}; };
     struct TraceEntry {
         uint16_t pc, nextPc;
         uint8_t a, x, y, p, sp;
         int cycles;
+        DebugBank bank{};
     };
     void setProfiling(bool enabled);
     void setHistoryEnabled(bool enabled);
@@ -156,16 +167,18 @@ public:
     // ── State the CPU and Memory consult ─────────────────────────────────
     /// Anything at all to check. False → the CPU stays on its fast loop.
     bool armed() const {
-        return bpCount_ || wpCount_ || profiling_ || historyEnabled_ ||
+        return breakpointCount() || watchpointCount() || profiling_ || historyEnabled_ ||
                transientArmed_.load(std::memory_order_relaxed);
     }
     /// Watchpoints specifically — what Memory gates its hook on.
-    bool watchArmed() const { return wpCount_ != 0; }
+    bool watchArmed() const { return watchpointCount() != 0; }
 
     /// M6502DebugHook. Called before the instruction at `pc` is executed;
     /// true halts the CPU with `pc` still pointing at it, so the instruction
     /// has NOT run and resuming re-tries it.
     bool onInstruction(uint16_t pc) override;
+    /// Explicit stepping needs attribution without testing PC breakpoints.
+    void beginStep(uint16_t pc, bool explicitStep = false);
 
     /// Called by Memory for an access to a watched address. Records the hit;
     /// the CPU halts at the END of the current instruction (the access is
@@ -181,6 +194,7 @@ public:
     /// sends EVERY read through `memReadSlow` while one is armed (free when
     /// none is). Memory.h § Write / § Read watchpoints, PERFORMANCE § 8.3/8.5.
     void noteAccess(uint16_t addr, uint8_t value, bool write) override;
+    void noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBank bank) override;
 
     /// True once something has asked the machine to stop and the stop has not
     /// been consumed yet. `EmulationController` drains this at its chunk
@@ -193,7 +207,7 @@ public:
     /// Suppress the breakpoint at `pc` for exactly one instruction. Resuming
     /// from a stop would otherwise re-trigger the same breakpoint forever,
     /// because the PC still points at it.
-    void armResumeFrom(uint16_t pc) { resumeSkip_ = pc; resumeSkipArmed_ = true; }
+    void armResumeFrom(uint16_t pc) { resumeSkip_ = pc; resumeBank_ = hit_.valid() && hit_.pc == pc ? hit_.pcBank : resolveBank(pc); resumeSkipArmed_ = true; }
 
     /// Drop every per-TIMELINE transient. Called when the machine jumps in
     /// time — a rewind scrub, a `.pom2snap` load, an AI `/snapshot/load`.
@@ -217,11 +231,18 @@ private:
     void ensureBpBits();
     void ensureWpBits();
     bool conditionMatches(uint16_t addr) const;
+    bool conditionMatches(const Condition& condition) const;
+    std::map<DebugAddress, Condition> bankConditions_;
     std::map<uint16_t, Condition> conditions_;
     const M6502* conditionCpu_ = nullptr;
     bool profiling_ = false;
     bool historyEnabled_ = false;
-    std::vector<ProfileEntry> profile_;
+    std::map<DebugAddress, ProfileEntry> profile_;
+    const Memory* memory_ = nullptr;
+    DebugBank curBank_{}, resumeBank_{};
+    DebugBank resolveBank(uint16_t addr, bool write = false) const;
+    std::map<DebugAddress, bool> bankBreakpoints_;
+    std::map<DebugAddress, Access> bankWatches_;
     std::vector<TraceEntry> history_;
     std::size_t historyHead_ = 0;
     std::size_t historyCount_ = 0;
@@ -238,6 +259,7 @@ private:
     std::size_t bpCount_ = 0;
     std::size_t wpCount_ = 0;
 
+    DebugBank transientBank_{};
     uint16_t transientAddr_   = 0;
     Reason   transientReason_ = Reason::None;
     M6502* stepCpu_ = nullptr;

@@ -8,6 +8,7 @@
 #include "Memory.h"
 #include "Mockingboard.h"
 #include "NoSlotClock.h"
+#include "ZipChip.h"
 #include "SnesMaxCard.h"
 #include "SlinkyCard.h"
 #include "SnapshotIO.h"
@@ -63,12 +64,17 @@ bool safeClockState(const Blob& bytes)
 }
 bool configuration(Memory& memory, Blob& out, std::string& error)
 {
-    if (memory.cpuSocketAccelerator()) {
-        error = "sessions do not support a socket accelerator"; return false;
+    const auto* accelerator = memory.cpuSocketAccelerator();
+    if (accelerator && !dynamic_cast<const ZipChip*>(accelerator)) {
+        error = "unsupported session socket accelerator"; return false;
     }
     const auto* clock = memory.getNoSlotClock();
     out = {1, uint8_t(clock != nullptr), uint8_t(clock && clock->isEnabled()),
            uint8_t(clock ? clock->slot() : 0)};
+    if (accelerator) {
+        out[0] = 2; out.push_back(1);
+        out.push_back(static_cast<const ZipChip*>(accelerator)->bootFast() ? 1 : 0);
+    }
     return true;
 }
 bool describe(SlotPeripheral* card, SessionArchive::Slot& out, std::string& error)
@@ -141,7 +147,7 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
                     uint32_t machineId, std::string& error)
 {
     Blob config;
-    if (session.version < 1 || session.version > 6) {
+    if (session.version < 1 || session.version > 7) {
         error = "unsupported session version"; return false;
     }
     const size_t cardLimit = session.version == 1 ? 1024u * 1024u : kMaxSessionCardBytes;
@@ -169,6 +175,9 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
         SessionArchive::Slot live;
         if (!describe(card, live, error)) return false;
         const auto& record = session.slots[slot];
+        if (session.version < 7 && uint8_t(record.kind) >= uint8_t(Card::Cffa)) {
+            error = "this card requires session format version 7"; return false;
+        }
         if (session.version < 6 && record.kind == Card::HardDisk) {
             error = "HDV sessions require format version 6"; return false;
         }

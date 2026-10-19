@@ -4,11 +4,13 @@ POM2 — Floppy drive mechanical sound samples
 Two sample sets from the MAME project drive POM2's FloppySoundDevice
 (a port of MAME's src/devices/imagedev/floppy.cpp::floppy_sound_device):
 
-  525_*.wav  — 5.25" Disk II (used by the slot-6 Disk II Interface card)
-  35_*.wav   — 3.5" UniDisk / SmartPort drives (sample set shipped for
-               future use; POM2 does not currently emulate a 3.5" drive,
-               but FloppySoundDevice::loadSamples accepts FormFactor::FF35
-               so a future SmartPort / Liron card can opt in)
+  525_*.wav  — Disk II 5.25" mechanisms, including cards outside slot 6
+  35_*.wav   — Sony 3.5" / SmartPort mechanisms. Both form factors are
+               loaded by MainWindow and wired to their drive sound sinks.
+
+The optional Virtual ][ recordings are a separate local-only bank. They are
+not part of this sample directory's package contract and are excluded from
+release payloads. Select available banks/levels in the audio controls.
 
 Source
 ------

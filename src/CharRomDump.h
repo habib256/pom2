@@ -32,14 +32,14 @@
 //   4 KB (IIe-class)  Pixels are stored with inverted polarity (1 = OFF)
 //                     and bit 0 already leftmost. XOR 0xFF, nothing else.
 //
-//   2 KB, marked      AppleWin's `Apple2_Video.rom`. Bit 7 of each byte
+//   2 KB, marked      AppleWin's video ROM and the tracked Videx dump. Bit 7
 //                     marks the range: clear = inverse (XOR the low 7),
 //                     set = flashing (leave). Bits are stored MSB-left
 //                     (the video shift register reads that way), so the
 //                     low 7 are reversed.
 //
-//   2 KB, unmarked    The Videx LOWER CASE CHIP. Same MSB-left bit order,
-//                     but bit 7 is never set anywhere — so the range has
+//   2 KB, unmarked    Legacy input without range markers (the tracked Videx
+//                     dump is marked). With no bit 7 marker, the range has
 //                     to be split by OFFSET instead (first 512 bytes are
 //                     the inverse range). Choosing wrong here inverts the
 //                     entire normal range, and because the glyph SHAPES

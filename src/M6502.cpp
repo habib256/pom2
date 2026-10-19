@@ -1262,9 +1262,9 @@ template void M6502::BBSn<2>(); template void M6502::BBSn<3>();
 template void M6502::BBSn<4>(); template void M6502::BBSn<5>();
 template void M6502::BBSn<6>(); template void M6502::BBSn<7>();
 
-// WDC WAI / STP. We model the halt by rewinding PC to the WAI/STP
-// opcode so the next step() re-fetches it (and the IRQ/NMI handler
-// runs first if asserted, breaking the loop).
+// WDC WAI / STP. WAI currently falls through after three cycles;
+// STP uses a persistent halt latch cleared by reset. Neither handler
+// parks PC at the opcode; see the WAI approximation below.
 void M6502::WAI(void)
 {
     // WDC `WAI` suspends the CPU until an IRQ or NMI is asserted. Crucial
@@ -1292,7 +1292,7 @@ void M6502::WAI(void)
 
 void M6502::STP(void)
 {
-    // WDC `STP` ($CB) halts the CPU until a RESET. Per MAME
+    // WDC `STP` ($DB) halts the CPU until a RESET. Per MAME
     // `ow65c02.lst:715-718` this is a `for(;;) { eat_all_cycles; }`
     // loop inside the dispatch handler — only `reset_c` (RESET line)
     // can break out. NMI does **not** wake STP (unlike WAI).

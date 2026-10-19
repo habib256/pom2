@@ -297,7 +297,7 @@ public:
             if (iieFastRead_) return iieReadFromAux(addr) ? aux[addr] : mem[addr];
             return memReadSlow(addr);
         }
-        if (testMode) return mem[addr];
+        if (testMode && plainRead_) return mem[addr];
         // ROM window. `!lcReadRam` → the LC maps ROM; `romFastRead_` → no //c
         // alt-firmware bank can override it (`!iicProfile_`) and no read
         // watch is armed; the last clause is the exact NoSlotClock intercept
@@ -522,6 +522,7 @@ public:
     /// grid, and anything else that wants "what the CPU sees" rather than
     /// "what is in the main bank".
     uint8_t peekCpuView(uint16_t addr) const;
+    pom2::DebugBank debugBank(uint16_t addr, bool write = false) const;
 
     /// Bulk form of peekCpuView() — fills all 64 KiB. `out` must have room
     /// for 0x10000 bytes.
@@ -898,6 +899,8 @@ public:
     /// Configuration and canonical firmware, independent of soft switches,
     /// watchpoints and the currently selected firmware/RamWorks bank.
     void appendSnapshotEnvironment(std::vector<uint8_t>& out) const;
+    // Session reconstruction only; ordinary snapshots never install firmware.
+    bool installSessionEnvironment(const std::vector<uint8_t>& bytes, std::string& error);
     /// Validate extended state without changing RAM, devices, IRQs, caches or
     /// beam events. Used before applying untrusted file/session snapshots.
     bool validateSnapshotState(const uint8_t* data, size_t n,

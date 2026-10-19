@@ -39,6 +39,7 @@
 
 #include "Debugger.h"
 #include "DebuggerSymbols.h"
+#include "DebuggerSourceMap.h"
 
 #include <cstdint>
 #include <string>
@@ -68,9 +69,11 @@ private:
         bool     running = false;
         bool     halted  = false;
         Debugger::Hit hit{};
-        std::vector<uint16_t> breakpoints;
+        std::vector<DebugAddress> breakpoints;
+        std::vector<DebugBank> banks;
+        DebugBank pcBank;
         std::vector<Debugger::Watch> watchpoints;
-        std::map<uint16_t, Debugger::Condition> conditions;
+        std::map<DebugAddress, Debugger::Condition> conditions;
         bool profiling = false, historyEnabled = false;
         std::vector<Debugger::ProfileEntry> profile;
         std::vector<Debugger::TraceEntry> history;
@@ -85,6 +88,7 @@ private:
     void drawBreakpointList(EmulationController& ctrl, const Snapshot& snap);
     void drawWatchpointList(EmulationController& ctrl, const Snapshot& snap);
     void drawStopBanner(const Snapshot& snap);
+    void drawSource(EmulationController& ctrl, const Snapshot& snap);
     void drawAssembler(EmulationController& ctrl, const Snapshot& snap);
 
     /// Disassembly origin. Follows the PC unless the user has scrolled away.
@@ -99,19 +103,25 @@ private:
     char conditionValue_[8] = {"00"};
     char symbolPath_[1024] = {};
     DebuggerSymbols symbols_;
+    DebuggerSourceMap sourceMap_;
+    char sourceMapPath_[1024] = {};
+    std::string sourceStatus_, sourceRoot_, sourceFile_;
+    std::vector<std::string> sourceLines_;
+    bool sourceLoaded_ = false;
     std::string symbolStatus_;
     char assemblyAddress_[8] = {"0300"};
     char assemblySource_[128] = {"LDA #$00"};
     std::string assemblyStatus_;
     /// Same, for the watchpoint box. Separate storage so typing in one does
     /// not clear the other.
-    char      wpEntry_[8]  = {0};
+    char      wpEntry_[256]  = {0};
     /// Access the next watchpoint is armed with (Debugger::Access bits).
     /// Defaults to Write: it is free while armed, a read watch is not.
     int       wpAccess_    = 2;
     /// The address the user last clicked in the disassembly — the target for
     /// Run To Cursor.
     uint16_t  cursorAddr_  = 0;
+    DebugBank cursorBank_{};
     bool      cursorValid_ = false;
 };
 

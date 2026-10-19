@@ -93,5 +93,5 @@ Run from the repo root (so roms/ probes resolve):
 ROMs:
   The repo ships the full roms/ tree, so a source build boots out of the
   box. To override a dump, replace the file in roms/ (or drop one in the
-  per-user data dir — see README § ROMs and media).
+  per-user data dir — see docs/USER-GUIDE.md, Your disks and saves).
 MSG

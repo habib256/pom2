@@ -1328,8 +1328,16 @@ void testWatchpointResumeKeepsNextBreakpoint()
     assert(ctrl.debugger().lastHit().pc == 0x0802);
 }
 
+#include "debugger_banks_cases.h"
+
 int main()
 {
+    testPhysicalBankRouting();
+    testBankBreakpointsAndWatches();
+    testBankProfileAcrossSwitchingInstruction();
+    testBankSourceMap();
+    testBankRomAndExplicitStep();
+    testWatchBankBeforeExpansionRelease();
     testBreakpointBookkeeping();
     testBreakStopsBeforeTheInstruction();
     testResumeMakesProgress();

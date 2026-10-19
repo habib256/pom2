@@ -69,6 +69,7 @@ namespace pom2 {
 class UthernetIICard final : public SlotPeripheral
 {
 public:
+    bool sessionReplacementReady() const override { return false; }
     /// Only A0/A1 are decoded (`W5100.h:6`).
     static constexpr uint8_t kRegisterMask = 0x03;
     static constexpr uint8_t kRegMode    = 0x04 & kRegisterMask;   // 0

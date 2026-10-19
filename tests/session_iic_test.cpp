@@ -7,6 +7,7 @@
 #include "Mockingboard.h"
 #include "SessionSnapshot.h"
 #include "SessionFiles.h"
+#include "SessionMachine.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
@@ -51,7 +52,7 @@ struct Fixture {
         assert(mem.loadAppleIIRom(rom, true) && mem.isIIcClass());
         for (int slot : {1, 2}) {
             auto card = std::make_unique<SuperSerialCard>(slot);
-            card->setBuiltInPort(true);
+            card->setBuiltInPort(true); card->setCable(SuperSerialCard::Cable::NullModem);
             if (slot == 1) serial = card.get();
             mem.slotBus().plug(slot, std::move(card));
         }
@@ -114,6 +115,18 @@ void roundtrip(pom2::SystemProfile profile) {
         std::fprintf(stderr, "//c restore: %s\n", f->error.c_str()); assert(false);
     }
     assert(f->encoded() == before);
+    // Rebuild a different machine, including the alternate firmware and
+    // motherboard drive topology, after deleting the original image files.
+    auto rebuilt = std::make_unique<EmulationController>(AudioDevice::OutputMode::Offline);
+    assert(pom2::loadSessionFile(*rebuilt, f->session, f->error));
+    {
+        pom2::SessionArchive restored; Blob encoded;
+        auto state = rebuilt->lockState();
+        assert(pom2::captureSession(restored, state.cpu(), state.memory(), rebuilt->machineId(), f->error));
+        assert(pom2::encodeSessionArchive(restored, encoded, f->error));
+        assert(encoded == before);
+    }
+
     uint8_t block[512];
     assert(f->port->unit(0)->readBlock(2, block));
     assert(f->port->deviceSelectRead(3) == block[37]); // partial read continued exactly

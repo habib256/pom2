@@ -21,7 +21,7 @@ an explicit request before scheduling.
 
 <a id="wasm-001"></a>
 
-## WASM-001 — File picker / drop-zone disks
+## WASM-001 — Direct disk-image upload / drop-zone
 
 **Priority:** 🧊 · **State:** Frozen.
 
@@ -29,9 +29,14 @@ an explicit request before scheduling.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2121). Original dates and estimates are retained below.
 
-- 🧊 **File picker / drop-zone disks** — build-time bundling
-  only. HTML5 drop-zone → `FS.writeFile('/uploads/…')` →
-  `DiskIICard::insert`. *~1 d.*
+Direct disk-image upload/drop-zone mounting remains frozen. The browser is
+not restricted to build-time content: `BrowserFiles` and
+`wasm/browser_files.js` already provide text upload and `.pom2session`
+import/export. Sessions can embed disk contents; automatic resume stores
+supported configurations in IndexedDB. These do not provide a generic
+disk-image picker wired to drive insertion. See the
+[session contract](../session-format.md) and [RELEASE-005](release-1.0.md#release-005)
+for the implemented browser persistence checks.
 
 <a id="wasm-002"></a>
 

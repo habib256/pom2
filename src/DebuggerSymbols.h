@@ -3,6 +3,8 @@
 #ifndef POM2_DEBUGGER_SYMBOLS_H
 #define POM2_DEBUGGER_SYMBOLS_H
 
+#include "DebugAddress.h"
+
 #include <charconv>
 #include <cstdint>
 #include <map>
@@ -30,12 +32,27 @@ public:
 
     bool resolve(std::string_view name, uint16_t& out) const {
         const auto it = names_.find(std::string(name));
-        if (it != names_.end()) { out = it->second; return true; }
+        if (it != names_.end()) { out = it->second.addr; return true; }
         return address(name, out);
     }
 
-    std::string label(uint16_t addr) const {
-        const auto it = labels_.find(addr);
+    bool resolveLocation(std::string_view text, DebugAddress& out) const {
+        DebugAddress value;
+        const auto named = names_.find(std::string(text));
+        if (named != names_.end()) { out=named->second; return true; }
+        if (address(text,value.addr)) { out=value; return true; }
+        const auto colon = text.find(':');
+        if (colon != std::string_view::npos) {
+            if (!DebugBank::parse(std::string(text.substr(0,colon)), value.bank)) return false;
+            text.remove_prefix(colon+1);
+        }
+        if (!resolve(text,value.addr)) return false;
+        out=value; return true;
+    }
+
+    std::string label(uint16_t addr, DebugBank bank = {}) const {
+        auto it = labels_.find({addr,bank});
+        if (it == labels_.end()) it = labels_.find({addr,{}});
         return it == labels_.end() ? std::string{} : it->second;
     }
 
@@ -43,12 +60,12 @@ public:
 
     /// AppleWin: "0800 NAME"; VICE/cc65: "al 000800 .NAME";
     /// assembler assignments: "NAME = $0800" or "NAME EQU $0800".
-    /// This is an 8-bit machine: reject banked addresses rather than truncate.
+    /// Optional POM2 bank qualifiers (aux1:$0800); numeric addresses stay 16-bit.
     bool load(std::string_view text, std::string& error) {
         error.clear();
         if (text.size() > 4 * 1024 * 1024) { error = "Symbol file exceeds 4 MiB"; return false; }
-        std::map<std::string, uint16_t> names;
-        std::map<uint16_t, std::string> labels;
+        std::map<std::string, DebugAddress> names;
+        std::map<DebugAddress, std::string> labels;
         std::istringstream input{std::string(text)};
         std::string line;
         std::size_t number = 0;
@@ -71,10 +88,10 @@ public:
                 value = first;
                 name = second;
             }
-            uint16_t addr = 0;
+            DebugAddress addr;
             const bool validName = !name.empty() && name.size() <= 255 &&
                 name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.$@:") == std::string::npos;
-            if (!validName || !address(value, addr) ||
+            if (!validName || !DebuggerSymbols{}.resolveLocation(value, addr) ||
                 (names.count(name) && names.at(name) != addr) || names.size() >= 65536) {
                 error = "Invalid or conflicting symbol at line " + std::to_string(number);
                 return false;
@@ -88,8 +105,8 @@ public:
     }
 
 private:
-    std::map<std::string, uint16_t> names_;
-    std::map<uint16_t, std::string> labels_;
+    std::map<std::string, DebugAddress> names_;
+    std::map<DebugAddress, std::string> labels_;
 };
 
 } // namespace pom2

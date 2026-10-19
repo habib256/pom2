@@ -5,15 +5,20 @@ what this policy is about:
 
 - the **AI control server** (`--ai-control`, or the AI Control panel) — an
   HTTP server on the loopback interface that can read and drive the emulated
-  machine, mount media and write snapshots;
+  machine, mount media, write snapshots/sessions and reconstruct supported
+  machines from session archives;
 - the **network cards** — the Uthernet II's sockets are host sockets, and the
   Uthernet I / FujiNet paths go through libslirp or a host TCP/serial link;
-- **media and snapshot parsing** — disk images, WOZ, 2IMG, snapshots and
-  settings files come from anywhere.
+- **file parsing** — disk images, WOZ, MOOF, 2IMG, snapshots, session archives,
+  settings, symbols and source maps can be supplied by the user. Sessions
+  include supported firmware/media and are validated before replacement.
 
 The rules POM2 already enforces are written down in `CLAUDE.md` (the loopback
 perimeter, the AI server's token and `Host` fence) and `DEV.md`. A report
 that one of them does not hold is exactly what we want to hear about.
+The current session limits and detached-media rules are in
+[session-format.md](docs/session-format.md); source-map file access is
+documented in [debugger-banks.md](docs/debugger-banks.md).
 
 ## Reporting a vulnerability
 

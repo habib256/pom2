@@ -165,7 +165,8 @@ bool ZipChip::validateSnapshotState(const uint8_t* data, std::size_t len) const
 {
     if (!data || len < kSnapBytes) return false;
     byteio::Reader r(data, len);
-    return r.u32() == kSnapMagic && r.u16() == kSnapVersion;
+    return r.u32() == kSnapMagic && r.u16() == kSnapVersion &&
+           data[6] <= 1 && data[7] <= 3 && data[8] <= 1 && data[9] <= 1 && data[12] <= 1;
 }
 
 bool ZipChip::loadSnapshotState(const uint8_t* data, std::size_t len)

@@ -36,8 +36,8 @@
 //                   written ONLY when captureMachineState(includeSlots=true).
 //
 // `includeSlots` is the dividing line: the rewind ring buffer passes true so
-// a rewind during disk I/O restores the drive head (the media itself is never
-// captured — it doesn't change within a rewind window). The AI-control
+// a rewind during disk I/O restores the drive head and writable non-WOZ
+// Disk II nibble buffers; irreversible writes invalidate the ring. The AI-control
 // `/snapshot` path passes false, keeping its documented "disk/slot state
 // deliberately excluded" (CLAUDE.md) file contract — an archival snapshot
 // can outlive a media swap, where a stale head position would mismatch.

@@ -767,6 +767,7 @@ bool CassetteDevice::loadPlaybackDurations(std::vector<uint32_t> durations,
     // tape fully playable.
     closeAudioStream();
     stopPulseAudio();
+    detachedSession_ = false;
     loadedDurations    = std::move(durations);
     loadedInitialLevel = initialLevel;
     loadedTapePath     = path;

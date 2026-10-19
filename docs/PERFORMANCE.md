@@ -5,6 +5,10 @@ its before/after measurements and the reasoning behind each change. It serves
 two purposes: give the **recipe to redo the profile**, and stop anyone from
 "re-optimising" by guesswork code that has already been dealt with — or from
 undoing an optimisation without knowing what it paid for.
+Timings, host throughput and suite counts below belong to their recorded
+campaigns. They are not measurements of every subsequent checkout. Use the
+documented `pom2_bench` commands and identity checks to measure a new change;
+current functional contracts live in [DEV.md](../DEV.md).
 
 Method and structure follow the same campaign done on **NeoST** (`../neost/docs/PERFORMANCE.md`),
 POM2's sibling Atari ST emulator: same deterministic-headless-subject
@@ -23,33 +27,46 @@ after, on every workload measured here.
 
 ## 1. The measurement subject: `pom2_bench`
 
-`pom2_headless` cannot be profiled: it starts the worker thread, paces to
-wall-clock, opens an audio device and waits for a human. `pom2_bench`
-(`src/pom2_bench.cpp`) is the opposite — a closed run with no threads, no
-audio device, no sockets, no pacing:
+Use `pom2_bench` for reproducible core profiling. `pom2_headless` also has a
+finite `--frames`/`--screenshot` capture mode that runs without its CPU worker,
+TCP listener or wall-clock pacing; its interactive mode starts the worker and
+listens for input. `pom2_bench` (`src/pom2_bench.cpp`) isolates the CPU/bus/video
+workload without an audio device, network setup or controller worker:
 
-    one invocation → exactly N frames of `cyclesPerFrame` cycles
+    one invocation → N frames, each executing at least its requested cycle budget
 
-so two runs retire the **same instruction count**. That is what makes
-before/after comparisons trustworthy to the percent, far more than wall time.
-It prints an FNV-1a hash of RAM and of the framebuffer: an optimisation that
-moves either one is not an optimisation, it is a bug.
+The CPU runs in chunks of at most 4096 requested cycles and finishes the
+current instruction, so executed cycles can exceed the frame budget. Compare
+the reported `cycles`, not `frames × cyclesPerFrame`. With identical inputs,
+cycle totals and guest state are reproducible; wall time varies with the host.
+The output always includes an FNV-1a hash of **main RAM `$0000–$BFFF`**; it
+does not hash auxiliary RAM, Language Card RAM or all device state. The final
+framebuffer hash is shown for integer rendering pipelines. OE-CPU and AppleWin
+use host floating point and print `fb=<fp-dependent>` unless `--hash-frame`
+forces a hash. Treat these hashes as workload checks, not a complete machine
+state comparison.
 
 Since 2026-09-17 the RAM half of that rule is a ctest, `bench_identity`
 (`tools/check_bench_identity.sh`, golden in `tests/bench_golden.txt`): four
-workloads, cycle count and RAM hash. The framebuffer hash stays a manual
-check — it goes through host floating point. A change that is meant to move
+workloads, cycle count and main-RAM hash. The framebuffer hash stays outside
+that gate; floating-point pipelines require comparisons on a matching host/toolchain. A change that is meant to move
 emulation regenerates the golden with `--update` and says so in its commit.
 
 ```sh
-# Representative workloads (from the repo root — ROM/disk probes are relative)
-./build/pom2_bench --frames 3000 --quiet                       # ROM banner: CPU + bus + text
-./build/pom2_bench --disk disks_5.4/dsk/<image>.dsk --frames 900 --quiet   # Disk II LSS
-./build/pom2_bench --disk … --mode oecpu --frames 400 --quiet   # OE composite CPU demod
-./build/pom2_bench --rom roms/apple2e.rom --iie --frames 3000 --quiet      # //e paging
+# Run from the repository root; protect the bundled benchmark media.
+export POM2_MEDIA_WRITE_DEFAULT=protected
+cmake --build build --target pom2_bench --parallel 3
+./build/pom2_bench --frames 3000 --quiet
+./build/pom2_bench --disk packaging/disks/MICRO-SOKOBAN.dsk --frames 900 --quiet
+./build/pom2_bench --disk packaging/disks/MICRO-SOKOBAN.dsk --mode oecpu --frames 400 --quiet
+./build/pom2_bench --rom roms/apple2e.rom --iie --frames 3000 --quiet
 ```
 
-⚠ `--hash-all` hashes every frame instead of the last. It is for identity
+These are runnable sample workloads using a curated disk, not a recreation
+of every historical measurement below. Substitute the same disk and firmware
+used in a recorded campaign when comparing its figures.
+
+⚠ `--hash-all` accumulates a hash over every rendered frame instead of the last. It is for identity
 checks only: hashing 560×192×4 bytes per frame costs **more than the emulation
 does** (it was 17 % of the very first profile taken here). Never combine it
 with callgrind or with PGO training.
@@ -59,13 +76,13 @@ with callgrind or with PGO training.
 ```sh
 # Profiling binary: release optimisations, minus LTO (so functions keep their
 # identity in the profile), plus symbols.
-cmake -B build-prof -DCMAKE_BUILD_TYPE=Release -DPOM2_ENABLE_TESTS=OFF \
+cmake -S . -B build-prof -DCMAKE_BUILD_TYPE=Release -DPOM2_ENABLE_TESTS=OFF \
       -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
       -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer"
-cmake --build build-prof -j --target pom2_bench
+cmake --build build-prof --parallel 3 --target pom2_bench
 
-valgrind --tool=callgrind --callgrind-out-file=boot.out \
-    ./build-prof/pom2_bench --disk disks_5.4/dsk/<image>.dsk --frames 1200 --quiet
+POM2_MEDIA_WRITE_DEFAULT=protected valgrind --tool=callgrind --callgrind-out-file=boot.out \
+    ./build-prof/pom2_bench --disk packaging/disks/MICRO-SOKOBAN.dsk --frames 1200 --quiet
 
 callgrind_annotate --threshold=80 boot.out                      # by function
 callgrind_annotate --auto=yes --include=$PWD/src boot.out       # by LINE (most useful)

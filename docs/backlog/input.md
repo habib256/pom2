@@ -16,7 +16,6 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [INPUT-001](#input-001) | 🟡 | To verify | Host Shift is not wired to `$C063`, and the dead code that would wire it has the polarity backwards |
-| [INPUT-002](#input-002) | 🟡 | To verify | PADL(2)/PADL(3) host binding |
 | [INPUT-003](#input-003) | 🟡 | To verify | Mouse → paddles mapping |
 
 <a id="input-001"></a>
@@ -44,18 +43,16 @@ an explicit request before scheduling.
 
 ## INPUT-002 — PADL(2)/PADL(3) host binding
 
-**Priority:** 🟡 · **State:** To verify.
+**State:** Implemented; removed from the active task index on 2026-10-19.
 
-**Acceptance criterion (after revalidation):** Bind and read both second-paddle axes through PADL(2)/PADL(3), including calibration and persistence.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2057). Original dates and estimates are retained below.
-
-- 🟡 **PADL(2)/PADL(3) host binding** — no host axes are bound to the second
-  stick; `JoystickInput.cpp:60-75` is the NaN-guarded `[-1,+1] → [0,255]`
-  mapper it would feed.
-  *Revalidated 2026-10-06:* still true — `JoystickInput::paddleValue`
-  returns 128 for paddles 2/3 ("2/3 are not wired", `src/JoystickInput.cpp:290-302`);
-  the mapper is `axisToPaddle01` at `:58-73`.
+`JoystickInput::update` maps standard gamepads' right-stick X/Y to paddles
+2/3. `paddleValue` handles both axis pairs with their corresponding inversion
+settings and shared deadzone/square-gate policy; `MainWindow_Input` forwards
+all four axes to memory. Unmapped devices use only their first two raw axes
+and keep 2/3 centered, because extra raw axes may be triggers.
+`joystick_square_gate` covers independent sticks, right-axis inversion,
+deadzone and disconnect fallback. The historical unbound-axis report is
+superseded; see [CHANGELOG](../../CHANGELOG.md).
 
 <a id="input-003"></a>
 

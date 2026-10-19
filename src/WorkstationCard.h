@@ -172,6 +172,7 @@ namespace pom2 {
 class WorkstationCard : public SlotPeripheral
 {
 public:
+    bool sessionReplacementReady() const override { return false; }
     /// The card's crystal, derived rather than assumed: the firmware ends up
     /// with WR12/WR13 = 6 and WR4's x1 clock, and 3686400 / (6 + 2) / 2 is
     /// exactly 230400 — the LocalTalk bit rate.

@@ -16,18 +16,18 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [UI-002](#ui-002) | 🟡 | Partial: native chooser added | Native picker integration and platform verification |
-| [UI-003](#ui-003) | 🟡 | To verify | Bug hunt #16's debugger residue |
+| [UI-003](#ui-003) | 🟡 | Partial: debugger and CPU validation corrected | HTTP screen-method and status-inventory review |
 | [UI-004](#ui-004) | 🟢 | To verify | Deeper guided tutorials |
 | [UI-006](#ui-006) | 🟢 | To verify | Airier default layout |
-| [UI-007](#ui-007) | 🟢 | To verify — premise false on 2026-10-06 | `isDuplicate` flags cffa/smartport35 duplicates |
+| [UI-007](#ui-007) | 🟢 | Code policy shared; interactive confirmation remains | Duplicate-card validation in Slot Configuration |
 | [UI-005](#ui-005) | 🧊 | Frozen | MicroM8-style 3D voxel view ("Voxel Cube") |
 | [UI-008](#ui-008) | 🧊 | Frozen | On-screen touchscreen / virtual joystick |
 | [UI-009](#ui-009) | 🟢 | Ready for design | Disk Library miniatures |
-| [UI-010](#ui-010) | 🟢 | Ready for design | OS file associations for disk images |
+| [UI-010](#ui-010) | 🟢 | Partial: macOS/Linux declarations and open handling exist | OS file associations for disk images |
 
 <a id="ui-002"></a>
 
-## UI-002 — No native file picker.
+## UI-002 — Remaining native file picker integration and platform checks
 
 **Priority:** 🟡 · **State:** Partial, 2026-10-17.
 
@@ -38,6 +38,8 @@ an explicit request before scheduling.
 `NativeFileDialog` provides AppKit, Win32 and external zenity/kdialog
 backends, with ImGui fallback when unavailable. Integrated into drive
 insertion, HGR/DHGR paint/sprite open/save and debugger-symbol selection.
+Desktop session open/save also uses the native chooser, with overwrite
+confirmation and a manual-path fallback when the backend is unavailable.
 Cancellation is distinguished from backend unavailability.
 
 Remaining: extend other standalone file/export panels and obtain interactive
@@ -52,7 +54,7 @@ and the expanded `debugger` regression suite.
 
 **Priority:** 🟡 · **State:** To verify.
 
-**Acceptance criterion (after revalidation):** Exercise endpoint method/range validation, flat-bus watches and step-over cleanup with explicit expected responses.
+**Acceptance criterion (after revalidation):** Define and verify the screenshot endpoint's method contract and the intended media-status inventory; retain existing CPU-validation and debugger regressions.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1978). Original dates and estimates are retained below.
 
@@ -62,6 +64,23 @@ and the expanded `debugger` regression suite.
   `flatBus_` while read watches are not; a watchpoint hit during a Step
   reports `pc=$0000`; a step-over transient survives an unrelated stop
   (MAME drops temporaries); `/status`'s `disks` is Disk-II-only. *2 h.*
+
+**Reconciliation 2026-10-19:** The paragraph above is a historical report,
+not a current defect list. `Debugger` now records the actual instruction PC
+on an explicit step, drops transients on unrelated stops, and applies flat-bus
+write/high-address read watches. Bank-qualified stops/profiling and `.p2map`
+source correspondence are also implemented; see the
+[debugger guide](../debugger-banks.md).
+
+**HTTP source check 2026-10-20:** `handleCpuSet` validates every supplied
+register before changing state: `pc` is 0–65535, the other five registers
+0–255, and malformed/out-of-range values receive 400. The old masking claim
+is superseded. `handleScreen` still does not check the method; deciding and
+verifying its method contract remains. `/status.disks` describes the attached
+Disk II controller, while `block_storage` and `floppy_storage` separately
+report persistence state. It is inaccurate to call all of `/status`
+Disk-II-only; a complete mounted-media inventory remains a separate scope
+choice. No new endpoint execution is claimed by this source reconciliation.
 
 <a id="ui-004"></a>
 
@@ -86,29 +105,29 @@ and the expanded `debugger` regression suite.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2101). Original dates and estimates are retained below.
 
-- 🟢 **Airier default layout** — ImGui Docking or
-  `SetNextWindowPos` adaptive cascade.
+ImGui docking and Emulation, Debug, Audio and Reset layout presets are
+implemented by `MainWindow::applyDockLayout`. The remaining proposal is to
+review their default spacing and behavior at supported window sizes while
+preserving saved layouts. It is not a request to introduce docking.
 
 <a id="ui-007"></a>
 
-## UI-007 — `isDuplicate` flags cffa/smartport35 duplicates
+## UI-007 — Duplicate-card validation in Slot Configuration
 
-**Priority:** 🟢 · **State:** To verify — premise false on 2026-10-06.
+**Priority:** 🟢 · **State:** Shared code policy implemented; interactive confirmation remains.
 
-**Revalidation 2026-10-06 (code reading):** `isDuplicate` in
-`src/MainWindow_Slots.cpp:216-228` returns false for any key
-`SlotConfigurationCoordinator::isMultiInstance` accepts, and that predicate
-lists `diskii`, `cffa`, `smartport35` and `liron`
-(`src/SlotConfigurationCoordinator.cpp:119-125`, since `70cc8e9`, 2026-08-26),
-so two CFFA or two `smartport35` cards are no longer flagged. Confirm in the
-Slot Config window, then remove this entry.
+`isDuplicate` in `MainWindow_Slots.cpp` returns false for keys accepted by
+`SlotConfigurationCoordinator::isMultiInstance`. The current predicate permits
+Disk II, CFFA 2.0/3000, SmartPort, SuperDrive, Liron, Mockingboard A/C and
+Sound II, Phasor and SSI263 Echo cards. Multiple CFFA or SmartPort cards are
+therefore allowed by the UI's code path, contrary to the original report.
+Confirm the displayed validation in Slot Configuration before closing the
+remaining interactive check; do not schedule a second duplicate-policy fix.
 
 **Acceptance criterion (after revalidation):** Verify duplicate detection against each card's actual multiple-instance policy; archive claims contradicted by current support.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2103). Original dates and estimates are retained below.
 
-- 🟢 **`isDuplicate` flags cffa/smartport35 duplicates** in the Slot
-  Config assignment column — cosmetic.
 
 <a id="ui-005"></a>
 
@@ -169,9 +188,19 @@ blocking the library's scan. Missing art must leave a readable text row.
 
 ## UI-010 — OS file associations for disk images
 
-**Priority:** 🟢 · **State:** Ready for design (after the shared catalogue/search view).
+**Priority:** 🟢 · **State:** Partial implementation; registration coverage and platform validation remain.
 
 **Acceptance criterion:** Register supported image extensions in each desktop
 package, open a disk from the host file manager into the correct drive, and
 verify behavior on macOS, Windows and Linux without overriding another app's
 default association.
+
+**Code reconciliation 2026-10-19:** `packaging/macos/Info.plist.in` declares
+`.dsk`, `.do`, `.po`, `.nib`, `.woz`, `.d13`, `.2mg` and `.hdv`.
+`HostOpenFiles_mac.mm` receives Finder/Dock open events and `main.cpp` drains
+the queue into the normal file-drop path. Linux installs `POM2.desktop`
+(`Exec=POM2 %f`) and `pom2-disk.xml`; `.po` has a lower MIME weight to avoid
+winning against gettext files. Linux/Windows positional disk arguments are
+handled by the CLI. This is implemented plumbing, not proof of an installed
+package's association behavior. Remaining: Windows registration, extension
+coverage (including `.moof`) and clean-host open/default-association checks.

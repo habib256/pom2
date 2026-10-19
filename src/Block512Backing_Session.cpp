@@ -9,8 +9,8 @@
 namespace pom2 {
 bool Block512Backing::appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const
 {
-    if (!sessionCaptureReady() || synth_) {
-        error = "block sessions require idle file media (host folders are unsupported)"; return false;
+    if (!sessionCaptureReady()) {
+        error = "block sessions require media without pending host writes"; return false;
     }
     std::vector<uint8_t> bytes{'B','M','S',1,
         uint8_t((wpHeader_ ? 1 : 0) | (hostReadOnly_ ? 2 : 0) | (writeBack_ ? 4 : 0)), uint8_t(loaded_)};

@@ -1,0 +1,95 @@
+# Bank-aware debugger
+
+Open **View → Debugger**. Addresses without a bank qualifier, such as `$0800`
+or a legacy label, match every bank. To stop only in one physical bank, enter
+`aux1:$0800` in the breakpoint or watch field. Hexadecimal addresses remain
+16-bit; bank indices are decimal. Register conditions work with either form.
+Clicking the disassembly gutter creates a breakpoint for the bank currently
+shown. Run To Cursor retains the bank selected with the instruction.
+
+| Qualifier | Physical memory |
+|---|---|
+| `*` | Any bank; default for unqualified addresses |
+| `main` | Main RAM below `$C000` |
+| `aux0` … `aux127` | Auxiliary/RamWorks RAM, including ALTZP zero page/stack |
+| `lc1`, `lc2` | Main Language Card banks at `$D000–$DFFF` |
+| `lc0` | Shared main Language Card RAM at `$E000–$FFFF` |
+| `aux0lc1`, `aux0lc2`, `aux0lc0` | Auxiliary Language Card; replace `0` after `aux` with the RamWorks index |
+| `rom0`, `rom1` | Motherboard firmware; bank 1 exists on //c models with alternate firmware |
+| `slot1` … `slot7` | Card slot/expansion window, or its active TransWarp firmware shadow |
+| `io` | Soft switches, MIG windows and unclaimed expansion bus |
+| `flat` | Flat test/foreign CPU bus |
+| `ignored` | `$D000–$FFFF` write with Language Card writes disabled |
+
+Only installed banks are reachable. Selecting `lc1` or `lc2` does not split
+`$E000–$FFFF`: those bytes belong to the shared `lc0` bank. `80STORE`, PAGE2,
+HIRES, RAMRD/RAMWRT and ALTZP all participate in address resolution.
+
+A read watch matches the read bank; a write watch matches the write bank.
+For example, with RAMRD off and RAMWRT on, `main:$0800` observes reads and
+`aux0:$0800` observes writes. The stop banner reports the code bank and the
+access bank separately. As before, a watch stops after the instruction's
+access has taken place, and opcode fetches count as reads. Explicit stepping
+also records the instruction's actual PC and code bank.
+
+The profiler keeps distinct visits/cycles for each bank and PC. History
+records the code bank before execution and registers after execution. An
+instruction that changes ROMBANK or RamWorks selection stays attributed to
+its original code bank. Reset, session load and rewind clear measurements
+and pending stops while preserving user breakpoints and watches. With all
+instrumentation disabled, the ordinary CPU and production memory fast paths
+remain unchanged.
+
+## Bank-qualified symbols
+
+Existing AppleWin, VICE/cc65 label files and assignments remain supported.
+POM2 assignments can additionally specify the bank:
+
+```text
+main_entry = main:$0800
+aux_entry = aux1:$0800
+shared_entry = $0900
+```
+
+Use `aux_entry` directly in a breakpoint/watch field. Bank-specific labels
+appear only in their bank; unqualified labels provide a fallback. Prefixing
+a label explicitly, such as `aux2:shared_entry`, overrides its bank.
+
+## Source correspondence
+
+The **Source** section loads a POM2 `.p2map` text file. Each nonempty row is an
+inclusive hexadecimal address range, a source path and a decimal line number
+starting at 1. A single address is also accepted. Lines beginning with `#`
+are comments. Use quoted paths for spaces and forward slashes in paths.
+
+```text
+# address range          source path           line
+main:$0800-$0801         "src/main.s"           12
+main:$0802-$0804         "src/main.s"           13
+aux1:$0800-$0802         "src/banked worker.s"  42
+*:$0900-$0905            "src/common.s"         8
+```
+
+Paths are relative to the map's directory, or absolute. The source panel
+follows the PC, or the selected disassembly instruction when PC following is
+disabled. It displays nearby source lines and can install a breakpoint at
+the mapped range's start. **Reload source** refreshes an edited source file.
+An exact-bank range takes precedence over a wildcard range. Ranges must not
+overlap within the same bank. Maps and individual source files are limited
+to 4 MiB; maps contain at most 65536 ranges, source paths at most 4096 bytes,
+and line numbers range from 1 to 1000000. Bank qualifiers are case-sensitive
+and numeric bank indices do not accept leading zeroes. A failed import keeps the last
+valid map. File reads happen outside the emulator state lock.
+
+This format is a correspondence table for assembler/linker tooling to emit;
+cc65 `.lbl` files provide symbols only. Native cc65 `.dbg` import, variable
+inspection, stack locals and expression evaluation are not implemented.
+The disassembly always shows the live CPU mapping. Private RAM/ROM banks
+inside individual cards and secondary shadow writes are not distinguished;
+their bus window is identified by slot. Z80 instructions and other card CPU
+execution remain outside the 6502 debugger's profiling/breakpoint hooks.
+
+Implementation: `DebugAddress.h`, `MemoryCpuView.cpp`, `Debugger.*`,
+`DebuggerSymbols.h`, `DebuggerSourceMap.h` and `Debugger_ImGui.*`.
+Regression cases run in the `debugger` test, with the memory-routing matrix
+in `memory_cpu_view`, `bus_fastpath` and `ramworks_smoke`.

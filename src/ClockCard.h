@@ -189,6 +189,7 @@ public:
     /// slot-ROM-only dump `tryLoadDump` also accepts, `expansionRomRead`
     /// answers $FF for the whole window — latching it then starved whichever
     /// card really serves $C800 (bug hunt #9; same rule as the Grappler+).
+    bool installSessionIdentity(const std::vector<uint8_t>& bytes);
     bool takesC800() const override { return expansionRomLoaded_; }
 
     /// Was the slot ROM sourced from a real Thunderware U9 dump (vs the

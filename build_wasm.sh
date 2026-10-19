@@ -8,10 +8,10 @@
 #   POM2.data         — preloaded asset bundle. Its CONTENTS are decided by
 #                       packaging/bundle.manifest, parsed by CMakeLists.txt
 #                       (`dir` + `file` + `wasm` entries), not by this script:
-#                       today roms/ + fonts/ + the two pic/ photos + floppyemu/
-#   POM2.worker.js    — pthread worker (when USE_PTHREADS=1)
+#                       ROMs, fonts, named artwork, curated disks + floppyemu/
+#   The current build is single-threaded; no pthread worker is emitted.
 #   serve.py          — local dev server that sets COOP+COEP headers
-#                       (required for SharedArrayBuffer / pthreads)
+#                       (optional for the current single-threaded build)
 #
 # Prerequisites:
 #   - Emscripten SDK on PATH (`emcc -v` must succeed).
@@ -127,8 +127,8 @@ if [ -f "$WASM_DIR/POM2.html" ]; then
     mv -f "$WASM_DIR/POM2.html" "$WASM_DIR/index.html"
 fi
 
-# Local dev server with COOP + COEP — required for SharedArrayBuffer /
-# pthreads. python3's built-in http.server doesn't ship those headers,
+# Local dev server with COOP + COEP. These are not required by the current
+# single-threaded build. python3's http.server doesn't ship those headers,
 # so we provide a tiny wrapper.
 cat > "$WASM_DIR/serve.py" <<'PY'
 #!/usr/bin/env python3

@@ -4,6 +4,9 @@ Reference: [MAME revision a2b6ba2d4be70dabf7ff7a642749dda0c6e70498](https://gith
 The comparison used source downloaded at this revision, rather than moving
 master or search-engine line numbers. This is a source-level differential
 check, not an end-to-end recording comparison with a running MAME binary.
+The results and counts below are dated evidence. For the current audio/card
+contract and later speech work, see [DEV](../DEV.md#mockingboard),
+[the audio backlog](backlog/audio.md) and [the parity dashboard](audits/emulation-parity.md).
 
 ## Confirmed defects corrected
 

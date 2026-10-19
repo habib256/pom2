@@ -105,6 +105,7 @@ namespace pom2 {
 class FujiNetCard : public SlotPeripheral
 {
 public:
+    bool sessionReplacementReady() const override { return false; }
     /// Slot 7 by default: the //e autostart scans it BEFORE the Disk II in
     /// slot 6, so a machine with a FujiNet attached boots straight into its
     /// CONFIG program — the arrangement fujinet-go-apple2-desktop ships.

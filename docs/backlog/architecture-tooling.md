@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [ARCH-004](#arch-004) | 🟠 | To verify | Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed |
-| [ARCH-009](#arch-009) | 🟠 | To verify | No test drives the ImGui panels, so a UI-thread deadlock fails nothing |
+| [ARCH-009](#arch-009) | 🟠 | Partial: Ethernet concurrency and selected UI interactions covered | Remaining ImGui panel concurrency coverage |
 | [ARCH-003](#arch-003) | 🟡 | To verify | ThreadSanitizer: the GUI half is still open. |
 | [ARCH-005](#arch-005) | 🟡 | To verify | Bug hunt #16's tooling residue |
 | [ARCH-006](#arch-006) | 🟡 | To verify | Bug hunt #15's host residue |
@@ -54,8 +54,13 @@ the debt has grown, not shrunk — `Apple2Display.cpp` 2536, `DiskImage.cpp`
 3293, `ImageWriter.cpp` 2809, `M6502.cpp` 2359, `Memory.cpp` 2766,
 `hgrpaint/HgrPaintEditor.cpp` 2656; neither named seam has been cut.
 `Memory.cpp` is **over** its recorded ceiling of 2751 (+15, from `95cf8bd`),
-so `tools/check_file_sizes.sh` fails on HEAD and so did the 2026-10-06 push
-CI's Linux job.
+so `tools/check_file_sizes.sh` failed on that revision, as did the
+2026-10-06 push CI's Linux job.
+
+**Documentation recheck 2026-10-20:** the current file-size guard passes;
+the historical ceiling violation is not a current failure. Responsibility
+splits remain a separate review task; passing a size ceiling does not prove
+that the older architectural debt has been resolved.
 
 **Additional original evidence:**
 
@@ -86,7 +91,7 @@ CI's Linux job.
 
 <a id="arch-009"></a>
 
-## ARCH-009 — No test drives the ImGui panels, so a UI-thread deadlock fails nothing
+## ARCH-009 — Remaining ImGui panel concurrency coverage
 
 **Priority:** 🟠 · **State:** Ethernet panel seam verified in CI; other routes remain.
 
@@ -94,18 +99,11 @@ CI's Linux job.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2228). Original dates and estimates are retained below.
 
-- 🟠 **No test drives the ImGui panels, so a UI-thread deadlock fails nothing**
-  *(found the hard way 2026-08-27; gated on
-  [G5-10](release-1.0.md#g5))* — a coordinator capture placed inside an
-  existing `lock_guard(stateMutex())` scope would have hung the UI thread and
-  the emulator together, while the full suite stayed green, because nothing
-  drives the panels. `stateMutex` is non-recursive and every coordinator
-  capture takes it itself.
-  **Mitigation in the tree**: `tools/check_coordinator_locks.sh`, run after
-  touching any coordinator call site — falsifiable against `44b715f`.
-  **Still open**: `tests/frontend_device_panel_concurrency`, a headless ImGui
-  frame driven while cards are replugged. That is the only thing that closes
-  the class rather than scanning for it. *1 d.*
+The historical recursive-lock report motivated
+`tools/check_coordinator_locks.sh` and the runtime coverage below.
+`stateMutex` remains non-recursive: coordinator captures must not be nested
+inside an existing machine lock. The concurrency harness is implemented;
+extending it to other direct panel routes is the remaining work.
 
 **Implementation 2026-10-17:**
 `tests/frontend_device_panel_concurrency_test.cpp` now renders real
@@ -119,6 +117,12 @@ routes and other card panels remain outside this harness.
 [Linux run 39063373838](https://github.com/habib256/pom2/actions/runs/39063373838).
 Other direct `MainWindow` panels remain outside the harness and should be
 considered separately from the release Ethernet gate.
+
+**Current interaction coverage 2026-10-19:** `session_file_picker` drives
+ImGui session save/load, cancellation, overwrite and error paths;
+`drive_rack_interaction` drives media-panel interactions. These complement
+the Ethernet concurrency harness, rather than proving all panels race-free.
+The blanket claim that no test drives ImGui is obsolete.
 
 <a id="arch-003"></a>
 

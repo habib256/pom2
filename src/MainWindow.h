@@ -73,7 +73,7 @@ namespace pom2 { class DevicePanelCoordinator; }
 namespace pom2 { class StorageCoordinator; }
 namespace pom2 { class SlotCardFactory; }
 namespace pom2 { class SlotRebuildCoordinator; }
-namespace pom2 { class SlotConfigurationCoordinator; }
+namespace pom2 { class SlotConfigurationCoordinator; struct SessionArchive; }
 namespace pom2 { class SlotProvisioningCoordinator; }
 namespace pom2 { class DebugCoordinator; }
 namespace pom2 { class NetworkCoordinator; }
@@ -1399,6 +1399,9 @@ private:
     void driveRewindHold(bool held);
     void renderTapeFileDialogs();
     void renderPasteFileDialog();
+    bool sessionMachineActive_ = false;
+    void initializeSessionLoader();
+    bool reconstructSessionMachine(const pom2::SessionArchive& session, std::string& error);
     void renderSessionFileDialog();
     void renderBrowserSessionMenu();
     pom2::BrowserSessionStore browserSession_;

@@ -15,11 +15,10 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [AUDIO-011](#audio-011) | 🟠 | To verify | Bug hunt #16's speech residue |
+| [AUDIO-011](#audio-011) | 🟠 | Partly resolved; analog/inflection limits remain | Bug hunt #16's speech residue |
 | [AUDIO-003](#audio-003) | 🟡 | Partial: nominal single-tone balance calibrated | Compare Mockingboard output level with MAME |
 | [AUDIO-005](#audio-005) | 🟢 | To verify | Analog output stage. |
 | [AUDIO-006](#audio-006) | 🟢 | To verify | Mutex contention. |
-| [AUDIO-007](#audio-007) | 🟢 | To verify | Mute drops the queue. |
 | [AUDIO-010](#audio-010) | 🟢 | To verify | AY Port A read mask by DDR |
 | [AUDIO-004](#audio-004) | 🧊 | Frozen | ayumi-grade resampling |
 | [AUDIO-008](#audio-008) | 🧊 | Frozen | 8-bit DAC (Marczewski) |
@@ -32,8 +31,9 @@ an explicit request before scheduling.
 **Priority:** 🟠 · **State:** Partly resolved (2026-10-17); remaining features below.
 
 **Acceptance criterion:** Verify the remaining SSI waveform/reset and
-Phasor speech behavior against a stated oracle; do not schedule the frozen
-TMS card rewrite implicitly.
+Phasor speech behavior against a stated oracle. Echo+ TMS5220C synthesis is
+implemented; its independent board/pin-timing validation remains separate
+from the SSI263 work.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1952),
 [DEV SSI263](../../DEV.md#ssi263--echo-street-electronics), CHANGELOG 2026-10-17.
@@ -154,17 +154,19 @@ hardware check before changing bass response or speech balance.
 
 <a id="audio-007"></a>
 
-## AUDIO-007 — Mute drops the queue.
+## AUDIO-007 — Mute playback continuity (resolved)
 
-**Priority:** 🟢 · **State:** To verify.
+**State:** Implemented; removed from the active index on 2026-10-20.
 
 **Acceptance criterion (after revalidation):** Verify muted register updates survive unmute and volume changes remain ramped; archive the report if already covered.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1453). Original dates and estimates are retained below.
 
-- 🟢 **Mute drops the queue.** The `isMuted` early-out returns after
-  `pending` has been drained, so writes are lost while muted and `vol`
-  changes are applied as a hard step at buffer boundaries (click).
+Mockingboard and Phasor rendering keep their generators, stamped events and
+speech cursors advancing while output gain fades to zero. Mute changes gain,
+not playback state. The smoke suites verify the 5 ms fade; `phasor_timeline`
+also compares muted/unmuted playback against an independently running audible
+card. The historical early-out/lost-queue description is superseded.
 
 <a id="audio-010"></a>
 
@@ -177,6 +179,11 @@ hardware check before changing bass response or speech balance.
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1461). Original dates and estimates are retained below.
 
 - 🟢 **AY Port A read mask by DDR** (R14/R15) — academic.
+
+Current AY register reads apply register-width masks. Generic port-direction
+behavior for R14/R15 remains a separate limitation: these ports are not wired
+by POM2's Mockingboard/Phasor model. Do not confuse it with the VIA Port A DDR
+masking already covered by the bus tests.
 
 <a id="audio-004"></a>
 
@@ -210,6 +217,8 @@ hardware check before changing bass response or speech balance.
 
 - 🧊 **8-bit DAC (Marczewski)** — 8-bit slot latch → R-2R DAC. Niche
   demos (Music Studio, trackers). AppleWin refs `Card::CT_DX1`. *1 d.*
+  This is a different board from the implemented S.A.M. DAC (`sam`); it does
+  not mean POM2 lacks all 8-bit DAC support.
 
 <a id="audio-009"></a>
 

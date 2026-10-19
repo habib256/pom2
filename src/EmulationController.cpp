@@ -135,7 +135,9 @@ void EmulationController::applyAcceleratorClock(double mul)
             card->setCpuClock(hz);
 }
 
-EmulationController::EmulationController()
+EmulationController::EmulationController() : EmulationController(AudioDevice::OutputMode::Host) {}
+
+EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     : processor(&mem), writeBackQueue_(*this)
 {
     cyclesPerFrame.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
@@ -145,7 +147,7 @@ EmulationController::EmulationController()
     // cassette starts streaming. miniaudio sometimes negotiates 48 kHz on
     // Apple Silicon even when 44.1 kHz is requested; using a stale rate
     // would drift the cassette pulse playback by the rate ratio.
-    audioDev = std::make_unique<AudioDevice>();
+    audioDev = std::make_unique<AudioDevice>(audioMode);
     tape     = std::make_unique<CassetteDevice>();
     tape->setAudioOutputSampleRate(audioDev->getActualSampleRate());
     tape->setAudioAvailable(audioDev->isAvailable());
@@ -239,6 +241,7 @@ EmulationController::EmulationController()
     // bitmaps are lazy) and leaves `M6502::run` on the loop it has always
     // used, so a session that does not debug pays nothing for it.
     debugger_ = std::make_unique<pom2::Debugger>();
+    debugger_->setMemory(&mem);
     // Where Memory reports a watched write. The sink is permanent; what
     // switches watchpoints on and off is Memory's own (lazily allocated)
     // diversion table, rebuilt by syncDebugHook().
@@ -1571,11 +1574,11 @@ void EmulationController::debugStepOut()
     setMode(Mode::Running);
 }
 
-void EmulationController::debugRunToCursor(uint16_t addr)
+void EmulationController::debugRunToCursor(uint16_t addr, pom2::DebugBank bank)
 {
     {
         std::lock_guard<std::mutex> lk(stateMtx);
-        debugger_->setTransient(addr, pom2::Debugger::Reason::RunToCursor);
+        debugger_->setTransient(addr, pom2::Debugger::Reason::RunToCursor, bank);
         debugResume();
         syncDebugHook();
     }
@@ -1591,21 +1594,16 @@ void EmulationController::debugRunToCursor(uint16_t addr)
 // the per-instruction loop exits as soon as spent >= 1.
 void EmulationController::stepBusMaster()
 {
-    // KNOWN LIMIT (bug hunt #4): neither branch goes through
-    // `M6502DebugHook::onInstruction`, so `Debugger::curPc_` — the shadow
-    // `noteAccess` uses to name the instruction responsible for a watched
-    // access — is NOT updated while single-stepping. A watchpoint that fires
-    // during a Step therefore reports the pc of the last instruction the
-    // debugged RUN loop saw, which may be stale or 0. The stop itself is
-    // correct (the machine halts, the address and value are right); only the
-    // attributed pc is. Stepping is deliberately kept off the hook: routing it
-    // through `processor.run(1)` would change how a single step's cycles reach
-    // `memory->advanceCycles`, which is the interrupt-entry phase that
-    // mockingboard_t1_irq_phase / via_t1_rearm_chain pin.
-    if (SlotPeripheral* dma = mem.slotBus().dmaClaimant())
+    if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
         dma->dmaRun(1);
-    else
-        processor.step();   // step() runs mem.advanceCycles internally
+    } else {
+        // Keep step()'s cycle/IRQ timing; only instrument its boundaries.
+        const uint16_t pc = processor.getProgramCounter();
+        const bool debug = debugger_->armed();
+        if (debug) debugger_->beginStep(pc, true);
+        processor.step();
+        if (debug) debugger_->onStepCompleted(processor, pc, processor.getCurrentInstructionCycles());
+    }
 }
 
 #ifndef __EMSCRIPTEN__

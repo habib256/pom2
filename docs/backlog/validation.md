@@ -17,7 +17,7 @@ an explicit request before scheduling.
 |---|---|---|---|
 | [VALIDATION-002](#validation-002) | 🟠 | To verify | [DIX](https://github.com/Fr3nchT0uch/DIX/) — French Touch demo anthology |
 | [VALIDATION-001](#validation-001) | 🟡 | To verify | Disk II opposing-magnet response on a real //c |
-| [VALIDATION-003](#validation-003) | 🟡 | To verify | Spiradisc / RWTS18 |
+| [VALIDATION-003](#validation-003) | 🟡 | Partial: gameplay observed; broader protection evidence remains | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Blocked (oracle) | DOS 3.1 / 3.1.1 `]` anomaly |
 | [VALIDATION-005](#validation-005) | 🟢 | To verify | A2 File Cmd one-in-three GUI-only DHGR failure |
 
@@ -80,7 +80,7 @@ remove (`DiskIICard::seekPhaseW`, `kStepperResponseCycles`).
 
 ## VALIDATION-003 — Spiradisc / RWTS18
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial integration evidence recorded 2026-10-12; candidate rerun and broader coverage remain.
 
 **Acceptance criterion (after revalidation):** Run the named protected titles on real WOZ images and record weak-bit/spiral behavior against their expected boot result.
 
@@ -92,7 +92,15 @@ remove (`DiskIICard::seekPhaseW`, `kStepperResponseCycles`).
   amplifier-freakout time now produces one hash-drawn blip per zone per
   revolution, so a weak-bit protection is a coin toss instead of a constant,
   and a track with no flux at all answers read-amplifier noise instead of
-  hanging the guest's `LDA $C08C,X / BPL`. What is unvalidated is the titles.
+  hanging the guest's `LDA $C08C,X / BPL`.
+
+The [protected-disk report](../audits/protected-disks-2026-10-12.md) records
+Captain Goodnight side A/B reaching gameplay and Prince of Persia side A
+reaching its first dungeon room on WOZ captures. The Captain capture includes
+half-track positions; the selected PoP capture has whole tracks only, so its
+boot does not validate quarter-track behavior. Later levels/PoP side B,
+completion, other captures and physical-hardware comparison remain unverified.
+These are dated manual observations, not automated protection goldens.
 
 <a id="validation-004"></a>
 
