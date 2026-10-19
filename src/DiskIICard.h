@@ -166,6 +166,12 @@ public:
         std::vector<uint8_t> runtime;
         std::array<std::unique_ptr<DiskImage>, 2> media;
     };
+    bool sessionReplacementReady() const override {
+        for (int d = 0; d < kDriveCount; ++d)
+            if (!ejecting_[d].expired() || images[d].hasPendingWriteBack()) return false;
+        return true;
+    }
+    bool installSessionIdentity(const std::vector<uint8_t>& bytes);
     void appendSessionIdentity(std::vector<uint8_t>& out) const;
     bool appendSessionState(std::vector<uint8_t>& out, std::string& error) const;
     bool prepareSessionState(const uint8_t* data, size_t len,

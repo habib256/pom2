@@ -1,6 +1,8 @@
 // POM2 — GPL-3.0-or-later
 #include "SessionIIc.h"
 #include "IIcMouse.h"
+#include "CffaCard.h"
+#include "SessionCards.h"
 #include "LeChatMauveCard.h"
 #include "Memory.h"
 #include "SessionIO.h"
@@ -49,7 +51,9 @@ void sessionIdentities(SmartPortCard& card, Blob& runtime) {
 }
 }
 bool describeIIcSessionDevice(SlotPeripheral* card, SessionArchive::Slot& out, std::string& error) {
-    if (auto* serial = dynamic_cast<SuperSerialCard*>(card)) {
+    if (auto* cffa = dynamic_cast<CffaCard*>(card)) {
+        out.kind = Card::Cffa; cffa->appendSessionIdentity(out.identity);
+    } else if (auto* serial = dynamic_cast<SuperSerialCard*>(card)) {
         if (!serial->builtInPort() || !serial->sessionIdle()) {
             error = "sessions require idle built-in serial ports"; return false;
         }
@@ -75,10 +79,14 @@ bool describeIIcSessionDevice(SlotPeripheral* card, SessionArchive::Slot& out, s
             }
             out.identity.push_back(isHdv ? 2 : unit ? 1 : 0);
         }
+    } else if (describeAdditionalSessionCard(card, out)) {
     } else { error = "sessions do not support card: " + std::string(card->name()); return false; }
     return true;
 }
 bool captureIIcSessionDevice(SlotPeripheral* card, Blob& out, size_t& mediaBytes, std::string& error) {
+    if (auto* cffa = dynamic_cast<CffaCard*>(card)) {
+        return budget(mediaBytes, *cffa->blockBacking(), error) && cffa->appendSessionState(out, error);
+    }
     if (auto* hdv = dynamic_cast<ProDOSHardDiskCard*>(card)) {
         Blob runtime; hdv->appendSnapshotState(runtime); sessionio::blob(out, runtime);
         for (int i = 0; i < 2; ++i) {
@@ -109,7 +117,17 @@ bool captureIIcSessionDevice(SlotPeripheral* card, Blob& out, size_t& mediaBytes
 bool prepareIIcSessionDevice(SlotPeripheral* card, const SessionArchive::Slot& record, int slot,
                              std::unique_ptr<SlotPeripheral>& out, size_t& mediaBytes, std::string& error, bool allowWritable, bool allowBlocks) {
     Blob runtime = record.state;
-    if (record.kind == Card::Serial) {
+    if (uint8_t(record.kind) >= uint8_t(Card::Transwarp)) {
+        out = prepareAdditionalSessionCard(record, slot, card, error);
+        return bool(out);
+    } else if (record.kind == Card::Cffa) {
+        auto prepared = std::make_unique<CffaCard>(slot);
+        auto* live = static_cast<CffaCard*>(card);
+        if (!prepared->installSessionIdentity(record.identity) ||
+            !live->prepareSessionState(record.state, *prepared, error) ||
+            !budget(mediaBytes, *prepared->blockBacking(), error)) return false;
+        out = std::move(prepared); return true;
+    } else if (record.kind == Card::Serial) {
         auto serial = std::make_unique<SuperSerialCard>(slot);
         serial->setBuiltInPort(true);
         // The SSC loader clamps masks but trusts this derived word width.
@@ -177,6 +195,9 @@ bool prepareIIcSessionDevice(SlotPeripheral* card, const SessionArchive::Slot& r
     return true;
 }
 void applyIIcSessionDevice(SlotPeripheral* card, SlotPeripheral* prepared) {
+    if (auto* cffa = dynamic_cast<CffaCard*>(card)) {
+        cffa->applySessionState(*static_cast<CffaCard*>(prepared)); return;
+    }
     Blob runtime;
     prepared->appendSnapshotState(runtime);
     if (auto* hdv = dynamic_cast<ProDOSHardDiskCard*>(card)) {

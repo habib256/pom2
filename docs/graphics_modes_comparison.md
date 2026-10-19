@@ -13,6 +13,12 @@ pinned tests, and the capture of the intro screen produced by
 `hdv/Total Replay II v1.0-alpha.4.hdv`; default 60 M instructions after
 //e boot).
 
+The capture inputs are user-provided media, not package contents. The probe
+currently searches the two paths above and fails if neither exists; a source
+checkout need not contain them. The PNGs below record that capture run, not
+a fresh compatibility result for every later revision. Card-owned pictures
+(Videoterm/VidHD) are separate from these motherboard render modes.
+
 ---
 
 ## Overview

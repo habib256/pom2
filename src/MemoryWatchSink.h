@@ -26,14 +26,17 @@
 #define POM2_MEMORY_WATCH_SINK_H
 
 #include <cstdint>
+#include "DebugAddress.h"
 
 namespace pom2 {
 
 struct MemoryWatchSink {
     virtual ~MemoryWatchSink() = default;
-    /// One access to a watched address. `write` is false for reads, which
-    /// nothing delivers today — see Debugger::noteAccess for why.
+    /// One access to a watched address, including opcode fetches.
     virtual void noteAccess(uint16_t addr, uint8_t value, bool write) = 0;
+    virtual void noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBank) {
+        noteAccess(addr, value, write);
+    }
 };
 
 }  // namespace pom2

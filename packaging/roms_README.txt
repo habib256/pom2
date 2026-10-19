@@ -55,6 +55,13 @@ Expected files
     341-0057.bin          Apple II Parallel Interface Card PROM
     thunderclock_u9_v1.3.bin  ThunderClock+ Rev 1.3 EPROM
     liron.rom             Liron-class SmartPort controller ROM
+    slinky_341-0344a.bin  Apple Memory Expansion (Slinky) 4 KB firmware
+    ae_transwarp_1.4.bin  TransWarp v1.4 firmware/shadow ROM
+    341-0358-A.bin        Workstation Card's 64 KB coprocessor firmware
+    videx_videoterm_v24_60hz.bin  Videoterm v2.4 firmware (60 Hz)
+    videx_videoterm_v24_50hz.bin  alternate 50 Hz firmware
+    videx_videoterm_char_normal.bin   normal character set
+    videx_videoterm_char_inverse.bin  alternate/inverse character set
 
 Notes
 -----
@@ -63,3 +70,9 @@ Notes
   leave it in place.
 * If only apple2.rom is present for a profile that prefers a machine-specific
   dump, POM2 warns that the ROM may not match the selected machine.
+* The ROM Status panel shows the current inventory, identities and fallback
+  effects for catalogued entries. RomCatalog.h, SystemProfile.cpp and the
+  individual card loaders define accepted paths and probe order; the list
+  above describes common filenames, not every accepted alias.
+* A .pom2session may carry its own supported firmware. Loading one does not
+  install or replace files in this directory.

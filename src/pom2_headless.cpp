@@ -256,9 +256,9 @@ int main(int argc, char** argv)
         "roms/apple2.rom", { "../roms/apple2.rom", "../../roms/apple2.rom" });
     const std::string promPath = !promArg.empty() ? promArg : findAsset(
         "roms/disk2.rom", { "../roms/disk2.rom", "../../roms/disk2.rom" });
-    // Disk images are never packaged (see packaging/bundle.manifest), so this
-    // one only ever resolves in a source checkout — which is exactly where the
-    // telnet console is used.
+    // This legacy DOS master probe resolves only in a development library.
+    // Packages ship named curated images under bundled_disks/ instead;
+    // pass --disk explicitly to select one of those for this frontend.
     const std::string diskPath = !diskArg.empty() ? diskArg : findAsset(
         "disks_5.4/dos33_master.dsk", { "../disks_5.4/dos33_master.dsk",
                                         "../../disks_5.4/dos33_master.dsk" });
@@ -383,8 +383,8 @@ int main(int argc, char** argv)
     // test: an Autostart ROM points it into its own cold-start ($FA62 on the
     // II+), the original Apple ][ monitor (apple2o.rom) points it at $FF59 —
     // no autostart, no boot, and there the poke is the only way in. With no
-    // Disk II plugged (capture mode against a package, which ships no disk
-    // images) $C600 holds nothing, so never poke.
+    // Disk II plugged (capture mode without a selected disk), $C600 holds
+    // nothing, so never poke.
     if (diskRaw && controller.cpu().getProgramCounter() >= 0xFF00)
         controller.cpu().setProgramCounter(0xC600);
     controller.setMode(EmulationController::Mode::Running);

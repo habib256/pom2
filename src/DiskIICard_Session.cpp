@@ -5,6 +5,7 @@
 #include "SessionIO.h"
 
 #include <memory>
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 
@@ -20,6 +21,22 @@ void DiskIICard::appendSessionIdentity(std::vector<uint8_t>& out) const
     prom(bootRom13Loaded, bootRom13);
     prom(p6RomLoaded, p6Rom);
     prom(p6Rom13Loaded, p6Rom13);
+}
+
+bool DiskIICard::installSessionIdentity(const std::vector<uint8_t>& bytes)
+{
+    if (bytes.size() != 2 + 4 + bootRom.size() + bootRom13.size() + p6Rom.size() + p6Rom13.size() ||
+        bytes[0] != 1 || bytes[1] > 1) return false;
+    size_t pos = 2;
+    auto prom = [&](bool& loaded, auto& rom) {
+        if (bytes[pos] > 1) return false;
+        loaded = bytes[pos++] != 0;
+        std::copy_n(bytes.data() + pos, rom.size(), rom.begin()); pos += rom.size();
+        return true;
+    };
+    iwmHost_ = bytes[1] != 0;
+    return prom(bootRomLoaded, bootRom) && prom(bootRom13Loaded, bootRom13) &&
+           prom(p6RomLoaded, p6Rom) && prom(p6Rom13Loaded, p6Rom13);
 }
 
 bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& error) const

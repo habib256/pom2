@@ -43,21 +43,35 @@ The licence files ship next to the fonts in every package (`packaging/bundle.man
 
 ## Photographs
 
-Two photographs ship in the packages (`packaging/bundle.manifest` names
-them): `pic/Apple_II_plus.jpg` (the About panel and the README) and
-`pic/Keyboard_AppleIIe.jpeg` (the clickable //e keyboard panel, whose
-hotspots were measured on it). The other files under `pic/` are working
-material that no package carries.
+Three photographs ship in the packages, as named in
+`packaging/bundle.manifest`: `pic/Apple_II_plus.jpg` (About),
+`pic/Keyboard_AppleIIe.jpeg` (the clickable //e keyboard) and
+`pic/Keyboard_AppleIIc.png` (the //c-class keyboard). The October 13 changelog
+records the //c image as a supplied photo; that alone does not record its
+photographer or redistribution terms. Packages also carry `pic/retro/`,
+whose illustration notices are described separately below. Other reference
+photographs under `pic/` are not included by the manifest.
 
 The keyboard's right-arrow legend was corrected with an image-generation
 edit in October 2026; the image dimensions and hotspot coordinates are
 unchanged. This edit does not establish the original photograph's provenance.
 
-**Provenance of the two shipped photographs is not recorded in this tree.**
+**Provenance and redistribution terms of these three photographs are not
+recorded in this tree.**
 Until the author states where they come from and under which terms, treat
 them as *all rights reserved* by their unknown photographers; a package
 maintainer who needs certainty should replace them with photographs of
 known origin. (Filed in [`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1).)
+
+## Retro monitor and drive illustrations
+
+`pic/retro/` ships the Monitor II/Disk II artwork derived from
+Oscar Casamitjana's apple2e-emulator at commit
+`dd1c57a24e35d179726a51401581d3f313fd3793`, with its
+[MIT license](pic/retro/LICENSE), [attribution/adaptation notice](pic/retro/NOTICE.txt)
+and editable SVG sources. The notice also describes POM2's Apple 3.5,
+Disk //c and hard-disk front illustrations and reuse of the MIT rainbow
+geometry. Their reference photographs are not distributed in this directory.
 
 ## Test-time downloads (never shipped)
 

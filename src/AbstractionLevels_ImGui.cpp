@@ -121,9 +121,9 @@ const std::vector<AbsEntry>& abstractionCatalog()
     static const std::vector<AbsEntry> kCatalog = {
     // ── CPU & memory ────────────────────────────────────────────────────
     { "cpu", "CPU & memory", "6502 / 65C02 / Rockwell / WDC", AbsLevel::L0,
-      "Per-cycle; 100% of the 178 documented NMOS opcodes vs Tom Harte 65x02; "
+      "Instruction-stepped; recorded Tom Harte sweep: 178 NMOS opcode files pass; "
       "WDC decimal SBC silicon-exact including interdigit carry",
-      "This is the floor.", "M6502.h/.cpp" },
+      "CMOS uses WDC-style opcodes; WAI falls through after 3 cycles, STP halts until reset.", "M6502.h/.cpp" },
     { "z80", "CPU & memory", "Z80 core", AbsLevel::L0,
       "zexdoc + zexall clean; MEMPTR and X/Y flags modelled, not approximated",
       "This is the floor.", "Z80.h/.cpp" },
@@ -150,8 +150,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "Pure-analog IIR-on-signal is deferred as academic (5-10 d).",
       "NtscPostProcessor.*, OpenGLShader.*" },
     { "lut", "Video", "Artifact-colour LUT modes", AbsLevel::H1,
-      "MAME's composite colour tables indexed per dot pattern — the RESULT of "
-      "NTSC artifacting, tabulated, with no signal in between",
+      "MAME dot-pattern tables or AppleWin's IIR-derived phase/history LUT — "
+      "NTSC decoding is precomputed, then looked up during rendering",
       "Not a defect: it is the cheap path, and the OE pipeline beside it is "
       "the low-level one. Switchable above.",
       "Apple2Display.cpp, AppleWinNtsc.h/.cpp" },
@@ -182,8 +182,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "counting) are wired by no POM2 card.",
       "Mockingboard.*, Via6522.h, Ay3_8910.h" },
     { "ssi263", "Audio", "SSI263 speech", AbsLevel::H1,
-      "Registers, A/!R handshake, IRQ modes and phoneme DURATION are "
-      "chip-exact (L1); the sound itself is a canned PCM blob per phoneme",
+      "AppleWin-derived registers, A/!R handshake, IRQ modes and PCM durations; "
+      "speech uses fixed phoneme samples rather than analog formant synthesis",
       "The real chip is an analog formant synth. AppleWin's blob is the only "
       "extant reference — MAME has no SSI263 at all.",
       "Ssi263.*, Ssi263PhonemeData.*" },
@@ -220,7 +220,7 @@ const std::vector<AbsEntry>& abstractionCatalog()
     { "cffa", "Storage", "CFFA 2.0 (IDE)", AbsLevel::L2,
       "The real 4 KB firmware dump EXECUTES over an ATA taskfile model "
       "isomorphic to MAME's cs0_r/cs0_w",
-      "The ATA layer skips DMA / IRQ / SMART; CHD backing is phase 2.",
+      "The ATA layer skips DMA / IRQ / SMART; CHD backing is out of scope.",
       "CffaCard.*, AtaBlockDevice.*" },
     { "cffa3", "Storage", "CFFA3000 (SmartPort)", AbsLevel::H1,
       "Synthetic SmartPort firmware serves eight disk-image units; the "
@@ -228,8 +228,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "AVR firmware, dynamic slot RAM, CF/USB menus and slot ghosting are "
       "outside this block-level model.", "Cffa3000Card.h, SmartPortCard.*" },
     { "superdrive", "Storage", "SuperDrive (ProDOS block service)", AbsLevel::H1,
-      "A SmartPort-compatible block service exposes 1.44 MB images through "
-      "the slot; the 341-0438-A card ROM is not executed",
+      "A SmartPort block service exposes 400/800K GCR and 1.44 MB MFM images; "
+      "the 341-0438-A card ROM is not executed",
       "SWIM registers and the card's 65C02 firmware are not emulated.",
       "SmartPortCard.*" },
     { "hdv", "Storage", "ProDOS HDV card", AbsLevel::H1,

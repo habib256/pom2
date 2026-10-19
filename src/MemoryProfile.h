@@ -85,6 +85,7 @@ public:
     /// host-served $C500 substitute. See SmartPortBusPort.h.
     virtual void setExternalSmartPort(pom2::SmartPortBusPort* /*port*/) {}
     /// The //c+ (MIG + shared IWM), as opposed to the plain //c.
+    virtual uint8_t debugRomBank() const { return 0; }
     virtual bool isIIcPlus() const { return false; }
     /// Canonical additional firmware for snapshot compatibility checks.
     /// Must not read the bus, alter ROMBANK, or include volatile state.

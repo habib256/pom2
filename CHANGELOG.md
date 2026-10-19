@@ -10,6 +10,87 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Documentation and integrated help match current code
+
+The [documentation index](docs/README.md) connects user/developer guides,
+reference contracts, backlogs, distributed instructions and dated evidence.
+The manuals describe this checkout, including untagged implementation work;
+release notes and historical measurements retain their original scope.
+
+- [Sessions](docs/session-format.md) document v7 machine reconstruction,
+  embedded firmware/cards, detached writable media and program tapes.
+  [Debugging](docs/debugger-banks.md) covers physical banks, symbols,
+  profiling and source maps, with the remaining tooling limits explicit.
+- Hardware/media/audio references follow the current card catalogue, ROM
+  loaders, SmartPort chains, capture-write boundaries and mixer behavior.
+  Host-folder, Floppy Emu, cassette and mechanical-sound instructions agree
+  with their implementations; the teaching quiz covers all nine profiles.
+- CLI, benchmark and abstraction-panel help match the actual ordering,
+  timing, ROM probes, storage and speech contracts. Performance recipes use
+  runnable media paths and state the cycle-budget/hash boundaries.
+- Build/CI notes distinguish full native suites, the portable Windows subset,
+  browser checks and package/device validation. The SDK describes the public
+  facade, installed consumer procedure and device/media limits.
+- Packaging/browser notes identify the four curated disks, current //c
+  PAL/DIX-fix boot, URL arguments, single-threaded browser target and asset
+  inventory. Photograph provenance remains an open distribution gate.
+- Backlogs distinguish implemented behavior from remaining evidence and work,
+  including native choosers, duplicate cards, FujiNet timeout/UI policy and
+  HTTP validation. Historical findings retain stable resolution anchors.
+
+Documentation, comments and help strings changed; emulation and test logic
+were not changed by this reconciliation. Validation includes native builds,
+CLI help, an installed SDK consumer, four benchmark workloads, portable-test
+configuration/discovery, URL examples, local links, source guards, shell syntax
+and bundled-media SHA-256 checks. The [review record](docs/audits/documentation-2026-10-20.md)
+records the details and limits; no new full-suite, remote CI or physical-device
+validation is claimed.
+
+## 2026-10-19 — Bank-aware debugger and source correspondence
+
+Breakpoints (including register conditions), read/write watches, run-to-cursor,
+symbols, profiling and history now distinguish main/auxiliary/RamWorks RAM,
+Language Card low banks and shared high RAM, //c firmware banks and card
+windows. Unqualified addresses retain their all-bank behavior. Access banks
+are resolved before soft-switch side effects; cycle accounting retains the
+instruction's original bank even when it switches its own mapping. Explicit
+single-step now attributes watched accesses to the actual instruction and
+records profile/history measurements without changing cycle/IRQ timing.
+Flat-bus watches also cover writes and high-address reads.
+
+The Source panel imports transactional bank-qualified `.p2map` ranges,
+shows the matching source context and installs source-line breakpoints.
+File reads stay outside `stateMutex`. Details, examples and remaining limits
+are in [the debugger guide](docs/debugger-banks.md); native compiler debug-info
+and card-private banking are not yet imported. Regression cases extend
+`debugger` and preserve the production fast paths when instrumentation is off.
+
+## 2026-10-19 — Sessions reconstruct their machine automatically
+
+Opening a session through the desktop, browser, CLI or local API now rebuilds
+its supported profile, exact embedded firmware, CPU mode, memory, No-Slot
+Clock and slot topology. Existing v1–v6 bundles can also be reconstructed.
+Incoming machine/card/media state is validated on an isolated candidate;
+unsaved host media and pending commits refuse replacement. The desktop
+rebinds its display, drive panels and audio sources on the UI owner thread,
+including API requests in kiosk mode. Session-private disk paths and slots
+are kept out of the ordinary startup settings.
+
+Session v7 adds Zip Chip, TransWarp firmware/shadow state, CFFA EEPROM/ATA
+and detached block media, Phasor, both Echo+ variants, S.A.M. and 4play.
+Host-folder volumes become self-contained detached block images without
+reopening or syncing the source directory. Program-tape pulse sources,
+playback/rewind cursors and in-progress recordings are embedded too.
+Unsupported devices, streamed audio decks and live transports remain explicit
+refusals. The [session contract](docs/session-format.md) records these limits.
+
+Validation: native macOS and WebAssembly builds; 21 targeted native tests,
+the HTTP session endpoint smoke, and two session tests under ASan/UBSan.
+Chrome reconstructs the saved //c after starting with the II+ preset and
+compares checkpoint bytes, then repeats source-free writable floppy and
+HDV restores. The Windows portable CI subset now includes `session_machine`;
+no Windows/ARM execution is claimed here.
+
 ## 2026-10-18 — Detached HDV volumes in resumable sessions
 
 Session v6 embeds both ProDOS HDV drives and HDV units in mixed SmartPort

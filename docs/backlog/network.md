@@ -18,10 +18,10 @@ an explicit request before scheduling.
 | [NETWORK-001](#network-001) | 🟡 | To verify | [FujiNet] built-in FujiNet, native in POM2 — DECIDED 2026-08-21. |
 | [NETWORK-002](#network-002) | 🟡 | To verify | [FujiNet] a `CONTROL` to the peer's PRINTER unit kills it |
 | [NETWORK-003](#network-003) | 🟡 | To verify | [FujiNet] the desktop firmware's `N:` device never opens a socket |
-| [NETWORK-004](#network-004) | 🟡 | To verify | [FujiNet] the 250 ms relay timeout is sized for local media only |
+| [NETWORK-004](#network-004) | 🟡 | Policy/UI implemented; remote-media validation remains | [FujiNet] delayed network-media calls |
 | [NETWORK-005](#network-005) | 🟡 | To verify | [FujiNet] a network-backed SmartPort call freezes the emulator |
 | [NETWORK-007](#network-007) | 🟡 | To verify | [FujiNet] //c-class support |
-| [NETWORK-011](#network-011) | 🟡 | To verify | Bug hunt #14's network residue |
+| [NETWORK-011](#network-011) | 🟡 | Partial: corrected findings separated from remaining reports | Bug hunt #14's network residue |
 | [NETWORK-006](#network-006) | 🟢 | To verify | [FujiNet] `PR#n` before the peer attaches prints `FN ERROR` |
 | [NETWORK-008](#network-008) | 🟢 | To verify | [FujiNet] embedded firmware |
 | [NETWORK-013](#network-013) | 🟢 | Shipped (verify) | W5100 name resolution is still inline |
@@ -103,28 +103,30 @@ an explicit request before scheduling.
 
 <a id="network-004"></a>
 
-## NETWORK-004 — [FujiNet] the 250 ms relay timeout is sized for local media only
+## NETWORK-004 — FujiNet delayed network-media calls
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Timeout policy and UI implemented; remote-media evidence remains.
 
-**Acceptance criterion (after revalidation):** Test a delayed network-backed relay call with a bounded timeout and a useful guest-visible failure.
+**Acceptance criterion:** Run a delayed TNFS-backed mount/read/write against
+an identified peer version, record successful completion and bounded failure,
+and check UI responsiveness separately under [NETWORK-005](#network-005).
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1875). Original dates and estimates are retained below.
+**Historical evidence:** [original 250 ms finding](../archive/todo-2026-10-05.md#source-1875)
+and the 2026-10-06 recheck predate the current policy.
 
-- 🟡 **[FujiNet] the 250 ms relay timeout is sized for local media only** —
-  measured 2026-08-21. `SpOverSlipLink::kDefaultTimeoutMs` is fine while the
-  peer answers out of its own SPIFFS (booting `autorun.po` never approaches
-  it), but every block read of a TNFS-hosted image crosses the internet and
-  overruns it, so the guest gets `FN ERROR` instead of a boot. Workaround
-  today is the per-slot `fujinet_timeout_ms_slot<N>` key (3000 works); it has
-  no UI and nothing tells the user it is why their network disk will not
-  boot. Options: raise the default, or measure the peer's round-trip at
-  enumeration and size the timeout from it. *~2 h.* → `DEV.md` § FujiNet.
+**Code reconciliation 2026-10-20:** local calls default to 250 ms. Selected
+FujiNet host/directory operations and block I/O for images marked mounted use
+at least 5000 ms in `SpOverSlipLink::transact`; an explicit outer call budget
+can cap that. One deadline covers sending and receiving. The FujiNet panel
+has a **Timeout (ms)** slider from 50 to 5000, persisted per slot as
+`fujinet_timeout_ms_slot<N>`. The old claims of a uniform 250 ms budget and no
+UI are superseded.
 
-**Revalidation note 2026-10-06:** unchanged on main — the constant now lives
-on `FujiNetTransport` (`src/FujiNetTransport.h:52`, still 250) and
-`SpOverSlipLink` inherits it; the per-slot key is read in
-`src/MainWindow_SlotConfig.cpp:455-458` and still has no UI.
+`sp_over_slip_link` contains `testRemoteFujiDirectoryCanOutlastLocalIoBudget`
+and `testMountedFujiImageCanReadSlowNetworkBlocks` for delayed fake peers.
+That source-level coverage is not a fresh TNFS/USB
+run, and it does not establish that every third-party network command fits
+within five seconds. Keep the remaining validation task scoped to that evidence.
 
 <a id="network-005"></a>
 
@@ -172,40 +174,26 @@ FujiNet would hang off.
 
 ## NETWORK-011 — Bug hunt #14's network residue
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partly resolved; current implementation summary reconciled 2026-10-19.
 
 **Acceptance criterion (after revalidation):** Break down the network register, relay-range, reset and teardown findings into independent reproductions with bounded completion.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2031). Original dates and estimates are retained below.
 
-- 🟡 **Bug hunt #14's network residue** *(2026-09-09; read, not fixed)*:
-  the loopback policy now lives in three files (`W5100Device::checkDestination`,
-  `FujiNetNetDevice`, `SlirpBackend::transmit`) and the W5100's IPRAW path
-  still bypasses `checkDestination` device-side (the backend catches it);
-  the CS8900A tests the multicast I/G bit as `buffer[0] & 0x80` where 802.3
-  puts it in bit 0 (looks like a faithful MAME/VICE port — needs a ruling),
-  leaves `packetPagePtr_` stale on reset, never uses `RxOKA`, does not
-  decode `CRCerrorA`/`RuntA`/`ExtradataA`, stamps `$0004` over PacketPage
-  `$0400` on an implied skip with an empty queue, ignores `LineCTL.SerRxOn`
-  (frames are buffered with the receiver off), reads `$0400-$0FFF` as 0,
-  and omits `framesMissed_`/`rxMissReported_` from its snapshot while saving
-  the register they baseline; `FujiNetCard::rangeIsSafe` guards `$C000-$C0FF`
-  only, so a relay write to `$C100-$C7FF` reaches `slotRomWrite`;
-  `SpOverSlipLink::notifyGuestReset` makes one round trip per unit (32) on
-  the CPU thread on every reset with no aggregate bound; `SlirpBackend::
-  receive` returns 0 on an oversized front frame and ends the drain for that
-  tick; W5100 `Sn_DHAR`/`Sn_MSSR` writes are dropped; `ChildProcess::stop`
-  ends in a blocking `waitpid` and the env scrub misses `LD_LIBRARY_PATH`.
-  *1 d for the lot.*
+**Current status, reconciled 2026-10-19:** The original report is not a
+current defect list. Implemented corrections include CS8900A multicast and
+receiver gating, PacketPage reset/receive reads, RxMISS snapshot state, RxCTL
+length/status filtering and receive-event handling; W5100 socket-register
+writes; FujiNet's `$C000-$CFFF` buffer fence and bounded reset sweep; and
+`LD_LIBRARY_PATH` filtering for helper processes. The dated evidence below
+records their regression cases.
 
-**Revalidation note 2026-10-06 (code reading, not reproduction):**
-`FujiNetCard::rangeIsSafe` still refuses only `$C000-$C0FF`
-(`src/FujiNetCard.cpp:269-278`); the env scrub still lists `LD_PRELOAD`/
-`LD_AUDIT`/`DYLD_*` but not `LD_LIBRARY_PATH` (`src/ChildProcess.cpp:211-223`);
-the CS8900A still tests `buffer[0] & 0x80` (`src/Cs8900aDevice.cpp:365`).
-`notifyGuestReset` now skips the printer unit and stops at the first unit
-that does not reply (`src/SpOverSlipLink.cpp:866-905`), which bounds the dead-peer
-case but not a live peer with many units.
+Remaining reports to verify independently include W5100 IPRAW policy routing,
+CS8900A implied-skip behavior and child-process teardown. CRC-error acceptance
+is constrained by the backend's already-validated frames. The reported slirp
+oversized-front-frame issue is not reachable with the current card callers'
+1518-byte receive buffers. See the original report for historical details;
+do not reintroduce the corrected items as work still to implement.
 
 **Bug hunt 2026-10-18:** The CS8900A multicast classifier and receive-enable
 gate were reproduced and fixed. A frame with first destination octet `$01`

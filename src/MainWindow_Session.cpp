@@ -112,7 +112,7 @@ void MainWindow::persistSession(bool flushMedia)
         std::lock_guard<std::mutex> lk(controller->stateMutex());
         const auto snapshot = storageCoordinator_->captureRebuildSnapshot(
             controller->memory().slotBus());
-        storageCoordinator_->persistSessionSettings(*settings, snapshot);
+        if (!sessionMachineActive_) storageCoordinator_->persistSessionSettings(*settings, snapshot);
     }
 
     // Persist mounted 3.5" disks across restarts AND flush any firmware-
@@ -168,7 +168,7 @@ void MainWindow::persistSession(bool flushMedia)
     // (MainWindow.cpp), so tools/check_settings_keys.sh sees one key on both
     // sides; spelled out per drive, the guard saw nine write-only literals
     // and three read-only prefixes.
-    for (std::size_t i = 0; i < onboard35.size(); ++i) {
+    for (std::size_t i = 0; !sessionMachineActive_ && i < onboard35.size(); ++i) {
         const std::string suffix = std::to_string(i + 1);
         settings->setString("disk35_path_" + suffix,
                             onboard35[i].loaded ? onboard35[i].path : std::string());
@@ -183,7 +183,7 @@ void MainWindow::persistSession(bool flushMedia)
     // HDV cards — those persist via hdv_path; skip them here.)
     for (auto* blk : blockCards()) {
         auto* cffa = dynamic_cast<pom2::CffaCard*>(blk);
-        if (!cffa) continue;
+        if (!cffa || sessionMachineActive_) continue;
         const std::string key = "cffa_slot" + std::to_string(cffa->getSlot());
         settings->setString(key + "_path",
                             cffa->isImageLoaded() ? cffa->getImagePath()
@@ -271,7 +271,7 @@ void MainWindow::persistSession(bool flushMedia)
     // plugSlotsFromSettings.)
     {
         const auto& cfg = pom2::profileConfig(activeProfile);
-        for (int s = 1; s <= 7; ++s) {
+        for (int s = 1; !sessionMachineActive_ && s <= 7; ++s) {
             if (s == storageCoordinator_->autoProvisionedHdvSlot()) continue;   // session-local auto-plug
             if (s == storageCoordinator_->autoProvisionedSmartPortSlot()) continue;   // idem (Floppy Emu)
             // Profile-forced slots (built-ins / noPhysicalSlots) hold the

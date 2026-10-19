@@ -357,10 +357,10 @@ private :
     template <int N> void BBRn(void);
     template <int N> void BBSn(void);
 
-    // WDC 65C02 WAI / STP. WAI halts the CPU until an IRQ/NMI fires;
-    // we model the halt by parking PC at the WAI instruction (so it
-    // re-executes once IRQ clears the I flag and wakes the CPU).
-    // STP halts until reset; we just hang PC the same way.
+    // WDC 65C02 WAI / STP. WAI currently consumes three cycles and
+    // falls through; it does not implement a waiting latch.
+    // STP sets the sticky halted latch, ignoring IRQ/NMI until reset.
+    // See the implementations for timing and the WAI approximation.
     void WAI(void);
     void STP(void);
 
@@ -417,7 +417,7 @@ private :
     bool        cmosSubstitute_ = false;
     void        applyDispatch(CpuMode mode);
 
-    /// Set by `STP` ($CB on 65C02 / W65C02). When true, `step()` skips
+    /// Set by `STP` ($DB on 65C02 / W65C02). When true, `step()` skips
     /// opcode dispatch *and* IRQ/NMI service — only `softReset()` /
     /// `hardReset()` can clear it (matches WDC + MAME
     /// `ow65c02.lst:715-718` where STP is a `for(;;)` loop that only

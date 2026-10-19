@@ -19,13 +19,13 @@
 //
 // Layout produced:
 //   Block 0       Boot block (zeroed — volume is not directly bootable;
-//                 the user boots ProDOS from elsewhere, then the slot 5
-//                 host-folder volume appears as a secondary drive).
+//                 the user boots ProDOS from elsewhere, then accesses the
+//                 host-folder volume through its configured HDV slot/drive).
 //   Block 1       Boot block 2 (zeroed).
 //   Blocks 2-5    Volume directory (key + 3 extension blocks → 51 entries).
 //   Blocks 6+      Contiguous volume bitmap blocks, allocated to cover the
 //                  complete synthesised volume.
-//   Following     File data + sapling index blocks, allocated sequentially.
+//   Following     Subdirectories, file data and sapling/tree index blocks.
 //
 // Scope:
 //   * Recursive subdirectories (bounded depth and symlink-cycle detection).

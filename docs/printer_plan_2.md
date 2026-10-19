@@ -277,7 +277,8 @@ to be a `SlotPeripheral` with a ROM in it.
 | `$7500-$7503` | **Zilog 8530 SCC**, wired A1 = A//B, A0 = D//C | `LDA #$03 / STA $7502 / NOP / NOP / LDA $7502` at `$EE13` is a poll of RR3, which exists in channel A only; `$10` then `$30` to `$7500` are the WR0 Reset External/Status and Error Reset commands. Nothing else in an 8-bit design looks like that. |
 | `$7A00` | a **five-bit** latch | The POST writes `$FF` into it with a `DEC $7A00` and then compares against `#$1F` (`$F131-$F139`). The other selects read back all eight bits. |
 | `$7000` | status / progress code | Written with `$03`, `$0B`, `$0F`, `$07`, `$04` at each phase boundary, and `$04` immediately before the halt loop. |
-| `$8000-$FFFF` | ROM, 32 KB window | Two 32 KB images share it. The firmware never writes above `$8000` — checked over 2.5 M instructions. |
+| `$7C00` | ROM bank select | Bit 1 selects the half: clear maps file offset `$8000`, set maps offset `$0000`. The far-call trampoline at `$42D1` switches it while executing from RAM. |
+| `$8000-$FFFF` | ROM, 32 KB window | Two 32 KB images share it, selected by `$7C00`. The firmware never writes above `$8000` — checked over 2.5 M instructions. |
 
 **The banking is one bit, not three.** File `0x8000-0xFFFF` is a single
 coherent image at `$8000-$FFFF`: its `JSR`/`JMP` targets stay inside that
@@ -289,10 +290,11 @@ RESET `$C000` is the RAM-sizing probe. File `0x0000-0x7FFF` is a *second*
 32 KB image for the same window, self-consistent the same way, empty above
 `$E000`. Both are live: the LocalTalk strings (`THOMAS EAGER WROTE THE LAP
 DRIVERS`, `Apple //e Boot`) are in the upper image, the LaserWriter one
-(`%%IncludeProcSet IWEm 1 1`) is in the lower. Which of the `$7x00` latches
-selects the half is **not yet established**; `$7000` and `$7C00` are the
-candidates, since the reset routine rewrites both between two attempts at the
-RAM probe.
+(`%%IncludeProcSet IWEm 1 1`) is in the lower. The implementation now selects
+the half with **bit 1 of `$7C00`**: zero maps the upper file half and two maps
+the lower half. `WorkstationCard::writeLatch` implements this mapping;
+the RAM-resident far-call trampoline at `$42D1` supplies the firmware evidence.
+`$7000` is a status/progress latch, not the ROM selector.
 
 **The Apple II side of the firmware is in the image, at a fixed offset.**
 This is the part the earlier note got backwards. File `0xC400-0xC4FF` is a

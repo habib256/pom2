@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "MainWindow.h"
+#include "SessionLoadQueue.h"
 #include "MediaWritePolicy.h"
 
 // Named because this file uses them DIRECTLY. All of them also arrive
@@ -219,6 +220,7 @@ MainWindow::MainWindow(bool forceIIPlus)
     // writes panel state: the menus, the palette, the settings round-trip and
     // the browser build's chrome-light startup are all derived from those
     // bindings, and an unbound panel is a menu row that toggles nothing.
+    initializeSessionLoader();
     registerPanels();
 
     // Load any persisted runtime config. Missing/malformed file → use
@@ -947,6 +949,7 @@ bool MainWindow::startAiControlFromCli(unsigned short port, std::string& errOut)
 
 MainWindow::~MainWindow()
 {
+    if (auto queue = controller->sessionLoadQueue()) queue->close();
     // Stop the AI control server BEFORE the CPU worker — pending requests
     // hold `controller->stateMutex()` and call into `controller->memory()` /
     // `controller->cpu()`; we want them quiesced before we tear anything
@@ -1291,6 +1294,7 @@ void MainWindow::setDpiScale(float s)
 
 void MainWindow::render()
 {
+    if (auto queue = controller->sessionLoadQueue()) queue->process();
     // Track wallclock between frames so the deck counter / armed pulse /
     // status overlay can age correctly.
     using clock = std::chrono::steady_clock;

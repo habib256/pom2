@@ -101,18 +101,22 @@ fallback and the absence of a C800 claim, as well as the SHR painter.
 
 **Priority:** 🟡 · **State:** To verify.
 
-**Acceptance criterion (after revalidation):** Compare FLASH phase, Videx glyph bits and 80-column color phase with the cited references and current dumps.
+**Acceptance criterion (after revalidation):** Compare FLASH phase and 80-column color phase with the cited references; the Videx marker documentation is corrected.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1984). Original dates and estimates are retained below.
 
 - 🟡 **Bug hunt #15's display residue** *(2026-09-09; read, not fixed)*:
   the II/II+ FLASH range blinks in antiphase with MAME's model::II (and
-  with POM2's own //e cursor) — cosmetic; `CharRomDump.h` and DEV say the
-  Videx dump "never sets bit 7" while the shipped file marks all of
-  $40-$7F, so that sentence and the offset branch are stale; 80-column
+  with POM2's own //e cursor) — cosmetic; 80-column
   TEXT under the OE/AppleWin CPU demods uses phase 0 where MAME's
   `is_80_column` term would apply (no colour oracle, and the term is
   per-frame on a beam-raced split). *2 h.*
+
+**Videx reconciliation 2026-10-19:** The tracked 2048-byte LOWER CASE CHIP
+dump has bit 7 set in all 512 bytes for glyphs `$40-$7F`.
+`normaliseCharRom` detects the marker and uses the marked-dump rule; the
+offset fallback is for unmarked input. The earlier claim that the shipped
+dump takes the offset path was a documentation error, not a missing code fix.
 
 <a id="display-002"></a>
 
@@ -172,25 +176,23 @@ fallback and the absence of a C800 claim, as well as the SHR painter.
 
 **Priority:** 🟢 · **State:** To verify.
 
-**Acceptance criterion (after revalidation):** Separate intentional device pitch limits from browser 50 Hz pacing; validate each approved remaining timing change.
+**Acceptance criterion (after revalidation):** Validate any remaining clock/toggle discrepancy independently of the implemented browser wall-time pacing.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1101). Original dates and estimates are retained below.
 
-- 🟢 **PAL residuals** — device generator clocks (AY/IWM/SSI263) stay at the
-  NTSC nominal (0.7 % delta = inaudible pitch, deliberately not retimed;
-  speaker + cassette realtime audio ARE retimed, their queues starve
-  audibly otherwise); WASM pacing (RAF 60 Hz) not yet switched to 50 Hz;
-  manual NTSC/PAL toggle + auto-PAL when a Chat Mauve card is plugged (the
-  two PAL profiles already cover the use case).
+**Current clock behavior:** Mockingboard/Phasor AY and VIA timing follows
+the unaccelerated PAL/NTSC slot-bus clock (`setStandardClock`), while SSI263
+phoneme lengths follow the CPU clock. The IWM retains its own 7.16 MHz crystal
+by design. Speaker/cassette replay receives the active CPU clock. The old
+claim that AY/SSI timing remains fixed at NTSC nominal is superseded.
 
-**Revalidated 2026-10-06 — premise partly false.** The AY and 6522 clocks
-no longer stay at the NTSC nominal: the Mockingboard / Phasor derive them
-from the live slot-bus clock, which follows PAL (`setStandardClock` →
-`SlotBusClock.h`; `src/Mockingboard.cpp:540-558`, fed by
-`src/EmulationController.cpp:82`), and SSI263 phoneme lengths follow the
-live CPU clock (CHANGELOG *2026-09-29 — Bug hunt, round three*). The IWM
-keeps its own 7.16 MHz crystal by design. The WASM pacing and the manual
-NTSC/PAL toggle were not rechecked.
+**Code reconciliation 2026-10-19:** `EmulationController::tickFrame`
+scales the browser CPU budget by elapsed wall time and the profile's frame
+interval, capped at four frames. Rendering still follows the browser's RAF;
+a 60 Hz display does not make the PAL guest run at 60 Hz. The historical
+request to switch RAF to 50 Hz is therefore not a missing implementation.
+Manual standard selection/automatic Chat Mauve selection remains a separate
+proposal; PAL machine profiles already select the standard.
 
 <a id="display-007"></a>
 

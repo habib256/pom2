@@ -6,6 +6,9 @@ Reorganised 2026-10-05. Past gate completions remain in the
 [historical report](../archive/todo-2026-10-05.md#the-road-to-10).
 Old estimates and CI claims require revalidation. Release checks are rerun
 against the candidate build.
+Implementation status was reconciled with the working tree on 2026-10-19.
+Recorded CI results below are dated evidence, not a claim that the current
+candidate or local changes have passed those remote jobs.
 
 ## What 1.0 means
 
@@ -25,12 +28,12 @@ The original rationale and past gate completions remain in the
 
 | Gate | State from existing evidence | Acceptance criterion |
 |---|---|---|
-| [G1](#g1) — Distribution | Partial; decisions remain | Record the history-distribution decision and provenance/terms for both photographs. |
+| [G1](#g1) — Distribution | Partial; decisions remain | Record the history-distribution decision and provenance/terms for all three shipped photographs. |
 | [G2](#g2) — Data durability | Closed in the original report | Keep the named storage, snapshot and reset regressions green on the candidate. |
 | [G3](#g3) — Accurate claims | Closed in the original report | Reconcile the candidate README, Welcome and card catalog with shipped behavior. |
 | [G4](#g4) — Repeatable packaging | Closed in the original report | A current rehearsal builds all seven packages; build_dist and payload checks pass. |
-| [G5](#g5) — Test coverage | Partial | Validate alert delivery, software GL/UI concurrency, browser persistence and libslirp transport. |
-| [G6](#g6) — Platform evidence | To verify | Record actual tests or explicit limitations for Windows, ARM/Pi and Intel macOS. |
+| [G5](#g5) — Test coverage | Checks implemented; candidate evidence pending | Rerun alert, software GL/UI, Chrome persistence/session and libslirp checks on the candidate. |
+| [G6](#g6) — Platform evidence | Windows subset recorded; hardware/package checks remain | Rerun the expanded Windows subset and record package smoke tests or limitations for Windows, ARM/Pi and Intel macOS. |
 
 <a id="g1"></a>
 
@@ -38,16 +41,16 @@ The original rationale and past gate completions remain in the
 
 <a id="release-001"></a>
 
-### RELEASE-001 — Commercial software tracked in git — removed from the work tree 2026-09-05, still in history.
+### RELEASE-001 — Tracked media, repository history and distribution decision
 
 **Priority:** 🟠 · **State:** To verify / decision pending.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-153).
 
-**Acceptance criterion:** Record an explicit decision on historical media distribution and align the repository and release payload with it.
+**Acceptance criterion:** Record an explicit decision on tracked and historical media distribution and align the repository and release payload with it.
 
-- ◔ **Commercial software tracked in git — removed from the work tree
-  2026-09-05, still in history.** 907 files (286 MB) moved to
+- ◔ **Historical removal report, 2026-09-05; blobs remain in history.**
+  The original report records 907 files (286 MB) moved to
   `/Volumes/TEST/pom2-media/`, each copy verified by SHA-256 before the
   original was deleted, with a `MANIFEST.tsv` and a `RESTORE.sh` alongside:
   the whole 4am/Asimov WOZ collection (`disks_5.4/woz`, 757 titles), the
@@ -66,25 +69,33 @@ The original rationale and past gate completions remain in the
   packfile), or accept it and document the risk.*
   The three `hdv/` volumes whose contents were never established
   (`2018-01-23 - ProDOS8.2mg`, `Bad.Apple.hdv`, `Mouseapps Apple2.hdv`, 96 MB)
-  went the same way on the same day, so `hdv/` now holds only the author's own
-  projects. **910 files, 382 MB** in the manifest.
+  were also recorded as removed that day. **910 files, 382 MB** in that
+  historical manifest.
+
+The current tracked inventory differs from that historical report: it includes
+`hdv/Total Replay v6.1.hdv` alongside other HDV images and `floppyemu/DIX.po`.
+Review `git ls-files hdv floppyemu` when making the distribution decision; the
+old removal report does not establish the current contents or their rights.
+The release manifest excludes the development `hdv/` directory; this does not
+resolve the separate repository/history decision.
 
 <a id="release-002"></a>
 
-### RELEASE-002 — The two shipped photographs have no recorded provenance.
+### RELEASE-002 — Provenance for the three shipped photographs
 
 **Priority:** 🟠 · **State:** To verify / decision pending.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-194).
 
-**Acceptance criterion:** Record origin, rights holder and redistribution terms for both shipped photographs in THIRD-PARTY.md.
+**Acceptance criterion:** Record origin, rights holder and redistribution terms for all three shipped photographs in THIRD-PARTY.md.
 
-- 🟠 **The two shipped photographs have no recorded provenance.**
-  `pic/Apple_II_plus.jpg` (About panel, README) and
-  `pic/Keyboard_AppleIIe.jpeg` (the keyboard panel). `THIRD-PARTY.md` says
-  so and treats them as all-rights-reserved until the author states their
-  origin and terms — one sentence each from the author closes this. *~5 min
-  of the author's memory.*
+The original report covered `pic/Apple_II_plus.jpg` and
+`pic/Keyboard_AppleIIe.jpeg`. The current manifest also ships
+`pic/Keyboard_AppleIIc.png`, added on 2026-10-13. The changelog calls it a
+supplied photo but does not establish the photographer or redistribution
+terms. All three require the provenance record described in THIRD-PARTY.md.
+The separately bundled `pic/retro/` illustration license and notice are
+already present; those do not establish rights for these photographs.
 
 <a id="g2"></a>
 
@@ -217,9 +228,9 @@ omissions, fixed in the following change.
 
 <a id="release-005"></a>
 
-### RELEASE-005 — G5-12 · WASM CI is compile-only.
+### RELEASE-005 — G5-12 · Browser persistence and session CI evidence
 
-**Priority:** 🟢 · **State:** To verify / decision pending.
+**Priority:** 🟢 · **State:** Automation implemented; candidate CI evidence pending.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-473).
 
@@ -231,13 +242,12 @@ to `state.cfg`, waits for the IDBFS flush, reloads the page, and reads it
 back. The local browser run passes; the check now runs in the WASM CI job.
 CI evidence from the new workflow run is pending.
 
-- 🟢 **G5-12 · WASM CI is compile-only.** *≈1 d.* The job builds and checks
-  three files are non-empty; it never boots the module, never touches
-  `PersistentFs`/IDBFS. The browser build **never destroys its `MainWindow`**,
-  so the only thing that persists a visitor's state is a 10-second heartbeat. A
-  regression that compiles but breaks the mount passes green and surfaces as
-  *"my browser forgets everything."* A node smoke — load, run N frames, write a
-  setting, `pom2_persist_now()`, reload, assert — closes it.
+**Current scope 2026-10-19:** The smoke also checks text upload, tab
+pause/resume, default //c Mockingboard, automatic session resume, reconstruction
+of a saved //c from a different startup profile, and byte-identical writable
+floppy/HDV checkpoints after deleting source files. The WASM job invokes it
+after building the bundle. This closes the former compile-only implementation
+gap; record the candidate run result rather than scheduling a new smoke tool.
 
 <a id="g6"></a>
 
@@ -245,24 +255,13 @@ CI evidence from the new workflow run is pending.
 
 <a id="release-007"></a>
 
-### RELEASE-007 — Windows ships a binary against which no test has ever run.
+### RELEASE-007 — Windows portable core tests and candidate package validation
 
-**Priority:** 🔴 · **State:** Verified on current main; rerun for the 1.0 candidate.
+**Priority:** 🔴 · **State:** Historical 11-case pass recorded; current 12-case subset and candidate package checks pending.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-516).
 
 **Acceptance criterion:** Record a passing MSVC core test subset, or accurately document Windows as build-verified only.
-
-- 🔴 **Windows ships a binary against which no test has ever run.** Both
-  `ci.yml:230-236` and `release.yml:707` set `-DPOM2_ENABLE_TESTS=OFF`, and the
-  CI comment concedes: *"the suite has never been built for MSVC."* README
-  lists Windows as a first-class platform. **Either** get a core subset green
-  under MSVC (*~1 d for a first 20 headless tests; 2-4 d for the unknown
-  portability backlog*) **or** say plainly in README that Windows is
-  build-verified only. The first is better; the second is honest; the current
-  state is neither.
-  *(Line numbers on 2026-10-06: `ci.yml:426-433`, `release.yml:753`; still
-  `-DPOM2_ENABLE_TESTS=OFF`.)*
 
 **Revalidation 2026-10-17:** CI at `fe429ca` configures
 `POM2_ENABLE_TESTS=ON` and `POM2_PORTABLE_TESTS_ONLY=ON` under MSVC, then
@@ -271,6 +270,12 @@ builds and runs the portable core subset. The [Windows job in run
 passed **11/11 tests, no skips**. This satisfies the core subset criterion;
 the release packaging job still builds the shipping binary with tests off,
 so the actual 1.0 package needs its candidate smoke check.
+
+**Current subset 2026-10-19:** `tests/cmake/Pom2PortableTests.cmake` now
+registers twelve cases, adding `session_machine` to the eleven-case set.
+The Windows CI target list includes it. The historical 11/11 result does
+not validate this expanded subset or the untagged changes; rerun both the
+candidate tests and the shipping package's launch checks.
 
 <a id="release-010"></a>
 
@@ -302,7 +307,7 @@ so the actual 1.0 package needs its candidate smoke check.
 
 <a id="release-008"></a>
 
-### RELEASE-008 — Linux aarch64 / Raspberry Pi are never built outside a release
+### RELEASE-008 — ARM64 / Raspberry Pi package launch and rendering evidence
 
 **Priority:** 🟡 · **State:** To verify / decision pending.
 
@@ -310,10 +315,11 @@ so the actual 1.0 package needs its candidate smoke check.
 
 **Acceptance criterion:** Record launch and rendering results for the ARM/Pi packages on the target hardware.
 
-- 🟡 **Linux aarch64 / Raspberry Pi are never built outside a release** and
-  never tested at all — three of the seven shipped packages. The rehearsal in
-  G4 covers the build; rendering on real hardware cannot be proven by CI and
-  should be a checklist line.
+ARM64, Raspberry Pi and Pi 400 artifacts are built by the release workflow,
+including rehearsals. Regular Linux CI also configures `POM2_GLES=ON`, builds
+that rendering tier and verifies GLES linkage. This runs on the Linux CI
+host; it is not execution of the ARM64 packages on Pi hardware. Actual
+package launch/rendering evidence on the target devices remains the gate.
 
 <a id="release-009"></a>
 

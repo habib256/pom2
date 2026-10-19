@@ -389,7 +389,23 @@ bad key and nothing changes):
 | `GET /slot-log?slot=N` | drain the log: `entries` of `cycle`, `addr`, `value`, `op` (r/w), plus `enabled`, `writes` and `dropped` |
 | `GET /printer/spool?slot=N[&from=K]` | bytes the card sent its printer since byte offset K, as a hex string, and the `next` cursor; also answers for the synthetic `printer` card |
 
-**Library** (`libpom2_core_test.a`):
+`GET /slot-log` consumes the buffered entries. Its `writes` counts only that
+batch; `dropped` is cumulative since logging was enabled. Enabling logging
+again clears both the entries and the dropped count. Disabling retains the
+buffer for a final read.
+
+`GET /printer/spool` copies retained bytes without consuming them. Pass the
+returned `next` as `from` on the next poll. Old bytes may have been evicted
+from the bounded spool; a cursor past its current end resynchronizes to the
+retained beginning after a clear. This is a preview stream, not an unlimited
+print-job archive.
+
+**Internal C++ interfaces** (in-tree application/tests):
+
+The interfaces below use internal headers and are not part of the installed
+`include/pom2/core.hpp` facade. `pom2_core_test` is the test archive target;
+its filename depends on the platform. For supported embedding and installation,
+see the [core SDK contract](SDK.md).
 
 - `PrinterPortControl.h` — `describePrinterPort`, `applyPrinterPortOptions`,
   `printerPortJson`; the functions behind both doors above.

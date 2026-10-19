@@ -27,14 +27,16 @@ uint32_t crc32(const uint8_t* data, size_t n)
 bool encodeSessionArchive(const SessionArchive& session, std::vector<uint8_t>& out,
                           std::string& error)
 {
-    if ((session.version < 1 || session.version > 6) || !session.machineId || session.core.size() > 17u * 1024u * 1024u ||
-        session.configuration.size() > 64) {
+    if ((session.version < 1 || session.version > 7) || !session.machineId || session.core.size() > 17u * 1024u * 1024u ||
+        session.configuration.size() > 64 || session.cassette.size() > (9u << 20) ||
+        (session.version < 7 && !session.cassette.empty())) {
         error = "invalid session machine/core/configuration"; return false;
     }
     const size_t cardLimit = session.version == 1 ? 1024u * 1024u : kMaxSessionCardBytes;
     // Bound the total before allocating/copying the payload, even for
     // callers that construct an archive directly rather than decoding one.
-    size_t total = 8 + session.configuration.size() + session.core.size();
+    size_t total = 8 + session.configuration.size() + session.core.size() +
+                   (session.version >= 7 ? 4 + session.cassette.size() : 0);
     for (const auto& slot : session.slots) {
         const size_t room = kMaxSessionBytes - 24;
         if (slot.identity.size() > 16384 || slot.state.size() > cardLimit ||
@@ -46,9 +48,11 @@ bool encodeSessionArchive(const SessionArchive& session, std::vector<uint8_t>& o
     std::vector<uint8_t> payload;
     sessionio::blob(payload, session.configuration);
     sessionio::blob(payload, session.core);
+    if (session.version >= 7) sessionio::blob(payload, session.cassette);
     for (const auto& slot : session.slots) {
         if (slot.identity.size() > 16384 || slot.state.size() > cardLimit ||
-            uint8_t(slot.kind) > uint8_t(session.version >= 6 ? SessionArchive::Card::HardDisk :
+            uint8_t(slot.kind) > uint8_t(session.version >= 7 ? SessionArchive::Card::EchoTms :
+                      session.version >= 6 ? SessionArchive::Card::HardDisk :
                       session.version >= 4 ? SessionArchive::Card::SonyMedia :
                       session.version >= 3 ? SessionArchive::Card::Clock
                                                               : SessionArchive::Card::SnesMax) ||
@@ -85,7 +89,7 @@ bool decodeSessionArchive(const std::vector<uint8_t>& bytes, SessionArchive& out
     r.pos = 8;
     SessionArchive staged;
     staged.version = r.u32();
-    if (staged.version < 1 || staged.version > 6) { error = "unsupported session version"; return false; }
+    if (staged.version < 1 || staged.version > 7) { error = "unsupported session version"; return false; }
     const size_t cardLimit = staged.version == 1 ? 1024u * 1024u : kMaxSessionCardBytes;
     staged.machineId = r.u32();
     const uint32_t payload = r.u32();
@@ -100,9 +104,13 @@ bool decodeSessionArchive(const std::vector<uint8_t>& bytes, SessionArchive& out
     if (!r.blob(staged.configuration, 64) || !r.blob(staged.core, 17u * 1024u * 1024u)) {
         error = "invalid session core/configuration length"; return false;
     }
+    if (staged.version >= 7 && !r.blob(staged.cassette, 9u << 20)) {
+        error = "invalid session cassette length"; return false;
+    }
     for (auto& slot : staged.slots) {
         slot.kind = SessionArchive::Card(r.u8());
-        if (uint8_t(slot.kind) > uint8_t(staged.version >= 6 ? SessionArchive::Card::HardDisk :
+        if (uint8_t(slot.kind) > uint8_t(staged.version >= 7 ? SessionArchive::Card::EchoTms :
+                      staged.version >= 6 ? SessionArchive::Card::HardDisk :
                       staged.version >= 4 ? SessionArchive::Card::SonyMedia :
                       staged.version >= 3 ? SessionArchive::Card::Clock
                                                              : SessionArchive::Card::SnesMax) ||

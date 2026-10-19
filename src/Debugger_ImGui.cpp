@@ -85,9 +85,11 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.cmos     = cpu.effectiveCpuMode() == M6502::CpuMode::CMOS;
         snap.halted   = cpu.isHalted();
         snap.hit      = ctrl.debugger().lastHit();
-        snap.breakpoints = ctrl.debugger().breakpoints();
+        snap.breakpoints = ctrl.debugger().bankBreakpoints();
+        snap.pcBank = mem.debugBank(snap.pc);
         snap.watchpoints = ctrl.debugger().watchpoints();
-        snap.conditions = ctrl.debugger().conditions();
+        for (const auto& c : ctrl.debugger().conditions()) snap.conditions[{c.first,{}}]=c.second;
+        for (const auto& c : ctrl.debugger().bankConditions()) snap.conditions[c.first]=c.second;
         snap.profiling = ctrl.debugger().profiling();
         snap.historyEnabled = ctrl.debugger().historyEnabled();
         snap.profile = ctrl.debugger().profile();
@@ -100,6 +102,8 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         // paging without touching a soft switch (Memory.h).
         snap.memory.assign(0x10000, 0);
         mem.snapshotCpuView(snap.memory.data());
+        snap.banks.resize(0x10000);
+        for (unsigned a=0; a<0x10000; ++a) snap.banks[a]=mem.debugBank(static_cast<uint16_t>(a));
     }
     snap.running = ctrl.getMode() == EmulationController::Mode::Running;
 
@@ -154,9 +158,11 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
                     symbolStatus_ = std::to_string(symbols_.size()) + " symbols loaded.";
             }
         }
-        ImGui::TextWrapped("AppleWin .sym, VICE/cc65 labels and NAME = $address. Use labels in the breakpoint field.");
+        ImGui::TextWrapped("AppleWin .sym, VICE/cc65 labels and NAME = $address. Bank-qualified symbols are supported (entry = aux1:$0800). Use labels in the breakpoint field.");
         ImGui::TextWrapped("%s", symbolStatus_.c_str());
     }
+
+    drawSource(ctrl,snap);
 
     if (ImGui::CollapsingHeader("Profiler and execution history")) {
         if (ImGui::Checkbox("Profile CPU steps", &snap.profiling)) {
@@ -183,21 +189,21 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
             ImGui::TableHeadersRow();
             for (const auto& entry : snap.profile) {
                 ImGui::TableNextRow(); ImGui::TableNextColumn();
-                ImGui::Text("$%04X", entry.pc); ImGui::TableNextColumn();
-                ImGui::TextUnformatted(symbols_.label(entry.pc).c_str()); ImGui::TableNextColumn();
+                ImGui::TextUnformatted(DebugAddress{entry.pc,entry.bank}.text().c_str()); ImGui::TableNextColumn();
+                ImGui::TextUnformatted(symbols_.label(entry.pc,entry.bank).c_str()); ImGui::TableNextColumn();
                 ImGui::Text("%llu", static_cast<unsigned long long>(entry.visits)); ImGui::TableNextColumn();
                 ImGui::Text("%llu", static_cast<unsigned long long>(entry.cycles));
             }
             ImGui::EndTable();
         }
         for (const auto& entry : snap.history)
-            ImGui::Text("$%04X -> $%04X A:%02X X:%02X Y:%02X P:%02X SP:%02X (%d cycles)",
-                entry.pc, entry.nextPc, entry.a, entry.x, entry.y, entry.p, entry.sp, entry.cycles);
+            ImGui::Text("%s -> $%04X A:%02X X:%02X Y:%02X P:%02X SP:%02X (%d cycles)",
+                DebugAddress{entry.pc,entry.bank}.text().c_str(), entry.nextPc, entry.a, entry.x, entry.y, entry.p, entry.sp, entry.cycles);
         ImGui::EndChild();
     }
 
     // Disassembly left, breakpoints right.
-    const float rightWidth = 210.0f;
+    const float rightWidth = 270.0f;
     ImGui::BeginChild("##disasm",
                       ImVec2(ImGui::GetContentRegionAvail().x - rightWidth - 8.0f, 0),
                       true);
@@ -228,6 +234,9 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
         ImGui::TextColored(kDimColour, snap.running ? "Running." : "Stopped.");
         return;
     }
+    ImGui::Text("Bank: %s", snap.hit.pcBank.text().c_str());
+    if (snap.hit.reason == Debugger::Reason::WatchRead || snap.hit.reason == Debugger::Reason::WatchWrite)
+        ImGui::Text("Access bank: %s", snap.hit.bank.text().c_str());
     char msg[128];
     switch (snap.hit.reason) {
         case Debugger::Reason::Breakpoint:
@@ -295,7 +304,7 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
     ImGui::SameLine();
     ImGui::BeginDisabled(!cursorValid_);
     if (ImGui::Button("Run To Cursor", ImVec2(120, 0)))
-        ctrl.debugRunToCursor(cursorAddr_);
+        ctrl.debugRunToCursor(cursorAddr_, cursorBank_);
     ImGui::EndDisabled();
     if (!cursorValid_ && ImGui::IsItemHovered())
         ImGui::SetTooltip("Click a line in the disassembly first");
@@ -337,8 +346,9 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
         const std::string mnem =
             disassemble6502(snap.memory.data(), addr, len, snap.cmos);
         const bool isPc = (addr == snap.pc);
-        const bool isBp = std::binary_search(snap.breakpoints.begin(),
-                                             snap.breakpoints.end(), addr);
+        const DebugAddress location{addr,snap.banks[addr]};
+        const bool wildcard = std::binary_search(snap.breakpoints.begin(),snap.breakpoints.end(),DebugAddress{addr,{}});
+        const bool isBp = wildcard || std::binary_search(snap.breakpoints.begin(),snap.breakpoints.end(),location);
 
         // The gutter IS the control: clicking it toggles the breakpoint, the
         // way every debugger since Turbo Pascal has worked. A separate "add
@@ -347,7 +357,8 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
         const char* mark = isBp ? "*" : " ";
         if (ImGui::SmallButton(mark)) {
             auto st = ctrl.lockState();
-            ctrl.debugger().toggleBreakpoint(addr);
+            if (isBp) ctrl.debugger().removeBreakpoint(addr,wildcard ? DebugBank{} : location.bank);
+            else ctrl.debugger().addBreakpoint(addr,location.bank);
             ctrl.syncDebugHook();          // touches the CPU — hence lockState
         }
         if (ImGui::IsItemHovered())
@@ -362,13 +373,14 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
                           "%02X ", snap.memory[(addr + b) & 0xFFFF]);
 
         char line[96];
-        const std::string label = symbols_.label(addr);
-        std::snprintf(line, sizeof(line), "$%04X  %-9s %s %s", addr, bytes, mnem.c_str(), label.c_str());
+        const std::string label = symbols_.label(addr,location.bank);
+        std::snprintf(line, sizeof(line), "%s  %-9s %s %s", location.text().c_str(), bytes, mnem.c_str(), label.c_str());
 
         if (isPc)      ImGui::PushStyleColor(ImGuiCol_Text, kPcColour);
         else if (isBp) ImGui::PushStyleColor(ImGuiCol_Text, kBreakColour);
         if (ImGui::Selectable(line, cursorValid_ && addr == cursorAddr_)) {
             cursorAddr_  = addr;
+            cursorBank_ = location.bank;
             cursorValid_ = true;
         }
         if (isPc || isBp) ImGui::PopStyleColor();
@@ -383,16 +395,17 @@ void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
                                         const Snapshot& snap)
 {
     ImGui::TextUnformatted("Breakpoints");
+    ImGui::TextWrapped("bank:address or address for all banks (aux0:0800, lc2:D000).");
     ImGui::Separator();
 
-    ImGui::SetNextItemWidth(70);
+    ImGui::SetNextItemWidth(150);
     const bool entered = ImGui::InputText("##bpaddr", bpEntry_, sizeof(bpEntry_),
                                           ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     const bool add = ImGui::Button("Add") || entered;
     if (add && bpEntry_[0]) {
-        uint16_t v = 0, value = 0;
-        if (symbols_.resolve(bpEntry_, v) &&
+        DebugAddress location; uint16_t value = 0;
+        if (symbols_.resolveLocation(bpEntry_, location) &&
             (!conditionEnabled_ || DebuggerSymbols::address(conditionValue_, value))) {
             auto st = ctrl.lockState();
             if (conditionEnabled_) {
@@ -400,9 +413,9 @@ void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
                 condition.reg = static_cast<Debugger::Register>(conditionRegister_);
                 condition.compare = static_cast<Debugger::Compare>(conditionCompare_);
                 condition.value = value;
-                ctrl.debugger().addConditionalBreakpoint(v, condition, st.cpu());
+                ctrl.debugger().addConditionalBreakpoint(location.addr, condition, st.cpu(), location.bank);
             } else {
-                ctrl.debugger().addBreakpoint(v);
+                ctrl.debugger().addBreakpoint(location.addr,location.bank);
             }
             ctrl.syncDebugHook();
             symbolStatus_.clear();
@@ -427,24 +440,23 @@ void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
     if (snap.breakpoints.empty()) {
         ImGui::TextColored(kDimColour, "none");
     } else {
-        for (const uint16_t bp : snap.breakpoints) {
-            ImGui::PushID(static_cast<int>(bp));
+        for (const auto& location : snap.breakpoints) {
+            const uint16_t bp = location.addr;
+            ImGui::PushID(location.text().c_str());
             if (ImGui::SmallButton("x")) {
                 auto st = ctrl.lockState();
-                ctrl.debugger().removeBreakpoint(bp);
+                ctrl.debugger().removeBreakpoint(bp,location.bank);
                 ctrl.syncDebugHook();
             }
             ImGui::SameLine();
-            if (ImGui::Selectable(([bp] {
-                    char t[16];
-                    std::snprintf(t, sizeof(t), "$%04X", bp);
-                    return std::string(t);
-                })().c_str())) {
+            if (ImGui::Selectable(location.text().c_str())) {
                 viewAddr_ = bp;
+                cursorAddr_ = bp; cursorBank_ = location.bank.kind == DebugBank::Any ? snap.banks[bp] : location.bank;
+                cursorValid_ = true;
                 followPc_ = false;      // jumping to a breakpoint means "look here"
             }
             ImGui::PopID();
-            const auto condition = snap.conditions.find(bp);
+            const auto condition = snap.conditions.find(location);
             if (condition != snap.conditions.end()) {
                 static const char* registers[] = {"A", "X", "Y", "P", "SP", "PC"};
                 static const char* operators[] = {"==", "!=", "<", "<=", ">", ">="};
@@ -485,11 +497,9 @@ void Debugger_ImGui::drawWatchpointList(EmulationController& ctrl,
                           "opcode fetches and soft-switch reads included.");
     ImGui::Separator();
 
-    ImGui::SetNextItemWidth(70);
+    ImGui::SetNextItemWidth(150);
     const bool entered = ImGui::InputText("##wpaddr", wpEntry_, sizeof(wpEntry_),
-                                          ImGuiInputTextFlags_CharsHexadecimal |
                                           ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
     ImGui::RadioButton("R", &wpAccess_, Debugger::Read);
     ImGui::SameLine();
     ImGui::RadioButton("W", &wpAccess_, Debugger::Write);
@@ -498,11 +508,10 @@ void Debugger_ImGui::drawWatchpointList(EmulationController& ctrl,
     ImGui::SameLine();
     const bool add = ImGui::Button("Watch") || entered;
     if (add && wpEntry_[0]) {
-        unsigned v = 0;
-        if (std::sscanf(wpEntry_, "%x", &v) == 1) {
+        DebugAddress location;
+        if (symbols_.resolveLocation(wpEntry_, location)) {
             auto st = ctrl.lockState();
-            ctrl.debugger().setWatchpoint(static_cast<uint16_t>(v & 0xFFFF),
-                                          static_cast<Debugger::Access>(wpAccess_));
+            ctrl.debugger().setWatchpoint(location.addr, static_cast<Debugger::Access>(wpAccess_), location.bank);
             ctrl.syncDebugHook();      // installs Memory's diversions
         }
         wpEntry_[0] = '\0';
@@ -513,19 +522,21 @@ void Debugger_ImGui::drawWatchpointList(EmulationController& ctrl,
         return;
     }
     for (const Debugger::Watch& w : snap.watchpoints) {
-        ImGui::PushID(0x10000 + static_cast<int>(w.addr));
+        ImGui::PushID(DebugAddress{w.addr,w.bank}.text().c_str());
         if (ImGui::SmallButton("x")) {
             auto st = ctrl.lockState();
-            ctrl.debugger().setWatchpoint(w.addr, Debugger::None);
+            ctrl.debugger().setWatchpoint(w.addr, Debugger::None, w.bank);
             ctrl.syncDebugHook();
         }
         ImGui::SameLine();
-        char t[16];
-        std::snprintf(t, sizeof(t), "$%04X %s", w.addr,
+        char t[48];
+        std::snprintf(t, sizeof(t), "%s %s", DebugAddress{w.addr,w.bank}.text().c_str(),
                       w.access == Debugger::ReadWrite ? "RW"
                       : w.access == Debugger::Read    ? "R" : "W");
         if (ImGui::Selectable(t)) {
             viewAddr_ = w.addr;
+            cursorAddr_ = w.addr; cursorBank_ = w.bank.kind == DebugBank::Any ? snap.banks[w.addr] : w.bank;
+            cursorValid_ = true;
             followPc_ = false;
         }
         ImGui::PopID();
@@ -536,6 +547,81 @@ void Debugger_ImGui::drawWatchpointList(EmulationController& ctrl,
         ctrl.debugger().clearWatchpoints();
         ctrl.syncDebugHook();
     }
+}
+
+// Source files are read on the UI thread, after the machine snapshot lock.
+void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
+{
+    if (!ImGui::CollapsingHeader("Source")) return;
+    ImGui::SetNextItemWidth(420);
+    ImGui::InputText("Map file", sourceMapPath_, sizeof(sourceMapPath_));
+    ImGui::SameLine();
+    if (nativeFileDialogAvailable() && ImGui::Button("Browse##source")) {
+        std::string picked;
+        if (nativeFileDialog(false,"Load source map","p2map,txt","","",picked)==FileDialogResult::Selected) {
+            if (picked.size()<sizeof(sourceMapPath_))
+                std::snprintf(sourceMapPath_,sizeof(sourceMapPath_),"%s",picked.c_str());
+            else sourceStatus_="The selected path is too long.";
+        }
+    }
+    auto readBounded = [](const std::filesystem::path& path, std::string& text) {
+        std::ifstream file(path,std::ios::binary|std::ios::ate);
+        const auto size=file ? file.tellg() : std::streampos{-1};
+        if (size<0 || size>4*1024*1024) return false;
+        std::string value(static_cast<size_t>(size),'\0');
+        file.seekg(0);
+        if (!value.empty()) file.read(value.data(),static_cast<std::streamsize>(value.size()));
+        if (!file) return false;
+        text=std::move(value); return true;
+    };
+    if (ImGui::Button("Load source map")) {
+        std::string text;
+        if (!readBounded(std::filesystem::u8path(sourceMapPath_),text))
+            sourceStatus_="Cannot read source map (maximum 4 MiB).";
+        else if (sourceMap_.load(text,sourceStatus_)) {
+            sourceRoot_=std::filesystem::u8path(sourceMapPath_).parent_path().u8string();
+            sourceStatus_=std::to_string(sourceMap_.size())+" source ranges loaded.";
+            sourceFile_.clear(); sourceLoaded_=false;
+        }
+    }
+    ImGui::TextWrapped("Map rows: aux0:$0800-$0802 \"src/main.s\" 42. Paths are relative to the map. Ranges use inclusive hexadecimal addresses; lines start at 1.");
+    ImGui::TextWrapped("%s",sourceStatus_.c_str());
+    const DebugAddress location{followPc_ || !cursorValid_ ? snap.pc : cursorAddr_,
+        followPc_ || !cursorValid_ ? snap.pcBank : cursorBank_};
+    const auto* entry=sourceMap_.lookup(location);
+    if (!entry) { ImGui::TextDisabled("No source mapping for %s",location.text().c_str()); return; }
+    ImGui::Text("%s -> %s:%u",location.text().c_str(),entry->file.c_str(),entry->line);
+    if (ImGui::Button("Break at source line")) {
+        auto st=ctrl.lockState();
+        ctrl.debugger().addBreakpoint(entry->start.addr,entry->start.bank);
+        ctrl.syncDebugHook();
+    }
+    const auto path=(std::filesystem::u8path(sourceRoot_)/std::filesystem::u8path(entry->file)).lexically_normal();
+    auto loadSource = [&] {
+        std::string text;
+        sourceLoaded_=readBounded(path,text);
+        sourceLines_.clear();
+        if (!sourceLoaded_) return;
+        std::istringstream input(text); std::string line;
+        while (std::getline(input,line)) sourceLines_.push_back(std::move(line));
+    };
+    if (sourceFile_!=path.u8string()) {
+        sourceFile_=path.u8string();
+        loadSource();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload source")) loadSource();
+    if (!sourceLoaded_) { ImGui::TextDisabled("Cannot read source (maximum 4 MiB)."); return; }
+    ImGui::BeginChild("##sourceLines",ImVec2(0,125),true,ImGuiWindowFlags_HorizontalScrollbar);
+    const unsigned first=entry->line > 4 ? entry->line-4 : 1;
+    const unsigned last=std::min(entry->line+4,static_cast<unsigned>(sourceLines_.size()));
+    for (unsigned number=first; number<=last; ++number) {
+        if (number==entry->line) ImGui::PushStyleColor(ImGuiCol_Text,kPcColour);
+        ImGui::Text("%c %5u  %s",number==entry->line ? '>' : ' ',number,sourceLines_[number-1].c_str());
+        if (number==entry->line) ImGui::PopStyleColor();
+    }
+    if (sourceLines_.size()<entry->line) ImGui::TextDisabled("Source line is beyond end of file.");
+    ImGui::EndChild();
 }
 
 }  // namespace pom2

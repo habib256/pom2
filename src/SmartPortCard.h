@@ -36,10 +36,10 @@
 // design replaces them with a `std::array<unique_ptr<SmartPortUnit>, kMaxUnits>`
 // where each slot can hold any concrete `SmartPortUnit` (3.5", HDV, future
 // types). ProDOS sees the first two units as drive 1 / drive 2 of slot N;
-// units 3+ are reserved for a future extended-SmartPort hookup and are
-// inert today (kMaxUnits = 2 for v1).
+// SmartPort calls enumerate additional units. There are up to 14 bays,
+// with 8 visible by default; setUnitCount selects an even count from 2-14.
 //
-//   $C0n0 write = drive select (bits 0-1 = unit index, 0..kMaxUnits-1)
+//   $C0n0 write = drive select (value modulo the configured unit count)
 //   $C0n1 write = block LO byte (selected unit)
 //   $C0n2 write = block HI byte (selected unit)
 //   $C0n3 read  = next byte of selected block (auto-incrementing)
@@ -50,8 +50,9 @@
 //                 read/write stream and returns carry-set (ProDOS $27) so a
 //                 failed transfer is never reported as success.
 //
-// Slot ROM ($Cn00-$CnFF) holds a ProDOS block driver that ProDOS scans
-// for at boot. Signature:
+// Slot ROM ($Cn00-$CnFF) holds a ProDOS block driver. The synthetic
+// fallback has the signature below; loadLironRom preserves the real ROM
+// identity ($Cn07=$00, $CnFE=$BF, $CnFF=$0A) under HLE service overlays:
 //
 //   $Cn01 = $20     (ProDOS signature)
 //   $Cn03 = $00
@@ -91,17 +92,11 @@ class SmartPortCard : public SlotPeripheral, public MountableMediaCard
 public:
     static constexpr int    kDefaultSlot   = 5;
     static constexpr size_t kBlockBytes    = SmartPortUnit::kBlockBytes;
-    /// Maximum units chained on this card. Capped at 2 in v1 to match
-    /// ProDOS-8's direct slot driver (drive 1 + drive 2). Real Liron =
-    /// 2 as well; raising this to 4 needs the SmartPort extended-call
-    /// protocol in the ROM driver (not wired today).
-    /// Eight bays, the way a modern SmartPort controller (A2retroNET on an
-    /// A2Pico, 2026-09-08) presents them: units 1-2 are ProDOS's drive 1/2
-    /// of the slot, units 3+ are enumerated through the SmartPort STATUS
-    /// call and remapped by ProDOS 8 2.4+ onto empty slots. How many the
-    /// card ANSWERS FOR is `unitCount()` (2, 4, 6 or 8 — A2retroNET's
-    /// `number=`). It starts at the ceiling since 2026-09-11 (`kDefaultUnits`),
-    /// like the Liron: a count saved as `smartport_slotN_units` still wins.
+    /// Fourteen addressable bays; eight are exposed by default. Units 1-2
+    /// are ProDOS's drive 1/2 of the slot; additional units are enumerated
+    /// through SmartPort STATUS and remapped by ProDOS 8 2.4+ onto empty
+    /// slots. `unitCount()` selects the visible even count from 2 to 14;
+    /// a saved `smartport_slotN_units` value overrides the default.
     static constexpr size_t kMaxUnits      = 14;
     static constexpr int    kDefaultUnits  = 8;
 
@@ -134,7 +129,7 @@ public:
     /// $C500 page is never punched in: the machine's own firmware speaks to
     /// these over the IWM, enumerates them and boots from them.
     /// The number of units the card answers for — STATUS unit 0's device
-    /// count, the SmartPort unit range, the media rows. 2, 4, 6 or 8; any
+    /// count, the SmartPort unit range, the media rows. 2, 4, ..., 14; any
     /// other value is rounded to the next even number in that range. Bays
     /// beyond it keep their media but are invisible to the guest.
     void setUnitCount(int n);

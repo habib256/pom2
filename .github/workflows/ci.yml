@@ -1,12 +1,11 @@
 # POM2 continuous integration.
 #
-# Two jobs:
-#   linux  — build the full tree (GUI + pom2_headless + unit tests) and run the
-#            300+-test ctest suite (Klaus 6502/65C02, Tom Harte curated,
-#            cpu_cycle_count, golden-hash display, boot traces). This is the
-#            non-regression gate: it must stay green on every push / PR.
-#   wasm   — Emscripten verification build (build_wasm.sh) so the browser
-#            target can never silently rot. Build-only; no test run in-browser.
+# Native checks cover quick GCC compilation, software GL, full Linux/macOS
+# suites and a portable Windows subset. Separate jobs run coverage and
+# scheduled/manual sanitizers, with an alert for failed scheduled runs.
+# The wasm job builds with Emscripten AND runs the Chrome persistence/session
+# smoke test; the pages job deploys the resulting demo when its conditions hold.
+# Job definitions below are authoritative for triggers, filters and toolchains.
 #
 # MOST OF THE SUITE DOES DEPEND ON roms/. This file used to claim the opposite
 # ("no test depends on machine ROM dumps — the suite drives the emulator core
@@ -18,8 +17,7 @@
 # reported as ctest SKIPPED (SKIP_RETURN_CODE 77), and the step below asserts
 # the registered test COUNT, so a suite that quietly shrinks fails.
 #
-# Dear ImGui is gitignored; both jobs clone it shallowly (same as
-# ./setup_imgui.sh).
+# Dear ImGui is gitignored; build jobs fetch the revision in imgui_pin.env.
 
 name: CI
 
@@ -335,10 +333,9 @@ jobs:
   # discovered DURING a release, with the version already tagged — the worst
   # possible moment and the hardest to back out of.
   #
-  # These two are build-only on purpose. Packaging, signing, universal-binary
-  # lipo and the payload verification are release concerns and stay there; all
-  # this has to answer is "does the tree still compile for that toolchain",
-  # which is the question whose answer used to arrive too late.
+  # macOS runs the native suite; Windows runs the portable core subset.
+  # Packaging, signing, universal-binary lipo and payload verification remain
+  # release concerns in release.yml; these jobs build and test without packaging.
 
   macos:
     name: macOS build + ctest (no packaging)
@@ -353,7 +350,7 @@ jobs:
         run: tools/fetch_imgui_pinned.sh
 
       # Homebrew's glfw, not the universal static build release.yml makes:
-      # this job is a compile check, and a universal build would spend most of
+      # this job tests a native build, and a universal build would spend most of
       # its runtime on a slice nothing here inspects.
       - name: Install build dependencies
         run: brew install glfw
@@ -432,7 +429,7 @@ jobs:
         shell: cmd
         run: |
           cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=ON -DPOM2_PORTABLE_TESTS_ONLY=ON
-          cmake --build build --config Release --parallel 3 --target pom2_imgui test_cpu_cycle_count test_bus_fastpath test_memory_cpu_view test_pal_timing test_debugger test_w5100_socket_seam test_vidhd_card test_snesmax_card test_snapshot_environment test_snapshot_preflight test_session_snapshot
+          cmake --build build --config Release --parallel 3 --target pom2_imgui test_cpu_cycle_count test_bus_fastpath test_memory_cpu_view test_pal_timing test_debugger test_w5100_socket_seam test_vidhd_card test_snesmax_card test_snapshot_environment test_snapshot_preflight test_session_snapshot test_session_machine
 
       - name: Run portable core tests
         run: ctest --test-dir build -C Release --output-on-failure --no-tests=error --parallel 2

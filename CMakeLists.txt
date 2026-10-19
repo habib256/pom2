@@ -10,8 +10,8 @@ cmake_policy(SET CMP0091 NEW)
 
 project(pom2_imgui VERSION 0.9.7 LANGUAGES CXX)
 if(APPLE)
-    # One Objective-C++ file: src/HostOpenFiles_mac.mm, the Finder / Dock
-    # open-file hook GLFW's delegate does not provide.
+    # Native macOS hooks use Objective-C++: Finder/Dock open-file events
+    # and the AppKit file chooser.
     enable_language(OBJCXX)
 endif()
 
@@ -267,6 +267,9 @@ set(SOURCES
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/SessionMachine.cpp
+    src/SessionCards.cpp
+    src/SessionLoadQueue.cpp
     src/BrowserSessionStore.cpp
     src/DiskImage_Session.cpp
     src/DiskImage_SessionWritable.cpp
@@ -294,7 +297,9 @@ set(SOURCES
     src/AtaBlockDevice.cpp
     src/AudioDevice.cpp
     src/CassetteDevice.cpp
+    src/CassetteDevice_Session.cpp
     src/CffaCard.cpp
+    src/CffaCard_Session.cpp
     src/CassetteDeck_ImGui.cpp
     src/CliDispatcher.cpp
     src/CliRunner.cpp
@@ -373,8 +378,8 @@ set(SOURCES
     # v0.8.5 panel decomposition unchanged.
     # Public C++17 facade (include/pom2/core.hpp) — PIMPL over Memory/M6502,
     # ported with its contract test. The installable find_package(pom2_core)
-    # half stays on the branch: it needs a real library target, which the
-    # v0.8.5 tree does not have.
+    # package is exported below as POM2::core by the pom2_core_sdk install
+    # component; the source tree and installed consumer use the same facade.
     src/Pom2Core.cpp
     src/W5100HostSockets.cpp
     src/W5100NameResolver.cpp
@@ -540,6 +545,7 @@ set(POM2_DEVICES_HEADERS
 set(POM2_DEVICES_SOURCES
     src/DiskIICard_Session.cpp
     src/CffaCard.cpp
+    src/CffaCard_Session.cpp
     src/ClockCard.cpp
     src/Cs8900aDevice.cpp
     src/DiskIICard.cpp
@@ -762,6 +768,7 @@ set(POM2_FRONTEND_SOURCES
 )
 
 set(POM2_MACHINE_HEADERS
+    src/DebugAddress.h
     src/Opcode6502.h
     src/Apple2VideoDecode.h
     src/AppleKeyLatch.h
@@ -786,6 +793,7 @@ set(POM2_MACHINE_SOURCES
     src/MemoryProfile_IIcClass.cpp
     src/AppleWinNtsc.cpp
     src/CassetteDevice.cpp
+    src/CassetteDevice_Session.cpp
     src/Disassembler6502.cpp
     src/IWMDevice.cpp
     src/SmartPortHub.cpp
@@ -836,6 +844,7 @@ set(POM2_RUNTIME_HEADERS
     include/pom2/core.hpp
     src/Debugger.h
     src/DebuggerSymbols.h
+    src/DebuggerSourceMap.h
     # MediaMount.h is pure contract — one <string> include and forward
     # declarations — but its implementation reaches DiskIICard and
     # EmulationController, so the pair is runtime. Nothing below the frontend
@@ -860,6 +869,9 @@ set(POM2_RUNTIME_SOURCES
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/SessionMachine.cpp
+    src/SessionCards.cpp
+    src/SessionLoadQueue.cpp
     src/BrowserSessionStore.cpp
     src/AiControlServer.cpp
     src/AiControlServer_Printer.cpp
@@ -1444,6 +1456,9 @@ set(POM2_CORE_SOURCES
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/SessionMachine.cpp
+    src/SessionCards.cpp
+    src/SessionLoadQueue.cpp
     src/BrowserSessionStore.cpp
     src/DiskImage_Session.cpp
     src/DiskImage_SessionWritable.cpp
@@ -1474,7 +1489,9 @@ set(POM2_CORE_SOURCES
     src/AtaBlockDevice.cpp
     src/AudioDevice.cpp
     src/CassetteDevice.cpp
+    src/CassetteDevice_Session.cpp
     src/CffaCard.cpp
+    src/CffaCard_Session.cpp
     src/CliDispatcher.cpp
     src/CliRunner.cpp
     src/ClockCard.cpp
@@ -1743,6 +1760,7 @@ add_executable(pom2_headless
     src/CharRomDump.cpp
     src/AudioDevice.cpp
     src/CassetteDevice.cpp
+    src/CassetteDevice_Session.cpp
     src/ClockCard.cpp
     src/Disk35Image.cpp
     src/Disk35Image_Bitstream.cpp
@@ -1839,6 +1857,7 @@ add_executable(pom2_bench
     src/AppleWinNtsc.cpp
     src/AudioDevice.cpp
     src/CassetteDevice.cpp
+    src/CassetteDevice_Session.cpp
     src/Disk35Image.cpp
     src/Disk35Image_Bitstream.cpp
     src/Disk35Image_Session.cpp

@@ -83,7 +83,8 @@ consumed as the next chunk's amnesty (needs a SoftCard actively DMA-ing).
 
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
 TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
-WDC WAI/STP (PC parks, IRQ wakes). Klaus Dormann clean.
+WDC WAI is a three-cycle fallthrough approximation; STP halts until reset.
+Klaus Dormann clean.
 `setCpuMode(NMOS)` re-overrides four KIL column-2 entries
 ($02/$22/$42/$62) back to halt, remaps the eight $xB-column
 immediates ($0B/$2B/$4B/$6B/$8B/$AB/$CB/$EB) as `UnoffImm`
@@ -125,10 +126,12 @@ caught indirectly via stack RAM). This is exactly the timing-bug class
 `cpu_cycle_count_test` was built for, generalised to every opcode × 10 000
 states.
 
-Results below are from **full 256-opcode** sweeps of both variants
-(`tests/fetch_tomharte.sh <variant> <dir> --all`), not just the gated subset:
+Results below are historical **full 256-opcode** sweeps of both variants
+(`tests/fetch_tomharte.sh <variant> <dir> --all`), not just the gated subset.
+These are matching corpus files, not a count of documented instructions or
+proof of per-access bus ordering; passing NMOS files include unofficial NOPs:
 
-- **NMOS 6502** (`6502/v1`): **100% on all 178 documented opcodes**
+- **NMOS 6502** (`6502/v1`): **178 opcode files passed in the recorded sweep**
   (1 780 000 vectors), incl. decimal ADC/SBC + the NMOS `JMP (ind)` page bug.
   The 78 failing files are exactly the undocumented opcodes with observable
   side effects (SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC/ANC/ALR/ARR/XAA/SBX/SHY/SHX/
@@ -757,9 +760,10 @@ the rest.
 
 **The inverse/flash range.** In the 4 KB //e dumps and AppleWin's
 `Apple2_Video.rom`, bit 7 of each byte marks the range that renders inverse.
-The Videx dump never sets bit 7 at all, so that marker is absent and the
-range has to be split by OFFSET (the first 512 bytes) instead. `loadCharRom`
-now scans for the marker once and picks the rule accordingly. Getting this
+The tracked 2 KB Videx LOWER CASE CHIP dump also carries that marker: all
+512 bytes in glyphs `$40-$7F` have bit 7 set. `normaliseCharRom` scans the
+first 1024 bytes and selects the marked rule. Only an unmarked 2 KB dump
+uses the offset fallback (first 512 bytes). Getting this
 backwards inverts the entire normal range — and because the glyph SHAPES are
 unaffected, it is invisible in a screenshot of ordinary text.
 
@@ -951,11 +955,12 @@ block painter applies the rotation. Pinned by `dlgr_mame_phase` (signal and
 MonoWhite frame dot-for-dot against MAME's builder, the phase term, and
 the block colours as a regression guard) and `dlgr_render_smoke`.
 Observed, not changed: the II/II+ FLASH range blinks in antiphase with
-MAME's (and with POM2's own //e); the shipped Videx dump *does* carry the
-bit-7 range marker, so `CharRomDump.h`'s "never sets bit 7" sentence and
-its offset branch are stale; 80-column TEXT under the CPU demods keeps
+MAME's (and with POM2's own //e); 80-column TEXT under the CPU demods keeps
 phase 0 where MAME uses the 80-column term (no colour oracle: MAME renders
 text monochrome). History: CHANGELOG 2026-09-09 (bug hunt #15).
+The accompanying Videx marker finding is resolved as a documentation error:
+the shipped dump takes the detected-marker branch; the offset fallback
+remains valid for unmarked dumps.
 
 ### Beam-racing (mid-scanline soft switches)
 
@@ -1892,8 +1897,13 @@ never reach the deck on a //c, where that address is the 40/80-column switch.
 Pinned by `cassette_hostile`. Known limits: 24-bit PCM is refused with an
 accurate message; a rewind across a live capture keeps `recordedDurations`
 (cassette output never bumps the media epoch — a design call, documented in
-the header); `--save-tape out.mp3` writes ACI bytes into a `.mp3`. History:
-CHANGELOG 2026-09-09 (bug hunt #17).
+the header). The old CLI suffix finding is resolved: `resolveSaveTapePath`
+keeps an existing `.aci`/`.wav` suffix (case-insensitive), otherwise appends
+the format hint or `.aci` by default. Thus `--save-tape out.mp3` produces
+`out.mp3.aci`; it does not encode MP3. Explicit `.aci`/`.wav` suffixes win over
+`--save-tape-format`. Direct `CassetteDevice::saveTape` callers must supply
+the desired suffix themselves; that method writes WAV only for `.wav`, ACI
+otherwise. Historical finding: CHANGELOG 2026-09-09 (bug hunt #17).
 
 ### Mockingboard
 
@@ -4013,8 +4023,9 @@ Ported from MAME `bus/a2bus/a2cffa.cpp`.
   hidden from Slot Config when absent. Source: dreher.net
   `Run6_CDROM.zip` (`Firmware/V2.0/`).
 
-- **Image**: `.hdv`/`.2mg` raw LBA (compat preserved). **CHD = phase
-  2**. Mounts via HDV Library.
+- **Image**: `.hdv`/`.2mg` raw LBA (compat preserved). CHD backing is not
+  implemented and is closed as out of scope in the standing decisions.
+  Mounts via HDV Library.
 
 Pinned: `cffa_card_smoke` (ROM-gated). Full MAME oracle: `mame
 apple2ee -sl7 cffa2 -hard1 <img>` (romset `~/mame_roms/cffa2/`).
@@ -4447,6 +4458,12 @@ atomic-write family to do so; pinned by `testWriteBackCarriesFileMode`.
 
 ### Snapshot
 
+For the current resumable-machine contract, see
+[sessions v7](docs/session-format.md). `.pom2snap` and `.pom2session` are
+different formats: the snapshot restrictions below do not describe sessions.
+Version-specific paragraphs record the steps that introduced each capability;
+later versions supersede their original restrictions.
+
 `SnapshotIO`. `POM2SNAP` magic, named 8-byte sections, format shared
 with POM1. Captures CPU + RAM + soft-switch display state. **Disk II
 deliberately excluded** — would need mounted-image identity + head
@@ -4486,6 +4503,19 @@ checkpoint remains for unexpected implementation failures, not validation.
 disagreement, repeated valid validation, valid restore and atomic direct
 profile/port refusals. This test also runs in the portable CI subset.
 
+**Machine reconstruction and sessions v7** (2026-10-19). `SessionMachine`
+builds an isolated candidate from embedded firmware, profile, CPU/memory and
+slot records before replacing the live machine. `SessionCards` supplies
+additional card construction/validation/wiring. Zip Chip, TransWarp, CFFA/ATA,
+Phasor, both Echo+ variants, S.A.M. and 4play are supported. Host-folder
+volumes resume as detached block images; `CassetteDevice_Session` embeds
+program-tape pulses, cursor and recordings. Live transports, streamed audio
+and unsupported cards remain refused. `SessionLoadQueue` routes desktop/API
+replacement through the UI owner thread so display, audio and media panels
+are rebound together. CLI and browser use the same reconstruction contract;
+ordinary startup media/slot settings stay separate from session topology.
+`session_machine` is included in the twelve-case portable core subset.
+
 **Block sessions v6** (2026-10-18). `Block512Backing_Session` encodes
 nonzero or dirty 512-byte blocks in strictly increasing order (max 65536
 blocks per medium, 128 MiB expanded across a session). `SessionIIc` embeds
@@ -4498,7 +4528,8 @@ destruction cannot write source files. `session_block_media` covers sparse
 32 MiB geometry, dirty zero/nonzero blocks, 2IMG locks, malformed records,
 partial byte/block transfers and rollback; the browser persistence smoke
 also restores a source-free HDV from IndexedDB. Dense archives above the
-32 MiB envelope are refused; host folders and CFFA/ATA remain excluded.
+32 MiB envelope are refused. v7 extends this to detached host-folder volumes
+and CFFA/ATA state.
 
 **Writable floppy sessions v5** (2026-10-18). `DiskImage_SessionWritable`
 and `Disk35Image_Session` wrap current media in `DMS` records with original
@@ -4544,23 +4575,25 @@ lock and performs CRC/file I/O outside it. Embedded disks are clean,
 physically write-protected non-WOZ nibble tracks, independent of their original
 paths. Unsupported devices and outgoing dirty media are refused. See
 [session-format.md](docs/session-format.md) for the supported configuration,
-wire layout and remaining restrictions. This adds neither automatic machine
-recreation. Desktop File-menu and command-palette actions use
+wire layout and remaining restrictions. v1 required a matching active machine;
+the current loader reconstructs it automatically, including for legacy bundles.
+Desktop File-menu and command-palette actions use
 `SessionFilePicker` and `MainWindow_SessionFiles`: selection and overwrite
 confirmation run without the machine lock, then the controller adapter
 executes the operation. Native cancellation does not open the manual path
 fallback; errors retain the dialog and path. The GUI does not change the
-running/paused mode. Browser builds hide the host-filesystem actions.
+running/paused mode. Browser builds use upload/download actions instead of
+host-filesystem dialogs and offer optional IndexedDB automatic resume.
 
-**Protected WOZ sessions v2**. Archives now write version 2 and continue to
-read v1. `DWO1` media records carry canonical WOZ bytes, while `DRO1` keeps
+**Protected WOZ sessions v2**. Version 2 introduced WOZ records while retaining
+v1 compatibility; the current writer emits v7. `DWO1` media records carry canonical WOZ bytes, while `DRO1` keeps
 the nibble representation. `DiskImage::loadWozBytes` is shared with the
 ordinary image loader; neither nested restore nor the canonical media
 payload needs a host filename. It retains sparse quarter-tracks, bit timing
 and native FLUX transitions. Both file/slot lengths and expanded media
-storage are bounded. Restored media are always physically protected, even
-when the original protection came from the host notch. Writable sessions
-still need their own persistence/lifecycle policy.
+storage are bounded. v1/v2 media records restore as physically protected,
+including protection inherited from the host notch. v5 and later writable
+records preserve guest protection while enforcing detached persistence.
 
 
 **The header carries a machine identity** (2026-09-06). The 32-bit word
@@ -5937,11 +5970,12 @@ the LC latches resolved, no side effect) — the only spelling that reaches
 Language-Card RAM, since the raw main array holds the ROM image at
 `$D000-$FFFF`; `main` and `aux` are the raw arrays; the POST twin refuses
 `cpu` because a write is bank-explicit by design and refuses any other
-unknown bank too. Pinned by `ai_control_mem_bank`. Noted, not fixed:
+unknown bank too. Pinned by `ai_control_mem_bank`. Historical HTTP findings
+still require revalidation:
 `POST /screen.ppm` is answered; `POST /cpu` masks an out-of-range `pc`/`p`
-silently where `/speed` refuses; write watches are short-circuited under
-`flatBus_` while read watches are not; a watchpoint during a Step reports
-`pc=$0000`; a step-over transient survives an unrelated stop. `/status`'s
+silently where `/speed` refuses. The former flat-bus write-watch, explicit-step
+PC attribution and step-over transient findings were corrected in the current
+debugger; see [bank-aware debugging](docs/debugger-banks.md). `/status`'s
 `disks` lists the Disk II only; block images have a separate
 `block_storage` array, floppies a `floppy_storage` one.
 
@@ -6016,8 +6050,8 @@ model, not to the cards'. Pinned by
 
 Endpoints (the header comments on `AiControlServer.h` and
 `AiControlServer_Printer.cpp` describe the exact JSON shapes; the routing in
-`AiControlServer.cpp` is what is served — the `.h` comment lags it on
-`/disk/sync`, the printer routes and POST `/cpu`'s `p`/`sp`):
+`AiControlServer.cpp` is what is served; the header is a compact overview,
+while this table and the handler implementations give the detailed contract):
 
 | Route | Verb(s) | Does |
 |---|---|---|
@@ -6029,6 +6063,7 @@ Endpoints (the header comments on `AiControlServer.h` and
 | `/keyboard` | POST | `{"text":…}` / `{"raw":…}` → the paste queue |
 | `/disk`, `/eject` | POST | insert / eject by `{slot, drive, path}`; the endpoints drive the **primary** (lowest-slot) Disk II — `slot` may be omitted, and when given must match that card's real slot (validated and echoed back; a hard-coded "6" used to touch the slot-5 primary while confirming slot 6) |
 | `/snapshot/save`, `/snapshot/load` | POST | save path **must** end `.pom2snap` so an agent cannot clobber an unrelated file; load magic-byte-checks the blob |
+| `/session/save`, `/session/load` | POST | `{"path":"game.pom2session"}`; save captures the supported machine/media bundle atomically, load reconstructs profile, firmware and cards after detached validation; desktop loads use the UI owner-thread queue. See [session limits](docs/session-format.md) |
 | `/speed` | POST | `{"cycles_per_frame":N}` or `{"preset":"1x\|2x\|max"}` |
 | `/screen.ppm` | GET | binary PPM of the live framebuffer |
 | `/mouse` | POST | signed delta (±127/call) or absolute counter + button, straight into the Mouse Card's host-motion input |
@@ -6569,9 +6604,13 @@ from being "fixed" back into a bug.
 emulated 6502 is parked inside its `JSR` for the whole round trip, so this is
 what the hardware does too, and the alternative (a completion register the ROM
 polls) would change the guest-visible protocol and break "any FujiNet software
-works unmodified". Bounded by a **250 ms** default timeout: ~50× headroom over
-a real USB round trip, and a dead peer costs one dropped frame rather than a
-full second. Only peer acquisition and enumeration live on the worker thread.
+works unmodified". Local calls default to **250 ms**, configurable in the
+FujiNet panel from 50 to 5000 ms. Selected remote host/directory operations
+and block I/O for mounted images receive at least **5 s**, subject to any
+explicit outer call-budget cap. One deadline covers both send and receive.
+A stalled call can therefore hold `stateMutex` for its whole budget; the
+longer network policy does not resolve UI responsiveness. Peer acquisition
+and enumeration live on the worker thread.
 
 `SpOverSlipLink` has **two** peer-teardown entry points on purpose —
 `peerLostLocked()` for callers already holding `callMtx_` (that is `transact()`
@@ -6651,15 +6690,14 @@ was considered and rejected — see docs/fujinet_plan.md § 8.
 **Driving it against a real peer — what bites** (measured 2026-08-21, against
 the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
 
-- **250 ms is not enough for network-backed media.** `SpOverSlipLink`'s
-  default response timeout (`kDefaultTimeoutMs`) is sized for a FujiNet
-  answering out of its own SPIFFS — booting its `autorun.po` never comes close
-  to it. A disk mounted from a TNFS server travels Apple → POM2 → firmware →
-  the internet → back, and every block read blows straight through 250 ms: the
-  card reports `kSpNoDevice`/IO error, its boot block never lands, and the
-  guest sees **`FN ERROR`**. Raise it per slot with
-  `fujinet_timeout_ms_slot<N>` (accepted range 50–5000; 3000 made a TNFS boot
-  read reliably).
+- **Historical timeout finding, now addressed in the policy/UI.** The
+  2026-08-21 TNFS run exceeded the then-uniform 250 ms response budget;
+  setting `fujinet_timeout_ms_slot<N>` to 3000 was the recorded workaround.
+  Current `SpOverSlipLink::transact` gives selected remote calls and
+  mounted-image block I/O at least 5 s, while the panel exposes the local-call
+  budget (50–5000 ms). A delayed directory fake-peer regression covers the
+  distinction. Revalidate the actual peer/TNFS image before claiming the old
+  boot observation is resolved end to end; see NETWORK-004 in the backlog.
 - **`FN ERROR` is OUR message, not BASIC's.** The card ROM prints it at
   `$Cn42` when the boot read fails (`buildRom`, text stored reversed at
   `$CnF0`). Seeing it means the `JSR $Cn60` came back with carry set — no
@@ -7441,12 +7479,11 @@ running must not quietly fill a disk.
 
 ### Printer sound (`PrinterSoundDevice`)
 
-The head buzz, the carriage-return sweep and the platen motor. **Synthesised,
-and for once that is not a fallback**: the floppy sounds are MAME's WAV set,
-but no equivalent free ImageWriter set exists — and mikedaley/web-a2e, the
-reference for the rest of the printer work, **ships no audio assets at all**
-(checked, not assumed). Its `printer-sound.js` synthesises, and this is a port
-of that model (MIT, Shawn Bullock).
+The head buzz, the carriage-return sweep and the platen motor use
+**synthesised noise grains by default**, ported from mikedaley/web-a2e
+`printer-sound.js` (MIT, Shawn Bullock). An optional user-supplied Virtual ][
+"Matrix Printer" recording can replace the grains with a loop, as described
+below. The recording is not bundled; synthesis remains available without it.
 
 **Why grains.** A dot-matrix impact is a short broadband NOISE click, not a
 tone: the head energy sits near the basic printing frequency (~900-1000 Hz)
@@ -8870,7 +8907,7 @@ of a saturated full-width slab.
 
 ### Docking + layout presets
 
-POM2 hosts a **DockSpace over the viewport work area** so its 38 panels become
+POM2 hosts a **DockSpace over the viewport work area** so its catalogued panels become
 tabs in a persistent layout instead of a pile of overlapping windows.
 `MainWindow::renderDockSpace()` creates it; `applyDockLayout()` seeds layouts.
 
@@ -9368,8 +9405,9 @@ it. Each window points at the other in its header text.
 - **Slot Configuration — card assignment.** AUX 80-col row (IIe-class) + slots 1-7.
   Each slot a `kCardTypes` dropdown, EXCEPT profile built-ins
   (`builtInSlots[s]`) which render as locked, greyed `LabelText` with
-  "card — built-in …" badge. `diskii` is multi-instance (never a
-  duplicate); other keys red-flag duplicates and disable Apply.
+  "card — built-in …" badge. Duplicate validation uses
+  `SlotConfigurationCoordinator::isMultiInstance`, shared with provisioning;
+  Disk II is not the only key that permits multiple instances.
   Apply persists `slot_N_card` and calls
   `restartEmulationFromSettings()`.
 
@@ -9379,14 +9417,19 @@ it. Each window points at the other in its header text.
   - `dynamic_cast<MountableMediaCard*>` → render bays inline:
     status dot (grey empty / orange WP / green loaded / red error),
     per-bay type select (SmartPort), path InputText + Mount/Eject,
-    write-back, Boot slot. Covers SmartPort (2 units), CFFA + HDV
-    (1 bay).
+    write-protection notch and Boot slot. Bay counts come from each card's
+    live media contract: SmartPort supports configurable chains, CFFA has
+    one block backing and ProDOS HDV has two drives.
   - else `dynamic_cast<DiskIICard*>` → internal 5.25" drives (1-2),
     each with path + Insert/Eject, Boot slot. Drive 1 persists to
-    `disk_path_slotN`; drive 2 is session-only.
+    `disk_path_slotN`; drive 2 persists to `disk_path_slotN_drive2` through
+    `diskIIPathSettingKey`. Both restore from the ordinary startup settings.
 
-  Each media action takes `stateMutex` and calls `persistMediaBay()`
-  (per-unit/per-slot/global keys), then `settings->save()`.
+  Media actions use `StorageCoordinator`: file reads/decoding and write-back
+  commits run outside `stateMutex`, while adoption/state changes run under it.
+  The coordinator persists the matching bay/drive keys; insert and eject do
+  not maintain a separate panel-only persistence rule. Restored session media
+  have a distinct detached persistence contract and do not replace startup paths.
 
 Settings: `show_slot_config` + `show_media_panel` (both persisted;
 both cleared in kiosk). Command palette: `panel.slotconfig`,
@@ -10005,7 +10048,9 @@ overwritten; `setMode(Stopped)` cancels `stepsPending`; every resume in
 ### Debugger (`Debugger.h/.cpp`, `Debugger_ImGui.*`)
 
 Breakpoints, register predicates, single-step, frame-aware step-over/out,
-run-to-cursor, symbols, per-PC cycle profiling and a 256-step register history.
+run-to-cursor, bank-qualified symbols, per-bank/PC cycle profiling and a
+256-step register history. [Bank identities and source maps](docs/debugger-banks.md)
+describe the panel syntax and supported physical mappings.
 The panel serves both application development and POM2 diagnostics.
 
 The 2026-10-17 additions follow actual RTS/stack frames: inline ProDOS and
@@ -10023,10 +10068,12 @@ be used in breakpoint entry. Conditions compare A/X/Y/P/SP/PC with
 
 Profiling/history are opt-in and keep the hook attached while enabled.
 Completed-step hooks exist only on the debugged CPU loop. Profiling includes
-IRQ/NMI-entry-only steps and combines different banks at the same 16-bit PC;
-history shows post-step registers. A reset/rewind clears measurements, while
-user breakpoints/conditions survive. Source-level debugging and bank-aware
-conditions are still separate work.
+IRQ/NMI-entry-only steps and separates physical banks at the same 16-bit PC;
+history records the pre-step code bank and post-step registers. Explicit
+stepping uses the same attribution without changing step cycle/IRQ timing.
+A reset/rewind clears measurements, while user breakpoints/conditions survive.
+The Source panel imports bounded `.p2map` ranges and reads source outside
+`stateMutex`; native compiler debug-info and variable inspection remain separate work.
 
 Before it, every parity hunt paid for a throwaway trace / dump / probe binary
 because there was no way to stop a running machine and look at it (the
@@ -10314,12 +10361,13 @@ shares `RESOURCE_LOCK source_payload` with `bundle_manifest`, which plants
 too. Found by its mutation run: emsdk 6.0.8 tests directories against the
 patterns as well, so the directory form below is redundant there.
 
-**Why `floppyemu` is `wasm`-only**: `wasm/shell.html` boots
-`floppyemu/DIX.po` by default (since 2026-09-08 — DIX, GPLv3, on the PAL //e
-with the fresh-install slot map; it replaced Total Replay, whose commercial
-titles left the tree on 2026-09-05 and whose deleted file the shell kept
-booting, so the live demo 404'd for three days), so the folder *is* the live
-demo's boot disk. Desktop users mount their own media.
+**Browser and desktop disks.** The manifest retains `wasm floppyemu` as a
+browser-only media folder, but it is no longer the default boot source.
+`wasm/shell.html` selects `iic-pal` and `bundled_disks/DIX-fix.po` unless URL
+parameters override them. The four explicit `bundled_disks/` file entries
+ship on desktop and in the browser; personal media libraries remain excluded.
+The former `floppyemu/DIX.po` default replaced the deleted Total Replay image
+in 2026-09; that history does not describe the current default.
 
 **Boot smoke.** `pom2_headless --frames 300 --screenshot out.ppm` runs N frames
 inline through `tickFrame()` (no worker thread, no sleeps, deterministic),
@@ -10340,8 +10388,9 @@ it claims to be. Before that, Pages served a committed `wasm/` copy and
 `tools/wasm_stamp.sh` fingerprinted the sources to catch it going stale — which
 turned every push touching `src/` red until someone re-committed 38 MB of
 binaries (`POM2.wasm`: 39 commits, packfile 383 MiB). Both the guard and the
-committed copy are gone; `wasm/` keeps only `shell.html` and `serve.py`, and
-the staged outputs are `.gitignore`d.
+committed copy are gone; tracked `wasm/` sources are `shell.html`,
+`browser_files.js` (the file-selector/download bridge) and `serve.py`.
+The staged outputs are `.gitignore`d.
 
 **Four things the packaging audit found** *(2026-09-09, bug hunt #16)*.
 (1) The SDK install rules (`libpom2_core.a`, `include/pom2/`, the CMake
@@ -10378,18 +10427,19 @@ outside `src/` and `tests/`.
 Driver: `build_wasm.sh` → `wasm/{index.html, POM2.js, POM2.wasm,
 POM2.data}` (untracked; the shell template is `wasm/shell.html`, the dev
 server `wasm/serve.py`). User-facing summary lives in `README.md`
-§ "🌐 WebAssembly".
+[Technical overview](README.md#technical-overview) and the
+[user guide](docs/USER-GUIDE.md).
 
 **Single-threaded by design**. No `std::thread`, no `SharedArrayBuffer`,
 no COOP/COEP — runs on any static host (GitHub Pages, Cloudflare
 Pages, plain S3). The CPU worker thread is replaced by
 `EmulationController::tickFrame()` called from the render loop in
 `main.cpp` (look for `#ifdef __EMSCRIPTEN__`). Trade-off vs the
-native build: no parallel audio thread, but miniaudio's Web Audio
-backend runs in a browser-managed worklet anyway, so the difference
-is invisible in practice.
+native build: no POM2 CPU worker thread. Audio is delivered through
+miniaudio's Web Audio backend; browser/platform latency still requires
+measurement and tuning rather than assuming desktop-equivalent behavior.
 
-**CMake Emscripten branch** at `CMakeLists.txt:1107-1215`:
+**CMake Emscripten branch** (`if(EMSCRIPTEN)`):
 
 - `-sUSE_GLFW=3 -sUSE_WEBGL2=1 -sFULL_ES3=1` — Emscripten ships
   GLFW3 + WebGL2 ports built-in, so the ImGui GLFW/OpenGL3 backends
@@ -10404,8 +10454,9 @@ is invisible in practice.
   [§ Browser persistence](#browser-persistence-idbfs) for the three
   parts, none of which is optional.
 - `--preload-file roms@/roms …` — the payload `packaging/bundle.manifest`
-  lists (`roms`, `fonts`, the two photos under `pic/`, plus the
-  browser-only `wasm floppyemu`), baked into `POM2.data` at build time
+  lists (`roms`, `fonts`, three photographs and `pic/retro/` artwork,
+  curated `bundled_disks/` files, plus browser-only `wasm floppyemu`),
+  baked into `POM2.data` at build time
   (the old `POM2_WASM_BUNDLE` list was never read and is gone). The 3.5" library is opt-in via
   `-DPOM2_WASM_BUNDLE_DISKS=ON` (appends `disks_3.5`; `disks_5.4` +
   `hdv` are excluded — too large).
@@ -10462,8 +10513,9 @@ during testing, not theorised.
 - Headless Chrome reports the page as `hidden`, so `requestAnimationFrame`
   never fires and POM2's frame loop — CPU, render, persistence — does not run
   at all. CDP `Emulation.setFocusEmulationEnabled {enabled:true}` fixes it.
-- `wasm/shell.html` is **not** a link dependency. Editing it alone rebuilds
-  nothing and you keep serving the previous page. Touch a source file.
+- `wasm/shell.html` and `wasm/browser_files.js` are explicit `LINK_DEPENDS`
+  entries. Editing either relinks the browser bundle; touching an unrelated
+  C++ file is unnecessary. Serve the rebuilt bundle when checking changes.
 
 
 The symbols stay declared so every caller still links — only the
@@ -10489,9 +10541,21 @@ applied via the IDBFS mount path for future user uploads.
   touch→mouse outside the canvas) — WASM-002.
 - Audio worklet latency not tuned — WASM-003.
 
-**CI builds it**: `ci.yml`'s `wasm` job runs `./build_wasm.sh` on every push to `main`
-and every pull request (and the `pages` job deploys the result), so a refactor that breaks
-the Emscripten build turns CI red.
+**Browser file/session workflow.** `BrowserFiles` and
+`wasm/browser_files.js` implement text-file upload and session archive
+import/download. `MainWindow_SessionFiles` checkpoints supported machines
+every ten seconds and at page hide when automatic resume is enabled.
+Reconstruction restores the embedded machine/firmware/cards and keeps media
+detached from their original files. This is distinct from the settings/layout
+heartbeat above; see the [v7 contract](docs/session-format.md).
+
+**CI execution.** `ci.yml`'s `wasm` job builds with `./build_wasm.sh`, checks
+the artifacts and runs `tools/wasm_persistence_smoke.mjs` against Chrome.
+The smoke checks text upload, //c audio-card presence, tab pause/resume,
+setting persistence and exact session reloads, including reconstruction from
+a different startup profile and source-free writable floppy/HDV media.
+The workflow declares these checks; candidate CI results still need to be
+recorded independently. The `pages` job deploys the browser build from main.
 
 ---
 

@@ -204,6 +204,7 @@ public:
     /// is already plugged and still shadowing. Returns false (and shadows
     /// nothing) unless `bytes.size() == kRomSize`.
     bool setRom(std::vector<uint8_t> bytes);
+    const std::vector<uint8_t>& sessionRom() const { return rom_; }
     bool hasRom() const { return rom_.size() == kRomSize; }
     /// True while $F000-$FFFF is the card's ROM rather than the Apple's.
     bool shadowActive() const { return shadowing_; }

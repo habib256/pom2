@@ -21,10 +21,14 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 </div>
 
 **[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
-[Bundled disks](#bundled-disks) · [Build it](#build-it)**
+[Bundled disks](#bundled-disks) · [Build it](#build-it) · [Documentation](docs/README.md)**
 
 > **v0.9.7:** [What's new](docs/releases/v0.9.7.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
+
+This checkout also includes untagged changes described in [CHANGELOG.md](CHANGELOG.md),
+including v7 sessions that reconstruct their machine and a bank-aware debugger
+with source correspondence. Tagged packages follow their release notes.
 
 ## Start playing
 
@@ -85,14 +89,16 @@ and press Return.
 - **Files and tools.** The shared ProDOS host folder preserves type/aux type
   in portable `NAME#TTAAAA` names, offers opt-in TXT line-ending conversion
   and saves concurrent edits in `.pom2-conflicts/`. Disk Library search,
-  rewind, snapshots, a memory viewer, symbol-aware debugger, conditional
-  breakpoints, an interactive 6502/65C02 assembler, Disk II flux inspection
+  rewind, snapshots, a memory viewer, bank-aware debugger, conditional
+  breakpoints, symbols and source correspondence, an interactive 6502/65C02 assembler, Disk II flux inspection
   and CPU profiling support both play and development.
 - **Connections and browser.** Desktop builds offer Uthernet I/II, FujiNet
   relay, TNFS and VSDrive. The WebAssembly build stores settings and layout in
   IndexedDB and offers text upload, session import/export and optional
-  [automatic resume for supported sessions](docs/session-format.md#using-it). Writable floppy and HDV sessions
-  retain unsaved data and further guest writes in RAM, preserving source files.
+  [automatic resume for supported sessions](docs/session-format.md#using-it).
+  Sessions reconstruct supported profiles, embedded firmware and cards, including
+  writable floppy/block media and program tapes. Restored disks retain unsaved
+  data and further guest writes in RAM; save another session to retain them.
   Its //c starts with a Mockingboard 4c and pauses while the tab is hidden.
   Host socket networking is unavailable in the browser.
 

@@ -1,12 +1,17 @@
 # POM2 — TODO
 
-Action queue updated 2026-10-17 · **v0.9.4 → 1.0**.
+Action queue updated 2026-10-20 · **v0.9.7 → 1.0**.
 This page answers what to do next. Detailed tasks and acceptance criteria live
 in `docs/backlog/`; dated reports and decisions have their own documents.
 
 The requested non-IIgs emulator comparison work is tracked in
 [the implementation report](docs/audits/non-iigs-parity-2026-10-17.md),
 including implemented changes and the remaining hardware/product projects.
+Current sessions reconstruct supported machines and embed writable media,
+firmware and program tapes; see the [v7 contract](docs/session-format.md).
+The debugger supports bank-qualified stops, profiling and source correspondence;
+see the [debugger guide](docs/debugger-banks.md). These are implemented,
+with the remaining limits documented in those guides.
 
 ## Action queue
 
@@ -20,14 +25,14 @@ Move an item when its next action or dependency changes.
 | Task | Next action |
 |---|---|
 | [RELEASE-001](docs/backlog/release-1.0.md#release-001) | Record the decision on commercial media still present in Git history, then align repository and release distribution with it. |
-| [RELEASE-002](docs/backlog/release-1.0.md#release-002) | Obtain the origin and redistribution terms of the two shipped photographs from their owner; record them in `THIRD-PARTY.md`. |
+| [RELEASE-002](docs/backlog/release-1.0.md#release-002) | Obtain the origin and redistribution terms of all three shipped photographs; record them in `THIRD-PARTY.md`. |
 
 ### Next — complete the remaining evidence
 
 | Task | Next action |
 |---|---|
 | [VALIDATION-002](docs/backlog/validation.md#validation-002) | Boot DIX with the documented PAL profile and slot map; record menu and demo results before other corpus titles. |
-| [RELEASE-005](docs/backlog/release-1.0.md#release-005) | Automate a browser setting write, persistence, reload and readback. |
+| [RELEASE-005](docs/backlog/release-1.0.md#release-005) | Record candidate CI evidence for the existing Chrome persistence/session smoke; automation is implemented. |
 | [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
 | [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |
 
@@ -54,6 +59,8 @@ candidate verification still has to run.
 For the Disk Library follow-up, the requested order is
 [miniatures](docs/backlog/ui-debugger.md#ui-009), then
 [desktop file associations](docs/backlog/ui-debugger.md#ui-010).
+The latter already has macOS/Linux declarations and host-open handling;
+Windows registration, extension coverage and installed-package checks remain.
 
 <a id="backlog"></a>
 

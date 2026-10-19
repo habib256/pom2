@@ -61,10 +61,10 @@ file pic/Keyboard_AppleIIc.png
 dir  pic/retro
 
 # ─── Browser-only extras ────────────────────────────────────────────────────
-# floppyemu/ holds the browser demo's boot disk — `wasm/shell.html` boots
-# `floppyemu/DIX.po` (the French Touch anthology, GPLv3, 800 KB) by default
-# since 2026-09-08 — so the browser bundle cannot drop it. Desktop users mount
-# their own media, hence `wasm`, not `dir`.
+# Retain the legacy floppyemu/ media folder in browser builds only. The
+# current shell boots bundled_disks/DIX-fix.po on iic-pal, using an explicit
+# file entry below. Those curated disks ship on desktop and in the browser;
+# personal disk libraries remain excluded.
 wasm floppyemu
 
 # Curated disks explicitly selected for this release. Keep user libraries

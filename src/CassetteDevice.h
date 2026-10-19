@@ -137,6 +137,11 @@ public:
     /// the bus byte if needed.
     uint8_t toggleOutput();
 
+    bool appendSessionState(std::vector<uint8_t>& out, std::string& error) const;
+    bool loadSessionState(const std::vector<uint8_t>& bytes, std::string& error, bool apply = true);
+    bool sessionReplaceable() const {
+        return !audioStreamMode && (detachedSession_ || (!hasRecordedTape() && !isRecordingArmed()));
+    }
     bool loadTape(const std::string& path);
     /// Mount `path` as a STREAMED audio tape: the file stays on disk and is
     /// decoded on demand at the host rate, instead of being converted to a
@@ -272,6 +277,7 @@ private:
     static std::string lookupTapeInfo(const std::string& path);
 
 private:
+    bool detachedSession_ = false;
     bool audioAvailable = false;
     bool autoRewindEnabled = false;     // see setAutoRewind
     uint32_t audioOutputSampleRate = kWavFileSampleRate;

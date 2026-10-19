@@ -8,6 +8,8 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   `docs/backlog/`. Scope decisions → `docs/decisions/project-scope.md`;
   parity and dated evidence → `docs/audits/`. Reproduce historical reports
   on current main before implementing them; archive completions in CHANGELOG.
+- `docs/session-format.md` — current v7 resumable-machine contract, supported devices, detached media and browser automatic resume.
+- `docs/debugger-banks.md` — physical bank qualifiers, symbols, profiling and `.p2map` source correspondence.
 - `docs/test_corpus.md` — edge-case integration corpus; **[DIX](https://github.com/Fr3nchT0uch/DIX/)** (French Touch anthology) is the priority gold-standard benchmark.
 - `docs/lle_vs_hle.md` — abstraction level per subsystem (silicon vs contract), the HLE seams, and the rule POM2 follows when picking a level.
 - `docs/printer_plan.md` — dot-matrix printer gap analysis vs `web-a2e` + phased plan (character ROMs, screen dump, more heads).
@@ -139,7 +141,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   sets it from `profileConfig(...).noPhysicalSlots`. It **defaults to true**,
   so a hand-built card in a test keeps the old behaviour (`iicplus_boot35`
   relies on that); only the factory path narrows it.
-- **`make probes` builds the 25 eyeball tools** that are deliberately not
+- **`cmake --build build --target probes` builds the manual tools** deliberately excluded from
   ctest tests (`EXCLUDE_FROM_ALL`; they assert nothing reproducible and some
   need untracked media). Run it before concluding a capability is missing —
   the 2026-09-07 sweep said "no built binary can boot an HDV" while
@@ -163,11 +165,12 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 
 ```bash
 ./setup_imgui.sh             # one-time deps + clones imgui/ at the pinned commit
-cd build && cmake .. && make # → build/POM2
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 3 # → build/POM2
 ./run_emulator.sh            # cwd = repo root so roms/ probes resolve
 ```
 
-**Dear ImGui is pinned** — `imgui_pin.env` is the single source of truth (repo + branch + commit), shared by `setup_imgui.sh`, `tools/fetch_imgui_pinned.sh` (the release + packaging path) and both CI jobs. POM2 requires the **`docking`** branch: the DockSpace that hosts its 38 panels needs `ImGuiConfigFlags_DockingEnable`, which does not exist on `master`. The branch is force-pushed on every upstream rebase, hence the commit pin. Multi-viewport stays off. → [DEV § Docking](DEV.md#docking--layout-presets)
+**Dear ImGui is pinned** — `imgui_pin.env` is the single source of truth (repo + branch + commit), shared by `setup_imgui.sh`, `tools/fetch_imgui_pinned.sh` (the release + packaging path) and CI build jobs. POM2 requires the **`docking`** branch: the DockSpace that hosts the panels in `PanelCatalog.h` needs `ImGuiConfigFlags_DockingEnable`, which does not exist on `master`. The branch is force-pushed on every upstream rebase, hence the commit pin. Multi-viewport stays off. → [DEV § Docking](DEV.md#docking--layout-presets)
 
 `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14). UI 60 Hz; the CPU worker's `cyclesPerFrame` comes from the active profile (`CpuClock.h`: 17045 NTSC / **20313 PAL — the default profile is PAL**), and `EmulationController`'s bare initialiser (17045) only holds until the first `applyProfile`. Single `stateMutex` guards CPU + Memory.
 
@@ -187,12 +190,12 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Composite NTSC shader (OpenEmulator-style) | `NtscPostProcessor.*`, `OpenGLShader.*` | [§ Composite NTSC shader](DEV.md#composite-ntsc-shader-colorcompositeoe) |
 | AppleWin NTSC (CPU IIR-LUT) | `AppleWinNtsc.h/.cpp` | [§ AppleWin NTSC](DEV.md#applewin-ntsc-colorapplewin) |
 | CRT glass pass (scanlines, mask, vignette, phosphor γ) | `CrtEffectStack.*` | [§ CRT effect stack](DEV.md#universal-crt-effect-stack-crteffectstack) |
-| Le Chat Mauve RGB — one catalog key `chatmauve`, four variants by the `chatmauve_variant` setting (Féline · Adaptateur //c · Eve with `$C0B0-$C0BF` + CPREG auto-write · Video-7) | `LeChatMauveCard.h/.cpp` (state), `Apple2Display_ChatMauve.cpp` (painters), `LeChatMauve_ImGui.*`, `docs/chatmauve_plan.md` | [§ Le Chat Mauve](DEV.md#le-chat-mauve-lechatmauvecard) |
+| Le Chat Mauve RGB — one catalog key `chatmauve`, five variants by the `chatmauve_variant` setting (Féline · Adaptateur //c · Eve with `$C0B0-$C0BF` + CPREG auto-write · partial RVB Graph · Video-7) | `LeChatMauveCard.h/.cpp` (state), `Apple2Display_ChatMauve.cpp` (painters), `LeChatMauve_ImGui.*`, `docs/chatmauve_plan.md` | [§ Le Chat Mauve](DEV.md#le-chat-mauve-lechatmauvecard) |
 | Videx Videoterm 80-column card (][ / ][+, slot 3, ROM-gated) — catalog `videoterm`; HD6845S register file; its 720×216 picture replaces the Apple's while TEXT + AN0 (`DisplayState::an0`). **Dropped from the plan on every `iieMode` profile** (`SlotConfigurationCoordinator::resolve`, the saved key kept): a //e's 80 columns are built in, and the card's `$C0Bx` decode would cut the Chat Mauve's Eve window | `VidexVideotermCard.h/.cpp`, `Hd6845Crtc.h/.cpp`, `CardVideoSource.h` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
 | VidHD — IIgs Super Hi-Res on a //e (any slot, no ROM) — catalog `vidhd`; latches `$C022/$C029/$C034/$C035` writes, SHR (NEWVIDEO `$C0`) paints 640×400 from the CPU's aux bank through `CardVideoSource`. **Dropped on ][ / ][+ and //c** | `VidHDCard.h/.cpp` | [§ VidHD](DEV.md#vidhd-vidhdcard) |
 | Speaker / Cassette / Audio bus (stereo; mono sources are pan-placed) | `AudioDevice.*`, `SpeakerDevice.*`, `CassetteDevice.*` | [§ Audio](DEV.md#audio), [§ Stereo bus](DEV.md#stereo-bus-2026-08-01) |
 | Mockingboard A/C + Sound II | `Mockingboard.h/.cpp` + `Via6522.h` + `Ay3_8910.h` + `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard), [§ Sound II](DEV.md#mockingboardcard-variantsoundii) |
-| Phasor (2×VIA, 4×AY) | `PhasorCard.h/.cpp` + `AyPsgSynth.h` | [§ Phasor](DEV.md#phasor-applied-engineering) |
+| Phasor (2×VIA, 4×AY, 2×SSI263AP) | `PhasorCard.h/.cpp` + `AyPsgSynth.h` | [§ Phasor](DEV.md#phasor-applied-engineering) |
 | AY PSG audio-thread synth (shared: generators, mixer, band-limiting, DC) | `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard) |
 | SSI263 speech chip | `Ssi263.h/.cpp` + `Ssi263PhonemeData.h/.cpp` | [§ SSI263](DEV.md#ssi263--echo-street-electronics) |
 | Cricket / Echo (SSI263) — catalog `echoplus` | `EchoPlusCard.h/.cpp` | [§ EchoPlusCard](DEV.md#echopluscard-cricket--ssi263-class--catalog-echoplus) |
@@ -201,7 +204,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Grappler (1981) — `grappler1` · Apple Parallel Interface — `pic` (ROM-gated; their printer is a `CentronicsPrinter`) | `GrapplerClassicCard.*`, `AppleParallelCard.*`, `CentronicsPrinter.*` | [printer-detection §§ 8-9](docs/printer-detection.md#8-grappler-1981) |
 | Printer side of a slot, read/set from outside (CLI, HTTP, library) + per-slot bus-access log + stream→PNG | `PrinterPortControl.*`, `SlotBus.h` (`enableAccessLog`), `PrinterRender.*`, `AiControlServer_Printer.cpp` | [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |
 | Floppy mechanical sounds (MAME WAV samples; optional Virtual ][ bank, never packaged) | `FloppySoundDevice.h/.cpp` | [§ Floppy sounds](DEV.md#floppy-mechanical-sounds) |
-| Printer mechanical sounds (**synthesised** — no sample set exists) | `PrinterSoundDevice.*`, `PrinterSoundSink.h` | [§ Printer sound](DEV.md#printer-sound-printersounddevice) |
+| Printer mechanical sounds (synthesised grains; optional user-supplied Virtual ][ loop) | `PrinterSoundDevice.*`, `PrinterSoundSink.h` | [§ Printer sound](DEV.md#printer-sound-printersounddevice) |
 | TransWarp accelerator (Applied Engineering) — catalog `transwarp` | `TranswarpCard.h/.cpp` | [§ TransWarp](DEV.md#transwarp-applied-engineering) |
 | Zip Chip — 6502-socket accelerator (not a slot), setting `zip_chip`, Machine menu; Memory's `$C0xx` slow path only | `ZipChip.h/.cpp`, `CpuSocketAccelerator.h` | [§ Zip Chip](DEV.md#zip-chip-cpu-socket-zipchip) |
 | Memory Expansion "Slinky" (1 MB RAM disk, real 341-0344A ROM) — catalog `slinky` | `SlinkyCard.h/.cpp` | [§ Slinky](DEV.md#memory-expansion-card--slinky-slinkycard) |
@@ -256,7 +259,8 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Abstraction levels panel (LLE/HLE per subsystem, live + switchable) | `AbstractionLevels_ImGui.*` | [§ Abstraction Levels](DEV.md#abstraction-levels-panel-lle--hle) |
 | Clickable Apple //e keyboard (photo + measured hotspots) | `Keyboard_ImGui.*`, `AppleIIeKeyboardLayout.*` (generated), `AppleKeyLatch.h`, `tools/gen_keyboard_layout.py` | [§ Keyboard panel](DEV.md#apple-e-keyboard-panel) |
 | Floppy Emu (BMOW SD/OLED) | `FloppyEmuDevice.*`, `FloppyEmu_ImGui.*` | [§ Floppy Emu](DEV.md#floppy-emu-bmow) |
-| Run-control debugger (breakpoints, step, step-over, read/write watchpoints) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
+| Bank-aware debugger (breakpoints/watches, step over/out, symbols, profiling, source correspondence) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `DebugAddress.h`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`, `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
+| Resumable sessions (v7, automatic profile/firmware/card reconstruction, detached media and program tapes) | `SessionArchive.*`, `SessionSnapshot.*`, `SessionMachine.*`, `SessionCards.*`, `SessionLoadQueue.*`, `SessionFiles.*`, `CassetteDevice_Session.cpp` | [Session contract](docs/session-format.md) |
 | Clock & threading | `EmulationController.h/.cpp` | [§ Threading](DEV.md#clock--threading) |
 | Thread exception barrier (every long-lived thread) | `ThreadGuard.h` | [§ Threading](DEV.md#thread-exception-barrier-threadguardh) |
 | System profiles | `SystemProfile.h/.cpp` | [§ Profiles](DEV.md#profile-switching-internals) |
@@ -341,11 +345,11 @@ $F800-$FFFF  Monitor ROM + 6502 vectors ($FFFA-$FFFF)
 enough: a card with no expansion ROM (Disk II, Mockingboard, mouse, 4play, Le
 Chat Mauve) must not latch the window and starve the card that serves it — on
 the fresh-install map the //e autostart scans `$C700` first and used to hand
-slot 7 a window slot 5's SmartPort ROM needed. Nine cards override it:
+slot 7 a window slot 5's SmartPort ROM needed. The overriding cards are:
 `LironCard`, `WorkstationCard`, `CffaCard`, `SmartPortCard`,
 `VidexVideotermCard` and `SuperSerialCard` return true; `ClockCard`,
-`GrapplerCard` and `GrapplerClassicCard` only while their expansion ROM is
-loaded (`SuperSerialCard` claims for parity
+`GrapplerCard`, `GrapplerClassicCard` and `SlinkyCard` only while their
+expansion ROM is loaded (`SuperSerialCard` claims for parity
 with `a2ssc.cpp:50`, and serves Apple's EPROM there when
 `roms/ssc_341-0065-a.bin` is present — `$FF` without it). Released at `$CFFF`.
 
@@ -477,8 +481,9 @@ disagrees with `project(VERSION)`, or when the release-notes file is missing.
 ## Package payload
 
 **`packaging/bundle.manifest` is the single list of what ships inside a
-package** — `roms/` (+ `packaging/roms_README.txt` renamed to `roms/README.txt`)
-+ `fonts/` + the About photo + the //e keyboard photo, `wasm floppyemu` as the
+package** — `roms/` (with `packaging/roms_README.txt` renamed to `roms/README.txt`),
+`fonts/`, the About and //e and //c keyboard photos, `pic/retro/` artwork
+and the curated `bundled_disks/` files, with `wasm floppyemu` as the
 browser-only extra (it holds the demo's boot disk), a `deny` list
 (`disks_5.4`, `hdv`, `disks_3.5`, `snapshots`, `printouts`, `cassettes`,
 `prodos_folder`, `virtual_ii_sons`) that must never appear in one, and a `denyglob` archive filter

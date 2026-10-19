@@ -2283,12 +2283,12 @@ std::string Memory::recentIoReadSummary() const
 // report happens after the read so the hit carries the value the bus saw.
 uint8_t Memory::memReadSlow(uint16_t addr)
 {
+    const bool watched = readDivert_ && readWatch_[addr] && watchSink_;
+    const auto bank = watched ? debugBank(addr) : pom2::DebugBank{};
     const uint8_t v = memReadSlowBody(addr);
-    if (readDivert_ && readWatch_[addr] && watchSink_)
-        watchSink_->noteAccess(addr, v, /*write=*/false);
+    if (watched) watchSink_->noteBankAccess(addr, v, false, bank);
     return v;
 }
-
 // memReadSlow's body, unchanged from before the fast-path split: any path
 // that reaches it behaves exactly as it always did.
 inline uint8_t Memory::memReadSlowBody(uint16_t addr)
@@ -2572,20 +2572,20 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
 
 void Memory::memWriteSlow(uint16_t addr, uint8_t value)
 {
-    // Flat test RAM, or a card CPU's own bus — see memReadSlowBody.
-    if (flatBus_) {
-        if (foreignBus_) foreignBus_->write(addr, value);
-        else             mem[addr] = value;
-        return;
-    }
-
     // Write watchpoints (Memory.h § Write watchpoints). Armed addresses below
     // $C000 are diverted here by having their `writable[]` byte cleared;
     // everything from $C000 up already comes through here, so one test covers
     // RAM, soft switches, slot I/O and the language card alike. Costs an empty
     // -vector test when nobody is debugging, on the SLOW path only.
     if (!writeWatch_.empty() && (writeWatch_[addr] & kWatchArmed) && watchSink_)
-        watchSink_->noteAccess(addr, value, /*write=*/true);
+        watchSink_->noteBankAccess(addr, value, true, debugBank(addr, true));
+
+    // Flat test RAM, or a card CPU's own bus — see memReadSlowBody.
+    if (flatBus_) {
+        if (foreignBus_) foreignBus_->write(addr, value);
+        else             mem[addr] = value;
+        return;
+    }
 
     // Fast path: writable RAM and Language Card overlay for $D000-$FFFF.
     if (addr < 0xC000) {

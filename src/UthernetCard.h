@@ -66,6 +66,7 @@ namespace pom2 {
 class UthernetCard final : public SlotPeripheral
 {
 public:
+    bool sessionReplacementReady() const override { return false; }
     /// Locally-administered default MAC (the 0x02 in the first octet says
     /// "not globally unique"), with 'U1' baked in so it is recognisable in
     /// a packet capture.

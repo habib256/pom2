@@ -16,11 +16,13 @@ This file is only the Pi-side how-to.
 
 ## 1. Get the fast binary — from CI, not from the Pi
 
-The released `POM2-v*-aarch64.AppImage` is built for **generic aarch64**: it
-has to run from a Pi 3 to a Pi 5, so GCC gets neither the real core's cost
-model nor a profile.
+Release downloads distinguish the generic ARM64 desktop package
+(`POM2-v<ver>-aarch64.AppImage`) from the GLES Raspberry Pi package
+(`POM2-v<ver>-raspberry-aarch64.AppImage`) and the Pi 4/Pi 400 build
+(`POM2-v<ver>-pi400-aarch64.AppImage`). Use a Pi package on Raspberry Pi OS;
+the desktop ARM64 package is not a substitute for the GLES build.
 
-**You do not need to compile on the Pi to fix that.** The
+**You do not need to compile on the Pi for a core-specific PGO build.** The
 `Raspberry Pi packages` workflow (`.github/workflows/pi400.yml`) does the whole
 two-pass PGO + LTO build on GitHub's **native ARM64 runner**, inside a
 `debian:bookworm` container — the training run included. The Pi pays nothing:
@@ -113,7 +115,7 @@ an SD card is a guaranteed audio dropout). The cmdline edit needs a reboot;
 everything else is live. It is idempotent and fully reversible.
 
 It deliberately does **not** install a kiosk session or touch the audio stack:
-POM2 has kiosk mode built in (`F10`, or `--kiosk`), and a session launched
+POM2 has kiosk mode built in (`--kiosk`; F10 toggles fullscreen), and a session launched
 with `--kiosk` is settings-read-only for its whole life, so it cannot disturb
 a desktop setup.
 
@@ -130,7 +132,10 @@ The `speed=… MHz (…x)` figure is emulated CPU throughput; `1.0x` is realtime
 for an Apple II. The `ram=` / `fb=` hashes must not change between builds — if
 they do, the faster binary is not the same emulator.
 
-> ⚠ Not yet run on real Pi hardware. The PGO recipe and both of its traps were
+> Target-Pi hardware evidence is still pending. The on-demand workflow executes
+> the packaged `--help` and `pom2_bench` on a native ARM64 runner; the release
+> Pi 400 job also invokes the packaged `--help`. These are execution checks,
+> not a Pi display/audio test. The PGO recipe and both of its traps were
 > validated end to end on x86-64 (same GCC semantics, same CMake object
 > layout), and `pi400.yml` re-checks arch / glibc floor / GLES-only / output
 > hashes on every run — but the `-mcpu` selection, the RAM-based `-j` cap in

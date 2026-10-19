@@ -114,8 +114,9 @@ public:
     /// It has no mechanical timing: a block costs exactly the CPU cycles of
     /// the driver's 512-byte copy loop, so runs are cycle-reproducible.
     bool attachSmartPort(int slot = 5);
-    /// Mount an 800 KiB (819 200-byte) ProDOS-order .po or an 800 KiB .2mg on
-    /// unit 0 or 1. Mounting over a disk first writes that disk's changed
+    /// Mount raw ProDOS-order 400/800 KiB, supported 2IMG or GCR WOZ/MOOF on
+    /// unit 0 or 1. Captures are block-write-protected; MFM/1.44 MB is disabled.
+    /// Mounting over a disk first writes that disk's changed
     /// blocks back to its file, as insertDisk() does for the Disk II. Guest
     /// writes reach the file on flushSmartPortDisk(), on the next insert or
     /// eject, and when the Core is destroyed. A read-only file mounts
@@ -137,8 +138,8 @@ public:
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
     /// by the host transport below, while the guest sees the real $C060 input.
     bool loadCassette(std::string_view path);
-    /// Save output captured from guest accesses to $C020. The extension picks
-    /// .wav or the native pulse-based .aci format.
+    /// Save output captured from guest accesses to $C020. A .wav suffix picks
+    /// WAV; other suffixes select ACI. No suffix is appended automatically.
     bool saveCassette(std::string_view path);
     void playCassette();
     void stopCassette();

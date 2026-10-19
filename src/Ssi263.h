@@ -24,8 +24,8 @@
 //
 // Ported in spirit from AppleWin `source/SSI263.cpp` (LGPL — POM2's
 // own chip-emulation code is independent; only the protocol contract
-// is shared, and the eventual phoneme PCM blob — if/when imported —
-// would be a separately-licensed data import). MAME does NOT
+// is shared; the imported phoneme PCM is separately attributed in
+// Ssi263PhonemeData.cpp and THIRD-PARTY.md). MAME does NOT
 // implement the SSI263 (verified 2026-05-27, no `ssi263*` file in
 // `src/devices/sound`), so this is the only reference target.
 //
@@ -51,8 +51,8 @@
 //
 //   * Mockingboard C: enabled A/!R drives CA1 on VIA2. The VIA latches an
 //     interrupt when CA1 sees the configured edge.
-//   * Echo+ / Phasor speech: A/!R drives the slot IRQ line directly,
-//     bypassing any 6522.
+//   * SSI263 Echo: A/!R drives the slot IRQ directly. Phasor uses direct
+//     slot IRQ in native mode and VIA CA1 routing in compatibility mode.
 //
 // `Ssi263::advance(cycles)` ticks the playback counter. When the
 // configured phoneme duration elapses, A/!R goes 0 → 1 and `advance`

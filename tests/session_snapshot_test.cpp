@@ -224,7 +224,7 @@ void malformed()
     // Embedded media have a physical header lock that the host notch cannot clear.
     assert(pom2::saveSessionFile(f.ctrl, f.bundle, f.error));
     { auto state = f.ctrl.lockState(); f.ctrl.cassette().armRecording(); }
-    assert(!pom2::saveSessionFile(f.ctrl, f.bundle, f.error));
+    assert(pom2::saveSessionFile(f.ctrl, f.bundle, f.error));
 }
 
 void writableRefusal()
@@ -265,7 +265,7 @@ void slinkySessions()
         slinky->deviceSelectWrite(0, 0x34); // reload the saved pointer
     }
     const auto saved = f.capture();
-    assert(saved.version == 6);
+    assert(saved.version == 7);
     assert(saved.slots[2].kind == SessionArchive::Card::Slinky);
     assert(saved.slots[2].identity == rom);
     Blob encoded;
@@ -448,7 +448,7 @@ void wozSessions()
             f.disk->deviceSelectRead(0xC);
         }
         const auto original = f.capture();
-        assert(original.version == 6);
+        assert(original.version == 7);
         auto previous = original; previous.version = 2;
         Blob previousBytes;
         SessionArchive previousDecoded;

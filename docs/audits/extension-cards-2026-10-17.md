@@ -9,6 +9,12 @@ The later 358-case run also includes the SNES MAX added concurrently; that
 work and the W5100 LISTEN addition are described in the separate
 [non-IIgs parity report](non-iigs-parity-2026-10-17.md).
 
+**Current capability reconciliation, 2026-10-20:** Echo+ TMS5220C was completed
+after the initial review and is now offered by the catalog. The capability
+table below reflects that implementation and the nested-snapshot corrections.
+The dated execution records and `.tests.txt` selection retain their original
+scope; they are not evidence that later additions ran in the initial audit.
+
 ## Findings
 
 ### Corrected: VidHD signature decoded in the wrong window
@@ -103,7 +109,7 @@ asserted contract, not proof that all board features are implemented.
 | `hdv` | `hdv_card_smoke`, `hdv_boot_scan`, `hdv_two_drives` | Synthetic block interface and ROM; a functional service, not an ATA/SCSI board model. |
 | `cffa` | `cffa_card_smoke`, `media_contract`, snapshot contract | Real ROM/IDE model; no CHD requirement. External media is deliberately outside register snapshots. |
 | `smartport35` | `smartport_card_smoke`, `smartport_eight_units`, `smartport_bus_device` | Synthetic service/firmware veneer; CONTROL data-list support remains limited. |
-| `liron` | `liron_chain`, `smartport_bus_device`, factory snapshot checks | Real controller firmware and IWM; drive-side CPU is replaced by a protocol model. Nested malformed snapshots have weaker atomicity. |
+| `liron` | `liron_chain`, `smartport_bus_device`, factory snapshot checks | Real controller firmware and IWM; drive-side CPU is replaced by a protocol model. LIR2 validates nested sections before resetting live state; the original atomicity finding is corrected. |
 | `ssc` | `ssc_acia_smoke`, `ssc_firmware`, `ssc_tcp_transport` | Real EPROM when present; host TCP cannot express electrical BREAK/RTS behavior. |
 | `printer` | `printer_card_smoke`, `printer_detection` | Synthetic always-ready spool interface, intentionally higher level than a parallel board. |
 | `grappler` | `grappler_card_smoke`, `grappler_printer_state`, snapshot contract | Real firmware when available; fallback and instantaneous strobe are documented approximations. |
@@ -121,6 +127,7 @@ asserted contract, not proof that all board features are implemented.
 | `mouseaw` | AppleWin mouse smoke and axis parity | HLE MCU behavior with real host EPROM; do not present it as the same silicon-level implementation. |
 | `mockingboard` | smoke, audio-quality/timeline, clock and snapshot contracts | AY/VIA timing is tested; analog output stage is not a physical waveform model. |
 | `mockingboard_c` | same card checks plus SSI suites | SSI modes/requests and PCM-derived durations corrected; inflection/articulation remain incomplete. |
+| `echoplus_tms` | later `tms5220`, `echoplus_tms5220` and catalog snapshot contracts | Actual single-VIA/two-AY8913 map and CPU-timed TMS5220C LPC speech, implemented 2026-10-18. Physical pin delays and independent analog board calibration remain open. |
 | `phasor` | card smoke, timeline, mode-scale and snapshot contracts | Four-AY audio and two SSI263AP speech chips; fixed-PCM and analog mix limits remain. Rejected-snapshot audio and compatibility-mode pair reset corrected. |
 | `echoplus` | `echoplus_card_smoke`, SSI suites | This key is Cricket/SSI speech, not the real TMS5220 Echo+. Same fixed-PCM waveform limits. |
 | `workstation` | card/CardCat/pacing and SCC firmware checks | Runs its coprocessor firmware; no LocalTalk network peer or working network boot. Frozen scope. |
@@ -131,9 +138,9 @@ asserted contract, not proof that all board features are implemented.
 | `sam` | `sam_card`, clock and snapshot contracts | Cycle-stamped DAC latch/audio model; no physical analog reconstruction claim. |
 
 Related checks include `zip_chip`, `ramworks_smoke`, language-card banking
-and `no_slot_clock_smoke`. Hidden `echoplus_tms` remains a silent scaffold
-with a provisional address map, covered for lifecycle/snapshot safety, not
-for real speech or correct hardware decoding.
+and `no_slot_clock_smoke`. The former hidden `echoplus_tms` scaffold has been
+replaced by the implemented card above; see [DEV](../../DEV.md#echoplustms5220card)
+for its bus/audio/state contract and the later validation scope.
 
 ## Remaining priorities
 
@@ -143,9 +150,9 @@ for real speech or correct hardware decoding.
    not synthesize all hardware register effects.
 2. Obtain an independent VidHD reference image and state which missing
    features are required by actual software before expanding the model.
-3. Keep capability descriptions honest: frozen TMS Echo+ and Workstation
-   networking are not implemented; Phasor speech uses fixed PCM, with an
-   approximate mono output mix.
+3. Keep capability descriptions honest: Echo+ TMS5220C speech is implemented,
+   with physical pin/analog validation still open. Workstation networking is
+   not implemented; Phasor speech uses fixed PCM and an approximate mono mix.
 4. Complete abstraction metadata for newer catalog keys. The UI's
    `abstractionCatalog()` still lacks several keys already described in
    `docs/lle_vs_hle.md` (CARDS-001); this is a documentation/UI gap rather

@@ -71,6 +71,8 @@ void Debugger::toggleBreakpoint(uint16_t addr)
 void Debugger::clearBreakpoints()
 {
     conditions_.clear();
+    bankBreakpoints_.clear();
+    bankConditions_.clear();
     // Freed rather than zeroed: an un-armed debugger should hold no memory,
     // and `armed()` keying off the count means the CPU goes back to its fast
     // loop the moment the last breakpoint goes.
@@ -97,8 +99,12 @@ bool Debugger::conditionMatches(uint16_t addr) const
 {
     const auto found = conditions_.find(addr);
     if (found == conditions_.end()) return true;
+    return conditionMatches(found->second);
+}
+
+bool Debugger::conditionMatches(const Condition& c) const
+{
     if (!conditionCpu_) return false;
-    const Condition& c = found->second;
     uint16_t value = 0;
     switch (c.reg) {
         case Register::A: value = conditionCpu_->getAccumulator(); break;
@@ -164,6 +170,7 @@ Debugger::Access Debugger::watchpointAt(uint16_t addr) const
 
 void Debugger::clearWatchpoints()
 {
+    bankWatches_.clear();
     wpBits_.clear();
     wpBits_.shrink_to_fit();
     wpCount_ = 0;
@@ -172,6 +179,7 @@ void Debugger::clearWatchpoints()
 std::vector<Debugger::Watch> Debugger::watchpoints() const
 {
     std::vector<Watch> out;
+    for (const auto& w : bankWatches_) out.push_back({w.first.addr, w.second, w.first.bank});
     if (wpBits_.empty()) return out;
     out.reserve(wpCount_);
     for (std::size_t a = 0; a < kAddressSpace; ++a)
@@ -182,10 +190,11 @@ std::vector<Debugger::Watch> Debugger::watchpoints() const
 
 // ── Transient stops ──────────────────────────────────────────────────────
 
-void Debugger::setTransient(uint16_t addr, Reason reason)
+void Debugger::setTransient(uint16_t addr, Reason reason, DebugBank bank)
 {
     stepCpu_ = nullptr;
     transientAddr_   = addr;
+    transientBank_ = bank;
     transientReason_ = reason;
     // Released last, so a CPU worker that observes the flag set also observes
     // the address and reason that go with it.
@@ -211,7 +220,6 @@ void Debugger::setStepOut(M6502& cpu, const Memory& memory)
 
 void Debugger::setProfiling(bool enabled)
 {
-    if (enabled && profile_.empty()) profile_.resize(kAddressSpace);
     profiling_ = enabled;
 }
 
@@ -223,7 +231,7 @@ void Debugger::setHistoryEnabled(bool enabled)
 
 void Debugger::clearMeasurements()
 {
-    std::fill(profile_.begin(), profile_.end(), ProfileEntry{});
+    profile_.clear();
     historyHead_ = historyCount_ = 0;
 }
 
@@ -231,7 +239,8 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
 {
     if (cycles <= 0) return;
     if (profiling_) {
-        auto& entry = profile_[pc];
+        auto& entry = profile_[{pc, curBank_}];
+        entry.bank = curBank_;
         entry.pc = pc;
         ++entry.visits;
         entry.cycles += static_cast<uint64_t>(cycles);
@@ -239,7 +248,7 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     if (historyEnabled_) {
         history_[historyHead_] = {pc, cpu.getProgramCounter(), cpu.getAccumulator(),
             cpu.getXRegister(), cpu.getYRegister(), cpu.getStatusRegister(),
-            cpu.getStackPointer(), cycles};
+            cpu.getStackPointer(), cycles, curBank_};
         historyHead_ = (historyHead_ + 1) % history_.size();
         historyCount_ = std::min(historyCount_ + 1, history_.size());
     }
@@ -249,9 +258,9 @@ std::vector<Debugger::ProfileEntry> Debugger::profile(std::size_t limit) const
 {
     std::vector<ProfileEntry> out;
     for (const auto& entry : profile_)
-        if (entry.visits) out.push_back(entry);
+        if (entry.second.visits) out.push_back(entry.second);
     std::sort(out.begin(), out.end(), [](const ProfileEntry& a, const ProfileEntry& b) {
-        return a.cycles != b.cycles ? a.cycles > b.cycles : a.pc < b.pc;
+        return a.cycles != b.cycles ? a.cycles > b.cycles : DebugAddress{a.pc,a.bank} < DebugAddress{b.pc,b.bank};
     });
     if (out.size() > limit) out.resize(limit);
     return out;
@@ -291,6 +300,13 @@ void Debugger::clearForTimeJump()
 
 // ── The hot hooks ────────────────────────────────────────────────────────
 
+void Debugger::beginStep(uint16_t pc, bool explicitStep)
+{
+    if (explicitStep) resumeSkipArmed_ = false;
+    curPc_ = pc;
+    curBank_ = resolveBank(pc);
+}
+
 bool Debugger::onInstruction(uint16_t pc)
 {
     // A watchpoint fired inside the PREVIOUS instruction. The access is done
@@ -302,7 +318,7 @@ bool Debugger::onInstruction(uint16_t pc)
     if (hit_.valid()) return true;
     // Latched for noteAccess(), which fires mid-instruction and would
     // otherwise have no way to name the instruction responsible.
-    curPc_ = pc;
+    beginStep(pc);
 
     bool transientHit = false;
     if (transientArmed_.load(std::memory_order_acquire)) {
@@ -316,14 +332,14 @@ bool Debugger::onInstruction(uint16_t pc)
                 stepMemory_->peekCpuView(pc) == 0x60)
                 stepReturning_ = true;
         } else {
-            transientHit = pc == transientAddr_;
+            transientHit = pc == transientAddr_ && (transientBank_.kind == DebugBank::Any || transientBank_ == curBank_);
         }
     }
 
     // Resuming from a stop: the PC still points at the instruction that
     // stopped us, so without this the same breakpoint fires forever and Run
     // does nothing. One instruction of amnesty, cleared on use.
-    if (resumeSkipArmed_ && pc == resumeSkip_) {
+    if (resumeSkipArmed_ && pc == resumeSkip_ && curBank_ == resumeBank_) {
         resumeSkipArmed_ = false;
         return false;
     }
@@ -334,11 +350,13 @@ bool Debugger::onInstruction(uint16_t pc)
         // a breakpoint behind at the return address.
         const Reason why = transientReason_;
         clearTransient();
-        hit_ = { why, pc, 0, 0 };
+        hit_ = { why, pc, 0, 0, curBank_ };
         return true;
     }
-    if (bpCount_ && hasBreakpoint(pc) && conditionMatches(pc)) {
-        hit_ = { Reason::Breakpoint, pc, 0, 0 };
+    if ((bpCount_ && hasBreakpoint(pc) && conditionMatches(pc)) ||
+        (bankBreakpoints_.count({pc,curBank_}) &&
+         (!bankConditions_.count({pc,curBank_}) || conditionMatches(bankConditions_.at({pc,curBank_}))))) {
+        hit_ = { Reason::Breakpoint, pc, 0, 0, curBank_ };
         return true;
     }
     return false;
@@ -346,20 +364,66 @@ bool Debugger::onInstruction(uint16_t pc)
 
 void Debugger::noteAccess(uint16_t addr, uint8_t value, bool write)
 {
-    if (wpBits_.empty()) return;
+    noteBankAccess(addr, value, write, resolveBank(addr,write));
+}
+
+void Debugger::noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBank bank)
+{
     const uint8_t want = write ? Write : Read;
-    if (!(wpBits_[addr] & want)) return;
+    const auto found = bankWatches_.find({addr,bank});
+    if (!(watchpointAt(addr) & want) &&
+        (found == bankWatches_.end() || !(found->second & want))) return;
     // Do NOT overwrite an existing un-consumed hit: the first stop wins, and
     // an instruction that touches two watched addresses should report the one
     // that stopped it rather than the last one it happened to reach.
     if (hit_.valid()) return;
     hit_ = { write ? Reason::WatchWrite : Reason::WatchRead,
-             curPc_, addr, value };
+             curPc_, addr, value, curBank_, bank };
     // curPc_, not the CPU's programCounter: the access is mid-instruction and
     // that register has already advanced past the opcode and its operands, so
     // it names neither the writing instruction nor anything stable. curPc_ is
     // what onInstruction was handed for the instruction now executing — the
     // one that performed this write.
+}
+
+DebugBank Debugger::resolveBank(uint16_t addr, bool write) const
+{
+    return memory_ ? memory_->debugBank(addr,write) : DebugBank{};
+}
+void Debugger::addBreakpoint(uint16_t addr, DebugBank bank)
+{
+    if (bank.kind == DebugBank::Any) addBreakpoint(addr);
+    else { bankBreakpoints_[{addr,bank}] = true; bankConditions_.erase({addr,bank}); }
+}
+void Debugger::removeBreakpoint(uint16_t addr, DebugBank bank)
+{
+    if (bank.kind == DebugBank::Any) removeBreakpoint(addr);
+    else { bankBreakpoints_.erase({addr,bank}); bankConditions_.erase({addr,bank}); }
+}
+void Debugger::addConditionalBreakpoint(uint16_t addr, Condition condition, const M6502& cpu, DebugBank bank)
+{
+    if (bank.kind == DebugBank::Any) { addConditionalBreakpoint(addr,condition,cpu); return; }
+    addBreakpoint(addr,bank);
+    conditionCpu_ = &cpu;
+    bankConditions_[{addr,bank}] = condition;
+}
+bool Debugger::hasBreakpoint(uint16_t addr, DebugBank bank) const
+{
+    return hasBreakpoint(addr) || bankBreakpoints_.count({addr,bank});
+}
+std::vector<DebugAddress> Debugger::bankBreakpoints() const
+{
+    std::vector<DebugAddress> out;
+    for (auto addr : breakpoints()) out.push_back({addr,{}});
+    for (const auto& entry : bankBreakpoints_) out.push_back(entry.first);
+    std::sort(out.begin(),out.end());
+    return out;
+}
+void Debugger::setWatchpoint(uint16_t addr, Access access, DebugBank bank)
+{
+    if (bank.kind == DebugBank::Any) setWatchpoint(addr,access);
+    else if (access == None) bankWatches_.erase({addr,bank});
+    else bankWatches_[{addr,bank}] = access;
 }
 
 void Debugger::clearHit()

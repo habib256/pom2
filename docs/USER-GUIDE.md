@@ -25,6 +25,12 @@ the selected CPU mode; out-of-range branches are rejected. Operands accept
 `$hex`, `%binary` and decimal; four hex digits force absolute addressing.
 Patches target RAM below `$C000` through the current CPU write mapping.
 
+The debugger also supports bank-qualified breakpoints and watches, such as
+`aux1:$0800` or `lc2:$D000`, separate profiling/history for each code bank,
+and source-line correspondence through `.p2map` files. Unqualified addresses
+continue to match every bank. See [Bank-aware debugger](debugger-banks.md)
+for the bank names, symbol syntax and source-map format.
+
 Select **Echo+ (TMS5220 + 2xAY)** in a free slot for the real Street
 Electronics speech/music card. Its TMS5220C speech is distinct from the
 Cricket/SSI263 card; both music chips and speech appear in the mixer.
@@ -48,6 +54,14 @@ limit is 4096 characters and truncation is reported. **File > Save/Open
 session...** now transfers session archives through browser downloads/uploads.
 See [session support and automatic resume](session-format.md#using-it) for
 supported configurations and IndexedDB checkpoint behavior.
+
+Desktop file opening also depends on the package's host integration. The
+macOS bundle declares common Apple II disk extensions and receives Finder/Dock
+open events. Linux provides a desktop launcher and an Apple II disk MIME type;
+desktop integration must be installed for **Open With** to discover it. On
+Windows, pass an image to `POM2.exe` or drop it on the window; the ZIP package
+does not register file associations. `.moof` is supported by the emulator but
+is not declared in the current macOS/Linux association metadata.
 
 ## Make it yours
 
@@ -133,11 +147,12 @@ machines it also restores the built-in ACIAs, IOU mouse, RGB adapter,
 onboard Sony media and SmartPort transfers. Session v6 also embeds both
 ProDOS HDV drives and HDV units in SmartPort chains, including dirty blocks.
 Sparse volumes up to 32 MiB fit when the full archive stays within 32 MiB;
-host-folder volumes and CFFA/ATA cards remain unsupported. Use desktop
+v7 also supports CFFA/ATA, Zip Chip, TransWarp, additional audio/game cards,
+program tapes and detached copies of host-folder volumes. Use desktop
 **File > Save session... / Open session...**, `--session-save` / `--session-load`
 or the local `/session/save` and
-`/session/load` API. Loading requires matching ROMs and cards; unsupported
-devices are refused. Restored writable disks keep further changes in RAM;
+`/session/load` API. Loading automatically rebuilds the recorded profile,
+ROMs, CPU, memory and supported cards; unsupported devices are refused. Restored writable disks keep further changes in RAM;
 save a new session or use automatic resume to retain them. Their original
 files are not overwritten by a restore. See [resumable sessions](session-format.md).
 
@@ -285,14 +300,14 @@ these machines so versatile.
 | Area | Available hardware and tools |
 |---|---|
 | **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7, Le Chat Mauve RGB and VidHD Super Hi-Res on a //e |
-| **Memory** | Language Card, IIe auxiliary memory and RamWorks III up to 8 MB |
-| **Sound** | Speaker, cassette, Mockingboard A/C, Mockingboard C with SSI263 speech, Phasor, Cricket / Echo; stereo mixing and mono output |
+| **Memory** | Language Card, IIe auxiliary memory, RamWorks III up to 8 MB and Slinky 1 MB expansion |
+| **Sound** | Speaker, cassette, Mockingboard A/C, Sound II with SSI263 speech, Phasor with dual SSI263AP, Cricket / Echo, Echo+ TMS5220C and S.A.M. DAC; stereo mixing and mono output |
 | **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0, CFFA3000 SmartPort HLE and Floppy Emu |
 | **Input and printing** | Mouse Card, joysticks/paddles, 4play, SNES MAX, Super Serial, parallel interfaces and ImageWriter II |
-| **Expansion** | Microsoft SoftCard Z80, TransWarp, Videx Videoterm, clocks and Apple II Workstation Card |
+| **Expansion** | Microsoft SoftCard Z80, TransWarp, Zip Chip socket accelerator, Videx Videoterm, clocks and Apple II Workstation Card |
 | **Connections** | Uthernet I/II, FujiNet relay, TNFS disk downloads and a ProDOS host-folder volume |
 | **Creative tools** | HGR/DHGR Paint Editor, HGR Sprite Editor, screenshots and print exports |
-| **Inspection** | Memory viewer, debugger with symbols, conditional breakpoints, step over/out, profiling and execution history; snapshots and an optional AI-control HTTP API |
+| **Inspection** | Memory viewer, bank-aware debugger with symbols, conditional breakpoints, step over/out, source correspondence, profiling and history; snapshots, resumable sessions and an optional AI-control HTTP API |
 
 For card keys, firmware details and implementation notes, see
 [CLAUDE.md](../CLAUDE.md) and [DEV.md](../DEV.md).
@@ -320,6 +335,10 @@ For card keys, firmware details and implementation notes, see
   a physical board can still be used. The bundled program requires macOS 14+
   on Apple Silicon, macOS 15+ on Intel, or Ubuntu 22.04 compatible libraries
   on Linux x64. See `POM2 --help` for connection options.
+  The FujiNet panel's **Timeout (ms)** control adjusts local calls from
+  50 to 5000 ms. Remote host/directory operations and mounted-image block I/O
+  receive up to five seconds; a slow call can pause the interface while it
+  waits for the peer.
 - **Workstation Card:** Apple's firmware boots and passes its diagnostics.
   A LocalTalk network and AppleShare netboot are not implemented.
 - **//c and //c+:** SmartPort units are supported; the //c+ also boots through
@@ -397,8 +416,20 @@ POM2 --kiosk "my-game.dsk"                  # fullscreen
 POM2 tnfs://host/path/image.po              # fetch, cache and boot
 POM2 --snapshot-save session.pom2snap
 POM2 --snapshot-load session.pom2snap
+POM2 --session-save game.pom2session        # bundle supported machine/media
+POM2 --session-load game.pom2session        # reconstruct the saved machine
 POM2 --help                                # all options
 ```
+
+Actions such as snapshot/session load/save, stepping and paste run in command-line
+order after startup settles. `--speed` sets a cycles-per-frame budget: normal
+speed is 17045 for NTSC or 20313 for PAL. `--cpu-max` runs without normal pacing;
+the achievable emulation speed depends on the host.
+
+Cassette output saves as ACI by default or WAV with `--save-tape-format wav`.
+An explicit `.aci`/`.wav` suffix wins over that hint; other suffixes receive
+an appended format suffix, so `--save-tape out.mp3` creates `out.mp3.aci`.
+MP3 is an input format, not a recording encoder.
 
 Other options cover speed, display mode, cassette recording, blank disks,
 ProDOS host folders, FujiNet and automation. Optional values use `=`:
@@ -437,12 +468,25 @@ git clone https://github.com/ocornut/imgui.git
 $imguiPin = ((Get-Content imgui_pin.env | Where-Object { $_ -match '^IMGUI_COMMIT=' }) -split '=', 2)[1]
 git -C imgui checkout $imguiPin
 vcpkg install --triplet x64-windows-static
-cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=OFF
 cmake --build build --config Release --parallel 3
+./build/Release/POM2.exe
 ```
 
 The manifest supplies the dependencies. The static triplet matches the release
 build's CRT and avoids shipping extra DLLs.
+
+This recipe builds the application. To run the same portable core tests as
+Windows CI, use a separate build directory with the same toolchain/triplet:
+
+```powershell
+cmake -S . -B build-portable "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=ON -DPOM2_PORTABLE_TESTS_ONLY=ON
+cmake --build build-portable --config Release --parallel 3
+ctest --test-dir build-portable -C Release --output-on-failure --no-tests=error --parallel 2
+```
+
+The registered subset is defined in `tests/cmake/Pom2PortableTests.cmake`;
+the full suite includes POSIX-specific harnesses and is run on Linux/macOS.
 
 </details>
 
@@ -457,7 +501,9 @@ and populate `imgui/` with the pinned revision, then:
 ./build_wasm.sh --serve
 ```
 
-The local server supplies the headers needed for browser threads. The asset
+The local server supplies COOP/COEP headers, but the current browser build is
+single-threaded and does not require SharedArrayBuffer or a pthread worker.
+The asset
 list comes from [the package manifest](../packaging/bundle.manifest), including
 the curated disks. `--with-data` adds the local `disks_3.5/` collection for
 **development only**; do not publish that larger personal bundle.
@@ -465,7 +511,9 @@ the curated disks. `--with-data` adds the local `disks_3.5/` collection for
 The browser opens a PAL Apple //c and boots DIX-fix by default, with the
 Apple II Screen docked on the left and Drives on the right. URL parameters
 `?preset=...&disk=...` override the machine and boot image; `?nodisk=1`
-starts without a disk.
+starts without a disk. Changing only `preset` keeps the default DIX-fix image.
+For an II+ without a boot image, use `?preset=ii%2B&nodisk=1` (`%2B` encodes
+the plus sign in the profile name).
 
 Host socket networking and the listening AI-control HTTP server are unavailable
 in the browser.
@@ -473,6 +521,8 @@ in the browser.
 </details>
 
 ### Tests and packages
+
+On Linux and macOS, configure and run the full native suite:
 
 ```bash
 cmake -S . -B build -DPOM2_ENABLE_TESTS=ON

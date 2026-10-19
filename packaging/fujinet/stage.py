@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage pinned, official FujiNet-PC Apple runtimes beside POM2's assets.
 
-FujiNet v1.5.2 is the latest stable release with FujiNet-PC Apple binaries.
+POM2 pins the FujiNet-PC Apple binaries from FujiNet v1.5.2.
 The platform archives are fetched at package time, so the repository does not
 carry opaque executables. Their SHA-256 values are GitHub release digests.
 """

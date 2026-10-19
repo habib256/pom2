@@ -1,21 +1,23 @@
-# Resumable sessions (v6; v1–v5 compatible)
+# Resumable sessions (v7; v1–v6 compatible)
 
 `.pom2session` bundles CPU/RAM state, supported card state and embedded
-floppy and HDV contents, including unsaved writes. It complements `.pom2snap`, whose contract remains
+floppy/block contents and program tapes, including unsaved writes. Opening a
+bundle reconstructs its machine profile, firmware, CPU, memory and supported
+card topology automatically; the original ROM and media files are not needed. It complements `.pom2snap`, whose contract remains
 CPU/RAM without slot restoration. Both formats deliberately have different
 magic bytes: loading a session as a snapshot must fail rather than silently
 dropping its cards and disks.
 
 ## Supported configuration
 
-- Apple II, II+, IIe, //c, //c PAL and //c+, including RamWorks where applicable, with the same profile,
+- Apple II, II+, IIe, //c, //c PAL and //c+, including RamWorks where applicable, with the recorded profile,
   motherboard/character ROMs, memory configuration and No-Slot Clock settings
-  selected before loading.
+  recorded in the bundle. These replace the active machine when needed.
 - Any combination of Disk II, Mockingboard A/C, Mockingboard Sound II,
-  SNES MAX, Slinky RAM expansion and ThunderClock+ in the same slots. Disk
+  SNES MAX, Slinky RAM expansion and ThunderClock+ in their recorded slots. Disk
   II's four PROM images and configuration, Slinky's 4 KB firmware, and the
-  clock card's slot/expansion ROM bytes must match. Empty slots must match
-  as well. Slinky's sparse 1 MB RAM and the clock's in-progress serial and
+  clock card's slot/expansion ROM bytes are embedded. Empty slots are
+  reconstructed as well. Slinky's sparse 1 MB RAM and the clock's in-progress serial and
   timer state are included; host wall-clock time continues advancing.
 - Read-only or writable 5.25-inch media: DOS/ProDOS
   sector images, 13-sector images and nibble images, including normalized
@@ -31,14 +33,26 @@ dropping its cards and disks.
   be idle, without listeners/connections or queued transport bytes.
 - Read-only or writable 400K/800K media in the onboard Sony mechanisms
   and SmartPort 3.5-inch units are embedded, including WOZ/MOOF captures.
-  The SmartPort chain geometry and unit types must match; transfer buffers,
+  The SmartPort chain geometry and unit types are reconstructed; transfer buffers,
   partially consumed reads and the external-port transaction are restored.
 
 - Version 6 adds both drives of ProDOS HDV cards and HDV units in mixed
   SmartPort chains. Raw and 2IMG block contents, protection flags, dirty
   blocks and partial transfers survive without reopening source files.
-  The ProDOS card's slot ROM must match. SmartPort still requires the
+  The ProDOS card's built-in slot ROM is checked. SmartPort still requires the
   built-in firmware; external Liron firmware is unsupported.
+
+- Version 7 adds Zip Chip socket state, TransWarp firmware/shadow/timers,
+  CFFA 2.0 EEPROM/ATA state and embedded block media, Phasor, SSI263 Echo+,
+  TMS5220C Echo+, S.A.M. and 4play. CFFA preserves partial READ, WRITE and
+  IDENTIFY transfers, including whether completing the buffer advances the
+  ATA taskfile. S.A.M. retains its existing audio-only snapshot contract:
+  its next CPU write supplies the DAC level.
+- A ProDOS host-folder volume is captured as its current block image. It
+  resumes as a detached disk, without the directory path or host syncing.
+- Program tapes embed their pulse source, cursor, comparator/output state,
+  rewind/pause state and recording buffer. Recording can continue after a
+  restore without reopening the source. Streamed audio decks remain excluded.
 
 Restored disks are detached from host files; the drive label is `(session disk)`.
 Version 5 writable media retain their guest-visible protection/write-enable
@@ -49,16 +63,18 @@ The drive panels identify this mode. Read-only records from older formats
 remain permanently protected. No original disk filename is reopened by the
 session decoder.
 Reopen the bundle explicitly on subsequent launches, or enable the browser
-automatic-resume option described below. A bundle does not recreate the
-machine configuration automatically.
+automatic-resume option described below. The loader recreates the machine configuration automatically.
 Host gamepad input, mixer settings and window layout stay live.
 
-Other unsupported cards, socket accelerators, pending eject/write-back
-operations, host-folder volumes, CFFA/ATA cards, active serial transports
-and cassette content/recording cause refusal. No unsupported device is
-silently omitted. A snapshot can capture unsaved floppy writes without
+Unsupported cards, unknown socket accelerators, pending eject/write-back
+operations, active serial transports and streamed audio decks cause refusal. No unsupported device is
+silently omitted. A session can capture unsaved floppy writes without
 flushing them. Before loading, outgoing dirty host-backed media must still
 be flushed or saved; outgoing detached session media can be rolled back.
+Outgoing host cassette recordings must be saved/cleared before replacement;
+detached session recordings may be rolled back. Remove outgoing network or
+Workstation cards before requesting a different topology; the loader does
+not stop their host workers under the machine lock.
 
 ## Using it
 
@@ -67,13 +83,15 @@ The command palette exposes the same actions. POM2 uses the platform file
 selector where available and offers a path field otherwise. Save appends
 `.pom2session` when no suffix is given, and asks before replacing an existing
 file. Cancelling leaves the machine and destination untouched. A failed
-operation keeps the path and error visible for correction. Opening resumes
-the saved state in the currently selected matching configuration; it does
-not change the running/paused mode.
+operation keeps the path and error visible for correction. Opening validates an isolated candidate before replacing the active machine.
+It preserves the current running/paused mode. The desktop publishes the new
+profile, drive panels, display and audio inventory together; HTTP loads are
+serviced by the same owner-thread queue, including in kiosk mode. Session
+media paths and reconstructed slots do not overwrite the usual startup
+media/slot settings. An explicit profile or slot rebuild leaves session mode.
 
 In the browser, **File > Save session...** downloads a `.pom2session` archive;
-**File > Open session...** opens the browser file selector. The same machine,
-firmware and card restrictions apply. Imports are bounded
+**File > Open session...** opens the browser file selector. The same supported-device restrictions apply, with automatic reconstruction. Imports are bounded
 at 32 MiB and validated before live state is replaced.
 
 **File > Automatic resume > Resume this machine on reload** opts the current
@@ -97,8 +115,7 @@ POM2 --session-load game.pom2session
 ```
 
 These are deferred actions: like `--snapshot-save/load`, they execute in CLI
-order after startup. Restore requires the matching configuration to have
-already been selected. For a machine already running with its optional
+order after startup. A load selects the recorded configuration automatically. For a machine already running with its optional
 local AI-control server enabled:
 
 ```sh
@@ -108,10 +125,11 @@ curl -X POST http://127.0.0.1:6503/session/load \
   -H 'Content-Type: application/json' -d '{"path":"game.pom2session"}'
 ```
 
-Use the configured port and authentication header when enabled. These routes
+Use the configured port; add `-H 'X-POM2-Token: YOUR_TOKEN'` when a token is
+configured. These routes
 inherit the server's working-directory path fence and request protections.
 Save paths must resolve to `.pom2session`; filesystem writes publish atomically.
-Automatic card recreation is not supported.
+Unknown profile IDs and unsupported devices are refused without replacing the machine.
 
 ## Wire layout and restoration
 
@@ -120,18 +138,25 @@ All integers are little-endian; maximum file size is 32 MiB.
 | Field | Encoding |
 |---|---|
 | Magic | Eight bytes, `POM2SESS` |
-| Version | u32, currently 5; versions 1 through 5 accepted |
+| Version | u32, currently 7; versions 1 through 7 accepted |
 | Machine identity | Nonzero u32 profile identity |
 | Payload size | u32, exactly file size minus 24 |
 | Controller configuration | u32 length + bytes (up to 64) |
 | Core snapshot | u32 length + existing ENV/CPU/MEM/MEX snapshot (up to 17 MiB) |
+| Cassette (v7+) | u32 length + CTS1 state (up to 9 MiB); empty means no tape |
 | Eight slot records | u8 kind + length-prefixed identity (up to 16 KiB) + state (within the 32 MiB file limit; 1 MiB in v1) |
 | CRC32 | u32 IEEE reversed-polynomial CRC over all preceding bytes |
 
 Slot kinds are 0 empty, 1 Disk II, 2 Mockingboard A/C, 3 Sound II, 4 SNES MAX,
 5 Slinky and 6 ThunderClock+ (v3+), 7 built-in serial, 8 IOU mouse,
 9 Le Chat Mauve, 10 SmartPort and 11 onboard Sony media (v4+),
-and 12 ProDOS HDV (v6+).
+and 12 ProDOS HDV (v6+). Version 7 adds 13 CFFA, 14 TransWarp, 15 Phasor,
+16 SSI263 Echo+, 17 S.A.M., 18 4play and 19 TMS5220C Echo+.
+Configuration v1 is four bytes: version, No-Slot Clock present, enabled and
+slot (255 means no slot). Configuration v2 appends a Zip Chip kind byte (1) and boot-fast flag.
+The ENV section carries the exact firmware and geometry used to build the
+candidate; standalone `.pom2snap` loads continue comparing ENV without
+installing it.
 Slot 0 carries kind 11 on //c-class machines and remains empty otherwise;
 no actual peripheral may occupy slot 0. The language card lives in the core
 memory snapshot. The Sony record contains three presence bytes followed by
@@ -157,7 +182,7 @@ file still has a 32 MiB cap; larger sessions are refused, not truncated.
 Decoded media storage across slots is limited to 128 MiB. Version 1 keeps
 its original limits and rejects WOZ records; old read-only nibble sessions
 remain loadable. Version 2 WOZ sessions also remain loadable. New saves use
-version 6. Version 3 binds Slinky state to the exact 4 KB ROM image and the
+version 7. Version 3 binds Slinky state to the exact 4 KB ROM image and the
 clock to its slot/expansion ROM bytes. Version 4 adds //c-class devices and
 protected 3.5-inch media. Version 5 adds writable/dirty media and their
 write framing. Older readers refuse the new version.
@@ -208,7 +233,10 @@ preserved. ProDOS HDV records contain a runtime blob and two media blobs.
 SmartPort uses these block records in HDV bays and existing floppy records
 elsewhere. The complete archive still has a 32 MiB ceiling: dense HDVs or
 large combinations can exceed it and are refused without truncation.
-Host folders are not serialized. Pending background or captured host commits
+v6 did not capture host-folder volumes. v7 captures their current block
+contents as detached media: directory paths and synchronization policy are
+not serialized, and restoration never reopens or syncs the original folder.
+Pending background or captured host commits
 prevent capture/replacement until their payloads are released. Restored block
 volumes suppress autosave, explicit flush, detach commits and destructor
 write-back even if the write-enable policy is subsequently changed.
@@ -246,3 +274,28 @@ HDV drives, mixed SmartPort chains, partial transfers, source independence,
 2IMG locks, dirty zero blocks, malformed-record atomicity and dense-image
 refusal. The Chrome persistence smoke compares whole archives after deleting
 both floppy and HDV source files and reloading their IndexedDB checkpoints.
+
+
+## Version 7 device records
+
+CFFA identity is a loaded flag followed by its complete 4096-byte EEPROM.
+Its state is a length-prefixed CFA1/ATA runtime, one taskfile-advance flag,
+and a length-prefixed BMS1 block medium. This extra flag distinguishes
+IDENTIFY from READ/WRITE without changing the rewind format.
+TransWarp identity is empty or its 4096-byte firmware; volatile state uses
+the existing versioned snapshot, including displaced motherboard ROM.
+Other v7 cards use their existing snapshot formats and empty identities.
+Each is decoded on a detached validator and must round-trip canonically;
+Phasor timers are range-checked before loading.
+
+CTS1 stores flags, cassette cycle stamps, the current segment remainder,
+playback index, rewind carry, and bounded loaded/recorded duration vectors
+(maximum 1,048,576 transitions each). It contains no host path. Hardware
+state resumes exactly; host mixer settings and audio output queues remain
+host policy. Echo+ resamples to the active device's rate on restoration.
+
+`session_machine` covers all nine profiles, cross-profile firmware/card
+reconstruction, Zip/TransWarp, split ATA transfers, detached folder volumes,
+program-tape playback/recording continuation, malformed payload refusal and
+the owner-thread load queue. The lower-level `restoreSession` remains a
+strict same-configuration primitive used by reconstruction preflight.

@@ -5,6 +5,9 @@ what follows exists to keep it that way.
 
 ## Build and test
 
+The full-suite commands below target Linux/macOS. Windows uses the
+[portable-test recipe](docs/USER-GUIDE.md#build-from-source).
+
 ```bash
 ./setup_imgui.sh                              # once: dependencies + pinned Dear ImGui
 cmake -S . -B build -DPOM2_ENABLE_TESTS=ON
@@ -12,8 +15,16 @@ cmake --build build -j3
 cd build && ctest -j2                          # run from build/; tests find roms/ themselves
 ```
 
-`make probes` (from `build/`) builds the eyeball tools that are deliberately
-not tests. The WebAssembly build is `./build_wasm.sh`.
+`cmake --build build --target probes --parallel 3` builds the eyeball tools
+that are deliberately not CTest tests, independently of the chosen generator.
+The WebAssembly build is `./build_wasm.sh`.
+
+The [CI workflow](.github/workflows/ci.yml) runs full native suites on Linux
+and macOS, a portable core subset on Windows, software-GL checks and a Chrome
+persistence/session smoke test for WebAssembly. Coverage and scheduled/manual
+sanitizers have their own jobs. Platform subsets and job registration do not
+establish that a particular revision passed; record the actual run when citing
+results. Packaging checks belong to the separate release workflow.
 
 ## Before you open a pull request
 
@@ -51,6 +62,11 @@ trip on:
 `DEV.md` holds the why behind each subsystem. `TODO.md` indexes open work in
 `docs/backlog/` and the scope decisions in `docs/decisions/project-scope.md`.
 Check them before starting something large: some subsystems are deliberately frozen.
+The [documentation index](docs/README.md) separates current reference pages,
+planning and dated evidence. When behavior changes, update the user guide and
+its technical/domain entry together, including integrated help when affected.
+Keep release notes and historical audit measurements tied to their original
+version/run; an old successful run is not proof for a new candidate.
 
 ## Reporting bugs
 

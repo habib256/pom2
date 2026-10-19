@@ -4,6 +4,9 @@ Maintained decisions moved from TODO on 2026-10-05. Revisit only with new
 evidence or an explicit change of scope. Historical implementation claims
 inside the original rationale are dated; the [backlog](../../TODO.md) tracks
 work and [DEV.md](../../DEV.md) describes the current implementation.
+File counts and line counts in the rationale are dated measurements, not
+current build limits. `tools/file_size_budget.txt` and the CMake size checks
+define the enforced ceilings for this checkout.
 
 ## The scope ruling
 
@@ -54,10 +57,18 @@ backlog items are closed as *won't do* unless somebody arrives with a need.
 
 Z80 core + SoftCard *(a finished subsystem — its cleanup list is quality, not
 correctness: do not schedule it)* · RamWorks III above 128 K · AppleWin NTSC,
-artifact-colour LUT modes, mono phosphor, CRT glass pass *(no ctest at all until
-G5-10; say so)* · Cassette · Mockingboard Sound II, SSI263, Cricket/Echo ·
-Phasor *(cycle-stamped playback landed 2026-09-09)* · Floppy mechanical sounds · Disk II drive 2, `.d13`, `.nib`/`.nib2`,
+artifact-colour LUT modes, mono phosphor, CRT glass pass *(selected rendering
+contracts are covered by `applewin_ntsc_smoke`, `display_golden_hash`,
+`mono_text_phosphor`, `crt_glass_resample` and `crt_barrel_view`; these are
+not blanket physical-display or UI coverage)* · Cassette · Mockingboard Sound II, SSI263, Cricket/Echo ·
+Phasor *(cycle-stamped playback landed 2026-09-09)* ·
+Echo+ TMS5220C (`echoplus_tms`) *(reopened and implemented 2026-10-18:
+VIA, two AY8913s and LPC speech; physical pin timing and analog calibration
+remain open; see [DEV](../../DEV.md#echoplustms5220card))* ·
+Floppy mechanical sounds · Disk II drive 2, `.d13`, `.nib`/`.nib2`,
 2MG, MacBinary, skew sniffing · CFFA 2.0 *(**CHD closed as won't-do**)* ·
+CFFA3000 synthetic SmartPort and SuperDrive block service *(supported
+contracts, not complete AVR/CF/USB or SWIM hardware emulation)* ·
 ProDOS HDV card *(its write-back is core; its device model is not;
 two drives since 2026-09-11, pinned `hdv_two_drives`)* · ProDOS
 host folder · IWM + Sony 3.5" + SmartPort hub · **the SmartPort card's units
@@ -69,14 +80,15 @@ alternative to the core `smartport35`; since 2026-09-11 up to 14 units, each
 `$C500` stub + `IIcExternalSmartPort` · Super Serial Card + telnet *(the "real
 SSC ROM" move was closed as won't-do, then shipped anyway on 2026-09-26:
 Apple's 341-0065-A runs when `roms/ssc_341-0065-a.bin` is present, pinned
-`ssc_firmware`)* · Uthernet II *(**`LISTEN` closed as
-won't-do**)* · FujiNet relay *(relay side only; three of its five open items are
+`ssc_firmware`)* · Uthernet II *(local TCP `LISTEN` implemented 2026-10-17
+under the loopback opt-in; LAN/interface mapping remains open)* · FujiNet relay *(relay side only; three of its five open items are
 upstream bugs POM2 has nothing to fix; the native device's phases 2-4 are
 unscheduled)* · TNFS media · Grappler+, parallel PrinterCard, ImageWriter II +
 PDF, screen dump, print history *(`printer_plan_2`'s remaining phases are
 unscheduled; the `ImageWriter.cpp` file-size debt is still owed as a **ratchet**
 obligation)* · ThunderClock+ and No-Slot Clock · Mouse Card, both models ·
-Joystick / paddles / 4play *(**4play is complete** — mark it so)* · TransWarp ·
+Joystick / paddles / 4play *(complete register contract)* · SNES MAX
+*(two standard SNES joypads)* · TransWarp ·
 **Memory Expansion "Slinky"**, **Zip Chip** and **S.A.M. DAC** *(2026-10-16,
 moved out of the parked tail on the user's explicit request, each with its
 named software: the Slinky is ProDOS 8's RAM disk and AppleWorks' expanded
@@ -85,6 +97,7 @@ acceleration plus the Zip Chip control utilities that drive `$C05A-$C05F`;
 the S.A.M. DAC is what the S.A.M. speech software streams to. Pinned
 `slinky_card`, `zip_chip`, `sam_card`)* ·
 Videx Videoterm *(2026-09-29; ROM-gated, ][ / ][+ only)* ·
+VidHD *(partial IIe SHR display contract, independent board capture still open)* ·
 Rewind + snapshot *("redo" and writable-WOZ undo closed as won't-do)* ·
 Debugger and memory panels · AI control server + SDK *(a break here is urgent —
 the project's own verification method depends on it)* · CLI + kiosk · Panel
@@ -94,7 +107,6 @@ registry, theme, docking, palette · WASM build · Packaging.
 
 | Subsystem | Why frozen |
 |---|---|
-| **Echo+ TMS5220** (`echoplus_tms`) — reopened and implemented 2026-10-18 | The explicit request to complete the remaining features supersedes the former hide ruling. The VIA/two-AY/TMS5220C audio implementation is documented in [DEV](../../DEV.md#echoplustms5220card). |
 | 🧊 **Apple II Workstation Card** | Steps 2 and 3 are ❌ with no network on the other end; it buys an alternative transport for PostScript the SSC already carries, and doubles emulation cost while plugged. **Close items 2 and 3** |
 | 🧊 **Zilog Z8530 SCC** | Its only consumer is the card above; SDLC is datasheet-derived with no MAME oracle. `scc8530_smoke` stays as a build guard |
 | 🧊 **Uthernet I + libslirp backend** | No Windows transport (vcpkg's port drags glib into CI), none on WASM, and absent from the .dmg and the x86_64 AppImage. Uthernet II covers the need everywhere with no dependency. **Close both transport items** |
@@ -104,7 +116,7 @@ registry, theme, docking, palette · WASM build · Packaging.
 | 🧊 **Floppy Emu** | 4 of 6 modes; the two missing were already "out of scope for v1" |
 | 🧊 **Printer mechanical sounds** | Synthesised because **no sample set exists** — there is no oracle and never will be |
 | 🧊 **PostScript by delegation** | Delegates to a host Ghostscript; document the dependency, no in-process renderer |
-| 🧊 **WASM browser extras** (file picker, touch input, worklet latency, 50 Hz RAF) | Open since the WASM build landed; the demo is blocked on G1, not on code |
+| 🧊 **Remaining WASM browser extras** (direct disk-image picker/drop-zone, touch input, worklet tuning) | These remain frozen. Text/session upload/download, IndexedDB automatic resume and PAL wall-time CPU pacing are implemented; RAF still follows the host display. The public demo is linked from README; distribution decisions remain separate release gates. |
 | 🧊 **Apple ][ Original (1977) profile** | No profile-specific test, no corpus title, no report. Do not chase rev-0 quirks |
 | 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
 
