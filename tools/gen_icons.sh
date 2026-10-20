@@ -40,7 +40,7 @@ trap 'rm -rf "$tmp"' EXIT
 # At 16 physical pixels the "][" is 0.8 px of bar and renders as bright mush
 # that swallows the apple — measured against bar thicknesses 11, 14 and 17,
 # none of which survive (see the note in POM2.svg). That one slot therefore
-# drops the bracket group and lets the apple carry the icon. The simplified
+# drops the lettering group (POM and brackets) and lets the apple carry the icon. The simplified
 # art is DERIVED from the master right here rather than kept as a second
 # file, so the two cannot drift apart.
 plain="$tmp/POM2-nobrackets.svg"
