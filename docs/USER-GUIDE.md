@@ -25,14 +25,19 @@ such as `LDA #$00`, then choose **Assemble and advance**. The byte preview uses
 the selected CPU mode; out-of-range branches are rejected. Operands accept
 `$hex`, `%binary` and decimal; four hex digits force absolute addressing.
 Patches target RAM below `$C000` through the current CPU write mapping.
+The assembler takes numeric operands, not loaded symbols or expressions;
+it advances the patch address without changing the CPU's PC. See the
+[assembler reference](debugger-banks.md#assemble-instruction) for syntax
+and the effects on rewind/debugger history.
 
 The debugger also supports bank-qualified breakpoints and watches, such as
 `aux1:$0800` or `lc2:$D000`, separate profiling/history for each code bank,
 and source-line correspondence through `.p2map` files. Unqualified addresses
 continue to match every bank. See [Bank-aware debugger](debugger-banks.md)
 for run controls, bank names, symbol syntax and the source-map format.
-**Step** (F7) advances one instruction; **Step Over** (F8) follows a JSR's
-return, including calls with inline arguments. With a SoftCard Z80 holding
+With the Debugger panel open, **Step** (F7) advances one instruction;
+**Step Over** (F8) follows a JSR's return, including calls with inline
+arguments. With a SoftCard Z80 holding
 the bus, a plain Step advances the Z80; the debugger display and breakpoints
 still describe the 6502.
 
@@ -85,6 +90,23 @@ including the dotted appearance behind orange and blue hi-res colours.
 For a different perspective, open the **3D voxel view** from Display and orbit
 the running picture. The old pixels have a little depth now.
 
+### Arrange the workspace
+
+Drag panel tabs to dock them together or move them into another part of the
+window. **View → Layout** offers **Reset to default**, **Emulation**,
+**Debug** and **Audio** arrangements. Reset places the screen above the
+keyboard on the left and Drives, Disk Library and Slot Configuration on the
+right. Emulation gives the screen more room with storage panels on the right;
+Debug groups memory tools; Audio groups sound-card inspectors, mixer and tape.
+These actions rearrange docking; open a hidden panel from its menu when needed.
+Slot-numbered device windows can be docked manually and retain that placement.
+
+In **View → Interface**, choose Amber, Green, Cold blue or Slate accents and
+set interface zoom from 75% to 250%. This scales menus, text and controls
+in addition to the monitor's display scaling. It does not change the guest's
+video mode or phosphor colour. Layout and appearance are saved on ordinary
+desktop launches; kiosk persistence follows the rules below.
+
 ### The chatter of the drive
 
 Open **Devices → Storage → Drives** for a vertical stack of your configured
@@ -136,8 +158,13 @@ from release packages.
 
 ### One more chance
 
-Hold **F6** to rewind, or open **Rewind (time-travel)** to move back through
-recent execution and resume. Snapshots let you save and reload a machine state.
+Open **Machine → Rewind (time-travel)** and enable **Record** before playing;
+recording is off by default. Once history has accumulated, hold **F6** to
+rewind, or use the panel's timeline and resume controls. The **history (s)**
+slider selects 5–120 seconds; the memory budget can shorten the retained
+history. Turning Record back on starts a new timeline. The recording setting
+and chosen history length are remembered on ordinary desktop launches.
+Snapshots let you save and reload a machine state.
 
 File snapshots restore CPU, RAM and memory/display switches. New captures
 check the motherboard and character ROMs, memory configuration and PAL/NTSC
@@ -228,7 +255,7 @@ buffer. Machine rewind and `.pom2snap` do not restore them; v7
 | **Alt+Enter** / Alt+keypad Enter | Switch between fullscreen with mouse capture and the windowed interface with a free pointer |
 | **F10** / **Ctrl+Alt+F** | Switch between fullscreen and the windowed interface |
 | **Ctrl+Alt+G** / middle mouse button | Toggle mouse capture for an installed Mouse Card |
-| **F6**, held | Rewind |
+| **F6**, held | Rewind while Record is enabled and history is available |
 | **F9** | Save a screenshot |
 | **F11** | Soft reset / Ctrl-Reset |
 | **F12** | Hard reset |
@@ -479,13 +506,22 @@ review them manually. Conflict detection is conservative: a host file newer
 than the mount is kept even if the volume still holds its original snapshot.
 Files deleted by the guest are left on the host.
 
-Screenshots and printouts go into POM2's per-user data directory:
+### Screenshots and settings
+
+On desktop, screenshots and printouts go into POM2's per-user data directory:
 
 | System | Data directory |
 |---|---|
 | Linux | `~/.local/share/POM2/` (`XDG_DATA_HOME` is honoured) |
 | macOS | `~/Library/Application Support/POM2/` |
 | Windows | `%LOCALAPPDATA%\POM2\` |
+
+**F9** writes `screenshots/screenshot_NNN.ppm`, using binary P6 RGB at the
+renderer framebuffer's native dimensions. The capture contains the emulated
+picture before the GL CRT effects, monitor artwork and interface are drawn.
+The OpenEmulator GPU pipeline uses its CPU demodulation path for capture.
+The status message reports the saved path. In the browser, F9 writes into
+the virtual filesystem; it does not start a browser download.
 
 Replacement ROMs can go in `roms/` under that directory. Firmware and other
 third-party material have their own rights and notices; see
@@ -500,6 +536,23 @@ directory:
 | macOS | `~/Library/Application Support/POM2/` |
 | Windows | `%APPDATA%\POM2\`, falling back to `%LOCALAPPDATA%\POM2\` when the first directory cannot be created or used as a directory |
 | Browser | `/persistent/` in the browser's IndexedDB-backed filesystem |
+
+If no configuration directory can be used, desktop settings fall back to
+`$HOME/.pom2_state` and the layout to `$HOME/.pom2_imgui.ini`; without HOME,
+the fallbacks are `pom2_state.cfg` and `imgui.ini` in the launch directory.
+When the normal layout destination is missing, startup attempts to copy a
+legacy layout from `~/.config/POM2/imgui.ini` on Unix or the launch directory's
+`imgui.ini` on Windows.
+
+Close POM2 before hand-editing `state.cfg`: settings are loaded at startup,
+and a later save can overwrite edits made while it is running. The file is
+line-oriented `key=value`, not JSON. A line starting with `#` is a comment;
+`#` inside a value is ordinary text. Backslashes are escaped as `\\`, and
+`\n`, `\r`, `\t` and `\s` represent newline, carriage return, tab and space.
+Unknown keys are preserved; files larger than 4 MiB are refused. To restore
+default settings, keep a backup and move the settings file aside while POM2
+is closed. **View → Layout → Reset to default** rearranges panels without
+resetting machine or audio settings.
 
 Ordinary startup settings remember media paths; they do not embed disk contents
 or resume CPU execution. Use a [session archive](session-format.md) for that.
@@ -577,6 +630,13 @@ speed is 17045 for NTSC or 20313 for PAL. `--cpu-max` runs without normal pacing
 the achievable emulation speed depends on the host.
 CLI speed values above 2000000 are clamped with a warning; the HTTP `/speed`
 endpoint rejects out-of-range values instead.
+
+For the //c+, `--35-disk1`, `--35-disk2` and `--35-disk3` mount GCR
+400/800 KiB media in the internal Sony, first external Sony and second
+external Sony respectively. They accept supported raw/2IMG and GCR WOZ/MOOF
+images. These startup options mount without booting and are ignored with a
+warning on other profiles; use `--preset iic+` to select the required machine.
+Slot-based SmartPort/Liron drives use their panel or the Disk Library.
 
 Cassette output saves as ACI by default or WAV with `--save-tape-format wav`.
 An explicit `.aci`/`.wav` suffix wins over that hint; other suffixes receive

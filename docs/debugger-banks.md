@@ -1,6 +1,8 @@
 # Bank-aware debugger
 
-Open **View → Debugger**. Addresses without a bank qualifier, such as `$0800`
+Open **View → Debugger**. The panel combines run controls, disassembly,
+breakpoints/watches, an instruction assembler, symbols, source correspondence
+and profiling. Addresses without a bank qualifier, such as `$0800`
 or a legacy label, match every bank. To stop only in one physical bank, enter
 `aux1:$0800` in the breakpoint or watch field. Hexadecimal addresses remain
 16-bit; bank indices are decimal. Register conditions work with either form.
@@ -39,6 +41,27 @@ its original code bank. Reset, session load and rewind clear measurements
 and pending stops while preserving user breakpoints and watches. With all
 instrumentation disabled, the ordinary CPU and production memory fast paths
 remain unchanged.
+
+## Breakpoints and watches
+
+Enter a hexadecimal address or loaded symbol in **Breakpoints**, then choose
+**Add**. To add a register predicate, enable **Conditional**, select
+`A`, `X`, `Y`, `P`, `SP` or `PC`, choose `==`, `!=`, `<`, `<=`, `>` or `>=`,
+and enter a hexadecimal comparison value. For example, add `main:$0800`
+with `X == 10` to stop before that instruction only when X is `$10`.
+Comparisons use unsigned register values; the panel accepts one predicate
+per address/bank, without expressions or a configurable bit mask. Adding
+the same breakpoint again replaces its predicate; adding it with Conditional
+off makes it unconditional.
+
+In **Watch**, select **R**, **W** or **RW**, enter the address or symbol,
+then choose **Watch**. A watch covers one address/bank rather than an address
+range. If an instruction makes several watched accesses, the first one
+determines the stop banner, including the accessed value. The live PC after
+the stop points to the next instruction, while the banner identifies the
+instruction that performed the access. Read watches also see opcode fetches
+and soft-switch reads; arming one sends CPU reads through the slower watched
+path. Use **x**, **Clear all** or **Clear watches** to remove stops.
 
 ## Run control
 
@@ -84,8 +107,20 @@ and keep the mapping stable when editing banked RAM.
 
 ## Bank-qualified symbols
 
-Existing AppleWin, VICE/cc65 label files and assignments remain supported.
-POM2 assignments can additionally specify the bank:
+Expand **Symbols**, enter a file path (or choose **Browse** where available)
+and click **Load symbols**. Accepted rows include AppleWin address/name
+pairs, VICE/cc65 labels and assembler assignments:
+
+```text
+0800 START
+al 000810 .loop
+worker EQU $0820
+```
+
+Addresses are hexadecimal and must fit in 16 bits even when padded with
+leading zeroes. Symbol names are case-sensitive; `.loop` retains its leading
+dot. `;` and `#` start comments. POM2 assignments can additionally specify
+the bank:
 
 ```text
 main_entry = main:$0800
@@ -96,6 +131,50 @@ shared_entry = $0900
 Use `aux_entry` directly in a breakpoint/watch field. Bank-specific labels
 appear only in their bank; unqualified labels provide a fallback. Prefixing
 a label explicitly, such as `aux2:shared_entry`, overrides its bank.
+
+Successful imports replace the previous symbol table; an invalid or
+conflicting row rejects the entire import and preserves the old table.
+Files are limited to 4 MiB and 65536 unique names; names contain at most
+255 ASCII letters, digits or characters from `_.$@:`. A name repeated with
+the same address/bank is accepted; conflicting definitions are refused.
+When several names share an address/bank, the listing uses the first one.
+
+## Assemble instruction
+
+Expand **Assemble instruction** and stop the CPU. Enter a hexadecimal
+**Address**, or choose **Use cursor / PC**, then enter one instruction.
+The byte preview uses the current NMOS/CMOS instruction table. Mnemonics
+and register suffixes are case-insensitive; `;` starts a comment.
+
+Operands accept `$` hexadecimal, `%` binary or unprefixed decimal values.
+For example, `LDA $10` selects zero-page addressing, while `LDA $0010`
+forces absolute addressing. Branch operands are target addresses, not
+relative displacements; `BNE $0800` must be within −128…127 bytes of the
+following instruction. Symbols loaded in the Symbols section, arithmetic
+expressions, labels, directives and multiple-instruction source files are
+not accepted here.
+
+Choose **Assemble and advance** (or press Enter in the instruction field)
+to write the bytes. The complete instruction must fit below `$C000` and
+uses the current CPU write mapping. The address field advances by the
+instruction length; the CPU's PC does not move or execute it. Patching
+clears rewind history and debugger measurements. Keep the read/write bank
+mapping in mind when checking the result in the disassembly or memory viewer.
+
+## Profiling and history
+
+In **Profiler and execution history**, enable **Profile CPU steps**, **Keep last 256
+steps**, or both. The profile table shows the twenty address/bank entries
+with the largest accumulated cycle counts, with visits and symbols. History
+is shown oldest first, with the instruction's original code bank/PC, next PC,
+post-step registers and elapsed cycles.
+
+Cycle totals include IRQ/NMI entry steps, so a visit is not necessarily a
+retired opcode. Turning a measurement option off stops collection and keeps
+its existing results; re-enabling continues collection. **Clear measurements**
+empties both results without disabling collection or removing user stops.
+Reset, rewind, session load and instruction patches also clear measurements.
+Profiling/history keep the debugger hook active even with no breakpoint set.
 
 ## Source correspondence
 

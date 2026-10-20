@@ -4774,7 +4774,7 @@ ring shrinks then stays monotonic). Both verified falsifiable.
 
 **UI** (`Rewind_ImGui`): Machine ▸ "Rewind". Record toggle, a timeline
 slider, |< / << hold / <| / |> / resume transport, history-length
-slider, and `F6` = hold-to-rewind-live from anywhere (polled in
+slider (5–120 seconds), and `F6` = hold-to-rewind-live from anywhere (polled in
 `MainWindow::render`, survives ImGui capture, no-op when recording is
 off). The cursor is the panel's own state; the scrub flag is a *view* of
 `EmulationController::rewindScrubbing()`, resynced (`syncScrub`) on entry to
@@ -4783,6 +4783,13 @@ answer went on believing it was scrubbing after a toolbar Play, so its next
 drag seeked a running machine (the slider visibly did nothing) and a released
 `F6` hold resumed from a stale cursor. The ring and machine live in the
 controller.
+
+Recording defaults to off (`RewindBuffer::enabled_` and the
+`rewind_enabled` startup fallback). Enable **Record** before collecting
+history. Ordinary desktop persistence stores `rewind_enabled` and
+`rewind_history_seconds`; the latter is converted to frames using the active
+profile's refresh rate. The 256 MiB payload budget can retain less than the
+requested duration.
 
 **Slot/disk state** (`rewind_slot_state`): `SlotPeripheral` gained
 `append/loadSnapshotState`; `DiskIICard` serializes its mechanical +
@@ -9052,12 +9059,14 @@ right-column tabs. The right column takes 34% of the work area and the keyboard
 37% of the left column's height. The keyboard docks by stable `###appleKeyboard`
 identity despite profile-dependent titles. A one-shot focus selects Drives
 after seeding, independent of panel render order. Native sessions enable the
-Monitor II frame by default; saved choices and layouts are preserved. First-time
-browser sessions retain their compact screen-only presentation. The reference
+Monitor II frame by default; saved choices and layouts are preserved. The browser
+seeds the screen and Drives side by side when `wasm_screen_drives_layout` is
+absent/false, including for older saved layouts. Later visits retain panel and
+docking choices. The reference
 capture is `pic/POM2-default-desktop.png`.
 
-Known gap: kiosk mode bypasses the dockspace entirely (it returns before
-`renderDockSpace`), which is correct — kiosk is chrome-free by definition.
+Kiosk mode bypasses the dockspace entirely (it returns before
+`renderDockSpace`); returning to the windowed interface restores access to it.
 
 ### Theme + UI scaling (`Pom2Theme`)
 
@@ -9106,10 +9115,29 @@ the toolbar and status bar speak one visual language. `verticalRule` replaced
 literal `"|"` text characters in the toolbar, which inherited the text colour
 and baseline and so read as content rather than structure.
 
-Known gap: window positions in `imgui.ini` are absolute pixels, so changing
-the zoom mid-session does not move panels placed at the previous scale — a
-tall-enough toolbar can end up behind the Apple II Screen window. Docking
-(with a scale-relative layout) is the real fix.
+Floating windows retain absolute positions in `imgui.ini`; changing zoom does
+not rearrange those windows. Docked windows use the viewport work area after
+the menu/toolbar/status-bar insets, as described above. Apply a View → Layout
+preset to rebuild docking when a different arrangement is needed.
+
+### Settings store and layout files
+
+`Settings::resolveStorePath` uses `userConfigDir()/state.cfg`, falling back
+to `$HOME/.pom2_state` and then launch-directory `pom2_state.cfg`. The layout
+path in `main.cpp` shares the normal configuration directory, but falls back
+to `$HOME/.pom2_imgui.ini` or launch-directory `imgui.ini`. Platform locations
+and the legacy layout migration are described in the
+[user guide](docs/USER-GUIDE.md#screenshots-and-settings).
+
+The settings store is escaped `key=value`, with comments only at line start,
+UTF-8 BOM support, unknown-key retention and a 4 MiB input cap. Values escape
+backslash, CR/LF and boundary whitespace; keys additionally escape `=` and
+a leading `#`. Loading does not monitor subsequent external edits. Saves
+publish through a unique temporary sibling and atomic replacement; unchanged
+in-memory content is skipped only after this process has written it once.
+Kiosk's read-only flag suppresses saves centrally. The existing
+`settings_roundtrip` regression covers file encoding, typed accessors,
+configuration resolution and unchanged-save behavior.
 
 ### MainWindow Pimpl-light
 
@@ -9357,8 +9385,7 @@ on the case), `InternalHeader` (the //c's internal expansion connector),
 | Machine | Sections |
 |---|---|
 | II / II+ | Expansion slots (7 free; slot 0, the Language Card, is not modelled as a card) · Ports (game port, cassette jacks) |
-| //e | Expansion slots · Auxiliary connector (80-column card read-only + RamWorks size) · Ports (game port; no cassette — the //e dropped it) |
-| II / II+ / //e (cassette row) | The cassette jacks are listed on all three — the //e kept them; only the //c dropped them |
+| //e | Expansion slots · Auxiliary connector (80-column card read-only + RamWorks size) · Ports (game port, cassette jacks) |
 | //c | External ports (serial 1 printer DIN-5, serial 2 modem DIN-5, hand controls DB-9, disk port DB-19 = SmartPort chain + 5.25" drive 2, video expansion DB-15) · Built-in devices (internal 5.25" drive, slot 6) · Internal expansion connector (CPU socket: Mockingboard 4c) |
 | //c+ | Same, except: serial ports are mini-DIN-8; the internal drive is the 3.5" (slot 5) and the disk port row is slot 6 (external 5.25" + SmartPort chain); the CPU-socket board is the 4c+ (its $C400 page replaces the ROM 5 memory-expansion driver; the mouse firmware is at $C700) |
 
@@ -9998,6 +10025,12 @@ external 1, external 2), `--blank-disk [drive:]path`,
 `-h`/`--help`, `-v`/`--version`.
 `printUsage()` is the source of truth.
 
+The `--35-disk1/2/3` options call `mountOnboard35` during startup and do not
+request a boot. They require the //c+ profile (otherwise they warn and are
+ignored), accept supported 400/800 KiB GCR media and do not select a slotted
+SmartPort/Liron unit. The source parser and mounting paths define these
+restrictions; the flags do not enable SuperDrive MFM mode.
+
 **Positional disk + `--kiosk`**. First non-flag arg → `CliPlan::
 bootDiskPath`; `--kiosk` → `CliPlan::kiosk`. `main.cpp`:
 
@@ -10156,15 +10189,29 @@ Symbols accept `0800 NAME`, VICE/cc65 `al 000800 .NAME`, `NAME = $0800` and
 addresses beyond 16 bits are rejected. Labels appear in the listing and can
 be used in breakpoint entry. Conditions compare A/X/Y/P/SP/PC with
 `==`, `!=`, `<`, `<=`, `>` or `>=`.
+The panel's comparison value is hexadecimal and predicates use unsigned
+register values; one condition is stored per address/bank. Symbols are
+case-sensitive, and a successful import replaces the prior table.
 
 Profiling/history are opt-in and keep the hook attached while enabled.
 Completed-step hooks exist only on the debugged CPU loop. Profiling includes
 IRQ/NMI-entry-only steps and separates physical banks at the same 16-bit PC;
 history records the pre-step code bank and post-step registers. Explicit
 stepping uses the same attribution without changing step cycle/IRQ timing.
+The UI requests the twenty entries with the largest accumulated cycle counts;
+the underlying profile retains the other visited addresses as well. Disabling
+profiling/history pauses collection without clearing the retained results.
 A reset/rewind clears measurements, while user breakpoints/conditions survive.
 The Source panel imports bounded `.p2map` ranges and reads source outside
 `stateMutex`; native compiler debug-info and variable inspection remain separate work.
+
+`Debugger_Assembler.cpp` patches one numeric instruction through `memWrite`
+while stopped, entirely below `$C000`; it does not resolve debugger symbols
+or advance the CPU's PC. `assemble6502` uses `Opcode6502` for the active
+NMOS/CMOS table, chooses zero-page/absolute forms from operand width and
+computes branch displacements from target addresses. The patch calls
+`noteTimeJump` and clears rewind history. See the
+[assembler syntax and panel workflow](docs/debugger-banks.md#assemble-instruction).
 
 Before it, every parity hunt paid for a throwaway trace / dump / probe binary
 because there was no way to stop a running machine and look at it (the

@@ -97,8 +97,9 @@ std::optional<SessionFileSelection> SessionFilePicker::render()
         closing_ = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return {};
     }
     ImGui::TextUnformatted(save_ ? "Save session" : "Open session");
-    ImGui::TextWrapped("II/II+/IIe or //c with floppy media (including WOZ/MOOF), "
-        "supported cards and idle built-in serial ports. Select the same profile, ROMs and cards before loading.");
+    ImGui::TextWrapped("Supported II/II+/IIe and //c-class machines, cards, floppy/block media "
+        "and program tapes. Built-in serial ports must be idle. "
+        "Opening restores the recorded profile, embedded firmware and supported cards automatically.");
     ImGui::TextWrapped("Restored writable disks keep changes in RAM; save a session to retain them.");
     if (!save_) ImGui::TextWrapped("Loading replaces the current CPU, memory and supported device state.");
     std::optional<SessionFileSelection> selection;

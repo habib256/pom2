@@ -760,13 +760,13 @@ void MainWindow::renderMenuBar()
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
             };
             layoutItem("Reset to default", DockLayout::Reset,
-                       "Screen centre; Disk Library, Slot Configuration and\n"
-                       "ImageWriter II tabbed right; inspectors as a tab\n"
-                       "group bottom-right.");
+                       "Screen above the keyboard on the left; Drives, Disk\n"
+                       "Library and Slot Configuration tabbed on the right.\n"
+                       "Other assigned panels open as additional tabs.");
             ImGui::Separator();
             layoutItem("Emulation", DockLayout::Emulation,
                        "Widest screen. Disk Library / Cassette / Floppy Emu\n"
-                       "and Slot Config in one right column. No debug tools.");
+                       "and Slot Config in one right column.");
             layoutItem("Debug", DockLayout::Debug,
                        "Memory viewer + maps right, horizontal map along the\n"
                        "bottom, inspectors bottom-right.");
@@ -777,7 +777,7 @@ void MainWindow::renderMenuBar()
             ImGui::TextDisabled("Drag any tab to re-dock; layout is saved.");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
-                    "Docks persist in ~/.config/POM2/imgui.ini.\n"
+                    "Docks persist in imgui.ini in POM2's configuration directory.\n"
                     "Slot-numbered panels (Disk II, 3.5\", HDV, SmartPort,\n"
                     "Printer) build their title at runtime, so presets can't\n"
                     "place them — dock them once and they stay put.");

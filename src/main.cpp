@@ -445,13 +445,10 @@ int main(int argc, char* argv[])
     // `ImGuiWindowFlags_NoMove` to the Apple II Screen and roll our
     // own title-bar drag inside `MainWindow::renderScreenWindow`.
     // Persist ImGui window positions / sizes / docking state to
-    // ~/.config/POM2/imgui.ini (mirrors Settings::resolveStorePath).
-    // First launch sees no file → `FirstUseEver` defaults from
-    // `renderScreenWindow`/`renderDiskPanelWindow`/`renderHdvPanelWindow`
-    // pick the curated layout (Screen top-left, HDV bottom-left, Disk II
-    // right column). Subsequent launches restore whatever the user
-    // dragged into place. Falls back to the cwd `imgui.ini` if $HOME
-    // isn't set (matches Settings's fallback path).
+    // userConfigDir()/imgui.ini, beside the normal state.cfg. MainWindow
+    // seeds the initial docking layout; subsequent launches restore the
+    // user's placement. With no configuration directory, use
+    // $HOME/.pom2_imgui.ini, or cwd imgui.ini when HOME is absent.
     // Kiosk keeps a deterministic startup layout and must not restore or
     // overwrite the user's desktop window placement. WASM used to be lumped
     // in with it for the same reason — but "deterministic" there meant "the

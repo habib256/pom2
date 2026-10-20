@@ -50,8 +50,7 @@
 
 namespace pom2 {
 
-/// Accent hue. The three options are phosphor colours rather than arbitrary
-/// UI hues — POM2 is an Apple II emulator and the chrome should read as one.
+/// Accent hue. Four options: amber, green, cold blue and neutral slate.
 enum class UiAccent {
     Amber = 0,   ///< Amber phosphor (default) — warm, matches the ][ era.
     Green,       ///< P31 green phosphor.
@@ -94,8 +93,9 @@ const Palette& palette();
 ///
 /// @param accent    accent hue (persisted as `ui_accent`).
 /// @param uiScale   user zoom, 1.0 = 100 % (persisted as `ui_scale`).
-/// @param dpiScale  monitor content scale from the windowing system
-///                  (`glfwGetWindowContentScale`), 1.0 on a non-HiDPI display.
+/// @param dpiScale  scale from ImGui_ImplGlfw_GetContentScaleForWindow,
+///                  avoiding a second DPI multiplier on platforms whose
+///                  framebuffer scaling is already handled by the backend.
 ///
 /// Geometry is scaled by `uiScale * dpiScale`; fonts by the same product,
 /// applied as two separate ImGui factors so a future per-monitor DPI change

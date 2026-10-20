@@ -16,11 +16,11 @@
 
 // Settings — minimal "remember runtime config across sessions" facility.
 //
-// Stored at `${HOME}/.config/POM2/state.cfg` (or `${HOME}/.pom2_state`
-// fallback when XDG dirs aren't available; or in `./pom2_state.cfg` when
-// HOME itself is unset) — the directory comes from `pom2::userConfigDir()`,
-// which is also where `imgui.ini` goes, and which is `/persistent` (the
-// IDBFS mount) under Emscripten. Plain `key=value` lines, one per setting.
+// Stored at userConfigDir()/state.cfg: platform configuration directory on
+// desktop, /persistent (IDBFS) in the browser. With no usable configuration
+// directory, fall back to $HOME/.pom2_state, then ./pom2_state.cfg if HOME is
+// absent. The layout normally shares that directory, but has its own
+// .pom2_imgui.ini / imgui.ini fallback. Plain key=value lines, one per setting.
 // Unknown keys are preserved on round-trip so a future binary that drops
 // a setting doesn't lose user data; unknown keys are simply ignored on
 // the get-side.

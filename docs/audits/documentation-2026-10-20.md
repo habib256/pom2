@@ -443,7 +443,84 @@ compatibility boundary, v2 refusal, CPU-silicon check and the separate
 64 MiB snapshot-file read cap. No new snapshot runtime or crash test is
 claimed in this follow-up.
 
-### Final working-tree consistency review
+### Session chooser, rewind and drive-help follow-up against `6f8f436`
+
+Compared the remaining chooser/help strings with `loadSessionFile`,
+`reconstructSessionMachine`, `mountOnboard35`, `EmulationController::mount35`,
+`Disk35Image::exportRawTo` and `buildConnectorLayout` in `SlotConnectors.h`.
+The session chooser still asked users to select matching firmware/cards;
+it now describes automatic reconstruction and the supported block/tape media.
+Sony CLI help and drive selection/conversion text no longer imply an
+800 KiB-only loader, and Sony instructions point to Machine → Profile.
+DEV's contradictory //e connector rows now consistently include cassette ports.
+
+Compared the rewind instructions with `RewindBuffer`, `Rewind_ImGui` and
+`MainWindow` startup/persistence. README, user guide and Welcome help now
+explain enabling Record before F6; the guides describe the history slider,
+memory ceiling and fresh timeline on re-enabling recording. The user guide
+also identifies the Debugger panel requirement for F7/F8 and the //c+-only,
+mount-without-boot semantics of `--35-disk1/2/3`.
+
+All six contributor source guards and `git diff --check` passed. The five
+edited C++ translation units passed native C++17 syntax checks, using a
+temporary `Version.h` generated from the template and CMake version 0.9.7.
+The 147 local file/heading references in the five edited Markdown files
+resolved. The syntax check emitted the existing macOS OpenGL deprecation
+warnings in `MainWindow_MiscPanels.cpp`.
+No executable build, full CTest run or interactive UI/device execution was
+performed for these prose/help-only changes.
+
+### Debugger workflow documentation follow-up
+
+Compared `DebuggerSymbols`, `DebuggerSourceMap`, `Debugger`,
+`Debugger_ImGui`, `Debugger_Assembler`, `Assembler6502` and
+`EmulationController::noteTimeJump` with the debugger/user/developer guides.
+Documented the conditional-breakpoint controls and unsigned hexadecimal
+comparison, single-address watches and first-access stop reporting. Symbol
+instructions now include the supported row formats, case sensitivity,
+replacement/conflict rules and parser limits. The assembler reference states
+the numeric-only operand grammar, addressing-width and branch-target rules,
+current write mapping, unchanged CPU PC and cleared history after patches.
+Profiling instructions identify the twenty-row cycle-ranked UI view, retained
+measurements while collection is disabled and the 256-step history ordering.
+The documentation index links these implemented workflows.
+
+The existing `tests/assembler6502_test.cpp` built with `Assembler6502.cpp`
+and `Disassembler6502.cpp` as an isolated C++17 executable and printed
+`assembler6502: OK`. This pass changes Markdown only; it does not claim a
+new interactive debugger run or full CTest execution.
+All six contributor guards and `git diff --check` passed again. All 193
+local file/heading references across the seven currently edited Markdown
+files resolved.
+
+### Workspace, settings and screenshot follow-up
+
+Compared `MainWindow::applyDockLayout`, `Pom2Theme`, `main.cpp`, `Settings`,
+`ResourcePaths` and `MainWindow::saveScreenshot` with the user/developer
+guides and related help/comments. Reset-layout help now describes the screen
+above the keyboard and Drives/library/configuration on the right. The layout
+tooltip uses the platform configuration directory; header comments describe
+all four accents and the ImGui backend DPI helper. DEV no longer describes
+browser startup as screen-only or treats docking as an unimplemented zoom fix.
+
+The user guide adds workspace controls, screenshot format/content and browser
+file-output behavior, configuration fallbacks/migration and the settings-file
+editing/escaping contract. Settings and main-loop comments use the current
+platform and fallback paths. These changes affect prose/help only.
+
+The existing `settings_roundtrip_test.cpp` built with `Settings.cpp` and
+`ResourcePaths.cpp` as an isolated C++17 executable and passed. Its expected
+negative controls logged oversized-input and rename-failure warnings.
+`MainWindow_Chrome.cpp` passed a native C++17 syntax check using a temporary
+`Version.h` expanded from the current template/version. No new screenshot,
+interactive docking, browser or cross-platform runtime check is claimed.
+All six contributor guards and `git diff --check` passed. The local text-link
+check covered 877 file/heading references across all 71 tracked Markdown
+files with no errors; external URLs were not fetched. Removing comments and
+whitespace from `main.cpp`, `Settings.h` and `Pom2Theme.h` confirmed that
+their contents otherwise match HEAD.
+
+### Historical working-tree consistency review
 
 Rechecked all 891 local references across 71 tracked Markdown files; target
 files and Markdown anchors resolved. External URLs were not fetched.

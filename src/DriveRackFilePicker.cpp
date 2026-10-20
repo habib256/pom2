@@ -74,7 +74,7 @@ std::optional<DriveRackSelection> DriveRackFilePicker::render() {
     if (closing_) { ImGui::CloseCurrentPopup(); closing_ = false; ImGui::EndPopup(); return {}; }
     ImGui::TextWrapped("%s", target_.label.c_str());
     ImGui::TextDisabled("%s", target_.kind == DrivePictureKind::DiskII ? "5.25-inch disk image" :
-                              target_.kind == DrivePictureKind::Floppy35 ? "800K 3.5-inch disk image" : "ProDOS hard-disk image");
+                              target_.kind == DrivePictureKind::Floppy35 ? "3.5-inch disk image (1.44 MB requires SuperDrive)" : "ProDOS hard-disk image");
     const auto current = fs::path(directory_);
     ImGui::BeginDisabled(current == current.root_path());
     if (ImGui::Button("Up")) browse(current.parent_path().string());

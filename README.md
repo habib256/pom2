@@ -125,7 +125,7 @@ Four disks are ready in **File → Disk Library**:
 
 | Key | Action |
 |---|---|
-| **F6** (hold) | Rewind |
+| **F6** (hold) | Rewind (enable Record in Machine → Rewind first) |
 | **F10** | Toggle fullscreen |
 | **F9** | Save a screenshot |
 | **F11 / F12** | Soft reset / hard reset |

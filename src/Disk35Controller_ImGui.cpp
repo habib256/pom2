@@ -107,7 +107,7 @@ void renderDriveBlock(int                                       driveIdx,
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
-                "Writes the decoded 800K payload beside the image as\n"
+                "Writes the decoded block payload beside the image as\n"
                 "%s\nand mounts it here with write-back on. Protected\n"
                 "track patterns are not retained in .po. The original is\n"
                 "not modified; existing files are never overwritten.",
@@ -171,7 +171,7 @@ Disk35Controller_ImGui::FrameResult Disk35Controller_ImGui::render(
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
                            "Sony 3.5\" drives are only active on the");
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
-                           "Apple //c+ profile (Hardware → Presets).");
+                           "Apple //c+ profile (Machine → Profile).");
         ImGui::Separator();
     }
 

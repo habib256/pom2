@@ -10,6 +10,26 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Session, rewind and drive instructions reconciled
+
+Session chooser help now describes automatic machine reconstruction, embedded
+firmware, block media and program tapes. Rewind instructions explain that
+Record must be enabled first, how history is bounded and when settings persist.
+Sony startup flags and drive-picker/conversion help no longer imply that
+only 800 KiB media are accepted. The developer connector table retains the
+//e cassette ports, and Sony help uses the current Machine → Profile menu.
+The debugger guide now gives the conditional-breakpoint workflow, symbol-file
+formats and replacement rules, numeric assembler syntax/patch effects, and the
+profile table/history collection limits. The existing `assembler6502` regression
+passed as an isolated native executable.
+Workspace instructions now describe the current presets and zoom controls;
+layout help follows the screen/keyboard/Drives arrangement and platform
+configuration paths. Browser startup, settings encoding/fallbacks and F9's
+native P6 framebuffer capture are documented from their current implementations.
+The isolated `settings_roundtrip` regression also passed.
+Only documentation and help strings changed. Source guards and native C++17
+syntax checks passed; see the [review record](docs/audits/documentation-2026-10-20.md).
+
 ## 2026-10-20 — Debugger stops survive DMA hand-back
 
 When a SoftCard releases the bus partway through a slice, the remaining

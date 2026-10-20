@@ -805,7 +805,7 @@ void MainWindow::renderWelcomePanelWindow()
     ImGui::Spacing();
     ImGui::SeparatorText("Try these");
     ImGui::BulletText("Display → 3D voxel view  — MicroM8-style cube renderer.");
-    ImGui::BulletText("Machine → Rewind (F6)    — scrub back through machine state.");
+    ImGui::BulletText("Machine → Rewind        — enable Record, then hold F6 to rewind.");
     ImGui::BulletText("Display → CRT Settings   — scanlines, phosphor, NTSC look.");
     ImGui::BulletText("Machine → Profile        — switch between ][ / ][+ / //e / //c / //c+.");
 
