@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Nox Archaist v1.37 compatibility image for Mockingboard 4c
+
+`tools/make_nox_mb4c_fix.py INPUT.hdv OUTPUT.hdv` creates a separate,
+fingerprinted compatibility image for the //c + Mockingboard 4c. The title
+loader leaves its polling VBL interrupt enabled when the sound driver
+executes CLI. That handler acknowledges only the VIA, so the unacknowledged
+IOU VBL immediately interrupts again and freezes the title. The publisher
+[documents that MB4c requires a game patch](https://www.6502workshop.com/p/playing-nox-archaist-on-real-hardware.html).
+This independently tested patch disables VBL before starting the player and
+re-arms it for the loader's final VBL wait before its existing cleanup.
+It changes 23 image bytes, preserves the original and refuses unknown game
+files or an existing output. No game files are distributed and no hardware
+emulation is changed. Build `nox_mb4c_boot_probe` and pass an image to reproduce
+the original IRQ storm or validate audio and return to the menu on the copy.
+
 ## 2026-10-20 — Correct browser drag-and-drop documentation
 
 External disk-image drops already work through Emscripten's GLFW3 canvas

@@ -9248,6 +9248,8 @@ set_tests_properties(workstation_card_pacing PROPERTIES
 if(TARGET pom2_core_test)
     add_executable(protected_disk_boot_probe EXCLUDE_FROM_ALL protected_disk_boot_probe.cpp)
     target_link_libraries(protected_disk_boot_probe PRIVATE pom2_core_test)
+    add_executable(nox_mb4c_boot_probe EXCLUDE_FROM_ALL nox_mb4c_boot_probe.cpp)
+    target_link_libraries(nox_mb4c_boot_probe PRIVATE pom2_core_test)
 endif()
 
 set(POM2_PROBE_TARGETS
@@ -9268,6 +9270,7 @@ set(POM2_PROBE_TARGETS
     madef_phase_probe
     oldskool_crash_probe
     oldskool_raster_probe
+    nox_mb4c_boot_probe
     protected_disk_boot_probe
     render_total_replay_modes
     rom_basic
