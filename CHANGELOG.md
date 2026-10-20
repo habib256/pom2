@@ -10,6 +10,58 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Media and reset documentation follow-up
+
+Reconciled the storage read/write matrix and 3.5-inch capture explanation
+with the native GCR flux and SuperDrive MFM sector-writing paths. GCR block
+services still refuse capture writes; that restriction no longer implies
+that native IWM capture writes are absent. HDV payloads are documented as
+nonempty, 512-byte aligned and bounded at 32 MiB, with a separate 64 MiB
+backing-file envelope bound. Protection descriptions distinguish physical
+media flags from persistence policy and in-memory block writes.
+The Disk II abstraction table and fallback discussion now account for a
+mounted WOZ forcing LSS through the embedded sequencer without an external
+P6 dump. Cassette recording exports are separated from source-image writes.
+
+The user guide and packaged disk instructions distinguish DIX's card scan
+from standalone demos that hard-code slot 4. Browser controls document the
+toolbar's startup-image relaunch separately from F11/F12 and Machine-menu
+resets. These are documentation/comment corrections, without runtime changes.
+
+## 2026-10-20 — Browser import documentation reconciliation
+
+Aligned the README's first-run instructions, user guide, session contract,
+developer workflow, documentation index and scope/backlog entries with the
+untagged browser disk-import implementation. Direct file selection is
+implemented; desktop disk-image drop upload remains frozen. The references
+separate the 64 MiB upload limit from the 32 MiB session bound and distinguish
+MEMFS disk writes from IndexedDB checkpoints. Storage comments now make the
+same distinction. Earlier audit observations remain dated, with a follow-up
+recording which descriptions have been superseded. No runtime behavior changed.
+
+## 2026-10-20 — Browser disk-image import
+
+The browser's File > Import disk and boot action opens a local file selector
+and routes the image through the existing media loaders and boot policy.
+Clicking an empty drive (or its File-menu Insert entry) imports into that
+drive without rebooting; profile changes and occupied/incompatible drives
+are rejected through the existing mount checks.
+
+Disk uploads are limited to 64 MiB, preserve a sanitized format extension,
+and use separate MEMFS directories so repeated filenames cannot overwrite
+mounted media. The original local file is unchanged. Supported disks and
+their writes can be retained through session download or Automatic resume;
+the usual drive and session limits still apply. Browser desktop drag-and-drop
+upload remains unavailable.
+
+Validation: native and WebAssembly Release builds passed with strict warnings.
+The DOM/FS tests cover upload limits, cancellation, extension filtering and
+same-name collisions. The Chrome smoke imports and boots a NIB image through
+the File menu, inserts another same-name image into drive 2 while paused,
+checks that drive 1 is unchanged and both media enter the session archive,
+and passes the existing text, persistence and cross-profile resume checks.
+All six contributor guards passed. The full native execution suite was not rerun.
+
 ## 2026-10-20 — Bug-hunt regressions across media, input and serial I/O
 
 TNFS rejects mismatched TCP sequences, failed or malformed directory listings,

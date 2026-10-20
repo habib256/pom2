@@ -15,13 +15,13 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [WASM-001](#wasm-001) | 🧊 | Frozen | File picker / drop-zone disks |
+| [WASM-001](#wasm-001) | 🧊 | Frozen | Disk-image drop-zone (picker implemented) |
 | [WASM-002](#wasm-002) | 🧊 | Frozen | Mobile touch input |
 | [WASM-003](#wasm-003) | 🧊 | Frozen | Audio worklet tuning |
 
 <a id="wasm-001"></a>
 
-## WASM-001 — Direct disk-image upload / drop-zone
+## WASM-001 — Disk-image drop-zone (picker implemented)
 
 **Priority:** 🧊 · **State:** Frozen.
 
@@ -29,12 +29,24 @@ an explicit request before scheduling.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2121). Original dates and estimates are retained below.
 
-Direct disk-image upload/drop-zone mounting remains frozen. The browser is
+Direct disk-image selection was implemented on 2026-10-20 in the untagged
+checkout: File > Import disk and boot
+and empty-drive Insert actions open the local browser selector. Uploads have
+unique MEMFS paths and use the normal media routing and loaders. The 64 MiB
+upload bound is separate from drive and session bounds.
+See the [user-facing import contract](../USER-GUIDE.md#browser-disk-import).
+Local validation built the native and WebAssembly applications and passed
+the DOM/FS tests and Chrome smoke. The smoke exercises import/boot from File,
+same-name import into drive 2 without rebooting, preservation of drive 1 and
+both media in a session archive. This does not establish published-package
+availability or a candidate CI result.
+
+Desktop drag-and-drop mounting remains frozen. The browser is
 not restricted to build-time content: `BrowserFiles` and
 `wasm/browser_files.js` already provide text upload and `.pom2session`
 import/export. Sessions can embed disk contents; automatic resume stores
-supported configurations in IndexedDB. These do not provide a generic
-disk-image picker wired to drive insertion. See the
+supported configurations in IndexedDB. The disk-image picker is separate
+from these text/session transfers. See the
 [session contract](../session-format.md) and [RELEASE-005](release-1.0.md#release-005)
 for the implemented browser persistence checks.
 

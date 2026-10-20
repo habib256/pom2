@@ -17,12 +17,13 @@
 // Block512Backing — shared 512-byte block backing store for ProDOS
 // hard-disk style cards. Owns the in-memory image, the 2IMG/.2mg container
 // envelope (header + any trailer preserved bit-for-bit on write-back),
-// medium write-protect, dirty-block tracking, opt-in host-file write-back,
+// medium write-protect, dirty-block tracking, policy-controlled host-file write-back,
 // and host-folder synth volumes.
 //
-// Two cards share it (DEV.md § ProDOSHardDiskCard / § CffaCard):
+// Consumers (DEV.md § ProDOSHardDiskCard / § CffaCard / § SmartPortCard):
 //   - ProDOSHardDiskCard  — synthetic streaming port → byte-level access.
 //   - AtaBlockDevice / CffaCard — MAME-faithful ATA → block-level access.
+//   - SmartPortHdvUnit — hard-disk units behind SmartPort wrappers.
 //
 // Extracted verbatim from ProDOSHardDiskCard (2026-05-24, P1 § Cartes de
 // stockage MAME-fidèles) so behaviour — and the hdv_* pin tests — are
@@ -148,8 +149,8 @@ public:
     /// Re-reads under the lock in one case, deliberately: when the outgoing
     /// medium is the SAME file with unsaved changes, the prepared bytes
     /// predate the flush and installing them would roll the guest's writes
-    /// back. Rare (write-back is opt-in and the paths must match exactly) and
-    /// correct beats fast on the write-back path.
+    /// back. This exception requires the same image path and pending writes;
+    /// preserving those writes takes precedence over mount latency.
     bool adoptImage(PreparedImage&& prepared);
 
 private:

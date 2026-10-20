@@ -219,20 +219,20 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
         }
         blocks_ = std::move(buf);
         // Writability is decided by the FILE, not by its extension. All
-        // three names reaching here (.po, .dsk, .image) hold the identical
-        // bare 819 200-byte ProDOS block payload and take the identical
-        // save path, so there was never a technical reason to treat them
+        // three names reaching here (.po, .dsk, .image) hold raw block
+        // payloads and take the same save path for each accepted geometry,
+        // so there was never a technical reason to treat them
         // differently — the old rule marked .dsk/.image physically WP on
         // the grounds that such dumps are "sometimes read-only by
         // convention".
         //
         // That is the wrong layer for a convention. `fileWriteProtected_`
         // is the PHYSICAL tab: it overrides the user's own
-        // `setWriteBackEnabled` opt-in, so an 800K .dsk stayed read-only
+        // `setWriteBackEnabled` policy, so an 800K .dsk stayed read-only
         // even after the user explicitly asked for write-back and got no
-        // explanation why. Nothing is loosened by dropping it — writes
-        // still require that opt-in, which is off by default, plus a
-        // host file that is actually writable.
+        // explanation why. Writes still require an enabled write-back
+        // policy (enabled by default) and a writable host file. GCR
+        // capture block restrictions are handled separately.
         fileWriteProtected_ = false;
         kind_   = n == kBytesPerImage400 ? ImageKind::Raw400k :
                   n == kBytesPerImage1440 ? ImageKind::Raw1440k : ImageKind::Raw800k;

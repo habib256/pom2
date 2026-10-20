@@ -236,6 +236,15 @@ omissions, fixed in the following change.
 
 **Acceptance criterion:** Boot the browser module, write a setting, persist it, reload and recover the value in an automated check.
 
+**Local follow-up 2026-10-20:** The untagged checkout also implements direct
+disk-image import. The Chrome smoke passed import/boot from File, same-name
+import into an empty second drive without rebooting, preservation of the
+first image and both media in the session archive. The existing persistence
+and exact session-reload checks passed in the same run. DOM/FS import tests
+and native/WebAssembly Release builds passed separately. This is local
+evidence; the candidate CI evidence gate remains open. See
+[WASM-001](wasm.md#wasm-001) for the remaining disk-image drop-zone.
+
 **Implementation 2026-10-18:** `tools/wasm_persistence_smoke.mjs` serves the
 built bundle to headless Chrome, waits for the first frame, writes a setting
 to `state.cfg`, waits for the IDBFS flush, reloads the page, and reads it

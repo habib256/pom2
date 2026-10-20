@@ -2949,10 +2949,12 @@ declines (no block backing) and the caller takes the whole-image capture from
 
 ### Read / write matrix by format
 
-Every media format POM2 mounts, and whether it can be written back.
-"Write" means a guest (or host) modification survives `saveDirty()` into
-the *source file*; every one of them commits through the atomic +
-durable path (§ Write-back commit), never an in-place `trunc`.
+The disk rows describe whether guest changes can be committed back to the
+source image through the atomic write-back path (§ Write-back commit).
+Detached session media keep changes in RAM for the next session capture;
+they do not overwrite the original file. Host-folder writes materialize
+host files, while cassette rows refer to explicit recording export to an
+ACI/WAV destination, not modification of the loaded program tape.
 
 | Format | Bay / backend | Read | Write back | Pinned by |
 |---|---|---|---|---|
@@ -2964,34 +2966,40 @@ durable path (§ Write-back commit), never an in-place `trunc`.
 | `.2mg` wrapping DOS / ProDOS / nib | 5.25" `DiskImage` | ✅ | ✅ | `disk_2mg_writeback_smoke` (header + trailer preserved byte-for-byte) |
 | `.woz` 5.25" (WOZ1 / WOZ2, bit cells) | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke` — dirty quarter-tracks spliced back, header CRC32 zeroed per Applesauce 2.1 |
 | `.woz` 5.25" **carrying FLUX tracks** | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke`: preserves untouched 125 ns flux positions, encodes delta bytes, grows full TRKS slots, updates the FLUX chunk offset, and honors INFO write protection |
-| `.po` / `.2mg` 819 200 (800 K) | 3.5" `Disk35Image` | ✅ | ✅ | `disk35_atomic_save` (both kinds; 2IMG envelope preserved) |
-| `.dsk` / `.image` 819 200 (800 K) | 3.5" `Disk35Image` | ✅ | ✅ | `disk35_atomic_save` — writability comes from the FILE, never the extension (the old "read-only by convention" rule overrode the user's own opt-in) |
-| `.woz` 3.5" (`INFO.disk_type = 2`) | 3.5" `Disk35Image` | ✅ | ❌ **by design** — but see *Convert* | `woz35_load::testWriteProtected` — giving blocks back would mean re-encoding the user's flux, which POM2 cannot do. **Convert to writable `.po`**: the 3.5" panel offers it on any mounted WOZ (`Disk35Image::exportRawTo` via `StorageCoordinator::convertDisk35WozToPo`, behind `MainWindow::convertWoz35ToPo`). The decode already produced the 1600 blocks a `.po` holds, so the copy costs nothing, mounts with write-back on, and the `.woz` is left untouched as the master |
-| `.hdv` (any 512-aligned size) | `Block512Backing` | ✅ | ✅ | `hdv_writeback_smoke` |
-| `.2mg` hard disk (> 800 K) | `Block512Backing` | ✅ | ✅ | `hdv_writeback_smoke` (header + creator/comment trailer survive) |
+| Raw `.po` / ProDOS-order `.2mg`, 409 600 / 819 200 bytes (400/800 KiB) | 3.5" `Disk35Image`, SmartPort/Liron or native Sony | ✅ | ✅ | `disk35_atomic_save`, `moof35_load`; 2IMG envelope preserved |
+| Raw `.dsk` / `.image`, 400/800 KiB | 3.5" `Disk35Image` | ✅ | ✅ | Same raw payload and write-back as `.po`; protection follows media policy and file permissions |
+| GCR `.woz` / `.moof` through SmartPort block calls | `Disk35Image::writeBlock` | ✅ | ❌ block writes; export to raw `.po` first | `woz35_load`, `moof35_load`, `disk35_flux_write`; capture preservation is a block-service restriction |
+| GCR `.woz` / `.moof` through native IWM/Sony writes | `Sony35Drive` → `Disk35Image::writeFlux125ns` | ✅ | ✅ flux splicing, subject to file/container protection | `disk35_flux_write`, `sony35_write_head`; preserves timing and unrelated tracks/metadata |
+| Raw/ProDOS-order `.2mg` 1 474 560 bytes (1.44 MB) | SuperDrive-mode SmartPort 3.5" unit | ✅ | ✅ | `superdrive_prodos_boot`, `moof35_load`; ordinary SmartPort/Liron and Sony units reject this geometry |
+| MFM `.moof` 1.44 MB | SuperDrive-mode SmartPort 3.5" unit | ✅ | ✅ existing CRC-valid sector splices | `moof35_load`; original SWIM hardware and card CPU are not emulated |
+| `.hdv` (nonempty 512-aligned payload, at most 32 MiB) | `Block512Backing` | ✅ | ✅ | `hdv_writeback_smoke` |
+| ProDOS-order `.2mg` hard disk (payload at most 32 MiB) | `Block512Backing` | ✅ | ✅ | `hdv_writeback_smoke` (header + creator/comment trailer survive) |
 | CFFA / IDE volumes | `CffaCard` → `Block512Backing` | ✅ | ✅ | shares the backing above |
 | SmartPort units (`.po`/`.2mg`/`.hdv`) | `SmartPort*Unit` | ✅ | ✅ | `smartport_write_dispatch`, `smartport_mixed_units_smoke` |
 | Host folder → ProDOS volume | `ProDOSVolume` | ✅ | ✅ | `prodos_volume_smoke` (decode → host files, collision-safe, idempotent) |
 | `.wav` cassette | `CassetteDevice` | ✅ | ✅ | `cassette_wav_tail` |
 | `.aci` cassette | `CassetteDevice` | ✅ | ✅ | `cassette_wav_tail` |
 
-**Write-protect is the union of four independent sources**, and any one
-of them alone makes a medium read-only: the process write-back default
-(`writeBackEnabled`, `MediaWritePolicy.h` — **media are writable by default
-since 2026-09-08**, `POM2_MEDIA_WRITE_DEFAULT=protected` flips it), the 2IMG
-header's write-protect flag, the host file being read-only on disk (the
-notch — what every media panel's tick flips, § The notch), and a per-format "physically WP" rule (the
-3.5" WOZ row above). `isWriteProtected()` folds them together, so nothing
-can be written by accident and nothing is silently dropped.
+**Physical protection and write-back policy are separate contracts.** The
+host file's read-only bit (the notch) and a container's protection flag can
+protect a medium. GCR captures additionally refuse block writes while native
+IWM writes can splice their flux. `setWriteBackEnabled` does not override
+physical protection or turn a GCR block service into a flux writer.
 
-Note what is NOT in that list: the file's **extension**. A physical-WP
-rule outranks `setWriteBackEnabled`, so a convention there would refuse a
-user's write-back silently; conventions belong in what a *user* sets, not
-in what the format layer decides for them.
+`MediaWritePolicy.h` makes media writable by default;
+`POM2_MEDIA_WRITE_DEFAULT=protected` disables file write-back. The way that
+policy affects guest writes depends on the backend: `DiskImage` and
+`Disk35Image` fold it into their protection checks, while
+`Block512Backing::isWriteProtected()` tests the container and host-file flags
+and permits in-memory block changes with persistence disabled. SmartPort
+wrappers can impose additional policy. `media_contract` pins these deliberate
+differences; do not infer guest protection from a write-back flag alone.
 
-**The remaining ❌ row is a refusal, not a gap.** A 3.5" WOZ could accept a
-write and lose it at flush. Refusing at mount avoids that loss; encoding its
-GCR/flux representation is the work that would lift it.
+The HDV payload bound is 65,536 blocks of 512 bytes (32 MiB). The backing-file
+read is separately capped at 64 MiB to allow bounded 2IMG headers/trailers.
+These limits do not make every such payload bootable or valid ProDOS media.
+A `.hdv` suffix keeps a small volume on the hard-disk route; extension and
+geometry still select the loader, whose content checks determine acceptance.
 
 ### DiskImage
 
@@ -3655,7 +3663,7 @@ from live cards before tear-down. **IWM wiring**: only slot-6
 
 ### Two read paths
 
-- **Bit-level LSS** (default when `roms/diskii_p6.rom` present) —
+- **Bit-level LSS** (explicitly loaded P6 dump or any mounted WOZ) —
   verbatim port of MAME `machine/wozfdc.cpp` + flux-event subset
   of `imagedev/floppy.cpp`. MAME `cycles` = 2× CPU clock.
   `lssSync(extra)` catches up from `lssCycle` to `cyclesLimit =
@@ -3665,7 +3673,7 @@ from live cards before tear-down. **IWM wiring**: only slot-6
   after `control()` (read-pipe latency). P6 PROM (341-0028-A)
   indexed by `(state<<4) | (Q7<<3) | (Q6<<2) | (QA<<1) | (!PULSE)`.
   Pinned: `diskii_lss_smoke`, `mame_lss_parity_smoke`.
-- **Legacy 32-cycle gate** (fallback) — `kCyclesPerNibble = 32`;
+- **Legacy 32-cycle gate** (no explicitly loaded P6 dump and no mounted WOZ) — `kCyclesPerNibble = 32`;
   nibble every 32 cycles, `byteReady` toggles for BPL spins.
   2–3× faster than LSS in stock boots.
 
@@ -5445,31 +5453,26 @@ intelligent drive — historically the reason for the ROM 0 upgrade. Its rear
 connector takes a second 5.25", which is `DiskIICard` drive 2; a 3.5" there
 is reachable only through the host-served `$C500` substitute.
 
-*WOZ (flux) images* (2026-08-18). A `.woz` holds bit CELLS, and POM2
-stores 3.5" media as a flat block array with no GCR *encoder* — so a flux
-dump has nothing to be mounted as unless it is decoded at LOAD time.
-`Disk35Image::loadWoz` walks the WOZ2 chunks (TMAP indexes `track*2+side`
-on a double-sided 3.5"; TRKS entries give startBlock/blockCount/bitCount)
-and runs each track through `Sony35Gcr` — the **same** decoder
-`Sony35Drive::decodeAndCommit` uses when the guest writes a track, moved
-out of `Sony35Drive.cpp` so there is one copy of MAME's tables and
-checksum walk rather than two. **`decodeAndCommit` filters on the latched
-head as well as the track** *(2026-09-09, bug hunt #15)*: a sector whose
-side byte disagrees with the head `writeStart()` latched is not committed
-to the far side of the platter. This is the only path by which the guest
-changes an 800K image through the IWM; pinned by `sony35_write_head`. The
-codec itself was cleared term for term against MAME's `ap_dsk35.cpp` — all
-80 tracks × 2 sides × every sector round-trip byte-exact, the interleave
-verified on the wire, a bad checksum and a bit slip each losing exactly
-one sector.
+*WOZ/MOOF GCR images*. `Disk35Image` retains both the captured track
+representation and a decoded block projection. `loadWoz` reads WOZ2/MOOF
+chunks; `Sony35Gcr` decodes GCR sectors. Native IWM writes use
+`Sony35Drive::writeFlux` and `Disk35Image::writeFlux125ns` to splice captured
+transitions, preserving 125 ns timing and unrelated tracks/metadata.
+`Disk35Image_Bitstream.cpp` serializes the edited capture. This is separate
+from raw-image writes, where `Sony35Drive::decodeAndCommit` updates blocks
+from the written track and checks the latched track/head (`sony35_write_head`).
+GCR block services continue to refuse writes: export the decoded contents to
+a raw `.po` for that workflow. MFM MOOF sector splicing is a separate
+SuperDrive-only block path; it does not imply native Sony MFM support.
 
 Three things that decide whether it works:
 
 * The track is a **circle**. Walking it once loses the sector straddling
   the seam — ~1 per track-side, ~150 blocks on an 800K disk. The loader
   walks one revolution plus an overlap and de-duplicates by block.
-* A WOZ mounts **write-protected**, and `setWriteBackEnabled` does not
-  override it: handing blocks back means re-encoding the user's flux.
+* GCR WOZ/MOOF **block writes** are refused. Native IWM flux writes are
+  supported when file/container protection and write-back policy allow them;
+  `setWriteBackEnabled` never overrides physical protection.
 * `classifyDiskForSlot` reads `INFO.disk_type` rather than sniffing size
   (flux size describes the dump, not the payload), so an 800K 3.5" WOZ
   reaches the Sony bay instead of the Disk II. A 5.25" WOZ mounted in the
@@ -10684,25 +10687,58 @@ import reconstructs embedded firmware/media without installing ROM files.
 
 **Known gaps** (tracked in `docs/backlog/wasm.md`):
 
-- No file picker / drop-zone for user disks (`.dsk`/`.woz`/`.hdv`) —
-  WASM-001.
+- Desktop disk-image drag-and-drop upload is unavailable — WASM-001.
+  Local file selection is implemented as described below.
 - No touch input on mobile (GLFW3-EM doesn't synthesise
   touch→mouse outside the canvas) — WASM-002.
 - Audio worklet latency not tuned — WASM-003.
 
 **Browser file/session workflow.** `BrowserFiles` and
-`wasm/browser_files.js` implement text-file upload and session archive
-import/download. `MainWindow_SessionFiles` checkpoints supported machines
-every ten seconds and at page hide when automatic resume is enabled.
-Reconstruction restores the embedded machine/firmware/cards and keeps media
-detached from their original files. This is distinct from the settings/layout
-heartbeat above; see the [v7 contract](docs/session-format.md).
+`wasm/browser_files.js` implement three local-file selections. The numeric
+`BrowserFileKind` values are the C++/JavaScript callback contract:
+
+| Kind | Limit | Virtual destination and use |
+|---|---|---|
+| `Text` (0) | 1 MiB | `/uploads/listing.txt`, consumed by the paste dialog |
+| `Session` (1) | 32 MiB | `/uploads/import.pom2session`, validated and reconstructed before replacing the live machine; removed after the attempt |
+| `Disk` (2) | 64 MiB | A fresh `/uploads/disk-N/` directory and sanitized filename, retained for mounted-media write-back and session capture |
+
+`chooseBrowserFile` is nonblocking and returns false while the picker is busy,
+while a previous result is pending, or on a native build. Results are consumed
+on the UI thread by `MainWindow::renderSessionFileDialog`. The disk selector
+accepts `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`, `.2mg`, `.hdv`
+and `.image`. JavaScript checks size/extension before upload; the normal
+classifier and media loaders still validate format, drive compatibility and
+their own size bounds. The upload size is checked again after `arrayBuffer`.
+
+**File > Import disk and boot...** routes through `insertAndBootImage`.
+An empty drive's Insert action saves its target/profile and routes the result
+through `insertDriveRackImage`/`mountEmptyDrive`, without booting. A changed
+profile is rejected; the mount helper rechecks drive availability, type and
+occupancy. A second upload, even with the same name, never overwrites the
+first virtual file. The original local file is not modified.
+
+`/uploads` is MEMFS, outside `/persistent`: ordinary media autosave updates
+the virtual copy but does not persist it to IndexedDB. `Save session...`
+downloads supported media with the machine. `BrowserSessionStore`, driven
+by `MainWindow_SessionFiles`, checkpoints supported machines every ten seconds
+and at page hide when automatic resume is enabled. Reconstruction restores
+the embedded machine/firmware/cards and keeps media detached from their
+original files. Session bounds/device restrictions remain independent of
+the disk-upload limit. This is distinct from the settings/layout heartbeat
+above; see the [v7 contract](docs/session-format.md) and
+[browser import instructions](docs/USER-GUIDE.md#browser-disk-import).
 
 **CI execution.** `ci.yml`'s `wasm` job builds with `./build_wasm.sh`, checks
 the artifacts and runs `tools/wasm_persistence_smoke.mjs` against Chrome.
 The smoke checks text upload, //c audio-card presence, tab pause/resume,
 setting persistence and exact session reloads, including reconstruction from
-a different startup profile and source-free writable floppy/HDV media.
+a different startup profile and source-free writable floppy/HDV media. It also
+imports and boots a NIB through the File menu, imports another same-name NIB
+into the empty second drive while paused, verifies that drive 1 is unchanged
+and checks that both media enter the session archive. The DOM/FS test
+`tools/browser_files_test.mjs` covers bounds, cancellation, extension filtering,
+filename sanitization and upload-directory collisions.
 The workflow declares these checks; candidate CI results still need to be
 recorded independently. The `pages` job deploys the browser build from main.
 

@@ -114,7 +114,7 @@ whenever a ROM dump exists but the chip behind it does not need to.
 | **Floppy mechanical sounds** (`FloppySoundDevice`) | **H2** | Host sample playback, driven by `emuCycles`-stamped phase strobes. Two banks (`FloppySoundDevice::Bank`): MAME's 10-WAV seek/spin set (default) and the Virtual ][ Disk II recordings, loaded only from a local, gitignored `roms/virtual_ii_sons/` | Nothing on the bus to model — it is literally acoustics |
 | **Printer mechanical sounds** (`PrinterSoundDevice`) | **H2** | **Synthesised** bandpassed-noise grains per character / line feed, ported from web-a2e's `printer-sound.js`; an optional user-supplied Virtual ][ "Matrix Printer" loop replaces grains when selected and decoded | Nothing on the bus to model |
 | **DiskImage / WOZ** | **L0** | Bit-cell / flux-transition store; `getNextTransition` verbatim MAME `floppy.cpp` | `.dsk` has no flux, so its bitstream is *reconstructed* (sync-FF padding ≥ 5) — exactly what real hardware infers |
-| **Disk II** (`DiskIICard`) | **L0** | Real 341-0028-A **P6 LSS PROM** indexed per LSS cycle; real P5A boot PROM; per-drive angular position vs MAME `m_revolution_start_time` | The legacy 32-cycle nibble gate is the H1 fallback, used only when `diskii_p6.rom` is absent |
+| **Disk II** (`DiskIICard`) | **L0** | Real 341-0028-A **P6 LSS PROM** indexed per LSS cycle; real P5A boot PROM; per-drive angular position vs MAME `m_revolution_start_time` | Without an explicitly loaded P6 dump, non-WOZ media can use the legacy H1 32-cycle nibble gate. Any mounted WOZ forces LSS using the embedded sequencer table if needed |
 | **IWM** (`IWMDevice`) | **L0** | Verbatim MAME `machine/iwm.cpp`: `m_active`/`m_rw`/read-walker/write-window state machines | Only sub-CPU-cycle Q3 phase unmodelled |
 | **SmartPortHub / Sony35Drive** | **L0/L1** | Zoned GCR, LSTRB register strobes, DSKCHG latch polarity per MAME `floppy.cpp:560/672/723` | — |
 | **CFFA 2.0** (`CffaCard` + `AtaBlockDevice`) | **L2** | **Real 4 KB firmware dump executes** over an ATA taskfile model isomorphic to MAME's `cs0_r/cs0_w` | ATA layer skips DMA / IRQ / SMART; CHD backing is not implemented and is closed as out of scope in the standing decisions |
@@ -404,9 +404,10 @@ Ordered by how much the gate has changed since the original decision.
 Reaching L is a one-off cost; **staying** at L is a standing one, and POM2 has a
 structural hole here worth naming.
 
-Every ROM-driven L path in the table degrades **silently** to a lower level when
-its dump is absent: Disk II drops to the legacy 32-cycle nibble gate without
-`diskii_p6.rom`, the mouse falls back from L0 to the H1 `mouseaw`, `ClockCard`
+Several ROM-driven L paths in the table can degrade to a lower level when
+their dump is absent: Disk II can use the legacy 32-cycle nibble gate without
+`diskii_p6.rom` when no WOZ is mounted; a WOZ forces LSS with the embedded
+sequencer table. The mouse falls back from L0 to the H1 `mouseaw`, `ClockCard`
 falls back to its synthetic ROM, `GrapplerCard` to `buildStubRom()`,
 `SuperSerialCard` to its hand-assembled page. (The Grappler 1981, the PIC, the
 Videoterm and the Workstation Card refuse instead: no dump, empty slot.) That is

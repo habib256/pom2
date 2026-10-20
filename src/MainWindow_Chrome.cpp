@@ -380,6 +380,9 @@ void MainWindow::renderMenuBar()
         if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
         if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
         renderBrowserSessionMenu();
+#ifdef __EMSCRIPTEN__
+        if (ImGui::MenuItem("Import disk and boot...")) chooseBrowserDisk();
+#endif
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::DiskLibrary);
         // Every drive of the machine, the Drives window's own list and

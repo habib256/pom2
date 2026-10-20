@@ -407,10 +407,10 @@ public:
     pollAutosave(pom2::MediaCommitExecutor& executor, bool force) override;
     pom2::MediumPersistence persistence() const override;
 
-    /// User opt-in for write-back. Default: false (read-only) to avoid
-    /// silently mutating the source file. Mainwindow flips this before
-    /// eject if the user has opted in. WOZ images now go through the
-    /// same gate — once `writeBackEnabled` is on and the WOZ INFO byte
+    /// Effective guest protection combines file/container protection and
+    /// the process write-back policy. MediaWritePolicy enables write-back
+    /// by default; POM2_MEDIA_WRITE_DEFAULT=protected disables it. WOZ
+    /// images use the same gate — when write-back is enabled and the INFO byte
     /// doesn't mark the source as physically write-protected, writes
     /// splice into `bitStream[qt]` and serialise back through
     /// saveDirty() (zeroing CRC32 per Applesauce WOZ spec).

@@ -57,7 +57,12 @@ drive's quarter-track head position, transition density over a revolution and
 a zoomed transition timeline. The angular cursor follows controller time.
 Sector images display reconstructed flux rather than an original capture.
 
-In the browser, **Edit > Paste from file... > Choose text file...** uploads a
+In the browser, **File > Import disk and boot...** imports a disk image from
+your computer. Clicking an empty drive imports into that drive without
+rebooting. See [browser disk import](#browser-disk-import) for formats,
+size limits and preserving changes.
+
+**Edit > Paste from file... > Choose text file...** uploads a
 text listing through the browser selector. Choose **Paste** to queue it at the
 Apple II keyboard. Files up to 1 MiB are accepted; the existing paste queue
 limit is 4096 characters and truncation is reported. **File > Save/Open
@@ -114,15 +119,18 @@ drives. Slot cards appear from slot 7 down to slot 1,
 with each card's drives in numerical order. This matches the //e's slot scan;
 the //c normally tries its internal 5.25-inch drive, then SmartPort, without
 automatically trying the external 5.25-inch drive. The //c+ keeps its internal and
-external 3.5-inch mechanisms at the top. Click an empty drive picture to choose an image, or drop a file onto
-it from your desktop or the Disk Library. POM2 inserts it into that drive
+external 3.5-inch mechanisms at the top. Click an empty drive picture to choose
+an image. On desktop, you can also drop a file onto it from your computer;
+Disk Library drag-and-drop works inside the application. POM2 inserts it into that drive
 without restarting your game. Eject a mounted disk before inserting another.
 The Disk Library's **All media** tab searches 5¼-inch, 3½-inch, hard-disk and
 Floppy Emu images together. Results stay grouped by medium, so a WOZ offered
 for more than one drive keeps the correct mount options in each group. The
 other tabs narrow the same library to one medium.
-The file browser lets you explore your whole disk: jump to Home, the root or
-mounted volumes, enter a folder path directly, and reveal hidden folders.
+On desktop, the file browser lets you explore your whole disk: jump to Home,
+the root or mounted volumes, enter a folder path directly, and reveal hidden
+folders. In the browser, clicking an empty drive opens your computer's file
+selector; the image is uploaded into browser memory.
 The doors, activity lights and mounted disk names follow the machine.
 
 The Audio Mixer's **Automatic** sound mode uses **MAME recordings for classic
@@ -342,8 +350,11 @@ and restart an enabled VSDrive host on the next launch. This is separate from
 `.pom2session`: active VSDrive prevents session capture or replacement, and
 expansion Super Serial Cards are unsupported even when stopped. Only idle
 //c built-in serial ports can be included in a session.
-Some programs expect specific slots: DIX, for example, needs its Mockingboard
-moved to slot 4. The //c family's built-in devices are locked to their hardware
+Some standalone French Touch programs, such as MAD EFFECT, address the
+Mockingboard in slot 4 directly. DIX's loader scans for the card; the
+slot-4 //e configuration is a recorded validation setup, rather than a
+universal requirement. The browser's //c uses its Mockingboard 4c expansion.
+The //c family's built-in devices are locked to their hardware
 positions. Profile changes reset the machine and remount disks where possible.
 An absent or unreadable main ROM refuses a profile change and keeps the
 current machine and its configuration.
@@ -438,6 +449,10 @@ Enable **Write-protected** in a media panel or Slot Configuration, or right-clic
 an image in the Disk Library. This changes the host file's write permissions;
 WOZ/2IMG header protection also applies. For a protected collection by default,
 launch with `POM2_MEDIA_WRITE_DEFAULT=protected`.
+This process policy disables file write-back; it is distinct from a disk's
+physical write-protection flag. Some block controllers can still modify
+their in-memory copy while write-back is disabled. Use the disk's
+**Write-protected** control when the guest must see a protected medium.
 
 You can organise your own collection with these folders:
 
@@ -465,7 +480,7 @@ valid for the selected drive.
 | Raw 400/800 KiB `.po`, `.dsk`, `.image` | 3½-inch. Ordinary SmartPort/Liron and native Sony mechanisms accept these GCR geometries. |
 | Raw 1.44 MB `.po`, `.dsk`, `.image` | 3½-inch routing, but mounting requires a SuperDrive media unit. |
 | `.2mg` | The header's payload length determines routing: 5¼-inch sector/nibble geometry, 400/800 KiB or 1.44 MB 3½-inch geometry, otherwise a block-aligned HDV volume. Library scans use approximate file-size filters and may omit unusual wrappers; use the drive's mount control for those files. |
-| `.hdv` | Hard-disk volume, including an 800 KiB image; the extension keeps it separate from a Sony floppy of the same size. |
+| `.hdv` | A nonempty, 512-byte-aligned hard-disk payload up to 32 MiB (65,536 blocks), including an 800 KiB image; the extension keeps it separate from a Sony floppy of the same size. |
 
 The 3½-inch loader accepts raw block payloads, ProDOS-order 2IMG wrappers and
 supported WOZ/MOOF captures. It does not decode DiskCopy 4.2 headers or tag
@@ -735,11 +750,35 @@ the plus sign in the profile name).
 
 Host socket networking and the listening AI-control HTTP server are unavailable
 in the browser.
-Direct disk-image upload/drop-zone mounting is also unavailable. Use the
-bundled media or import a supported `.pom2session` archive containing the
-disk; text upload is a separate paste workflow. Settings and automatic-resume
-archives are stored in this browser's IndexedDB, rather than beside a desktop
-executable.
+
+<a id="browser-disk-import"></a>
+
+### Import a disk in the browser
+
+Use **File > Import disk and boot...** to upload an image from your computer
+and boot it through the normal Disk II, 3.5-inch or HDV routing. To insert
+without rebooting, click an empty drive in **Drives**, or choose its Insert
+entry under **File**. The selected drive must accept that image type.
+Supported extensions are `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`,
+`.2mg`, `.hdv` and `.image`; imports are limited to 64 MiB per file and the
+normal format/drive limits still apply. Each upload has a separate virtual
+file, so importing the same filename twice cannot overwrite a mounted disk.
+The local source file remains unchanged. Uploaded disks and their writes live
+in browser memory: **Save session...** downloads supported media with the
+machine, and **Automatic resume** preserves supported configurations across
+reloads. Session size/device limits still apply. Desktop drag-and-drop upload
+is not implemented in the browser. Text upload is a separate paste workflow.
+Saving settings alone does not preserve an uploaded disk. See the
+[session contract](session-format.md#using-it) for supported configurations
+and the separate 32 MiB session limit.
+
+The browser toolbar's power-cycle and soft-reset buttons relaunch the
+startup boot image when one was configured by the default launch or URL.
+Importing a disk does not change that startup image. **F11/F12** and the
+Machine menu retain their normal reset operations on the current machine.
+
+Settings and automatic-resume archives are stored in this browser's IndexedDB,
+rather than beside a desktop executable.
 If IndexedDB is blocked or its startup read times out, POM2 starts with fresh
 in-memory state; changes may not survive a reload. The browser console reports
 the storage failure. The preloaded firmware/media remain available independently

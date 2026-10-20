@@ -22,6 +22,7 @@ const context = {
     },
   },
   FS: { mkdirTree() {}, writeFile(path, bytes) { files.set(path, [...bytes]); },
+    analyzePath(path) { return {exists: [...files.keys()].some(file => file.startsWith(path + '/'))}; },
     readFile(path) { if (!files.has(path)) throw new Error('missing file'); return new Uint8Array(files.get(path)); },
   },
   URL: { createObjectURL() { return 'blob:test'; }, revokeObjectURL(url) { revoked.push(url); } },
@@ -68,6 +69,40 @@ choose(0);
 assert.match(calls.at(-1)[2], /picker denied/);
 assert(last().removed && !context.Module.pom2FilePickerActive);
 pickerFailure = false;
+const diskPickerStarted = choose(2);
+assert.match(last().accept, /\.woz/);
+assert.equal(diskPickerStarted, true);
+last().files = [{ name: '../../same.WOZ', size: 3,
+  async arrayBuffer() { return new Uint8Array([87, 79, 90]).buffer; } }];
+await last().fire('change');
+const diskPath = calls.at(-1)[1];
+assert.deepEqual(calls.at(-1), [2, '/uploads/disk-1/same.WOZ', '']);
+choose(2);
+last().files = [{ name: 'same.WOZ', size: 2,
+  async arrayBuffer() { return new Uint8Array([1, 2]).buffer; } }];
+await last().fire('change');
+assert.deepEqual(calls.at(-1), [2, '/uploads/disk-2/same.WOZ', '']);
+assert.deepEqual(files.get(diskPath), [87, 79, 90], 'reimport overwrote mounted media');
+context.Module.pom2DiskUploadId = 0; // Existing directories still reserve their names.
+choose(2);
+last().files = [{ name: 'space and unicode-é.dsk', size: 1,
+  async arrayBuffer() { return new Uint8Array([3]).buffer; } }];
+await last().fire('change');
+assert.deepEqual(calls.at(-1), [2, '/uploads/disk-3/space_and_unicode-_.dsk', '']);
+assert.deepEqual(files.get(diskPath), [87, 79, 90]);
+choose(2);
+last().files = [{ name: 'game.zip', size: 1 }];
+await last().fire('change');
+assert.match(calls.at(-1)[2], /supported disk image/);
+choose(2);
+last().files = [{ name: 'huge.hdv', size: 64 * 1024 * 1024 + 1 }];
+await last().fire('change');
+assert.match(calls.at(-1)[2], /64 MiB/);
+choose(2);
+await last().fire('cancel');
+assert.deepEqual(calls.at(-1), [2, '', '']);
+assert(!context.Module.pom2FilePickerActive);
+assert.equal(choose(99), false);
 assert(context.Module.pom2DownloadFile('/uploads/import.pom2session', 'session.pom2session'));
 assert.equal(last().download, 'session.pom2session');
 assert(last().removed);

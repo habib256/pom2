@@ -776,7 +776,9 @@ void MainWindow::renderWelcomePanelWindow()
 #ifdef __EMSCRIPTEN__
     ImGui::BulletText("File → Disk Library opens bundled images.");
     ImGui::BulletText("File → Open session... imports a supported machine and its disks.");
-    ImGui::TextDisabled("Direct disk-image upload and drop mounting are unavailable in the browser.");
+    ImGui::BulletText("File → Import disk and boot... opens a disk image from your computer.");
+    ImGui::BulletText("Click an empty drive to import a disk without rebooting.");
+    ImGui::TextDisabled("Save a session or enable Automatic resume to keep imported disks and changes.");
 #else
     ImGui::BulletText("Drag a .woz / .moof / .dsk / .po / .nib / .hdv / .2mg onto this window.");
     ImGui::BulletText("Or File → Disk Library to browse bundled images.");

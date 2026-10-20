@@ -647,10 +647,9 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         pom2::log().warn("HDV", error);
         return false;
     }
-    // Browser build: the image file lives in the IDBFS mount and reaches
-    // IndexedDB only when the frame loop's pump flushes. Before this, only
-    // Settings::save marked the store dirty, so a session that wrote a disk
-    // and changed nothing else lost the disk on reload. No-op natively.
+    // Browser build: images under /persistent reach IndexedDB on the next
+    // IDBFS flush. Uploaded /uploads images remain in MEMFS; preserving
+    // those requires a session or Automatic resume. No-op natively.
     markPersistentStateDirty();
     pom2::log().info("HDV", "Saved " + std::to_string(written) +
                             " modified block(s) to " + pending.path);

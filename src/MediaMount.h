@@ -35,8 +35,8 @@
 // One case deliberately keeps its cost: if the OUTGOING medium has unsaved
 // changes, DiskIICard::installDisk still flushes it inline and still refuses
 // the swap when that flush fails. Losing somebody's only copy of a disk to
-// save a frame is not a trade worth making. Write-back is opt-in, so the
-// common path is the fully unlocked one.
+// save a frame is not a trade worth making. Images are writable by default,
+// subject to media protection; a clean outgoing medium needs no flush.
 
 #ifndef POM2_MEDIA_MOUNT_H
 #define POM2_MEDIA_MOUNT_H

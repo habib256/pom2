@@ -570,6 +570,12 @@ private:
     std::vector<pom2::DriveRackHit> driveRackHits_;
     int driveRackHitFrame_ = -1;
     pom2::SystemProfile driveRackPickerProfile_{};
+#ifdef __EMSCRIPTEN__
+    bool browserDiskTargetsDrive_ = false;
+    pom2::DrivePicture browserDiskTarget_;
+    pom2::SystemProfile browserDiskProfile_{};
+    void chooseBrowserDisk(const pom2::DrivePicture* target = nullptr);
+#endif
     std::vector<std::string> driveRackPendingDrop_;
     ImVec2 driveRackDropPosition_{};
 

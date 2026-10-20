@@ -167,8 +167,12 @@ void MainWindow::runDriveRackAction(const pom2::DrivePicture& drive,
                                     const std::string& path) {
     using Kind = pom2::DrivePictureKind;
     if (type == pom2::DriveRackAction::Type::Insert) {
+#ifdef __EMSCRIPTEN__
+        chooseBrowserDisk(&drive);
+#else
         driveRackPickerProfile_ = activeProfile;
         driveRackFilePicker_.open(drive);
+#endif
         return;
     }
     if (type == pom2::DriveRackAction::Type::Mount) {

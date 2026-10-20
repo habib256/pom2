@@ -9,8 +9,11 @@ DIX-fix.po — French Touch anthology with POM2's 12-byte menu patch.
 Source: https://github.com/Fr3nchT0uch/DIX
 Built reproducibly from DIX.po with tools/make_dix_fix.py; patch details:
 https://github.com/habib256/pom2/blob/main/docs/test_corpus.md
-Use //e PAL (128 KB), slot-4 Mockingboard and a slot-5 SmartPort/Liron 3.5-inch
-bay. RETURN/SPACE at the fresh menu starts the automatic demo sequence.
+The recorded //e setup uses PAL timing, 128 KB, slot-4 Mockingboard and a
+slot-5 SmartPort/Liron 3.5-inch bay. DIX's loader scans for its Mockingboard;
+standalone demos such as MAD EFFECT may instead hard-code slot 4. The browser
+uses a PAL //c with its Mockingboard 4c expansion and SmartPort media.
+RETURN/SPACE at the fresh menu starts the automatic demo sequence.
 
 CHROMABREAK.po — ChromaBreak 1.0.
 Source: https://github.com/habib256/pom2games/releases/tag/chromabreak-1.0

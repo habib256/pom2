@@ -101,6 +101,16 @@ In the browser, **File > Save session...** downloads a `.pom2session` archive;
 **File > Open session...** opens the browser file selector. The same supported-device restrictions apply, with automatic reconstruction. Imports are bounded
 at 32 MiB and validated before live state is replaced.
 
+[Direct disk-image import](USER-GUIDE.md#browser-disk-import) is a separate
+workflow: **File > Import disk and boot...** starts the imported image;
+an empty drive's Insert action mounts it without rebooting. Uploaded files
+live under unique `/uploads/disk-N/` paths in MEMFS. Guest writes update that
+virtual copy, leaving the original local file unchanged. Saving a supported
+session embeds the media, and Automatic resume checkpoints it to IndexedDB.
+Saving settings or flushing a virtual disk alone does not retain the uploaded
+file across reloads. The disk-upload limit is 64 MiB per file; session archives
+still have their own 32 MiB bound and supported-device restrictions.
+
 **File > Automatic resume > Resume this machine on reload** opts the current
 supported configuration into checkpoints every ten seconds and on page hide.
 The archive and running/stopped mode are stored under the existing IndexedDB

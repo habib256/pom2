@@ -327,7 +327,40 @@ try {
   await evaluate('Module._pom2_persist_now()');
   assert(Buffer.from((await checkpoint()).bytes).equals(hdvArchive),
     'HDV/CPU/SmartPort state changed across source-free browser resume');
-  console.log('WASM browser: text upload, //c Mockingboard, tab pause/resume, persistence and exact cross-profile //c/floppy/HDV checkpoint reload passed');
+  // Import through the actual File menu, not a preloaded virtual path.
+  const importedDisk = path.join(profile, 'import.nib');
+  await writeFile(importedDisk, Buffer.alloc(35 * 6656, 0xAA));
+  await click(20, 10);
+  const diskOpened = event('Page.fileChooserOpened');
+  await click(115, 98); // Import disk and boot...
+  const diskChooser = await diskOpened;
+  await send('DOM.setFileInputFiles', { files: [importedDisk], backendNodeId: diskChooser.backendNodeId });
+  await waitFor(() => evaluate("!Module.pom2FilePickerActive && Module.FS.analyzePath('/uploads/disk-1/import.nib').exists"),
+    'browser disk upload');
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 1'), 'imported disk boot');
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 1, 'import did not boot the disk');
+  assert.equal(await evaluate("Module.FS.stat('/uploads/disk-1/import.nib').size"), 35 * 6656);
+  assert.equal(await evaluate("document.querySelectorAll('input[type=file]').length"), 0);
+  await click(110, 10); await click(150, 58); // Pause before inserting drive 2.
+  await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'imported disk pause');
+  await writeFile(importedDisk, Buffer.alloc(35 * 6656, 0xFF));
+  const driveOpened = event('Page.fileChooserOpened');
+  await click(850, 360); // Empty second Disk //c drive picture.
+  const driveChooser = await driveOpened;
+  await send('DOM.setFileInputFiles', { files: [importedDisk], backendNodeId: driveChooser.backendNodeId });
+  await waitFor(() => evaluate(`(() => {
+    Module._pom2_persist_now();
+    return Module.FS.readFile('/persistent/state.cfg', {encoding:'utf8'}).includes('disk_path_slot6_drive2=/uploads/disk-2/import.nib');
+  })()`), 'browser drive-2 import and mount');
+  assert.equal(await evaluate('Module._pom2_browser_running()'), 0, 'drive import rebooted a paused machine');
+  assert.equal(await evaluate("Module.FS.readFile('/uploads/disk-1/import.nib')[0]"), 0xAA,
+    'the second upload replaced the first disk');
+  assert.equal(await evaluate("Module.FS.readFile('/uploads/disk-2/import.nib')[0]"), 0xFF);
+  await evaluate('Module._pom2_persist_now()');
+  const importedCheckpoint = Buffer.from((await checkpoint()).bytes);
+  assert(importedCheckpoint.includes(Buffer.alloc(1024, 0xAA)), 'boot disk missing from session');
+  assert(importedCheckpoint.includes(Buffer.alloc(1024, 0xFF)), 'second disk missing from session');
+  console.log('WASM browser: disk import/boot, text upload, //c Mockingboard, tab pause/resume, persistence and exact cross-profile //c/floppy/HDV checkpoint reload passed');
 } finally {
   socket?.close();
   if (browser && browser.exitCode === null && browser.signalCode === null) {

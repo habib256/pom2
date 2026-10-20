@@ -67,7 +67,23 @@ void MainWindow::renderSessionFileDialog()
             tapeStatusUntil = lastFrameTime + 10.0;
         } else if (!file->path.empty()) {
             if (file->kind == pom2::BrowserFileKind::Text) pasteDialogPath = file->path;
-            else {
+            else if (file->kind == pom2::BrowserFileKind::Disk) {
+                bool ok = false;
+                std::string error;
+                if (browserDiskProfile_ != activeProfile) {
+                    error = "Machine changed. Import the disk again.";
+                } else if (browserDiskTargetsDrive_) {
+                    ok = insertDriveRackImage(browserDiskTarget_, file->path);
+                    if (!ok) error = tapeStatusMessage;
+                } else {
+                    ok = insertAndBootImage(file->path, error);
+                }
+                tapeStatusMessage = ok ? (browserDiskTargetsDrive_ ? "Disk imported into drive." : "Disk imported and booted.")
+                                       : "Disk import failed: " + error;
+                tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
+                // Keep the unique MEMFS file: normal media write-back and session
+                // capture use it. The original local file is never modified.
+            } else {
                 std::string error;
                 const bool ok = pom2::loadSessionFile(*controller, file->path, error);
                 tapeStatusMessage = ok ? "Session imported." : "Session failed: " + error;
@@ -97,6 +113,16 @@ void MainWindow::renderSessionFileDialog()
         tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
     }
 }
+
+#ifdef __EMSCRIPTEN__
+void MainWindow::chooseBrowserDisk(const pom2::DrivePicture* target)
+{
+    if (!pom2::chooseBrowserFile(pom2::BrowserFileKind::Disk)) return;
+    browserDiskTargetsDrive_ = target != nullptr;
+    if (target) browserDiskTarget_ = *target;
+    browserDiskProfile_ = activeProfile;
+}
+#endif
 
 
 void MainWindow::initializeSessionLoader()

@@ -5,6 +5,11 @@ implementation changes. The CMake version is 0.9.7; the checkout includes
 untagged session/debugger work. This review updates descriptions and help,
 not the emulator's behavior or test assertions.
 
+**Later follow-up:** the browser disk-import implementation and its current
+documentation are recorded in [Browser disk-import follow-up](#browser-disk-import-follow-up).
+Earlier references below to missing direct disk upload describe the tree
+before that implementation.
+
 ## Scope and document ownership
 
 The [documentation index](../README.md) is the entry point. Review includes
@@ -536,3 +541,95 @@ commercial games or photograph redistribution rights. Those remain explicit
 tasks or limits. Historical performance and coverage numbers were not
 remeasured. Remaining hardware/IDE/browser features are documented as such;
 the documentation changes do not implement them.
+
+
+## Browser disk-import follow-up
+
+Reviewed against `135051f` plus the untagged working-tree disk-import
+implementation. `BrowserFiles.h/.cpp`, `wasm/browser_files.js`,
+`MainWindow_SessionFiles`, `MainWindow_DriveRack`, `DriveRackMount`,
+`BrowserSessionStore` and `SessionArchive` define the behavior described here.
+The earlier observations in this report about absent direct disk selection
+are superseded by that implementation; dated execution results above remain
+unchanged.
+
+- README first-run instructions, the user guide and documentation index now
+  expose the File-menu import/boot and empty-drive import paths. Desktop
+  file drops, in-application Disk Library drops and browser local selection
+  are distinguished.
+- The session contract and DEV distinguish the 64 MiB disk-upload limit from
+  the 32 MiB archive limit. `/uploads/disk-N/` lives in MEMFS; media autosave
+  updates that copy, while session download or Automatic resume preserves
+  supported media. Ordinary settings persistence does not preserve uploads.
+- DEV records the three numeric browser file kinds, destinations, asynchronous
+  result handling, profile/drive checks and same-name isolation. The scope
+  ruling and WASM-001 freeze only the remaining desktop drop-zone. File
+  selection is implemented in this checkout, with no claim of a tagged or
+  deployed release.
+- Storage comments no longer assume every browser disk resides in IDBFS.
+  The legacy Disk II insertion help and mount comment now describe writable
+  defaults and file/container protection rather than the removed opt-in.
+- RELEASE-005 and DEV describe the expanded Chrome smoke. The prior local
+  run passed menu import/boot, drive-2 insertion without rebooting, same-name
+  isolation and inclusion of both media in a session, alongside its existing
+  persistence/reconstruction checks. Candidate remote CI evidence remains
+  a separate release gate.
+
+This follow-up changes documentation, comments and insertion-help text;
+it does not change import, storage or emulation behavior. Existing browser
+execution evidence comes from the preceding implementation task, rather
+than a new runtime run for these prose changes.
+
+
+## Media and control source follow-up
+
+The subsequent review compared the current README/user guide, storage matrix,
+3.5-inch implementation narrative and packaged disk instructions with
+`SystemProfile`, `MainWindow_Input`, `MainWindow_Chrome`, `CliDispatcher`,
+`Block512Backing`, `DiskImage`, `Disk35Image`, `Disk35Image_Bitstream`,
+`Sony35Drive`, `SmartPortHdvUnit`, `MainWindow` toolbar dispatch and the
+registered media regression sources. The profile and command-line inventories
+were inspected; this is not a claim of exhaustive fidelity or runtime testing.
+
+Confirmed corrections:
+
+- DEV's old 3.5-inch paragraph still claimed no GCR encoder/native capture
+  writes. The current native path splices flux, whereas GCR block writes
+  remain refused. The matrix now distinguishes native GCR capture writes,
+  GCR block services, raw 400/800 KiB media and SuperDrive-only 1.44 MB
+  raw/MFM captures, with named existing tests.
+- The HDV matrix said any 512-aligned size. `Block512Backing` requires a
+  nonempty payload no larger than 65,536 blocks (32 MiB), and bounds the
+  entire input file at 64 MiB before allocation. User and developer
+  references now distinguish those bounds.
+- Protection was incorrectly described as one uniform four-way union.
+  `Block512Backing::isWriteProtected` excludes the write-back policy, while
+  `SmartPortHdvUnit` adds it. User/developer guidance now distinguishes
+  physical protection, persistence policy and possible RAM-only writes.
+  `Disk35Image` comments no longer describe write-back as off by default.
+- The user guide incorrectly required DIX's Mockingboard at slot 4.
+  Existing source/corpus evidence distinguishes its scan from standalone
+  MAD EFFECT's fixed slot access. README/package instructions identify
+  slot 4 as the recorded //e setup and describe the browser //c's 4c.
+- Browser toolbar soft-reset/power-cycle dispatch can relaunch the startup
+  boot image. Disk import does not replace that target. F11/F12 and Machine
+  menu handlers reset the current machine directly; the guide now explains
+  that difference.
+- `DiskIICard::recomputeUseBitLss` forces LSS whenever either drive contains
+  a WOZ, using the embedded sequencer when the external P6 dump is absent.
+  The LLE/HLE table, fallback discussion and DEV read-path descriptions now
+  include that exception. Cassette export and detached session media are
+  distinguished from source-image write-back in the storage matrix introduction.
+
+These are current source comparisons and corrections to prose/comments.
+Previously recorded builds, browser runs and hardware observations retain
+their original scope; no new full native suite or browser run is claimed.
+
+Validation for this follow-up: all 832 local path/anchor references in the
+current Markdown documents passed (71 tracked Markdown files including
+historical files; archive/release pages were excluded from the current-page
+scan). All six contributor guards and `git diff --check` passed. The browser
+DOM/FS regression test passed, the current native executable's `--help`
+completed, and `make_dix_fix.py --verify packaging/disks/DIX-fix.po`
+confirmed the packaged patch. None of these checks establishes new emulation
+fidelity or remote CI results.

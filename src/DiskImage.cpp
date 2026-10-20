@@ -2749,11 +2749,10 @@ bool writeFileAtomic(const std::string& path, std::string& lastError,
         std::filesystem::remove(tmp, ec2);
         return false;
     }
-    // Browser build: the image now exists in the IDBFS mount's memory image
-    // and nowhere else until the frame loop's pump flushes it to IndexedDB.
-    // Only Settings::save used to mark the store dirty, so a session that
-    // saved a game and changed no setting lost the save on reload. No-op
-    // natively — the rename + fsync above is already durable.
+    // Browser build: mark IDBFS dirty for images under /persistent; the
+    // frame loop flushes that mount to IndexedDB. Uploaded /uploads images
+    // are MEMFS only: retain them through a session or Automatic resume.
+    // No-op natively — the rename + fsync above is already durable.
     pom2::markPersistentStateDirty();
     return true;
 }

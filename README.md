@@ -27,14 +27,19 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
 This checkout also includes untagged changes described in [CHANGELOG.md](CHANGELOG.md),
-including v7 sessions that reconstruct their machine and a bank-aware debugger
-with source correspondence. Tagged packages follow their release notes.
+including v7 sessions that reconstruct their machine, a bank-aware debugger
+with source correspondence and direct browser disk-image import. Tagged
+packages follow their release notes.
 
 ## Start playing
 
 **In a browser:** [launch POM2](https://habib256.github.io/pom2/wasm/).
 It opens a PAL Apple //c with the DIX-fix demo disk. The browser build follows
 `main`, so it may differ from a tagged release.
+In the current checkout, **File → Import disk and boot...** opens a disk image
+from your computer. Click an empty drive to insert without rebooting.
+Save a session or enable Automatic resume to keep supported disks and changes;
+see [browser disk import](docs/USER-GUIDE.md#browser-disk-import) for limits.
 
 **On your computer:** [download a package](https://github.com/habib256/pom2/releases/latest),
 unpack it and launch POM2. Firmware, fonts and artwork are included. Keep the
@@ -94,7 +99,8 @@ and press Return.
   and CPU profiling support both play and development.
 - **Connections and browser.** Desktop builds offer Uthernet I/II, FujiNet
   relay, TNFS and VSDrive. The WebAssembly build stores settings and layout in
-  IndexedDB and offers text upload, session import/export and optional
+  IndexedDB and offers direct disk-image import (File → Import disk and boot...),
+  text upload, session import/export and optional
   [automatic resume for supported sessions](docs/session-format.md#using-it).
   Sessions reconstruct supported profiles, embedded firmware and cards, including
   writable floppy/block media and program tapes. Restored disks retain unsaved
@@ -114,7 +120,7 @@ Four disks are ready in **File → Disk Library**:
 | Disk | Try it for |
 |---|---|
 | [A2 File Cmd XL v0.9.8](https://github.com/habib256/a2filecmd/releases/tag/v0.9.8) | A ProDOS file manager on a 32 MB hard-disk image; mount in an HDV/SmartPort bay. |
-| [DIX-fix](https://github.com/Fr3nchT0uch/DIX/) | French Touch demos; use a PAL //e with Mockingboard in slot 4. |
+| [DIX-fix](https://github.com/Fr3nchT0uch/DIX/) | French Touch demos; use a PAL machine with 128 KB and Mockingboard. The recorded //e setup uses slots 4 (sound) and 5 (SmartPort); the browser uses a //c with Mockingboard 4c. |
 | [ChromaBreak 1.0](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.0) | A colourful brick-breaking game. |
 | [Micro-Sokoban 1.2](https://github.com/habib256/pom2games/releases/tag/1.2) | A small puzzle with many crates to move. |
 

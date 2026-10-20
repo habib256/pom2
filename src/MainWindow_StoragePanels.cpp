@@ -1407,11 +1407,9 @@ void MainWindow::renderDiskFileDialog()
         ImGui::Text("Target: Disk II slot %d", popupCard->getSlot());
     }
     ImGui::TextUnformatted("Path to a 5.25\" image —"
-                           " .dsk / .do (DOS 3.3, 143 360 B) or"
-                           " .po (ProDOS, 143 360 B) or .nib (raw"
-                           " nibble stream, 232 960 B) or .woz"
-                           " (bit-cell, copy-protected disks; read-only)."
-                           " Write-back is opt-in via the panel checkbox.");
+                           " .dsk / .do / .d13 / .po / .nib / .woz."
+                           " Images are writable by default unless the file"
+                           " or image container is write-protected.");
     if (popupPanel) {
         char buf[512] = {0};
         std::snprintf(buf, sizeof(buf), "%s", popupPanel->dialogPath.c_str());
