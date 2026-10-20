@@ -10,6 +10,30 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — AppleWin-HLE mouse: GETCLAMP, TIMEDATA, mouse off
+
+Three firmware entries from Apple II Technical Notes Mouse #2/#3/#7, run
+through the real AppleMouse II EPROM (`mouseaw`, the //e default in slot 4):
+
+- **GETCLAMP ($Cn1A) moved the pointer.** The EPROM asks the MCU with $F0
+  plus a two-byte address (traced on the wire) and reads one byte. The HLE
+  — AppleWin's dispatch — had no $F0, so it took the address byte $4E for
+  a MOUSE_POS command: the clamp bytes came back stale and the pointer
+  jumped. $F0 now reads the MCU RAM the clamp window lives in ($47-$4E),
+  and returns exactly what the LLE card answers with the real 68705.
+- **TIMEDATA ($Cn1C) was ignored.** It sends $90|A; A bit 0 selects a 50 Hz
+  VBL interrupt instead of 60 Hz, effective at the next INITMOUSE, and an
+  INITMOUSE without it goes back to the default. Honoured now, at the
+  card's own real-time rate (cycles = live clock / Hz). When no program
+  calls it, the interrupt stays locked to the profile's beam as before —
+  the note's free-running 60 Hz default is not modelled, because PAL
+  titles have only ever been tested against the beam-locked edge.
+- **Mouse off still tracked motion.** With SETMOUSE bit 0 clear, motion is
+  now ignored and the pointer does not jump when the mouse comes back on.
+
+The TIMEDATA state rides in the snapshot's reserved word (old blobs read
+as "never called"). Pinned by `mouse_card_applewin_smoke`.
+
 ## 2026-10-20 — SmartPort: FORMAT, EJECT, interrupt status and DIB names
 
 Four protocol details from the Apple II Technical Notes (SmartPort #2/#7,

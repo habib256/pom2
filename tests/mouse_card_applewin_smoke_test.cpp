@@ -43,7 +43,9 @@
 // it deliberately.
 
 #include "MouseCardAppleWin.h"
+#include "M6502.h"
 #include "Memory.h"
+#include "ResourcePaths.h"
 
 #include <algorithm>
 #include <cassert>
@@ -513,6 +515,160 @@ void test_snapshot_round_trip_and_irq_rewind()
 
 }  // namespace
 
+// ── Firmware-level checks: the real AppleMouse II EPROM on a 6502 ─────────
+// The Apple II Technical Notes (Mouse #2, #3, #7) describe the firmware
+// entries; these run them through 341-0270-C, as a program would.
+struct FirmwareRig {
+    Memory mem;
+    M6502  cpu{&mem};
+    MouseCardAppleWin* card = nullptr;
+    bool ok = false;
+    FirmwareRig()
+    {
+        const auto rom  = pom2::findResource("roms/apple2p.rom");
+        const auto slot = pom2::findResource("roms/mouse_341-0270-c.bin");
+        if (rom.empty() || slot.empty()) return;
+        mem.setCpu(&cpu);
+        if (!mem.loadAppleIIRom(rom.c_str())) return;
+        auto owned = std::make_unique<MouseCardAppleWin>(4);
+        if (!owned->loadRom(slot)) return;
+        card = owned.get();
+        mem.slotBus().plug(4, std::move(owned));
+        cpu.setCpuMode(M6502::CpuMode::NMOS);
+        cpu.hardReset(); mem.slotBus().reset();
+        ok = true;
+    }
+    // SEI; LDA #a; LDX #$C4; LDY #$40; JSR $C4(entry); JMP * — as TN Mouse
+    // #7's caller does.
+    void call(uint8_t off, uint8_t a)
+    {
+        const uint8_t e = mem.memRead(static_cast<uint16_t>(0xC400 + off));
+        const uint8_t prog[] = { 0x78, 0xA9, a, 0xA2, 0xC4, 0xA0, 0x40,
+                                 0x20, e, 0xC4, 0x4C, 0x0A, 0x03 };
+        for (unsigned i = 0; i < sizeof prog; ++i)
+            mem.memWrite(static_cast<uint16_t>(0x300 + i), prog[i]);
+        cpu.setProgramCounter(0x300);
+        for (int g = 0; g < 3'000'000 && cpu.getProgramCounter() != 0x30A; ++g) cpu.run(1);
+        assert(cpu.getProgramCounter() == 0x30A && "a Mouse Card entry never returned");
+    }
+    void clamp(int axis, int lo, int hi)
+    {
+        mem.memWrite(0x478, static_cast<uint8_t>(lo));
+        mem.memWrite(0x4F8, static_cast<uint8_t>(hi));
+        mem.memWrite(0x578, static_cast<uint8_t>(lo >> 8));
+        mem.memWrite(0x5F8, static_cast<uint8_t>(hi >> 8));
+        call(0x17, static_cast<uint8_t>(axis));          // CLAMPMOUSE
+    }
+    void idle(long cycles)
+    {
+        const uint8_t loop[] = { 0x4C, 0x00, 0x03 };    // JMP $0300
+        for (unsigned i = 0; i < sizeof loop; ++i)
+            mem.memWrite(static_cast<uint16_t>(0x300 + i), loop[i]);
+        cpu.setProgramCounter(0x300);
+        for (long spent = 0; spent < cycles;) spent += cpu.run(64);
+    }
+};
+
+// TN Mouse #7: GETCLAMP ($Cn1A), called eight times with $478 = $4E..$47,
+// returns MaxYL, MaxXL, MaxYH, MaxXH, MinYL, MinXL, MinYH, MinXH in $578.
+// The firmware asks the MCU with $F0 + a two-byte address; the HLE had no
+// such command, took the address $4E for MOUSE_POS and moved the pointer.
+// Expected bytes = what the LLE card returns with the real 68705.
+void test_getclamp_reads_the_window_and_leaves_the_pointer()
+{
+    FirmwareRig r;
+    if (!r.ok) { std::printf("  skip: GETCLAMP needs the ][+ and Mouse Card ROMs\n"); return; }
+    r.call(0x19, 0);                                    // INITMOUSE
+    r.clamp(0, 100, 500);
+    r.clamp(1, 20, 300);
+    // POSMOUSE takes the slot's own screen holes ($0478+n X lo, $04F8+n
+    // Y lo, $0578+n X hi, $05F8+n Y hi); CLAMPMOUSE above takes the bare
+    // $478/$4F8/$578/$5F8.
+    r.mem.memWrite(0x478 + 4, 250); r.mem.memWrite(0x578 + 4, 0);  // X = 250
+    r.mem.memWrite(0x4F8 + 4, 150); r.mem.memWrite(0x5F8 + 4, 0);  // Y = 150
+    r.call(0x16, 0);                                    // POSMOUSE
+    {
+        const auto s0 = r.card->debugSnapshot();
+        assert(s0.iX == 250 && s0.iY == 150 && "POSMOUSE placed the pointer");
+    }
+    const uint8_t expect[8] = { 0x00, 0x00, 0x64, 0x14, 0x01, 0x01, 0xF4, 0x2C };
+    for (int k = 7; k >= 0; --k) {
+        r.mem.memWrite(0x478, static_cast<uint8_t>(0x47 + k));
+        r.mem.memWrite(0x4F8, 0x00);
+        r.call(0x1A, 0x00);
+        const uint8_t got = r.mem.memRead(0x578);
+        if (got != expect[k])
+            std::fprintf(stderr, "GETCLAMP $%02X: got $%02X, want $%02X\n", 0x47 + k, got, expect[k]);
+        assert(got == expect[k]);
+    }
+    const auto s = r.card->debugSnapshot();
+    assert(s.iX == 250 && s.iY == 150 && "GETCLAMP must not move the pointer");
+}
+
+// TN Mouse #2: TIMEDATA ($Cn1C), A bit 0 = 50 Hz, effective at the next
+// INITMOUSE, and an INITMOUSE without one goes back to the default — which
+// POM2 keeps on the beam (timeDataHz() == 0).
+void test_timedata_sets_the_vbl_rate()
+{
+    FirmwareRig r;
+    if (!r.ok) { std::printf("  skip: TIMEDATA needs the ][+ and Mouse Card ROMs\n"); return; }
+    r.card->setCpuClock(1022727.0);
+    r.call(0x19, 0);
+    assert(r.card->timeDataHz() == 0);
+    r.call(0x1C, 0x01);                                 // TIMEDATA 50 Hz
+    assert(r.card->timeDataHz() == 0 && "not before INITMOUSE");
+    r.call(0x19, 0);
+    assert(r.card->timeDataHz() == 50);
+
+    // One second of VBL interrupts (SETMOUSE $08), each acknowledged by
+    // SERVEMOUSE as a handler would.
+    auto countIrqs = [&]() {
+        r.call(0x12, 0x08);                             // SETMOUSE: VBL int only
+        int n = 0;
+        // One second on the machine's own counter: SERVEMOUSE's cycles count.
+        const uint64_t end = r.mem.getCycleCounter() + 1'022'727;
+        while (r.mem.getCycleCounter() < end) {
+            r.idle(500);
+            if (r.card->slotIrqAsserted()) { ++n; r.call(0x13, 0); }   // SERVEMOUSE
+        }
+        return n;
+    };
+    const int at50 = countIrqs();
+    r.call(0x1C, 0x00);                                 // TIMEDATA 60 Hz
+    r.call(0x19, 0);
+    assert(r.card->timeDataHz() == 60);
+    const int at60 = countIrqs();
+    std::printf("  TIMEDATA: %d VBL interrupts/s at 50 Hz, %d at 60 Hz\n", at50, at60);
+    assert(at50 >= 49 && at50 <= 51);
+    assert(at60 >= 59 && at60 <= 61);
+    r.call(0x19, 0);                                    // INIT without TIMEDATA
+    assert(r.card->timeDataHz() == 0);
+}
+
+// TN Mouse #3: with the mouse off "any mouse motion is ignored" and the
+// position is kept until it is turned back on — the pointer must not jump
+// by the distance travelled meanwhile.
+void test_mouse_off_ignores_motion()
+{
+    FirmwareRig r;
+    if (!r.ok) { std::printf("  skip: mouse-off needs the ][+ and Mouse Card ROMs\n"); return; }
+    r.call(0x19, 0);
+    r.call(0x12, 0x01);                                 // SETMOUSE: on
+    r.card->setHostMouse(0, 0, false);
+    r.idle(200);
+    r.card->setHostMouse(10, 0, false);
+    r.idle(200);
+    const int on = r.card->debugSnapshot().iX;
+    assert(on > 0 && "motion is tracked with the mouse on");
+    r.call(0x12, 0x00);                                 // SETMOUSE: off
+    r.card->setHostMouse(60, 0, false);
+    r.idle(200);
+    assert(r.card->debugSnapshot().iX == on && "motion ignored with the mouse off");
+    r.call(0x12, 0x01);                                 // back on
+    r.idle(200);
+    assert(r.card->debugSnapshot().iX == on && "no jump when it is turned back on");
+}
+
 int main()
 {
     test_missing_rom_refuses_to_load();
@@ -523,6 +679,9 @@ int main()
     test_snapshot_round_trip_and_irq_rewind();
     test_vbl_pacing_follows_set_cycles();
     test_vbl_irq_locked_to_beam();
+    test_getclamp_reads_the_window_and_leaves_the_pointer();
+    test_timedata_sets_the_vbl_rate();
+    test_mouse_off_ignores_motion();
 
     std::printf("OK mouse_card_applewin_smoke\n");
     return 0;

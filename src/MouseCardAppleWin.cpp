@@ -213,14 +213,25 @@ void MouseCardAppleWin::advanceCycles(int cycles)
     // restore, rewind, setCycleCounter) and the kVblUnphased sentinel.
     if (ownsClock_) ownClock_ += static_cast<uint64_t>(cycles);
     const uint64_t now = *clock_;
-    if (now >= nextVblCycle_ ||
-        nextVblCycle_ - now > static_cast<uint64_t>(vblCycles_))
+    if (now >= nextVblCycle_ || nextVblCycle_ - now > vblPeriod())
         serviceVbl(now);
+}
+
+uint64_t MouseCardAppleWin::vblPeriod() const
+{
+    // A rate TIMEDATA chose runs off the card's own timer, in real time:
+    // cycles = the live clock / Hz (setCpuClock). Otherwise the beam.
+    if (vblRate_ >= 0) {
+        const double hz = vblRate_ ? 50.0 : 60.0;
+        const auto c = static_cast<uint64_t>(cpuHz_ / hz + 0.5);
+        return c > 0 ? c : 1;
+    }
+    return static_cast<uint64_t>(vblCycles_);
 }
 
 void MouseCardAppleWin::serviceVbl(uint64_t now)
 {
-    const uint64_t frame = static_cast<uint64_t>(vblCycles_);
+    const uint64_t frame = vblPeriod();
     // Fire only on an ordinary crossing. A counter that jumped more than a
     // frame past the edge (a restore moving the clock forward) or is still
     // unphased just re-phases: no spurious VBL out of a clock jump.
@@ -270,6 +281,7 @@ void MouseCardAppleWin::onReset()
     byMode = 0;
     nX = nY = 0;
     iX = iY = 0;
+    vblRate_ = timeDataPending_ = -1;   // the MCU restarts on its default rate
     iMinX = 0; iMaxX = 1023;
     iMinY = 0; iMaxY = 1023;
     bButtons[0] = bButtons[1] = false;
@@ -381,6 +393,11 @@ void MouseCardAppleWin::onCommand()
     case MOUSE_INIT:
         nDataLen = 3;
         byBuff[1] = 0xFF;
+        // TIMEDATA's rate takes effect here, and an INIT without a fresh
+        // TIMEDATA reverts to the default (TN Mouse #2).
+        vblRate_ = timeDataPending_;
+        timeDataPending_ = -1;
+        nextVblCycle_ = kVblUnphased;
         break;
     case MOUSE_CLAMP:
         nDataLen = 5;
@@ -403,7 +420,12 @@ void MouseCardAppleWin::onCommand()
         break;
     case MOUSE_TIME:
         switch (byBuff[0] & 0x0C) {
-        case 0x00: nDataLen = 1; break;
+        case 0x00:
+            nDataLen = 1;
+            // TIMEDATA: the firmware sends $90 | A, and A bit 0 picks the
+            // interrupt rate — 1 = 50 Hz, 0 = 60 Hz (TN Mouse #2).
+            timeDataPending_ = static_cast<int8_t>(byBuff[0] & 0x01);
+            break;
         case 0x04: nDataLen = 3; break;
         case 0x08: nDataLen = 2; break;
         case 0x0C: nDataLen = 4; break;
@@ -415,6 +437,15 @@ void MouseCardAppleWin::onCommand()
     case 0xB0:
     case 0xC0:
         nDataLen = 1;
+        break;
+    case 0xF0:
+        // Read the MCU's RAM: $F0, address lo, address hi, then one reply
+        // byte (GETCLAMP, $Cn1A — TN Mouse #7). Seen on the wire, and the
+        // replies checked against the real 68705 on the LLE card. The
+        // default length of 1 made the next byte, the address, a command
+        // of its own: $4E is MOUSE_POS, and GETCLAMP moved the pointer.
+        // $F1 (A bit 0 set) is not documented and keeps the default.
+        nDataLen = (byBuff[0] == 0xF0) ? 3 : 1;
         break;
     default:
         nDataLen = 1;
@@ -445,6 +476,33 @@ void MouseCardAppleWin::onWrite()
         setClampY(0, 1023);
         setPositionAbs(0, 0);
         break;
+    case 0xF0: {
+        if (byBuff[0] != 0xF0) break;
+        // Where the 68705 keeps the clamp window, read off the LLE card
+        // running the real 341-0269 mask ROM: $47 MinX hi, $48 MinY hi,
+        // $49 MinX lo, $4A MinY lo, $4B MaxX hi, $4C MaxY hi, $4D MaxX lo,
+        // $4E MaxY lo — TN Mouse #7's eight bytes, in its order. Other
+        // addresses are working storage this HLE does not have: 0.
+        const int addr = (byBuff[2] << 8) | byBuff[1];
+        uint8_t v = 0;
+        switch (addr) {
+        case 0x47: v = static_cast<uint8_t>(iMinX >> 8); break;
+        case 0x48: v = static_cast<uint8_t>(iMinY >> 8); break;
+        case 0x49: v = static_cast<uint8_t>(iMinX);      break;
+        case 0x4A: v = static_cast<uint8_t>(iMinY);      break;
+        case 0x4B: v = static_cast<uint8_t>(iMaxX >> 8); break;
+        case 0x4C: v = static_cast<uint8_t>(iMaxY >> 8); break;
+        case 0x4D: v = static_cast<uint8_t>(iMaxX);      break;
+        case 0x4E: v = static_cast<uint8_t>(iMaxY);      break;
+        default: break;
+        }
+        // The reply is on Port A when the firmware reads it. byBuff[0]
+        // too: the read strobe that follows re-presents byBuff[0] (the
+        // cursor is back at 0), so the byte stays put either way round.
+        byBuff[0] = v;
+        pia.setPortAInput(v);
+        break;
+    }
     }
 }
 
@@ -565,7 +623,12 @@ void MouseCardAppleWin::pollHostInput()
     lastHostX = hx;
     lastHostY = hy;
 
-    if (dx || dy) setPositionRel(dx, dy);
+    // Mouse off (mode bit 0 clear): "the mouse position is not tracked;
+    // any mouse motion is ignored", and the position "retains the last
+    // values it had before the mouse was turned off until it is turned on
+    // again" (TN Mouse #3). The deltas are consumed, not banked — the
+    // pointer does not jump when the program turns the mouse back on.
+    if ((dx || dy) && (byMode & MODE_MOUSE_ON)) setPositionRel(dx, dy);
 
     if (hb != lastHostButton) {
         lastHostButton = hb;
@@ -614,10 +677,10 @@ void MouseCardAppleWin::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(bBtn0 ? 1 : 0);
     out.push_back(bBtn1 ? 1 : 0);
     put32(vblCycles_);
-    // Formerly the VBL pacer's accumulator. The phase is now the machine's
-    // cycle counter (carried by the CPU section), so this slot is reserved
-    // and always 0 — kept so older blobs keep their layout.
-    put32(0);
+    // Formerly the VBL pacer's accumulator, then reserved (always 0). Now
+    // the TIMEDATA state, biased so an old blob's 0 reads as "never
+    // called": byte 0 = vblRate_ + 1, byte 1 = timeDataPending_ + 1.
+    put32(static_cast<int32_t>((vblRate_ + 1) | ((timeDataPending_ + 1) << 8)));
     // The IRQ level cannot be re-derived from byState: MOUSE_SERV drops the
     // line (AppleWin's CpuIrqDeassert(IS_MOUSE)) WITHOUT clearing byState's
     // STAT_INT_* bits — only the next MOUSE_READ does that. Carry the level
@@ -654,7 +717,12 @@ void MouseCardAppleWin::loadSnapshotState(const uint8_t* data, std::size_t len)
     bBtn0       = data[p++] != 0;
     bBtn1       = data[p++] != 0;
     vblCycles_    = get32();
-    (void)get32();          // reserved (old VBL accumulator), see append
+    {
+        const int32_t td = get32();   // TIMEDATA state, see append
+        const int rate = (td & 0xFF) - 1, pending = ((td >> 8) & 0xFF) - 1;
+        vblRate_         = static_cast<int8_t>((rate == 0 || rate == 1) ? rate : -1);
+        timeDataPending_ = static_cast<int8_t>((pending == 0 || pending == 1) ? pending : -1);
+    }
     nextVblCycle_ = kVblUnphased;   // re-phase to the beam on the next tick
     const bool irq = data[p++] != 0;
     p += pia.loadSnapshotState(data + p, len - p);

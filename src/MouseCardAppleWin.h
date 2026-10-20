@@ -39,7 +39,14 @@
 //   $70 MOUSE_HOME    1-byte    Re-home to the clamp window's (MinX, MinY)
 //                                — (0, 0) only while the window is the
 //                                power-on 0..1023 (see the .cpp)
-//   $90 MOUSE_TIME    1..4 byte VBL-time command (no-op in HLE)
+//   $90 MOUSE_TIME    1..4 byte VBL-time command. TIMEDATA ($Cn1C) sends
+//                                $90|A: bit 0 = 50 Hz, else 60 Hz, applied
+//                                at the next INIT (TN Mouse #2)
+//   $F0 MCU memory    3-byte    Read one byte of the MCU's RAM: address
+//                                lo, hi; one reply byte. GETCLAMP ($Cn1A,
+//                                TN Mouse #7) reads the clamp window at
+//                                $47-$4E. Not in AppleWin, which took the
+//                                address byte $4E for a MOUSE_POS command
 //
 // PIA Port B handshake (AppleWin's On6821_B): the firmware uses BIT5 of
 // Port B as a write-strobe (1→0 = "byte on Port A is for the MCU") and
@@ -139,6 +146,16 @@ public:
         if (cycles > 0) { vblCycles_ = cycles; nextVblCycle_ = kVblUnphased; }
     }
     int  vblCycles() const { return vblCycles_; }
+    /// The live CPU clock, for a VBL rate a program chose with TIMEDATA
+    /// (the MCU's own crystal: a rate in Hz, converted to machine cycles).
+    void setCpuClock(double hz) override
+    {
+        if (hz > 0) { cpuHz_ = hz; nextVblCycle_ = kVblUnphased; }
+    }
+    /// The VBL interrupt rate TIMEDATA put in force at the last INIT: 50 or
+    /// 60, or 0 when no program asked — then the card keeps the profile's
+    /// beam (see vblCycles_).
+    int  timeDataHz() const { return vblRate_ < 0 ? 0 : (vblRate_ ? 50 : 60); }
 
     /// Snapshot of internal mouse-firmware state for the Mouse Inspector
     /// panel. Not part of the AppleWin protocol — POM2-only diagnostic
@@ -257,6 +274,16 @@ private:
     //    `ownClock_` stands in when no Memory is behind the bus. ─────────
     static constexpr uint64_t kVblUnphased = ~uint64_t{0};
     int             vblCycles_    = 17030;
+    // TIMEDATA (TN Mouse #2): -1 = not called, 0 = 60 Hz, 1 = 50 Hz. The
+    // call only takes effect at the next INIT, and an INIT without one
+    // goes back to the default — so it is latched in two steps. Until a
+    // program asks, the edge stays on the beam (vblCycles_), which is what
+    // every title tested so far relies on, PAL demos included; the note's
+    // "default 60 Hz" free-running timer is not modelled.
+    int8_t          timeDataPending_ = -1;
+    int8_t          vblRate_         = -1;
+    double          cpuHz_           = 1022727.0;
+    uint64_t        vblPeriod() const;
     uint64_t        nextVblCycle_ = kVblUnphased;   // absolute cycle of the next edge
     uint64_t        ownClock_     = 0;
     const uint64_t* clock_        = &ownClock_;
