@@ -94,14 +94,15 @@ const char* hgrName(LeChatMauveCard::HgrMode m)
     switch (m) {
         case H::LcmColor: return "LCM"; case H::Mono: return "Mono"; case H::FgBg: return "FgBg";
         case H::Spec1: return "Spec1"; case H::Spec2: return "Spec2"; case H::Dash: return "Dash";
-        case H::Cp280: return "CP280";
+        case H::Cp280: return "CP280"; case H::RvbGraph: return "RvbGraph";
     }
     return "?";
 }
 const char* textName(LeChatMauveCard::TextMode m)
 {
     using T = LeChatMauveCard::TextMode;
-    switch (m) { case T::Plain: return "Plain"; case T::Color: return "Color"; case T::Green: return "Green"; }
+    switch (m) { case T::Plain: return "Plain"; case T::Color: return "Color"; case T::Green: return "Green";
+                 case T::Tinted: return "Tinted"; }
     return "?";
 }
 

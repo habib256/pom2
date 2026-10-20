@@ -199,13 +199,19 @@ void Apple2Display::renderInternalBand(Memory& mem, const Memory::DisplayState& 
 {
     if (scanY0 >= scanY1) return;
     renderInternalBandImpl(mem, state, scanY0, scanY1);
-    // Eve TXTGREEN is a post-pass over whatever painted the text rows: the
-    // decision tree below has a dozen exits and the text painters are shared
-    // with every other pipeline, so the tint is applied once, here.
-    if (chatMauveActive() &&
-        chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr)
-            == LeChatMauveCard::TextMode::Green)
-        tintTextGreen(state, scanY0, scanY1);
+    // Eve TXTGREEN and the RVB Graph's text colour are a post-pass over
+    // whatever painted the text rows: the decision tree below has a dozen
+    // exits and the text painters are shared with every other pipeline, so
+    // the tint is applied once, here.
+    if (chatMauveActive()) {
+        const auto tm = chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr);
+        if (tm == LeChatMauveCard::TextMode::Green)
+            tintText(state, scanY0, scanY1,
+                     0xFF000000u | (uint32_t{0x33} << 16) | (uint32_t{0xFF} << 8) | 0x33u);
+        else if (tm == LeChatMauveCard::TextMode::Tinted)
+            tintText(state, scanY0, scanY1,
+                     kChatMauveLoResPalette[chatMauve->rvbGraph().textColour]);
+    }
 }
 
 void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplayState& state,

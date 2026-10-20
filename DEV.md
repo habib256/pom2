@@ -826,10 +826,20 @@ latch ring with `Memory::accessCycle()` — the data cycle the video events
 carry, not the instruction start — so a frame whose first event is the
 `$C05F` edge itself is clocked once (pinned by case 5 of
 `chatmauve_latch_split`, which drives the stores through a real `M6502`).
-The RVB Graph's `$C0F3` is whole-screen monochrome green, not green text
-(`tintTextGreen` remaps every row in that mode). And the card answers the
+And the card answers the
 floating bus, not `$FF`, on `$C0F0-$C0FF` and `$C700-$C7FF` — it drives
 nothing there. Pinned in `le_chat_mauve_smoke`.
+
+**The RVB Graph, from its manual** *(2026-10-20)*. A control register at
+`$C0F0 + S + U + K` (data `16·(15−CT)`: inverted text colour) and eight
+write-only colour registers at `$C70F/$C71F/$C72F/$C73F − Bn` (data
+`15−Cn`): Cn colours an isolated dot by position (column parity + bit 7),
+Bn a run by its leftmost dot. S = dotted lines / four-colour system,
+U = use the registers (else usual colours with white = CT), K = lock the
+registers and make RESET ignore the card. `renderHiResRvbGraph` paints it;
+`tintText` gives the text rows CT (shared with the Eve's TXTGREEN). The
+earlier four-strobe model came from a forum thread about a different card.
+Rules and page numbers: [chatmauve_plan § 3.6](docs/chatmauve_plan.md#36-the-rvb-graph-ii--ii).
 
 The French RGB adapters and their US cousin, as ONE card with a **variant**
 (`chatmauve_variant` = `feline` | `iic` | `eve` | `video7`; //c-class

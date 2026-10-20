@@ -10,6 +10,25 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — The RVB Graph, from its manual
+
+The Le Chat Mauve RVB Graph's *Manuel de Référence* surfaced (a 2024 scan
+on retronik.silicium.org, docs/chatmauve_plan.md § 3.6), and it disproved
+what POM2 modelled. The four "`$C0F0-$C0F3` mode strobes" (colour/mono,
+white/green text) came from a forum thread about a **different** RGB card;
+on the RVB Graph those addresses are the S values of one control register,
+`$C0F0 + S + U + K`, whose data byte is the inverted text colour. The card
+also has eight write-only colour registers at `$C70F/$C71F/$C72F/$C73F − Bn`
+(data `15 − Cn`): Cn colours an isolated HGR dot by its position (column
+parity + bit 7), Bn a run of two or more by its leftmost dot. S selects
+dotted colour lines and the four-colour system, U the registers (otherwise
+the usual colours with white tied to the text colour), K locks the registers
+and makes RESET leave the card alone. Monochrome is not a mode but a choice
+of colours (every register 15, or 12 for green). All of it is modelled now;
+`le_chat_mauve_smoke` § 13 replays the manual's own POKEs. The OCR misreads
+B1 as "81" and CT as "Cî", so every value was checked against the page
+images. Snapshot blob v5; a v4 blob restores power-on registers.
+
 ## 2026-10-20 — Nox Archaist v1.37 compatibility image for Mockingboard 4c
 
 `tools/make_nox_mb4c_fix.py INPUT.hdv OUTPUT.hdv` creates a separate,

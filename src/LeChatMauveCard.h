@@ -39,13 +39,17 @@
 //               (COL280A/B, CP280, HRBW, SPEC1/2, DASH), TXT16 colour text
 //               with the aux nibbles the OTHER way round from Video-7's,
 //               TXTGREEN, LOCKRES.
-//   RvbGraph    Le Chat Mauve RVB Graph (II / II+ slot card) — PARTIAL: the
-//               four documented mode strobes at its slot's device select
-//               ($C0F0-$C0F3 in slot 7: colour + white text, colour + green
-//               text, mono white, mono green — forum.system-cfg t=9395, via
-//               a Sonotec clone). The whole-screen text colour register, the
-//               HGR colour registers and the dotted-line option stay
-//               unmodelled: its manual has never surfaced (plan § 3.6/P4).
+//   RvbGraph    Le Chat Mauve RVB Graph (II / II+, slot 7 only). Everything
+//               its "Manuel de Référence" (22 pp., chapters III-IV) gives a
+//               program: the control register at $C0F0+S+U+K (data
+//               16·(15−CT): the whole-screen text colour), dotted or
+//               continuous colour lines (S bit 0), the four-colour system
+//               (S bit 1), the HGR colour registers (U) and their lock (K),
+//               which also decides whether RESET puts the card back to
+//               normal. Eight write-only colour registers at $C70F-Bn,
+//               $C71F-Bn, $C72F-Bn, $C73F-Bn (data 15−Cn): Cn colours an
+//               isolated dot, Bn a run of 2+ by its leftmost dot. Rules and
+//               the page numbers: docs/chatmauve_plan.md § 3.6.
 //   Video7      Video-7 AppleColor RGB / Apple Extended 80-col RGB card: the
 //               four patent modes including 160-wide chunky, F/B colour text
 //               (aux hi nibble = foreground) and F/B HGR when AN3 is off —
@@ -139,6 +143,7 @@ public:
         Spec2,      // Eve HRSPEC2: SPEC1 minus "colour dot on black" (010 → own bit)
         Dash,       // Eve HRDASH: colour runs drawn dotted (P3 — rendered as LcmColor)
         Cp280,      // Eve CP280: AN3 off, 80COL OFF, HR1+HR2+HR3 — fg/bg from aux (hi = bg)
+        RvbGraph,   // RVB Graph: C0-C3 / B0-B3 by dot position, S options (rvbGraph())
     };
 
     /// What the decoder does with TEXT.
@@ -146,6 +151,21 @@ public:
         Plain,      // the motherboard's black and white
         Color,      // 40-col colour text, per-cell colours in aux (see auxHiNibbleIsForeground)
         Green,      // Eve TXTGREEN: white → green, 40 and 80 col
+        Tinted,     // RVB Graph: white → the CT colour (rvbGraph().textColour)
+    };
+
+    /// RVB Graph register file. Colours are indices into the lo-res table
+    /// (the manual's "table des couleurs", chapter II); the card stores them
+    /// inverted (15 − colour) and these are decoded. n = 0..3 is the dot
+    /// position: 0 even column bit 7 = 0 (violet), 1 odd/0 (green), 2 even/1
+    /// (blue), 3 odd/1 (orange).
+    struct RvbGraphState {
+        uint8_t s          = 0;      // 0 continuous, 1 dotted, 2 four-colour, 3 = 2 dotted
+        bool    useRegs    = false;  // U = 4: HGR from C/B (else usual colours, white = CT)
+        bool    locked     = false;  // K = 8: registers closed, RESET leaves the card alone
+        uint8_t textColour = 15;     // CT
+        uint8_t c[4]       = { 3, 12, 6, 9 };      // isolated dot (usual colours)
+        uint8_t b[4]       = { 15, 15, 15, 15 };   // run of 2+, by its leftmost dot
     };
 
     /// Eve switches, bit i of `eveSwitches()`; address = $C0B0 + 2·i (+1 = on).
@@ -200,19 +220,20 @@ public:
     /// arrives through onVideoSoftSwitchWrite with its data byte.
     void onVideoSoftSwitch(uint16_t addr) override;
     void onVideoSoftSwitchWrite(uint16_t addr, uint8_t value) override;
-    /// RVB Graph only: the four mode strobes live in the card's own
-    /// device-select window (any access decodes, like the Apple soft
-    /// switches). Other variants keep the base no-op.
+    /// The card drives nothing in its device-select window: reads keep the
+    /// floating bus on every variant.
     uint8_t deviceSelectRead (uint8_t low4) override;
     /// No slot EPROM: $Cn00-$CnFF must keep reading the floating bus.
     uint8_t slotRomRead(uint8_t /*low8*/) override { return openBus(); }
+    /// RVB Graph only: the control register ($C0F0-$C0FF at slot 7).
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
-    /// RVB Graph mode register: 0 colour + white text, 1 colour + green
-    /// text, 2 mono white, 3 mono green ($C0F0-$C0F3 at slot 7).
-    uint8_t rvbMode() const { return rvbMode_; }
+    /// RVB Graph only: the colour registers ($C700-$C73F at slot 7).
+    void    slotRomWrite(uint8_t low8, uint8_t v) override;
+    const RvbGraphState& rvbGraph() const { return rvb_; }
 
     // Rewind/snapshot: the guest-visible state. v3 = v2 + the Eve's switch
-    // byte and CPREG (guest-written through $C0Bx, so guest-volatile).
+    // byte and CPREG (guest-written through $C0Bx, so guest-volatile); v5
+    // adds the RVB Graph's control byte, CT and its eight colour registers.
     // The variant and invertBit7 are user settings and stay out.
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
@@ -275,7 +296,8 @@ private:
     bool       invertBit7_      = false;
     uint8_t    eveSwitches_     = 0;        // all off at power-on
     uint8_t    cpreg_           = 0;
-    uint8_t    rvbMode_         = 0;        // RVB Graph: colour + white text
+    RvbGraphState rvb_;                     // RVB Graph registers
+    uint16_t   rvbGeneration_   = 0;        // bumped on every RVB write (frame key)
     // Rolling latch history for beam-raced replay (latchBefore). 512 edges
     // is > one PAL frame of per-scanline clocking.
     struct LatchEdge { uint64_t cycle; uint8_t before; uint8_t after; };

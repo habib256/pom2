@@ -41,6 +41,7 @@ public:
         bool                        invertBit7  = false;   // Dragon Wars compat
         uint8_t                     eveSwitches = 0;       // bit i = EveSwitch i
         uint8_t                     cpreg       = 0;
+        LeChatMauveCard::RvbGraphState rvb;                // RVB Graph registers
         bool                        auxShadowText = false; // Memory hook armed?
         bool                        auxShadowHgr  = false;
     };

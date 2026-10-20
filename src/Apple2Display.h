@@ -632,10 +632,17 @@ private:
     // (see the definition). Each cell = 2 dots in frame80.
     void renderDhgrCol280(Memory& mem, const Memory::DisplayState& state,
                           int firstScanline, int lastScanline, bool paletteB);
-    // Eve TXTGREEN: the text rows of a band, white → green (P31 tint) in
-    // whichever framebuffer the band was painted into. Text is black and
-    // white before this pass, so the remap is exact.
-    void tintTextGreen(const Memory::DisplayState& state, int scanY0, int scanY1);
+    // RVB Graph single HGR: C0-C3 / B0-B3 by dot position and the S options
+    // (dotted lines, four-colour system) — see the definition for the
+    // manual's rules. Each HGR dot = 2 dots in frame80.
+    void renderHiResRvbGraph(Memory& mem, const Memory::DisplayState& state,
+                             int firstScanline, int lastScanline);
+    // One-colour text: the text rows of a band, white → `colour`, in
+    // whichever framebuffer the band was painted into — Eve TXTGREEN (P31
+    // green) and the RVB Graph's CT. Text is black and white before this
+    // pass, so the remap is exact.
+    void tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
+                  uint32_t colour);
     // The RGB-card pipeline is selected AND a card is plugged. Without the
     // card ChatMauveRGB silently renders as ColorNTSC (a real machine pulled
     // out of its adapter still has composite on the wire).

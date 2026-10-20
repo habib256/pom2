@@ -118,6 +118,10 @@ void Apple2Display::renderHiResChatMauve80(Memory& mem,
                                            LeChatMauveCard::HgrMode hm)
 {
     using HgrMode = LeChatMauveCard::HgrMode;
+    if (hm == HgrMode::RvbGraph) {
+        renderHiResRvbGraph(mem, state, firstScanline, lastScanline);
+        return;
+    }
     // Single hi-res displays MAIN page 1/2; aux HGR is only shown via DHGR.
     const uint8_t* ram = mem.data();
 
@@ -163,6 +167,83 @@ void Apple2Display::renderHiResChatMauve80(Memory& mem,
                 rgb = kChatMauveHGR[msbHigh[i / 7]][code];
             } else {
                 rgb = ctr ? 0xFFFFFFFFu : 0xFF000000u;
+            }
+            outRow[i * 2 + 0] = rgb;
+            outRow[i * 2 + 1] = rgb;
+        }
+    }
+}
+
+// Single HGR under the RVB Graph — its Manuel de Référence, chapters III-IV
+// (pp. 9-15), against the scan. A dot's POSITION is n = (column & 1) +
+// 2 × bit 7 of its byte: 0 "violet" (even, bit 7 = 0), 1 "vert" (odd, 0),
+// 2 "bleu" (even, 1), 3 "orange" (odd, 1).
+//
+//   - a lit dot with no lit neighbour is "isolé" → Cn of its own position;
+//   - 2+ consecutive lit dots → Bn of the run's LEFTMOST dot ("si le premier
+//     point à gauche est en colonne paire…", p. 15) — or, with S bit 1 set
+//     (S = 2/3), each dot's own Cn: "la couleur B n'apparaît plus" (p. 13);
+//   - an unlit dot is black with S bit 0 set (S = 1/3, "tout point
+//     représenté en mémoire par un 0 apparaît noir"). With it clear, the
+//     "traits horizontaux des couleurs C0, C1, C2, C3 sont continus" (p. 13):
+//     a horizontal line in Cn is alternate 1s and 0s (p. 12), so a 0 between
+//     two lit dots takes the colour of an ISOLATED neighbour, the left one
+//     first. The manual only describes such lines; a 0 between two runs
+//     (11011) has no Cn to take and stays black — POM2's reading.
+//   - U = 0 (registers ignored): the usual colours C = 3, 12, 6, 9 (the
+//     values p. 10 calls "la façon habituelle") and every B = CT — "la
+//     couleur des points usuellement blanc … est liée à la couleur
+//     attribuée aux lignes de texte" (p. 13).
+//
+// Colours index the lo-res table, which is the manual's own (chapter II).
+// No half-dot shift. Each HGR dot becomes 2 dots of `frame80`.
+void Apple2Display::renderHiResRvbGraph(Memory& mem, const Memory::DisplayState& state,
+                                        int firstScanline, int lastScanline)
+{
+    const LeChatMauveCard::RvbGraphState& g = chatMauve->rvbGraph();
+    uint32_t cRgb[4], bRgb[4];
+    static constexpr uint8_t kUsual[4] = { 3, 12, 6, 9 };
+    for (int n = 0; n < 4; ++n) {
+        cRgb[n] = kChatMauveLoResPalette[g.useRegs ? g.c[n] : kUsual[n]];
+        bRgb[n] = kChatMauveLoResPalette[g.useRegs ? g.b[n] : g.textColour];
+    }
+    const bool dotted   = (g.s & 1) != 0;
+    const bool fourOnly = (g.s & 2) != 0;
+    const uint32_t black = kChatMauveLoResPalette[0];
+
+    const uint8_t* ram = mem.data();
+    uint8_t  pixels[kWidth + 2];   // 280 dots, one zero guard each side
+    uint8_t  pos[kWidth + 2];      // n of each dot
+    pixels[0] = pixels[kWidth + 1] = 0;
+    pos[0] = pos[kWidth + 1] = 0;
+    uint8_t* px = pixels + 1;
+    uint8_t* np = pos + 1;
+    auto isolated = [&](int i) { return px[i] && !px[i - 1] && !px[i + 1]; };
+
+    for (int y = firstScanline; y < lastScanline; ++y) {
+        const uint16_t rowAddr = hgrRowAddress(y, videoHgrPage2(state));
+        for (int col = 0; col < 40; ++col) {
+            const uint8_t b = ram[rowAddr + col];
+            const uint8_t bank = static_cast<uint8_t>((b >> 6) & 2u);
+            for (int k = 0; k < 7; ++k) {
+                const int x = col * 7 + k;
+                px[x] = static_cast<uint8_t>((b >> k) & 1u);
+                np[x] = static_cast<uint8_t>(bank | (x & 1));
+            }
+        }
+
+        uint32_t* outRow = frame80.data() + static_cast<size_t>(y) * kWidth80;
+        int runStart = 0;
+        for (int i = 0; i < kWidth; ++i) {
+            uint32_t rgb = black;
+            if (px[i]) {
+                if (!px[i - 1]) runStart = i;
+                if (!px[i - 1] && !px[i + 1]) rgb = cRgb[np[i]];
+                else if (fourOnly)            rgb = cRgb[np[i]];
+                else                          rgb = bRgb[np[runStart]];
+            } else if (!dotted && px[i - 1] && px[i + 1]) {
+                if (isolated(i - 1))      rgb = cRgb[np[i - 1]];
+                else if (isolated(i + 1)) rgb = cRgb[np[i + 1]];
             }
             outRow[i * 2 + 0] = rgb;
             outRow[i * 2 + 1] = rgb;
@@ -243,35 +324,26 @@ void Apple2Display::renderDhgrCol280(Memory& mem, const Memory::DisplayState& st
     }
 }
 
-// Eve TXTGREEN: "blanc → vert", 40 and 80 columns. The text painters put
-// pure white on pure black, so remapping white in the text rows of the band
-// is the whole effect; the green is the P31 tint the MonoGreen pipeline uses.
-void Apple2Display::tintTextGreen(const Memory::DisplayState& state, int scanY0, int scanY1)
+// Text in one colour: Eve TXTGREEN ("blanc → vert", 40 and 80 columns, the
+// P31 tint the MonoGreen pipeline uses) and the RVB Graph's CT. The text
+// painters put pure white on pure black, so remapping white in the text
+// rows of the band is the whole effect.
+void Apple2Display::tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
+                             uint32_t colour)
 {
     int lo = 0, hi = 0;
-    // The RVB Graph's $C0F3 is whole-screen "monochrome green", not green
-    // text (plan § 3.6: -16143 = colours + green text, -16141 = monochrome
-    // green). hgrMode()/dhgrModeFor() already answer Mono there, so the
-    // graphics rows are white dots on black and the same white→green remap
-    // finishes the job; without this the mode came out green text over a
-    // WHITE picture.
-    if (chatMauve &&
-        chatMauve->variant() == LeChatMauveCard::Variant::RvbGraph &&
-        chatMauve->rvbMode() == 3) {
-        if (!bandScanlines(scanY0, scanY1, 0, kHeight, &lo, &hi)) return;
-    } else if (state.textMode) {
+    if (state.textMode) {
         if (!bandScanlines(scanY0, scanY1, 0, kHeight, &lo, &hi)) return;
     } else if (state.mixedMode) {
         if (!bandScanlines(scanY0, scanY1, 160, kHeight, &lo, &hi)) return;
     } else {
         return;
     }
-    constexpr uint32_t kGreen = 0xFF000000u | (uint32_t{0x33} << 16) | (uint32_t{0xFF} << 8) | 0x33u;
     const int w = useFrame80_ ? kWidth80 : kWidth;
     uint32_t* base = useFrame80_ ? frame80.data() : frame.data();
     for (int y = lo; y < hi; ++y) {
         uint32_t* row = base + static_cast<size_t>(y) * w;
         for (int x = 0; x < w; ++x)
-            if (row[x] == 0xFFFFFFFFu) row[x] = kGreen;
+            if (row[x] == 0xFFFFFFFFu) row[x] = colour;
     }
 }

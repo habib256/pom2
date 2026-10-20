@@ -42,7 +42,7 @@ const char* LeChatMauveCard::variantLabel(Variant v)
         case Variant::IIcAdapter: return "Adaptateur //c (DB-15)";
         case Variant::Eve:        return "Eve (//e aux slot, $C0B0-$C0BF)";
         case Variant::Video7:     return "Video-7 AppleColor RGB (US)";
-        case Variant::RvbGraph:   return "RVB Graph (II/II+, partial)";
+        case Variant::RvbGraph:   return "RVB Graph (II/II+, slot 7)";
     }
     return "?";
 }
@@ -64,7 +64,8 @@ void LeChatMauveCard::setVariant(Variant v)
     // becomes an Eve powers up with all of them off, like the real board.
     eveSwitches_ = 0;
     cpreg_       = 0;
-    rvbMode_     = 0;
+    rvb_         = RvbGraphState{};
+    ++rvbGeneration_;
     mixedWarned_ = false;
     syncAuxShadow();
 }
@@ -103,24 +104,59 @@ void LeChatMauveCard::onReset()
         eveSwitches_ = 0;
         syncAuxShadow();
     }
+
+    // RVB Graph manual p. 13, K: with the registers open, "si vous pressez
+    // la touche RESET au clavier vous revenez au mode de visualisation
+    // usuel (dans ce cas RESET est équivalent à un «POKE -16 144, 0»)";
+    // with K = 8, "la touche RESET n'a plus d'action sur la carte". The
+    // colour registers are not touched either way — RESET is a control
+    // write, and they only matter again once a program sets U.
+    if (variant_ == Variant::RvbGraph && !rvb_.locked) {
+        deviceSelectWrite(0x0, 0x00);
+    }
 }
 
-uint8_t LeChatMauveCard::deviceSelectRead(uint8_t low4)
+uint8_t LeChatMauveCard::deviceSelectRead(uint8_t /*low4*/)
 {
-    // RVB Graph mode strobes — POKE −16144…−16141 in the sources, i.e. any
-    // access decodes the address, read or write.
-    if (variant_ == Variant::RvbGraph && low4 <= 3) rvbMode_ = low4;
-    // Nothing on this board DRIVES the data bus in $C0(8+n)X — the strobes
-    // are address decodes, and the other four variants decode nothing here
-    // at all. A card that answers $FF where it holds no driver hides the
-    // floating bus (CLAUDE.md § Memory map), and `chatmauve` is the
-    // fresh-install slot-7 default, so this covered $C0F0-$C0FF by default.
+    // Nothing on this board DRIVES the data bus in $C0(8+n)X, and a read
+    // latches nothing: the RVB Graph's control register takes a DATA byte
+    // (the text colour), which a read cycle does not put on the bus — the
+    // manual only ever POKEs it. A card that answers $FF where it holds no
+    // driver hides the floating bus (CLAUDE.md § Memory map), and
+    // `chatmauve` is the fresh-install slot-7 default.
     return openBus();
 }
 
-void LeChatMauveCard::deviceSelectWrite(uint8_t low4, uint8_t)
+void LeChatMauveCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
-    if (variant_ == Variant::RvbGraph && low4 <= 3) rvbMode_ = low4;
+    if (variant_ != Variant::RvbGraph) return;
+    // RVB Graph manual pp. 12-13: POKE −16144 + S + U + K, 16·(15 − CT).
+    // −16144 = $C0F0, so the address's low nibble IS the option set —
+    // S = bits 0-1 (0..3), U = bit 2 (0 or 4), K = bit 3 (0 or 8) — and the
+    // data's high nibble is the text colour, inverted. The manual's own
+    // recipes: $C0F4 then $C0FC (p. 9), $C0F5/$C0FD (p. 11), $C0F9 (p. 14).
+    rvb_.s          = static_cast<uint8_t>(low4 & 0x03);
+    rvb_.useRegs    = (low4 & 0x04) != 0;
+    rvb_.locked     = (low4 & 0x08) != 0;
+    rvb_.textColour = static_cast<uint8_t>(15 - (v >> 4));
+    ++rvbGeneration_;
+}
+
+void LeChatMauveCard::slotRomWrite(uint8_t low8, uint8_t v)
+{
+    if (variant_ != Variant::RvbGraph || rvb_.locked) return;
+    // RVB Graph manual pp. 9 and 15-16: POKE −14577 − Bn, 15 − Cn for n = 0
+    // and −14561 / −14545 / −14529 for n = 1..3, i.e. $C70F, $C71F, $C72F,
+    // $C73F minus Bn. So address bits 4-5 name the register pair, the low
+    // address nibble is 15 − Bn and the data's low nibble 15 − Cn. Only
+    // $C700-$C73F is documented; whether the card decodes A6/A7 is not in
+    // the manual, so the rest of the page is left alone. "Registres fermés"
+    // (K = 8) protects them "de toute modification accidentelle" (p. 13).
+    if (low8 >= 0x40) return;
+    const int n = (low8 >> 4) & 0x03;
+    rvb_.b[n] = static_cast<uint8_t>(15 - (low8 & 0x0F));
+    rvb_.c[n] = static_cast<uint8_t>(15 - (v & 0x0F));
+    ++rvbGeneration_;
 }
 
 void LeChatMauveCard::onUnplug()
@@ -289,9 +325,9 @@ LeChatMauveCard::DhgrMode LeChatMauveCard::dhgrModeFor(RenderMode latch) const
         return DhgrMode::COL140;
 
     case Variant::RvbGraph:
-        // The plan's family table: COL140 and BW560 only — no mixed, no
-        // 160. The two mono strobes force the 560-dot monochrome.
-        if (rvbMode_ >= 2) return DhgrMode::BW560;
+        // A ][+ card: the //e's DHGR does not exist for it, and its manual
+        // says nothing about AN3. Kept on the plan's family table — COL140
+        // and BW560 only, no mixed, no 160 — for a //e that hosts it anyway.
         return latch == RenderMode::BW560 ? DhgrMode::BW560 : DhgrMode::COL140;
 
     case Variant::Eve: {
@@ -341,10 +377,11 @@ LeChatMauveCard::HgrMode LeChatMauveCard::hgrMode(bool an3On) const
         return an3On ? HgrMode::LcmColor : HgrMode::FgBg;
 
     case Variant::RvbGraph:
-        // $C0F2/$C0F3 are whole-screen monochrome; the HGR colour
-        // registers (6 programmable of 16) are not modelled — standard LCM
-        // colours until the manual surfaces.
-        return rvbMode_ >= 2 ? HgrMode::Mono : HgrMode::LcmColor;
+        // Its own decoder whatever the switches: monochrome is not a mode
+        // of this card but a choice of colours (manual p. 11: every
+        // register at 15 gives "une image identique à celle obtenue sur un
+        // moniteur noir et blanc", every one at 12 a green monitor).
+        return HgrMode::RvbGraph;
 
     case Variant::Eve: {
         // Table IX-1, AN3 on rows, confirmed by Purplesoft's `& GR 1..5`
@@ -384,10 +421,9 @@ LeChatMauveCard::TextMode LeChatMauveCard::textMode(bool eightyCol, bool an3On) 
         return (!eightyCol && !an3On) ? TextMode::Color : TextMode::Plain;
 
     case Variant::RvbGraph:
-        // $C0F1/$C0F3 turn the text green (white otherwise). The
-        // whole-screen text COLOUR register is not modelled (no address on
-        // record) — colour text renders white.
-        return (rvbMode_ & 1) ? TextMode::Green : TextMode::Plain;
+        // "Les lignes de texte apparaîtront dans la couleur CT" (p. 10):
+        // one colour for the whole text screen, from the control register.
+        return rvb_.textColour == 15 ? TextMode::Plain : TextMode::Tinted;
 
     case Variant::Eve:
         // Manual IV-2.2: TXT16 on + 80COL off → 40-col colour text, hi
@@ -407,7 +443,7 @@ uint32_t LeChatMauveCard::renderStateKey() const
          | (static_cast<uint32_t>(mode)          << 4)
          | (static_cast<uint32_t>(eveSwitches_)  << 8)
          | (invertBit7_ ? (1u << 16) : 0u)
-         | (static_cast<uint32_t>(rvbMode_)      << 17);
+         | (static_cast<uint32_t>(rvbGeneration_ & 0x7FFF) << 17);
 }
 
 // ─── Snapshot ────────────────────────────────────────────────────────────
@@ -418,20 +454,25 @@ void LeChatMauveCard::appendSnapshotState(std::vector<uint8_t>& out) const
     // were the $C0B8/$C0BA pair under their old, wrong labels). Both are
     // written by the guest through $C0Bx, so a rewind past a `STA $C0B9`
     // has to put them back.
-    out.push_back('C'); out.push_back('M'); out.push_back(4);
+    // v5: the RVB Graph's register file replaces v4's mode strobe.
+    out.push_back('C'); out.push_back('M'); out.push_back(5);
     out.push_back(fifo);
     out.push_back(static_cast<uint8_t>(mode));
     out.push_back(an3Prev ? 1 : 0);
     out.push_back(eightyColLatched ? 1 : 0);
     out.push_back(eveSwitches_);
     out.push_back(cpreg_);
-    out.push_back(rvbMode_);          // v4: the RVB Graph mode strobe
+    out.push_back(static_cast<uint8_t>(rvb_.s | (rvb_.useRegs ? 0x04 : 0) |
+                                       (rvb_.locked ? 0x08 : 0)));
+    out.push_back(rvb_.textColour);
+    for (int n = 0; n < 4; ++n) out.push_back(rvb_.c[n]);
+    for (int n = 0; n < 4; ++n) out.push_back(rvb_.b[n]);
 }
 
 void LeChatMauveCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     if (len < 7 || data[0] != 'C' || data[1] != 'M' ||
-        data[2] < 1 || data[2] > 4) return;
+        data[2] < 1 || data[2] > 5) return;
     fifo             = static_cast<uint8_t>(data[3] & 0b11);
     mode             = static_cast<RenderMode>(data[4] & 0b11);
     an3Prev          = data[5] != 0;
@@ -445,7 +486,20 @@ void LeChatMauveCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     } else if (data[2] >= 3 && len >= 9) {
         eveSwitches_ = data[7];
         cpreg_       = data[8];
-        if (data[2] >= 4 && len >= 10) rvbMode_ = data[9] & 0x03;
+        // v4's byte 9 was the old four-strobe model, which the manual
+        // disproved; a v4 blob restores the power-on register file.
+        if (data[2] >= 5 && len >= 19) {
+            rvb_.s          = static_cast<uint8_t>(data[9] & 0x03);
+            rvb_.useRegs    = (data[9] & 0x04) != 0;
+            rvb_.locked     = (data[9] & 0x08) != 0;
+            rvb_.textColour = static_cast<uint8_t>(data[10] & 0x0F);
+            for (int n = 0; n < 4; ++n) {
+                rvb_.c[n] = static_cast<uint8_t>(data[11 + n] & 0x0F);
+                rvb_.b[n] = static_cast<uint8_t>(data[15 + n] & 0x0F);
+            }
+        } else {
+            rvb_ = RvbGraphState{};
+        }
     }
     if (!isEve()) eveSwitches_ = 0;
     // Snapshot-load and rewind move cycleCounter backwards; edges recorded
@@ -455,5 +509,6 @@ void LeChatMauveCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // this clock-jump reason — this ring is the card's parallel log).
     latchRingHead_ = 0;
     latchRingSize_ = 0;
+    ++rvbGeneration_;
     syncAuxShadow();
 }

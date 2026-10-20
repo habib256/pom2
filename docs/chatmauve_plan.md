@@ -8,10 +8,9 @@ POM2's `LeChatMauveCard` and the Chat Mauve render paths in
 carries where it comes from, and each gap says what would close it.*
 
 > **Status (checked against the code 2026-10-06).** P0, P1, P2 shipped;
-> P3 closed as bounded; P4 partial (the RVB Graph variant with its four
-> `$C0F0-$C0F3` strobes); P6 first rung (the mode latch beam-races) plus
-> the live switch/CPREG panel; P7 done. Open: P4's registers (gated on the
-> manual), P5, the rest of P6 (dot-level `$C0Bx`, TTL-RGBI palette), and
+> P3 closed as bounded; P4 done 2026-10-20 (the RVB Graph from its
+> manual); P6 first rung (the mode latch beam-races) plus
+> the live switch/CPREG panel; P7 done. Open: P5, the rest of P6 (dot-level `$C0Bx`, TTL-RGBI palette), and
 > the Extasie / DIX / PoP goldens. § 0 and § 2.2 describe the model as it
 > was *before* the plan. The living description is
 > [`DEV.md` § Le Chat Mauve](../DEV.md#le-chat-mauve-lechatmauvecard) and
@@ -54,8 +53,9 @@ measurements on a //c adapter and, through a friend, an Eve (AppleWin
 | DHGR 160×192 chunky (Video-7 / Apple RGB only) | — | — | — | — |
 | Double lo-res | — | **✗** | ✓ | ✓ |
 | TEXT colour (fg/bg per character, aux byte) | whole-screen register | ✓ (TXT16) | — | — |
-| TEXT green monochrome | ✓ ($C0F1/3) | ✓ (TXTGREEN) | — | — |
-| Registers | `$C0F0-$C0F3` (+ HGR colour regs) | `$C0B0-$C0BF` | none | none |
+| TEXT green monochrome | CT = 12 | ✓ (TXTGREEN) | — | — |
+| HGR colours programmable (C0-C3 isolated, B0-B3 runs), dotted, 4-colour | ✓ | — | — | — |
+| Registers | `$C0F0-$C0FF` + `$C700-$C73F` | `$C0B0-$C0BF` | none | none |
 | Mode latch (AN3 clocks /80COL) | ? | ✓ | ✓ | ✓ |
 
 Two hardware facts that matter for a model:
@@ -86,7 +86,7 @@ started.*
 ### 2.1 After P0-P2 (2026-09-01)
 
 `LeChatMauveCard` carries a **variant** — Féline, Adaptateur //c, Eve,
-Video-7, and since 2026-09-02 a partial RVB Graph (§ 5, P4) — and answers three questions for the renderers: `dhgrMode()`,
+Video-7, and the RVB Graph (§ 3.6, P4 — complete since 2026-10-20) — and answers three questions for the renderers: `dhgrMode()`,
 `hgrMode(an3On)`, `textMode(eightyCol, an3On)`. The card owns the latch, the
 Eve's switch byte and CPREG; the pixel rules live in `Apple2Display`.
 
@@ -103,13 +103,13 @@ Eve's switch byte and CPREG; the pixel rules live in `Apple2Display`.
 | SPEC1 / SPEC2 | 5-dot window: `11011` → black (SPEC1), plus `00100` → white (SPEC2); alternating runs stay coloured | goldens `cm/eve/hgr-spec*` (rule from the manual's prose, to confirm against the PLA in P3) |
 | DASH | rendered as HRAPPLE — P3 | — |
 | Variant selection | one catalog key; `chatmauve_variant` setting (`feline` \| `iic` \| `eve` \| `video7` \| `rvb` — `LeChatMauveCard.cpp:29-35`). Chosen in **Slot Configuration** (a "model" combo under the card's row, staged + applied with the slots) or live in the Chat Mauve panel; //c-class connectors are hardware-fixed to the Adaptateur IIc at plug time | — |
-| Snapshot | blob v3 = latch + switch byte + CPREG; v2's two toggles map onto TXT16 / TXTGREEN. Now **v4** (+ the RVB Graph mode strobe, `LeChatMauveCard.cpp:421-428`) | smoke § 12 |
+| Snapshot | blob v3 = latch + switch byte + CPREG; v2's two toggles map onto TXT16 / TXTGREEN. **v5** carries the RVB Graph's control byte, CT and eight colour registers (a v4 blob's old mode strobe restores power-on registers) | smoke § 12, § 13 |
 
-The mode latch now beam-races (P6 first rung); RVB Graph exists with its
-four mode strobes (P4 partial); P3 is closed as bounded, rather than waiting
+The mode latch now beam-races (P6 first rung); the RVB Graph is complete
+from its manual (P4); P3 is closed as bounded, rather than waiting
 for an implementation inferred from insufficient PLA evidence.
 Purplesoft's screens are frozen by `purplesoft_eve_screens`.
-Still open: dot-level `$C0Bx`, P5, the RVB Graph's registers, Extasie /
+Still open: dot-level `$C0Bx`, P5, Extasie /
 DIX / PoP goldens, the TTL-RGBI palette.
 
 ### 2.2 As found, 2026-09-01 morning
@@ -459,14 +459,46 @@ goldens) until a schematic or board trace surfaces.
 
 ### 3.6 The RVB Graph (II / II+)
 
-Registers at the slot-7 device select (system-cfg forum, from a Sonotec
-clone's analysis): `POKE -16144,0` ($C0F0) colours + white text,
-`-16143` ($C0F1) colours + green text, `-16142` ($C0F2) monochrome white,
-`-16141` ($C0F3) monochrome green. fenarinarsa: a whole-screen **text
-colour register** (any of the 16 GR colours), **HGR colour registers**
-(choose the 6 HGR colours among the 16) and a **dotted-line** option.
-Output is RGBI over a 74LS164 + 74LS175 (four dots at 14 MHz). The manual
-has not been found online; the HGR colour registers stay a gap.
+Source: its *Manuel de Référence* (§ 7). The OCR is unreliable ("81" for
+B1, "8" for B, "Cî" for CT); every fact below was read off the scan, page
+numbers as printed.
+
+**Hardware (ch. I, V).** Slot 7 only (SYNC pin 19, COLOR REF pin 35, 14 MHz
+pin 24, TEXT pin 23). The user pulls the motherboard's 9334 / 74LS259
+display soft-switch latch and plugs the card's 16-pin ribbon into its
+socket; a wire brings composite video from the auxiliary video connector.
+Outputs: Péritel on an 8-pin header (three trim pots for R, G, B) and an
+Apple /// style TTL header (XRGB1/2/4/8). "Brevet déposé".
+
+**Control register (pp. 12-14):** `POKE −16144 + S + U + K, 16·(15 − CT)`.
+−16144 = `$C0F0` (p. 16), so the low address nibble carries the options:
+
+| | Values | Meaning |
+|---|---|---|
+| CT | data high nibble = 15 − CT | colour of every text line (the 16 lo-res colours, table p. 8) |
+| S | 0-3 (bits 0-1) | 0 colour lines continuous; 1 dotted ("tout point représenté en mémoire par un 0 apparaît noir"); 2 continuous, but runs take C0-C3 by position — "la couleur B n'apparaît plus"; 3 = 2, dotted |
+| U | 0 or 4 (bit 2) | 0 usual colours, and "usually white" HGR dots take CT; 4 the colour registers |
+| K | 0 or 8 (bit 3) | 0 registers open, RESET = `POKE −16144,0`; 8 registers closed, RESET has no effect on the card |
+
+**Colour registers (pp. 9, 15-16):** `POKE −14577 − Bn, 15 − Cn`, then
+−14561, −14545, −14529 for n = 1..3 — `$C70F`, `$C71F`, `$C72F`, `$C73F`
+minus Bn. Write-only, undefined at power-on, written while K = 0. n is the
+dot's position: 0 even column bit 7 = 0 (usually violet), 1 odd/0 (green),
+2 even/1 (blue), 3 odd/1 (orange). **Cn** colours an isolated dot; **Bn**
+a run of 2+ lit dots whose leftmost dot is at position n. B0 = B1 = B2 = B3
+is the five-colour system of ch. III; 8 colours + black otherwise. HCOLOR
+1 → C1, 2 → C0, 5 → C3, 6 → C2 (p. 11). The usual colours are C = 3, 12,
+6, 9 and B = 15 (p. 10, Exemple 1). Monochrome is a choice of colours:
+everything 15 = a black-and-white monitor, everything 12 = a green one
+(p. 11).
+
+**What POM2 adds (not in the manual):** a 0 between two lit dots is
+filled with an isolated neighbour's Cn when S is even (the manual only
+says alternating lines look continuous); a read of `$C0Fx` latches
+nothing (the register takes a data byte); only `$C700-$C73F` is decoded;
+the power-on registers hold the usual colours. Implementation:
+`LeChatMauveCard::deviceSelectWrite` / `slotRomWrite`,
+`Apple2Display::renderHiResRvbGraph`.
 
 ### 3.7 Palette, outputs, timing
 
@@ -604,17 +636,14 @@ straight out of the fuse map — the Eve decoder becomes the PLA itself.
 Cross-check with Purplesoft's `&PLOT` for the COL280 bit order. Where the
 PLA leaves a choice (rev A palette, the "blanked" row), document it.
 
-**P4 — RVB Graph (1 d, gated on its manual). ◔ Partial 2026-09-02** —
-fifth variant `rvb` (`LeChatMauveCard::Variant::RvbGraph`): the four mode
-strobes `$C0F0-$C0F3` at the card's device select (colour + white text,
-colour + green text, mono white, mono green), COL140/BW560 by the latch,
-no mixed, no 160. The text-colour register, the HGR colour registers and
-the dotted-line option stay unmodelled — still gated on the manual.
-
-*As planned:* `$C0F0-$C0F3`, the text
-colour register, the HGR colour registers and dotted lines, on the II+
-profiles. Blocked until the RVB Graph manual or a board photo surfaces;
-the plan records exactly which forum threads to ask.
+**P4 — RVB Graph. ✓ Done 2026-10-20**, from its manual (§ 3.6). The
+2026-09-02 version modelled four `$C0F0-$C0F3` "mode strobes" taken from a
+forum thread that turned out to describe another card; the manual shows
+those four addresses are the S values of one control register. Now
+modelled: the control register (S, U, K, text colour CT), the eight colour
+registers, dotted lines, the four-colour system, the K lock and its RESET
+rule. Pinned by `le_chat_mauve_smoke` § 13, which replays the manual's
+own POKEs.
 
 **P5 — //c adapter quirk (½-1 d, optional). Not started** (the
 `IIcAdapter` variant still behaves as the Féline, `LeChatMauveCard.h:32-34`).
@@ -662,7 +691,8 @@ Purplesoft need.
 | SPEC1 / SPEC2 / DASH exact rules — SPEC1/2 modelled from the manual's prose with a 5-dot window, DASH as HRAPPLE | the PLA (P3) |
 | PLA pin assignment | consistency search (P3); a board photo of the Eve would settle it in an hour |
 | Eve rev B palette (rev A is rev B rotated, see § 1) | a capture from an owner (system-cfg, WDA forums) |
-| RVB Graph HGR colour registers | its manual — not found online |
+| ~~RVB Graph HGR colour registers~~ **Closed 2026-10-20**: its manual (§ 3.6) | — |
+| RVB Graph: decoding of `$C740-$C7FF`, a read of `$C0Fx`, the exact fill of a 0 between two runs | a board, or a schematic |
 | //c adapter internals | a schematic exists in a clone thread on forum.silicium.org (behind a bot wall; readable with a browser) |
 | Mixed-mode boundary: "cut / repeat" vs "next quadruplet" | both are reproduced by the mux+latch model; Extasie's own images decide (P1) |
 
@@ -683,6 +713,9 @@ Purplesoft need.
   `PaletteRGB_Feline`).
 - Video-7, US patent 4,631,692 *RGB interface* (FIG. 1 shift register,
   the four modes, the MIX mux per seven 14 MHz periods).
-- forum.system-cfg.com t=9395 (RVB Graph / Sonotec `$C0F0-$C0F3`).
+- *RVB Graph — Manuel de Référence pour Apple II plus*, Le Chat Mauve,
+  22 pp. scan (retronik.silicium.org, uploaded 2024): https://retronik.silicium.org/DOCUMENTS/Info/Apple_II/Le%20Chat%20Mauve%20RVB%20Graph%20Manuel%20de%20R%C3%A9f%C3%A9rence%20pour%20Apple%20II%20plus%20%28Le%20Chat%20Mauve%29.pdf
+- forum.system-cfg.com t=9395 — an RGB card (Sonotec?) with a traced
+  schematic; **not** the RVB Graph, despite what § 3.6 used to say.
 - MAME `apple2video.cpp` `dhgr_update` (the byte-level Video-7 rules POM2
   ports today).

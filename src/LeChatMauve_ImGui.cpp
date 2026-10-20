@@ -289,6 +289,20 @@ LeChatMauve_ImGui::FrameResult LeChatMauve_ImGui::render(
                             snap.auxShadowHgr  ? "ON" : "off");
     }
 
+    // ─── RVB Graph registers ($C0F0-$C0FF, $C700-$C73F) ─────────────────
+    if (snap.variant == LeChatMauveCard::Variant::RvbGraph) {
+        static const char* kS[4] = { "continuous", "dotted", "4 colours",
+                                     "4 colours, dotted" };
+        const auto& g = snap.rvb;
+        ImGui::Separator();
+        ImGui::TextDisabled("RVB Graph ($C0F0+S+U+K, $C70F-Bn..$C73F-Bn):");
+        ImGui::Text("Text colour CT = %d   S = %d (%s)", g.textColour, g.s, kS[g.s & 3]);
+        ImGui::Text("U = %s   K = %s", g.useRegs ? "4 (registers)" : "0 (usual colours)",
+                    g.locked ? "8 (locked, RESET ignored)" : "0 (open)");
+        ImGui::Text("C0-C3 = %2d %2d %2d %2d   B0-B3 = %2d %2d %2d %2d",
+                    g.c[0], g.c[1], g.c[2], g.c[3], g.b[0], g.b[1], g.b[2], g.b[3]);
+    }
+
     ImGui::Separator();
     ImGui::TextDisabled("Notes:");
     ImGui::TextDisabled(" - HGR: LCM rule (2-bit cell, 3-bit window), no fringing");
@@ -297,6 +311,7 @@ LeChatMauve_ImGui::FrameResult LeChatMauve_ImGui::render(
     ImGui::TextDisabled(" - Feline / //c: AN3 off = HGR mono; no color text");
     ImGui::TextDisabled(" - Eve: table IX-1 (HR1-3), TXT16 hi=bg, CPREG -> aux");
     ImGui::TextDisabled(" - Video-7: F/B text + F/B HGR (hi=fg), 160 chunky");
+    ImGui::TextDisabled(" - RVB Graph: text colour, C0-C3/B0-B3 HGR, dotted, 4-colour");
     ImGui::TextDisabled(" - Mode actif via menu Display -> Le Chat Mauve");
 
     ImGui::End();

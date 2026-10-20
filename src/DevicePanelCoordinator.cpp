@@ -190,6 +190,7 @@ DevicePanelCoordinator::captureChatMauve() const
         snapshot.dhgrMode = card->dhgrMode();
         snapshot.eveSwitches = card->eveSwitches();
         snapshot.cpreg = card->cpreg();
+        snapshot.rvb = card->rvbGraph();
         snapshot.auxShadowText = state.memory().auxShadowText();
         snapshot.auxShadowHgr = state.memory().auxShadowHgr();
     }

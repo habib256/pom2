@@ -726,7 +726,7 @@ int main()
         eve.setCpreg(0x5A);
         std::vector<uint8_t> blob;
         eve.appendSnapshotState(blob);
-        assert(blob.size() == 10 && blob[2] == 4);
+        assert(blob.size() == 19 && blob[2] == 5);
         LeChatMauveCard back(7, LeChatMauveCard::Variant::Eve);
         back.loadSnapshotState(blob.data(), blob.size());
         assert(back.currentMode() == LeChatMauveCard::RenderMode::BW560);
@@ -742,13 +742,25 @@ int main()
         assert(fel.eveSwitches() == 0);
     }
 
-    // ─── 13. RVB Graph (partial): the four $C0F0-$C0F3 mode strobes ──────
+    // ─── 13. RVB Graph: the Manuel de Référence, chapters III-IV ──────────
     //
-    // forum.system-cfg t=9395 (Sonotec clone): POKE −16144…−16141 =
-    // colour + white text / colour + green text / mono white / mono green,
-    // decoded at the card's own device select (slot 7 here). The colour
-    // registers stay unmodelled (no manual) — docs/chatmauve_plan.md § 3.6.
+    // Every write below is a POKE the manual prints (pp. 9-16, checked on the
+    // scan, not the OCR): the control register $C0F0 + S + U + K with data
+    // 16·(15 − CT), and the colour registers $C70F/$C71F/$C72F/$C73F − Bn
+    // with data 15 − Cn. Colours are the lo-res table (chapter II).
     {
+        // The lo-res colours the manual's examples use (Apple2Display's
+        // table is private; these are its entries).
+        const uint32_t kMagenta = 0xFFD11AAAu;   //  3 "violet"
+        const uint32_t kBlue    = 0xFFB58A00u;   //  6
+        const uint32_t kOrange  = 0xFF4772FFu;   //  9
+        const uint32_t kPink    = 0xFFCF7AFFu;   // 11 "rose"
+        const uint32_t kGreen   = 0xFF2CE66Fu;   // 12 "vert clair"
+        const uint32_t kYellow  = 0xFF7BF6FFu;   // 13
+        const uint32_t kDkBlue  = 0xFF830700u;   //  2
+        const uint32_t kBrown   = 0xFF005F7Au;   //  8
+        const uint32_t kRed     = 0xFF4C12ACu;   //  1
+
         Memory mem;                       // a ][+-class machine: no IIe mode
         Apple2Display display;
         auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::RvbGraph);
@@ -757,39 +769,150 @@ int main()
         display.setChatMauveCard(raw);
         display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
 
+        // The manual's subroutine: open with K = 0, write the four
+        // registers, close with K = 8 (p. 15, lines 1000-1500).
+        auto program = [&](int s, int u, int ct, const int c[4], const int b[4]) {
+            mem.memWrite(static_cast<uint16_t>(0xC0F0 + s + u), static_cast<uint8_t>(16 * (15 - ct)));
+            for (int n = 0; n < 4; ++n)
+                mem.memWrite(static_cast<uint16_t>(0xC70F + 0x10 * n - b[n]),
+                             static_cast<uint8_t>(15 - c[n]));
+            mem.memWrite(static_cast<uint16_t>(0xC0F8 + s + u), static_cast<uint8_t>(16 * (15 - ct)));
+        };
+        auto hgrDot = [&](int x) { display.render(mem); return *pixelAt(display, 2 * x, 0); };
+
         (void)mem.memRead(0xC050); (void)mem.memRead(0xC057); (void)mem.memRead(0xC054);
+        (void)mem.memRead(0xC052);
         clearHgrLine(mem, 0);
-        writeHgrByte(mem, 0, 0, 0x01);    // a lone dot: magenta under LCM
-        const uint32_t magenta = pack(0xAA, 0x1A, 0xD1);
 
-        assert(raw->rvbMode() == 0);      // power-on: colour + white text
-        display.render(mem);
-        assert(*pixelAt(display, 0, 0) == magenta);
+        // Power-on = the usual display: "POKE −16144, 0" (p. 11). Isolated
+        // dots take the usual colours by position, a run of two is white.
+        assert(raw->rvbGraph().textColour == 15 && !raw->rvbGraph().useRegs);
+        writeHgrByte(mem, 0, 0, 0x01);  assert(hgrDot(0) == kMagenta);   // even, bit 7 = 0
+        writeHgrByte(mem, 0, 0, 0x02);  assert(hgrDot(1) == kGreen);     // odd,  bit 7 = 0
+        writeHgrByte(mem, 0, 0, 0x81);  assert(hgrDot(0) == kBlue);      // even, bit 7 = 1
+        writeHgrByte(mem, 0, 0, 0x82);  assert(hgrDot(1) == kOrange);    // odd,  bit 7 = 1
+        writeHgrByte(mem, 0, 0, 0x03);
+        assert(hgrDot(0) == kWhite && hgrDot(1) == kWhite && hgrDot(2) == kBlack);
 
-        (void)mem.memRead(0xC0F2);        // mono white
-        assert(raw->rvbMode() == 2);
-        display.render(mem);
-        assert(*pixelAt(display, 0, 0) == kWhite && *pixelAt(display, 2, 0) == kBlack);
+        // A read latches nothing: the register takes a DATA byte.
+        (void)mem.memRead(0xC0F5);
+        assert(raw->rvbGraph().s == 0 && !raw->rvbGraph().useRegs);
 
-        mem.memWrite(0xC0F0, 0);          // back to colour (write decodes too)
-        assert(raw->rvbMode() == 0);
-        display.render(mem);
-        assert(*pixelAt(display, 0, 0) == magenta);
+        // Exemple 1 (p. 10): the usual colours, pink text.
+        {
+            const int c[4] = { 3, 12, 6, 9 }, b[4] = { 15, 15, 15, 15 };
+            program(0, 4, 11, c, b);
+            const auto& g = raw->rvbGraph();
+            assert(g.useRegs && g.locked && g.s == 0 && g.textColour == 11);
+            assert(g.c[0] == 3 && g.c[1] == 12 && g.c[2] == 6 && g.c[3] == 9);
+            assert(g.b[0] == 15 && g.b[3] == 15);
+        }
+        writeHgrByte(mem, 0, 0, 0x01);  assert(hgrDot(0) == kMagenta);
+        writeHgrByte(mem, 0, 0, 0x03);  assert(hgrDot(0) == kWhite);
 
-        // Green text: an inverse space turns green, normal text stays black.
+        // Exemple 2 (p. 10): C0 = 13, the violet dots turn yellow.
+        {
+            const int c[4] = { 13, 12, 6, 9 }, b[4] = { 15, 15, 15, 15 };
+            program(0, 4, 15, c, b);
+        }
+        writeHgrByte(mem, 0, 0, 0x01);  assert(hgrDot(0) == kYellow);
+
+        // K = 8 (p. 13): the registers are closed — a stray $C700 write
+        // changes nothing — and RESET leaves the card alone.
+        mem.memWrite(0xC700, 0x00);
+        assert(raw->rvbGraph().c[0] == 13 && raw->rvbGraph().b[0] == 15);
+        raw->onReset();
+        assert(raw->rvbGraph().useRegs && raw->rvbGraph().locked);
+
+        // Eight colours (chapter IV § II, p. 15): a run takes Bn of its
+        // LEFTMOST dot's position.
+        {
+            const int c[4] = { 3, 12, 6, 9 }, b[4] = { 1, 2, 8, 13 };
+            program(0, 4, 15, c, b);
+        }
+        writeHgrByte(mem, 0, 0, 0x03);                       // x0-1: starts even, bit 7 = 0
+        assert(hgrDot(0) == kRed && hgrDot(1) == kRed);      // B0
+        writeHgrByte(mem, 0, 0, 0x06);                       // x1-2: starts odd
+        assert(hgrDot(1) == kDkBlue && hgrDot(2) == kDkBlue);// B1
+        writeHgrByte(mem, 0, 0, 0x83);  assert(hgrDot(0) == kBrown);   // B2
+        writeHgrByte(mem, 0, 0, 0x86);  assert(hgrDot(1) == kYellow);  // B3
+
+        // S (p. 13). An alternating line ($55: dots 0, 2, 4, 6) is a C0 line:
+        // continuous with S = 0, dotted with S = 1.
+        {
+            const int c[4] = { 3, 12, 6, 9 }, b[4] = { 15, 15, 15, 15 };
+            writeHgrByte(mem, 0, 0, 0x55);
+            program(0, 4, 15, c, b);
+            assert(hgrDot(0) == kMagenta && hgrDot(1) == kMagenta && hgrDot(2) == kMagenta);
+            program(1, 4, 15, c, b);
+            assert(hgrDot(0) == kMagenta && hgrDot(1) == kBlack && hgrDot(2) == kMagenta);
+            // S = 2: "la couleur B n'apparaît plus" — a run of three is
+            // C0 C1 C0 by position, and still continuous between lines.
+            program(2, 4, 15, c, b);
+            writeHgrByte(mem, 0, 0, 0x07);
+            assert(hgrDot(0) == kMagenta && hgrDot(1) == kGreen && hgrDot(2) == kMagenta);
+            // "C1 sur fond C0": one odd dot set in a C0 line.
+            writeHgrByte(mem, 0, 0, 0x5D);              // 1 0 1 1 1 0 1
+            assert(hgrDot(1) == kMagenta && hgrDot(3) == kGreen && hgrDot(5) == kMagenta);
+            // S = 3: the same, dotted.
+            program(3, 4, 15, c, b);
+            writeHgrByte(mem, 0, 0, 0x55);
+            assert(hgrDot(1) == kBlack);
+        }
+
+        // U = 0 ties the white of HGR to CT (p. 13); POKE −16135,0 (p. 14)
+        // = $C0F9: usual colours, dotted, locked, white text.
+        mem.memWrite(0xC0F0, static_cast<uint8_t>(16 * (15 - 12)));   // U = 0, CT = 12
+        writeHgrByte(mem, 0, 0, 0x03);  assert(hgrDot(0) == kGreen);
+        mem.memWrite(0xC0F9, 0x00);
+        assert(raw->rvbGraph().s == 1 && !raw->rvbGraph().useRegs &&
+               raw->rvbGraph().locked && raw->rvbGraph().textColour == 15);
+        writeHgrByte(mem, 0, 0, 0x55);  assert(hgrDot(1) == kBlack);
+
+        // The black-and-white monitor of p. 11: $C0F5, every register 15,
+        // $C0FD. Every lit dot white, every 0 black.
+        {
+            const int c[4] = { 15, 15, 15, 15 }, b[4] = { 15, 15, 15, 15 };
+            program(1, 4, 15, c, b);
+            writeHgrByte(mem, 0, 0, 0x55);
+            assert(hgrDot(0) == kWhite && hgrDot(1) == kBlack && hgrDot(2) == kWhite);
+        }
+        // …and the green one: everything 12, text included.
+        {
+            const int c[4] = { 12, 12, 12, 12 }, b[4] = { 12, 12, 12, 12 };
+            program(1, 4, 12, c, b);
+            assert(hgrDot(0) == kGreen);
+        }
+
+        // Text in CT (p. 10): an inverse space is a block of text colour.
         (void)mem.memRead(0xC051);
         mem.memWrite(loresAddr(0), 0x20);
-        mem.memWrite(loresAddr(1), 0xA0);
-        const uint32_t green = pack(0x33, 0xFF, 0x33);
         display.render(mem);
-        assert(*pixelAt(display, 0, 0) == kWhite);      // $C0F0: white text
-        (void)mem.memRead(0xC0F3);        // mono green
-        assert(raw->rvbMode() == 3);
+        assert(*pixelAt(display, 0, 0) == kGreen);
+        {
+            const int c[4] = { 3, 12, 6, 9 }, b[4] = { 15, 15, 15, 15 };
+            program(0, 4, 11, c, b);
+        }
         display.render(mem);
-        assert(*pixelAt(display, 0, 0) == green);
-        (void)mem.memRead(0xC0F1);        // colour + green text
+        assert(*pixelAt(display, 0, 0) == kPink);
+
+        // Snapshot v5 carries the whole register file.
+        std::vector<uint8_t> blob;
+        raw->appendSnapshotState(blob);
+        LeChatMauveCard copy(7, LeChatMauveCard::Variant::RvbGraph);
+        copy.loadSnapshotState(blob.data(), blob.size());
+        assert(copy.rvbGraph().textColour == 11 && copy.rvbGraph().useRegs &&
+               copy.rvbGraph().locked && copy.rvbGraph().c[1] == 12 &&
+               copy.rvbGraph().b[2] == 15);
+
+        // K = 0: RESET is "POKE −16144, 0" — usual display, white text. The
+        // registers keep their bytes.
+        mem.memWrite(0xC0F4, static_cast<uint8_t>(16 * (15 - 11)));
+        raw->onReset();
+        assert(raw->rvbGraph().textColour == 15 && !raw->rvbGraph().useRegs &&
+               raw->rvbGraph().s == 0 && raw->rvbGraph().c[0] == 3);
         display.render(mem);
-        assert(*pixelAt(display, 0, 0) == green);
+        assert(*pixelAt(display, 0, 0) == kWhite);
     }
 
     // ─── 14. ColorNTSC fallback when card not plugged ─────────────────────
@@ -811,45 +934,7 @@ int main()
 
     std::printf("Le Chat Mauve smoke: OK (FIFO, LCM HGR, BW560, lo-res grays, bit7 invert, "
                 "Eve $C0B0-$C0BF + CPREG auto-write + TXT16 + TXTGREEN + table IX-1, "
-                "AN3-off per variant, RVB Graph $C0F0-3, snapshot v4, NTSC fallback)\n");
-    // ── RVB Graph $C0F3 is WHOLE-SCREEN monochrome green ────────────────────
-    // -16141 (plan § 3.6) turns the picture green, not just the text: the
-    // graphics rows were already white (hgrMode → Mono) and only the text
-    // band was remapped, so the mode came out green text over a white
-    // picture.
-    {
-        Memory mem;
-        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::RvbGraph);
-        LeChatMauveCard* raw = card.get();
-        raw->setMemory(&mem);
-        mem.slotBus().plug(7, std::move(card));
-        Apple2Display display;
-        display.setChatMauveCard(raw);
-        display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
-        for (uint32_t a = 0x2000; a < 0x4000; ++a) mem.memWrite(static_cast<uint16_t>(a), 0x7F);
-        for (uint16_t a = 0x0400; a < 0x0800; ++a) mem.memWrite(a, 0xC1);   // inverse-ish glyph
-        (void)mem.memRead(0xC050); (void)mem.memRead(0xC053); (void)mem.memRead(0xC057);
-        (void)mem.memRead(0xC0F3);
-        assert(raw->rvbMode() == 3);
-        display.render(mem);
-        const uint32_t gfx = *pixelAt(display, 20, 50);
-        const uint32_t txt = *pixelAt(display, 20, 170);
-        // Find a lit pixel on each row rather than trusting one x.
-        auto litOn = [&](int y) {
-            for (int x = 0; x < display.width(); ++x) {
-                const uint32_t p = *pixelAt(display, x, y);
-                if ((p & 0x00FFFFFF) != 0) return p;
-            }
-            return uint32_t{0};
-        };
-        (void)gfx; (void)txt;
-        const uint32_t gLit = litOn(50), tLit = litOn(170);
-        assert(gLit != 0 && tLit != 0);
-        assert(gLit == tLit && "monochrome green must tint the picture, not only the text");
-        assert(((gLit >> 8) & 0xFF) > (gLit & 0xFF) && "…and green it is");
-        std::printf("  RVB Graph $C0F3 monochrome green covers the picture OK\n");
-    }
-
+                "AN3-off per variant, RVB Graph registers, snapshot v5, NTSC fallback)\n");
     // ── The card drives nothing on $C0Fx / $C7xx: the floating bus stays ───
     {
         Memory mem;
