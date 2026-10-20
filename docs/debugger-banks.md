@@ -40,6 +40,48 @@ and pending stops while preserving user breakpoints and watches. With all
 instrumentation disabled, the ordinary CPU and production memory fast paths
 remain unchanged.
 
+## Run control
+
+**Step** (F7) executes one instruction. **Step Over** (F8) runs a JSR until
+its outer RTS returns; other opcodes take a plain step. It decodes the current
+CPU mapping without reading soft switches. Inline ProDOS/SmartPort arguments,
+recursion and stack wrap are handled by following the return frame rather
+than assuming the next instruction is at PC+3. **Step Out** follows the current
+subroutine's return. These shortcuts are handled while the debugger panel is
+open. **Run To Cursor** uses the selected disassembly instruction and bank.
+
+A breakpoint stops before its instruction executes. Resuming with **Run**, the
+toolbar or another run control lets that instruction execute once before the
+same breakpoint can fire again. A watch stops after the access and does not
+suppress a breakpoint on the following instruction. **Stop**, or another
+debugger stop, cancels pending Step Over, Step Out and Run To Cursor operations;
+user breakpoints and watches remain installed.
+
+When a SoftCard Z80 owns the bus, a plain Step advances one Z80 instruction;
+the displayed registers/disassembly and breakpoint/profiling hooks still
+refer to the 6502. Once the card releases the bus, remaining slice time returns
+to the common 6502 debugger path: stops, resuming a previous hit and detaching
+an idle hook work there as on an ordinary slice. Step Over and Step Out track
+6502 call frames, so they do not provide Z80 call stepping.
+
+## Memory viewer
+
+The memory viewer shows the current 64 KiB CPU read mapping. **Goto** takes
+a hexadecimal address; bank qualifiers in breakpoint/watch fields filter
+stops and do not select a different mapping for the viewer. **Search** accepts
+hex bytes such as `A9 FF 48`, or an ASCII string. ASCII matching also accepts
+characters with their high bit set. Searches continue after the previous
+match, or from the displayed start address, and stop at `$FFFF` without wrapping.
+
+Double-click a hex byte, enter its replacement and press Enter to edit;
+Escape cancels. Edits go through the CPU write mapping and normal bus writes,
+so RAMRD and RAMWRT can make the displayed byte and edited bank differ.
+ROM protection and I/O side effects still apply. **Undo** retains up to 256
+edits and records the previous byte at the write target. **Undo** and **Redo**
+write the recorded value through the mapping active when clicked; they do
+not restore bank switches or reverse device side effects. Pause execution
+and keep the mapping stable when editing banked RAM.
+
 ## Bank-qualified symbols
 
 Existing AppleWin, VICE/cc65 label files and assignments remain supported.
@@ -84,10 +126,13 @@ valid map. File reads happen outside the emulator state lock.
 This format is a correspondence table for assembler/linker tooling to emit;
 cc65 `.lbl` files provide symbols only. Native cc65 `.dbg` import, variable
 inspection, stack locals and expression evaluation are not implemented.
-The disassembly always shows the live CPU mapping. Private RAM/ROM banks
-inside individual cards and secondary shadow writes are not distinguished;
-their bus window is identified by slot. Z80 instructions and other card CPU
-execution remain outside the 6502 debugger's profiling/breakpoint hooks.
+The disassembly and memory viewer resolve the current CPU RAM/ROM mapping
+without bus side effects. Soft-switch and //c+ MIG windows show the flat
+mirror; card windows use side-effect-free card peeks where available and
+otherwise show the mirror. Private RAM/ROM banks inside individual cards
+and secondary shadow writes are not distinguished; their bus window is
+identified by slot. Z80 instructions and other card CPU execution remain
+outside the 6502 debugger's profiling/breakpoint hooks.
 
 Implementation: `DebugAddress.h`, `MemoryCpuView.cpp`, `Debugger.*`,
 `DebuggerSymbols.h`, `DebuggerSourceMap.h` and `Debugger_ImGui.*`.

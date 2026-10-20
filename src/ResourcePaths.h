@@ -46,15 +46,14 @@ namespace pom2 {
 /// `GetModuleFileNameW` (Windows).
 std::filesystem::path executableDir();
 
-/// Writable per-user POM2 data directory. Unlike resourceSearchDirs(), this
-/// never points at the install tree or the current working directory. The
-/// directory is created best-effort and is suitable for printouts and other
-/// durable application output.
+/// Best-effort output directory: per-user data when available, otherwise
+/// <temp>/POM2, with a relative POM2 last resort if temp resolution fails.
+/// Directory creation is attempted; callers still handle write errors.
 std::filesystem::path userDataDir();
 
 /// True when userDataDir() really is a per-user directory — and therefore the
 /// FIRST resourceSearchDirs() root. False when it fell back to `<temp>/POM2`,
-/// which is searched last (see resourceSearchDirs()).
+/// which is searched after executable-relative roots and before CWD fallbacks.
 bool userDataDirIsPerUser();
 
 /// Writable per-user POM2 **configuration** directory — where `state.cfg`
@@ -82,6 +81,8 @@ std::filesystem::path userConfigDir();
 ///   3. <exeDir>/..               — portable bundle (binary in bin/)
 ///   4. <exeDir>/../share/POM2    — FHS install (/usr/bin + /usr/share/POM2)
 ///   5. CWD, ../, ../../          — development fallback only
+/// Without a per-user data directory, its temp fallback is inserted after
+/// executable-relative roots; it cannot override installed assets.
 /// Cached after the first call.
 const std::vector<std::filesystem::path>& resourceSearchDirs();
 

@@ -242,22 +242,20 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "The whole 256 B slot page and the 2 KB $C800 bank come from the real "
       "roms/liron.rom; only the service entries are overlaid onto POM2's own "
       "SmartPort handler",
-      "Full Liron LLE needs the IWM bit-shifter AND the UniDisk drive-side "
-      "65C02 — out of scope.",
+      "The separate Liron card executes controller firmware over an IWM; "
+      "the UniDisk drive-side 65C02 is represented by its protocol.",
       "SmartPortCard.*" },
     { "liron", "Storage", "Liron 3.5-inch controller", AbsLevel::L2,
       "The real 4 KB ROM executes over an IWM device and boots through the "
       "SmartPort bus protocol",
       "The UniDisk drive-side 65C02 is represented by a protocol responder.",
       "LironCard.*, SmartPortBusDevice.*" },
-    { "iicsp", "Storage", "//c-class on-board SmartPort", AbsLevel::H1,
-      "A $C500-$C5FF hole punched through the //c's forced INTCXROM, armed "
-      "only by an explicit GUI/CLI boot — plus the stub's $C800 expansion "
-      "bank, gated by the iicCardWindow_ execution-flow heuristic. ProDOS 8 "
-      "2.4.3 boots and runs end-to-end",
-      "A real //c masks all slot ROM, and MAME models no 3.5\" on a plain //c. "
-      "An HLE only works once it is complete — bus etiquette included "
-      "(docs/lle_vs_hle.md, the case study).",
+    { "iicsp", "Storage", "16 KB //c SmartPort fallback", AbsLevel::H1,
+      "ROM 255 lacks SmartPort firmware. Explicit boot exposes POM2's $C500 "
+      "stub and its $C800 expansion bank through forced INTCXROM; "
+      "iicCardWindow_ gates the expansion window",
+      "The 32 KB //c and //c+ instead run their own firmware over the external "
+      "SmartPort bus responder; the //c+ boots slot 5 through its reset scan.",
       "Memory.cpp, SmartPortCard.*" },
     { "prodosvol", "Storage", "ProDOS host folder", AbsLevel::H1,
       "POM2 FABRICATES a valid ProDOS volume image once; from then on the "
@@ -285,10 +283,10 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "model, not a shortcut. Looks like HLE; is not.",
       "UthernetIICard.*, W5100Device.*" },
     { "fujinet", "Network & serial", "FujiNet relay", AbsLevel::H1,
-      "Synthetic 256 B slot ROM whose only job is to trap into the host; every "
-      "SmartPort call is forwarded verbatim over SP-over-SLIP",
-      "Nothing below the protocol exists to model — the device is real and "
-      "off-box.",
+      "Synthetic slot ROM relays peer-backed calls over SP-over-SLIP; "
+      "controller count and the optional HTTP N: service are local",
+      "Peer functions stay off-box; local N: is plain HTTP, not full "
+      "FujiNet firmware (no TLS, SSH or JSON parser).",
       "FujiNetCard.*, SpOverSlipLink.*" },
     { "netbackend", "Network & serial", "Ethernet host transport", AbsLevel::H2,
       "Null / Loopback / libslirp user-mode NAT",
@@ -367,8 +365,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "CrtEffectStack.*, Voxel3DRenderer.*, hgrpaint/*" },
     { "bootfromslot", "Host-side (off-axis)", "bootFromSlot shortcut",
       AbsLevel::Host,
-      "Cold boot plus a forced PC = $Cn00 after validating the JSR trio — no "
-      "real firmware scan happens",
+      "Usually cold boot plus PC = $Cn00 after validating the JSR trio; "
+      "//c+ slot 5 instead resets through the real firmware's SmartPort scan",
       "Labelled a synthetic shortcut in EmulationController.h.",
       "EmulationController.cpp" },
     };

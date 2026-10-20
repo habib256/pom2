@@ -76,20 +76,23 @@ struct TnfsFetchResult {
 bool parseTnfsUrl(const std::string& url, std::string& host, std::uint16_t& port,
                   std::string& path);
 
-/// Fetch `url` into `cacheDir`, reusing an existing file of the right size
-/// rather than pulling it again. `cacheDir` is created if missing.
+/// Fetch `url` into `cacheDir`, reusing a nonempty cached file without
+/// contacting the server or checking for remote changes. Cache identity is
+/// host + port + path. `cacheDir` is created if missing.
 ///
-/// Blocking, and bounded only by the client's own per-request timeout — so
-/// call it from the UI thread BETWEEN frames, never with `stateMutex` held.
-/// A 140 KB floppy is ~270 round trips; the caller is told the size first so
-/// it can say no.
+/// Blocking: never hold `stateMutex` while calling. Limits provide a default
+/// 60-second transfer deadline and a 32 MiB download cap, plus optional abort.
+/// Deadline checks between operations/chunks cannot interrupt an in-flight
+/// request; the client also receives timeout/retry and cancellation bounds.
+/// A completed download is published atomically; failures publish no partial
+/// image. The result reports the size; there is no caller confirmation hook.
 TnfsFetchResult tnfsFetchImage(const std::string& url,
                                const std::string& cacheDir,
                                const TnfsFetchLimits& limits = {});
 
 /// Prune `cacheDir` to `budgetBytes`, deleting least-recently-used files
-/// first (mtime order, oldest gone first). Called after every successful
-/// fetch, so the cache cannot grow without bound: the cache key is a hash of
+/// first (mtime order, oldest gone first). Called after each new successful
+/// download (not a cache hit): the cache key is a hash of
 /// host+port+path, so a server that renames or re-publishes an image orphans
 /// the old file forever and nothing ever collected it. `keep` (optional) is
 /// never deleted — the file the fetch just landed. Returns the bytes freed.

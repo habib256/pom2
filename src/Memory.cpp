@@ -57,8 +57,8 @@ Memory::Memory()
     lcBank1.fill(0);
     lcBank2.fill(0);
     lcHigh.fill(0);
-    // ROM region. The Apple II //e bank-switched language card is NOT
-    // modelled — $D000-$FFFF is plain ROM. The slot ROM range
+    // ROM mirror. Language Card RAM is separate and selected by the paging
+    // latches; $D000-$FFFF starts ROM-protected here. The slot ROM range
     // $C100-$C7FF is NOT marked as ROM here: SlotBus owns that window and
     // dispatches reads to plugged cards (writes dropped in Memory::memWrite).
     markRomRegion(0xD000, 0xFFFF);  // Applesoft + Monitor

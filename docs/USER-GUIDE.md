@@ -30,7 +30,11 @@ The debugger also supports bank-qualified breakpoints and watches, such as
 `aux1:$0800` or `lc2:$D000`, separate profiling/history for each code bank,
 and source-line correspondence through `.p2map` files. Unqualified addresses
 continue to match every bank. See [Bank-aware debugger](debugger-banks.md)
-for the bank names, symbol syntax and source-map format.
+for run controls, bank names, symbol syntax and the source-map format.
+**Step** (F7) advances one instruction; **Step Over** (F8) follows a JSR's
+return, including calls with inline arguments. With a SoftCard Z80 holding
+the bus, a plain Step advances the Z80; the debugger display and breakpoints
+still describe the 6502.
 
 Select **Echo+ (TMS5220 + 2xAY)** in a free slot for the real Street
 Electronics speech/music card. Its TMS5220C speech is distinct from the
@@ -141,6 +145,13 @@ standard before loading; older files load with a compatibility warning.
 Cards, mounted media and external connections are not restored by `.pom2snap`
 files.
 
+Snapshot files use format v2, with v1 compatibility. A v1 file without extended
+memory state restores only CPU/main RAM; auxiliary RAM, Language Card RAM,
+paging and display mode keep their current values. A v2 file missing that
+required state is refused. The current CPU silicon must also match; a file
+snapshot does not select another machine profile. Snapshot file loads are
+bounded at 64 MiB, separately from the 32 MiB session limit.
+
 For supported II/II+/IIe and //c-class configurations, `.pom2session` additionally bundles
 floppy media, including unsaved writes, WOZ/FLUX and 3.5-inch WOZ/MOOF,
 Mockingboard, SNES MAX, Slinky RAM and ThunderClock+ state. On //c-class
@@ -167,6 +178,13 @@ Mapped gamepads use the left stick for `PDL(0/1)` and the right stick for
 controls. Unmapped desktop joysticks use their raw X/Y axes and leave the extra
 paddles centred.
 
+For a mapped gamepad, B/Circle drives game-port button 0 and A/Cross drives
+button 1; PB2 stays released. The D-pad sends Apple II arrow keys, X/Square
+sends Space and Y/Triangle sends Return. Raw joysticks instead use buttons
+0/1/2 as the three game-port buttons. Choosing **(none)** in the Joystick
+panel keeps the paddles centred and buttons released; it disables automatic
+binding until you choose a device again.
+
 With a **SNES MAX** card installed, the first two mapped gamepads feed its
 two SNES ports (D-pad, four face buttons, Select/Start and shoulder buttons).
 They stop driving the Apple game port and keyboard shortcuts. Use **F1/F2**
@@ -183,6 +201,26 @@ And yes, you can print. Open **Devices → ImageWriter II (printout)**, connect
 a printer interface, and watch the dots appear on the page. The printer handles
 text, graphics and colour, with PNG and multi-page PDF export.
 
+### Load and record a cassette
+
+Open **Devices → Storage → Cassette deck**. On II/II+/IIe, load `.aci`,
+`.wav`, `.mp3`, `.ogg` or `.flac`, then press PLAY. A program tape displays
+**ARMED - waiting for READ** until the guest polls the cassette input at
+`$C060`; pressing PLAY alone does not consume the leader. The //c family
+has no cassette port: its `$C020`/`$C060` accesses serve other hardware and
+do not record or start program-tape playback.
+
+Program WAV input supports PCM 8/16-bit and float32, including supported
+WAVE_FORMAT_EXTENSIBLE forms; 24-bit PCM is refused. MP3/OGG/FLAC inputs
+are decoded into program pulses. Streamed background audio is a separate
+internal deck mode and cannot be embedded in a session.
+
+Guest writes to the cassette output are captured automatically. The deck's
+REC control clears the previous capture for a new recording; Save writes
+captured output as ACI or WAV. Reset preserves tape position and the capture
+buffer. Machine rewind and `.pom2snap` do not restore them; v7
+`.pom2session` does include program-tape position and recording state.
+
 ## Controls
 
 | Key or action | What it does |
@@ -193,12 +231,15 @@ text, graphics and colour, with PNG and multi-page PDF export.
 | **F6**, held | Rewind |
 | **F9** | Save a screenshot |
 | **F11** | Soft reset / Ctrl-Reset |
-| **F12** | Hard reset / power-cycle |
+| **F12** | Hard reset |
 | **Ctrl+Shift+P** | Open the command palette |
 | **Ctrl+V** | Paste the host clipboard into the Apple II |
 | Left / right Alt | Open-Apple / Solid-Apple, when enabled |
 | Enter / Backspace / arrow keys | Return / left arrow / Apple II arrows |
 | Ctrl+A…Z | Apple II control characters; Ctrl+V is intercepted for paste |
+
+Both reset keys preserve RAM. F11 also preserves A/X/Y; F12 clears them.
+Use **Machine → Cold boot (wipe RAM)** for a fresh power-on memory state.
 
 A Mouse Card normally belongs in **slot 4** on a //e: slot 3's internal
 80-column firmware can hide it from guest software. **View → Capture mouse**
@@ -339,6 +380,12 @@ For card keys, firmware details and implementation notes, see
   a physical board can still be used. The bundled program requires macOS 14+
   on Apple Silicon, macOS 15+ on Intel, or Ubuntu 22.04 compatible libraries
   on Linux x64. See `POM2 --help` for connection options.
+  Desktop startup enables POM2's built-in `N:` network service by default.
+  It serves plain HTTP; TLS/HTTPS, SSH, JSON parsing and the full FujiNet
+  network protocol set require the external peer's implementation. For that
+  mode, disable the local service with `fujinet_builtin_network<N>=false`
+  in `state.cfg`, where `<N>` is the FujiNet slot number. Disks, CONFIG and
+  clock services still require the peer when local `N:` is enabled.
   The FujiNet panel's **Timeout (ms)** control adjusts local calls from
   50 to 5000 ms. Remote host/directory operations and mounted-image block I/O
   receive up to five seconds; a slow call can pause the interface while it
@@ -376,6 +423,36 @@ floppyemu/    Floppy Emu media (created on first run)
 roms/         System and peripheral firmware
 ```
 
+### Pick the right image and drive
+
+For a dropped image or a positional CLI filename, POM2 chooses a controller
+from the extension and geometry. The receiving loader then validates the
+contents; appearing in the Disk Library does not guarantee that an image is
+valid for the selected drive.
+
+| Image | Automatic destination and limits |
+|---|---|
+| `.dsk`, `.do`, `.d13`, `.nib`; 140 KiB `.po` | Disk II 5¼-inch. A raw `.dsk` of exactly 400 KiB, 800 KiB or 1.44 MB is routed to a 3½-inch controller instead. |
+| `.woz` | The WOZ `INFO` disk type selects 5¼-inch or 3½-inch. Library lists offer WOZ to both drive types; the loader rejects a mismatch. |
+| `.moof` | 3½-inch; 400/800 KiB GCR, or 1.44 MB MFM with SuperDrive. |
+| Raw 400/800 KiB `.po`, `.dsk`, `.image` | 3½-inch. Ordinary SmartPort/Liron and native Sony mechanisms accept these GCR geometries. |
+| Raw 1.44 MB `.po`, `.dsk`, `.image` | 3½-inch routing, but mounting requires a SuperDrive media unit. |
+| `.2mg` | The header's payload length determines routing: 5¼-inch sector/nibble geometry, 400/800 KiB or 1.44 MB 3½-inch geometry, otherwise a block-aligned HDV volume. Library scans use approximate file-size filters and may omit unusual wrappers; use the drive's mount control for those files. |
+| `.hdv` | Hard-disk volume, including an 800 KiB image; the extension keeps it separate from a Sony floppy of the same size. |
+
+The 3½-inch loader accepts raw block payloads, ProDOS-order 2IMG wrappers and
+supported WOZ/MOOF captures. It does not decode DiskCopy 4.2 headers or tag
+data; convert those images before mounting. A `.image` suffix alone does not
+make a DiskCopy container a raw image. GCR capture block mounts remain
+write-protected; native IWM capture writes and SuperDrive MFM sector writes
+follow the limits described above.
+
+The Floppy Emu panel routes a selection by its emulation mode: Disk II,
+external Sony on //c+, or intelligent SmartPort/Liron media. Its Favorites
+menu reads `favdisks.txt` inside the configured SD folder; paths must stay
+inside that folder. The `automount N` directive is parsed but does not trigger
+startup mounting. See the [SD-folder instructions](../floppyemu/README.txt).
+
 ### Share a ProDOS folder
 
 Put files in `prodos_folder/`, then mount its **[host folder]** entry from the
@@ -389,6 +466,9 @@ folder between macOS, Linux and Windows. Enable **Convert host-folder
 TXT line endings on next mount** to exchange ProDOS TXT (`$04`) files as CR
 inside the Apple II and LF on the host. The option is off by default and
 does not change binary files.
+
+The generated volume has no boot blocks. Boot a separate ProDOS disk first,
+then access `/HOST/` from that system.
 
 Guest edits are held in memory until ejection or quit. Enable **Sync to host
 folder (on eject)** in the HDV panel to save them. The panel reports pending
@@ -431,6 +511,26 @@ the executable (including `../share/POM2/`), then the working directory and
 its two parents. A per-user ROM override therefore takes precedence over the
 packaged or checkout copy.
 
+That directory order applies to each filename separately. Profile switching
+tries its filenames in the following order, all under `roms/`:
+
+| Profile | Main ROM filenames, first existing match |
+|---|---|
+| `ii` | `apple2o.rom`, `apple2.rom` |
+| `ii+` | `apple2p.rom`, `apple2.rom` |
+| `iie-u`, `iie-u-pal` | `apple2e_unenh.rom`, `342-0135-b.64.rom`, `apple2e.rom` |
+| `iie`, `iie-pal` | `apple2e.rom` |
+| `iic`, `iic-pal` | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` |
+| `iic+` | `apple2cp.rom`, `apple2c-plus.rom`, `apple2c-32Kv0.rom` |
+
+For example, a per-user `apple2.rom` does not override a packaged
+`apple2p.rom` for `ii+`; use the preferred filename for an explicit override.
+An existing but unreadable/invalid main ROM refuses the profile change;
+the resolver does not continue through later filenames after that failure.
+Character-ROM selection has its own profile order, overridden by a selected
+character set. The PAL variants reuse their corresponding NTSC firmware
+lists; timing comes from the selected profile.
+
 ## Command line
 
 ```bash
@@ -445,10 +545,38 @@ POM2 --session-load game.pom2session        # reconstruct the saved machine
 POM2 --help                                # all options
 ```
 
-Actions such as snapshot/session load/save, stepping and paste run in command-line
-order after startup settles. `--speed` sets a cycles-per-frame budget: normal
+TNFS URLs download to `tnfs_cache` beside `state.cfg` before the window opens.
+The download needs no FujiNet card or external firmware. New downloads are
+limited to 32 MiB and use a 60-second deadline; an in-flight request can delay
+the deadline check. In a terminal, Ctrl+C requests cancellation; a second
+Ctrl+C terminates the process. A failed download is logged and startup
+continues without that disk.
+
+The cache key includes host, port and path. A cached image opens offline
+without checking for server updates. Guest saves follow the normal image
+write policy and modify that local copy; they are not uploaded to TNFS.
+To fetch a fresh copy, close POM2 and remove the corresponding cached file,
+preserving any saves you need first. After a new download, the cache prunes
+older entries toward a 512 MiB budget; keep valued saves outside this cache.
+
+Actions such as snapshot/session load/save, stepping and paste are submitted
+in command-line order after startup settles. The first reported failure skips
+remaining actions. `--step N` queues work without waiting for it to finish;
+a following save is not guaranteed to capture the state after those N steps.
+Paste likewise queues characters for the guest to consume.
+
+`--load addr:file` and `--run addr` take hexadecimal addresses, including bare
+digits: `--run 2000` means `$2000`. Binary loads below `$C000` target main
+RAM regardless of guest paging; spans touching `$C000–$CFFF` are refused.
+Language Card loads at `$D000` and above require readable/writable RAM and
+are checked by reading back each byte. They are not transactional: a later
+failure can leave earlier bytes changed.
+
+`--speed` sets a cycles-per-frame budget: normal
 speed is 17045 for NTSC or 20313 for PAL. `--cpu-max` runs without normal pacing;
 the achievable emulation speed depends on the host.
+CLI speed values above 2000000 are clamped with a warning; the HTTP `/speed`
+endpoint rejects out-of-range values instead.
 
 Cassette output saves as ACI by default or WAV with `--save-tape-format wav`.
 An explicit `.aci`/`.wav` suffix wins over that hint; other suffixes receive
@@ -459,6 +587,12 @@ Other options cover speed, display mode, cassette recording, blank disks,
 ProDOS host folders, FujiNet and automation. Optional values use `=`:
 `--ai-control=6503`, for example. CLI `--rewind` rewinds the **cassette**;
 F6 and the Rewind panel control machine time-travel.
+
+For desktop automation, `--ai-control=6503` starts the optional loopback HTTP
+server. It exposes CPU/memory inspection and editing, keyboard/mouse input,
+Disk II insertion, image synchronization and snapshot/session operations.
+See the [HTTP reference and examples](../DEV.md#ai-control-server-aicontrolserver)
+for request shapes, authentication, path limits and available routes.
 
 ## Build from source
 
@@ -541,6 +675,15 @@ the plus sign in the profile name).
 
 Host socket networking and the listening AI-control HTTP server are unavailable
 in the browser.
+Direct disk-image upload/drop-zone mounting is also unavailable. Use the
+bundled media or import a supported `.pom2session` archive containing the
+disk; text upload is a separate paste workflow. Settings and automatic-resume
+archives are stored in this browser's IndexedDB, rather than beside a desktop
+executable.
+If IndexedDB is blocked or its startup read times out, POM2 starts with fresh
+in-memory state; changes may not survive a reload. The browser console reports
+the storage failure. The preloaded firmware/media remain available independently
+of that persistent store.
 
 </details>
 
@@ -565,6 +708,17 @@ artifacts without publishing a release. All platforms read the same
 
 Local packaging: `./build_dist.sh` on Linux, `./package_macos_release.sh` on macOS,
 and `package_windows_release.bat` on Windows.
+
+| Script | Build and output contract |
+|---|---|
+| Linux `build_dist.sh` | Configures a Release build in `build-dist/` and writes the relocatable tarball to `DIST/`. `--tests` runs CTest before packaging; `--clean` removes that build directory first. `.deb` and AppImage creation are best-effort when `dpkg-deb` and `linuxdeploy` are available; success does not guarantee all formats were produced. |
+| macOS `package_macos_release.sh` | Builds in `build-macos/`, then creates `dist/POM2.app` and `dist/POM2-macOS-v<version>.dmg`. The default is Universal 2 (`arm64;x86_64`); `POM2_MACOS_ARCHS` overrides it. Supply a matching GLFW through `CMAKE_PREFIX_PATH`. The app is ad-hoc signed, not notarized. |
+| Windows `package_windows_release.bat` | Stages an existing `build/Release/POM2.exe`, falling back to `build/POM2.exe`, into `dist/POM2-Windows/` and creates the versioned ZIP in `dist/`. Build the static-runtime executable first; the script does not compile or collect dependency DLLs. Git Bash, Python and PowerShell are used during packaging. |
+
+Linux and macOS build parallelism can be overridden with `POM2_JOBS`.
+The scripts also stage hash-checked FujiNet-PC downloads on supported desktop
+targets, so packaging needs access to those upstream archives. Generic asset
+selection follows the manifest; source libraries and user state are excluded.
 
 ## Credits and project links
 

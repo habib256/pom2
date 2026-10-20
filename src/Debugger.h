@@ -31,25 +31,22 @@
 // and the item whose return is every other item in the backlog.
 //
 // ── Threading ────────────────────────────────────────────────────────────
-// The whole class is guarded by the emulator's `stateMutex`, and by nothing
-// else. That is not a shortcut, it is the cheapest CORRECT arrangement: the
-// CPU worker already holds that lock for the whole of its 4096-cycle chunk, so
-// every `checkPc` / `noteAccess` call below happens inside it, and a UI thread
-// that mutates a breakpoint under the same lock cannot race them. No atomics,
-// no second mutex, no lock-free bitmap. Callers on the UI side must take
-// `controller->stateMutex()` around every mutating call — `Debugger_ImGui`
-// does, in one place.
+// State is guarded by the emulator's stateMutex, except for transient
+// cancellation below. The CPU worker holds that lock for its 4096-cycle chunk, so
+// every onInstruction / noteBankAccess call happens inside it. UI mutations
+// take controller->lockState() so they cannot race the worker. clearTransient
+// is the exception: its atomic flag lets setMode(Stopped) cancel run control
+// without acquiring the non-recursive state lock. See that method below.
 //
 // ── Cost when nobody is debugging ────────────────────────────────────────
-// `armed()` is false until the first breakpoint or watchpoint exists, and both
-// hot paths are written so that costs one predictable branch and nothing else:
+// armed() includes breakpoints, watches, transients, profiling and history.
+// With all disabled, the production CPU/memory fast paths stay intact:
 //
 //   * `M6502::run` picks between two loops ONCE per call — per 4096-cycle
 //     chunk, not per instruction — so an un-armed debugger is unmeasurable.
-//   * `Memory::memRead`/`memWrite` test one pointer at the top and otherwise
-//     run byte-for-byte the code they ran before. That one IS per access, on
-//     the hottest path in the emulator, so it was measured rather than
-//     assumed — see DEV.md § Debugger for the numbers.
+//   * Write watches divert addresses through writable[]; read watches use
+//     derived fast-read gates. Neither adds a pointer test per bus access.
+//     See MemoryWatch.cpp and DEV.md § Debugger for the measurements.
 
 #ifndef POM2_DEBUGGER_H
 #define POM2_DEBUGGER_H
@@ -130,9 +127,9 @@ public:
     std::size_t watchpointCount() const { return wpCount_ + bankWatches_.size(); }
 
     // ── Transient stops ──────────────────────────────────────────────────
-    /// Break once at `addr`, then forget it. Used by step-over (the address
-    /// after a JSR) and run-to-cursor. A transient at an address that also
-    /// carries a real breakpoint leaves the real one alone.
+    /// Break once at addr/bank, then forget it (run-to-cursor). Call stepping
+    /// uses setStepOver/setStepOut's frame tracking instead of a PC+3 target.
+    /// A transient leaves a user breakpoint at the same address installed.
     void setTransient(uint16_t addr, Reason reason, DebugBank bank = {});
     /// Follow the actual outer RTS, including inline arguments, recursion and
     /// stack wrap. Only the debugged loop consults the CPU/memory references.

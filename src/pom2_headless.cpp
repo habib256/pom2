@@ -21,7 +21,7 @@
 //
 // Boot/post-boot keyboard injection: a real disk boots into Applesoft
 // without knowing the SSC exists, so the emulator pastes a small setup
-// sequence (`IN#2 / PR#2`) once the disk has had time to spin up. After
+// sequence (`PR#2 / IN#2`) once the disk has had time to spin up. After
 // that, every byte the telnet client sends is fed via the SSC into the
 // Apple II's input vector, and every PRINTed byte comes back out on the
 // SSC's TX path.
@@ -90,9 +90,10 @@ void usage(const char* prog)
     std::fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
-        "  --rom <path>          apple2.rom (12K or 16K).      Default: probe roms/\n"
+        "  --rom <path>          System ROM (normally 12/16 KiB for II/II+).\n"
+        "                        Default: probe roms/apple2.rom; no profile switch.\n"
         "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/\n"
-        "  --disk <path>         .dsk/.do/.po/.nib floppy.    Default: dos33_master.dsk\n"
+        "  --disk <path>         Disk II image. Default: probe disks_5.4/dos33_master.dsk\n"
         "  --port <N>            SSC TCP port. Default 6502\n"
         "  --paste-after <sec>   Emulated seconds before autopasting\n"
         "                        the SSC setup sequence. Default 6.\n"
@@ -103,10 +104,12 @@ void usage(const char* prog)
         "  --no-setup            Don't autopaste anything.\n"
         "\n"
         "Capture mode (no telnet listener, no threads, deterministic):\n"
-        "  --frames <N>          Run N emulated frames, then exit.\n"
+        "  --frames <N>          N > 0: run N emulated frames, then exit.\n"
+        "                        N = 0: interactive unless --screenshot is given.\n"
         "  --screenshot <path>   Write the screen as a binary PPM (P6) after\n"
         "                        those frames. Exits non-zero if the capture is\n"
-        "                        a single flat colour — see the note below.\n"
+        "                        a single flat colour (exit 3). Defaults to 300\n"
+        "                        frames when --frames is absent or zero.\n"
         "  --version             Print the version and exit.\n"
         "  -h, --help            Show this and exit.\n"
         "\n"
@@ -269,9 +272,8 @@ int main(int argc, char** argv)
     }
     // Outside capture mode the disk IS the point (the telnet console drives
     // DOS 3.3), so its absence stays fatal. In capture mode the machine boots
-    // the ROM to the Applesoft prompt on its own — and packages deliberately
-    // ship no disk images, so requiring one would make the smoke untestable
-    // against the very artifact it is meant to check.
+    // the ROM to the Applesoft prompt on its own. Packages omit the legacy
+    // DOS master; requiring it would make their no-argument smoke fail.
     if (!captureMode && (promPath.empty() || diskPath.empty())) {
         std::fprintf(stderr, "missing prom/disk; try --help\n");
         return 1;
@@ -282,7 +284,7 @@ int main(int argc, char** argv)
 
     // II/II+ mode is enough for DOS 3.3. We deliberately avoid loading
     // apple2e.rom here even if present so the headless target stays
-    // simple; switch via --rom if you need the IIe ROM.
+    // simple; --rom changes the file, not the machine's memory mode.
     EmulationController controller;
     // Everything from here to `controller.start()` below runs before the
     // CPU worker exists, so the raw accessor is correct: there is no second
@@ -297,8 +299,8 @@ int main(int argc, char** argv)
     // which spins forever waiting for a disk that is never coming, and the
     // capture is the uninitialised text page. With no controller the same ROM
     // falls through to Applesoft and draws its banner — which is what we want
-    // to photograph. Packages ship roms/ and no disk images, so this is the
-    // normal path there.
+    // to photograph. Packages omit the legacy default disk, so this is the
+    // normal path without an explicit --disk there.
     const bool plugDiskII = !promPath.empty() && (!captureMode || !diskPath.empty());
     if (plugDiskII) {
         auto disk = std::make_unique<DiskIICard>();
@@ -361,12 +363,10 @@ int main(int argc, char** argv)
     controller.memory().slotBus().plug(ClockCard::kDefaultSlot,
         std::make_unique<ClockCard>(ClockCard::kDefaultSlot));
 
-    // Mirror the live-emulator boot ritual: hard reset, propagate that
-    // through the slot bus (so DiskIICard can re-arm its trace flags),
-    // then start running. We don't go through the menu's PR#6 — the
-    // disk PROM autoboots when PC starts at $C600, which is what
-    // hardReset() leaves PC pointing at when the reset vector at $FFFC
-    // is set up by the Apple II ROM to land in slot 6.
+    // Hard reset loads the motherboard reset vector; reset the slot bus
+    // as well so DiskIICard can re-arm its trace flags. Autostart firmware
+    // initializes the machine before scanning slots and entering $C600;
+    // the original monitor needs the explicit fallback below.
     controller.cpu().hardReset();
     controller.memory().slotBus().reset();
     if (diskRaw) diskRaw->seekTrack0();

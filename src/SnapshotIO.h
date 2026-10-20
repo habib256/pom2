@@ -27,7 +27,8 @@
 //
 // Suggested section roster for Apple II:
 //
-//   "CPU"      16 bytes: PC(2) A X Y status SP cpuMode (6) + cycle count(8).
+//   "CPU"      17 bytes: PC(2) A X Y status SP cpuMode (6), cycle count(8),
+//              STP halt latch(1). Legacy 16-byte CPU sections are accepted.
 //              IRQ/NMI lines are NOT persisted — they are transient bus
 //              signals re-asserted by the cards on each MMIO access, so they
 //              self-correct within a frame of resuming.
@@ -43,11 +44,10 @@
 // (A "CASS" cassette section was once listed here but never implemented —
 // tape state is deliberately outside the snapshot, like disk media.)
 //
-// Unknown sections are skipped at load time (forward compat). Cards that
-// don't have state to persist write a zero-length section, or simply
-// don't appear at all.
+// The section reader can skip unknown sections. File/API machine restores
+// reject SLOT sections; those are reserved for trusted in-memory rewind.
 //
-// No compression, no checksum (yet — could be a v2 sweetener). The file
+// Version 2 has no compression or checksum (sessions add their own CRC). The file
 // is small (~200 KB for stock IIe) and the use case is "snapshot now,
 // reload now" rather than archival cold storage.
 //
@@ -55,7 +55,7 @@
 //   SnapshotWriter(std::vector<uint8_t>&)  — accumulate the blob in RAM
 //   SnapshotReader(const uint8_t*, size_t) — parse a blob already in RAM
 // The memory backend is what the rewind ring buffer (RewindBuffer) uses to
-// serialize/restore machine state at 60 Hz without touching the filesystem.
+// serialize/restore machine state without touching the filesystem.
 // The wire format is byte-identical between the two backends.
 
 #ifndef POM2_SNAPSHOT_IO_H
@@ -112,7 +112,7 @@ inline bool readSnapshotFileBytes(const std::string& path,
 inline constexpr char     kSnapshotMagic[8] = {'P','O','M','2','S','N','A','P'};
 // v2 adds the "MEX" section (aux RAM, Language-Card RAM, RamWorks banks,
 // paging soft-switches, DisplayState) so IIe/IIc state restores fully.
-// The reader accepts any version <= kSnapshotVersion, so v1 files still load.
+// The reader accepts versions 1..kSnapshotVersion, so v1 files still load.
 inline constexpr uint32_t kSnapshotVersion  = 2;
 inline constexpr std::size_t kSectionNameLen = 8;
 
@@ -126,8 +126,9 @@ public:
     /// already cleared on every profile switch, so the check would be dead
     /// weight on the hot capture path.
     ///
-    /// File-backed: writes the snapshot straight to `path` (truncating any
-    /// existing file). `good()` is false if the file could not be opened.
+    /// File-backed: writes to a unique sibling temporary file and publishes
+    /// it at `path` on finish(). The existing destination remains until then.
+    /// `good()` is false if the temporary file could not be opened.
     explicit SnapshotWriter(const std::string& path,
                             std::uint32_t machineId = 0);
     /// Memory-backed: writes the snapshot straight into `sink` as it is

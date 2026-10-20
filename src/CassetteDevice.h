@@ -89,9 +89,9 @@ public:
 
     /// Snapshot-load / rewind mitigation ("time jump").
     ///
-    /// The deck is NOT in any snapshot: its recorded buffer can be megabytes
-    /// and its playback cursor belongs to a tape file the snapshot does not
-    /// name. So a restore leaves the deck holding the ABANDONED timeline's
+    /// File .pom2snap and the rewind ring omit the deck; v7 .pom2session
+    /// archives separately embed program-tape playback and recording state.
+    /// A CPU/RAM-only restore leaves the deck holding the ABANDONED timeline's
     /// cycle stamps while the CPU counter jumps backwards — and every stamp
     /// here is compared with unsigned subtraction, so `currentCycle -
     /// lastTapeInputCycle` wrapped to ~2^64 and the playback path saw one

@@ -100,14 +100,15 @@ public:
     void goUp();
 
     /// True when `filename`'s extension is valid for the current mode
-    /// (5.25 → dsk/do/po/nib/woz/2mg; 3.5/Unidisk → dsk/do/po/2mg;
+    /// (5.25 → dsk/do/po/nib/woz/2mg; 3.5/Unidisk → dsk/do/po/moof/woz/2mg;
     /// Smartport → po/hdv/2mg). Case-insensitive.
     bool acceptsFile(const std::string& filename) const;
 
     // ── Favorites (favdisks.txt in the SD root) ─────────────────────────
-    /// Parse <sdRoot>/favdisks.txt: an optional first line "automount N"
-    /// (N=0/1/2), then one favorite image path per line. Paths are resolved
-    /// relative to the SD root when not absolute. Missing file → not present.
+    /// Parse <sdRoot>/favdisks.txt: optional first meaningful "automount N"
+    /// (N=0/1/2), then favorite paths; skip blank/comment lines. Paths resolve
+    /// relative to the SD root and must remain inside it after canonicalization.
+    /// The UI does not act on automount. Missing file → not present.
     Favorites favorites() const;
 
     /// Parse favdisks.txt CONTENT (for testing without touching the disk).

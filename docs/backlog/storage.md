@@ -18,7 +18,6 @@ an explicit request before scheduling.
 | [STORAGE-002](#storage-002) | 🟡 | To verify | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
 | [STORAGE-010](#storage-010) | 🟡 | To verify | Bug hunt #16's Disk II read residue |
-| [STORAGE-011](#storage-011) | 🟡 | To verify | SmartPort image-format restrictions |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
@@ -74,9 +73,9 @@ an explicit request before scheduling.
 
 <a id="storage-011"></a>
 
-## STORAGE-011 — SmartPort image-format restrictions
+## STORAGE-011 — SmartPort image-format restrictions (documented)
 
-**Priority:** 🟡 · **State:** To verify (parameter validation resolved).
+**State:** Done (2026-10-20); retained here for stable incoming links.
 
 **Acceptance criterion:** Document unsupported flux and image formats without claiming support.
 
@@ -90,9 +89,16 @@ support write-back with a save/reload regression. Native 3.5-inch GCR
 WOZ/MOOF writes also preserve 125 ns timing and container metadata
 (2026-10-18, `disk35_flux_write`). MFM MOOF block writes now splice existing CRC-valid
 sectors and preserve untouched 125 ns transitions (`moof35_load`); GCR HLE
-block mounts still require raw conversion. The report's remaining 400K
-and DiskCopy 4.2 restrictions still need revalidation and documentation;
-they were not tested by that protocol regression.
+block mounts still require raw conversion.
+
+**Source reconciliation 2026-10-20:** `Disk35Image::loadFile` accepts raw
+400/800 KiB images, ProDOS-order 2IMG payloads of those sizes, and supported
+WOZ/MOOF captures. `moof35_load` includes a single-sided 400K capture,
+export and raw reload. 1.44 MB requires the SuperDrive capability. DiskCopy
+4.2 header/tag decoding remains unsupported; raw `.image` files must have
+a supported payload size. These boundaries are now documented in
+the [user guide](../USER-GUIDE.md#pick-the-right-image-and-drive). This closes
+the format-documentation criterion; it does not claim a new test execution.
 
 <a id="storage-003"></a>
 

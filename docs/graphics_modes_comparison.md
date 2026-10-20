@@ -31,9 +31,9 @@ a fresh compatibility result for every later revision. Card-owned pictures
 | 4 | `ChatMauveRGB` | AppleWin `RGBMonitor.cpp` (PR #837) + Péritel hardware | direct RGB | 560×192 | `le_chat_mauve_smoke`, `video7_parity_smoke` | [↓](#4-chatmauvergb) |
 | 5 | `ColorCompositeOE` | OpenEmulator + apple2shader | GLSL shader | 560×192 | `oe_demod_gpu_cpu_parity`, `text_oecpu_crisp` | [↓](#5-colorcompositeoe) |
 | 5b | `ColorCompositeOECpu` | OpenEmulator (same demod, on the CPU) | CPU demod → RGBA framebuffer | 560×192 | `oe_demod_gpu_cpu_parity`, `text_oecpu_crisp` | [↓](#5-colorcompositeoe) |
-| 6 | `MonoWhite` | AppleWin VT_MONO_WHITE (empirical palette) | luminance | 280/560×192 | `display_persistence_smoke` | [↓](#6-monowhite) |
-| 7 | `MonoGreen` | AppleWin VT_MONO_GREEN (P31 phosphor) | luminance×tint+decay | 280/560×192 | `display_persistence_smoke` | [↓](#7-monogreen) |
-| 8 | `MonoAmber` | AppleWin VT_MONO_AMBER (long-persistence) | luminance×tint+decay 0.96 | 280/560×192 | `display_persistence_smoke` | [↓](#8-monoamber) |
+| 6 | `MonoWhite` | AppleWin VT_MONO_WHITE (empirical palette) | luminance | 560×192 graphics; 280/560×192 text | `display_persistence_smoke` | [↓](#6-monowhite) |
+| 7 | `MonoGreen` | AppleWin VT_MONO_GREEN (P31 phosphor) | luminance×tint+decay | 560×192 graphics; 280/560×192 text | `display_persistence_smoke` | [↓](#7-monogreen) |
+| 8 | `MonoAmber` | AppleWin VT_MONO_AMBER (long-persistence) | luminance×tint+decay 0.96 | 560×192 graphics; 280/560×192 text | `display_persistence_smoke` | [↓](#8-monoamber) |
 | 9 | `ColorAppleWin` | AppleWin `NTSC.cpp` (Simms / Charlesworth) | LUT IIR 4-phase × 4096 | 560×192 | `applewin_ntsc_smoke` | [↓](#9-colorapplewin) |
 
 Captures generated with:
@@ -266,6 +266,14 @@ chromaticity).
    afterglow for white — it's the neutral reference).
 4. Phosphor tint RGB = `(255, 255, 255)` — multiplicative on luminance.
 
+For green/amber graphics, decay follows emulated video frames, not host
+repaints. Rendering the same paused frame applies no decay; advancing by
+several frames uses `decay^delta`, with delta capped at eight frames per
+render. White always follows the current dots without retaining history.
+Text uses the selected phosphor tint but has no persistence buffer. These
+rules come from `effectivePhosphorDecay` and `textLitColor` in
+[`Apple2Display.cpp`](../src/Apple2Display.cpp).
+
 **Deviations**: none. Neutral reference.
 
 **Tests**: `hgr_render_smoke` (HGR colour pairs and all 16 GR dot patterns),
@@ -285,8 +293,9 @@ full-screen text keeps its native 280/560 width.
 *"CIE x=0.280, y=0.595"* — the published P31 chromaticity. RGB tint
 empirical (0x33, 0xFF, 0x33), not formally derived from the CIE.
 
-**Algorithm**: identical to MonoWhite + green tint + `decay = 0.85`
-(short persistence, ~3 frames of glow).
+**Algorithm**: identical to MonoWhite + green tint + `decay = 0.85` per
+emulated video frame. The exponential factor has a half-life of about
+4.3 frames before integer quantization; visible duration depends on intensity.
 
 **Deviations**:
 
@@ -305,7 +314,8 @@ empirical (0x33, 0xFF, 0x33), not formally derived from the CIE.
 
 **Source**: AppleWin `VT_MONO_AMBER` (long-persistence amber,
 Tektronix / Sanyo type). RGB tint `(0xFF, 0xB0, 0x00)` empirical. Decay 0.96
-— ~25 frames of visible afterglow.
+per emulated video frame gives an exponential half-life of about 17 frames
+before integer quantization.
 
 **Algorithm**: MonoWhite + amber tint + `decay = 0.96`. One native-dot
 persistence buffer (`persistenceL80` 560×192), shared by HGR, GR, DHGR and DLGR.
@@ -392,7 +402,9 @@ Pins on:
 *Monitor sub-mode — IIR + 4-phase LUT, sharp scanlines*
 
 ![AppleWin TV](img/total_replay_10_ColorAppleWin_Tv.png)
-*TV sub-mode — first frame, blend with an initially black buffer (in a continuous capture the result is brighter at equilibrium)*
+*Historical capture helper: TV sub-mode blended with an initially black buffer.
+The application uses a valid prior AppleWin frame, so its first frame is
+unblended and repeated paused repaints do not advance the history.*
 
 ![AppleWin Idealized](img/total_replay_11_ColorAppleWin_Idealized.png)
 *Idealized sub-mode — same 4-phase × 4096-history hue LUT as Monitor/Tv,
@@ -429,8 +441,10 @@ HGR byte is set (74LS74 flip-flop in the hardware).
 
 ### Measured performance (single x86-64 core, Release -O3)
 
-Approximate measurements on a recent i7, rendering one ARCHON frame (HGR
-280×192):
+Historical approximate figures for one ARCHON frame on an i7, with HGR
+input at 280×192. The original run did not record a reproducible revision,
+CPU model or complete toolchain. Output dimensions and execution paths vary
+by mode; these figures are not a current performance guarantee.
 
 | Mode | CPU cost | Note |
 |---|---|---|
@@ -445,7 +459,10 @@ Approximate measurements on a recent i7, rendering one ARCHON frame (HGR
 | ColorAppleWin Tv | ~0.55 ms | + 50% line blend |
 | ColorAppleWin Idealized | ~0.30 ms | same 4-phase × 4096-history hue LUT as Monitor with chroma ×1.6 — the figure dates from a mistaken "16-entry LUT" description; expect Monitor-class cost |
 
-All CPU modes are well under the 16.6 ms / 60 FPS budget.
+The recorded OE-CPU figure exceeds a 16.6 ms frame budget. It must not be
+combined with the other rows into a claim that every CPU path sustains
+60 FPS. For current measurements, use the reproducible recipes in
+[PERFORMANCE.md](PERFORMANCE.md); no new timing run is claimed here.
 
 ---
 

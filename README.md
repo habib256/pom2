@@ -128,7 +128,7 @@ Four disks are ready in **File → Disk Library**:
 | **F6** (hold) | Rewind |
 | **F10** | Toggle fullscreen |
 | **F9** | Save a screenshot |
-| **F11 / F12** | Soft reset / power cycle |
+| **F11 / F12** | Soft reset / hard reset |
 | **Ctrl+Shift+P** | Open the command palette |
 | **Ctrl+V** | Paste text into the Apple II |
 

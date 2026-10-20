@@ -32,7 +32,7 @@
 //                  this card emulates.
 //
 // POM2 keeps the class name `EchoPlusCard` + catalog key `"echoplus"` for
-// settings.json compatibility; the user-visible label was updated to
+// saved-settings compatibility; the user-visible label was updated to
 // "Cricket / Echo (SSI263)" to reflect the actual chip. New designs that
 // want the real Echo+ should use `EchoPlusTMS5220Card` (catalog key
 // `"echoplus_tms"`).

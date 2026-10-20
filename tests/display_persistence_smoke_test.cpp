@@ -92,9 +92,8 @@ void testDhgrMonoAfterglow()
     mem.memWrite(IIE_80COL_ON, 0);
     mem.memRead(DHIRES_ON);
 
-    // MonoAmber — the only built-in HiResMode whose decay is non-zero
-    // (0.96, see kPhosphors). MonoWhite/Green have decay=0 → no glow,
-    // which is correct but not interesting for an afterglow test.
+    // MonoAmber has the longest built-in decay (0.96 versus green's 0.85;
+    // white has none). Use amber to make retained DHGR luminance clear.
     disp.setHiResMode(Apple2Display::HiResMode::MonoAmber);
 
     // Frame 1: light every HGR byte (main + aux) so every output dot is

@@ -775,16 +775,22 @@ void MainWindow::renderWelcomePanelWindow()
 
     // ── Loading software ─────────────────────────────────────────────
     ImGui::SeparatorText("Loading a disk");
+#ifdef __EMSCRIPTEN__
+    ImGui::BulletText("File → Disk Library opens bundled images.");
+    ImGui::BulletText("File → Open session... imports a supported machine and its disks.");
+    ImGui::TextDisabled("Direct disk-image upload and drop mounting are unavailable in the browser.");
+#else
     ImGui::BulletText("Drag a .woz / .moof / .dsk / .po / .nib / .hdv / .2mg onto this window.");
     ImGui::BulletText("Or File → Disk Library to browse bundled images.");
     ImGui::BulletText("Or launch from a terminal: POM2 path/to/game.woz");
     ImGui::TextDisabled("POM2 auto-routes each image to Disk II, SmartPort 3.5\" or ProDOS HDV.");
+#endif
 
     ImGui::Spacing();
     ImGui::SeparatorText("Suggested media folders");
     ImGui::BulletText("roms/        Apple II firmware dumps");
     ImGui::BulletText("disks_5.4/   5.25\" disk images (.dsk/.woz/.nib)");
-    ImGui::BulletText("disks_3.5/   3.5\" disk images (800K)");
+    ImGui::BulletText("disks_3.5/   400K/800K images; 1.44 MB requires SuperDrive");
     ImGui::BulletText("hdv/         ProDOS hard-disk images (.hdv/.2mg)");
 
     // ── Keys & signature features ────────────────────────────────────

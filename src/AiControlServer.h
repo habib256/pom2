@@ -29,10 +29,13 @@
 // Endpoints (all opt-in via settings.ai_control_enable; default off):
 //
 //   GET  /status              → {profile, cpu_mode, mode, cycles_per_frame,
-//                                cpu:{pc,a,x,y,p,sp,cycles}, disks:[...]}
+//                                cpu:{pc,a,x,y,p,sp,cycles}, disks:[...],
+//                                block_storage:[...], floppy_storage:[...]}
 //   POST /reset               → body {"kind":"soft|hard|cold"} (default hard)
 //   GET  /cpu                 → CPU register dump
 //   POST /cpu                 → body {"pc":?, "a":?, "x":?, "y":?, "p":?, "sp":?}
+//                                pc 0..65535, other registers 0..255;
+//                                validates all supplied values before mutation.
 //   GET  /mem?addr=N&len=N[&bank=main|aux|cpu]
 //                             → {"addr":N,"bank":"…","data":"FFEE…"} (hex, len ≤ 4096)
 //                             main = the raw main 64 KiB array (default),
@@ -46,8 +49,10 @@
 //                             below $C000 only; a write is bank-explicit, so
 //                             `cpu` is refused with a 400)
 //   POST /keyboard            → body {"text":"..."} or {"raw":"..."} — paste
-//   POST /disk                → body {"slot":6,"drive":0,"path":"..."} — insert
-//   POST /eject               → body {"slot":6,"drive":0} — eject
+//   POST /disk                → body {"drive":0,"path":"..."} — insert
+//   POST /eject               → body {"drive":0} — eject
+//                                Both target the primary (lowest-slot) Disk II;
+//                                optional slot must match it, drives are 0/1.
 //   POST /disk/sync           → flush mounted block/floppy media; wait for commits
 //   POST /snapshot/save       → body {"path":"....pom2snap"} — save path MUST
 //                                end with `.pom2snap` so an agent can't
@@ -59,13 +64,18 @@
 //                                and detached media; see docs/session-format.md.
 //   Printer/slot-log routes and full response shapes are listed in DEV.md.
 //   POST /speed               → body {"cycles_per_frame":N} OR {"preset":"1x|2x|max"}
-//   GET  /screen.ppm          → binary PPM of the live framebuffer
+//   GET  /screen.ppm          → P6 RGB of the emulated framebuffer at native
+//                             dimensions; no window chrome; 503 without display
 //   POST /mouse               → body {"dx":?,"dy":?} signed Apple-cursor delta
 //                                (±127/call) OR {"x":?,"y":?} absolute counter,
 //                                {"btn":0|1}, {"reset":1}. Drives the Mouse
-//                                Card's host-motion input exactly as
+//                                Card's or //c IOU mouse's host-motion input as
 //                                MainWindow::onMouseMove would — lets an agent
 //                                exercise mouse-driven apps headlessly.
+//
+// JSON successes include ok:true; failures include ok:false and error. Paths remain
+// inside cwd after canonicalization. The full client contract and request
+// examples are in DEV.md, under AI control server.
 //
 // Authentication: optional shared-secret in the `X-POM2-Token` header. When
 // the configured token is empty, requests are accepted unauthenticated

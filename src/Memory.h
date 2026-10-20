@@ -706,8 +706,8 @@ public:
     /// `\r`, `\n` all collapse to one CR. Non-printable controls below
     /// `$20` other than CR / HT are dropped silently. Capped at
     /// `kPasteMaxChars` so a runaway clipboard can't overwhelm the queue.
-    /// Bytes are appended to an internal FIFO that drains one byte per
-    /// `clearKeyStrobe()` — so the Apple II ROM's strobe-and-poll loop
+    /// Bytes are appended to an internal FIFO; after the strobe is cleared,
+    /// the next `$C000` read promotes a byte. The ROM's strobe-and-poll loop
     /// pulls them out at exactly its own pace, no timing tricks needed.
     /// Returns the number of bytes actually queued (after filtering).
     /// The ][/][+ case-fold is applied iff not in IIe mode.

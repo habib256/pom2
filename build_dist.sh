@@ -2,8 +2,8 @@
 #
 # build_dist.sh — produce POM2 release artifacts into DIST/.
 #
-# Today: Linux only (Windows / macOS / WASM are tracked separately on the
-# release-infra branch). Run from the repo root:
+# Linux driver. Other platforms use package_macos_release.sh,
+# package_windows_release.bat and build_wasm.sh. Run from the repo root:
 #
 #     ./build_dist.sh              # build + package Linux into DIST/
 #     ./build_dist.sh --tests      # also run the ctest suite first
@@ -12,10 +12,11 @@
 # Outputs (all under DIST/):
 #   POM2-v<ver>-linux-<arch>.tar.gz   relocatable bundle (bin/ + share/POM2)
 #   POM2-v<ver>-linux-<arch>.deb      Debian/Ubuntu package (if cpack DEB ok)
-#   POM2-v<ver>-x86_64.AppImage       single-file portable (if tooling present)
+#   POM2-v<ver>-<arch>.AppImage      single-file portable (if tooling present)
 #
-# The full roms/ tree ships under share/POM2/roms/ (system + peripheral
-# dumps + floppy_samples) so a release boots without a separate ROM drop.
+# Firmware and assets ship under share/POM2/ according to bundle.manifest,
+# including its exclusions. The tarball is required; DEB/AppImage are
+# best-effort and may be skipped even when the script exits successfully.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -90,8 +90,11 @@ public:
     Core(const Core&) = delete;
     Core& operator=(const Core&) = delete;
 
-    /// Load a 12/16/32 KiB Apple II system ROM. For //c-style 32 KiB dumps,
-    /// pass lowerBankFor32K=true; //e combined dumps use the upper bank.
+    /// Load an Apple II system ROM: common sizes are 12/16/20/32 KiB.
+    /// A 20 KiB dump skips its 4 KiB prefix; other accepted sizes in
+    /// 2..64 KiB use the loader's best-effort top-of-memory placement.
+    /// For //c-style 32 KiB dumps pass lowerBankFor32K=true; //e combined
+    /// dumps use the upper bank. Character ROMs load separately.
     bool loadRom(std::string_view path, bool lowerBankFor32K = false);
     bool loadCharacterRom(std::string_view path, int bank = 0);
     std::string lastError() const;
@@ -160,8 +163,8 @@ public:
     bool mockingboardAttached() const;
     void setMockingboardVolume(float volume);
 
-    /// Reset variants mirror the emulator UI: warm soft reset preserves CPU
-    /// registers, hard reset clears A/X/Y, and cold boot also clears RAM.
+    /// CPU/RAM reset variants: soft reset preserves A/X/Y while updating
+    /// PC/P/SP; hard reset clears A/X/Y, and cold boot also clears RAM.
     void softReset();
     void hardReset();
     void coldBoot();
@@ -176,12 +179,21 @@ public:
     std::uint8_t read(std::uint16_t address);
     void write(std::uint16_t address, std::uint8_t value);
 
+    /// Inject a 7-bit key. With no pending paste, a newer key replaces an
+    /// unread latch value; while paste bytes remain, the key appends to them.
+    /// II/II+ memory mode folds ASCII lowercase to uppercase.
     void queueKey(std::uint8_t ascii);
     /// Physical key state for IIe AKD ($C010), independent of the strobe.
     /// Tokens in 0..511 distinguish simultaneous host keys. queueKey still
     /// supplies character/repeat events; these calls do not inject a byte.
     void setKeyHeld(std::uint16_t token, bool down);
     void releaseHeldKeys();
+    /// Queue clipboard text, normalizing line endings to CR and filtering
+    /// controls except CR/HT. Well-formed UTF-8 uses best-effort ASCII
+    /// transliteration; other buffers use Apple high-ASCII masking.
+    /// II/II+ mode folds lowercase to uppercase. At most 4096 characters
+    /// including pending input are accepted. Returns output characters
+    /// queued, not input bytes consumed; it does not wait for guest reads.
     std::size_t pasteText(std::string_view text);
 
     /// Drive one of the four Apple II paddle inputs directly. Values map to
@@ -208,8 +220,10 @@ public:
 
     /// Pull mono float32 samples from the built-in 1-bit speaker. The caller
     /// owns both the buffer and scheduling; call after emulating the matching
-    /// span of CPU time. Samples are in [-1, +1]. Returns zero for a null
-    /// buffer, zero frames, or a zero sample rate.
+    /// span of CPU time. This is the filtered source signal with speaker
+    /// gain applied, without the stereo mixer's final [-1, +1] clamp.
+    /// Returns frameCount after filling, or zero for a null buffer, zero
+    /// frames, or a zero sample rate; it does not advance the CPU.
     std::size_t pullSpeakerAudio(float* monoOutput, std::size_t frameCount,
                                  std::uint32_t sampleRate = 44100);
     /// Speaker gain in [0, 2]. Values outside the range are clamped.
@@ -217,7 +231,10 @@ public:
 
     /// Pull the complete interleaved stereo mix: centred built-in speaker and
     /// cassette plus Mockingboard AY1 on the left and AY2 on the right when
-    /// attached. The output buffer must hold frameCount * 2 floats. This
+    /// attached. Uses the shared mixer with unity master gain and stereo
+    /// output clamped to [-1, +1]. Fills and returns frameCount, or returns
+    /// zero for a null buffer, zero frames, or a zero sample rate, without
+    /// advancing the CPU. The buffer must hold frameCount * 2 floats. This
     /// consumes the same speaker timeline as pullSpeakerAudio(); a host should
     /// use one API or the other, not both for the same emulated time span.
     std::size_t pullAudio(float* interleavedStereo, std::size_t frameCount,

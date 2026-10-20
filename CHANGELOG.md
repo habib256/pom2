@@ -68,6 +68,53 @@ Raspberry Pi instructions follow the workflow's processor-specific filenames,
 actual PGO disk selection and floating-point hash limits, with runnable repository
 paths and explicit graphical-runtime requirements for the tarball.
 
+A further comparison against `b9bfa84` removes superseded debugger limitations
+from DEV: DMA hand-back uses the common stop path, Step advances the current
+bus master, and bank-qualified watches filter the physical access bank.
+The debugger guide now explains run/resume, call stepping, cancellation and
+the side-effect-free inspection limits of I/O/card windows.
+
+Storage and abstraction references now agree on the HDV `$Cn07=$3C`
+autostart signature, the //c+ firmware's external SmartPort boot path and the
+separate SmartPort HLE/Liron firmware implementations. The user guide adds
+image-to-drive routing, 400K/800K/1.44 MB and DiskCopy limits, browser media
+import boundaries and the distinction between hard reset and a RAM-clearing
+cold boot. The format-documentation task STORAGE-011 is closed. Scope and
+parity notes describe current write defaults, optional local printer samples
+and FujiNet's configurable call budgets without changing scope decisions.
+
+The HTTP reference now records current register validation, separate memory
+read/write contracts, response envelopes, path/request bounds and the actual
+speed/mouse controls. Integrated Welcome and Abstraction Levels help follows
+browser import limits and the //c firmware/stub split. Public/internal header
+comments describe current HTTP and debugger contracts; emulator logic is unchanged.
+
+Floppy Emu instructions distinguish parsed `automount` directives from the
+manual mount/boot workflow, document SD-root containment for favorites and
+identify the actual mode-specific drive routes. The graphics comparison
+records emulated-frame persistence, current monochrome dimensions and valid
+AppleWin TV history. Historical timing figures retain their limits, including
+the OE-CPU result above a 60 Hz frame budget.
+
+Input and cassette instructions now describe four mapped gamepad axes, face
+button routing, armed program-tape playback and the //c's absent cassette
+interface. CLI help/reference distinguishes ordered action submission from
+completion of queued steps, records memory-load boundaries and clarifies tape
+suffix precedence. Current settings references use `state.cfg`; cassette
+comments distinguish CPU/RAM snapshots and rewind from v7 sessions.
+
+ROM instructions now show the profile filename order and explain that a
+fallback filename in the user directory does not outrank a preferred packaged
+filename. Browser references distinguish preloaded MEMFS assets from IDBFS
+state, document storage-failure startup and describe alternating automatic
+checkpoint files with atomic marker publication.
+
+The SDK reference now includes the 20 KiB ROM layout and best-effort size
+handling, attachment/replacement boundaries, boot-entry versus completed-boot
+semantics and halted-CPU cycle accounting. Reset comments name A/X/Y rather
+than claiming all registers survive. FujiNet references distinguish relayed
+services from controller status and the default local HTTP `N:` device.
+
 ## 2026-10-19 — Bank-aware debugger and source correspondence
 
 Breakpoints (including register conditions), read/write watches, run-to-cursor,

@@ -134,7 +134,7 @@ bool charRomFitsProfile(const CharRomEntry& e, SystemProfile p);
 /// stale settings files written by a future build).
 const CharRomEntry& charRomEntry(CharRomLocale l);
 
-/// String key used in settings.cfg so the choice survives restarts.
+/// String key used in state.cfg so the choice survives restarts.
 const char* charRomLocaleKey(CharRomLocale l);
 CharRomLocale charRomLocaleFromKey(const std::string& key);
 

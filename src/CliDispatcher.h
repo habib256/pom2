@@ -23,13 +23,15 @@
 //                          MainWindow's first render() call.
 //   Phase C (deferred)   : --load addr:file, --run addr, --paste, --step,
 //                          --trace-brk, --play/--rec/--rewind,
-//                          --snapshot-save AND --snapshot-load. Fires after a
+//                          snapshot/session save and load. Fires after a
 //                          short settling period, in COMMAND-LINE ORDER — so
 //                          a `--snapshot-load x --run 300` does the restore
 //                          first because it was typed first, not because of
 //                          any phase split. (This comment used to place
 //                          --snapshot-load in Phase A; the parser has always
 //                          pushed it as a deferred action like the others.)
+//                          --step queues work; the runner does not wait for
+//                          its completion before submitting the next action.
 //
 // Every parser is dependency-free for unit testing — pass argv,
 // receive std::optional<CliPlan>.
@@ -122,7 +124,7 @@ struct CliPlan {
     std::string                     bootDiskPath;
 
     /// `--prodos-folder <path>` synthesises a /HOST/ ProDOS block volume
-    /// from a host directory (guest writes go back to the folder) and mounts
+    /// from a host directory (sync back is a separate opt-in) and mounts
     /// it — drive 1 of an HDV card, or drive 2 beside a positional HDV. It
     /// has no boot blocks, so nothing boots from it.
     std::string                     prodosFolderPath;

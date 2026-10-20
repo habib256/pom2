@@ -1361,8 +1361,8 @@ void EmulationController::noteTimeJump()
     //  * The speaker's 1-bit reconstruction cursor only snaps FORWARD and
     //    purges older-stamped toggles as stale, so without a reset audio
     //    stays dead until the counter re-passes its pre-jump value.
-    //  * The cassette deck is in no snapshot at all and compares its stamps
-    //    with unsigned subtraction, so a backwards jump wrapped them (see
+    //  * File snapshots/rewind omit cassette state (v7 sessions restore it
+    //    separately). Its unsigned stamp comparisons wrapped on a jump (see
     //    CassetteDevice::resetForTimeJump). It keeps its tape and cursor.
     //
     // The sound CARDS need nothing here: Mockingboard / Phasor serialize

@@ -23,6 +23,10 @@ The default `CoreConfig{}` selects NMOS 6502, NTSC and non-IIe memory. It does
 not select the desktop's enhanced PAL //e profile. Instances are movable,
 noncopyable and must not be accessed concurrently. `run(0)` or a negative
 budget returns zero without executing an instruction.
+Returned cycles measure elapsed emulated time, not retired instructions:
+a halted CPU still advances device time in two-cycle idle steps. Check
+`cpuState().halted` when deciding whether guest execution can make progress;
+reset clears that halt state.
 
 `loadRom` and `loadCharacterRom` load the paths supplied by the host; they do
 not run the desktop profile-selection workflow or start execution. Choose the
@@ -32,11 +36,38 @@ soft-switch side effects; they are not memory-inspector peeks. Failed
 load/attach/save/boot operations report their error through `lastError()`;
 queries such as `diskInserted()` can return `false` as an ordinary result.
 
+System ROM loading recognizes 12/16/20/32 KiB layouts: 12 KiB maps at
+`$D000`, 16 KiB at `$C000`, and a 20 KiB dump skips its first 4 KiB before
+mapping the remaining 16 KiB. For 32 KiB, `lowerBankFor32K=false` selects
+the upper firmware half of a combined //e dump; `true` selects //c bank 0
+and retains its alternate bank. Other accepted sizes from 2–64 KiB use
+best-effort placement at the top of memory; acceptance alone does not make
+an arbitrary dump compatible with the chosen machine. Character ROM data
+is loaded separately through `loadCharacterRom`.
+
 `setPaddle(0..3, value)` and `setPaddleButton(0..2, pressed)` expose the full
 game port. `setJoystickAxes(x, y)` is a convenience for paddles 0/1 only;
 deadzone, inversion, right-stick mapping and host gamepad discovery belong
 to the embedding frontend. `queueKey`/`pasteText` inject characters, while
 `setKeyHeld`/`releaseHeldKeys` supply physical IIe AKD state separately.
+
+`queueKey` models a single hardware latch: without pending paste bytes,
+another call replaces an unread character. While paste bytes remain queued,
+live keys append after them. Values are masked to 7 bits; II/II+ memory mode
+also folds ASCII lowercase to uppercase. Use `pasteText` for a whole string
+rather than calling `queueKey` repeatedly before running the guest.
+
+`pasteText` normalizes CR/LF/CRLF to CR, drops controls below `$20` except
+CR and tab, and applies the same II/II+ case fold. A well-formed UTF-8 buffer
+uses best-effort ASCII transliteration of supported accents/punctuation;
+unsupported Unicode characters are omitted. Other buffers use Apple
+high-ASCII masking. New paste input is limited by a 4096-character capacity
+including pending input and can be truncated. The return value counts
+accepted output characters, not consumed input bytes or characters already
+read by the guest; it cannot serve as a UTF-8 retry offset. Delivery follows
+guest keyboard polling: after clearing the strobe, the next `$C000` read
+promotes a queued character. `pasteText` does not run the CPU or wait for
+the text to be consumed.
 
 `renderFrame()` returns a borrowed CPU-rendered framebuffer without OpenGL;
 the next render, move-assignment or destruction invalidates the view. For
@@ -49,10 +80,36 @@ returned width and height. `pullSpeakerAudio` takes one float per frame;
 `pullAudio` takes two interleaved floats per frame, left then right. Their
 default rate is 44100 Hz. Allocate the caller-owned buffers accordingly.
 
+Both audio pulls fill and return the requested frame count, including silent
+samples; the return value is not an available-audio count. A null buffer,
+zero frame count or zero sample rate returns zero. Pulling audio does not
+advance the CPU. The host must coordinate emulation and output scheduling;
+the facade exposes no desktop pause/suspend or master-mixer controls.
+
+`pullAudio` uses the application's shared mix law with unity master gain,
+unmuted stereo output and a final clamp to `[-1, +1]`. It visits the speaker,
+cassette and every attached card audio source. `pullSpeakerAudio` bypasses
+that final mixer clamp and returns the filtered speaker signal with its
+source gain applied; it does not promise the same amplitude bound. Apply
+any host output limit required by the destination format.
+
 Disk II drive indices and SmartPort unit indices are **0 and 1**, while
 expansion slot numbers are **1 through 7**. The facade provides one Disk II
 controller in slot 6, one optional SmartPort controller (slot 5 by default),
 and multiple Mockingboards in separate empty slots (slot 4 by default).
+
+`attachDiskII` can replace this core's existing Disk II controller after
+successfully loading the new PROMs; it does not retain its mounted disks.
+A different card occupying slot 6 refuses attachment. SmartPort can be
+attached only once, and SmartPort/Mockingboard attachment requires an empty
+destination slot. `bootDisk()` cold-boots and enters `$C600`; its success
+means that the controller/PROM/media preconditions passed, not that the guest
+has completed booting. It exposes no drive-2 boot selector.
+
+Soft reset preserves A/X/Y, but reloads PC from the reset vector, updates P
+and decrements SP. Hard reset clears A/X/Y while preserving RAM; cold boot
+also resets RAM to POM2's power-on pattern. Reset calls do not reopen media
+or reload firmware files.
 
 The desktop/browser `.pom2session` workflow, automatic machine reconstruction,
 bank-aware debugger and source panel are not methods on this public facade.

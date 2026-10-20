@@ -191,7 +191,7 @@ void MainWindow::renderVoxelSettingsWindow()
 // Sliders that drive the OpenEmulator-style shader: standard four TV knobs
 // (B/C/S/H), sharpness (chroma bandwidth), persistence (CRT afterglow), and
 // the pure post-effects (scanlines, barrel, vignette, shadow mask). All
-// values are persisted to settings.json under the `ntsc_*` keys so the look
+// values are persisted to state.cfg under the `ntsc_*` keys so the look
 // survives across sessions. No look presets: they overwrote the whole glass
 // block in one click, which made the panel hard to reason about — the
 // defaults plus "Reset to defaults" are the only starting points now.

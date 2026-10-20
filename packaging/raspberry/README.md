@@ -129,14 +129,29 @@ Environment overrides: `POM2_PREFIX` (default `/opt/POM2`), `POM2_BUILD_DIR`
 
 ```sh
 sudo packaging/raspberry/pi_tuning.sh        # governor + IRQ pinning + swap off
+sudo packaging/raspberry/pi_tuning.sh --no-irq-pin  # leave boot arguments alone
 sudo packaging/raspberry/pi_tuning.sh --uninstall
 ```
 
-Governor `performance` (Pi OS ships `ondemand`, whose frequency ramps produce
-exactly the periodic "it goes in jerks" stutter on a 60 Hz bursty load), hard
-IRQs pinned to core 0 via `irqaffinity=0`, swap off (one swap-in mid-frame on
-an SD card is a guaranteed audio dropout). The cmdline edit needs a reboot;
-everything else is live. It is idempotent and fully reversible.
+The script selects the `performance` governor to avoid frequency ramps under
+the emulator's bursty load. It also sets default hardware IRQ affinity to
+core 0 via `irqaffinity=0`. The script adds this argument only
+when none is already present, using `/boot/firmware/cmdline.txt` or
+`/boot/cmdline.txt`; it skips the edit if neither exists. The cmdline edit
+needs a reboot. `--no-irq-pin` skips it explicitly.
+
+The `pom2-perf.service` unit applies the performance governor immediately and
+on later boots. Swap is disabled only through `dphys-swapfile` when that tool
+is installed; other swap configurations are left alone.
+
+`--uninstall` removes the governor service and restores the saved
+`cmdline.txt.pom2-bak` if present, requiring a reboot for the restored boot
+arguments. This restores the whole saved file, including its other arguments;
+preserve later edits before using that backup. Uninstall does not immediately
+restore the previous governor and leaves swap as configured. To re-enable
+`dphys-swapfile`, use `sudo systemctl enable --now dphys-swapfile` when that
+is the swap service you intend to use. Restore your chosen governor separately
+or let the system's normal boot policy apply after reboot.
 
 It deliberately does **not** install a kiosk session or touch the audio stack:
 POM2 has kiosk mode built in (`--kiosk`; F10 toggles fullscreen), and a session launched

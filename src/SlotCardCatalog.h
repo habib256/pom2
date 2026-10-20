@@ -126,8 +126,8 @@ inline constexpr CardType kCardTypes[] = {
     // MACRAW / IPRAW modes need a backend. No MAME device — ported from
     // AppleWin `source/Uthernet2.cpp`.
     { "uthernet2",    "Uthernet II (W5100)" },
-    // FujiNet (fujinet.online) — SmartPort controller that RELAYS every call
-    // to a real FujiNet over the project's SP-over-SLIP protocol: a FujiNet
+    // FujiNet — SmartPort controller relaying peer-backed calls over
+    // SP-over-SLIP, with local count/N: services. Its peer can be a FujiNet
     // desktop build on loopback TCP, or a physical ESP32 board over USB
     // CDC-ACM. One card carries every FujiNet function (block storage, the
     // N: network device, clock, printer, modem, CP/M) because on the Apple II

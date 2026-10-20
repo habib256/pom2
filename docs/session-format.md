@@ -114,6 +114,15 @@ never falls back to a CPU/RAM-only snapshot. The default browser //c topology
 and writable floppy images are supported. IndexedDB flushes are asynchronous: an
 abrupt browser termination may lose changes since the last completed flush.
 
+Checkpoint files alternate between `browser-resume.pom2session` and
+`browser-resume-next.pom2session` under `/persistent`. The
+`browser-resume.enabled` marker records the active file and intended
+running/stopped mode. A checkpoint writes the inactive file before atomically
+publishing the marker, so a failed capture/write does not replace the active
+checkpoint. This publication happens in the mounted filesystem; IndexedDB
+durability still depends on the asynchronous flush. A corrupt active archive
+or marker suspends resume rather than silently selecting the other generation.
+
 After selecting a supported configuration, use:
 
 ```sh

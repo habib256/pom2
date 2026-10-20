@@ -16,6 +16,14 @@ single dump (or add an extra one) in a read-only package:
 `ResourcePaths` also probes a `roms/` folder next to the executable and the
 current working directory (dev layout).
 
+The override must use the filename the active profile prefers. Filename
+preference is checked before directory preference: for example, a bundled
+apple2p.rom wins over a per-user apple2.rom on the II+ profile. Put your II+
+override at roms/apple2p.rom under the per-user data directory. An existing
+but invalid preferred main ROM refuses a profile change; it does not silently
+continue to a later alias. See docs/USER-GUIDE.md in the source repository
+for the profile filename table, and Help -> ROM Status for the live inventory.
+
 Expected files
 --------------
   Main system ROMs
@@ -66,6 +74,9 @@ Expected files
 Notes
 -----
 * A 12 KB main ROM maps to $D000-$FFFF; a 16 KB one to $C000-$FFFF.
+  A 20 KB combined dump skips the leading 4 KB and maps its upper 16 KB.
+  A 32 KB dump uses the profile's //e versus //c bank layout; a character
+  generator embedded in a combined file is not loaded as a separate charset.
 * floppy_samples/ (mechanical drive sounds, BSD-3-Clause) is not firmware —
   leave it in place.
 * If only apple2.rom is present for a profile that prefers a machine-specific

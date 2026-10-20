@@ -29,8 +29,12 @@ works, which is what *supported* means.
 (hashes, not smoke assertions); a regression blocks a release. **Supported** —
 it works and is pinned; bugs are fixed on report; **no proactive fidelity work,
 no gap-closing, no backlog grooming**. **Frozen** — present and shipped,
-documented as frozen in README and in the card picker; no promise; its open
-backlog items are closed as *won't do* unless somebody arrives with a need.
+documented as frozen in this scope reference and the domain backlog; no
+promise; its open backlog items are closed as *won't do* unless somebody
+arrives with a need.
+The card picker shows abstraction levels where available; scope labels were
+removed from its rows on 2026-09-12. `SlotCardCatalog::CardScope` retains
+the classification in code.
 
 **Core is 14 rows out of ~60. That ratio is the point.**
 
@@ -114,10 +118,10 @@ registry, theme, docking, palette · WASM build · Packaging.
 | 🧊 **3D voxel view** | A framebuffer effect with a math test and no other pin, no corpus, no reports. 431 lines that work (513 in `Voxel3DRenderer.cpp` on 2026-10-06). Close the heightfield-mesh option |
 | 🧊 **HGR/DHGR paint + sprite editors** | **Unreachable by ctest by construction**, which is how three OOB accesses survived four weeks green — *and* duplicated verbatim into POM1, so every fix must be applied twice with nothing flagging the omission. Ship it, add nothing. The one admissible piece of work is the shared `EditorTestAccess` seam, and only on a report |
 | 🧊 **Floppy Emu** | 4 of 6 modes; the two missing were already "out of scope for v1" |
-| 🧊 **Printer mechanical sounds** | Synthesised because **no sample set exists** — there is no oracle and never will be |
+| 🧊 **Printer mechanical sounds** | Synthesised by default. The optional local Virtual ][ matrix-printer recording is implemented, selected with the manual Virtual ][ sound bank; recordings are not shipped. Further fidelity work remains frozen. |
 | 🧊 **PostScript by delegation** | Delegates to a host Ghostscript; document the dependency, no in-process renderer |
 | 🧊 **Remaining WASM browser extras** (direct disk-image picker/drop-zone, touch input, worklet tuning) | These remain frozen. Text/session upload/download, IndexedDB automatic resume and PAL wall-time CPU pacing are implemented; RAF still follows the host display. The public demo is linked from README; distribution decisions remain separate release gates. |
-| 🧊 **Apple ][ Original (1977) profile** | No profile-specific test, no corpus title, no report. Do not chase rev-0 quirks |
+| 🧊 **Apple ][ Original (1977) profile** | Rev-0 fidelity work remains frozen. Generic profile/session tests include it (`system_profile_smoke`, `session_machine`); the latter uses synthetic firmware and does not certify original-ROM or rev-0 hardware behavior. |
 | 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
 
 ## Standing rulings
@@ -136,10 +140,18 @@ Decisions, not work. Do not re-litigate without new evidence.
   doing both is not. Physically write-protect belongs to the medium; the
   counter-argument is that accepting a write with write-back off loses it
   silently. **Settled 2026-09-07**: inside a SmartPort card the rule is the
-  card's — physically write-protected *or* no write-back opt-in, as the 3.5"
+  card's — physically write-protected *or* write-back disabled, as the 3.5"
   unit and the Disk II already answered; `SmartPortHdvUnit` was aligned. The
   HDV-class *cards* keep their in-session-writable policy, and DEV.md states
   the divergence. Pinned by `media_contract`.
+  **Current default (2026-09-08 onward):** media mount writable; there is no
+  per-card write-back opt-in in the UI. The visible protection control changes
+  the disk file's host read-only bit, and container locks still apply.
+  `POM2_MEDIA_WRITE_DEFAULT=protected` changes the process default; detached
+  session disks accept supported writes in RAM without host persistence.
+  ProDOS host-folder synchronization retains its separate opt-in. See the
+  [user guide](../USER-GUIDE.md#your-disks-and-saves) and
+  [session contract](../session-format.md).
 - **R2 · Echo+ TMS5220: ship or hide.** The former silent scaffold was hidden.
   The 2026-10-18 explicit implementation request reopened it; the actual
   VIA/two-AY/TMS5220C audio implementation now ships in the catalog. Physical

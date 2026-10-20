@@ -165,7 +165,7 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "BMOW Floppy Emu: SD-card image browser + OLED, emulated." },
 { PanelId::Cassette, "panel.cassette", "Cassette deck", PanelGroup::DevStorage,
   "show_cassette", nullptr,
-  "Load/save tape images (.wav) on II/II+/IIe." },
+  "Load ACI/WAV/MP3/OGG/FLAC program tapes; save ACI/WAV on II/II+/IIe." },
 
 // ── Devices ▸ Sound ───────────────────────────────────────────────────────
 { PanelId::Mixer, "panel.mixer", "Audio Mixer", PanelGroup::DevSound,

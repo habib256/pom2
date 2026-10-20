@@ -76,10 +76,11 @@ where every 65C02 Apple shipped (Rockwell/GTE/NCR) executes a 1-cycle NOP
 choice, the table is the WDC variant); `WAI` charges 3 cycles and falls
 through instead of waiting; `getCycleCountNow()` over-reads by the last
 instruction's cycles between steps (harmless to its mid-instruction
-callers, ≤14 cycles once for the Mockingboard/Phasor reset anchors);
-and `EmulationController::runCpuSlice`'s DMA-release tail runs without
-the stop check and hit reconciliation, so a breakpoint hit there is
-consumed as the next chunk's amnesty (needs a SoftCard actively DMA-ing).
+callers, ≤14 cycles once for the Mockingboard/Phasor reset anchors).
+The DMA-release debugger defect from the same report was corrected on
+2026-10-20: `runCpuSlice` routes the remaining 6502 budget through the common
+hook/hit reconciliation and stop check. `debugger` covers the stop, toolbar
+resume and cancelled-transient hook detachment after hand-back.
 
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
 TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
@@ -356,8 +357,10 @@ instruction-precise in both directions: the granting `STA $CnXX` calls
 `M6502::stop()` so the in-flight `run()` chunk ends at that instruction
 boundary (`run` re-arms `running` on the next call), and `runCpuSlice`
 gives the chunk remainder to the other CPU instead of burning dead time.
-Single-step (`Mode::Step`) deliberately keeps stepping the 6502 — the
-debugger is 6502-centric.
+Single-step (`Mode::Step`) calls `stepBusMaster`: it advances one Z80
+instruction while the SoftCard owns the bus, otherwise one 6502 instruction.
+The debugger's disassembly, breakpoints and profiling remain 6502-centric;
+stepping the Z80 does not add its execution to the 6502 history.
 
 Snapshot: the full Z80 register file + enabled/firstBoot/T-carry go into
 the card's `SLOTn` blob (magic `SFZ2`, hand-packed little-endian, foreign
@@ -1456,7 +1459,7 @@ copied — the implementation is rewritten from the public NTSC spec
 (FCC/CCIR §73.682) and the openemulator-explainer notebook by
 Zellyn Hunter (algorithm description only).
 
-All knobs persist under settings.json keys `ntsc_brightness`,
+All knobs persist under `state.cfg` keys `ntsc_brightness`,
 `ntsc_contrast`, `ntsc_saturation`, `ntsc_hue`, `ntsc_sharpness`,
 `ntsc_persistence`, `ntsc_scanlines`, `ntsc_barrel`,
 `ntsc_shadow_mask` (int 0..3), `ntsc_shadow_strength`, `ntsc_pal`,
@@ -2295,7 +2298,7 @@ slot ROM page.
 settings, but the markadev/AppleII-RevEng audit (2026-05-28) confirms
 the real Street Electronics ECHO+ used 2× AY-3-8913 + TMS5220, not the
 SSI263. The SSI263-based Street Electronics product was the Cricket.
-The catalog key stays `"echoplus"` for `settings.json` back-compat;
+The catalog key stays `"echoplus"` for saved-settings compatibility;
 the user-visible label is now "Cricket / Echo (SSI263)". See
 [§ EchoPlusTMS5220Card](#echoplustms5220card) for the real Echo+ chipset.
 
@@ -4206,7 +4209,7 @@ Pinned: `smartport_card_smoke_test`, `smartport_mixed_units_smoke_test`.
 > carries in code comments (`SmartPortCard`, `Memory`, `MainWindow`) and in
 > `TODO.md`. It refers to this section; there is no tracker behind it.
 
-Two paths, by ROM:
+Three paths, by ROM:
 
 - **32 KB //c (rev 0/3/4) — the machine's own firmware, since 2026-09-01.**
   Its bank-0 `$C500` page is the disk controller firmware (the Liron's, byte
@@ -4219,9 +4222,14 @@ Two paths, by ROM:
   drive, ProDOS lists `S5,D1/D2` next to the internal `S6`, and
   `bootFromSlot(5)` jumps into the real page and boots through it. Pinned
   `iic_external_smartport`.
-- **16 KB //c (rev 255) and the //c+'s HDV/2mg — the host-served stub.** The
-  16 KB dump has no 3.5" firmware at all; the //c+ boots its internal Sony
-  through the MIG but reaches an HDV only this way. The **same
+- **//c+ — the machine's own firmware and shared IWM.** Its ROM probes the
+  external SmartPort bus at reset, including HDV units. The Sony mechanisms
+  retain their IWM/MIG path; external SmartPort devices use the protocol
+  responder. `bootFromSlot(5)` takes the reset path rather than jumping
+  directly into `$C500`, which does not discover the rear device when entered
+  outside the ROM's boot scan.
+- **16 KB //c (rev 255) — the host-served stub.** The
+  16 KB dump has no 3.5" firmware at all. The **same
   `SmartPortCard`** as //e is built into slot 5 and its `$Cn00` page is
   punched through the forced INTCXROM. Why not faithful IWM/Sony there:
   the real //c-class masks all slot ROM → a normal card's `$Cn00` is
@@ -4231,7 +4239,8 @@ Two paths, by ROM:
 
 - **ROM hole** (`Memory::memRead`, //c-class INTCXROM branch):
   `$C500-$C5FF` (bank 0) returns `slots.slotRomRead(addr)` instead of
-  internal ROM **iff** `iicSmartPortArmed_` AND
+  internal ROM **iff** `iicSmartPortArmed_`, the machine is not serving the
+  external SmartPort bus through its own firmware, AND
   `slots.peripheral(5)->exposesIicOnboardRom()` (unit holds media).
   Bank 1 handled earlier by `internalRomRead` → hole is bank-0 only
   (preserves //c+ alt firmware's `$C500` data).
@@ -5970,10 +5979,11 @@ the LC latches resolved, no side effect) — the only spelling that reaches
 Language-Card RAM, since the raw main array holds the ROM image at
 `$D000-$FFFF`; `main` and `aux` are the raw arrays; the POST twin refuses
 `cpu` because a write is bank-explicit by design and refuses any other
-unknown bank too. Pinned by `ai_control_mem_bank`. Historical HTTP findings
-still require revalidation:
-`POST /screen.ppm` is answered; `POST /cpu` masks an out-of-range `pc`/`p`
-silently where `/speed` refuses. The former flat-bus write-watch, explicit-step
+unknown bank too. Pinned by `ai_control_mem_bank`. `POST /cpu` validates all
+supplied registers before changing any: `pc` is 0–65535, A/X/Y/P/SP are
+0–255, and malformed or out-of-range values receive 400. The older masking
+report is superseded. `/screen.ppm` still has no method check; GET is the
+documented client method. The former flat-bus write-watch, explicit-step
 PC attribution and step-over transient findings were corrected in the current
 debugger; see [bank-aware debugging](docs/debugger-banks.md). `/status`'s
 `disks` lists the Disk II only; block images have a separate
@@ -6057,19 +6067,68 @@ while this table and the handler implementations give the detailed contract):
 |---|---|---|
 | `/status` | GET | profile, cpu_mode, mode, cycles_per_frame, CPU regs, Disk II disks, block-image persistence (`block_storage`), floppy persistence (`floppy_storage`) |
 | `/disk/sync` | POST | flush mounted HDV/CFFA/SmartPort block images and every mounted 5.25"/3.5" floppy; waits for host-file commits, HTTP 500 on failure; no body required |
-| `/cpu` | GET / POST | register dump / set `pc`,`a`,`x`,`y`,`p`,`sp` |
-| `/mem?addr=N&len=N[&bank=main\|aux\|cpu]` | GET / POST | hex read (len ≤ 4096; `cpu` = the 6502's view) / bulk RAM write (`main`\|`aux` only) |
+| `/cpu` | GET / POST | register dump / set any of `pc`,`a`,`x`,`y`,`p`,`sp`; validate all supplied values before mutation |
+| `/mem?addr=N&len=N[&bank=main\|aux\|cpu]` | GET | hex read, length 0–4096, clipped at `$FFFF`; `cpu` resolves the current CPU view without bus side effects |
+| `/mem?addr=N[&bank=main\|aux]` | POST | `{"data":"A90060"}` writes explicit RAM bytes below `$C000`; rejects `cpu`, unknown banks and writes crossing into I/O/ROM |
 | `/reset` | POST | `{"kind":"soft\|hard\|cold"}` — the three verbs in [CLAUDE § Reset](CLAUDE.md#reset-architecture) |
 | `/keyboard` | POST | `{"text":…}` / `{"raw":…}` → the paste queue |
 | `/disk`, `/eject` | POST | insert / eject by `{slot, drive, path}`; the endpoints drive the **primary** (lowest-slot) Disk II — `slot` may be omitted, and when given must match that card's real slot (validated and echoed back; a hard-coded "6" used to touch the slot-5 primary while confirming slot 6) |
 | `/snapshot/save`, `/snapshot/load` | POST | save path **must** end `.pom2snap` so an agent cannot clobber an unrelated file; load magic-byte-checks the blob |
 | `/session/save`, `/session/load` | POST | `{"path":"game.pom2session"}`; save captures the supported machine/media bundle atomically, load reconstructs profile, firmware and cards after detached validation; desktop loads use the UI owner-thread queue. See [session limits](docs/session-format.md) |
-| `/speed` | POST | `{"cycles_per_frame":N}` or `{"preset":"1x\|2x\|max"}` |
+| `/speed` | POST | `{"cycles_per_frame":N}` (1–2000000) or `{"preset":"1x\|2x\|max"}`; 1x/2x follow active PAL/NTSC timing, max selects 1000000 cycles/frame |
 | `/screen.ppm` | GET | binary PPM of the live framebuffer |
-| `/mouse` | POST | signed delta (±127/call) or absolute counter + button, straight into the Mouse Card's host-motion input |
+| `/mouse` | POST | `dx`/`dy` clamp to ±127/call; `x`/`y` override the corresponding delta as 8-bit counters, `btn` sets the button, `reset` clears accumulated counters; supports both Mouse Cards and the //c IOU mouse |
 | `/printer-port[?slot=N]` | GET / POST | the printer side of one slot, or of every `ssc`/`grappler`/`grappler1`/`pic` slot / `{"slot":N,"set":"k=v,…"}`, the `--printer-port` option language |
 | `/slot-log?slot=N` | GET / POST | drain slot N's bus-access log / `{"slot":N,"enable":1[,"capacity":C]}` (capacity 1-4194304) or `{"slot":N,"enable":0}` |
 | `/printer/spool?slot=N[&from=K]` | GET | bytes the card in slot N sent its printer since byte K (hex), plus the next cursor — see [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |
+
+JSON successes include `"ok":true`; failures include `"ok":false` and an
+`error` string. `/screen.ppm` returns binary PPM instead. Use the documented
+methods: `/status` and `/screen.ppm` currently do not enforce GET themselves.
+Requests are limited to a 64 KiB preamble and 1 MiB body; chunked request
+bodies are refused. File paths resolve inside the process's working directory,
+including after canonicalization. The fence is independent of the per-user
+settings/data directories and the ROM search path.
+
+For example, with the server running on its default port:
+
+```sh
+curl http://127.0.0.1:6503/status
+curl 'http://127.0.0.1:6503/mem?addr=768&len=16&bank=cpu'
+curl -X POST 'http://127.0.0.1:6503/mem?addr=768&bank=main' \
+  -H 'Content-Type: application/json' -d '{"data":"A90060"}'
+curl -X POST http://127.0.0.1:6503/disk/sync
+```
+
+Add `-H 'X-POM2-Token: YOUR_TOKEN'` when configured. `/disk` and `/eject`
+use zero-based Disk II drive numbers (0/1); they do not provide generic
+Sony/SmartPort bay mounting. `/disk/sync` does cover mounted block and floppy
+image persistence, but does not enable host-folder synchronization or write
+detached session disks to files. `/speed` changes the cycle budget; it does
+not expose the CLI's unpaced `--cpu-max` switch. No HTTP run/pause/single-step
+route is currently registered.
+
+`/keyboard` accepts nonempty `text`, `raw`, or both (text is queued first).
+Text follows clipboard normalization: CR/LF/CRLF become CR, controls below
+`$20` other than CR/tab are dropped, supported UTF-8 characters are transliterated and
+II/II+ lowercase folds to uppercase. Raw input is a JSON string of key bytes,
+not hexadecimal: bytes are masked to 7 bits without text filtering, line-ending
+normalization or case folding. Both share the paste capacity of 4096 pending
+characters, including the occupied latch, and may truncate. A successful
+response's `queued` counts accepted output characters; zero is possible when
+full. It does not mean the guest consumed them. Clearing the strobe permits
+the next `$C000` read to promote a queued character.
+
+`/screen.ppm` renders the current emulated framebuffer and returns a P6 header
+followed by width × height RGB triplets, with no alpha channel. Read the
+dimensions from the header: video modes and card displays can differ. The
+capture excludes window chrome and panels. OE-GPU composite mode uses its
+CPU demodulation path for capture rather than reading a GL window. A missing
+attached display returns HTTP 503. For example:
+
+```sh
+curl --fail http://127.0.0.1:6503/screen.ppm -o screen.ppm
+```
 
 **Threading**: one worker thread, one client at a time. Each request takes
 `EmulationController`'s state lock for exactly the slice that touches
@@ -6542,8 +6601,12 @@ II **every** FujiNet function is a SmartPort unit — block storage, `N:`, the
 clock, the printer, the modem, CP/M — which is why POM2 relays *one* protocol
 and gets all of them, rather than porting six devices.
 
-`FujiNetCard` is a **relay, not an emulation**. It presents a SmartPort
-controller to the guest and forwards every call verbatim to a real FujiNet.
+`FujiNetCard` combines a relay with an optional local service. It presents a SmartPort
+controller to the guest and relays device calls to a real FujiNet, except
+for the optional built-in `N:` service. Controller device-count status is
+also answered locally. Desktop settings enable the local `N:` by default;
+it implements plain HTTP, while disks, CONFIG and clock services remain
+peer-backed. See the implementation details below for the network seam.
 
 **Sources.** MAME has no FujiNet device, so the project's usual "MAME = source
 of truth" rule does not apply; this is stated in the file headers so the
@@ -6853,18 +6916,24 @@ the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
 **TNFS media** (`TnfsClient.*`, `TnfsMedia.*`) is the other half of the same
 world and needs no peer: a positional `tnfs://host[:port]/path/image.po`
 fetches the image into a per-user cache and boots it like any local file, and
-a cache hit opens no socket, so the second run works offline. Cache keys are
-hashed (host + port + path), which is what keeps a hostile path from choosing
-a filename — and is also what stops an old entry from ever being recognised
-again, so the cache needed a **budget**: `pruneTnfsCache`
-(`TnfsMedia.cpp:89-141`) is an LRU sweep by mtime against
-`kTnfsCacheBudgetBytes = 512 MB` (`TnfsMedia.h:104`), run after every fetch.
+a cache hit opens no socket, so the second run works offline. Cache keys hash
+host + port + path and retain a sanitized readable tail. An unchanged key
+reuses a nonempty file without remote size/content validation; a renamed
+remote path creates a separate entry. Guest writes affect this cached local
+image, not the server. The cache lives beside the settings store in
+`tnfs_cache`. `pruneTnfsCache` sweeps by mtime against
+`kTnfsCacheBudgetBytes = 512 MiB` after a successful new download, preserving
+the just-fetched image. Cache hits refresh mtime but do not run the sweep.
 The fetch itself is bounded by `TnfsFetchLimits::deadlineSeconds`, cut from
-180 to **60** (`TnfsMedia.h:57`): the number is not how long a large image
+180 to **60 seconds**: the number is not how long a large image
 takes, it is how long a user stares at an unpainted window — the pre-window
 fetch runs before any GLFW window exists — before deciding POM2 has hung.
-`SIGINT` is wired to the same fetch's abort flag
-(`main.cpp:244`, `:672-696`), because there is no UI yet to press cancel in.
+New downloads are capped at 32 MiB. Deadline checks between operations and
+64 KiB chunks can be delayed by an in-flight client request; this is not an
+exact wall-clock cutoff. `SIGINT` is wired to the fetch's abort flag because
+there is no UI yet to press cancel in; a second interrupt restores default
+termination. A failed/cancelled download publishes no partial image, logs
+the error and lets startup continue without the positional disk.
 
 CLI: `--fujinet[=PORT]`, `--fujinet-serial[=DEVICE]`, `--fujinet-slot N`.
 Panel: View ▸ FujiNet. Design notes and the remaining phases:
@@ -8369,8 +8438,11 @@ working mouse.
 ### Joystick / paddles
 
 `JoystickInput` polls all 16 GLFW slots each UI frame (hot-plug).
-One binding drives PADL(0/1) + PB0/1/2. PADL(2/3) read centred
-(128). **Paddle RC** in `Memory::softSwitchAccess`: `$C064-$C067`
+One binding drives PADL(0/1) from the left stick and PADL(2/3) from the
+right stick on mapped gamepads. Raw joysticks use only X/Y and keep the
+second pair centred at 128. Each pair has its own inversion settings and
+passes through the same deadzone/square-gate transform. **Paddle RC** in
+`Memory::softSwitchAccess`: `$C064-$C067`
 returns `0x80` while `(cycleCounter - paddleLatchCycle) <
 paddleValue × 11`. `$C070` arms latch. 11-cycle constant = rough
 Apple II RC step.
@@ -9659,15 +9731,21 @@ the device's *defining* behaviour, not another FDC:
   daisy-chain) modes out of scope.
 - SD-card **file explorer** — bounded to SD root, `..` + dirs-first,
   case-insensitive, format-filtered per mode (`acceptsFile`: 5.25 →
-  dsk/do/po/nib/woz/2mg; 3.5/Unidisk → dsk/do/po/2mg; Smartport →
+  dsk/do/po/nib/woz/2mg; 3.5/Unidisk → dsk/do/po/moof/woz/2mg; Smartport →
   po/hdv/2mg).
 - **favorites** — `favdisks.txt` in SD root: optional `automount N`
-  first line (0 never / 1 first / 2 most-recent) then one image path
-  per line (relative to SD root or absolute), matching real device.
+  first meaningful line (0 never / 1 first / 2 most-recent), then one image
+  path per line. Blank/comment lines are skipped. Relative and absolute paths
+  must remain inside the SD root after lexical and canonical checks; escapes
+  through `..` or symlinks are dropped. The directive is parsed but the UI
+  does not consume it for startup mounting.
 
 Actual mounting **routed by MainWindow** into existing controller
-cards (`DiskIICard` for 5.25/3.5, `SmartPortCard` units for HDV) —
-device only picks the image + the mode. Core is UI/emulator-agnostic
+devices: 5.25-inch uses drive 0 of the primary Disk II; dumb 3.5-inch uses
+the external Sony on a //c+; UniDisk/HD modes route through the storage
+coordinator to an intelligent SmartPort/Liron controller. Selecting an image
+mounts and boots/resets it. The mode chooses the route, independently of the
+extension. The device model only picks the image + mode and is UI/emulator-agnostic
 (no ImGui / MainWindow / SlotBus) so format filtering, SD navigation,
 and favdisks parsing unit-test in isolation. Ref: BMOW Floppy Emu
 Model C manual §3 + §5.
@@ -9678,7 +9756,8 @@ OLED views (SD File Explorer + Settings → Disk Emulation Mode).
 
 Virtual "SD card" = `floppyemu/` (separate from Disk Library folders).
 Settings: `floppyemu_mode`, `floppyemu_sd_root`, `show_floppy_emu`.
-Pinned: `floppy_emu_smoke_test`.
+Pinned by CTest `floppy_emu_smoke` (`tests/floppy_emu_smoke_test.cpp`),
+including extension filters and lexical/symlink containment for favorites.
 
 ## Profile switching internals
 
@@ -9895,6 +9974,14 @@ tape ops, paste, run, step). Snapshot loads require the matching machine;
 session loads reconstruct it. See [the session contract](docs/session-format.md)
 for supported devices, detached media and refusal conditions.
 
+The runner submits actions in order and stops the sequence after a reported
+failure. Execution is asynchronous: `--step N` queues a step count through
+`requestStep`, then continues to the next action without waiting for those
+instructions to finish. A following snapshot/session save is therefore not
+a guaranteed post-step checkpoint. `--run` resumes the worker; `--paste`
+queues input that the guest consumes later. CLI ordering does not make these
+operations a synchronous execution script.
+
 Flags: `-p`/`--preset ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal`,
 `--speed`, `--cpu-max`, `--display`, `--ii-plus`/`--ii+`,
 `--ai-control[=PORT]`, `--kiosk`,
@@ -10083,20 +10170,21 @@ Before it, every parity hunt paid for a throwaway trace / dump / probe binary
 because there was no way to stop a running machine and look at it (the
 2026-08-22 audit counted 24 of them, 5 535 lines; history: CHANGELOG).
 
-**Layering.** The CPU does not know about the debugger. `M6502.h` declares a
-two-method interface, `M6502DebugHook`, and `Debugger` implements it — so the
-dependency runs one way and `M6502.cpp` needs no new include.
-`EmulationController` owns the `Debugger`, and `Debugger_ImGui` owns every
-decision the panel makes. `MainWindow.cpp` gained **six lines**: three to own
-and show the panel, three to register it with the palette and the View menu.
-That was not free — the file-size ratchet failed the build and made the budget
-edit visible in the same commit, which is exactly what it is for.
+**Layering.** `M6502.h` declares `M6502DebugHook` with a pre-instruction stop
+callback and a completed-step callback; `Debugger` implements it without
+introducing a dependency from the CPU onto the concrete debugger.
+`EmulationController` owns the debugger and run-control operations;
+`Debugger_ImGui` owns panel interaction and display. The panel takes a state
+snapshot under the controller lock, then renders from that snapshot. Source
+and symbol file reads happen outside the lock.
 
 **Where the stop happens.** `runCpuSlice` is the single funnel both drivers
 (the worker thread and the WASM RAF tick) go through, so the check lives there
 once instead of in each. The worker's inner loop re-reads `mode` at the top of
 every iteration, so parking inside the funnel stops the machine within one
-4096-cycle chunk.
+4096-cycle chunk. If a DMA claimant releases the bus before exhausting the
+chunk, its consumed cycles are retained and the remaining budget enters this
+same 6502 path, including hook/hit reconciliation and stop publication.
 
 **A breakpoint stops BEFORE its instruction.** The hook is called with the PC
 still on the instruction, which has not run. That is the difference between a
@@ -10130,7 +10218,7 @@ armed it is dropped by `setMode(Mode::Stopped)`, which deliberately does not
 re-sync (it must not take the lock). So after **one** step-over plus Run the
 machine kept a debugged CPU for the rest of the session, with nothing armed
 and the interrupt phase perturbed — the phase OLDSKOOL races against.
-`runCpuSlice` (`EmulationController.cpp:1373-1374`) now reconciles instead:
+`EmulationController::runCpuSlice` now reconciles instead:
 two relaxed loads per 4096-cycle chunk, running exactly once per transition
 (afterwards the hook *is* null), and covering every resume path — toolbar
 Play, Machine ▸ Run, the palette, the kiosk menu — instead of only the
@@ -10165,9 +10253,11 @@ Three things that design has to get right, all pinned by `debugger` cases 7-9:
 
 $C000 and above needs no diversion at all — those writes already reach
 `memWriteSlow` — so soft switches, slot I/O and the language card are watchable
-for free. The watch is on the ADDRESS, not the bank: on a //e it fires whichever
-of main/aux the paging picks. And it fires on the ACCESS, including a write the
-machine then drops.
+for free. An unqualified watch fires for any physical bank mapped at its
+address; a bank-qualified watch filters the resolved access bank, including
+the `ignored` bank for disabled Language Card writes. It fires on the access,
+including a write the machine then drops. Memory reports the bank before
+soft-switch side effects can change the mapping.
 
 `Memory` reports through `MemoryWatchSink` (`MemoryWatchSink.h`), a two-line
 interface, rather than calling `Debugger` directly: `Memory.cpp` is linked into
@@ -10200,18 +10290,12 @@ the two traps (the flag test, the un-inlined slow body) in
 [PERFORMANCE § 8.5](docs/PERFORMANCE.md). A read watch fires on the bus
 ACCESS after the read, opcode fetches included — a watch on `$FBB3` answers
 "who checks the ROM ID byte" — and soft-switch reads included, with their
-side effects, as on the real bus; the memory viewer peeks `mem[]` and never
-fires. The panel offers R / W / RW and defaults to W, which is free in both
+side effects, as on the real bus; the memory viewer uses `snapshotCpuView`
+without bus side effects and never fires a read watch. The panel offers
+R / W / RW and defaults to W, which is free in both
 states. Pinned by `debugger` cases 10 (stop, reader named, value carried,
 opcode fetch, soft switch, disarm reopens the fast path) and 11 (an unwatched
 read under an armed watch does not stop).
-
-**Known limit.** Step-over reads the opcode at the PC with `peekMainRam`, not
-`memRead` — a debugger must never flip a soft switch to inspect the machine —
-so it sees main RAM only, the same view the Disasm panel and MemoryViewer
-already show. On a //e running from aux, or under a Language Card bank, it can
-misread. Both failure directions are benign: a missed JSR becomes a single
-step, and a phantom JSR arms a transient that never fires.
 
 **Two run-control fixes** *(2026-09-08, bug hunt #9)*. **Step Over decodes
 the CPU's own view**: `debugStepOver` reads `peekCpuView` — the same
@@ -10384,6 +10468,19 @@ enough. Pinned locally by `headless_boot_capture`. With no disk it also skips
 plugging the Disk II: an empty drive parks the II+ autostart in the boot PROM
 forever and photographs the uninitialised text page.
 
+For this frontend, a positive `--frames N` or any `--screenshot path` enables
+capture. A screenshot with no positive frame count runs 300 frames;
+`--frames 0` alone retains interactive mode. The P6 PPM file is written
+before the flat-colour check, so an exit-3 capture can still be inspected.
+That check establishes only a nonuniform image, not a successful guest OS
+boot. Capture skips the SSC TCP listener and setup paste. Interactive mode
+requires a resolved Disk II PROM and disk, starts the SSC listener on port
+6502 by default and queues `PR#2\rIN#2\r` after six emulated seconds; use
+`--port`, `--paste-after`, `--setup` or `--no-setup` to change those defaults.
+The legacy disk probe is `disks_5.4/dos33_master.dsk`; packages require an
+explicit `--disk` to select a curated image. `--rom` changes the firmware
+file without applying a desktop profile or enabling IIe memory mode.
+
 **The browser demo deploys from CI, not from the branch** (2026-08-23).
 `ci.yml`'s `wasm` job stages the bundle it just built under `_site/wasm/`
 and the `pages` job ships it with `actions/deploy-pages` on every push to
@@ -10530,12 +10627,13 @@ silently assumed "not a browser therefore POSIX", which broke the
 Windows build); new socket calls must have a no-socket branch
 returning a safe sentinel (`false`/0/empty), not `#error`.
 
-**Asset resolution**. `ResourcePaths` searches CWD-relative paths
-(`./roms/apple2.rom`, etc.). Under Emscripten the CWD is `/` and
-preloaded folders live at `/roms`, `/fonts`, `/disks`, … — same
-relative shape, so probes resolve unchanged. The native
-exec-relative path (added in d582b2f for Linux dist) is also
-applied via the IDBFS mount path for future user uploads.
+**Asset resolution**. Under Emscripten the CWD is `/`; the manifest preloads
+resources at `/roms`, `/fonts`, `/pic`, `/bundled_disks` and `/floppyemu`.
+Ordinary relative asset probes resolve there through `ResourcePaths`.
+`/persistent` is a separate IDBFS mount for settings/layout and automatic
+session checkpoints. It is not an extra ROM search root, and preloading
+resources does not make later writes to their MEMFS paths durable. Session
+import reconstructs embedded firmware/media without installing ROM files.
 
 **Known gaps** (tracked in `docs/backlog/wasm.md`):
 

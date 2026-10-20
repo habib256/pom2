@@ -30,6 +30,11 @@ described in [DEV](../DEV.md#fujinet-sp-over-slip-relay); unresolved work lives 
 and the helper environment filter. Old line numbers and pre-fix behavior below
 retain their historical context. The relay still needs an external peer;
 it is not self-contained FujiNet firmware running inside POM2.
+The current card answers controller device-count status locally and can serve
+its own `N:` unit through `FujiNetNetDevice` (plain HTTP, enabled by desktop
+settings by default). That local service can exist without a peer; disks,
+CONFIG and clock operations still require one. References below to forwarding
+every call describe the original relay proposal, not those local exceptions.
 
 ## Table of contents
 
