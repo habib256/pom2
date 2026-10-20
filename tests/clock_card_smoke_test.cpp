@@ -21,6 +21,9 @@
 // would and assert it serialises out the right BCD bytes.
 
 #include "ClockCard.h"
+#include "M6502.h"
+#include "Memory.h"
+#include "ResourcePaths.h"
 
 #include <cassert>
 #include <filesystem>
@@ -28,6 +31,7 @@
 #include <cstdio>
 #include <ctime>
 #include <memory>
+#include <string>
 
 namespace {
 
@@ -80,8 +84,58 @@ void testSignature()
     assert(card.slotRomRead(0x01) == 0xD8);     // CLD
     assert(card.slotRomRead(0x03) == 0xD8);     // CLD
     assert(card.slotRomRead(0x05) == 0x78);     // SEI (re-disable IRQ)
-    // $Cs08 is RTS — a stray JMP $Cs00 falls through and returns cleanly.
-    assert(card.slotRomRead(0x08) == 0x60);
+    // $Cs08 SEC (read) and $Cs0B CLC (write) — the Thunderware entry
+    // convention ProDOS's driver calls (testProDosClockCall runs it).
+    assert(card.slotRomRead(0x08) == 0x38);
+    assert(card.slotRomRead(0x0B) == 0x18);
+}
+
+// What ProDOS's clock driver does with the card (Apple II Technical Note
+// ProDOS #1; bytes read out of the ProDOS kernel on CHROMABREAK.po):
+// `LDA #$A3 / JSR $Cn0B / JSR $Cn08`, then it parses $200. Runs on a real
+// 6502 against the card's ROM page and returns the 17 bytes it left there.
+std::string runProDosClockCall(std::unique_ptr<ClockCard> card)
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    // The Thunderware EPROM borrows Monitor routines; the fallback does not.
+    const std::string rom = pom2::findResource("roms/apple2p.rom");
+    if (!rom.empty()) mem.loadAppleIIRom(rom.c_str());
+    mem.slotBus().plug(4, std::move(card));
+    const uint8_t prog[] = { 0xA9, 0xA3, 0x20, 0x0B, 0xC4,   // LDA #'#' JSR $C40B
+                             0x20, 0x08, 0xC4,               // JSR $C408
+                             0x4C, 0x08, 0x03 };             // JMP *
+    for (uint16_t i = 0; i < sizeof(prog); ++i) mem.memWrite(uint16_t(0x300 + i), prog[i]);
+    for (uint16_t a = 0x200; a < 0x220; ++a) mem.memWrite(a, 0x00);
+    cpu.hardReset();
+    cpu.setProgramCounter(0x300);
+    for (int guard = 0; guard < 400000 && cpu.getProgramCounter() != 0x308; ++guard)
+        cpu.run(1);
+    assert(cpu.getProgramCounter() == 0x308 && "the clock call never returned");
+    std::string out;
+    for (uint16_t a = 0x200; a < 0x211; ++a) out.push_back(char(mem.memRead(a) & 0x7F));
+    return out;
+}
+
+void testProDosClockCall()
+{
+    // 2026-05-09 14:37:42, a Saturday: "MM,DW,DD,HH,MN,SS" (TN ProDOS #1).
+    auto fallback = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42,
+                                           /*probeDump=*/false);
+    assert(!fallback->romLayoutError());
+    const std::string synth = runProDosClockCall(std::move(fallback));
+    std::printf("  fallback ROM wrote \"%s\"\n", synth.c_str());
+    assert(synth == "05,06,09,14,37,42");
+
+    // The genuine EPROM, when present, must write the same digits — the
+    // fallback is held to the firmware it stands in for.
+    auto real = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+    if (real->romFromDump()) {
+        const std::string fw = runProDosClockCall(std::move(real));
+        std::printf("  Thunderware EPROM wrote \"%s\"\n", fw.c_str());
+        assert(fw == synth);
+    }
 }
 
 // Helper: read one DATA_OUT bit and advance the chip by pulsing CLK.
@@ -634,6 +688,9 @@ int main()
     testC800ClaimFollowsTheEprom();
     testSignature();
     std::printf("ProDOS detection signature: OK\n");
+
+    testProDosClockCall();
+    std::printf("ProDOS clock call (JSR $Cn0B / $Cn08 → $200): OK\n");
 
     testTimeReadProtocol();
     std::printf("uPD1990AC time-read protocol round-trip: OK\n");

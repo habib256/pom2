@@ -29,11 +29,13 @@
 //   $Cs04 = $58   (CLI)
 //   $Cs06 = $70   (BVS)
 //
-// On match ProDOS copies its hardcoded ThunderClock driver into RAM
-// (around $D742) and rewrites its $BF06-$BF08 vector to JMP into that
-// copy. The slot ROM itself is touched only for detection — every
-// subsequent CLOCK call talks to the chip via the device-select range
-// below, NOT by JMPing back to $Cs00.
+// On match ProDOS copies its ThunderClock driver into RAM (around $D742)
+// and rewrites its $BF06-$BF08 vector to JMP into that copy — and that
+// driver CALLS THE CARD'S FIRMWARE: `LDA #$A3 / JSR $Cs0B` (format `#`)
+// then `JSR $Cs08`, which leaves "MM,DW,DD,HH,MN,SS" in $200 (Apple II
+// Technical Note ProDOS #1). The firmware talks to the chip through the
+// device-select range below. Without roms/thunderclock_u9_v1.3.bin the
+// page is POM2's own fallback with the same two entries (buildRom).
 //
 // uPD1990AC bit-bang protocol
 // ---------------------------
@@ -198,6 +200,8 @@ public:
     bool romFromDump()           const { return romFromDump_; }
     /// Path the dump was loaded from (empty when synthetic).
     const std::string& romSource() const { return romSource_; }
+    /// The fallback page failed to assemble (SlotRomAsm) — a test bug.
+    bool romLayoutError() const { return romLayoutError_; }
 
 private:
     int slot;
@@ -205,6 +209,7 @@ private:
     std::array<uint8_t, 0x800> expansionRom_{};   // $C800-$CFFF (2 KB)
     bool                       expansionRomLoaded_ = false;
     bool                       romFromDump_        = false;
+    bool                       romLayoutError_     = false;
     std::string                romSource_;
     TimeFn timeFn;
 

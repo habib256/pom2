@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — ThunderClock fallback ROM answers ProDOS's clock call
+
+Apple II Technical Note ProDOS #1 says ProDOS *calls* the clock card, and
+the ProDOS kernel confirms it: its driver does `LDA #$A3 / JSR $Cn0B /
+JSR $Cn08` and parses the "MM,DW,DD,HH,MN,SS" string the card leaves at
+$200. `ClockCard`'s fallback page (used when
+`roms/thunderclock_u9_v1.3.bin` is missing) was built on the opposite
+belief — "ProDOS never JMPs to $Cs00" — and held an RTS at $Cn08 and
+padding at $Cn0B, so a card without its dump gave ProDOS no time at all.
+The fallback now has the Thunderware entry convention ($Cn08 SEC read,
+$Cn0B CLC write) and a 6502 read routine that drives the emulated
+uPD1990AC like a program would (TIME_READ + STB, SHIFT, 40 CLK pulses)
+and formats the string. `clock_card_smoke` runs the ProDOS call on a real
+6502 against both the fallback and the genuine EPROM and requires the same
+bytes.
+
 ## 2026-10-20 — The RVB Graph, from its manual
 
 The Le Chat Mauve RVB Graph's *Manuel de Référence* surfaced (a 2024 scan

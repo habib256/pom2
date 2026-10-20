@@ -19,6 +19,7 @@
 #include "CpuClock.h"
 #include "Logger.h"
 #include "ResourcePaths.h"
+#include "SlotRomAsm.h"
 
 #include <algorithm>
 #include <cstring>
@@ -290,8 +291,9 @@ void ClockCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     //
     // Deliberate divergence from MAME `upd1990a.cpp:312-327`, which
     // gates this shift behind `m_c == MODE_SHIFT`. POM2 keeps the shift
-    // lax (any mode) because ProDOS's hardcoded ThunderClock driver
-    // pulses CLK while still in MODE_TIME_READ without first switching
+    // lax (any mode) because the read path stock ProDOS goes through
+    // (its driver calls the card's firmware at $Cn08 — Tech Note ProDOS
+    // #1) pulses CLK while still in MODE_TIME_READ without first switching
     // to MODE_SHIFT — strict gating breaks stock ProDOS reads, and the
     // ThunderClock+ card paired with a real uPD1990AC has been
     // observed to permit this shortcut in practice (the MODE bit just
@@ -445,25 +447,120 @@ void ClockCard::advanceCycles(int cycles)
 
 void ClockCard::buildRom()
 {
-    rom.fill(0xEA);     // NOP padding everywhere we don't write
+    rom.fill(0x00);
 
-    // ProDOS clock-detection signature. ProDOS only inspects the bytes at
-    // even offsets 0/2/4/6; the odd-offset fillers form a benign 1-byte
-    // execution path. ProDOS itself never JMPs to $Cs00 for clock reads
-    // — it copies its hardcoded driver into RAM (~$D742) and patches
-    // $BF06-$BF08 to jump there — so the body past the signature is
-    // dead code in practice. We still leave a `BRK; RTS` at $Cs08 in
-    // case stray firmware ever does call here, to fail loud rather than
-    // wander into NOP-padded territory.
-    rom[0x00] = 0x08;   // PHP        — signature
-    rom[0x01] = 0xD8;   // CLD        — 1-byte filler
-    rom[0x02] = 0x28;   // PLP        — signature
-    rom[0x03] = 0xD8;   // CLD
-    rom[0x04] = 0x58;   // CLI        — signature (briefly enables IRQ)
-    rom[0x05] = 0x78;   // SEI        — re-disable IRQ immediately
-    rom[0x06] = 0x70;   // BVS        — signature
-    rom[0x07] = 0x00;   // BVS operand: branch +0 → $Cs08 either way
-    rom[0x08] = 0x60;   // RTS — minimal "call did nothing" trap
+    // The fallback when roms/thunderclock_u9_v1.3.bin is absent. ProDOS
+    // finds the card by the bytes at even offsets 0/2/4/6, copies its own
+    // clock driver into the global page, and that driver CALLS THE CARD:
+    // `LDA #$A3 / JSR $Cn0B / JSR $Cn08`, then parses $200 (Apple II
+    // Technical Note ProDOS #1, "Clock card": the card "deposits an ASCII
+    // string in the GETLN input buffer in the form 07,04,14,22,46,57" —
+    // month, day of week, date, hour, minute, second). The bytes were read
+    // out of the ProDOS kernel on packaging/disks/CHROMABREAK.po. Until
+    // 2026-10-20 this page held the signature and an RTS at $Cn08, so a
+    // card without its dump read no time at all and $Cn0B ran into the
+    // padding.
+    //
+    // Same entry convention as the Thunderware EPROM: $Cn08 = SEC (read a
+    // string), $Cn0B = CLC (write a character — the format; only `#`, the
+    // numeric one ProDOS asks for, exists here, so it is accepted and
+    // ignored). The read talks to the emulated uPD1990AC exactly as a
+    // program would: TIME_READ with an STB pulse loads the time into the
+    // shift register, SHIFT mode, then 40 CLK pulses, LSB first —
+    // seconds, minutes, hours, date (BCD), then month (binary, high
+    // nibble) and day of week. The slot's screen holes $0478+n / $04F8+n
+    // hold the byte being assembled and the output position. Ends in
+    // REGISTER_HOLD with interrupts off, as the manual says a read leaves
+    // the card (5-2).
+    const auto dev   = static_cast<uint8_t>(0x80 + 16 * slot);    // $C0n0
+    const auto tmp   = static_cast<uint8_t>(0x78 + slot);         // $0478+n
+    const auto pos   = static_cast<uint8_t>(0xF8 + slot);         // $04F8+n
+    const auto modeRead  = static_cast<uint8_t>(kModeTimeRead << 3);
+    const auto modeShift = static_cast<uint8_t>(kModeShift << 3);
+
+    pom2::SlotRomAsm a(rom, slot, "ThunderClock fallback");
+    a.region("signature", 0x00, 0x08)
+     .emit({ 0x08,               // PHP        — signature
+             0xD8,               // CLD
+             0x28,               // PLP        — signature
+             0xD8,               // CLD
+             0x58,               // CLI        — signature
+             0x78,               // SEI
+             0x70, 0x00 });      // BVS +0     — signature; falls into $Cn08
+    a.region("entries", 0x08, 0x10)
+     .emit({ 0x38 })             // $Cn08 SEC  — read
+     .branch(0xB0, "dispatch")   //       BCS dispatch
+     .emit({ 0x18 })             // $Cn0B CLC  — write (the format char)
+     .label("dispatch")
+     .branch(0xB0, "read")       //       BCS read
+     .emit({ 0x60 });            //       RTS  — `#` accepted
+    a.region("read", 0x10, 0xC0)
+     .emit({ 0x8A, 0x48, 0x98, 0x48,            // TXA PHA TYA PHA
+             0xA9, modeRead,                    // LDA #TIME_READ
+             0x8D, dev, 0xC0,                   // STA $C0n0
+             0x09, kBitStb,                     // ORA #STB
+             0x8D, dev, 0xC0,                   // STA $C0n0 — load the time
+             0xA9, modeShift,                   // LDA #SHIFT
+             0x8D, dev, 0xC0,                   // STA $C0n0
+             0x09, kBitStb,                     // ORA #STB
+             0x8D, dev, 0xC0,                   // STA $C0n0
+             0xA9, modeShift,                   // LDA #SHIFT
+             0x8D, dev, 0xC0,                   // STA $C0n0 — STB low
+             0xA9, 15,                          // LDA #15   — seconds go last
+             0x8D, pos, 0x04 })                 // STA pos
+     .label("byte")
+     .emit({ 0xA2, 0x08 })                      // LDX #8
+     .label("bit")
+     .emit({ 0xAD, dev, 0xC0,                   // LDA $C0n0 — DATA_OUT in bit 7
+             0x0A,                              // ASL A
+             0x6E, tmp, 0x04,                   // ROR tmp
+             0xA9, static_cast<uint8_t>(modeShift | kBitClk),
+             0x8D, dev, 0xC0,                   // STA $C0n0 — CLK rising
+             0xA9, modeShift,
+             0x8D, dev, 0xC0,                   // STA $C0n0 — CLK low
+             0xCA })                            // DEX
+     .branch(0xD0, "bit")                       // BNE bit
+     .emit({ 0xAC, pos, 0x04,                   // LDY pos
+             0xA9, 0xAC,                        // LDA #','
+             0x99, 0xFF, 0x01,                  // STA $01FF,Y — comma before
+             0xC0, 0x03 })                      // CPY #3
+     .branch(0xF0, "last")                      // BEQ last  — month + weekday
+     .emit({ 0xAD, tmp, 0x04,                   // LDA tmp   — a BCD byte
+             0x4A, 0x4A, 0x4A, 0x4A,            // LSR ×4
+             0x09, 0xB0,                        // ORA #'0'
+             0x99, 0x00, 0x02,                  // STA $0200,Y
+             0xAD, tmp, 0x04,                   // LDA tmp
+             0x29, 0x0F,                        // AND #$0F
+             0x09, 0xB0,                        // ORA #'0'
+             0x99, 0x01, 0x02,                  // STA $0201,Y
+             0x88, 0x88, 0x88,                  // DEY ×3
+             0x8C, pos, 0x04 })                 // STY pos
+     .branch(0xD0, "byte")                      // BNE byte  — Y ≥ 3 here
+     .label("last")
+     .emit({ 0xAD, tmp, 0x04,                   // LDA tmp
+             0x29, 0x0F,                        // AND #$0F  — weekday 0..6
+             0x09, 0xB0,                        // ORA #'0'
+             0x8D, 0x04, 0x02,                  // STA $0204
+             0xA9, 0xB0,                        // LDA #'0'
+             0x8D, 0x03, 0x02,                  // STA $0203
+             0xAD, tmp, 0x04,                   // LDA tmp
+             0x4A, 0x4A, 0x4A, 0x4A,            // LSR ×4    — month 1..12
+             0xA2, 0xB0,                        // LDX #'0'
+             0xC9, 0x0A })                      // CMP #10
+     .branch(0x90, "units")                     // BCC units
+     .emit({ 0xE9, 0x0A,                        // SBC #10   — carry is set
+             0xA2, 0xB1 })                      // LDX #'1'
+     .label("units")
+     .emit({ 0x09, 0xB0,                        // ORA #'0'
+             0x8D, 0x01, 0x02,                  // STA $0201
+             0x8E, 0x00, 0x02,                  // STX $0200
+             0xA9, 0x8D,                        // LDA #CR
+             0x8D, 0x11, 0x02,                  // STA $0211
+             0xA9, 0x00,                        // LDA #REGISTER_HOLD
+             0x8D, dev, 0xC0,                   // STA $C0n0 — IRQs off too
+             0x68, 0xA8, 0x68, 0xAA,            // PLA TAY PLA TAX
+             0x60 });                           // RTS
+    romLayoutError_ = !a.finish();
 }
 
 void ClockCard::tryLoadDump()
