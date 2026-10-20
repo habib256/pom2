@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Correct browser drag-and-drop documentation
+
+External disk-image drops already work through Emscripten's GLFW3 canvas
+handlers and POM2's registered `glfwSetDropCallback`. Earlier descriptions
+of a missing/frozen browser drop-zone were incorrect. A local headless Chrome
+check dispatched file-backed drag events and confirmed canvas drop/boot,
+then insertion into empty drive 2 without resuming or rebooting the paused
+machine. No drop implementation change was needed.
+
+README, user/developer references, session paths and scope/backlog entries
+now describe this existing path. The separately added file selector uses
+unique `/uploads/disk-N/` directories and a 64 MiB upload bound; GLFW drops
+use filename-based `/.glfw_dropped_files/` paths and normal loader bounds.
+WASM-001 is recorded as implemented rather than frozen.
+
 ## 2026-10-20 — Media and reset documentation follow-up
 
 Reconciled the storage read/write matrix and 3.5-inch capture explanation
@@ -33,7 +48,8 @@ resets. These are documentation/comment corrections, without runtime changes.
 Aligned the README's first-run instructions, user guide, session contract,
 developer workflow, documentation index and scope/backlog entries with the
 untagged browser disk-import implementation. Direct file selection is
-implemented; desktop disk-image drop upload remains frozen. The references
+implemented; the claim in this entry that browser disk-image drops were
+frozen was later corrected after checking GLFW/Emscripten. The references
 separate the 64 MiB upload limit from the 32 MiB session bound and distinguish
 MEMFS disk writes from IndexedDB checkpoints. Storage comments now make the
 same distinction. Earlier audit observations remain dated, with a follow-up
@@ -51,8 +67,8 @@ Disk uploads are limited to 64 MiB, preserve a sanitized format extension,
 and use separate MEMFS directories so repeated filenames cannot overwrite
 mounted media. The original local file is unchanged. Supported disks and
 their writes can be retained through session download or Automatic resume;
-the usual drive and session limits still apply. Browser desktop drag-and-drop
-upload remains unavailable.
+the usual drive and session limits still apply. Browser file drops already
+use GLFW/Emscripten; the earlier unavailable claim was incorrect.
 
 Validation: native and WebAssembly Release builds passed with strict warnings.
 The DOM/FS tests cover upload limits, cancellation, extension filtering and

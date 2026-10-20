@@ -5,10 +5,12 @@ implementation changes. The CMake version is 0.9.7; the checkout includes
 untagged session/debugger work. This review updates descriptions and help,
 not the emulator's behavior or test assertions.
 
-**Later follow-up:** the browser disk-import implementation and its current
-documentation are recorded in [Browser disk-import follow-up](#browser-disk-import-follow-up).
-Earlier references below to missing direct disk upload describe the tree
-before that implementation.
+**Later corrections:** the [selector follow-up](#browser-disk-import-follow-up)
+records the new file selector; [GLFW drop verification](#glfw-browser-drop-verification)
+corrects the mistaken assertion that external disk-image drops were absent.
+That drop path already existed through Emscripten. Earlier missing-upload
+statements below must not be read as evidence that browser file drops were
+unimplemented.
 
 ## Scope and document ownership
 
@@ -633,3 +635,30 @@ DOM/FS regression test passed, the current native executable's `--help`
 completed, and `make_dix_fix.py --verify packaging/disks/DIX-fix.po`
 confirmed the packaged patch. None of these checks establishes new emulation
 fidelity or remote CI results.
+
+
+## GLFW browser drop verification
+
+Checked revision `cd7cad0` and the Emscripten 6.0.8 GLFW3 library used by the
+local browser bundle. `main.cpp` registers `glfwSetDropCallback` for the web
+build. Emscripten's `src/lib/libglfw.js` installs canvas drop/dragover handlers,
+reads local files with `FileReader`, writes MEMFS paths under
+`/.glfw_dropped_files/`, then invokes the registered callback. POM2 queues
+those paths through `onFileDrop` and resolves drive targets through
+`processDriveRackFileDrop`.
+
+A temporary headless Chrome/CDP check, using the existing built WASM bundle,
+dispatched mouse motion and file-backed `dragEnter`/`dragOver`/`drop` events.
+It verified drive-1 mount/boot from a canvas drop, paused the machine, dropped
+a different image onto empty drive 2, and verified the second mounted path,
+continued paused mode and both files' distinct bytes. This tests browser
+drag events, not every desktop/browser's physical pointer-drag behavior.
+No import/drop implementation changed during this verification.
+
+The prior source reviews missed this dependency-provided path. Their claims
+that browser desktop disk drops were absent or frozen were incorrect, not
+historical evidence of a missing implementation. Current user/developer,
+scope and backlog references have been corrected. The selector added in
+`cd7cad0` remains separate: its 64 MiB bound and unique directories do not
+apply to GLFW's filename-based drop path. Dropped media still use the normal
+loaders and session persistence contracts.

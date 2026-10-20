@@ -36,8 +36,9 @@ packages follow their release notes.
 **In a browser:** [launch POM2](https://habib256.github.io/pom2/wasm/).
 It opens a PAL Apple //c with the DIX-fix demo disk. The browser build follows
 `main`, so it may differ from a tagged release.
-In the current checkout, **File → Import disk and boot...** opens a disk image
-from your computer. Click an empty drive to insert without rebooting.
+Drop a disk image from your computer onto the browser canvas to boot it,
+or onto an empty drive to insert without rebooting. In the current checkout,
+**File → Import disk and boot...** also opens a local file selector.
 Save a session or enable Automatic resume to keep supported disks and changes;
 see [browser disk import](docs/USER-GUIDE.md#browser-disk-import) for limits.
 

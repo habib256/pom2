@@ -10687,11 +10687,26 @@ import reconstructs embedded firmware/media without installing ROM files.
 
 **Known gaps** (tracked in `docs/backlog/wasm.md`):
 
-- Desktop disk-image drag-and-drop upload is unavailable — WASM-001.
-  Local file selection is implemented as described below.
 - No touch input on mobile (GLFW3-EM doesn't synthesise
   touch→mouse outside the canvas) — WASM-002.
 - Audio worklet latency not tuned — WASM-003.
+
+**Browser desktop file drops.** `glfwSetDropCallback` is registered in
+`main.cpp` for native and WebAssembly builds. With `-sUSE_GLFW=3`,
+Emscripten's GLFW library installs `drop`/`dragover` handlers on the canvas,
+reads dropped files with `FileReader`, writes them to MEMFS under
+`/.glfw_dropped_files/`, then calls `glfw_drop_callback`.
+`MainWindow::onFileDrop` queues the paths; `processDriveRackFileDrop`
+mounts a file on the targeted empty drive without rebooting, or routes a
+non-drive drop through the existing classify/mount/boot path. Occupied or
+incompatible drive targets are refused rather than redirected.
+
+This path predates the explicit local-file selector below. It does not use
+`BrowserFiles::Disk` or that selector's 64 MiB upload check and unique
+`/uploads/disk-N/` directories. GLFW uses filename-based virtual paths;
+repeated basenames can replace an earlier dropped file in MEMFS. The format
+loaders retain their own bounds. Dropped copies are temporary; supported
+sessions/Automatic resume preserve media through the usual contract.
 
 **Browser file/session workflow.** `BrowserFiles` and
 `wasm/browser_files.js` implement three local-file selections. The numeric
@@ -10718,7 +10733,8 @@ profile is rejected; the mount helper rechecks drive availability, type and
 occupancy. A second upload, even with the same name, never overwrites the
 first virtual file. The original local file is not modified.
 
-`/uploads` is MEMFS, outside `/persistent`: ordinary media autosave updates
+`/uploads` and `/.glfw_dropped_files` are MEMFS, outside `/persistent`:
+ordinary media autosave updates
 the virtual copy but does not persist it to IndexedDB. `Save session...`
 downloads supported media with the machine. `BrowserSessionStore`, driven
 by `MainWindow_SessionFiles`, checkpoints supported machines every ten seconds

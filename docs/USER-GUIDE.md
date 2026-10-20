@@ -120,8 +120,8 @@ with each card's drives in numerical order. This matches the //e's slot scan;
 the //c normally tries its internal 5.25-inch drive, then SmartPort, without
 automatically trying the external 5.25-inch drive. The //c+ keeps its internal and
 external 3.5-inch mechanisms at the top. Click an empty drive picture to choose
-an image. On desktop, you can also drop a file onto it from your computer;
-Disk Library drag-and-drop works inside the application. POM2 inserts it into that drive
+an image, or drop a file onto it from your computer on desktop or in the
+browser canvas. Disk Library drag-and-drop works inside the application. POM2 inserts it into that drive
 without restarting your game. Eject a mounted disk before inserting another.
 The Disk Library's **All media** tab searches 5¼-inch, 3½-inch, hard-disk and
 Floppy Emu images together. Results stay grouped by medium, so a WOZ offered
@@ -755,19 +755,24 @@ in the browser.
 
 ### Import a disk in the browser
 
-Use **File > Import disk and boot...** to upload an image from your computer
+Drop an image from your computer onto the browser canvas to mount and boot
+it, or onto an empty drive picture to insert without rebooting. These drops
+are handled by GLFW/Emscripten and use the normal media routing and loaders.
+You can also use **File > Import disk and boot...** to choose a local image
 and boot it through the normal Disk II, 3.5-inch or HDV routing. To insert
 without rebooting, click an empty drive in **Drives**, or choose its Insert
 entry under **File**. The selected drive must accept that image type.
 Supported extensions are `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`,
-`.2mg`, `.hdv` and `.image`; imports are limited to 64 MiB per file and the
-normal format/drive limits still apply. Each upload has a separate virtual
-file, so importing the same filename twice cannot overwrite a mounted disk.
+`.2mg`, `.hdv` and `.image`. The file selector limits uploads to 64 MiB per
+file; normal format/drive limits still apply. Each selector upload has a
+separate virtual file, so choosing the same filename twice cannot overwrite
+a mounted disk. Drag-and-drop uses filename-based copies instead; use the
+selector when importing distinct disks with the same filename.
 The local source file remains unchanged. Uploaded disks and their writes live
 in browser memory: **Save session...** downloads supported media with the
 machine, and **Automatic resume** preserves supported configurations across
-reloads. Session size/device limits still apply. Desktop drag-and-drop upload
-is not implemented in the browser. Text upload is a separate paste workflow.
+reloads. Session size/device limits still apply. Text upload is a separate
+paste workflow.
 Saving settings alone does not preserve an uploaded disk. See the
 [session contract](session-format.md#using-it) for supported configurations
 and the separate 32 MiB session limit.

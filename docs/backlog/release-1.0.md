@@ -243,7 +243,9 @@ first image and both media in the session archive. The existing persistence
 and exact session-reload checks passed in the same run. DOM/FS import tests
 and native/WebAssembly Release builds passed separately. This is local
 evidence; the candidate CI evidence gate remains open. See
-[WASM-001](wasm.md#wasm-001) for the remaining disk-image drop-zone.
+[WASM-001](wasm.md#wasm-001) for existing GLFW/Emscripten file drops and
+the separately added selector. A later local Chrome check confirmed canvas
+drop/boot and empty-drive drop insertion without rebooting.
 
 **Implementation 2026-10-18:** `tools/wasm_persistence_smoke.mjs` serves the
 built bundle to headless Chrome, waits for the first frame, writes a setting
