@@ -715,6 +715,9 @@ void FujiNetCard::answerDeviceCount(uint16_t payloadAddr)
     // Claim at least up to our own unit so the scan reaches it.
     if (builtInNetwork_) count = std::max<std::size_t>(count, builtInNetUnit());
     list[0] = static_cast<uint8_t>(std::min<std::size_t>(count, 255));
+    // Interrupt status: bit 6 set = no interrupt pending (TN SmartPort #2).
+    // A zero told an interrupt handler polling the chain to service us.
+    list[1] = 0x40;
     if (!writeGuestBlock(payloadAddr, list, sizeof(list))) { finish(kSpIoError); return; }
     finish(kSpOk, static_cast<uint8_t>(sizeof(list)), 0x00);
 }

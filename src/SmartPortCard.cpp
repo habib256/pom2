@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <string_view>
 
 namespace pom2 {
 
@@ -65,6 +66,10 @@ constexpr uint16_t kStatusAddr    = 0xC800 + kStatusC800;
 /// continues the scan if so, else restores CSW/KSW and returns. $CD30.
 constexpr size_t   kBootScanC800  = 0x530;
 constexpr uint16_t kBootScanAddr  = 0xC800 + kBootScanC800;
+/// Any ProDOS driver command other than STATUS/READ/WRITE: FORMAT, else $27.
+/// $CD60.
+constexpr size_t   kOtherCmdC800  = 0x560;
+constexpr uint16_t kOtherCmdAddr  = 0xC800 + kOtherCmdC800;
 
 } // anon namespace
 
@@ -813,12 +818,9 @@ void SmartPortCard::buildRom()
      .branch(0xF0, "read")
      .emit({ 0xC9, 0x02 })          // CMP #$02
      .branch(0xF0, "write")
-     .emit({ 0xA9, 0x27,            // bad cmd (incl. FORMAT $03): LDA #$27 —
-                                    // a REAL driver error code; the old $01
-                                    // is not in the ProDOS $27/$28/$2B set
-                                    // and surfaced as a bogus code in Filer.
-             0x38,                  // SEC
-             0x60 })                // RTS
+     .emit({ 0x4C, static_cast<uint8_t>(kOtherCmdAddr & 0xFF),
+                   static_cast<uint8_t>(kOtherCmdAddr >> 8) })  // JMP $CD60
+                                    // FORMAT ($03) or a bad command ($27)
      .label("dispStatus")
      .emit({ 0x4C, static_cast<uint8_t>(kStatusAddr & 0xFF),
                    static_cast<uint8_t>(kStatusAddr >> 8) });  // JMP $CD10
@@ -908,9 +910,11 @@ void SmartPortCard::buildRom()
     // $CnFE capability byte (ProDOS 8 TN #21): bit3 format, bit2 WRITE,
     // bit1 read, bit0 status, bits5-4 volume count. Was $13 — read+status
     // only — which advertised a READ-ONLY device to capability-inspecting
-    // utilities despite the write path being fully implemented.
+    // utilities despite the write path being fully implemented; then $17,
+    // with FORMAT refused. FORMAT is answered now ($CD60), so bit 3 is set,
+    // like the real Liron's $BF.
     a.region("tail", 0xFE, pom2::kSlotRomBytes)
-     .emit({ 0x17 })                // read+WRITE+status, 2 units
+     .emit({ 0x1F })                // format+read+WRITE+status, 2 units
      .byteOf("driver");
 
     // A page that does not assemble is a build error in hand-written code,
@@ -1080,6 +1084,41 @@ void SmartPortCard::buildC800()
         std::memcpy(c800_.data() + kBootScanC800, bs, sizeof bs);
     }
 
+    // ── Any other ProDOS driver command ($CD60) ───────────────────────────
+    // FORMAT ($03) is a ProDOS driver command too (TN ProDOS #16: a
+    // formatter calls it through the driver), and a block device "need only
+    // lay down marks", which an image does not need: $28 for an empty bay,
+    // $2B for a protected one, success otherwise — the same answers the
+    // SmartPort FORMAT call gives. $CnFE has advertised format since the
+    // real Liron page went in ($BF), and the driver used to answer $27.
+    // Anything else is a bad command: $27.
+    {
+        const uint8_t statReg = static_cast<uint8_t>(0x80 + slot_ * 16 + 0x04);
+        const uint8_t oc[] = {
+            0xC9, 0x03,            // CMP #$03    ; FORMAT?
+            0xD0, 0x13,            // BNE bad     (+19)
+            0x2C, statReg, 0xC0,   // BIT $C0n4   ; N = no media, V = WP
+            0x10, 0x04,            // BPL +4      ; media present
+            0xA9, 0x28,            // LDA #$28    ; no device connected
+            0x38,                  // SEC
+            0x60,                  // RTS
+            0x50, 0x04,            // BVC +4      ; writable
+            0xA9, 0x2B,            // LDA #$2B    ; write protected
+            0x38,                  // SEC
+            0x60,                  // RTS
+            0xA9, 0x00,            // LDA #$00    ; formatted
+            0x18,                  // CLC
+            0x60,                  // RTS
+            // bad:
+            0xA9, 0x27,            // LDA #$27    ; ProDOS I/O error
+            0x38,                  // SEC
+            0x60                   // RTS
+        };
+        static_assert(kOtherCmdC800 + sizeof oc <= 0x600,
+                      "the command fallback must not run into the handler at $CE00");
+        std::memcpy(c800_.data() + kOtherCmdC800, oc, sizeof oc);
+    }
+
     constexpr size_t kHandlerOff = 0x600;   // $CE00
     std::memcpy(c800_.data() + kHandlerOff, kHandler, sizeof(kHandler));
     const uint8_t base = static_cast<uint8_t>(0x80 + slot_ * 16);
@@ -1129,9 +1168,14 @@ uint8_t SmartPortCard::spExecute()
             const uint8_t code = spCollect_[5];
             if (unitNo == 0) {
                 if (code != 0x00) return fail(0x21);   // bad status code
-                // Controller status: device count + 7 reserved bytes.
+                // Controller status (TN SmartPort #2): device count, then the
+                // interrupt status — bit 6 SET means "no interrupt", and no
+                // unit here ever interrupts (the UniDisk 3.5 sets it too);
+                // a zero told an interrupt handler polling the chain that
+                // this card wanted service — then vendor $0000
+                // ("undetermined"), interface version, two reserved.
                 spResult_ = { static_cast<uint8_t>(unitCount_),
-                              0, 0, 0, 0, 0, 0, 0 };
+                              0x40, 0, 0, 0, 0, 0, 0 };
                 return ok();
             }
             SmartPortUnit* u = unitFor(unitNo);
@@ -1159,13 +1203,15 @@ uint8_t SmartPortCard::spExecute()
                               static_cast<uint8_t>(blocks),
                               static_cast<uint8_t>(blocks >> 8),
                               static_cast<uint8_t>(blocks >> 16) };
-                static constexpr char kId[] = "POM2 SMARTPORT";
-                const size_t idLen = sizeof(kId) - 1;
-                spResult_.push_back(static_cast<uint8_t>(idLen));
-                for (size_t i = 0; i < 16; ++i)
-                    spResult_.push_back(i < idLen
-                        ? static_cast<uint8_t>(kId[i]) : uint8_t{' '});
+                // The name: "DISK 3.5" is what both the UniDisk 3.5 and the
+                // Apple 3.5 Drive answer (TN SmartPort #7), and what a
+                // program identifying drives by name looks for.
                 const bool is35 = u->kindKey() == SmartPort35Unit::kKindKey;
+                const std::string_view kId = is35 ? "DISK 3.5" : "POM2 HARDDISK";
+                spResult_.push_back(static_cast<uint8_t>(kId.size()));
+                for (size_t i = 0; i < 16; ++i)
+                    spResult_.push_back(i < kId.size()
+                        ? static_cast<uint8_t>(kId[i]) : uint8_t{' '});
                 spResult_.push_back(is35 ? 0x01 : 0x02);  // type: 3.5 / disk
                 // UniDisk 3.5 #5 / SmartPort #7: type $01 subtype $00
                 // (no extended SmartPort, no disk-switched). $C0 is the
@@ -1221,10 +1267,18 @@ uint8_t SmartPortCard::spExecute()
         }
         case 0x04: {                                   // CONTROL
             if (pcount != 3) return fail(0x04);
-            // Code 0 (device reset) is a no-op success; anything needing
-            // the control list's data is unsupported (the stub can't copy
-            // guest→device lists) → bad control code.
-            return spCollect_[5] == 0x00 ? ok() : fail(0x21);
+            // Code 0 (device reset) is a no-op success. Code 4 is EJECT
+            // since May 1988 (TN SmartPort #2): "all SmartPort devices which
+            // support removable media must support this call", and a fixed
+            // one "should simply return from this call without an error".
+            // Accepted for every unit — the disk is NOT taken out of the
+            // bay, because a guest-driven eject would have to commit the
+            // image off the machine lock (the //c+ Sony drive's two-phase
+            // path) and this HLE card has no such path yet. Anything else
+            // needs the control list's data, which the stub cannot copy
+            // guest→device → bad control code.
+            const uint8_t code = spCollect_[5];
+            return (code == 0x00 || code == 0x04) ? ok() : fail(0x21);
         }
         case 0x05:                                     // INIT
             if (pcount != 1) return fail(0x04);

@@ -10,6 +10,30 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — SmartPort: FORMAT, EJECT, interrupt status and DIB names
+
+Four protocol details from the Apple II Technical Notes (SmartPort #2/#7,
+ProDOS #16/#21), each checked against the code first:
+
+- **FORMAT through the ProDOS driver.** With the real Liron page loaded,
+  $CnFE = $BF advertises format, yet the driver answered FORMAT ($03) with
+  $27. Any command other than STATUS/READ/WRITE now jumps to $CD60 in the
+  card's $C800 bank: FORMAT answers $28 (empty bay), $2B (protected) or
+  success — the SmartPort FORMAT call's answers — and anything else stays
+  $27. The synthetic $CnFE goes from $17 to $1F.
+- **CONTROL $04 is EJECT** since May 1988 and must not be an error; it was
+  $21. Accepted now; the disk stays in the bay (a guest-driven eject would
+  need the //c+ Sony drive's off-lock commit, which this card lacks).
+- **Controller STATUS byte 1, bit 6 = "no interrupt".** It was 0 on
+  `SmartPortCard` and `FujiNetCard`, telling an interrupt handler polling
+  the chain that the card wanted service.
+- **DIB name "DISK 3.5"**, what the UniDisk 3.5 and the Apple 3.5 Drive
+  answer, instead of "POM2 SMARTPORT" / "POM2 UNIDISK3.5" (hard disks:
+  "POM2 HARDDISK").
+
+Pinned in `smartport_io_error`, `liron_smartport_dispatch` and
+`smartport_bus_device`.
+
 ## 2026-10-20 — ThunderClock fallback ROM answers ProDOS's clock call
 
 Apple II Technical Note ProDOS #1 says ProDOS *calls* the clock card, and

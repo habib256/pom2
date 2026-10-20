@@ -4120,11 +4120,13 @@ in the card's $C800 bank (`buildC800`): it saves ZP $42-$45, collects the
 cmd + first 10 param-list bytes through $C0n7, EXECUTEs via $C0nE, then
 moves data guest↔device ($C0n9 pull / $C0n3 push). Commands: STATUS $00
 (unit 0 controller status; per-unit general status + 24-bit block count;
-statcode $03 = 25-byte DIB with "POM2 SMARTPORT" ID + type $01 3.5"/$02
+statcode $03 = 25-byte DIB named "DISK 3.5" (3.5") or "POM2 HARDDISK" + type $01 3.5"/$02
 disk, subtype `$00`/`$20` — UniDisk 3.5 #5 / not-removable HD, no extended
 bit), READ $01, WRITE $02 (through the legacy commit machinery → real
 error latching), FORMAT $03 (no-op success on a block store), CONTROL $04
-(code 0 only), INIT $05. Errors per the ProDOS/SmartPort set: $01 bad
+(code 0 reset and code 4 EJECT — accepted, the disk stays in the bay),
+INIT $05. The unit-0 controller status sets bit 6 of byte 1 ("no
+interrupt", TN SmartPort #2). Errors per the ProDOS/SmartPort set: $01 bad
 cmd (incl. `$40-$45`: the dump's `$CC5B` `CPX #$0A`), $04 bad pcount, $21
 bad status/control code, $27 I/O, $28 no device, $2B write-protected,
 $2D bad block, $2F offline. `$C0` is the Apple 3.5 Drive (IIgs, IWM in

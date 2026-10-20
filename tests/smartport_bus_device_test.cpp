@@ -378,7 +378,8 @@ int main()
         const auto emptyFloppy = replyBody(r);
         assert(emptyFloppy[21] == 0x01 && emptyFloppy[22] == 0x00 &&
                "an empty UniDisk 3.5 is $00, not Apple 3.5 Drive $C0");
-        assert(emptyFloppy[4] == 15);
+        // "DISK 3.5" — the UniDisk 3.5's own DIB name (TN SmartPort #7).
+        assert(emptyFloppy[4] == 8 && emptyFloppy[5] == 'D' && emptyFloppy[12] == '5');
         u0.unidisk = false;
         u0.media = true;
         r = transact(d, frame(2, 0x00, {0x41, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}));

@@ -166,6 +166,8 @@ int main()
         assert(r.sentinel == 0x77 && "RA must advance past the 3 inline bytes");
         assert(!r.carry && r.a == 0x00);
         assert(mem.memRead(kBuf) == 2 && "device count");
+        assert((mem.memRead(kBuf + 1) & 0x40) &&
+               "interrupt status bit 6 = no interrupt (TN SmartPort #2)");
 
         // ── STATUS unit 1, code 0: general status + 3-byte block count ──
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x00});
@@ -181,8 +183,10 @@ int main()
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x03});
         r = spCall(cpu, mem, 0x00);
         assert(!r.carry && r.a == 0x00);
-        assert(mem.memRead(kBuf + 4) == 14 && "ID string length");
-        assert(mem.memRead(kBuf + 5) == 'P' && mem.memRead(kBuf + 8) == '2');
+        // "DISK 3.5": the UniDisk 3.5 / Apple 3.5 Drive name (TN SmartPort #7).
+        assert(mem.memRead(kBuf + 4) == 8 && "ID string length");
+        assert(mem.memRead(kBuf + 5) == 'D' && mem.memRead(kBuf + 12) == '5' &&
+               mem.memRead(kBuf + 13) == ' ');
         assert(mem.memRead(kBuf + 21) == 0x01 && "device type: 3.5 disk");
         assert(mem.memRead(kBuf + 22) == 0x00 &&
                "UniDisk 3.5 DIB subtype $00 (UniDisk 3.5 #5; $C0 is Apple 3.5)");
@@ -257,6 +261,15 @@ int main()
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x00});
         r = spCall(cpu, mem, 0x04);          // CONTROL code 0
         assert(!r.carry && r.a == 0x00);
+
+        // CONTROL code 4 is EJECT since May 1988 and must not be an error
+        // (TN SmartPort #2); a code the card has no use for still is.
+        setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x04});
+        r = spCall(cpu, mem, 0x04);
+        assert(!r.carry && r.a == 0x00 && "CONTROL EJECT is accepted");
+        setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x05});
+        r = spCall(cpu, mem, 0x04);
+        assert(r.carry && r.a == 0x21 && "an unknown control code stays $21");
 
         // ── ZP $42-$45 preserved across the dispatch ─────────────────────
         mem.memWrite(0x42, 0xDE); mem.memWrite(0x43, 0xAD);

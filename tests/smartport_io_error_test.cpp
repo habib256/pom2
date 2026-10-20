@@ -147,7 +147,37 @@ int main()
         assert(r.a == 0x27 && "out-of-range write must return error $27");
     }
 
+    // (E) FORMAT ($03) through the ProDOS driver (TN ProDOS #16): the page
+    // advertises it in $CnFE bit 3 (the real Liron's $BF does too), so it
+    // must be answered, not refused with $27 as it was until 2026-10-20.
+    assert((mem.memRead(static_cast<uint16_t>((romHi << 8) | 0xFE)) & 0x08) &&
+           "$CnFE must advertise FORMAT");
+    {
+        CallResult r = callDriver(0x03, 0);
+        assert(r.carry == 0 && r.a == 0x00 && "FORMAT on a writable disk succeeds");
+    }
+    {
+        auto callUnit = [&](uint8_t unitByte, uint8_t cmd) -> CallResult {
+            mem.memWrite(0x42, cmd);
+            mem.memWrite(0x43, unitByte);
+            mem.memWrite(0x10, 0xEE);
+            mem.memWrite(0x11, 0xEE);
+            cpu.setProgramCounter(0x0300);
+            cpu.run(60000);
+            return { mem.memRead(0x10), mem.memRead(0x11) };
+        };
+        CallResult r = callUnit(0x80, 0x03);
+        assert(r.carry == 1 && r.a == 0x28 && "FORMAT on an empty bay: no device");
+        uraw->setWriteBackEnabled(false);         // the notch: write-protected
+        r = callUnit(0x00, 0x03);
+        assert(r.carry == 1 && r.a == 0x2B && "FORMAT on a protected disk: $2B");
+        uraw->setWriteBackEnabled(true);
+        r = callUnit(0x00, 0x04);
+        assert(r.carry == 1 && r.a == 0x27 && "an unknown driver command stays $27");
+    }
+
     fs::remove(po);
-    std::printf("OK smartport_io_error (in-range CLC; out-of-range SEC+$27, read & write)\n");
+    std::printf("OK smartport_io_error (in-range CLC; out-of-range SEC+$27, read & write;"
+                " FORMAT answered)\n");
     return 0;
 }

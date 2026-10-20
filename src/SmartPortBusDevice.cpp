@@ -460,9 +460,11 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
             // $02, bit 5 = not removable). Guessing from block count / empty
             // made an ejected HDV answer as a UniDisk.
             const bool floppy = u->isUnidisk35();
-            static const char kFloppy[16] = "POM2 UNIDISK3.5";
+            // "DISK 3.5" is the UniDisk 3.5's own name (TN SmartPort #7:
+            // the UniDisk 3.5 and the Apple 3.5 Drive both answer it).
+            static const char kFloppy[16] = "DISK 3.5       ";
             static const char kHard[16]   = "POM2 HARDDISK  ";
-            st[4] = floppy ? 15 : 13;
+            st[4] = floppy ? 8 : 13;
             std::memcpy(st + 5, floppy ? kFloppy : kHard, 16);
             st[21] = floppy ? 0x01 : 0x02;
             st[22] = floppy ? 0x00 : 0x20;
