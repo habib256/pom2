@@ -134,15 +134,6 @@ void SmartPortBusDevice::setUnitCount(int count)
     unitCount_ = count;
 }
 
-bool SmartPortBusDevice::anyMedia() const
-{
-    for (int i = 0; i < unitCount_; ++i) {
-        const SmartPortBusUnit* u = units_[static_cast<std::size_t>(i)];
-        if (u && u->hasMedia()) return true;
-    }
-    return false;
-}
-
 bool SmartPortBusDevice::unitHasMedia(int index) const
 {
     if (index < 0 || index >= unitCount_) return false;

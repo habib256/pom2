@@ -1351,11 +1351,9 @@ void MainWindow::render()
         pom2::Toolbar_ImGui::Snapshot tb;
         const auto mode = controller->getMode();
         tb.isRunning          = (mode == EmulationController::Mode::Running);
-        tb.isStopped          = (mode == EmulationController::Mode::Stopped);
         tb.cyclesPerFrame     = controller->getCyclesPerFrame();
         tb.videoStandard      = controller->getVideoStandard();
         tb.activeProfile      = activeProfile;
-        tb.hasPrimaryDiskCard = (primaryDiskII() != nullptr);
         tb.charRomLocale      = charRomLocale;
         auto isMonoHiRes = [](Apple2Display::HiResMode m) {
             return m == Apple2Display::HiResMode::MonoWhite ||
@@ -1369,7 +1367,7 @@ void MainWindow::render()
             tb.rewindHasFrames = !controller->rewind().empty();
         }
 
-        const auto tr = toolbar->render(ImGui::GetFrameHeight(), tb);
+        const auto tr = toolbar->render(tb);
 #ifdef __EMSCRIPTEN__
         auto browserResetBoot = [&]() -> bool {
             if (browserResetBootImage_.empty()) return false;
@@ -1423,14 +1421,6 @@ void MainWindow::render()
                 lastColorHiResMode_ = curHi;
                 display->setHiResMode(lastMonoHiResMode_);
             }
-        }
-        if (tr.requestInsertDisk && diskPanel) {
-            // Reuse the existing per-panel popup machinery: setting the
-            // primary panel's `insertDialogOpen` flag is exactly what
-            // its own "Insert .dsk…" button does. `renderDiskFileDialog`
-            // picks it up next frame and routes to `primaryDiskII()`.
-            diskPanel->insertDialogOpen = true;
-            if (diskPanel->dialogPath.empty()) diskPanel->dialogPath = "disks_5.4/";
         }
         if (tr.setCharRomRequested) {
             // Hot swap: Memory::loadCharRom rewrites the csbits table

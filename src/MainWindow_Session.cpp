@@ -178,7 +178,7 @@ void MainWindow::persistSession(bool flushMedia)
     }
 
     // CFFA per-slot image + write-back for EVERY plugged CFFA card. `cffa`
-    // is multi-instance, so persist each (not just the primary `primaryCffaCard()`),
+    // is multi-instance, so persist each rather than only the primary card,
     // mirroring the DiskII loop above. (blockCards() also returns synthetic
     // HDV cards — those persist via hdv_path; skip them here.)
     for (auto* blk : blockCards()) {

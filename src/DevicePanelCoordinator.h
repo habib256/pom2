@@ -55,16 +55,11 @@ public:
         int printerSlot = -1;
         int grapplerSlot = -1;
         int clockSlot = -1;
-        bool grapplerRomLoaded = false;
-        bool grapplerBusy = false;
         bool clockRomFromDump = false;
         std::vector<int> serialSlots;
 
         bool chatMauvePlugged() const noexcept { return chatMauveSlot >= 0; }
-        bool smartPortPlugged() const noexcept { return smartPortSlot >= 0; }
         bool fujiNetPlugged() const noexcept { return fujiNetSlot >= 0; }
-        bool serialPlugged() const noexcept { return !serialSlots.empty(); }
-        bool printerPlugged() const noexcept { return printerSlot >= 0; }
         bool grapplerPlugged() const noexcept { return grapplerSlot >= 0; }
         bool clockPlugged() const noexcept { return clockSlot >= 0; }
         bool ethernetPlugged() const noexcept

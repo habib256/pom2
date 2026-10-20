@@ -150,9 +150,9 @@ int main()
         const uint8_t mainPat = 0x01;
         for (int y = 0; y < 192; y += 37) {            // sample a few lines
             for (int x = 0; x < 560; ++x) {
-                const bool aux = (x % 14) < 7;
-                const uint8_t pat = aux ? auxPat : mainPat;
-                const int phase = aux ? (x & 3) : ((x + 1) & 3);   // main: one sample later
+                const bool auxHalf = (x % 14) < 7;
+                const uint8_t pat = auxHalf ? auxPat : mainPat;
+                const int phase = auxHalf ? (x & 3) : ((x + 1) & 3);   // main: one sample later
                 const uint8_t want = ((pat >> phase) & 1u) ? 0xFFu : 0x00u;
                 assert(s[y * 560 + x] == want
                        && "DLGR signal must emit the nibble at absolute beam phase");

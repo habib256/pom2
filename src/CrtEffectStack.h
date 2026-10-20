@@ -128,7 +128,6 @@ private:
     // there fails with GL_INVALID_VALUE, the FBO goes incomplete and the
     // window goes black with nothing in the log.
     int  maxTexSize_ = 0;
-    int  srcW_ = 0, srcH_ = 0;
     int  pingPongIdx = 0;
     bool firstFrame  = true;
 

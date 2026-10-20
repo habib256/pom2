@@ -1075,8 +1075,8 @@ static void resolveGlyph(uint8_t screenByte, uint8_t out[8],
 //   * IIe ALTCHAR additions (4 KB ROM only): codes $40-$5F look up the
 //     second 2 KB bank (mousetext glyphs); codes $60-$7F display the
 //     lowercase glyph from $E0-$FF as inverse video.
-//   * 2 KB ROMs (II/II+) have no lowercase: codes $61-$7A and $E1-$FA
-//     are remapped to their uppercase equivalents (clear bit 5).
+//   * 2 KB ROMs use their dumped glyphs directly, including any repeated
+//     glyph ranges; no renderer-side lowercase fold is applied.
 //
 // The renderer reads each row's 7 pixels by `(row >> i) & 1` for i=0..6
 // after the optional flash XOR.
@@ -1088,7 +1088,6 @@ struct GlyphLookup {
 static GlyphLookup lookupCsbitsGlyph(uint8_t screenByte,
                                      const uint8_t* charRom,
                                      std::size_t charRomSize,
-                                     bool charRomLower,
                                      bool altCharSet)
 {
     GlyphLookup g{};
@@ -1102,9 +1101,8 @@ static GlyphLookup lookupCsbitsGlyph(uint8_t screenByte,
     // identical to characters C0-FF", and exactly what the 2 KB dump holds
     // (videx_lowercase_char_rom asserts $E1 == $A1 at the ROM level). Folding
     // a-z onto A-Z here overrode the dump and drew letters where real hardware,
-    // MAME and AppleWin all draw punctuation. `charRomLower` is now unused:
-    // whatever the dump has at the code IS what the screen shows.
-    (void)charRomLower;
+    // MAME and AppleWin all draw punctuation. Whatever the dump has at the
+    // code IS what the screen shows.
 
     // Code-range routing (mirrors MAME's IIe `get_text_character`):
     //
@@ -1163,13 +1161,12 @@ static GlyphLookup lookupCsbitsGlyph(uint8_t screenByte,
 static std::array<uint8_t, 8> glyphRows7(uint8_t screenByte,
                                          const uint8_t* charRom,
                                          std::size_t charRomSize,
-                                         bool charRomLower,
                                          bool useCharRom, bool altCharSet,
                                          bool flashPhase)
 {
     std::array<uint8_t, 8> rows{};
     if (useCharRom) {
-        const auto g = lookupCsbitsGlyph(screenByte, charRom, charRomSize, charRomLower, altCharSet);
+        const auto g = lookupCsbitsGlyph(screenByte, charRom, charRomSize, altCharSet);
         for (int gy = 0; gy < 8; ++gy) {
             uint8_t bits = g.bytes[gy];
             if (g.flash && flashPhase) bits ^= 0x7Fu;
@@ -1301,7 +1298,7 @@ void Apple2Display::renderText(Memory& mem, const Memory::DisplayState& state,
             const int cellX = col * 7;
             const int cellY = row * 8;
 
-            const auto rows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(), mem.charRomHasLowercase(),
+            const auto rows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
                                          useCharRom, altCharSet, flashPhase);
             for (int gy = 0; gy < 8; ++gy) {
                 const int y = cellY + gy;
@@ -1353,7 +1350,7 @@ void Apple2Display::renderTextChatMauveFgBg(Memory& mem,
             // Resolve the glyph into a uniform 7-bit row (bit i = pixel i,
             // bit 0 = leftmost, 1 = lit) with invert/flash already applied,
             // so the 14-dot widening below is shared by both font paths.
-            const auto glyphRows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(), mem.charRomHasLowercase(),
+            const auto glyphRows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
                                               useCharRom, altCharSet, flashPhase);
 
             for (int gy = 0; gy < 8; ++gy) {
@@ -1872,7 +1869,7 @@ void Apple2Display::renderText80(Memory& mem, const Memory::DisplayState& state,
                 const int     cellX = col * 14 + half * 7;
                 const int     cellY = row * 8;
 
-                const auto rows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(), mem.charRomHasLowercase(),
+                const auto rows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
                                              useCharRom, altCharSet, flashPhase);
                 for (int gy = 0; gy < 8; ++gy) {
                     const int y = cellY + gy;
@@ -2244,7 +2241,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             const uint16_t rowAddr = textRowAddress(row, videoTextPage2(state));
             for (int col = col0; col < col1; ++col) {
                 const uint8_t src = ram[rowAddr + col];
-                const auto bytes = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(), mem.charRomHasLowercase(),
+                const auto bytes = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
                                               useCharRom, state.altChar, flashPhase);
                 for (int gy = 0; gy < 8; ++gy) {
                     const int y = row * 8 + gy;
@@ -2273,7 +2270,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
                 // (AppleWin scanner convention).
                 const uint8_t src = (col & 1) ? ram[rowAddr + (col >> 1)]
                                               : aux[rowAddr + (col >> 1)];
-                const auto bytes = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(), mem.charRomHasLowercase(),
+                const auto bytes = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
                                               useCharRom, state.altChar, flashPhase);
                 for (int gy = 0; gy < 8; ++gy) {
                     const int y = row * 8 + gy;

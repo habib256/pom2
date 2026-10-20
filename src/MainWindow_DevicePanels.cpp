@@ -549,15 +549,6 @@ void MainWindow::renderPrinterPanelWindow()
     ImGui::End();
 }
 
-SuperSerialCard* MainWindow::printerTapSsc() const
-{
-    // serialCards() is sorted by slot ascending, so the first tapped card is
-    // the lowest slot — the //c printer port when that profile is active.
-    for (auto* ssc : serialCards())
-        if (ssc && ssc->printerTap()) return ssc;
-    return nullptr;
-}
-
 void MainWindow::pumpPostScript(const std::vector<uint8_t>& fresh)
 {
     // Ask the interpreter for exactly the sheet the tray holds, so the page

@@ -25,7 +25,6 @@
 namespace {
 
 constexpr uint16_t IIE_80COL_ON  = 0xC00D;
-constexpr uint16_t IIE_80COL_OFF = 0xC00C;
 constexpr uint16_t CLR_TEXT      = 0xC050;
 constexpr uint16_t SET_TEXT      = 0xC051;
 constexpr uint16_t CLR_MIXED     = 0xC052;
@@ -61,12 +60,6 @@ std::vector<uint32_t> rows(const Apple2Display& d, int y0, int y1)
     const uint32_t* p = d.pixels();
     return std::vector<uint32_t>(p + static_cast<size_t>(y0) * w,
                                  p + static_cast<size_t>(y1) * w);
-}
-
-int lum(uint32_t p)
-{
-    return static_cast<int>(p & 0xFF) + static_cast<int>((p >> 8) & 0xFF) +
-           static_cast<int>((p >> 16) & 0xFF);
 }
 
 // ── 1. Leaving mixed mode during VBL must repaint the text band ──────────

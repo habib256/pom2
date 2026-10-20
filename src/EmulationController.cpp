@@ -1083,7 +1083,7 @@ bool EmulationController::bootFromSlot(int slot)
         // not-bootable branch below already had: the bus is silenced whenever
         // the machine is not Running, and this path resumes it by storing the
         // mode directly. Booting from a PAUSED machine (toolbar Pause, a
-        // debugger breakpoint, `rewindEndPaused`) therefore ran the whole
+        // debugger breakpoint or paused rewind scrub) therefore ran the whole
         // session mute — every Boot button in the Library reaches here.
         if (audioDev) audioDev->setSuspended(false);
         mode.store(Mode::Running);
@@ -1378,14 +1378,6 @@ void EmulationController::noteTimeJump()
         debugger_->clearForTimeJump();
         syncDebugHook();
     }
-}
-
-void EmulationController::rewindEndPaused()
-{
-    // Stay Stopped at the current frame; nothing to do but keep the worker
-    // parked. Provided as a named counterpart to rewindEndAndResume so the
-    // UI's intent is explicit.
-    setMode(Mode::Stopped);
 }
 
 // NOT inside the __EMSCRIPTEN__ guard: tickFrame — the browser-RAF CPU

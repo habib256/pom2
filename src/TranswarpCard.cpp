@@ -354,11 +354,23 @@ void TranswarpCard::appendSnapshotState(std::vector<uint8_t>& out) const
 
 void TranswarpCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
+    if (!data) return;
     byteio::Reader r(data, len);
     if (!r.has(4 + 2 + 6 + 4)) return;
     if (r.u32() != kSnapMagic)   return;
     const uint16_t version = r.u16();
     if (version == 0 || version > kSnapVersion) return;
+
+    // Validate the complete variable-length v2 record before changing DIP
+    // switches, timing, CPU ownership or the physical ROM window. A partial
+    // displaced-ROM section must not leave a half-restored card running.
+    if (version >= 2) {
+        byteio::Reader tail = r;
+        tail.pos += 6 + 4;  // flags/DIPs + slow-cycle count, checked above
+        if (!tail.has(1)) return;
+        const bool carriesRom = tail.u8() != 0;
+        if (carriesRom && !tail.has(kRomSize)) return;
+    }
 
     dsw1_      = r.u8();
     dsw2_      = r.u8();

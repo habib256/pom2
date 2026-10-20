@@ -473,7 +473,6 @@ public:
     /// below, which is the HOST's pacing knob — the two were conflated
     /// before the character ROMs landed, when NLQ could only mean "slower".
     enum class Quality : uint8_t { Correspondence = 0, Draft, NLQ, Count };
-    static const char* qualityName(Quality q);
     Quality quality() const { return quality_; }
 
     enum class Speed : uint8_t { Instant = 0, Draft, NLQ, Count };

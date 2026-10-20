@@ -46,11 +46,8 @@ namespace {
 
 constexpr uint16_t LC_RAM_RW_BANK2 = 0xC083;   // read RAM, write RAM, bank 2
 constexpr uint16_t LC_RAM_RW_BANK1 = 0xC08B;   // read RAM, write RAM, bank 1
-constexpr uint16_t LC_RAM_R_BANK2  = 0xC080;   // read RAM only, bank 2 (no write)
 constexpr uint16_t ALTZP_OFF       = 0xC008;
 constexpr uint16_t ALTZP_ON        = 0xC009;
-constexpr uint16_t RAMWRT_OFF      = 0xC004;
-constexpr uint16_t RAMWRT_ON       = 0xC005;
 
 void enableLcWrite(Memory& mem, uint16_t switchAddr) {
     // Two accesses required to arm the prewrite latch and then enable.

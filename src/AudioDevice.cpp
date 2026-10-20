@@ -55,15 +55,21 @@
 #endif
 
 // GCC's -Wstringop-overflow trips a false positive on miniaudio's atomic
-// intrinsics (ma_atomic_load_64 on &pSound->seekTarget). Silence locally;
-// no other warnings appear in the miniaudio TU at our level.
-#if defined(__GNUC__) && !defined(__clang__)
+// intrinsics (ma_atomic_load_64 on &pSound->seekTarget). The WebAudio backend
+// also leaves context parameters unused. Keep these vendor diagnostics local
+// to the implementation include; first-party audio code stays fully checked.
+#if defined(__clang__) && defined(__EMSCRIPTEN__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#elif defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
 #endif
 #define MINIAUDIO_IMPLEMENTATION
 #include "third_party/miniaudio.h"
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__clang__) && defined(__EMSCRIPTEN__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 

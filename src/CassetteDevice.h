@@ -28,7 +28,7 @@
 // The pulse format (zero-crossing audio with 770 Hz sync, 1 kHz "1",
 // 2 kHz "0") is structurally identical to the Apple-1 ACI tape format,
 // just with different timing constants — POM1's pulse-extraction core
-// (`pcmToDurations`, miniaudio decoders, audio queue, REW state machine)
+// (PCM pulse extraction, miniaudio decoders, audio queue, REW state machine)
 // ports verbatim with the I/O addresses re-wired.
 //
 // Two playback modes (mirrored from POM1):
@@ -187,7 +187,6 @@ public:
     bool isRewinding()      const { return rewinding; }
     bool isAudioAvailable() const { return audioAvailable; }
     bool isAudioStreamMode() const { return audioStreamMode; }
-    double getQueuedAudioSeconds() const;
     size_t getLoadedTransitionCount() const {
         return audioStreamMode ? static_cast<size_t>(audioStreamTotalFrames) : loadedDurations.size();
     }
@@ -258,12 +257,6 @@ private:
     bool saveWavTape(const std::string& path) const;
     bool loadMiniaudioTape(const std::string& path);
     void closeAudioStream();
-
-    static bool pcmToDurations(const std::vector<float>& mono,
-                               uint32_t sampleRate,
-                               std::vector<uint32_t>& outDurations,
-                               bool& outInitialLevel,
-                               std::string& outErr);
 
     bool loadPlaybackDurations(std::vector<uint32_t> durations,
                                bool initialLevel,

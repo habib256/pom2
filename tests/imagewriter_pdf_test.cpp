@@ -31,22 +31,24 @@
 
 // This test binary provides the single stb_image_write implementation
 // (the GUI's lives in Pom2HgrPaintHost.cpp, not linked here).
-#if defined(__clang__)
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-#if defined(__clang__)
-#  pragma clang diagnostic pop
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
 #endif
 
 #include "ImageWriter.h"
 #include "ImageWriterPdf.h"
 
 #include <cassert>
+#include <clocale>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -175,6 +177,30 @@ void testImageWriterIntegration()
     std::printf("  ok: ImageWriter sheets → 2-page PDF (Letter 612x792)\n");
 }
 
+void testLocaleIndependentNumbers()
+{
+    const std::string saved = std::setlocale(LC_NUMERIC, nullptr);
+    const char* selected = nullptr;
+    for (const char* candidate : {"fr_FR.UTF-8", "de_DE.UTF-8", "French_France.1252"}) {
+        selected = std::setlocale(LC_NUMERIC, candidate);
+        if (selected) break;
+    }
+    if (!selected) {
+        std::puts("  skip: decimal-comma locale unavailable");
+        return;
+    }
+    const std::string active = selected;
+    assert(std::string(std::localeconv()->decimal_point) == ",");
+    // Recheck MediaBox numbers, drawing commands, xref and raster round-trip
+    // under this locale. The exporter must not change the caller's locale.
+    testStructureAndRoundTrip();
+    const std::string pdf = readAll(kOutPath);
+    findAt(pdf, "4.00 0 0 3.00 0 0 cm");
+    assert(active == std::setlocale(LC_NUMERIC, nullptr));
+    assert(std::setlocale(LC_NUMERIC, saved.c_str()));
+    std::puts("  ok: PDF numbers use dots under a decimal-comma locale");
+}
+
 void testErrorContract()
 {
     std::string err;
@@ -234,6 +260,7 @@ void testDurableCommit()
 int main()
 {
     testStructureAndRoundTrip();
+    testLocaleIndependentNumbers();
     testImageWriterIntegration();
     testErrorContract();
     testDurableCommit();

@@ -59,12 +59,6 @@ void FourPlayCard::onReset()
     // `device_reset`). Left explicit so the absence reads as a decision.
 }
 
-uint8_t FourPlayCard::playerByte(int player) const
-{
-    if (player < 0 || player >= kPlayers) return kIdle;
-    return state_[static_cast<std::size_t>(player)].load(std::memory_order_relaxed);
-}
-
 // MAME `4play.cpp:123-140`: offsets 0-3 are the four players, everything
 // else is $FF.
 uint8_t FourPlayCard::deviceSelectRead(uint8_t low4)

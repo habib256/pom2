@@ -163,6 +163,12 @@ void JoystickInput::poll()
     // buttons, so menu navigation never bleeds into the running game.
     nav_ = UiNav{};
     activeIsGamepad_ = false;
+    // A different pad has its own button history. Seed from its first poll
+    // rather than comparing held controls against the previous device.
+    if (navPrevHostIdx_ != active.hostIdx) {
+        navPrevValid_ = false;
+        navPrevHostIdx_ = active.hostIdx;
+    }
     const int navJid = GLFW_JOYSTICK_1 + active.hostIdx;
     GLFWgamepadstate gs{};
     if (active.hostIdx >= 0 && active.hostIdx < kHostCount &&
@@ -188,10 +194,10 @@ void JoystickInput::poll()
         const float sx = gs.axes[GLFW_GAMEPAD_AXIS_LEFT_X];
         const int curStickY = sy < -0.5f ? -1 : (sy > 0.5f ? 1 : 0);
         const int curStickX = sx < -0.5f ? -1 : (sx > 0.5f ? 1 : 0);
-        const bool stickUpEdge    = curStickY == -1 && navPrevStickY_ != -1;
-        const bool stickDownEdge  = curStickY ==  1 && navPrevStickY_ !=  1;
-        const bool stickLeftEdge  = curStickX == -1 && navPrevStickX_ != -1;
-        const bool stickRightEdge = curStickX ==  1 && navPrevStickX_ !=  1;
+        const bool stickUpEdge    = navPrevValid_ && curStickY == -1 && navPrevStickY_ != -1;
+        const bool stickDownEdge  = navPrevValid_ && curStickY ==  1 && navPrevStickY_ !=  1;
+        const bool stickLeftEdge  = navPrevValid_ && curStickX == -1 && navPrevStickX_ != -1;
+        const bool stickRightEdge = navPrevValid_ && curStickX ==  1 && navPrevStickX_ !=  1;
 
         // Level (held) state — the D-pad button OR the stick past its gate.
         auto held = [&](int b) { return gs.buttons[b] == GLFW_PRESS; };
@@ -205,8 +211,6 @@ void JoystickInput::poll()
         nav_.down     = edge(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)  || stickDownEdge;
         nav_.left     = edge(GLFW_GAMEPAD_BUTTON_DPAD_LEFT)  || stickLeftEdge;
         nav_.right    = edge(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT) || stickRightEdge;
-        nav_.pageUp   = edge(GLFW_GAMEPAD_BUTTON_LEFT_BUMPER);
-        nav_.pageDown = edge(GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER);
 
         nav_.upHeld       = held(GLFW_GAMEPAD_BUTTON_DPAD_UP)    || curStickY == -1;
         nav_.downHeld     = held(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)  || curStickY ==  1;
@@ -340,10 +344,4 @@ bool JoystickInput::buttonDown(int buttonIdx) const
     const DeviceState& d = devices[active.hostIdx];
     if (!d.present) return false;
     return d.buttons[buttonIdx];
-}
-
-bool JoystickInput::anyPresent() const
-{
-    for (const auto& d : devices) if (d.present) return true;
-    return false;
 }

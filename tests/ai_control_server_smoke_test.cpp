@@ -921,6 +921,20 @@ void testCpuRegisterSet(EmulationController& /*ctrl*/, pom2::AiControlServer& /*
     assert(contains(r.body, "\"p\":52"));
     assert(contains(r.body, "\"sp\":253"));
 
+    // A present empty integer is invalid: reject the whole request before
+    // applying its otherwise valid register update.
+    r = post("/cpu", R"({"a":99,"pc":""})");
+    assert(r.status == 400);
+    r = oneShot(kTestPort, "GET /cpu HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(contains(r.body, "\"pc\":4096"));
+    assert(contains(r.body, "\"a\":17"));
+
+    // Escaped object keys are equivalent to their plain JSON spelling.
+    r = post("/cpu", R"({"\u0070\u0063":8192})");
+    assert(r.status == 200);
+    r = oneShot(kTestPort, "GET /cpu HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(contains(r.body, "\"pc\":8192"));
+
     // Partial update: only the supplied keys change.
     r = post("/cpu", "{\"a\":255}");
     assert(r.status == 200);

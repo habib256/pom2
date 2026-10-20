@@ -177,37 +177,21 @@ void SuperSerialCard::answerTelnetOption(uint8_t command, uint8_t option)
     default: return;
     }
 
-    // Record what we just agreed to. `WILL BINARY` is our OWN direction
-    // (guest→peer); `DO BINARY` is theirs (peer→guest).
-    //
-    // BEFORE the loop guard below, not after: the guard RETURNS, and with the
-    // update behind it a `DONT BINARY` / `WONT BINARY` that switches an
-    // ENABLED option back off never reached this block. The flags stayed set
-    // for the rest of the session, so the TX side kept omitting the RFC 854
-    // CR NUL and the RX side kept handing the guest the LF of every CR LF
-    // (bug hunt #8).
-    const bool wasEnabled =
-        (option == kOptBinary) &&
-        ((command == kDont && telnetBinaryTx_) ||
-         (command == kWont && telnetBinaryRx_));
-    if (option == kOptBinary) {
-        if (answer == kWill) telnetBinaryTx_ = true;
-        if (answer == kDo)   telnetBinaryRx_ = true;
-        if (answer == kWont) telnetBinaryTx_ = false;
-        if (answer == kDont) telnetBinaryRx_ = false;
+    // RFC 854, General Considerations 3(b): acknowledge changes, not a
+    // request for a mode already in effect. Track each direction of BOTH
+    // accepted options; even SGA needs state to prevent acknowledgment loops.
+    const bool local = command == kDo || command == kDont;
+    bool* enabled = nullptr;
+    if (option == kOptBinary)
+        enabled = local ? &telnetBinaryTx_ : &telnetBinaryRx_;
+    else if (option == kOptSga)
+        enabled = local ? &telnetSgaTx_ : &telnetSgaRx_;
+    if (enabled) {
+        const bool requested = command == kDo || command == kWill;
+        if (*enabled == requested) return;
+    } else if (command == kDont || command == kWont) {
+        return;  // unsupported options are already disabled
     }
-
-    // Never answer a REFUSAL we already agree with — DONT/WONT for an option
-    // that is already OFF is the state both ends are in, and echoing it starts
-    // the option loop RFC 854 §"option negotiation" warns about. A DONT/WONT
-    // that actually turned an option off is a state CHANGE, and RFC 1143 §7
-    // ("Q Method", state YES + DONT → send WONT, go to NO) requires the
-    // answer for it. SGA is not tracked because nothing in this card behaves
-    // differently under it.
-    if (!wasEnabled &&
-        ((command == kDont && answer == kWont) ||
-         (command == kWont && answer == kDont)))
-        return;
 
     std::lock_guard<std::mutex> lk(bufferMtx);
     // Straight into the raw reply queue, not txBuf: these bytes are telnet
@@ -215,6 +199,9 @@ void SuperSerialCard::answerTelnetOption(uint8_t command, uint8_t option)
     // is guest data and gets IAC-doubled on the way out.
     constexpr size_t kReplyCap = 256;      // a negotiation burst, not a stream
     if (telnetReply_.size() + 3 > kReplyCap) return;
+    // Change state only when its answer fits. Otherwise a retry must still
+    // be able to obtain the acknowledgment that was not queued this time.
+    if (enabled) *enabled = command == kDo || command == kWill;
     telnetReply_.push_back(kIac);
     telnetReply_.push_back(answer);
     telnetReply_.push_back(option);
@@ -332,11 +319,24 @@ bool SuperSerialCard::vsDriveReadOnly(int drive) const
 
 size_t SuperSerialCard::processTransportTextRx(uint8_t* data, size_t n)
 {
-    n = processTelnetRx(data, n);
-    // IAC unescaping always applies (RFC 856 keeps IAC doubling); the NVT
-    // line-ending rules do NOT once BINARY is agreed for this direction.
-    if (telnetBinaryRx_) { telnetPrevCR_ = false; return n; }
-    return normalizeLineEndings(data, n, telnetPrevCR_);
+    // Apply each BINARY transition at its position in the stream (RFC 856
+    // section 5, https://www.rfc-editor.org/rfc/rfc856#section-5). Parsing
+    // the entire buffer first used its FINAL mode for earlier data too,
+    // making CR/LF/NUL handling depend on TCP recv() boundaries.
+    size_t written = 0;
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t byte = data[i];
+        const size_t produced = processTelnetRx(&byte, 1);
+        // IAC unescaping still applies in BINARY; only NVT normalization
+        // stops. Clear CR history even if this byte only enabled BINARY.
+        if (telnetBinaryRx_) {
+            telnetPrevCR_ = false;
+            if (produced) data[written++] = byte;
+        } else if (produced && normalizeLineEndings(&byte, 1, telnetPrevCR_)) {
+            data[written++] = byte;
+        }
+    }
+    return written;
 }
 
 void SuperSerialCard::deliverTransportBytes(const uint8_t* data, size_t n,
@@ -580,6 +580,9 @@ void SuperSerialCard::applyCommandReg(uint8_t v)
     // the driver writes new bytes to TDR which we'll then send.
     if (prevDtr && !dtrAsserted_) {
         txBuf.clear();
+        // The CTS-held byte is pending TX too. Leaving it here lets a
+        // later cable change transmit stale data after the port was closed.
+        tdrHeld_ = false;
         sendBudget_ = 0.0;
     }
     pushIrqLine();

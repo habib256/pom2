@@ -114,7 +114,10 @@ bool HgrSpriteEditor::recordPlot(int x, int y, HgrColor c)
 void HgrSpriteEditor::applyOps(const std::vector<ByteEdit>& ops, bool forward)
 {
     if (forward) for (const auto& e : ops) scratch[e.addr] = e.newVal;
-    else         for (const auto& e : ops) scratch[e.addr] = e.oldVal;
+    // A stroke can touch one byte repeatedly (seven pixels share it).
+    // Unwind in reverse order so the earliest old value wins on Undo.
+    else for (auto it = ops.rbegin(); it != ops.rend(); ++it)
+        scratch[it->addr] = it->oldVal;
 }
 
 void HgrSpriteEditor::doUndo()
@@ -344,10 +347,12 @@ void HgrSpriteEditor::buildSpriteBytes(std::vector<uint8_t>& out, int& wB, int& 
         extract(scratch.data(), 0, 0, wBytes_, hRows_, out.data());
         // ×1 palette group selector (Woz's bit 7): group 1 shifts the whole
         // sprite's artifact family Violet→Blue / Green→Orange. Palette is per-byte
-        // on HGR, so set bit 7 only on bytes that carry lit pixels (empty bytes
-        // stay $00 — their group is irrelevant).
-        if (palGroup1_)
-            for (auto& byte : out) if (byte) byte |= 0x80u;
+        // on HGR. Replace any palette bits from loaded/grabbed bytes with the
+        // selected group; empty shape bytes stay $00 in either group.
+        for (auto& byte : out) {
+            byte &= 0x7Fu;
+            if (palGroup1_ && byte) byte |= 0x80u;
+        }
     }
 }
 
@@ -513,9 +518,13 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
         std::FILE* f = std::fopen(fullPath.c_str(), "rb");
         if (!f) { status = "Cannot open file"; return true; }
         std::vector<uint8_t> spr(static_cast<size_t>(wBytes_) * hRows_, 0);
-        const size_t got = std::fread(spr.data(), 1, spr.size(), f);   // short files zero-pad
-        std::fclose(f);
-        (void)got;
+        std::fread(spr.data(), 1, spr.size(), f);   // short files zero-pad
+        const bool readError = std::ferror(f) != 0;
+        const int closeResult = std::fclose(f);
+        if (readError || closeResult != 0) {
+            status = "Cannot read sprite file";
+            return true;
+        }
         auto before = snapshotRegion();
         for (const auto& p : before) scratch[p.first] = 0;
         stamp(spr.data(), wBytes_, hRows_, 0, 0,

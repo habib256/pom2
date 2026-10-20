@@ -50,7 +50,6 @@
 namespace {
 
 constexpr int kW = 560;
-constexpr int kH = 1;
 
 uint8_t r8(uint32_t c) { return  c        & 0xFFu; }
 uint8_t g8(uint32_t c) { return (c >> 8 ) & 0xFFu; }

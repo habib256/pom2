@@ -1680,7 +1680,6 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     if (low >= 0x30 && low <= 0x3F) {
         if (isWrite && (low & 0xFE) == 0x34) slots.broadcastVideoSwitchWrite(addr, writeVal);  // VidHD $C034/5 (AppleWin IOWrite_C03x)
         speakerToggles.fetch_add(1, std::memory_order_relaxed);
-        if (speakerCb) speakerCb(speakerUser);
         if (speaker) {
             const uint64_t now = cycleCounter +
                 (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0);

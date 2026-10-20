@@ -52,6 +52,7 @@ constexpr uint16_t kSnapVersion = 1;
 /// Dest MAC + source MAC + EtherType.
 constexpr int kEthMinimumSize = 6 + 6 + 2;
 
+#if POM2_HAS_SOCKETS
 /// Scratch size for one recvfrom on a TCP/UDP socket. Deliberately the
 /// whole 8 KB RX region rather than an MTU: a single socket may own all of
 /// it (RMSR $FF), and a datagram is read WHOLE or not at all. Sizing it
@@ -60,6 +61,7 @@ constexpr int kEthMinimumSize = 6 + 6 + 2;
 /// ceiling is the same 8 KB minus the in-band header, so a truncated read
 /// is always dropped instead of being stamped with a wrong length.
 constexpr size_t kMaxDatagram = kW5100MemSize - kW5100RxBase;   // 8 KB
+#endif
 
 uint8_t indexByte(uint16_t value, unsigned shift)
 {
@@ -133,6 +135,7 @@ bool isValidHostname(const std::string& name)
     return label != 0;                         // no trailing dot
 }
 
+#if POM2_HAS_SOCKETS
 // ── Destination policy (POM2, not the datasheet) ──────────────────────
 //
 // The W5100's TCP and UDP sockets are HOST sockets. That is the feature — it
@@ -190,6 +193,7 @@ std::string dottedQuad(uint32_t addressNetworkOrder)
     return std::to_string(o[0]) + "." + std::to_string(o[1]) + "." +
            std::to_string(o[2]) + "." + std::to_string(o[3]);
 }
+#endif
 
 // ── Local-port policy for Sn_PORT (POM2, not the datasheet) ───────────
 //

@@ -1174,14 +1174,14 @@ int main()
     // physical location must not reopen the image or discard guest writes.
     {
         EmulationController c;
-        pom2::StorageCoordinator storage;
+        pom2::StorageCoordinator sonyStorage;
         pom2::Settings settings;
         settings.setReadOnly(true);
         {
             auto state = c.lockState();
             state.memory().slotBus().plug(5, std::make_unique<pom2::SmartPortCard>(5));
         }
-        const auto mounted = storage.mountDisk35(c, settings, 0, disk35Path, true);
+        const auto mounted = sonyStorage.mountDisk35(c, settings, 0, disk35Path, true);
         assert(mounted.ok && !mounted.usesSmartPort && mounted.bootSlot == -1);
         assert(settings.getString("disk35_path_1") == disk35Path);
         c.disk35Internal().setWriteBackEnabled(true);
@@ -1193,30 +1193,30 @@ int main()
         assert(locations[0].slot == -1 && locations[0].bay == 0);
         assert(pom2::sameImageFile(locations[0].path, disk35Path));
         assert(c.disk35Internal().hasUnsavedChanges());
-        const auto duplicate = storage.mountDisk35(c, settings, 0, disk35Path);
+        const auto duplicate = sonyStorage.mountDisk35(c, settings, 0, disk35Path);
         assert(!duplicate.ok);
         assert(duplicate.error.find("already mounted") != std::string::npos);
-        const auto secondSony = storage.mountDisk35(c, settings, 1, disk35Path, true);
+        const auto secondSony = sonyStorage.mountDisk35(c, settings, 1, disk35Path, true);
         assert(!secondSony.ok);
         std::uint8_t read[512];
         assert(c.disk35Internal().readBlock(10, read));
         assert(std::memcmp(read, changed, sizeof read) == 0);
         assert(!c.disk35External().isLoaded());
-        const auto thirdDuplicate = storage.mountDisk35(c, settings, 2, disk35Path, true);
+        const auto thirdDuplicate = sonyStorage.mountDisk35(c, settings, 2, disk35Path, true);
         assert(!thirdDuplicate.ok);
         const auto thirdPath = disk35Path + ".third.po";
         std::filesystem::copy_file(disk35Path, thirdPath,
                                   std::filesystem::copy_options::overwrite_existing);
-        assert(storage.mountDisk35(c, settings, 2, thirdPath, true).ok);
+        assert(sonyStorage.mountDisk35(c, settings, 2, thirdPath, true).ok);
         assert(settings.getString("disk35_path_3") == thirdPath);
         assert(c.externalSony35Connected(1) && c.externalSony35Connected(2));
-        assert(!storage.connectExternalSony35(c, settings, 2, false).ok);
-        assert(storage.captureDisk35(c, true).drives[2].loaded);
+        assert(!sonyStorage.connectExternalSony35(c, settings, 2, false).ok);
+        assert(sonyStorage.captureDisk35(c, true).drives[2].loaded);
         assert(pom2::mountedImageLocations(c).size() == 2);
-        assert(storage.ejectDisk35(c, settings, 2, true).ok);
+        assert(sonyStorage.ejectDisk35(c, settings, 2, true).ok);
         assert(settings.getString("disk35_path_3").empty());
         assert(c.externalSony35Connected(2)); // eject leaves the mechanism connected
-        assert(storage.connectExternalSony35(c, settings, 2, false).ok);
+        assert(sonyStorage.connectExternalSony35(c, settings, 2, false).ok);
         assert(!c.externalSony35Connected(2));
         assert(!settings.getBool("disk35_connected_3", true));
         std::filesystem::remove(thirdPath);
@@ -1769,10 +1769,6 @@ int main()
                         (c->backing().readByte(ent + 0x12) << 8)) * 512u;
             }
             return 0;
-        };
-        auto readNote = [&] {
-            std::ifstream in(folder / "note.txt", std::ios::binary);
-            return std::string((std::istreambuf_iterator<char>(in)), {});
         };
         mount(synth(), folder.string());
         assert(sc.setMediaBayWriteBack(ctl, st, 5, 0, true).ok);

@@ -24,6 +24,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 
@@ -233,7 +234,16 @@ bool ChildProcess::start(const std::string& exePath,
     if (isRunning()) stop();
 
     if (exePath.empty()) { errOut = "no helper program configured"; return false; }
-    if (::access(exePath.c_str(), X_OK) != 0) {
+    // Resolve against the parent's current directory before the child chdirs.
+    // Otherwise access() checks one file but execve() can launch another
+    // (or fail) using the same relative spelling in the new working directory.
+    std::error_code pathError;
+    const std::string executablePath = std::filesystem::absolute(exePath, pathError).string();
+    if (pathError) {
+        errOut = "cannot resolve helper path " + exePath + ": " + pathError.message();
+        return false;
+    }
+    if (::access(executablePath.c_str(), X_OK) != 0) {
         errOut = exePath + ": " + std::strerror(errno);
         return false;
     }
@@ -243,7 +253,7 @@ bool ChildProcess::start(const std::string& exePath,
     // is very much multi-threaded (CPU worker, audio, link workers).
     std::vector<std::string> owned;
     owned.reserve(args.size() + 1);
-    owned.push_back(exePath);
+    owned.push_back(executablePath);
     for (const auto& a : args) owned.push_back(a);
     std::vector<char*> argv;
     argv.reserve(owned.size() + 1);

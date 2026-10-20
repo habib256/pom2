@@ -58,14 +58,12 @@ public:
     /// while we redraw 30 widgets and call ImGui per-key.
     struct DeckSnapshot {
         bool   loadedTape           = false;
-        bool   recordedTape         = false;
         bool   playbackActive       = false;
         bool   playbackArmed        = false;
         bool   rewinding            = false;
         bool   audioAvailable       = false;
         bool   playbackPaused       = false;
         bool   audioStreamMode      = false;
-        double queuedAudioSeconds   = 0.0;
         double playbackPositionSec  = 0.0;
         double playbackTotalSec     = 0.0;
         size_t loadedTransitions    = 0;

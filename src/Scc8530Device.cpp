@@ -115,11 +115,6 @@ enum : uint8_t {
     WR5_CRC16               = 0x04,
     WR5_TX_ENABLE           = 0x08,
     WR5_SEND_BREAK          = 0x10,
-    WR5_TX_WORD_LENGTH_MASK = 0x60,
-    WR5_TX_WORD_LENGTH_5    = 0x00,
-    WR5_TX_WORD_LENGTH_6    = 0x40,
-    WR5_TX_WORD_LENGTH_7    = 0x20,
-    WR5_TX_WORD_LENGTH_8    = 0x60,
     WR5_DTR                 = 0x80,
 };
 
@@ -1239,18 +1234,6 @@ int Scc8530Device::rxWordLength(int index) const
     case WR3_RX_WORD_LENGTH_6: return 6;
     case WR3_RX_WORD_LENGTH_7: return 7;
     case WR3_RX_WORD_LENGTH_8: return 8;
-    default:                   return 5;
-    }
-}
-
-/// MAME `z80scc_channel::get_tx_word_length` (z80scc.cpp:1415).
-int Scc8530Device::txWordLength(int index) const
-{
-    switch (ch_[index].wr5 & WR5_TX_WORD_LENGTH_MASK) {
-    case WR5_TX_WORD_LENGTH_5: return 5;
-    case WR5_TX_WORD_LENGTH_6: return 6;
-    case WR5_TX_WORD_LENGTH_7: return 7;
-    case WR5_TX_WORD_LENGTH_8: return 8;
     default:                   return 5;
     }
 }

@@ -17,7 +17,7 @@
 // 13-sector (DOS 3.1/3.2/3.2.1) round-trip pin. A synthesized 116480-byte
 // .d13 image nibblizes through the 5-and-3 GCR encoder (nibblizeTrack13)
 // on load, and decodes back byte-for-byte through the write-back path
-// (decodeTrack13) on saveDirty. No network, no PROM, no boot needed —
+// (decodeNibbles13) on saveDirty. No network, no PROM, no boot needed —
 // this pins the GCR encode↔decode pair (port of MAME ap2_dsk.cpp
 // a2_13sect_format) and the 116480-byte format detection.
 //

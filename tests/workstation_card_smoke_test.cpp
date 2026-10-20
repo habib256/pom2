@@ -250,10 +250,10 @@ int main()
     // blob is truncated or foreign. Refuse the WHOLE restore in that case.
     // Otherwise this mixes saved RAM/CPU with a reset/live serial chip.
     {
-        std::vector<uint8_t> live, scc;
+        std::vector<uint8_t> live, sccState;
         card.appendSnapshotState(live);
-        card.scc().appendSnapshot(scc);
-        const auto sccOffset = live.size() - scc.size();
+        card.scc().appendSnapshot(sccState);
+        const auto sccOffset = live.size() - sccState.size();
         assert(live != blob);
         for (std::size_t n = sccOffset; n < blob.size(); ++n) {
             card.loadSnapshotState(blob.data(), n);

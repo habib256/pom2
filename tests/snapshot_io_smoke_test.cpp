@@ -166,9 +166,9 @@ int main()
             w.writeSection("ID", nullptr, 0);
             assert(w.finish());
         }
-        pom2::SnapshotReader r(blob.data(), blob.size());
-        assert(r.good());
-        assert(r.machineId() == kId);
+        pom2::SnapshotReader identityReader(blob.data(), blob.size());
+        assert(identityReader.good());
+        assert(identityReader.machineId() == kId);
 
         // A writer given no identity records 0, and 0 must keep loading:
         // that is every snapshot taken before this field existed, plus the

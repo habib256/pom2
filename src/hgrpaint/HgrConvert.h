@@ -50,11 +50,6 @@ namespace hgrpaint {
 struct ImportOptions {
     bool  stretch = false;     // false = fit + letterbox (keep aspect), true = stretch
     bool  dither  = true;      // error diffusion (kernel selectable below)
-    // DEPRECATED — ignored by the HGR path. The NTSC half-dot carry + sliding
-    // window are physically left→right, so a right-to-left dither row would have
-    // to score candidates against a fabricated left word; the cross-byte
-    // refinement passes below kill the diagonal smear serpentine used to hide.
-    bool  serpentine = false;
     float diffusion = 1.0f;    // fraction of error propagated (1 = full grain, <1 = smoother)
     float brightness = 1.0f;   // multiply the source (1 = none)
     float contrast   = 1.0f;   // contrast around mid-grey (1 = none)

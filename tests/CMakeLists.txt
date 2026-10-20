@@ -23,6 +23,14 @@
 # test would print "OK" regardless of whether its checks actually held.
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-UNDEBUG>)
 
+# Check test and probe sources at the same warning level as the core. Apply
+# per source so vendored implementations compiled by UI tests keep their own
+# warning baseline. This also covers the portable subset's early return.
+file(GLOB _pom2_test_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+separate_arguments(_pom2_test_warn_flags NATIVE_COMMAND "${POM2_WARN_FLAGS}")
+set_property(SOURCE ${_pom2_test_sources} APPEND PROPERTY
+             COMPILE_OPTIONS ${_pom2_test_warn_flags})
+
 # Select a self-contained native core subset without configuring/downloading
 # the POSIX-only harnesses. CI exercises this exact entry point under MSVC.
 option(POM2_PORTABLE_TESTS_ONLY "Configure only portable core regressions" OFF)
@@ -354,6 +362,15 @@ if(UNIX AND NOT APPLE)
 endif()
 add_test(NAME joystick_square_gate COMMAND test_joystick_square_gate)
 set_tests_properties(joystick_square_gate PROPERTIES TIMEOUT 5)
+
+add_executable(test_joystick_navigation
+    joystick_navigation_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/JoystickInput.cpp
+)
+target_include_directories(test_joystick_navigation PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_joystick_navigation PRIVATE ${GLFW_TARGET})
+add_test(NAME joystick_navigation COMMAND test_joystick_navigation)
+set_tests_properties(joystick_navigation PROPERTIES TIMEOUT 5)
 
 
 # ─── //c+ boot trace (diagnostic, no asserts) ─────────────────────────────
@@ -2199,7 +2216,7 @@ add_test(NAME disk_media_state COMMAND test_disk_media_state
 set_tests_properties(disk_media_state PROPERTIES TIMEOUT 10)
 
 # ─── 13-sector (DOS 3.x, 5-and-3 GCR) round-trip ──────────────────────────
-# Pins nibblizeTrack13 ↔ decodeTrack13 (port of MAME a2_13sect_format) and
+# Pins nibblizeTrack13 ↔ decodeNibbles13 (port of MAME a2_13sect_format) and
 # 116480-byte format detection. Synthesized image, no network/PROM.
 add_executable(test_d13_roundtrip
     d13_roundtrip_smoke_test.cpp
@@ -5954,6 +5971,10 @@ set_tests_properties(ssc_keyboard_bridge PROPERTIES TIMEOUT 5)
 # 127.0.0.1 port (the test asks the kernel for one and hands it to
 # AiControlServer — a fixed 36502 collided with a parallel ctest run) so the
 # test exercises the full path including the worker thread.
+add_executable(test_ai_control_json ai_control_json_test.cpp)
+target_include_directories(test_ai_control_json PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME ai_control_json COMMAND test_ai_control_json)
+
 add_executable(test_ai_control_server
     ai_control_server_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
@@ -6097,6 +6118,10 @@ add_executable(ntsc_oe_ab EXCLUDE_FROM_ALL
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(ntsc_oe_ab PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(ntsc_oe_ab PRIVATE GLFW_INCLUDE_NONE)
+if(APPLE)
+    target_compile_definitions(ntsc_oe_ab PRIVATE GL_SILENCE_DEPRECATION)
+endif()
 target_link_libraries(ntsc_oe_ab PRIVATE ${GLFW_TARGET} ${OPENGL_LIBRARIES})
 if(UNIX AND NOT APPLE)
     target_link_libraries(ntsc_oe_ab PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
@@ -6139,6 +6164,10 @@ add_executable(oe_signal_view EXCLUDE_FROM_ALL
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(oe_signal_view PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(oe_signal_view PRIVATE GLFW_INCLUDE_NONE)
+if(APPLE)
+    target_compile_definitions(oe_signal_view PRIVATE GL_SILENCE_DEPRECATION)
+endif()
 target_link_libraries(oe_signal_view PRIVATE ${GLFW_TARGET} ${OPENGL_LIBRARIES})
 if(UNIX AND NOT APPLE)
     target_link_libraries(oe_signal_view PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
@@ -6196,6 +6225,7 @@ add_executable(crt_barrel_view
 )
 target_include_directories(crt_barrel_view PRIVATE ${CMAKE_SOURCE_DIR}/src
                                                    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(crt_barrel_view PRIVATE GLFW_INCLUDE_NONE)
 if(APPLE)
     target_compile_definitions(crt_barrel_view PRIVATE GL_SILENCE_DEPRECATION)
 endif()
@@ -6467,6 +6497,23 @@ target_include_directories(test_hgr_sprite_blit PRIVATE
     ${CMAKE_SOURCE_DIR}/src/hgrsprite)
 add_test(NAME hgr_sprite_blit COMMAND test_hgr_sprite_blit)
 set_tests_properties(hgr_sprite_blit PROPERTIES TIMEOUT 10)
+
+# Drive the real editor's stroke history without opening a GUI or GL context.
+add_executable(test_hgr_sprite_undo
+    hgr_sprite_undo_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrsprite/HgrSpriteEditor.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrsprite/HgrSpriteBlit.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrsprite/HgrSpriteAsmExport.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(test_hgr_sprite_undo PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/hgrpaint ${IMGUI_DIR})
+add_test(NAME hgr_sprite_undo COMMAND test_hgr_sprite_undo)
+set_tests_properties(hgr_sprite_undo PROPERTIES TIMEOUT 10)
 
 # ─── DHGR 560-dot converter vs real renderDhgr ────────────────────────────
 # Pins (1) the converter's internal ColorNTSC DHGR decode byte-identical to

@@ -111,8 +111,6 @@ inline constexpr float kVolumeTable[16] = {
     0.1319f, 0.2164f, 0.2974f, 0.3909f, 0.5128f, 0.6371f, 0.8186f, 1.0000f
 };
 
-inline constexpr int kNumRegs = Ay3_8910::kAyNumRegs;
-
 /// One PSG's audio-thread synthesis state. Counters are INTEGERS (MAME
 /// parity — `ay8910.cpp:998-1015`); `tickPhase` carries the fractional
 /// position between clock/8 ticks so the render loop can integrate.

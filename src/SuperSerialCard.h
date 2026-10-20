@@ -331,13 +331,15 @@ public:
         telnetCommand_ = 0;
         telnetBinaryRx_ = false;
         telnetBinaryTx_ = false;
+        telnetSgaRx_ = false;
+        telnetSgaTx_ = false;
         std::lock_guard<std::mutex> lk(bufferMtx);
         telnetReply_.clear();   // a new peer negotiates from scratch
     }
 
-    /// Answer one WILL/WONT/DO/DONT (RFC 854 requires an answer to every
-    /// option request — see the definition for what silence does to a stock
-    /// telnet client). BINARY and SGA are accepted, everything else refused.
+    /// Answer a WILL/WONT/DO/DONT requesting an option change (RFC 854).
+    /// Duplicate requests for the current state are silent to prevent loops.
+    /// BINARY and SGA are accepted, everything else refused.
     /// The reply is queued RAW, ahead of guest data, by drainTransportTx.
     void answerTelnetOption(uint8_t command, uint8_t option);
 
@@ -442,6 +444,8 @@ private:
     /// clean TDR path exists for.
     bool telnetBinaryRx_ = false;   ///< peer→guest is 8-bit clean
     bool telnetBinaryTx_ = false;   ///< guest→peer is 8-bit clean
+    bool telnetSgaRx_ = false;      ///< negotiated SGA, peer→guest
+    bool telnetSgaTx_ = false;      ///< negotiated SGA, guest→peer
     /// Telnet PROTOCOL bytes owed to the peer (option answers). Kept apart
     /// from txBuf because guest data is IAC-escaped on the way out and these
     /// must not be; drained ahead of it, under `bufferMtx`.

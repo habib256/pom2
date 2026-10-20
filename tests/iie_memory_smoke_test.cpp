@@ -55,12 +55,8 @@ constexpr uint16_t IIE_RD_80STORE   = 0xC018;
 constexpr uint16_t IIE_RD_ALTCHAR   = 0xC01E;
 constexpr uint16_t IIE_RD_80COL     = 0xC01F;
 
-constexpr uint16_t SET_GR    = 0xC050;
-constexpr uint16_t SET_TEXT  = 0xC051;
 constexpr uint16_t SET_PAGE1 = 0xC054;
 constexpr uint16_t SET_PAGE2 = 0xC055;
-constexpr uint16_t SET_LORES = 0xC056;
-constexpr uint16_t SET_HIRES = 0xC057;
 
 void testRAMRDIndependence(Memory& mem)
 {

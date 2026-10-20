@@ -592,8 +592,31 @@ void testDrainDetachedKillsTheGroup()
 
 } // namespace
 
+void testRelativeExecutableWithWorkingDirectory()
+{
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("pom2_child_relative_" + std::to_string(::getpid()));
+    fs::create_directories(root / "work");
+    fs::create_symlink("/bin/sh", root / "helper");
+    const fs::path original = fs::current_path();
+    fs::current_path(root);
+    ChildProcess child;
+    std::string error;
+    const bool started = child.start("./helper", {"-c", "printf ready > launched"},
+                                     "work", error);
+    fs::current_path(original);
+    assert(started && "relative executable was resolved after changing directory");
+    for (int i = 0; i < 200 && child.isRunning(); ++i) sleepMs(10);
+    assert(!child.isRunning() && child.lastExitCode() == 0);
+    assert(fs::is_regular_file(root / "work" / "launched"));
+    fs::remove_all(root);
+    std::puts("  ok: relative executable survives a child working-directory change");
+}
+
 int main()
 {
+    testRelativeExecutableWithWorkingDirectory();
     testExitIsDetectedAndReaped();
     testStopTerminates();
     testStubbornChildIsKilled();

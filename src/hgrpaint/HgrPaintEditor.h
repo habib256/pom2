@@ -58,9 +58,6 @@ public:
     void render(const std::vector<uint8_t>& memory,
                 const std::vector<uint8_t>* aux = nullptr);
 
-    // Which HGR page the editor targets (false = page 1 $2000, true = page 2).
-    bool targetsPage2() const { return page2; }
-
     // Session persistence — the host app round-trips this through its own
     // settings store so the editor reopens where it was left. `mode`:
     // 0 = HGR, 1 = GR, 2 = DHGR, 3 = DLGR (the double modes clamp to HGR

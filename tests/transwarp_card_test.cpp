@@ -404,6 +404,45 @@ void testRestoreReconcilesTheShadowWindow()
     std::printf("  ok: a restore reconciles the $F000 window with the blob\n");
 }
 
+void testTruncatedSnapshotIsIgnored()
+{
+    Memory mem;
+    TranswarpCard* tw = plug(mem, 4);
+    std::vector<uint8_t> warp(TranswarpCard::kRomSize, 0x7C);
+    assert(tw->setRom(warp));
+    tw->setFullAcceleration(false);
+    (void)mem.memRead(0xC070);                 // arm the joystick slow window
+    std::vector<uint8_t> source;
+    tw->appendSnapshotState(source);
+    assert(source.size() == 17 + TranswarpCard::kRomSize);
+
+    tw->onReset();
+    tw->setFullAcceleration(true);
+    std::vector<uint8_t> before;
+    tw->appendSnapshotState(before);
+    assert(before != source);
+    for (const size_t length : {size_t{16}, size_t{17}, source.size() - 1}) {
+        tw->loadSnapshotState(source.data(), length);
+        std::vector<uint8_t> after;
+        tw->appendSnapshotState(after);
+        assert(after == before && "a truncated snapshot changed the live card");
+    }
+    tw->loadSnapshotState(source.data(), source.size());
+    std::vector<uint8_t> restored;
+    tw->appendSnapshotState(restored);
+    assert(restored == source);
+    auto legacy = source;
+    legacy[4] = 1;                           // v1 has no shadow section
+    legacy.resize(16);
+    tw->onReset();
+    tw->setFullAcceleration(true);
+    tw->loadSnapshotState(legacy.data(), legacy.size());
+    restored.clear();
+    tw->appendSnapshotState(restored);
+    assert(restored == source && "the fixed-length v1 format must still load");
+    std::printf("  ok: truncated snapshots leave the card untouched\n");
+}
+
 
 // Whoever holds the bus runs the program. The card brings its own W65C02, so
 // on an NMOS machine (][, ][+, unenhanced //e) the program runs on CMOS
@@ -582,6 +621,7 @@ int main()
     testRomReloadUnderShadow();
     testBusAggregationAndAbsence();
     testSnapshotRoundTrip();
+    testTruncatedSnapshotIsIgnored();
     testRestoreReconcilesTheShadowWindow();
     testCardCpuIsA65C02();
     testIIPlusBootsThroughTheFirmware();

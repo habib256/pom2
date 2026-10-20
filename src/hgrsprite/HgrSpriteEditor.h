@@ -64,6 +64,7 @@ public:
     void releaseGL();
 
 private:
+    friend struct HgrSpriteEditorTestAccess;
     enum class Tool : uint8_t { Pencil = 0, Eraser, Fill };
 
     struct ByteEdit { uint16_t addr; uint8_t oldVal, newVal; };

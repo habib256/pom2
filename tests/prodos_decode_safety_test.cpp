@@ -250,8 +250,8 @@ int main()
           std::fwrite("hello", 1, 5, f); std::fclose(f); }
         std::vector<std::uint8_t> after;
         assert(pom2::buildVolumeFromFolder(guest.string(), "HOST", after).ok);
-        const auto r = pom2::decodeVolumeToFolder(after, served.string(), &mountTime);
-        assert(r.ok);
+        const auto decoded = pom2::decodeVolumeToFolder(after, served.string(), &mountTime);
+        assert(decoded.ok);
         assert(fs::file_size(served / "photo.bin") == kHiddenBytes &&
                "the guest's new PHOTO overwrote a host file it never saw");
         bool saved = false;               // the guest's file landed beside it

@@ -653,12 +653,9 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     dstW = std::max(1, dstW);
     dstH = std::max(1, dstH);
 
-    // srcW_/srcH_ are the LOGICAL source dimensions (drive uSrcSize, i.e. the
+    // srcW/srcH are the LOGICAL source dimensions (drive uSrcSize, i.e. the
     // scanline/mask frequency tied to source rows); outW/outH are the output
     // FBO size = the on-screen target. They are now decoupled.
-    srcW_ = srcW;
-    srcH_ = srcH;
-
     // Save the caller's framebuffer BEFORE the allocate/resize block: that
     // block binds our own FBOs to check completeness and used to hand the
     // binding back as 0. On a resize frame (window drag, zoom, 80-col toggle)

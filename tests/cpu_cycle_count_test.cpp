@@ -228,18 +228,18 @@ int main()
     //    length (bug hunt #5). One representative per class; totals from the
     //    Tom Harte 6502 corpus. $B3 / $BF pay the page-cross penalty.
     {
-        Memory mem;
-        M6502 ucpu(&mem);
+        Memory undocMemory;
+        M6502 ucpu(&undocMemory);
         ucpu.setCpuMode(M6502::CpuMode::NMOS);
         // Zero page $40/$41 → $0300 (no cross with Y = 4); $42/$43 → $03FE
         // (crosses with Y = 4).
-        mem.memWrite(0x40, 0x00); mem.memWrite(0x41, 0x03);
-        mem.memWrite(0x42, 0xFE); mem.memWrite(0x43, 0x03);
+        undocMemory.memWrite(0x40, 0x00); undocMemory.memWrite(0x41, 0x03);
+        undocMemory.memWrite(0x42, 0xFE); undocMemory.memWrite(0x43, 0x03);
         auto withY4 = [&](std::initializer_list<uint8_t> target) {
-            mem.memWrite(0x0200, 0xA0);   // LDY #$04
-            mem.memWrite(0x0201, 0x04);
+            undocMemory.memWrite(0x0200, 0xA0);   // LDY #$04
+            undocMemory.memWrite(0x0201, 0x04);
             uint16_t a = 0x0202;
-            for (uint8_t b : target) mem.memWrite(a++, b);
+            for (uint8_t b : target) undocMemory.memWrite(a++, b);
             ucpu.setProgramCounter(0x0200);
             (void)ucpu.run(1);
             return ucpu.run(1);
@@ -263,7 +263,7 @@ int main()
         };
         bool ok = true;
         for (const U& u : table) {
-            const int got = u.y ? withY4(u.code) : oneInstr(ucpu, mem, u.code, 0x0200);
+            const int got = u.y ? withY4(u.code) : oneInstr(ucpu, undocMemory, u.code, 0x0200);
             if (got != u.expect) {
                 std::printf("FAIL NMOS undoc cycles: %s = %d (want %d)\n",
                             u.name, got, u.expect);

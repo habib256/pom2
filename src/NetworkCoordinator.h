@@ -64,8 +64,6 @@ public:
     serialDevices() const noexcept { return serialDevices_; }
 
     const std::string& status() const noexcept { return status_; }
-    void setStatus(std::string status) { status_ = std::move(status); }
-    void clearStatus() { status_.clear(); }
 
     const std::string& helperPath() const noexcept { return helperPath_; }
     const std::string& helperResolved() const noexcept

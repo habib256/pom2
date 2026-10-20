@@ -80,10 +80,6 @@ public:
         int primaryHdvSlot = -1;
         int primaryCffaSlot = -1;
         int primarySmartPortSlot = -1;
-        bool primaryDiskUsingBitLss = false;
-        bool primaryDiskLoaded = false;
-        bool primaryHdvLoaded = false;
-        bool primarySmartPortLironRomLoaded = false;
 
         bool hasDiskII() const noexcept { return primaryDiskIISlot >= 0; }
         bool hasBlockDevice() const noexcept

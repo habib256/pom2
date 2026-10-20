@@ -1226,15 +1226,6 @@ void MainWindow::renderMediaPanel()
 
 // ─── Emulation restart ──────────────────────────────────────────────────
 
-std::string MainWindow::firstExistingPath(const std::vector<std::string>& candidates)
-{
-    // pom2::findFirstResource probes each candidate against CWD, the
-    // build/-relative `../` `../../` roots (dev), and the executable-
-    // relative / FHS-install roots (portable bundle, AppImage, /usr/bin).
-    // See ResourcePaths.h.
-    return pom2::findFirstResource(candidates);
-}
-
 M6502::CpuMode MainWindow::resolveCpuMode(M6502::CpuMode profileDefault) const
 {
     return pom2::resolveCpuModeSetting(*settings, profileDefault);   // ProfileSwitch.h

@@ -124,10 +124,6 @@ void deleteShaderProgram(unsigned int program)
 #endif
 }
 
-#if POM2_GL_ES || defined(__APPLE__)
-[[maybe_unused]] static bool loadEntryPoints() { return true; }
-#endif
-
 static unsigned int compileOne(unsigned int kind,
                                const char* versionLine,
                                const char* precisionLine,

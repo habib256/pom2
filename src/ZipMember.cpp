@@ -72,14 +72,18 @@ bool readZipMember(const std::vector<std::uint8_t>& zip,
     };
 
     // End Of Central Directory: scanned back from the tail, because the
-    // comment in front of it has a variable length.
+    // comment after it has a variable length. A signature inside that binary
+    // comment is not a record unless its declared length reaches EOF.
     if (n < 22) { err = "archive is too small to be a zip"; return false; }
     const std::size_t maxBack = std::min<std::size_t>(n, 22u + 65535u);
     std::size_t eocd = 0;
     bool found = false;
     for (std::size_t back = 22; back <= maxBack && !found; ++back) {
         const std::size_t o = n - back;
-        if (le32(o) == 0x06054B50u) { eocd = o; found = true; }
+        if (le32(o) == 0x06054B50u && le16(o + 20) == back - 22) {
+            eocd = o;
+            found = true;
+        }
     }
     if (!found) { err = "no zip central directory (not an archive?)"; return false; }
 

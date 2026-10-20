@@ -95,9 +95,6 @@ public:
     /// a held direction does not stick while the user is in a menu.
     void releaseAll();
 
-    /// The byte the guest would read for `player` right now.
-    uint8_t playerByte(int player) const;
-
     /// The bit packing, exposed so a test can check it without a card and
     /// so the layout lives in exactly one place.
     static uint8_t pack(const Player& p);

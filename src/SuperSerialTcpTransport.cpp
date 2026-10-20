@@ -41,7 +41,11 @@ namespace {
 class TcpTransport final : public SuperSerialTransport
 {
 public:
+#if POM2_HAS_SOCKETS
     TcpTransport(SuperSerialCard& card, int slot) : card_(card), slot_(slot) {}
+#else
+    TcpTransport(SuperSerialCard&, int) {}
+#endif
 
     ~TcpTransport() override { stop(); }
 
@@ -231,11 +235,11 @@ private:
     }
 #endif // POM2_HAS_SOCKETS
 
+    uint16_t         port_ = 0;
+    std::atomic<bool> listening_{ false };
+#if POM2_HAS_SOCKETS
     SuperSerialCard& card_;
     int              slot_ = 0;
-    uint16_t         port_ = 0;
-
-    std::atomic<bool> listening_{ false };
     std::atomic<bool> stopRequested_{ false };
     // Atomic so stop() can shutdown() these to wake the worker, while the
     // worker remains the sole closer of the client fd.
@@ -243,6 +247,7 @@ private:
     std::atomic<socket_t> clientFd_{ kInvalidSocket };
     std::mutex            fdLifeMtx_;
     std::thread           worker_;
+#endif
 };
 
 } // namespace

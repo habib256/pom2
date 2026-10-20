@@ -140,11 +140,6 @@ int main(int argc, char** argv) {
     (void)snapshotD084;
 
     const uint8_t* ram = mem.data();
-    auto runUntilStable = [&](int cycles) {
-        int t = 0;
-        while (t < cycles) t += cpu.run(8192);
-    };
-
     auto sample = [&](const char* tag) {
         const auto ds = mem.getDisplayState();
         const uint16_t pc = cpu.getProgramCounter();

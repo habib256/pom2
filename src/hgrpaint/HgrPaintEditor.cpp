@@ -1803,9 +1803,8 @@ void hgrpaint::HgrPaintEditor::renderImportPreview()
         hgrpaint::ImportOptions opt;
         opt.stretch    = importStretch;
         opt.dither     = importDither;
-        // opt.serpentine is deliberately NOT set: it is deprecated for HGR (the
-        // NTSC decode is physically left-to-right; the converter's refinement
-        // passes replace what serpentine papered over) — see HgrConvert.h.
+        // HGR conversion follows the NTSC decode from left to right;
+        // cross-byte refinement handles the seams after error diffusion.
         opt.diffusion  = importDiffusion;
         opt.brightness = importBrightness;
         opt.contrast   = importContrast;

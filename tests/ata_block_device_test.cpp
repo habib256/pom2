@@ -97,6 +97,40 @@ std::string writeWp2img(uint32_t blocks) {
 } // namespace
 
 int main() {
+    // The in-memory loader has the same 16-bit block-address ceiling as
+    // the file loader. A refused replacement must retain the current image.
+    {
+        Block512Backing backing;
+        const size_t maximum = Block512Backing::kMaxBlocks * kBlk;
+        assert(backing.loadFromBytes(std::vector<uint8_t>(maximum, 0), "max-blocks", ""));
+        assert(backing.blockCount() == Block512Backing::kMaxBlocks);
+        backing.writeByte(maximum - 1, 0xA5);
+        assert(!backing.loadFromBytes(std::vector<uint8_t>(maximum + kBlk, 0),
+                                      "oversized-blocks", ""));
+        assert(backing.path() == "max-blocks");
+        assert(backing.blockCount() == Block512Backing::kMaxBlocks);
+        assert(backing.readByte(maximum - 1) == 0xA5);
+        assert(backing.hasUnsavedChanges());
+        assert(!backing.lastError().empty());
+    }
+
+    // Block numbers are untrusted 32-bit values. On a 32-bit host a byte
+    // offset computed before the range check can wrap back into block zero.
+    {
+        Block512Backing backing;
+        assert(backing.loadFromBytes(makeImage(4), "block-bounds", ""));
+        uint8_t buf[kBlk];
+        for (const uint32_t block : {0x00800000u, 0x00800001u, 0xFFFFFFFFu}) {
+            std::memset(buf, 0xCD, sizeof buf);
+            assert(!backing.readBlock(block, buf));
+            for (const uint8_t byte : buf) assert(byte == 0xCD);
+            assert(!backing.writeBlock(block, buf));
+        }
+        assert(!backing.hasUnsavedChanges());
+        assert(backing.readBlock(0, buf));
+        for (size_t i = 0; i < kBlk; ++i) assert(buf[i] == pat(0, i));
+    }
+
     // ── IDENTIFY reports the LBA28 capacity ───────────────────────────────
     {
         AtaBlockDevice a;
@@ -275,6 +309,34 @@ int main() {
         assert((a.cs0_r(7) & AtaBlockDevice::kStDRDY) != 0);
     }
 
+    // Switching to the absent slave during a master PIO write must leave
+    // both the master's medium and its partially filled sector untouched.
+    {
+        AtaBlockDevice a;
+        assert(a.backing().loadFromBytes(makeImage(4), "pio-select", ""));
+        uint8_t before[kBlk];
+        assert(a.backing().readBlock(2, before));
+        setLba(a, 2, 1);
+        a.cs0_w(7, AtaBlockDevice::kCmdWrite);
+        a.cs0_w(0, 0x1234);                    // first word for the master
+
+        a.cs0_w(6, 0xF0);                      // select the absent slave
+        for (size_t i = 0; i < 256; ++i) a.cs0_w(0, 0xDEAD);
+        uint8_t after[kBlk];
+        assert(a.backing().readBlock(2, after));
+        assert(std::memcmp(before, after, kBlk) == 0);
+        assert(!a.backing().hasUnsavedChanges());
+
+        a.cs0_w(6, 0xE0);                      // resume the master transfer
+        assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) != 0);
+        for (size_t i = 1; i < 256; ++i) a.cs0_w(0, 0x5678);
+        assert((a.cs0_r(7) & AtaBlockDevice::kStDRQ) == 0);
+        assert(a.backing().readBlock(2, after));
+        assert(after[0] == 0x34 && after[1] == 0x12);
+        for (size_t i = 2; i < kBlk; i += 2)
+            assert(after[i] == 0x78 && after[i + 1] == 0x56);
+    }
+
     // ── WRITE to a write-protected device aborts (ERR), no silent success ──
     {
         AtaBlockDevice a;
@@ -355,6 +417,37 @@ int main() {
         assert(a.cs0_r(7) & AtaBlockDevice::kStDRQ);
         readSector(a, buf);
         for (size_t i = 0; i < kBlk; ++i) assert(buf[i] == pat(616, i));
+    }
+
+    // The largest accepted CHS geometry must roll sector 255 to sector 1
+    // of the next head/cylinder, rather than wrapping the register to zero.
+    for (const uint8_t command : {AtaBlockDevice::kCmdRead, AtaBlockDevice::kCmdWrite}) {
+        AtaBlockDevice a;
+        assert(a.backing().loadFromBytes(makeImage(1020), "chs-255", ""));
+        a.cs0_w(2, 255);
+        a.cs0_w(6, 0xA1);                 // two heads, 255 sectors each
+        a.cs0_w(7, AtaBlockDevice::kCmdInitParams);
+        a.cs0_w(2, 1);
+        a.cs0_w(3, 255);
+        a.cs0_w(4, 0);
+        a.cs0_w(5, 0);
+        a.cs0_w(6, 0xA1);                 // cylinder 0, final head/sector
+        a.cs0_w(7, command);
+        assert(a.cs0_r(7) & AtaBlockDevice::kStDRQ);
+        uint8_t buf[kBlk]{};
+        if (command == AtaBlockDevice::kCmdRead) readSector(a, buf);
+        else writeSector(a, buf);
+        assert(a.cs0_r(3) == 1);           // first sector of cylinder 1
+        assert((a.cs0_r(6) & 0x0F) == 0);
+        assert(a.cs0_r(4) == 1 && a.cs0_r(5) == 0);
+        assert(a.cs0_r(2) == 0);
+
+        // A command reusing the updated address must read block 510, not
+        // the previous track's first sector through the sector-zero fallback.
+        a.cs0_w(2, 1);
+        a.cs0_w(7, AtaBlockDevice::kCmdRead);
+        readSector(a, buf);
+        for (size_t i = 0; i < kBlk; ++i) assert(buf[i] == pat(510, i));
     }
 
     // Bound hostile/sparse HDV files before allocating their apparent size.

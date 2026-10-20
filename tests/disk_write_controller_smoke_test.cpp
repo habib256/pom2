@@ -109,7 +109,6 @@ int main()
 
         // Drive 16 bytes of writes via Q6H ($C0ED) at ~32-cycle pacing.
         // Pattern is just 0x80 + i so each byte is uniquely identifiable.
-        const int kPos0 = card.getTrackPosition();
         for (int i = 0; i < 16; ++i) {
             cpuStore(card, 0xD, static_cast<uint8_t>(0x80 + i), kCyclesPerNibble);
         }
@@ -117,26 +116,6 @@ int main()
         // Switch back to read mode (no-op effect on track contents).
         card.deviceSelectWrite(0xE, 0);
 
-        // Inspect the track buffer directly via the public read path.
-        // The 16 bytes we wrote should be on the track in the 16 nibble
-        // slots immediately after kPos0.
-        int matched = 0;
-        // The first nibble flush happens after 32 cycles have accumulated;
-        // the latch at that moment is whatever the most recent Q6H store
-        // put there. Walk a small window and count exact matches.
-        // Allow a one-position drift since cycleAccum carries over.
-        for (int pos = kPos0; pos < kPos0 + 20; ++pos) {
-            for (int i = 0; i < 16; ++i) {
-                if (card.isDiskLoaded()) {
-                    // Re-read via the controller would advance state;
-                    // peek through the underlying DiskImage instead.
-                    // We don't have a const accessor for the image, so
-                    // toggle into read mode and use $C0nC reads. But
-                    // that advances trackPos. Use deviceSelectRead with
-                    // motor off… simpler: forge a separate test below.
-                }
-            }
-        }
         // (Inspection is done by Case 2 below using a peek through eject.)
         std::printf("disk_write_controller: case 1 setup OK (full check in case 2)\n");
         fs::remove(p);

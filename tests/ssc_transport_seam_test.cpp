@@ -207,6 +207,33 @@ void testReconnectResetsTelnetParser()
     std::printf("  a reconnect resets the telnet parser: OK\n");
 }
 
+void testBinaryTransitionsRespectByteOrder()
+{
+    // RFC 856: BINARY changes the interpretation of subsequent data. A TCP
+    // read boundary must not decide whether earlier CR/LF/NUL bytes survive.
+    const std::vector<uint8_t> wire{
+        'A', '\r', '\n', 0,             // NVT: collapse CRLF, discard NUL
+        0xFF, 0xFB, 0,                  // WILL BINARY
+        'B', '\r', '\n', 0, 0xFF, 0xFF, // binary: preserve data, unescape IAC
+        0xFF, 0xFC, 0,                  // WONT BINARY
+        'C', '\r', '\n', 0};
+    const std::vector<uint8_t> expected{'A', '\r', 'B', '\r', '\n', 0, 0xFF, 'C', '\r'};
+    // Exercise every two-chunk split, including inside the negotiations.
+    for (size_t split = 0; split <= wire.size(); ++split) {
+        SuperSerialCard card(2);
+        std::vector<uint8_t> got;
+        auto consume = [&](size_t begin, size_t end) {
+            std::vector<uint8_t> chunk(wire.begin() + begin, wire.begin() + end);
+            const size_t n = card.processTransportTextRx(chunk.data(), chunk.size());
+            got.insert(got.end(), chunk.begin(), chunk.begin() + n);
+        };
+        consume(0, split);
+        consume(split, wire.size());
+        assert(got == expected && "Telnet decoding depends on TCP read boundaries");
+    }
+    std::printf("  BINARY transitions preserve byte order across every split: OK\n");
+}
+
 
 // ── SW2-6 gates the IRQ line, independently of the ACIA ──────────────────
 //
@@ -261,6 +288,7 @@ int main()
     testOutboundIacIsVerbatimInRawMode();
     testKeyboardSinkOnlyInTextMode();
     testReconnectResetsTelnetParser();
+    testBinaryTransitionsRespectByteOrder();
     testIrqDipGatesTheSlotLine();
     std::printf("OK\n");
     return 0;

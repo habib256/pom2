@@ -353,12 +353,6 @@ ProDOSHardDiskCard* MainWindow::primaryHdvCard() const
         .primaryHdv;
 }
 
-pom2::CffaCard* MainWindow::primaryCffaCard() const
-{
-    return storageCoordinator_->topology(controller->memory().slotBus())
-        .primaryCffa;
-}
-
 pom2::SmartPortCard* MainWindow::primarySmartPortCard() const
 {
     return storageCoordinator_->topology(controller->memory().slotBus())

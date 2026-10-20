@@ -99,14 +99,12 @@ void MainWindow::renderCassetteDeckWindow(float deltaSeconds)
         std::lock_guard<std::mutex> lk(controller->stateMutex());
         const CassetteDevice& d = controller->cassette();
         snap.loadedTape          = d.hasLoadedTape();
-        snap.recordedTape        = d.hasRecordedTape();
         snap.playbackActive      = d.isPlaybackActive();
         snap.playbackArmed       = d.isPlaybackArmed();
         snap.rewinding           = d.isRewinding();
         snap.audioAvailable      = d.isAudioAvailable();
         snap.playbackPaused      = d.isPlaybackPaused();
         snap.audioStreamMode     = d.isAudioStreamMode();
-        snap.queuedAudioSeconds  = d.getQueuedAudioSeconds();
         snap.playbackPositionSec = d.getPlaybackPositionSeconds();
         snap.playbackTotalSec    = d.getPlaybackTotalSeconds();
         snap.loadedTransitions   = d.getLoadedTransitionCount();

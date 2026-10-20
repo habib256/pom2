@@ -16,7 +16,7 @@
 
 // CassetteDevice WAV tail-flush regression test.
 //
-// pcmToDurations emits a transition-duration only ON a sign change, so the
+// PCM pulse extraction emitted a transition-duration only ON a sign change, so the
 // held segment after the LAST zero-crossing (trailing leader / final
 // half-bit — saveWavTape appends a 0.1 s trailer) was never converted,
 // truncating the recovered transition stream by one segment. This builds a

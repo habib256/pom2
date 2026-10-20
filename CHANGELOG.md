@@ -10,6 +10,117 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-20 — Bug-hunt regressions across media, input and serial I/O
+
+TNFS rejects mismatched TCP sequences, failed or malformed directory listings,
+and cached images above the caller's size limit. ZIP readers ignore false
+end-of-directory signatures inside archive comments. ATA writes respect drive
+selection, CHS transfers carry correctly past sector 255, and block backing
+rejects oversized images and indices before address arithmetic can wrap.
+TransWarp snapshot loading validates the complete variable-length payload before
+changing card state.
+
+Joystick navigation resets edge history after rebinding or reconnecting.
+Keyboard paste normalizes high-bit line endings and keeps live key input within
+the queue limit. Serial text follows Telnet BINARY changes in stream order,
+duplicate option negotiations do not loop, and closing or resetting the ACIA
+discards a byte held behind inactive CTS. PDF numbers use a fixed decimal locale,
+and child executables resolve relative to the parent's working directory.
+
+Sprite Undo reverses repeated writes to the same byte; failed file reads preserve
+artwork and history. Sprite output consistently applies the selected palette.
+The JSON API decodes backspace/form-feed and escaped keys, preserves valid UTF-8
+in responses, and rejects explicitly empty optional integer fields.
+
+Each fix includes a focused regression test. Final validation rebuilt the native
+application and passed all 17 selected regression suites plus the six contributor
+guards. The ATA block-index regression was also verified in WebAssembly. The full
+execution suite was not rerun.
+
+## 2026-10-20 — Strict warnings for tests and diagnostic probes
+
+Test/probe translation units now receive the core's warning options, including
+`POM2_WERROR`, before the portable subset's early return. Flags apply to the
+test sources themselves, preserving the warning baseline of separately compiled
+vendor code and keeping test assertions enabled. This closes the gap where a
+strict application build left most test sources at the compiler's defaults.
+
+Remove unused constants, locals, helpers and an empty inspection loop; rename
+shadowed fixture variables without changing assertions. The three tests that
+instantiate stb image writers locally scope the vendor's aggregate-initializer
+diagnostics to those includes. The stricter audit's 65 warnings are resolved.
+
+Validation: all 400 test/probe sources passed compilation checks with
+`-Wall -Wextra -Wshadow -Werror`. An isolated assertion-enabled harness rebuilt
+and passed 67 existing regressions; the separately rebuilt ROM-fetch regression
+also passed. Native application, core libraries, benchmark and headless builds
+were clean, as were all six contributor guards. The full execution suite and
+Linux/Windows builds were not run.
+
+## 2026-10-20 — Browser compilation warnings
+
+Compile the HTTP server's private helpers, request limits, W5100 socket helpers
+and SSC TCP worker state only when host sockets are available, matching their
+callers. Desktop-only joystick navigation history now follows the same platform
+guard as its polling implementation.
+Miniaudio's unused WebAudio context parameters are excluded from diagnostics
+only around its implementation include; first-party warning checks stay active.
+The OpenGL diagnostic targets disable GLFW's implicit legacy GL header so
+`Pom2GL.h` selects the core header consistently. The two older tools also use
+the macOS deprecation definition already applied to the main application.
+The browser ROM-fetch stub explicitly ignores its callbacks and omits private
+download/unpack/scratch-directory helpers; shared ROM validation stays available.
+
+Validation: native application, core libraries, benchmark and WebAssembly built
+with `POM2_WERROR=ON` without diagnostics. All three affected GL tools built
+without warnings. An audit covered 641 source files (1,392 compilation variants);
+the 41 affected variants were rechecked clean after the fixes. Forty-seven
+existing regressions passed, all four benchmark identities were retained, and
+all six contributor guards passed. The full test suite and Linux/Windows builds
+were not run.
+
+## 2026-10-20 — Remove unused implementation remnants
+
+Coordinator and shared-renderer extractions left unused MainWindow helpers,
+audio-inventory accessors, a joystick query, a TNFS peer-address buffer and
+local shader/conversion/synth helpers. These have no production or test callers
+and are removed. Text rendering also drops the ignored lowercase argument
+from its private glyph helpers; character-ROM metadata and its session format
+remain intact. The installed core facade and serialized formats are unchanged.
+
+The follow-up also removes the retired whole-buffer PCM converter and its DC
+helper, unused private DiskImage/SCC/MCU wrappers, a CFFA alias and obsolete
+mouse-sync/ROM-status fields. The toolbar drops an ignored height argument,
+unread snapshot fields and an insertion action that no producer sets. Active
+WAV/miniaudio loading, nibble decoding and disk-insertion workflows are retained.
+Developer/test comments now name the decoders that write-back actually uses.
+
+The data-flow pass removes unread cassette/storage diagnostics, CRT dimension
+copies, unused gamepad page-edge fields, the ignored HGR serpentine option,
+uncalled host-side helpers and old DNS fields in the W5100 socket fake.
+The cassette panel no longer locks and sums the audio queue for a value it
+never displays. Held-button paging, live CRT size uniforms, recording state,
+SmartPort presence handling and conversion algorithms retain their active paths.
+
+The final pass removes the unregistered legacy speaker callback, unused UI
+and coordinator accessors, duplicate unread printer diagnostics, and a discarded
+TMS5220 filter calculation with its commented-out predecessor. Cycle-stamped
+speaker events and the active speech-filter recurrence are retained.
+
+Validation: native application, assertion-enabled core archive and benchmark
+built with `POM2_WERROR=ON`; forty-one existing regressions passed in an isolated
+CTest harness (audio, glyph/display hashes, joystick/mouse, TNFS and image
+conversion, cassette, disk write-back, SCC/MCU, storage, rewind, 4play,
+ImageWriter/PDF, SmartPort, W5100, speech/speaker, input I/O, printer/serial
+coordinators and the public facade). A differential TMS5220 run retained the
+same hash over 4,000 output samples and the final serialized chip state.
+The CRT regression also ran with a real OpenGL context. TNFS required
+permission to bind its
+local test servers.
+The four benchmark identity workloads retained their cycle counts and RAM
+hashes. All six contributor guards passed. The full suite and browser/other
+platform builds were not rerun.
+
 ## 2026-10-20 — Session, rewind and drive instructions reconciled
 
 Session chooser help now describes automatic machine reconstruction, embedded

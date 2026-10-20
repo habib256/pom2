@@ -76,6 +76,7 @@ public:
     ChildProcess& operator=(const ChildProcess&) = delete;
 
     /// Launch `exePath` with `args` (argv[0] is supplied automatically).
+    /// Relative executable paths refer to POM2's current directory.
     /// `workingDir` empty = inherit POM2's. Returns false with a
     /// human-readable reason in `errOut`; a process already running is
     /// stopped first.

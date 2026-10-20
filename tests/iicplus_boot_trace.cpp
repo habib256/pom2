@@ -77,8 +77,6 @@ int main()
         mem.setIWMAuthoritative(env[0] != '0');
     }
 
-    const auto& cfg = pom2::profileConfig(pom2::SystemProfile::AppleIIcPlus);
-
     // Mimic applyProfile: clear RAM, reset switches, enable IIe paging,
     // load ROM with pickLowerHalf=true for //c-style banks, set CPU
     // mode, hard reset.
@@ -154,7 +152,6 @@ int main()
 
     // Fingerprint text page 1: count non-$00 bytes, max/min, sample first 80.
     int nonZero = 0;
-    uint8_t firstChars[40] = {};
     for (uint16_t a = 0x0400; a <= 0x07FF; ++a) {
         const uint8_t b = mem.memRead(a);
         if (b != 0x00) ++nonZero;

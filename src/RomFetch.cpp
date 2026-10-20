@@ -375,6 +375,9 @@ bool dirIsWritable(const fs::path& dir)
 #endif
 }
 
+bool readAll(const fs::path& path, std::vector<std::uint8_t>& out, std::string& err);
+
+#ifndef __EMSCRIPTEN__
 bool runHostTool(const std::string& exe,
                  const std::vector<std::string>& args,
                  const std::string& cwd,
@@ -482,8 +485,6 @@ bool extractZipMember(const fs::path& zip, const std::string& member,
     return false;
 }
 
-bool readAll(const fs::path& path, std::vector<std::uint8_t>& out, std::string& err);
-
 /// One member's bytes. In-process first (stored/deflate — every archive
 /// RetroBIOS serves); a host tool only for what that cannot read. The
 /// in-process reader is not an optimisation: the host fallback was `tar`,
@@ -504,6 +505,7 @@ bool unpackZipMember(const fs::path& zip, const std::string& member,
     return extractZipMember(zip, member, extractDir, err, cancelled) &&
            readAll(extractedMemberPath(extractDir, member), bytes, err);
 }
+#endif
 
 /// Largest thing this module will ever read into memory. The biggest catalog
 /// entry is 32 KB and the biggest zip a few hundred; the cap exists because
@@ -762,8 +764,13 @@ bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
     bool found = false;
     for (std::size_t back = 22; back <= maxBack; ++back) {
         const std::size_t off = zip.size() - back;
+        const std::size_t commentLength = static_cast<std::size_t>(zip[off + 20]) |
+                                         (static_cast<std::size_t>(zip[off + 21]) << 8);
+        // Comments may contain the same signature: only a record whose
+        // declared comment reaches EOF can describe this archive.
         if (zip[off] == 0x50 && zip[off+1] == 0x4B &&
-            zip[off+2] == 0x05 && zip[off+3] == 0x06) { eocd = off; found = true; break; }
+            zip[off+2] == 0x05 && zip[off+3] == 0x06 &&
+            commentLength == back - 22) { eocd = off; found = true; break; }
     }
     if (!found) { err = "no zip central directory (not an archive?)"; return false; }
 
@@ -881,6 +888,7 @@ bool localDumpAcceptable(const RomFetchEntry& e, const std::vector<std::uint8_t>
 
 namespace {
 
+#ifndef __EMSCRIPTEN__
 constexpr const char* kFetchDirPrefix = ".retrobios-fetch";
 
 fs::path uniqueFetchDir(const fs::path& destRoot)
@@ -910,6 +918,8 @@ void sweepStaleFetchDirs(const fs::path& destRoot)
     }
 }
 
+#endif
+
 }  // namespace
 
 RomFetchResult fetchMissingRoms(const fs::path& destRoot,
@@ -920,6 +930,8 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     r.destDir = destRoot.string();
 
 #if defined(__EMSCRIPTEN__)
+    (void)progress;
+    (void)cancelled;
     r.error   = "ROM download is not available in the browser build";
     r.summary = r.error;
     return r;

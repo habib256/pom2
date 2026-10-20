@@ -64,7 +64,6 @@ uint16_t hgrAddr(int y)
         + 0x28  * (y >> 6));
 }
 
-uint8_t alpha(uint32_t p) { return static_cast<uint8_t>((p >> 24) & 0xFF); }
 uint8_t blueOf (uint32_t p) { return static_cast<uint8_t>((p >> 16) & 0xFF); }
 uint8_t greenOf(uint32_t p) { return static_cast<uint8_t>((p >> 8)  & 0xFF); }
 uint8_t redOf  (uint32_t p) { return static_cast<uint8_t>(p & 0xFF); }

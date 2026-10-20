@@ -237,6 +237,15 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
     if (fs::exists(dest, ec)) {
         const auto sz = fs::file_size(dest, ec);
         if (!ec && sz > 0) {
+            // Cached images obey the same bounds as downloads. In
+            // particular, validate the host's wide file size before
+            // narrowing it into the 32-bit result below.
+            if (sz > sizeCap) {
+                r.error = "TNFS " + path + " is " + std::to_string(sz) +
+                          " bytes, over the " + std::to_string(sizeCap) +
+                          "-byte ceiling";
+                return r;
+            }
             // Touch it: the prune below is an LRU over mtimes, and a boot
             // disk fetched once and mounted every day since would otherwise
             // be the OLDEST file in the cache — the first one evicted.

@@ -70,6 +70,39 @@ static void testReleasePollDoesNotEatTheQueue()
 int main()
 {
     testReleasePollDoesNotEatTheQueue();
+    // Live keys append behind a paste, so they must share its queue ceiling.
+    {
+        Memory mem;
+        assert(mem.pasteText(std::string(Memory::kPasteMaxChars, 'X')) ==
+               Memory::kPasteMaxChars);
+        for (int i = 0; i < 100; ++i) mem.queueKey('Z');
+        assert(mem.pendingPasteSize() == Memory::kPasteMaxChars - 1);
+        size_t consumed = 0;
+        while (keyReady(mem)) {
+            assert(consumeKey(mem) == 'X');
+            ++consumed;
+        }
+        assert(consumed == Memory::kPasteMaxChars);
+        mem.queueKey('Z');
+        assert(consumeKey(mem) == 'Z');  // input resumes once space is available
+    }
+    // Seven-bit normalization must precede CR/LF handling, including when
+    // a terminal delivers the two halves of a CRLF in separate calls.
+    for (const std::string& ending : {std::string("\x8A"), std::string("\x8D\n"),
+                                     std::string("\r\x8A"), std::string("\x8D\x8A")}) {
+        const std::string text = "A" + ending + "B";
+        Memory clipboard;
+        assert(clipboard.pasteText(text) == 3);
+        std::string out;
+        while (keyReady(clipboard)) out.push_back(static_cast<char>(consumeKey(clipboard)));
+        assert(out == "A\rB");
+
+        Memory terminal;
+        for (const char byte : text) terminal.pasteKeyStream(&byte, 1);
+        out.clear();
+        while (keyReady(terminal)) out.push_back(static_cast<char>(consumeKey(terminal)));
+        assert(out == "A\rB");
+    }
     // ── Empty paste is a no-op ───────────────────────────────────────────
     {
         Memory mem;

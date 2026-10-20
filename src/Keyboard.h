@@ -93,6 +93,7 @@ public:
 
     // A live keystroke: newest-wins into the latch when no paste is in
     // flight, else appended so it is delivered in FIFO order after the paste.
+    // A full paste FIFO drops the incoming key, preserving accepted text.
     void queueKey(uint8_t apple2Key);
 
     // $C010: drop the strobe. The next paste byte is promoted by the

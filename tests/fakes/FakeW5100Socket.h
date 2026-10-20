@@ -25,7 +25,6 @@
 #include <cstring>
 #include <deque>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -157,12 +156,8 @@ public:
         return socket;
     }
 
-
-
-
     W5100ConnectResult nextConnectResult = W5100ConnectResult::Connected;
     W5100ConnectResult nextPollConnectResult = W5100ConnectResult::Connected;
-    uint32_t resolveResult = 0;
     /// DANGLES once the device closes the socket it points at — the device
     /// owns those. Read it only while the socket is still open; for anything
     /// asked afterwards use `connectAttempts`, which lives here.
@@ -173,12 +168,7 @@ public:
     /// socket the way connectAttempts does.
     int sendAttempts = 0;
     W5100SocketKind lastKind = W5100SocketKind::Tcp;
-    std::string lastHostname;
-    int lastResolveWaitMs = 0;
     int openCount = 0;
-    int resolveCount = 0;
-    int pollResolverCount = 0;
-    int clearResolverCacheCount = 0;
 };
 
 } // namespace pom2::test

@@ -276,7 +276,6 @@ private:
     // ─── Memory access ─────────────────────────────────────────────────
     uint8_t rdmem(uint16_t addr);
     void    wrmem(uint16_t addr, uint8_t v);
-    uint8_t rdop_arg(uint16_t addr) { return rdmem(addr); }
 
     // ─── Stack ────────────────────────────────────────────────────────
     void pushbyte(uint8_t v);

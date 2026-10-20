@@ -162,7 +162,8 @@ public:
 
     /// Replace the image with synthesised bytes (e.g. a host-folder volume).
     /// `hostFolder` non-empty marks it a synth volume whose write-back decodes
-    /// back into that folder. Must be a non-zero multiple of 512.
+    /// back into that folder. Must be a non-zero multiple of 512, with
+    /// at most kMaxBlocks blocks, just like file-backed images.
     bool loadFromBytes(std::vector<uint8_t> bytes, const std::string& label,
                        const std::string& hostFolder);
 

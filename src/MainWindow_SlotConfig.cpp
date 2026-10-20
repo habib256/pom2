@@ -194,8 +194,6 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         auto made = slotCardFactory_->create(
             { "diskii", s, cpuIsCmosForSlots, activeProfile });
         if (!made) return;
-        diskRomPath   = made.resourcePath;
-        diskRomStatus = made.status;
         auto* card = static_cast<DiskIICard*>(made.card.get());
 
         // Runtime wiring stays here — it is composition, not construction.

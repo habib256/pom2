@@ -423,7 +423,6 @@ int main()
     // path — the page is diverted through writable[] like a write watch —
     // so the interplay with a real write watch is pinned too.
     {
-        using Sw = LeChatMauveCard::EveSwitch;
         Memory mem;
         mem.setIIEMode(true);
         auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Eve);

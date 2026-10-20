@@ -29,12 +29,6 @@
 
 namespace {
 
-// ─── AY-3-8910 amplitude table ───────────────────────────────────────────
-// Lives in AyPsgSynth.h since 2026-08-01 so Mockingboard and Phasor share
-// one copy (and one provenance note — the old "MAME build_single_table"
-// citation here was wrong; see the header).
-using pom2::ay::kVolumeTable;
-
 // AY-3-8910 input clock on the Mockingboard — pin 22 (CLOCK) is wired to
 // the slot's phase 0 clock, i.e. the Apple II 1.0227 MHz CPU clock.
 //
@@ -47,28 +41,18 @@ using pom2::ay::kVolumeTable;
 // /2 lives in the toggle. Earlier POM2 versions used clock/16 which
 // produced **one octave too low** on every Mockingboard note. Fixed
 // 2026-05-14.
-// These are the NTSC nominal values, kept for reference and for tests
-// that quote them. The render loop derives its own tick rate from the
-// LIVE slot-bus clock instead (`ticksPerSample` in fillAudioBuffer) so that a
+// The render loop derives its tick rate from the live slot-bus clock
+// (`ticksPerSample` in fillAudioBuffer) so that a
 // PAL machine clocks the AY at its real 1 015 625 Hz.
-[[maybe_unused]] constexpr float kAyClockHz     = static_cast<float>(POM2_CPU_CLOCK_HZ);
-[[maybe_unused]] constexpr float kAyToneStepHz  = kAyClockHz / 8.0f;   // ~127.8 kHz
-[[maybe_unused]] constexpr float kAyNoiseStepHz = kAyClockHz / 8.0f;   // ~127.8 kHz
 
-// Convenience aliases — the VIA register layout, IFR bits, AY register
-// count, and PB control-bus map all live as static members of the
+// Convenience aliases — the VIA register layout and AY register count
+// live as static members of the
 // shared `pom2::Via6522` / `pom2::Ay3_8910` types since 2026-05-27.
 // These using-declarations preserve the existing call sites without
 // touching the (already-tested) implementation below.
 using Via    = pom2::Via6522;
 using AyChip = pom2::Ay3_8910;
 constexpr int     kAyNumRegs    = AyChip::kAyNumRegs;
-[[maybe_unused]] constexpr uint8_t kPbBitBc1     = AyChip::kPbBitBc1;
-[[maybe_unused]] constexpr uint8_t kPbBitBdir    = AyChip::kPbBitBdir;
-[[maybe_unused]] constexpr uint8_t kPbBitReset   = AyChip::kPbBitReset;
-[[maybe_unused]] constexpr uint8_t IFR_T1        = Via::IFR_T1;
-[[maybe_unused]] constexpr uint8_t IFR_T2        = Via::IFR_T2;
-[[maybe_unused]] constexpr uint8_t IFR_ANY       = Via::IFR_ANY;
 constexpr uint8_t VIA_ORB       = Via::VIA_ORB;
 constexpr uint8_t VIA_ORA       = Via::VIA_ORA;
 constexpr uint8_t VIA_DDRB      = Via::VIA_DDRB;
@@ -380,16 +364,14 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // PAL demos that need it most.
         const double cyclesPerSample =
             cpuClockHz.load(std::memory_order_relaxed) / static_cast<double>(sr);
-        [[maybe_unused]] const uint64_t bufferCycles =
-            static_cast<uint64_t>(cyclesPerSample * frameCount);
-
         // ── Cursor pacing: a JITTER BUFFER, not a chase ───────────────
         // The producer and the consumer move the same number of cycles
         // per second by construction (17045 cycles x 60 Hz = 44100
         // samples x 23.19 cycles), but NOT at the same granularity: the
         // CPU worker publishes one video frame's worth of writes in a
         // single burst every ~16.7 ms, while one audio callback only ever
-        // covers `bufferCycles` (256 frames = 5937 cycles at 44.1 kHz).
+        // covers `cyclesPerSample * frameCount` (256 frames = 5937 cycles
+        // at 44.1 kHz).
         // A burst therefore lands ~3 callbacks' worth of future writes in
         // the queue at once.
         //

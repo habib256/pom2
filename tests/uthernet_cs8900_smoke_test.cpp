@@ -64,10 +64,6 @@ namespace {
 // $C0nX offsets (`cs8900a.cpp:61-70`).
 constexpr uint8_t kRxTxDataLo = 0x0;
 constexpr uint8_t kRxTxDataHi = 0x1;
-constexpr uint8_t kTxCmdLo    = 0x4;
-constexpr uint8_t kTxCmdHi    = 0x5;
-constexpr uint8_t kTxLenLo    = 0x6;
-constexpr uint8_t kTxLenHi    = 0x7;
 constexpr uint8_t kPpPtrLo    = 0xA;
 constexpr uint8_t kPpPtrHi    = 0xB;
 constexpr uint8_t kPpDataLo   = 0xC;

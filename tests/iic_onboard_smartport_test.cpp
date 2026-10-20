@@ -380,7 +380,6 @@ static void testRealHdvBootTrace()
             // premiere entree dans C800-CFFF DEPUIS l'exterieur
             if (pc >= 0xC800 && pc <= 0xCFFE) {
                 const uint16_t prev = ring[(pos - 2) & 255];
-                const bool fromStub = (prev >= 0xC500 && prev <= 0xC5FF);
                 if (false) {
                     hits++;
                     std::printf("  [entree %d @%ld] %04X -> %04X owner=%d "

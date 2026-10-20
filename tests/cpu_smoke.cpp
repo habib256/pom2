@@ -49,10 +49,8 @@ int main()
     // Force PC straight at $0300 (skip the boot-time reset vector).
     cpu.setProgramCounter(0x0300);
 
-    int totalCycles = 0;
     for (int i = 0; i < 100; ++i) {
         cpu.step();
-        totalCycles += 1;     // step() doesn't expose its own counter
     }
 
     const uint8_t cellByte = mem.peekMainRam(0x400);

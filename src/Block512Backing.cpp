@@ -317,6 +317,12 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
         pom2::log().warn("HDV", lastError_);
         return false;
     }
+    if (bytes.size() / kBlockBytes > kMaxBlocks) {
+        lastError_ = "Synthesised image has more than 65536 ProDOS blocks: " +
+                     std::to_string(bytes.size() / kBlockBytes);
+        pom2::log().warn("HDV", lastError_);
+        return false;
+    }
     image_ = std::move(bytes);
     headerBytes_.clear();
     dataOffset_ = 0;
@@ -662,8 +668,10 @@ void Block512Backing::markDirty(uint32_t blk)
 
 bool Block512Backing::readBlock(uint32_t blk, uint8_t* dst512) const
 {
+    // Check block numbers before forming byte offsets: size_t is 32-bit in
+    // WASM, where block $800000 * 512 wraps to the start of the image.
+    if (blk >= blockCount()) return false;
     const size_t base = static_cast<size_t>(blk) * kBlockBytes;
-    if (base + kBlockBytes > image_.size()) return false;
     bumpActivity();
     std::memcpy(dst512, &image_[base], kBlockBytes);
     return true;
@@ -672,8 +680,8 @@ bool Block512Backing::readBlock(uint32_t blk, uint8_t* dst512) const
 bool Block512Backing::writeBlock(uint32_t blk, const uint8_t* src512)
 {
     if (isWriteProtected()) return false;
+    if (blk >= blockCount()) return false;   // before 32-bit offset multiplication
     const size_t base = static_cast<size_t>(blk) * kBlockBytes;
-    if (base + kBlockBytes > image_.size()) return false;
     bumpActivity();
     if (std::memcmp(&image_[base], src512, kBlockBytes) != 0) {
         std::memcpy(&image_[base], src512, kBlockBytes);

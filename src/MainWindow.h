@@ -488,7 +488,7 @@ private:
     std::unique_ptr<pom2::SlotProvisioningCoordinator> slotProvisioningCoordinator_;
 
     // The storage aliases are gone. `diskIICards()` / `primaryDiskII()` /
-    // `primaryHdvCard()` / `primaryCffaCard()` / `primarySmartPortCard()`
+    // `primaryHdvCard()` / `primarySmartPortCard()`
     // resolve them from the live SlotBus, and every mutation goes through
     // `storageCoordinator_` under the machine lock.
     // Plural alias: the //c built-in lineup ships TWO SSC-compatible
@@ -812,10 +812,6 @@ private:
     /// see persistSession.
     bool         aiControlFromCliOnly_ = false;
 
-    // Disk II insert dialog state moved to DiskController_ImGui (it
-    // owns its own UX surface). MainWindow keeps only the ROM probe.
-    std::string diskRomPath  = "roms/disk2.rom";
-    std::string diskRomStatus;
     // Auto-turbo while the Disk II motor is spinning. Real Apple II boot
     // takes 10-15 s at 1 MHz; bumping to ~60 MHz emulated for the duration
     // of the read drops it to <1 s. Off by default — preserves authentic
@@ -1176,23 +1172,6 @@ private:
     double  mouseSubAppleX = 0.0;
     double  mouseSubAppleY = 0.0;
 
-    // ── Absolute closed-loop cursor sync (host ⇄ guest) ────────────────
-    // The Mouse Card is a purely *relative* quadrature device, so a host
-    // delta fed open-loop drifts away from the guest cursor in absolute
-    // terms (clamp-edge losses + scale mismatch). When the AppleMouse
-    // firmware is active (mode byte $07F8+s bit 0) we instead drive the
-    // guest *toward* the host cursor's absolute position-in-widget, read
-    // back from the firmware screen holes ($0478+s/$0578+s low/high X,
-    // $04F8+s/$05F8+s low/high Y — layout per the Apple II Mouse FAQ).
-    // To avoid quadrature windup (host cursor events fire far faster than
-    // the app polls READMOUSE, so the holes are stale between polls) we
-    // edge-trigger: a correction is injected only once the holes have
-    // moved, i.e. once the app has consumed the previous batch. Sentinel
-    // -1 forces the first correction.
-    int  lastSyncHoleX  = -1;
-    int  lastSyncHoleY  = -1;
-    bool mouseSyncActive = false;   // true while in absolute mode (mouse on)
-
     // ── Host-pointer capture ("mouse grab") ───────────────────────────
     // Policy in `MouseGrab.h`; this is the runtime state it reads. Like
     // kiosk, a grab is a pure host-side mode: the machine never sees it, so
@@ -1351,7 +1330,6 @@ private:
     SuperSerialCard* primarySerialCard() const;
     DiskIICard* primaryDiskII() const;
     ProDOSHardDiskCard* primaryHdvCard() const;
-    pom2::CffaCard* primaryCffaCard() const;
     pom2::SmartPortCard* primarySmartPortCard() const;
     /// Flush every slot-owned medium before a profile/slot rebuild. Returns
     /// false without destroying cards so dirty RAM remains retryable.
@@ -1455,10 +1433,6 @@ private:
     void pumpImageWriter();
     /// The LaserWriter's PostScript path: spool, render off-thread, adopt.
     void pumpPostScript(const std::vector<uint8_t>& fresh);
-    /// The SSC feeding the ImageWriter, if any: lowest-slot plugged SSC
-    /// with its printer tap on (//c printer port = slot 1 by default).
-    /// Parallel cards outrank it in pumpImageWriter().
-    SuperSerialCard* printerTapSsc() const;
     void renderNoSlotClockPanelWindow();
     /// Apple //e keyboard window: lazy-loads the photo, draws it, and turns
     /// a clicked cap into a keystroke on the emulated machine.
@@ -1575,10 +1549,6 @@ private:
     /// paused — its card set is whatever the failed rebuild left — and
     /// applying again runs a full, fresh transaction.
     void abandonSlotRebuild(const char* what, const std::string& why);
-
-    /// Pick the first existing file path in `candidates`. Empty string
-    /// when none exists. Used by applyProfile to probe ROM candidates.
-    static std::string firstExistingPath(const std::vector<std::string>& candidates);
 
     /// Resolve the CPU mode to use given the profile default + the
     /// `cpu_mode_override` setting. `auto` (default) → profile.defaultCpu;

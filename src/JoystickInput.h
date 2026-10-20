@@ -69,8 +69,6 @@ public:
         bool down    = false;   // D-pad down  / left-stick down
         bool left    = false;   // D-pad left  / left-stick left
         bool right   = false;   // D-pad right / left-stick right
-        bool pageUp  = false;   // L1 (left bumper)  — fast page jump
-        bool pageDown= false;   // R1 (right bumper) — fast page jump
         // ── Raw held level (for the menu's temporal auto-repeat) ────────
         // The paused menu loop runs unthrottled, so a per-frame
         // counter would scroll hundreds of steps/s. The UI derives a clock-
@@ -159,8 +157,6 @@ public:
     /// false when the bound pad has no gamepad mapping (raw layout unknown).
     const GamepadPlay& play() const { return play_; }
 
-    bool anyPresent() const;
-
     /// UI-navigation edges from the bound pad's standard gamepad mapping,
     /// refreshed by poll(). Rising-edge pulses (one poll each). All-false
     /// when no gamepad-mapped pad is bound (or under Emscripten).
@@ -202,15 +198,17 @@ private:
     Binding active;
     bool    autoBindDone = false;
 
-    // UI-nav edge detection state (desktop only). Previous digital-button
-    // snapshot (GLFW gamepad layout: 15 buttons) + previous virtual-stick
-    // vertical direction (-1/0/+1) so left-stick pushes fire like a D-pad.
     UiNav                       nav_{};
     GamepadPlay                 play_{};
+#ifndef __EMSCRIPTEN__
+    // Desktop UI-nav edge detection: previous GLFW gamepad buttons and
+    // virtual-stick directions (-1/0/+1) so stick pushes fire like a D-pad.
     std::array<unsigned char, 15> navPrevButtons_{};
     int  navPrevStickY_   = 0;
     int  navPrevStickX_   = 0;
     bool navPrevValid_    = false;
+    int  navPrevHostIdx_  = -1;
+#endif
     bool activeIsGamepad_ = false;   // bound pad has a standard mapping
     bool snesMaxMode_ = false;       // Start/Select belong to the guest card
 };

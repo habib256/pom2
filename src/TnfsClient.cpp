@@ -386,6 +386,10 @@ bool TnfsClient::transact(uint8_t command, const uint8_t* payload,
     // hand back the whole packet and this is the one place that knows what
     // the header means.
     replySession_ = get16(raw.data());
+    if (raw[2] != pkt[2]) {
+        errOut = "TNFS: reply for another sequence";
+        return false;
+    }
     // The header echoes the command and the session id, and both must match
     // what went out. Over TCP this is not a nicety: sendRecvTcp keys its
     // "top up to the declared count" framing on the command byte, so one reply
@@ -506,8 +510,8 @@ bool TnfsClient::listDir(const std::string& path, std::vector<DirEntry>& out,
     }
     const uint8_t handle = reply[1];
 
-    // READDIR yields one NUL-terminated name per call and ends with a
-    // non-zero status (EOF is reported as an error code, not a flag).
+    // READDIR yields one NUL-terminated name per call. Only EOF completes
+    // the listing; another error or a malformed name leaves it incomplete.
     // Bounded: every exit condition below is the SERVER's to choose, so a
     // server that answers each READDIR with one more name never returns and
     // grows `out` until the host runs out of memory (measured: 273 000 round
@@ -520,11 +524,21 @@ bool TnfsClient::listDir(const std::string& path, std::vector<DirEntry>& out,
         // apart matters: otherwise a server that drops the connection after
         // one entry yields a one-entry listing the caller believes is whole.
         if (!transact(kTnfsReadDir, &handle, 1, r, errOut)) { truncated = true; break; }
-        if (r.size() < 2 || r[0] != 0x00) break;          // end of directory
+        if (!r.empty() && r[0] == 0x21) break;  // end of directory
+        if (r.empty() || r[0] != 0x00) {
+            errOut = "READDIR " + path + ": " +
+                     (r.empty() ? "empty reply" : statusText(r[0]));
+            truncated = true;
+            break;
+        }
         const char* name = reinterpret_cast<const char*>(r.data() + 1);
         const std::size_t max = r.size() - 1;
         const std::size_t len = ::strnlen(name, max);
-        if (len == 0) break;
+        if (len == 0 || len == max) {
+            errOut = "READDIR " + path + ": malformed name";
+            truncated = true;
+            break;
+        }
         DirEntry e;
         e.name = std::string(name, len);
         // The plain READDIR carries no type flag; a trailing '/' is the

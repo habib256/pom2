@@ -124,7 +124,6 @@ int main(int argc, char** argv)
     // (real LSS would do CLR on QA=1 then shift in). Approximation good
     // enough to count D5 AA 96 occurrences.
     uint8_t shifter = 0;
-    int byteIdx = 0;
     std::vector<uint8_t> bytes;
     bytes.reserve(static_cast<size_t>(bitCount) / 8 + 1);
     for (int i = 0; i < bitCount; ++i) {
@@ -134,7 +133,6 @@ int main(int argc, char** argv)
             bytes.push_back(shifter);
             shifter = 0;
         }
-        ++byteIdx;
     }
     int bitMatches = 0;
     int firstBitMatch = -1;

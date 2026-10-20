@@ -67,12 +67,7 @@ public:
         std::vector<int> echoPlusSlots;
         std::vector<int> echoPlusTmsSlots;
 
-        bool hasMockingboard() const noexcept { return !mockingboardSlots.empty(); }
-        bool hasPhasor() const noexcept { return !phasorSlots.empty(); }
-        bool hasEchoPlus() const noexcept { return !echoPlusSlots.empty(); }
         int primaryMockingboardSlot() const noexcept;
-        int primaryPhasorSlot() const noexcept;
-        int primaryEchoPlusSlot() const noexcept;
     };
 
     struct MixerCardSnapshot {
@@ -171,7 +166,6 @@ public:
     void unregisterAll();
 
     bool contains(const AudioSource* source) const;
-    std::size_t sourceCount() const { return sources_.size(); }
 
     InventorySnapshot captureInventory() const;
     std::vector<MixerCardSnapshot> captureMixerCards() const;

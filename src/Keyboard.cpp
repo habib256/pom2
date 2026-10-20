@@ -32,6 +32,9 @@ void Keyboard::queueKey(uint8_t apple2Key)
         // A host paste is draining — append so this live keystroke is
         // delivered in order AFTER it, instead of clobbering the currently
         // latched paste byte and jumping the FIFO.
+        // Live keys share the paste ceiling: a held key or host automation
+        // must not grow this FIFO without bound while the guest is paused.
+        if (pasteQueue_.size() + (keyReady_ ? 1u : 0u) >= kPasteMaxChars) return;
         pasteQueue_.push_back(b);
         publish();
     } else {
@@ -215,6 +218,10 @@ std::size_t Keyboard::pushChars(const char* data, std::size_t length,
             }
         }
 
+        // Apple high-ASCII carries the same line endings with bit 7 set.
+        // Normalize to seven bits before recognizing CR/LF, or a high-bit
+        // LF is filtered out and a high-bit CR + ASCII LF types two Returns.
+        b &= 0x7F;
         // Line-ending normalisation: \r, \n, and \r\n all collapse to one
         // CR ($0D). Track the previous byte so the LF after CR doesn't
         // produce a second CR.

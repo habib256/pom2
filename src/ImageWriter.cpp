@@ -1103,16 +1103,6 @@ void ImageWriter::setAutoFeedMode(AutoFeed m)
     crJustFed_      = false;
 }
 
-const char* ImageWriter::qualityName(Quality q)
-{
-    switch (q) {
-        case Quality::Draft:  return "Draft";
-        case Quality::NLQ:    return "Near letter quality";
-        case Quality::Correspondence:
-        default:              return "Correspondence";
-    }
-}
-
 const char* ImageWriter::speedName(Speed s)
 {
     switch (s) {

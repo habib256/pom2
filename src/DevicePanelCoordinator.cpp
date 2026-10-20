@@ -84,10 +84,8 @@ DevicePanelCoordinator::captureInventory() const
                 snapshot.printerSlot = slot;
         }
         if (snapshot.grapplerSlot < 0) {
-            if (const auto* card = dynamic_cast<const GrapplerCard*>(peripheral)) {
+            if (dynamic_cast<const GrapplerCard*>(peripheral)) {
                 snapshot.grapplerSlot = slot;
-                snapshot.grapplerRomLoaded = card->isRomLoaded();
-                snapshot.grapplerBusy = card->printerBusy();
             }
         }
         if (const auto* card = dynamic_cast<const ClockCard*>(peripheral)) {

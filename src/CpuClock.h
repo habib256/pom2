@@ -25,7 +25,6 @@
 
 inline constexpr int POM2_CPU_CLOCK_HZ = 1022727;
 inline constexpr int POM2_CPU_CYCLES_PER_FRAME_60HZ = (POM2_CPU_CLOCK_HZ + 30) / 60;
-inline constexpr int POM2_CPU_CYCLES_PER_MILLISECOND = (POM2_CPU_CLOCK_HZ + 500) / 1000;
 
 // Hard ceiling for the per-frame worker cycle budget (turbo). ONE constant
 // shared by the CLI `--speed` clamp and the AI server's POST /speed so the

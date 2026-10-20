@@ -48,9 +48,6 @@ namespace {
 
 constexpr uint8_t MCU_PB_X1 = 0x02;     // X gate
 constexpr uint8_t MCU_PB_X0 = 0x01;     // X dir
-constexpr uint8_t MCU_PB_Y0 = 0x04;     // Y dir
-constexpr uint8_t MCU_PB_Y1 = 0x08;     // Y gate
-constexpr uint8_t MCU_PB_BUTTON = 0x80; // active LOW
 
 std::vector<uint8_t> haltRom()
 {

@@ -337,9 +337,9 @@ void testAyToneFrequency()
 {
     // Pins the AY tone COUNTER math touched by the float→integer refactor
     // (3f42efc; MAME parity ay8910.cpp:998-1015). A tone toggles every
-    // `period` tone-ticks, the tick rate is kAyToneStepHz = CPU_CLOCK/8
+    // `period` tone-ticks, the tick rate is CPU_CLOCK/8
     // (≈127.84 kHz), so the square-wave fundamental is
-    // kAyToneStepHz / (2*period). Render an audible period and measure the
+    // (CPU_CLOCK/8) / (2*period). Render an audible period and measure the
     // fundamental by counting upward mean-crossings — a broken counter (wrong
     // divisor, drift, off-by-one) shifts the frequency well outside tolerance.
     MockingboardCard card(4);
@@ -368,7 +368,7 @@ void testAyToneFrequency()
 
     const double sr       = 44100.0;
     const double measured = cycles * sr / N;
-    // kAyToneStepHz = POM2_CPU_CLOCK_HZ(1022727)/8; fundamental = /(2*period).
+    // Tone tick rate = POM2_CPU_CLOCK_HZ(1022727)/8; fundamental = /(2*period).
     const double expected = (1022727.0 / 8.0) / (2.0 * period);   // ≈ 998.8 Hz
     std::printf("  AY tone period %d: measured=%.1f Hz expected=%.1f Hz (%d cyc)\n",
                 period, measured, expected, cycles);

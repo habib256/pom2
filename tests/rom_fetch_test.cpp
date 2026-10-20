@@ -32,6 +32,7 @@
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wunused-function"
 #  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 #include "stb_image_write.h"
 #if defined(__GNUC__) || defined(__clang__)
@@ -214,6 +215,32 @@ int main()
         damaged[30 + 11 + 40] ^= 0xFF;          // inside the deflated payload
         expect(!pom2::readZipMember(damaged, "341-0011.d0", got, zerr, 1 << 20),
                "a damaged member is refused");
+
+        // A ZIP comment is arbitrary binary data, including record signatures.
+        // This decoy has a zero comment length but still has ten bytes after
+        // its fixed header, so it cannot be the real end record.
+        auto commented = zip;
+        const std::size_t endRecord = commented.size() - 22;
+        commented[endRecord + 20] = 32;
+        commented.insert(commented.end(), 32, 0);
+        commented[zip.size()] = 0x50;
+        commented[zip.size() + 1] = 0x4B;
+        commented[zip.size() + 2] = 0x05;
+        commented[zip.size() + 3] = 0x06;
+        expect(pom2::readZipMember(commented, "stored.bin", got, zerr, 1 << 20)
+                   && got == small,
+               "a directory signature inside the ZIP comment is ignored");
+        std::uintmax_t total = 0;
+        expect(pom2::zipUnpackedSizeWithinCap(commented, total, zerr)
+                   && total == rom.size() + 2 * small.size(),
+               "the size gate counts the real directory despite a comment signature");
+
+        auto truncatedComment = zip;
+        truncatedComment[endRecord + 20] = 1;
+        expect(!pom2::readZipMember(truncatedComment, "stored.bin", got, zerr, 1 << 20),
+               "a ZIP with a missing declared comment byte is refused");
+        expect(!pom2::zipUnpackedSizeWithinCap(truncatedComment, total, zerr),
+               "the size gate refuses a truncated ZIP comment");
     }
 
     // Every catalogued card ROM says what its absence does, and the words

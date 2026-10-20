@@ -107,16 +107,6 @@ int AudioCoordinator::InventorySnapshot::primaryMockingboardSlot() const noexcep
     return mockingboardSlots.empty() ? -1 : mockingboardSlots.back();
 }
 
-int AudioCoordinator::InventorySnapshot::primaryPhasorSlot() const noexcept
-{
-    return phasorSlots.empty() ? -1 : phasorSlots.back();
-}
-
-int AudioCoordinator::InventorySnapshot::primaryEchoPlusSlot() const noexcept
-{
-    return echoPlusSlots.empty() ? -1 : echoPlusSlots.back();
-}
-
 AudioCoordinator::~AudioCoordinator()
 {
     unregisterAll();

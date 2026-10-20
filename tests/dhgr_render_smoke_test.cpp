@@ -41,12 +41,9 @@
 
 namespace {
 
-constexpr uint16_t IIE_80COL_OFF   = 0xC00C;
 constexpr uint16_t IIE_80COL_ON    = 0xC00D;
-constexpr uint16_t SET_TEXT        = 0xC051;
 constexpr uint16_t CLR_TEXT        = 0xC050;
 constexpr uint16_t SET_HIRES       = 0xC057;
-constexpr uint16_t CLR_HIRES       = 0xC056;
 constexpr uint16_t DHIRES_ON       = 0xC05E;
 constexpr uint16_t DHIRES_OFF      = 0xC05F;
 

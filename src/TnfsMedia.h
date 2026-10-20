@@ -55,7 +55,8 @@ struct TnfsFetchLimits {
     /// it. A server that cannot deliver a floppy in a minute is a server to
     /// give up on; the retry costs one command line.
     int  deadlineSeconds = 60;
-    /// Largest image to pull. Defaults to `kTnfsMaxImageBytes`; 0 = default.
+    /// Largest image to accept, including cache hits.
+    /// Defaults to `kTnfsMaxImageBytes`; 0 = default.
     std::uint32_t maxBytes = 0;
     /// Polled between chunks. Set it from another thread (or a signal
     /// handler) to abandon the transfer. Null = no cancellation.

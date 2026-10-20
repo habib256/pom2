@@ -133,18 +133,10 @@ const char* shortLocaleLabel(CharRomLocale l) {
 
 } // anon namespace
 
-Toolbar_ImGui::Result Toolbar_ImGui::render(
-    float /*unused*/, const Snapshot& snap)
+Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
 {
     Result r;
 
-    // Pin to the top-left, flush against the menu bar. `WorkPos`
-    // already excludes the main menu bar (it's the top-left of the
-    // viewport's work area), so we use it as-is — adding a
-    // `menuBarHeight` offset on top pushed the toolbar one row too
-    // low (fixed 2026-05-15). The `menuBarHeight` parameter is kept
-    // for ABI stability in case the caller can't always feed
-    // `WorkPos`; ignored here.
     // A viewport side bar rather than a hand-positioned window (changed when
     // docking landed). Two reasons: `BeginViewportSideBar` *reserves* its
     // height in the viewport work area, so the DockSpace below it — and any

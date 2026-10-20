@@ -2996,7 +2996,7 @@ GCR/flux representation is the work that would lift it.
 ### DiskImage
 
 **An address field routes only when its checksum checks out** *(2026-09-08,
-bug hunt #5)*. `decodeTrack` / `decodeTrack13` check `vol ^ trk ^ sec`
+bug hunt #5)*. `decodeNibbles` / `decodeNibbles13` check `vol ^ trk ^ sec`
 first, as RWTS does (Beneath Apple DOS) and `Sony35Gcr` does on the 3.5"
 side, so one bad nibble cannot send a data field into another sector on
 write-back. A failing header is skipped; the sector keeps the bytes
@@ -3553,7 +3553,7 @@ sets `sectorsPerTrack_=13` (`is13Sector()`).
 Codec = verbatim MAME `formats/ap2_dsk.cpp` `a2_13sect_format`:
 `nibblizeTrack13/writeDataField13` (encode, `kTranslate5[32]`, addr
 prologue `D5 AA B5`, data prologue `D5 AA AD`, 411-nibble data) +
-`decodeTrack13/kUntranslate5` (write-back). Physical interleave
+`decodeNibbles13/kUntranslate5` (write-back). Physical interleave
 `sector = (i*10)%13`. Pinned **byte-for-byte round-trip**:
 `d13_roundtrip_smoke`.
 

@@ -53,11 +53,6 @@ public:
     FrameResult render(const char* title, bool& open,
                        EmulationController& ctrl, float deltaSeconds);
 
-    /// Force-exit any in-progress scrub (e.g. on reset / profile switch).
-    void cancelScrub() { scrubbing_ = false; }
-
-    bool isScrubbing() const { return scrubbing_; }
-
     /// Drive a live rewind step from outside the panel (e.g. a held hotkey).
     /// Begins scrubbing if needed and steps the cursor back by `frames`.
     void holdRewind(EmulationController& ctrl, size_t frames);

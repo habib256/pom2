@@ -179,10 +179,10 @@ int main()
         }
 
         Memory mem3;
-        auto card = std::make_unique<ProDOSHardDiskCard>(5);
-        ProDOSHardDiskCard* raw = card.get();
+        auto adoptedCard = std::make_unique<ProDOSHardDiskCard>(5);
+        ProDOSHardDiskCard* raw = adoptedCard.get();
         assert(raw->loadImage(first));
-        mem3.slotBus().plug(5, std::move(card));
+        mem3.slotBus().plug(5, std::move(adoptedCard));
 
         // Guest starts reading block 2 and stops three bytes in.
         mem3.memWrite(0xC0D0, 0x02);

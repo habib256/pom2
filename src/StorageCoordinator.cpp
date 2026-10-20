@@ -511,22 +511,14 @@ StorageCoordinator::captureInventory(EmulationController& controller) const
         snapshot.blockSlots.push_back(card->getSlot());
     for (auto* card : cards.smartPortCards)
         snapshot.smartPortSlots.push_back(card->getSlot());
-    if (cards.primaryDiskII) {
+    if (cards.primaryDiskII)
         snapshot.primaryDiskIISlot = cards.primaryDiskII->getSlot();
-        snapshot.primaryDiskUsingBitLss = cards.primaryDiskII->usingBitLss();
-        snapshot.primaryDiskLoaded = cards.primaryDiskII->isDiskLoaded();
-    }
-    if (cards.primaryHdv) {
+    if (cards.primaryHdv)
         snapshot.primaryHdvSlot = cards.primaryHdv->getSlot();
-        snapshot.primaryHdvLoaded = cards.primaryHdv->isImageLoaded();
-    }
     if (cards.primaryCffa)
         snapshot.primaryCffaSlot = cards.primaryCffa->getSlot();
-    if (cards.primarySmartPort) {
+    if (cards.primarySmartPort)
         snapshot.primarySmartPortSlot = cards.primarySmartPort->getSlot();
-        snapshot.primarySmartPortLironRomLoaded =
-            cards.primarySmartPort->isLironRomLoaded();
-    }
     return snapshot;
 }
 

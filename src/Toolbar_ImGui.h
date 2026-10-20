@@ -26,8 +26,8 @@
 //
 // Layout: tightly packed icon buttons, one row, Font Awesome glyphs when
 // `fa-solid-900.ttf` is loaded (text fallback otherwise). Anchored via
-// `SetNextWindowPos` at `(0, menuBarHeight)` with NoTitleBar / NoMove /
-// NoResize so it can't be dragged out of the way; always visible.
+// `BeginViewportSideBar` in the viewport work area with NoTitleBar / NoMove /
+// NoResize so it can't be dragged out of the way; visible outside kiosk.
 
 #ifndef POM2_TOOLBAR_IMGUI_H
 #define POM2_TOOLBAR_IMGUI_H
@@ -44,15 +44,12 @@ class Toolbar_ImGui
 public:
     struct Snapshot {
         bool          isRunning          = false;
-        bool          isStopped          = false;   // CPU paused (vs single-step ready)
         int           cyclesPerFrame     = 17045;
         // Active video standard: the 1×/2×/4× buckets derive from its
         // cyclesPerFrame (17045 NTSC / 20313 PAL) — a hardcoded 17045 made
         // "1×" run a PAL machine at 852 kHz (−16 %).
         VideoStandard videoStandard      = VideoStandard::NTSC;
         SystemProfile activeProfile      = SystemProfile::AppleIIPlus;
-        // Enable / disable hint for the disk button(s).
-        bool          hasPrimaryDiskCard = false;
         // True when the display is currently in a monochrome phosphor mode
         // (drives the color/mono toggle button's icon tint + tooltip).
         bool          displayIsMono      = false;
@@ -75,7 +72,6 @@ public:
         bool requestRewindHeld       = false;   // hold-to-rewind button held this frame
         bool requestStep             = false;   // single-instruction step
         bool requestScreenshot       = false;
-        bool requestInsertDisk       = false;   // open Insert-disk popup
         // Full screen IS kiosk mode — there is no separate full-screen view
         // (same action as the View menu item and F10). The toolbar is not
         // drawn in kiosk, so this button only ever means "enter".
@@ -93,10 +89,8 @@ public:
         CharRomLocale setCharRomLocale    {};
     };
 
-    /// Render the toolbar. `menuBarHeight` positions the window just
-    /// below the main menu bar (`ImGui::GetFrameHeight()` at the call
-    /// site).
-    Result render(float menuBarHeight, const Snapshot& snap);
+    /// Render the toolbar in the viewport work area below the menu bar.
+    Result render(const Snapshot& snap);
 };
 
 } // namespace pom2

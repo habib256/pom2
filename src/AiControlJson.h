@@ -115,7 +115,7 @@ inline void jsonAppendUtf8(std::string& out, uint32_t cp)
 /// POM2's API surface uses flat one-level JSON only — no nested objects or
 /// arrays — so a hand-rolled scanner is enough and avoids dragging in a
 /// JSON dependency. Accepts unquoted tokens (numbers, true/false), quoted
-/// strings with `\"`, `\\`, `\n`, `\r`, `\t` escapes. Unknown keys → empty
+/// strings with standard JSON escapes. Unknown keys → empty
 /// string; the caller supplies the default.
 // Parse a JSON value (quoted string with escapes, or a bare token) that
 // starts at body[pos] (pos just past the key's ':'). Returns unescaped text.
@@ -130,6 +130,8 @@ inline std::string jsonParseValueAt(const std::string& body, size_t pos)
         while (pos < n && body[pos] != '"') {
             if (body[pos] == '\\' && pos + 1 < n) {
                 switch (body[pos + 1]) {
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
                     case 'n': out.push_back('\n'); break;
                     case 'r': out.push_back('\r'); break;
                     case 't': out.push_back('\t'); break;
@@ -208,34 +210,42 @@ inline size_t jsonSkipValueAt(const std::string& body, size_t pos)
     return pos;
 }
 
-/// Extract `key`'s value from flat one-level JSON. Walks the body skipping
+/// Locate `key`'s value in flat one-level JSON. Walks the body skipping
 /// over string VALUES so the key only matches at an object-key position
 /// (immediately followed by ':') — a value containing another field's name
-/// as a substring no longer hijacks the match. Unknown key → empty string.
-inline std::string jsonGetString(const std::string& body, const std::string& key)
+/// as a substring no longer hijacks the match. Unknown key → npos, distinct
+/// from a present key whose value is an empty string.
+inline size_t jsonFindValueAt(const std::string& body, const std::string& key)
 {
     const size_t n = body.size();
     size_t i = 0;
     while (i < n) {
         if (body[i] != '"') { ++i; continue; }
         // Read the string token at i (a key candidate).
-        std::string name;
         size_t j = i + 1;
         for (; j < n && body[j] != '"'; ++j) {
-            if (body[j] == '\\' && j + 1 < n) { name.push_back(body[j + 1]); ++j; }
-            else                              { name.push_back(body[j]); }
+            if (body[j] == '\\' && j + 1 < n) ++j;
         }
         if (j >= n) break;                  // unterminated string
         size_t k = j + 1;
         while (k < n && std::isspace(static_cast<unsigned char>(body[k]))) ++k;
-        if (k < n && body[k] == ':') {       // `name` is an object key
-            if (name == key) return jsonParseValueAt(body, k + 1);
+        if (k < n && body[k] == ':') {       // string token is an object key
+            // Keys support exactly the same escapes as quoted values,
+            // including Unicode escapes and surrogate pairs.
+            if (jsonParseValueAt(body, i) == key) return k + 1;
             i = jsonSkipValueAt(body, k + 1);
         } else {
-            i = j + 1;                       // `name` was a value string
+            i = j + 1;                       // token was a value string
         }
     }
-    return {};
+    return std::string::npos;
+}
+
+/// Extract a value as text. Unknown keys and empty strings both return empty.
+inline std::string jsonGetString(const std::string& body, const std::string& key)
+{
+    const size_t at = jsonFindValueAt(body, key);
+    return at == std::string::npos ? std::string{} : jsonParseValueAt(body, at);
 }
 
 inline bool jsonGetInt(const std::string& body, const std::string& key, long& out);
@@ -245,7 +255,7 @@ inline bool jsonGetInt(const std::string& body, const std::string& key, long& ou
 inline bool jsonOptionalIntOk(const std::string& body, const std::string& key, long& out)
 {
     long v = 0;
-    if (jsonGetString(body, key).empty()) return true;
+    if (jsonFindValueAt(body, key) == std::string::npos) return true;
     if (!jsonGetInt(body, key, v)) return false;
     out = v;
     return true;
@@ -331,7 +341,8 @@ inline std::string jsonEscape(const std::string& in)
 {
     std::string out;
     out.reserve(in.size() + 8);
-    for (unsigned char c : in) {
+    for (size_t i = 0; i < in.size(); ++i) {
+        const auto c = static_cast<unsigned char>(in[i]);
         switch (c) {
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
@@ -348,13 +359,29 @@ inline std::string jsonEscape(const std::string& in)
                 } else if (c < 0x80) {
                     out.push_back(static_cast<char>(c));
                 } else {
-                    // Escape everything above ASCII rather than passing the
-                    // raw byte through. Filenames on macOS and Linux may hold
-                    // bytes that are not valid UTF-8, and one of them inside a
-                    // mounted image's path made every subsequent /status reply
-                    // undecodable — the agent's polling broke permanently,
-                    // until the disk was ejected, with nothing to point at.
-                    // \u00XX is valid JSON and round-trips the byte value.
+                    // Preserve valid UTF-8: escaping each byte as \u00XX
+                    // changes the character (e.g. UTF-8 é becomes Ã©), so
+                    // returned filenames no longer name the mounted file.
+                    // Invalid filesystem bytes still need escaping to keep
+                    // the whole response decodable.
+                    const size_t len = c >= 0xC2 && c <= 0xDF ? 2 :
+                                       c >= 0xE0 && c <= 0xEF ? 3 :
+                                       c >= 0xF0 && c <= 0xF4 ? 4 : 0;
+                    bool valid = len != 0 && len <= in.size() - i;
+                    uint32_t cp = c & (len == 2 ? 0x1Fu : len == 3 ? 0x0Fu : 0x07u);
+                    for (size_t k = 1; valid && k < len; ++k) {
+                        const auto next = static_cast<unsigned char>(in[i + k]);
+                        if ((next & 0xC0u) != 0x80u) valid = false;
+                        else cp = (cp << 6) | (next & 0x3Fu);
+                    }
+                    const uint32_t minCp = len == 2 ? 0x80u : len == 3 ? 0x800u : 0x10000u;
+                    valid = valid && cp >= minCp && cp <= 0x10FFFFu &&
+                            !(cp >= 0xD800u && cp <= 0xDFFFu);
+                    if (valid) {
+                        out.append(in, i, len);
+                        i += len - 1;
+                        break;
+                    }
                     char buf[8];
                     std::snprintf(buf, sizeof(buf), "\\u%04X", c);
                     out += buf;

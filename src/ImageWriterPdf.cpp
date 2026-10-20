@@ -45,6 +45,9 @@ extern "C" unsigned char* stbi_zlib_compress(unsigned char* data,
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 
 namespace pom2 {
 
@@ -66,11 +69,14 @@ std::string paletteHex()
     return hex;
 }
 
-std::string fmt(const char* f, double a, double b = 0.0)
+std::string pdfNumber(double value)
 {
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), f, a, b);
-    return buf;
+    // PDF numbers always use a decimal point, regardless of LC_NUMERIC or
+    // the host's C++ locale. Keep the caller's global locale untouched.
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::fixed << std::setprecision(2) << value;
+    return out.str();
 }
 
 } // namespace
@@ -131,7 +137,7 @@ bool writeImageWriterPdf(const std::vector<const ImageWriter::Page*>& pages,
 
         beginObj(pageId);
         pdf += "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " +
-               fmt("%.2f %.2f", wPt, hPt) +
+               pdfNumber(wPt) + " " + pdfNumber(hPt) +
                "] /Resources << /XObject << /Im0 " + std::to_string(imgId) +
                " 0 R >> >> /Contents " + std::to_string(contId) + " 0 R >>\n"
                "endobj\n";
@@ -140,7 +146,7 @@ bool writeImageWriterPdf(const std::vector<const ImageWriter::Page*>& pages,
         // image space puts the FIRST sample row at the TOP of the unit
         // square (spec §4.8.3), matching the raster's top-down rows.
         const std::string content =
-            "q\n" + fmt("%.2f 0 0 %.2f", wPt, hPt) + " 0 0 cm\n/Im0 Do\nQ";
+            "q\n" + pdfNumber(wPt) + " 0 0 " + pdfNumber(hPt) + " 0 0 cm\n/Im0 Do\nQ";
         beginObj(contId);
         pdf += "<< /Length " + std::to_string(content.size()) +
                " >>\nstream\n" + content + "\nendstream\nendobj\n";

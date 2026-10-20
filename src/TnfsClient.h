@@ -174,9 +174,6 @@ private:
     int       retries_   = 5;
     std::string host_;
     uint16_t    port_ = kDefaultPort;
-    /// Kept so a UDP session can re-address the server on every send without
-    /// resolving the name again.
-    std::vector<uint8_t> peerAddr_;
     /// Borrowed cancellation flag; see setAbortFlag().
     const std::atomic<bool>* abort_ = nullptr;
 };

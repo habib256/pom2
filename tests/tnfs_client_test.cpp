@@ -482,6 +482,24 @@ int main()
         check(again.localPath == got.localPath, "and names the same file");
 
         stub.shutdownStub();
+        if (got.ok) {
+            pom2::TnfsFetchLimits limits;
+            limits.maxBytes = static_cast<std::uint32_t>(expect.size() - 1);
+            const auto capped = pom2::tnfsFetchImage(url, cache.string(), limits);
+            check(!capped.ok && capped.error.find("ceiling") != std::string::npos,
+                  "a cache hit obeys the caller's image-size ceiling");
+            limits.maxBytes = static_cast<std::uint32_t>(expect.size());
+            const auto exact = pom2::tnfsFetchImage(url, cache.string(), limits);
+            check(exact.ok && exact.fromCache && exact.bytes == expect.size(),
+                  "an offline cache hit exactly at the ceiling still succeeds");
+
+            // A sparse file exercises the size check without writing its
+            // payload. Check above UINT32_MAX before narrowing the result.
+            fs::resize_file(got.localPath, (1ull << 32) + expect.size());
+            const auto oversized = pom2::tnfsFetchImage(url, cache.string());
+            check(!oversized.ok && oversized.error.find("ceiling") != std::string::npos,
+                  "an oversized cached image is refused before its size can wrap");
+        }
         fs::remove_all(cache, ec);
     }
 

@@ -130,6 +130,36 @@ void testTdrWhileDtrDeasserted()
     std::printf("  ok: DTR side-effects on TDR\n");
 }
 
+void testClosingPortDiscardsParkedTdr()
+{
+    for (const bool programmedReset : {false, true}) {
+        for (const bool reopenBeforeCts : {false, true}) {
+            SuperSerialCard card(2);
+            card.setPrinterTap(true);
+            card.setCable(SuperSerialCard::Cable::Nothing);
+            card.deviceSelectWrite(kCommandAddr, 0x01);
+            card.deviceSelectWrite(kRdrAddr, 'X'); // parked behind inactive CTS
+            assert(card.bytesTx() == 0);
+            if (programmedReset) card.deviceSelectWrite(kStatusAddr, 0);
+            else card.deviceSelectWrite(kCommandAddr, 0);
+            assert(!card.dtrAsserted());
+            if (reopenBeforeCts) card.deviceSelectWrite(kCommandAddr, 0x01);
+            card.setCable(SuperSerialCard::Cable::NullModem);
+            assert(card.txQueueDepth() == 0 && "closing the port left an old byte in TDR");
+            assert(card.bytesTx() == 0);
+            std::vector<uint8_t> spool;
+            card.drainPrinterSpoolFrom(0, spool);
+            assert(spool.empty());
+            if (!reopenBeforeCts) card.deviceSelectWrite(kCommandAddr, 0x01);
+            card.deviceSelectWrite(kRdrAddr, 'Y');
+            assert(card.txQueueDepth() == 1 && card.bytesTx() == 1);
+            card.drainPrinterSpoolFrom(0, spool);
+            assert((spool == std::vector<uint8_t>{'Y'}));
+        }
+    }
+    std::printf("  ok: closing/resetting the port discards a CTS-held byte\n");
+}
+
 void testEchoLoopback()
 {
     SuperSerialCard ssc(2);
@@ -869,6 +899,50 @@ void testTelnetOptionNegotiation()
     std::printf("  ok: telnet option negotiation answered (RFC 854)\n");
 }
 
+void testTelnetDuplicateNegotiation()
+{
+    for (const uint8_t option : {uint8_t{0}, uint8_t{3}}) {
+        for (const uint8_t enable : {uint8_t{0xFD}, uint8_t{0xFB}}) {
+            SuperSerialCard card(2);
+            auto feed = [&](uint8_t command) {
+                uint8_t wire[]{0xFF, command, option};
+                assert(card.processTelnetRx(wire, sizeof wire) == 0);
+                std::vector<uint8_t> reply;
+                card.drainTransportTx(reply);
+                return reply;
+            };
+            const uint8_t answer = enable == 0xFD ? 0xFB : 0xFD;
+            const uint8_t disable = enable == 0xFD ? 0xFE : 0xFC;
+            const uint8_t disabledAnswer = enable == 0xFD ? 0xFC : 0xFE;
+            assert((feed(enable) == std::vector<uint8_t>{0xFF, answer, option}));
+            assert(feed(enable).empty() && "duplicate enable must not start an ACK loop");
+            // The other direction is independent, even for the same option.
+            assert((feed(answer) == std::vector<uint8_t>{0xFF, enable, option}));
+            assert(feed(answer).empty());
+            assert((feed(disable) == std::vector<uint8_t>{0xFF, disabledAnswer, option}));
+            assert(feed(disable).empty());
+            assert((feed(enable) == std::vector<uint8_t>{0xFF, answer, option}));
+            card.resetTelnet();
+            assert((feed(enable) == std::vector<uint8_t>{0xFF, answer, option}));
+        }
+    }
+    SuperSerialCard saturated(2);
+    for (int i = 0; i < 85; ++i) {
+        uint8_t unsupported[]{0xFF, 0xFD, 0x18};
+        saturated.processTelnetRx(unsupported, sizeof unsupported);
+    }
+    uint8_t binary[]{0xFF, 0xFD, 0};
+    saturated.processTelnetRx(binary, sizeof binary); // answer cannot fit yet
+    std::vector<uint8_t> replies;
+    saturated.drainTransportTx(replies);
+    assert(replies.size() == 255);
+    saturated.processTelnetRx(binary, sizeof binary);
+    replies.clear();
+    saturated.drainTransportTx(replies);
+    assert((replies == std::vector<uint8_t>{0xFF, 0xFB, 0}));
+    std::printf("  ok: telnet duplicates are silent, genuine option changes acknowledged\n");
+}
+
 // A snapshot is a FILE. `statusErrors_` is the STICKY-ERROR half of the
 // status register and nothing else: the other bits are computed at read time
 // and OR'd with it, so a blob carrying $FF pinned DCD and DSR high for the
@@ -965,6 +1039,7 @@ int main()
 {
     testDtrAndCommandDecode();
     testTdrWhileDtrDeasserted();
+    testClosingPortDiscardsParkedTdr();
     testEchoLoopback();
     testEchoRequiresDtr();
     testSevenBitWordAndParityError();
@@ -987,6 +1062,7 @@ int main()
     testRomPrInEntriesInitAcia();
     testTxIrq();
     testTelnetOptionNegotiation();
+    testTelnetDuplicateNegotiation();
     testSnapshotStatusErrorsAreMasked();
     testSnapshotKeepsParkedTdr();
     testTxPacingBurstIsShort();

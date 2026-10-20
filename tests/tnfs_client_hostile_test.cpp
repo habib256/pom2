@@ -77,7 +77,10 @@ enum class Evil {
     EndlessDir,        ///< READDIR never says "end of directory"
     DirCutShort,       ///< closes the connection mid-listing
     WrongCommand,      ///< answers with a command byte we never sent
-    WrongSequence,     ///< answers with a sequence byte we never sent (UDP)
+    WrongSequence,     ///< answers with a sequence byte we never sent
+    DirError,          ///< an I/O error after one valid directory entry
+    DirEmptyReply,     ///< a READDIR response with no status byte (UDP)
+    DirMissingNul,     ///< a successful READDIR name without its terminator (UDP)
 };
 
 std::vector<uint8_t> reply(const uint8_t* req, const std::vector<uint8_t>& payload,
@@ -114,7 +117,10 @@ struct Hostile {
         case pom2::kTnfsCloseDir:return {0x00};
 
         case pom2::kTnfsReadDir: {
-            readDirs.fetch_add(1);
+            const int index = readDirs.fetch_add(1);
+            if (evil == Evil::DirError && index > 0) return {0x03};
+            if (evil == Evil::DirEmptyReply) return {};
+            if (evil == Evil::DirMissingNul) return {0x00, 'B', 'A', 'D'};
             // A name, every time, for ever.
             std::vector<uint8_t> p{0x00};
             const char* nm = "AAAAAAA";
@@ -189,7 +195,9 @@ struct TcpStub {
                 // downstream is reachable to test.
                 const bool lie = (s.evil == Evil::WrongCommand &&
                                   buf[3] != pom2::kTnfsMount);
-                const auto pkt = reply(buf, payload, lie, false);
+                const bool wrongSeq = (s.evil == Evil::WrongSequence &&
+                                       buf[3] != pom2::kTnfsMount);
+                const auto pkt = reply(buf, payload, lie, wrongSeq);
                 ::send(c, pkt.data(), pkt.size(), 0);
             }
             clientFd.store(-1);
@@ -238,7 +246,7 @@ struct UdpStub {
                                              reinterpret_cast<sockaddr*>(&from), &fl);
                 if (r <= 4) break;
                 const auto payload = s.handle(buf, static_cast<std::size_t>(r));
-                if (payload.empty()) continue;
+                if (payload.empty() && s.evil != Evil::DirEmptyReply) continue;
                 // MOUNT answers straight, so the session is established; from
                 // then on every sequence byte is wrong.
                 const bool wrongSeq = (s.evil == Evil::WrongSequence &&
@@ -263,6 +271,42 @@ struct UdpStub {
 
 int main()
 {
+    for (const Evil evil : {Evil::DirError, Evil::WrongSequence}) {
+        TcpStub stub(evil);
+        if (!stub.start()) return 1;
+        pom2::TnfsClient c;
+        c.setTimeoutMs(200);
+        std::string err;
+        check(c.mount("127.0.0.1", stub.port, "/", err), "mounts TCP regression stub");
+        if (evil == Evil::WrongSequence) {
+            check(c.openFile("/GAME.PO", err) < 0,
+                  "rejects a TCP OPEN reply with the wrong sequence");
+            check(!err.empty(), "reports the sequence failure reason");
+            c.unmount();
+            stub.shutdownStub();
+            continue;
+        }
+        std::vector<pom2::TnfsClient::DirEntry> out;
+        check(!c.listDir("/", out, err), "READDIR I/O error fails the listing");
+        check(!err.empty(), "reports the listing failure reason");
+        check(out.size() == 1, "I/O error occurs after one valid entry");
+        c.unmount();
+        stub.shutdownStub();
+    }
+    for (const Evil evil : {Evil::DirEmptyReply, Evil::DirMissingNul}) {
+        UdpStub stub(evil);
+        if (!stub.start()) return 1;
+        pom2::TnfsClient c;
+        c.setTimeoutMs(200);
+        std::string err;
+        check(c.mount("127.0.0.1", stub.port, "/", err), "mounts UDP regression stub");
+        std::vector<pom2::TnfsClient::DirEntry> out;
+        check(!c.listDir("/", out, err), "malformed READDIR fails the listing");
+        check(out.empty(), "malformed directory names are not returned");
+        check(!err.empty(), "reports the malformed reply reason");
+        c.unmount();
+        stub.shutdownStub();
+    }
     // ── A READ may not deliver more than was asked for ────────────────────
     {
         TcpStub stub(Evil::OversizedRead);

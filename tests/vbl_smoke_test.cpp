@@ -37,7 +37,6 @@
 namespace {
 
 constexpr uint64_t kCyclesPerScanline = 65;
-constexpr uint64_t kVisibleScanlines  = 192;
 constexpr uint64_t kFrameScanlines    = 262;
 constexpr uint64_t kFrameCycles       = kCyclesPerScanline * kFrameScanlines;
 

@@ -180,14 +180,16 @@ void AtaBlockDevice::nextSector()
         devHead_ = static_cast<uint8_t>((devHead_ & 0xF0) | ((lba >> 24) & 0x0F));
         return;
     }
-    uint8_t  sector = lba0_;                          // CHS, 1-based sectors
+    // Keep the increment wider than the register: a 255-sector geometry
+    // must compare 256 against numSectors_ before wrapping to sector 1.
+    uint16_t sector = lba0_;                          // CHS, 1-based sectors
     uint8_t  head   = devHead_ & 0x0F;
     uint16_t cyl    = static_cast<uint16_t>(lba1_ | (lba2_ << 8));
     if (++sector > numSectors_) {
         sector = 1;
         if (++head >= numHeads_) { head = 0; ++cyl; }
     }
-    lba0_    = sector;
+    lba0_    = static_cast<uint8_t>(sector);
     lba1_    = static_cast<uint8_t>(cyl);
     lba2_    = static_cast<uint8_t>(cyl >> 8);
     devHead_ = static_cast<uint8_t>((devHead_ & 0xF0) | head);
@@ -345,7 +347,10 @@ void AtaBlockDevice::cs0_w(uint8_t reg, uint16_t val)
     const uint8_t v = static_cast<uint8_t>(val & 0xFF);
     switch (reg & 0x07) {
         case 0: { // data port (PIO out)
-            if (phase_ != Phase::PioOut) return;
+            // Like cs0_r and command dispatch, data writes belong only to
+            // the selected device. Selecting the absent slave mid-transfer
+            // must not feed its words into the master's pending sector.
+            if (!selected() || phase_ != Phase::PioOut) return;
             wordBuf_[wordIdx_++] = val;
             if (wordIdx_ >= 256) {
                 if (!flushBufferToSector()) {

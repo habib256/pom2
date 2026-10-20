@@ -740,14 +740,9 @@ public:
     size_t pendingPasteSize() const { return keyboard_.pendingPasteSize(); }
     void   cancelPaste()            { keyboard_.cancelPaste(); }
 
-    // Speaker — the CPU toggles a flip-flop by reading $C030. We expose
-    // a counter the audio backend can sample. UI may also subscribe via
-    // setSpeakerToggleCallback().
+    // Speaker — $C030 toggles the flip-flop. The attached SpeakerDevice
+    // receives cycle-stamped edges; this counter supports diagnostics.
     uint64_t getSpeakerToggleCount() const { return speakerToggles.load(); }
-    using SpeakerCallback = void (*)(void* user);
-    void setSpeakerCallback(SpeakerCallback cb, void* user) {
-        speakerCb = cb; speakerUser = user;
-    }
 
     // Paddle inputs — $C064-$C067 read the 4 paddles, $C061-$C063 read
     // the 3 push-button switches. Game-port reset latch armed by $C070.
@@ -1070,8 +1065,6 @@ private:
 
     // Speaker.
     std::atomic<uint64_t> speakerToggles{0};
-    SpeakerCallback speakerCb = nullptr;
-    void*           speakerUser = nullptr;
 
     // Game port — paddles, buttons and the Open/Solid-Apple + Shift mods,
     // plus the $C070 RC-discharge latch. All of it lives in PaddleInputs now

@@ -36,16 +36,17 @@
 // lives in Pom2HgrPaintHost.cpp, which is not linked here — same arrangement
 // imagewriter_pdf_test.cpp uses, and the reason this test does not drag the
 // whole paint-host include cone in for a PNG writer.
-#if defined(__clang__)
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image.h"
 #include "stb_image_write.h"
-#if defined(__clang__)
-#  pragma clang diagnostic pop
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
 #endif
 
 #include "PrinterHistory.h"

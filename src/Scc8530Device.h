@@ -396,7 +396,6 @@ private:
     unsigned rtxcRateOf(int index) const;             ///< z80scc.cpp:2813
     int  clockMode(int index) const;                  ///< z80scc.cpp:1320
     int  rxWordLength(int index) const;               ///< z80scc.cpp:1396
-    int  txWordLength(int index) const;               ///< z80scc.cpp:1415
     /// Frame length in HALF-bit periods, the way `update_serial` programs
     /// diserial's `set_data_frame(1, data, parity, stop)`. Half-bits
     /// because 1.5 stop bits is a legal SCC frame.

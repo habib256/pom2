@@ -314,8 +314,6 @@ public:
     /// Leave scrub: discard the abandoned future after `index` and resume
     /// live execution from there.
     void   rewindEndAndResume(size_t index);
-    /// Leave scrub but stay paused at the current frame (keeps the ring).
-    void   rewindEndPaused();
     /// Media-write policy for the rewind ring.
     ///
     /// The ring never captures MEDIA of a block device (HDV / CFFA /

@@ -70,6 +70,7 @@ using namespace aijson;
 
 namespace {
 
+#if POM2_HAS_SOCKETS
 constexpr size_t kMaxBodyBytes    = 1 << 20;   // 1 MiB hard cap on body
 constexpr size_t kMaxHeaderBytes  = 64 * 1024; // 64 KiB on the request preamble
 constexpr int    kRecvTimeoutMs   = 4000;      // per-recv SO_RCVTIMEO
@@ -145,7 +146,6 @@ std::optional<std::string> safeCwdRelativePath(const std::string& in,
     return full.string();
 }
 
-#if POM2_HAS_SOCKETS
 void applyRecvTimeout(pom2::socket_t fd, int timeoutMs)
 {
 #ifdef _WIN32
@@ -190,7 +190,6 @@ bool sendAll(pom2::socket_t fd, const char* buf, size_t n)
     }
     return true;
 }
-#endif // POM2_HAS_SOCKETS
 
 std::string cpuModeName(M6502::CpuMode m)
 {
@@ -206,6 +205,7 @@ std::string runModeName(EmulationController::Mode m)
     }
     return "?";
 }
+#endif // POM2_HAS_SOCKETS
 
 } // namespace
 

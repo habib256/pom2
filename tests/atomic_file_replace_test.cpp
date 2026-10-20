@@ -338,8 +338,8 @@ int main()
         fs::remove(link, lec);
         fs::create_symlink(real, link, lec);
         if (!lec) {
-            const fs::path tmp = pom2::tempSiblingPath(link);
-            assert(fs::weakly_canonical(tmp.parent_path()) ==
+            const fs::path targetTemp = pom2::tempSiblingPath(link);
+            assert(fs::weakly_canonical(targetTemp.parent_path()) ==
                        fs::weakly_canonical(elsewhere) &&
                    "the temp file is a sibling of the LINK — a cross-device rename");
             // And the commit still lands on the target through the link.
@@ -364,10 +364,10 @@ int main()
         const fs::path sweepDir = dir / "sweep";
         fs::create_directories(sweepDir, ec);
         const fs::path stale  = sweepDir / "disk.po.4242-1.pom2tmp";
-        const fs::path fresh  = sweepDir / "disk.po.4243-1.pom2tmp";
+        const fs::path liveTemp  = sweepDir / "disk.po.4243-1.pom2tmp";
         const fs::path keeper = sweepDir / "disk.po";
         writeFile(stale,  pattern(16, 0x01));
-        writeFile(fresh,  pattern(16, 0x02));
+        writeFile(liveTemp,  pattern(16, 0x02));
         writeFile(keeper, pattern(16, 0x03));
         // Age only the first one: the sweep must not touch a temp another
         // POM2 may be writing through RIGHT NOW.
@@ -378,7 +378,7 @@ int main()
 
         assert(pom2::sweepStaleTempSiblings(sweepDir, 24) == 1);
         assert(!fs::exists(stale));
-        assert(fs::exists(fresh)  && "a temp younger than the cutoff was swept");
+        assert(fs::exists(liveTemp)  && "a temp younger than the cutoff was swept");
         assert(fs::exists(keeper) && "the sweep touched a real file");
         // Idempotent, and a missing directory is not an error.
         assert(pom2::sweepStaleTempSiblings(sweepDir, 24) == 0);
@@ -400,8 +400,8 @@ int main()
         writeFile(image, pattern(64, 0x10));
         std::string err;
         assert(pom2::setMediaNotch(image.string(), false, err));
-        const fs::path tmp = pom2::tempSiblingPath(image);
-        writeFile(tmp, pattern(64, 0x20));
+        const fs::path commitTemp = pom2::tempSiblingPath(image);
+        writeFile(commitTemp, pattern(64, 0x20));
 
         std::atomic<bool> renamed{false};
         std::thread committer;
@@ -409,7 +409,7 @@ int main()
             std::unique_lock<std::mutex> hold(pom2::mediaPermissionMutex());
             committer = std::thread([&] {
                 std::error_code cec;
-                const bool ok = pom2::replaceMediaFileAtomic(tmp, image, cec);
+                const bool ok = pom2::replaceMediaFileAtomic(commitTemp, image, cec);
                 assert(ok && !cec);
                 renamed = true;
             });

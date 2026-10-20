@@ -110,11 +110,6 @@ public:
     void setUnitCount(int count);
     int  unitCount() const { return unitCount_; }
 
-    /// True when at least one unit holds media. The owner uses this to decide
-    /// whether a device is on the port at all: an empty chain answers the
-    /// presence poll with silence, so the firmware reports $28 and a //c
-    /// autostart falls through to its internal drive.
-    bool anyMedia() const;
     bool unitHasMedia(int index) const;
 
     // ── Bus-side events, from whoever owns the IWM registers ─────────────
