@@ -27,6 +27,7 @@
 
 #include "ProDOSVolume.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cstdio>
