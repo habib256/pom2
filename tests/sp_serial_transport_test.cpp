@@ -102,7 +102,7 @@ int main()
            std::string(reinterpret_cast<const char*>(out), sizeof(out)),
            "the board receives the frame byte for byte");
     const char in[] = "\xC0\x42\xC0";
-    ::write(master, in, 3);
+    expect(::write(master, in, 3) == 3, "the board sends its reply");
     uint8_t buf[16];
     int got = 0;
     for (int tries = 0; tries < 20 && got < 3; ++tries) {

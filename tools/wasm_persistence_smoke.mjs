@@ -68,10 +68,20 @@ try {
   let browserErrors = '';
   browser.stderr.on('data', data => { browserErrors += String(data).slice(-1000); });
   const portFile = path.join(profile, 'DevToolsActivePort');
-  const debugPort = await waitFor(async () => {
-    if (browser.exitCode !== null) throw new Error(browserErrors);
-    return Number((await readFile(portFile, 'utf8')).split('\n')[0]);
-  }, 'Chrome DevTools', 15000);
+  // waitFor swallows a throw from its probe, so a Chrome that died used to
+  // surface as a bare timeout with its stderr lost. Check the exit here, and
+  // give a cold start on a loaded CI runner more than 15 s.
+  let debugPort;
+  try {
+    debugPort = await waitFor(async () => {
+      if (browser.exitCode !== null) return -1;
+      return Number((await readFile(portFile, 'utf8')).split('\n')[0]);
+    }, 'Chrome DevTools', 60000);
+  } catch (error) {
+    throw new Error(`${error.message}\nChrome stderr:\n${browserErrors}`);
+  }
+  if (debugPort === -1)
+    throw new Error(`Chrome exited (${browser.exitCode}) before DevTools:\n${browserErrors}`);
   const pages = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
   const page = pages.find(item => item.type === 'page');
   assert(page, 'Chrome did not open a page target');
