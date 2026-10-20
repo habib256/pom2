@@ -218,9 +218,9 @@ int main()
         a.writeSection("AAAAAAAA", aBytes.data(), aBytes.size());
         b.writeSection("BBBBBBBB", bBytes.data(), bBytes.size());
         auto firstSection = [&]() {
-            pom2::SnapshotReader r(both.string());
+            pom2::SnapshotReader reader(both.string());
             std::string nm; uint32_t ln = 0;
-            if (!r.good() || !r.nextSection(nm, ln)) return std::string("<bad>");
+            if (!reader.good() || !reader.nextSection(nm, ln)) return std::string("<bad>");
             return nm;
         };
         assert(a.finish() && "the first writer's commit failed");
