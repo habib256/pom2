@@ -149,7 +149,9 @@ std::vector<uint8_t> buildMinimalWoz2(const std::vector<uint8_t>& bitData,
     }
     std::vector<uint8_t> blockData(512, 0);
     const size_t copy = std::min<size_t>(bitData.size(), 512);
-    std::memcpy(blockData.data(), bitData.data(), copy);
+    // An empty bitData has a null data(), which memcpy may not take even
+    // with a zero count (UBSan nonnull-attribute).
+    if (copy) std::memcpy(blockData.data(), bitData.data(), copy);
     trks.insert(trks.end(), blockData.begin(), blockData.end());
     if (sharedTrack) trks.insert(trks.end(), blockData.begin(), blockData.end());
     addChunk("TRKS", trks);

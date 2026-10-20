@@ -104,8 +104,12 @@ int main() {
             assert(liron->bayInfo(0).acceptsSony35OrHdv);
         }
         // The 3.5" click: a Liron bay had no sound path at all (bug hunt
-        // 2026-10-16). Counted on the 3.5" source's queue — no audio thread
-        // drains it here. Needs the bundled MAME samples to make a sound.
+        // 2026-10-16). Counted on the 3.5" source's queue. Needs the bundled
+        // MAME samples to make a sound. A CI runner can open a real (or null)
+        // audio device whose callback drains that queue under our feet, so
+        // the source leaves the mixer first: `mixSources` holds the same
+        // mutex for the whole callback, so nothing drains it after this.
+        controller.audio().removeSource(&controller.floppySound35());
         std::string samples;
         for (const char* d : {"roms/floppy_samples", "../roms/floppy_samples",
                               "../../roms/floppy_samples"})

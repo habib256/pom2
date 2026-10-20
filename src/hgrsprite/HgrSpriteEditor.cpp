@@ -518,7 +518,10 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
         std::FILE* f = std::fopen(fullPath.c_str(), "rb");
         if (!f) { status = "Cannot open file"; return true; }
         std::vector<uint8_t> spr(static_cast<size_t>(wBytes_) * hRows_, 0);
-        std::fread(spr.data(), 1, spr.size(), f);   // short files zero-pad
+        // Short files zero-pad, so the count is not checked; ferror() is.
+        // A (void) cast does not silence GCC's warn_unused_result.
+        const size_t got = std::fread(spr.data(), 1, spr.size(), f);
+        (void)got;
         const bool readError = std::ferror(f) != 0;
         const int closeResult = std::fclose(f);
         if (readError || closeResult != 0) {
