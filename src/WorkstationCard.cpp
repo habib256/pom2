@@ -293,8 +293,8 @@ void WorkstationCard::slotRomWrite(uint8_t low8, uint8_t v)
 }
 
 // "ATLK" at $CnF9-$CnFC. This is the card's identity on the Apple II bus:
-// it is neither a Pascal 1.1 device nor a ProDOS block device, so software
-// — CardCat included — finds it by this signature and not by $Cn05/$Cn07.
+// $Cn05/$Cn07 ($03/$3C) only say "bootable", which a disk controller says
+// too, so software — CardCat included — finds the card by this signature.
 bool WorkstationCard::signaturePublished() const
 {
     static constexpr uint8_t kAtlk[4] = { 'A', 'T', 'L', 'K' };

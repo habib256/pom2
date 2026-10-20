@@ -1905,6 +1905,7 @@ set_tests_properties(printer_grain_pileup PROPERTIES TIMEOUT 30)
 add_executable(test_printer_paper_tray
     printer_paper_tray_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_paper_tray PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -5242,6 +5243,7 @@ set_tests_properties(printer_card_smoke PROPERTIES TIMEOUT 5)
 add_executable(test_imagewriter
     imagewriter_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5271,6 +5273,7 @@ set_tests_properties(imagewriter_smoke PROPERTIES TIMEOUT 10)
 add_executable(test_imagewriter_pdf
     imagewriter_pdf_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriterPdf.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -6824,6 +6827,7 @@ add_executable(test_postscript_render
     ${CMAKE_SOURCE_DIR}/src/PostScriptRender.cpp
     ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_postscript_render PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7551,6 +7555,7 @@ set_tests_properties(child_process PROPERTIES TIMEOUT 30)
 add_executable(test_printer_glyph
     printer_glyph_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_glyph PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7570,6 +7575,7 @@ add_executable(test_printer_screen_dump
     printer_screen_dump_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterScreenDump.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_screen_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7612,6 +7618,7 @@ add_executable(test_printer_history
     printer_history_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterHistory.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_history PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7975,6 +7982,13 @@ pom2_add_headless_test(test_sam_card
 pom2_add_headless_test(test_zip_chip
     NAME zip_chip TIMEOUT 30
     SOURCES zip_chip_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# The //c Plus's built-in accelerator, driven by its own ROM: 4 MHz after a
+# reset, 1 MHz with Esc held through it.
+pom2_add_headless_test(test_iicplus_accelerator
+    NAME iicplus_accelerator TIMEOUT 60
+    SOURCES iicplus_accelerator_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 # ─── Printer-detection toolkit: options, access log, PNG render ──────────

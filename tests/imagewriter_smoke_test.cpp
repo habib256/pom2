@@ -1175,14 +1175,15 @@ void testParserHardening()
         assert(inkPixels(iw.currentPage()) > 0);
     }
 
-    // b) ESC I right after a parametered command must not eat text.
-    //    Identical streams except for the (unsupported, zero-parameter)
-    //    ESC I must produce identical ink — the stale parameter count
-    //    used to swallow "HELL".
+    // b) ESC I right after a parametered command must not eat text. The
+    //    stale parameter count used to swallow "HELL"; a whole custom-
+    //    character load (ESC I … CTRL-D, see testCustomCharacters) now sits
+    //    between the graphics and the text and must print nothing itself.
     {
         ImageWriter iw, ref;
-        feed(iw,  "\x1BG0004\xFF\xFF\xFF\xFF\x1BIHELLO\r");
-        feed(ref, "\x1BG0004\xFF\xFF\xFF\xFF"     "HELLO\r");
+        feedN(iw,  std::string("\x1BG0004\xFF\xFF\xFF\xFF\x1B-\x1BIAEZZZ", 19) +
+                   std::string("\0\0\x04", 3) + "HELLO\r");
+        feedN(ref, std::string("\x1BG0004\xFF\xFF\xFF\xFF\x1B-", 12) + "HELLO\r");
         assert(inkPixels(iw.currentPage()) == inkPixels(ref.currentPage()));
     }
 
@@ -1819,6 +1820,78 @@ static void testEpsonParamBytesCostNothing()
     std::printf("  Epson / Diablo parameter bytes cost no mechanism time: OK\n");
 }
 
+// ImageWriter II Technical Reference, ch. 7 — custom characters. The
+// manual's own example: "ESC - ESC I A E Z Z Z CTRL-@ CTRL-@ CTRL-D"
+// loads, on the A key, three columns of $5A (Z) and two blank ones, using
+// the top eight wires; ESC ' prints from the custom set, ESC $ goes back.
+void testCustomCharacters()
+{
+    const std::string load = std::string("\x1B-\x1BIAEZZZ", 9) +
+                             std::string("\0\0\x04", 3);
+    auto ink = [](const std::string& stream) {
+        ImageWriter iw;
+        iw.printBytes(reinterpret_cast<const uint8_t*>(stream.data()), stream.size());
+        return inkPixels(iw.currentPage());
+    };
+    const size_t standardA = ink("A");
+    const size_t standardB = ink("B");
+    assert(standardA > 0);
+
+    // Loading prints nothing: every byte up to CTRL-D is the definition.
+    assert(ink(load) == 0);
+
+    // The custom A: 12 dots (3 columns × 4) — not the standard A.
+    const size_t customA = ink(load + "\x1B'A");
+    assert(customA > 0 && customA != standardA);
+    // The same shape loaded on another key prints the same ink.
+    const size_t customQ = ink(std::string("\x1B-\x1BIQEZZZ", 9) +
+                               std::string("\0\0\x04", 3) + "\x1B'Q");
+    assert(customQ == customA);
+    // An undefined key in the custom font prints its standard character.
+    assert(ink(load + "\x1B'B") == standardB);
+    // ESC $ returns to the standard font: the second A is a standard one.
+    // (Not an exact sum — it lands at a fractional x, and the raster
+    // rounds its dots differently there.)
+    {
+        const size_t both = ink(load + "\x1B'A\x1B$A");
+        assert(both > customA + standardA / 2 && both < customA + standardA * 2);
+        assert(ink(load + "\x1B'A\x1B$") == customA);
+    }
+    // A software reset keeps the set (ch. 7) but returns to standard text.
+    assert(ink(load + "\x1B" "c" "\x1B'A") == customA);
+    assert(ink(load + "\x1B'\x1B" "cA") == standardA);
+
+    // High ASCII: with the 8-dot maximum a key may be 160-239, fetched by
+    // ESC * with the plain character 128 below it (193 → 'A').
+    const std::string loadHigh = std::string("\x1B-\x1BI\xC1" "EZZZ", 9) +
+                                 std::string("\0\0\x04", 3);
+    assert(ink(loadHigh + "\x1B*A") == customA);
+    assert(ink(loadHigh + "\x1B'A") == standardA);   // A itself is not defined
+
+    // Wires 2-9 (lower-case width code): the same dots, one wire lower.
+    {
+        ImageWriter top, low;
+        const std::string lowLoad = std::string("\x1B-\x1BIAeZZZ", 9) +
+                                    std::string("\0\0\x04", 3);
+        feedN(top, load + "\x1B'A");
+        feedN(low, lowLoad + "\x1B'A");
+        assert(inkPixels(low.currentPage()) == inkPixels(top.currentPage()));
+        assert(low.currentPage().pix != top.currentPage().pix);
+    }
+
+    // ESC - erases a previous set; power-off loses it.
+    assert(ink(load + "\x1B-\x1B'A") == standardA);
+    {
+        ImageWriter iw;
+        feedN(iw, load);
+        iw.setPowered(false);
+        iw.setPowered(true);
+        feedN(iw, "\x1B'A");
+        assert(inkPixels(iw.currentPage()) == standardA);
+    }
+    std::printf("  custom characters (ESC - / ESC I … CTRL-D / ESC ' / ESC * / ESC $): OK\n");
+}
+
 int main()
 {
     testEscPProportionalIsConsumed();
@@ -1834,6 +1907,7 @@ int main()
     testColorRibbon();
     testBitImageGraphics();
     testCommandFraming();
+    testCustomCharacters();
     testPaperHandling();
     testRgbaExport();
     testSpoolSeam();

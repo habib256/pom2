@@ -150,7 +150,13 @@ bool prepareIIcSessionDevice(SlotPeripheral* card, const SessionArchive::Slot& r
         }
         if (!r.done()) { error = "trailing session HDV data"; return false; }
         out = std::move(hdv);
-    } else if (record.kind == Card::IIcMouse) out = std::make_unique<IIcMouse>();
+    } else if (record.kind == Card::IIcMouse) {
+        // Keep the live card's firmware slot: 7 on a //c Plus (its mouse
+        // firmware and screen holes moved there, TN Misc #8), 4 otherwise.
+        // The default ctor said 4, so after a session load a //c Plus's
+        // Mouse inspector and the AI /mouse reported the wrong port.
+        out = std::make_unique<IIcMouse>(static_cast<IIcMouse*>(card)->getSlot());
+    }
     else if (record.kind == Card::ChatMauve) {
         auto* rgb = static_cast<LeChatMauveCard*>(card);
         out = std::make_unique<LeChatMauveCard>(slot, rgb->variant());

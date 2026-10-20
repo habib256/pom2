@@ -92,8 +92,9 @@ public:
     pom2::NoSlotClock* getNoSlotClock() const { return noSlotClock_; }
     /// An accelerator in the 6502 SOCKET — the Zip Chip (ZipChip.h).
     /// Non-owning, set by EmulationController; nullptr = stock CPU. It is
-    /// consulted only on //e-class machines with slots (activeAccel), so a
-    /// profile switch needs no re-wiring.
+    /// consulted only on //e-class machines with slots and on the //c Plus
+    /// (activeAccel); EmulationController::installSocketAccelerator picks
+    /// which chip that is after a profile switch.
     void setCpuSocketAccelerator(pom2::CpuSocketAccelerator* a) { accel_ = a; }
     pom2::CpuSocketAccelerator* cpuSocketAccelerator() const { return accel_; }
     /// The 6502 clock multiplier the frame loop burns at: any slot
@@ -767,7 +768,11 @@ public:
     // and IIe-class warm reset. II/II+ warm/hard reset use
     // `resetSoftSwitchesWarm()` instead so LC + display switches survive
     // (MAME `apple2.cpp:325-331` machine_reset).
-    void resetSoftSwitches();
+    /// `warm` = the reset LINE (Ctrl-Reset, F12), not power-on: the
+    /// keyboard latch survives it (MAME reset_w leaves m_strobe/m_transchar
+    /// alone; only machine_reset clears them). The //c Plus ROM reads $C000
+    /// after its reset delay to see whether Esc is held.
+    void resetSoftSwitches(bool warm = false);
 
     // Warm reset (Ctrl-Reset / F11). Mirrors MAME's split between
     // `apple2_state::machine_reset` (minimal — only kbd strobe + cnxx
@@ -1100,7 +1105,10 @@ private:
     pom2::CpuSocketAccelerator* accel_ = nullptr;
     pom2::CpuSocketAccelerator* activeAccel() const
     {
-        return (accel_ && iieMode && !iicProfile_) ? accel_ : nullptr;
+        // //e-class machines with slots (a Zip Chip in the socket), and the
+        // //c Plus, whose built-in accelerator answers the same registers.
+        return (accel_ && iieMode && (!iicProfile_ || iicProfile_->isIIcPlus()))
+                   ? accel_ : nullptr;
     }
     uint64_t accelNow() const;
     /// MAME apple2e.cpp:2266-2275 — the Zip's $C05E STATEREG-like byte.

@@ -10,6 +10,80 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-21 — The //c Plus accelerator is a Zip, and Esc slows it
+
+A user reported the //c Plus "too fast at 1×" and that holding Esc at reset
+— the real machine's way to run at 1 MHz — did nothing. Both were true: the
+profile carried a fixed 4× budget (68180 cycles/frame), so the toolbar's
+"1×" meant 4.09 MHz on that machine alone, and nothing answered the
+accelerator's registers. The //c Plus's CGGA is a licensed Zip (MAME
+apple2e.cpp: fast = $08 → $C05B, normal = $08 → $C05A, unlock $5A ×4, lock
+$A5), and POM2 already modelled the Zip for the //e. The profile now runs a
+1× budget with its own `ZipChip` seated
+(`EmulationController::installSocketAccelerator`, separate from the user's
+//e Zip option), and the //c Plus ROM drives it at every reset exactly as on
+the machine: unlock, fast, slot mask, lock, then `LDA $C000 / STA $CE04 …
+CMP #$9B` ($FD82/$FDD3) — Esc held through the reset puts it at 1 MHz. It
+slows around slot and speaker accesses as MAME's does, and software can
+switch it. For Esc to survive the reset, the reset LINE no longer clears the
+//e-class keyboard latch: MAME's `reset_w` touches no keyboard state, only
+`machine_reset` (power-on) does. The rewind timeline's seconds now include
+an accelerator's multiplier (it ignored the //e Zip too). Restoring a //c
+Plus session seats that accelerator without switching on the user's //e Zip
+Chip option, which used to follow them back to a //e profile. Pinned by
+`iicplus_accelerator`, `device_clock_fanout` and `session_iic`.
+
+## 2026-10-21 — ProDOS host folder: sparse files both ways
+
+Apple II Technical Note ProDOS #30. Building the volume, an all-zero 512-byte
+chunk now gets no block (its index entry is 0) — except the first, which
+ProDOS 8 always allocates — and a tree's all-zero group gets no sub-index:
+the note's `BSAVE SPARSE.FILE,A$300,L$1,B$FFFFFF` round trip is five blocks,
+where it used to be 16 MB and overflow the volume. Decoding, a seedling with
+EOF past 512 (what ProDOS 8 ≤ 1.9 made after SET_EOF) reads as zeros past its
+block instead of being cut to 512 bytes. Pinned in `prodos_volume_smoke`.
+
+## 2026-10-21 — Tech-note odds and ends: Workstation Card, //c Plus mouse, Slinky
+
+- The Workstation Card's comments said its page carried no block-device
+  signature; the dump's page opens `A0 20 A0 00 A0 03 A0 3C` — the ProDOS /
+  autostart boot signature (the network boot). Comments corrected; behaviour
+  already followed the dump.
+- A session load re-created the //c Plus's IOU mouse with the default
+  firmware slot 4 instead of 7 (TN Misc #8), so its inspector and the AI
+  `/mouse` reported the wrong port. It keeps the live card's slot now.
+- Slinky: "RESET turn[s] off the Memory Expansion Card registers until an
+  access to the $Cn00 space" (TN Memory Expansion #1). Modelled — reads float
+  and writes are ignored until a $Cn page access; snapshot blob v2 carries
+  the flag (v1 blobs restore enabled). Pinned in `slinky_card`.
+
+## 2026-10-21 — VidHD paints the IIgs text colours
+
+`$C022` was latched and never shown. The text and its background now take
+SCREENCOLOR's nibbles in the IIgs's sixteen master colours (Apple II
+Technical Note IIgs #63, Table 1) once a program moves it off the `$F0` the
+card starts with — what the ProDOS text-colour themes in
+a2stuff/prodos-drivers rely on for "any Apple II equipped with a VidHD
+card". The border colour stays unpainted (POM2's picture has no border), and
+NEWVIDEO bit 5 stays unmodelled (a IIgs feature, TN IIgs #29, not shown to
+exist on the VidHD). Pinned in `vidhd_card`.
+
+## 2026-10-20 — ImageWriter II custom characters
+
+`ESC I` was framed as a command with no parameters, so a program that
+downloaded a custom font printed its definition as a page of garbage, and a
+test pinned exactly that ("\x1BIHELLO" printed HELLO). Implemented from the
+*ImageWriter II Technical Reference*, chapter 7, which Apple II Technical
+Note ImageWriter #1 takes for granted: `ESC -` / `ESC +` (8- or 16-dot
+maximum; erases the set and switches to 8-bit data), `ESC I` then `KEY
+WIDTH DATA…` per character up to `CTRL-D` (Table 7-2: `A`-`P` = 1-16 dots
+on wires 1-8, `a`-`p` on wires 2-9; bit 0 = top wire), `ESC '` to print
+from the set, `ESC *` for keys 160-239 fetched as key − 128, `ESC $` back
+to the standard font. The set survives `ESC c` and is lost at power-off, as
+the manual says. ImageWriter II only — the I, the DMP and the 8510A share
+the parser but not the chapter. `imagewriter_smoke` loads the manual's own
+example (`ESC - ESC I A E Z Z Z ^@ ^@ ^D`).
+
 ## 2026-10-20 — AppleWin-HLE mouse: GETCLAMP, TIMEDATA, mouse off
 
 Three firmware entries from Apple II Technical Notes Mouse #2/#3/#7, run

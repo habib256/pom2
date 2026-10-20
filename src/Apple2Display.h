@@ -481,6 +481,7 @@ private:
         size_t               charRomSize = 0;
         const void*          chatMauve = nullptr;   // card identity (may be unplugged)
         int                  chatMauveState = -1;   // mode + Eve toggles
+        uint64_t             cardTextColours = 0;   // a VidHD's $C022, 0 = none
         std::vector<uint8_t> vram;           // $0400-$0BFF, main + aux
     };
     // The key describes the pixels that are in the framebuffer RIGHT NOW, so
@@ -642,7 +643,7 @@ private:
     // green) and the RVB Graph's CT. Text is black and white before this
     // pass, so the remap is exact.
     void tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
-                  uint32_t colour);
+                  uint32_t colour, uint32_t background = 0);
     // The RGB-card pipeline is selected AND a card is plugged. Without the
     // card ChatMauveRGB silently renders as ColorNTSC (a real machine pulled
     // out of its adapter still has composite on the wire).

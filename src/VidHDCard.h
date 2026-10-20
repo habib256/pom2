@@ -60,9 +60,17 @@
 // bus (`SlotPeripheral::busAuxRam`), so it needs no Memory dependency and
 // Apple2Display links nothing new (CardVideoSource.h).
 //
-// NOT modelled (DEV.md § VidHD): the IIgs text / border colours (SCREENCOLOR
-// and BORDERCOLOR are latched, snapshotted, never painted), the SHADOW
-// register's meaning, B&W DHGR (NEWVIDEO bit 5), the VidHD's own extended
+// The text colours ARE painted (2026-10-21): SCREENCOLOR's high nibble is the
+// text, its low nibble the background, in the IIgs's sixteen colours (Apple
+// II Technical Note IIgs #63, Table 1), once a program has moved it off the
+// $F0 white-on-black the card comes up with — the ProDOS "text color themes"
+// (a2stuff/prodos-drivers `textcolors`) write $C022/$C034 and say they work
+// on "any Apple II equipped with a VidHD card".
+//
+// NOT modelled (DEV.md § VidHD): BORDERCOLOR (latched and snapshotted, but
+// POM2's picture has no border to paint), the SHADOW register's meaning,
+// B&W DHGR (NEWVIDEO bit 5 — the IIgs has it, TN IIgs #29, but nothing shows
+// the VidHD does), the VidHD's own extended
 // text modes (80×45, 120×67, 240×135), its enable/disable switch, and the
 // ][ / ][+ aux mirror (AppleWin mirrors 80STORE/RAMRD/RAMWRT/PAGE2 into a
 // card-side RAM there) — the card is offered on //e-class profiles only.
@@ -135,11 +143,15 @@ public:
     int  pictureHeight() const override { return kPictureHeight; }
     void paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark,
                       uint64_t emuCycles, double cpuHz) const override;
+    bool textColours(uint32_t& fg, uint32_t& bg) const override;
+    /// The IIgs colour register value `index` (0-15) as 0xAABBGGRR —
+    /// TN IIgs #63 Table 1's master colours.
+    static uint32_t iigsColour(uint8_t index);
 
 private:
     int slot_;
     const uint8_t* auxOverride_ = nullptr;
-    uint8_t screenColor_ = 0;   // $C022
+    uint8_t screenColor_ = 0xF0;   // $C022: white text on black
     uint8_t newVideo_    = 0;   // $C029
     uint8_t borderColor_ = 0;   // $C034
     uint8_t shadow_      = 0;   // $C035

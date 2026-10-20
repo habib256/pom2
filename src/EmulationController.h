@@ -142,6 +142,16 @@ public:
     void setZipChipInstalled(bool on);
     void setZipChipInstalled(const pom2::StateAccess& state, bool on);
     bool zipChipInstalled() const { return zipInstalled_.load(); }
+    /// The //c Plus's built-in accelerator (the CGGA, Zip-licensed and
+    /// Zip-compatible — MAME apple2e.cpp header): always present on that
+    /// profile, never the user's `zip_chip` option. Its ROM drives it at
+    /// reset (unlock, fast, slot mask, lock — then Esc held → normal speed).
+    pom2::ZipChip& iicPlusAccelerator() { return iicPlusZip_; }
+    /// Point Memory at the socket accelerator this machine has: the //c
+    /// Plus's own, the user's Zip Chip, or none. Caller holds stateMutex;
+    /// the profile switch calls it once the new ROM (and so the //c Plus
+    /// identity) is in place.
+    void installSocketAccelerator();
     static constexpr int kSony35Drives = 3;
     /// Physical external mechanisms persist when their media is ejected.
     /// Caller holds stateMutex (or is restoring before the worker starts).
@@ -540,6 +550,7 @@ private:
     std::unique_ptr<pom2::NoSlotClock>  noSlotClock_;
     pom2::ZipChip      zipChip_;
     std::atomic<bool>  zipInstalled_{false};
+    pom2::ZipChip      iicPlusZip_;     // the //c Plus CGGA (boots fast)
 
     pom2::RewindBuffer rewind_;
     /// Last `pom2::mediaWriteEpoch()` value the ring was reconciled against

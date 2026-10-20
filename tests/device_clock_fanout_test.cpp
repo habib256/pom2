@@ -27,8 +27,14 @@
 #include "EmulationController.h"
 #include "SystemProfile.h"
 #include "TranswarpCard.h"
+#include "M6502.h"
+#include "Memory.h"
+#include "ResourcePaths.h"
+#include "ZipChip.h"
 
 #include <memory>
+#include <mutex>
+#include <string>
 
 #include <cassert>
 #include <cmath>
@@ -45,12 +51,37 @@ int main()
         ctrl.setCyclesPerFrame(pom2VideoTiming(VideoStandard::PAL).cyclesPerFrame);
         ctrl.setVideoStandard(VideoStandard::PAL);
         assert(near(ctrl.emulatedCpuClockHz(), 1015625.0) && "a 1x PAL machine keeps its nominal");
-        // The //c+: 68180 cycles per NTSC frame = 4x.
+    }
+    // The //c+: its 4 MHz is its built-in accelerator since 2026-10-21 (a
+    // ZipChip its ROM sets fast at reset), on a 1x budget — and the devices
+    // must be told the clock it actually burns, 4 MHz (MAME's Zip speed).
+    if (const std::string rom = pom2::findResource("roms/apple2cp.rom"); !rom.empty()) {
+        EmulationController ctrl;
         const auto& cp = pom2::profileConfig(pom2::SystemProfile::AppleIIcPlus);
         ctrl.setCyclesPerFrame(cp.defaultCyclesPerFrame);
         ctrl.setVideoStandard(cp.videoStandard);
-        assert(near(ctrl.emulatedCpuClockHz(), 4.0 * 1022727.0) &&
-               "the //c+ must hand its devices the 4x clock it actually runs at");
+        {
+            auto st = ctrl.lockState();
+            st.memory().setIIEMode(true);
+            assert(st.memory().loadAppleIIRom(rom.c_str(), true));
+            st.cpu().setCpuMode(M6502::CpuMode::CMOS);
+        }
+        {
+            std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+            ctrl.installSocketAccelerator();
+        }
+        {
+            auto st = ctrl.lockState();
+            st.memory().memWrite(0x0300, 0x4C);   // JMP $0300 — no slot access
+            st.memory().memWrite(0x0301, 0x00);
+            st.memory().memWrite(0x0302, 0x03);
+            st.cpu().setProgramCounter(0x0300);
+        }
+        ctrl.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 3; ++i) ctrl.tickFrame();
+        assert(near(ctrl.emulatedCpuClockHz(), pom2::ZipChip::kFastHz) &&
+               "the //c+ must hand its devices the 4 MHz clock it actually runs at");
+        ctrl.setMode(EmulationController::Mode::Stopped);
     }
     // Bug hunt #10: a plugged TransWarp multiplied the frame's cycle budget
     // by 3.5 but every emuCycles consumer kept the stock clock — a 1 kHz tone
@@ -72,16 +103,13 @@ int main()
                "the budget and the audio clock must agree");
     }
 
-    // The toolbar's 1x bucket = the profile's stock budget: 68180 on the //c+,
-    // the video standard's own cyclesPerFrame everywhere else.
+    // The toolbar's 1x bucket = the profile's stock budget, which is the
+    // video standard's own cyclesPerFrame on every profile — the //c+'s 4x
+    // is its accelerator's, not its budget's (68180 until 2026-10-21).
     for (const pom2::SystemProfile p : pom2::allProfiles()) {
         const auto& cfg = pom2::profileConfig(p);
-        const int nominal = pom2VideoTiming(cfg.videoStandard).cyclesPerFrame;
-        if (p == pom2::SystemProfile::AppleIIcPlus)
-            assert(cfg.defaultCyclesPerFrame == 68180 && cfg.defaultCyclesPerFrame == 4 * nominal);
-        else
-            assert(cfg.defaultCyclesPerFrame == nominal);
+        assert(cfg.defaultCyclesPerFrame == pom2VideoTiming(cfg.videoStandard).cyclesPerFrame);
     }
-    std::printf("device_clock_fanout: 1x NTSC/PAL nominal, //c+ 4x, toolbar buckets OK\n");
+    std::printf("device_clock_fanout: 1x NTSC/PAL nominal, //c+ accelerator 4 MHz, toolbar buckets OK\n");
     return 0;
 }

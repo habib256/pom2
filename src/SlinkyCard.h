@@ -111,6 +111,8 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
+    /// A write to the ROM page is an access to the $Cn00 space too.
+    void    slotRomWrite(uint8_t, uint8_t) override { regsEnabled_ = true; }
     uint8_t expansionRomRead(uint16_t offset) override;
     bool    peekSlotRom(uint8_t low8, uint8_t& out) const override;
     bool    peekExpansionRom(uint16_t offset, uint8_t& out) const override;
@@ -130,6 +132,11 @@ private:
 
     int slot_;
     std::array<uint8_t, 16> regs_{};
+    // TN Memory Expansion #1: "RESET turn[s] off the Memory Expansion Card
+    // registers until an access to the $Cn00 space" (the gate array's way
+    // of saving pins; "the boot scan hits $Cn00 anyway"). Not in MAME's
+    // a2memexp. A card built outside a machine has seen no reset: on.
+    bool regsEnabled_ = true;
     uint32_t wptr_    = 0;
     uint32_t liveptr_ = 0;
     std::vector<uint8_t> ram_;

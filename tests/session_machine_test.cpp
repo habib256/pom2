@@ -21,6 +21,7 @@
 #include "TestTempPath.h"
 #include <cassert>
 #include <future>
+#include <mutex>
 #include <fstream>
 #include <filesystem>
 
@@ -50,6 +51,11 @@ void profiles()
         rom.bytes.assign(cfg.noPhysicalSlots ? 0x8000 : 0x4000, 0xEA);
         if (cfg.noPhysicalSlots) { rom.bytes[0x3BC0] = 0; rom.bytes[0x3BBF] = profile == SystemProfile::AppleIIcPlus ? 5 : 3; }
         assert(source->memory().loadAppleIIRom(rom, cfg.noPhysicalSlots));
+        {
+            // As the profile switch does: a //c Plus seats its accelerator.
+            std::lock_guard<std::mutex> lk(source->stateMutex());
+            source->installSocketAccelerator();
+        }
         source->cpu().setProgramCounter(0x4567);
         source->memory().writeRamUnchecked(0x1234, uint8_t(profile));
         const auto archive = capture(*source);

@@ -161,6 +161,13 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
     k.chatMauve = chatMauve;
     k.chatMauveState =
         chatMauve ? static_cast<int>(chatMauve->renderStateKey()) : -1;
+    // A VidHD's text colours change with a $C022 write that moves neither
+    // video RAM nor a soft switch — key on them or the repaint is skipped.
+    {
+        uint32_t fg = 0, bg = 0;
+        k.cardTextColours = (cardVideo_ && cardVideo_->textColours(fg, bg))
+            ? ((uint64_t{fg} << 32) | bg) : 0;
+    }
     k.vram.resize(kLen * 2 + cromSize);
     std::memcpy(k.vram.data(),            mainRam + kBase, kLen);
     std::memcpy(k.vram.data() + kLen,     auxBytes + kBase, kLen);
@@ -175,6 +182,7 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
         p.hiResModeId == k.hiResModeId &&
         p.charRom == k.charRom && p.charRomSize == k.charRomSize &&
         p.chatMauve == k.chatMauve && p.chatMauveState == k.chatMauveState &&
+        p.cardTextColours == k.cardTextColours &&
         std::memcmp(&p.state, &k.state, sizeof(Memory::DisplayState)) == 0 &&
         p.vram.size() == k.vram.size() &&
         std::memcmp(p.vram.data(), k.vram.data(), k.vram.size()) == 0;
@@ -212,6 +220,13 @@ void Apple2Display::renderInternalBand(Memory& mem, const Memory::DisplayState& 
             tintText(state, scanY0, scanY1,
                      kChatMauveLoResPalette[chatMauve->rvbGraph().textColour]);
     }
+    // A VidHD's IIgs text colours ($C022) on the Apple's own text, when the
+    // card is not showing its Super Hi-Res picture and the monitor is not a
+    // monochrome one (its lit dot is not white, so there is nothing to map).
+    uint32_t fg = 0, bg = 0;
+    if (cardVideo_ && !cardVideo_->ownsScreen(state.textMode, state.an0) &&
+        !isMonochrome() && cardVideo_->textColours(fg, bg))
+        tintText(state, scanY0, scanY1, fg, bg);
 }
 
 void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplayState& state,

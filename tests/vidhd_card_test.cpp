@@ -213,6 +213,26 @@ int main()
         disp.render(mem);
         expect(disp.width() == 280 && !disp.showingCardPicture(),
                "SHR off: the Apple's picture");
+
+        // IIgs text colours on the Apple's own text (TN IIgs #63 Table 1):
+        // $C022 = $D6 is yellow text on medium blue. A normal space is all
+        // background, an inverse space all text colour. The change alone —
+        // no video RAM, no soft switch — must repaint.
+        mem.memWrite(0x0400, 0xA0);            // normal space, column 0
+        mem.memWrite(0x0401, 0x20);            // inverse space, column 1
+        mem.memWrite(0xC022, 0xD6);
+        disp.render(mem);
+        expect(disp.pixels()[0] == VidHDCard::iigsColour(0x6),
+               "$C022 low nibble: the text background (medium blue)");
+        expect(disp.pixels()[7 + 1] == VidHDCard::iigsColour(0xD),
+               "$C022 high nibble: the text colour (yellow)");
+        expect(VidHDCard::iigsColour(0x6) == rgb(0x2, 0x2, 0xF),
+               "medium blue is master colour $022F");
+        mem.memWrite(0xC022, 0xF0);            // the default: plain text again
+        disp.render(mem);
+        expect(disp.pixels()[0] == 0xFF000000u, "$F0: white on black, untouched");
+        mem.memWrite(0xC022, 0xF6);            // back to what section 2 left
+
         mem.memWrite(0xC029, 0xC1);
         disp.render(mem);
         expect(disp.showingCardPicture() && disp.width() == W && disp.height() == H,

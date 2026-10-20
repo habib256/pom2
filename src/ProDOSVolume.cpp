@@ -86,11 +86,14 @@ struct PreparedFile {
     std::uint8_t                access = 0xE3;
     std::vector<std::uint8_t>   data;
     std::uint8_t                storageType = kStorageSeedling;
-    std::size_t                 dataBlocks  = 0;
+    std::size_t                 dataBlocks  = 0;     // ALLOCATED data blocks
+    std::size_t                 chunks      = 0;     // 512-byte chunks of data
     std::size_t                 indexBlocks = 0;     // 0 for seedling, 1 for sapling
     // Filled at layout: keyPointer (= seedling data block, sapling index block).
     std::size_t                 firstBlock  = 0;
 };
+
+bool chunkAllocated(const std::vector<std::uint8_t>& data, std::size_t i);
 
 // ProDOS TXT uses CR line endings. Only type $04 is transformed, and only
 // when the folder mount explicitly enables text exchange.
@@ -668,13 +671,28 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
         const std::size_t payloadSize = pf.data.size();
         if (payloadSize <= kBlockBytes) {
             pf.storageType = kStorageSeedling;
+            pf.chunks      = 1;
             pf.dataBlocks  = 1;
             pf.indexBlocks = 0;
         } else {
-            pf.dataBlocks  = (payloadSize + kBlockBytes - 1) / kBlockBytes;
+            // Sparse, as ProDOS writes it (TN ProDOS #30, "Sparse Files"): an
+            // all-zero 512-byte chunk gets NO block — its index entry is 0
+            // and reads back as zeros — except the first, which "ProDOS 8
+            // always allocates". A host file that is mostly zeros (a
+            // `BSAVE …,B$FFFFFF` round trip is 16 MB with one byte of data)
+            // then costs what it cost on the guest's disk, five blocks,
+            // instead of overflowing the volume.
+            pf.chunks      = (payloadSize + kBlockBytes - 1) / kBlockBytes;
             pf.storageType = payloadSize <= kSaplingMaxBytes ? kStorageSapling : kStorageTree;
-            pf.indexBlocks = payloadSize <= kSaplingMaxBytes ? 1 :
-                1 + (pf.dataBlocks + 255) / 256;
+            std::size_t groupsUsed = 0;
+            pf.dataBlocks = 0;
+            for (std::size_t g = 0; g * 256 < pf.chunks; ++g) {
+                bool any = false;
+                for (std::size_t i = g * 256; i < std::min(pf.chunks, g * 256 + 256); ++i)
+                    if (chunkAllocated(pf.data, i)) { ++pf.dataBlocks; any = true; }
+                if (any) ++groupsUsed;
+            }
+            pf.indexBlocks = pf.storageType == kStorageSapling ? 1 : 1 + groupsUsed;
         }
         ++result.filesIncluded;
         dir.order.push_back({false, dir.files.size()});
@@ -715,6 +733,18 @@ void childIndexToBlockSlot(std::size_t firstBlock, std::size_t childIndex,
     prodosSlot1Based = static_cast<std::uint8_t>(slot + 1);
 }
 
+// Does chunk `i` (512 bytes) of `data` need a block? The first always does
+// (ProDOS 8 allocates it on CREATE); any other only if it holds a non-zero
+// byte. TN ProDOS #30.
+bool chunkAllocated(const std::vector<std::uint8_t>& data, std::size_t i)
+{
+    if (i == 0) return true;
+    const std::size_t off = i * kBlockBytes;
+    const std::size_t end = std::min(data.size(), off + kBlockBytes);
+    for (std::size_t k = off; k < end; ++k) if (data[k]) return true;
+    return false;
+}
+
 // Lay down the data + (if sapling) index block for `f`. Updates `nextBlock`
 // linearly, mirroring the original buildVolumeFromFolder allocation order
 // so flat-volume tests stay byte-identical to the pre-subdir layout.
@@ -736,7 +766,16 @@ void writeFileData(std::vector<std::uint8_t>& image, PreparedFile& f,
         const std::size_t master = tree ? nextBlock++ : 0;
         if (tree) markBitmapUsed(image, master, master + 1);
         std::uint8_t* idx = nullptr;
-        for (std::size_t i = 0; i < f.dataBlocks; ++i) {
+        for (std::size_t i = 0; i < f.chunks; ++i) {
+            // A tree's sub-index exists only for a group that holds data; an
+            // all-zero group is a 0 in the master index (sizing counted the
+            // same groups).
+            if (i % 256 == 0 && tree) {
+                bool any = false;
+                for (std::size_t k = i; k < std::min(f.chunks, i + 256); ++k)
+                    if (chunkAllocated(f.data, k)) { any = true; break; }
+                if (!any) { i += 255; idx = nullptr; continue; }
+            }
             if (i % 256 == 0) {
                 const std::size_t idxBlk = nextBlock++;
                 markBitmapUsed(image, idxBlk, idxBlk + 1);
@@ -749,6 +788,7 @@ void writeFileData(std::vector<std::uint8_t>& image, PreparedFile& f,
                     f.firstBlock = idxBlk;
                 }
             }
+            if (!chunkAllocated(f.data, i)) continue;   // sparse: entry stays 0
             const std::size_t db = nextBlock++;
             idx[i % 256]       = static_cast<std::uint8_t>(db & 0xFF);
             idx[256 + i % 256] = static_cast<std::uint8_t>((db >> 8) & 0xFF);
@@ -1468,7 +1508,7 @@ void decodeOneDir(DecodeWalk& w,
             // turned "your file is over 128 KB" into "your file is gone".
             // One more level of indirection is all a tree is.
             const std::size_t sizeCeiling =
-                (storage == kStorageTree) ? kTreeMaxBytes : kSaplingMaxBytes;
+                (storage == kStorageSapling) ? kSaplingMaxBytes : kTreeMaxBytes;
             if (eof > sizeCeiling) {
                 pom2::log().warn("ProDOSVol",
                     "skipping oversize file in decode: " + name);
@@ -1512,16 +1552,14 @@ void decodeOneDir(DecodeWalk& w,
             };
 
             if (storage == kStorageSeedling) {
-                if (eof > kBlockBytes) {
-                    // A seedling is defined as eof ≤ 512; a larger eof means
-                    // an inconsistent entry (ProDOS promotes to sapling past
-                    // 512). Warn rather than silently emit a 512-byte file.
-                    pom2::log().warn("ProDOSVol",
-                        "seedling entry claims eof>512, truncating: " + name);
-                }
                 const std::uint8_t* d = blockPtr(keyPtr);
                 const std::size_t   take = std::min<std::size_t>(eof, kBlockBytes);
                 data.insert(data.end(), d, d + take);
+                // A seedling with EOF past 512 is legal and sparse: ProDOS 8
+                // up to 1.9 made one when SET_EOF went past $200 on a seedling
+                // (TN ProDOS #30, "One more thing"). Everything after the one
+                // block reads as zeros — it used to be cut to 512 bytes.
+                if (eof > kBlockBytes) data.insert(data.end(), eof - kBlockBytes, 0u);
             } else if (storage == kStorageSapling) {
                 // Sapling: keyPtr → index block listing the data blocks.
                 std::size_t remaining = eof;

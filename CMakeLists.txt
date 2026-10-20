@@ -420,6 +420,7 @@ set(SOURCES
     src/PhasorCard.cpp
     src/PrinterCard.cpp
     src/ImageWriter.cpp
+    src/ImageWriter_CustomChars.cpp
     src/ImageWriterPdf.cpp
     src/ImageWriter_ImGui.cpp
     src/Rewind_ImGui.cpp
@@ -894,6 +895,7 @@ set(POM2_RUNTIME_SOURCES
     src/FujiNetCardFactory.cpp
     src/FujiNetNetDevice.cpp
     src/ImageWriter.cpp
+    src/ImageWriter_CustomChars.cpp
     src/ImageWriterPdf.cpp
     src/MachineSnapshot.cpp
     src/Pom2Core.cpp
@@ -1561,6 +1563,7 @@ set(POM2_CORE_SOURCES
     # program linking only the core library could not render a page.
     src/hgrpaint/HgrFont.cpp
     src/ImageWriter.cpp
+    src/ImageWriter_CustomChars.cpp
     src/ImageWriterPdf.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp

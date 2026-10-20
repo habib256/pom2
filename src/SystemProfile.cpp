@@ -206,13 +206,16 @@ const ProfileConfig& cfgAppleIIcPlus()
         { "roms/apple2e_char.rom", "roms/apple2_char.rom" },
         /*iieMode=*/true,        // same paging as IIe/IIc
         M6502::CpuMode::CMOS,    // 65C02 at 4 MHz on real silicon
-        // Real //c Plus boots with its on-board Zip-style accelerator
-        // running the 65C02 at ~4 MHz (the slower 1 MHz mode is only
-        // entered for disk I/O via $C036 on real silicon — POM2 doesn't
-        // model that softswitch, but its event-driven disk LSS is purely
-        // cycle-driven so a 4× CPU still produces correctly-paced
-        // nibbles). 4 × 17045 = 68180 cycles per 60 Hz frame.
-        68180,
+        // The STOCK clock, 1×. The //c Plus's 4 MHz comes from its built-in
+        // accelerator (the Zip-compatible CGGA), modelled as a ZipChip that
+        // EmulationController::installSocketAccelerator seats on this
+        // profile: the ROM unlocks it, sets it fast and locks it at every
+        // reset, and drops it to 1 MHz when Esc is held — so the machine
+        // runs at 4.09 MHz, slows for slot/speaker accesses as MAME's does,
+        // and software can switch it ($C05A/$C05B). Until 2026-10-21 this
+        // was a fixed 68180 (4×) budget, Esc did nothing, and the toolbar's
+        // "1×" meant 4 MHz on this machine only.
+        17045,
         // builtInSlots: [_, ssc(printer), ssc(modem), _, mouse,
         //                smartport35, diskii, _]. Same dual-serial layout
         // as cfgAppleIIc — //c+ inherits the //c's two on-board RS-232

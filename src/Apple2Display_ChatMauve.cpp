@@ -329,7 +329,7 @@ void Apple2Display::renderDhgrCol280(Memory& mem, const Memory::DisplayState& st
 // painters put pure white on pure black, so remapping white in the text
 // rows of the band is the whole effect.
 void Apple2Display::tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
-                             uint32_t colour)
+                             uint32_t colour, uint32_t background)
 {
     int lo = 0, hi = 0;
     if (state.textMode) {
@@ -343,7 +343,11 @@ void Apple2Display::tintText(const Memory::DisplayState& state, int scanY0, int 
     uint32_t* base = useFrame80_ ? frame80.data() : frame.data();
     for (int y = lo; y < hi; ++y) {
         uint32_t* row = base + static_cast<size_t>(y) * w;
-        for (int x = 0; x < w; ++x)
+        for (int x = 0; x < w; ++x) {
             if (row[x] == 0xFFFFFFFFu) row[x] = colour;
+            // background == 0: leave the paper alone (no alpha-0 colour is
+            // ever painted, so 0 is free as "not asked").
+            else if (background && row[x] == 0xFF000000u) row[x] = background;
+        }
     }
 }

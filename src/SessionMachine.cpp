@@ -25,7 +25,7 @@
 void EmulationController::setZipChipInstalled(const pom2::StateAccess&, bool on)
 {
     zipInstalled_.store(on); zipChip_.onReset(0);
-    mem.setCpuSocketAccelerator(on ? &zipChip_ : nullptr);
+    installSocketAccelerator();
 }
 
 bool ClockCard::installSessionIdentity(const std::vector<uint8_t>& bytes)
@@ -219,8 +219,15 @@ bool reconstructSession(EmulationController& c, const SessionArchive& session,
     auto configure = [&](EmulationController& target, const StateAccess& state) {
         if (!target.memory().installSessionEnvironment(env, error)) return false;
         target.cpu().setCpuMode(mode);
-        target.setZipChipInstalled(state, config.size() == 6);
-        if (config.size() == 6) target.zipChip().setBootFast(config[5]);
+        if (target.memory().isIIcPlus()) {
+            // The //c Plus's accelerator is part of the machine, not the
+            // user's //e Zip Chip option — restoring one must not switch that
+            // option on (it would follow the user back to a //e profile).
+            target.installSocketAccelerator();
+        } else {
+            target.setZipChipInstalled(state, config.size() == 6);
+            if (config.size() == 6) target.zipChip().setBootFast(config[5]);
+        }
         target.memory().setNoSlotClock(config[1] ? &target.noSlotClock() : nullptr);
         target.noSlotClock().setEnabled(config[2]); target.noSlotClock().setSlot(config[3]);
         target.setCyclesPerFrame(profileConfig(profile).defaultCyclesPerFrame);

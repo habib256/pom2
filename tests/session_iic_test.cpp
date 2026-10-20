@@ -50,6 +50,9 @@ struct Fixture {
         rom.path = "synthetic //c session firmware"; rom.bytes.assign(0x8000, 0xEA);
         rom.bytes[0x3BC0] = 0; rom.bytes[0x3BBF] = plus ? 5 : 3;
         assert(mem.loadAppleIIRom(rom, true) && mem.isIIcClass());
+        // As the profile switch does: the //c Plus seats its built-in
+        // accelerator once its ROM is in (stateMutex is held here).
+        ctrl.installSocketAccelerator();
         for (int slot : {1, 2}) {
             auto card = std::make_unique<SuperSerialCard>(slot);
             card->setBuiltInPort(true); card->setCable(SuperSerialCard::Cable::NullModem);
@@ -118,7 +121,12 @@ void roundtrip(pom2::SystemProfile profile) {
     // Rebuild a different machine, including the alternate firmware and
     // motherboard drive topology, after deleting the original image files.
     auto rebuilt = std::make_unique<EmulationController>(AudioDevice::OutputMode::Offline);
-    assert(pom2::loadSessionFile(*rebuilt, f->session, f->error));
+    if (!pom2::loadSessionFile(*rebuilt, f->session, f->error)) {
+        std::fprintf(stderr, "rebuilt restore: %s\n", f->error.c_str()); assert(false);
+    }
+    // The //c Plus's accelerator is the machine's, not the user's //e Zip
+    // Chip option: restoring the session must leave that option off.
+    assert(!rebuilt->zipChipInstalled());
     {
         pom2::SessionArchive restored; Blob encoded;
         auto state = rebuilt->lockState();

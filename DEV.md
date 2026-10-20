@@ -1335,9 +1335,19 @@ for the Videoterm on a //e; the picker greys it out and `--slot` refuses it.
 **Snapshot.** `"VDHD"` v1: magic, version, the four registers. AppleWin also
 saves its ][+ memory mode, which POM2 has no use for.
 
-**Not modelled.** The IIgs text and border colours (SCREENCOLOR and
-BORDERCOLOR are latched and snapshotted, never painted — there is no border
-in the picture), SHADOW's meaning, B&W DHGR (NEWVIDEO bit 5), the VidHD's own
+**Text colours** *(2026-10-21)*. SCREENCOLOR paints the Apple's own text
+once a program moves it off the `$F0` the card comes up with: high nibble =
+text, low nibble = background, in the IIgs's sixteen master colours (Apple
+II Technical Note IIgs #63, Table 1, `VidHDCard::iigsColour`). Software
+relies on it on a VidHD — the ProDOS text-colour themes in
+a2stuff/prodos-drivers write `$C022`/`$C034` for "any Apple II equipped with
+a VidHD card". `CardVideoSource::textColours` hands the pair to
+Apple2Display, which remaps the text rows (`tintText`, shared with the Chat
+Mauve) and keys the text-frame cache on it.
+
+**Not modelled.** BORDERCOLOR (latched and snapshotted — there is no border
+in the picture), SHADOW's meaning, B&W DHGR (NEWVIDEO bit 5: a IIgs feature,
+TN IIgs #29, with no evidence the VidHD has it), the VidHD's own
 extended text modes (80×45, 120×67, 240×135) and their colours, its
 enable/disable switch, SHR raster effects (an SCB or palette change mid-frame
 shows next frame), and the ][ / ][+ aux mirror. A mono monitor setting does
@@ -8080,8 +8090,14 @@ character, plus a perforation skip every few. Slot Config warns; slots
 1/2/4/5/7 print correctly (verified against the real 4 KB dump on both
 `apple2p.rom` and `apple2e.rom`).
 
-**Not modelled**: user-defined character sets (`ESC '` / `ESC I`, absent
-from the reference too), `ESC ?` (send ID string — POM2 has no
+**Custom characters** *(2026-10-20)*, ImageWriter II only (Technical
+Reference ch. 7): `ESC -` / `ESC +` (8- or 16-dot maximum, erases the set,
+8-bit mode), `ESC I KEY WIDTH DATA… CTRL-D` (width `A`-`P` on wires 1-8,
+`a`-`p` on 2-9), `ESC '` / `ESC *` (high ASCII by key − 128) / `ESC $`.
+Kept across `ESC c`, lost at power-off; an undefined key prints its
+standard character. The I, DMP and 8510A keep consuming these as no-ops.
+
+**Not modelled**: `ESC ?` (send ID string — POM2 has no
 printer→computer back-channel), and `CAN` ($18, "erase current line from
 the print buffer", *Technical Reference* Miscellaneous table) — dots are
 painted as they arrive, so there is no line buffer to erase.

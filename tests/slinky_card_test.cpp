@@ -90,8 +90,12 @@ void registers()
     expect(c.deviceSelectRead(0x8) == 0x5A, "$C0n8 is a plain latch");
 
     c.onReset();
+    // TN Memory Expansion #1: RESET turns the registers off until an access
+    // to the $Cn00 space — a write now is not latched.
+    c.deviceSelectWrite(0x8, 0x77);
+    (void)c.slotRomRead(0x00);                 // the boot scan's $Cn00 access
     expect(c.livePointer() == 0 && c.deviceSelectRead(0x8) == 0x00,
-           "reset clears the latches");
+           "reset clears the latches, and they ignore writes until $Cn00");
     expect(c.ramAt(0x01FFFE) == 0x11, "reset keeps the RAM");
 }
 

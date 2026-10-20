@@ -67,8 +67,15 @@
 //                entry points from `$Cn14` (each `LDY #cmd` then a branch to
 //                the common body at `$Cn36`), the node address at `$CnF0`,
 //                and **`ATLK` at `$CnF9-$CnFC`** — the signature guest
-//                software identifies the card by, since it is neither a
-//                Pascal 1.1 device nor a ProDOS block device. The driver proves it: the $Cn00 code sets
+//                software identifies the card by. It is not a Pascal 1.1
+//                device ($Cn0B = $2A), but the page does open with the
+//                ProDOS / autostart boot signature in the `LDY #` idiom
+//                (`A0 20 A0 00 A0 03 A0 3C`: $Cn01 = $20, $Cn03 = $00,
+//                $Cn05 = $03, $Cn07 = $3C), so the //e scan and ProDOS see
+//                a bootable slot — the network boot. Checked against the
+//                dump 2026-10-21 (Apple II Technical Notes AppleTalk #4/#6
+//                describe the card; an earlier comment here said it carried
+//                no block-device signature). The driver proves it: the $Cn00 code sets
 //                `$FB/$FC` to $Cn00 and then does `STA ($FB),Y` — it writes
 //                into its own firmware page. What the host reads there is
 //                what the card put there, copied out of ROM at boot

@@ -1281,8 +1281,22 @@ static void testTreeFilesBuildAndRoundTrip()
         const uint8_t* entry = image.data() + 2 * 512 + 4 + 39;
         assert((entry[0] >> 4) == (size <= 131072 ? 2 : 3));
         assert(rd24(entry + 0x15) == size);
-        const size_t blocks = (size + 511) / 512;
-        assert(rd16(entry + 0x13) == blocks + (size <= 131072 ? 1 : 1 + (blocks + 255) / 256));
+        // Allocated blocks: the first chunk always, every other only if it
+        // holds a non-zero byte (sparse, TN ProDOS #30) — this pattern's
+        // 131073-byte case ends on a single $00 byte, which needs no block.
+        const size_t chunks = (size + 511) / 512;
+        size_t blocks = 0, groups = 0;
+        for (size_t g = 0; g * 256 < chunks; ++g) {
+            bool any = false;
+            for (size_t c = g * 256; c < std::min(chunks, g * 256 + 256); ++c) {
+                bool used = (c == 0);
+                for (size_t k = c * 512; !used && k < std::min(size, c * 512 + 512); ++k)
+                    used = data[k] != 0;
+                if (used) { ++blocks; any = true; }
+            }
+            if (any) ++groups;
+        }
+        assert(rd16(entry + 0x13) == blocks + (size <= 131072 ? 1 : 1 + groups));
         const auto decoded = pom2::decodeVolumeToFolder(image, destination.string());
         assert(decoded.ok && decoded.filesWritten == 1 && decoded.filesUnsaved == 0);
         std::ifstream input(destination / "LARGE.bin", std::ios::binary);
@@ -1423,6 +1437,87 @@ static void testConcurrentConflictCopiesNeverReplaceEachOther()
     fs::remove_all(source, ec);
 }
 
+// TN ProDOS #30, "Sparse Files". A file's all-zero 512-byte chunks need no
+// block (index entry 0 reads back as zeros) — except the first, which
+// ProDOS 8 always allocates. The build side used to allocate every chunk,
+// so a mostly-empty host file cost its full size on the volume.
+static void testSparseFiles()
+{
+    auto firstEntry = [](const std::vector<std::uint8_t>& img) {
+        return img.data() + 2 * kBlockBytes + 4 + 39;     // entry 0 of block 2
+    };
+
+    // Sapling: chunks 1-8 empty, data in chunk 0 and chunk 9.
+    {
+        fs::path dir = makeTempDir("sparse_sapling");
+        std::vector<std::uint8_t> bin(5000, 0);
+        bin[0] = 0x11; bin[4999] = 0x99;
+        writeFile(dir / "holes.bin", bin);
+        std::vector<std::uint8_t> img;
+        auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == 1);
+        const std::uint8_t* e = firstEntry(img);
+        assert((e[0] >> 4) == 0x2);
+        assert(rd16(e + 0x13) == 3 && "1 index + chunk 0 + chunk 9");
+        assert(rd24(e + 0x15) == 5000);
+        fs::path dst = makeTempDir("sparse_sapling_out");
+        auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+        assert(dr.ok);
+        std::ifstream in(dst / "HOLES.bin", std::ios::binary);
+        std::vector<std::uint8_t> back((std::istreambuf_iterator<char>(in)), {});
+        assert(back == bin && "holes read back as zeros");
+        fs::remove_all(dir); fs::remove_all(dst);
+    }
+
+    // The note's own example: BSAVE SPARSE.FILE,A$300,L$1,B$FFFFFF — 16 MB
+    // of EOF, "only takes 5 blocks on a ProDOS disk": a master index, two
+    // index blocks, two data blocks (the first, always allocated, and the
+    // one holding the byte).
+    {
+        fs::path dir = makeTempDir("sparse_tree");
+        std::vector<std::uint8_t> big(0xFFFFFF, 0);
+        big.back() = 0x42;
+        writeFile(dir / "sparse.bin", big);
+        std::vector<std::uint8_t> img;
+        auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == 1);
+        const std::uint8_t* e = firstEntry(img);
+        assert((e[0] >> 4) == 0x3);
+        assert(rd16(e + 0x13) == 5 && "TN ProDOS #30: five blocks");
+        assert(br.totalBlocks < 200 && "the volume is not 16 MB");
+        fs::path dst = makeTempDir("sparse_tree_out");
+        auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+        assert(dr.ok);
+        std::ifstream in(dst / "SPARSE.bin", std::ios::binary);
+        std::vector<std::uint8_t> back((std::istreambuf_iterator<char>(in)), {});
+        assert(back == big);
+        fs::remove_all(dir); fs::remove_all(dst);
+    }
+
+    // A seedling with EOF past 512 (ProDOS 8 ≤ 1.9 after SET_EOF, TN ProDOS
+    // #30 "One more thing"): the rest reads as zeros, it is not cut to 512.
+    {
+        fs::path dir = makeTempDir("sparse_seedling");
+        std::vector<std::uint8_t> small(300, 0x5A);
+        writeFile(dir / "seed.bin", small);
+        std::vector<std::uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+        std::uint8_t* e = img.data() + 2 * kBlockBytes + 4 + 39;
+        assert((e[0] >> 4) == 0x1);
+        e[0x15] = 1000 & 0xFF; e[0x16] = 1000 >> 8; e[0x17] = 0;   // EOF = 1000
+        fs::path dst = makeTempDir("sparse_seedling_out");
+        auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+        assert(dr.ok);
+        std::ifstream in(dst / "SEED.bin", std::ios::binary);
+        std::vector<std::uint8_t> back((std::istreambuf_iterator<char>(in)), {});
+        assert(back.size() == 1000);
+        for (std::size_t i = 0; i < 300; ++i) assert(back[i] == 0x5A);
+        for (std::size_t i = 512; i < 1000; ++i) assert(back[i] == 0);
+        fs::remove_all(dir); fs::remove_all(dst);
+    }
+    std::printf("  sparse files (TN ProDOS #30): OK\n");
+}
+
 int main()
 {
     testFolderTextModeAndMetadata();
@@ -1437,6 +1532,7 @@ int main()
     testDecodeNeverMergesTwoEntriesOntoOneFile();
     testMultipleBitmapBlocks();
     testHostNewerFilePreserved();
+    testSparseFiles();
     testSymlinkLoopsAndEscapesAreRefused();
     testExtensionCaseRoundTripDoesNotDuplicate();
     testWindowsReservedNamesRefused();

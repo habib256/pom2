@@ -52,6 +52,7 @@ src/IIcExternalSmartPort.cpp
 src/IWMDevice.cpp
 src/ImageWriter.cpp
 src/ImageWriterPdf.cpp
+src/ImageWriter_CustomChars.cpp
 src/JoystickInput.cpp
 src/Keyboard.cpp
 src/LeChatMauveCard.cpp

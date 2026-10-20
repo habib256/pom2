@@ -384,6 +384,7 @@ void ImageWriter::setPowered(bool on)
     if (on == powered_) return;
     powered_ = on;
     if (sound_) sound_->power(on);
+    if (!on) clearCustomGlyphs();       // RAM: lost at power-off (ch. 7)
     // DELIBERATELY not resetPrinter() and not newPage(): switching a real
     // printer off does not eject the sheet or wipe what is on it. That is
     // what `powerCycle()` is for, and conflating the two is why "power off"
@@ -442,6 +443,9 @@ void ImageWriter::resetPrinter()
     // dot-matrix cell that smears every glyph — see ImageWriter.h.
     style_        = 0;
     extraIntraSpace_ = 0.0;
+    // Standard font, any ESC I abandoned; the set survives a reset (ch. 7).
+    customFont_   = 0;
+    customLoad_   = CustomLoad::Off;
     bitGraph_.remBytes = 0;
     bitGraph_.readBytesColumn = 0;
     // A repeat run still owed is part of the parser state a reset clears —
@@ -904,6 +908,9 @@ void ImageWriter::printChar(uint8_t ch)
 
 void ImageWriter::printCharInternal(uint8_t ch)
 {
+    // An ESC I load takes every byte whole (8-bit keys and dots) to CTRL-D.
+    if (customLoad_ != CustomLoad::Off) { feedCustomLoad(ch); return; }
+
     // Bit 7 is masked for text but never for graphics data
     // (imagewriter.cpp:1260-1263) — nor for the Epson / Diablo parsers'
     // BINARY parameters, which are full bytes: masking them turned an FX-80
@@ -920,13 +927,15 @@ void ImageWriter::printCharInternal(uint8_t ch)
     if (ch == 0x01) ch = 0x20;
 
     const double lineStart = curX_;
-    renderGlyph(ch);
+    const CustomGlyph* custom = customGlyphFor(ch);
+    if (custom) renderCustomGlyph(*custom);
+    else renderGlyph(ch);
 
     // Slashed zero when soft switch B-1 is closed (imagewriter.cpp:1325).
     // Overstrike, not substitution: the real switch prints a slash THROUGH
     // the zero, and with a ROM face both glyphs come from the same bank, so
     // simply rendering '/' on top at the same origin is what the head does.
-    if ((switchb_ & kSwitchBSlashZero) && ch == '0') {
+    if (!custom && (switchb_ & kSwitchBSlashZero) && ch == '0') {
         if (romGlyph('0')) {
             renderGlyph('/');
         } else {
@@ -946,6 +955,8 @@ void ImageWriter::printCharInternal(uint8_t ch)
         const double prop = glyphAdvance(ch);
         if (prop > 0.0) advance = prop;
     }
+    // A custom character is as wide as its own dot columns (ch. 7).
+    if (custom) advance = custom->width * customDotPitch();
     advance += extraIntraSpace_;
     curX_ += advance;
 
@@ -1545,6 +1556,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
 
         switch (escCmd_) {
         case 0x21: case 0x22: case 0x24: case 0x2b: case 0x2e:
+        case 0x27: case 0x2a: case 0x2d: case 0x49:
         case 0x30: case 0x31: case 0x32: case 0x33: case 0x34:
         case 0x35: case 0x36: case 0x3c: case 0x3e: case 0x3f:
         case 0x41: case 0x42: case 0x45: case 0x4d: case 0x4e:
@@ -1595,14 +1607,6 @@ bool ImageWriter::processCommandChar(uint8_t ch)
             neededParam_ = 7;
             msb_ = 255;
             break;
-        case 0x27:  // ESC '  select user-defined set
-        case 0x49:  // ESC I  define user-defined characters
-            // Not supported by the reference either. neededParam_ must be
-            // cleared here: leaving the previous command's count armed made
-            // phase 2 swallow the next 1-6 printable bytes as parameters.
-            neededParam_ = 0;
-            escCmd_ = 0;
-            return true;
         default:
             neededParam_ = 0;
             escCmd_      = 0;
@@ -1947,13 +1951,16 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     // typeface variant POM2 has only one bank for.
     case 0x6d: case 0x4d: break;                // typeface select — one font
     case 0x3d: break;                           // internal font ID
-    case 0x24: break;                           // cancel MSB + MouseText
+    case 0x24: customFont_ = 0; break;          // ESC $  standard font
     case 0x3f: break;                           // ESC ?  ID string: no back-channel
     case 0x4f: case 0x6f: break;                // paper-out detector
     case 0x6b: break;                           // optional font
     case 0x6c: break;                           // CR before LF/FF
     case 0x40: break;                           // output bin
-    case 0x2b: case 0x2e: break;                // custom char width
+    case 0x2d: case 0x2b: case 0x49: case 0x27: case 0x2a:
+        execCustomCharEscape(static_cast<uint8_t>(escCmd_));   // ESC - + I ' *
+        break;
+    case 0x2e: break;                           // custom char width
 
     case 0x4c:                                  // ESC L nnn  left margin
         spacesToZeros(3);

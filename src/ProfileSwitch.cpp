@@ -188,6 +188,12 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
     //     machine so a snapshot of the old one is refused.
     controller.setCyclesPerFrame(cfg.defaultCyclesPerFrame);
     controller.setVideoStandard(cfg.videoStandard);
+    {
+        // The //c Plus's own accelerator, or the user's Zip Chip, or none —
+        // decided by the ROM just loaded, before the reset that seats it.
+        std::lock_guard<std::mutex> lk(controller.stateMutex());
+        controller.installSocketAccelerator();
+    }
     controller.setMachineId(snapshotMachineId(p));
 
     // 11. The CPU fetches its reset vector from the new ROM.

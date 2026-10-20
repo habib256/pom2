@@ -26,7 +26,7 @@
 namespace pom2 {
 namespace {
 constexpr uint32_t kSnapMagic   = 0x4B4E4C53u;   // 'SLNK' little-endian
-constexpr uint16_t kSnapVersion = 1;
+constexpr uint16_t kSnapVersion = 2;   // v2: + the register-enable flag
 constexpr std::size_t kPages = SlinkyCard::kRamBytes / 256;
 } // namespace
 
@@ -48,6 +48,7 @@ void SlinkyCard::onReset()
 {
     regs_.fill(0);
     wptr_ = liveptr_ = 0;
+    regsEnabled_ = false;   // until the next $Cn00-$CnFF access (TN MemExp #1)
 }
 
 // The three pointer bytes always mirror a pointer, with the Apple card's
@@ -62,6 +63,7 @@ void SlinkyCard::publishPointer(uint32_t p)
 // a2memexp.cpp:166-181 read_c0nx.
 uint8_t SlinkyCard::deviceSelectRead(uint8_t low4)
 {
+    if (!regsEnabled_) return openBus();   // nothing drives the bus yet
     low4 &= 0x0F;
     uint8_t v = regs_[low4];
     if (low4 == 3) {
@@ -78,6 +80,7 @@ uint8_t SlinkyCard::deviceSelectRead(uint8_t low4)
 // the START of a transfer.
 void SlinkyCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
+    if (!regsEnabled_) return;
     low4 &= 0x0F;
     switch (low4) {
         case 0: case 1: case 2: {
@@ -101,6 +104,7 @@ void SlinkyCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 // a2memexp.cpp:238-247 read_cnxx: `m_rom[offset + slotno() * 0x100]`.
 uint8_t SlinkyCard::slotRomRead(uint8_t low8)
 {
+    regsEnabled_ = true;    // any $Cn00-page access wakes the registers
     uint8_t v = 0xFF;
     (void)peekSlotRom(low8, v);
     return v;
@@ -150,6 +154,7 @@ void SlinkyCard::appendSnapshotState(std::vector<uint8_t>& out) const
         byteio::putU16(out, p);
         out.insert(out.end(), ram_.begin() + p * 256, ram_.begin() + p * 256 + 256);
     }
+    out.push_back(regsEnabled_ ? 1 : 0);   // v2
 }
 
 void SlinkyCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -160,7 +165,8 @@ void SlinkyCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (!data || len < kHead) return;
     byteio::Reader r(data, len);
     if (r.u32() != kSnapMagic) return;
-    if (r.u16() != kSnapVersion) return;
+    const uint16_t version = r.u16();
+    if (version != 1 && version != kSnapVersion) return;
     std::array<uint8_t, 16> regs{};
     for (auto& b : regs) b = r.u8();
     const uint32_t wptr = r.u32();
@@ -172,9 +178,16 @@ void SlinkyCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         const unsigned p = body[i * 258] | (body[i * 258 + 1] << 8);
         if (p >= kPages) return;
     }
+    // v2 appends the register-enable flag; a v1 blob predates it (on).
+    bool enabled = true;
+    if (version >= 2) {
+        if (len < kHead + count * 258 + 1) return;
+        enabled = data[kHead + count * 258] != 0;
+    }
     regs_ = regs;
     wptr_ = wptr;
     liveptr_ = live;
+    regsEnabled_ = enabled;
     std::fill(ram_.begin(), ram_.end(), 0xFF);
     for (std::size_t i = 0; i < count; ++i) {
         const uint8_t* e = body + i * 258;

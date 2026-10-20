@@ -58,6 +58,10 @@ public:
     /// that blinks. Called under stateMutex, like the rest of render().
     virtual void paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark,
                               uint64_t emuCycles, double cpuHz) const = 0;
+
+    /// When the card does NOT own the screen: does it colour the Apple's
+    /// TEXT? `fg` / `bg` are colours as 0xAABBGGRR. Default: no.
+    virtual bool textColours(uint32_t& /*fg*/, uint32_t& /*bg*/) const { return false; }
 };
 
 } // namespace pom2

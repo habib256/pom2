@@ -33,10 +33,11 @@ void EmulationController::setVideoStandard(VideoStandard s)
     videoStandard_.store(s);
     const VideoTiming& vt = pom2VideoTiming(s);
     frameIntervalUs.store(1'000'000 / vt.refreshHz);
-    // The standard's nominal clock is NOT what the machine runs at when the
-    // profile solders an accelerator on: the //c+ carries
-    // defaultCyclesPerFrame = 68180 and burns 4 090 908 cycles per emulated
-    // second. Handing 1 022 727 to the emuCycles consumers made each of them
+    // The standard's nominal clock is NOT what the machine runs at when a
+    // profile solders an accelerator into its budget: the //c+ carried
+    // defaultCyclesPerFrame = 68180 (4 090 908 cycles per emulated second)
+    // until 2026-10-21, when its 4× became the ZipChip it really is and
+    // reaches this fan-out through applyAcceleratorClock instead. Handing 1 022 727 to the emuCycles consumers made each of them
     // read a //c+ cycle stamp as four times the time it is — a 4 kHz speaker
     // tone rendered at 1 kHz while producing four seconds of audio per
     // second of wall clock. Scale by the profile's own budget, which
@@ -52,6 +53,7 @@ void EmulationController::setVideoStandard(VideoStandard s)
     mem.setVideoStandard(s);
     // The Zip's 4 MHz and its millisecond delays are against the stock clock.
     zipChip_.setStockClockHz(static_cast<double>(vt.cpuClockHz));
+    iicPlusZip_.setStockClockHz(static_cast<double>(vt.cpuClockHz));
     // Retune the 1-bit speaker's cycle→sample reconstruction to the standard's
     // actual CPU clock (PAL ≈ 1.0156 MHz vs NTSC ≈ 1.0227 MHz). Without this
     // the audio path assumed NTSC under PAL and starved the reconstructor,
@@ -912,7 +914,22 @@ void EmulationController::setZipChipInstalled(bool on)
     std::lock_guard<std::mutex> lk(stateMtx);
     zipInstalled_.store(on);
     zipChip_.onReset(0);   // a chip just seated comes up as after a reset
-    mem.setCpuSocketAccelerator(on ? &zipChip_ : nullptr);
+    installSocketAccelerator();
+}
+
+void EmulationController::installSocketAccelerator()
+{
+    // The //c Plus has its accelerator soldered on, so the user's Zip Chip
+    // option (a //e socket part) never applies there.
+    if (mem.isIIcPlus()) {
+        if (mem.cpuSocketAccelerator() != &iicPlusZip_) {
+            iicPlusZip_.setBootFast(true);   // MAME accel_reset: IIc+ → fast
+            iicPlusZip_.onReset(0);
+        }
+        mem.setCpuSocketAccelerator(&iicPlusZip_);
+        return;
+    }
+    mem.setCpuSocketAccelerator(zipInstalled_.load() ? &zipChip_ : nullptr);
 }
 
 void EmulationController::hardReset()

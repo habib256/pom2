@@ -642,11 +642,8 @@ void Memory::resetSoftSwitchesWarm()
     // II/II+ machine_reset (apple2.cpp:325-331) only clears the cnxx
     // tracker + kbd strobe — LC bank-select, display switches and the
     // expansion-ROM latch SURVIVE. IIe/IIc/IIc+ reset_w (apple2e.cpp:
-    // 1453-1508) runs the full MMU/IOU/LC list — same as our cold reset.
-    if (iieMode) {
-        resetSoftSwitches();
-        return;
-    }
+    // 1453-1508) runs the full MMU/IOU/LC list — our cold reset, keyboard aside.
+    if (iieMode) { resetSoftSwitches(/*warm=*/true); return; }
     keyboard_.reset();   // abandon any in-flight paste, drop the strobe
     // NB: cnxx-slot tracker analogue lives in SlotBus, which the caller
     // (EmulationController::softReset) drives via slotBus().reset();
@@ -663,7 +660,7 @@ bool Memory::chatMauveBlockedBySlot3() const
     return card->name() != "Le Chat Mauve";
 }
 
-void Memory::resetSoftSwitches()
+void Memory::resetSoftSwitches(bool warm)
 {
     std::lock_guard<std::mutex> lk(stateMutex);
     display = DisplayState{};
@@ -731,7 +728,9 @@ void Memory::resetSoftSwitches()
     // (`charRomBankOffset`). Same reason they are in the snapshot trailer.
     an1 = false;   // (AN0 is display.an0, cleared with `display` above)
     an2 = false;
-    keyboard_.reset();   // abandon any in-flight paste, drop the strobe
+    // Only power-on clears the latch (MAME machine_reset; reset_w keeps it),
+    // so the //c Plus ROM sees an Esc held through Ctrl-Reset ($FD82).
+    if (warm) keyboard_.cancelPaste(); else keyboard_.reset();
 }
 
 void Memory::clearRam()

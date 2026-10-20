@@ -45,6 +45,29 @@ bool VidHDCard::peekSlotRom(uint8_t low8, uint8_t& out) const
     }
 }
 
+uint32_t VidHDCard::iigsColour(uint8_t index)
+{
+    // Apple II Technical Note IIgs #63, Table 1 — the master colour ($0RGB)
+    // of each $C022 / $C034 colour register value.
+    static constexpr uint16_t kMaster[16] = {
+        0x0000, 0x0D03, 0x0009, 0x0D2D, 0x0072, 0x0555, 0x022F, 0x06AF,
+        0x0850, 0x0F60, 0x0AAA, 0x0F98, 0x01D0, 0x0FF0, 0x04F9, 0x0FFF,
+    };
+    const uint16_t m = kMaster[index & 0x0F];
+    const uint32_t r = ((m >> 8) & 0xF) * 17u;
+    const uint32_t g = ((m >> 4) & 0xF) * 17u;
+    const uint32_t b = ( m       & 0xF) * 17u;
+    return 0xFF000000u | (b << 16) | (g << 8) | r;
+}
+
+bool VidHDCard::textColours(uint32_t& fg, uint32_t& bg) const
+{
+    if (screenColor_ == 0xF0) return false;   // the default: plain text
+    fg = iigsColour(static_cast<uint8_t>(screenColor_ >> 4));
+    bg = iigsColour(static_cast<uint8_t>(screenColor_ & 0x0F));
+    return true;
+}
+
 void VidHDCard::onVideoSoftSwitchWrite(uint16_t addr, uint8_t value)
 {
     // AppleWin VidHD.cpp:93-99 (`VideoIOWrite`, the IIgs registers). The

@@ -34,19 +34,24 @@ namespace {
 ///
 /// This used to be a hardcoded 1022727.0. That is the NTSC nominal, and it
 /// is wrong on two of POM2's profiles:
-///   * **//c Plus** carries a 4x Zip-style accelerator — 68180 cycles per
-///     60 Hz frame, ~4.09 MHz. Dividing its cycle stamps by the NTSC clock
-///     reported a 30-second ring as "120.0 s", disagreeing by a factor of
-///     four with the "history (s)" slider sitting right beside it.
+///   * **//c Plus** runs its built-in Zip-compatible accelerator at ~4.09
+///     MHz. Dividing its cycle stamps by the NTSC clock reported a 30-second
+///     ring as "120.0 s", disagreeing by a factor of four with the "history
+///     (s)" slider sitting right beside it.
 ///   * **PAL** runs 20313 cycles at 50 Hz (~1.0156 MHz).
 ///
 /// The worker's own budget is the honest source: cyclesPerFrame x refresh
-/// is exactly what it spends per wall-clock second, accelerator included.
+/// is what it spends per wall-clock second at 1×, and a socket or slot
+/// accelerator (the //c Plus's, a Zip Chip, a TransWarp) multiplies that —
+/// which the live clock carries (emulatedCpuClockHz ÷ the stock clock).
+/// Since 2026-10-21 the //c Plus's 4× is that accelerator, not its budget.
 double effectiveCpuHz(EmulationController& ctrl)
 {
     const VideoTiming& t = pom2VideoTiming(ctrl.getVideoStandard());
-    const double hz = static_cast<double>(ctrl.getCyclesPerFrame()) *
-                      static_cast<double>(t.refreshHz);
+    double hz = static_cast<double>(ctrl.getCyclesPerFrame()) *
+                static_cast<double>(t.refreshHz);
+    const double mul = ctrl.emulatedCpuClockHz() / static_cast<double>(t.cpuClockHz);
+    if (mul > 0.0) hz *= mul;
     return hz > 0.0 ? hz : static_cast<double>(t.cpuClockHz);
 }
 

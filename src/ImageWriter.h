@@ -620,6 +620,31 @@ private:
     uint8_t  switcha_ = 0, switchb_ = ' ';
     uint8_t  msb_ = 0;                    // 255 = pass bit 7 through
 
+    // ─── Custom characters (ImageWriter II Technical Reference, ch. 7) ──
+    // `ESC -` / `ESC +` pick an 8- or 16-dot maximum and erase the set;
+    // `ESC I KEY WIDTH DATA… … CTRL-D` loads it; `ESC '` / `ESC *` print
+    // from it and `ESC $` returns to the standard font. Kept across a
+    // software reset (the manual says so) and lost at power-off.
+    struct CustomGlyph {
+        uint8_t width = 0;                // dot columns; 0 = not defined
+        bool    lowerWires = false;       // wires 2-9 instead of 1-8
+        uint8_t cols[16]{};               // bit 0 = top wire
+    };
+    enum class CustomLoad : uint8_t { Off, Key, Width, Data };
+    CustomGlyph customGlyphs_[256]{};
+    bool        customWide_  = false;     // ESC + (16-dot maximum)
+    CustomLoad  customLoad_  = CustomLoad::Off;
+    uint8_t     customKey_   = 0;
+    uint8_t     customWidth_ = 0;         // as sent: the bytes to consume
+    uint8_t     customPos_   = 0;
+    uint8_t     customFont_  = 0;         // 0 standard, 1 ESC ', 2 ESC *
+    void feedCustomLoad(uint8_t raw);
+    void execCustomCharEscape(uint8_t cmd);   // ESC - + I ' *
+    void clearCustomGlyphs();
+    const CustomGlyph* customGlyphFor(uint8_t ch) const;
+    void renderCustomGlyph(const CustomGlyph& g);
+    double customDotPitch() const;
+
     double   curX_ = 0.0, curY_ = 0.0;    // print head, inches
 
     uint16_t escCmd_  = 0;
