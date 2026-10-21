@@ -296,7 +296,6 @@ void testTimeSetRoundTrip()
     const uint8_t target[5] = {
         0x59, 0x58, 0x23, 0x31, 0xC0
     };
-    constexpr uint8_t kModeShiftShifted   = 0x01 << 3;     // C0/C1/C2 = 001
     constexpr uint8_t kModeTimeSetShifted = 0x02 << 3;     // C0/C1/C2 = 010
 
     // Latch MODE_SHIFT with an STB pulse: the chip only shifts in the
@@ -621,7 +620,6 @@ void testResetPreservesSetTime()
     // as testTimeSetRoundTrip) and commit via STB in MODE_TIME_SET.
     // 40-bit register: 5 bytes, no year (see testTimeSetRoundTrip).
     const uint8_t target[5] = { 0x59, 0x58, 0x23, 0x31, 0xC0 };
-    constexpr uint8_t kModeShiftShifted   = 0x01 << 3;
     constexpr uint8_t kModeTimeSetShifted = 0x02 << 3;
     card->deviceSelectWrite(0, kModeShiftShifted);
     card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
