@@ -233,6 +233,18 @@ int main()
         expect(disp.pixels()[0] == 0xFF000000u, "$F0: white on black, untouched");
         mem.memWrite(0xC022, 0xF6);            // back to what section 2 left
 
+        // BORDERCOLOR, low nibble, in the same sixteen colours; black (the
+        // power-on value) is no border at all.
+        const uint8_t border = card->borderColor();
+        mem.memWrite(0xC034, 0x06);
+        disp.render(mem);
+        expect(disp.cardBorderColour() == VidHDCard::iigsColour(0x6),
+               "$C034 low nibble: the border colour");
+        mem.memWrite(0xC034, 0x00);
+        disp.render(mem);
+        expect(disp.cardBorderColour() == 0, "$C034 = 0: no border");
+        mem.memWrite(0xC034, border);
+
         mem.memWrite(0xC029, 0xC1);
         disp.render(mem);
         expect(disp.showingCardPicture() && disp.width() == W && disp.height() == H,

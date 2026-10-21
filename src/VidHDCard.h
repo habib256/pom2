@@ -67,8 +67,10 @@
 // (a2stuff/prodos-drivers `textcolors`) write $C022/$C034 and say they work
 // on "any Apple II equipped with a VidHD card".
 //
-// NOT modelled (DEV.md § VidHD): BORDERCOLOR (latched and snapshotted, but
-// POM2's picture has no border to paint), the SHADOW register's meaning,
+// So is BORDERCOLOR ($C034, low nibble), as a band around the picture in the
+// screen window (borderColour; MainWindow_Screen.cpp).
+//
+// NOT modelled (DEV.md § VidHD): the SHADOW register's meaning,
 // B&W DHGR (NEWVIDEO bit 5 — the IIgs has it, TN IIgs #29, but nothing shows
 // the VidHD does), the VidHD's own extended
 // text modes (80×45, 120×67, 240×135), its enable/disable switch, and the
@@ -144,6 +146,12 @@ public:
     void paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark,
                       uint64_t emuCycles, double cpuHz) const override;
     bool textColours(uint32_t& fg, uint32_t& bg) const override;
+    /// BORDERCOLOR's low nibble in the IIgs colours; 0 (black, the power-on
+    /// value) is "none", so a machine nobody themed looks as it did.
+    uint32_t borderColour() const override
+    {
+        return (borderColor_ & 0x0F) ? iigsColour(borderColor_ & 0x0F) : 0;
+    }
     /// The IIgs colour register value `index` (0-15) as 0xAABBGGRR —
     /// TN IIgs #63 Table 1's master colours.
     static uint32_t iigsColour(uint8_t index);

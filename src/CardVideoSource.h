@@ -62,6 +62,10 @@ public:
     /// When the card does NOT own the screen: does it colour the Apple's
     /// TEXT? `fg` / `bg` are colours as 0xAABBGGRR. Default: no.
     virtual bool textColours(uint32_t& /*fg*/, uint32_t& /*bg*/) const { return false; }
+
+    /// The colour of the border around the picture, as 0xAABBGGRR, or 0 for
+    /// none (the window's own background shows). Default: none.
+    virtual uint32_t borderColour() const { return 0; }
 };
 
 } // namespace pom2

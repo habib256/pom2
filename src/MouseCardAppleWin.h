@@ -153,8 +153,8 @@ public:
         if (hz > 0) { cpuHz_ = hz; nextVblCycle_ = kVblUnphased; }
     }
     /// The VBL interrupt rate TIMEDATA put in force at the last INIT: 50 or
-    /// 60, or 0 when no program asked — then the card keeps the profile's
-    /// beam (see vblCycles_).
+    /// 60, or 0 when no program asked — then the card runs at its default
+    /// 60 Hz: on the beam under NTSC, on its own timer under PAL.
     int  timeDataHz() const { return vblRate_ < 0 ? 0 : (vblRate_ ? 50 : 60); }
 
     /// Snapshot of internal mouse-firmware state for the Mouse Inspector

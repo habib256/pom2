@@ -372,9 +372,16 @@ void MainWindow::drawScreenImage()
         ? retroArtwork_.monitor() : 0;
     // SVG opening: (41,40), 608x432, inside a 690x512 case.
     // Reserve the case margins before choosing the picture/CRT resolution.
+    // A card's border colour (a VidHD's $C034) is a band around the picture,
+    // as thick as a IIgs's (KEGS: 32 of 640 columns, 16 of 200 lines a side),
+    // reserved before the picture is sized. Not under the monitor artwork.
+    const uint32_t border = bezel ? 0 : display->cardBorderColour();
+    const ImVec2 borderFrac = border ? ImVec2(32.0f / 640.0f, 16.0f / 200.0f)
+                                     : ImVec2(0.0f, 0.0f);
     const ImVec2 pictureAvail = bezel
         ? ImVec2(avail.x * 608.0f / 690.0f, avail.y * 432.0f / 512.0f)
-        : avail;
+        : ImVec2(avail.x / (1.0f + 2.0f * borderFrac.x),
+                 avail.y / (1.0f + 2.0f * borderFrac.y));
     ImVec2 size;
     switch (aspectMode) {
         case AspectMode::Crt43: {
@@ -550,6 +557,13 @@ void MainWindow::drawScreenImage()
         cur.x + std::max(0.0f, (avail.x - bodySize.x) * 0.5f) + margin.x,
         cur.y + std::max(0.0f, (avail.y - bodySize.y) * 0.5f) + margin.y));
 
+    if (border) {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const ImVec2 band(size.x * borderFrac.x, size.y * borderFrac.y);
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(at.x - band.x, at.y - band.y),
+            ImVec2(at.x + size.x + band.x, at.y + size.y + band.y), border);
+    }
     ImGui::Image(static_cast<ImTextureID>(presentTex), size);
     // Capture the screen widget's screen-space rect so the GLFW
     // cursor-pos callback (Phase 5) can map a host position onto Apple

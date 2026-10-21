@@ -263,6 +263,10 @@ public:
         framebufferMutated();
     }
     pom2::CardVideoSource* cardVideoSource() const { return cardVideo_; }
+    /// The card's border colour (a VidHD's $C034) as of the last render(),
+    /// 0xAABBGGRR, 0 = none. Latched under stateMutex so the screen window
+    /// can paint it without the lock; a monochrome monitor shows none.
+    uint32_t cardBorderColour() const { return cardBorder_; }
 
     /// Composite signal buffer for the ColorCompositeOE mode. 8-bit
     /// per-sample luminance at 14.318 MHz (560 samples per scanline,
@@ -312,6 +316,7 @@ private:
     int  cardPictureW_ = 0;
     int  cardPictureH_ = 0;
     pom2::CardVideoSource* cardVideo_ = nullptr;   // non-owning, owned by SlotBus
+    uint32_t cardBorder_ = 0;                     // cardBorderColour()
     uint32_t monitorLitColor() const;   // the Apple text painters' lit colour
     /// Paints the card's picture and publishes it when the card's rule holds
     /// for `state` (TEXT + AN0 for the Videoterm, SHR for the VidHD).

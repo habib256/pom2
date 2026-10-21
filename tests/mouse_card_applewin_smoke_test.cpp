@@ -261,7 +261,8 @@ void test_vbl_pacing_follows_set_cycles()
 // interrupt landed on scanlines 188 / 234 / 65 / 157 for four reset phases
 // and every Ctrl-Reset moved the A2DeskTop cursor update to a new line.
 // Resets the card at several beam phases (and restores a snapshot onto a
-// clock moved to yet another phase) on NTSC and PAL, and requires the first
+// clock moved to yet another phase) on NTSC and on PAL after TIMEDATA 50 Hz,
+// and requires the first
 // VBL interrupt on scanline 192 +-1 -- cross-checked against Memory's own
 // VBLBAR at $C019.
 void test_vbl_irq_locked_to_beam()
@@ -304,6 +305,16 @@ void test_vbl_irq_locked_to_beam()
             mem.setCycleCounter(frame * 57 + phase);
             mem.slotBus().reset();
             primePiaForOutput(mem, devBase);
+            // A PAL program asks for 50 Hz (TN Mouse #2); left at the
+            // default 60 Hz the card runs on its own timer, off the beam.
+            if (pal) {
+                pulseCommand(mem, devBase, 0x91);   // MOUSE_TIME: 50 Hz
+                pulseCommand(mem, devBase, 0x50);   // MOUSE_INIT
+                for (int k = 0; k < 2; ++k) {       // its two reply bytes
+                    mem.memWrite(devBase + 2, 0x00);
+                    mem.memWrite(devBase + 2, 0x10);
+                }
+            }
             pulseCommand(mem, devBase, 0x09);   // MOUSE_SET: ON | INT_VBL
 
             const int line = firstIrqLine(mem, raw, frame);
@@ -606,8 +617,8 @@ void test_getclamp_reads_the_window_and_leaves_the_pointer()
 }
 
 // TN Mouse #2: TIMEDATA ($Cn1C), A bit 0 = 50 Hz, effective at the next
-// INITMOUSE, and an INITMOUSE without one goes back to the default — which
-// POM2 keeps on the beam (timeDataHz() == 0).
+// INITMOUSE, and an INITMOUSE without one goes back to the default 60 Hz
+// (timeDataHz() == 0), which is not the frame rate on a PAL machine.
 void test_timedata_sets_the_vbl_rate()
 {
     FirmwareRig r;
@@ -643,6 +654,20 @@ void test_timedata_sets_the_vbl_rate()
     assert(at60 >= 59 && at60 <= 61);
     r.call(0x19, 0);                                    // INIT without TIMEDATA
     assert(r.card->timeDataHz() == 0);
+
+    // The default is 60 Hz on a PAL machine too: the card does not see the
+    // 50 Hz frame, a program has to ask for it.
+    r.card->setVblCycles(20280);                        // PAL beam, 312 × 65
+    r.call(0x19, 0);
+    const int palDefault = countIrqs();
+    r.call(0x1C, 0x01);                                 // TIMEDATA 50 Hz
+    r.call(0x19, 0);
+    const int palFifty = countIrqs();
+    std::printf("  PAL: %d VBL interrupts/s by default, %d after TIMEDATA 50 Hz\n",
+                palDefault, palFifty);
+    assert(palDefault >= 59 && palDefault <= 61);
+    // On the beam now: 1 022 727 / 20280 = 50.4 frames in the rig's second.
+    assert(palFifty >= 49 && palFifty <= 52);
 }
 
 // TN Mouse #3: with the mouse off "any mouse motion is ignored" and the

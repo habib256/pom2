@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-21 — VidHD border colour; the mouse's 60 Hz default on PAL
+
+- **VidHD BORDERCOLOR is painted.** `$C034`'s low nibble, in the IIgs
+  colours, is now a band around the picture in the screen window, as thick
+  as a IIgs border (the ProDOS text-colour themes set it along with
+  `$C022`). Black, the power-on value, draws nothing, so a machine nobody
+  themed is unchanged.
+- **The AppleWin-HLE mouse interrupts at 60 Hz until TIMEDATA says 50**,
+  on a PAL machine too (TN Mouse #2: "If you fail to call TimeData,
+  InitMouse will use a default interrupt rate of 60 Hz"; it is the
+  68705's own timer, which is also what the LLE card does). A rate that
+  matches the video standard stays locked to the beam's VBL edge (60 Hz on
+  NTSC, 50 Hz after TIMEDATA on PAL); any other runs on the card's timer.
+  Until now PAL kept the beam's 50 Hz whatever the program asked for.
+  Pinned by `mouse_card_applewin_smoke` and `vidhd_card`.
+
 ## 2026-10-21 — The //c Plus accelerator is a Zip, and Esc slows it
 
 A user reported the //c Plus "too fast at 1×" and that holding Esc at reset
@@ -98,10 +114,8 @@ through the real AppleMouse II EPROM (`mouseaw`, the //e default in slot 4):
 - **TIMEDATA ($Cn1C) was ignored.** It sends $90|A; A bit 0 selects a 50 Hz
   VBL interrupt instead of 60 Hz, effective at the next INITMOUSE, and an
   INITMOUSE without it goes back to the default. Honoured now, at the
-  card's own real-time rate (cycles = live clock / Hz). When no program
-  calls it, the interrupt stays locked to the profile's beam as before —
-  the note's free-running 60 Hz default is not modelled, because PAL
-  titles have only ever been tested against the beam-locked edge.
+  card's own real-time rate (cycles = live clock / Hz). (The 60 Hz
+  default on PAL followed on 2026-10-21, see above.)
 - **Mouse off still tracked motion.** With SETMOUSE bit 0 clear, motion is
   now ignored and the pointer does not jump when the mouse comes back on.
 

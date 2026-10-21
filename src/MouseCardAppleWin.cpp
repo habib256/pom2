@@ -69,6 +69,8 @@ constexpr uint8_t MODE_INT_ALL      = STAT_INT_ALL;
 // 50 Hz frame on the PAL profiles. Its PHASE is the beam's: see serviceVbl.
 constexpr uint64_t kCyclesPerScanline = 65;
 constexpr uint64_t kVisibleScanlines  = 192;
+/// Between 17030 (NTSC, 262×65) and 20280 (PAL, 312×65).
+constexpr int      kPalBeamThreshold  = 18000;
 
 }  // namespace
 
@@ -219,14 +221,16 @@ void MouseCardAppleWin::advanceCycles(int cycles)
 
 uint64_t MouseCardAppleWin::vblPeriod() const
 {
-    // A rate TIMEDATA chose runs off the card's own timer, in real time:
-    // cycles = the live clock / Hz (setCpuClock). Otherwise the beam.
-    if (vblRate_ >= 0) {
-        const double hz = vblRate_ ? 50.0 : 60.0;
-        const auto c = static_cast<uint64_t>(cpuHz_ / hz + 0.5);
-        return c > 0 ? c : 1;
-    }
-    return static_cast<uint64_t>(vblCycles_);
+    // The MCU interrupts at 60 Hz unless TIMEDATA asked for 50 (TN Mouse #2:
+    // "If you fail to call TimeData, InitMouse will use a default interrupt
+    // rate of 60 Hz", on a European Apple too). A rate that matches the
+    // video standard rides the beam; any other runs off the card's own
+    // timer, in real time: cycles = the live clock / Hz (setCpuClock).
+    const bool fifty    = vblRate_ == 1;
+    const bool palBeam  = vblCycles_ > kPalBeamThreshold;
+    if (fifty == palBeam) return static_cast<uint64_t>(vblCycles_);
+    const auto c = static_cast<uint64_t>(cpuHz_ / (fifty ? 50.0 : 60.0) + 0.5);
+    return c > 0 ? c : 1;
 }
 
 void MouseCardAppleWin::serviceVbl(uint64_t now)

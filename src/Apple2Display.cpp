@@ -506,6 +506,7 @@ void Apple2Display::render(Memory& mem)
         Apple2Display* self;
         ~KeyPublisher() { self->commitTextFrameKey(); }
     } keyPublisher{this};
+    cardBorder_ = (cardVideo_ && !isMonochrome()) ? cardVideo_->borderColour() : 0;
     // The video scanner reads RamWorks bank 0 whatever bank the CPU selected
     // (Memory::videoAuxData). The pointer moves with the bank, so it is
     // re-derived here, once per frame, and only for this Memory's own aux —

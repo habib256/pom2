@@ -1345,8 +1345,15 @@ a VidHD card". `CardVideoSource::textColours` hands the pair to
 Apple2Display, which remaps the text rows (`tintText`, shared with the Chat
 Mauve) and keys the text-frame cache on it.
 
-**Not modelled.** BORDERCOLOR (latched and snapshotted — there is no border
-in the picture), SHADOW's meaning, B&W DHGR (NEWVIDEO bit 5: a IIgs feature,
+BORDERCOLOR (`$C034`, low nibble) is a band around the picture in the
+screen window, as thick as a IIgs's border (KEGS: 32 of 640 columns, 16 of
+200 lines a side): `CardVideoSource::borderColour`, latched by
+`Apple2Display::render` under the lock (`cardBorderColour`), painted by
+`MainWindow_Screen.cpp`. Black, the power-on value, is no band, so an
+unthemed machine looks as before; the monitor artwork, a monochrome monitor
+and the kiosk view show none.
+
+**Not modelled.** SHADOW's meaning, B&W DHGR (NEWVIDEO bit 5: a IIgs feature,
 TN IIgs #29, with no evidence the VidHD has it), the VidHD's own
 extended text modes (80×45, 120×67, 240×135) and their colours, its
 enable/disable switch, SHR raster effects (an SCB or palette change mid-frame
