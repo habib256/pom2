@@ -304,6 +304,21 @@ int main()
         expect(fresh.newVideo() == 0xE1, "a foreign blob is ignored");
         fresh.loadSnapshotState(blob.data(), blob.size() - 1);
         expect(fresh.newVideo() == 0xE1, "a short blob is ignored");
+
+        // A v0.9.7 blob (version 1): $C022 powered up at 0 there and was
+        // never painted, so an untouched one saved 0. Read as the IIgs's
+        // $F0, or the restored text is black on black.
+        std::vector<uint8_t> v1 = blob;
+        v1[4] = 1; v1[5] = 0x00;
+        VidHDCard old(3);
+        old.loadSnapshotState(v1.data(), v1.size());
+        uint32_t fg = 0, bg = 0;
+        expect(old.screenColor() == 0xF0 && !old.textColours(fg, bg),
+               "a v1 blob's untouched $C022 is plain text");
+        expect(old.newVideo() == 0xE1, "…and the rest of the v1 blob still loads");
+        v1[5] = 0x1E;
+        old.loadSnapshotState(v1.data(), v1.size());
+        expect(old.screenColor() == 0x1E, "a v1 blob's written $C022 is kept");
     }
 
     if (failures) { std::printf("vidhd_card: %d failure(s)\n", failures); return 1; }

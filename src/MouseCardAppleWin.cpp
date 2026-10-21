@@ -23,6 +23,7 @@
 #include "MouseCardAppleWin.h"
 #include "Logger.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -226,16 +227,48 @@ uint64_t MouseCardAppleWin::vblPeriod() const
     // rate of 60 Hz", on a European Apple too). A rate that matches the
     // video standard rides the beam; any other runs off the card's own
     // timer, in real time: cycles = the live clock / Hz (setCpuClock).
+    if (vblOnBeam()) return static_cast<uint64_t>(vblCycles_);
     const bool fifty    = vblRate_ == 1;
-    const bool palBeam  = vblCycles_ > kPalBeamThreshold;
-    if (fifty == palBeam) return static_cast<uint64_t>(vblCycles_);
     const auto c = static_cast<uint64_t>(cpuHz_ / (fifty ? 50.0 : 60.0) + 0.5);
     return c > 0 ? c : 1;
+}
+
+bool MouseCardAppleWin::vblOnBeam() const
+{
+    const bool fifty   = vblRate_ == 1;
+    const bool palBeam = vblCycles_ > kPalBeamThreshold;
+    return fifty == palBeam;
+}
+
+void MouseCardAppleWin::setCpuClock(double hz)
+{
+    if (hz <= 0) return;
+    const double old = cpuHz_;
+    cpuHz_ = hz;
+    if (vblOnBeam() || nextVblCycle_ == kVblUnphased || old <= 0) return;
+    // Own timer: what is left of the current period, in real time, is the
+    // same; only its length in CPU cycles changes.
+    const uint64_t now = *clock_;
+    if (nextVblCycle_ <= now) return;
+    const double left = static_cast<double>(nextVblCycle_ - now) * hz / old;
+    nextVblCycle_ = now + std::max<uint64_t>(1, static_cast<uint64_t>(left + 0.5));
 }
 
 void MouseCardAppleWin::serviceVbl(uint64_t now)
 {
     const uint64_t frame = vblPeriod();
+    if (!vblOnBeam()) {
+        // The 68705's own timer: one period after the last edge, wherever
+        // the beam is. A clock jump or an unphased card starts a new period.
+        if (now >= nextVblCycle_ && now - nextVblCycle_ < frame) {
+            onMouseEvent(/*vbl=*/true);
+            nextVblCycle_ += frame;
+            if (nextVblCycle_ <= now) nextVblCycle_ = now + frame;
+        } else {
+            nextVblCycle_ = now + frame;
+        }
+        return;
+    }
     // Fire only on an ordinary crossing. A counter that jumped more than a
     // frame past the edge (a restore moving the clock forward) or is still
     // unphased just re-phases: no spurious VBL out of a clock jump.

@@ -107,6 +107,7 @@ public:
         std::lock_guard<std::mutex> lk(mtx_);
         hostKeysTracked_ = true;
         heldKeys_.set(token, down);
+        if (down) { pressToken_ = token; pressCodeValid_ = false; }
     }
     void releaseHeldKeys() {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -176,6 +177,19 @@ public:
         publish();
     }
 
+    // Power-on: everything `reset()` drops, except a finger still on a key.
+    // The encoder's first scan finds that key closed and strobes it, which
+    // is how the //c Plus ROM sees Esc held at power-on and stays at 1 MHz.
+    void powerOn() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        streamPrevCR_ = false;
+        pasteQueue_.clear();
+        const bool held = pressCodeValid_ && heldKeys_.test(pressToken_);
+        lastKey_  = held ? pressCode_ : 0;
+        keyReady_ = held;
+        publish();
+    }
+
 private:
     // Shared body of pasteText / pasteKeyStream. `mtx_` held by the caller.
     std::size_t pushChars(const char* data, std::size_t length,
@@ -198,6 +212,11 @@ private:
     bool                 keyReady_ = false;
     bool                 hostKeysTracked_ = false;
     std::bitset<512>     heldKeys_;
+    // The last key pressed and the character it typed (setKeyHeld, then
+    // queueKey), for `powerOn`.
+    uint16_t             pressToken_ = 0;
+    uint8_t              pressCode_  = 0;
+    bool                 pressCodeValid_ = false;
     // pasteKeyStream's persistent "saw a CR" state — see its declaration.
     bool                 streamPrevCR_ = false;
     std::atomic<uint8_t> mirror_{ 0 };

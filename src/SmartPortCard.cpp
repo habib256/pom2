@@ -416,6 +416,12 @@ bool SmartPortCard::BusUnit::isUnidisk35() const
     return !u || u->kindKey() == SmartPort35Unit::kKindKey;
 }
 
+void SmartPortCard::BusUnit::requestEject()
+{
+    // The //c rear port's units are this card's bays (IIcExternalSmartPort).
+    if (card_) card_->requestGuestEject(static_cast<int>(bay_));
+}
+
 uint64_t SmartPortCard::BusUnit::mediaIdentity() const
 {
     const SmartPortUnit* u = target();
@@ -1271,14 +1277,21 @@ uint8_t SmartPortCard::spExecute()
             // since May 1988 (TN SmartPort #2): "all SmartPort devices which
             // support removable media must support this call", and a fixed
             // one "should simply return from this call without an error".
-            // Accepted for every unit — the disk is NOT taken out of the
-            // bay, because a guest-driven eject would have to commit the
-            // image off the machine lock (the //c+ Sony drive's two-phase
-            // path) and this HLE card has no such path yet. Anything else
-            // needs the control list's data, which the stub cannot copy
-            // guest→device → bad control code.
+            // A 3.5" disk really leaves the drive: the request goes to the
+            // UI thread, which ejects through the three-phase path (the
+            // write-back cannot run here, under the machine lock). Unit 0 or
+            // a number past the chain is no device ($28), as for FORMAT.
+            // Anything else needs the control list's data, which the stub
+            // cannot copy guest→device → bad control code.
+            if (unitNo == 0 || unitNo > static_cast<uint8_t>(unitCount_))
+                return fail(0x28);
             const uint8_t code = spCollect_[5];
-            return (code == 0x00 || code == 0x04) ? ok() : fail(0x21);
+            if (code != 0x00 && code != 0x04) return fail(0x21);
+            SmartPortUnit* u = unitFor(unitNo);
+            if (code == 0x04 && u && u->isLoaded() &&
+                u->kindKey() == SmartPort35Unit::kKindKey)
+                requestGuestEject(unitNo - 1);
+            return ok();
         }
         case 0x05:                                     // INIT
             if (pcount != 1) return fail(0x04);

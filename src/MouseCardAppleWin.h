@@ -148,10 +148,10 @@ public:
     int  vblCycles() const { return vblCycles_; }
     /// The live CPU clock, for a VBL rate a program chose with TIMEDATA
     /// (the MCU's own crystal: a rate in Hz, converted to machine cycles).
-    void setCpuClock(double hz) override
-    {
-        if (hz > 0) { cpuHz_ = hz; nextVblCycle_ = kVblUnphased; }
-    }
+    /// The MCU's timer runs on its own crystal, so an accelerator changing
+    /// the CPU clock rescales the distance to the next edge instead of
+    /// re-phasing it: the interrupts stay 1/60 s apart in real time.
+    void setCpuClock(double hz) override;
     /// The VBL interrupt rate TIMEDATA put in force at the last INIT: 50 or
     /// 60, or 0 when no program asked — then the card runs at its default
     /// 60 Hz: on the beam under NTSC, on its own timer under PAL.
@@ -276,14 +276,15 @@ private:
     int             vblCycles_    = 17030;
     // TIMEDATA (TN Mouse #2): -1 = not called, 0 = 60 Hz, 1 = 50 Hz. The
     // call only takes effect at the next INIT, and an INIT without one
-    // goes back to the default — so it is latched in two steps. Until a
-    // program asks, the edge stays on the beam (vblCycles_), which is what
-    // every title tested so far relies on, PAL demos included; the note's
-    // "default 60 Hz" free-running timer is not modelled.
+    // goes back to the default — so it is latched in two steps. The default
+    // is 60 Hz on any machine (TN Mouse #2), the 68705's own timer: a rate
+    // that matches the video standard is phased to the beam's VBL edge, any
+    // other (60 Hz on PAL, 50 Hz on NTSC) runs free from the last edge.
     int8_t          timeDataPending_ = -1;
     int8_t          vblRate_         = -1;
     double          cpuHz_           = 1022727.0;
     uint64_t        vblPeriod() const;
+    bool            vblOnBeam() const;   // the rate is the video standard's
     uint64_t        nextVblCycle_ = kVblUnphased;   // absolute cycle of the next edge
     uint64_t        ownClock_     = 0;
     const uint64_t* clock_        = &ownClock_;

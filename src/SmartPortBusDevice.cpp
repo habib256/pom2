@@ -462,8 +462,8 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
             const bool floppy = u->isUnidisk35();
             // "DISK 3.5" is the UniDisk 3.5's own name (TN SmartPort #7:
             // the UniDisk 3.5 and the Apple 3.5 Drive both answer it).
-            static const char kFloppy[16] = "DISK 3.5       ";
-            static const char kHard[16]   = "POM2 HARDDISK  ";
+            static const char kFloppy[17] = "DISK 3.5        ";
+            static const char kHard[17]   = "POM2 HARDDISK   ";
             st[4] = floppy ? 8 : 13;
             std::memcpy(st + 5, floppy ? kFloppy : kHard, 16);
             st[21] = floppy ? 0x01 : 0x02;
@@ -513,12 +513,24 @@ void SmartPortBusDevice::serveWriteData(const std::vector<uint8_t>& body)
     pendingWrite_ = false;
     const bool stale = staleWrite_;
     staleWrite_ = false;
-    if (pendingCmd_ != kCmdWrite) {
-        // CONTROL / character WRITE: taken, nothing to do with it.
+    SmartPortBusUnit* u = unitFor(pendingUnit_);
+    if (pendingCmd_ == kCmdControl) {
+        // The command packet's parameters are the call's own list after the
+        // unit — list pointer, then the code — so the code is the low byte
+        // `serveCommand` decoded as a block number. EJECT on a UniDisk 3.5
+        // takes the disk out, as the drive's motor does; a hard disk "should
+        // simply return from this call without an error" (TN SmartPort #2).
+        if (!u) { buildReply(kErrBadUnit, nullptr, 0, false); return; }
+        if ((pendingBlock_ & 0xFF) == 0x04 && u->isUnidisk35() && u->hasMedia())
+            u->requestEject();
         buildReply(0x00, nullptr, 0, false);
         return;
     }
-    SmartPortBusUnit* u = unitFor(pendingUnit_);
+    if (pendingCmd_ != kCmdWrite) {
+        // Character WRITE: taken, nothing to do with it.
+        buildReply(0x00, nullptr, 0, false);
+        return;
+    }
     if (!u)                                { buildReply(kErrBadUnit, nullptr, 0, false); return; }
     if (!u->hasMedia())                    { buildReply(kErrOffline, nullptr, 0, false); return; }
     // The disk the command was addressed to is not the one in the drive now:

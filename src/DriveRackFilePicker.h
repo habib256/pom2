@@ -7,10 +7,13 @@
 #include <string>
 #include <vector>
 namespace pom2 {
-struct DriveRackSelection { DrivePicture target; std::string path; };
+// `boot`: no drive was chosen — the image goes where its type maps and the
+// machine boots it (File > Insert disk and boot…, the browser's import twin).
+struct DriveRackSelection { DrivePicture target; std::string path; bool boot = false; };
 class DriveRackFilePicker {
 public:
     void open(const DrivePicture& target);
+    void openForBoot();
     std::optional<DriveRackSelection> render();
     void complete(bool ok, const std::string& error);
 private:
@@ -22,7 +25,7 @@ private:
     std::array<char, 2048> folder_{};
     std::vector<Entry> entries_;
     bool showHidden_ = false;
-    bool opening_ = false, closing_ = false;
+    bool opening_ = false, closing_ = false, boot_ = false;
 };
 }
 #endif

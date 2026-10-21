@@ -108,6 +108,11 @@ public:
     /// multiplier and the millisecond delays are derived from it.
     void   setStockClockHz(double hz) { if (hz > 0) stockHz_ = hz; }
     void   setBootFast(bool on) { bootFast_ = on; }
+    /// The //c Plus's soldered CGGA rather than a socket Zip: it always
+    /// boots fast, so a blob whose boot-fast byte is 0 came from the user's
+    /// //e Zip (a //c Plus snapshot saved before 2026-10-21) and is not this
+    /// chip's state — the restore takes the reset state the ROM leaves.
+    void   setSoldered(bool on) { soldered_ = on; }
     bool   bootFast() const { return bootFast_; }
 
     // Diagnostics / tests.
@@ -122,6 +127,7 @@ private:
 
     double   stockHz_   = static_cast<double>(POM2_CPU_CLOCK_HZ);
     bool     bootFast_  = true;
+    bool     soldered_  = false;
     bool     unlocked_  = false;
     int      stage_     = 0;       // MAME m_accel_stage: $5A writes seen
     bool     fast_      = true;

@@ -91,6 +91,23 @@ public:
     /// Number of mountable bays. HDV/CFFA = 1, SmartPort = its unit count.
     virtual int bayCount() const = 0;
 
+    /// A guest-driven eject (SmartPort CONTROL code 4 on a UniDisk 3.5): the
+    /// CPU thread records it here under `stateMutex`, and the UI thread
+    /// takes the requests, also under the lock, then runs the normal
+    /// three-phase eject (`StorageCoordinator::ejectMediaBay`) — so the disk
+    /// leaves the drive the way the eject button takes it out, with the
+    /// write-back off the lock. Bits are bays.
+    void requestGuestEject(int bay)
+    {
+        if (bay >= 0 && bay < 32) guestEjects_ |= 1u << bay;
+    }
+    unsigned takeGuestEjectRequests()
+    {
+        const unsigned r = guestEjects_;
+        guestEjects_ = 0;
+        return r;
+    }
+
     /// Cards whose chain length is the user's to pick — today the Liron,
     /// whose SmartPort bus carries 2, 4, 6 or 8 units. Empty = fixed.
     /// (`SmartPortCard` has its own count, its own keyspace and its own
@@ -246,6 +263,9 @@ public:
     /// Type-select bays only: swap the media kind in `bay` to `kindKey`
     /// (drops any currently-mounted media). No-op for fixed-kind cards.
     virtual void setBayType(int /*bay*/, const std::string& /*kindKey*/) {}
+
+private:
+    unsigned guestEjects_ = 0;   // requestGuestEject; guarded by stateMutex
 };
 
 } // namespace pom2

@@ -172,6 +172,7 @@ bool ZipChip::validateSnapshotState(const uint8_t* data, std::size_t len) const
 bool ZipChip::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     if (!validateSnapshotState(data, len)) return false;
+    if (soldered_ && data[12] == 0) { onReset(0); return true; }   // setSoldered
     byteio::Reader r(data, len);
     (void)r.u32(); (void)r.u16();
     unlocked_     = r.u8() != 0;

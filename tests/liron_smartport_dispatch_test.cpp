@@ -146,6 +146,7 @@ int main()
         if (useLiron) assert(card->loadLironRom(lironRom));
         card->setUnit(0, std::move(unit));   // SmartPort unit 1
         // bay 1 left EMPTY (no unit object)  → SmartPort unit 2 = $28
+        pom2::SmartPortCard* cardRaw = card.get();
         mem.slotBus().plug(kSlot, std::move(card));
 
         // ── Identity bytes (real dump only) ─────────────────────────────
@@ -264,9 +265,21 @@ int main()
 
         // CONTROL code 4 is EJECT since May 1988 and must not be an error
         // (TN SmartPort #2); a code the card has no use for still is.
+        (void)cardRaw->takeGuestEjectRequests();   // code 0 above asked nothing
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);
         assert(!r.carry && r.a == 0x00 && "CONTROL EJECT is accepted");
+        // …and the 3.5" really leaves: the request waits for the UI thread,
+        // which ejects through the three-phase path (serviceGuestEjects).
+        assert(cardRaw->takeGuestEjectRequests() == 0x1u && "EJECT asks for bay 0");
+        assert(cardRaw->takeGuestEjectRequests() == 0u && "taken once");
+        setPlist(mem, {3, 2, kBuf & 0xFF, kBuf >> 8, 0x04});
+        r = spCall(cpu, mem, 0x04);
+        assert(!r.carry && r.a == 0x00 && "an empty drive: nothing to eject, no error");
+        assert(cardRaw->takeGuestEjectRequests() == 0u);
+        setPlist(mem, {3, 3, kBuf & 0xFF, kBuf >> 8, 0x04});
+        r = spCall(cpu, mem, 0x04);
+        assert(r.carry && r.a == 0x28 && "CONTROL past the chain: no device");
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x05});
         r = spCall(cpu, mem, 0x04);
         assert(r.carry && r.a == 0x21 && "an unknown control code stays $21");

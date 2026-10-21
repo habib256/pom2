@@ -1889,6 +1889,16 @@ void testCustomCharacters()
         feedN(iw, "\x1B'A");
         assert(inkPixels(iw.currentPage()) == standardA);
     }
+    // A load cut off by power-off does not eat the next job: before, the
+    // printer came back still collecting key/width/data bytes.
+    {
+        ImageWriter iw;
+        feedN(iw, std::string("\x1B-\x1BIAE", 6));
+        iw.setPowered(false);
+        iw.setPowered(true);
+        feedN(iw, "A");
+        assert(inkPixels(iw.currentPage()) == standardA);
+    }
     std::printf("  custom characters (ESC - / ESC I … CTRL-D / ESC ' / ESC * / ESC $): OK\n");
 }
 

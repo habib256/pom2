@@ -729,8 +729,10 @@ void Memory::resetSoftSwitches(bool warm)
     an1 = false;   // (AN0 is display.an0, cleared with `display` above)
     an2 = false;
     // Only power-on clears the latch (MAME machine_reset; reset_w keeps it),
-    // so the //c Plus ROM sees an Esc held through Ctrl-Reset ($FD82).
-    if (warm) keyboard_.cancelPaste(); else keyboard_.reset();
+    // so the //c Plus ROM sees an Esc held through Ctrl-Reset ($FD82) — and
+    // a power-on re-strobes a key still held down (Keyboard::powerOn), so it
+    // sees one held through the power switch too.
+    if (warm) keyboard_.cancelPaste(); else keyboard_.powerOn();
 }
 
 void Memory::clearRam()
@@ -1276,7 +1278,11 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             return !d || d->loadSnapshotState(p, k);
         })) return false;
     if (!readSection([&](const uint8_t* p, size_t k) {
-            return !accel_ || k == 0 || accel_->loadSnapshotState(p, k);
+            // A snapshot taken with no accelerator seated says nothing about
+            // this one: it takes its reset state rather than whatever the
+            // previous machine left in it.
+            if (accel_ && k == 0) { accel_->onReset(cycleCounter); return true; }
+            return !accel_ || accel_->loadSnapshotState(p, k);
         })) return false;
     return true;
 }

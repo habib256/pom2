@@ -44,7 +44,14 @@ void DriveRackFilePicker::browse(const std::string& directory) {
     std::snprintf(folder_.data(), folder_.size(), "%s", directory_.c_str());
     path_[0] = 0;
 }
+void DriveRackFilePicker::openForBoot() {
+    DrivePicture any;
+    any.label = "The disk goes into the drive its type maps to, then the machine boots it.";
+    open(any);
+    boot_ = true;
+}
 void DriveRackFilePicker::open(const DrivePicture& target) {
+    boot_ = false;
     target_ = target; opening_ = true; closing_ = false; path_[0] = 0; error_.clear();
     if (directory_.empty()) {
         auto root = findFirstResource({"bundled_disks", "packaging/disks"});
@@ -59,13 +66,14 @@ std::optional<DriveRackSelection> DriveRackFilePicker::render() {
         opening_ = false;
         if (nativeFileDialogAvailable()) {
             std::string picked;
-            const auto status = nativeFileDialog(false, "Insert disk into " + target_.label,
+            const auto status = nativeFileDialog(false,
+                boot_ ? std::string("Insert disk and boot") : "Insert disk into " + target_.label,
                 "dsk,do,po,nib,woz,moof,2mg,hdv,d13,image", directory_, "", picked);
             if (status == FileDialogResult::Cancelled) return {};
             ImGui::OpenPopup("Insert disk into drive");
             if (status == FileDialogResult::Selected) {
                 browse(fs::path(picked).parent_path().string());
-                return DriveRackSelection{target_, picked};
+                return DriveRackSelection{target_, picked, boot_};
             }
         } else ImGui::OpenPopup("Insert disk into drive");
     }
@@ -73,7 +81,9 @@ std::optional<DriveRackSelection> DriveRackFilePicker::render() {
     if (!ImGui::BeginPopupModal("Insert disk into drive", nullptr, ImGuiWindowFlags_NoSavedSettings)) return {};
     if (closing_) { ImGui::CloseCurrentPopup(); closing_ = false; ImGui::EndPopup(); return {}; }
     ImGui::TextWrapped("%s", target_.label.c_str());
-    ImGui::TextDisabled("%s", target_.kind == DrivePictureKind::DiskII ? "5.25-inch disk image" :
+    if (boot_)
+        ImGui::TextDisabled("Any disk image: 5.25-inch, 3.5-inch or ProDOS hard disk");
+    else ImGui::TextDisabled("%s", target_.kind == DrivePictureKind::DiskII ? "5.25-inch disk image" :
                               target_.kind == DrivePictureKind::Floppy35 ? "3.5-inch disk image (1.44 MB requires SuperDrive)" : "ProDOS hard-disk image");
     const auto current = fs::path(directory_);
     ImGui::BeginDisabled(current == current.root_path());
@@ -138,7 +148,7 @@ std::optional<DriveRackSelection> DriveRackFilePicker::render() {
     insert |= ImGui::InputText("File or folder", path_.data(), path_.size(), ImGuiInputTextFlags_EnterReturnsTrue);
     if (!error_.empty()) ImGui::TextWrapped("%s", error_.c_str());
     ImGui::BeginDisabled(path_[0] == 0);
-    insert |= ImGui::Button("Insert");
+    insert |= ImGui::Button(boot_ ? "Insert and boot" : "Insert");
     ImGui::EndDisabled(); ImGui::SameLine();
     if (ImGui::Button("Cancel")) { ImGui::CloseCurrentPopup(); insert = false; }
     std::optional<DriveRackSelection> result;
@@ -147,7 +157,7 @@ std::optional<DriveRackSelection> DriveRackFilePicker::render() {
         auto path = fs::path(path_.data());
         if (path.is_relative()) path = fs::path(directory_) / path;
         if (fs::is_directory(path, ec)) { browse(path.string()); path_[0] = 0; }
-        else result = DriveRackSelection{target_, path.string()};
+        else result = DriveRackSelection{target_, path.string(), boot_};
     }
     ImGui::EndPopup();
     return result;

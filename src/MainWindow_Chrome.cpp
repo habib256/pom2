@@ -382,6 +382,11 @@ void MainWindow::renderMenuBar()
         renderBrowserSessionMenu();
 #ifdef __EMSCRIPTEN__
         if (ImGui::MenuItem("Import disk and boot...")) chooseBrowserDisk();
+#else
+        if (ImGui::MenuItem("Insert disk and boot...")) {
+            driveRackPickerProfile_ = activeProfile;
+            driveRackFilePicker_.openForBoot();
+        }
 #endif
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::DiskLibrary);

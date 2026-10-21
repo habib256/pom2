@@ -50,7 +50,14 @@ double effectiveCpuHz(EmulationController& ctrl)
     const VideoTiming& t = pom2VideoTiming(ctrl.getVideoStandard());
     double hz = static_cast<double>(ctrl.getCyclesPerFrame()) *
                 static_cast<double>(t.refreshHz);
-    const double mul = ctrl.emulatedCpuClockHz() / static_cast<double>(t.cpuClockHz);
+    // The live clock carries the speed setting's budget as well as the
+    // accelerator (applyAcceleratorClock), and cyclesPerFrame already holds
+    // the former: divide it back out, or 2x reads as 4x.
+    const int base = ctrl.getBaseCyclesPerFrame();
+    const double baseRatio = base > t.cyclesPerFrame
+        ? static_cast<double>(base) / t.cyclesPerFrame : 1.0;
+    const double mul = ctrl.emulatedCpuClockHz() /
+                       (static_cast<double>(t.cpuClockHz) * baseRatio);
     if (mul > 0.0) hz *= mul;
     return hz > 0.0 ? hz : static_cast<double>(t.cpuClockHz);
 }

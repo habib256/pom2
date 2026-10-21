@@ -70,6 +70,7 @@
 #include <ctime>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 void MainWindow::bootHdvImage()
@@ -97,6 +98,26 @@ void MainWindow::bootHdvImage()
     tapeStatusMessage = booted ? "Booting HDV (slot " +
         std::to_string(dev->getSlot()) + "): " + p : "HDV boot failed: " + error;
     tapeStatusUntil   = lastFrameTime + 4.0;
+}
+
+void MainWindow::serviceGuestEjects()
+{
+    // Taken under the lock, carried out without it: `ejectMediaBay` takes the
+    // lock itself (non-recursive) and splits the write-back off it. A refused
+    // eject leaves the disk in, as a failed commit always does.
+    std::vector<std::pair<int, int>> todo;
+    {
+        auto state = controller->lockState();
+        for (int slot = 1; slot <= 7; ++slot) {
+            auto* media = dynamic_cast<pom2::MountableMediaCard*>(
+                state.memory().slotBus().peripheral(slot));
+            if (!media) continue;
+            const unsigned bays = media->takeGuestEjectRequests();
+            for (int bay = 0; bay < 32; ++bay)
+                if (bays & (1u << bay)) todo.emplace_back(slot, bay);
+        }
+    }
+    for (const auto& [slot, bay] : todo) ejectMediaBay(slot, bay, false);
 }
 
 bool MainWindow::ejectMediaBay(int slot, int index, bool diskII)

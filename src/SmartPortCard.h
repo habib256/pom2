@@ -262,6 +262,7 @@ private:
         bool     writeBlock(uint32_t block, const uint8_t in[512]) override;
         bool     isUnidisk35()    const override;
         uint64_t mediaIdentity()  const override;
+        void     requestEject()         override;
     private:
         SmartPortUnit* target() const
         { return card_ ? card_->units_[bay_].get() : nullptr; }

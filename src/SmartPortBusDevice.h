@@ -93,6 +93,11 @@ public:
     /// swapped in since — including from a snapshot FILE, whose identity
     /// belongs to another process and never matches.
     virtual uint64_t mediaIdentity()  const { return 0; }
+    /// CONTROL code 4 (EJECT, TN SmartPort #2) reached this unit with a
+    /// medium in it. The drive's owner takes the disk out on a thread that
+    /// may do file I/O (`MountableMediaCard::requestGuestEject`); the bus
+    /// only acknowledges. A fixed disk never gets the call.
+    virtual void     requestEject() {}
 };
 
 class SmartPortBusDevice {

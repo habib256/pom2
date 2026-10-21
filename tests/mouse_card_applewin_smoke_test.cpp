@@ -232,6 +232,16 @@ void test_vbl_pacing_follows_set_cycles()
 
         const uint16_t devBase = 0xC0C0;            // slot 4
         primePiaForOutput(mem, devBase);
+        // On PAL the card's default is 60 Hz on its own timer (TN Mouse #2);
+        // the beam's edge needs TIMEDATA 50 Hz ($91) and an INIT ($50).
+        if (usePal) {
+            pulseCommand(mem, devBase, 0x91);
+            pulseCommand(mem, devBase, 0x50);
+            for (int k = 0; k < 2; ++k) {           // read INIT's two reply bytes
+                mem.memWrite(devBase + 2, 0x00);    // PB4 1→0: read strobe
+                mem.memWrite(devBase + 2, 0x10);
+            }
+        }
         // MOUSE_SET ($0n) with MODE_INT_VBL (bit 3) in the low nibble.
         pulseCommand(mem, devBase, 0x08);
 
@@ -668,6 +678,32 @@ void test_timedata_sets_the_vbl_rate()
     assert(palDefault >= 59 && palDefault <= 61);
     // On the beam now: 1 022 727 / 20280 = 50.4 frames in the rig's second.
     assert(palFifty >= 49 && palFifty <= 52);
+
+    // The card's own timer is the 68705's crystal: an accelerator switching
+    // the CPU between 1 and 4 MHz (a Zip's slow windows, every few ms) must
+    // not move it. Each clock change used to re-phase the edge, so a clock
+    // that changed more often than once a period starved the interrupt.
+    r.call(0x1C, 0x00);                                 // back to 60 Hz…
+    r.call(0x19, 0);                                    // …free-running on PAL
+    r.call(0x12, 0x08);
+    double seconds = 0.0, hz = 1022727.0;
+    int n = 0;
+    long sinceSwitch = 0;
+    while (seconds < 1.0) {
+        const uint64_t before = r.mem.getCycleCounter();
+        r.idle(500);
+        const uint64_t spent = r.mem.getCycleCounter() - before;
+        seconds += static_cast<double>(spent) / hz;
+        sinceSwitch += static_cast<long>(spent);
+        if (r.card->slotIrqAsserted()) { ++n; r.call(0x13, 0); }
+        if (sinceSwitch >= 3000) {
+            sinceSwitch = 0;
+            hz = hz < 2e6 ? 4090908.0 : 1022727.0;
+            r.card->setCpuClock(hz);
+        }
+    }
+    std::printf("  PAL, accelerator toggling: %d VBL interrupts in one real second\n", n);
+    assert(n >= 58 && n <= 63);   // the rig's ~61 at a steady clock, ±2
 }
 
 // TN Mouse #3: with the mouse off "any mouse motion is ignored" and the

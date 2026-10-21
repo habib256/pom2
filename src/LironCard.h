@@ -266,7 +266,14 @@ private:
     /// is loaded (the card keeps them exclusive).
     class ImageUnit final : public SmartPortBusUnit {
     public:
-        void bind(Disk35Image* img, Block512Backing* blk) { img_ = img; blk_ = blk; }
+        void bind(Disk35Image* img, Block512Backing* blk,
+                  MountableMediaCard* owner, int bay)
+        { img_ = img; blk_ = blk; owner_ = owner; bay_ = bay; }
+        /// A UniDisk's EJECT: the card's owner takes the 3.5" out.
+        void requestEject() override
+        {
+            if (owner_ && disk()) owner_->requestGuestEject(bay_);
+        }
         bool hasMedia() const override { return disk() || hard(); }
         uint64_t mediaIdentity() const override
         {
@@ -325,6 +332,8 @@ private:
         bool hard() const { return blk_ && blk_->isLoaded(); }
         Disk35Image*     img_ = nullptr;
         Block512Backing* blk_ = nullptr;
+        MountableMediaCard* owner_ = nullptr;
+        int              bay_ = 0;
         mutable bool     lastUnidisk_ = true;
     };
     bool busEnabled_ = true;

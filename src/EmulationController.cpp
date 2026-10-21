@@ -924,6 +924,7 @@ void EmulationController::installSocketAccelerator()
     if (mem.isIIcPlus()) {
         if (mem.cpuSocketAccelerator() != &iicPlusZip_) {
             iicPlusZip_.setBootFast(true);   // MAME accel_reset: IIc+ → fast
+            iicPlusZip_.setSoldered(true);
             iicPlusZip_.onReset(0);
         }
         mem.setCpuSocketAccelerator(&iicPlusZip_);

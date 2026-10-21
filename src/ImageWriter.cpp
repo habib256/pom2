@@ -384,7 +384,23 @@ void ImageWriter::setPowered(bool on)
     if (on == powered_) return;
     powered_ = on;
     if (sound_) sound_->power(on);
-    if (!on) clearCustomGlyphs();       // RAM: lost at power-off (ch. 7)
+    if (!on) {
+        clearCustomGlyphs();            // RAM: lost at power-off (ch. 7)
+        // So is everything the microprocessor was in the middle of: a
+        // half-received ESC I would otherwise eat the next job's text, and
+        // a half-received ESC its first byte.
+        customLoad_ = CustomLoad::Off;
+        customFont_ = 0;
+        escSeen_ = fsSeen_ = false;
+        escCmd_  = 0;
+        numParam_ = neededParam_ = 0;
+        epsonNeed_ = epsonCount_ = 0;
+        diabloNeed_ = 0;
+        diabloCmd_  = 0;
+        bitGraph_.remBytes = 0;
+        bitGraph_.readBytesColumn = 0;
+        repeatRemaining_ = 0;
+    }
     // DELIBERATELY not resetPrinter() and not newPage(): switching a real
     // printer off does not eject the sheet or wipe what is on it. That is
     // what `powerCycle()` is for, and conflating the two is why "power off"

@@ -1589,6 +1589,9 @@ private:
     /// `slot < 0` names a //c+ on-board Sony 3.5" mechanism (`index` = its
     /// drive, 0 internal) — no slot card owns those.
     bool ejectMediaBay(int slot, int index, bool diskII);
+    /// Carry out the ejects guest code asked for (SmartPort CONTROL code 4,
+    /// `MountableMediaCard::requestGuestEject`), once a frame.
+    void serviceGuestEjects();
     /// Write a read-only 3.5" WOZ out as a writable `.po` beside it, then
     /// mount the copy in the same drive with write-back on. The WOZ is left
     /// untouched. `useSmartPort35` picks the source the 3.5" panel is

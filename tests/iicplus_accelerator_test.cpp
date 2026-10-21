@@ -35,6 +35,7 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -138,6 +139,48 @@ int main()
     c.hardReset();
     runFrames(c, 120);
     expect(zip.fast(), "a reset without Esc is back at 4 MHz");
+
+    // Esc held through the POWER switch: the latch is cleared at power-on,
+    // but the keyboard encoder's first scan finds the key still down and
+    // strobes it, so the ROM slows the accelerator as on Ctrl-Reset.
+    constexpr uint16_t kEscToken = 256;      // GLFW_KEY_ESCAPE
+    {
+        auto st = c.lockState();
+        st.memory().setKeyHeld(kEscToken, true);
+        st.memory().queueKey(0x9B);
+    }
+    c.coldBoot();
+    runFrames(c, 120);
+    expect(!zip.fast(), "Esc held at power-on puts the //c Plus at 1 MHz");
+    {
+        auto st = c.lockState();
+        (void)st.memory().memRead(0xC010);
+        st.memory().setKeyHeld(kEscToken, false);
+        st.memory().queueKey(0x9B);          // typed and released: latched only
+    }
+    c.coldBoot();
+    runFrames(c, 120);
+    expect(zip.fast(), "a key released before power-on is not seen: 4 MHz");
+
+    // A //c Plus snapshot from before 2026-10-21 carries the user's //e Zip
+    // (boot-fast byte 0 when that option booted slow). It is not this
+    // chip's state: the restore takes the reset state, 4 MHz.
+    {
+        pom2::ZipChip socketZip;
+        socketZip.setBootFast(false);
+        socketZip.onReset(0);
+        std::vector<uint8_t> blob;
+        socketZip.appendSnapshotState(blob);
+        expect(zip.loadSnapshotState(blob.data(), blob.size()), "the old blob is accepted");
+        expect(zip.fast() && !zip.unlocked(), "…and leaves the //c Plus chip fast and locked");
+        std::vector<uint8_t> own;
+        zip.ioWrite(0x5B, 0x00, 0);          // locked: ignored, still fast
+        zip.appendSnapshotState(own);
+        pom2::ZipChip copy;
+        copy.setSoldered(true);
+        expect(copy.loadSnapshotState(own.data(), own.size()) && copy.fast(),
+               "the chip's own blob round-trips");
+    }
 
     c.setMode(EmulationController::Mode::Stopped);
     if (failures) return 1;

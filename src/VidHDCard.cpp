@@ -23,7 +23,7 @@ namespace {
 // unit (VidHD.cpp:170-180) saves the same four plus its ][+ memory mode,
 // which POM2 does not model.
 constexpr uint8_t kMagic[4] = { 'V', 'D', 'H', 'D' };
-constexpr uint8_t kVersion  = 1;
+constexpr uint8_t kVersion  = 2;   // 2: $C022 is painted, powers up $F0
 constexpr std::size_t kBlobBytes = 4 + 1 + 4;
 } // namespace
 
@@ -148,8 +148,13 @@ void VidHDCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     // Foreign, older or short blobs are refused whole (SlotPeripheral.h).
     if (!data || len < kBlobBytes) return;
-    if (!std::equal(kMagic, kMagic + 4, data) || data[4] != kVersion) return;
+    if (!std::equal(kMagic, kMagic + 4, data)) return;
+    if (data[4] != kVersion && data[4] != 1) return;
     screenColor_ = data[5];
+    // v1 (v0.9.7) powered $C022 up at 0 and never painted it, so a program
+    // that left it alone saved 0 — black on black today. That 0 meant
+    // "untouched": the IIgs power-on value is $F0.
+    if (data[4] == 1 && screenColor_ == 0) screenColor_ = 0xF0;
     newVideo_    = data[6];
     borderColor_ = data[7];
     shadow_      = data[8];

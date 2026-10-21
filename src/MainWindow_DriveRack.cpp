@@ -206,6 +206,13 @@ void MainWindow::processDriveRackFileDrop() {
     if (const auto selected = driveRackFilePicker_.render()) {
         if (driveRackPickerProfile_ != activeProfile) {
             driveRackFilePicker_.complete(false, "Machine changed. Cancel and select a drive again.");
+        } else if (selected->boot) {
+            std::string error;
+            const bool ok = insertAndBootImage(selected->path, error);
+            tapeStatusMessage = ok ? "Disk inserted and booted: " + selected->path
+                                   : "Insert and boot failed: " + error;
+            tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
+            driveRackFilePicker_.complete(ok, error);
         } else {
             const bool ok = insertDriveRackImage(selected->target, selected->path);
             driveRackFilePicker_.complete(ok, ok ? "" : tapeStatusMessage);

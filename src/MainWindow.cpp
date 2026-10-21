@@ -1325,6 +1325,9 @@ void MainWindow::render()
     // any disk panel window is open (the disk panel defaults to hidden).
     updateAutoTurbo();
 
+    // A program's SmartPort EJECT takes the 3.5" out from here, off the lock.
+    serviceGuestEjects();
+
     // Kiosk: only the screen, no chrome. Joystick + auto-turbo above still
     // run so the machine behaves identically; everything else is skipped.
     // F6 hold-to-rewind still works (no toolbar button in kiosk).

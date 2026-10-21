@@ -48,7 +48,7 @@ LironCard::LironCard(int slot)
 {
     for (int i = 0; i < kDrives; ++i) drives_[i].setImage(&images_[i]);
     for (int i = 0; i < kMaxUnits; ++i) {
-        busUnits_[static_cast<std::size_t>(i)].bind(&images_[i], &blocks_[i]);
+        busUnits_[static_cast<std::size_t>(i)].bind(&images_[i], &blocks_[i], this, i);
         bus_.setUnit(i, &busUnits_[static_cast<std::size_t>(i)]);
     }
     bus_.setUnitCount(unitCount_);

@@ -10,6 +10,50 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-21 — Bug hunt: the last five commits, against the real machines
+
+- **SmartPort EJECT takes the disk out.** CONTROL code 4 on a UniDisk 3.5
+  holding a disk now ejects it, on all three paths (the slot card's HLE
+  dispatch, the Liron bus, the //c rear port). The CPU thread only records
+  the request (`MountableMediaCard::requestGuestEject`); the UI thread
+  ejects once a frame through the coordinator's three-phase path
+  (`MainWindow::serviceGuestEjects`), so the write-back stays off
+  `stateMutex` and a failed commit keeps the disk in. A hard disk still
+  returns without an error, as TN SmartPort #2 asks. Headless builds
+  acknowledge the call without ejecting. CONTROL on unit 0 or past the
+  chain is now $28 instead of success.
+- **The bus DIB name is padded to 16 bytes.** `"DISK 3.5"` / `"POM2
+  HARDDISK"` were 15-character literals, so byte 16 went out as `$00`.
+- **v0.9.7 VidHD snapshots no longer restore black-on-black text.** That
+  build powered `$C022` up at 0 and never painted it; the blob version
+  stayed 1 when the power-on value became `$F0`. Version 2 now, and a v1
+  blob's 0 reads as `$F0`.
+- **The rewind length counted the speed setting twice** (`cyclesPerFrame`
+  and the live clock both carry it): at 2x a 30 s ring read 15 s.
+- **The mouse's own 60/50 Hz timer is the 68705's crystal.** An
+  accelerator changing the CPU clock re-phased it every time, so a Zip or
+  TransWarp opening slow windows every few ms starved the interrupt. The
+  clock change now rescales what is left of the period, and the timer runs
+  one period after the last edge instead of on the beam's grid.
+- **Esc held through the power switch slows the //c Plus.** A power-on
+  clears the latch, but the encoder strobes a key still held down
+  (`Keyboard::powerOn`); before, only Ctrl-Reset worked.
+- **Old //c Plus snapshots restore the right speed.** A blob from before
+  the //c Plus Zip carried the user's //e Zip state; one whose boot-fast
+  byte is 0 cannot be the soldered chip's and takes the reset state
+  (`ZipChip::setSoldered`). A snapshot with no accelerator section resets
+  the live one rather than keeping the previous machine's.
+- **ImageWriter power-off drops half-received commands** (ESC I, ESC, the
+  ESC/P and Diablo collectors): the next job lost its first characters.
+- **VidHD border colour is an atomic**: two `render()`s write it, the
+  screen window reads it unlocked.
+- **File > Insert disk and boot…** on desktop, the browser build's import
+  item: one picker, the image goes to the drive its type maps to, then
+  the machine boots.
+
+Pinned by `smartport_bus_device`, `liron_smartport_dispatch`, `vidhd_card`,
+`mouse_card_applewin_smoke`, `iicplus_accelerator`, `imagewriter_smoke`.
+
 ## 2026-10-21 — VidHD border colour; the mouse's 60 Hz default on PAL
 
 - **VidHD BORDERCOLOR is painted.** `$C034`'s low nibble, in the IIgs

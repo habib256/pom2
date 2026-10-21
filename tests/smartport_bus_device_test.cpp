@@ -49,6 +49,8 @@ struct RamUnit final : pom2::SmartPortBusUnit {
     uint32_t blockCount()     const override { return media ? 4u : 0u; }
     bool     writeProtected() const override { return wp; }
     bool     isUnidisk35()    const override { return unidisk; }
+    int      ejects = 0;
+    void     requestEject()         override { ++ejects; }
     bool readBlock(uint32_t b, uint8_t out[512]) override
     { if (b >= 4) return false; std::memcpy(out, &blocks[b * 512], 512); return true; }
     bool writeBlock(uint32_t b, const uint8_t in[512]) override
@@ -354,6 +356,28 @@ int main()
                "FORMAT on a number nobody was assigned is a bad unit");
     }
 
+    // CONTROL code 4 (EJECT, TN SmartPort #2): a UniDisk 3.5 holding a disk
+    // asks its owner to take it out; a hard disk, an empty drive and the
+    // other codes are acknowledged and nothing happens. The code rides in
+    // the command packet, the control list in the data packet after it.
+    {
+        auto control = [&](uint8_t dev, uint8_t code) {
+            transact(d, frame(dev, 0x00, {0x04, 0x03, 0x00, 0x08, code, 0x00, 0x00, 0x00, 0x00}),
+                     /*expectReply=*/false);
+            return replyStatus(transact(d, frame(dev, 0x02, {0x00, 0x00})));
+        };
+        u1.unidisk = true;
+        assert(control(3, 0x04) == 0x00 && u1.ejects == 1 && "EJECT takes the 3.5\" out");
+        assert(control(3, 0x00) == 0x00 && u1.ejects == 1 && "device reset ejects nothing");
+        u1.media = false;
+        assert(control(3, 0x04) == 0x00 && u1.ejects == 1 && "an empty drive has nothing to eject");
+        u1.media = true;
+        u1.unidisk = false;
+        assert(control(3, 0x04) == 0x00 && u1.ejects == 1 &&
+               "a fixed disk returns from EJECT without an error");
+        assert(control(1, 0x04) == 0x11 && "EJECT on a number nobody was assigned is a bad unit");
+    }
+
     // DIB (STATUS code 3). Kind is a property of the drive, not of the
     // disk in it: a 4-block unit is a hard disk (type $02, $20) with or
     // without media; a UniDisk 3.5 is type $01, subtype $00 — UniDisk 3.5
@@ -380,6 +404,10 @@ int main()
                "an empty UniDisk 3.5 is $00, not Apple 3.5 Drive $C0");
         // "DISK 3.5" — the UniDisk 3.5's own DIB name (TN SmartPort #7).
         assert(emptyFloppy[4] == 8 && emptyFloppy[5] == 'D' && emptyFloppy[12] == '5');
+        // Padded with spaces to all sixteen bytes, the last one included
+        // (a 15-character literal used to leave its NUL there).
+        for (int i = 13; i < 21; ++i) assert(emptyFloppy[i] == ' ');
+        for (int i = 18; i < 21; ++i) assert(emptyHd[i] == ' ');
         u0.unidisk = false;
         u0.media = true;
         r = transact(d, frame(2, 0x00, {0x41, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00}));
