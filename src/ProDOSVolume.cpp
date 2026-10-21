@@ -1876,6 +1876,7 @@ ProDOSDecodeResult decodeVolumeToFolder(
     // approximation is still applied on top.
     r.completedAt = walk.stamp;
     if (walk.newest > r.completedAt) r.completedAt = walk.newest;
+    r.completedAtValid = true;
 
     if (walk.ioFailed) return r;
 

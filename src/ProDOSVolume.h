@@ -111,6 +111,12 @@ struct ProDOSDecodeResult {
     /// Taken as max(clock now, newest mtime actually written) so a server
     /// clock ahead of ours cannot defeat it.
     std::filesystem::file_time_type completedAt{};
+    /// True once the walk ran, so `completedAt` is real. A decode that stops
+    /// before writing anything (folder gone, not creatable) leaves it false:
+    /// comparing `completedAt` against a default value is no signal, since
+    /// what a default file_clock time means differs between libc++ and
+    /// libstdc++ (the 2026-10-21 guard did not hold on Linux).
+    bool completedAtValid = false;
 };
 
 /// Reverse of `buildVolumeFromFolder`: walk a synthesised volume's directory

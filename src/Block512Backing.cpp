@@ -395,7 +395,8 @@ bool Block512Backing::saveDirty()
     const std::vector<uint32_t> captured = pending.dirtyIndices;
     const bool wasSynth = pending.synth;
     std::string error;
-    std::filesystem::file_time_type stamp{};
+    // min(): "no stamp published" — never a time a walk can produce.
+    std::filesystem::file_time_type stamp = std::filesystem::file_time_type::min();
     const bool ok = commitWriteBack(std::move(pending), error, &stamp);
     collectWriteBack();
     if (ok) {
@@ -425,9 +426,10 @@ bool Block512Backing::saveDirty()
     // stamp. Adopting the default `file_time_type{}` there moved the mount
     // stamp to the clock's epoch, after which every host file read as a
     // host edit and every later guest save went to .pom2-conflicts/. A walk
-    // that ran (success or partial) always publishes `now()`, so this never
-    // skips the restamp the paragraph above needs.
-    if (wasSynth && synth_ && loaded_ && stamp != std::filesystem::file_time_type{}) {
+    // that ran (success or partial) always publishes, so this never skips
+    // the restamp the paragraph above needs.
+    if (wasSynth && synth_ && loaded_ &&
+        stamp != std::filesystem::file_time_type::min()) {
         mountTime_    = stamp;
         hasMountTime_ = true;
     }
@@ -549,8 +551,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         // stamp. Returning early left the caller with nothing to adopt.
         // Not when the decode stopped before its walk (completedAt still
         // default): nothing was written, so the old stamp stays valid.
-        if (newMountTime && r.completedAt != std::filesystem::file_time_type{})
-            *newMountTime = r.completedAt;
+        if (newMountTime && r.completedAtValid) *newMountTime = r.completedAt;
         if (!r.ok) {
             error = r.error;
             pom2::log().warn("HDV", "Synth folder write-back failed: " + error);
