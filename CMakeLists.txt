@@ -283,6 +283,7 @@ set(SOURCES
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
     src/MemoryWatch.cpp
+    src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/MachineSnapshot.cpp
@@ -787,6 +788,7 @@ set(POM2_MACHINE_SOURCES
     src/Assembler6502.cpp
     src/Keyboard.cpp
     src/MemoryWatch.cpp
+    src/MemoryVideoLog.cpp
     src/M6502.cpp
     src/M6502_Undoc.cpp
     src/Z80.cpp
@@ -1477,6 +1479,7 @@ set(POM2_CORE_SOURCES
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
     src/MemoryWatch.cpp
+    src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/MachineSnapshot.cpp
@@ -1802,6 +1805,7 @@ add_executable(pom2_headless
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
     src/MemoryWatch.cpp
+    src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/Mockingboard.cpp
@@ -1884,6 +1888,7 @@ add_executable(pom2_bench
     src/MemorySnapshotValidation.cpp
     src/CharRomDump.cpp
     src/MemoryWatch.cpp
+    src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/NoSlotClock.cpp

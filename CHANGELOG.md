@@ -12,6 +12,36 @@ marker and the previous one.
 
 **v0.9.8 marker** — 2026-10-21. Release notes: [v0.9.8](docs/releases/v0.9.8.md).
 
+## 2026-10-21 — The display paints the RAM the beam fetched (pom2games DIRTBIKE)
+
+Reported by pom2games. DIRTBIKE double-buffers its hi-res pages: it draws
+the hidden page, then flips with `$C054/$C055`. Under POM2 it flickered, and
+on a real Apple II it does not.
+
+**The cause.** The real scanner fetches RAM during the scan (Sather; MAME
+`apple2video.cpp`). The display replayed a frame's soft-switch events, but
+painted every band from RAM as it stood at paint time. After a mid-frame
+flip, the band above it showed page A half-redrawn, because the game had
+already started erasing it. POM2 had a shortcut for this: a frame that
+flips one way only is painted from the final page. DIRTBIKE flips more than
+once per frame, so the shortcut never applied.
+
+**The fix: the video write log.**
+- While armed, CPU writes to `$0400-$0BFF` and `$2000-$5FFF` are logged with
+  their cycle. That covers main RAM, the aux bank the scanner reads and the
+  Eve's CPREG auto-write. The log is armed by the same zero-cost
+  `writable[]` diversion as the write watchpoints, and only while frames
+  carry soft-switch events.
+- `render()` rewinds video RAM to each band's fetch time and starts a new
+  band wherever a write changes what the beam fetched. It then restores RAM
+  bit-exact.
+- With the log valid, the one-way flip shortcut stands down. A lone
+  mid-frame flip now shows the real tear: page A intact above, page B below.
+
+The fix applies to every display path (LUT, composite OpenEmulator,
+AppleWin) and to the mixed text band. Pinned by `drol_pageflip_render`: the
+flip-then-redraw case, and a write into the visible page racing the beam.
+
 ## 2026-10-21 — Host joystick: a source per paddle, Apple II joystick on stick 1
 
 Reported by the user: the host pad's analog stick did not drive the Apple II

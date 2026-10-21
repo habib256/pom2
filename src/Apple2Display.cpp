@@ -111,6 +111,7 @@ void Apple2Display::applyVideoEvent(Memory::DisplayState& state,
         case Memory::VideoEventKind::An3:       state.an3       = value; break;
         case Memory::VideoEventKind::EightyStore: state.eightyStore = value; break;
         case Memory::VideoEventKind::AltChar:   state.altChar   = value; break;
+        case Memory::VideoEventKind::Cut:       break;   // a band edge only
     }
 }
 
@@ -459,12 +460,13 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
                 if (y1 <= kMixedTextFirstScanline) return;
                 renderInternalSegment(mem, st, std::max(y0, kMixedTextFirstScanline),
                                       y1, col0, col1);
-            });
+            }, bandHook());
         force560_ = false;
         setUseFrame80(true);
         return;
     }
 
+    if (bandHook_) bandHook_(kMixedTextFirstScanline);   // beam-time RAM
     if (mem.isIIE() && state.eightyCol)
         renderText80(mem, state, 20, 24);
     else {
@@ -596,6 +598,7 @@ void Apple2Display::render(Memory& mem)
     // display tests drive this class, poking soft switches into Memory with
     // no clock running at all.
     auto events = mem.takeVideoEvents();
+    BeamTimeRam beamRam(*this, mem, events);   // Apple2Display_Beam.cpp
     Memory::DisplayState state = mem.getDisplayState();
     //
     // Last: a STOPPED machine publishes nothing at all (no cycles, no frame
@@ -659,29 +662,24 @@ void Apple2Display::render(Memory& mem)
     const bool cpuDemodGfx  = cpuDemod && (!state.textMode || oeDemodsText);
     const bool needSignal = (hiResMode == HiResMode::ColorCompositeOE) || cpuDemod;
 
-    // Fetch the last PUBLISHED video frame's soft-switch log ONCE (a copy —
-    // Memory republishes at each video-frame boundary, so re-rendering the
-    // same frame at 60 Hz over 50 Hz PAL content is safe). Both consumers
-    // need it: the RGBA beam-racing path (the fallback framebuffer) AND the
-    // composite signal builder, so mid-scanline mode switches (text↔graphics
-    // splits, page flips, DHGR toggles) show up in the OE/AppleWin composite
-    // picture too — not just the LUT modes. `events` survives the
-    // renderBeamRacing copy and is handed to fillCompositeSignal below.
+    // The published frame's soft-switch log, fetched ONCE above (a copy, so
+    // re-rendering one frame at 60 Hz over 50 Hz PAL is safe), feeds BOTH the
+    // RGBA beam-racing path and the composite signal builder below — so
+    // mid-scanline switches reach the OE/AppleWin pictures, not just LUT.
     if (!cpuDemodGfx) {
         if (events.empty()) {
             // Repaint unless this is the very same full-screen text frame that
             // is already in the framebuffer. Beam-raced frames take the else
             // branch and are never skipped.
-            if (!staticTextFrameUnchanged(mem, state)) renderInternal(mem, state);
+            if (!beamCuts_.empty() || !staticTextFrameUnchanged(mem, state))
+                renderInternalBeamTime(mem, state);   // = renderInternal, banded
         } else {
             // A beam-raced frame publishes no key: the framebuffer no longer
             // corresponds to any single whole-frame text state.
             renderBeamRacing(mem, events);
         }
     }
-    // The remaining case — a CPU demod about to overwrite frame80 from the
-    // composite signal — also publishes no key, and needs no statement to say
-    // so: nextTextFrameKey_ stays invalid.
+    // A CPU demod about to overwrite frame80 publishes no key either.
 
     // fillCompositeSignal sets this; with no signal there are no black rows.
     mixedBandLeftBlack_ = false;
@@ -2506,8 +2504,15 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             mixedBandLeftBlack_ = true;
     };
 
-    if (!beamRace) {
-        paintSignalBand(0, kSignalHeight, 0, 40);
+    if (!beamRace) {                 // full frame, in beam-time RAM bands
+        int y0 = 0;
+        for (const uint16_t cut : beamCuts_) {
+            if (bandHook_) bandHook_(y0);
+            paintSignalBand(y0, cut, 0, 40);
+            y0 = cut;
+        }
+        if (bandHook_) bandHook_(y0);
+        paintSignalBand(y0, kSignalHeight, 0, 40);
         return true;
     }
 
@@ -2523,7 +2528,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             uint8_t) {
             state = st;
             paintSignalBand(y0, y1, col0, col1);
-        });
+        }, bandHook());
     return true;
 }
 

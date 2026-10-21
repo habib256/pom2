@@ -65,6 +65,7 @@ src/MachineSnapshot.cpp
 src/MediaMount.cpp
 src/Memory.cpp
 src/MemoryProfile_IIcClass.cpp
+src/MemoryVideoLog.cpp
 src/MemoryViewer_ImGui.cpp
 src/MemoryWatch.cpp
 src/Mockingboard.cpp

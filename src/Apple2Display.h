@@ -751,6 +751,10 @@ private:
     // rising edges clock the $C00C/D level), so a mid-frame latch change
     // paints each band with the value of ITS moment. Callers without a card
     // pass 0b11 (COL140) and ignore the parameter.
+    // `beforeBand`, when set, is called with each band's first line before
+    // its segments paint: render() points it at Memory::videoRewindTo, so
+    // the painters read the RAM that band was fetched from. It also means
+    // RAM is beam-exact, so the one-way page-flip shortcut stands down.
     static void forEachBeamSegment(
         const Memory::DisplayState& frameStart,
         std::vector<Memory::VideoEvent> events,
@@ -758,7 +762,27 @@ private:
         uint8_t startLatch,
         const std::function<void(const Memory::DisplayState&,
                                  int y0, int y1, int col0, int col1,
-                                 uint8_t latch)>& paint);
+                                 uint8_t latch)>& paint,
+        const std::function<void(int)>* beforeBand = nullptr);
+    // Set by render() for the length of one paint while the video write log
+    // describes the published frame (Memory::videoRewindBegin); empty
+    // otherwise. Every forEachBeamSegment call in this class passes it.
+    std::function<void(int)> bandHook_;
+    // One paint's beam-time RAM: rewinds video RAM to the published frame's
+    // start, adds a Cut event per line where a logged write changes what the
+    // beam fetched, arms bandHook_, and puts RAM back on every way out.
+    // Cut lines for a frame with NO soft-switch event: the full-frame paths
+    // paint in these bands instead (renderInternalBeamTime, the composite
+    // full-frame band), so they keep their own buffer domain. Frames with
+    // events get Cut events instead.
+    std::vector<uint16_t> beamCuts_;
+    void renderInternalBeamTime(Memory& mem, const Memory::DisplayState& state);
+    struct BeamTimeRam {
+        BeamTimeRam(Apple2Display& d, Memory& m, std::vector<Memory::VideoEvent>& events);
+        ~BeamTimeRam();
+        Apple2Display& display; Memory& mem; bool on;
+    };
+    const std::function<void(int)>* bandHook() const { return bandHook_ ? &bandHook_ : nullptr; }
     void renderBeamRacing(Memory& mem, std::vector<Memory::VideoEvent> events);
     // The Chat Mauve latch for the band being painted by the beam-raced
     // replay (renderDhgr consumes it); < 0 outside a replay = ask the card.

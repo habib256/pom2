@@ -37,7 +37,8 @@ void Memory::setWriteWatch(uint16_t addr, bool on)
         // The REAL permission, not the byte: a page the aux shadow has
         // already diverted reads false here while being plain RAM.
         writeWatch_[addr] = static_cast<uint8_t>(
-            kWatchArmed | ((writable[addr] || auxShadowCovers(addr))
+            kWatchArmed | ((writable[addr] || auxShadowCovers(addr) ||
+                            videoWriteLogCovers(addr))
                                ? kWatchWasWritable : 0));
         // THE diversion: the fast path's own test now fails for this address,
         // which is the whole trick. Below $C000 only — above it every write
@@ -49,7 +50,7 @@ void Memory::setWriteWatch(uint16_t addr, bool on)
     if (writeWatch_.empty() || !(writeWatch_[addr] & kWatchArmed)) return;
     // An address the aux shadow still covers stays diverted (its slow-path
     // permission comes from ramWritable(), which knows about the shadow).
-    if (addr < 0xC000 && !auxShadowCovers(addr))
+    if (addr < 0xC000 && !auxShadowCovers(addr) && !videoWriteLogCovers(addr))
         writable[addr] = (writeWatch_[addr] & kWatchWasWritable) != 0;
     writeWatch_[addr] = 0;
     if (--writeWatchCount_ == 0) {
@@ -93,7 +94,8 @@ void Memory::clearWriteWatches()
     if (writeWatch_.empty()) return;
     for (std::size_t a = 0; a < writeWatch_.size(); ++a) {
         if (!(writeWatch_[a] & kWatchArmed)) continue;
-        if (a < 0xC000 && !auxShadowCovers(static_cast<uint16_t>(a)))
+        if (a < 0xC000 && !auxShadowCovers(static_cast<uint16_t>(a)) &&
+            !videoWriteLogCovers(static_cast<uint16_t>(a)))
             writable[a] = (writeWatch_[a] & kWatchWasWritable) != 0;
     }
     writeWatch_.clear();
@@ -117,7 +119,8 @@ void Memory::setAuxShadow(bool textPage, bool hgrPage, uint8_t byte)
         flag = on;
         for (uint32_t a = lo; a <= hi; ++a) {
             if (hasWriteWatch(static_cast<uint16_t>(a))) continue;
-            writable[a] = !on;
+            // The video write log may hold the page diverted on its own.
+            writable[a] = !on && !videoWriteLogCovers(static_cast<uint16_t>(a));
         }
     };
     apply(auxShadowText_, textPage, 0x0400, 0x07FF);

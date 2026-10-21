@@ -103,6 +103,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -2347,6 +2348,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -5574,6 +5576,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -5627,6 +5630,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -5684,6 +5688,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -5739,6 +5744,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -5795,6 +5801,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -5851,6 +5858,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -7375,6 +7383,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -8645,6 +8654,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp

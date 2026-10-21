@@ -538,9 +538,8 @@ void Memory::advanceCyclesVideo()
     // same published frame instead of stealing a half-recorded one — the
     // old tick-bracket model dropped every event recorded between the UI's
     // take and the next tick (~1 empty take in 6 under PAL → mid-scanline
-    // effects like French Touch *Mad Effect* flickered at ~10 Hz).
-    // Legacy mode: tests bracket synchronously via beginVideoEventFrame().
-    //
+    // effects like French Touch *Mad Effect* flickered at ~10 Hz). Legacy
+    // mode: tests bracket synchronously via beginVideoEventFrame().
     // The frame boundary is `vblFrameBase_` moving — it IS
     // `cycleCounter - cycleCounter % frameCycles`, maintained incrementally
     // above, so compare it rather than divide again: `cycleCounter /
@@ -549,6 +548,7 @@ void Memory::advanceCyclesVideo()
     // arrived with the per-video-frame publication and measured ~2 % of the
     // core on an M1, more on a Cortex-A72 where `udiv` is slower).
     if (!legacyEventBracket_ && vblFrameBase_ != lastVideoFrameStart_) {
+        onVideoFramePublished(lastVideoFrameStart_, !videoEvents_.empty());
         lastVideoFrameStart_ = vblFrameBase_;
         const uint64_t newFrameStart = vblFrameBase_;
         std::lock_guard<std::mutex> lk(stateMutex);
@@ -2590,10 +2590,10 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
     // Fast path: writable RAM and Language Card overlay for $D000-$FFFF.
     if (addr < 0xC000) {
         if (!ramWritable(addr)) return;
-        // Diagnostic: log every write to $0400 (top-left text-screen cell)
-        // while the IIe reboot trace is armed. The user reports an 'M'
-        // landing there after Choplifter's title screen; we want to see
-        // from which PC and at which cycle.
+        if (videoWriteLogCovers(addr)) noteVideoWrite(addr, value);   // MemoryVideoLog.cpp
+            // Diagnostic: log every write to $0400 (top-left text cell) while the
+        // IIe reboot trace is armed — an 'M' landing there after Choplifter's
+        // title screen; from which PC and at which cycle?
         if (addr == 0x0400 && value == 0xCD && iieRebootTraceEnabled()) {
             // The 'M' write to $0400 is the smoking gun. Dump 16 bytes
             // around the writing PC plus the M6502 PC trace ring buffer

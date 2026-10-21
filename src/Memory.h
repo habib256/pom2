@@ -48,6 +48,7 @@
 #include "PaddleInputs.h"
 
 #include <array>
+#include <functional>
 #include <atomic>
 #include <cassert>
 #include <cstdint>
@@ -409,6 +410,7 @@ public:
         if (!writeWatch_.empty() && (writeWatch_[addr] & kWatchArmed))
             return (writeWatch_[addr] & kWatchWasWritable) != 0;
         if (auxShadowCovers(addr)) return true;   // RAM pages by construction
+        if (videoWriteLogCovers(addr)) return true;
         return writable[addr];
     }
 
@@ -429,6 +431,41 @@ public:
     bool    auxShadowText() const { return auxShadowText_; }
     bool    auxShadowHgr()  const { return auxShadowHgr_; }
     uint8_t auxShadowByte() const { return auxShadowByte_; }
+
+    // ── Video write log: beam-time RAM for the display ──────────────────
+    // The scanner fetches RAM DURING the scan (Sather, Understanding the
+    // Apple II ch. 3 / IIe ch. 5): a byte written after the beam passed its
+    // line shows next frame. The display paints a published frame later,
+    // from live RAM, so a double-buffered game that flips mid-frame and
+    // starts redrawing the page it just hid showed the band above the flip
+    // half-erased (pom2games DIRTBIKE, 2026-10-21). While armed, every CPU
+    // write to $0400-$0BFF / $2000-$5FFF (main, and the aux bank the scanner
+    // reads) is logged with its cycle, and the painter rewinds RAM to each
+    // band's scan time. Same zero-cost diversion as the write watch: arming
+    // clears `writable[]` there. Armed while published frames carry
+    // soft-switch events, dropped after kVideoLogQuietFrames without one.
+    // MemoryVideoLog.cpp.
+    bool videoWriteLogCovers(uint16_t addr) const {
+        return videoLogArmed_ && ((addr >= 0x0400 && addr < 0x0C00) ||
+                                  (addr >= 0x2000 && addr < 0x6000));
+    }
+    void setVideoWriteLog(bool on);
+    bool videoWriteLogArmed() const { return videoLogArmed_; }
+    /// Display side, the caller holding the state lock for the whole paint:
+    /// begin, then `videoRewindTo(line)` before painting each band (either
+    /// direction), then end, which puts RAM back exactly. begin() returns
+    /// false and changes nothing when the log does not describe the
+    /// published frame (armed too late, overflowed, or RAM moved under it).
+    /// `cutFilter` (optional): only writes it accepts get a band of their
+    /// own — the display passes "lands in a page this frame shows" for a
+    /// frame with no soft-switch event. Every write is still rewound.
+    bool videoRewindBegin(const std::function<bool(uint16_t addr, bool aux)>* cutFilter = nullptr);
+    void videoRewindTo(int line);
+    void videoRewindEnd();
+    /// Lines 1..191 at which a logged write changes what the beam fetches.
+    const std::vector<uint16_t>& videoRewindCuts() const { return vrCuts_; }
+    /// Start cycle of the last published video frame.
+    uint64_t videoPublishedFrameStart() const { return videoPublishedStart_; }
 
     // ── Read watchpoints ─────────────────────────────────────────────────
     // Reads have no per-address table on their fast path to hide a watch in
@@ -650,6 +687,10 @@ public:
         An3,
         EightyStore,
         AltChar,
+        /// Display-side only, never recorded by Memory: a band boundary the
+        /// renderer inserts where a logged video-RAM write changes what the
+        /// beam fetches (see videoRewindBegin). Changes no state.
+        Cut,
     };
     struct VideoEvent {
         uint64_t       emuCycle = 0;
@@ -968,6 +1009,24 @@ private:
     bool    auxShadowText_ = false;
     bool    auxShadowHgr_  = false;
     uint8_t auxShadowByte_ = 0;
+    // Video write log (see videoWriteLogCovers).
+    struct VideoWrite { uint64_t cycle; uint16_t addr; uint8_t oldValue, newValue; bool toAux; };
+    static constexpr std::size_t kVideoLogCap = std::size_t{1} << 18;
+    static constexpr int kVideoLogQuietFrames = 600;
+    void noteVideoWrite(uint16_t addr, uint8_t value);
+    void onVideoFramePublished(uint64_t frameStart, bool hadEvents);
+    uint8_t* videoWriteTarget(const VideoWrite& w);
+    bool     videoLogArmed_      = false;
+    uint64_t videoLogValidFrom_  = 0;
+    uint64_t videoPublishedStart_ = 0;
+    int      videoQuietFrames_   = 0;
+    std::vector<VideoWrite> videoLog_;
+    bool                  vrActive_  = false;
+    std::vector<uint32_t> vrOrder_;    // log indices, stably sorted by cut line
+    std::vector<uint16_t> vrCutOf_;    // per log entry
+    std::size_t           vrApplied_ = 0;
+    std::vector<uint16_t> vrCuts_;
+    std::vector<uint8_t>  vrSeen_;
     // Read-watchpoint table, same lifetime rule. `readDivert_` is
     // `readWatchCount_ != 0`; memRead never tests it directly — it is folded
     // into the three derived fast-path bytes below by refreshReadFastFlags().

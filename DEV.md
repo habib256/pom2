@@ -1078,9 +1078,49 @@ direction is a buffer flip → apply the final page **frame-wide** (the displaye
 page at frame end is the freshly completed buffer, exactly what RAM holds) and
 drop the events; a frame that flips BOTH directions (DIX MODPAGE: page 1 left,
 page 2 right of the same line) keeps the exact replay. Pinned by
-`drol_pageflip_render`; `dix_modpage_split` unchanged. Known trade-off *(🟢)*: a
-single intentional one-direction mid-frame page split renders full-page — the
-real fix is MAME-style incremental scanline rendering.
+`drol_pageflip_render`; `dix_modpage_split` unchanged. That shortcut is now
+only the fallback for frames the video write log (below) cannot describe.
+
+**Beam-time RAM: the video write log** *(2026-10-21)*. The real fix for the
+above. The scanner fetches RAM during the scan (Sather, *Understanding the
+Apple II* ch. 3 / *IIe* ch. 5): 40 bytes per line, from cycle 25 of each
+65-cycle line, so a byte written after the beam passed its line shows next
+frame. pom2games' DIRTBIKE flips more than once per frame, which beats the
+one-way shortcut, and flickered.
+
+- **Logging** (`Memory.h` § Video write log, `MemoryVideoLog.cpp`): while
+  armed, every CPU write to `$0400-$0BFF` / `$2000-$5FFF` is logged {cycle,
+  old, new}. That covers main RAM, the aux bank the scanner reads
+  (`videoAuxData`; RamWorks banks other than 0 are skipped) and the Eve's
+  CPREG auto-write. It costs the fast path nothing: arming clears
+  `writable[]` over those pages, the same diversion the write watch and the
+  aux shadow use, and `MemoryWatch.cpp` keeps the three from re-enabling
+  each other's pages.
+- **Arming:** a published frame with any soft-switch event arms the log;
+  `kVideoLogQuietFrames` (600) frames without one disarm it. Each
+  publication trims the entries older than the published frame.
+- **Painting:** `Apple2Display::BeamTimeRam` (`Apple2Display_Beam.cpp`) wraps
+  one `render()`, under the state lock the paint already holds.
+  `videoRewindBegin` validates the log (armed before the frame started; the
+  newest byte per address still matches RAM; no clock rollback). It then
+  undoes every write since the frame start and gives each write its *cut*:
+  the first line whose fetch sees it, by line, and by byte column on the
+  line where the write happened. A `Cut` video event per such line makes
+  `forEachBeamSegment` start a band there. Its `beforeBand` hook
+  (`videoRewindTo`) moves RAM to each band, both directions, for the RGBA,
+  composite and mixed-band replays alike. The destructor re-applies
+  everything, so RAM comes back bit-exact.
+- **Frames with no soft-switch event** stay on the full-frame paths
+  (`renderInternalBeamTime`, and the composite full-frame band), cut into
+  `beamCuts_` bands, so their buffer domain does not change. Only writes into
+  a page the frame shows cut a band there. A Cut event would send them down
+  the replay, which under Le Chat Mauve paints plain 40-column text in the 560
+  domain: the picture is the same, but the buffer alternated per frame
+  (caught by `purplesoft_eve_screens`, on the //e ROM's cursor blink).
+- **Effect:** with the log valid, the one-way page-flip shortcut stands down,
+  and a lone mid-frame flip now shows the tear a real Apple II shows.
+- Pinned by `drol_pageflip_render`: the DIRTBIKE flip-then-redraw case, and a
+  write into the visible page racing the beam.
 
 **Composite signal also beam-races.** `render()` now takes the event log
 *once* and hands it to `fillCompositeSignal(mem, events)` as well as the RGBA

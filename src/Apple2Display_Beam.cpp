@@ -206,7 +206,8 @@ void Apple2Display::forEachBeamSegment(
     VideoStandard std,
     uint8_t startLatch,
     const std::function<void(const Memory::DisplayState&, int, int, int, int,
-                             uint8_t)>& paint)
+                             uint8_t)>& paint,
+    const std::function<void(int)>* beforeBand)
 {
     // ── Double-buffer page flips (DROL-class) vs beam-raced page splits ──
     // A frame whose PAGE2 events all go ONE direction is a buffer flip, not
@@ -223,8 +224,12 @@ void Apple2Display::forEachBeamSegment(
     for (const auto& e : events)
         if (e.kind == Memory::VideoEventKind::Page2)
             (e.value ? pageOn : pageOff) = true;
+    // With beam-time RAM (`beforeBand`, the video write log) the band above
+    // the flip reads the page as the beam saw it, so the exact replay is
+    // right and the shortcut — which hides the tear a real machine shows —
+    // is not needed.
     Memory::DisplayState start = frameStart;
-    if (pageOn != pageOff) {
+    if (pageOn != pageOff && !beforeBand) {
         start.page2 = pageOn;
         events.erase(std::remove_if(events.begin(), events.end(),
                          [](const Memory::VideoEvent& e) {
@@ -248,6 +253,9 @@ void Apple2Display::forEachBeamSegment(
     // segment — the common case.
     struct Seg { int colEnd; Memory::DisplayState st; uint8_t latch; };
     std::array<std::vector<Seg>, kHeight> perLine;
+    // Lines a Cut event starts: a band must begin there even though the
+    // display state is unchanged (the RAM under it is not).
+    std::array<bool, kHeight> cutAt{};
 
     // The Chat Mauve mode latch, replayed from the same events: a Dhgr
     // event going ON→OFF is the $C05E→$C05F rising edge of AN3, which
@@ -260,6 +268,7 @@ void Apple2Display::forEachBeamSegment(
         std::vector<Seg> segs;
         int prevCol = 0;
         while (ei < events.size() && events[ei].scanline == y) {
+            if (events[ei].kind == Memory::VideoEventKind::Cut) { cutAt[y] = true; ++ei; continue; }
             const int col = beamColForEvent(events[ei], std);
             if (col > prevCol) { segs.push_back({col, cur, latch}); prevCol = col; }
             if (events[ei].kind == Memory::VideoEventKind::Dhgr &&
@@ -294,7 +303,8 @@ void Apple2Display::forEachBeamSegment(
 
     int bandY0 = 0;
     for (int y = 1; y <= kHeight; ++y) {
-        if (y == kHeight || !sameSegs(perLine[y], perLine[bandY0])) {
+        if (y == kHeight || cutAt[y] || !sameSegs(perLine[y], perLine[bandY0])) {
+            if (beforeBand) (*beforeBand)(bandY0);
             int col0 = 0;
             for (const auto& s : perLine[bandY0]) {
                 paint(s.st, bandY0, y, col0, s.colEnd, s.latch);
@@ -303,6 +313,66 @@ void Apple2Display::forEachBeamSegment(
             bandY0 = y;
         }
     }
+}
+
+// Beam-time RAM (Memory.h § Video write log). The display paints a frame
+// after the machine ran it; when the log describes the published frame,
+// video RAM is rewound to the frame start, the bands are cut wherever a
+// logged write changes what the beam fetched, and every replay moves RAM to
+// its band before painting it (bandHook_). The destructor puts RAM back
+// exactly, on every way out of render().
+Apple2Display::BeamTimeRam::BeamTimeRam(Apple2Display& d, Memory& m,
+                                        std::vector<Memory::VideoEvent>& events)
+    : display(d), mem(m), on(false)
+{
+    // A frame with no soft-switch event cuts bands only for writes into the
+    // pages it shows: a write elsewhere (the hidden page) cannot change the
+    // picture, and an extra band would only move the paint off the
+    // full-frame path for nothing.
+    const Memory::DisplayState st = m.getDisplayStateAtFrameStart();
+    const bool page2 = st.page2 && !st.eightyStore;
+    const std::function<bool(uint16_t, bool)> shown = [st, page2](uint16_t a, bool) {
+        const uint16_t text = page2 ? 0x0800 : 0x0400;
+        const uint16_t gfx  = page2 ? 0x4000 : 0x2000;
+        const bool inText = a >= text && a < text + 0x0400;
+        const bool inGfx  = a >= gfx  && a < gfx  + 0x2000;
+        if (st.textMode || !st.hiRes) return inText;      // text, lo-res
+        return inGfx || (st.mixedMode && inText);
+    };
+    on = m.videoRewindBegin(events.empty() ? &shown : nullptr);
+    if (!on) return;
+    mem.videoRewindTo(0);
+    Memory& rm = mem;
+    display.bandHook_ = [&rm](int line) { rm.videoRewindTo(line); };
+    if (events.empty()) {               // full-frame paths band themselves
+        display.beamCuts_ = mem.videoRewindCuts();
+        return;
+    }
+    const uint64_t frameStart = mem.videoPublishedFrameStart();
+    for (uint16_t cut : mem.videoRewindCuts())
+        events.push_back({frameStart + cut * 65ull, cut,
+                          Memory::VideoEventKind::Cut, false});
+}
+
+Apple2Display::BeamTimeRam::~BeamTimeRam()
+{
+    if (!on) return;
+    mem.videoRewindEnd();
+    display.bandHook_ = nullptr;
+    display.beamCuts_.clear();
+}
+
+void Apple2Display::renderInternalBeamTime(Memory& mem, const Memory::DisplayState& state)
+{
+    // renderInternal, in bands: RAM moves to each band's fetch time first.
+    int y0 = 0;
+    for (const uint16_t cut : beamCuts_) {
+        if (bandHook_) bandHook_(y0);
+        renderInternalBand(mem, state, y0, cut);
+        y0 = cut;
+    }
+    if (bandHook_) bandHook_(y0);
+    renderInternalBand(mem, state, y0, kHeight);
 }
 
 void Apple2Display::renderBeamRacing(Memory& mem,
@@ -328,7 +398,7 @@ void Apple2Display::renderBeamRacing(Memory& mem,
     forEachBeamSegment(beamStart, events, mem.videoStandard(), startLatch,
         [&](const Memory::DisplayState& st, int, int, int, int, uint8_t) {
             (usesLegacyPath(mem, st) ? anyLegacy : any560) = true;
-        });
+        }, bandHook());
     force560_ = anyLegacy && any560;
     forEachBeamSegment(beamStart, std::move(events),
         mem.videoStandard(), startLatch,
@@ -337,7 +407,7 @@ void Apple2Display::renderBeamRacing(Memory& mem,
             bandLatch_ = latch;
             renderInternalSegment(mem, st, y0, y1, col0, col1);
             bandLatch_ = -1;
-        });
+        }, bandHook());
     force560_ = false;
 }
 
