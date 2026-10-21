@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🍏 POM2 v0.9.7 — Apple II Family Emulator
+# 🍏 POM2 v0.9.8 — Apple II Family Emulator
 
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 
@@ -23,13 +23,11 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 **[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
 [Bundled disks](#bundled-disks) · [Build it](#build-it) · [Documentation](docs/README.md)**
 
-> **v0.9.7:** [What's new](docs/releases/v0.9.7.md) ·
+> **v0.9.8:** [What's new](docs/releases/v0.9.8.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
-This checkout also includes untagged changes described in [CHANGELOG.md](CHANGELOG.md),
-including v7 sessions that reconstruct their machine, a bank-aware debugger
-with source correspondence and direct browser disk-image import. Tagged
-packages follow their release notes.
+Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
+tagged packages follow their release notes.
 
 ## Start playing
 
@@ -59,8 +57,8 @@ executable and its accompanying folders together.
 On Linux, make the AppImage executable before opening it:
 
 ```bash
-chmod +x POM2-v0.9.7-x86_64.AppImage
-./POM2-v0.9.7-x86_64.AppImage
+chmod +x POM2-v0.9.8-x86_64.AppImage
+./POM2-v0.9.8-x86_64.AppImage
 ```
 
 Then pick a machine in **Machine → Profile**, drop a disk image onto the
