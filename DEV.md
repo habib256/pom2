@@ -8501,10 +8501,22 @@ working mouse.
 ### Joystick / paddles
 
 `JoystickInput` polls all 16 GLFW slots each UI frame (hot-plug).
-One binding drives PADL(0/1) from the left stick and PADL(2/3) from the
-right stick on mapped gamepads. Raw joysticks use only X/Y and keep the
-second pair centred at 128. Each pair has its own inversion settings and
-passes through the same deadzone/square-gate transform. **Paddle RC** in
+Each paddle reads a **source** (`Binding::source`, keys
+`joystick_source_pdl0..3`, codes `JoystickInput::Source`): none, stick 1/2
+X/Y, L2/R2 or raw host axis 0..7. The default is stick 1 → PADL(0/1), the
+Apple II joystick, and stick 2 → PADL(2/3).
+
+- **Mapped pads** (GLFW / SDL DB, or the browser's `standard` layout): stick
+  1/2 and the triggers come from the mapping. Browser L2/R2 are analog
+  buttons 6/7 rescaled to −1..+1.
+- **Unmapped pads:** `resolveRawSticks` takes the first four raw axes that
+  do not rest low as the two sticks, and the first two that do as L2/R2. A
+  pad's first sample (`seedRestingAxes`) is its rest position, and an axis
+  at < −0.75 then is a trigger.
+
+The panel's **Detect** picks the raw axis that moves furthest (> 0.5) from
+where it sat when the button was clicked. Inversion is per paddle, and each
+pair passes through the same deadzone/square-gate transform. **Paddle RC** in
 `Memory::softSwitchAccess`: `$C064-$C067`
 returns `0x80` while `(cycleCounter - paddleLatchCycle) <
 paddleValue × 11`. `$C070` arms latch. 11-cycle constant = rough

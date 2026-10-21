@@ -35,6 +35,7 @@ class JoystickPanel_ImGui
 public:
     static constexpr int kAxes    = 4;
     static constexpr int kButtons = 3;
+    static constexpr int kRawAxes = 8;
 
     /// One entry per detected GLFW host joystick. Used to populate the
     /// combo and the read-only "all detected devices" overflow list.
@@ -42,6 +43,9 @@ public:
         int         index = -1;
         std::string name;
         std::array<float, kAxes>    axis{};
+        std::array<float, 2>        trigger{ -1.0f, -1.0f };  // L2, R2
+        std::array<float, kRawAxes> raw{};
+        int                         rawCount = 0;
         std::array<bool,  kButtons> buttons{};
     };
 
@@ -53,6 +57,8 @@ public:
         float deadzone = 0.10f;
         std::array<bool, kAxes> invert{ false, false };
         bool  squareGate = true;
+        /// Per paddle, a JoystickInput::Source code.
+        std::array<int, kAxes> source{ 1, 2, 3, 4 };
 
         // Live Apple-II-side values for confirmation.
         std::array<uint8_t, 4> appleIIPaddle{ 128, 128, 128, 128 };
@@ -65,9 +71,16 @@ public:
         float deadzone = 0.10f;
         std::array<bool, kAxes> invert{ false, false };
         bool  squareGate = true;
+        std::array<int, kAxes> source{ 1, 2, 3, 4 };
     };
 
     FrameResult render(const char* title, bool& open, const Snapshot& snap);
+
+private:
+    // "Detect": the paddle whose source is being learned (-1 = none), and
+    // the bound pad's raw axes when the button was clicked.
+    int learning_ = -1;
+    std::array<float, kRawAxes> learnBase_{};
 };
 
 } // namespace pom2

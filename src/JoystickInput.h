@@ -17,14 +17,21 @@
 // JoystickInput — GLFW host-side joystick polling, mapped to the Apple II
 // game port. ONE active joystick at a time:
 //
-//   host X axis  → PADL(0)   ($C064)
-//   host Y axis  → PADL(1)   ($C065)
-//   host btn 0   → PB0       ($C061, "open-apple")
-//   host btn 1   → PB1       ($C062, "closed-apple")
-//   host btn 2   → PB2       ($C063, "shift mod" / third button)
+//   first analog stick X → PADL(0)   ($C064)  — the Apple II joystick
+//   first analog stick Y → PADL(1)   ($C065)
+//   host btn 0           → PB0       ($C061, "open-apple")
+//   host btn 1           → PB1       ($C062, "closed-apple")
+//   host btn 2           → PB2       ($C063, "shift mod" / third button)
 //
-// A mapped gamepad's right stick feeds PADL(2)/PADL(3). Unmapped host
-// joysticks keep their raw X/Y and leave the second pair centered.
+// PADL(2)/PADL(3) — the second paddle pair — take the second stick by
+// default. Every paddle's source is configurable (Binding::source): none,
+// stick 1/2 X/Y, the L2/R2 triggers or any raw host axis 0..7, and the
+// Joystick panel can learn it from a move.
+//
+// "Stick 1" / "stick 2" are the gamepad mapping's left / right stick when
+// GLFW (or the browser's "standard" layout) knows the pad; otherwise the
+// first / next two raw axes that rest centred — an axis already near -1 when
+// the pad appears is a trigger, and is skipped.
 //
 // All 16 GLFW slots are polled each frame so a hot-plugged pad shows up
 // in the selection combo immediately. The active "binding" picks one of
@@ -43,11 +50,33 @@ public:
     static constexpr int kHostCount  = 16;     // GLFW slots
     static constexpr int kAxes       = 4;      // left X/Y, right X/Y
     static constexpr int kButtons    = 3;      // PB0, PB1, PB2
+    static constexpr int kRawAxes    = 8;      // raw host axes a paddle can take
+
+    /// Where one Apple II paddle reads from (Binding::source, persisted as
+    /// `joystick_source_pdlN`). Raw axis k is `SrcRaw0 + k`.
+    enum Source : int {
+        SrcNone    = 0,                 // centred (128)
+        SrcStick1X = 1, SrcStick1Y = 2, // first analog stick
+        SrcStick2X = 3, SrcStick2Y = 4, // second analog stick
+        SrcTriggerL = 5, SrcTriggerR = 6, // L2 / R2, released = -1
+        SrcRaw0    = 10,                // raw host axis 0..kRawAxes-1
+    };
+    static bool validSource(int s) {
+        return (s >= SrcNone && s <= SrcTriggerR) ||
+               (s >= SrcRaw0 && s < SrcRaw0 + kRawAxes);
+    }
 
     struct DeviceState {
         bool        present = false;
         std::string name;
-        std::array<float, kAxes>    axis{};       // -1..+1
+        std::array<float, kAxes>    axis{};       // stick 1 X/Y, stick 2 X/Y, -1..+1
+        std::array<float, 2>        trigger{ -1.0f, -1.0f }; // L2, R2: -1 released
+        std::array<float, kRawAxes> raw{};        // raw host axes, -1..+1
+        int  rawCount = 0;
+        // Raw axes that rested near -1 when the pad appeared: triggers, never
+        // a stick. `seeded` = that first sample has been taken.
+        std::array<bool, kRawAxes> restsLow{};
+        bool seeded = false;
         std::array<bool,  kButtons> buttons{};
         uint16_t snesButtons = 0; // B,Y,Select,Start,Up,Down,Left,Right,A,X,L,R
     };
@@ -114,9 +143,18 @@ public:
         // circular stick region back out to the full square. See
         // JoystickInput.cpp for the transform.
         bool  squareGate = true;
+        // Per paddle (PADL 0..3). Default: the Apple II joystick on the first
+        // analog stick, the second paddle pair on the second.
+        std::array<int, kAxes> source{ SrcStick1X, SrcStick1Y, SrcStick2X, SrcStick2Y };
     };
 
     JoystickInput();
+
+    /// The value a paddle source reads on `device` (0 for none / absent).
+    static float sourceValue(const DeviceState& device, int source);
+    /// Stick 1 / stick 2 for an UNMAPPED pad: the first four raw axes that
+    /// do not rest low, in order; the first two that do are L2/R2. Pure.
+    static void resolveRawSticks(DeviceState& device);
 
     /// Refresh state from GLFW. Call once per UI frame.
     void poll();
@@ -144,7 +182,7 @@ public:
     Binding&       binding()       { return active; }
     const Binding& binding() const { return active; }
 
-    /// 0..3: left X/Y, right X/Y; unavailable axes are centered.
+    /// 0..3: PADL(n) through Binding::source; unavailable axes are centered.
     uint8_t paddleValue(int paddleIdx) const;
     /// Pure routing helper, also used by controller regression tests.
     static uint8_t paddleValue(const DeviceState& device, const Binding& binding,
@@ -194,6 +232,9 @@ public:
                                uint8_t& padX, uint8_t& padY);
 
 private:
+    /// Take a newly present pad's first sample as its rest position.
+    static void seedRestingAxes(DeviceState& device);
+
     std::array<DeviceState, kHostCount> devices{};
     Binding active;
     bool    autoBindDone = false;

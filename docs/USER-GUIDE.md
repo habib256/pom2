@@ -208,10 +208,17 @@ write already saved to disk or an action performed by a connected FujiNet.
 
 ### Joysticks, keys and paper
 
-Mapped gamepads use the left stick for `PDL(0/1)` and the right stick for
-`PDL(2/3)`. The Joystick panel has deadzone, square-gate and axis-inversion
-controls. Unmapped desktop joysticks use their raw X/Y axes and leave the extra
-paddles centred.
+By default the first analog stick is the Apple II joystick (`PDL(0/1)`) and
+the second stick drives `PDL(2/3)`. On a pad without a standard gamepad
+mapping, the sticks are the raw axes that rest centred; an axis already at
+its end when the pad is plugged in is taken for a trigger.
+
+Each paddle's source can be changed in the Joystick panel, under **Paddle
+sources**. A paddle can read either stick's X or Y axis, the L2 or R2
+trigger, any raw host axis, or nothing (centred). **Detect** learns the
+source: click it, then move the stick or trigger. The panel also shows the
+raw axes live, and has deadzone, square-gate and per-paddle inversion
+controls.
 
 For a mapped gamepad, B/Circle drives game-port button 0 and A/Cross drives
 button 1; PB2 stays released. The D-pad sends Apple II arrow keys, X/Square

@@ -12,6 +12,29 @@ marker and the previous one.
 
 **v0.9.8 marker** — 2026-10-21. Release notes: [v0.9.8](docs/releases/v0.9.8.md).
 
+## 2026-10-21 — Host joystick: a source per paddle, Apple II joystick on stick 1
+
+Reported by the user: the host pad's analog stick did not drive the Apple II
+joystick, and nothing in the panel could make it.
+
+- **Each paddle's source is configurable:** none, stick 1/2 X/Y, L2/R2, or
+  any raw host axis 0..7 (`Binding::source`, persisted as
+  `joystick_source_pdl0..3`). Before, the routing was fixed: mapped pads
+  took left/right stick from GLFW's mapping, and unmapped pads took raw X/Y
+  only. The Joystick panel shows the raw axes live, and its **Detect** button
+  learns a source from a move. Inversion is now labelled per paddle, which
+  is what it always was.
+- **Default:** stick 1 is the Apple II joystick (PDL 0/1) and stick 2 drives
+  PDL 2/3.
+- **Unmapped pads keep stick 2 and get the triggers.** An unmapped pad's
+  sticks are the raw axes that rest centred. An axis at −1 when the pad
+  appears is taken for a trigger, L2/R2, rather than a stick. Until now an
+  unmapped pad left PDL 2/3 centred, because raw axes 2/3 can be triggers.
+- **Browser:** a pad with the `standard` layout reads its L2/R2 from analog
+  buttons 6/7.
+
+Pinned by `joystick_square_gate` (`testPaddleSources`).
+
 ## 2026-10-21 — //c and //c Plus mouse follows the pointer (GitHub #17)
 
 Reported on the browser build with A2DeskTop. On a //c or //c Plus the Apple

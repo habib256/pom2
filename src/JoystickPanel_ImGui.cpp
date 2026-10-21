@@ -18,7 +18,11 @@
 
 #include "imgui.h"
 
+#include "JoystickInput.h"
+
+#include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace pom2 {
 
@@ -77,6 +81,24 @@ findHost(const std::vector<JoystickPanel_ImGui::HostDevice>& hosts, int idx)
     return nullptr;
 }
 
+std::string sourceLabel(int src)
+{
+    switch (src) {
+    case JoystickInput::SrcNone:     return "None (centred)";
+    case JoystickInput::SrcStick1X:  return "Stick 1 X";
+    case JoystickInput::SrcStick1Y:  return "Stick 1 Y";
+    case JoystickInput::SrcStick2X:  return "Stick 2 X";
+    case JoystickInput::SrcStick2Y:  return "Stick 2 Y";
+    case JoystickInput::SrcTriggerL: return "L2 trigger";
+    case JoystickInput::SrcTriggerR: return "R2 trigger";
+    default: break;
+    }
+    if (src >= JoystickInput::SrcRaw0 &&
+        src < JoystickInput::SrcRaw0 + JoystickInput::kRawAxes)
+        return "Raw axis " + std::to_string(src - JoystickInput::SrcRaw0);
+    return "None (centred)";
+}
+
 } // namespace
 
 JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
@@ -87,8 +109,9 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     r.deadzone   = snap.deadzone;
     r.invert     = snap.invert;
     r.squareGate = snap.squareGate;
+    r.source     = snap.source;
 
-    if (!open) return r;
+    if (!open) { learning_ = -1; return r; }
 
     ImGui::SetNextWindowSize(ImVec2(380, 380), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(title, &open)) {
@@ -97,8 +120,9 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     }
 
     ImGui::TextDisabled(
-        "Left stick: PDL(0/1). Right stick: PDL(2/3)."
-        " Buttons feed PB0/PB1/PB2. Right stick needs a mapped gamepad.");
+        "Default: stick 1 = the Apple II joystick, PDL(0/1); stick 2 ="
+        " PDL(2/3). Each paddle's source can be changed below."
+        " Buttons feed PB0/PB1/PB2.");
     ImGui::Separator();
 
     // ─── Device combo ────────────────────────────────────────────────────
@@ -140,10 +164,21 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     const HostDevice* bound =
         snap.hostIdx >= 0 ? findHost(snap.hosts, snap.hostIdx) : nullptr;
     if (bound) {
-        drawAxisBar("X axis", bound->axis[0], snap.deadzone);
-        drawAxisBar("Y axis", bound->axis[1], snap.deadzone);
-        drawAxisBar("Right X", bound->axis[2], snap.deadzone);
-        drawAxisBar("Right Y", bound->axis[3], snap.deadzone);
+        drawAxisBar("Stick 1 X", bound->axis[0], snap.deadzone);
+        drawAxisBar("Stick 1 Y", bound->axis[1], snap.deadzone);
+        drawAxisBar("Stick 2 X", bound->axis[2], snap.deadzone);
+        drawAxisBar("Stick 2 Y", bound->axis[3], snap.deadzone);
+        drawAxisBar("L2", bound->trigger[0], 0.0f);
+        drawAxisBar("R2", bound->trigger[1], 0.0f);
+        if (ImGui::TreeNode("Raw host axes")) {
+            for (int k = 0; k < bound->rawCount && k < kRawAxes; ++k) {
+                char label[16];
+                std::snprintf(label, sizeof(label), "Raw %d", k);
+                drawAxisBar(label, bound->raw[k], 0.0f);
+            }
+            if (bound->rawCount == 0) ImGui::TextDisabled("(no axes)");
+            ImGui::TreePop();
+        }
         ImGui::Spacing();
         drawButtonLed("Btn 0", bound->buttons[0]);
         drawButtonLed("Btn 1", bound->buttons[1]);
@@ -155,15 +190,76 @@ JoystickPanel_ImGui::FrameResult JoystickPanel_ImGui::render(
     ImGui::Spacing();
     ImGui::Separator();
 
+    // ─── Paddle sources ──────────────────────────────────────────────────
+    // "Detect" learns a source from a move: the raw axis that travels
+    // furthest from where it sat when the button was clicked (> 0.5) wins.
+    if (!bound) learning_ = -1;
+    if (learning_ >= 0 && bound) {
+        int best = -1; float bestDelta = 0.5f;
+        for (int k = 0; k < bound->rawCount && k < kRawAxes; ++k) {
+            const float delta = std::fabs(bound->raw[k] - learnBase_[k]);
+            if (delta > bestDelta) { bestDelta = delta; best = k; }
+        }
+        if (best >= 0) {
+            r.source[learning_] = JoystickInput::SrcRaw0 + best;
+            r.changed = true;
+            learning_ = -1;
+        }
+    }
+    ImGui::TextUnformatted("Paddle sources:");
+    static const int kChoices[] = {
+        JoystickInput::SrcStick1X, JoystickInput::SrcStick1Y,
+        JoystickInput::SrcStick2X, JoystickInput::SrcStick2Y,
+        JoystickInput::SrcTriggerL, JoystickInput::SrcTriggerR,
+        JoystickInput::SrcNone };
+    for (int i = 0; i < kAxes; ++i) {
+        ImGui::PushID(i);
+        char label[16];
+        std::snprintf(label, sizeof(label), "PDL(%d)", i);
+        ImGui::SetNextItemWidth(170.0f);
+        if (ImGui::BeginCombo(label, sourceLabel(r.source[i]).c_str())) {
+            for (int c : kChoices)
+                if (ImGui::Selectable(sourceLabel(c).c_str(), r.source[i] == c)) {
+                    r.source[i] = c; r.changed = true;
+                }
+            for (int k = 0; k < kRawAxes; ++k) {
+                const int c = JoystickInput::SrcRaw0 + k;
+                if (ImGui::Selectable(sourceLabel(c).c_str(), r.source[i] == c)) {
+                    r.source[i] = c; r.changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (learning_ == i) {
+            if (ImGui::SmallButton("Cancel")) learning_ = -1;
+            ImGui::SameLine();
+            ImGui::TextDisabled("move the stick or trigger…");
+        } else if (bound && ImGui::SmallButton("Detect")) {
+            learning_ = i;
+            learnBase_ = bound->raw;
+        }
+        ImGui::PopID();
+    }
+    if (ImGui::SmallButton("Restore defaults")) {
+        r.source = { JoystickInput::SrcStick1X, JoystickInput::SrcStick1Y,
+                     JoystickInput::SrcStick2X, JoystickInput::SrcStick2Y };
+        r.changed = true;
+        learning_ = -1;
+    }
+    ImGui::Spacing();
+    ImGui::Separator();
+
     // ─── Tuning ──────────────────────────────────────────────────────────
     if (ImGui::SliderFloat("Deadzone", &r.deadzone, 0.0f, 0.5f, "%.2f"))
         r.changed = true;
-    if (ImGui::Checkbox("Invert X", &r.invert[0])) r.changed = true;
+    // Inversion is per PADDLE, whatever source feeds it.
+    if (ImGui::Checkbox("Invert PDL(0)", &r.invert[0])) r.changed = true;
     ImGui::SameLine();
-    if (ImGui::Checkbox("Invert Y", &r.invert[1])) r.changed = true;
-    if (ImGui::Checkbox("Invert right X", &r.invert[2])) r.changed = true;
+    if (ImGui::Checkbox("Invert PDL(1)", &r.invert[1])) r.changed = true;
+    if (ImGui::Checkbox("Invert PDL(2)", &r.invert[2])) r.changed = true;
     ImGui::SameLine();
-    if (ImGui::Checkbox("Invert right Y", &r.invert[3])) r.changed = true;
+    if (ImGui::Checkbox("Invert PDL(3)", &r.invert[3])) r.changed = true;
 
     if (ImGui::Checkbox("Square gate (Apple II corners)", &r.squareGate))
         r.changed = true;

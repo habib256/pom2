@@ -520,6 +520,11 @@ MainWindow::MainWindow(bool forceIIPlus)
             jb.invert[1]  = settings->getBool("joystick_invert_y", jb.invert[1]);
             jb.invert[2]  = settings->getBool("joystick_invert_right_x", jb.invert[2]);
             jb.invert[3]  = settings->getBool("joystick_invert_right_y", jb.invert[3]);
+            for (int i = 0; i < 4; ++i) {
+                const int src = settings->getInt(
+                    "joystick_source_pdl" + std::to_string(i), jb.source[i]);
+                if (JoystickInput::validSource(src)) jb.source[i] = src;
+            }
             // -2 is "key absent": a fresh install must still auto-bind, and
             // a persisted -1 means the user chose "(none)" and the
             // auto-binder has to keep its hands off (markBindingExplicit).

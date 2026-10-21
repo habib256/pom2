@@ -259,6 +259,48 @@ void testFourPaddleRouting()
     std::printf("  ok: independent sticks, right inversion/deadzone and disconnect\n");
 }
 
+// Paddle sources: the default puts the Apple II joystick (PDL 0/1) on the
+// first stick and PDL 2/3 on the second; each paddle can read none, any
+// stick axis, L2/R2 or a raw host axis. An unmapped pad's sticks are the raw
+// axes that rest centred — an axis at -1 when the pad appears is a trigger.
+void testPaddleSources()
+{
+    JoystickInput::Binding def;
+    assert(def.source[0] == JoystickInput::SrcStick1X &&
+           def.source[1] == JoystickInput::SrcStick1Y &&
+           def.source[2] == JoystickInput::SrcStick2X &&
+           def.source[3] == JoystickInput::SrcStick2Y);
+
+    // Unmapped pad: raw 0/1 = stick 1, raw 2 = a trigger (rests at -1),
+    // raw 3/4 = stick 2, raw 5 = the second trigger.
+    JoystickInput::DeviceState d;
+    d.present = true;
+    d.rawCount = 6;
+    d.raw = {0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f};
+    for (int i = 0; i < 6; ++i) d.restsLow[i] = d.raw[i] < -0.75f;
+    d.seeded = true;
+    d.raw[3] = 1.0f;                    // push stick 2 right
+    d.raw[2] = 1.0f;                    // squeeze L2
+    JoystickInput::resolveRawSticks(d);
+    assert(d.axis[2] == 1.0f && "stick 2 X is raw 3, not the trigger at raw 2");
+    assert(d.trigger[0] == 1.0f && d.trigger[1] == -1.0f);
+
+    JoystickInput::Binding b;
+    assert(JoystickInput::paddleValue(d, b, 2) == 255);
+    b.source[2] = JoystickInput::SrcTriggerL;
+    assert(JoystickInput::paddleValue(d, b, 2) == 255);
+    b.source[2] = JoystickInput::SrcNone;
+    assert(JoystickInput::paddleValue(d, b, 2) == 128);
+    b.source[0] = JoystickInput::SrcRaw0 + 3;          // a raw axis, directly
+    assert(JoystickInput::paddleValue(d, b, 0) == 255);
+    b.source[0] = JoystickInput::SrcRaw0 + 7;          // beyond rawCount
+    assert(JoystickInput::paddleValue(d, b, 0) == 128);
+    assert(JoystickInput::validSource(JoystickInput::SrcRaw0 + 7) &&
+           !JoystickInput::validSource(JoystickInput::SrcRaw0 + 8) &&
+           !JoystickInput::validSource(7));
+    std::printf("  ok: paddle sources (default sticks, triggers, raw, none)\n");
+}
+
 } // namespace
 
 int main()
@@ -276,6 +318,7 @@ int main()
     testGateOffPath();
     testInvert();
     testFourPaddleRouting();
+    testPaddleSources();
     std::printf("joystick_square_gate: all assertions passed\n");
     return 0;
 }

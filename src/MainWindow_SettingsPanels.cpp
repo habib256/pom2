@@ -407,6 +407,9 @@ void MainWindow::renderJoystickPanelWindow()
         hd.index   = h;
         hd.name    = d.name;
         hd.axis    = d.axis;
+        hd.trigger = d.trigger;
+        hd.raw     = d.raw;
+        hd.rawCount = d.rawCount;
         hd.buttons = d.buttons;
         snap.hosts.push_back(std::move(hd));
     }
@@ -415,6 +418,7 @@ void MainWindow::renderJoystickPanelWindow()
     snap.deadzone   = cf.deadzone;
     snap.invert     = cf.invert;
     snap.squareGate = cf.squareGate;
+    snap.source     = cf.source;
     for (int i = 0; i < 4; ++i) snap.appleIIPaddle[i] = joystick->paddleValue(i);
     for (int i = 0; i < 3; ++i) snap.appleIIButton[i] = joystick->buttonDown(i);
 
@@ -426,6 +430,7 @@ void MainWindow::renderJoystickPanelWindow()
         bind.deadzone   = result.deadzone;
         bind.invert     = result.invert;
         bind.squareGate = result.squareGate;
+        bind.source     = result.source;
         // Picking a device — "(none)" included — is a decision, and the
         // auto-binder must stop overruling it. See markBindingExplicit().
         if (hostPicked) joystick->markBindingExplicit();
@@ -440,6 +445,9 @@ void MainWindow::renderJoystickPanelWindow()
             settings->setBool ("joystick_invert_y",    bind.invert[1]);
             settings->setBool ("joystick_invert_right_x", bind.invert[2]);
             settings->setBool ("joystick_invert_right_y", bind.invert[3]);
+            for (int i = 0; i < 4; ++i)
+                settings->setInt("joystick_source_pdl" + std::to_string(i),
+                                 bind.source[i]);
         }
     }
 }

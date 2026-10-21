@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 JoystickInput::JoystickInput() = default;
 
@@ -84,18 +85,33 @@ void JoystickInput::poll()
         d.buttons.fill(false);
         d.snesButtons = 0;
 
-        if (browserPads <= 0 || h >= browserPads) continue;
+        if (browserPads <= 0 || h >= browserPads) { d.seeded = false; continue; }
 
         EmscriptenGamepadEvent gp{};
         if (emscripten_get_gamepad_status(h, &gp) != EMSCRIPTEN_RESULT_SUCCESS ||
             !gp.connected) {
+            d.seeded = false;
             continue;
         }
 
         d.present = true;
         d.name = gp.id[0] ? gp.id : "Browser Gamepad";
-        for (int i = 0; i < kAxes; ++i) {
-            d.axis[i] = (i < gp.numAxes) ? static_cast<float>(gp.axis[i]) : 0.0f;
+        d.rawCount = std::min(gp.numAxes, kRawAxes);
+        d.raw.fill(0.0f);
+        for (int i = 0; i < d.rawCount; ++i)
+            d.raw[i] = static_cast<float>(gp.axis[i]);
+        seedRestingAxes(d);
+        // W3C "standard" layout: axes 0/1 = left stick, 2/3 = right stick.
+        // Anything else is a raw layout, resolved like an unmapped desktop pad.
+        if (std::strcmp(gp.mapping, "standard") == 0) {
+            for (int i = 0; i < kAxes; ++i) d.axis[i] = d.raw[i];
+            // Standard L2/R2 are analog BUTTONS 6/7 (0..1): put them on the
+            // -1 (released) .. +1 scale the desktop triggers use.
+            for (int t = 0; t < 2; ++t)
+                d.trigger[t] = 6 + t < gp.numButtons
+                    ? static_cast<float>(gp.analogButton[6 + t] * 2.0 - 1.0) : -1.0f;
+        } else {
+            resolveRawSticks(d);
         }
         for (int i = 0; i < kButtons; ++i) {
             d.buttons[i] = (i < gp.numButtons) &&
@@ -118,6 +134,9 @@ void JoystickInput::poll()
             d.present = false;
             d.name.clear();
             d.axis.fill(0.0f);
+            d.raw.fill(0.0f);
+            d.rawCount = 0;
+            d.seeded = false;
             d.buttons.fill(false);
             continue;
         }
@@ -127,17 +146,21 @@ void JoystickInput::poll()
 
         int axisCount = 0;
         const float* axes = glfwGetJoystickAxes(jid, &axisCount);
-        for (int i = 0; i < kAxes; ++i) {
-            d.axis[i] = (i < 2 && axes && i < axisCount) ? axes[i] : 0.0f;
-        }
-        // Raw axes 2/3 can be triggers. Only a standard mapping identifies
-        // the right stick reliably; unmapped sticks stay centered.
+        d.rawCount = axes ? std::min(axisCount, kRawAxes) : 0;
+        d.raw.fill(0.0f);
+        for (int i = 0; i < d.rawCount; ++i) d.raw[i] = axes[i];
+        seedRestingAxes(d);
+        // Unmapped: the sticks are the raw axes that rest centred (triggers
+        // rest at -1). A standard mapping, below, names them exactly.
+        resolveRawSticks(d);
         GLFWgamepadstate mapped{};
         if (glfwGetGamepadState(jid, &mapped)) {
             d.axis = {mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_X],
                       mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_Y],
                       mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_X],
                       mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y]};
+            d.trigger = {mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER],
+                         mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER]};
             const int snesMap[] = {GLFW_GAMEPAD_BUTTON_A, GLFW_GAMEPAD_BUTTON_X,
                 GLFW_GAMEPAD_BUTTON_BACK, GLFW_GAMEPAD_BUTTON_START,
                 GLFW_GAMEPAD_BUTTON_DPAD_UP, GLFW_GAMEPAD_BUTTON_DPAD_DOWN,
@@ -319,6 +342,39 @@ void JoystickInput::stickToPaddles(float x, float y, const Binding& b,
     padY = axisToPaddle01(y);
 }
 
+void JoystickInput::seedRestingAxes(DeviceState& d)
+{
+    // The first sample after the pad appears is its rest position: an axis
+    // already near -1 then is a trigger (GLFW and browsers report released
+    // triggers as -1), and a trigger is never one of the sticks.
+    if (d.seeded || d.rawCount == 0) return;
+    for (int i = 0; i < kRawAxes; ++i)
+        d.restsLow[i] = i < d.rawCount && d.raw[i] < -0.75f;
+    d.seeded = true;
+}
+
+void JoystickInput::resolveRawSticks(DeviceState& d)
+{
+    d.axis.fill(0.0f);
+    d.trigger = { -1.0f, -1.0f };
+    int k = 0, t = 0;
+    for (int i = 0; i < d.rawCount && i < kRawAxes; ++i) {
+        if (!d.restsLow[i]) { if (k < kAxes) d.axis[k++] = d.raw[i]; }
+        else if (t < 2)     d.trigger[t++] = d.raw[i];
+    }
+}
+
+float JoystickInput::sourceValue(const DeviceState& d, int src)
+{
+    if (src >= SrcStick1X && src <= SrcStick2Y) return d.axis[src - SrcStick1X];
+    if (src == SrcTriggerL || src == SrcTriggerR) return d.trigger[src - SrcTriggerL];
+    if (src >= SrcRaw0 && src < SrcRaw0 + kRawAxes) {
+        const int k = src - SrcRaw0;
+        return k < d.rawCount ? d.raw[k] : 0.0f;
+    }
+    return 0.0f;                                   // SrcNone / unknown
+}
+
 uint8_t JoystickInput::paddleValue(int paddleIdx) const
 {
     if (active.hostIdx < 0 || active.hostIdx >= kHostCount) return 128;
@@ -332,8 +388,11 @@ uint8_t JoystickInput::paddleValue(const DeviceState& d, const Binding& b, int p
     Binding pair = b;
     pair.invert[0] = b.invert[firstAxis];
     pair.invert[1] = b.invert[firstAxis + 1];
+    // Each paddle of the pair reads its own source; the pair still goes
+    // through the deadzone / square gate together, as one stick.
     uint8_t px = 128, py = 128;
-    stickToPaddles(d.axis[firstAxis], d.axis[firstAxis + 1], pair, px, py);
+    stickToPaddles(sourceValue(d, b.source[firstAxis]),
+                   sourceValue(d, b.source[firstAxis + 1]), pair, px, py);
     return (paddleIdx & 1) == 0 ? px : py;
 }
 
