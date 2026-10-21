@@ -592,6 +592,13 @@ private:
     // Frame index the scrub currently sits on, kNoFrame when not scrubbing.
     // Written from the UI thread (the rewind transport), read anywhere.
     std::atomic<size_t> scrubIndex_{pom2::RewindBuffer::kNoFrame};
+    /// The frame a scrub was left on when the machine resumed through
+    /// `setMode` (Play, Machine > Run) rather than `rewindEndAndResume`: the
+    /// next capture drops the abandoned future after it. Cutting at the new
+    /// capture's cycle instead kept old-timeline frames whose stamp happened
+    /// to be lower — and a seek onto one restored the timeline left behind.
+    std::atomic<size_t> resumeTruncate_{pom2::RewindBuffer::kNoFrame};
+    void captureRewindLocked();   // stateMtx held
 
     std::mutex              stateMtx;
     std::condition_variable wakeCv;

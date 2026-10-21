@@ -1253,6 +1253,69 @@ void testStepOverRecursiveReturn()
     assert(st.cpu().getXRegister() == 0);
 }
 
+// An IRQ step runs nothing at the interrupted PC: the hook hears an
+// interrupt entry, not a completed instruction (the profiler used to count a
+// visit and 7 cycles to an instruction that had not run, and history logged
+// it), and the instruction is reported once, after RTI, when it does run.
+void testInterruptEntryIsNotAStep()
+{
+    struct Recorder final : M6502DebugHook {
+        int steps = 0, entries = 0; uint16_t enteredFrom = 0, stepPc = 0; int entryCycles = 0;
+        bool onInstruction(uint16_t) override { return false; }
+        void onStepCompleted(const M6502&, uint16_t pc, int) override { ++steps; stepPc = pc; }
+        void onInterruptEntered(const M6502&, uint16_t pc, int c) override
+        { ++entries; enteredFrom = pc; entryCycles = c; }
+    } rec;
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.memWrite(0x0800, 0xEA);
+    cpu.setProgramCounter(0x0800);
+    cpu.setStatusRegister(0x20);                 // I clear
+    cpu.setDebugHook(&rec);
+    cpu.setIrqLine(M6502::IRQ_SRC_LEGACY, true);
+    cpu.run(1);                                  // one step: the IRQ entry
+    assert(rec.entries == 1 && rec.enteredFrom == 0x0800 && rec.entryCycles == 7);
+    assert(rec.steps == 0 && "the NOP at $0800 did not run");
+    cpu.setDebugHook(nullptr);
+    std::puts("  ok: an interrupt entry is reported as such, not as a step");
+}
+
+// The entry's 7 cycles belong to the handler in the HANDLER's bank. Keyed by
+// the interrupted instruction's bank (aux here), they went to a phantom
+// zero-visit row and the ROM handler's row showed 2 cycles instead of 9.
+void testInterruptEntryUsesTheHandlersBank()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setIIEMode(true);
+    const uint8_t rom[] = { 0xEA, 0x4C, 0x01, 0xFA };   // $FA00: NOP / JMP $FA01
+    mem.loadRomBytes(rom, sizeof rom, 0xFA00);
+    const uint8_t vec[2] = { 0x00, 0xFA };
+    mem.loadRomBytes(vec, 2, 0xFFFE);
+    mem.memWrite(0xC005, 0);                             // RAMWRT
+    mem.memWrite(0xC003, 0);                             // RAMRD
+    mem.memWrite(0x3000, 0xEA);
+    cpu.setProgramCounter(0x3000);
+    cpu.setStatusRegister(0x20);                         // I clear
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.setProfiling(true);
+    cpu.setDebugHook(&dbg);
+    cpu.setIrqLine(M6502::IRQ_SRC_LEGACY, true);
+    cpu.run(9);                       // cycles: the 7-cycle entry, then the NOP
+    cpu.setDebugHook(nullptr);
+    const auto profile = dbg.profile();
+    bool found = false;
+    for (const auto& e : profile)
+        if (e.pc == 0xFA00) {
+            found = true;
+            assert(e.visits == 1 && e.cycles == 9 &&
+                   "the IRQ entry's 7 cycles land on the handler's own row");
+        }
+    assert(found);
+    std::puts("  ok: an interrupt entry is filed under the handler's bank");
+}
+
 void testProfilerHistoryAndStepOut()
 {
     Memory mem;
@@ -1419,6 +1482,8 @@ int main()
     testStepOverRecursiveReturn();
     testConditionalBreakpointsAndSymbols();
     testProfilerHistoryAndStepOut();
+    testInterruptEntryIsNotAStep();
+    testInterruptEntryUsesTheHandlersBank();
     testWatchpointResumeKeepsNextBreakpoint();
     std::printf("debugger: all assertions passed\n");
     return 0;

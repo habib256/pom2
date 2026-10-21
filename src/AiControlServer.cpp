@@ -36,13 +36,16 @@
 #include "MouseCardAppleWin.h"
 #include "IIcMouse.h"
 #include "SlotBus.h"
+#include "ResourcePaths.h"
 #include "SnapshotIO.h"
 #include "SystemProfile.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -138,12 +141,33 @@ std::optional<std::string> safeCwdRelativePath(const std::string& in,
     // Component-wise prefix check on canonical paths. We can't use a
     // string-level `starts_with` because `/foo/barbaz` would falsely
     // match `/foo/bar`. fs::path iteration handles separator quirks.
-    auto cwdIt = cwd.begin(), cwdEnd = cwd.end();
-    auto fullIt = full.begin(), fullEnd = full.end();
-    for (; cwdIt != cwdEnd; ++cwdIt, ++fullIt) {
-        if (fullIt == fullEnd || *cwdIt != *fullIt) return std::nullopt;
+    auto under = [](const fs::path& root, const fs::path& p) {
+        if (root.empty()) return false;
+        auto r = root.begin(), q = p.begin();
+        for (; r != root.end(); ++r, ++q)
+            if (q == p.end() || *r != *q) return false;
+        return true;
+    };
+    // The launch directory is a jail only when it is not above the user's
+    // files: a Finder launch runs from `/`, an AppImage desktop launch from
+    // $HOME, and nothing chdirs — so "under cwd" let /disk and
+    // /snapshot/save reach ~/.ssh and any file the user can write. The
+    // per-user data directory always counts; the install tree (bundled
+    // disks) only for reading.
+#ifdef _WIN32
+    const char* homeEnv = std::getenv("USERPROFILE");
+#else
+    const char* homeEnv = std::getenv("HOME");
+#endif
+    const fs::path home = homeEnv && *homeEnv ? fs::weakly_canonical(homeEnv, ec) : fs::path();
+    if (!(home.empty() ? cwd == cwd.root_path() : under(cwd, home)) && under(cwd, full))
+        return full.string();
+    if (under(fs::weakly_canonical(pom2::userDataDir(), ec), full)) return full.string();
+    if (mustExist) {
+        const fs::path exe = fs::weakly_canonical(pom2::executableDir(), ec);
+        if (under(exe, full) || under(exe.parent_path(), full)) return full.string();
     }
-    return full.string();
+    return std::nullopt;
 }
 
 void applyRecvTimeout(pom2::socket_t fd, int timeoutMs)
@@ -468,6 +492,16 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
     auto pastDeadline = [&]() {
         return std::chrono::steady_clock::now() >= deadline;
     };
+    // Each recv waits at most what is left of the deadline: checked only
+    // BETWEEN recvs, a stalled client held the single server thread for the
+    // deadline plus one more full per-recv timeout (~14 s, not 10).
+    auto recvBounded = [&](char* buf, size_t n) -> iolen_t {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if (left <= 0) return 0;
+        applyRecvTimeout(fd, static_cast<int>(std::min<long long>(left, kRecvTimeoutMs)));
+        return recvSocket(fd, buf, n);
+    };
 
     std::string buffer;
     buffer.reserve(2048);
@@ -476,7 +510,7 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
     while (headerEnd == std::string::npos) {
         if (buffer.size() > kMaxHeaderBytes) return false;
         if (pastDeadline()) return false;
-        const iolen_t got = recvSocket(fd, chunk, sizeof(chunk));
+        const iolen_t got = recvBounded(chunk, sizeof(chunk));
         if (got <= 0) return false;
         buffer.append(chunk, chunk + got);
         headerEnd = buffer.find("\r\n\r\n");
@@ -544,7 +578,7 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
         }
         while (req.body.size() < static_cast<size_t>(cl)) {
             if (pastDeadline()) return false;
-            const iolen_t got = recvSocket(fd, chunk, sizeof(chunk));
+            const iolen_t got = recvBounded(chunk, sizeof(chunk));
             if (got <= 0) return false;
             req.body.append(chunk, chunk + got);
         }

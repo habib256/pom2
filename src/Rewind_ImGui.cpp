@@ -54,7 +54,7 @@ double effectiveCpuHz(EmulationController& ctrl)
     // accelerator (applyAcceleratorClock), and cyclesPerFrame already holds
     // the former: divide it back out, or 2x reads as 4x.
     const int base = ctrl.getBaseCyclesPerFrame();
-    const double baseRatio = base > t.cyclesPerFrame
+    const double baseRatio = base > 0
         ? static_cast<double>(base) / t.cyclesPerFrame : 1.0;
     const double mul = ctrl.emulatedCpuClockHz() /
                        (static_cast<double>(t.cpuClockHz) * baseRatio);

@@ -291,6 +291,69 @@ void testLoopbackDestinationIsRefused()
 
 // The UDP path is the OTHER half of the same escape: a datagram needs no
 // CONNECT to reach 127.0.0.1:6503.
+// DISCON is graceful: the FIN follows the data SEND_OK already reported.
+// With a tail still owed to a slow peer, the socket waits in FIN_WAIT until
+// poll() has flushed it, then closes; it used to drop the tail at once.
+void testDisconFlushesThePendingTail()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x0A000001u, 8080);
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+    auto* sock = fake->lastSocket;
+    sock->sendResult = {W5100IoStatus::WouldBlock, 0};   // peer not reading
+    for (uint16_t k = 0; k < 100; ++k)
+        device.writeValueAt(static_cast<uint16_t>(kW5100TxBase + k), static_cast<uint8_t>(k));
+    device.writeValueAt(socketReg(0, kW5100SnTxWr0), 0x00);
+    device.writeValueAt(socketReg(0, kW5100SnTxWr1), 100);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrSendOk);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrDiscon);
+    assert(device.socketInfo(0).status == kW5100SnSrFinWait && "the FIN waits for the data");
+    const uint64_t before = device.bytesSent();
+    const int attempts = fake->sendAttempts;
+    sock->sendResult = {W5100IoStatus::Ok, 0};             // the peer drains
+    device.poll();
+    // (`sock` is gone now: the close released the host socket.)
+    assert(fake->sendAttempts == attempts + 1 && device.bytesSent() - before == 100 &&
+           "the tail reached the peer");
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    std::printf("  DISCON sends the pending tail before closing: OK\n");
+}
+
+// The chip receives on its own: a peer's FIN moves Sn_SR to CLOSE_WAIT and
+// raises DISCON with the guest never reading Sn_RX_RSR, and data raises
+// RECV. A driver waiting on Sn_SR or Sn_IR used to wait for ever.
+void testReceiveWithoutReadingRsr()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x0A000001u, 8080);
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+    test::FakeW5100HostSocket::Packet data;
+    data.result = {W5100IoStatus::Ok, 0, 0, 0};
+    data.data = {'h', 'i'};
+    fake->lastSocket->packets.push_back(data);
+    device.poll();
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrRecv);
+    assert(device.socketInfo(0).rxPending == 2);
+    test::FakeW5100HostSocket::Packet fin;
+    fin.result = {W5100IoStatus::Ok, 0, 0, 0};          // 0 bytes: orderly close
+    fake->lastSocket->packets.push_back(fin);
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrCloseWait);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrDiscon);
+    std::printf("  data and the peer's FIN arrive without an RSR read: OK\n");
+}
+
 void testLoopbackDatagramIsRefused()
 {
     W5100Device device;
@@ -314,14 +377,16 @@ void testLoopbackDatagramIsRefused()
     device.writeValueAt(socketReg(0, kW5100SnTxWr1), 0x01);
     device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
 
-    // NOT fake->lastSocket->sentBytes: the refusal closed (freed) the socket
-    // on that SEND, so the pointer dangles — ASan caught the read nightly.
     assert(fake->sendAttempts == 0 &&
            "a loopback datagram must never reach a host socket");
-    assert(device.socketInfo(0).status == kW5100SnSrClosed);
-    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+    // ONE datagram, not the socket (the chip's answer to an undeliverable
+    // datagram): TIMEOUT, no SEND_OK, and Sn_SR still SOCK_UDP — closing it
+    // made the next SEND a no-op that an ioLibrary sendto() waited on for ever.
+    assert(device.socketInfo(0).status == kW5100SnSrUdp);
+    const uint8_t ir = device.readValueAt(socketReg(0, kW5100SnIr));
+    assert((ir & kW5100SnIrTimeout) && !(ir & kW5100SnIrSendOk));
 
-    std::printf("  loopback datagram refused: OK\n");
+    std::printf("  loopback datagram refused, the socket kept: OK\n");
 }
 
 // ── Case 5b: a discarded datagram is one datagram, not the socket ─────────
@@ -633,6 +698,8 @@ int main()
     testMaskedTxPointersSendOnlyTheStagedBytes();
     testLoopbackDestinationIsRefused();
     testLoopbackDatagramIsRefused();
+    testDisconFlushesThePendingTail();
+    testReceiveWithoutReadingRsr();
     testDiscardedDatagramKeepsTheSocket();
     testLocalPortPolicy();
     testListenWarnsOncePerSocket();

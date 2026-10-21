@@ -354,6 +354,53 @@ int main(int argc, char** argv)
     std::error_code ec;
     fs::create_directories(dir, ec);
 
+    // Sweet-16 writes its 2IMG files (creator 'WOOF') with a zero data
+    // length; CiderPress repairs those to block count × 512 and so must every
+    // loader here. Any other creator's zero stays a malformed header.
+    {
+        auto sweet16 = [&](size_t payload, const char* creator) {
+            std::vector<uint8_t> v = make2img(payload, rng);
+            std::memcpy(v.data() + 4, creator, 4);
+            v[28] = v[29] = v[30] = v[31] = 0;
+            const fs::path out = dir / "sweet16.2mg";
+            std::ofstream f(out, std::ios::binary | std::ios::trunc);
+            f.write(reinterpret_cast<const char*>(v.data()), std::streamsize(v.size()));
+            return out.string();
+        };
+        DiskImage d525;
+        assert(d525.loadFile(sweet16(143360, "WOOF")) && "5.25\" Sweet-16 2IMG loads");
+        pom2::Disk35Image d35;
+        assert(d35.loadFile(sweet16(819200, "WOOF")) && "3.5\" Sweet-16 2IMG loads");
+        pom2::Block512Backing hdv;
+        assert(hdv.loadImage(sweet16(1024 * 512, "WOOF")) && hdv.blockCount() == 1024 &&
+               "an HDV Sweet-16 2IMG loads");
+        pom2::Block512Backing other;
+        assert(!other.loadImage(sweet16(1024 * 512, "POM2")) &&
+               "a zero data length from any other creator is still refused");
+        std::printf("  Sweet-16 2IMG with a zero data length loads (CiderPress parity)\n");
+
+        // A 52-byte header with its data at 52 holds every defined field and
+        // is legal; only 64 is the usual size. All three loaders refused it.
+        auto short52 = [&](size_t payload) {
+            std::vector<uint8_t> v = make2img(payload, rng);
+            v[8] = 52; v[9] = 0;
+            v[24] = 52; v[25] = v[26] = v[27] = 0;
+            v.erase(v.begin() + 52, v.begin() + 64);
+            const fs::path out = dir / "short52.2mg";
+            std::ofstream f(out, std::ios::binary | std::ios::trunc);
+            f.write(reinterpret_cast<const char*>(v.data()), std::streamsize(v.size()));
+            return out.string();
+        };
+        DiskImage s525;
+        assert(s525.loadFile(short52(143360)) && "5.25\" 2IMG with a 52-byte header loads");
+        pom2::Disk35Image s35;
+        assert(s35.loadFile(short52(819200)) && "3.5\" 2IMG with a 52-byte header loads");
+        pom2::Block512Backing shdv;
+        assert(shdv.loadImage(short52(1024 * 512)) && shdv.blockCount() == 1024 &&
+               "an HDV 2IMG with a 52-byte header loads");
+        std::printf("  2IMG with a 52-byte header and data at 52 loads\n");
+    }
+
     for (int i = 0; i < iters; ++i) {
         const Seed& s = seeds[rng() % seeds.size()];
         std::vector<uint8_t> b = s.bytes;

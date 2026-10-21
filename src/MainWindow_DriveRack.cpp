@@ -10,6 +10,7 @@
 #include "StorageCoordinator.h"
 #include "SystemProfile.h"
 #include <algorithm>
+#include <cfloat>
 #include <filesystem>
 #include <utility>
 
@@ -194,12 +195,52 @@ void MainWindow::runDriveRackAction(const pom2::DrivePicture& drive,
     tapeStatusUntil = lastFrameTime + 4.0;
 }
 
-bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path) {
+bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path,
+                                      bool explain) {
     std::string error;
     const bool ok = pom2::mountEmptyDrive(*controller, *settings, *storageCoordinator_, target, path, error);
     tapeStatusMessage = ok ? "Inserted into " + target.label + ": " + path : error;
     tapeStatusUntil = lastFrameTime + 5.0;
+    if (!ok && explain) showDiskRefusal(path, error);
     return ok;
+}
+
+void MainWindow::showDiskRefusal(const std::string& path, const std::string& why)
+{
+    diskRefusalFile_ = std::filesystem::path(path).filename().string();
+    diskRefusalText_ = why;
+    diskRefusalPending_ = true;
+}
+
+void MainWindow::renderDiskRefusal()
+{
+    constexpr const char* kTitle = "Disk not inserted###diskrefusal";
+    if (diskRefusalPending_) {
+        diskRefusalPending_ = false;
+        ImGui::OpenPopup(kTitle);
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(ImGui::GetFontSize() * 26, 0),
+                                        ImVec2(ImGui::GetFontSize() * 34, FLT_MAX));
+    if (!ImGui::BeginPopupModal(kTitle, nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        return;
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32);
+    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.30f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION
+                       "  %s was not inserted", diskRefusalFile_.empty()
+                           ? "The disk" : diskRefusalFile_.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(diskRefusalText_.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    const float w = ImGui::GetFontSize() * 6;
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - w - ImGui::GetStyle().WindowPadding.x);
+    if (ImGui::Button("OK", ImVec2(w, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        ImGui::IsKeyPressed(ImGuiKey_Enter))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void MainWindow::processDriveRackFileDrop() {
@@ -214,7 +255,7 @@ void MainWindow::processDriveRackFileDrop() {
             tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
             driveRackFilePicker_.complete(ok, error);
         } else {
-            const bool ok = insertDriveRackImage(selected->target, selected->path);
+            const bool ok = insertDriveRackImage(selected->target, selected->path, /*explain=*/false);
             driveRackFilePicker_.complete(ok, ok ? "" : tapeStatusMessage);
         }
     }

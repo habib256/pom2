@@ -150,6 +150,7 @@ public:
     std::vector<ProfileEntry> profile(std::size_t limit = 20) const;
     std::vector<TraceEntry> history() const;
     void onStepCompleted(const M6502& cpu, uint16_t pc, int cycles) override;
+    void onInterruptEntered(const M6502& cpu, uint16_t interruptedPc, int cycles) override;
     /// Disarm without firing. Safe to call from a thread that does NOT hold
     /// `stateMutex` — the only member of this class for which that is true,
     /// and deliberately so: `EmulationController::setMode(Mode::Stopped)` is

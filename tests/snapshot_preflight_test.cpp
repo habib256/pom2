@@ -321,8 +321,34 @@ void testProfileRefusalIsAtomic()
 }
 } // namespace
 
+// A blob taken with no accelerator seated says nothing about the one seated
+// now: it takes its reset state. The branch that does this was dead code —
+// the section reader skipped empty sections before calling it.
+void testEmptyAcceleratorSectionResets()
+{
+    Memory source;
+    M6502 sourceCpu{&source};
+    source.setCpu(&sourceCpu);
+    std::vector<uint8_t> blob;
+    source.appendSnapshotState(blob);
+
+    Memory target;
+    M6502 targetCpu{&target};
+    target.setCpu(&targetCpu);
+    pom2::ZipChip zip;
+    zip.setBootFast(false);
+    zip.onReset(0);                 // the previous machine left it slow…
+    zip.setBootFast(true);          // …and its reset state is fast
+    assert(!zip.fast());
+    target.setCpuSocketAccelerator(&zip);
+    assert(target.loadSnapshotState(blob.data(), blob.size()));
+    assert(zip.fast() && "an empty accelerator section resets the live chip");
+    std::puts("  empty accelerator section resets the seated chip: ok");
+}
+
 int main()
 {
+    testEmptyAcceleratorSectionResets();
     testPurePreflight();
     testGeometry();
     testProfileRefusalIsAtomic();

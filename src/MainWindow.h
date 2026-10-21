@@ -196,6 +196,12 @@ public:
     /// the Apple II Screen widget; otherwise no-op (ImGui handles it).
     void onMouseMove  (double x, double y);
     void onMouseButton(int button, int action);
+    /// Absolute cursor sync (mouseaw card, //c IOU mouse): drive the guest
+    /// cursor to the spot under the host pointer. Called from onMouseMove
+    /// and once per frame (renderScreenWindow) so a push skipped while the
+    /// previous one was in flight still lands after the pointer stops.
+    /// Returns true when the sync owns the motion.
+    bool syncMouseAbsolute(double x, double y);
     /// GLFW window-focus callback. Releases a captured pointer when the
     /// window loses focus — a grab that survives Alt-Tab would keep
     /// swallowing the desktop's pointer with no visible owner.
@@ -1152,6 +1158,15 @@ private:
     // they all sit inside the rect, so clicks aimed at them were reaching
     // the guest *and* arming the click-to-grab capture underneath.
     bool screenHovered_ = false;
+    // Last syncMouseAbsolute verdict: the guest cursor follows the host
+    // pointer absolutely, so the host cursor is hidden over the screen.
+    bool mouseAbsoluteActive_ = false;
+    // Host cursor over the screen this frame should be hidden (set by
+    // renderScreenWindow, consumed and cleared at the top of render()).
+    bool hostCursorWanted_ = false;
+    // What the browser canvas' CSS cursor currently is (Emscripten's GLFW
+    // has no GLFW_CURSOR_HIDDEN, so the page hides it itself).
+    bool hostCursorHidden_ = false;
     // Running 8-bit Apple II "mouse units" counter — mirrors MAME's
     // IPT_MOUSE_X/Y (0..0xFF wrapping). The MCU firmware computes
     // deltas with 8-bit subtraction.
@@ -1395,7 +1410,17 @@ private:
     void renderDiskLibraryWindow();
     void renderDisk35PanelWindow();
     void renderDriveRackWindow();
-    bool insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path);
+    /// `explain`: a refusal opens the disk-refusal dialog. The rack's own
+    /// file picker passes false — it shows the reason in its own window.
+    bool insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path,
+                              bool explain = true);
+    /// A disk the user tried to insert was refused. Shown in a dialog in the
+    /// middle of the screen until OK — a few seconds of status-bar text was
+    /// easy to miss, and said what failed without saying why.
+    void showDiskRefusal(const std::string& path, const std::string& why);
+    void renderDiskRefusal();
+    std::string diskRefusalFile_, diskRefusalText_;
+    bool diskRefusalPending_ = false;
     /// Every drive of the machine as plain values, in the rack's order — the
     /// one list the Drives window and the File menu both draw from.
     std::vector<pom2::DrivePicture> collectDrivePictures();

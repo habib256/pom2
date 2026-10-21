@@ -85,6 +85,9 @@
 
 #include "imgui_internal.h"   // BeginViewportSideBar (status bar)
 #include <GLFW/glfw3.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>      // EM_ASM: hide the canvas cursor (render())
+#endif
 
 #include <algorithm>
 #include <vector>
@@ -871,6 +874,9 @@ MainWindow::MainWindow(bool forceIIPlus)
                 st.cpu().setCpuMode(resolved);
         }
     }
+    // The //c 40/80 key (Machine menu): a physical setting, applied once.
+    controller->lockState().memory().setIic40ColumnSwitch(
+        settings->getBool("iic_40col_switch", false));
     // Profile-specific floppy motor pitch — applies only to the 5.25"
     // bank. The 3.5" instance keeps motorPitch=1.0 because the 35_*.wav
     // samples are already recorded at the Sony 800K cadence, so a pitch
@@ -1310,6 +1316,22 @@ void MainWindow::render()
     // Mouse Card from a widget that is no longer on screen.
     screenHovered_ = false;
 
+    // Host cursor over the screen, as decided by the previous frame's
+    // renderScreenWindow. Desktop GLFW hides it through ImGui's
+    // ImGuiMouseCursor_None; Emscripten's GLFW has no GLFW_CURSOR_HIDDEN,
+    // so the browser build sets the canvas' CSS cursor itself — and only on
+    // a change, so the page's own styling is left alone otherwise.
+#ifdef __EMSCRIPTEN__
+    if (hostCursorWanted_ != hostCursorHidden_) {
+        EM_ASM({
+            var c = Module['canvas'];
+            if (c) c.style.cursor = $0 ? 'none' : '';
+        }, hostCursorWanted_ ? 1 : 0);
+        hostCursorHidden_ = hostCursorWanted_;
+    }
+#endif
+    hostCursorWanted_ = false;
+
     pollJoystickAndPushToMemory();
 
     // Windowed pointer capture needs a Mouse Card on the bus.
@@ -1327,6 +1349,7 @@ void MainWindow::render()
 
     // A program's SmartPort EJECT takes the 3.5" out from here, off the lock.
     serviceGuestEjects();
+    renderDiskRefusal();   // any frame, kiosk included: a refusal must be seen
 
     // Kiosk: only the screen, no chrome. Joystick + auto-turbo above still
     // run so the machine behaves identically; everything else is skipped.

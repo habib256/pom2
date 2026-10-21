@@ -213,6 +213,60 @@ int main()
     }
 
     fs::remove_all(root, ec);
+
+    // A pass that fails BEFORE its walk — the folder gone (an unplugged USB
+    // stick) and the path not creatable — wrote nothing and must leave the
+    // mount stamp alone. It used to adopt the decode's default stamp, the
+    // clock's epoch: from then on every host file read as a host edit and
+    // each guest save went to .pom2-conflicts/ instead of the file.
+    {
+        const fs::path vol = fs::temp_directory_path() / "pom2_synth_prewalk";
+        const fs::path away = fs::temp_directory_path() / "pom2_synth_prewalk_away";
+        fs::remove_all(vol, ec);
+        fs::remove_all(away, ec);
+        fs::create_directories(vol, ec);
+        writeHostFile(vol / "AFILE.TXT", "AAAAAAAAAAAAAAAA");
+        fs::last_write_time(vol / "AFILE.TXT",
+                            fs::file_time_type::clock::now() -
+                                std::chrono::hours(24), ec);
+        std::vector<std::uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(vol.string(), "HOST", img).ok);
+        pom2::Block512Backing b;
+        assert(b.loadFromBytes(img, "[host folder] prewalk", vol.string()));
+        b.setWriteBackEnabled(true);
+        assert(guestPatch(b, "AAAAAAAAAAAAAAAA", "GUESTWROTETHISP1"));
+
+        // The folder goes away and a plain FILE takes its path, so
+        // create_directories fails before anything is written. rename()
+        // keeps the files' mtimes, as a remounted stick would.
+        fs::rename(vol, away, ec);
+        assert(!ec);
+        writeHostFile(vol, "not a directory");
+        if (b.saveDirty()) {
+            std::printf("FAIL: a save into a path that is a file succeeded\n");
+            return 1;
+        }
+        fs::remove(vol, ec);
+        fs::rename(away, vol, ec);
+        assert(!ec);
+
+        if (!b.saveDirty()) {
+            std::printf("FAIL: the retry failed (%s)\n", b.lastError().c_str());
+            return 1;
+        }
+        const std::string got = readHostFile(findHostFile(vol, "AFILE"));
+        if (got.rfind("GUESTWROTETHISP1", 0) != 0 ||
+            fs::exists(vol / ".pom2-conflicts")) {
+            std::printf("FAIL: after a pre-walk failure the guest save was "
+                        "diverted (AFILE='%s', conflicts dir %s) — the mount "
+                        "stamp was moved to the epoch\n",
+                        got.substr(0, 16).c_str(),
+                        fs::exists(vol / ".pom2-conflicts") ? "present" : "absent");
+            return 1;
+        }
+        fs::remove_all(vol, ec);
+    }
+
     std::printf("OK prodos_synth_failed_flush (a partial write-back failure "
                 "no longer freezes the files it wrote)\n");
     return 0;

@@ -292,6 +292,15 @@ void testIndirectWindowDecode()
     (void)card.deviceSelectRead(kData);
     assert(card.chip().dataAddress() == pom2::kW5100TxBase);
 
+    // The same wraps in the $8000-$FFFF mirror: $DFFF used to run into the
+    // RX buffer at $E000, and $FFFF into the common registers.
+    setAddress(card, static_cast<uint16_t>(0x8000 + pom2::kW5100RxBase - 1));
+    (void)card.deviceSelectRead(kData);
+    assert(card.chip().dataAddress() == 0x8000 + pom2::kW5100TxBase);
+    setAddress(card, 0xFFFF);
+    (void)card.deviceSelectRead(kData);
+    assert(card.chip().dataAddress() == 0x8000 + pom2::kW5100RxBase);
+
     // Auto-increment off: the address is sticky.
     card.deviceSelectWrite(kMode, 0x00);
     setAddress(card, pom2::kW5100Rtr0);
@@ -520,6 +529,21 @@ void testMacRaw()
            "and the common IR must reflect socket 0");
 
     std::printf("  MACRAW OK (%zu-byte frame round-tripped)\n", frame.size());
+}
+
+// MACRAW exists on socket 0 only (datasheet Sn_MR); an OPEN elsewhere
+// leaves the socket CLOSED.
+void testMacRawOnlyOnSocketZero()
+{
+    UthernetIICard card(3);
+    for (size_t i = 0; i < 4; ++i) {
+        const uint16_t base = socketBase(i);
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrMacRaw);
+        writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrOpen);
+        const uint8_t sr = readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnSr));
+        assert(sr == (i == 0 ? pom2::kW5100SnSrMacRaw : pom2::kW5100SnSrClosed));
+    }
+    std::printf("  MACRAW only on socket 0 OK\n");
 }
 
 void testIpRawUsesBroadcastMacForSubnetBroadcast()
@@ -1203,6 +1227,7 @@ int main()
     testBufferCarve();
     testTcpSession();
     testMacRaw();
+    testMacRawOnlyOnSocketZero();
     testIpRawUsesBroadcastMacForSubnetBroadcast();
     testSnapshotRoundTrip();
     testHalfCloseWait();

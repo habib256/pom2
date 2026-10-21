@@ -701,6 +701,11 @@ public:
     }
     void clearKeyStrobe()         { keyboard_.clearStrobe(); }
     void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
+    /// The //c keyboard's 40/80-column switch, read at $C060 bit 7 (set =
+    /// 40 columns). A physical key on the machine, not a soft switch: no
+    /// reset touches it. POM2's default is the 80 position.
+    void setIic40ColumnSwitch(bool forty) { iic40ColSwitch_ = forty; }
+    bool iic40ColumnSwitch() const { return iic40ColSwitch_; }
     void releaseHeldKeys()        { keyboard_.releaseHeldKeys(); }
 
     /// Paste a block of text. Line-endings normalised to CR ($0D) — `\r\n`,
@@ -1201,6 +1206,7 @@ private:
 
     // //c-class on-board SmartPort ROM-exposure gate (see setIicSmartPortArmed).
     bool iicSmartPortArmed_ = false;
+    bool iic40ColSwitch_ = false;   // setIic40ColumnSwitch
     /// //c-class internal expansion connector: has the program written into
     /// the card's page yet? Until it has, reads there stay the machine's own
     /// firmware (MAME `m_mockingboard4c`). Cleared by every reset.

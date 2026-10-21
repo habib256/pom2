@@ -16,6 +16,7 @@
 
 #include "Block512Backing.h"
 #include "MediaAutosave.h"
+#include "TwoImgHeader.h"
 #include "MediaNotch.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
@@ -215,16 +216,18 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
         const uint16_t headerLen = static_cast<uint16_t>(bytes[8]) |
                                    (static_cast<uint16_t>(bytes[9]) << 8);
         const uint32_t off    = rd32(24);
-        const uint32_t len    = rd32(28);
+        const uint32_t len    = twoImgDataLength(bytes.data());
         if (format != 1) {
             lastError_ = "2IMG image is not in ProDOS block order (format=" +
                          std::to_string(format) + ")";
             pom2::log().warn("HDV", lastError_);
             return false;
         }
-        // The offset must follow the declared header. Otherwise bytes the
-        // container calls header become guest-visible disk blocks.
-        if (off < 64 || off < headerLen || off > bytes.size() ||
+        // The offset must follow the declared header and every defined field
+        // (bytes 0-47, plus 4 reserved: 52). Otherwise bytes the container
+        // calls header become guest-visible disk blocks. 64 is only the usual
+        // size; a 52-byte header with its data at 52 is legal.
+        if (off < 52 || off < headerLen || off > bytes.size() ||
             len == 0 || static_cast<size_t>(off) + len > bytes.size()) {
             lastError_ = "Invalid 2IMG data window (header=" +
                          std::to_string(headerLen) + ", offset=" +
@@ -417,10 +420,14 @@ bool Block512Backing::saveDirty()
     // stamp covers everything the failed pass wrote, so adopting it is what
     // keeps the next pass from preserving POM2's own output away.
     //
-    // No `stamp != file_time_type{}` guard here: on the success path this must
-    // stay byte-for-byte the behaviour that was green before, and a guard that
-    // can silently skip the restamp is the shape of the bug, not a safety net.
-    if (wasSynth && synth_ && loaded_) {
+    // A pass that failed BEFORE its walk (folder gone — an unplugged USB
+    // stick — or not creatable / resolvable) wrote nothing and publishes no
+    // stamp. Adopting the default `file_time_type{}` there moved the mount
+    // stamp to the clock's epoch, after which every host file read as a
+    // host edit and every later guest save went to .pom2-conflicts/. A walk
+    // that ran (success or partial) always publishes `now()`, so this never
+    // skips the restamp the paragraph above needs.
+    if (wasSynth && synth_ && loaded_ && stamp != std::filesystem::file_time_type{}) {
         mountTime_    = stamp;
         hasMountTime_ = true;
     }
@@ -540,7 +547,10 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         // Published BEFORE the failure return: a failed pass has usually
         // still written part of the tree, and those files carry the decode's
         // stamp. Returning early left the caller with nothing to adopt.
-        if (newMountTime) *newMountTime = r.completedAt;
+        // Not when the decode stopped before its walk (completedAt still
+        // default): nothing was written, so the old stamp stays valid.
+        if (newMountTime && r.completedAt != std::filesystem::file_time_type{})
+            *newMountTime = r.completedAt;
         if (!r.ok) {
             error = r.error;
             pom2::log().warn("HDV", "Synth folder write-back failed: " + error);

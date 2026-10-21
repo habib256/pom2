@@ -565,6 +565,9 @@ private:
     std::array<std::vector<int>, kQuarterTracks> wozQtFluxTicks{};
     std::array<int, kQuarterTracks> wozQtFluxPeriodTicks{};
     std::array<size_t, kQuarterTracks> wozQtFluxHeaderOff{};
+    // DiskImageWozFlux.cpp: a MacBinary envelope follows a payload that grew.
+    static void refitMacBinaryEnvelope(std::vector<uint8_t>& header,
+                                       std::vector<uint8_t>& trailer, std::size_t payload);
     void writeWozFlux(int qt, int64_t start, int64_t end, int count,
                       const int64_t* transitions, int64_t revolutionStart);
     bool applyWozFluxWriteBack();

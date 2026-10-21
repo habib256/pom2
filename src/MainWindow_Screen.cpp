@@ -581,6 +581,20 @@ void MainWindow::drawScreenImage()
     // hidden screen window cannot leave a stale `true` behind.
     const bool screenHovered = ImGui::IsItemHovered();
     screenHovered_ = screenHovered;
+    // Absolute cursor sync, once per frame as well as per pointer event:
+    // a push is skipped while the previous one is still in flight, and on
+    // the //c that lasts several frames, so the last move before the
+    // pointer comes to rest would otherwise never land. While the sync owns
+    // the cursor the guest cursor IS the pointer — hide the host one over
+    // the screen, as other emulators do, instead of showing two arrows.
+    if (screenHovered && !mouseGrabbed_ && mouseInited)
+        (void)syncMouseAbsolute(lastMouseHostX, lastMouseHostY);
+    else if (!screenHovered)
+        mouseAbsoluteActive_ = false;
+    if (screenHovered && !mouseGrabbed_ && mouseAbsoluteActive_) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        hostCursorWanted_ = true;
+    }
     if (screenHovered && !mouseGrabbed_ &&
         ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         const float height = screenRectMax.y - screenRectMin.y;

@@ -254,6 +254,23 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     }
 }
 
+void Debugger::onInterruptEntered(const M6502& cpu, uint16_t, int cycles)
+{
+    // The entry's cycles belong to the handler it enters; it is not a visit
+    // (the handler's first instruction counts its own when it runs), and
+    // nothing executed, so history records nothing.
+    // Keyed by the HANDLER's bank, resolved at its PC: `curBank_` is still
+    // the interrupted instruction's (aux, LC RAM…), which filed the entry
+    // under a phantom zero-visit row beside the real handler's.
+    if (!profiling_ || cycles <= 0) return;
+    const uint16_t pc = cpu.getProgramCounter();
+    const DebugBank bank = resolveBank(pc);
+    auto& entry = profile_[{pc, bank}];
+    entry.bank = bank;
+    entry.pc = pc;
+    entry.cycles += static_cast<uint64_t>(cycles);
+}
+
 std::vector<Debugger::ProfileEntry> Debugger::profile(std::size_t limit) const
 {
     std::vector<ProfileEntry> out;

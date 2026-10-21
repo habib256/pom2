@@ -134,6 +134,7 @@ SmartPortCard::setUnit(size_t idx, std::unique_ptr<SmartPortUnit> u)
     readCacheValid_[idx] = false;
     readCacheBlock_[idx] = 0xFFFF;
     writeBufPrimed_[idx] = false;
+    borrowedKind_[idx].reset();
     auto old = std::move(units_[idx]);
     units_[idx] = std::move(u);
     if (auto* disk = dynamic_cast<SmartPort35Unit*>(units_[idx].get()))
@@ -376,14 +377,13 @@ pom2::SmartPortBusUnit* SmartPortCard::smartPortBusUnit(int index)
 
 bool SmartPortCard::BusUnit::hasMedia() const
 {
-    const SmartPortUnit* u = target();
-    return u && u->isLoaded();
+    return card_ && card_->guestLoaded(bay_);
 }
 
 uint32_t SmartPortCard::BusUnit::blockCount() const
 {
     const SmartPortUnit* u = target();
-    return (u && u->isLoaded()) ? u->blockCount() : 0;
+    return (u && card_->guestLoaded(bay_)) ? u->blockCount() : 0;
 }
 
 bool SmartPortCard::BusUnit::writeProtected() const
@@ -395,7 +395,7 @@ bool SmartPortCard::BusUnit::writeProtected() const
 bool SmartPortCard::BusUnit::readBlock(uint32_t block, uint8_t out[512])
 {
     SmartPortUnit* u = target();
-    if (!u || !u->isLoaded() || !u->readBlock(block, out)) return false;
+    if (!u || !card_->guestLoaded(bay_) || !u->readBlock(block, out)) return false;
     if (card_) card_->noteAccess(u);
     return true;
 }
@@ -403,7 +403,7 @@ bool SmartPortCard::BusUnit::readBlock(uint32_t block, uint8_t out[512])
 bool SmartPortCard::BusUnit::writeBlock(uint32_t block, const uint8_t in[512])
 {
     SmartPortUnit* u = target();
-    if (!u || !u->isLoaded() || !u->writeBlock(block, in)) return false;
+    if (!u || !card_->guestLoaded(bay_) || !u->writeBlock(block, in)) return false;
     if (card_) card_->noteAccess(u);
     return true;
 }
@@ -419,12 +419,23 @@ bool SmartPortCard::BusUnit::isUnidisk35() const
 void SmartPortCard::BusUnit::requestEject()
 {
     // The //c rear port's units are this card's bays (IIcExternalSmartPort).
-    if (card_) card_->requestGuestEject(static_cast<int>(bay_));
+    if (card_) card_->requestGuestEject(static_cast<int>(bay_), unitMediaId(target()));
 }
 
 uint64_t SmartPortCard::BusUnit::mediaIdentity() const
 {
-    const SmartPortUnit* u = target();
+    return unitMediaId(target());
+}
+
+uint64_t SmartPortCard::bayMediaIdentity(int bay) const
+{
+    if (bay < 0 || bay >= static_cast<int>(kMaxUnits)) return 0;
+    const SmartPortUnit* u = units_[static_cast<size_t>(bay)].get();
+    return (u && u->isLoaded()) ? unitMediaId(u) : 0;
+}
+
+uint64_t SmartPortCard::unitMediaId(const SmartPortUnit* u)
+{
     if (!u) return 0;
     if (const auto* b = u->blockBacking()) return b->mountId();
     if (const auto* u35 = dynamic_cast<const SmartPort35Unit*>(u))
@@ -492,7 +503,7 @@ uint8_t SmartPortCard::blockCountByte(int which) const
     const SmartPortUnit* u =
         (activeUnit_ < static_cast<size_t>(unitCount_))
         ? units_[activeUnit_].get() : nullptr;
-    uint32_t blocks = (u && u->isLoaded()) ? u->blockCount() : 0u;
+    uint32_t blocks = (u && guestLoaded(activeUnit_)) ? u->blockCount() : 0u;
     // ProDOS STATUS returns a 16-bit count: an exactly-32 MiB volume
     // (65536 blocks — Block512Backing::kMaxBlocks deliberately admits
     // it, since block INDEXES stay 16-bit) must clamp to $FFFF, not
@@ -578,7 +589,7 @@ uint8_t SmartPortCard::statusByte() const
 {
     const SmartPortUnit* u = (activeUnit_ < static_cast<size_t>(unitCount_))
         ? units_[activeUnit_].get() : nullptr;
-    uint8_t s = (u && u->isLoaded()) ? 0x00 : 0x80;
+    uint8_t s = (u && guestLoaded(activeUnit_)) ? 0x00 : 0x80;
     if (!u || u->isWriteProtected()) s |= 0x40;
     if (activeUnit_ < kMaxUnits && ioError_[activeUnit_]) s |= 0x01;  // I/O error
     return s;
@@ -592,7 +603,7 @@ uint8_t SmartPortCard::readDataByte()
         return 0xFF;
     }
     SmartPortUnit* unit = units_[u].get();
-    if (!unit || !unit->isLoaded()) {
+    if (!unit || !guestLoaded(u)) {
         // No unit / no media: latch the error so the ROM routine returns
         // carry-set instead of CLC "success" with a $FF buffer. Without
         // this, ProDOS ONLINE on an empty bay 2 got a garbage volume and
@@ -637,7 +648,7 @@ void SmartPortCard::writeDataByte(uint8_t v)
         return;
     }
     SmartPortUnit* unit = units_[u].get();
-    if (!unit || !unit->isLoaded()) {
+    if (!unit || !guestLoaded(u)) {
         // Same as readDataByte: a write to an empty bay must error, not
         // silently drop 512 bytes and return "success" to the driver.
         if (u < kMaxUnits) ioError_[u] = true;
@@ -1186,7 +1197,7 @@ uint8_t SmartPortCard::spExecute()
             }
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);                 // no device connected
-            const bool     loaded = u->isLoaded();
+            const bool     loaded = guestLoaded(unitNo - 1u);
             const uint32_t blocks = loaded ? u->blockCount() : 0;
             // General status byte: bit7 block dev, bit6 write allowed,
             // bit5 read allowed, bit4 online, bit3 format allowed,
@@ -1235,7 +1246,7 @@ uint8_t SmartPortCard::spExecute()
             if (pcount != 3) return fail(0x04);
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
-            if (!u->isLoaded()) return fail(0x2F);     // device offline
+            if (!guestLoaded(unitNo - 1u)) return fail(0x2F);   // device offline
             const uint32_t block = static_cast<uint32_t>(spCollect_[5])
                                  | static_cast<uint32_t>(spCollect_[6]) << 8
                                  | static_cast<uint32_t>(spCollect_[7]) << 16;
@@ -1267,7 +1278,7 @@ uint8_t SmartPortCard::spExecute()
             if (pcount != 1) return fail(0x04);
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
-            if (!u->isLoaded()) return fail(0x2F);
+            if (!guestLoaded(unitNo - 1u)) return fail(0x2F);
             if (u->isWriteProtected()) return fail(0x2B);
             return ok();  // block devices "need only lay down marks" — no-op
         }
@@ -1288,9 +1299,9 @@ uint8_t SmartPortCard::spExecute()
             const uint8_t code = spCollect_[5];
             if (code != 0x00 && code != 0x04) return fail(0x21);
             SmartPortUnit* u = unitFor(unitNo);
-            if (code == 0x04 && u && u->isLoaded() &&
+            if (code == 0x04 && u && guestLoaded(unitNo - 1u) &&
                 u->kindKey() == SmartPort35Unit::kKindKey)
-                requestGuestEject(unitNo - 1);
+                requestGuestEject(unitNo - 1, unitMediaId(u));
             return ok();
         }
         case 0x05:                                     // INIT
@@ -1477,6 +1488,20 @@ void SmartPortCard::setBayType(int bay, const std::string& kindKey)
     }
     if (auto unit = makeSmartPortUnit(kindKey))
         setUnit(static_cast<size_t>(bay), std::move(unit));
+}
+
+void SmartPortCard::borrowBayType(int bay, std::string originalKind)
+{
+    if (bay < 0 || static_cast<size_t>(bay) >= kMaxUnits) return;
+    borrowedKind_[static_cast<size_t>(bay)] = std::move(originalKind);
+}
+
+std::string SmartPortCard::persistedBayKind(int bay) const
+{
+    if (bay < 0 || static_cast<size_t>(bay) >= kMaxUnits) return {};
+    const auto idx = static_cast<size_t>(bay);
+    if (borrowedKind_[idx]) return *borrowedKind_[idx];
+    return units_[idx] ? std::string(units_[idx]->kindKey()) : std::string();
 }
 
 } // namespace pom2

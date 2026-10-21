@@ -275,6 +275,7 @@ set(SOURCES
     src/DiskImage_SessionWritable.cpp
     src/DiskIICard_Session.cpp
     src/M6502.cpp
+    src/M6502_Undoc.cpp
     src/Z80.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
@@ -622,6 +623,7 @@ set(POM2_FOUNDATION_HEADERS
     src/DriveSoundPolicy.h
     src/MediaWritePolicy.h
     src/MediaNotch.h
+    src/TwoImgHeader.h
     src/AudioSource.h
     src/ByteIO.h
     src/CharRomDump.h
@@ -786,6 +788,7 @@ set(POM2_MACHINE_SOURCES
     src/Keyboard.cpp
     src/MemoryWatch.cpp
     src/M6502.cpp
+    src/M6502_Undoc.cpp
     src/Z80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
@@ -1466,6 +1469,7 @@ set(POM2_CORE_SOURCES
     src/DiskImage_SessionWritable.cpp
     src/DiskIICard_Session.cpp
     src/M6502.cpp
+    src/M6502_Undoc.cpp
     src/Z80.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
@@ -1791,6 +1795,7 @@ add_executable(pom2_headless
     src/Sony35Drive_Session.cpp
     src/LeChatMauveCard.cpp
     src/M6502.cpp
+    src/M6502_Undoc.cpp
     src/MachineSnapshot.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
@@ -1872,6 +1877,7 @@ add_executable(pom2_bench
     src/IWMDevice.cpp
     src/LeChatMauveCard.cpp
     src/M6502.cpp
+    src/M6502_Undoc.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp

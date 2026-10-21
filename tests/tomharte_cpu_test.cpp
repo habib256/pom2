@@ -43,9 +43,8 @@
 //      this is the class of bug that the hand-picked cpu_cycle_count_test was
 //      built to catch, now generalised to every opcode × 10 000 states)
 //
-// POM2 models undocumented NMOS opcodes as length/cycle-correct NOP
-// placeholders (see cpu_cycle_count_test.cpp), NOT their real silicon
-// behaviour, so those vectors are expected to diverge. The default CTest run
+// Since 2026-10-21 the undocumented NMOS opcodes compute their results
+// (M6502_Undoc.cpp) and all 66 non-JAM files pass; the JAMs halt. The default CTest run
 // points at a curated set of *documented* opcodes (downloaded at configure
 // time); pass `--skip` / `--only` to scope a hand-run, and use
 // tests/fetch_tomharte.sh to pull the full 256-opcode set for exhaustive

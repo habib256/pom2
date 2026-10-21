@@ -10,6 +10,18 @@ struct EchoPlusTMS5220Card::AudioSrc : AudioSource, RateAware {
     EchoPlusTMS5220Card& card;
     explicit AudioSrc(EchoPlusTMS5220Card& c) : card(c) {}
     void setSampleRate(uint32_t hz) override { card.setSampleRate(hz); }
+    // The CPU side makes exactly rate_ samples per emulated second and this
+    // side eats one per output sample, so a backlog built while emulation ran
+    // ahead (disk turbo, --cpu-max, speed > 1x) never drained: speech and the
+    // AYs stayed ~186 ms (the 8192 cap) late for the rest of the session.
+    // Snap a backlog past 100 ms back to 50 ms, the way Dac8Audio re-anchors
+    // a producer that got 2x its lead ahead.
+    void trimBacklog() {
+        const std::size_t maxLead = card.rate_ / 10, keep = card.rate_ / 20;
+        if (card.pcm_.size() > maxLead)
+            card.pcm_.erase(card.pcm_.begin(),
+                            card.pcm_.begin() + std::ptrdiff_t(card.pcm_.size() - keep));
+    }
     void fillAudioBuffer(float* out, int count) override {
         std::lock_guard<std::mutex> lock(card.mtx_);
         for (int i = 0; i < count; ++i) {
@@ -17,6 +29,7 @@ struct EchoPlusTMS5220Card::AudioSrc : AudioSource, RateAware {
             if (!card.pcm_.empty()) card.pcm_.pop_front();
             out[i] = card.muted_ ? 0 : sample * card.volume_;
         }
+        trimBacklog();
     }
     bool fillAudioBufferStereo(float* left, float* right, int count) override {
         std::lock_guard<std::mutex> lock(card.mtx_);
@@ -26,22 +39,25 @@ struct EchoPlusTMS5220Card::AudioSrc : AudioSource, RateAware {
             left[i] = card.muted_ ? 0 : sample[0] * card.volume_;
             right[i] = card.muted_ ? 0 : sample[1] * card.volume_;
         }
+        trimBacklog();
         return true;
     }
 };
-EchoPlusTMS5220Card::EchoPlusTMS5220Card(int slot) : audio_(std::make_unique<AudioSrc>(*this)), slot_(slot) { onReset(); }
+EchoPlusTMS5220Card::EchoPlusTMS5220Card(int slot) : audio_(std::make_unique<AudioSrc>(*this)), slot_(slot) { resetCard(true); }
 EchoPlusTMS5220Card::~EchoPlusTMS5220Card() = default;
 AudioSource* EchoPlusTMS5220Card::audioSource() { return audio_.get(); }
-void EchoPlusTMS5220Card::onReset() {
+void EchoPlusTMS5220Card::onReset() { resetCard(false); }
+void EchoPlusTMS5220Card::onPowerCycle() { resetCard(true); }
+void EchoPlusTMS5220Card::resetCard(bool powerCycle) {
     std::lock_guard<std::mutex> lock(mtx_);
-    speech_.reset(); via_.reset();
+    speech_.reset(); via_.reset(powerCycle);
     for (int i = 0; i < 2; ++i) { ay_[i].reset(); synth_[i] = {}; }
     pcm_.clear(); viaPhase_ = speechPhase_ = samplePhase_ = 0;
     lastSpeech_ = -1; lastWrite_ = 0;
     lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
     assertIrq(false);
 }
-void EchoPlusTMS5220Card::onUnplug() { onReset(); }
+void EchoPlusTMS5220Card::onUnplug() { resetCard(true); }
 void EchoPlusTMS5220Card::setCpu(M6502* cpu) {
     std::lock_guard<std::mutex> lock(mtx_);
     cpu_ = cpu; lastCycle_ = cpu ? cpu->getCycleCountNow() : 0;

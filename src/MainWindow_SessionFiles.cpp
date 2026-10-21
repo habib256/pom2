@@ -80,6 +80,8 @@ void MainWindow::renderSessionFileDialog()
                 }
                 tapeStatusMessage = ok ? (browserDiskTargetsDrive_ ? "Disk imported into drive." : "Disk imported and booted.")
                                        : "Disk import failed: " + error;
+                // insertDriveRackImage has already explained its own refusal.
+                if (!ok && !browserDiskTargetsDrive_) showDiskRefusal(file->path, error);
                 tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
                 // Keep the unique MEMFS file: normal media write-back and session
                 // capture use it. The original local file is never modified.

@@ -82,14 +82,28 @@ void IIcMouse::step()
     // MAME apple2e.cpp update_iic_mouse (:2700-2810). Each pending step
     // toggles X0/Y0. X1/Y1 encode direction with opposite Y polarity;
     // only the selected X0/Y0 edge raises the shared mouse interrupt.
+    //
+    // Back-pressure: while an axis' interrupt latch is still pending, that
+    // axis holds its next transition. One transition per scanline (65
+    // cycles) is far faster than the ROM's IRQ handler, so a fast host move
+    // used to produce edges the firmware never saw — A2DeskTop received ~42%
+    // of a full-screen drag and the cursor could not reach the screen edges
+    // even with the pointer captured. A real mouse never outruns the handler;
+    // holding the queue until $C048 clears the latch keeps every unit.
+    // Only in IRQ mode: with the interrupt off nothing latches, and software
+    // polling X0/X1 directly keeps the plain per-scanline pace.
+    // Deliberate divergence from MAME, whose update_iic_mouse emits a
+    // transition every scanline unconditionally (and loses the same edges):
+    // the host pointer can move faster than any physical mouse, so the
+    // shaping belongs on this side of the quadrature (GitHub issue #17).
     bool irq = false;
-    if (countX_) {
+    if (countX_ && !(enabled_ && xIrq_)) {
         x1_ = countX_ > 0;
         countX_ += countX_ > 0 ? -1 : 1;
         if (enabled_ && x0_ == xEdge_) { xIrq_ = true; irq = true; }
         x0_ = !x0_;
     }
-    if (countY_) {
+    if (countY_ && !(enabled_ && yIrq_)) {
         y1_ = countY_ < 0;
         countY_ += countY_ > 0 ? -1 : 1;
         if (enabled_ && y0_ == yEdge_) { yIrq_ = true; irq = true; }

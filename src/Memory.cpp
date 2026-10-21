@@ -663,11 +663,13 @@ bool Memory::chatMauveBlockedBySlot3() const
 void Memory::resetSoftSwitches(bool warm)
 {
     std::lock_guard<std::mutex> lk(stateMutex);
+    const DisplayState kept = display;
     display = DisplayState{};
-    // Beam-racing log: a reset wipes the soft-switch timeline. Replaying
-    // pre-reset events (or a stale published frame) against the wiped state
-    // would paint ghost segments for up to one frame — drop both and resync
-    // the frame-start snapshots to the fresh state.
+    // Ctrl-Reset clears 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3 only (MAME
+    // `apple2e.cpp:1459-1471`, Sather Fig 7.1): TEXT, MIXED, DHGR survive it.
+    if (warm) { display.textMode = kept.textMode; display.mixedMode = kept.mixedMode; display.dhgr = kept.dhgr; }
+    // A reset wipes the beam-racing timeline: drop the logged events (stale
+    // ones would paint ghost segments) and resync the frame-start snapshots.
     videoEvents_.clear();
     publishedEvents_.clear();
     displayAtFrameStart_ = display;
@@ -728,10 +730,8 @@ void Memory::resetSoftSwitches(bool warm)
     // (`charRomBankOffset`). Same reason they are in the snapshot trailer.
     an1 = false;   // (AN0 is display.an0, cleared with `display` above)
     an2 = false;
-    // Only power-on clears the latch (MAME machine_reset; reset_w keeps it),
-    // so the //c Plus ROM sees an Esc held through Ctrl-Reset ($FD82) — and
-    // a power-on re-strobes a key still held down (Keyboard::powerOn), so it
-    // sees one held through the power switch too.
+    // reset_w keeps the latch, so the //c Plus ROM sees Esc held through
+    // Ctrl-Reset ($FD82); power-on re-strobes a key held (Keyboard::powerOn).
     if (warm) keyboard_.cancelPaste(); else keyboard_.powerOn();
 }
 
@@ -1194,11 +1194,11 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
     // Second trailer: length-prefixed //c-class device sections, absent in
     // older blobs (live values kept). A started section must be valid; a
     // failure propagates to MachineSnapshot's transactional rollback.
-    auto readSection = [&](auto&& apply) -> bool {
+    auto readSection = [&](auto&& apply, bool wantsEmpty = false) -> bool {
         if (pos == n) return true;             // optional trailer absent
         if (!need(4)) return false;            // torn length prefix
         const uint32_t len = getU32();
-        if (len == 0) return true;
+        if (len == 0) return !wantsEmpty || apply(data + pos, std::size_t{0});
         if (n - pos < len) return false;
         if (!apply(data + pos, static_cast<size_t>(len))) return false;
         pos += len;
@@ -1278,12 +1278,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             return !d || d->loadSnapshotState(p, k);
         })) return false;
     if (!readSection([&](const uint8_t* p, size_t k) {
-            // A snapshot taken with no accelerator seated says nothing about
-            // this one: it takes its reset state rather than whatever the
-            // previous machine left in it.
+            // None saved: reset state, not what the last machine left.
             if (accel_ && k == 0) { accel_->onReset(cycleCounter); return true; }
             return !accel_ || accel_->loadSnapshotState(p, k);
-        })) return false;
+        }, /*wantsEmpty=*/true)) return false;
     return true;
 }
 
@@ -1361,9 +1359,12 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // previously answered $C011/$C012 with IIe-style LC status on II+ —
     // a deliberate convenience that diverged from hardware; software
     // acking a key via `STA $C01x` (x≠0) never saw its strobe clear.)
+    // Nothing drives the data bus there, so the read is the video scanner's
+    // byte: MAME `apple2.cpp:362-372` read_floatingbus(), AppleWin IORead_C01x
+    // IO_Null (GH#1261). The key latch made $C019 vapor-lock see a constant.
     if (!iieMode && low >= 0x10 && low <= 0x1F) {
         clearKeyStrobe();
-        return kbLatch & 0x7F;
+        return floatingBus();
     }
     // IIe: any WRITE in $C010-$C01F clears the strobe (MAME `apple2e.cpp`
     // c000_w: `if ((offset & 0xf0) == 0x10) { m_strobe = 0; ... }` — only
@@ -1734,18 +1735,13 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // a bare comparator byte with bits 0-6 clamped to 0, so the $C060 half
     // of the mirrored pair disagreed with its own $C068 twin below.
     if (low == 0x60) {
-        // //c-class: NOT a cassette comparator. The //c has no cassette port
-        // at all; $C060 there reads the 40/80-column switch (Apple //c Tech
-        // Ref 2e), which POM2 does not model and which reads back low (80
-        // columns). The $C02x fence above already kept the //c out of the
-        // cassette OUTPUT path — this half was missing, so a //c firmware
-        // read of the column switch called into the deck: with a tape loaded
-        // and PLAY armed, it consumed the arm and STARTED the tape rolling
-        // (readTapeInput's armed→active transition), and it kept re-stamping
-        // the leader-rewind clock. Same byte on the bus, no deck side effect.
-        const uint8_t bit7 = (cassette && !iicProfile_)
-            ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
-            : uint8_t{0};
+        // //c-class: no cassette port — $C060 is the keyboard's 40/80-column
+        // switch, bit 7 set in the 40 position (MAME `apple2e.cpp:2321`,
+        // //c Tech Ref 2e). It must never reach the deck: a read of the
+        // switch used to consume an armed PLAY and start the tape.
+        const uint8_t bit7 = iicProfile_ ? (iic40ColSwitch_ ? uint8_t{0x80} : uint8_t{0})
+            : cassette ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
+                       : uint8_t{0};
         return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));
     }
 

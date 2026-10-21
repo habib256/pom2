@@ -380,6 +380,9 @@ private:
         /// the tail silently corrupted the stream. Host-side only, never
         /// snapshotted (a restored connection is demoted to CLOSED anyway).
         std::vector<uint8_t> pendingTx;
+        /// DISCON arrived with `pendingTx` still owed: the chip sends its FIN
+        /// after the data (Sn_SR FIN_WAIT), so `poll()` closes once it drains.
+        bool closeAfterTx = false;
 
         bool isOpen() const
         {
@@ -440,7 +443,8 @@ private:
 
     // Transmit paths (`Uthernet2.cpp:772-895`).
     void sendData(size_t i);
-    void sendDataToSocket(size_t i, const std::vector<uint8_t>& data);
+    /// False when the datagram was refused (TIMEOUT raised, no SEND_OK).
+    bool sendDataToSocket(size_t i, const std::vector<uint8_t>& data);
     /// Push a TCP socket's pendingTx tail into the host socket; called on
     /// every poll() until the queue drains. Kills the connection if the
     /// backlog passes 1 MiB (the peer has stalled for good).

@@ -31,11 +31,12 @@
 // cpu_nmos_index_dummy_read_test, and every case also asserts its cycle
 // count so the pin guards the timing the fix must NOT move.
 //
-// The store forms ($8F/$83/$93 SAX/AHX, $9B/$9C/$9E/$9F TAS/SHY/SHX/AHX) and
-// the RMW forms ($x3/$x7/$xB/$xF SLO/RLA/SRE/RRA/DCP/ISC) deliberately stay
-// silent: their bus cycle is a WRITE whose value comes from semantics POM2
-// does not model, and writing a wrong byte into RAM would be worse than
-// writing none. Their silence is asserted below so the boundary is explicit.
+// The store forms ($8F/$83/$93 SAX/SHA, $9B/$9C/$9E/$9F TAS/SHY/SHX/SHA) and
+// the RMW forms ($x3/$x7/$xB/$xF SLO/RLA/SRE/RRA/DCP/ISC) stayed silent while
+// their results were not modelled. Since 2026-10-21 they compute them
+// (M6502_Undoc.cpp, Tom Harte 6502/v1 exact) and so make the same bus cycles
+// as their documented siblings: a store writes once (plus the indexed dummy
+// read), an RMW reads, writes the original back (NMOS) and writes the result.
 
 #include "M6502.h"
 #include "Memory.h"
@@ -127,11 +128,11 @@ int main()
     check("LDY #$40 : LAX $C0F0,Y ($BF)", N, {0xA0, 0x40, 0xBF, 0xF0, 0xC0},
           2, 0, 0, 1, 2 + 5);
 
-    std::printf("store / RMW forms stay silent (documented boundary):\n");
-    check("SAX $C030      ($8F)", N, {0x8F, 0x30, 0xC0}, 1, 0, 0, 0, 4);
-    check("DCP $C030      ($CF)", N, {0xCF, 0x30, 0xC0}, 1, 0, 0, 0, 6);
-    check("SHY $C030,X    ($9C)", N, {0x9C, 0x30, 0xC0}, 1, 0, 0, 0, 5);
-    check("SLO ($30),Y    ($13)", N, {0x13, 0x30},       1, 0, 0, 0, 8);
+    std::printf("store / RMW forms make their siblings' bus cycles:\n");
+    check("SAX $C030      ($8F)", N, {0x8F, 0x30, 0xC0}, 1, 0, 0, 1, 4);   // as STA abs
+    check("DCP $C030      ($CF)", N, {0xCF, 0x30, 0xC0}, 1, 0, 0, 3, 6);   // as DEC abs
+    check("SHY $C030,X    ($9C)", N, {0x9C, 0x30, 0xC0}, 1, 0, 0, 2, 5);   // as STA abs,X
+    check("SLO ($30),Y    ($13)", N, {0x13, 0x30},       1, 0, 0, 4, 8);   // dummy + RMW
 
     if (failures) {
         std::printf("cpu_undoc_bus_access FAILED (%d)\n", failures);

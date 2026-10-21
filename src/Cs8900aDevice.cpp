@@ -620,8 +620,9 @@ uint8_t Cs8900aDevice::readRxBuffer(bool oddAddress)
         ++rxCount_;
     }
 
-    // +4 = the RxStatus and RxLength words that precede the payload.
-    if (rxCount_ >= rxLength_ + 4) rxState_ = kRxIdle;
+    // +4 = the RxStatus and RxLength words that precede the payload. A frame
+    // read out is no longer the ISQ's to re-announce at the next RxEvent read.
+    if (rxCount_ >= rxLength_ + 4) { rxState_ = kRxIdle; isqStagedFrame_ = false; }
 
     return value;
 }
@@ -752,11 +753,15 @@ void Cs8900aDevice::latchInterruptStatusQueue()
 {
     uint16_t value = 0x0000;
 
-    // RxEvent first. Only when a frame can actually be popped: with one
-    // already staged (`kRxGotFrame`) a read of RxEvent is an "implied skip"
-    // that DISCARDS it, and the ISQ must not do that behind the driver's back
-    // while it is still draining the payload through RXTXDATA.
-    if (rxEnabled_ && rxState_ != kRxGotFrame && !frameQueue_.empty()) {
+    // RxEvent first, whenever a frame is waiting. With one still staged
+    // and half read, this is the datasheet's "implied Skip" (§5.2.5: "the
+    // host reads part of the frame and then reads the RxEvent register,
+    // either directly or through the ISQ, and learns of another receive
+    // frame"): the committed frame is freed and the next one reported.
+    // Holding the ISQ back instead hid every queued frame behind one a
+    // driver had dropped half-read, and an ISQ-only driver never received
+    // again.
+    if (rxEnabled_ && !frameQueue_.empty()) {
         const uint64_t receivedBefore = framesReceived_;
         const uint16_t rx = receiveFrame();
         ppWrite16(kPpRxStatus,  rx);
@@ -869,6 +874,14 @@ void Cs8900aDevice::sideEffectsAfterReadPp(uint16_t ppAddress, bool oddAddress)
     case kPpSeBufEvent:
         // Back to its own register number, exactly as the ISQ path leaves it.
         ppWrite16(kPpSeBufEvent, 0x000C);
+        break;
+
+    case kPpSeTxEvent:
+        // An event register is cleared by reading it, directly or through
+        // the ISQ. Only the ISQ path did: once TxOK was modelled, a driver
+        // polling TxEvent at $0128 saw every completion again on its next
+        // poll, and the ISQ reported it a second time.
+        ppWrite16(kPpSeTxEvent, 0x0008);
         break;
 
     case kPpSeRxMiss:

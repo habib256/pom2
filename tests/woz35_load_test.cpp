@@ -228,6 +228,31 @@ void testRefusals()
         std::error_code ec; fs::remove(p, ec);
     }
     std::printf("  ok: 5.25\" and WOZ1 images are refused by name\n");
+
+    // The header CRC32 (bytes 8-11, over 12..EOF; 0 = not computed) is
+    // checked as the 5.25" loader and the MOOF path check it: a corrupt 3.5"
+    // WOZ used to mount silently.
+    {
+        auto woz = buildWoz(tracks, 2);
+        uint32_t crc = 0xFFFFFFFFu;
+        for (std::size_t i = 12; i < woz.size(); ++i) {
+            crc ^= woz[i];
+            for (int bit = 0; bit < 8; ++bit)
+                crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
+        }
+        crc = ~crc;
+        for (int k = 0; k < 4; ++k) woz[8 + k] = uint8_t(crc >> (8 * k));
+        const fs::path good = writeTemp("pom2_woz35_crc_ok.woz", woz);
+        pom2::Disk35Image ok;
+        assert(ok.loadFile(good.string()) && "a WOZ with its own CRC32 loads");
+        woz[woz.size() - 1] ^= 0x01;
+        const fs::path bad = writeTemp("pom2_woz35_crc_bad.woz", woz);
+        pom2::Disk35Image img;
+        assert(!img.loadFile(bad.string()));
+        assert(img.lastError().find("CRC32") != std::string::npos);
+        std::error_code ec; fs::remove(good, ec); fs::remove(bad, ec);
+    }
+    std::printf("  ok: a 3.5\" WOZ whose CRC32 does not match is refused\n");
 }
 
 }  // namespace

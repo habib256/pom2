@@ -420,6 +420,11 @@ private:
                           const RebuildSnapshot& snapshot) const;
     static void restoreHdvDrive2(ProDOSHardDiskCard& hdv,
                                  const RebuildSnapshot& snapshot);
+    // StorageCoordinator_HdvBays.cpp — `mountBlockBytes` on a SmartPort
+    // card; "" on success, else the error. Caller holds `stateMutex`.
+    static std::string mountHostFolderOnSmartPort(
+        SmartPortCard& card, int bay, std::vector<std::uint8_t>&& bytes,
+        const std::string& label, const std::string& hostFolder, bool convertText);
 
     int autoHdvSlot_ = -1;
     int autoSmartPortSlot_ = -1;

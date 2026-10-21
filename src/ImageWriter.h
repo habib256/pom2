@@ -640,6 +640,7 @@ private:
     uint8_t     customFont_  = 0;         // 0 standard, 1 ESC ', 2 ESC *
     void feedCustomLoad(uint8_t raw);
     void execCustomCharEscape(uint8_t cmd);   // ESC - + I ' *
+    void abandonPendingInput();   // ESC c and power-off
     void clearCustomGlyphs();
     const CustomGlyph* customGlyphFor(uint8_t ch) const;
     void renderCustomGlyph(const CustomGlyph& g);

@@ -43,12 +43,12 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // second of wall clock. Scale by the profile's own budget, which
     // applyProfile has already committed (step 10 sets it before calling
     // here). On every 1× machine the ratio is exactly 1 (17045/17045,
-    // 20313/20313) so not one constant moves; an accelerator only ever
-    // speeds up, hence the one-sided test.
+    // 20313/20313) so not one constant moves. Both ways: a speed below 1×
+    // (`--speed`, AI `/speed`) burns fewer cycles a second, and handing the
+    // stock clock to the queues then starved them.
     const int base = baseCyclesPerFrame_.load();
     const double hz = static_cast<double>(vt.cpuClockHz) *
-        (base > vt.cyclesPerFrame
-             ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
+        (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     cpuClockHz_.store(hz);
     mem.setVideoStandard(s);
     // The Zip's 4 MHz and its millisecond delays are against the stock clock.
@@ -123,8 +123,7 @@ void EmulationController::applyAcceleratorClock(double mul)
     const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
     const int base = baseCyclesPerFrame_.load();
     double hz = static_cast<double>(vt.cpuClockHz) *
-        (base > vt.cyclesPerFrame
-             ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
+        (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     hz *= mul;
     if (hz == cpuClockHz_.load()) return;   // the no-accelerator fast path
     cpuClockHz_.store(hz);
@@ -869,8 +868,7 @@ void EmulationController::tickFrame()
     // disabled ring costs nothing.
     if (rewind_.enabled()) {
         std::lock_guard<std::mutex> lk(stateMtx);
-        noteMediaWrite();   // a rewind may not cross a media write
-        rewind_.capture(processor, mem);
+        captureRewindLocked();
     }
 }
 
@@ -1202,7 +1200,10 @@ void EmulationController::setMode(Mode m)
     // itself is dropped by the next `RewindBuffer::capture`, which is on the
     // worker and therefore cannot deadlock against callers that reach setMode
     // while already holding stateMtx (the Disk II Library's boot buttons do).
-    if (m != Mode::Stopped) scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
+    if (m != Mode::Stopped) {
+        const size_t at = scrubIndex_.exchange(pom2::RewindBuffer::kNoFrame);
+        if (at != pom2::RewindBuffer::kNoFrame) resumeTruncate_.store(at);
+    }
     // Stop disarms any step-over / run-to-cursor transient. The user asked the
     // machine to halt, so a breakpoint they never placed must not survive to
     // halt it again minutes later, at an address that belonged to a step they
@@ -1226,7 +1227,9 @@ void EmulationController::setMode(Mode m)
     // at the one funnel every Stop path goes through costs one relaxed store;
     // the worker retires its OWN Step by storing `mode` directly, so it does
     // not come through here and cannot cancel a step it is mid-way through.
-    if (m == Mode::Stopped) stepsPending.store(0);
+    // Running abandons them too: the machine is free-running, and a backlog
+    // left behind (`--step N --run ADDR`) ran on the next debugger Step.
+    if (m != Mode::Step) stepsPending.store(0);
     // Silence the host bus unless the CPU is actually running. The audio
     // device keeps calling its sources ~200×/s regardless of `mode`, so a
     // paused machine used to keep the AY generators and the floppy motor
@@ -1342,6 +1345,14 @@ void EmulationController::rewindEndAndResume(size_t index)
         }
     }
     setMode(Mode::Running);
+}
+
+void EmulationController::captureRewindLocked()
+{
+    noteMediaWrite();   // a rewind may not cross a media write
+    const size_t at = resumeTruncate_.exchange(pom2::RewindBuffer::kNoFrame);
+    if (at != pom2::RewindBuffer::kNoFrame) rewind_.truncateAfter(at);
+    rewind_.capture(processor, mem);
 }
 
 void EmulationController::noteMediaWrite()
@@ -1613,8 +1624,13 @@ void EmulationController::stepBusMaster()
         const uint16_t pc = processor.getProgramCounter();
         const bool debug = debugger_->armed();
         if (debug) debugger_->beginStep(pc, true);
+        (void)processor.takeInterruptEntered();
         processor.step();
-        if (debug) debugger_->onStepCompleted(processor, pc, processor.getCurrentInstructionCycles());
+        // An IRQ/NMI entry runs nothing at `pc`: it is not a completed step.
+        if (debug && processor.takeInterruptEntered())
+            debugger_->onInterruptEntered(processor, pc, processor.getCurrentInstructionCycles());
+        else if (debug)
+            debugger_->onStepCompleted(processor, pc, processor.getCurrentInstructionCycles());
     }
 }
 
@@ -1881,8 +1897,7 @@ void EmulationController::workerLoop()
         // consistent view vs. any UI-thread memory write.
         if (rewind_.enabled()) {
             std::lock_guard<std::mutex> lk(stateMtx);
-            noteMediaWrite();   // a rewind may not cross a media write
-            rewind_.capture(processor, mem);
+            captureRewindLocked();
         }
 
         // Hang detector: sample end-of-frame PC; if every sample over the

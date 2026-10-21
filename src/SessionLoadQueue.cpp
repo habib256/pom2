@@ -8,7 +8,16 @@ bool SessionLoadQueue::load(const SessionArchive& session, std::string& error)
 {
     std::unique_lock<std::mutex> lock(mutex_);
     if (closed_) { error = "session loader is shutting down"; return false; }
-    if (std::this_thread::get_id() == owner_) { lock.unlock(); return loader_(session, error); }
+    if (std::this_thread::get_id() == owner_) {
+        lock.unlock();
+        // Same barrier as process(): a bad_alloc on a big archive must be a
+        // failed load, not an exception thrown into the UI's frame loop.
+        try { return loader_(session, error); }
+        catch (const std::exception& e) { error = e.what(); }
+        catch (...) { error = "session reconstruction failed"; }
+        return false;
+    }
+    if (remoteSuspended_) { error = "session load cancelled"; return false; }
     auto request = std::make_shared<Request>(); request->session = session;
     pending_.push_back(request);
     cv_.wait(lock, [&] { return request->done || closed_; });
@@ -28,6 +37,14 @@ void SessionLoadQueue::process()
           request->ok = ok; request->error = std::move(error); request->done = true; }
         cv_.notify_all();
     }
+}
+void SessionLoadQueue::suspendRemote(bool on)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    remoteSuspended_ = on;
+    if (!on) return;
+    for (auto& request : pending_) { request->error = "session load cancelled"; request->done = true; }
+    pending_.clear(); cv_.notify_all();
 }
 void SessionLoadQueue::close()
 {

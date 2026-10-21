@@ -487,6 +487,7 @@ void W5100Device::clearSocket(size_t i)
     Socket& s = sockets_[i];
     s.host.reset();   // the handle's destructor closes the host socket
     s.pendingTx.clear();
+    s.closeAfterTx = false;
     // CLOSE clears Sn_IR (datasheet §5.1: the socket returns to its
     // power-on state), and a stale SEND_OK/CON on a dead socket is exactly
     // what makes the next OPEN look already-finished to a polling driver.
@@ -584,7 +585,10 @@ void W5100Device::openSocket(size_t i)
         setSocketStatus(i, kW5100SnSrIpRaw);
         break;
     case kW5100SnMrMacRaw:
-        setSocketStatus(i, kW5100SnSrMacRaw);
+        // Socket 0 only (datasheet Sn_MR: "MACRAW mode can be used only in
+        // socket 0"); elsewhere the OPEN leaves the socket CLOSED. Accepting
+        // it gave sockets 1-3 a transmit path the receive side never fed.
+        if (i == 0) setSocketStatus(i, kW5100SnSrMacRaw);
         break;
     case kW5100SnMrTcp:
     case kW5100SnMrTcp | kW5100SnVirtualDns:
@@ -702,8 +706,19 @@ void W5100Device::setCommandRegister(size_t i, uint8_t value)
     case kW5100SnCrOpen:    openSocket(i);   break;
     case kW5100SnCrListen:  listenSocket(i); break;
     case kW5100SnCrConnect: connectSocket(i); break;
-    case kW5100SnCrClose:
-    case kW5100SnCrDiscon:  closeSocket(i);  break;
+    case kW5100SnCrClose:   closeSocket(i);  break;
+    case kW5100SnCrDiscon:
+        // Graceful: the FIN follows the data the guest was already told was
+        // sent (SEND_OK). Closing at once dropped the tail a slow peer had
+        // not taken yet — an upload truncated without an error. CLOSE stays
+        // abortive.
+        if (sockets_[i].status == kW5100SnSrEstablished && !sockets_[i].pendingTx.empty()) {
+            sockets_[i].closeAfterTx = true;
+            setSocketStatus(i, kW5100SnSrFinWait);
+        } else {
+            closeSocket(i);
+        }
+        break;
     case kW5100SnCrSend:
     // SEND_MAC is SEND with the ARP step skipped (datasheet §5.1). POM2 runs
     // UDP over a host socket, which does its own address resolution, so the
@@ -1191,10 +1206,11 @@ void W5100Device::sendData(size_t i)
     setMem(static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd0), indexByte(wr, 8));
     setMem(static_cast<uint16_t>(s.registerAddress + kW5100SnTxRd1), indexByte(wr, 0));
 
+    bool accepted = true;
     switch (s.status) {
     case kW5100SnSrMacRaw:      sendDataMacRaw(data);      break;
     case kW5100SnSrIpRaw:       sendDataIpRaw(i, data);    break;
-    default:                    sendDataToSocket(i, data); break;
+    default:                    accepted = sendDataToSocket(i, data); break;
     }
 
     // SEND_OK is what the stock WIZnet `send()` waits on before returning
@@ -1202,18 +1218,19 @@ void W5100Device::sendData(size_t i)
     // ring, which for this model is now: a host-side tail parked in pendingTx
     // is still "accepted by the chip", exactly as bytes in the real chip's
     // internal TCP retransmit queue are.
-    if (sockets_[i].status != kW5100SnSrClosed)
+    if (accepted && sockets_[i].status != kW5100SnSrClosed)
         raiseSocketIrq(i, kW5100SnIrSendOk);
 }
 
 // `Uthernet2.cpp:812-842`
-void W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
+bool W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
 {
 #if !POM2_HAS_SOCKETS
     (void)i; (void)data;
+    return true;
 #else
     Socket& s = sockets_[i];
-    if (!s.isOpen() || data.empty()) return;
+    if (!s.isOpen() || data.empty()) return true;
 
     // Ignored for a connected TCP socket, so the same code serves both.
     const uint32_t destinationAddress =
@@ -1238,9 +1255,12 @@ void W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
             log().warn("W5100", "socket " + std::to_string(i) + ": datagram to " +
                                 dottedQuad(destinationAddress) + " refused — " +
                                 verdict.reason);
-            clearSocket(i);
+            // ONE datagram, not the socket: an undeliverable one is TIMEOUT
+            // with Sn_SR still SOCK_UDP. Closing it here made the next SEND
+            // a no-op on a CLOSED socket, and ioLibrary's sendto() — TIMEOUT
+            // already cleared — then waited for a SEND_OK for ever.
             raiseSocketIrq(i, kW5100SnIrTimeout);
-            return;
+            return false;
         }
     }
 
@@ -1254,7 +1274,7 @@ void W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
     if (isTcp && !s.pendingTx.empty()) {
         s.pendingTx.insert(s.pendingTx.end(), data.begin(), data.end());
         flushPendingTx(i);
-        return;
+        return true;
     }
 
     // sendToSocket, not ::sendto: MSG_NOSIGNAL where the platform has it,
@@ -1284,6 +1304,7 @@ void W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
     } else {
         clearSocket(i);
     }
+    return true;
 #endif
 }
 
@@ -1676,8 +1697,11 @@ void W5100Device::autoIncrement()
     if (!(modeRegister_ & kW5100MrAi)) return;
     ++dataAddress_;
     // The indirect window wraps within each 8 KB buffer rather than
-    // running into the next region (Uthernet II manual p.12 bottom).
-    if (dataAddress_ == kW5100RxBase || dataAddress_ == kW5100MemSize)
+    // running into the next region (Uthernet II manual p.12 bottom) — in
+    // the $8000-$FFFF mirror too, where $DFFF used to run into the RX
+    // buffer at $E000 and $FFFF into the common registers at $0000.
+    const uint16_t low = static_cast<uint16_t>(dataAddress_ & (kW5100MemSize - 1));
+    if (low == kW5100RxBase || low == 0)
         dataAddress_ = static_cast<uint16_t>(dataAddress_ - 0x2000);
 }
 
@@ -1709,8 +1733,16 @@ void W5100Device::poll()
         // Retry TCP bytes the host socket refused earlier (short write /
         // EAGAIN) — see sendDataToSocket.
         if (!sockets_[i].pendingTx.empty()) flushPendingTx(i);
+        if (sockets_[i].closeAfterTx && sockets_[i].pendingTx.empty()) clearSocket(i);
 
         Socket& s = sockets_[i];
+        // The chip receives on its own: data, a peer's FIN (Sn_SR CLOSE_WAIT)
+        // and a reset move Sn_SR / Sn_IR whether or not the guest reads
+        // Sn_RX_RSR. Polled only on that read (AppleWin's lazy shape), a
+        // driver that waits on the status or the RECV/DISCON interrupt
+        // never saw the peer close or the data arrive.
+        if (s.host && (s.status == kW5100SnSrEstablished || s.status == kW5100SnSrUdp))
+            receiveOnePacketFromSocket(i);
         if (s.host && s.status == kW5100SnSrListen) {
             if (!allowLoopback_) {
                 clearSocket(i);

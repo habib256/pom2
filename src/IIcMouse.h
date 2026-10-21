@@ -21,6 +21,10 @@ public:
     bool loadIicMouseState(const uint8_t* data, size_t n) override;
     bool validateIicMouseState(const uint8_t* data, size_t n) const override;
     bool hostDrained() const { return countX_ == 0 && countY_ == 0; }
+    /// Every queued edge emitted AND serviced: no axis latch still waits for
+    /// the ROM's IRQ handler, so the screen-hole position is final. The
+    /// absolute cursor sync pushes its next correction only from here.
+    bool settled() const { return hostDrained() && !xIrq_ && !yIrq_; }
 private:
     int firmwareSlot_ = 4; // //c+ moves the firmware entry table/screen holes to port 7
     void step();

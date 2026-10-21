@@ -41,9 +41,15 @@ public:
     /// the CPU with `pc` unchanged, so the instruction has not run and a
     /// later resume re-tries it.
     virtual bool onInstruction(uint16_t pc) = 0;
-    /// Debugged loop only. State is AFTER the step; cycles include a possible
-    /// interrupt-entry-only step. Never called for an instruction stopped before execution.
+    /// Debugged loop only. State is AFTER the step. Never called for an
+    /// instruction stopped before execution, nor for an interrupt entry.
     virtual void onStepCompleted(const M6502&, uint16_t, int) {}
+    /// Debugged loop only: the step ENTERED an interrupt (IRQ/NMI) instead of
+    /// executing the instruction at `interruptedPc`, which runs after RTI.
+    /// `cycles` is the 7-cycle entry; the CPU's PC is the handler's first.
+    /// Reported as a step it once was, the profiler counted a visit and 7
+    /// cycles to an instruction that had not run, and history logged it.
+    virtual void onInterruptEntered(const M6502&, uint16_t /*interruptedPc*/, int /*cycles*/) {}
 };
 
 class M6502
@@ -178,6 +184,9 @@ public:
     void setXRegister(uint8_t v)      { xRegister      = v; }
     void setYRegister(uint8_t v)      { yRegister      = v; }
     void setStatusRegister(uint8_t v) { statusRegister = v; }
+    /// Whether the last debugged step only ENTERED an interrupt (see
+    /// M6502DebugHook::onInterruptEntered); reading clears it.
+    bool takeInterruptEntered() { const bool v = interruptEntered_; interruptEntered_ = false; return v; }
     void setStackPointer(uint8_t v)   { stackPointer   = v; }
     /// STP ($DB, WDC 65C02) halt latch — guest-visible state that only
     /// RESET clears, so snapshot/rewind must carry it: restoring a
@@ -370,17 +379,20 @@ private :
     void Unoff3(void);
     void UnoffImm(void);    // 2-byte, 2-cycle undoc NOP (imm) / NMOS ANC/SBC #imm
     void UnoffZpX(void);    // 2-byte, 4-cycle undoc NOP (zp,X)
-    void UnoffZp5(void);    // 2-byte, 5-cycle undoc RMW (zp)
-    void UnoffZpX6(void);   // 2-byte, 6-cycle undoc RMW (zp,X)
-    void UnoffInd6(void);   // 2-byte, 6-cycle undoc (zp,X)/(zp),Y — STORE forms
-    void UnoffInd6R(void);  // 2-byte, 6-cycle undoc LAX (zp,X) — reads the EA
-    void UnoffInd8(void);   // 2-byte, 8-cycle undoc RMW (zp,X)/(zp),Y
-    void UnoffIndY5(void);  // 2-byte, 5+p-cycle undoc LAX (zp),Y
-    void UnoffAbs6(void);   // 3-byte, 6-cycle undoc RMW (abs)
-    void UnoffAbs7(void);   // 3-byte, 7-cycle undoc RMW (abs,X / abs,Y)
-    void UnoffAbsY(void);   // 3-byte, 4+p-cycle undoc read (abs,Y)
-    void UnoffAbs4(void);   // 3-byte, 4-cycle undoc NOP/LAX (abs) — reads the EA
-    void UnoffAbsSt(void);  // 3-byte, 4-cycle undoc SAX (abs) — stores, no read
+    void UnoffAbs4(void);   // 3-byte, 4-cycle undoc NOP (abs) — reads the EA
+    // M6502_Undoc.cpp — the undocumented NMOS opcodes, with their results.
+    // One template per addressing mode; `Kind` is the operation.
+    void installNmosUndocumented();
+    void undocAt(int kind, uint16_t ea, uint16_t base, bool crossed);
+    template <int Kind> void UndocZp();
+    template <int Kind, bool Y> void UndocZpI();
+    template <int Kind> void UndocAbs();
+    template <int Kind, bool Y> void UndocAbsI();
+    template <int Kind> void UndocIndX();
+    template <int Kind> void UndocIndY();
+    template <int Kind> void UndocImm();
+    void adcValue(uint8_t value);   // ADC / SBC on a value already fetched
+    void sbcValue(uint8_t value);
     void UnoffAbsX(void);   // 3-byte, 4+p-cycle undoc NOP (abs,X, NMOS)
     void Unoff5C(void);     // 3-byte, 8-cycle 65C02 oddball $5C
     void Hang(void);
@@ -388,6 +400,7 @@ private :
 
     /// Per-instruction debug hook, or nullptr. See setDebugHook().
     M6502DebugHook* debugHook_ = nullptr;
+    bool interruptEntered_ = false;   // debugged loop: see onInterruptEntered
 
     /// Emit the intermediate RMW bus cycle between the initial read and
     /// the modified-value write. On NMOS (MAME `om6502.lst:161-164`)

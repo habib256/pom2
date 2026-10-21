@@ -94,5 +94,22 @@ int main() {
         machine.cpu().step();
         assert(echo->slotRomRead(4) == mb->slotRomRead(4));
     }
-
+    // A backlog built while emulation ran ahead (disk turbo) must not stay
+    // as latency: with no rate matching the queue sat at its 8192 cap and
+    // the card played ~186 ms late for the rest of the session. One fill
+    // snaps it to 50 ms (2205 samples at 44.1 kHz), and that is all left.
+    {
+        EchoPlusTMS5220Card lag; lag.setCpuClock(1000000);
+        lag.slotRomWrite(3, 0xFF); lag.slotRomWrite(2, 0xFF);
+        writeAy(lag, 0, 0, 64); writeAy(lag, 0, 7, 0x3E); writeAy(lag, 0, 8, 15);
+        lag.advanceCycles(1000000);                    // one second ahead
+        std::vector<float> l(441), r(441);
+        lag.audioSource()->fillAudioBufferStereo(l.data(), r.data(), 441);
+        std::vector<float> kept(2205), keptR(2205);
+        lag.audioSource()->fillAudioBufferStereo(kept.data(), keptR.data(), 2205);
+        assert(*std::max_element(kept.begin(), kept.end()) > 0.05f);
+        lag.audioSource()->fillAudioBufferStereo(l.data(), r.data(), 441);
+        assert(std::all_of(l.begin(), l.end(), [](float v) { return v == 0; }) &&
+               "the turbo backlog must be trimmed to 50 ms, not kept");
+    }
 }

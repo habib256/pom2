@@ -19,6 +19,7 @@
 
 #include "Disk35Image.h"
 #include "Disk35Bitstream.h"
+#include "TwoImgHeader.h"
 #include "Disk35Mfm.h"
 #include "MediaNotch.h"
 
@@ -138,8 +139,11 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
         const uint32_t format    = rd32(buf.data() + 12);
         const uint32_t flags     = rd32(buf.data() + 16);
         const uint32_t dataOff   = rd32(buf.data() + 24);
-        const uint32_t dataLen   = rd32(buf.data() + 28);
+        const uint32_t dataLen   = twoImgDataLength(buf.data());
 
+        // After the declared header, which holds every defined field (bytes
+        // 0-47) once it is 52 long, as in Block512Backing. 64 is only the
+        // usual size: a 52-byte header with data at 52 is a legal 2IMG.
         if (headerLen < 52 || dataOff < headerLen || dataOff > n ||
             dataLen == 0 ||
             static_cast<std::size_t>(dataOff) + dataLen > n)
@@ -556,9 +560,11 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         return false;
     }
 
-    // The MOOF header stores CRC32 of all chunks. Zero is the format's
-    // explicit "not calculated" value, also used by synthetic fixtures.
-    if (moof) {
+    // The MOOF and WOZ headers store CRC32 of all chunks. Zero is the
+    // format's explicit "not calculated" value, also used by synthetic
+    // fixtures. A WOZ went unchecked, so a corrupt 3.5" one mounted silently
+    // where the 5.25" loader refuses the same file.
+    {
         const uint32_t expected = rd32(buf.data() + 8);
         if (expected != 0) {
             uint32_t crc = 0xFFFFFFFFu;
@@ -568,7 +574,8 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
                     crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
             }
             if (~crc != expected) {
-                lastError_ = "Disk35Image: MOOF CRC32 mismatch in " + imgPath;
+                lastError_ = std::string("Disk35Image: ") + (moof ? "MOOF" : "WOZ") +
+                             " CRC32 mismatch in " + imgPath;
                 return false;
             }
         }

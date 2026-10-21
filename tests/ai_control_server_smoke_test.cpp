@@ -56,6 +56,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -729,6 +730,24 @@ void testSnapshotPathSafety(EmulationController& /*ctrl*/, pom2::AiControlServer
         assert(rn.status == 400);
         assert(contains(rn.body, "control byte"));
     }
+
+#ifndef _WIN32
+    // A launch directory at or above the user's home is no jail: a Finder
+    // launch runs from `/`, an AppImage desktop launch from $HOME, and
+    // "under cwd" then let /snapshot/save write anywhere the user can.
+    {
+        const char* oldHome = std::getenv("HOME");
+        const std::string saved = oldHome ? oldHome : "";
+        for (const fs::path& home : { fs::current_path(), fs::current_path() / "sub" }) {
+            ::setenv("HOME", home.string().c_str(), 1);
+            const fs::path target = fs::weakly_canonical(fs::current_path() / relName);
+            HttpResponse rh = post("/snapshot/save", "{\"path\":\"" + relName + "\"}");
+            assert(rh.status == 403 && "cwd at or above $HOME is not a jail");
+            assert(!fs::exists(target));
+        }
+        if (oldHome) ::setenv("HOME", saved.c_str(), 1); else ::unsetenv("HOME");
+    }
+#endif
 
     std::puts("  snapshot path-safety: OK");
 }

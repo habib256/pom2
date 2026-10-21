@@ -31,6 +31,7 @@ public:
     void setStandardClock(double hz) override;
     void advanceCycles(int cycles) override;
     void onReset() override;
+    void onPowerCycle() override;
     void onUnplug() override;
     void setSampleRate(uint32_t hz);
     void setVolume(float value);
@@ -43,6 +44,7 @@ public:
     Snap snapshot() const;
 private:
     struct AudioSrc;
+    void resetCard(bool powerCycle);
     std::unique_ptr<AudioSrc> audio_;
     int slot_;
     mutable std::mutex mtx_;

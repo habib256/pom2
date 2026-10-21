@@ -145,7 +145,21 @@ void testStopCancelsQueuedSteps()
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     ctrl.stop();
     assert(cycles(ctrl) - b0 == 8 && "four NOP steps must burn eight cycles");
-    std::puts("  ok: Stop cancels queued steps, a burst still runs whole");
+    // Run abandons them too (`--step N --run ADDR`): the backlog used to wait
+    // for the next debugger Step press.
+    ctrl.requestStep(20000);
+    ctrl.setMode(EmulationController::Mode::Running);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ctrl.stop();
+    const uint64_t b1 = cycles(ctrl);
+    ctrl.requestStep(1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    ctrl.stop();
+    if (cycles(ctrl) - b1 > 8)
+        std::printf("FAIL: a Step after Run burned %llu cycles\n",
+                    (unsigned long long)(cycles(ctrl) - b1));
+    assert(cycles(ctrl) - b1 <= 8 && "Run must cancel the queued steps");
+    std::puts("  ok: Stop and Run cancel queued steps, a burst still runs whole");
 }
 
 void testBootFromSlotUnsuspendsAudio()

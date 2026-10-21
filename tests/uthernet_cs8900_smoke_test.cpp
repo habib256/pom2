@@ -1022,11 +1022,17 @@ void testTxEventReportsTxOk()
     transmitFrame(card, makeFrame(kOurMac, kOurMac, 64, 0x10));
     assert(card.chip().framesSent() == 1);
     assert(readPpWord(card, kPpSeTxEvent) & 0x0100);      // TxOK
+    // Reading an event register clears it: polled directly, the completion
+    // is reported once, and the ISQ does not report it again.
+    assert(readPpWord(card, kPpSeTxEvent) == 0x0008);
+    assert(readPpWord(card, kPpSeIsq) == 0x0000);
 
-    // It reaches the driver through the ISQ, which clears it.
+    // Through the ISQ, which clears it too.
+    transmitFrame(card, makeFrame(kOurMac, kOurMac, 64, 0x11));
     const uint16_t isq = readPpWord(card, kPpSeIsq);
     assert((isq & 0x003F) == 0x08 && (isq & 0x0100));     // TxEvent + TxOK
     assert(readPpWord(card, kPpSeIsq) == 0x0000);
+    assert(readPpWord(card, kPpSeTxEvent) == 0x0008);
 
     std::printf("  TxEvent reports TxOK on release\n");
 }
@@ -1208,6 +1214,54 @@ void testIsqStagedFrameSurvivesTheRxEventRead()
     std::printf("  ISQ-staged frame survives the driver's RxEvent read\n");
 }
 
+// Datasheet §5.2.5, condition 3: "The host reads part of the frame and then
+// reads the RxEvent register, either directly or through the ISQ, and learns
+// of another receive frame. This condition is called an 'implied Skip'." An
+// ISQ-only driver that drops a frame half-read must be told about the next
+// one; the ISQ used to stay silent while a frame was staged, and with frames
+// still queued every later ISQ read returned 0 — that driver never received
+// again.
+void testIsqImpliedSkipAfterPartialRead()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+    acceptOwnMac(card);
+    constexpr size_t kLen = 64;
+    for (int i = 0; i < 3; ++i) {
+        const auto f = makeFrame(kOurMac, kOurMac, kLen, static_cast<uint8_t>(0x10 * (i + 1)));
+        raw->transmit(f.data(), static_cast<int>(f.size()));
+        card.advanceCycles(pom2::UthernetCard::kPollIntervalCycles);
+    }
+    assert(card.chip().queuedFrames() == 3);
+    assert((readPpWord(card, kPpSeIsq) & 0x003F) == 0x04);
+    // Only the status and length: the frame is not for this driver.
+    for (int k = 0; k < 2; ++k) {
+        (void)card.deviceSelectRead(kRxTxDataHi);
+        (void)card.deviceSelectRead(kRxTxDataLo);
+    }
+    const uint16_t next = readPpWord(card, kPpSeIsq);
+    assert((next & 0x003F) == 0x04 && (next & 0x0100) && "the next frame is announced");
+    assert(card.chip().queuedFrames() == 1);
+    // …and it is frame 1 that is now read out.
+    for (int k = 0; k < 2; ++k) {
+        (void)card.deviceSelectRead(kRxTxDataHi);
+        (void)card.deviceSelectRead(kRxTxDataLo);
+    }
+    std::vector<uint8_t> got;
+    for (size_t i = 0; i < kLen; ++i)
+        got.push_back(card.deviceSelectRead((i & 1) ? kRxTxDataHi : kRxTxDataLo));
+    assert(got[14] == static_cast<uint8_t>(0x20 + 14));
+    // Drained: a direct RxEvent read now pops frame 2 instead of
+    // re-announcing the frame the ISQ staged and the driver already read.
+    assert((readPpWord(card, kPpSeRxEvent) & 0x0100) != 0);
+    assert(card.chip().queuedFrames() == 0);
+    std::printf("  ISQ implied skip after a partial read\n");
+}
+
 // BufEvent and RxMISS are read-to-clear (datasheet §4.4.17 / §4.4.20).
 // Without the clear, one missed frame left RxMiss set for the rest of the
 // session and a driver reading BufEvent directly re-diagnosed the same lost
@@ -1383,6 +1437,7 @@ int main()
     testRxQueueIsByteBoundedAndCountsMisses();
     testRxMissSurvivesSnapshot();
     testIsqStagedFrameSurvivesTheRxEventRead();
+    testIsqImpliedSkipAfterPartialRead();
     testBufEventAndRxMissClearOnRead();
     testTxOkWithoutBackend();
     testResetClearsTheDecodedFilter();

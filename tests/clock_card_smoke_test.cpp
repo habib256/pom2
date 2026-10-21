@@ -40,6 +40,9 @@ constexpr uint8_t kBitClk    = 0x02;
 constexpr uint8_t kBitStb    = 0x04;
 // Mode bits live in bits 3..5. MODE_TIME_READ = 0b011 → 0x18 raw.
 constexpr uint8_t kModeTimeReadShifted = 0x03 << 3;     // 0x18
+// MODE_SHIFT = 0b001 → 0x08: the only mode in which CLK moves the register
+// (MAME `upd1990a.cpp:393`).
+constexpr uint8_t kModeShiftShifted    = 0x01 << 3;     // 0x08
 
 std::tm fixedTime_2026_05_09_14_37_42()
 {
@@ -178,10 +181,12 @@ void testTimeReadProtocol()
     // into the 40-bit shift register.
     card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
 
-    // Step 3: drop STB so subsequent writes only pulse CLK. Mode bits
-    // can be left at 0 — the chip latched on STB rise. Keep them at
-    // TIME_READ to match what real driver code does.
-    const uint8_t baseline = kModeTimeReadShifted;     // STB low, CLK low
+    // Step 3: strobe MODE_SHIFT — CLK only shifts there, and DATA_OUT
+    // only shows the register there (TIME_READ drives a 0.5 Hz pulse).
+    // The card's firmware does exactly this at $C951: $18, then $08.
+    card->deviceSelectWrite(0, kModeShiftShifted);
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+    const uint8_t baseline = kModeShiftShifted;        // STB low, CLK low
     card->deviceSelectWrite(0, baseline);
 
     // Step 4: clock out the 5 bytes the chip holds, LSB-first. 40-bit
@@ -213,7 +218,9 @@ void testShiftDrainsToZero()
     auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
     card->deviceSelectWrite(0, kModeTimeReadShifted);
     card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
-    const uint8_t baseline = kModeTimeReadShifted;
+    card->deviceSelectWrite(0, kModeShiftShifted);
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+    const uint8_t baseline = kModeShiftShifted;
     card->deviceSelectWrite(0, baseline);
 
     // Shift out all 48 bits.
@@ -235,7 +242,9 @@ void testStbRelatchesTime()
     auto readSeconds = [&]() -> uint8_t {
         card->deviceSelectWrite(0, kModeTimeReadShifted);
         card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
-        const uint8_t baseline = kModeTimeReadShifted;
+        card->deviceSelectWrite(0, kModeShiftShifted);
+        card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+        const uint8_t baseline = kModeShiftShifted;
         card->deviceSelectWrite(0, baseline);
         return readByteLsbFirst(*card, baseline);
     };
@@ -290,7 +299,10 @@ void testTimeSetRoundTrip()
     constexpr uint8_t kModeShiftShifted   = 0x01 << 3;     // C0/C1/C2 = 001
     constexpr uint8_t kModeTimeSetShifted = 0x02 << 3;     // C0/C1/C2 = 010
 
-    // Arm MODE_SHIFT (no STB pulse yet — just hold the mode bits).
+    // Latch MODE_SHIFT with an STB pulse: the chip only shifts in the
+    // mode it LATCHED, and the mode bits alone latch nothing.
+    card->deviceSelectWrite(0, kModeShiftShifted);
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
     card->deviceSelectWrite(0, kModeShiftShifted);
 
     // Clock 40 bits in. For position k in [0, 40), the bit value is
@@ -322,7 +334,9 @@ void testTimeSetRoundTrip()
     // each call so the effective time stays pinned at our set value).
     card->deviceSelectWrite(0, kModeTimeReadShifted);
     card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
-    const uint8_t baseline = kModeTimeReadShifted;
+    card->deviceSelectWrite(0, kModeShiftShifted);
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+    const uint8_t baseline = kModeShiftShifted;
     card->deviceSelectWrite(0, baseline);
 
     const uint8_t got[5] = {
@@ -354,31 +368,37 @@ void testTimeSetRoundTrip()
     // time from the card and supplies the year itself.
 }
 
-// MODE_SHIFT is *not* strictly gated in POM2 (deliberate divergence
-// from MAME `upd1990a.cpp:312-327` — see ClockCard.cpp commentary).
-// This test pins the divergence: clocking CLK while in MODE_TIME_READ
-// also shifts the register. ProDOS's ThunderClock driver depends on
-// this, and the testTimeReadProtocol() case above already exercises it
-// implicitly — here we just spell out that the mode bits don't matter
-// for the shift action.
-void testShiftLaxAcrossModes()
+// CLK shifts the register in MODE_SHIFT only (MAME `upd1990a.cpp:393`).
+// POM2 used to shift in every mode; the card's firmware never relied on it
+// (it strobes SHIFT before its first CLK, $C951). Clocking in TIME_READ
+// must leave the latched time intact for the SHIFT that follows, and
+// DATA_OUT there is the chip's 0.5 Hz pulse, not the register's LSB.
+void testShiftOnlyInShiftMode()
 {
     auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
-
-    // Pre-load shift register via TIME_READ.
     card->deviceSelectWrite(0, kModeTimeReadShifted);
     card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
-
-    // Read 4 bits while keeping mode = REGISTER_HOLD (mode bits 000),
-    // which in MAME would block any shift. POM2's lax behaviour shifts
-    // anyway — the first 4 bits of $42 ($42 = 0100_0010 LSB-first: 0,1,0,0,0,0,1,0).
-    const uint8_t baseline = 0x00;       // mode = HOLD, STB=0, CLK=0
+    for (int i = 0; i < 4; ++i) {                 // CLK in TIME_READ: no shift
+        card->deviceSelectWrite(0, kModeTimeReadShifted | kBitClk);
+        card->deviceSelectWrite(0, kModeTimeReadShifted);
+    }
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+    const uint8_t baseline = kModeShiftShifted;
     card->deviceSelectWrite(0, baseline);
-
+    // Seconds $42 LSB-first: 0,1,0,0 — the first bits, not bits 4-7.
     assert(readBitThenAdvance(*card, baseline) == 0);
     assert(readBitThenAdvance(*card, baseline) == 1);
     assert(readBitThenAdvance(*card, baseline) == 0);
     assert(readBitThenAdvance(*card, baseline) == 0);
+
+    // TIME_READ's DATA_OUT is a 0.5 Hz square wave: it flips once a second.
+    card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
+    const bool first = (card->deviceSelectRead(0) & 0x80) != 0;
+    card->advanceCycles(1022727 / 2);
+    assert(((card->deviceSelectRead(0) & 0x80) != 0) == first);
+    card->advanceCycles(1022727 / 2 + 10);
+    assert(((card->deviceSelectRead(0) & 0x80) != 0) != first &&
+           "TIME_READ DATA_OUT toggles at 0.5 Hz");
 }
 
 // ─── TP (Timing-Pulse) interrupt path ────────────────────────────────────
@@ -604,6 +624,8 @@ void testResetPreservesSetTime()
     constexpr uint8_t kModeShiftShifted   = 0x01 << 3;
     constexpr uint8_t kModeTimeSetShifted = 0x02 << 3;
     card->deviceSelectWrite(0, kModeShiftShifted);
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+    card->deviceSelectWrite(0, kModeShiftShifted);
     for (int k = 0; k < 40; ++k) {
         const uint8_t bit = (target[k / 8] >> (k % 8)) & 1;
         const uint8_t baseline =
@@ -622,7 +644,9 @@ void testResetPreservesSetTime()
     // Read back through the normal TIME_READ path — the set time survives.
     card->deviceSelectWrite(0, kModeTimeReadShifted);
     card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
-    const uint8_t baseline = kModeTimeReadShifted;
+    card->deviceSelectWrite(0, kModeShiftShifted);
+    card->deviceSelectWrite(0, kModeShiftShifted | kBitStb);
+    const uint8_t baseline = kModeShiftShifted;
     card->deviceSelectWrite(0, baseline);
     const uint8_t sec = readByteLsbFirst(*card, baseline);
     const uint8_t min = readByteLsbFirst(*card, baseline);
@@ -707,7 +731,7 @@ int main()
     testTimeSetRoundTrip();
     std::printf("MODE_TIME_SET round-trip (DATA_IN → shift → STB+SET → read): OK\n");
 
-    testShiftLaxAcrossModes();
+    testShiftOnlyInShiftMode();
     std::printf("MODE_SHIFT lax: CLK shifts in any mode (ProDOS compat): OK\n");
 
     testTpRatesProduceExpectedPulseCounts();

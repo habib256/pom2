@@ -30,6 +30,20 @@ from. When MAME upstream renames a path (e.g. `wozfdc.cpp` `bus/a2bus
 
 ## CPU
 
+**The undocumented NMOS opcodes compute their results** *(2026-10-21)*.
+`M6502_Undoc.cpp`: SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC in every addressing mode,
+ANC/ALR/ARR (decimal BCD fix included)/ANE/LXA/SBX/USBC #imm, and the
+unstable SHA/SHX/SHY/TAS (value ANDed with base-high + 1, the high byte of
+the address replaced by it on a page cross) and LAS. ANE/LXA OR the
+accumulator with the magic $EE first. One template per addressing mode,
+installed over the NMOS table by `installNmosUndocumented()`; RRA/ISC go
+through `adcValue`/`sbcValue`, so the address is read once. **All 66 files
+of the Tom Harte `6502/v1` set pass, 660 000 vectors** — registers, flags,
+memory and cycles — and fifteen of them (one per family) joined the
+curated ctest manifest. The two paragraphs below are history: the cycle
+counts they settled are the ones kept, and the RMW / store forms now write.
+Only the twelve JAMs are left unmodelled beyond halting.
+
 **Undocumented NMOS opcodes cost what the silicon costs** *(2026-09-08, bug
 hunt #5)*. They stay length-correct NOPs (no SLO/RLA/…/LAX semantics — MAME
 `om6502.lst` has them, nothing in the corpus needs the results), but the
@@ -134,7 +148,8 @@ proof of per-access bus ordering; passing NMOS files include unofficial NOPs:
 
 - **NMOS 6502** (`6502/v1`): **178 opcode files passed in the recorded sweep**
   (1 780 000 vectors), incl. decimal ADC/SBC + the NMOS `JMP (ind)` page bug.
-  The 78 failing files are exactly the undocumented opcodes with observable
+  (2026-10-21: the 66 non-JAM files of those 78 now pass too — see the top
+  of this section.) The 78 failing files were exactly the undocumented opcodes with observable
   side effects (SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC/ANC/ALR/ARR/XAA/SBX/SHY/SHX/
   TAS/LAS + the 12 JAMs), which POM2 models as length/cycle-correct NOP
   placeholders by design. The undocumented *NOPs* ($x3/$x7/$xB/$xF, $04/$44/
@@ -5782,11 +5797,14 @@ and the snapshot loader; the two int32 snapshot slots keep their size and
 position. The pin's tolerance is one pulse per emulated second, on NTSC and
 PAL. History: CHANGELOG 2026-09-09 (bug hunt #14).
 
-**MODE_SHIFT lax-gating divergence**: POM2 shifts on **every** CLK
-rising edge regardless of mode (MAME `upd1990a.cpp:312-327` gates on
-`m_c == MODE_SHIFT`). ProDOS's hardcoded driver pulses CLK while
-still in MODE_TIME_READ; strict gating breaks stock ProDOS. Observed
-HW permits the shortcut. Pinned: `testShiftLaxAcrossModes`.
+**CLK shifts in MODE_SHIFT only** (MAME `upd1990a.cpp:393`). POM2 used
+to shift in every mode, on the belief that ProDOS clocks the bits out in
+MODE_TIME_READ. It does not: ProDOS calls the card's firmware, which strobes
+TIME_READ (`$18`) and then SHIFT (`$08`) before its first CLK (`$C951` in
+the U9 v1.3 EPROM), as does POM2's synthetic ROM. DATA_OUT follows the mode
+too: the register's LSB in SHIFT / TIME_SET, a 1 Hz square wave in
+REGISTER_HOLD, 0.5 Hz in TIME_READ (512 Hz in test mode). Pinned:
+`testShiftOnlyInShiftMode`.
 
 **Optional real ROM dump.** Drop `roms/thunderclock_u9_v1.3.bin` (also
 accepted: `thunderclock_u9.bin`, `thunderclock.rom`,

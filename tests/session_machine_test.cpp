@@ -21,6 +21,8 @@
 #include "TestTempPath.h"
 #include <cassert>
 #include <future>
+#include <stdexcept>
+#include <thread>
 #include <mutex>
 #include <fstream>
 #include <filesystem>
@@ -305,6 +307,30 @@ int main()
     auto task = std::async(std::launch::async, [&] { std::string e; return queue->load(session, e); });
     while (task.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) queue->process();
     assert(task.get());
+    // Stopping the AI server joins its worker from the owner thread: a load
+    // that worker posted must fail, not wait for a frame that never comes,
+    // and one posted during the stop must fail at once. The queue stays
+    // open afterwards.
+    {
+        auto waiting = std::async(std::launch::async, [&] { std::string e; return queue->load(session, e); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        queue->suspendRemote(true);
+        assert(!waiting.get());
+        auto late = std::async(std::launch::async, [&] { std::string e; return queue->load(session, e); });
+        assert(!late.get());
+        queue->suspendRemote(false);
+        auto again = std::async(std::launch::async, [&] { std::string e; return queue->load(session, e); });
+        while (again.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) queue->process();
+        assert(again.get());
+    }
+    // The owner's own load is behind the same exception barrier as process().
+    {
+        SessionLoadQueue throwing([](const SessionArchive&, std::string&) -> bool {
+            throw std::runtime_error("out of memory");
+        });
+        std::string e;
+        assert(!throwing.load(session, e) && e == "out of memory");
+    }
     auto blocked = std::async(std::launch::async, [&] { std::string e; return queue->load(session, e); });
     queue->close(); assert(!blocked.get());
 }

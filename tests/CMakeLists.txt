@@ -96,6 +96,7 @@ endif()
 # bus + cassette destructors, so they have to link too.
 set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -2339,6 +2340,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -5565,6 +5567,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -5617,6 +5620,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -5673,6 +5677,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -5727,6 +5732,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -5782,6 +5788,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -5837,6 +5844,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -7360,6 +7368,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
@@ -8629,6 +8638,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp

@@ -477,6 +477,13 @@ void LeChatMauveCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     mode             = static_cast<RenderMode>(data[4] & 0b11);
     an3Prev          = data[5] != 0;
     eightyColLatched = data[6] != 0;
+    // Every field a version does not carry goes back to its power-on value
+    // (the SlotPeripheral.h contract): a v1 blob kept the live Eve switches,
+    // CPREG and RVB Graph registers, and v2 the live CPREG and registers, so
+    // an old session came back painted with the current one's colours.
+    eveSwitches_ = 0;
+    cpreg_       = 0;
+    rvb_         = RvbGraphState{};
     if (data[2] == 2 && len >= 9) {
         // v2 carried "colour text enable" ($C0B8/9 = TXT16) and "HGR
         // duochrome" ($C0BA/B = TXTGREEN, mislabelled). Map them onto the
@@ -497,8 +504,6 @@ void LeChatMauveCard::loadSnapshotState(const uint8_t* data, std::size_t len)
                 rvb_.c[n] = static_cast<uint8_t>(data[11 + n] & 0x0F);
                 rvb_.b[n] = static_cast<uint8_t>(data[15 + n] & 0x0F);
             }
-        } else {
-            rvb_ = RvbGraphState{};
         }
     }
     if (!isEve()) eveSwitches_ = 0;

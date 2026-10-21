@@ -33,6 +33,7 @@
 // they are among the few things allowed to reach memory without `stateMutex`.
 
 #include "MainWindow.h"
+#include "DriveRackMount.h"
 #include "BrowserFiles.h"
 
 #include "AppleKeyLatch.h"
@@ -513,6 +514,85 @@ void MainWindow::onWindowFocus(bool focused)
     }
 }
 
+bool MainWindow::syncMouseAbsolute(double x, double y)
+{
+    // ── Absolute closed-loop cursor sync ────────────────────────────────
+    // When the guest's mouse firmware is on and its clamp window is known,
+    // the Apple cursor is driven to the spot under the host pointer instead
+    // of by relative deltas — the guest cursor then simply IS the pointer,
+    // so it reaches every edge and the host cursor can be hidden over the
+    // screen (renderScreenWindow). Two sources of the authoritative state:
+    //   * the `mouseaw` card's HLE'd MCU (`iX/iY`, `[iMin..iMax]`);
+    //   * the //c IOU mouse, whose ROM keeps cursor and clamp window in
+    //     screen holes (MouseCoordinator::IIcSnapshot).
+    // The host position is projected onto the widget rect (saturating
+    // outside, so leaving the widget pins the Apple cursor at that edge)
+    // and the delta toward the projected target is pushed. The earlier
+    // closed-loop attempt (reverted in commit ccd9a95) failed because it
+    // assumed the clamp range equalled the display resolution — wrong for
+    // MousePaint's 0..559 or A2DeskTop's //c 0..139. The firmware-reported
+    // window sidesteps that guess entirely.
+    // Each push is bounded to ±127 (the MCU's 8-bit signed wrap range);
+    // large gaps converge over several pushes. Returns true when the sync
+    // owns the motion (pushed or waiting on a push in flight).
+    const pom2::mousegrab::Context grabCtx = mouseGrabContext();
+    const float widgetW = screenRectMax.x - screenRectMin.x;
+    const float widgetH = screenRectMax.y - screenRectMin.y;
+    mouseAbsoluteActive_ = false;
+    if (widgetW <= 0.0f || widgetH <= 0.0f ||
+        !pom2::mousegrab::shouldRouteMotion(grabCtx) ||
+        !pom2::mousegrab::allowAbsoluteSync(grabCtx))
+        return false;
+
+    // The policy — and the rule that fixed the A2FILECMD jump — lives in
+    // MouseSync.h: a correction is computed against the card's position
+    // only once the previous push has been consumed; computing it against a
+    // stale position stacked two corrections for one move and the cursor
+    // overshot the pointer on every fast event.
+    const auto mouseInventory = mouseCoordinator_->capture();
+    pom2::mousesync::CardState cs;
+    if (mouseInventory.appleWinPlugged) {
+        const auto& s = mouseInventory.appleWin;
+        cs.iX = s.iX;       cs.iY = s.iY;
+        cs.iMinX = s.iMinX; cs.iMaxX = s.iMaxX;
+        cs.iMinY = s.iMinY; cs.iMaxY = s.iMaxY;
+        cs.mouseOn = s.mouseOn();
+        cs.hostDrained = s.hostDrained;
+    } else if (mouseInventory.kind == pom2::MouseCoordinator::Kind::IIc &&
+               mouseInventory.iic.clampKnown) {
+        // The ROM's IRQ handler moves the hole position one unit per serviced
+        // edge, so "drained" means every queued edge emitted AND serviced.
+        const auto& s = mouseInventory.iic;
+        cs.iX = mouseInventory.holes.x();
+        cs.iY = mouseInventory.holes.y();
+        cs.iMinX = s.minX; cs.iMaxX = s.maxX;
+        cs.iMinY = s.minY; cs.iMaxY = s.maxY;
+        cs.mouseOn = (mouseInventory.holes.mode & 0x01) != 0;
+        cs.hostDrained = s.settled;
+    } else {
+        return false;
+    }
+
+    pom2::mousesync::Delta d;
+    const auto decision = pom2::mousesync::absoluteDelta(
+        (x - double(screenRectMin.x)) / double(widgetW),
+        (y - double(screenRectMin.y)) / double(widgetH), cs, d);
+    if (decision == pom2::mousesync::Decision::NotApplicable) return false;
+    if (decision == pom2::mousesync::Decision::Push && (d.dx || d.dy)) {
+        mouseAppleX = static_cast<uint8_t>(mouseAppleX + d.dx);
+        mouseAppleY = static_cast<uint8_t>(mouseAppleY + d.dy);
+        (void)mouseCoordinator_->routeHost(mouseAppleX, mouseAppleY,
+                                           mouseButtonHeld);
+    }
+    // Drop relative sub-pixel residue so a later fallback (mouse turned off
+    // mid-session) doesn't replay stale fractional motion accumulated
+    // before sync was active.
+    mouseSubAppleX = 0.0;
+    mouseSubAppleY = 0.0;
+    mouseAbsoluteActive_ = true;
+    return true;
+}
+
 void MainWindow::onMouseMove(double x, double y)
 {
     // First call after startup just seeds last-position; no delta yet.
@@ -545,59 +625,7 @@ void MainWindow::onMouseMove(double x, double y)
     const float widgetH = screenRectMax.y - screenRectMin.y;
     if (widgetW <= 0.0f || widgetH <= 0.0f) return;
 
-    // ── Absolute closed-loop cursor sync (AppleWin HLE only) ───────────
-    // When the `mouseaw` card is plugged AND the AppleMouse firmware has
-    // been turned on (MODE_MOUSE_ON, bit 0 of the latched MODE byte), the
-    // card's HLE'd MCU keeps the cursor position in `iX/iY` clamped to
-    // the firmware-installed window `[iMinX..iMaxX] × [iMinY..iMaxY]`.
-    // We read that authoritative state via the debug snapshot, project
-    // the host cursor's position onto the widget rect (saturating clamp
-    // outside, so wandering out of the widget pins the Apple cursor at
-    // the matching edge instead of letting it drift), and inject the
-    // delta needed to drive `iX/iY` toward the projected target. The
-    // earlier closed-loop attempt (reverted in commit ccd9a95) failed
-    // because it assumed the clamp range equalled the display resolution
-    // — that's true for the //e desktop but wrong for e.g. MousePaint's
-    // 0..559 horizontal clamp. Using the card-reported clamp window
-    // sidesteps that guess entirely.
-    // Each push is bounded to ±127 (the MCU's 8-bit signed wrap range);
-    // large gaps (first event after re-entry, big window resize) converge
-    // over several events.
-    bool absoluteHandled = false;
-    const auto mouseInventory = mouseCoordinator_->capture();
-    if (mouseInventory.appleWinPlugged &&
-        pom2::mousegrab::allowAbsoluteSync(grabCtx)) {
-        const auto& s = mouseInventory.appleWin;
-        // The policy — and the rule that fixed the A2FILECMD jump — lives in
-        // MouseSync.h: a correction is computed against the card's position
-        // only once the previous push has been drained by the CPU thread;
-        // computing it against a stale iX/iY stacked two corrections for one
-        // move and the cursor overshot the pointer on every fast event.
-        pom2::mousesync::CardState cs;
-        cs.iX = s.iX;       cs.iY = s.iY;
-        cs.iMinX = s.iMinX; cs.iMaxX = s.iMaxX;
-        cs.iMinY = s.iMinY; cs.iMaxY = s.iMaxY;
-        cs.mouseOn = s.mouseOn();
-        cs.hostDrained = s.hostDrained;
-        pom2::mousesync::Delta d;
-        const auto decision = pom2::mousesync::absoluteDelta(
-            (x - double(screenRectMin.x)) / double(widgetW),
-            (y - double(screenRectMin.y)) / double(widgetH), cs, d);
-        if (decision == pom2::mousesync::Decision::Push) {
-            mouseAppleX = static_cast<uint8_t>(mouseAppleX + d.dx);
-            mouseAppleY = static_cast<uint8_t>(mouseAppleY + d.dy);
-            pushMouse(mouseAppleX, mouseAppleY, mouseButtonHeld);
-        }
-        if (decision != pom2::mousesync::Decision::NotApplicable) {
-            // Drop relative sub-pixel residue so a later fallback (mouse
-            // turned off mid-session) doesn't replay stale fractional
-            // motion accumulated before sync was active.
-            mouseSubAppleX = 0.0;
-            mouseSubAppleY = 0.0;
-            absoluteHandled = true;
-        }
-    }
-    if (absoluteHandled) return;
+    if (syncMouseAbsolute(x, y)) return;
 
     // ── Relative drive (fallback, and the only path while captured) ──
     // Used by the MAME-faithful MouseCard (no iX/iY exposed — firmware
@@ -964,16 +992,20 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
         } else {
             tapeStatusMessage = "Drop failed: " + err;
             pom2::log().warn("Drop", "dropped image rejected: " + err);
+            showDiskRefusal(path, err);
         }
         tapeStatusUntil = lastFrameTime + 4.0;
         return;
     }
     // Nothing usable in the drop — tell the user rather than silently
-    // ignoring it (the most common case is dropping a ROM or a .zip).
+    // ignoring it (the most common case is dropping a ROM or a .zip), and
+    // say why in the dialog every refusal uses.
     tapeStatusMessage =
         "Dropped file not a disk image "
         "(.dsk/.do/.d13/.po/.nib/.woz/.moof/.hdv/.2mg)";
     tapeStatusUntil = lastFrameTime + 4.0;
+    for (int i = 0; i < count; ++i)
+        if (paths[i]) { showDiskRefusal(paths[i], pom2::explainUnknownDisk(paths[i])); break; }
 }
 
 bool MainWindow::altAppleKeysSetting() const

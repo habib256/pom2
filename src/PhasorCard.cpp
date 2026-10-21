@@ -573,8 +573,8 @@ void PhasorCard::resetCard(bool powerCycle)
     invalidateAyTimeline();   // the CPU-side banks change out of band here
     ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     for (auto& chip : ssi_) chip.reset(powerCycle);
-    via_[0]->reset();
-    via_[1]->reset();
+    via_[0]->reset(powerCycle);
+    via_[1]->reset(powerCycle);
     for (int i = 0; i < 4; ++i) ay_[i]->reset();
     mode_ = PH_Mockingboard;       // power-up default = MB compat
     assertIrq(false);
@@ -705,7 +705,10 @@ void PhasorCard::syncToCpuCycleAt(uint64_t now)
         // (rewind, setCycleCounter): the stamped stream no longer describes
         // the machine. Same threshold as MockingboardCard.
         constexpr uint64_t kTimelineBreakCycles = 1024;
-        if (lastSyncCycle_ - now > kTimelineBreakCycles) invalidateAyTimeline();
+        if (lastSyncCycle_ - now > kTimelineBreakCycles) {
+            invalidateAyTimeline();
+            for (auto& chip : ssi_) chip.invalidateTimeline();   // its queue too
+        }
         // Defensive rewind (mirrors MockingboardCard::syncToCpuCycleAt):
         // the end-of-step batch path passes (getCycleCountNow() - cycles),
         // which can be < lastSyncCycle_ if a mid-instruction MMIO access

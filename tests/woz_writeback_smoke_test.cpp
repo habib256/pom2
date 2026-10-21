@@ -611,10 +611,53 @@ bool testFluxSlotGrowth()
     return true;
 }
 
+// The same growth inside a MacBinary wrapper: the header's data-fork length
+// (bytes 83-86) and the padding to 128 must follow the bigger WOZ, or the
+// reload cuts it at the old length and refuses the disk.
+bool testFluxSlotGrowthInMacBinary()
+{
+    auto woz = buildFluxWoz();
+    woz[260] = 0; woz[261] = 2;
+    std::fill(woz.begin() + 1536, woz.begin() + 2047, 4);
+    woz[2047] = 36;
+    std::vector<uint8_t> file(128, 0);
+    file[1] = 5; std::memcpy(&file[2], "a.woz", 5);
+    const std::size_t len = woz.size();
+    file[83] = uint8_t(len >> 24); file[84] = uint8_t(len >> 16);
+    file[85] = uint8_t(len >> 8);  file[86] = uint8_t(len);
+    file.insert(file.end(), woz.begin(), woz.end());
+    while (file.size() % 128) file.push_back(0);
+    const auto path = writeTempFile(file, "mb_flux_grow");
+    DiskImage img;
+    if (!img.loadFile(path)) { std::printf("FAIL: load MacBinary FLUX\n"); return false; }
+    img.setWriteBackEnabled(true);
+    std::vector<int64_t> pulses;
+    for (int i = 0; i < 513; ++i) pulses.push_back(i);
+    img.writeFlux(0, 0, 520, static_cast<int>(pulses.size()), pulses.data());
+    if (!img.saveDirty()) { std::printf("FAIL: grow MacBinary FLUX\n"); return false; }
+    const auto saved = readWholeFile(path);
+    const std::size_t fork = (std::size_t(saved[83]) << 24) | (std::size_t(saved[84]) << 16) |
+                             (std::size_t(saved[85]) << 8)  |  std::size_t(saved[86]);
+    if (fork <= len || saved.size() % 128 != 0 || saved.size() < 128 + fork) {
+        std::printf("FAIL: MacBinary fork length/padding not refitted\n"); return false;
+    }
+    DiskImage reloaded;
+    if (!reloaded.loadFile(path) || reloaded.fluxEvents(0).size() != 513) {
+        std::printf("FAIL: grown MacBinary WOZ does not reload: %s\n",
+                    reloaded.getLastError().c_str());
+        return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    std::printf("  ok: MacBinary envelope follows a grown FLUX slot\n");
+    return true;
+}
+
 int main()
 {
     if (!testFluxWriteBackRoundTrip()) return 1;
     if (!testFluxSlotGrowth()) return 1;
+    if (!testFluxSlotGrowthInMacBinary()) return 1;
     if (!testSharedTrkQuarterTracksAlias()) return 1;
     if (!testWoz1WriteBackRoundTrip())  return 1;
     if (!testWoz2WriteBackRoundTrip())  return 1;

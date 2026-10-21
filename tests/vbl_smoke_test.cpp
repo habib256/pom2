@@ -83,6 +83,25 @@ int main()
         mem.memWrite(0xC05B, 0);   // would enable VBL IRQ on IIe
         advance(mem, kFrameCycles);
         (void)readVbl(mem);
+
+        // II+: a $C01x read clears the strobe and returns the FLOATING
+        // BUS, not the key latch (MAME `apple2.cpp:362-372`, AppleWin
+        // IORead_C01x GH#1261). With every video byte = $AA, whatever the
+        // scanner fetches is $AA; the old answer was the key, $41.
+        for (uint32_t a = 0; a < 0xC000; ++a)
+            mem.memWrite(static_cast<uint16_t>(a), 0xAA);
+        for (uint16_t addr : {uint16_t(0xC010), uint16_t(0xC019), uint16_t(0xC01F)}) {
+            mem.queueKey('A');
+            (void)mem.memRead(0xC000);
+            const uint8_t v = mem.memRead(addr);
+            if (v != 0xAA) {
+                std::printf("FAIL: II+ $%04X read %02X, want floating bus AA\n",
+                            addr, v);
+                return 1;
+            }
+            assert((mem.memRead(0xC000) & 0x80) == 0);   // strobe cleared
+            advance(mem, 37);
+        }
     }
 
     // ── Case 2: IIe with VBL IRQ enabled. ──

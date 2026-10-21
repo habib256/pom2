@@ -140,9 +140,9 @@ bool appendMediaBaySettingUpdates(
         const std::string base = "smartport_slot" + std::to_string(slot) +
                                  "_unit" + std::to_string(bay);
         const SmartPortUnit* unit = card->unit(static_cast<std::size_t>(bay));
+        if (unit && unit->path().rfind("[host folder] ", 0) == 0) return false;   // no file
         appendStringSetting(
-            updates, base + "_type",
-            unit ? std::string(unit->kindKey()) : std::string());
+            updates, base + "_type", card->persistedBayKind(bay));
         appendStringSetting(
             updates, base + "_path", unit ? unit->path() : std::string());
         appendBoolSetting(
@@ -815,6 +815,12 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
         auto* peripheral = bus.peripheral(slot);
+        if (auto* sp = dynamic_cast<SmartPortCard*>(peripheral)) {
+            const std::string why = mountHostFolderOnSmartPort(
+                *sp, bay, std::move(bytes), label, hostFolder, convertText);
+            if (!why.empty()) return commandError(why);
+            result.ok = true;
+        } else {
         auto* card = dynamic_cast<ProDOSBlockCard*>(peripheral);
         if (!card)
             return commandError("slot " + std::to_string(slot) +
@@ -832,6 +838,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
             updates, *peripheral, slot, bay,
             autoHdvSlot_, autoSmartPortSlot_);
         result.ok = true;
+        }
     }
     // The bay holds different media now — see invalidateRewindForMediaChange.
     invalidateRewindForMediaChange(controller);

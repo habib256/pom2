@@ -43,6 +43,7 @@
 #include "Disk35Image.h"
 #include "DiskIICard.h"
 #include "DiskImage.h"
+#include "DriveRackMount.h"
 #include "EmulationController.h"
 #include "Logger.h"
 #include "MediaMount.h"
@@ -105,6 +106,8 @@ void MainWindow::serviceGuestEjects()
     // Taken under the lock, carried out without it: `ejectMediaBay` takes the
     // lock itself (non-recursive) and splits the write-back off it. A refused
     // eject leaves the disk in, as a failed commit always does.
+    // A request whose disk is no longer in the bay (one mounted there since)
+    // is dropped: the guest ejected THAT disk, not this one.
     std::vector<std::pair<int, int>> todo;
     {
         auto state = controller->lockState();
@@ -112,12 +115,23 @@ void MainWindow::serviceGuestEjects()
             auto* media = dynamic_cast<pom2::MountableMediaCard*>(
                 state.memory().slotBus().peripheral(slot));
             if (!media) continue;
-            const unsigned bays = media->takeGuestEjectRequests();
-            for (int bay = 0; bay < 32; ++bay)
-                if (bays & (1u << bay)) todo.emplace_back(slot, bay);
+            for (const auto& r : media->takeGuestEjectRequests()) {
+                if (media->bayMediaIdentity(r.bay) == r.mediaId)
+                    todo.emplace_back(slot, r.bay);
+                else
+                    media->cancelGuestEject(r.bay);
+            }
         }
     }
-    for (const auto& [slot, bay] : todo) ejectMediaBay(slot, bay, false);
+    for (const auto& [slot, bay] : todo) {
+        if (ejectMediaBay(slot, bay, false)) continue;
+        // Refused (the write-back failed): the disk stays, and the guest
+        // sees it again instead of an empty drive that never empties.
+        auto state = controller->lockState();
+        if (auto* media = dynamic_cast<pom2::MountableMediaCard*>(
+                state.memory().slotBus().peripheral(slot)))
+            media->cancelGuestEject(bay);
+    }
 }
 
 bool MainWindow::ejectMediaBay(int slot, int index, bool diskII)
@@ -547,7 +561,8 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
     // backed by nothing, hanging on a garbage screen. Say so instead of
     // mounting and then reporting a boot that cannot happen.
     if (!romLoaded_) {
-        errOut = "no Apple II ROM loaded — see Help > Welcome / Quick Start";
+        errOut = "This machine has no Apple II ROM, so nothing can start on it.\n\n"
+                 "Help > ROM Status shows which ROM file is missing and where to put it.";
         return false;
     }
     switch (classifyDiskForSlot(path)) {
@@ -560,7 +575,13 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             DiskIICard* target = nullptr;
             for (auto* c : diskIICards()) if (c && c->getSlot() == 6) { target = c; break; }
             if (!target) target = primaryDiskII();
-            if (!target) { errOut = "no Disk II card in the current config"; return false; }
+            if (!target) {
+                errOut = "\"" + std::filesystem::path(path).filename().string() +
+                         "\" is a 5.25-inch floppy disk, but this machine has no "
+                         "5.25-inch drive (no Disk II card is plugged in).\n\nAdd a "
+                         "Disk II card in Machine > Slot Configuration, or pick another machine.";
+                return false;
+            }
             const bool ok = pom2::mountDiskII(*controller, *target, 0, path,
                                               errOut, /*seekTrack0=*/true);
             if (!ok) return false;
@@ -578,7 +599,9 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             for (const auto& location : pom2::mountedImageLocations(*controller)) {
                 if (!pom2::sameImageFile(location.path, path)) continue;
                 if (mounted) {
-                    errOut = "boot image is mounted in multiple devices";
+                    errOut = "This disk is already in more than one drive, so POM2 "
+                             "cannot tell which one to start from.\n\nEject the "
+                             "extra copies first.";
                     return false;
                 }
                 mounted = true;
@@ -597,8 +620,11 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
                     controller->memory().slotBus());
                 if (!onboard && !primarySmartPortCard() && liron < 0 &&
                     ensureSmartPortCardForBoot() < 0) {
-                    errOut = "no 3.5\" device in this config, and no free slot "
-                             "to plug a SmartPort 3.5\" card into";
+                    errOut = "\"" + std::filesystem::path(path).filename().string() +
+                             "\" is a 3.5-inch disk, but this machine has no 3.5-inch "
+                             "drive and no free slot to add one.\n\nFree a slot in Machine > "
+                             "Slot Configuration for a SmartPort card, or pick the Apple //c "
+                             "Plus, which has a 3.5-inch drive built in.";
                     return false;
                 }
                 const auto result = storageCoordinator_->mountDisk35(
@@ -614,7 +640,10 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
             // Make sure a card exists to host the HDV (auto-plug one if the
             // saved config has none), then route + boot.
             if (ensureHdvCardForBoot() < 0) {
-                errOut = "no free slot to plug an HDV card into";
+                errOut = "\"" + std::filesystem::path(path).filename().string() +
+                         "\" is a hard disk, but this machine has no hard-disk "
+                         "controller and no free slot to add one.\n\nFree a slot in "
+                         "Machine > Slot Configuration: POM2 then adds the controller itself.";
                 return false;
             }
             int bootSlot = 0;
@@ -625,7 +654,7 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
         }
         case DiskSlotClass::Unknown:
         default:
-            errOut = "unrecognised disk image (extension/size): " + path;
+            errOut = pom2::explainUnknownDisk(path);
             return false;
     }
 }
@@ -633,8 +662,33 @@ bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut
 bool MainWindow::mountProDOSFolder(const std::string& path, std::string& errOut,
                                    int bay)
 {
-    if (ensureHdvCardForBoot() < 0 || !primaryHdvCard()) {
-        errOut = "no free slot to plug an HDV card into";
+    // An HDV card's drive if there is one; otherwise the boot target the
+    // coordinator picked is a SmartPort card (the fresh-install //e's slot 5,
+    // the //c's on-board one), and the folder takes its first EMPTY unit —
+    // after a boot HDV routed into unit 1, that is unit 2. Requiring an HDV
+    // card made `--prodos-folder` fail on the default slot map, which has
+    // no free slot for one.
+    const int target = ensureHdvCardForBoot();
+    int slot = primaryHdvCard() ? primaryHdvCard()->getSlot() : -1;
+    if (slot < 0 && target >= 0) {
+        auto state = controller->lockState();
+        if (auto* sp = dynamic_cast<pom2::SmartPortCard*>(
+                state.memory().slotBus().peripheral(target))) {
+            bay = -1;
+            for (int u = 0; u < sp->unitCount(); ++u) {
+                const auto* unit = sp->unit(static_cast<std::size_t>(u));
+                if (!unit || !unit->isLoaded()) { bay = u; break; }
+            }
+            if (bay < 0) {
+                errOut = "every unit of the SmartPort card in slot " +
+                         std::to_string(target) + " holds a disk";
+                return false;
+            }
+            slot = target;
+        }
+    }
+    if (slot < 0) {
+        errOut = "no HDV card or SmartPort unit to mount the folder on";
         return false;
     }
 
@@ -646,7 +700,7 @@ bool MainWindow::mountProDOSFolder(const std::string& path, std::string& errOut,
     }
 
     const auto mounted = storageCoordinator_->mountBlockBytes(
-        *controller, *settings, primaryHdvCard()->getSlot(), std::move(bytes),
+        *controller, *settings, slot, std::move(bytes),
         std::string("[host folder] ") + path, path, bay);
     if (!mounted.ok) {
         errOut = mounted.error;

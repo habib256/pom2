@@ -130,6 +130,103 @@ void testOutboundIacIsEscapedInTextMode()
     std::printf("  outbound $FF is escaped as IAC IAC in text mode: OK\n");
 }
 
+// ── A paced peer holds the guest back, it does not lose bytes ───────────
+//
+// A real 6551 keeps TDRE low until its shift register has sent the byte at
+// the programmed baud, so the guest waits at line speed. POM2 reported TDRE
+// set whatever the backlog, and a LIST faster than the line overran the 4 KB
+// ring: the oldest bytes went, from the middle of the stream. With the ring
+// full and a peer connected, TDRE now reads 0; draining frees it again.
+void testFullTxRingHoldsTdre()
+{
+    SuperSerialCard card(2);
+    auto transport = std::make_unique<test::FakeSuperSerialTransport>(card);
+    auto* fake = transport.get();
+    card.setTransport(std::move(transport));
+    card.setRawMode(true);
+    fake->connect();
+    openPort(card);
+    int written = 0;
+    while ((card.deviceSelectRead(kAciaStatus) & 0x10) && written < 10000) {
+        card.deviceSelectWrite(kAciaData, static_cast<uint8_t>(written));
+        ++written;
+    }
+    assert(written == 4096 && "TDRE drops when the ring is full");
+    const auto wire = fake->drain();
+    assert(wire.size() == 4096 && wire[0] == 0 && wire[4095] == static_cast<uint8_t>(4095) &&
+           "nothing was dropped");
+    assert((card.deviceSelectRead(kAciaStatus) & 0x10) && "drained: TDRE is back");
+    std::printf("  a full TX ring holds TDRE instead of dropping bytes: OK\n");
+}
+
+// The peer hangs up while the full ring holds TDRE low: no drain comes, but
+// TDRE reads 1 again, and on a 6551 the bit going high IS the transmit
+// interrupt. It was deferred to a drain that never ran, so an IRQ-driven
+// driver (command $05) sat in WFI for good.
+void testTxIrqWhenPeerDropsWithFullRing()
+{
+    SuperSerialCard card(2);
+    auto transport = std::make_unique<test::FakeSuperSerialTransport>(card);
+    auto* fake = transport.get();
+    card.setTransport(std::move(transport));
+    card.setRawMode(true);
+    card.setModemLinesTied(true);                  // no DCD/DSR edge
+    fake->connect();
+    card.deviceSelectWrite(kAciaCommand, 0x05);    // DTR, RX + TX IRQ on
+    int written = 0;
+    while ((card.deviceSelectRead(kAciaStatus) & 0x10) && written < 10000)
+        card.deviceSelectWrite(kAciaData, static_cast<uint8_t>(written++));
+    assert(written == 4096);
+    card.advanceCycles(1);
+    assert(!(card.deviceSelectRead(kAciaStatus) & 0x80) &&
+           "ring full: TDRE low, no transmit interrupt");
+    fake->disconnect();
+    card.advanceCycles(1);
+    const uint8_t st = card.deviceSelectRead(kAciaStatus);
+    assert((st & 0x10) && "peer gone: TDRE reads 1 again");
+    assert((st & 0x80) && "...and that edge is the transmit interrupt");
+    std::printf("  a hang-up on a full ring raises the TX interrupt: OK\n");
+}
+
+// ── RFC 854: only a BARE CR is followed by NUL ───────────────────────────
+// CR LF goes out as CR LF; it used to be CR NUL LF.
+void testCrNulOnlyAfterBareCr()
+{
+    SuperSerialCard card(2);
+    auto transport = std::make_unique<test::FakeSuperSerialTransport>(card);
+    auto* fake = transport.get();
+    card.setTransport(std::move(transport));
+    card.setRawMode(false);
+    fake->connect();
+    openPort(card);
+    for (uint8_t b : { uint8_t('\r'), uint8_t('\n'), uint8_t('\r'), uint8_t('A') })
+        card.deviceSelectWrite(kAciaData, b);
+    const auto wire = fake->drain();
+    assert((wire == std::vector<uint8_t>{ '\r', '\n', '\r', 0x00, 'A' }));
+    std::printf("  CR LF stays CR LF, a bare CR gets its NUL: OK\n");
+}
+
+// ── A connection is no DCD/DSR edge when the tap already holds them up ──
+// A real 6551 interrupts on a pin change only. With the printer tap armed
+// the Auto cable holds DCD/DSR active, so a telnet peer arriving changes
+// neither — the //c printer port's default used to take an interrupt.
+void testNoDcdIrqWhenTapHoldsTheLines()
+{
+    for (const bool tap : { false, true }) {
+        SuperSerialCard card(2);
+        auto transport = std::make_unique<test::FakeSuperSerialTransport>(card);
+        auto* fake = transport.get();
+        card.setTransport(std::move(transport));
+        card.setPrinterTap(tap);
+        openPort(card);
+        (void)card.deviceSelectRead(kAciaStatus);    // clears any IRQ
+        fake->connect();
+        const bool irq = (card.deviceSelectRead(kAciaStatus) & 0x80) != 0;
+        assert(irq == !tap);
+    }
+    std::printf("  no DCD/DSR interrupt without a pin change: OK\n");
+}
+
 void testOutboundIacIsVerbatimInRawMode()
 {
     SuperSerialCard card(2);
@@ -286,6 +383,10 @@ int main()
     testRawModePassesIacByteThrough();
     testOutboundIacIsEscapedInTextMode();
     testOutboundIacIsVerbatimInRawMode();
+    testFullTxRingHoldsTdre();
+    testTxIrqWhenPeerDropsWithFullRing();
+    testCrNulOnlyAfterBareCr();
+    testNoDcdIrqWhenTapHoldsTheLines();
     testKeyboardSinkOnlyInTextMode();
     testReconnectResetsTelnetParser();
     testBinaryTransitionsRespectByteOrder();

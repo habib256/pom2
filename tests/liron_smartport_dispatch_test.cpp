@@ -265,18 +265,36 @@ int main()
 
         // CONTROL code 4 is EJECT since May 1988 and must not be an error
         // (TN SmartPort #2); a code the card has no use for still is.
-        (void)cardRaw->takeGuestEjectRequests();   // code 0 above asked nothing
+        assert(cardRaw->takeGuestEjectRequests().empty() && "code 0 asks nothing");
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);
         assert(!r.carry && r.a == 0x00 && "CONTROL EJECT is accepted");
         // …and the 3.5" really leaves: the request waits for the UI thread,
-        // which ejects through the three-phase path (serviceGuestEjects).
-        assert(cardRaw->takeGuestEjectRequests() == 0x1u && "EJECT asks for bay 0");
-        assert(cardRaw->takeGuestEjectRequests() == 0u && "taken once");
+        // which ejects through the three-phase path (serviceGuestEjects),
+        // naming the disk it was made for.
+        {
+            const auto req = cardRaw->takeGuestEjectRequests();
+            assert(req.size() == 1 && req[0].bay == 0 && "EJECT asks for bay 0");
+            assert(req[0].mediaId != 0 && req[0].mediaId == cardRaw->bayMediaIdentity(0));
+            assert(cardRaw->takeGuestEjectRequests().empty() && "taken once");
+        }
+        // From the guest's side the drive is empty as soon as EJECT returns,
+        // as a real UniDisk's is: STATUS says offline, READ fails $2F.
+        setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x00});
+        r = spCall(cpu, mem, 0x00);
+        assert(!r.carry && (mem.memRead(kBuf) & 0x10) == 0 && "ejected: not online");
+        setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x00, 0x00, 0x00});
+        r = spCall(cpu, mem, 0x01);
+        assert(r.carry && r.a == 0x2F && "ejected: READ is offline");
+        // A refused eject (failed write-back) gives it back.
+        cardRaw->cancelGuestEject(0);
+        setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x00});
+        r = spCall(cpu, mem, 0x00);
+        assert(!r.carry && (mem.memRead(kBuf) & 0x10) && "cancelled: online again");
         setPlist(mem, {3, 2, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);
         assert(!r.carry && r.a == 0x00 && "an empty drive: nothing to eject, no error");
-        assert(cardRaw->takeGuestEjectRequests() == 0u);
+        assert(cardRaw->takeGuestEjectRequests().empty());
         setPlist(mem, {3, 3, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);
         assert(r.carry && r.a == 0x28 && "CONTROL past the chain: no device");

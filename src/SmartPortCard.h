@@ -76,6 +76,7 @@
 #include "SmartPortUnit.h"
 
 #include <array>
+#include <optional>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -123,6 +124,15 @@ public:
     /// Idempotent on an already-empty slot.
     std::unique_ptr<SmartPortUnit> setUnit(size_t idx,
                                            std::unique_ptr<SmartPortUnit> u);
+
+    /// A host folder mounted on an empty bay turns it into an HDV unit for
+    /// the session only (StorageCoordinator::mountHostFolderOnSmartPort).
+    /// `borrowBayType` remembers what the bay was; `persistedBayKind` is the
+    /// kind the settings must keep — the borrowed one while the loan lasts,
+    /// so ejecting the folder no longer saves `_type=hdv` over the user's
+    /// 3.5" unit. Any later setUnit (a user type change) ends the loan.
+    void borrowBayType(int bay, std::string originalKind);
+    std::string persistedBayKind(int bay) const;
 
     /// The same units, as SmartPort **bus** devices for a //c's external
     /// port (SlotPeripheral::smartPortBusUnit). On the 32 KB //c this card's
@@ -221,6 +231,7 @@ public:
     // host's (MainWindow's) job — these only touch in-memory unit state.
     int  bayCount() const override { return unitCount_; }
     MediaBayInfo bayInfo(int bay) const override;
+    uint64_t bayMediaIdentity(int bay) const override;
     bool mountBay(int bay, const std::string& path, std::string& errOut) override;
     bool adoptBay(int bay, Block512Backing::PreparedImage&& prepared,
                   std::string& errOut) override;
@@ -249,9 +260,23 @@ public:
 private:
     int  slot_;
     std::array<std::unique_ptr<SmartPortUnit>, kMaxUnits> units_{};
+    std::array<std::optional<std::string>, kMaxUnits> borrowedKind_{};
 
     /// SmartPortBusUnit over a SmartPortUnit. Bound to a bay, not a unit
     /// object, so a swap through setUnit() is seen on the next call.
+    /// The unit's mount identity (Block512Backing / Disk35Image mountId).
+    static uint64_t unitMediaId(const SmartPortUnit* u);
+    /// What the GUEST sees: a medium in bay `idx`, unless the guest ejected
+    /// it and the UI thread has not taken it out yet (requestGuestEject).
+    bool guestLoaded(size_t idx) const
+    {
+        if (idx >= kMaxUnits) return false;
+        const SmartPortUnit* u = units_[idx].get();
+        if (!u || !u->isLoaded()) return false;
+        const int bay = static_cast<int>(idx);
+        return !guestDoorArmed(bay) || !guestDoorOpen(bay, unitMediaId(u));
+    }
+
     class BusUnit final : public pom2::SmartPortBusUnit {
     public:
         void bind(SmartPortCard* card, size_t bay) { card_ = card; bay_ = bay; }

@@ -582,6 +582,28 @@ void testSoftResetPreservesLcOnII()
     mem2.resetSoftSwitchesWarm();
     // 80STORE bit (MF_80STORE = 0x01 per Memory.h) should be cleared.
     assert((mem2.iieModeFlags() & 0x01) == 0);
+
+    // …but not the IOU's TEXT/MIXED nor the DHGR latch: MAME `reset_w`
+    // (Sather Fig 7.1) clears 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3 only.
+    // Power-on (resetSoftSwitches) still resets them all.
+    (void)mem2.memRead(0xC050);   // graphics
+    (void)mem2.memRead(0xC053);   // mixed
+    (void)mem2.memRead(0xC055);   // page 2
+    (void)mem2.memRead(0xC057);   // hi-res
+    mem2.resetSoftSwitchesWarm();
+    {
+        const auto ds = mem2.getDisplayState();
+        assert(!ds.textMode && ds.mixedMode && "Ctrl-Reset keeps TEXT/MIXED");
+        assert(!ds.page2 && !ds.hiRes && "…and clears PAGE2/HIRES");
+    }
+    mem2.resetSoftSwitches();
+    assert(mem2.getDisplayState().textMode && !mem2.getDisplayState().mixedMode);
+
+    // The //c's 40/80 key reads at $C060 bit 7 (set = 40 columns), and no
+    // reset touches it — it is a physical switch.
+    mem2.setIic40ColumnSwitch(true);
+    mem2.resetSoftSwitchesWarm();
+    assert(mem2.iic40ColumnSwitch());
 }
 
 // F11/F12 on II/II+ must preserve display soft switches (TEXT/GRAPHICS,
@@ -613,14 +635,17 @@ void testResetPreservesDisplayOnIIPlus()
         assert(!ds.textMode && ds.hiRes && "hard reset must keep display on II+");
     }
 
-    // IIe warm reset wipes display (MAME reset_w full list).
+    // IIe warm reset clears HIRES but not TEXT: MAME `reset_w` (apple2e.cpp
+    // :1459-1471) resets 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3 only — the
+    // ROM's RESET handler is what returns to text.
     Memory mem2;
     mem2.setIIEMode(true);
     mem2.resetSoftSwitches();
     mem2.memRead(0xC050);
     mem2.memRead(0xC057);
     mem2.resetSoftSwitchesWarm();
-    assert(mem2.getDisplayState().textMode && "IIe reset returns to TEXT");
+    assert(!mem2.getDisplayState().textMode && !mem2.getDisplayState().hiRes &&
+           "IIe Ctrl-Reset keeps TEXT off, clears HIRES");
 }
 
 // Theme 7 (hardReset no stack wipe): MAME `apple2.cpp:325-331` doesn't

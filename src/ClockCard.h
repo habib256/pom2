@@ -287,6 +287,13 @@ private:
     // (`:240-242`, `:307-309`) instead of leaving it alone.
     bool testMode_           = false;
 
+    // DATA_OUT's pulse in REGISTER_HOLD (1 Hz) and TIME_READ (0.5 Hz): the
+    // level at mode entry and the CPU cycles since. Not in the snapshot —
+    // a phase the guest cannot sample to better than a second.
+    bool     dataOutStart_  = false;
+    uint64_t dataOutCycles_ = 0;
+    bool dataOut() const;
+
     // ── ThunderClock+ interrupt logic (card-level, POM2-original) ───────
     //
     // MAME's `a2thunderclock.cpp` never binds the chip's tp_callback, so

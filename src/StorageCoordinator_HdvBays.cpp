@@ -116,3 +116,36 @@ StorageCoordinator::mountHdvIntoFreeBay(EmulationController& controller,
 }
 
 }  // namespace pom2
+
+namespace pom2 {
+
+// A SmartPort bay: the fresh-install //e has one in slot 5 and no free slot
+// for an HDV card (slot 3 is the 80 columns), and the //c's on-board one is
+// the only drive its firmware boots. The bay must be empty — a host folder
+// never replaces a disk.
+std::string StorageCoordinator::mountHostFolderOnSmartPort(
+    SmartPortCard& card, int bay, std::vector<std::uint8_t>&& bytes,
+    const std::string& label, const std::string& hostFolder, bool convertText)
+{
+    if (bay < 0 || bay >= card.unitCount())
+        return "invalid SmartPort unit " + std::to_string(bay + 1);
+    const auto index = static_cast<std::size_t>(bay);
+    if (card.unit(index) && card.unit(index)->isLoaded())
+        return "SmartPort unit " + std::to_string(bay + 1) + " already holds a disk";
+    // The bay's own kind (often an empty 3.5" unit) is lent for the session:
+    // put back on failure, and the one the settings keep (borrowBayType).
+    const std::string original = card.persistedBayKind(bay);
+    if (!(card.unit(index) && card.unit(index)->blockBacking()))
+        card.setBayType(bay, std::string(SmartPortHdvUnit::kKindKey));
+    Block512Backing* backing = card.unit(index) ? card.unit(index)->blockBacking() : nullptr;
+    if (!backing || !backing->loadFromBytes(std::move(bytes), label, hostFolder)) {
+        const std::string why = backing ? backing->lastError() : std::string();
+        card.setBayType(bay, original);
+        return why.empty() ? std::string("host folder mount failed") : why;
+    }
+    if (original != SmartPortHdvUnit::kKindKey) card.borrowBayType(bay, original);
+    if (!hostFolder.empty()) backing->setHostFolderTextConversion(convertText);
+    return {};
+}
+
+} // namespace pom2

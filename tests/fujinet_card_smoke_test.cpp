@@ -555,6 +555,29 @@ void testDeviceCountWithoutPeer()
     std::printf("  ok: device-count probe answered locally, no peer needed\n");
 }
 
+// An extended call ($40-$7F) carries a FOUR-byte list pointer, so five
+// inline bytes follow the JSR (IIgs Firmware Reference, SmartPort chapter).
+// The card stepped the return address by 3 for every call, so the RTS landed
+// in the pointer's high bytes — $00 = BRK. It must answer "bad command" and
+// return past all five.
+void testExtendedCallReturnsPastFiveBytes()
+{
+    Machine m;
+    m.startLink();
+    placeSmartPortCall(m, 0x40, 0x0310);           // extended STATUS
+    m.mem.memWrite(0x0306, 0x00);                  // pointer bytes 3-4
+    m.mem.memWrite(0x0307, 0x00);
+    m.mem.memWrite(0x0308, 0x4C);
+    m.mem.memWrite(0x0309, 0x08);
+    m.mem.memWrite(0x030A, 0x03);                  // JMP $0308
+    m.run(20000);
+    assert(m.cpu->getProgramCounter() == 0x0308 &&
+           "extended call must return past the 5 inline bytes");
+    assert(m.cpu->getAccumulator() == kSpBadCommand);
+    m.card->transportLink().stop();
+    std::printf("  ok: extended call refused, returns past 5 inline bytes\n");
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 //  The built-in N: has to be FINDABLE, and it must not shadow anything
 // ═════════════════════════════════════════════════════════════════════════
@@ -908,6 +931,7 @@ int main()
     testSmartPortReadBlock();
     testStackWrapAtPageBoundary();
     testDeviceCountWithoutPeer();
+    testExtendedCallReturnsPastFiveBytes();
     testBuiltInNetworkIsInsideTheChain();
     testBuiltInNetworkDoesNotShadowThePeer();
     testForwardedCallWithoutPeerIsNoDevice();

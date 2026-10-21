@@ -210,6 +210,38 @@ int main()
         assert(liveCycle(wasm) == c);
     }
 
+    // ── Resuming a scrub with Play cuts the ring at the frame left ─────────
+    // `setMode(Running)` (toolbar Play, Machine > Run) is a resume too. The
+    // ring used to be cut only at the NEXT capture's cycle, so every old-
+    // timeline frame stamped below it survived, and a seek onto one restored
+    // the timeline the user had left. Now the frame left on is the cut.
+    {
+        EmulationController m;
+        {
+            std::lock_guard<std::mutex> lk(m.stateMutex());
+            Memory& mem = m.memory();
+            mem.memWrite(0x0800, 0x4C);
+            mem.memWrite(0x0801, 0x00);
+            mem.memWrite(0x0802, 0x08);
+            m.cpu().setProgramCounter(0x0800);
+        }
+        m.rewind().setEnabled(true);
+        m.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 20; ++i) m.tickFrame();
+        assert(ringSize(m) >= 15);
+        m.setMode(EmulationController::Mode::Stopped);
+        constexpr size_t kLeftOn = 5;
+        assert(m.rewindSeek(kLeftOn) == kLeftOn);
+        // A bigger budget (an accelerator, --speed) makes the next capture
+        // land past frames 6-8's old stamps: the old cut kept them, the new
+        // one keeps none.
+        m.setCyclesPerFrame(m.getCyclesPerFrame() * 4);
+        m.setMode(EmulationController::Mode::Running);
+        m.tickFrame();
+        assert(ringSize(m) == kLeftOn + 2 &&
+               "the abandoned future survived a resume through Play");
+    }
+
     // ── (8) A media write clears the ring (bug hunt #2, items S3/S4/S5) ───
     //
     // The ring never captures the MEDIA of a block device (up to 32 MiB), a

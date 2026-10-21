@@ -335,6 +335,7 @@ public:
         telnetSgaTx_ = false;
         std::lock_guard<std::mutex> lk(bufferMtx);
         telnetReply_.clear();   // a new peer negotiates from scratch
+        txPendingCr_ = false;
     }
 
     /// Answer a WILL/WONT/DO/DONT requesting an option change (RFC 854).
@@ -356,6 +357,21 @@ public:
     /// drain only in telnet text mode — raw mode sends bytes verbatim.
     /// Public + static for unit testing.
     static void appendTelnetTxEscaped(std::vector<uint8_t>& out, uint8_t b);
+    /// The drain's form: RFC 854 wants the NUL after a BARE CR only, so a CR
+    /// waits for the next byte — CR LF goes out as CR LF, not CR NUL LF. The
+    /// drain settles a CR left pending at its end (`drainTransportTx`).
+    /// `bufferMtx` held.
+    void appendTelnetTx(std::vector<uint8_t>& out, uint8_t b)
+    {
+        if (txPendingCr_) {
+            txPendingCr_ = false;
+            if (b != '\n') out.push_back(0x00);
+        }
+        out.push_back(b);
+        if (b == 0xFF)      out.push_back(0xFF);
+        else if (b == '\r') txPendingCr_ = true;
+    }
+    bool txPendingCr_ = false;
 
     // Test/debug introspection — read-only reflection of the decoded
     // command/control register state.

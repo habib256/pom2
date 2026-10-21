@@ -34,6 +34,7 @@
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
+#include "SmartPortHdvUnit.h"
 #include "StorageCoordinator.h"
 #include "Woz35Fixture.h"
 
@@ -109,9 +110,81 @@ void testHostFolderLeavesHdvPathAlone()
     std::puts("  ok: a host-folder volume leaves hdv_path alone (commands)");
 }
 
+// `--prodos-folder` on the fresh-install //e: slot 5 holds a SmartPort card
+// and no slot is free for an HDV card, so the folder takes an EMPTY unit of
+// the SmartPort card as an HDV. It never replaces a disk there, and the
+// synthetic label is never saved as that unit's path.
+void testHostFolderOnSmartPortBay()
+{
+    EmulationController controller;
+    pom2::StorageCoordinator coord;
+    pom2::Settings settings;
+    settings.setReadOnly(true);
+    pom2::SmartPortCard* card = nullptr;
+    {
+        auto state = controller.lockState();
+        auto made = std::make_unique<pom2::SmartPortCard>(5);
+        card = made.get();
+        state.memory().slotBus().plug(5, std::move(made));
+    }
+    std::vector<std::uint8_t> bytes(280 * 512, 0);
+    const auto r = coord.mountBlockBytes(controller, settings, 5, bytes,
+                                         "[host folder] /tmp/pom2_host_sp",
+                                         "/tmp/pom2_host_sp", 1);
+    assert(r.ok && "a host folder mounts on an empty SmartPort unit");
+    {
+        auto state = controller.lockState();
+        const auto* unit = card->unit(1);
+        assert(unit && unit->isLoaded() &&
+               unit->kindKey() == pom2::SmartPortHdvUnit::kKindKey);
+        assert(unit->blockCount() == 280);
+    }
+    assert(settings.getString("smartport_slot5_unit1_path", "").empty() &&
+           "the synthetic label is not a path to restore");
+    const auto again = coord.mountBlockBytes(controller, settings, 5, bytes,
+                                             "[host folder] /tmp/other",
+                                             "/tmp/other", 1);
+    assert(!again.ok && "a host folder never replaces a disk in the unit");
+
+    // An empty 3.5" unit (the fresh-install //e's slot 5) is only LENT to
+    // the folder: the kind the settings keep stays 3.5", so ejecting the
+    // folder can no longer save `_type=hdv` over the user's unit, and a
+    // failed mount puts the 3.5" unit back instead of wiping the bay.
+    const std::string k35(pom2::SmartPort35Unit::kKindKey);
+    {
+        auto state = controller.lockState();
+        card->setBayType(2, k35);
+        card->setBayType(3, k35);
+    }
+    const auto lent = coord.mountBlockBytes(controller, settings, 5, bytes,
+                                            "[host folder] /tmp/pom2_lent",
+                                            "/tmp/pom2_lent", 2);
+    assert(lent.ok);
+    {
+        auto state = controller.lockState();
+        assert(card->unit(2)->kindKey() == pom2::SmartPortHdvUnit::kKindKey);
+        assert(card->persistedBayKind(2) == k35 &&
+               "the settings keep the lent bay's own 3.5\" kind");
+    }
+    const auto bad = coord.mountBlockBytes(controller, settings, 5,
+                                           std::vector<std::uint8_t>(100, 0),
+                                           "[host folder] /tmp/pom2_bad",
+                                           "/tmp/pom2_bad", 3);
+    assert(!bad.ok && "a 100-byte volume is not mountable");
+    {
+        auto state = controller.lockState();
+        assert(card->unit(3) && card->unit(3)->kindKey() == k35 &&
+               "a failed host-folder mount restores the bay's 3.5\" unit");
+        card->setBayType(2, k35);    // a user type change ends the loan
+        assert(card->persistedBayKind(2) == k35 && !card->unit(2)->isLoaded());
+    }
+    std::puts("  ok: a host folder mounts on an empty SmartPort unit");
+}
+
 int main()
 {
     testHostFolderLeavesHdvPathAlone();
+    testHostFolderOnSmartPortBay();
     // The whole run lives in a sandboxed HOME (and XDG_CONFIG_HOME, which
     // userConfigDir() prefers on Linux): this test drives coordinator
     // commands that persist, and a Settings that is not read-only saves to

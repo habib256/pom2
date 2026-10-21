@@ -66,6 +66,21 @@ public:
         int y() const noexcept { return (yHi << 8) | yLo; }
     };
 
+    /// The //c ROM keeps its clamp window in the column-5 screen holes (min
+    /// X/Y lo $047D/$04FD, hi $057D/$05FD, max X/Y lo $067D/$06FD, hi
+    /// $077D/$07FD) and its cursor in the ordinary mouse-port holes, updated
+    /// by the IRQ handler. The //c+ ROM moves the cursor and mode holes to
+    /// port 7 but leaves the clamp window in column 5. Together they are
+    /// what the AppleWin HLE card exposes as iX/iY + iMin/iMax, so the same
+    /// absolute sync (MouseSync.h) can drive the native //c mouse. Any other
+    /// firmware port keeps `clampKnown` false and the relative drive.
+    struct IIcSnapshot {
+        bool clampKnown = false;
+        int minX = 0, maxX = 0;
+        int minY = 0, maxY = 0;
+        bool settled = true;   ///< IIcMouse::settled(): holes are final
+    };
+
     struct Snapshot {
         Kind kind = Kind::None;
         int slot = -1;
@@ -73,6 +88,7 @@ public:
         bool appleWinPlugged = false;
         bool iicPlugged = false;
         AppleWinSnapshot appleWin;
+        IIcSnapshot iic;
         ScreenHolesSnapshot holes;
 
         bool plugged() const noexcept

@@ -127,6 +127,8 @@ void ClockCard::onReset()
     shiftReg.fill(0);
     prevWrite          = 0;
     lastMode           = kModeRegisterHold;
+    dataOutStart_      = false;
+    dataOutCycles_     = 0;
     // userOffsetActive / userOffsetSeconds deliberately SURVIVE a bus
     // RESET: the uPD1990AC on the ThunderClock+ is battery-backed (the
     // card carries an on-board NiCd; the chip's time counter keeps
@@ -231,7 +233,7 @@ uint8_t ClockCard::deviceSelectRead(uint8_t low4)
     // same way. Sample the flag BEFORE the access clears the request.
     (void)low4;
     const uint8_t out = static_cast<uint8_t>(
-        ((shiftReg[0] & 0x01) ? 0x80 : 0x00) |
+        (dataOut()             ? 0x80 : 0x00) |
         (irqPending_           ? 0x20 : 0x00));
     // Any read or write of the card clears a pending request (manual 5-2
     // point 3 + the `LDA $C088,Y / LDA $C080,Y` clear sequence at 5-1).
@@ -271,6 +273,13 @@ void ClockCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     //   MODE_SHIFT / MODE_REGISTER_HOLD: no per-edge action — the chip
     //                   just remembers the mode.
     if (stbNow && !stbPrev) {
+        // REGISTER_HOLD and TIME_READ start DATA_OUT's free-running pulse
+        // (MAME `:226-228`, `:296-304`: the timer is adjusted to fire at
+        // once, so the pin toggles on entry).
+        if (mode == kModeRegisterHold || mode == kModeTimeRead) {
+            dataOutStart_  = !dataOut();
+            dataOutCycles_ = 0;
+        }
         lastMode = mode;
         if (mode == kModeTimeRead) {
             latchTimeToShiftReg();
@@ -283,24 +292,15 @@ void ClockCard::deviceSelectWrite(uint8_t low4, uint8_t v)
         programTpTimer(mode);
     }
 
-    // CLK rising edge — shift the 48-bit register right by one bit.
-    // Each byte shifts towards LSB, with the LSB of the next byte
-    // sliding into the MSB of the previous one. The MSB of the last
-    // byte gets the DATA_IN bit (bit 0 of $C0n0). After the shift,
-    // DATA_OUT (= shiftReg[0] LSB) carries the next bit out.
-    //
-    // Deliberate divergence from MAME `upd1990a.cpp:312-327`, which
-    // gates this shift behind `m_c == MODE_SHIFT`. POM2 keeps the shift
-    // lax (any mode) because the read path stock ProDOS goes through
-    // (its driver calls the card's firmware at $Cn08 — Tech Note ProDOS
-    // #1) pulses CLK while still in MODE_TIME_READ without first switching
-    // to MODE_SHIFT — strict gating breaks stock ProDOS reads, and the
-    // ThunderClock+ card paired with a real uPD1990AC has been
-    // observed to permit this shortcut in practice (the MODE bit just
-    // selects DATA_OUT path / time-counter clocking; the shift register
-    // is wired to CLK directly). DATA_IN is still latched into the MSB
-    // because MODE_TIME_SET expects it.
-    if (clkNow && !clkPrev) {
+    // CLK rising edge — shift the 40-bit register right by one bit, in
+    // MODE_SHIFT only (MAME `upd1990a.cpp:393` gates on `m_c == MODE_SHIFT`;
+    // in the other modes CLK does nothing to the register). Each byte
+    // shifts towards LSB, the next byte's LSB sliding into its MSB, and
+    // DATA_IN enters the MSB of the last one. POM2 used to shift in every
+    // mode on the belief that ProDOS clocks the bits out in TIME_READ; the
+    // card's firmware it calls does not — `$C951` strobes TIME_READ ($18)
+    // to latch the time, then SHIFT ($08), before its first CLK.
+    if (clkNow && !clkPrev && lastMode == kModeShift) {
         // 40-BIT register, not 48. MAME `upd1990a.cpp` shifts
         // `max_shift = is_serial_mode() ? 6 : 5` bytes, and
         // `is_serial_mode()` requires TYPE_4990A — a plain UPD1990A (what
@@ -419,8 +419,24 @@ void ClockCard::clearIrqRequest()
     }
 }
 
+bool ClockCard::dataOut() const
+{
+    // MAME `upd1990a.cpp:222-310`: SHIFT and TIME_SET put the register's
+    // LSB on the pin; REGISTER_HOLD drives a 1 Hz square wave and TIME_READ
+    // a 0.5 Hz one on a uPD1990A (512 Hz in test mode). Any other mode
+    // leaves the pin where the previous one put it: the register's LSB.
+    double halfPeriod = 0.0;
+    if (lastMode == kModeRegisterHold)  halfPeriod = cpuClockHz_ / 2.0;
+    else if (lastMode == kModeTimeRead) halfPeriod = testMode_ ? cpuClockHz_ / 1024.0
+                                                               : cpuClockHz_;
+    if (halfPeriod <= 0.0) return (shiftReg[0] & 0x01) != 0;
+    const auto toggles = static_cast<uint64_t>(static_cast<double>(dataOutCycles_) / halfPeriod);
+    return dataOutStart_ != ((toggles & 1) != 0);
+}
+
 void ClockCard::advanceCycles(int cycles)
 {
+    if (cycles > 0) dataOutCycles_ += static_cast<uint64_t>(cycles);
     if (cycles <= 0 || tpHalfPeriodQ8_ <= 0) return;
     // int64 for the running sum only: `cycles` can be a whole emulated second
     // in a test harness, and 1022727 × 256 already needs 28 bits before the

@@ -736,6 +736,23 @@ int main()
         LeChatMauveCard fromV2(7, LeChatMauveCard::Variant::Eve);
         fromV2.loadSnapshotState(v2, sizeof v2);
         assert(fromV2.eveSwitch(Sw::TXT16) && fromV2.eveSwitch(Sw::TXTGREEN));
+        // A field a version does not carry restores its power-on value, not
+        // the live session's: v1 leaves the switches, CPREG and the RVB
+        // Graph registers at power-on, v2 CPREG and the registers.
+        {
+            LeChatMauveCard live(7, LeChatMauveCard::Variant::Eve);
+            live.loadSnapshotState(blob.data(), blob.size());   // CPREG $5A
+            live.loadSnapshotState(v2, sizeof v2);
+            assert(live.cpreg() == 0 && "v2 has no CPREG: power-on, not live");
+            const uint8_t v1[7] = { 'C', 'M', 1, 0, 0, 0, 0 };
+            live.loadSnapshotState(blob.data(), blob.size());
+            live.loadSnapshotState(v1, sizeof v1);
+            assert(live.eveSwitches() == 0 && live.cpreg() == 0);
+            const LeChatMauveCard::RvbGraphState powerOn{};
+            assert(live.rvbGraph().textColour == powerOn.textColour &&
+                   live.rvbGraph().c[0] == powerOn.c[0] &&
+                   live.rvbGraph().b[0] == powerOn.b[0]);
+        }
         // On a Féline the switch byte is meaningless and stays clear.
         LeChatMauveCard fel(7, LeChatMauveCard::Variant::Feline);
         fel.loadSnapshotState(blob.data(), blob.size());

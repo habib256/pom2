@@ -10,6 +10,282 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-21 — //c and //c Plus mouse follows the pointer (GitHub #17)
+
+Reported on the browser build with A2DeskTop. On a //c or //c Plus the Apple
+cursor lagged the host pointer, froze, and could not reach the screen edges.
+The //e was fine. The fix is the reporter's patch, `iic-mouse-absolute.patch`,
+reviewed and applied.
+
+- **The IOU mouse holds an axis' next quadrature transition while its IRQ
+  latch is pending.** One transition per scanline outran the ROM's IRQ
+  handler, and about 58 % of a fast move was lost. This deliberately departs
+  from MAME's `update_iic_mouse`, which loses those edges too: a host pointer
+  can move faster than any physical mouse, so the shaping belongs on POM2's
+  side of the quadrature.
+- **The absolute cursor sync (`MouseSync.h`) now drives the //c mouse too.**
+  Until now it served only `mouseaw`. `MouseCoordinator` reads the ROM's
+  clamp window from the column-5 screen holes (`$047D-$07FD`) on both ROMs,
+  and the cursor from the port-4 (//c) or port-7 (//c+) holes.
+  `MainWindow::syncMouseAbsolute` runs per pointer event and once per frame,
+  so the last move before the pointer stops still lands.
+- **While the sync owns the cursor, the host cursor is hidden over the
+  screen.** In the browser that is the canvas' CSS cursor, because
+  Emscripten's GLFW has no `GLFW_CURSOR_HIDDEN`.
+- Pinned by `iic_mouse_lle`: the column-5 clamp after INITMOUSE on all four
+  //c ROMs, and a 100-unit single-event drag, which fails without the
+  back-pressure.
+
+## 2026-10-21 — Bug hunt, the smaller six: CFFA, SSC, 2IMG, SSI263, Chat Mauve, odds
+
+- **CFFA: Reset re-protects the EEPROM**, as MAME `reset_from_bus` does
+  (`m_writeprotect = true`). The rewind blob is now `CFA2`, which adds the
+  EEPROM image because MAME saves `m_eeprom`. A `CFA1` blob still loads and
+  leaves the live EEPROM alone. Pinned by `card_snapshot_state`.
+- **SSC: a peer hanging up while the TX ring is full raises the transmit
+  interrupt.** The full ring held TDRE low, and the interrupt waited for a
+  drain that never came, while TDRE read 1 again. An IRQ-driven driver
+  (command `$05`) stayed in WFI. Pinned by `ssc_transport_seam`.
+- **2IMG: a 52-byte header with its data at 52 loads again**, in all three
+  loaders. That header holds every defined field. Block512Backing now checks
+  `headerLen >= 52` instead of a flat 64. Pinned by `fuzz_disk_image`.
+- **SSI263 (Sound II, Phasor): a cycle rollback drops the stale speech
+  queue too.** The AY queue was already dropped there. The SSI263's events
+  stayed stamped on the abandoned timeline and held every new phoneme
+  behind them. Pinned by `ssi263_speech_timeline`.
+- **Le Chat Mauve: old snapshots restore power-on values for what they do
+  not carry.** A v1 blob kept the live Eve switches, CPREG and RVB Graph
+  registers, and a v2 blob kept CPREG and the registers. Pinned by
+  `le_chat_mauve_smoke`.
+- **Debugger profile: an interrupt entry's 7 cycles are filed under the
+  handler's own bank**, resolved at its PC, rather than the interrupted
+  instruction's bank (aux, LC RAM). Pinned by `debugger`.
+- **ThunderClock: CLK shifts the register in MODE_SHIFT only** (MAME
+  `upd1990a.cpp:393`). The old "lax" divergence assumed ProDOS clocks in
+  TIME_READ, but the card firmware it calls strobes SHIFT first (`$C951`:
+  `$18`, then `$08`). DATA_OUT follows the mode:
+  - SHIFT and TIME_SET: the register's LSB.
+  - REGISTER_HOLD: a 1 Hz square wave.
+  - TIME_READ: 0.5 Hz (512 Hz in test mode).
+
+  Pinned by `clock_card_smoke`.
+- **ImageWriter: a power-off mid `ESC V`/`ESC U` restores switch B-6's
+  mask.** `ESC c` re-derived it, but a power-off did not. Pinned by
+  `imagewriter_smoke`.
+
+## 2026-10-21 — Bug hunt: six defects against MAME, AppleWin and the datasheets
+
+- **][ / ][+ `$C010-$C01F` reads return the floating bus**, not the key
+  latch. The strobe still clears. MAME `apple2.cpp:362-372` and AppleWin
+  `IORead_C01x` (GH#1261) agree on this. The old answer made a `$C019`
+  vapor-lock loop see a constant. Pinned by `vbl_smoke`.
+- **A failed host-folder save no longer moves the mount stamp to the
+  epoch.** A pass that stops before its walk (the folder is gone, or its
+  path is not a directory) writes nothing and publishes no stamp. Adopting
+  the default stamp made every host file read as a host edit, and every later
+  guest save went to `.pom2-conflicts/`. A partial pass still restamps, as
+  before. Pinned by `prodos_synth_failed_flush`.
+- **`--prodos-folder` only borrows an empty SmartPort unit.**
+  `SmartPortCard::borrowBayType` remembers the unit's own kind, often a
+  3.5" unit. `persistedBayKind` is what `appendMediaBaySettingUpdates`
+  saves, so ejecting the folder no longer writes `_type=hdv` over the user's
+  unit. A failed mount puts the 3.5" unit back instead of clearing the bay,
+  and any later type change ends the loan. Pinned by `storage_coordinator`.
+- **FujiNet extended SmartPort calls return past five inline bytes.** An
+  extended call has a 4-byte list pointer, so five bytes follow the `JSR`.
+  Stepping the return address by 3 sent the `RTS` into the pointer's high
+  bytes, usually `$00` = BRK. Extended calls are now refused with "bad
+  command" before anything is read, on the built-in N: path too. Pinned by
+  `fujinet_card`.
+- **6522 RES keeps the T1/T2 latches and counters and SR** (R6522 datasheet;
+  MAME `6522via.cpp:415-449`; AppleWin `6522.cpp:39-61` on Ctrl-RESET). Only
+  a power cycle sets them back to `$FFFF` / 0. That is AppleWin's choice: a
+  latch below about 7 defeats Mockingboard detection.
+  - Mockingboard, Phasor and Echo+ pass `powerCycle` through, and the Echo+
+    gains its own `onPowerCycle`.
+  - A driver that restarted T1 with a lone T1CH write got period `$FFxx`
+    after F12.
+  - Pinned by `via_t1_continuous_period`.
+- **Echo+ (TMS5220) audio no longer keeps a turbo backlog as latency.** The
+  queue had no rate matching, so after disk turbo, `--cpu-max` or a speed
+  above 1× it sat at its 8192-sample cap. Speech and the AYs then stayed
+  about 186 ms late for the rest of the session. The consumer now snaps a
+  backlog past 100 ms back to 50 ms, the way `Dac8Audio` re-anchors. Pinned
+  by `echoplus_tms5220`.
+
+## 2026-10-21 — The last open leads, against the real machines
+
+- **A //e Ctrl-Reset keeps TEXT, MIXED and the DHGR latch.** MAME
+  `reset_w` (and Sather Fig 7.1) clears 80STORE / 80COL / ALTCHR / PAGE2 /
+  HIRES / AN0-3 only; POM2 rebuilt the whole display state as at power-on.
+  A program with its own reset vector that kept a mixed screen lost it.
+  Power-on still resets everything; the ROM's RESET handler still goes to
+  text on its own.
+- **The //c's 40/80-column switch is readable at $C060** (bit 7 set in the
+  40 position, MAME `apple2e.cpp:2321`). It read 0 always; it is now a
+  physical setting, Machine > "40/80 switch in the 40-column position"
+  on //c profiles (`iic_40col_switch`, default 80 — today's behaviour).
+- **The debugger no longer counts an interrupt entry as a step.** With a
+  hook attached, a step that only enters an IRQ/NMI reported the
+  interrupted instruction as completed: the profiler added a visit and 7
+  cycles to an instruction that had not run, and history logged it.
+  `M6502DebugHook::onInterruptEntered` now carries it; the profiler charges
+  the 7 cycles to the handler, with no visit. The fast loop is untouched.
+- **The W5100 receives on its own.** Data, a peer's FIN (Sn_SR
+  CLOSE_WAIT + DISCON) and a reset now arrive at the card's 2048-cycle
+  poll, not only when the guest reads Sn_RX_RSR (AppleWin's lazy shape): a
+  driver waiting on Sn_SR or the RECV/DISCON interrupt waited for ever.
+- **The AI server's request deadline is a real bound.** Checked only
+  between recvs, one stalled client held the single server thread for
+  the 10 s deadline plus a full 4 s recv; each recv now waits at most the
+  time left.
+
+Pinned by `debugger`, `w5100_socket_seam`.
+
+## 2026-10-21 — Undocumented NMOS opcodes for real; disk refusals explained
+
+- **The undocumented NMOS opcodes compute their results** (`M6502_Undoc.cpp`):
+  SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC in every mode, ANC/ALR/ARR/ANE/LXA/SBX/
+  USBC, SHA/SHX/SHY/TAS/LAS. They were timing-correct NOPs, and the French
+  Touch corpus machine's code uses LAX/SAX/SLO. All 66 non-JAM files of the
+  Tom Harte `6502/v1` set pass (660 000 vectors: registers, flags, memory,
+  cycles); fifteen joined the ctest manifest. `cpu_undoc_bus_access` now
+  asserts the writes their documented siblings make.
+- **A refused disk says why, where it is seen.** A centred dialog ("… was
+  not inserted") replaces a few seconds of status-bar text, and the reason
+  is written for anyone: what the file is (a 5.25-inch floppy, a 3.5-inch
+  disk, a hard disk, or no disk image at all), what the drive takes, that
+  a disk only fits a drive made for it as on the real machine, and what to
+  do — drop it on the screen, which picks a drive that fits, or on the
+  right kind of drive; eject first when the drive is full; unpack a .zip.
+  Drag-and-drop on the screen or on a drive, the drive rack's mount, the
+  browser import and "Insert disk and boot" all use it; a missing drive
+  or slot names the menu to fix it (Machine > Slot Configuration).
+- **Checked, not changed:** with no disk in the first drive, the //c and
+  the //c Plus ROMs boot a hard disk on slot 5 / the rear port by
+  themselves (scratch probe over the real firmware: ProDOS + A2DeskTop
+  come up, 325 blocks read over the SmartPort bus). The //e does not: its
+  Disk II in slot 6 is found first and an empty 5.25" drive spins for ever,
+  as on the real machine — `PR#5`, the Boot button or the card in slot 7.
+- `TwoImgHeader.h` joined the foundation header manifest: configure had
+  refused the tree since bug hunt 2 (the builds never re-ran it).
+
+Pinned by `tomharte_cpu`, `cpu_undoc_bus_access`, `drive_rack_mount`.
+
+## 2026-10-21 — Bug hunt 4: the session loader's deadlocks
+
+- **Stopping the AI server during a `/session/load` froze the window for
+  good.** The load waits for the UI thread's next frame; Stop joined the
+  server's worker from that same thread first. Stop now suspends remote
+  loads (`SessionLoadQueue::suspendRemote`): the waiting one fails, one
+  posted during the stop fails at once, and the queue reopens after.
+- **The same at exit:** a `--session-load` posted in the last frame hung
+  the shutdown join; the queue is now closed before it.
+- **A load on the UI thread itself sits behind the same exception barrier
+  as the queued ones** — a `bad_alloc` on a big archive is a failed load,
+  not an exception into the frame loop.
+- The same hunt found nothing in the //e MMU / language card, the 6502 /
+  65C02 core (Klaus, Tom Harte NMOS + WDC sets) or the Mockingboard /
+  Phasor stack. Known and documented, not new: the undocumented NMOS
+  opcodes are timing-correct NOPs (LAX/SAX/SLO compute nothing).
+
+Pinned by `session_machine`.
+
+## 2026-10-21 — Bug hunt 3: Uthernet II, SSC, AI paths, rewind
+
+- **The AI server's file jail followed the launch directory**, and nothing
+  chdirs: a Finder launch runs from `/`, an AppImage desktop launch from
+  `$HOME`, so `/disk` and `/snapshot/save` reached any file the user owns.
+  The launch directory now counts only when it is not above the user's
+  home (`/`, `/Users`, `$HOME` itself are refused); the per-user data
+  directory always counts, the install tree (bundled disks) for reading.
+- **W5100 DISCON is graceful.** It closed at once and dropped the TCP tail
+  a slow peer had not taken yet — bytes the guest had already been told
+  were sent (SEND_OK): an upload ended truncated with no error. With a
+  tail owed, the socket now waits in FIN_WAIT until it drains, then
+  closes. CLOSE stays abortive.
+- **A refused UDP datagram keeps its socket.** A broadcast or multicast
+  the fence refuses is TIMEOUT with Sn_SR still SOCK_UDP and no SEND_OK;
+  closing the socket made the next SEND a no-op an ioLibrary `sendto()`
+  waited on for ever.
+- **Super Serial: a paced peer holds TDRE**, as the real 6551 does until
+  its shift register has sent the byte. A LIST faster than the line used
+  to overrun the 4 KB ring and lose bytes mid-stream. With no peer the
+  line goes nowhere and the guest is never held.
+- **The accelerator's "none saved, reset it" branch was dead code**:
+  Memory's section reader skipped empty sections before calling it.
+- **Resuming a scrub with Play / Machine > Run cut the ring at the next
+  capture's cycle**, not at the frame restored: old-timeline frames with
+  a lower stamp survived and a seek onto one restored the abandoned
+  timeline. The frame left is now handed to the next capture.
+
+- **Corrections on top**, each against the real part:
+  - Super Serial: no DCD/DSR interrupt when a connection changes neither
+    pin (the printer tap already holds them up); CR LF goes out as CR LF,
+    only a bare CR gets its NUL (RFC 854); no TX interrupt while TDRE
+    reads 0 (byte parked behind CTS, ring full), and one when the drain
+    makes room; a snapshot's word length outside 5-8 is clamped.
+  - W5100: MACRAW opens on socket 0 only (datasheet Sn_MR), and the
+    indirect window's auto-increment wraps in the $8000 mirror too.
+  - A 3.5" WOZ's header CRC32 is checked, as the 5.25" and MOOF loaders
+    do; a 2IMG data offset below 64 is refused by every loader.
+  - A CPU change from the Machine menu clears the rewind ring (its frames
+    could no longer be restored).
+
+Pinned by `w5100_socket_seam`, `ssc_transport_seam`, `uthernet2_w5100_smoke`,
+`woz35_load`, `snapshot_preflight` (accelerator section),
+`rewind_transport` (the cut) and `ai_control_server_smoke` (the jail).
+
+## 2026-10-21 — Bug hunt 2: CS8900A, WOZ in MacBinary, host folder, guest EJECT
+
+- **`--prodos-folder` failed on the fresh-install slot map.** It needed an
+  HDV card, but the boot-target lookup answers with the slot-5 SmartPort
+  card and the default //e has no free slot for one (slot 3 is the 80
+  columns). The folder now takes the first EMPTY unit of that SmartPort
+  card as an HDV (`StorageCoordinator::mountBlockBytes`), never replacing
+  a disk; after a boot HDV in unit 1 it lands in unit 2. The synthetic
+  `[host folder]` label is not saved as the unit's path. On the //c this
+  also puts the folder on the one drive its firmware boots.
+- **A guest EJECT is tied to the disk it named, and the drive looks empty
+  at once.** The request carries the mount's identity: a disk mounted in
+  the bay before the UI thread services it is not ejected. From the call
+  on, STATUS says offline and READ/WRITE answer $2F, as a real UniDisk's
+  drive is empty when EJECT returns; a refused eject (failed write-back)
+  gives the disk back to the guest.
+- **CS8900A: reading TxEvent directly clears it**, as reading any event
+  register does. Only the ISQ cleared it, so a driver polling $0128 saw
+  each completion again and the ISQ reported it twice.
+- **A MacBinary-wrapped WOZ 2.1 stayed loadable after a FLUX save that
+  grew its slot.** The header's data-fork length kept the old size, so the
+  reload cut the WOZ short ("chunk length runs past EOF"). The length, the
+  padding to 128 and a valid header CRC now follow the payload.
+
+- **CS8900A implied skip through the ISQ.** Datasheet §5.2.5: reading
+  RxEvent "either directly or through the ISQ" after part of a frame frees
+  that frame and reports the next. The ISQ held back while a frame was
+  staged, so an ISQ-only driver that dropped one frame half-read never
+  received again. The ISQ marker also clears once the staged frame is read
+  out, so a later direct RxEvent read pops the next frame instead of
+  re-announcing a gone one.
+- **Sweet-16 2IMG images load.** That emulator writes 0 as the data length
+  (creator `WOOF`); CiderPress repairs it to block count × 512
+  (`TwoImg.cpp`), and now so do the three loaders (`TwoImgHeader.h`). Any
+  other creator's 0 is still a malformed header.
+- **A refused `--slot` is no longer saved** in `state.cfg` (it was saved
+  before the rebuild ran, and an absent key came back as an empty one).
+- **Run cancels queued steps**, as Stop does: `--step N --run ADDR` left
+  the backlog for the next debugger Step press.
+- **Below 1× the device clocks follow the speed.** `--speed` / AI `/speed`
+  under the profile's budget handed the stock clock to the speaker,
+  cassette and Mockingboard queues, which then starved.
+- **CI was red** on the file-size ratchet after the first bug hunt; the new
+  code went to sibling translation units (`ImageWriter_CustomChars.cpp`,
+  `DiskImageWozFlux.cpp`, `StorageCoordinator_HdvBays.cpp`).
+
+Pinned by `storage_coordinator`, `liron_smartport_dispatch`,
+`uthernet_cs8900_smoke`, `woz_writeback_smoke`, `fuzz_disk_image`,
+`controller_mode_races`.
+
 ## 2026-10-21 — Bug hunt: the last five commits, against the real machines
 
 - **SmartPort EJECT takes the disk out.** CONTROL code 4 on a UniDisk 3.5
@@ -8142,7 +8418,7 @@ replaces them and tests the assembler itself, because a card test can only
 assert its flag is clear — which a `finish()` of `return true` would also
 satisfy. Mutation-checked on real cards: shrinking SmartPort's read region
 names it in the log and fails `smartport_rom_layout`; misspelling a label in
-FujiNetCard fails `fujinet_card_smoke`.
+FujiNetCard fails `fujinet_card`.
 
 217/217 ctest.
 

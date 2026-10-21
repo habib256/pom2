@@ -131,6 +131,17 @@ static void exercise(pom2::SystemProfile profile, const std::string& rom)
         call(0x12, 1); // polling API; the IOU still needs native hardware IRQs
         call(0x14, 0); // READMOUSE
         const int x = coord(0x478), y = coord(0x4F8);
+        {
+            // The clamp window MouseCoordinator::IIcSnapshot reads for the
+            // absolute cursor sync: both the //c (port 4) and the //c+
+            // (port 7) ROM keep it in the column-5 holes; INITMOUSE resets
+            // it to 0..1023.
+            auto clamp = [&](uint16_t low) {
+                return mem.memRead(low+5) | (mem.memRead(low+0x100+5) << 8);
+            };
+            assert(clamp(0x478) == 0 && clamp(0x4F8) == 0);
+            assert(clamp(0x678) == 1023 && clamp(0x6F8) == 1023);
+        }
         // The ROM counts the selected edge once per complete X0/Y0 period
         // (two transitions). Give its IRQ handler time to service each edge.
         // `setHostMouse` therefore queues TWO steps per commanded cursor unit,
@@ -147,6 +158,16 @@ static void exercise(pom2::SystemProfile profile, const std::string& rom)
         mouse->setHostMouse(20, 12, false);
         call(0x14, 0);
         assert(!(mem.memRead(0x778+slot) & 0x80));
+
+        // A fast drag: 100 units per axis in ONE host event. The IOU used to emit a
+        // transition every scanline regardless of the IRQ handler, so most
+        // edges landed while the previous one was still latched and the
+        // firmware counted ~40% of the move (A2DeskTop could not reach the
+        // screen edges). Pending latches now hold the queue: every unit lands.
+        mouse->setHostMouse(120, 112, false);
+        cpu.run(400000);
+        call(0x14, 0);
+        assert(coord(0x478) == x+120 && coord(0x4F8) == y+112);
     }
     std::printf("PASS mouse firmware: %s, profile %d\n", rom.c_str(), int(profile));
 }

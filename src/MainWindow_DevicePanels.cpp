@@ -24,6 +24,7 @@
 #include "DevicePanelCoordinator.h"
 #include "EmulationController.h"
 
+#include "SessionLoadQueue.h"
 #include "SystemProfile.h"
 #include "FujiNetCardFactory.h"
 #include "FujiNet_ImGui.h"
@@ -909,7 +910,15 @@ void MainWindow::renderAiControlPanelWindow()
             }
         }
     } else {
-        if (ImGui::Button("Stop")) { aiControlFromCliOnly_ = false; aiServer->stop(); }
+        if (ImGui::Button("Stop")) {
+            aiControlFromCliOnly_ = false;
+            // A /session/load waits for THIS thread's next frame; joining
+            // the server's worker first deadlocked the window for good.
+            auto queue = controller->sessionLoadQueue();
+            if (queue) queue->suspendRemote(true);
+            aiServer->stop();
+            if (queue) queue->suspendRemote(false);   // the worker is gone
+        }
     }
 
     if (token.empty()) {

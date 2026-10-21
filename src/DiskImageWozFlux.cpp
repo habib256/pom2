@@ -197,3 +197,45 @@ bool DiskImage::applyWozFluxWriteBack()
 
     return true;
 }
+
+// MacBinary header CRC (MacBinary II: CRC-16/XMODEM over bytes 0-123).
+static uint16_t macBinaryCrc(const uint8_t* p)
+{
+    uint16_t crc = 0;
+    for (int i = 0; i < 124; ++i) {
+        crc ^= static_cast<uint16_t>(p[i] << 8);
+        for (int b = 0; b < 8; ++b)
+            crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021)
+                                 : static_cast<uint16_t>(crc << 1);
+    }
+    return crc;
+}
+
+// A MacBinary envelope around a payload whose size changed (a WOZ 2.1 FLUX
+// slot that grew): the header's data-fork length (bytes 83-86) and the
+// padding to 128 that opens the trailer must follow it, or the reload cuts
+// the WOZ at the old length and refuses it ("chunk length runs past EOF").
+// A header CRC that was valid is recomputed. A 2IMG header is left alone.
+void DiskImage::refitMacBinaryEnvelope(std::vector<uint8_t>& header,
+                                       std::vector<uint8_t>& trailer, std::size_t payload)
+{
+    if (header.size() != 128 || header[0] != 0x00) return;
+    const std::size_t old = (std::size_t(header[83]) << 24) | (std::size_t(header[84]) << 16) |
+                            (std::size_t(header[85]) << 8)  |  std::size_t(header[86]);
+    if (old == payload) return;
+    const bool crcValid = ((uint16_t(header[124]) << 8) | header[125]) == macBinaryCrc(header.data());
+    header[83] = static_cast<uint8_t>(payload >> 24);
+    header[84] = static_cast<uint8_t>(payload >> 16);
+    header[85] = static_cast<uint8_t>(payload >> 8);
+    header[86] = static_cast<uint8_t>(payload);
+    if (crcValid) {
+        const uint16_t crc = macBinaryCrc(header.data());
+        header[124] = static_cast<uint8_t>(crc >> 8);
+        header[125] = static_cast<uint8_t>(crc);
+    }
+    const std::size_t oldPad = (128 - old % 128) % 128;
+    const std::size_t newPad = (128 - payload % 128) % 128;
+    const std::size_t drop = std::min(oldPad, trailer.size());
+    trailer.erase(trailer.begin(), trailer.begin() + static_cast<std::ptrdiff_t>(drop));
+    trailer.insert(trailer.begin(), newPad, 0x00);
+}

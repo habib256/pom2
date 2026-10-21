@@ -58,6 +58,7 @@ src/Keyboard.cpp
 src/LeChatMauveCard.cpp
 src/LironCard.cpp
 src/M6502.cpp
+src/M6502_Undoc.cpp
 src/M68705P3.cpp
 src/MC6821.cpp
 src/MachineSnapshot.cpp

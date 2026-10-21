@@ -93,6 +93,21 @@ void testCffaAtaState()
     c.loadSnapshotState(kForeign.data(), kForeign.size());
     assert(c.deviceSelectRead(0xA) == 0x00);   // untouched
 
+    // The EEPROM rides in the blob (MAME saves m_eeprom): a byte the config
+    // utility wrote comes back with the frame, then RES re-protects it
+    // (MAME reset_from_bus `m_writeprotect = true`).
+    pom2::CffaCard e(7);
+    e.deviceSelectWrite(0x3, 0);                  // unlock
+    e.expansionRomWrite(0x10, 0x5A);
+    std::vector<uint8_t> eblob;
+    e.appendSnapshotState(eblob);
+    e.expansionRomWrite(0x10, 0x00);
+    e.loadSnapshotState(eblob.data(), eblob.size());
+    assert(e.expansionRomRead(0x10) == 0x5A && "the EEPROM must round-trip");
+    e.onReset();
+    e.expansionRomWrite(0x10, 0x11);
+    assert(e.expansionRomRead(0x10) == 0x5A && "RES must re-protect the EEPROM");
+
     std::printf("  ok: CFFA ATA taskfile + PIO state round-trips\n");
 }
 
@@ -242,10 +257,13 @@ void testClockShiftRegister()
     // MODE_TIME_READ + STB rising edge snapshots the time into the 48-bit
     // shift register, then CLK pulses shift it out. Stop PARTWAY: that
     // half-shifted register is exactly what a rewind used to lose.
-    a.deviceSelectWrite(0x0, 0x18);           // mode latch + STB high
+    a.deviceSelectWrite(0x0, 0x1C);           // TIME_READ + STB: latch the time
+    a.deviceSelectWrite(0x0, 0x08);
+    a.deviceSelectWrite(0x0, 0x0C);           // SHIFT + STB: CLK shifts only here
+    a.deviceSelectWrite(0x0, 0x08);
     for (int i = 0; i < 9; ++i) {             // 9 CLK pulses
-        a.deviceSelectWrite(0x0, 0x18 | 0x02);
-        a.deviceSelectWrite(0x0, 0x18);
+        a.deviceSelectWrite(0x0, 0x08 | 0x02);
+        a.deviceSelectWrite(0x0, 0x08);
     }
 
     std::vector<uint8_t> blob;

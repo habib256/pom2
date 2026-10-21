@@ -40,6 +40,7 @@
 #include "Disk35Image.h"
 #include "PersistentFs.h"
 #include "ResourcePaths.h"
+#include "SessionLoadQueue.h"
 #include "SystemProfile.h"
 
 #include "imgui.h"
@@ -1296,6 +1297,9 @@ int main(int argc, char* argv[])
     deferredCancelled.store(true, std::memory_order_release);
 #ifndef __EMSCRIPTEN__
     autoBootCancelled.store(true, std::memory_order_release);
+    // A `--session-load` posted in the last frame waits for a UI frame that
+    // will never come: close the queue first, or the join hangs the exit.
+    if (auto queue = frameCtx.mainWindow->emul().sessionLoadQueue()) queue->close();
     if (deferredThread.joinable()) deferredThread.join();
     if (autoBootThread.joinable()) autoBootThread.join();
 #endif

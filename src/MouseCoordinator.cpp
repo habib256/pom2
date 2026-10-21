@@ -112,6 +112,25 @@ MouseCoordinator::Snapshot MouseCoordinator::capture() const
         snapshot.holes.mode = memory.peekCpuView(
             static_cast<std::uint16_t>(0x07F8 + snapshot.slot));
     }
+
+    if (iic && snapshot.kind == Kind::IIc) {
+        snapshot.iic.settled = iic->settled();
+        if (snapshot.slot == 4 || snapshot.slot == 7) {
+            // Column 5 on both ROMs: the //c+ moves the cursor and mode
+            // holes to port 7 but keeps the clamp window where the //c has
+            // it (measured under A2DeskTop on each).
+            auto& memory = state.memory();
+            auto hole = [&](std::uint16_t base) {
+                return int(memory.peekCpuView(
+                    static_cast<std::uint16_t>(base + 5)));
+            };
+            snapshot.iic.clampKnown = true;
+            snapshot.iic.minX = hole(0x0478) | (hole(0x0578) << 8);
+            snapshot.iic.minY = hole(0x04F8) | (hole(0x05F8) << 8);
+            snapshot.iic.maxX = hole(0x0678) | (hole(0x0778) << 8);
+            snapshot.iic.maxY = hole(0x06F8) | (hole(0x07F8) << 8);
+        }
+    }
     return snapshot;
 }
 

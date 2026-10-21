@@ -38,6 +38,8 @@
 #include "Block512Backing.h"
 #include "MediaWritePolicy.h"
 
+#include <array>
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -96,17 +98,49 @@ public:
     /// takes the requests, also under the lock, then runs the normal
     /// three-phase eject (`StorageCoordinator::ejectMediaBay`) — so the disk
     /// leaves the drive the way the eject button takes it out, with the
-    /// write-back off the lock. Bits are bays.
-    void requestGuestEject(int bay)
+    /// write-back off the lock.
+    ///
+    /// The request names the MEDIUM (`mediaId`, the mount's identity), not
+    /// only the bay: a disk mounted there before the UI gets to it is not the
+    /// one the guest ejected. And from the call on, the guest sees the drive
+    /// empty (`guestDoorOpen`), as a real UniDisk's is when EJECT returns —
+    /// until the eject lands, or is refused (`cancelGuestEject`).
+    struct GuestEject { int bay; uint64_t mediaId; };
+    void requestGuestEject(int bay, uint64_t mediaId)
     {
-        if (bay >= 0 && bay < 32) guestEjects_ |= 1u << bay;
+        if (bay < 0 || bay >= kGuestEjectBays || mediaId == 0) return;
+        doorOpen_[static_cast<std::size_t>(bay)] = mediaId;
+        guestEjects_ |= 1u << bay;
     }
-    unsigned takeGuestEjectRequests()
+    std::vector<GuestEject> takeGuestEjectRequests()
     {
-        const unsigned r = guestEjects_;
+        std::vector<GuestEject> out;
+        for (int bay = 0; bay < kGuestEjectBays; ++bay)
+            if (guestEjects_ & (1u << bay))
+                out.push_back({bay, doorOpen_[static_cast<std::size_t>(bay)]});
         guestEjects_ = 0;
-        return r;
+        return out;
     }
+    void cancelGuestEject(int bay)
+    {
+        if (bay >= 0 && bay < kGuestEjectBays) doorOpen_[static_cast<std::size_t>(bay)] = 0;
+    }
+    /// The medium `mediaId` in `bay` was ejected by the guest and is only
+    /// waiting for the UI thread to take it out: report the drive empty.
+    bool guestDoorOpen(int bay, uint64_t mediaId) const
+    {
+        return bay >= 0 && bay < kGuestEjectBays && mediaId != 0 &&
+               doorOpen_[static_cast<std::size_t>(bay)] == mediaId;
+    }
+    /// Cheap pre-test for the per-byte paths: no guest eject pending here.
+    bool guestDoorArmed(int bay) const
+    {
+        return bay >= 0 && bay < kGuestEjectBays &&
+               doorOpen_[static_cast<std::size_t>(bay)] != 0;
+    }
+    /// The mount identity in `bay` (0 = empty or unknown), for checking a
+    /// guest eject against the disk now there.
+    virtual uint64_t bayMediaIdentity(int /*bay*/) const { return 0; }
 
     /// Cards whose chain length is the user's to pick — today the Liron,
     /// whose SmartPort bus carries 2, 4, 6 or 8 units. Empty = fixed.
@@ -265,7 +299,10 @@ public:
     virtual void setBayType(int /*bay*/, const std::string& /*kindKey*/) {}
 
 private:
-    unsigned guestEjects_ = 0;   // requestGuestEject; guarded by stateMutex
+    static constexpr int kGuestEjectBays = 32;
+    // requestGuestEject; guarded by stateMutex.
+    unsigned guestEjects_ = 0;
+    std::array<uint64_t, kGuestEjectBays> doorOpen_{};
 };
 
 } // namespace pom2

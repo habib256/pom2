@@ -419,10 +419,12 @@ void M6502::setFlagCarry(int val)
         statusRegister &= ~M6502::Status::C;
 }
 
-void M6502::ADC(void)
+void M6502::ADC(void) { const uint8_t v = memory->memRead(op); cycles++; adcValue(v); }
+// The arithmetic on a fetched value: RRA (M6502_Undoc.cpp) adds the byte it
+// rotated without reading the address a second time.
+void M6502::adcValue(uint8_t Op2)
 {
- uint8_t Op1 = accumulator, Op2 = memory->memRead(op);
-    cycles++;
+ uint8_t Op1 = accumulator;
     // Carry-in captured before any flag math overwrites C below — the CMOS
     // decimal-mode V recomputation needs it after C has been clobbered with
     // the BCD carry-out.
@@ -515,10 +517,10 @@ void M6502::setFlagBorrow(int val)
         statusRegister &= ~M6502::Status::C;
 }
 
-void M6502::SBC(void)
+void M6502::SBC(void) { const uint8_t v = memory->memRead(op); cycles++; sbcValue(v); }
+void M6502::sbcValue(uint8_t Op2)   // ISC / USBC: see adcValue
 {
-uint8_t Op1 = accumulator, Op2 = memory->memRead(op);
-    cycles++;
+uint8_t Op1 = accumulator;
 
     if (statusRegister & M6502::Status::D)
     {
@@ -1411,68 +1413,11 @@ void M6502::applyDispatch(CpuMode mode)
         opcodeTable[0x0F + n * 0x10] = u3; // BBRn zp,offset
         opcodeTable[0x8F + n * 0x10] = u3; // BBSn zp,offset
     }
-    // NMOS undocumented multi-byte opcodes. Full semantics (SLO/RLA/SRE/
-    // RRA/SAX/LAX/DCP/ISC, ANC/ALR/ARR/XAA/SBX, TAS/LAS/AHX) are NOT
-    // modelled — MAME `m6502/m6502.cpp` (`om6502.lst`) implements them all;
-    // nothing in the POM2 corpus needs the results yet. What MUST be right
-    // is the byte length, or the instruction stream desyncs (the operand
-    // bytes get decoded as opcodes — cracked NMOS loaders embed these).
-    //
-    //   $x3 column — (zp,X)/(zp),Y RMW combos: all 2-byte on NMOS.
-    //   $xB column — ANC/ALR/ARR/XAA/LAX/SBX #imm: 2-byte;
-    //                SLO/RLA/SRE/RRA/TAS/LAS/DCP/ISC abs,Y: 3-byte.
-    //
-    // Note $CB/$DB: WAI/STP exist only on WDC 65C02; on NMOS these are
-    // SBX #imm (2-byte) and DCP abs,Y (3-byte) — mapping them to 1-byte
-    // NOPs (as a previous revision did) desynced the stream.
-    auto uimm = OpcodeEntry{&M6502::UnoffImm, nullptr};
-    // Lengths were right; the CYCLES were the generic 3/5 and undershot
-    // almost every one of these by 1-5 (bug hunt #5, Tom Harte 6502 corpus).
-    // $x3 column: SLO/RLA/SRE/RRA/DCP/ISC (zp,X) and (zp),Y are 8-cycle
-    // RMWs; $83 SAX (zp,X), $93 AHX (zp),Y and $A3 LAX (zp,X) are 6;
-    // $B3 LAX (zp),Y is 5+p.
-    {
-        const auto ind8 = OpcodeEntry{&M6502::UnoffInd8, nullptr};
-        const auto ind6 = OpcodeEntry{&M6502::UnoffInd6, nullptr};
-        for (int opc : {0x03,0x13,0x23,0x33,0x43,0x53,0x63,0x73,
-                       0xC3,0xD3,0xE3,0xF3}) opcodeTable[opc] = ind8;
-        for (int opc : {0x83,0x93})           opcodeTable[opc] = ind6;   // SAX/AHX: store
-        opcodeTable[0xA3] = OpcodeEntry{&M6502::UnoffInd6R, nullptr};    // LAX (zp,X): reads
-        opcodeTable[0xB3] = OpcodeEntry{&M6502::UnoffIndY5, nullptr};
-        // $x7 / $xF columns (mapped to u2/u3 by the Rockwell loop above):
-        // only SAX/LAX ($87/$97/$A7/$B7, $8F/$AF/$BF) are cheap reads — the
-        // rest are RMWs.
-        for (int opc : {0x07,0x27,0x47,0x67,0xC7,0xE7})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffZp5,  nullptr}; // zp   (5)
-        for (int opc : {0x17,0x37,0x57,0x77,0xD7,0xF7})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffZpX6, nullptr}; // zp,X (6)
-        for (int opc : {0x97,0xB7})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffZpX,  nullptr}; // zp,Y (4)
-        for (int opc : {0x0F,0x2F,0x4F,0x6F,0xCF,0xEF})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs6, nullptr}; // abs   (6)
-        for (int opc : {0x1F,0x3F,0x5F,0x7F,0xDF,0xFF})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs7, nullptr}; // abs,X (7)
-        // $AF LAX abs READS its effective address, $8F SAX abs WRITES it —
-        // same 4 cycles, different bus cycle, and on an Apple II that address
-        // can be a soft switch (see UnoffAbs4).
-        opcodeTable[0xAF] = OpcodeEntry{&M6502::UnoffAbs4,  nullptr}; // LAX abs (4)
-        opcodeTable[0x8F] = OpcodeEntry{&M6502::UnoffAbsSt, nullptr}; // SAX abs (4)
-        for (int opc : {0xBB,0xBF})
-            opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbsY, nullptr}; // abs,Y (4+p)
-    }
-    opcodeTable[0x0B] = uimm; // ANC #imm
-    opcodeTable[0x2B] = uimm; // ANC #imm
-    opcodeTable[0x4B] = uimm; // ALR #imm
-    opcodeTable[0x6B] = uimm; // ARR #imm
-    opcodeTable[0x8B] = uimm; // XAA #imm
-    opcodeTable[0xAB] = uimm; // LAX #imm
-    opcodeTable[0xCB] = uimm; // SBX #imm (65C02 WAI lives here)
-    opcodeTable[0xEB] = uimm; // USBC #imm
-    // $xB abs,Y: the RMW six are 7, TAS is genuinely 5, LAS ($BB) is 4+p and
-    // was set above — do not re-clobber it.
-    for (int opc : {0x1B,0x3B,0x5B,0x7B,0xDB,0xFB})
-        opcodeTable[opc] = OpcodeEntry{&M6502::UnoffAbs7, nullptr}; // SLO/RLA/SRE/RRA/DCP/ISC abs,Y (7)
-    opcodeTable[0x9B] = u3;   // TAS abs,Y (5)
+    // NMOS undocumented multi-byte opcodes WITH their results (SLO/RLA/SRE/
+    // RRA/SAX/LAX/DCP/ISC, ANC/ALR/ARR/ANE/LXA/SBX/USBC, SHA/SHX/SHY/TAS/
+    // LAS): M6502_Undoc.cpp. They were length- and cycle-correct NOPs, and
+    // the French Touch corpus machine's cycle-counted code uses LAX/SAX/SLO.
+    installNmosUndocumented();
 }
 
 void M6502::Unoff1(void)
@@ -1518,11 +1463,8 @@ void M6502::UnoffZpX(void)   // 2 bytes, 4 cycles: NOP zp,X ($54/$D4/$F4)
 // touched the bus at all, which is a bigger hole than the missing indexed
 // dummy read fixed in bug hunt #8 (that one lost a SECOND access; this one
 // loses the only one). Same rule, same witness: cycle counts do not move, the
-// soft-switch side effect does. The STORE forms ($8F/$83/$93 SAX/AHX, $9B/$9C/
-// $9E/$9F TAS/SHY/SHX/AHX) and the RMW forms ($x3/$x7/$xB/$xF SLO/RLA/SRE/RRA/
-// DCP/ISC) still emit nothing: their bus cycle is a WRITE whose value comes
-// from semantics POM2 deliberately does not model, and writing a wrong byte
-// into RAM would be worse than writing none. MAME `om6502.lst` nop_aba /
+// soft-switch side effect does. The LAX/SAX/RMW/store forms now live in
+// M6502_Undoc.cpp with their real results. MAME `om6502.lst` nop_aba /
 // nop_abx / lax_*, `ow65c02.lst` nop_c_aba ($DC/$FC).
 void M6502::UnoffAbs4(void)  // 3 bytes, 4 cycles: NOP abs ($0C/$AF, $DC/$FC on CMOS)
 {
@@ -1530,58 +1472,6 @@ void M6502::UnoffAbs4(void)  // 3 bytes, 4 cycles: NOP abs ($0C/$AF, $DC/$FC on 
     ea |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
     (void)memory->memRead(ea);
     cycles += 3;
-}
-// $8F (SAX abs) shares the 3-byte/4-cycle shape but WRITES A&X at the
-// effective address instead of reading it — no access, see above.
-void M6502::UnoffAbsSt(void) // 3 bytes, 4 cycles: SAX abs ($8F, NMOS)
-{
-    programCounter += 2;
-    cycles += 3;
-}
-// $A3 (LAX (zp,X)) — the one 6-cycle (zp,X) undoc that READS. Its siblings
-// $83/$93 (SAX/AHX) write, and keep the access-free UnoffInd6.
-void M6502::UnoffInd6R(void) // 2 bytes, 6 cycles: LAX (zp,X) ($A3, NMOS)
-{
-    const uint8_t zp = static_cast<uint8_t>(memory->memRead(programCounter++) + xRegister);
-    uint16_t ea = memory->memRead(zp);
-    ea |= static_cast<uint16_t>(memory->memRead(static_cast<uint8_t>(zp + 1))) << 8;
-    (void)memory->memRead(ea);
-    cycles += 5;
-}
-// The undocumented NMOS opcodes are modelled as length-correct NOPs, but a
-// NOP that costs the WRONG number of cycles is still a raster bug: the
-// //e Unenhanced PAL profile is the French Touch corpus machine, and its
-// cycle-counted code embeds LAX/SAX/SLO. Totals from the Tom Harte 6502
-// corpus (10 000 vectors per opcode, bug hunt #5); the generic Unoff2/Unoff3
-// (3/5) were right for only a handful of them.
-void M6502::UnoffZp5(void)   { programCounter++;    cycles += 4; }
-void M6502::UnoffZpX6(void)  { programCounter++;    cycles += 5; }
-void M6502::UnoffInd6(void)  { programCounter++;    cycles += 5; }
-void M6502::UnoffInd8(void)  { programCounter++;    cycles += 7; }
-void M6502::UnoffAbs6(void)  { programCounter += 2; cycles += 5; }
-void M6502::UnoffAbs7(void)  { programCounter += 2; cycles += 6; }
-// The two indexed READ forms pay the page-cross penalty, same rule (and
-// same reason) as UnoffAbsX: 4+p / 5+p, not a flat count.
-void M6502::UnoffAbsY(void)
-{
-    uint16_t base = memory->memRead(programCounter++);
-    base |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
-    const uint16_t ea = static_cast<uint16_t>(base + yRegister);
-    cycles += 3;
-    if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
-    nmosIndexDummyRead(base, ea, /*always=*/false);
-    (void)memory->memRead(ea);          // LAS/LAX abs,Y really read — see UnoffAbs4
-}
-void M6502::UnoffIndY5(void)
-{
-    const uint8_t zp = memory->memRead(programCounter++);
-    uint16_t base = memory->memRead(zp);
-    base |= static_cast<uint16_t>(memory->memRead(static_cast<uint8_t>(zp + 1))) << 8;
-    const uint16_t ea = static_cast<uint16_t>(base + yRegister);
-    cycles += 4;
-    if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
-    nmosIndexDummyRead(base, ea, /*always=*/false);
-    (void)memory->memRead(ea);          // LAX (zp),Y really reads — see UnoffAbs4
 }
 void M6502::UnoffAbsX(void)  // 3 bytes, 4+p cycles: NOP abs,X (NMOS TOP)
 {
@@ -2023,8 +1913,6 @@ void M6502::executeOpcode(void)
              entry.addrMode == &M6502::UnoffImm  ||
              entry.addrMode == &M6502::UnoffZpX  ||
              entry.addrMode == &M6502::UnoffAbs4 ||
-             entry.addrMode == &M6502::UnoffAbsSt ||
-             entry.addrMode == &M6502::UnoffInd6R ||
              entry.addrMode == &M6502::UnoffAbsX ||
              entry.addrMode == &M6502::Unoff5C   ||
              entry.addrMode == &M6502::Hang)) {
@@ -2301,6 +2189,7 @@ void M6502::step(void)
         }
         if (debugHook_ != nullptr) {
             cycles = 0;
+            interruptEntered_ = true;
         } else {
             executeOpcode();
         }
@@ -2329,8 +2218,10 @@ int M6502::run(int maxCycles)
             // Stop before execution; instrumentation stays off the fast loop.
             if (debugHook_->onInstruction(programCounter)) break;
             const uint16_t pcBefore = programCounter;
+            interruptEntered_ = false;
             step();
-            debugHook_->onStepCompleted(*this, pcBefore, cycles);
+            if (takeInterruptEntered()) debugHook_->onInterruptEntered(*this, pcBefore, cycles);
+            else                   debugHook_->onStepCompleted(*this, pcBefore, cycles);
             cyclesExecuted += cycles;
             // A watchpoint fires mid-instruction and cannot un-do the access,
             // so it halts at the first instruction boundary after it. The

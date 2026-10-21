@@ -129,6 +129,9 @@ bool CffaCard::ejectImage()
 
 void CffaCard::onReset()
 {
+    // MAME a2cffa.cpp reset_from_bus(): `m_writeprotect = true`. A program
+    // that unlocked the EEPROM ($C0n3) and was reset kept it writable.
+    writeProtect_ = true;
     ata_.reset();
     lastReadData_  = 0;
     lastWriteData_ = 0;
@@ -209,33 +212,42 @@ void CffaCard::expansionRomWrite(uint16_t offset, uint8_t v)
 }
 
 namespace {
-constexpr uint8_t kCffaSnapMagic[4] = { 'C', 'F', 'A', '1' };
+constexpr uint8_t kCffaSnapMagic[4]   = { 'C', 'F', 'A', '1' };
+// v2 appends the EEPROM image: MAME saves it (`save_item(NAME(m_eeprom))`),
+// and without it a rewind or a session load could not undo the settings the
+// CFFA config utility wrote there.
+constexpr uint8_t kCffaSnapMagicV2[4] = { 'C', 'F', 'A', '2' };
 }
 
 void CffaCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
-    out.insert(out.end(), kCffaSnapMagic, kCffaSnapMagic + 4);
+    out.insert(out.end(), kCffaSnapMagicV2, kCffaSnapMagicV2 + 4);
     out.push_back(static_cast<uint8_t>(lastReadData_));
     out.push_back(static_cast<uint8_t>(lastReadData_ >> 8));
     out.push_back(static_cast<uint8_t>(lastWriteData_));
     out.push_back(static_cast<uint8_t>(lastWriteData_ >> 8));
     out.push_back(writeProtect_ ? 1 : 0);
     ata_.appendSnapshotState(out);
+    out.insert(out.end(), rom_.begin(), rom_.end());
 }
 
 void CffaCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     // Foreign/undersized blobs are ignored (a different card type sat in
     // this slot when the frame was recorded).
-    if (data == nullptr ||
-        len < 4 + 5 + pom2::AtaBlockDevice::kSnapshotBytes ||
-        std::memcmp(data, kCffaSnapMagic, 4) != 0)
-        return;
+    // A v1 blob carries no EEPROM and leaves the live image alone.
+    constexpr size_t kHead = 4 + 5 + pom2::AtaBlockDevice::kSnapshotBytes;
+    if (data == nullptr || len < kHead) return;
+    const bool v2 = std::memcmp(data, kCffaSnapMagicV2, 4) == 0;
+    if (!v2 && std::memcmp(data, kCffaSnapMagic, 4) != 0) return;
+    if (v2 && len < kHead + kRomBytes) return;
     size_t p = 4;
     lastReadData_  = static_cast<uint16_t>(data[p] | (data[p + 1] << 8)); p += 2;
     lastWriteData_ = static_cast<uint16_t>(data[p] | (data[p + 1] << 8)); p += 2;
     writeProtect_  = data[p++] != 0;
-    ata_.loadSnapshotState(data + p, len - p);
+    ata_.loadSnapshotState(data + p, pom2::AtaBlockDevice::kSnapshotBytes);
+    p += pom2::AtaBlockDevice::kSnapshotBytes;
+    if (v2) std::memcpy(rom_.data(), data + p, kRomBytes);
 }
 
 } // namespace pom2

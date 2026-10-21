@@ -400,22 +400,34 @@ void FujiNetCard::handleSmartPortCall()
                    static_cast<uint16_t>(readGuest(retHiAddr) << 8);
     const uint16_t callRet = ret;
 
-    // Step the return address past the three inline bytes so the ROM's RTS
-    // lands on the instruction after them.
-    ret = static_cast<uint16_t>(ret + 3);
+    // Step the return address past the inline bytes so the ROM's RTS lands on
+    // the instruction after them: three for a standard call, five for an
+    // extended one (command bit 6 set, 4-byte list pointer — IIgs Firmware
+    // Reference, SmartPort chapter). Stepping 3 on an extended call returned
+    // into the pointer's high bytes, usually $00 = BRK.
+    const uint32_t inlineWide = static_cast<uint32_t>(callRet) + 1;
+    const bool inlineReadable = inlineWide <= 0xFFFF &&
+        rangeIsSafe(static_cast<uint16_t>(inlineWide), 1);
+    const uint8_t command = inlineReadable
+        ? readGuest(static_cast<uint16_t>(inlineWide)) : 0;
+    const bool extended = (command & 0x40) != 0;
+    const std::size_t inlineLen = extended ? 5 : 3;
+    ret = static_cast<uint16_t>(ret + inlineLen);
     writeGuest(retLoAddr, static_cast<uint8_t>(ret & 0xFF));
     writeGuest(retHiAddr, static_cast<uint8_t>(ret >> 8));
 
-    // The three inline bytes and the four-byte command list must be contiguous
+    // The inline bytes and the four-byte command list must be contiguous
     // guest RAM. Validate before any uint16_t addition can wrap $FFFF->$0000.
-    const uint32_t inlineWide = static_cast<uint32_t>(callRet) + 1;
-    if (inlineWide > 0xFFFF ||
-        !rangeIsSafe(static_cast<uint16_t>(inlineWide), 3)) {
+    if (!inlineReadable ||
+        !rangeIsSafe(static_cast<uint16_t>(inlineWide), inlineLen)) {
         finish(kSpIoError);
         return;
     }
+    // Extended calls are not implemented (a //e's SmartPort software issues
+    // standard ones); refuse them before reading a 2-byte pointer out of a
+    // 4-byte one, on the built-in N: path too.
+    if (extended) { finish(kSpBadCommand); return; }
     const uint16_t inlineAddr = static_cast<uint16_t>(inlineWide);
-    const uint8_t  command = readGuest(inlineAddr);
     const uint16_t cmdList = readGuest16(static_cast<uint16_t>(inlineAddr + 1));
     if (!rangeIsSafe(cmdList, 4)) { finish(kSpIoError); return; }
 
@@ -629,9 +641,9 @@ void FujiNetCard::handleSmartPortCall()
     }
 
     default:
-        // Extended ($4x) and unknown calls. A //e never issues them, and
-        // answering "bad command" is what a real controller that does not
-        // implement them does.
+        // Unknown standard calls (extended ones are refused above). Answering
+        // "bad command" is what a real controller that does not implement
+        // them does.
         finish(kSpBadCommand);
         return;
     }

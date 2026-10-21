@@ -351,9 +351,48 @@ void checkSoundIIWarmRequest()
     if (!card.isIrqAsserted()) fail("post-reset speech lost the next repeat request");
 }
 
+// The cycle counter rolls back under a Sound II with no blob for it (a bare
+// setCycleCounter, a card plugged after the snapshot). The AY queue was
+// dropped there, but the SSI263's was not: the old timeline's stamps sat at
+// the front and in-order playback held every new phoneme behind them.
+void checkSoundIIRollbackDropsStaleSpeech()
+{
+    Memory memory;
+    M6502 cpu(&memory);
+    MockingboardCard card(4, MockingboardCard::Variant::SoundII);
+    card.setCpu(&cpu);
+    card.setSampleRate(44100);
+    card.setVolume(1.0f);
+    constexpr uint64_t kOld = 50'000'000;
+    memory.setCycleCounter(kOld);
+    card.advanceCycles(1);
+    card.slotRomWrite(0x43, 0x8F);
+    card.slotRomWrite(0x44, 0x80);
+    card.slotRomWrite(0x40, 0xCA);     // queued at the OLD timeline's stamp
+    card.slotRomWrite(0x43, 0x0F);
+    memory.setCycleCounter(1000);      // rollback, no snapshot of the card
+    card.advanceCycles(1);
+    card.slotRomWrite(0x40, 0xD2);     // a phoneme on the new timeline
+    constexpr int frames = 512;
+    std::vector<float> out(frames);
+    uint64_t previous = 1000;
+    double audible = 0.0;
+    for (int block = 0; block < 40; ++block) {
+        const auto now = 1000 + static_cast<uint64_t>((block + 1) * frames * 1022727.0 / 44100);
+        memory.setCycleCounter(now);
+        card.advanceCycles(static_cast<int>(now - previous));
+        previous = now;
+        card.audioSource()->fillAudioBuffer(out.data(), frames);
+        audible += energy(out, 0, frames);
+    }
+    if (!(audible > 0.0))
+        fail("after a cycle rollback the stale SSI263 queue kept new speech mute");
+}
+
 int main()
 {
     std::vector<float> buf(kFrames, 0.0f);
+    checkSoundIIRollbackDropsStaleSpeech();
     checkExactEventBoundary();
     checkTimedFrameModeLatch();
     for (uint32_t sr : {22050u, 44100u, 48000u}) checkSoundIIWarmReset(sr);

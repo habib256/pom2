@@ -131,14 +131,18 @@ bool MainWindow::setSlotCardFromCli(int slot, const std::string& key,
         return false;
     }
     const std::string settingKey = pom2::slotCardSettingKey(cfg, slot);
+    const bool hadKey = settings->has(settingKey);
     const std::string previous = settings->getString(settingKey, "");
     settings->setString(settingKey, key);
-    if (!settingsReadOnly()) (void)settings->save();
+    // Saved only once the machine took it: saving first left a refused card
+    // in state.cfg, to come back at the next launch.
     if (!restartEmulationFromSettings()) {
-        settings->setString(settingKey, previous);
+        if (hadKey) settings->setString(settingKey, previous);
+        else        settings->erase(settingKey);
         error = "the slot rebuild was refused";
         return false;
     }
+    if (!settingsReadOnly()) (void)settings->save();
     return true;
 }
 

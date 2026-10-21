@@ -138,6 +138,11 @@ public:
     { return { 2, 4, 6, 8, 10, 12, 14 }; }
     void         setBayCount(int n) override { setUnitCount(n); }
     MediaBayInfo bayInfo(int bay) const override;
+    uint64_t bayMediaIdentity(int bay) const override
+    {
+        if (bay < 0 || bay >= kMaxUnits) return 0;
+        return busUnits_[static_cast<std::size_t>(bay)].loadedIdentity();
+    }
     bool         mountBay(int bay, const std::string& path,
                           std::string& errOut) override;
     /// Two-phase mount, phase 2 — hard disks only. An image the size of an
@@ -272,7 +277,13 @@ private:
         /// A UniDisk's EJECT: the card's owner takes the 3.5" out.
         void requestEject() override
         {
-            if (owner_ && disk()) owner_->requestGuestEject(bay_);
+            if (owner_ && disk()) owner_->requestGuestEject(bay_, img_->mountId());
+        }
+        /// The bay's mount identity, as loaded — not as the guest sees it.
+        uint64_t loadedIdentity() const
+        {
+            if (img_ && img_->isLoaded()) return img_->mountId();
+            return (blk_ && blk_->isLoaded()) ? blk_->mountId() : 0;
         }
         bool hasMedia() const override { return disk() || hard(); }
         uint64_t mediaIdentity() const override
@@ -328,7 +339,14 @@ private:
             return lastUnidisk_;
         }
     private:
-        bool disk() const { return img_ && img_->isLoaded(); }
+        // A disk the guest ejected is out of the drive from its side until
+        // the UI thread takes it out (MountableMediaCard::requestGuestEject).
+        bool disk() const
+        {
+            return img_ && img_->isLoaded() &&
+                   !(owner_ && owner_->guestDoorArmed(bay_) &&
+                     owner_->guestDoorOpen(bay_, img_->mountId()));
+        }
         bool hard() const { return blk_ && blk_->isLoaded(); }
         Disk35Image*     img_ = nullptr;
         Block512Backing* blk_ = nullptr;

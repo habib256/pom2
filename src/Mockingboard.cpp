@@ -847,8 +847,8 @@ void MockingboardCard::onPowerCycle()
 void MockingboardCard::resetCard(bool powerCycle)
 {
     std::lock_guard<std::mutex> lk(mtx);
-    via_[0]->reset();
-    via_[1]->reset();
+    via_[0]->reset(powerCycle);
+    via_[1]->reset(powerCycle);
     ay_[0]->reset();
     ay_[1]->reset();
     // Mockingboard-C RESET is not connected to SSI263 !PD/!RST pin 18.
@@ -1027,7 +1027,10 @@ void MockingboardCard::syncToCpuCycleAt(uint64_t now)
         // the card is in the blob; this covers the rest (a bare
         // `setCycleCounter`, a card plugged after the snapshot was taken).
         constexpr uint64_t kTimelineBreakCycles = 1024;
-        if (lastSyncCycle_ - now > kTimelineBreakCycles) invalidateAyTimeline();
+        if (lastSyncCycle_ - now > kTimelineBreakCycles) {
+            invalidateAyTimeline();
+            if (ssi_) ssi_->invalidateTimeline();   // its queue too
+        }
         lastSyncCycle_ = now;
         return;
     }

@@ -384,23 +384,7 @@ void ImageWriter::setPowered(bool on)
     if (on == powered_) return;
     powered_ = on;
     if (sound_) sound_->power(on);
-    if (!on) {
-        clearCustomGlyphs();            // RAM: lost at power-off (ch. 7)
-        // So is everything the microprocessor was in the middle of: a
-        // half-received ESC I would otherwise eat the next job's text, and
-        // a half-received ESC its first byte.
-        customLoad_ = CustomLoad::Off;
-        customFont_ = 0;
-        escSeen_ = fsSeen_ = false;
-        escCmd_  = 0;
-        numParam_ = neededParam_ = 0;
-        epsonNeed_ = epsonCount_ = 0;
-        diabloNeed_ = 0;
-        diabloCmd_  = 0;
-        bitGraph_.remBytes = 0;
-        bitGraph_.readBytesColumn = 0;
-        repeatRemaining_ = 0;
-    }
+    if (!on) { clearCustomGlyphs(); abandonPendingInput(); }   // RAM: lost (ch. 7)
     // DELIBERATELY not resetPrinter() and not newPage(): switching a real
     // printer off does not eject the sheet or wipe what is on it. That is
     // what `powerCycle()` is for, and conflating the two is why "power off"
@@ -424,9 +408,7 @@ void ImageWriter::resetPrinter()
 {
     color_        = 7 << 5;             // COLOR_BLACK
     curX_ = curY_ = 0.0;
-    escSeen_ = fsSeen_ = false;
-    escCmd_  = 0;
-    numParam_ = neededParam_ = 0;
+    abandonPendingInput();   // ImageWriter_CustomChars.cpp
     topMargin_    = 0.0;
     // Practically every Apple II printer driver (including GS/OS) assumes
     // the ImageWriter's 1/4 inch left margin (imagewriter.cpp:281).
@@ -443,34 +425,13 @@ void ImageWriter::resetPrinter()
         definedUnit_ = mp.defaultUnit;
     }
     quality_      = Quality::Correspondence;   // ESC a default (Table 4-1)
-    // The ESC/P collector as well: a reset arriving mid-command would
-    // otherwise leave the parser expecting parameters and eat the start of
-    // the next job.
-    epsonNeed_    = 0;
-    epsonCount_   = 0;
-    // Same trap, third parser: a reset arriving mid-command must not leave
-    // the collector armed, or it eats the first byte of the next job. The
-    // tab rack is part of the reset too — the 630's ESC 2 exists precisely
+    // The 630's tab rack is part of the reset — its ESC 2 exists precisely
     // because tabs otherwise survive everything.
-    diabloNeed_   = 0;
-    diabloCmd_    = 0;
     diabloTabs_.clear();
     // Reference sets STYLE_BOLD here to fatten a thin TrueType face; on a
     // dot-matrix cell that smears every glyph — see ImageWriter.h.
     style_        = 0;
     extraIntraSpace_ = 0.0;
-    // Standard font, any ESC I abandoned; the set survives a reset (ch. 7).
-    customFont_   = 0;
-    customLoad_   = CustomLoad::Off;
-    bitGraph_.remBytes = 0;
-    bitGraph_.readBytesColumn = 0;
-    // A repeat run still owed is part of the parser state a reset clears —
-    // and leaving it armed would keep `busy()` asserted with nothing left
-    // in the input buffer to explain it. (`updateSwitch()` below is what
-    // restores `msb_`, so ESC V/U's deferred restore is covered too.)
-    repeatRemaining_   = 0;
-    repeatPatPos_      = 0;
-    repeatRestoresMsb_ = false;
     hmi_          = -1.0;
     switcha_      = 0;                  // SWITCHA_CHARSET_US
     // ' ' is B-6 set (bit 7 ignored, the factory setting). B-3 must come up

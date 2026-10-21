@@ -71,8 +71,20 @@ int main() {
         // A stale "empty" snapshot never permits replacing a now-loaded disk.
         assert(!pom2::mountEmptyDrive(controller, settings, storage, target, other, error));
         assert(settings.getString("disk_path_slot4_drive2", "") == floppy);
+        // The refusal says why, in the user's words, and what to do instead.
+        assert(error.find("already holds a disk") != std::string::npos &&
+               error.find("Eject it first") != std::string::npos);
         target.slot = 5; target.bay = 0; target.kind = pom2::DrivePictureKind::Floppy35;
+        target.label = "Slot 5,1 · UniDisk 3.5\"";
         assert(!pom2::mountEmptyDrive(controller, settings, storage, target, floppy, error));
+        assert(error.find("\"one.dsk\" is a 5.25-inch floppy disk") != std::string::npos &&
+               error.find("takes 3.5-inch disks only") != std::string::npos &&
+               error.find("drop the file onto the emulator screen") != std::string::npos &&
+               error.find("a 5.25-inch drive (Disk II)") != std::string::npos);
+        const auto junk = image("notes.txt", 1000);
+        assert(!pom2::mountEmptyDrive(controller, settings, storage, target, junk, error));
+        assert(error.find("is not a disk image POM2 can read") != std::string::npos &&
+               error.find(".zip") != std::string::npos);
         assert(pom2::mountEmptyDrive(controller, settings, storage, target, floppy35, error));
         target.bay = 1; target.kind = pom2::DrivePictureKind::HardDisk;
         assert(pom2::mountEmptyDrive(controller, settings, storage, target, hd, error));

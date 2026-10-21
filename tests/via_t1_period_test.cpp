@@ -225,6 +225,32 @@ int main()
         std::printf("  advance(n) == n x advance(1) on exact-multiple slices: OK\n");
     }
 
+    // ── RES keeps the T1/T2 latches and SR; only power-up sets them ──────
+    //
+    // R6522 datasheet: RES clears every register except T1/T2 latches and
+    // counters and SR. MAME device_reset (`6522via.cpp:415-449`) never
+    // touches them; AppleWin keeps them on Ctrl-RESET. A driver that arms
+    // the latch once and later restarts T1 with a lone T1CH write got
+    // period $FFxx after F12.
+    {
+        pom2::Via6522 v;
+        v.write(pom2::Via6522::VIA_T1LL, 0x34);
+        v.write(pom2::Via6522::VIA_T1LH, 0x12);
+        v.write(pom2::Via6522::VIA_SR, 0x5A);
+        v.write(pom2::Via6522::VIA_ACR, 0x40);
+        v.reset();
+        assert(v.read(pom2::Via6522::VIA_T1LL) == 0x34 &&
+               v.read(pom2::Via6522::VIA_T1LH) == 0x12 &&
+               "warm RES must keep the T1 latch");
+        assert(v.read(pom2::Via6522::VIA_SR) == 0x5A && "warm RES must keep SR");
+        assert(v.read(pom2::Via6522::VIA_ACR) == 0x00 && "RES clears ACR");
+        v.reset(/*powerCycle=*/true);
+        assert(v.read(pom2::Via6522::VIA_T1LL) == 0xFF &&
+               v.read(pom2::Via6522::VIA_T1LH) == 0xFF &&
+               "power-up puts the T1 latch to $FFFF");
+        std::printf("  RES keeps T1 latch + SR, power-up resets them: OK\n");
+    }
+
     std::printf("via_t1_continuous_period OK (PB7 + PA latch pinned)\n");
     return 0;
 }

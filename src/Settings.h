@@ -83,6 +83,10 @@ public:
     void setBool  (const std::string& key, bool   value);
     void setInt   (const std::string& key, int    value);
     void setFloat (const std::string& key, float  value);
+    /// Absent and empty are different (a missing `slot_N_card` means the
+    /// default map), so an undo has to know which one it is restoring.
+    bool has  (const std::string& key) const { return store.count(key) != 0; }
+    void erase(const std::string& key)       { store.erase(key); }
 
     /// True when the store holds no keys — i.e. `load()` found no file, or
     /// found an empty one. The honest test for "is this a first run?", used

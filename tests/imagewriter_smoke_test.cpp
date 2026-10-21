@@ -1640,6 +1640,28 @@ static void testRepeatRestoresEighthBitSwitch()
     def.printBytes(hi, sizeof hi);
     assert(def.status().headY > y0);
     std::printf("  ESC V keeps switch B-6's eighth bit: OK\n");
+
+    // A power-off in the middle of the run abandons it, and the mask
+    // restore it owed with it: `ESC c` re-derives msb_, a power-off did
+    // not, so the next job's bytes kept ESC V's mask. Both B-6 settings.
+    for (const bool open : { false, true }) {
+        ImageWriter iw(72, ImageWriter::PaperSize::Letter);
+        iw.setPowered(true);
+        if (open) iw.printBytes(open8, sizeof open8);
+        iw.setSpeed(ImageWriter::Speed::Draft);
+        const uint8_t longV[] = { 0x1B, 'V', '9', '9', '9', '9', 0xFF };
+        iw.queueBytes(longV, sizeof longV);
+        iw.tick(1.0 / 60.0);
+        assert(iw.busy() && "the repeat run is still owed");
+        iw.setPowered(false);
+        iw.setPowered(true);
+        iw.setSpeed(ImageWriter::Speed::Instant);
+        const double y1 = iw.status().headY;
+        iw.printBytes(hi, sizeof hi);
+        assert((iw.status().headY == y1) == open &&
+               "after a power-off mid ESC V, $8D follows switch B-6 again");
+    }
+    std::printf("  a power-off mid ESC V restores the B-6 mask: OK\n");
 }
 
 // ── Epson ESC R (charset) must not cancel ESC N (skip over perforation) ──

@@ -271,6 +271,18 @@ public:
         aPrimed_ = false;
     }
 
+    /// The CPU cycle counter rolled back with no blob for this chip (a bare
+    /// `setCycleCounter`, a card plugged after the snapshot): the queued
+    /// events belong to the abandoned timeline. Left in place, the in-order
+    /// playback held every new phoneme until the audio cursor caught up
+    /// with the old stamps, so speech stayed mute for the whole rewind
+    /// depth. Same re-prime as `loadSnapshot`; caller holds the card mutex.
+    void invalidateTimeline()
+    {
+        ctlEvents_.clear();
+        aPrimed_ = false;
+    }
+
     /// Total number of phonemes accepted via writes to $00 since reset.
     /// Surfaces in the UI panel as a heartbeat for "the speech driver
     /// is actively pushing data".

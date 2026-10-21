@@ -4,7 +4,7 @@
 # Each file holds 10 000 single-instruction vectors. This subset spans every
 # addressing-mode timing class + the historically fragile paths (RMW, branch
 # page-cross, JMP-indirect NMOS bug, JSR/RTS/BRK/RTI, PLP flag-load, decimal
-# ADC/SBC). POM2's NMOS core passes ALL of these 100% (140 000 vectors).
+# ADC/SBC). POM2's NMOS core passes ALL of these 100% (290 000 vectors).
 # Run the full 256-opcode set with tests/fetch_tomharte.sh for exhaustive runs.
 a9  40ec9bdd6ecd6d37926b3c0256f6ae0071ee126caf82c67909b6489b90c681cd
 a5  b56e9d48efac9a3e210792b2a0fb7bae891f6f35816affacea379f1afdb4407b
@@ -20,3 +20,21 @@ fe  ab9bed36ae8ba5b3f4738bea6c2fb424304d1dcd2c7131ccab35f5d956bd0716
 40  6d94119e50f14fa56dae56f0a00656cc28c69e8368cfb1299d4289bf9fcbc501
 69  cd05943c2a67e3b38541bdaeca9f64170863fa15da38c2cad21e7039c6bce10b
 e9  ac2d3a110732d1a40036f1cf9d47480237eb1aaac217640c9da42e63486c5752
+# Undocumented NMOS opcodes (M6502_Undoc.cpp, 2026-10-21): one per family —
+# SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC, ARR (decimal BCD fix), ANE/LXA magic,
+# SHA page-cross, LAS. All 66 pass; the full set via fetch_tomharte.sh.
+07  aa9de158061d8eb70219cd17f676ef4b361ced1e7f9a058de19f8df14904f071
+3b  36239f6314b914601c37937fee0ddb8e25bdeb1840b76daa81e5fb3565c20e0d
+4f  bb22132cc4eed11c36f0e2d2ecf1fc2c0c35e12a19ebe968549192c3f55f6c81
+73  a489dbf8ef5929a5f12a4c2d58b3baf573e5a6a5ef271fc8563a0fad30800823
+87  230a3227ff60487ac9b89f2c71f46789cb9b7c41d522793b267a66755f33b9e4
+a7  fe4597130db2bdccd184418ac7cf412b6ed003d35629c61f7fb653fdde6d032e
+b3  baba96ed7b01a335cc99ac4ed90baedb0d63e04d465369fcdf2d48411cdc8814
+c3  9c56a3281bb92cc671ae78a3251cf0c47609e84c988a61ff118ca74fa518bd0f
+ff  d9d029aa994d5e4d6875dfe0e2baf67eae1c90e4e3059c3f529562bcaa29accb
+6b  43aec41d7cb3149788e24bfc00479e264bdcc1b35f4e3751fb4fe7f18542edd8
+8b  7581fc223899e58279d7bfa12f7727c48499e8a75da32e69123fdf508ffe4e71
+ab  b9b5b4f512545f656ab4a5b3726124f008b98f573605f70b71d2d64aec0ed86d
+cb  28ea0b99d7b0b9c4fb35c44eec206421f176b9ae756209a1118ae193886e6181
+93  e6691a022b83c99bfe06708f260a7034414abf548ddf006bc1ba18e080d24b3c
+bb  3502bcc87e9d3223d02aecee2c09bd071737298b07ba2dd4ecd30792a1a2e3f9

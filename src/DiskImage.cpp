@@ -16,6 +16,7 @@
 
 #include "DiskImage.h"
 #include "MediaNotch.h"
+#include "TwoImgHeader.h"
 
 #include "Block512Backing.h"
 #include "AtomicFileReplace.h"
@@ -305,14 +306,14 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
         const uint32_t format    = rd32(12);
         const uint32_t flags     = rd32(16);
         const uint32_t dataOff   = rd32(24);
-        const uint32_t dataLen   = rd32(28);
+        const uint32_t dataLen   = pom2::twoImgDataLength(base);
 
         if (headerLen < 52) {
             r.error = "Refused " + path + ": 2IMG header length " +
                       std::to_string(headerLen) + " is too small (need ≥ 52)";
             return r;
         }
-        if (dataOff < headerLen || dataOff > n ||
+        if (dataOff < headerLen || dataOff > n ||   // headerLen >= 52 above
             dataLen == 0 ||
             static_cast<std::size_t>(dataOff) + dataLen > n) {
             r.error = "Refused " + path +
@@ -2975,6 +2976,7 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
     if (twoImgFormat) {
         out.header  = twoImgHeaderRaw;
         out.trailer = twoImgTrailerRaw;
+        if (!out.payload.empty()) refitMacBinaryEnvelope(out.header, out.trailer, out.payload.size());
     }
     out.valid = true;
     out.seq   = pom2::nextMediaCaptureSeq();
@@ -3178,7 +3180,7 @@ static std::optional<uint64_t> read2mgPayloadLength(const std::string& path)
              | (static_cast<uint64_t>(hdr[o + 3]) << 24);
     };
     const uint64_t off = rd32(24);
-    const uint64_t len = rd32(28);
+    const uint64_t len = pom2::twoImgDataLength(hdr);
     std::error_code ec;
     const uint64_t total =
         static_cast<uint64_t>(std::filesystem::file_size(path, ec));

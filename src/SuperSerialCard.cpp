@@ -363,6 +363,7 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
     size_t taken = 0;
 
     std::lock_guard<std::mutex> lk(bufferMtx);
+    const bool wasFull = txBuf.size() >= kBufCap;
 
     // Telnet option answers first, VERBATIM — they are protocol, not guest
     // data, so they must not be IAC-escaped, and they must not wait behind a
@@ -394,7 +395,7 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
                 out.push_back(b);
                 if (!raw && b == 0xFF) out.push_back(0xFF);   // IAC IAC survives BINARY
             } else {
-                appendTelnetTxEscaped(out, b);
+                appendTelnetTx(out, b);
             }
             ++taken;
         }
@@ -409,12 +410,22 @@ size_t SuperSerialCard::drainTransportTx(std::vector<uint8_t>& out)
                 out.push_back(b);
                 if (!raw && b == 0xFF) out.push_back(0xFF);   // IAC IAC survives BINARY
             } else {
-                appendTelnetTxEscaped(out, b);
+                appendTelnetTx(out, b);
             }
             ++taken;
         }
     }
+    // A CR with no LF already queued behind it is a bare CR: its NUL goes
+    // out now rather than with the next byte (the Apple II's newline IS a
+    // lone CR, and the peer should not wait a keystroke for it).
+    if (txPendingCr_ && (txBuf.empty() || txBuf.front() != '\n')) {
+        out.push_back(0x00);
+        txPendingCr_ = false;
+    }
     lastDrainTime_ = now;
+    // Room again in a ring that held TDRE low: the transmitter is empty,
+    // which on a 6551 is the transmit interrupt (see transmitByte).
+    if (wasFull && taken > 0 && txIrqEnable_) raiseIrqSource(IRQ_TDRE);
     return taken;
 }
 
@@ -568,7 +579,10 @@ void SuperSerialCard::applyCommandReg(uint8_t v)
     // write). That immediate one is what a driver written as "enable the TX
     // interrupt, then WFI until the ISR feeds the next byte" depends on —
     // without it there is no first interrupt and it never starts.
-    if (txIrqEnable && !(irqState_ & IRQ_TDRE)) {
+    // Not while TDRE reads 0: a byte parked behind an inactive CTS, or a
+    // ring a paced peer has filled — the interrupt follows the bit.
+    if (txIrqEnable && !(irqState_ & IRQ_TDRE) && !tdrHeld_ &&
+        !(connected && txBuf.size() >= kBufCap)) {
         irqState_ |= uint8_t{IRQ_TDRE};
     }
 
@@ -656,6 +670,12 @@ void SuperSerialCard::onConnectionEdge(bool nowConnected)
     std::lock_guard<std::mutex> lk(bufferMtx);
     if (prevConnected_ == nowConnected) return;
     prevConnected_ = nowConnected;
+    // A paced peer that filled the ring held TDRE low, with the transmit
+    // interrupt deferred to drainTransportTx. If the peer hangs up instead,
+    // no drain comes, but TDRE reads 1 again (the gate needs `connected`):
+    // the bit going high is the interrupt, or a driver in WFI never wakes.
+    if (!nowConnected && txIrqEnable_ && !tdrHeld_ && txBuf.size() >= kBufCap)
+        raiseIrqSource(IRQ_TDRE);
     // MAME `mos6551.cpp:443-461`: a DCD or DSR pin change toggles the
     // matching status bit and raises IRQ_DCD/IRQ_DSR — but only when DTR
     // is asserted. ProTERM, MODEM.MGR and similar carrier-aware drivers
@@ -670,7 +690,12 @@ void SuperSerialCard::onConnectionEdge(bool nowConnected)
     if (cable_ == Cable::Modem) {
         raiseIrqSource(IRQ_DCD);
     } else if (cable_ == Cable::Auto &&
-               !modemLinesTied_.load(std::memory_order_relaxed)) {
+               !modemLinesTied_.load(std::memory_order_relaxed) &&
+               !printerTap_) {
+        // Only a real pin change interrupts: with the printer tap armed the
+        // Auto cable already holds DCD/DSR up (`inputLinesLocked`), so a peer
+        // coming or going changes neither pin — the //c printer port's
+        // default, which used to take a DCD|DSR interrupt per connection.
         raiseIrqSource(IRQ_DCD | IRQ_DSR);
     }
 }
@@ -927,7 +952,13 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 // TCP buffers TX, so the transmitter is empty the moment a
                 // byte lands — unless CTS is inactive, which parks the byte
                 // in TDR and masks TDRE (MAME `mos6551.cpp:286-289`).
-                uint8_t s = (lines.cts && !tdrHeld_) ? SR_TDRE : 0;
+                // A connected peer is paced at the programmed baud: with the
+                // ring full the transmitter is busy, as the real one is until
+                // its shift register empties. Reporting "empty" anyway let a
+                // fast LIST overrun the ring and lose bytes mid-stream. With
+                // no peer the line goes nowhere, and the 6551 never stalls.
+                const bool txBusy = connected && txBuf.size() >= kBufCap;
+                uint8_t s = (lines.cts && !tdrHeld_ && !txBusy) ? SR_TDRE : 0;
                 s |= statusErrors_;
                 if (!rxBuf.empty()) s |= SR_RDRF;
                 // DCD/DSR are ACTIVE-LOW pins: the status BIT is set when
@@ -1025,7 +1056,9 @@ void SuperSerialCard::transmitByte(uint8_t v)
     // to be computed and thrown away, so a driver programmed with
     // command $05 (DTR on, RX IRQ on, TX IRQ on) wrote one byte,
     // slept waiting for the ISR to ask for the next, and never woke.
-    if (txIrqEnable_) raiseIrqSource(IRQ_TDRE);
+    // …unless a paced peer has filled the ring: TDRE then reads 0 and the
+    // interrupt waits for the drain to make room (drainTransportTx).
+    if (txIrqEnable_ && !(connected && txBuf.size() >= kBufCap)) raiseIrqSource(IRQ_TDRE);
     // Printer tap: mirror the accepted byte into the host-visible
     // spool the ImageWriter drains (see setPrinterTap in the header).
     // The spool is capped: the drain cursor speaks absolute offsets
@@ -1373,7 +1406,9 @@ void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     dtrAsserted_  = data[p++] != 0;
     rxIrqEnable_  = data[p++] != 0;
     echoMode_     = data[p++] != 0;
-    wordLength_   = data[p++];
+    // 5-8 bits are all the control register can program; a corrupt 0-4
+    // would mask every received byte (rxDataMask: 0 → $00).
+    wordLength_   = static_cast<uint8_t>(data[p] >= 5 && data[p] <= 8 ? data[p] : 8); ++p;
     extraStop_    = data[p++] != 0;
     baudIndex_    = static_cast<uint8_t>(data[p++] & 0x0F);
     // Same class of guard: the IRQ mask has four defined sources, and a bit

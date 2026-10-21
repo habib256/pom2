@@ -130,20 +130,28 @@ struct Via6522
     /// IFR.CA1 is still set — MAME `6522via.cpp:662-700` + `:1107-1110`.
     uint8_t latchA = 0xFF;
 
-    inline void reset()
+    /// RES clears every register EXCEPT the T1/T2 latches and counters and
+    /// SR (R6522 datasheet; MAME `6522via.cpp:415-449` device_reset never
+    /// touches m_t1l*/m_t2l*/m_sr; AppleWin `6522.cpp:39-61` keeps them on
+    /// Ctrl-RESET). Only `powerCycle` puts them back to a deterministic
+    /// $FFFF — AppleWin's choice, as a latch < ~7 defeats MB detection.
+    inline void reset(bool powerCycle = false)
     {
         portAOut = portBOut = 0;
         portAIn  = 0xFF;
         latchA   = 0xFF;
-        t1Pb7    = true;     // MAME device_reset (`6522via.cpp:347`)
+        t1Pb7    = true;     // MAME device_reset (`6522via.cpp:433`)
         ddrA = ddrB = 0;
-        acr  = pcr = sr = 0;
-        t1Latch = 0xFFFF;
-        t1Counter = 0xFFFF;
+        acr  = pcr = 0;
+        if (powerCycle) {
+            sr = 0;
+            t1Latch    = 0xFFFF;
+            t1Counter  = 0xFFFF;
+            t2ll       = 0xFF;
+            t2Latch    = 0xFFFF;
+            t2Counter  = 0xFFFF;
+        }
         t1FireArmed = false;
-        t2ll       = 0xFF;
-        t2Latch    = 0xFFFF;
-        t2Counter  = 0xFFFF;
         t2Active   = false;
         ifr = 0;
         ier = 0;

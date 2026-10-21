@@ -328,7 +328,8 @@ both floppy and HDV source files and reloading their IndexedDB checkpoints.
 ## Version 7 device records
 
 CFFA identity is a loaded flag followed by its complete 4096-byte EEPROM.
-Its state is a length-prefixed CFA1/ATA runtime, one taskfile-advance flag,
+Its state is a length-prefixed CFA1/ATA runtime (the rewind blob's CFA2
+form adds the EEPROM, which a session already carries in its identity), one taskfile-advance flag,
 and a length-prefixed BMS1 block medium. This extra flag distinguishes
 IDENTIFY from READ/WRITE without changing the rewind format.
 TransWarp identity is empty or its 4096-byte firmware; volatile state uses

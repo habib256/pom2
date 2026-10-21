@@ -567,6 +567,7 @@ void MainWindow::renderMenuBar()
                 settings->save();
                 auto st = controller->lockState();
                 st.cpu().setCpuMode(cfg.defaultCpu);
+                controller->rewind().clear();   // its frames name the other CPU
             }
             ImGui::BeginDisabled(cmosOnly);
             // On a CMOS-only profile the NMOS override is inert (clamped), so
@@ -580,6 +581,7 @@ void MainWindow::renderMenuBar()
                 settings->save();
                 auto st = controller->lockState();
                 st.cpu().setCpuMode(M6502::CpuMode::NMOS);
+                controller->rewind().clear();   // its frames name the other CPU
             }
             ImGui::EndDisabled();
             if (ImGui::MenuItem("65C02 (CMOS)", nullptr,
@@ -590,6 +592,7 @@ void MainWindow::renderMenuBar()
                 settings->save();
                 auto st = controller->lockState();
                 st.cpu().setCpuMode(M6502::CpuMode::CMOS);
+                controller->rewind().clear();   // its frames name the other CPU
             }
             ImGui::Separator();
             ImGui::TextDisabled("NMOS = original 1975. Disables");
@@ -614,6 +617,20 @@ void MainWindow::renderMenuBar()
                     "where Alt/Option types characters (macOS French: { } [ ] |),\n"
                     "and use the on-screen //e keyboard for the Apple keys.\n"
                     "Windows AltGr never presses them either way.");
+        }
+        if (pom2::profileConfig(activeProfile).noPhysicalSlots) {
+            // The //c keyboard's 80/40 key, read at $C060 (Memory.h). A
+            // latching key on the real machine, so it is a setting, not state.
+            bool forty = settings->getBool("iic_40col_switch", false);
+            if (ImGui::MenuItem("40/80 switch in the 40-column position", nullptr, &forty)) {
+                settings->setBool("iic_40col_switch", forty);
+                if (!settingsReadOnly()) settings->save();
+                controller->lockState().memory().setIic40ColumnSwitch(forty);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "The //c's 40/80 key, above the keyboard. Programs that\n"
+                    "read it ($C060) choose 40 or 80 columns from it.");
         }
         {
             // Zip Chip — an accelerator in the 6502 SOCKET, not a slot card,
@@ -1163,7 +1180,7 @@ void MainWindow::renderStatusBar()
                                        ICON_FA_ARROW_RIGHT
                                        " Ctrl+Alt+G or middle click to release");
                 }
-            } else if (!mouseGrabbed_ && screenHovered_ &&
+            } else if (!mouseGrabbed_ && screenHovered_ && !mouseAbsoluteActive_ &&
                        mouseCoordinator_->capture().plugged() && roomFor(30.0f)) {
                 // Not captured, but the pointer is over the emulated screen
                 // with a Mouse Card on the bus — the exact moment the user is

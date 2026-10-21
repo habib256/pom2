@@ -283,7 +283,9 @@ public:
     /// Phase 2, to be called WITHOUT the lock: perform the deferred write.
     /// Static because the backing it came from may no longer exist.
     ///
-    /// `newMountTime` (optional, host-folder case only): on success, receives
+    /// `newMountTime` (optional, host-folder case only): whenever the decode
+    /// walk ran (success or partial failure; untouched when it stopped before
+    /// writing anything), receives
     /// the stamp the STILL-MOUNTED volume must adopt as its mount time. The
     /// decode has just written files whose mtime is now later than the old
     /// stamp; without this, the very next flush classifies POM2's own output

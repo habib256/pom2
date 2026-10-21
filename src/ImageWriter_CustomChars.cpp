@@ -27,6 +27,39 @@
 
 namespace pom2 {
 
+namespace {
+constexpr uint8_t kSwitchBEighthDataBit = 0x20;   // switch B-6, as in ImageWriter.cpp
+}
+
+// Everything the printer was in the middle of receiving, which `ESC c` and a
+// power-off both abandon: a half-received command must not eat the start of
+// the next job. Every parser has its collector here (ImageWriter, ESC/P,
+// Diablo), and the standard font comes back with any ESC I dropped — the
+// SET itself survives a reset and is lost at power-off (ch. 7).
+void ImageWriter::abandonPendingInput()
+{
+    escSeen_ = fsSeen_ = false;
+    escCmd_  = 0;
+    numParam_ = neededParam_ = 0;
+    epsonNeed_  = 0;
+    epsonCount_ = 0;
+    diabloNeed_ = 0;
+    diabloCmd_  = 0;
+    customFont_ = 0;
+    customLoad_ = CustomLoad::Off;
+    bitGraph_.remBytes = 0;
+    bitGraph_.readBytesColumn = 0;
+    // A repeat run still owed would keep `busy()` asserted with nothing in
+    // the input buffer to explain it. ESC V/U's deferred `msb_` restore is
+    // owed with it: `ESC c` re-derives msb_ in updateSwitch(), but a power-off
+    // does not, and left bit 7 masked for every byte of the next job.
+    if (repeatRestoresMsb_)
+        msb_ = (switchb_ & kSwitchBEighthDataBit) ? 0 : 255;
+    repeatRemaining_   = 0;
+    repeatPatPos_      = 0;
+    repeatRestoresMsb_ = false;
+}
+
 void ImageWriter::clearCustomGlyphs()
 {
     for (CustomGlyph& g : customGlyphs_) g = CustomGlyph{};
