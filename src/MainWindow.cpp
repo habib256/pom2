@@ -1549,21 +1549,15 @@ void MainWindow::render()
     // ImGuiMouseCursor_None at EndFrame by calling
     // glfwSetInputMode(GLFW_CURSOR_HIDDEN); on the next frame, leaving
     // it Normal (default ImGuiMouseCursor_Arrow) brings the OS cursor
-    // back. The screen rect is fresh because `renderScreenWindow()` ran
-    // earlier this frame.
+    // back. Hover, NOT rect containment: the rect is still there when a
+    // menu, popup or floating panel covers the screen, and stale when the
+    // screen window is hidden, so a rect test hid the host cursor over the
+    // rest of the UI. `screenHovered_` is fresh because
+    // `renderScreenWindow()` ran earlier this frame.
     const auto mouseInventory = mouseCoordinator_->capture();
-    if (mouseInventory.appleWinPlugged) {
-        const bool mouseOn = mouseInventory.appleWin.mouseOn();
-        const float w = screenRectMax.x - screenRectMin.x;
-        const float h = screenRectMax.y - screenRectMin.y;
-        const bool insideWidget =
-            w > 0.0f && h > 0.0f &&
-            lastMouseHostX >= double(screenRectMin.x) &&
-            lastMouseHostX <= double(screenRectMax.x) &&
-            lastMouseHostY >= double(screenRectMin.y) &&
-            lastMouseHostY <= double(screenRectMax.y);
-        if (mouseOn && insideWidget) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_None);
-        }
+    if (mouseInventory.appleWinPlugged && screenHovered_ && !mouseGrabbed_ &&
+        mouseInventory.appleWin.mouseOn()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        hostCursorWanted_ = true;
     }
 }
