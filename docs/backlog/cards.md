@@ -29,7 +29,6 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-012](#cards-012) | 🟡 | To verify | SSC fallback page and DOS 3.3 `PR#n` |
 | [CARDS-013](#cards-013) | 🟢 | To verify | `$C800` owner across Ctrl-Reset |
-| [CARDS-014](#cards-014) | 🟡 | Reproduced | A2osX never reaches its shell on a //c with the Mockingboard 4c |
 
 <a id="cards-001"></a>
 
@@ -330,33 +329,3 @@ map, reference, tests and remaining pin-timing/analog validation limits.
 **Acceptance criterion:** Cite MAME's `machine_reset` for `m_cnxx_slot`; if it releases the window, `SlotBus::reset()` does too, pinned.
 
 **Evidence:** `SlotBus::reset()` keeps `activeExpansionSlot` deliberately. Bug hunt 2026-10-06 recalled (from memory) `m_cnxx_slot = CNXX_UNCLAIMED` in MAME's reset. Low impact: every shipped ROM opens with `LDA $CFFF`.
-
-<a id="cards-014"></a>
-
-## CARDS-014 — A2osX never reaches its shell on a //c with the Mockingboard 4c
-
-**Priority:** 🟡 · **State:** Reproduced 2026-10-23, cause not found.
-
-A2osX 0.95 (`disks_3.5/A2osX-0.95-STABLE.800.po`) boots to its shell in ~18
-emulated seconds on a //e enhanced and on a //c with its IOU mouse and both
-serial ports (`a2osx_boot`). With the internal-connector Mockingboard 4c
-(`iic_expansion_card`) it never does — 120 s tried, kernel scheduler
-running, screen blank.
-
-What is known: at 6.03 s A2osX's Z80-card probe writes `$C100`…`$C700`
-(`STA ($00)` at `$25CE`, then `LDA $100B`). The write to `$C400` wakes the
-4c, which then owns `$C400-$C4FF` — the //c's mouse firmware page. POM2
-follows MAME there (`apple2e.cpp` `c400_w` wakes on any `$C4xx` write;
-only `machine_reset` puts it back to sleep). Not yet known: why the kernel
-then never finishes its init (its IRQ manager looks for a ThunderClock,
-the mouse firmware's VBL, or the IIgs), and whether a real //c with a real
-4c does the same.
-
-**Reproduce:** `make a2osx_boot_probe`, then
-`a2osx_boot_probe --machine iic --mb4c --seconds 40` (no prompt) against
-`--machine iic` (prompt).
-
-**Acceptance criterion:** either the hang is shown to be the hardware's
-behaviour (and documented), or A2osX reaches its shell with the 4c fitted
-and `a2osx_boot` pins it.
-

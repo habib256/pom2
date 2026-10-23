@@ -9535,6 +9535,14 @@ latch is `Memory::iicExpansionAwake_`: set by a write routed to
 carried in the paging snapshot section (byte 10). Pinned by
 `iic_mockingboard_4c`.
 
+The other face of that latch: once awake, the 4c hides the mouse firmware
+until the next reset, and with it the //c's only VBL interrupt source —
+`$C019` on a //c is the VBLINT *latch* (IIc Tech Note #9), which a poller
+never sees set while VBL interrupts are off. A2osX 0.95 trips over exactly
+this: its Z80-card probe writes `$C400`, its mouse search then finds no
+`$D6` at `$C4FB`, and its polled tick never comes, so it never reaches the
+shell (CHANGELOG 2026-10-23, pinned in `a2osx_boot`).
+
 Three rules the panel applies on top of the inventory:
 
 * **Built-in beats kind.** A connector whose slot carries a `BuiltInSlot` is

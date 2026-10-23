@@ -31,7 +31,6 @@ Move an item when its next action or dependency changes.
 
 | Task | Next action |
 |---|---|
-| [VALIDATION-002](docs/backlog/validation.md#validation-002) | Boot DIX with the documented PAL profile and slot map; record menu and demo results before other corpus titles. |
 | [RELEASE-005](docs/backlog/release-1.0.md#release-005) | Record candidate CI evidence for the existing Chrome persistence/session smoke; automation is implemented. |
 | [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
 | [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |

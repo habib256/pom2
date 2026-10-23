@@ -9287,6 +9287,9 @@ if(TARGET pom2_core_test)
     # A2osX (disks_3.5) on a //e or a //c assembled piece by piece.
     add_executable(a2osx_boot_probe EXCLUDE_FROM_ALL a2osx_boot_probe.cpp)
     target_link_libraries(a2osx_boot_probe PRIVATE pom2_core_test)
+    # DIX's automatic mode on the fresh-install //e PAL (VALIDATION-002).
+    add_executable(dix_auto_tour_probe EXCLUDE_FROM_ALL dix_auto_tour_probe.cpp)
+    target_link_libraries(dix_auto_tour_probe PRIVATE pom2_core_test)
 endif()
 
 set(POM2_PROBE_TARGETS
@@ -9298,6 +9301,7 @@ set(POM2_PROBE_TARGETS
     cpu_smoke
     dd2_ay_trace
     disasm_smoke
+    dix_auto_tour_probe
     dix_menu_raster_probe
     dix_return_crash_probe
     iic_a2fc_printer_port_probe

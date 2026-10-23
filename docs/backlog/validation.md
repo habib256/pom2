@@ -15,48 +15,10 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [VALIDATION-002](#validation-002) | 🟠 | To verify | [DIX](https://github.com/Fr3nchT0uch/DIX/) — French Touch demo anthology |
 | [VALIDATION-001](#validation-001) | 🟡 | To verify | Disk II opposing-magnet response on a real //c |
 | [VALIDATION-003](#validation-003) | 🟡 | Partial: gameplay observed; broader protection evidence remains | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Blocked (oracle) | DOS 3.1 / 3.1.1 `]` anomaly |
 | [VALIDATION-005](#validation-005) | 🟢 | To verify | A2 File Cmd one-in-three GUI-only DHGR failure |
-
-<a id="validation-002"></a>
-
-## VALIDATION-002 — [DIX](https://github.com/Fr3nchT0uch/DIX/) — French Touch demo anthology
-
-**Priority:** 🟠 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Record DIX boot/menu/demo results on the documented PAL profile and correct slot map before moving to other corpus titles.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2273). Original dates and estimates are retained below.
-
-- 🟠 **[DIX](https://github.com/Fr3nchT0uch/DIX/) — French Touch demo
-  anthology**. **Priority reference** for emulation perfection: chains vapor
-  lock, mid-scanline, Mockingboard, 128 KB aux, Unidisk/Liron. Validate DIX
-  first before any other corpus title. Full description → `docs/test_corpus.md`.
-  - ⚠️ **Some French Touch titles hard-code the Mockingboard at slot 4 — DIX
-    itself does not.** DIX **scans** `$C7→$C1` for its 6522 (`boot_unidisk.a`
-    `bdet`), so it finds the card wherever it sits. **MAD EFFECT**
-    (`disks_5.4/demo/madef/Sources/main.a:176-218`) addresses `$C4xx` with no
-    scan, and its whole frame sync is the T1 IRQ — with the card anywhere else
-    it arms a timer that never fires and waits forever: a frozen screen after
-    the loader, and no code regression. The **source** is the evidence here,
-    not the probe: `madef_phase_probe` reported "MAD EFFECT never runs" until
-    2026-09-07, when it turned out to plug the Mockingboard without
-    `setCpu()` — a 6522 that syncs lazily off the CPU's cycle counter
-    early-outs of every sync, T1 never expires, and the demo waits for ever.
-    Any earlier page-flip count from that probe (this line used to quote
-    "0 in slot 7 against ~191 in slot 4") is an artefact of its own wiring.
-    Slot 3 is no alternative: the
-    //e's internal 80-column firmware owns `$C300-$C3FF` (SLOTC3ROM off), so a
-    Mockingboard there is silent. **The fresh-install map is mouse@4,
-    Mockingboard@2** (CLAUDE.md § Fresh-install defaults — swapped 2026-09-02
-    because Extasie's self-modified `JSR $C4xx` needs the mouse there and DIX
-    scans anyway), so a title of MAD EFFECT's kind needs the two swapped by
-    hand. `MainWindow_Slots.cpp` already warns about the **mouse** side of
-    this (the "Extasie & friends want the mouse in slot 4" row hint);
-    🟢 the Mockingboard side has no hint yet.
 
 <a id="validation-001"></a>
 
