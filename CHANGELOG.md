@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — Browser: the Apple II Screen opens alone
+
+The browser build opened with the Drives rack docked beside the screen.
+It now opens on the Apple II Screen alone (and Welcome, when no ROM
+loaded), browser only; the desktop layout is unchanged. The seed runs once
+per visitor under a new key, `wasm_screen_only_layout`, so a visitor who
+had the screen-and-Drives layout gets it once too; after that, the
+visitor's own panels and docking are kept. The Emulation preset is still
+seeded underneath, so Drives or the Disk Library opened from the menus
+docks in a right column rather than floating over the screen. Checked in
+headless Chrome on a first visit: the screen alone, full width.
+
 ## 2026-10-23 — Browser: the dock space takes the whole browser window
 
 In the WASM build the GLFW window stayed at its creation size, 1125×825,

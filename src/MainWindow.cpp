@@ -748,17 +748,20 @@ MainWindow::MainWindow(bool forceIIPlus)
             // chrome.
             if (!romLoaded_) show(pom2::PanelId::Welcome) = true;
         }
-        // Seed screen + Drives side by side, including visitors whose old
-        // browser layout predates the drive rack. Subsequent visits retain
-        // their docking adjustments through imgui.ini.
-        if (!settings->getBool("wasm_screen_drives_layout", false)) {
+        // Seed the Apple II Screen alone (2026-10-23; it used to open beside
+        // Drives, `wasm_screen_drives_layout`). Once per visitor, returning
+        // ones included, so a layout from that time gets it once too; later
+        // visits keep their panels and docking through state.cfg and
+        // imgui.ini. The Emulation preset still assigns the storage panels
+        // to a right column, so one opened from the menus docks there
+        // instead of floating over the screen.
+        if (!settings->getBool("wasm_screen_only_layout", false)) {
             hideAllPanels();
-            show(pom2::PanelId::Drives) = true;
             if (!romLoaded_) show(pom2::PanelId::Welcome) = true;
             dockSeeded_ = true;
             pendingDockLayout_ = DockLayout::Emulation;
             dockLayoutRequested_ = true;
-            settings->setBool("wasm_screen_drives_layout", true);
+            settings->setBool("wasm_screen_only_layout", true);
         }
 #endif
     }
