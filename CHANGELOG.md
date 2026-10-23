@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — Browser: the dock space takes the whole browser window
+
+In the WASM build the GLFW window stayed at its creation size, 1125×825,
+and `wasm/shell.html` scaled the canvas to fit while keeping that aspect —
+on a wide browser window, black bars left and right that no panel could
+dock into. The canvas now fills the page, and `main.cpp` resizes the GLFW
+window to its CSS size at start-up and on every page resize, so the main
+viewport and the DockSpace over it follow the browser window. Checked in
+headless Chrome at 1900×900, 1280×1000 and 2400×1000: the canvas backing
+store equals the viewport each time, after a live resize too, and the
+default layout spreads across the full width.
+
 ## 2026-10-23 — DIX plays through on the fresh-install machine (VALIDATION-002)
 
 DIX (`disks_3.5/DIX.po`), the corpus's priority benchmark, was rechecked on

@@ -25,10 +25,12 @@
                 font: 700 clamp(28px, 7vw, 72px) ui-monospace, monospace;
                 letter-spacing: 0.08em; text-align: center; }
   #bootSplash.hidden { display: none; }
-  canvas    { --pom2-aspect: 1.3636363636; position: fixed; inset: 0;
-              display: block; width: min(100vw, calc(100vh * var(--pom2-aspect)));
-              height: min(100vh, calc(100vw / var(--pom2-aspect)));
-              margin: auto; background: #000; cursor: default; outline: none; }
+  /* The whole page: main.cpp sizes the GLFW window (and so the ImGui
+     DockSpace) to this box and follows every resize. The Apple II screen
+     keeps its own aspect inside its window. */
+  canvas    { position: fixed; inset: 0; display: block;
+              width: 100vw; height: 100vh;
+              background: #000; cursor: default; outline: none; }
   #err      { position: fixed; left: 16px; right: 16px; top: 16px;
               padding: 12px 16px; background: #4a1a1a; color: #ffe;
               border-radius: 6px; font-family: ui-monospace, monospace;
@@ -148,17 +150,6 @@
     arguments: _args,
     canvas: (function() {
       const c = document.getElementById('canvas');
-      const fitCanvas = () => {
-        const w = c.width || 1125;
-        const h = c.height || 825;
-        if (w > 0 && h > 0) c.style.setProperty('--pom2-aspect', w / h);
-      };
-      fitCanvas();
-      window.addEventListener('resize', fitCanvas);
-      new MutationObserver(fitCanvas).observe(c, {
-        attributes: true,
-        attributeFilter: ['width', 'height'],
-      });
       // ContextLost recovery is the user's problem (refresh tab).
       // NOTE: no preventDefault() here. Cancelling this event is the page
       // PROMISING the browser it will rebuild every GL object when

@@ -69,7 +69,7 @@ void requestShutdown(int) { gShutdownRequested = 1; }
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#include <emscripten/html5.h>   // emscripten_set_wheel_callback (browser zoom)
+#include <emscripten/html5.h>   // wheel + page-resize callbacks, canvas CSS size
 #endif
 
 static void glfw_error_callback(int error, const char* description)
@@ -367,9 +367,9 @@ int main(int argc, char* argv[])
 #endif
 
     // Native keeps the curated desktop layout: Apple II Screen on the
-    // left plus room for the unified Disk Library on the right. WASM
-    // starts chrome-light, so its canvas width tracks the Apple II Screen
-    // window instead of reserving an empty side column.
+    // left plus room for the unified Disk Library on the right. In the
+    // browser this is only the size until the first fit below: the canvas
+    // then takes the whole page.
     const char* kWindowTitle = "POM2 " POM2_VERSION_STRING " - Apple II Emulator";
     constexpr int kDefaultWindowWidth =
 #ifdef __EMSCRIPTEN__
@@ -413,6 +413,27 @@ int main(int argc, char* argv[])
                                   kWindowTitle, nullptr, nullptr);
     }
     if (!window) { glfwTerminate(); return -1; }
+#ifdef __EMSCRIPTEN__
+    // The canvas fills the browser page (wasm/shell.html), and the GLFW
+    // window — so ImGui's main viewport and the DockSpace over it — follows
+    // its CSS size: a wider browser window is width the panels can dock
+    // into. It used to stay 1125x825 and the page letterboxed it, leaving
+    // black bars nothing could use. Not GLFW_SCALE_TO_MONITOR: the backing
+    // store stays in CSS pixels, as it was.
+    {
+        auto fitCanvas = [](int, const EmscriptenUiEvent*, void* w) -> EM_BOOL {
+            double cssW = 0.0, cssH = 0.0;
+            emscripten_get_element_css_size("#canvas", &cssW, &cssH);
+            if (cssW >= 1.0 && cssH >= 1.0)
+                glfwSetWindowSize(static_cast<GLFWwindow*>(w),
+                                  static_cast<int>(cssW), static_cast<int>(cssH));
+            return EM_FALSE;
+        };
+        fitCanvas(0, nullptr, window);
+        emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, window,
+                                       false, fitCanvas);
+    }
+#endif
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
