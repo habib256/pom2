@@ -10,6 +10,24 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — Browser: `?url=` boots a disk image from another site
+
+A game repository (pom2games's `dist/`) can now link "play in the browser"
+without POM2 shipping its disk: `wasm/?preset=ii%2B&url=https://raw.githubusercontent.com/…/SNAKE.dsk`.
+The shell starts the download alongside `POM2.data`, holds `main()` with a
+run dependency, writes the bytes under `/uploads/url/` and passes that path
+as the positional disk — so routing is the CLI's, by extension, as for
+`?disk=`. It works because the host sends `Access-Control-Allow-Origin: *`
+(raw.githubusercontent.com does; a host that sends no CORS header cannot be
+reached from the page). http(s) only, the
+same extensions and 64 MiB bound as File > Import disk; a bad link shows an
+error and the machine boots with no disk rather than failing the load. It
+wins over `?disk=` and `?nodisk=`. Not changed: automatic resume, if a
+visitor turned it on, still restores its checkpoint after the boot.
+
+The page also carries a small "POM2 — Apple II emulator" link back to the
+repository, bottom right, for visitors who arrive from a game's link.
+
 **v0.9.8 marker** — 2026-10-21. Release notes: [v0.9.8](docs/releases/v0.9.8.md).
 
 ## 2026-10-21 — The display paints the RAM the beam fetched (pom2games DIRTBIKE)

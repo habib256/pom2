@@ -36,6 +36,13 @@
               z-index: 20; }
   .pill     { display: inline-block; padding: 2px 8px; border-radius: 9px;
               background: #2a2a36; font-size: 11px; margin-right: 6px; }
+  /* Back to the project from a deep link (a game's "play in the browser"):
+     bottom-right, above the canvas and the splash, quiet until hovered. */
+  #repoLink { position: fixed; right: 8px; bottom: 8px; z-index: 15;
+              padding: 3px 9px; border-radius: 9px; font-size: 12px;
+              background: rgba(12,12,18,0.75); color: #9ab;
+              text-decoration: none; opacity: 0.7; }
+  #repoLink:hover, #repoLink:focus { opacity: 1; color: #fff; }
 </style>
 </head>
 <body>
@@ -46,6 +53,8 @@
 </div>
 <div id="err"></div>
 <div id="bootSplash">PLEASE WAIT</div>
+<a id="repoLink" href="https://github.com/habib256/pom2" target="_blank"
+   rel="noopener" title="POM2 on GitHub">POM2 — Apple II emulator ↗</a>
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
 <script>
   // Single-threaded WASM by design — no SharedArrayBuffer / COOP/COEP
@@ -83,12 +92,52 @@
   //   ?preset=iie&disk=disks_3.5/A2DeskTop-1.5-en_800k.2mg   (needs --with-data)
   //   ?preset=ii%2B&nodisk=1  (II+ without a boot image; encode + as %2B)
   //   ?nodisk=1          (keep the preset, skip the disk arg)
+  // ?url= boots an image from anywhere the browser may fetch it (the host
+  // must send CORS headers — raw.githubusercontent.com does), so a game
+  // repository can link "play in the browser" without POM2 shipping its disk:
+  //   ?preset=ii%2B&url=https://raw.githubusercontent.com/habib256/pom2games/main/dist/SNAKE.dsk
+  // It wins over ?disk= and ?nodisk=. The download starts now, alongside
+  // POM2.data; preRun below holds main() until it lands in MEMFS.
   const _qs = new URLSearchParams(window.location.search);
   const _preset = _qs.get('preset') || 'iic-pal';
-  const _disk   = _qs.get('nodisk') === '1' ? null
+  const _url    = _qs.get('url');
+  const _disk   = (_url || _qs.get('nodisk') === '1') ? null
                  : (_qs.get('disk') || 'bundled_disks/DIX-fix.po');
   const _args = ['--preset', _preset];
   if (_disk) _args.push(_disk);
+
+  // Same bounds and extensions as File > Import disk (browser_files.js): the
+  // CLI routes the positional by its extension, so the name must keep it.
+  const _urlDiskLimit = 64 * 1024 * 1024;
+  const _urlDiskExt = /\.(dsk|do|d13|po|nib|woz|moof|2mg|hdv|image)$/i;
+  const _urlDisk = _url ? (async function() {
+    let target;
+    try { target = new URL(_url, window.location.href); }
+    catch (e) { throw new Error('not a valid URL'); }
+    if (target.protocol !== 'https:' && target.protocol !== 'http:')
+      throw new Error('only http(s) URLs are accepted');
+    const name = decodeURIComponent(target.pathname.split('/').pop() || '');
+    if (!_urlDiskExt.test(name))
+      throw new Error('the file name must end in .dsk, .do, .d13, .po, .nib, ' +
+                      '.woz, .moof, .2mg, .hdv or .image');
+    let response;
+    try { response = await fetch(target.href, { mode: 'cors', credentials: 'omit' }); }
+    catch (e) {
+      throw new Error('download failed (network error, or the server does ' +
+                      'not allow cross-origin requests)');
+    }
+    if (!response.ok) throw new Error('download failed: HTTP ' + response.status);
+    const declared = Number(response.headers.get('Content-Length') || 0);
+    if (declared > _urlDiskLimit) throw new Error('image exceeds 64 MiB');
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > _urlDiskLimit) throw new Error('image exceeds 64 MiB');
+    if (bytes.length === 0) throw new Error('the server returned an empty file');
+    return { name: name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-128), bytes };
+  })() : null;
+  // Keep a rejection from reaching the page-wide unhandledrejection handler
+  // before preRun looks at it: a bad link is reported and the machine boots
+  // without a disk, it is not a load failure.
+  if (_urlDisk) _urlDisk.catch(function() {});
 
   var Module = {
     // The app reads assets from MEMFS itself. Do not let Emscripten's
@@ -190,6 +239,31 @@
   });
 
   Module.preRun = (Module.preRun || []);
+  // ?url=: hold main() until the image is in MEMFS, then hand it over as the
+  // positional disk. Module.arguments is the very array callMain() reads, so
+  // pushing into it here (before the dependency is released) is enough.
+  if (_urlDisk) Module.preRun.push(function() {
+    const fs     = Module.FS || (typeof FS !== 'undefined' ? FS : null);
+    const addDep = Module.addRunDependency ||
+                   (typeof addRunDependency !== 'undefined' ? addRunDependency : null);
+    const delDep = Module.removeRunDependency ||
+                   (typeof removeRunDependency !== 'undefined' ? removeRunDependency : null);
+    if (addDep) addDep('pom2-url-disk');
+    setStatus('Loading POM2: downloading the disk image…');
+    _urlDisk.then(function(disk) {
+      fs.mkdirTree('/uploads/url');
+      const path = '/uploads/url/' + disk.name;
+      fs.writeFile(path, disk.bytes);
+      _args.push(path);
+    }).catch(function(e) {
+      errEl.style.display = 'block';
+      errEl.textContent = 'Could not load the disk image from\n' + _url +
+                          '\n' + e.message + '\nStarting without a disk.';
+      setTimeout(function() { errEl.style.display = 'none'; }, 12000);
+    }).finally(function() {
+      if (delDep) delDep('pom2-url-disk');
+    });
+  });
   Module.preRun.push(function() {
     // Reach the runtime through `Module` rather than the bare globals: the
     // shell's <script> is a different scope from the generated glue, and

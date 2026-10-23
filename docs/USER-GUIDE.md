@@ -755,6 +755,21 @@ starts without a disk. Changing only `preset` keeps the default DIX-fix image.
 For an II+ without a boot image, use `?preset=ii%2B&nodisk=1` (`%2B` encodes
 the plus sign in the profile name).
 
+`?url=` boots an image from another site: the page downloads it, then
+starts the machine on it. The server must allow cross-origin downloads —
+`raw.githubusercontent.com` does, so a GitHub repository can link its own
+disks:
+
+```text
+https://habib256.github.io/pom2/wasm/?preset=ii%2B&url=https://raw.githubusercontent.com/habib256/pom2games/main/dist/SNAKE.dsk
+```
+
+The address must be http(s), its file name must carry one of the disk
+extensions listed below, and the image is limited to 64 MiB. `url` wins
+over `disk` and `nodisk`; if the download fails, POM2 says why and starts
+without a disk. The downloaded copy lives only in the tab: like an imported
+disk, it is gone on reload unless a session keeps it.
+
 Host socket networking and the listening AI-control HTTP server are unavailable
 in the browser.
 
