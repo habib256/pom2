@@ -436,4 +436,14 @@ bool profileUsesLowerRomHalf(SystemProfile p)
            p == SystemProfile::AppleIIcPAL;
 }
 
+std::array<int, 7> bootScanOrder(SystemProfile p)
+{
+    switch (p) {
+        case SystemProfile::AppleIIc:
+        case SystemProfile::AppleIIcPAL:  return {6, 5, 7, 4, 3, 2, 1};
+        case SystemProfile::AppleIIcPlus: return {5, 6, 7, 4, 3, 2, 1};
+        default:                          return {7, 6, 5, 4, 3, 2, 1};
+    }
+}
+
 }  // namespace pom2

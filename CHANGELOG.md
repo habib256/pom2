@@ -31,6 +31,12 @@ no device waits for; it now asks when the period starts (`ceil`), and runs
 at 256 and 2048 frames. The speaker (100 ms lead) and the DAC were already
 wide enough. Cost: more latency in the browser, which WASM-003 tracks.
 
+## 2026-10-23 — Internal Disks & Media lists slots in boot order
+
+Top to bottom in the order the firmware looks for a boot disk —
+`pom2::bootScanOrder`: 7 → 1 on the ][+ / //e (the Autostart scan), 6
+then 5 on the //c, 5 then 6 on the //c+. Pinned in `system_profile_smoke`.
+
 ## 2026-10-23 — Browser: `?url=` boots a disk image from another site
 
 A game repository (pom2games's `dist/`) can now link "play in the browser"

@@ -875,7 +875,9 @@ void MainWindow::renderMediaPanel()
         // not the thread which owns every writer; this one is.
         const auto liveSlots = slotConfigCoordinator_->captureLive(
             controller->memory().slotBus());
-        for (int s = 1; s <= 7; ++s) {
+        // Listed in the order the firmware looks for a boot disk, so the
+        // drive that will boot sits at the top.
+        for (const int s : pom2::bootScanOrder(activeProfile)) {
             SlotPeripheral* p = bus.peripheral(s);
             if (!p) continue;
             const bool builtIn = profileCfg.builtInSlots[s].has_value();
