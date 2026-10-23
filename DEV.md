@@ -9184,9 +9184,10 @@ right-column tabs. The right column takes 34% of the work area and the keyboard
 identity despite profile-dependent titles. A one-shot focus selects Drives
 after seeding, independent of panel render order. Native sessions enable the
 Monitor II frame by default; saved choices and layouts are preserved. The browser
-seeds the screen and Drives side by side when `wasm_screen_drives_layout` is
-absent/false, including for older saved layouts. Later visits retain panel and
-docking choices. The reference
+opens on the Apple II Screen alone (plus Welcome when no ROM loaded): once per
+visitor, keyed `wasm_screen_only_layout`, older saved layouts included, it hides
+every panel and seeds the Emulation preset so a storage panel opened later docks
+in the right column. Later visits retain panel and docking choices. The reference
 capture is `pic/POM2-default-desktop.png`.
 
 Kiosk mode bypasses the dockspace entirely (it returns before
