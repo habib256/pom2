@@ -10,6 +10,65 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — Bug hunt, round five: rewind scrub, RamWorks, browser ?url=
+
+Five hunters on ground the earlier rounds had not covered: the five newest
+browser commits, //e and //c paging, 5.25" storage and autosave, the
+less-hunted cards (SoftCard, Slinky, Phasor, VidHD, Videoterm, 4play,
+S.A.M.), and the controller (rewind, profile switch, reset verbs). No data
+loss and no deadlock. What was fixed:
+
+- **A profile switch during a rewind scrub stopped the floppy autosave.**
+  `stop()` is `setMode(Stopped)`, which leaves a scrub standing, and
+  `start()` stores Running directly; the machine ran on with
+  `rewindScrubbing()` true, so `pollMediaWriteBacks` returned early for the
+  rest of the session, `/disk/sync` refused, and the next Pause/Play cut the
+  new ring at the old scrub index. `start()` now ends the scrub. Pinned in
+  `rewind_transport` (fails with the fix reverted).
+- **A late worker capture could cut the ring being scrubbed.** `stop()`
+  waits 200 ms for the park; a worker descheduled past that captured after
+  the scrub had begun, and `dropAbandonedFuture` deleted the frames after
+  the one on screen. `captureRewindLocked` skips while a scrub owns the ring.
+- **`bootFromSlot` kept queued single-steps.** Its three branches resume by
+  storing Running directly and never cleared `stepsPending`, so a
+  `--step 20000` interrupted by a Library Boot ran its remainder on the next
+  debugger Step — the bug `setMode` already fixed for every other path.
+- **RamWorks bank snapped to 0 on Ctrl-Reset and F12.** MAME's
+  `a2eramworks3.cpp` `device_reset` is a machine reset; the reset key
+  (`apple2e.cpp:1430-1508` `reset_w`) never touches the aux slot, and
+  AppleWin's `MemResetPaging` keeps `g_uActiveBank` (only `MemReset`, the
+  power cycle, clears it — GH#1414). The cold path still returns to bank 0.
+  `ramworks_smoke` now pins both.
+- **S.A.M. DAC audio after a rewind.** The card has no snapshot, so its
+  `Dac8Audio` queue kept the abandoned future's stamps and new writes queued
+  behind them. `SlotPeripheral::onTimeJump()` (default no-op) is fanned out
+  by `noteTimeJump`; `SamCard` drops its queue. Pinned in `sam_card`.
+- **SoftCard bus timestamps.** While the Z80 owned the bus, the parked
+  6502's in-flight count (the granting `STA`'s 4) was added to every
+  timestamp, so Z80 accesses to a VIA, the Disk II or the floating bus were
+  stamped up to 7 cycles off. `dmaRun` zeroes it
+  (`M6502::clearInFlightCycles`); MAME runs `dma_r`/`dma_w` on the Z80's
+  own timeline. Pinned in `softcard_toggle`.
+- **Browser `?url=`.** The download had no deadline, so a server that
+  stalled kept the page on the splash for ever (preRun holds `main()` on
+  it), and the 64 MiB limit was checked only after buffering the whole body
+  when there was no Content-Length. It now aborts after 60 s and counts the
+  body as it streams. The image is handed to MEMFS with `canOwn` and
+  released, instead of being held twice in the JS heap for the session; the
+  12 s timer hides only its own message, not an abort reported later; the
+  GitHub link leaves the status-bar corner 10 s after the first frame; and
+  the canvas uses `100dvh`, so on mobile the status bar is no longer under
+  the browser toolbar. Download checked in Node against a local server (a
+  normal image, an 80 MiB chunked body, a stalled body, an empty one); the
+  CI browser smoke does not cover `?url=`.
+
+Recorded rather than fixed: STORAGE-012 (a WOZ write to a track the file
+does not have is dropped silently — needs TRKS allocation), STORAGE-013
+(off-track quarter positions on non-WOZ images, FLUX writes longer than a
+revolution) and MEMORY-005 (`$CFFF` never reaches the `$C800` owner).
+Not changed: a saved session with automatic resume on still replaces a
+`?url=` disk, as it does `?disk=`.
+
 ## 2026-10-23 — RELEASE-005 and RELEASE-007: CI evidence recorded
 
 Both gates had their automation in place and were only waiting for a

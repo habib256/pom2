@@ -746,6 +746,15 @@ void EmulationController::start()
     // Running, and this path stores the mode directly instead of going
     // through setMode(). Missing it would leave a resumed machine mute.
     if (audioDev) audioDev->setSuspended(false);
+    // And the scrub setMode() would have ended. stop() is setMode(Stopped),
+    // which leaves a scrub standing, and the profile switch's hardReset()
+    // never cleared it: the machine came back Running with
+    // rewindScrubbing() true, so the floppy autosave poll returned early for
+    // the rest of the session, `/disk/sync` refused, and the next Pause/Play
+    // truncated the new ring at the old scrub index. A restart after a
+    // rebuild never continues a scrub.
+    scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
+    resumeTruncate_.store(pom2::RewindBuffer::kNoFrame);
     mode.store(Mode::Running);
     wakeCv.notify_all();
 #ifndef __EMSCRIPTEN__
@@ -1112,6 +1121,8 @@ bool EmulationController::bootFromSlot(int slot)
         // debugger breakpoint or paused rewind scrub) therefore ran the whole
         // session mute — every Boot button in the Library reaches here.
         if (audioDev) audioDev->setSuspended(false);
+        stepsPending.store(0);   // Running cancels queued steps, as setMode()
+        resumeTruncate_.store(pom2::RewindBuffer::kNoFrame);
         mode.store(Mode::Running);
         wakeCv.notify_all();
         return true;
@@ -1128,6 +1139,8 @@ bool EmulationController::bootFromSlot(int slot)
         processor.hardReset();
         workerParked_.store(false);  // same setter-thread invariant as setMode()
         if (audioDev) audioDev->setSuspended(false);  // ditto for the bus
+        stepsPending.store(0);   // Running cancels queued steps, as setMode()
+        resumeTruncate_.store(pom2::RewindBuffer::kNoFrame);
         mode.store(Mode::Running);
         wakeCv.notify_all();
         return false;   // the machine is running, but NOT off this card
@@ -1167,6 +1180,11 @@ bool EmulationController::bootFromSlot(int slot)
     processor.setProgramCounter(cnxx);
     workerParked_.store(false);  // same setter-thread invariant as setMode()
     if (audioDev) audioDev->setSuspended(false);   // ditto for the bus
+    // setMode() cancels queued single-steps on Running; this path stores the
+    // mode directly, so a `--step 20000` interrupted by a Library Boot left
+    // its remainder for the next debugger Step to run in one go.
+    stepsPending.store(0);
+    resumeTruncate_.store(pom2::RewindBuffer::kNoFrame);
     mode.store(Mode::Running);
     wakeCv.notify_all();
     pom2::log().info("Emul",
@@ -1359,6 +1377,11 @@ void EmulationController::rewindEndAndResume(size_t index)
 
 void EmulationController::captureRewindLocked()
 {
+    // A scrub owns the ring. stop() waits for the worker to park for 200 ms
+    // only; a worker descheduled past that still finishes its chunk and
+    // lands here after the UI has begun scrubbing, and the capture's
+    // dropAbandonedFuture would delete every frame after the one on screen.
+    if (scrubIndex_.load() != pom2::RewindBuffer::kNoFrame) return;
     noteMediaWrite();   // a rewind may not cross a media write
     const size_t at = resumeTruncate_.exchange(pom2::RewindBuffer::kNoFrame);
     if (at != pom2::RewindBuffer::kNoFrame) rewind_.truncateAfter(at);
@@ -1404,8 +1427,13 @@ void EmulationController::noteTimeJump()
     //    separately). Its unsigned stamp comparisons wrapped on a jump (see
     //    CassetteDevice::resetForTimeJump). It keeps its tape and cursor.
     //
-    // The sound CARDS need nothing here: Mockingboard / Phasor serialize
-    // their VIA + AY + SSI263 state through the SLOTn sections.
+    // Mockingboard / Phasor serialize their VIA + AY + SSI263 state through
+    // the SLOTn sections. A card that queues cycle-stamped samples and has
+    // no snapshot (the S.A.M. DAC) gets onTimeJump(): its queue holds the
+    // abandoned future's stamps, and new writes queued behind them broke
+    // Dac8Audio's non-decreasing contract (~0.1-0.2 s of stale audio).
+    for (int s = 1; s <= 7; ++s)
+        if (SlotPeripheral* p = mem.slotBus().peripheral(s)) p->onTimeJump();
     if (spk)  spk->reset();
     if (tape) tape->resetForTimeJump();
     // The debugger's transients name addresses in the timeline we just left:

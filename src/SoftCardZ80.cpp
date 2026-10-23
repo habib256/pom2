@@ -118,6 +118,13 @@ void SoftCardZ80::z80MemWrite(uint16_t addr, uint8_t v)
 // hands the bus back.
 int SoftCardZ80::dmaRun(int cycles6502)
 {
+    // The 6502 is parked mid-instruction (the STA that granted the bus), and
+    // its in-flight cycle count is what getCycleCountNow() /
+    // getCurrentInstructionCycles() add to every bus timestamp. Left at that
+    // STA's 4, every Z80 access to a VIA, the Disk II or the floating bus
+    // was stamped up to 7 cycles off the Z80's own position. MAME's
+    // dma_r/dma_w run on the Z80 timeline (a2softcard.cpp:111-176).
+    if (cpu_) cpu_->clearInFlightCycles();
     int spent = 0;
     while (spent < cycles6502 && enabled_) {
         int t = z80_.step() + tCarry_;

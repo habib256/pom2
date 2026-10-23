@@ -109,6 +109,14 @@ int main()
         cpu.run(20);
         expect(sam->dac().lastCode() == 0x40, "the second store reached the DAC");
         expect(sam->dac().queuedWrites() == 2, "exactly two writes (the read did nothing)");
+        {
+            // A rewind / snapshot load fans onTimeJump() out to the cards:
+            // the queue holds the abandoned future's stamps and must go.
+            SamCard jumped(kSlot);
+            jumped.dac().write(500000, 0x10);
+            jumped.onTimeJump();
+            expect(jumped.dac().queuedWrites() == 0, "onTimeJump drops the stamped queue");
+        }
 
         std::vector<float> out(64);
         sam->dac().fillAudioBuffer(out.data(), 64);

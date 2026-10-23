@@ -204,6 +204,9 @@ public:
     /// bounded by a single opcode (≤ 7 cycles, ~7 µs), well under one
     /// audio sample at 44 kHz.
     int getCurrentInstructionCycles() const { return cycles; }
+    /// Zero the in-flight count while another bus master (the SoftCard's
+    /// Z80) owns the bus; executeOpcode sets it back to 1 at the next fetch.
+    void clearInFlightCycles() { cycles = 0; }
 
     /// Absolute CPU cycle count right now, including in-flight sub-
     /// instruction cycles. Equivalent to `memory->getCycleCounter() +

@@ -108,7 +108,11 @@ void testToggleAndResume()
     assert(cpu.getProgramCounter() == 0x0305);
 
     // Z80 runs segment 1 out of translated RAM and releases the bus.
+    // The parked 6502 still holds the granting STA's in-flight count (4),
+    // which every bus timestamp adds; during the Z80's tenure it must be 0.
+    assert(cpu.getCurrentInstructionCycles() > 0);
     const int z1 = card->dmaRun(4096);
+    assert(cpu.getCurrentInstructionCycles() == 0);
     assert(!card->dmaActive());
     assert(mem.memRead(0x8000) == 0x5A);
     // seg 1 = 7+13+13 = 33 T-states = 16.5 → 16 cycles + carry.

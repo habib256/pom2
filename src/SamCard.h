@@ -55,6 +55,7 @@ public:
     void deviceSelectWrite(uint8_t low4, uint8_t v) override;
     void setCpuClock(double hz) override { dac_.setCpuClock(hz); }
     void onReset() override {}
+    void onTimeJump() override { dac_.reset(); }
 
     AudioSource* audioSource() override { return &dac_; }
     Dac8Audio&   dac() { return dac_; }

@@ -256,9 +256,9 @@ void testSetIIEModeFalseDropsBacking()
 
 void testResetSnapsBankToZero()
 {
-    // MAME `a2eramworks3.cpp:65-68 device_reset` snaps `m_bank = 0` on
-    // every reset. Pin that POM2's `resetSoftSwitches()` does the same
-    // when RamWorks is active. Data in all banks must SURVIVE the snap
+    // MAME `a2eramworks3.cpp:65-68 device_reset` snaps `m_bank = 0` on a
+    // machine reset (not the reset key). Pin that POM2's cold
+    // `resetSoftSwitches()` does the same when RamWorks is active. Data in all banks must SURVIVE the snap
     // — reset clears the selector only, not the DRAM.
     Memory mem;
     mem.setIIEMode(true);
@@ -274,6 +274,13 @@ void testResetSnapsBankToZero()
     // sentinel must still be readable after rotating back.
     selectBank(mem, 2);
     assert(mem.ramWorksBank() == 2);
+    // The reset KEY (Ctrl-Reset / F12 → resetSoftSwitchesWarm) keeps the
+    // bank: MAME's reset_w never resets the aux slot, AppleWin's
+    // MemResetPaging keeps g_uActiveBank.
+    mem.resetSoftSwitchesWarm();
+    assert(mem.ramWorksBank() == 2);
+    assert(readSentinel(mem) == 0xE2);
+    // The machine reset (power cycle) snaps it to 0.
     mem.resetSoftSwitches();
     assert(mem.ramWorksBank() == 0);
     assert(readSentinel(mem) == 0xE0);   // bank 0's sentinel still there
