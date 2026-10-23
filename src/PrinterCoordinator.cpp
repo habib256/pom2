@@ -89,6 +89,12 @@ bool PrinterCoordinator::clearPrinterPanelSpool(
     auto* card = dynamic_cast<PrinterCard*>(bus.peripheral(slot));
     if (!card) return false;
     card->clearSpool();
+    // Rewind the drain cursor HERE, under the same lock, rather than leave
+    // prepareDrain to infer the clear from a shorter spool next frame: a
+    // guest that spooled at least `consumed_` new bytes in between hid the
+    // clear, and the first `consumed_` bytes of the next printout were
+    // skipped (bug hunt 2026-10-23).
+    if (source_.address == reinterpret_cast<std::uintptr_t>(card)) consumed_ = 0;
     return true;
 }
 

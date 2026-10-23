@@ -148,6 +148,7 @@ bool IIcClassProfile::ioReadIWM(uint16_t addr, uint64_t cyc, uint8_t& out)
     // the firmware addresses the bus (or a transaction is in flight) the
     // port answers with the Sony-select path off; Sony sense probes must
     // not be answered by the intelligent device on the same connector.
+    if (extPort_) extPort_->setUpstreamSonyEnabled(hub_ && hub_->active35Selected());
     if (extPort_ && !mig35Sel_ && extPort_->sharedAfterRead(*iwm_, v, out)) return true;
     if (iwmAuthoritative_ && hub_ && hub_->active35Selected()) {
         out = v;
@@ -167,6 +168,7 @@ bool IIcClassProfile::ioWriteIWM(uint16_t addr, uint8_t value, uint64_t cyc)
     // //c+ only — see the rationale in ioReadIWM above.
     if (!hasAltBank_ || !iwm_ || !isPlus_) return false;
     iwm_->tick(cyc);
+    if (extPort_) extPort_->setUpstreamSonyEnabled(hub_ && hub_->active35Selected());
     const bool forBus = extPort_ && !mig35Sel_ && extPort_->sharedWantsWrite(*iwm_);
     iwm_->setBusCapture(forBus);
     iwm_->write(static_cast<uint8_t>(addr & 0xF), value);

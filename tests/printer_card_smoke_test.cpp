@@ -78,16 +78,21 @@ void testRomFingerprint()
            card.slotRomRead(0x4A) == 0xC0);                  // PWRITE: STA data port
     assert(card.slotRomRead(0x4E) == 0xA2);                  // PSTATUS
 
-    // CSWL/CSWH installation at $Cn20: LDA #$31 / STA $36 / LDA #$C1 / STA $37 / RTS.
-    assert(card.slotRomRead(0x20) == 0xA9);     // LDA #
-    assert(card.slotRomRead(0x21) == 0x31);     // low byte of $Cn31
-    assert(card.slotRomRead(0x22) == 0x85);     // STA zp
-    assert(card.slotRomRead(0x23) == 0x36);     // CSWL
-    assert(card.slotRomRead(0x24) == 0xA9);     // LDA #
-    assert(card.slotRomRead(0x25) == 0xC1);     // slotHi
-    assert(card.slotRomRead(0x26) == 0x85);     // STA zp
-    assert(card.slotRomRead(0x27) == 0x37);     // CSWH
-    assert(card.slotRomRead(0x28) == 0x60);     // RTS
+    // CSWL/CSWH installation at $Cn20, then the character in A is printed:
+    // PHA / LDA #$31 / STA $36 / LDA #$C1 / STA $37 / PLA / JMP $C131.
+    assert(card.slotRomRead(0x20) == 0x48);     // PHA
+    assert(card.slotRomRead(0x21) == 0xA9);     // LDA #
+    assert(card.slotRomRead(0x22) == 0x31);     // low byte of $Cn31
+    assert(card.slotRomRead(0x23) == 0x85);     // STA zp
+    assert(card.slotRomRead(0x24) == 0x36);     // CSWL
+    assert(card.slotRomRead(0x25) == 0xA9);     // LDA #
+    assert(card.slotRomRead(0x26) == 0xC1);     // slotHi
+    assert(card.slotRomRead(0x27) == 0x85);     // STA zp
+    assert(card.slotRomRead(0x28) == 0x37);     // CSWH
+    assert(card.slotRomRead(0x29) == 0x68);     // PLA
+    assert(card.slotRomRead(0x2A) == 0x4C &&
+           card.slotRomRead(0x2B) == 0x31 &&
+           card.slotRomRead(0x2C) == 0xC1);     // JMP $C131
 
     // Output handler at $Cn31: STA $C091 / RTS — write A to data port (low4=1).
     assert(card.slotRomRead(0x31) == 0x8D);     // STA abs
@@ -98,7 +103,7 @@ void testRomFingerprint()
     // A card built at slot 3 must rebake the slot-dependent bytes.
     PrinterCard card3(3);
     assert(card3.slotRomRead(0x02) == 0xC3);            // slotHi
-    assert(card3.slotRomRead(0x25) == 0xC3);            // slotHi
+    assert(card3.slotRomRead(0x26) == 0xC3);            // slotHi
     assert(card3.slotRomRead(0x32) == 0xB1);            // $80 + 3*16 + 1 = $B1
 
     std::printf("  ok: slot ROM fingerprint\n");
@@ -192,20 +197,24 @@ void testCpuPrintFlow()
     mem.writeRamUnchecked(0x36, 0x00);
     mem.writeRamUnchecked(0x37, 0x00);
 
-    // Program at $0800 — JSR $C100 then 3× JSR $C131 with 'H', 'I', CR.
+    // Program at $0800 — the real protocol: after PR#1 the FIRST character
+    // goes to $C100 with the character in A (COUT's JMP (CSWL)), which hooks
+    // CSW and prints it; the rest go through the hook. It used to be called
+    // with no character, which is how the dropped first one hid (bug hunt
+    // 2026-10-23).
     //
-    //   $0800  20 00 C1   JSR $C100        ; PR#1 hook → CSWL=$31, CSWH=$C1
-    //   $0803  A9 C8      LDA #$C8         ; 'H' | $80
-    //   $0805  20 31 C1   JSR $C131        ; output handler → STA $C091
+    //   $0800  A9 C8      LDA #$C8         ; 'H' | $80
+    //   $0802  20 00 C1   JSR $C100        ; hook CSW and print 'H'
+    //   $0805  8D 00 03   STA $0300        ; A survives the call
     //   $0808  A9 C9      LDA #$C9         ; 'I' | $80
     //   $080A  20 31 C1   JSR $C131
     //   $080D  A9 8D      LDA #$8D         ; CR | $80
     //   $080F  20 31 C1   JSR $C131
     //   $0812  4C 12 08   JMP $0812        ; park
     const uint8_t program[] = {
-        0x20, 0x00, 0xC1,
         0xA9, 0xC8,
-        0x20, 0x31, 0xC1,
+        0x20, 0x00, 0xC1,
+        0x8D, 0x00, 0x03,
         0xA9, 0xC9,
         0x20, 0x31, 0xC1,
         0xA9, 0x8D,
@@ -228,8 +237,9 @@ void testCpuPrintFlow()
     assert(cswl == 0x31);
     assert(cswh == 0xC1);
 
-    // The three JSR $C131 calls must have spooled three bytes.
+    // The entry call and the two JSR $C131 calls spooled three bytes.
     assert(cardPtr->bytesWritten() == 3);
+    assert(mem.peekMainRam(0x0300) == 0xC8);   // COUT leaves A unchanged
     const auto raw = cardPtr->spoolBytes();
     assert(raw[0] == 0xC8 && raw[1] == 0xC9 && raw[2] == 0x8D);
     assert(cardPtr->spoolText() == "HI\n");

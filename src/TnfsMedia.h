@@ -91,8 +91,15 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
                                const std::string& cacheDir,
                                const TnfsFetchLimits& limits = {});
 
+/// Record `image` as it is now as a pristine download (`<image>.fetched`:
+/// size + FNV-1a 64). Every fetch does this; tests use it to build a cache.
+bool markTnfsCachePristine(const std::string& image);
+
 /// Prune `cacheDir` to `budgetBytes`, deleting least-recently-used files
-/// first (mtime order, oldest gone first). Called after each new successful
+/// first (mtime order, oldest gone first). Only an image that still matches
+/// its `.fetched` stamp is evicted: one the guest wrote to (the floppy and
+/// block autosaves save into the cached file) holds the user's saves and is
+/// kept, as is one with no stamp. Called after each new successful
 /// download (not a cache hit): the cache key is a hash of
 /// host+port+path, so a server that renames or re-publishes an image orphans
 /// the old file forever and nothing ever collected it. `keep` (optional) is

@@ -235,6 +235,23 @@ bool scanFile(const std::string& path)
     return ok;
 }
 
+// Open-Apple / Solid-Apple + key typed no key at all: GLFW sends no
+// character for an Alt chord (bug hunt 2026-10-23). The chord's key comes
+// from the layout name, with the //e's US shifted symbols.
+void testAppleChordChar()
+{
+    using pom2::keychord::appleChordChar;
+    check(appleChordChar("s", kKeyA + 18, false) == 's', "OA-s types s");
+    check(appleChordChar("s", kKeyA + 18, true)  == 'S', "OA-S types S");
+    check(appleChordChar("/", 47, true) == '?', "OA-? types ?");
+    check(appleChordChar("1", 49, false) == '1', "OA-1 types 1");
+    check(appleChordChar(nullptr, kKeyA + 16, false) == 'q',
+          "no layout name (Emscripten): the US position");
+    check(appleChordChar("\xD1\x8F", kKeyA, false) == 'a',
+          "a Cyrillic cap falls back to the US letter");
+    check(appleChordChar(nullptr, 256, false) == 0, "Escape and friends: nothing");
+}
+
 void testNoEmscriptenAbortStubs()
 {
     const std::string root = POM2_STR(POM2_SOURCE_DIR);
@@ -256,6 +273,7 @@ int main()
     testAltGr();
     testCtrlLetter();
     testAltAppleKeys();
+    testAppleChordChar();
     testNoEmscriptenAbortStubs();
 
     if (failures) {

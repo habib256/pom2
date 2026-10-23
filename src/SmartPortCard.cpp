@@ -706,7 +706,8 @@ void SmartPortCard::buildRom()
     //   $Cn6F-$CnA1  read block
     //   $CnA2-$CnDF  write block
     //   $CnE0-$CnE2  spare (the old boot-failure halt loop)
-    //   $CnE3-$CnFD  LEFT ALONE — real dump ID bytes
+    //   $CnE3-$CnFB  LEFT ALONE — real dump ID bytes
+    //   $CnFC-$CnFD  size in blocks: $0000 = ask STATUS (as the dump)
     //   $CnFE-$CnFF  capability + driver-entry bytes
     //
     // Every region declares where it starts and ends, and every address in
@@ -930,6 +931,16 @@ void SmartPortCard::buildRom()
     // utilities despite the write path being fully implemented; then $17,
     // with FORMAT refused. FORMAT is answered now ($CD60), so bit 3 is set,
     // like the real Liron's $BF.
+    // $CnFC-$CnFD: the device's size in blocks, $0000 = "ask STATUS" (ProDOS
+    // 8 TRM, protocol converter / block-device signature), which is what the
+    // real Liron page holds (roms/liron.rom: 00 00 BF 0A). Left as NOP fill,
+    // this page claimed $EAEA = 60 138 blocks for every bay: A2osX reads the
+    // size there for a $Cn07 != 0 device and listed s5d1/s5d2 at 60 138,
+    // empty bay included (2026-10-23). The bays' size varies with the disk
+    // in them, so STATUS it is.
+    a.region("size", 0xFC, 0xFE)
+     .poke(0xFC, 0x00)
+     .poke(0xFD, 0x00);
     a.region("tail", 0xFE, pom2::kSlotRomBytes)
      .emit({ 0x1F })                // format+read+WRITE+status, 2 units
      .byteOf("driver");
@@ -1005,11 +1016,20 @@ void SmartPortCard::buildC800()
         0x91, 0x44, 0xC8, 0xCA, 0xD0, 0xF7, 0xAE, 0x8D, 0xC0, 0xE0, 0x00, 0xF0,
         0x0F, 0xA0, 0x00, 0xB1, 0x44, 0x8D, 0x83, 0xC0, 0xC8, 0xD0, 0xF8, 0xE6,
         0x45, 0xCA, 0xD0, 0xF3, 0xAD, 0x8F, 0xC0, 0xAA, 0x68, 0x85, 0x45, 0x68,
-        0x85, 0x44, 0x68, 0x85, 0x43, 0x68, 0x85, 0x42, 0x8A, 0xC9, 0x01, 0x60,
+        0x85, 0x44, 0x68, 0x85, 0x43, 0x68, 0x85, 0x42,
+        // The exit, as the Liron's own ($CDC1 in liron-if.asm): A = error,
+        // carry set iff A != 0, and X / Y = the byte count transferred, low /
+        // high ($C0nB/$C0nC, the reply's size). The handler used to return
+        // the error in X too and whatever the copy loop left in Y — 25 after
+        // a DIB, read by a caller as a count of 6400 (bug hunt 2026-10-23).
+        0x8A, 0x48,               // TXA / PHA         ; the error code
+        0xAE, 0x8B, 0xC0,         // LDX $C0nB         ; count, low
+        0xAC, 0x8C, 0xC0,         // LDY $C0nC         ; count, high
+        0x68, 0xC9, 0x01, 0x60,   // PLA / CMP #1 / RTS
     };
     // Register-operand lo bytes (0x80+reg placeholders) → this slot's base.
     static constexpr size_t kRegPatch[] =
-        { 24, 31, 66, 74, 91, 100, 113, 118, 127, 138, 149 };
+        { 24, 31, 66, 74, 91, 100, 113, 118, 127, 138, 149, 167, 170 };
 
     // ── ProDOS media pre-flight ($CD00) and STATUS ($CD10) ─────────────
     // Both are reached from the slot page's ProDOS driver, which is what

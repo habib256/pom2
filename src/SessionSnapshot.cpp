@@ -13,6 +13,7 @@
 #include "SlinkyCard.h"
 #include "SnapshotIO.h"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <utility>
@@ -155,7 +156,16 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
         error = "session core is too large"; return false;
     }
     if (!configuration(memory, config, error)) return false;
-    if (!machineId || session.machineId != machineId || session.configuration != config) {
+    // A //c Plus archive written before its built-in accelerator was modelled
+    // (2026-10-21) carries the 4-byte v1 configuration. The accelerator is
+    // soldered, so that is the same machine: compare the clock bytes only.
+    // Refusing it locked out every older //c Plus session, with an error
+    // asking for a configuration nobody can select (bug hunt 2026-10-23).
+    const auto& saved = session.configuration;
+    const bool sameConfig = saved == config ||
+        (memory.isIIcPlus() && saved.size() == 4 && saved[0] == 1 &&
+         config.size() == 6 && std::equal(saved.begin() + 1, saved.end(), config.begin() + 1));
+    if (!machineId || session.machineId != machineId || !sameConfig) {
         error = "session machine/clock configuration differs; select the matching configuration first";
         return false;
     }

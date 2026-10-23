@@ -325,6 +325,14 @@ Apple2Display::BeamTimeRam::BeamTimeRam(Apple2Display& d, Memory& m,
                                         std::vector<Memory::VideoEvent>& events)
     : display(d), mem(m), on(false)
 {
+    // Built AFTER renderCardPicture, never before: a VidHD paints SHR from
+    // aux $2000-$9FFF in one pass, and a rewind armed first left lines 0-102
+    // (below $6000) at the frame start and the rest live — a shear at ~102.
+    // Stopped (pause, breakpoint, single step): the debugger's pokes and the
+    // stepped stores are stamped after the published frame, so a rewind
+    // would hide them until the machine ran a whole frame again. Live RAM,
+    // as for the soft switches poked while idle (applyIdleSwitchOverride).
+    if (d.cpuIdle_) return;
     // A frame with no soft-switch event cuts bands only for writes into the
     // pages it shows: a write elsewhere (the hidden page) cannot change the
     // picture, and an extra band would only move the paint off the
@@ -360,6 +368,36 @@ Apple2Display::BeamTimeRam::~BeamTimeRam()
     mem.videoRewindEnd();
     display.bandHook_ = nullptr;
     display.beamCuts_.clear();
+}
+
+// patchMixedTextBand's no-split path. Beam-time RAM cut inside the band (a
+// frame with no event keeps its cuts in beamCuts_, not in `events`): paint
+// it in those bands, in the 560 domain, as the split path does — painted
+// once from line 160 the composite pipelines showed a status-line write a
+// frame late below it, where the LUT ones showed the tear (bug hunt
+// 2026-10-23). Otherwise moves RAM to line 160 and leaves the band to the
+// caller. True when the band is painted.
+bool Apple2Display::patchMixedTextByCuts(Memory& mem, const Memory::DisplayState& state)
+{
+    if (!std::any_of(beamCuts_.begin(), beamCuts_.end(), [](uint16_t c) {
+            return c > kMixedTextFirstScanline && c < kHeight; })) {
+        if (bandHook_) bandHook_(kMixedTextFirstScanline);
+        return false;
+    }
+    force560_ = true;
+    int y0 = kMixedTextFirstScanline;
+    auto paintBand = [&](int y1) {
+        if (y1 <= y0) return;
+        if (bandHook_) bandHook_(y0);
+        renderInternalSegment(mem, state, y0, y1, 0, 40);
+        y0 = y1;
+    };
+    for (const uint16_t c : beamCuts_)
+        if (c > kMixedTextFirstScanline && c < kHeight) paintBand(c);
+    paintBand(kHeight);
+    force560_ = false;
+    setUseFrame80(true);
+    return true;
 }
 
 void Apple2Display::renderInternalBeamTime(Memory& mem, const Memory::DisplayState& state)

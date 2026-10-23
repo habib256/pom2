@@ -525,12 +525,13 @@ void W5100Device::openSystemSocket(size_t i, W5100SocketKind kind,
     // Sn_PORT is the socket's LOCAL port, and the guest writes it BEFORE the
     // OPEN command (datasheet §5.2.1: "Sn_PORT should be set before OPEN").
     // Claiming it on the host socket is what the chip does, and without it
-    // nothing unsolicited can reach the guest: a DHCP client opens UDP on 68
-    // and waits for the server's broadcast, an NTP or TFTP exchange expects
-    // its answer at the port it named, and an unbound host socket listens on
+    // nothing unsolicited can reach the guest: an NTP or TFTP exchange
+    // expects its answer at the port it named, and an unbound host socket listens on
     // an ephemeral one instead — so those replies went to a port nobody was
     // reading and the guest simply timed out. Zero means "any", which is what
-    // an unbound socket already is.
+    // an unbound socket already is. (Not DHCP: port 68 is privileged and a
+    // broadcast destination is fenced, so a W5100 DHCP client cannot run —
+    // localPortAllowed / checkDestination, by design.)
     //
     // DATAGRAM SOCKETS ONLY. Nothing unsolicited can reach a TCP CLIENT — the
     // 4-tuple is fixed by the connect() — so binding Sn_PORT there buys the
@@ -681,7 +682,15 @@ void W5100Device::listenSocket(size_t i)
     // WIZnet W5100 datasheet, Sn_CR LISTEN / Sn_SR: INIT -> LISTEN ->
     // ESTABLISHED + CON. Bind locally only, under the existing loopback
     // opt-in; preserve the local-port fence used by UDP.
-    if (s.status == kW5100SnSrInit && s.host && allowLoopback_ &&
+    // Another of OUR sockets already listening on this port: the host bind
+    // would fail anyway, and the host side's "is the port taken" probe would
+    // otherwise connect to that listener — a phantom client for the guest.
+    bool ownListener = false;
+    for (size_t k = 0; k < sockets_.size(); ++k)
+        if (k != i && sockets_[k].status == kW5100SnSrListen &&
+            readNetworkWord(sockets_[k].registerAddress + kW5100SnPort0) == port)
+            ownListener = true;
+    if (s.status == kW5100SnSrInit && s.host && allowLoopback_ && !ownListener &&
         localPortAllowed(port) && s.host->listen(port)) {
         setSocketStatus(i, kW5100SnSrListen);
         return;
@@ -1090,6 +1099,14 @@ void W5100Device::receiveOnePacketRaw()
     }
     if (len <= 0) return;
 
+    // ARP for SIPR. The real chip answers it in hardware; this model invents
+    // destination MACs and never spoke ARP, so a peer that has to LEARN the
+    // guest's MAC — libslirp does, from ARP only, and drops its queued reply
+    // after a second — could never answer: an IPRAW ping got 100 % loss (bug
+    // hunt 2026-10-23). Not while socket 0 is in MACRAW: that guest runs its
+    // own stack (IP65) and answers its own ARP.
+    if (macRawSocket < 0 && answerArp(buffer, len)) return;
+
     const uint8_t* payload = nullptr;
     size_t   lengthOfPayload = 0;
     uint32_t source = 0;
@@ -1118,6 +1135,36 @@ void W5100Device::receiveOnePacketRaw()
         receiveOnePacketMacRaw(static_cast<size_t>(macRawSocket), buffer, len);
     }
     // Otherwise the frame is dropped, exactly as the chip would.
+}
+
+bool W5100Device::answerArp(const uint8_t* frame, int len)
+{
+    // Ethernet II + ARP for IPv4 over Ethernet: 14 + 28 bytes.
+    if (len < 42 || frame[12] != 0x08 || frame[13] != 0x06) return false;
+    const uint8_t* arp = frame + 14;
+    if (arp[0] != 0x00 || arp[1] != 0x01 || arp[2] != 0x08 || arp[3] != 0x00 ||
+        arp[4] != 6 || arp[5] != 4) return true;             // ARP, not ours
+    if (arp[6] != 0x00 || arp[7] != 0x01) return true;       // not a request
+    uint8_t sipr[4];
+    for (int k = 0; k < 4; ++k)
+        sipr[k] = mem(static_cast<uint16_t>(kW5100Sipr0 + k));
+    if ((sipr[0] | sipr[1] | sipr[2] | sipr[3]) == 0 ||
+        std::memcmp(arp + 24, sipr, 4) != 0) return true;    // not for SIPR
+
+    const std::array<uint8_t, 6> ourMac = macAddress();
+    uint8_t reply[60]{};                                     // min Ethernet frame
+    std::memcpy(reply, arp + 8, 6);                          // to the asker
+    std::memcpy(reply + 6, ourMac.data(), 6);
+    reply[12] = 0x08; reply[13] = 0x06;
+    uint8_t* r = reply + 14;
+    r[0] = 0x00; r[1] = 0x01; r[2] = 0x08; r[3] = 0x00; r[4] = 6; r[5] = 4;
+    r[6] = 0x00; r[7] = 0x02;                                // reply
+    std::memcpy(r + 8, ourMac.data(), 6);                    // sender = us
+    std::memcpy(r + 14, sipr, 4);
+    std::memcpy(r + 18, arp + 8, 6);                         // target = asker
+    std::memcpy(r + 24, arp + 14, 4);
+    backend_->transmit(reply, static_cast<int>(sizeof reply));
+    return true;
 }
 
 // `Uthernet2.cpp:661-680`
@@ -1303,6 +1350,10 @@ bool W5100Device::sendDataToSocket(size_t i, const std::vector<uint8_t>& data)
         // period UDP client does (bug hunt #8).
     } else {
         clearSocket(i);
+        // clearSocket zeroed Sn_IR, and a CLOSED socket gets no SEND_OK:
+        // ioLibrary's sendto() polls Sn_IR for SEND_OK or TIMEOUT only, and
+        // spun for ever (bug hunt 2026-10-23). Say how the send ended.
+        if (!isTcp) raiseSocketIrq(i, kW5100SnIrTimeout);
     }
     return true;
 #endif

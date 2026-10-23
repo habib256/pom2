@@ -132,6 +132,11 @@ void testWholeFrameReachesTheDriver()
            "the frame lost bytes on the way to the driver");
     assert(eofOnLast && "End Of Frame never reached RR1 D7");
     assert(scc.rxFifoCount(A) == 0);
+    // The frame is drained and its End Of Frame reset: nothing is left to
+    // interrupt for. The Special Receive Condition's IP outlived Error Reset
+    // and held /INT for good after the first frame (bug hunt 2026-10-23).
+    assert(!scc.intAsserted() && "/INT still asserted with the FIFO empty");
+    assert((scc.peekRr(A, 3) & 0x20) == 0 && "RR3 still shows A Rx IP");
 
     // And a frame far past the FIFO: LLAP header + 32 data bytes.
     std::vector<uint8_t> big{ 0x0B, 0x2A, 0x01 };

@@ -693,6 +693,20 @@ bool AiControlServer::hostHeaderIsLoopback(const Request& req)
            host == "localhost" || host == "localhost.";
 }
 
+// A browser made this request. `Origin` alone is not the test: per Fetch a
+// cross-site no-cors GET or HEAD — `<img src=http://127.0.0.1:6503/...>` on
+// any open page — carries no Origin, a real loopback Host, and so used to
+// pass for a native client: token-less it passed auth, with a token it
+// counted toward the five-failures brake and kept the agent at 429 (bug hunt
+// 2026-10-23). Every current browser stamps such requests with the Fetch
+// metadata headers, which no native HTTP client sends.
+bool AiControlServer::requestFromBrowser(const Request& req)
+{
+    return !req.headerValue("Origin").empty() ||
+           !req.headerValue("Sec-Fetch-Site").empty() ||
+           !req.headerValue("Sec-Fetch-Mode").empty();
+}
+
 bool AiControlServer::checkAuth(const Request& req) const
 {
     std::string configured;
@@ -724,7 +738,7 @@ bool AiControlServer::checkAuth(const Request& req) const
     // A token is a secret, not an origin proof; both gates stand together.
     if (!hostHeaderIsLoopback(req)) return false;
     if (configured.empty())
-        return req.headerValue("Origin").empty();
+        return !requestFromBrowser(req);
     // Constant-time: `operator==` bails on the first differing byte, which
     // over a few thousand requests leaks the prefix. The length is compared
     // first (it is not a secret — the token's ENTROPY is) and the byte loop
@@ -777,7 +791,7 @@ void AiControlServer::handleClient(socket_t fd)
         // refused by policy, not guessing — and counting those let any open
         // web page keep the real agent locked out with 429s (bug hunt
         // 2026-09-17).
-        if (hostHeaderIsLoopback(req) && req.headerValue("Origin").empty())
+        if (hostHeaderIsLoopback(req) && !requestFromBrowser(req))
             noteAuthFailure();
         sendJsonError(fd, 401, "missing or invalid X-POM2-Token");
         return;
@@ -931,8 +945,19 @@ void AiControlServer::handleReset(socket_t fd, const Request& req)
     if (req.method != "POST") {
         sendJsonError(fd, 405, "POST only"); return;
     }
+    // No body (or `{}`) is the documented default, a hard reset. A body that
+    // says something else without a readable "kind" — `{'kind':'soft'}`,
+    // `kind=soft` — is refused: it used to hard-reset and answer 200.
     std::string kind = jsonGetString(req.body, "kind");
-    if (kind.empty()) kind = "hard";
+    if (kind.empty()) {
+        std::string bare;
+        for (char c : req.body)
+            if (!std::isspace(static_cast<unsigned char>(c))) bare += c;
+        if (!bare.empty() && bare != "{}") {
+            sendJsonError(fd, 400, "kind must be soft|hard|cold"); return;
+        }
+        kind = "hard";
+    }
     if      (kind == "soft") ctrl_->softReset();
     else if (kind == "hard") ctrl_->hardReset();
     else if (kind == "cold") ctrl_->coldBoot();

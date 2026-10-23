@@ -108,6 +108,7 @@ struct Stub {
     std::atomic<bool>    stop{false};
     std::atomic<bool>    splitNextRead{false};   ///< TCP: send in two segments
     std::atomic<bool>    splitNextStat{false};   ///< TCP: split a STAT reply
+    std::atomic<int>     readDelayMs{0};         ///< TCP: hold each READ reply
     uint32_t             filePos = 0;
     int                  dirIndex = 0;
 
@@ -220,6 +221,9 @@ struct TcpStub {
                 const auto payload = s.handle(buf, static_cast<std::size_t>(r));
                 if (payload.empty()) continue;
                 const auto pkt = reply(buf, kSession, payload);
+                if (buf[3] == pom2::kTnfsRead && s.readDelayMs.load() > 0)
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(s.readDelayMs.load()));
                 std::size_t cut = 0;
                 if (s.splitNextRead.load() && buf[3] == pom2::kTnfsRead) {
                     s.splitNextRead.store(false);
@@ -556,6 +560,7 @@ int main()
             std::error_code tec;
             fs::last_write_time(p, fs::file_time_type::clock::now() -
                                        std::chrono::hours(hoursOld), tec);
+            check(pom2::markTnfsCachePristine(p.string()), "stamp a download");
             return p;
         };
         const auto oldest = put("aaa_old.po",    4096, 72);
@@ -581,6 +586,20 @@ int main()
         check(!fs::exists(middle), "the prune keeps going while over budget");
         check(fs::exists(newest), "the file just fetched is never evicted");
         check(freed2 == 4096, "and only the evictable file was counted");
+
+        // An image the guest saved into is the user's disk, not a download
+        // (bug hunt 2026-10-23): the autosave writes into the cached file.
+        const auto saved = put("ddd_saved.po", 4096, 96);
+        {
+            std::fstream f(saved, std::ios::binary | std::ios::in | std::ios::out);
+            f.seekp(100); f.put('S');
+        }
+        std::error_code tec;
+        fs::last_write_time(saved, fs::file_time_type::clock::now() -
+                                   std::chrono::hours(96), tec);
+        check(pom2::pruneTnfsCache(cache.string(), 1, newest.string()) == 0,
+              "a written-to image is never evicted");
+        check(fs::exists(saved), "and the guest's saves are still there");
 
         fs::remove_all(cache, ec);
     }
@@ -683,6 +702,37 @@ int main()
         check(elapsedMs < 5000,
               "and the whole-fetch deadline bounds the CONNECT phase too");
 
+        stub.shutdownStub();
+        fs::remove_all(cache, ec);
+    }
+
+    // ── The deadline is honoured INSIDE a 64 KiB chunk ──────────────────
+    // A server that answers every READ, each just inside the per-request
+    // timeout, used to hold the fetch until the chunk ended: `giveUp` ran
+    // only between chunks (bug hunt 2026-10-23). 76 READs x 150 ms is ~11 s
+    // inside one chunk; a 2 s deadline must still be honoured.
+    {
+        TcpStub stub;
+        stub.s.content = makeContent(40000);
+        stub.s.readDelayMs.store(150);
+        if (!stub.start()) { std::printf("FAIL: cannot start slow stub\n"); return 1; }
+        const auto cache = fs::temp_directory_path() / "pom2_tnfs_slow_cache";
+        std::error_code ec;
+        fs::remove_all(cache, ec);
+        pom2::TnfsFetchLimits limits;
+        limits.deadlineSeconds = 2;
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto got = pom2::tnfsFetchImage(
+            "tnfs://127.0.0.1:" + std::to_string(stub.port) + "/" + kFileName,
+            cache.string(), limits);
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        std::printf("      slow-server fetch returned in %lld ms: %s\n",
+                    static_cast<long long>(elapsedMs), got.error.c_str());
+        check(!got.ok, "a fetch past its deadline fails");
+        check(elapsedMs < 5000, "and the deadline is checked per request");
+        check(got.error.find("gave up") != std::string::npos,
+              "with the deadline's own message");
         stub.shutdownStub();
         fs::remove_all(cache, ec);
     }

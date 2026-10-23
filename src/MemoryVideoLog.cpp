@@ -59,7 +59,12 @@ int fetchColumn(uint16_t addr)
 
 uint8_t* Memory::videoWriteTarget(const VideoWrite& w)
 {
-    return w.toAux ? aux.data() : mem.data();
+    // An aux entry describes RamWorks bank 0 (noteVideoWrite logs nothing
+    // else), and bank 0 is not `aux` while another bank is selected — it is
+    // the backing store's first slot, where the scanner reads it.
+    if (!w.toAux) return mem.data();
+    return (ramWorksBanks_ > 1 && ramWorksBank_ != 0)
+        ? ramWorksBacking_.data() : aux.data();
 }
 
 void Memory::noteVideoWrite(uint16_t addr, uint8_t value)
@@ -84,8 +89,9 @@ void Memory::noteVideoWrite(uint16_t addr, uint8_t value)
         videoLog_.push_back({now, addr, old, v, intoAux});
     };
     push(toAux, value);
-    // The Eve's CPREG auto-write lands in aux beside a main write.
-    if (!toAux && auxShadowCovers(addr)) push(true, auxShadowByte_);
+    // The Eve's CPREG auto-write lands in aux beside a main write — on a
+    // //e-class machine only, as in memWriteSlow.
+    if (iieMode && !toAux && auxShadowCovers(addr)) push(true, auxShadowByte_);
 }
 
 void Memory::setVideoWriteLog(bool on)
@@ -99,6 +105,30 @@ void Memory::setVideoWriteLog(bool on)
         if (on)                         writable[a] = false;
         else if (!auxShadowCovers(addr)) writable[a] = true;   // RAM pages
     }
+    videoLog_.clear();
+    videoLogValidFrom_ = cycleCounter;
+    vrActive_ = false;
+}
+
+// A clock jump (rewind, snapshot or session load): the soft-switch log and
+// the write log both describe a timeline that no longer exists.
+void Memory::resetVideoEventLogForClockJump()
+{
+    videoEvents_.clear();
+    publishedEvents_.clear();
+    resetVideoWriteLogForClockJump();
+    constexpr uint64_t kCyclesPerScanline = 65;   // as in advanceCycles
+    const uint64_t kCyclesPerFrame =
+        kCyclesPerScanline *
+        static_cast<uint64_t>(
+            pom2VideoTiming(videoStandard_.load()).scanlinesPerFrame);
+    lastVideoFrameStart_ = cycleCounter - (cycleCounter % kCyclesPerFrame);
+}
+
+void Memory::resetVideoWriteLogForClockJump()
+{
+    // The log's cycles belong to the old timeline: undoing them would write
+    // bytes of a future that no longer happens into RAM.
     videoLog_.clear();
     videoLogValidFrom_ = cycleCounter;
     vrActive_ = false;
@@ -130,6 +160,13 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
     // was rewritten behind it: the newest logged byte of every address must
     // still be what RAM holds, or undoing the log would invent a picture.
     bool stale = !videoLog_.empty() && videoLog_.back().cycle > cycleCounter + 16;
+    // The cut computation below needs every entry inside or after the
+    // published frame, in clock order. A clock that jumped under the log
+    // (rewind, snapshot) breaks both, and a write logged after the jump
+    // hides it from the test above.
+    for (std::size_t i = 0; !stale && i < videoLog_.size(); ++i)
+        stale = videoLog_[i].cycle < frameStart ||
+                (i && videoLog_[i].cycle < videoLog_[i - 1].cycle);
     if (!stale) {
         vrSeen_.assign(0xC000, 0);
         for (auto it = videoLog_.rbegin(); it != videoLog_.rend(); ++it) {

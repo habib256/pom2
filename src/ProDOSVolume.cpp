@@ -52,6 +52,15 @@ constexpr std::size_t kStructuralBeforeBitmap = kBootBlocks + kVolDirBlocks; // 
 constexpr std::size_t kMinFirstDataBlock = kStructuralBeforeBitmap + 1;      // = 7
 constexpr std::size_t kBlocksPerBitmap   = kBlockBytes * 8;                  // 4096
 constexpr std::size_t kMaxVolumeBlocks   = 65535; // ProDOS total_blocks is 16-bit
+// Logical bytes one build stages in memory, and one decode may write to the
+// host. NOT the volume capacity: a sparse file costs a few blocks on the
+// volume and its full EOF on the host (TN ProDOS #30), so two guest
+// `BSAVE A,A$2000,L1,B$FFFFFE` files are 32 MB here and ~10 blocks there.
+// Gating the build on logical size made such a folder unmountable after its
+// first write-back; the real capacity test counts allocated blocks (Phase 2).
+// The decode side bounds what a crafted volume — many 16 MB seedlings on one
+// block — can make the host write (bug hunt 2026-10-23).
+constexpr std::size_t kMaxLogicalBytes   = std::size_t{512} << 20;
 
 constexpr std::uint8_t kStorageSeedling     = 0x1;
 constexpr std::uint8_t kStorageSapling      = 0x2;
@@ -75,7 +84,11 @@ constexpr std::size_t  kMaxRecursionDepth   = 16;
 // directory blocks (making the graph a forest — every block is walked at
 // most once, which caps the visit count at the number of blocks in the
 // image) and a hard budget on directories created.
-constexpr std::size_t  kMaxDirBlockChain    = 256;    // blocks per dir chain
+// Blocks per directory chain. ProDOS bounds a directory only by its 16-bit
+// entry count and the volume, so neither may the decode: at 256 blocks
+// (~3300 entries) the rest of a large subfolder was silently not written
+// back (bug hunt 2026-10-23). `w.expanded` already walks each block once.
+constexpr std::size_t  kMaxDirBlockChain    = kMaxVolumeBlocks;
 constexpr std::size_t  kMaxDecodeDirs       = 2048;   // host dirs per decode
 
 struct PreparedFile {
@@ -509,6 +522,17 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
                 ++symlinksSkipped;
                 continue;
             }
+            // A linked DIRECTORY is not served: the write-back never follows
+            // links, so every save failed on it, and following one would
+            // write its target's files twice, under two names (bug hunt
+            // 2026-10-23). A linked file is served; see the decode.
+            std::error_code dec;
+            if (fs::is_directory(entry.path(), dec)) {
+                pom2::log().warn("ProDOSVol",
+                    "skipping symlinked folder (not served): " + nm);
+                ++symlinksSkipped;
+                continue;
+            }
         }
         if (entry.is_regular_file(ec) || entry.is_directory(ec)) {
             children.push_back(entry.path());
@@ -641,8 +665,10 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             continue;
         }
         const std::size_t fsize = static_cast<std::size_t>(he.size);
-        if (fsize > kMaxVolumeBlocks * kBlockBytes - stagedBytes) {
-            result.error = "host folder exceeds the ProDOS volume capacity";
+        if (fsize > kMaxLogicalBytes - stagedBytes) {
+            result.error = "host folder holds more than " +
+                std::to_string(kMaxLogicalBytes >> 20) +
+                " MB of files — too much to serve as one ProDOS volume";
             return;
         }
         PreparedFile pf;
@@ -1195,6 +1221,7 @@ struct DecodeWalk {
     std::size_t                       totalBlocks = 0;
     std::unordered_set<std::uint16_t> expanded;
     std::size_t                       dirsLeft    = kMaxDecodeDirs;
+    std::size_t                       bytesLeft   = kMaxLogicalBytes;
     ProDOSDecodeResult&               r;
     bool                              ioFailed    = false;
     /// Mount-time stamp: host files newer than this are preserved, not
@@ -1280,13 +1307,38 @@ bool destStaysInsideRoot(const DecodeWalk& w, const fs::path& dest)
 // what is already on disk, so re-decoding an unchanged volume still lands on
 // the same names (writeFileAtomic's Unchanged path) instead of growing a new
 // `.1` every time.
-std::string reserveHostName(std::unordered_set<std::string>& used,
-                            const std::string& name)
+std::string foldHostCase(std::string s)
 {
-    if (used.insert(name).second) return name;
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// `folded` (optional) also refuses a name that differs from one already
+// reserved only in CASE. Two NEW guest files `HELLO` (TXT) and `HELLO.TXT`
+// (TXT) compose `HELLO.txt` and `HELLO.TXT`: on macOS / Windows the second
+// write landed on the first file — just stamped, so newer than the mount —
+// and went to .pom2-conflicts/ for good; on Linux the next build swapped
+// their contents (bug hunt 2026-10-23). A name going back to its OWN host
+// file is `exactOnly` (still recorded in `folded`): a case-sensitive folder
+// may hold `Foo.txt` and `FOO.TXT` as two files, each going back home.
+std::string reserveHostName(std::unordered_set<std::string>& used,
+                            const std::string& name,
+                            std::unordered_set<std::string>* folded = nullptr,
+                            bool exactOnly = false)
+{
+    auto take = [&](const std::string& cand) {
+        if (used.count(cand) ||
+            (folded && !exactOnly && folded->count(foldHostCase(cand))))
+            return false;
+        used.insert(cand);
+        if (folded) folded->insert(foldHostCase(cand));
+        return true;
+    };
+    if (take(name)) return name;
     for (int i = 1; i < 10000; ++i) {
         std::string cand = name + "." + std::to_string(i);
-        if (used.insert(cand).second) return cand;
+        if (take(cand)) return cand;
     }
     return name;                      // pathological — 10 000 clashing entries
 }
@@ -1315,8 +1367,10 @@ void decodeOneDir(DecodeWalk& w,
         return w.image.data() + b * kBlockBytes;
     };
 
-    // Host names already emitted in THIS directory during THIS pass.
+    // Host names already emitted in THIS directory during THIS pass, and the
+    // same case-folded (see reserveHostName).
     std::unordered_set<std::string> usedHostNames;
+    std::unordered_set<std::string> usedFolded;
 
     // What is already on disk here, indexed case-folded.
     //
@@ -1353,6 +1407,12 @@ void decodeOneDir(DecodeWalk& w,
     const std::vector<HostEntry> named =
         nameHostDir(hostFolder, w.rootReal, symlinksIgnored);
     std::unordered_map<std::string, const HostEntry*> sources;
+    // The same for the served SUBDIRECTORIES. Only files used to be matched,
+    // so a subfolder whose name the build sanitised (`My Stuff` served as
+    // `MY.STUFF`, a lowercase `games` on Linux) came back as a NEW folder
+    // named after the ProDOS entry, holding a copy of the whole subtree — and
+    // one more folder per mount/flush cycle (bug hunt 2026-10-23).
+    std::unordered_map<std::string, const HostEntry*> dirSources;
     // Case-folded, because on a case-insensitive host (macOS, Windows)
     // `PHOTO.bin` IS `photo.bin`: reserving the exact spelling is not enough.
     std::unordered_set<std::string> hiddenFolded;
@@ -1378,6 +1438,8 @@ void decodeOneDir(DecodeWalk& w,
                 hiddenFolded.insert(foldCase(he.path.filename().string()));
             } else if (!he.isDir)
                 sources.emplace(he.prodosName, &he);
+            else
+                dirSources.emplace(he.prodosName, &he);
         }
     }
     // The spelling to use for `wanted`: the file itself when it exists, else
@@ -1430,6 +1492,7 @@ void decodeOneDir(DecodeWalk& w,
 
             // Subdirectory entry → recurse.
             if (storage == kStorageSubdirEntry) {
+                const std::string rawDirName = name;
                 while (!name.empty() && name.back() == '.') name.pop_back();
                 // The name is decoded from untrusted (guest-writable) image
                 // bytes; reject anything that isn't a safe single component
@@ -1464,8 +1527,23 @@ void decodeOneDir(DecodeWalk& w,
                     r.aborted = true;
                     return;
                 }
-                const fs::path subDest =
-                    fs::path(hostFolder) / reserveHostName(usedHostNames, name);
+                // The served host folder this entry came from, when there is
+                // one: back into it, whatever the ProDOS spelling.
+                std::string dirHost;
+                bool ownSource = false;
+                if (const auto d = dirSources.find(rawDirName); d != dirSources.end()) {
+                    const std::string src = d->second->path.filename().string();
+                    if (usedHostNames.count(src) == 0) { dirHost = src; ownSource = true; }
+                }
+                if (dirHost.empty()) {
+                    bool onDisk = false;
+                    const std::string sp = reuseExistingSpelling(name, onDisk);
+                    std::error_code dec;
+                    dirHost = (onDisk && fs::is_directory(fs::path(hostFolder) / sp, dec))
+                        ? sp : name;
+                }
+                const fs::path subDest = fs::path(hostFolder) /
+                    reserveHostName(usedHostNames, dirHost, &usedFolded, ownSource);
                 if (!destStaysInsideRoot(w, subDest)) {
                     pom2::log().warn("ProDOSVol",
                         "decode: refusing subdir " + subDest.string() +
@@ -1482,6 +1560,12 @@ void decodeOneDir(DecodeWalk& w,
                         "cannot create subdir " + subDest.string() + ": " + ec.message());
                     ++r.filesSkipped;
                     ++r.dirsSkipped;
+                    // The directory and every file in it are the guest's data
+                    // and none of it lands: say so, so the save fails and the
+                    // blocks stay dirty. It used to report success — a guest
+                    // directory `NOTES` over a host FILE `NOTES` (guest
+                    // deletes are not mirrored) vanished (bug hunt 2026-10-23).
+                    noteUnsaved(r, name);
                     continue;
                 }
                 --w.dirsLeft;
@@ -1516,6 +1600,15 @@ void decodeOneDir(DecodeWalk& w,
                 if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
+            if (eof > w.bytesLeft) {
+                pom2::log().warn("ProDOSVol",
+                    "decode: " + std::to_string(kMaxLogicalBytes >> 20) +
+                    " MB written this pass — not writing " + name);
+                ++r.filesSkipped;
+                if (isProDOSLegalName(name)) noteUnsaved(r, name);
+                continue;
+            }
+            w.bytesLeft -= eof;
 
             std::vector<std::uint8_t> data;
             data.reserve(eof);
@@ -1631,13 +1724,15 @@ void decodeOneDir(DecodeWalk& w,
             // already spoken for in this pass, or when the composed name
             // already exists on disk (then that file is the destination).
             fs::path renameFrom;
+            bool ownSource = false;
             if (const auto src = sources.find(rawName); src != sources.end()) {
                 const std::string srcName = src->second->path.filename().string();
                 if (usedHostNames.count(srcName) == 0) {
                     if (src->second->fileType == fileType &&
                         src->second->auxType  == auxType) {
-                        spelled = srcName;
-                        onDisk  = true;
+                        spelled   = srcName;
+                        onDisk    = true;
+                        ownSource = true;
                     } else if (!onDisk) {
                         renameFrom = fs::path(hostFolder) / srcName;
                     }
@@ -1649,9 +1744,56 @@ void decodeOneDir(DecodeWalk& w,
                 usedHostNames.insert(spelled);
                 onDisk = false;
             }
-            const std::string hostName = reserveHostName(usedHostNames, spelled);
+            const std::string hostName =
+                reserveHostName(usedHostNames, spelled, &usedFolded, ownSource);
             if (hostName != spelled) renameFrom.clear();  // suffixed: a fresh file
             const fs::path dest = fs::path(hostFolder) / hostName;
+            // Text exchange: the volume holds CR, the decode composes LF —
+            // so a host file kept in CRLF (or old-Mac CR) was rewritten on
+            // the first flush although the guest never touched it (bug hunt
+            // 2026-10-23). Answer in the host file's own convention.
+            if (w.convertText && fileType == 0x04) {
+                const fs::path& existing = renameFrom.empty() ? dest : renameFrom;
+                std::ifstream in(existing, std::ios::binary);
+                if (in) {
+                    std::vector<char> head(64 * 1024);
+                    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+                    head.resize(static_cast<std::size_t>(in.gcount()));
+                    bool crlf = false, loneCr = false, lf = false;
+                    for (std::size_t k = 0; k < head.size(); ++k) {
+                        if (head[k] == '\r') {
+                            if (k + 1 < head.size() && head[k + 1] == '\n') { crlf = true; ++k; }
+                            else loneCr = true;
+                        } else if (head[k] == '\n') lf = true;
+                    }
+                    if (crlf || (loneCr && !lf)) {
+                        std::vector<std::uint8_t> out;
+                        out.reserve(data.size() + data.size() / 16);
+                        for (std::uint8_t c : data) {
+                            if (c == '\n') {
+                                out.push_back('\r');
+                                if (crlf) out.push_back('\n');
+                            } else out.push_back(c);
+                        }
+                        data.swap(out);
+                    }
+                }
+            }
+            // A symlink inside the folder is served (nameHostDir) but never
+            // written through (destStaysInsideRoot). Unchanged, it is no save
+            // at all: refusing it failed EVERY flush, naming a file the guest
+            // never touched (bug hunt 2026-10-23). Changed, it is refused.
+            if (ownSource) {
+                std::error_code lec;
+                if (fs::is_symlink(fs::symlink_status(dest, lec)) && !lec &&
+                    fs::file_size(dest, lec) == data.size() && !lec) {
+                    std::ifstream current(dest, std::ios::binary);
+                    std::vector<std::uint8_t> hostBytes(data.size());
+                    current.read(reinterpret_cast<char*>(hostBytes.data()),
+                                 static_cast<std::streamsize>(data.size()));
+                    if (current && hostBytes == data) continue;
+                }
+            }
             if (!destStaysInsideRoot(w, dest)) {
                 pom2::log().warn("ProDOSVol",
                     "decode: refusing " + dest.string() +
@@ -1778,6 +1920,12 @@ void decodeOneDir(DecodeWalk& w,
         // Next directory block pointer is at offset 2 of every dir block.
         curBlock = rd16(blk + 2);
     }
+    if (curBlock != 0 && curBlock < totalBlocks && guard > kMaxDirBlockChain) {
+        // Never silent: entries past here are the guest's and none lands.
+        pom2::log().warn("ProDOSVol",
+            "decode: directory chain longer than the volume under " + hostFolder);
+        r.aborted = true;
+    }
 }
 
 }  // namespace
@@ -1855,7 +2003,7 @@ ProDOSDecodeResult decodeVolumeToFolder(
         return r;
     }
 
-    DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, r, false,
+    DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, kMaxLogicalBytes, r, false,
                      preserveNewerThan, stickyPreserved, convertText, {},
                      fs::file_time_type::clock::now(), {} };
     // Resolved ONCE, before anything is written: every destination is checked

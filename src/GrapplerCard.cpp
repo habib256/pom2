@@ -354,10 +354,12 @@ void GrapplerCard::buildStubRom()
      .poke(0x0C, pom2::kPascalPrinterClass);   // class 1 = printer
     pom2::assemblePascalPrinterEntries(a, dataLo, 0x40, 0x60);
 
-    // PR#n CSWL/CSWH install.
+    // PR#n: install CSWL/CSWH, then print the character that came in A —
+    // the first one after PR#n arrives here (PrinterCard.cpp says why).
     a.region("prn", 0x20, 0x31)
-     .emit({ 0xA9 }).byteOf("cout")
-     .emit({ 0x85, 0x36, 0xA9, a.pageHi(), 0x85, 0x37, 0x60 });
+     .emit({ 0x48, 0xA9 }).byteOf("cout")
+     .emit({ 0x85, 0x36, 0xA9, a.pageHi(), 0x85, 0x37, 0x68 })
+     .jmp("cout");
 
     // Output handler: STA $C0(8+s)0 / RTS.
     a.region("cout", 0x31, 0x40)

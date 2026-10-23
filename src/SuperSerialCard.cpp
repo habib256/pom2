@@ -588,16 +588,23 @@ void SuperSerialCard::applyCommandReg(uint8_t v)
 
     // DTR transitions: MAME `mos6551.cpp:317-321` — when DTR is
     // de-asserted (m_dtr=1, i.e. cmd bit 0 == 0 here), force TX MARK +
-    // output_txd(1). For POM2 that means dropping the pending TX buffer
-    // and the rate-limit budget — the line is held high, no bytes go
-    // out. Going the other way (de-assert → assert) doesn't auto-resume:
-    // the driver writes new bytes to TDR which we'll then send.
+    // output_txd(1): the transmitter stops, and what it still held — the
+    // byte in TDR, the one in the shift register — never goes out.
+    //
+    // In POM2 that is the CTS-held byte and nothing else. The TX ring is NOT
+    // the 6551: TDRE reads 1 the instant a byte is written, so every byte in
+    // the ring left the chip as far as the guest can tell, and the ring is
+    // only the host pacing it onto the wire. Clearing it here lost whole
+    // messages on any driver that closes right after writing — A2osX's
+    // CLOSE is a programmed reset straight after the last byte, so
+    // `echo HELLO > /dev/com2` sent nothing at all (2026-10-23; real
+    // hardware loses at most the byte being shifted out). Going the other
+    // way (de-assert → assert) doesn't auto-resume: the driver writes new
+    // bytes to TDR which we'll then send.
     if (prevDtr && !dtrAsserted_) {
-        txBuf.clear();
-        // The CTS-held byte is pending TX too. Leaving it here lets a
-        // later cable change transmit stale data after the port was closed.
+        // Leaving the CTS-held byte would let a later cable change transmit
+        // stale data after the port was closed.
         tdrHeld_ = false;
-        sendBudget_ = 0.0;
     }
     pushIrqLine();
 }
@@ -628,13 +635,14 @@ void SuperSerialCard::evaluateRxFraming()
     for (uint8_t m = data; m; m = static_cast<uint8_t>(m & (m - 1)))
         ones = !ones;
 
-    bool expected;
-    switch ((cmdReg >> 6) & 0x03) {    // PMC, MAME `mos6551.cpp:310-315`
-        case 0:  expected = !ones; break;   // odd
-        case 1:  expected = ones;  break;   // even
-        case 2:  expected = true;  break;   // mark
-        default: expected = false; break;   // space
-    }
+    // PMC (MAME `mos6551.cpp:310-315` for the encoding). Only odd and even
+    // are CHECKED: the 6551 datasheet's PMC table reads "Mark parity bit
+    // transmitted, parity check disabled" and the same for space. Checking
+    // them flagged every byte of a 7M1 link — a common BBS setting — as a
+    // parity error (bug hunt 2026-10-23).
+    const uint8_t pmc = static_cast<uint8_t>((cmdReg >> 6) & 0x03);
+    if (pmc >= 2) return;
+    const bool expected = (pmc == 0) ? !ones : ones;    // odd : even
     if (received != expected) statusErrors_ |= SR_PARITY_ERROR;
 }
 

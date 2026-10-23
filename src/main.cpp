@@ -1142,10 +1142,17 @@ int main(int argc, char* argv[])
             // card, and the boot disk — mounted second — replaced the folder
             // (bug hunt 2026-10-16). Boot the HDV first; the folder takes
             // drive 2, which ProDOS lists as S<n>,D2.
+            // An 800K boot disk is the same story on a SmartPort card: the
+            // folder took unit 1 and the 3.5" replaced it (bug hunt
+            // 2026-10-23). Mounted after the boot disk, the folder takes the
+            // card's next empty unit.
             const bool folder = !c.prodosFolderPath.empty();
-            const bool hdvBoot = folder && !c.bootDiskPath.empty() &&
-                classifyDiskForSlot(c.bootDiskPath) == DiskSlotClass::Hdv;
-            if (folder && !hdvBoot &&
+            const DiskSlotClass bootClass = c.bootDiskPath.empty()
+                ? DiskSlotClass::Unknown : classifyDiskForSlot(c.bootDiskPath);
+            const bool hdvBoot = folder && bootClass == DiskSlotClass::Hdv;
+            const bool folderAfter = hdvBoot ||
+                (folder && bootClass == DiskSlotClass::Sony35);
+            if (folder && !folderAfter &&
                 !c.mainWindow->mountProDOSFolder(c.prodosFolderPath, err)) {
                 pom2::log().warn("CLI", "ProDOS folder mount failed: " + err);
             }
@@ -1162,8 +1169,9 @@ int main(int argc, char* argv[])
                 pom2::log().warn("CLI", "disk boot failed: " + err);
             }
             err.clear();
-            if (hdvBoot &&
-                !c.mainWindow->mountProDOSFolder(c.prodosFolderPath, err, 1)) {
+            if (folderAfter &&
+                !c.mainWindow->mountProDOSFolder(c.prodosFolderPath, err,
+                                                 hdvBoot ? 1 : 0)) {
                 pom2::log().warn("CLI", "ProDOS folder mount failed: " + err);
             }
             if (!c.blankDiskPath.empty()) {

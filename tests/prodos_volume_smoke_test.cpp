@@ -1519,6 +1519,166 @@ static void testSparseFiles()
     std::printf("  sparse files (TN ProDOS #30): OK\n");
 }
 
+// Bug hunt 2026-10-23, five ways a write-back lost or duplicated files.
+static void testWriteBackRoundTripsHostStructure()
+{
+    std::error_code ec;
+    auto regularFiles = [](const fs::path& d) {
+        std::error_code e; int n = 0;
+        for (const auto& x : fs::directory_iterator(d, e)) if (x.is_regular_file(e)) ++n;
+        return n;
+    };
+
+    // 1. A subfolder the build renamed goes back into ITSELF. `My Stuff` is
+    //    served as MY.STUFF; the decode created MY.STUFF/ beside it with a
+    //    copy of the subtree, one more folder per cycle.
+    {
+        const fs::path dir = makeTempDir("wb_subdir");
+        fs::create_directories(dir / "My Stuff");
+        writeFile(dir / "My Stuff" / "a.txt", {'a'});
+        for (int cycle = 0; cycle < 2; ++cycle) {
+            std::vector<std::uint8_t> img;
+            assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+            const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+            assert(dr.ok);
+        }
+        int dirs = 0;
+        for (const auto& x : fs::directory_iterator(dir, ec)) if (x.is_directory(ec)) ++dirs;
+        assert(dirs == 1 && !fs::exists(dir / "MY.STUFF") &&
+               "a sanitised subfolder came back as a second folder");
+        fs::remove_all(dir, ec);
+    }
+
+    // 2. A guest directory that cannot be created FAILS the save: a host
+    //    FILE of that name (guest deletes are not mirrored) swallowed it
+    //    and everything in it, reported as success.
+    {
+        const fs::path src = makeTempDir("wb_dirfail_src");
+        fs::create_directories(src / "NOTES");
+        writeFile(src / "NOTES" / "n.txt", {'n'});
+        std::vector<std::uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(src.string(), "HOST", img).ok);
+        const fs::path dst = makeTempDir("wb_dirfail_dst");
+        writeFile(dst / "NOTES", {'x'});
+        const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+        assert(!dr.ok && dr.filesUnsaved >= 1 && "a lost directory reported success");
+        fs::remove_all(src, ec); fs::remove_all(dst, ec);
+    }
+
+    // 3. Two NEW guest files whose host names differ only in case stay two
+    //    files. `HELLO` (TXT) and `HELLO.TXT` (TXT): on macOS / Windows the
+    //    second write landed on the first.
+    {
+        const fs::path src = makeTempDir("wb_case_src");
+        writeFile(src / "hello.txt", {'1'});
+        writeFile(src / "other.txt", {'2'});
+        std::vector<std::uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(src.string(), "HOST", img).ok);
+        bool renamed = false;
+        for (int e = 0; e < 12 && !renamed; ++e) {
+            std::uint8_t* ent = img.data() + 2 * kBlockBytes + 4 + 39 + e * 39;
+            if ((ent[0] & 0x0F) == 5 && std::memcmp(ent + 1, "OTHER", 5) == 0) {
+                ent[0] = static_cast<std::uint8_t>((ent[0] & 0xF0) | 9);
+                std::memcpy(ent + 1, "HELLO.TXT", 9);
+                renamed = true;
+            }
+        }
+        assert(renamed);
+        const fs::path dst = makeTempDir("wb_case_dst");
+        const auto dr = pom2::decodeVolumeToFolder(img, dst.string());
+        assert(dr.ok);
+        assert(regularFiles(dst) == 2 && "two guest files became one host file");
+        fs::remove_all(src, ec); fs::remove_all(dst, ec);
+    }
+
+    // 4. Sparse files the guest saved do not make the folder unmountable:
+    //    two `BSAVE ...,B$FFFFFE` cost ~10 blocks on the volume and 32 MB on
+    //    the host, and the build gated on the 32 MB.
+    {
+        const fs::path dir = makeTempDir("wb_sparse");
+        std::vector<std::uint8_t> big(0xFFFFFF, 0);
+        big.back() = 0x42;
+        writeFile(dir / "a.bin", big);
+        writeFile(dir / "b.bin", big);
+        std::vector<std::uint8_t> img;
+        const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == 2 && "sparse files made the folder unmountable");
+        fs::remove_all(dir, ec);
+    }
+
+    // 5. A symlinked file inside the folder is served; left unchanged it is
+    //    no save at all. Refused on every flush, it failed them all.
+    {
+        const fs::path dir = makeTempDir("wb_link");
+        writeFile(dir / "real.bin", {'r'});
+        fs::create_symlink("real.bin", dir / "link.bin", ec);
+        if (!ec) {
+            std::vector<std::uint8_t> img;
+            const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+            assert(br.ok && br.filesIncluded == 2);
+            const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+            assert(dr.ok && "an untouched symlinked file failed the save");
+            assert(fs::is_symlink(dir / "link.bin"));
+        }
+        fs::remove_all(dir, ec);
+    }
+    // 6. Text exchange keeps the host file's own line endings: a CRLF (or
+    //    old-Mac CR) file the guest never touched was rewritten as LF on the
+    //    first flush; an edited one keeps its convention.
+    {
+        const fs::path dir = makeTempDir("wb_crlf");
+        writeFile(dir / "dos.txt", {'a', '\r', '\n', 'b', '\r', '\n'});
+        writeFile(dir / "mac.txt", {'c', '\r', 'd', '\r'});
+        std::vector<std::uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img, true).ok);
+        const auto dr = pom2::decodeVolumeToFolder(img, dir.string(), nullptr, nullptr, true);
+        assert(dr.ok && dr.filesWritten == 0 && "an untouched text file was rewritten");
+        for (int blk = 2; blk <= 5; ++blk)
+            for (int e = 0; e < 13; ++e) {
+                const std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+                if ((ent[0] & 0x0F) == 3 && std::memcmp(ent + 1, "DOS", 3) == 0)
+                    img[rd16(ent + 0x11) * kBlockBytes] = 'A';   // the guest edits
+            }
+        const auto dr2 = pom2::decodeVolumeToFolder(img, dir.string(), nullptr, nullptr, true);
+        assert(dr2.ok && dr2.filesWritten == 1);
+        std::ifstream in(dir / "dos.txt", std::ios::binary);
+        const std::string back((std::istreambuf_iterator<char>(in)), {});
+        assert(back == "A\r\nb\r\n" && "an edited CRLF file lost its line endings");
+        fs::remove_all(dir, ec);
+    }
+
+    // 7. A subfolder past ~3300 entries is written back whole. The decode
+    //    followed 256 directory blocks and silently dropped the rest.
+    {
+        const fs::path dir = makeTempDir("wb_bigdir");
+        fs::create_directories(dir / "BIG");
+        constexpr int kFiles = 3400;
+        char nm[32];
+        for (int i = 0; i < kFiles; ++i) {
+            std::snprintf(nm, sizeof nm, "F%04d.bin", i);
+            writeFile(dir / "BIG" / nm, {static_cast<std::uint8_t>(i & 0x7F)});
+        }
+        std::vector<std::uint8_t> img;
+        const auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == kFiles);
+        // The guest edits the LAST file of the chain.
+        const std::uint8_t want[] = {0x15, 'F', '3', '3', '9', '9'};   // seedling, len 5
+        bool edited = false;
+        for (std::size_t off = 0; off + 39 <= img.size() && !edited; ++off) {
+            if (std::memcmp(img.data() + off, want, sizeof want) != 0) continue;
+            img[rd16(img.data() + off + 0x11) * kBlockBytes] = 0x7F;
+            edited = true;
+        }
+        assert(edited);
+        const auto dr = pom2::decodeVolumeToFolder(img, dir.string());
+        assert(dr.ok);
+        std::ifstream in(dir / "BIG" / "F3399.bin", std::ios::binary);
+        assert(in.get() == 0x7F && "an edit past the 256th directory block was lost");
+        fs::remove_all(dir, ec);
+    }
+    std::printf("prodos_volume_smoke: write-back keeps the host structure OK\n");
+}
+
 int main()
 {
     testFolderTextModeAndMetadata();
@@ -1534,6 +1694,7 @@ int main()
     testMultipleBitmapBlocks();
     testHostNewerFilePreserved();
     testSparseFiles();
+    testWriteBackRoundTripsHostStructure();
     testSymlinkLoopsAndEscapesAreRefused();
     testExtensionCaseRoundTripDoesNotDuplicate();
     testWindowsReservedNamesRefused();

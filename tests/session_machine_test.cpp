@@ -66,6 +66,13 @@ void profiles()
         assert(target->cpu().getCpuMode() == cfg.defaultCpu);
         assert(target->memory().isIIcClass() == cfg.noPhysicalSlots);
         assert(capture(*target).core == archive.core);
+        if (profile == SystemProfile::AppleIIcPlus) {
+            // Written before the //c Plus accelerator was modelled: the v1
+            // configuration, no accelerator bytes (bug hunt 2026-10-23).
+            auto old = archive; old.configuration.resize(4); old.configuration[0] = 1;
+            for (uint32_t version : {6u, 7u}) { old.version = version; requireLoad(*target, old); }
+            assert(capture(*target).core == archive.core);
+        }
     }
 }
 void legacyBundles()
@@ -251,11 +258,40 @@ void tapes()
     // Detached recordings may be rolled back to an explicit checkpoint.
     requireLoad(*target, session);
 }
+
+// REW pressed mid-segment: the forward countdown stayed set while the head
+// moved back, so a session saved during the rewind failed its own reader's
+// check and the whole session was refused (bug hunt 2026-10-23).
+void tapeRewindSession()
+{
+    const auto tapePath = pom2test::tempPath("session-rewind-tape.aci");
+    std::vector<uint8_t> tape{'P','O','M','1','A','C','I','1',1,0,0,0};
+    byteio::putU32(tape, 40);
+    for (int i = 0; i < 40; ++i) byteio::putU32(tape, (i & 1) ? 600 : 200);
+    { std::ofstream f(tapePath, std::ios::binary); f.write(reinterpret_cast<char*>(tape.data()), tape.size()); }
+    auto c = std::make_unique<EmulationController>(AudioDevice::OutputMode::Offline);
+    c->setMachineId(snapshotMachineId(SystemProfile::AppleIIPlus));
+    assert(c->cassette().loadTape(tapePath)); c->cassette().playTape();
+    for (int i = 0; i < 30; ++i) {             // the program reads $C060: the
+        c->cassette().advanceCycles(10);       // tape runs, into the 600-cycle
+        (void)c->cassette().readTapeInput();   // segment after the first 200
+    }
+    c->cassette().rewindTape();
+    c->cassette().advanceCycles(31);           // 620 rewind cycles: one segment back
+    std::vector<uint8_t> state; std::string error;
+    assert(c->cassette().appendSessionState(state, error));
+    if (!c->cassette().loadSessionState(state, error, false))
+        std::fprintf(stderr, "rewind session: %s\n", error.c_str());
+    assert(c->cassette().loadSessionState(state, error, false) &&
+           "a session saved mid-rewind was refused");
+    std::filesystem::remove(tapePath);
+}
 }
 
 int main()
 {
     profiles(); legacyBundles(); zipAndExpansions(); transwarp(); cffaAndFolder(); outgoingDurability(); tapes();
+    tapeRewindSession();
     auto source = std::make_unique<EmulationController>();
     source->setMachineId(snapshotMachineId(SystemProfile::AppleIIePAL));
     source->setVideoStandard(VideoStandard::PAL);

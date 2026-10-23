@@ -193,6 +193,76 @@ int main()
         assert(!row(f, fP1, 150) && "a line still ahead of the beam shows the write");
     }
 
+    // Stopped machine: a debugger poke (or a stepped store) is stamped after
+    // the published frame. Rewound away, it stayed invisible until the
+    // machine ran a whole frame again (bug hunt 2026-10-23).
+    {
+        Memory mem; populate(mem); hgrMode(mem); mem.memRead(SET_PAGE1);
+        mem.setCycleCounter(0);
+        advanceTo(mem, 50 * 65);
+        mem.memRead(SET_PAGE2); mem.memRead(SET_PAGE1);
+        advanceTo(mem, 3 * kFrame + 100);
+        assert(mem.videoWriteLogArmed());
+        assert(mem.videoRewindBegin()); mem.videoRewindEnd();   // log is live
+        Apple2Display d;
+        d.setAuxMemory(mem.auxData());
+        d.render(mem);                                     // running
+        const std::vector<uint32_t> before(d.pixels(), d.pixels() + W * H);
+        d.render(mem);                                     // no cycles: idle
+        for (uint16_t a = 0x2000; a < 0x2028; ++a) mem.memWrite(a, 0x7F);
+        d.render(mem);
+        const std::vector<uint32_t> after(d.pixels(), d.pixels() + W * H);
+        assert(!row(after, before, 0) && "a poke while stopped shows at once");
+    }
+
+    // A clock jump (rewind, snapshot load) under an armed log. The old
+    // timeline's entries carry future cycles; left in the log they blocked
+    // its trim, an entry from the frame BEFORE the published one survived,
+    // its cut underflowed to "after the picture", and the paint's final
+    // re-apply left that older byte in live RAM (bug hunt 2026-10-23).
+    {
+        Memory mem; populate(mem); hgrMode(mem); mem.memRead(SET_PAGE1);
+        mem.setCycleCounter(0);
+        advanceTo(mem, 50 * 65);
+        mem.memRead(SET_PAGE2); mem.memRead(SET_PAGE1);
+        advanceTo(mem, 5 * kFrame + 100 * 65);             // old timeline
+        mem.memWrite(0x2000, 0x11);
+        mem.setCycleCounter(2 * kFrame);                    // rewind
+        mem.resetVideoEventLogForClockJump();               // as loadSnapshotState
+        advanceTo(mem, 2 * kFrame + 100 * 65);
+        mem.memWrite(0x2000, 0x33);                         // frame 2
+        advanceTo(mem, 3 * kFrame + 100 * 65);
+        mem.memWrite(0x2000, 0x44);                         // frame 3, published
+        advanceTo(mem, 4 * kFrame + 100 * 65);
+        if (mem.videoRewindBegin()) mem.videoRewindEnd();
+        assert(mem.memRead(0x2000) == 0x44 && "a paint after a rewind left RAM live");
+    }
+
+    // RamWorks: an aux entry describes bank 0, which lives in the backing
+    // store while another bank is selected. Checked against the selected
+    // bank instead, the whole log was declared stale and dropped.
+    {
+        Memory mem; mem.setIIEMode(true); mem.setRamWorksBanks(2);
+        hgrMode(mem); mem.memRead(SET_PAGE1);
+        mem.setCycleCounter(0);
+        advanceTo(mem, 50 * 65);
+        mem.memRead(SET_PAGE2); mem.memRead(SET_PAGE1);
+        // The //e publishes its frames a little late, so the first frame
+        // after arming is not described: write in the one after it.
+        advanceTo(mem, 2 * kFrame + 100 * 65);
+        mem.memWrite(0xC005, 0);                            // RAMWRT: writes to aux
+        mem.memWrite(0x2000, 0x55);                         // aux bank 0, line 100
+        mem.memWrite(0xC004, 0);
+        mem.memWrite(0xC071, 1);                            // select bank 1
+        advanceTo(mem, 3 * kFrame + 100);
+        assert(mem.videoAuxData()[0x2000] == 0x55);
+        assert(mem.videoRewindBegin() && "the log still describes the frame");
+        mem.videoRewindTo(50);
+        assert(mem.videoAuxData()[0x2000] == 0x00 && "line 50 fetched the old byte");
+        mem.videoRewindEnd();
+        assert(mem.videoAuxData()[0x2000] == 0x55 && "bank 0 back to live");
+    }
+
     std::printf("drol_pageflip_render OK\n");
     return 0;
 }

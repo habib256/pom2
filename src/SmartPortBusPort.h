@@ -75,6 +75,12 @@ public:
     // lines around it: same claim rule, same answers, no second tracker.
     /// Before a write: true when the byte is the bus's — the caller then
     /// sets `setBusCapture(true)` on the IWM so it stays out of the shifter.
+    /// //c+ shared IWM: a Sony 3.5" drive is enabled ahead of this port on
+    /// the chain. An enabled 3.5" drive forces every PHASE line low for the
+    /// devices after it, so nothing downstream is reset or enabled by its
+    /// register selects (CA0-CA2 / LSTRB are PH0-PH3). Set before each
+    /// shared call below.
+    virtual void setUpstreamSonyEnabled(bool /*enabled*/) {}
     virtual bool sharedWantsWrite(const IWMDevice& /*iwm*/) { return false; }
     /// After the IWM took the write.
     virtual void sharedAfterWrite(const IWMDevice& /*iwm*/, uint8_t /*offset*/,

@@ -437,6 +437,9 @@ private:
     void receiveOnePacket(size_t i);
     void receiveOnePacketFromSocket(size_t i);
     void receiveOnePacketRaw();
+    /// An ARP request for SIPR is answered here, as the chip does in hardware.
+    /// True when `frame` was ARP (answered or not): nothing else takes it.
+    bool answerArp(const uint8_t* frame, int len);
     void receiveOnePacketMacRaw(size_t i, const uint8_t* data, int size);
     void receiveOnePacketIpRaw(size_t i, const uint8_t* payload, size_t len,
                                uint32_t source);

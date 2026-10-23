@@ -75,6 +75,14 @@ public:
     /// ~0.7 % deficit that starved the reconstructor and glitched continuous
     /// speaker music (e.g. H.E.R.O. on the //e-PAL profile).
     void setCpuClock(double hz);
+    /// An accelerator changed the CPU clock to `hz` at CPU cycle `cycle`; the
+    /// machine's stock clock is `stockHz`. Toggles are stamped in STOCK time
+    /// from here on (see recordToggle) and the reconstruction runs at
+    /// `stockHz`, so the queued backlog plays at the speed it was MADE at.
+    /// Converting at playback with the clock then in force played a backlog
+    /// made at 4 MHz as if made at 1 MHz and back again — the tail of a
+    /// //c+ bell 4x sharp (bug hunt 2026-10-23).
+    void setCpuClockAt(uint64_t cycle, double hz, double stockHz);
 
     /// Volume in [0, 2]. UI thread sets, audio thread reads.
     void  setVolume(float v);
@@ -106,6 +114,14 @@ private:
     // CPU clock the reconstruction assumes. Runtime (not constexpr) so PAL
     // profiles can retune it; audio thread reads, UI/worker thread writes.
     std::atomic<double>     cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
+    // CPU cycle → stock time, piecewise linear from the last clock change.
+    // Identity (and exact) until an accelerator changes the clock. Under
+    // eventMutex. See setCpuClockAt.
+    uint64_t stampBaseCycle_ = 0;
+    double   stampBaseStock_ = 0.0;
+    double   stampRatio_     = 1.0;
+    bool     stampIdentity_  = true;
+    double   toStockLocked(uint64_t cycle) const;
     // MAME's Apple II speaker route is 0.4 (apple2e.cpp / apple2.cpp).
     // Keep the same nominal level so the AY-to-speaker balance is measurable.
     static constexpr float  kSquareAmp    = 0.4f;

@@ -430,6 +430,22 @@ int main()
                     "through Memory\n");
     }
 
+    // ─── A host accelerator does not speed up the card ───────────────────
+    // The card's 65C02 and timer run off its own crystal. Paced one card
+    // cycle per HOST cycle, a 4 MHz Zip ran it ~4x fast against its SCC and
+    // the POST's loopback poll failed (bug hunt 2026-10-23).
+    {
+        pom2::WorkstationCard fast(4);
+        assert(fast.loadRom(romPath));
+        fast.setStandardClock(1020000.0);
+        fast.setCpuClock(4 * 1020000.0);
+        runFrames(fast, 4 * 400);                  // the same 8 s of card time
+        assert(fast.cardPc() != pom2::WorkstationCard::kPostHaltPc &&
+               "under a 4 MHz host the card halted at its POST error loop");
+        assert(fast.postPassed());
+        std::printf("  ok: a 4 MHz host leaves the card on its own clock\n");
+    }
+
     std::printf("OK workstation_card_smoke\n");
     return 0;
 }

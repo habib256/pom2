@@ -78,6 +78,7 @@ public:
     // lines around it. Same claim rule, same answers.
     /// Before a write: true when the byte is the bus's — the caller then
     /// sets `setBusCapture(true)` on the IWM so it stays out of the shifter.
+    void setUpstreamSonyEnabled(bool enabled) override { upstreamSony_ = enabled; }
     bool sharedWantsWrite(const IWMDevice& iwm) override;
     /// After the IWM took the write.
     void sharedAfterWrite(const IWMDevice& iwm, uint8_t offset, uint8_t value,
@@ -112,6 +113,7 @@ private:
     bool answer(uint8_t control, uint8_t iwmValue, uint8_t& out);
     void takeByte(const IWMDevice& iwm, uint8_t offset, uint8_t value);
     uint8_t lastPhases_ = 0;
+    bool    upstreamSony_ = false;   // see setUpstreamSonyEnabled
     unsigned mediaMask_ = 0;   // which units held media at the last look
 };
 

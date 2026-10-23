@@ -66,5 +66,34 @@ int main()
     assert(small.size() == large.size());
     for (size_t i = 0; i < small.size(); ++i)
         assert(std::abs(small[i] - large[i]) < 1e-6f);
+    // An accelerator's clock change between MAKING the sound and PLAYING it
+    // (a //c+ Zip slow window opening on the speaker access): toggles made
+    // at 4 MHz must still play at the pitch they were made at. Stamped in
+    // CPU cycles and converted with the clock in force at playback, this
+    // 1 kHz tone came out at 250 Hz (bug hunt 2026-10-23).
+    {
+        SpeakerDevice speaker;
+        speaker.setSampleRate(48000);
+        const double stock = POM2_CPU_CLOCK_HZ, fast = 4.0 * POM2_CPU_CLOCK_HZ;
+        speaker.setCpuClockAt(0, fast, stock);
+        constexpr double seconds = 0.08, freq = 1000.0;
+        uint64_t cycle = 0;
+        for (int edge = 0; edge < static_cast<int>(2 * freq * seconds); ++edge) {
+            cycle = static_cast<uint64_t>(edge * fast / (2 * freq));
+            speaker.recordToggle(cycle);
+        }
+        speaker.setCpuClockAt(cycle, stock, stock);   // the slow window opens
+        std::vector<float> out(static_cast<size_t>(48000 * seconds));
+        for (size_t off = 0; off < out.size(); off += 256)
+            speaker.fillAudioBuffer(out.data() + off,
+                static_cast<int>(std::min<size_t>(256, out.size() - off)));
+        int rising = 0;
+        for (size_t i = out.size() / 4 + 1; i < out.size() * 3 / 4; ++i)
+            if (out[i - 1] < 0.0f && out[i] >= 0.0f) ++rising;
+        const double measured = rising / (seconds / 2);
+        std::printf("tone made at 4 MHz, played after a slow-down: %.0f Hz\n", measured);
+        assert(std::abs(measured / freq - 1.0) < 0.1 &&
+               "a clock change between making and playing shifted the pitch");
+    }
     std::puts("Speaker audio quality: OK");
 }

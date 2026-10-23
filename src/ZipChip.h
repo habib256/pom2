@@ -76,8 +76,9 @@
 //   modelled: MAME has no case for them, so there is no source to port.
 //   The chip runs at 4 MHz or stock.
 //
-// Present only on //e-class machines with slots (Memory gates it); the
-// //c Plus keeps its fixed 4× profile budget.
+// Present on //e-class machines with slots, and seated by the //c Plus profile
+// as its built-in accelerator (EmulationController::installSocketAccelerator;
+// Memory::activeAccel gates both).
 
 #ifndef POM2_ZIP_CHIP_H
 #define POM2_ZIP_CHIP_H

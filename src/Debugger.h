@@ -264,6 +264,13 @@ private:
     const Memory* stepMemory_ = nullptr;
     uint8_t stepStack_ = 0;
     bool stepReturning_ = false;
+    // Nested calls inside a step: the SP each JSR was executed at. A frame
+    // closes when SP climbs back to that level (its RTS, or a routine that
+    // pops its own return address and jumps). See onInstruction.
+    std::vector<uint8_t> stepFrames_;
+    bool    stepSkipFirst_ = false;   // the step-over's own JSR is not nested
+    bool    stepOutMode_   = false;
+    uint8_t stepStartSp_   = 0;
     /// Atomic, alone among this class's members, because Stop clears it from
     /// the UI thread while the CPU worker may be reading it in
     /// `onInstruction`. Everything else here is guarded by `stateMutex`

@@ -1001,6 +1001,22 @@ void testAutoLineFeedDetection()
         assert(std::abs(iw.status().headX - 0.25) > 1e-9);   // it did print
     }
 
+    // 3b. The Diablo head latches the same way (bug hunt 2026-10-23): it
+    //     swallowed the LF but kept feeding on every later bare CR, so a
+    //     daisywheel driver's underline pass landed a line low.
+    {
+        ImageWriter iw(72, ImageWriter::PaperSize::Letter);
+        iw.setModel(pom2::IwModel::LaserWriterDiablo);
+        iw.setSpeed(ImageWriter::Speed::Instant);
+        const std::string job = "A\r\nTEXT";
+        iw.printBytes(reinterpret_cast<const uint8_t*>(job.data()), job.size());
+        assert(iw.autoFeedLatchedOff());
+        const double y = iw.status().headY;
+        const uint8_t cr = '\r';
+        iw.printBytes(&cr, 1);
+        assert(std::abs(iw.status().headY - y) < 1e-9 && "a bare CR overprints");
+    }
+
     // 4. An LF that is NOT preceded by a CR still feeds.
     {
         ImageWriter iw(72, ImageWriter::PaperSize::Letter);

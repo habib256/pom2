@@ -9284,9 +9284,13 @@ if(TARGET pom2_core_test)
     target_link_libraries(protected_disk_boot_probe PRIVATE pom2_core_test)
     add_executable(nox_mb4c_boot_probe EXCLUDE_FROM_ALL nox_mb4c_boot_probe.cpp)
     target_link_libraries(nox_mb4c_boot_probe PRIVATE pom2_core_test)
+    # A2osX (disks_3.5) on a //e or a //c assembled piece by piece.
+    add_executable(a2osx_boot_probe EXCLUDE_FROM_ALL a2osx_boot_probe.cpp)
+    target_link_libraries(a2osx_boot_probe PRIVATE pom2_core_test)
 endif()
 
 set(POM2_PROBE_TARGETS
+    a2osx_boot_probe
     artifact_probe
     c2plus_boot_probe
     cffa_boot_dump
@@ -9507,6 +9511,13 @@ add_executable(test_disk35_flux_write disk35_flux_write_test.cpp)
 target_link_libraries(test_disk35_flux_write PRIVATE pom2_core_test)
 add_test(NAME disk35_flux_write COMMAND test_disk35_flux_write)
 
+
+# A2osX (disks_3.5) as a hardware bench: boot to the shell on a //e and a
+# //c, size the SmartPort bays, and have ten of its drivers find their card.
+add_executable(test_a2osx_boot a2osx_boot_test.cpp)
+target_link_libraries(test_a2osx_boot PRIVATE pom2_core_test)
+add_test(NAME a2osx_boot COMMAND test_a2osx_boot WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(a2osx_boot PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 add_executable(test_session_machine session_machine_test.cpp)
 target_link_libraries(test_session_machine PRIVATE pom2_core_test)

@@ -141,6 +141,17 @@ int main()
                + std::to_string(cn07) + ")");
     }
 
+    // $CnFC-$CnFD: the device size in blocks, $0000 = "ask STATUS", as the
+    // real Liron page has it. The synthetic page left NOP fill there, and
+    // A2osX — which reads it for a $Cn07 != 0 device — sized every bay at
+    // $EAEA = 60 138 blocks (2026-10-23).
+    {
+        const uint16_t base = static_cast<uint16_t>(0xC000 + kSlot * 0x100);
+        expect(mem.memRead(static_cast<uint16_t>(base + 0xFC)) == 0x00 &&
+               mem.memRead(static_cast<uint16_t>(base + 0xFD)) == 0x00,
+               tag + "$CnFC-$CnFD must be $0000 (size via STATUS)");
+    }
+
     // ── 1. Nothing overflowed ────────────────────────────────────────────
     expect(!craw->romLayoutError(),
            tag + "a slot-ROM region overflowed its budget");

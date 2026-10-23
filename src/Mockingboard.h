@@ -321,6 +321,24 @@ private:
     // CLAUDE.md "Mockingboard" section for the Nox Archaist / Skyfox /
     // Broadside detection-failure class this fixes.
     uint64_t lastSyncCycle_ = 0;
+    /// Slot-bus (phase 0) time the VIAs have reached: `lastSyncCycle_`
+    /// converted by `busClock_`, so it runs at the STOCK rate whatever the
+    /// accelerator does. AY writes are stamped with it and the audio thread
+    /// replays them at the bus clock. Stamped in CPU cycles and replayed at
+    /// the clock in force at PLAYBACK time, a backlog made at one speed was
+    /// played at another — under the //c+ Zip a bell's tail came out 4x
+    /// sharp (bug hunt 2026-10-23). Ratio 1 (no accelerator): equal to
+    /// `lastSyncCycle_`, cycle for cycle.
+    uint64_t busNow_ = 0;
+    /// A small step back of the CPU-side sync point (see syncToCpuCycleAt):
+    /// take the same span off bus time, so the two stay equal at ratio 1.
+    void rewindBusNow(uint64_t cpuCycles)
+    {
+        const double r = busClock_.ratio();
+        const uint64_t back = (r == 1.0) ? cpuCycles
+            : static_cast<uint64_t>(static_cast<double>(cpuCycles) * r);
+        busNow_ = busNow_ > back ? busNow_ - back : 0;
+    }
     /// CPU cycles -> phase-0 ticks for the VIAs (guarded by mtx).
     pom2::SlotBusClock busClock_;
     void syncToCpuCycle();

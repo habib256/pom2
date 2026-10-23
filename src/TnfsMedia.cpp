@@ -24,6 +24,9 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -32,6 +35,50 @@ namespace pom2 {
 namespace {
 
 namespace fs = std::filesystem;
+
+// ── Pristine stamps ──────────────────────────────────────────────────────
+// A cached image is mounted writable like any other disk, so the floppy and
+// block autosaves put the guest's saves into it — and later runs serve that
+// copy offline. The prune used to evict it like any download, and the user's
+// progress went with it (bug hunt 2026-10-23). Each fetch now leaves
+// `<image>.fetched` beside the image: its size and FNV-1a 64 as fetched. Only
+// an image that still matches is a cache entry; one that does not is the
+// user's disk, and stays.
+constexpr const char* kStampSuffix = ".fetched";
+
+struct Fnv { std::uint64_t h = 1469598103934665603ull;
+             void add(const std::uint8_t* p, std::size_t n) {
+                 for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; } } };
+
+std::string stampText(std::uint64_t size, std::uint64_t hash)
+{
+    return std::to_string(size) + " " + std::to_string(hash) + "\n";
+}
+
+/// The stamp of the file as it is now; empty when it cannot be read.
+std::string currentStamp(const fs::path& image)
+{
+    std::ifstream f(image, std::ios::binary);
+    if (!f) return {};
+    Fnv fnv; std::uint64_t size = 0;
+    std::vector<char> buf(64 * 1024);
+    while (f.read(buf.data(), static_cast<std::streamsize>(buf.size())) || f.gcount() > 0) {
+        const auto got = static_cast<std::size_t>(f.gcount());
+        fnv.add(reinterpret_cast<const std::uint8_t*>(buf.data()), got);
+        size += got;
+        if (!f) break;
+    }
+    if (f.bad()) return {};
+    return stampText(size, fnv.h);
+}
+
+std::string savedStamp(const fs::path& image)
+{
+    std::ifstream f(image.string() + kStampSuffix, std::ios::binary);
+    if (!f) return {};
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return text;
+}
 
 /// Characters a cache file name may keep. Everything else becomes '_': the
 /// path comes off a remote server and lands in the user's filesystem, so it
@@ -86,6 +133,14 @@ std::string cacheNameFor(const std::string& host, std::uint16_t port,
 
 } // namespace
 
+bool markTnfsCachePristine(const std::string& image)
+{
+    const std::string stamp = currentStamp(image);
+    if (stamp.empty()) return false;
+    std::error_code ec;
+    return writeFileAtomic(image + kStampSuffix, stamp.data(), stamp.size(), ec);
+}
+
 std::uint64_t pruneTnfsCache(const std::string& cacheDir,
                              std::uint64_t budgetBytes,
                              const std::string& keep)
@@ -108,6 +163,10 @@ std::uint64_t pruneTnfsCache(const std::string& cacheDir,
         if (ec) break;
         std::error_code entryEc;
         if (!it->is_regular_file(entryEc) || entryEc) continue;
+        const std::string name = it->path().filename().string();
+        const std::size_t sl = std::char_traits<char>::length(kStampSuffix);
+        if (name.size() > sl && name.compare(name.size() - sl, sl, kStampSuffix) == 0)
+            continue;                                  // a stamp, not an image
         Entry e;
         e.path  = it->path();
         e.bytes = fs::file_size(e.path, entryEc);
@@ -129,8 +188,16 @@ std::uint64_t pruneTnfsCache(const std::string& cacheDir,
         // user is about to mount, and it is also the NEWEST, so this only
         // ever fires when the budget is smaller than a single image.
         if (!keep.empty() && e.path.string() == keep) continue;
+        // Only a download still as it was fetched; see "Pristine stamps".
+        const std::string saved = savedStamp(e.path);
+        if (saved.empty() || saved != currentStamp(e.path)) {
+            log().info("TNFS", "cache prune: kept " + e.path.filename().string() +
+                               " — written since it was fetched (guest saves)");
+            continue;
+        }
         std::error_code rmEc;
         if (!fs::remove(e.path, rmEc) || rmEc) continue;
+        fs::remove(e.path.string() + kStampSuffix, rmEc);
         total -= static_cast<std::uint64_t>(e.bytes);
         freed += static_cast<std::uint64_t>(e.bytes);
         log().info("TNFS", "cache prune: dropped " +
@@ -283,6 +350,8 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
         return static_cast<long long>(limits.deadlineSeconds) * 1000 - usedMs;
     };
     if (limits.abort) c.setAbortFlag(limits.abort);
+    if (limits.deadlineSeconds > 0)
+        c.setDeadline(started + std::chrono::seconds(limits.deadlineSeconds));
     if (limits.deadlineSeconds > 0) {
         const long long left = remainingMs();
         // Already out of time before a socket is opened (a long cache scan on
@@ -345,8 +414,11 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
         const std::uint32_t n = std::min(kChunk, size - done);
         if (!c.readAt(handle, done, bytes.data() + done, n, err)) {
             c.closeFile(handle);
-            r.error = "TNFS read " + path + " at " + std::to_string(done) +
-                      " failed: " + err;
+            // The client stops mid-chunk at the deadline or on Ctrl+C; say
+            // which, in giveUp's words.
+            if (!giveUp(done, size))
+                r.error = "TNFS read " + path + " at " + std::to_string(done) +
+                          " failed: " + err;
             return r;
         }
         done += n;
@@ -369,6 +441,14 @@ TnfsFetchResult tnfsFetchImage(const std::string& url,
     if (!writeFileAtomic(dest, bytes.data(), bytes.size(), ec)) {
         r.error = "cannot write " + dest.string() + ": " + ec.message();
         return r;
+    }
+
+    {
+        Fnv fnv; fnv.add(bytes.data(), bytes.size());
+        const std::string stamp = stampText(bytes.size(), fnv.h);
+        // Without its stamp the image is merely never evicted: not fatal.
+        (void)writeFileAtomic(dest.string() + kStampSuffix,
+                              stamp.data(), stamp.size(), ec);
     }
 
     r.ok        = true;

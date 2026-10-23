@@ -122,12 +122,15 @@ void EmulationController::applyAcceleratorClock(double mul)
 {
     const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
     const int base = baseCyclesPerFrame_.load();
-    double hz = static_cast<double>(vt.cpuClockHz) *
+    const double stockHz = static_cast<double>(vt.cpuClockHz) *
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
-    hz *= mul;
+    const double hz = stockHz * mul;
     if (hz == cpuClockHz_.load()) return;   // the no-accelerator fast path
     cpuClockHz_.store(hz);
-    if (spk)       spk->setCpuClock(hz);
+    // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
+    // its backlog then plays at the speed it was made at. The cards' AY
+    // replays do the same through their bus clock (busNow_).
+    if (spk)       spk->setCpuClockAt(mem.getCycleCounter(), hz, stockHz);
     if (tape)      tape->setCpuClock(hz);
     if (floppy525) floppy525->setCpuClock(hz);
     if (floppy35)  floppy35->setCpuClock(hz);
@@ -417,6 +420,13 @@ void EmulationController::connectExternalSony35(int idx, bool connected)
 bool EmulationController::mount35(int idx, const std::string& path, bool click)
 {
     if (idx < 0 || idx >= kSony35Drives) return false;
+    // The OUTGOING disk is saved first, unlocked, as the Disk II mount does
+    // (StorageCoordinator::mountDiskII): phase 2 below flushes a dirty
+    // medium inline — 800 KB and an fsync under `stateMtx` — and the floppy
+    // autosave keeps `dirty_` set while its own commit is in flight, so that
+    // ran after any write in the last second (bug hunt 2026-10-23). The
+    // inline flush stays the fallback.
+    { std::string ignored; (void)syncFloppyMedia(ignored); }
 
     // Two-phase, for the reason in MediaMount.h: `stateMtx` is held by the CPU
     // worker every 4096-cycle chunk and by the UI thread on every frame, so
@@ -1528,12 +1538,18 @@ void EmulationController::syncDebugHook()
 
 void EmulationController::debugResume()
 {
-    // Only a PC breakpoint has already stopped BEFORE this instruction.
-    // A watchpoint stopped AFTER its instruction, and must not suppress a
-    // different breakpoint on the next instruction.
+    // A PC breakpoint — and a step-over, step-out or run-to-cursor stop,
+    // which land the same way — has stopped BEFORE this instruction. A
+    // watchpoint stopped AFTER its instruction, and must not suppress a
+    // different breakpoint on the next instruction. The transients used to
+    // get no amnesty, so a breakpoint on the address they stopped at fired
+    // at once on the next Run, executing nothing (bug hunt 2026-10-23).
+    using Reason = pom2::Debugger::Reason;
     const auto hit = debugger_->lastHit();
-    if (hit.reason == pom2::Debugger::Reason::Breakpoint &&
-        hit.pc == processor.getProgramCounter())
+    const bool stoppedBefore =
+        hit.reason == Reason::Breakpoint || hit.reason == Reason::StepOver ||
+        hit.reason == Reason::StepOut    || hit.reason == Reason::RunToCursor;
+    if (stoppedBefore && hit.pc == processor.getProgramCounter())
         debugger_->armResumeFrom(hit.pc);
     debugger_->clearHit();
 }

@@ -117,8 +117,25 @@ uint8_t Memory::peekCpuView(uint16_t addr) const
             return internalIORom[addr - 0xC000];
         }
     }
-    // Slot-ROM window: falls back to the mirror. See Memory.h — several
-    // cards decode MMIO inside their $Cn00 page.
+    // Slot-ROM window: the card's own side-effect-free peek, when it has
+    // one. The flat mirror is never filled here on a //e (its internal ROM
+    // lives in internalIORom), so a card's firmware read as $00: the
+    // debugger disassembled BRKs, and Step Over / Step Out never saw the
+    // card's RTS — F8 on a `JSR $C5xx` SmartPort call became an unbounded
+    // Run (bug hunt 2026-10-23). A card that cannot peek (several decode
+    // MMIO inside their $Cn00 page; see Memory.h) still shows the mirror.
+    uint8_t out = 0;
+    if (addr <= 0xC7FF) {
+        if (const SlotPeripheral* p = slots.peripheral((addr >> 8) & 0x07);
+            p && p->peekSlotRom(static_cast<uint8_t>(addr & 0xFF), out))
+            return out;
+    } else if (addr <= 0xCFFE) {
+        const int active = slots.getActiveExpansionSlot();
+        if (active >= 1 && active <= 7)
+            if (const SlotPeripheral* p = slots.peripheral(active);
+                p && p->peekExpansionRom(static_cast<uint16_t>(addr - 0xC800), out))
+                return out;
+    }
     return mem[addr];
 }
 

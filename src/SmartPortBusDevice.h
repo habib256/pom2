@@ -195,6 +195,14 @@ public:
         int         badChecksums = 0;    // frames refused for their checksum
     };
     const Progress& progress() const { return progress_; }
+    /// The chain bay a packet addressed to `chainNumber` reaches, or -1 —
+    /// the INIT numbering as it stands, for tests and diagnostics.
+    int bayForChainNumber(uint8_t chainNumber) const {
+        const SmartPortBusUnit* u = unitFor(chainNumber);
+        for (int i = 0; u && i < unitCount_; ++i)
+            if (units_[static_cast<std::size_t>(i)] == u) return i;
+        return -1;
+    }
 
     // ── Snapshot / rewind ────────────────────────────────────────────────
     /// Everything a transaction in flight needs to resume after a restore:

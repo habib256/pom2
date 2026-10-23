@@ -255,6 +255,7 @@ bool TnfsClient::sendRecvTcp(const uint8_t* pkt, std::size_t n,
     std::size_t have = 0;
     auto pull = [&](std::size_t want) -> bool {
         while (have < want) {
+            if (stopped()) return false;
             const iolen_t r = ::recv(fd_, reinterpret_cast<char*>(buf + have),
                                      static_cast<iolen_t>(want - have), 0);
             if (r <= 0) return false;
@@ -329,7 +330,7 @@ bool TnfsClient::sendRecvUdp(const uint8_t* pkt, std::size_t n,
         // client (retries × per-request timeout). Poll the caller's abort
         // flag once per attempt so Ctrl+C is answered within one timeout
         // instead of after the whole ladder.
-        if (aborted()) { errOut = "TNFS: cancelled"; return false; }
+        if (stopped()) { errOut = "TNFS: cancelled"; return false; }
         if (sendNoSignal(fd_, pkt, n) != static_cast<iolen_t>(n)) {
             errOut = "TNFS send failed: " + lastSocketErrorText();
             return false;
@@ -638,6 +639,7 @@ bool TnfsClient::readAt(int handle, uint32_t offset, uint8_t* dst, uint32_t n,
         const uint16_t chunk = static_cast<uint16_t>(
             (n - done > static_cast<uint32_t>(kMaxReadChunk))
                 ? kMaxReadChunk : (n - done));
+        if (stopped()) { errOut = "TNFS: cancelled"; return false; }
         std::vector<uint8_t> body;
         body.push_back(static_cast<uint8_t>(handle));
         put16(body, chunk);

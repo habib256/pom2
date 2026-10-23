@@ -466,7 +466,7 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
         return;
     }
 
-    if (bandHook_) bandHook_(kMixedTextFirstScanline);   // beam-time RAM
+    if (patchMixedTextByCuts(mem, state)) return;   // Apple2Display_Beam.cpp
     if (mem.isIIE() && state.eightyCol)
         renderText80(mem, state, 20, 24);
     else {
@@ -598,7 +598,6 @@ void Apple2Display::render(Memory& mem)
     // display tests drive this class, poking soft switches into Memory with
     // no clock running at all.
     auto events = mem.takeVideoEvents();
-    BeamTimeRam beamRam(*this, mem, events);   // Apple2Display_Beam.cpp
     Memory::DisplayState state = mem.getDisplayState();
     //
     // Last: a STOPPED machine publishes nothing at all (no cycles, no frame
@@ -622,6 +621,7 @@ void Apple2Display::render(Memory& mem)
     // TEXT + AN0 under a Videx Videoterm, SHR under a VidHD: the card's
     // picture replaces this frame entirely (renderCardPicture, Apple2Display.h).
     if (renderCardPicture(mem, state)) return;
+    BeamTimeRam beamRam(*this, mem, events);   // after the card: see _Beam.cpp
     // Whether the 32-row text band needs patching is NOT a property of the
     // frame's final state, and it is not "any band was mixed graphics"
     // either. It is exactly: did fillCompositeSignal leave scanlines

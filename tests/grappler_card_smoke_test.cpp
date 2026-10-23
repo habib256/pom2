@@ -77,9 +77,11 @@ void testStubRom()
            card.slotRomRead(0x4A) == 0xC0);                  // PWRITE: STA data port
     assert(card.slotRomRead(0x4E) == 0xA2);                  // PSTATUS
     // CSWL/CSWH installer.
-    assert(card.slotRomRead(0x20) == 0xA9);
-    assert(card.slotRomRead(0x21) == 0x31);
-    assert(card.slotRomRead(0x25) == 0xC1);
+    assert(card.slotRomRead(0x20) == 0x48);     // PHA: the char in A is printed
+    assert(card.slotRomRead(0x21) == 0xA9);
+    assert(card.slotRomRead(0x22) == 0x31);
+    assert(card.slotRomRead(0x26) == 0xC1);
+    assert(card.slotRomRead(0x29) == 0x68 && card.slotRomRead(0x2A) == 0x4C);
     // Output handler — data port is $C0(8+s)0, the MAME data-latch offset.
     assert(card.slotRomRead(0x31) == 0x8D);
     assert(card.slotRomRead(0x32) == 0x90);     // $80 + 1*16 + 0
@@ -89,7 +91,7 @@ void testStubRom()
     // Slot 3 rebakes slot-dependent bytes.
     GrapplerCard card3(3);
     assert(card3.slotRomRead(0x02) == 0xC3);
-    assert(card3.slotRomRead(0x25) == 0xC3);
+    assert(card3.slotRomRead(0x26) == 0xC3);
     assert(card3.slotRomRead(0x32) == 0xB0);    // $80 + 3*16 + 0
 
     // Expansion ROM is open bus while the stub is active.

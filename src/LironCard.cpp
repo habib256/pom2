@@ -140,8 +140,9 @@ bool LironCard::busAddressed() const
     // what $C800's scan asserts before polling SENSE, and holding LSTRB high
     // through a status read is something no disk transaction ever does — so
     // it is an unambiguous marker for "talking to the bus, not the disk".
+    // ENABLE also needs PH2 LOW, as the drives decode it (see onPhases).
     const uint8_t ph = iwm_.phases();
-    return (ph & 0x02) && (ph & 0x08) && (iwm_.control() & 0x10);
+    return (ph & 0x02) && (ph & 0x08) && !(ph & 0x04) && (iwm_.control() & 0x10);
 }
 
 bool LironCard::busLive() const
@@ -463,9 +464,11 @@ void LironCard::onPhases(uint8_t phases)
 {
     if (busLive()) {
         // An intelligent drive on the chain: the phase lines are the bus's
-        // control lines, not a stepper's. PH0 is REQ; PH0 + PH2 together is
-        // the bus reset the firmware issues before an INIT scan ($C9E5).
-        if ((phases & 0x05) == 0x05) bus_.busReset();
+        // control lines, not a stepper's. PH0 is REQ; PH0 + PH2 high with
+        // PH1 + PH3 LOW is the bus reset the firmware issues before an INIT
+        // scan ($C9E5) — the exact pattern the drives decode (BMOW, "4th
+        // Quarter Fumble", 2021), not any state with PH0 and PH2 high.
+        if ((phases & 0x0F) == 0x05) bus_.busReset();
         bus_.reqChanged((phases & 0x01) != 0);
         return;
     }
@@ -525,7 +528,10 @@ MediaBayInfo LironCard::bayInfo(int bay) const
         return info;
     }
     const Disk35Image& img = images_[b];
-    info.kindLabel         = img.isLoaded() ? "UniDisk 3.5 (intelligent SmartPort, 800K)" : "UniDisk intelligent or SmartPort HD";
+    info.kindLabel         = !img.isLoaded() ? "UniDisk intelligent or SmartPort HD"
+        : img.blockCount() == Disk35Image::kBlockCount400 ? "UniDisk 3.5 (intelligent SmartPort, 400K)"
+        : img.blockCount() == Disk35Image::kBlockCount    ? "UniDisk 3.5 (intelligent SmartPort, 800K)"
+        :                                                   "UniDisk 3.5 (intelligent SmartPort)";
     info.path              = img.path();
     info.lastError         = img.lastError().empty() ? blk.lastError() : img.lastError();
     info.blockCount        = img.isLoaded() ? img.blockCount() : 0;

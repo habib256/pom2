@@ -429,6 +429,13 @@
 # and the cycle accessor. The chip itself is its own TU (src/ZipChip.cpp)
 # behind an abstract seam (src/CpuSocketAccelerator.h).
 #   src/Memory.cpp               2769 -> 2789 (+20)
+# 2026-10-23: src/ProDOSVolume.cpp RECORDED at 2063 (bug hunts 3-4). The
+# build (folder → volume) and the decode (volume → folder) live in one TU on
+# purpose: the decode REPLAYS the build's naming pass (nameHostDir) to match
+# every entry to its host file, and the two halves drifting apart is what lost
+# or duplicated host files in every write-back bug fixed that day. Splitting
+# them needs the naming pass as a shared unit first — owed, not forgotten.
+#
 src/Apple2Display.cpp                    2536
 src/DiskIICard.cpp                       2143
 # 2026-10-16: MacBinary data-fork bounds and WOZ CRC handling stay beside
@@ -437,6 +444,7 @@ src/DiskIICard.cpp                       2143
 src/DiskImage.cpp                        3316
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
+src/ProDOSVolume.cpp                     2063
 src/Memory.cpp                           2789
 # 2026-10-16: existing media transactions gain mount-identity checks,
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys

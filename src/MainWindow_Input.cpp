@@ -116,6 +116,10 @@ void MainWindow::onChar(unsigned int codepoint)
     // Apple II accepts the full ASCII range (uppercase and lowercase). We
     // forward the codepoint as-is — Applesoft and the Monitor pick whichever
     // case the user typed.
+    // An Alt driving an Apple key: onKey types that chord's key itself. A
+    // character arriving here too is the host's composition of the same
+    // press (macOS Option+[ is '{') and would type a second key.
+    if (appleKeys_.hostOpen || appleKeys_.hostSolid) return;
     if (codepoint >= 0x20 && codepoint < 0x80) {
         injectAscii(static_cast<uint8_t>(codepoint));
     }
@@ -168,9 +172,14 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
 {
     // AKD is a level, not the strobe. Observe releases before early returns;
     // modifiers and emulator function keys are not Apple II character keys.
+    // Keys the Apple keyboard HAS: the any-key-down line ($C010 bit 7) is
+    // wired to its matrix, so a host key with no Apple counterpart — Insert,
+    // Home, End, Page Up/Down — must not raise it, and the ISO <> key, which
+    // types a character, must (bug hunt 2026-10-23).
     const bool characterKey =
         (key >= GLFW_KEY_SPACE && key <= GLFW_KEY_GRAVE_ACCENT) ||
-        (key >= GLFW_KEY_ESCAPE && key <= GLFW_KEY_END) ||
+        key == GLFW_KEY_WORLD_1 || key == GLFW_KEY_WORLD_2 ||
+        (key >= GLFW_KEY_ESCAPE && key <= GLFW_KEY_UP && key != GLFW_KEY_INSERT) ||
         (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_EQUAL);
     if (characterKey && action == GLFW_RELEASE)
         controller->memory().setKeyHeld(static_cast<uint16_t>(key), false);
@@ -296,7 +305,10 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // clipboard / from file / cancel). Ctrl-Shift-V is unmapped and free if
     // a future version wants a direct chord.
     if (ctrlLetter == 'V') {
-        pasteFromClipboard();
+        // PRESS only, like F9-F12 below: on GLFW_REPEAT a held Ctrl+V queued
+        // the clipboard again ~30×/s up to the FIFO cap, typing a BASIC
+        // listing in several times over (bug hunt 2026-10-23).
+        if (action == GLFW_PRESS) pasteFromClipboard();
         return;
     }
 
@@ -312,7 +324,15 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     switch (key) {
         case GLFW_KEY_ENTER:        // fallthrough — main + numpad Enter both
         case GLFW_KEY_KP_ENTER:     injectAscii(0x0D); break;
+        // Backspace is the Apple's ← ($08): the key every Apple II edits a
+        // line with. The //e and //c ALSO have a DELETE key ($7F, top right
+        // of their keyboards — AppleWorks erases left with it); the host's
+        // forward-Delete (fn+delete on a Mac) types it. A ][ / ][+ has no
+        // such key, and gets nothing (bug hunt 2026-10-23).
         case GLFW_KEY_BACKSPACE:    injectAscii(0x08); break;
+        case GLFW_KEY_DELETE:
+            if (pom2::profileConfig(activeProfile).iieMode) injectAscii(0x7F);
+            break;
         case GLFW_KEY_LEFT:         injectAscii(0x08); break;
         case GLFW_KEY_RIGHT:        injectAscii(0x15); break;
         case GLFW_KEY_UP:           injectAscii(0x0B); break;
@@ -357,6 +377,17 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
             if (ctrl) {
                 if (const char c = layoutLetter(key, scancode))
                     injectAscii(static_cast<uint8_t>(c - 'A' + 1));
+            } else if (appleKeys_.hostOpen || appleKeys_.hostSolid) {
+                // Open/Solid-Apple + key: no char callback comes for it (see
+                // appleChordChar), so the key is typed here, from the layout.
+#ifdef __EMSCRIPTEN__
+                const char* name = nullptr;
+#else
+                const char* name = glfwGetKeyName(key, scancode);
+#endif
+                if (const char c = pom2::keychord::appleChordChar(
+                        name, key, (mods & GLFW_MOD_SHIFT) != 0))
+                    injectAscii(static_cast<uint8_t>(c));
             }
             break;
     }
@@ -403,6 +434,23 @@ void MainWindow::pasteFromFile(const std::string& path)
     f.read(text.data(), static_cast<std::streamsize>(text.size()));
     text.resize(static_cast<size_t>(f.gcount()));
     const bool truncated = f.peek() != std::char_traits<char>::eof();
+    // The cap can cut a multi-byte UTF-8 character in half, and pasteText
+    // judges well-formedness for the whole buffer: one cut sequence turned
+    // every "é" of a 4 KB file into Apple high-ASCII, "C)" (bug hunt
+    // 2026-10-23). Back off to the last character boundary.
+    if (truncated) {
+        std::size_t end = text.size();
+        std::size_t back = 0;
+        while (back < 4 && end > back &&
+               (static_cast<unsigned char>(text[end - 1 - back]) & 0xC0) == 0x80)
+            ++back;
+        if (end > back) {
+            const unsigned char lead = static_cast<unsigned char>(text[end - 1 - back]);
+            const std::size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3
+                                   : lead >= 0xC0 ? 2 : 1;
+            if (lead >= 0xC0 && back + 1 < need) text.resize(end - 1 - back);
+        }
+    }
     if (pasteAutoUppercase) {
         for (char& c : text) {
             if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');

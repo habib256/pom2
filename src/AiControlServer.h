@@ -73,9 +73,10 @@
 //                                MainWindow::onMouseMove would — lets an agent
 //                                exercise mouse-driven apps headlessly.
 //
-// JSON successes include ok:true; failures include ok:false and error. Paths remain
-// inside cwd after canonicalization. The full client contract and request
-// examples are in DEV.md, under AI control server.
+// JSON successes include ok:true; failures include ok:false and error. Paths are
+// fenced after canonicalization (cwd unless it is $HOME or above, the user data
+// directory, the install tree for reads — safeCwdRelativePath). The full client
+// contract and request examples are in DEV.md, under AI control server.
 //
 // Authentication: optional shared-secret in the `X-POM2-Token` header. When
 // the configured token is empty, requests are accepted unauthenticated
@@ -336,6 +337,8 @@ private:
     /// is configured server-side). Caller still has to send the 401 — this
     /// is just the predicate.
     bool checkAuth(const Request& req) const;
+    // Fetch metadata / Origin present: a browser sent it (AiControlServer.cpp).
+    static bool requestFromBrowser(const Request& req);
 };
 
 } // namespace pom2

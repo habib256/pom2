@@ -646,17 +646,15 @@ void MouseCardAppleWin::pollHostInput()
         lastHostY = hy;
         lastHostButton = hb;
         hostPrimed = true;
+        hostAccX_.store(0, std::memory_order_relaxed);   // priming: no motion
+        hostAccY_.store(0, std::memory_order_relaxed);
         return;
     }
 
-    // 8-bit signed delta with wrap correction — matches the running
-    // counter convention used by MAME-faithful MouseCard's setHostMouse.
-    int dx = static_cast<int>(hx) - static_cast<int>(lastHostX);
-    int dy = static_cast<int>(hy) - static_cast<int>(lastHostY);
-    if (dx >  0x80) dx -= 0x100;
-    else if (dx < -0x80) dx += 0x100;
-    if (dy >  0x80) dy -= 0x100;
-    else if (dy < -0x80) dy += 0x100;
+    // The motion setHostMouse banked since the last poll — exact however
+    // far the pointer went (a delta from the 8-bit counter wrapped at 128).
+    const int dx = hostAccX_.exchange(0, std::memory_order_relaxed);
+    const int dy = hostAccY_.exchange(0, std::memory_order_relaxed);
     lastHostX = hx;
     lastHostY = hy;
 

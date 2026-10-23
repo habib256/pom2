@@ -66,6 +66,15 @@ void installHostOpenFilesHandler()
     // delegate's class is then the target, and only later opens arrive.
     static bool installed = false;
     if (installed) return;
+    // AppKit also turns every argv word that is not an option into an
+    // "open this file" for the method added below, so `POM2 disk.po` booted
+    // the disk twice: once through the CLI's positional path, once through
+    // here (bug 2026-10-23). The CLI owns argv; AppKit is told to keep out of
+    // it. Finder double-clicks and Dock drops are real Apple Events, not
+    // argv, and still arrive. Registered before glfwInit's [NSApp run], which
+    // is when AppKit reads it.
+    [[NSUserDefaults standardUserDefaults]
+        registerDefaults:@{ @"NSTreatUnknownArgumentsAsOpen" : @"NO" }];
     Class cls = objc_getClass("GLFWApplicationDelegate");
     if (!cls) {
         id delegate = NSApp ? [NSApp delegate] : nil;

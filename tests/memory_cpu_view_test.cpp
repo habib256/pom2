@@ -174,9 +174,40 @@ int testIicPunchedCardRom()
     return 0;
 }
 
+// A //e with a card's firmware mapped (INTCXROM off): the view used to fall
+// back to the flat mirror, never filled there, so card ROM read as $00 —
+// BRKs in the disassembly, and Step Over never saw the card's RTS (bug hunt
+// 2026-10-23). The card's side-effect-free peek is asked now.
+struct RomCard final : SlotPeripheral {
+    uint8_t slotRomRead(uint8_t low8) override { return static_cast<uint8_t>(low8 ^ 0x60); }
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override {
+        out = static_cast<uint8_t>(low8 ^ 0x60); return true;
+    }
+    std::string_view name() const override { return "rom card"; }
+};
+int testIieCardRomView()
+{
+    Memory m;
+    m.clearRam();
+    m.setIIEMode(true);
+    m.resetSoftSwitches();                      // INTCXROM off: slots mapped
+    m.slotBus().plug(5, std::make_unique<RomCard>());
+    for (unsigned a = 0xC500; a < 0xC600; ++a) {
+        if (m.peekCpuView(static_cast<uint16_t>(a)) != m.memRead(static_cast<uint16_t>(a))) {
+            std::fprintf(stderr, "FAIL: //e $%04X view=$%02X bus=$%02X\n", a,
+                         m.peekCpuView(static_cast<uint16_t>(a)),
+                         m.memRead(static_cast<uint16_t>(a)));
+            return 1;
+        }
+    }
+    std::puts("[ OK ] //e: the view shows a slot card's ROM");
+    return 0;
+}
+
 int main()
 {
     if (testIicPunchedCardRom() != 0) return 1;
+    if (testIieCardRomView() != 0) return 1;
     const std::string rom = findRom();
     if (rom.empty()) {
         std::fprintf(stderr,

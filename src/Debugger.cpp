@@ -207,6 +207,10 @@ void Debugger::setStepOver(M6502& cpu, const Memory& memory)
     stepMemory_ = &memory;
     stepStack_ = cpu.getStackPointer();
     stepReturning_ = false;
+    stepFrames_.clear();
+    stepSkipFirst_ = true;        // armed AT the JSR being stepped over
+    stepOutMode_   = false;
+    stepStartSp_   = stepStack_;
     transientReason_ = Reason::StepOver;
     transientArmed_.store(true, std::memory_order_release);
 }
@@ -214,7 +218,13 @@ void Debugger::setStepOver(M6502& cpu, const Memory& memory)
 void Debugger::setStepOut(M6502& cpu, const Memory& memory)
 {
     setStepOver(cpu, memory);
-    stepStack_ = static_cast<uint8_t>(cpu.getStackPointer() + 2);
+    // Not SP+2: a routine stopped after PHA (a register save) returns from
+    // higher up, and its RTS was never matched — the machine ran on to some
+    // unrelated RTS (bug hunt 2026-10-23). The return is the first outer RTS
+    // that pops ABOVE where the step started; see onInstruction.
+    stepSkipFirst_ = false;
+    stepOutMode_   = true;
+    stepStartSp_   = cpu.getStackPointer();
     transientReason_ = Reason::StepOut;
 }
 
@@ -341,13 +351,33 @@ bool Debugger::onInstruction(uint16_t pc)
     if (transientArmed_.load(std::memory_order_acquire)) {
         if (stepCpu_) {
             const uint8_t sp = stepCpu_->getStackPointer();
-            // Do not stop just because a callee temporarily pops its return
-            // address to inspect inline arguments. Wait for the outer RTS.
-            // Keep this latch through an IRQ/NMI between RTS and its target.
+            // The OUTER return, not any RTS at the right stack depth. SP alone
+            // was the old test, and an inline-string routine (PLA PLA … JSR
+            // COUT … PHA PHA RTS) sits at the caller's level while it calls
+            // COUT, so COUT's RTS looked like the outer one and F8 stopped
+            // inside the routine (bug hunt 2026-10-23). Nested JSRs open a
+            // frame; one closes when SP climbs back to its JSR's level.
+            // Keep the latch through an IRQ/NMI between RTS and its target.
+            while (!stepFrames_.empty() && sp >= stepFrames_.back())
+                stepFrames_.pop_back();
             transientHit = stepReturning_ && sp == stepStack_;
-            if (!transientHit && sp == static_cast<uint8_t>(stepStack_ - 2) &&
-                stepMemory_->peekCpuView(pc) == 0x60)
-                stepReturning_ = true;
+            if (!transientHit) {
+                const uint8_t op = stepMemory_->peekCpuView(pc);
+                if (stepSkipFirst_) {
+                    stepSkipFirst_ = false;              // the stepped JSR
+                } else if (op == 0x20) {                 // JSR: a nested call
+                    if (stepFrames_.size() < 256) stepFrames_.push_back(sp);
+                } else if (op == 0x60 && stepFrames_.empty()) {
+                    const int after = static_cast<int>(sp) + 2;
+                    // An RTS used as a jump (push target-1, RTS) pops back to
+                    // where the callee was, not to the caller: not a return.
+                    if (stepOutMode_ ? after > static_cast<int>(stepStartSp_)
+                                     : static_cast<uint8_t>(after) == stepStack_) {
+                        stepReturning_ = true;
+                        stepStack_ = static_cast<uint8_t>(after);
+                    }
+                }
+            }
         } else {
             transientHit = pc == transientAddr_ && (transientBank_.kind == DebugBank::Any || transientBank_ == curBank_);
         }

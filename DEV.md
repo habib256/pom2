@@ -2813,7 +2813,7 @@ same code that runs the //c Plus's licensed built-in Zip.
 targets linking `Memory.cpp` gain no link dependency). Memory calls it on the
 `$C000-$C0FF` slow path only — reads in `memReadSlowBody`, writes in
 `memWrite`, both just before the soft-switch dispatch — and only while
-`iieMode && !iicProfile_` (`Memory::activeAccel`). The RAM fast path is
+`iieMode` with no //c profile, or on the //c Plus (`Memory::activeAccel`). The RAM fast path is
 untouched (PERFORMANCE §§ 8.2/8.5). `Memory::cpuSpeedMultiplier()` = the
 SlotBus (TransWarp) multiplier × the chip's; the controller's three chunk
 sites sample it there, so the emuCycles fan-out (`applyAcceleratorClock`)
@@ -2843,8 +2843,9 @@ for it, so nothing is invented.
 
 **UI.** Machine ▸ "Zip Chip (4 MHz, CPU socket)", key `zip_chip` (default
 off), owned by `EmulationController::setZipChipInstalled`. Snapshot: a Memory
-trailer section (the chip has no slot). The //c Plus keeps its fixed 4×
-profile budget; wiring its built-in Zip registers is a possible follow-up.
+trailer section (the chip has no slot). The //c Plus seats its own instance
+at every profile load (`installSocketAccelerator`): its 4 MHz is this chip,
+driven by its ROM at reset, not a fixed profile budget.
 
 Pinned by `zip_chip` (lock/unlock incl. a cancelled sequence, AN0 through
 locked and unlocked accesses, the register reads, `$C05A`/`$C05B` visible in
@@ -6113,6 +6114,16 @@ token guess counts toward the 429 brake — a browser page (`Origin`) or a
 rebound `Host` is refused by policy and no longer keeps the real agent locked
 out (`AiControlServer.cpp:522-530`, `:732-739`).
 
+**Bug hunt 2026-10-23**: "no `Origin`" was not "not a browser". A cross-site
+no-cors GET or HEAD — `<img src="http://127.0.0.1:6503/status">` on any open
+page — carries no `Origin` and the real loopback `Host`, so it passed
+token-less auth and, with a token set, counted toward the brake and kept the
+agent at 429. `requestFromBrowser` also reads the Fetch metadata headers
+(`Sec-Fetch-Site`, `Sec-Fetch-Mode`) every current browser sends and no native
+client does. And `POST /reset` with a body but no readable `kind`
+(`{'kind':'soft'}`, `kind=soft`) is a 400; only an empty body or `{}` means
+the default hard reset.
+
 An HTTP/1.1 listener on **loopback only** (`INADDR_LOOPBACK`, default port
 **6503** — deliberately one off the SSC's 6502) that lets an external process
 drive POM2 the way a human drives the UI. Written for AI agents: `curl` or an
@@ -6183,9 +6194,14 @@ JSON successes include `"ok":true`; failures include `"ok":false` and an
 `error` string. `/screen.ppm` returns binary PPM instead. Use the documented
 methods: `/status` and `/screen.ppm` currently do not enforce GET themselves.
 Requests are limited to a 64 KiB preamble and 1 MiB body; chunked request
-bodies are refused. File paths resolve inside the process's working directory,
-including after canonicalization. The fence is independent of the per-user
-settings/data directories and the ROM search path.
+bodies are refused. File paths are canonicalised (a final-component symlink is
+refused) and must then land in one of three places (`safeCwdRelativePath`):
+the working directory, but only when it is not `$HOME` or above it (a Finder
+launch runs from `/`, a desktop AppImage from `$HOME`); the per-user data
+directory (`pom2::userDataDir()`), for reading and writing; and, for reading
+only (`/disk`, `/snapshot/load`, `/session/load`), the executable's directory
+and its parent — the install tree and its bundled disks. A disk mounted from
+there follows the normal media write policy like any other.
 
 For example, with the server running on its default port:
 
@@ -9746,7 +9762,13 @@ is wired through the encoder's Ctrl line so a stray knock cannot reboot the
 machine. Ctrl+Reset → `softReset()`, Open-Apple+Ctrl+Reset → `hardReset()`,
 the same two verbs as F11 / F12. The Del cap sends **$7F**, which is what the
 //e's DELETE key generates — not the $08 the host Backspace injects (that is
-the left arrow's code, which is what a II/II+ had instead of a DELETE key).
+the left arrow's code, which is what a II/II+ had instead of a DELETE key). The
+host keyboard reaches $7F through its forward-Delete key on a //e-class
+profile (2026-10-23); Backspace stays the left arrow. Only keys the Apple
+keyboard has raise any-key-down ($C010 bit 7): Insert, Home, End and Page
+Up/Down do not, the ISO `<>` key does. Open/Solid-Apple + key is typed from
+`onKey` (`KeyChord.h` `appleChordChar`), because GLFW sends no character for
+an Alt chord.
 
 ### ROM Status panel
 

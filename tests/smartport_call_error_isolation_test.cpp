@@ -72,7 +72,7 @@ std::string writeSyntheticPo()
     return p.string();
 }
 
-struct CallResult { uint8_t a = 0; bool carry = false; };
+struct CallResult { uint8_t a = 0; bool carry = false; uint8_t x = 0, y = 0; };
 
 /// Emit a caller at $0300 that runs `body`, then captures P and A.
 CallResult runCaller(Memory& mem, M6502& cpu,
@@ -80,6 +80,8 @@ CallResult runCaller(Memory& mem, M6502& cpu,
 {
     uint16_t a = 0x0300;
     for (uint8_t b : body) mem.memWrite(a++, b);
+    mem.memWrite(a++, 0x8E); mem.memWrite(a++, 0x01); mem.memWrite(a++, 0x20);  // STX $2001
+    mem.memWrite(a++, 0x8C); mem.memWrite(a++, 0x02); mem.memWrite(a++, 0x20);  // STY $2002
     mem.memWrite(a++, 0x08);                                     // PHP
     mem.memWrite(a++, 0x8D); mem.memWrite(a++, 0x00); mem.memWrite(a++, 0x20);
     mem.memWrite(a++, 0x68);                                     // PLA
@@ -91,7 +93,8 @@ CallResult runCaller(Memory& mem, M6502& cpu,
     mem.memWrite(0x2003, 0x00);
     cpu.setProgramCounter(0x0300);
     cpu.run(400000);
-    return { mem.memRead(0x2000), (mem.memRead(0x2003) & 0x01) != 0 };
+    return { mem.memRead(0x2000), (mem.memRead(0x2003) & 0x01) != 0,
+             mem.memRead(0x2001), mem.memRead(0x2002) };
 }
 
 /// The ProDOS block driver at $Cn0A, params in ZP $42-$47.
@@ -206,6 +209,21 @@ int main()
     if ((mem.memRead(kSList) & 0x80) == 0) {
         std::printf("FAIL: STATUS list byte 0 = $%02X — bit 7 (block device) "
                     "not set\n", mem.memRead(kSList));
+        ++failures;
+    }
+    // The byte count comes back in X (low) / Y (high), as the Liron's own
+    // exit returns it ($CDC1, liron-if.asm): 4 for the general status, 25
+    // for a DIB. The handler returned the error code in X and whatever its
+    // copy loop left in Y (bug hunt 2026-10-23).
+    if (r.x != 4 || r.y != 0) {
+        std::printf("FAIL: STATUS count X/Y = $%02X/$%02X (want 4/0)\n", r.x, r.y);
+        ++failures;
+    }
+    mem.memWrite(kPList + 4, 0x03);                      // status code $03: DIB
+    r = smartPortCall(mem, cpu, 0x00);
+    if (r.carry || r.x != 25 || r.y != 0) {
+        std::printf("FAIL: DIB STATUS: C=%d count X/Y = $%02X/$%02X (want 25/0)\n",
+                    r.carry ? 1 : 0, r.x, r.y);
         ++failures;
     }
 

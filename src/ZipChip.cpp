@@ -113,10 +113,12 @@ void ZipChip::ioWrite(uint8_t low, uint8_t value, uint64_t now)
         }
     }
 
-    // Speaker: the delay lives in do_io (:1914), which writes reach too.
-    // PTRIG's paddle delay is on the READ side only (c000_r :2043-2044;
-    // c000_w's $C070-$C07F case has none), so a write does not open it.
+    // Speaker and PTRIG: both delays live in do_io (:1914, :2041-2044), and
+    // c000_w calls do_io for $C030 and for $C070-$C07F as c000_r does — so
+    // a STA / STZ $C070 opens the paddle delay too. The note here used to
+    // say the write side had none (bug hunt 2026-10-23).
     if ((low & 0xF0) == 0x30) { tempDelay(kShortDelayMs, (slotSpk_ & 1) != 0, now); return; }
+    if (low == 0x70) { tempDelay(kShortDelayMs, (gameIo_ & 0x40) != 0, now); return; }
     if (low >= 0x90) {                                // c080_w, :2934
         tempDelay(kSlotDelayMs, ((slotSpk_ >> (low >> 4 & 7)) & 1) != 0, now);
         return;
