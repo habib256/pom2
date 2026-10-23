@@ -32,8 +32,8 @@ The original rationale and past gate completions remain in the
 | [G2](#g2) — Data durability | Closed in the original report | Keep the named storage, snapshot and reset regressions green on the candidate. |
 | [G3](#g3) — Accurate claims | Closed in the original report | Reconcile the candidate README, Welcome and card catalog with shipped behavior. |
 | [G4](#g4) — Repeatable packaging | Closed in the original report | A current rehearsal builds all seven packages; build_dist and payload checks pass. |
-| [G5](#g5) — Test coverage | Checks implemented; candidate evidence pending | Rerun alert, software GL/UI, Chrome persistence/session and libslirp checks on the candidate. |
-| [G6](#g6) — Platform evidence | Windows subset recorded; hardware/package checks remain | Rerun the expanded Windows subset and record package smoke tests or limitations for Windows, ARM/Pi and Intel macOS. |
+| [G5](#g5) — Test coverage | Checks implemented and passing in CI; candidate rerun pending | Rerun alert, software GL/UI, Chrome persistence/session and libslirp checks on the candidate. |
+| [G6](#g6) — Platform evidence | Windows subset and package smoke recorded; ARM/Pi and Intel macOS remain | Record package smoke tests or limitations for ARM/Pi and Intel macOS; rerun the Windows checks on the candidate. |
 
 <a id="g1"></a>
 
@@ -230,7 +230,15 @@ omissions, fixed in the following change.
 
 ### RELEASE-005 — G5-12 · Browser persistence and session CI evidence
 
-**Priority:** 🟢 · **State:** Automation implemented; candidate CI evidence pending.
+**Priority:** 🟢 · **State:** Verified in CI (2026-10-23); candidate rerun via the checklist.
+
+**CI evidence 2026-10-23:** the WASM verification job of [run
+39962547856](https://github.com/habib256/pom2/actions/runs/39962547856/job/120443924646)
+at `070c0b8` ran `tools/wasm_persistence_smoke.mjs` in headless Chrome and
+passed: disk import/boot, text upload, //c Mockingboard, tab pause/resume,
+persistence and exact cross-profile //c/floppy/HDV checkpoint reload. This
+meets the acceptance criterion; the same job reruns on every push, so the
+1.0 candidate's own run is the remaining check (candidate checklist).
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-473).
 
@@ -268,7 +276,19 @@ gap; record the candidate run result rather than scheduling a new smoke tool.
 
 ### RELEASE-007 — Windows portable core tests and candidate package validation
 
-**Priority:** 🔴 · **State:** Historical 11-case pass recorded; current 12-case subset and candidate package checks pending.
+**Priority:** 🔴 · **State:** Verified in CI (2026-10-23); candidate rerun via the checklist.
+
+**CI evidence 2026-10-23:** the twelve-case subset passed under MSVC,
+**12/12, no skips** (`session_machine` included), in the [Windows job of
+run 39962547856](https://github.com/habib256/pom2/actions/runs/39962547856/job/120443924440)
+at `070c0b8`. The shipping package was checked by the [Windows job of the
+v0.9.8 release run 39665565853](https://github.com/habib256/pom2/actions/runs/39665565853/job/119449704365)
+at `28700c3`: self-contained `POM2.exe` (no DLL), `--help` launch, payload
+verification, and the boot smoke (`pom2_headless.exe --version`, then 300
+frames of an Apple II with a screenshot). Both run on every push / tag, so
+the 1.0 candidate's own runs are the remaining check (candidate checklist,
+§ Platform truth and § Tag). Interactive use on a real Windows desktop is
+not covered by either.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-516).
 

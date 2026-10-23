@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — RELEASE-005 and RELEASE-007: CI evidence recorded
+
+Both gates had their automation in place and were only waiting for a
+recorded run. Run 39962547856 (`070c0b8`) supplies it: the WASM job's
+headless-Chrome smoke passed (disk import/boot, persistence, exact
+cross-profile session reload), and the MSVC portable subset passed 12/12
+with no skips, `session_machine` included. The Windows package side comes
+from the v0.9.8 release run 39665565853, whose job boot-smokes the packaged
+`pom2_headless.exe` (300 frames) after checking the exe is self-contained.
+G5 and G6 now wait only on the 1.0 candidate rerun, plus ARM/Pi and Intel
+macOS. Not covered: interactive use on a real Windows desktop.
+
 ## 2026-10-23 — Browser: the Apple II Screen opens alone
 
 The browser build opened with the Drives rack docked beside the screen.
