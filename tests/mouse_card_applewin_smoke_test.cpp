@@ -730,6 +730,24 @@ void test_mouse_off_ignores_motion()
     assert(r.card->debugSnapshot().iX == on && "no jump when it is turned back on");
 }
 
+// Two host updates before one poll, 200 units in all: the delta taken from
+// the 8-bit counter at poll time wrapped past 128, and +200 moved the
+// pointer 56 units BACKWARDS (bug hunt 2026-10-23).
+void test_fast_motion_does_not_wrap()
+{
+    FirmwareRig r;
+    if (!r.ok) { std::printf("  skip: fast motion needs the ][+ and Mouse Card ROMs\n"); return; }
+    r.call(0x19, 0);
+    r.call(0x12, 0x01);                                 // SETMOUSE: on
+    r.card->setHostMouse(0, 0, false);
+    r.idle(200);
+    const int x0 = r.card->debugSnapshot().iX;
+    r.card->setHostMouse(100, 0, false);                // two updates, each
+    r.card->setHostMouse(200, 0, false);                // within ±127
+    r.idle(200);
+    assert(r.card->debugSnapshot().iX - x0 == 200 && "fast motion wrapped");
+}
+
 int main()
 {
     test_missing_rom_refuses_to_load();
@@ -743,6 +761,7 @@ int main()
     test_getclamp_reads_the_window_and_leaves_the_pointer();
     test_timedata_sets_the_vbl_rate();
     test_mouse_off_ignores_motion();
+    test_fast_motion_does_not_wrap();
 
     std::printf("OK mouse_card_applewin_smoke\n");
     return 0;

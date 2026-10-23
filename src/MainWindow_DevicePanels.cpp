@@ -587,14 +587,19 @@ void MainWindow::pumpPostScript(const std::vector<uint8_t>& fresh)
             // into the print history, exactly like a form feed does for the
             // matrix heads.
             imageWriter->formFeed();
+            archiveNewPrinterPages();
             // …and a job may have said `showpage` more than once. Every
             // further sheet the interpreter drew gets the same treatment,
             // in order, so a multi-page document arrives whole instead of
-            // as its first page plus a note.
+            // as its first page plus a note. Each one is archived as it is
+            // ejected: a job of up to 65 sheets would otherwise push all but
+            // the last 32 off the page stack before the next frame's archive
+            // pass saw them (bug hunt 2026-10-23).
             for (const auto& extra : page.more) {
                 imageWriter->adoptRenderedPage(extra.gray.data(),
                                                extra.w, extra.h);
                 imageWriter->formFeed();
+                archiveNewPrinterPages();
             }
             if (page.extraPages > 0) {
                 tapeStatusMessage =

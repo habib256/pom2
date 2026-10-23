@@ -306,7 +306,7 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
             // The VIA's synced "now" — the CPU cycle the emulation has
             // actually reached. Pacing needs THIS, not the last write; see
             // the guard below.
-            cpuNowSnap = parent->lastSyncCycle_;
+            cpuNowSnap = parent->busNow_;   // bus time, as the stamps
             // Timeline break check FIRST: `parent->ayEvents_` was emptied
             // at the moment of the break, so everything still in it now
             // belongs to the new timeline and must survive the purge.
@@ -362,8 +362,9 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // producer outruns every queued event — they would all land on the
         // first sample of the buffer, undoing the sub-buffer timing on the
         // PAL demos that need it most.
-        const double cyclesPerSample =
-            cpuClockHz.load(std::memory_order_relaxed) / static_cast<double>(sr);
+        // The stamps are slot-bus ticks (busNow_), so the cursor runs at the
+        // bus clock: constant whatever an accelerator does.
+        const double cyclesPerSample = ayClockHz() / static_cast<double>(sr);
         // ── Cursor pacing: a JITTER BUFFER, not a chase ───────────────
         // The producer and the consumer move the same number of cycles
         // per second by construction (17045 cycles x 60 Hz = 44100
@@ -409,7 +410,7 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // this card, which is inaudible for a music/SFX peripheral and far
         // cheaper than a resync.
         const uint64_t burst = static_cast<uint64_t>(
-            cpuClockHz.load(std::memory_order_relaxed) / 50.0);
+            ayClockHz() / 50.0);
         // Plus this callback's own span: the whole buffer is rendered at
         // once, so the backlog must cover it or its tail renders ahead of
         // the producer. Negligible at a desktop's 256 frames; ~43 ms with
@@ -836,6 +837,7 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // 6522s the whole gap in one `advance()` — a burst of phantom T1
     // underflows. Re-anchor on the machine we actually landed on.
     lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    busNow_ = lastSyncCycle_;
     // The restored IFR/IER need not match the IRQ line the card is driving;
     // nothing else re-evaluates it until the next VIA access.
     updateIrq();
@@ -866,6 +868,7 @@ void MockingboardCard::resetCard(bool powerCycle)
     // Re-anchor the lazy-sync clock to "now" so a freshly reset card
     // doesn't run a giant catch-up on its first MMIO access.
     lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    busNow_ = lastSyncCycle_;
     viaWriteCount_[0] = viaWriteCount_[1] = 0;
     ayWriteCount_[0]  = ayWriteCount_[1]  = 0;
     ayEnvWriteCount_[0] = ayEnvWriteCount_[1] = 0;
@@ -942,6 +945,7 @@ void MockingboardCard::setStandardClock(double hz)
 void MockingboardCard::advanceVias(uint64_t cpuCycles)
 {
     const uint64_t ticks = busClock_.busTicks(cpuCycles);
+    busNow_ += ticks;
     // The VIAs' `advance()` takes an int; clamp to a sane upper bound
     // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
     // few million here means our sync clock got desynchronised).
@@ -1038,6 +1042,7 @@ void MockingboardCard::syncToCpuCycleAt(uint64_t now)
             invalidateAyTimeline();
             if (ssi_) ssi_->invalidateTimeline();   // its queue too
         }
+        rewindBusNow(lastSyncCycle_ - now);
         lastSyncCycle_ = now;
         return;
     }
@@ -1195,9 +1200,9 @@ void MockingboardCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
     // forever — and dropping the CPU queue alone left the audio thread's
     // own backlog to replay stale values on top of the resync.
     if (ayEvents_.size() >= kMaxAyEvents) invalidateAyTimeline();
-    ayEvents_.push_back(AyRegEvent{ lastSyncCycle_,
+    ayEvents_.push_back(AyRegEvent{ busNow_,
                                     static_cast<uint8_t>(chip), reg, val });
-    latestAyEventCycle_.store(lastSyncCycle_, std::memory_order_relaxed);
+    latestAyEventCycle_.store(busNow_, std::memory_order_relaxed);
 }
 
 // Declare the cycle-stamped event stream discontinuous. Caller holds mtx.

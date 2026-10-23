@@ -1154,6 +1154,85 @@ void testStepOverInlineParameters()
     }
 }
 
+// Bug hunt 2026-10-23: three ways a step landed in the wrong place.
+void testStepEndsAtTheOuterReturn()
+{
+    // 1. The inline-string idiom: the callee pops its return address
+    //    (SP back at the caller's level), CALLS a subroutine, then pushes the
+    //    adjusted address and returns. The nested RTS looked like the outer
+    //    one, and F8 stopped inside the callee.
+    {
+        EmulationController ctrl;
+        {
+            auto st = ctrl.lockState();
+            const uint8_t caller[] = {0x20, 0x00, 0x09, 0x00, 0xA9, 0xEE};   // JSR; .byte 0; LDA
+            const uint8_t callee[] = {0x68, 0xAA, 0x68, 0xA8,                 // PLA TAX PLA TAY
+                                      0x20, 0x20, 0x09,                       // JSR $0920
+                                      0x98, 0x48, 0x8A, 0x18, 0x69, 0x01, 0x48, 0x60};
+            for (size_t i = 0; i < sizeof caller; ++i) st.memory().memWrite(0x0800 + i, caller[i]);
+            for (size_t i = 0; i < sizeof callee; ++i) st.memory().memWrite(0x0900 + i, callee[i]);
+            st.memory().memWrite(0x0920, 0xE6); st.memory().memWrite(0x0921, 0x40);
+            st.memory().memWrite(0x0922, 0x60);
+            st.memory().memWrite(0x0040, 0);
+            st.cpu().setProgramCounter(0x0800);
+            st.cpu().setStackPointer(0xFF);
+        }
+        ctrl.debugStepOver();
+        ctrl.tickFrame();
+        auto st = ctrl.lockState();
+        assert(st.cpu().getProgramCounter() == 0x0804 && "step over stopped inside the callee");
+        assert(st.cpu().getStackPointer() == 0xFF);
+        assert(st.memory().peekCpuView(0x40) == 1);
+    }
+    // 2. Step Out from inside a routine that saved a register (PHA): its RTS
+    //    pops from one byte higher than SP+2, was never matched, and the
+    //    machine ran on.
+    {
+        EmulationController ctrl;
+        {
+            auto st = ctrl.lockState();
+            const uint8_t prog[] = {0x20, 0x00, 0x09, 0xEA, 0x4C, 0x04, 0x08};  // JSR; NOP; JMP *
+            for (size_t i = 0; i < sizeof prog; ++i) st.memory().memWrite(0x0800 + i, prog[i]);
+            const uint8_t routine[] = {0x48, 0xEA, 0x68, 0x60};                 // PHA NOP PLA RTS
+            for (size_t i = 0; i < sizeof routine; ++i) st.memory().memWrite(0x0900 + i, routine[i]);
+            st.memory().memWrite(0x01FF, 0x08); st.memory().memWrite(0x01FE, 0x02);  // return $0802
+            st.memory().memWrite(0x01FD, 0x55);                                     // the saved A
+            st.cpu().setProgramCounter(0x0901);                                     // after the PHA
+            st.cpu().setStackPointer(0xFC);
+        }
+        ctrl.debugStepOut();
+        ctrl.tickFrame();
+        auto st = ctrl.lockState();
+        assert(ctrl.getMode() == EmulationController::Mode::Stopped && "step out ran on");
+        assert(st.cpu().getProgramCounter() == 0x0803);
+        assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::StepOut);
+    }
+    // 3. A step-over that stops on an address which also has a breakpoint:
+    //    the next Run must run, not stop there again having executed nothing.
+    {
+        EmulationController ctrl;
+        {
+            auto st = ctrl.lockState();
+            const uint8_t prog[] = {0x20, 0x00, 0x09, 0xE6, 0x41, 0x4C, 0x05, 0x08};  // JSR; INC $41; JMP *
+            for (size_t i = 0; i < sizeof prog; ++i) st.memory().memWrite(0x0800 + i, prog[i]);
+            st.memory().memWrite(0x0900, 0x60);
+            st.memory().memWrite(0x0041, 0);
+            st.cpu().setProgramCounter(0x0800);
+            st.cpu().setStackPointer(0xFF);
+            ctrl.debugger().addBreakpoint(0x0803);
+            ctrl.syncDebugHook();
+        }
+        ctrl.debugStepOver();
+        ctrl.tickFrame();
+        assert(ctrl.debugger().lastHit().pc == 0x0803);
+        { auto st = ctrl.lockState(); ctrl.debugResume(); }
+        ctrl.setMode(EmulationController::Mode::Running);
+        ctrl.tickFrame();
+        auto st = ctrl.lockState();
+        assert(st.memory().peekCpuView(0x41) == 1 && "Run after a step stopped at once");
+    }
+}
+
 void testStepOverReturnInterrupt()
 {
     Memory mem;
@@ -1478,6 +1557,7 @@ int main()
     testResetClearsTheLatchedStop();
     testStepOverDecodesTheCpuView();
     testStepOverInlineParameters();
+    testStepEndsAtTheOuterReturn();
     testStepOverReturnInterrupt();
     testStepOverRecursiveReturn();
     testConditionalBreakpointsAndSymbols();

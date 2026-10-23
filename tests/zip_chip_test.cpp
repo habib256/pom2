@@ -148,6 +148,12 @@ int main()
         expect(m.cpuSpeedMultiplier() > 3.0, "52 ms later the chip is fast again");
         (void)m.memRead(0xC090);                    // slot 1: not in the mask
         expect(m.cpuSpeedMultiplier() > 3.0, "slot 1 is not slowed under $E4");
+        // PTRIG opens the paddle delay on a WRITE too: MAME c000_w calls
+        // do_io for $C070, where the delay lives (bug hunt 2026-10-23).
+        m.memWrite(0xC070, 0x00);
+        expect(m.cpuSpeedMultiplier() == 1.0, "STA $C070 slows down for the paddles");
+        m.advanceCycles(static_cast<int>(0.006 * 1022727));
+        expect(m.cpuSpeedMultiplier() > 3.0, "5 ms later the chip is fast again");
         // $C05E bit 7 disables the delays.
         m.memWrite(0xC05E, 0x80);
         (void)m.memRead(0xC0E0);

@@ -31,8 +31,8 @@
 //     A sticky SR_OVERRUN bit must clear on the next $C0n8 read. RDRF
 //     follows rxBuf.empty() so it clears as the queue drains.
 //   * DTR side-effects — MAME `mos6551.cpp:290-292, 317-321`. cmd bit 0
-//     == 0 (DTR de-asserted) disables RX/TX IRQ, drops pending TX, and
-//     blocks new TDR writes from queueing.
+//     == 0 (DTR de-asserted) disables RX/TX IRQ, drops a CTS-held TDR byte,
+//     and blocks new TDR writes from queueing; bytes already accepted stay.
 //   * DCD/DSR transitions raise IRQ — MAME `mos6551.cpp:443-461`.
 //     onConnectionEdge raises IRQ_DCD|IRQ_DSR only when DTR is asserted;
 //     plain status read confirms DCD+DSR bits track the connection
@@ -123,9 +123,11 @@ void testTdrWhileDtrDeasserted()
     ssc.deviceSelectWrite(kRdrAddr, 'X');
     assert(ssc.txQueueDepth() == 1);
 
-    // De-assert DTR mid-stream → MAME forces MARK, POM2 drops the queue.
+    // De-assert DTR after the write. TDRE read 1 at once, so the byte left
+    // the 6551 as far as the guest knows: it is on the wire, and closing the
+    // port must not take it back (A2osX closes right after its last byte).
     ssc.deviceSelectWrite(kCommandAddr, 0x00);
-    assert(ssc.txQueueDepth() == 0);
+    assert(ssc.txQueueDepth() == 1);
 
     std::printf("  ok: DTR side-effects on TDR\n");
 }
@@ -256,6 +258,22 @@ void testSevenBitWordAndParityError()
     raw.deliverRxBytes(binary, 1);
     assert((raw.deviceSelectRead(kStatusAddr) & SR_PARITY_ERROR) == 0);
     assert(raw.deviceSelectRead(kRdrAddr) == 0xC1);
+
+    // MARK and SPACE parity transmit a fixed bit and do NOT check it (6551
+    // datasheet, PMC table: "parity check disabled"). Checking them flagged
+    // every byte of a 7M1 link (bug hunt 2026-10-23).
+    for (const uint8_t cmd : { uint8_t{0xA1}, uint8_t{0xE1} }) {   // mark, space
+        SuperSerialCard m(2);
+        m.deviceSelectWrite(kControlAddr, 0x2E);                  // 7 bits
+        m.deviceSelectWrite(kCommandAddr, cmd);
+        const uint8_t either[] = { 0x41, 0xC1 };
+        for (uint8_t b : either) {
+            m.deliverRxBytes(&b, 1);
+            assert((m.deviceSelectRead(kStatusAddr) & SR_PARITY_ERROR) == 0 &&
+                   "mark/space parity was checked");
+            assert(m.deviceSelectRead(kRdrAddr) == 0x41);
+        }
+    }
 
     std::printf("  ok: 7-bit receive mask + parity error\n");
 }

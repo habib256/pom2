@@ -297,7 +297,12 @@ private:
         /// (`SmartPort35Unit`, `SmartPortHdvUnit`) gates this on the medium.
         uint32_t blockCount() const override
         {
-            if (disk()) return Disk35Image::kBlockCount;
+            // The disk's own size: a 400K raw .po is 800 blocks and a 1.44M
+            // MOOF 2880. The 800K constant made STATUS report 1600 for every
+            // disk, so a formatter laid a 1600-block volume on an 800-block
+            // one and blocks past the end failed as I/O errors, not $2D
+            // (bug hunt 2026-10-23). SmartPort35Unit already did this.
+            if (disk()) return img_->blockCount();
             return hard() ? static_cast<uint32_t>(blk_->blockCount()) : 0u;
         }
         /// One rule for both bays of this card (TODO.md R1, settled

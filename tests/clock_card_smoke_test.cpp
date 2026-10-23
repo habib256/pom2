@@ -448,7 +448,7 @@ void testTpRatesProduceExpectedPulseCounts()
     };
     for (const auto& c : cases) {
         auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
-        assert(card->tpRateHz() == 0);            // TP off until a rate latched
+        assert(card->tpRateHz() == 64);           // REGISTER_HOLD's TP from power-up
         armTpInterrupts(*card, c.mode);
         assert(card->tpRateHz() == c.rateHz);
         assert(card->interruptsEnabled());
@@ -657,8 +657,10 @@ void testResetPreservesSetTime()
     assert((readByteLsbFirst(*card, baseline) & 0xF0) == 0xC0); // month=12
 }
 
-// RESET disables interrupts and stops the TP timer (manual 5-2 point 2).
-void testResetStopsTpAndIrq()
+// RESET disables the card's interrupts (manual 5-2 point 2) but not the
+// battery-backed chip: TP keeps its rate, and enabling interrupts again —
+// with no STB, as A2osX's `$60` does — brings the ticks straight back.
+void testResetStopsIrqButNotTp()
 {
     auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
     armTpInterrupts(*card, 0x06);
@@ -668,9 +670,24 @@ void testResetStopsTpAndIrq()
     card->onReset();
     assert(!card->interruptsEnabled());
     assert(!card->slotIrqAsserted());
-    assert(card->tpRateHz() == 0);
+    assert(card->tpRateHz() == 2048);
     card->advanceCycles(kCpuHz);
-    assert(!card->slotIrqAsserted());             // TP stopped → no new pulses
+    assert(!card->slotIrqAsserted());             // disabled → no request
+
+    card->deviceSelectWrite(0x0, 0x60);           // enable + C2, no STB
+    assert(card->tpRateHz() == 2048);             // C lines not latched
+    assert(countIrqPulses(*card, kCpuHz) > 2000);
+}
+
+// A fresh card's chip sits in REGISTER_HOLD with TP at 64 Hz, so a guest
+// that only enables interrupts gets 64 ticks a second.
+void testFreshCardTicksAt64HzOnEnable()
+{
+    auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+    card->onReset();                              // as the bus does at boot
+    card->deviceSelectWrite(0x0, 0x60);
+    const int pulses = countIrqPulses(*card, kCpuHz);
+    assert(pulses >= 62 && pulses <= 66);
 }
 
 }  // namespace
@@ -752,7 +769,8 @@ int main()
     testResetPreservesSetTime();
     std::printf("RESET preserves battery-backed set time: OK\n");
 
-    testResetStopsTpAndIrq();
+    testResetStopsIrqButNotTp();
+    testFreshCardTicksAt64HzOnEnable();
     std::printf("RESET stops TP timer + disables interrupts: OK\n");
 
     std::printf("clock_card_smoke OK\n");

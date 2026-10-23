@@ -52,9 +52,21 @@ void SpeakerDevice::buildSincKernel()
     if (ampSum == 0.0) ampSum = 1.0;
 }
 
-void SpeakerDevice::recordToggle(uint64_t cpuCycle)
+double SpeakerDevice::toStockLocked(uint64_t cycle) const
+{
+    if (stampIdentity_) return static_cast<double>(cycle);
+    const double s = stampBaseStock_ +
+        (static_cast<double>(cycle) - static_cast<double>(stampBaseCycle_)) * stampRatio_;
+    return s > 0.0 ? s : 0.0;
+}
+
+void SpeakerDevice::recordToggle(uint64_t rawCycle)
 {
     std::lock_guard<std::mutex> lk(eventMutex);
+    // In stock time (setCpuClockAt): the cycle itself while no accelerator
+    // ever changed the clock.
+    const uint64_t cpuCycle = stampIdentity_ ? rawCycle
+        : static_cast<uint64_t>(toStockLocked(rawCycle) + 0.5);
     events.push_back(cpuCycle);
     // The speaker is a 1-bit flip-flop: each event is a parity flip, not an
     // absolute level. Dropping a single toggle on overflow would invert the
@@ -97,7 +109,26 @@ void SpeakerDevice::setSampleRate(uint32_t hz)
 
 void SpeakerDevice::setCpuClock(double hz)
 {
-    if (hz > 0.0) cpuClockHz_.store(hz, std::memory_order_relaxed);
+    if (!(hz > 0.0)) return;
+    cpuClockHz_.store(hz, std::memory_order_relaxed);
+    // A standard change (profile load): stamps are plain cycles again.
+    std::lock_guard<std::mutex> lk(eventMutex);
+    stampIdentity_ = true;
+    stampRatio_ = 1.0;
+    stampBaseCycle_ = 0;
+    stampBaseStock_ = 0.0;
+}
+
+void SpeakerDevice::setCpuClockAt(uint64_t cycle, double hz, double stockHz)
+{
+    if (!(hz > 0.0) || !(stockHz > 0.0)) return;
+    cpuClockHz_.store(stockHz, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(eventMutex);
+    const double base = toStockLocked(cycle);
+    stampBaseCycle_ = cycle;
+    stampBaseStock_ = base;
+    stampRatio_     = stockHz / hz;
+    stampIdentity_  = stampRatio_ == 1.0 && base == static_cast<double>(cycle);
 }
 
 void SpeakerDevice::setVolume(float v)

@@ -304,6 +304,24 @@ inline bool errDatagramDiscard(int e)
 #endif
 }
 
+/// The SEND side of the same question: a failed sendto() on a datagram
+/// socket that describes the DESTINATION, not the socket. Wider than the
+/// receive list (bug hunt 2026-10-23): EACCES (a subnet broadcast without
+/// SO_BROADCAST), EHOSTDOWN (macOS, ARP gave up), EPERM (a host firewall),
+/// ENOBUFS (transient), EADDRNOTAVAIL / EINVAL (a destination such as port
+/// 0). Each fell into "fault", which closed the guest's UDP socket.
+inline bool errDatagramSendDiscard(int e)
+{
+    if (errDatagramDiscard(e)) return true;
+#ifdef _WIN32
+    return e == WSAEACCES || e == WSAEHOSTDOWN || e == WSAENOBUFS ||
+           e == WSAEADDRNOTAVAIL || e == WSAEINVAL;
+#else
+    return e == EACCES || e == EHOSTDOWN || e == EPERM || e == ENOBUFS ||
+           e == EADDRNOTAVAIL || e == EINVAL;
+#endif
+}
+
 /// Human-readable form. `std::strerror` cannot render a WSA code, so
 /// Windows goes through FormatMessage.
 inline std::string socketErrorText(int e)

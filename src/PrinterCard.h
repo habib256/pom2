@@ -45,11 +45,11 @@
 //
 // PR#n protocol (minimal — DOS/BASIC works, no Pascal driver needed)
 // ------------------------------------------------------------------
-// `PR#n` from Applesoft/Monitor JSRs to $Cn00. Our slot ROM hooks
-// CSWL/CSWH ($36/$37) so subsequent COUT calls jump to our 3-byte
-// output handler at $Cn31, which stores A into the data port and RTSes.
-// A is preserved (STA doesn't clobber it), so callers that re-read A
-// after COUT keep working.
+// `PR#n` points CSW at $Cn00; the next COUT then jumps there with the first
+// character in A. Our slot ROM hooks CSWL/CSWH ($36/$37) to the output
+// handler at $Cn31 — which stores A into the data port and RTSes — and
+// prints that first character through it. A is preserved (STA doesn't
+// clobber it), so callers that re-read A after COUT keep working.
 //
 // Slot ROM layout (s = slot number, slotHi = $C0+s):
 //
@@ -58,11 +58,13 @@
 //   $Cn07  18        Pascal 1.1 sig 2               (CLC)
 //   $Cn0B  01        Pascal 1.1 firmware revision
 //   $Cn0C  10        Pascal device class 1 = printer (kPascalPrinterClass)
-//   $Cn20  A9 31     LDA #$31                       (CSWL low byte)
-//   $Cn22  85 36     STA $36                        (= low byte of $Cn31)
-//   $Cn24  A9 ss     LDA #slotHi                    (CSWH = $C0+s)
-//   $Cn26  85 37     STA $37
-//   $Cn28  60        RTS
+//   $Cn20  48        PHA                            (the character)
+//   $Cn21  A9 31     LDA #$31                       (CSWL low byte)
+//   $Cn23  85 36     STA $36                        (= low byte of $Cn31)
+//   $Cn25  A9 ss     LDA #slotHi                    (CSWH = $C0+s)
+//   $Cn27  85 37     STA $37
+//   $Cn29  68        PLA
+//   $Cn2A  4C 31 ss  JMP $Cn31                      (print it)
 //   $Cn31  8D 91 c0  STA $C0(8+s)1                  (data port write)
 //   $Cn34  60        RTS
 //

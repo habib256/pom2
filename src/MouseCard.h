@@ -169,6 +169,10 @@ private:
     std::atomic<uint8_t> hostX { 0 };
     std::atomic<uint8_t> hostY { 0 };
     std::atomic<bool>    hostButton { false };
+    // Motion banked by setHostMouse since the MCU last read it, per axis.
+    std::atomic<int>     hostAcc_[2] = { 0, 0 };
+    // The counter the previous update set; starts where hostX/hostY start.
+    uint8_t              hostSetX_ = 0, hostSetY_ = 0;
 
     // Per-axis running quadrature state, lifted from MAME's m_last /
     // m_count arrays. Each call to mcuPortBRead emits at most one

@@ -777,6 +777,7 @@ private:
     // events get Cut events instead.
     std::vector<uint16_t> beamCuts_;
     void renderInternalBeamTime(Memory& mem, const Memory::DisplayState& state);
+    bool patchMixedTextByCuts(Memory& mem, const Memory::DisplayState& state);
     struct BeamTimeRam {
         BeamTimeRam(Apple2Display& d, Memory& m, std::vector<Memory::VideoEvent>& events);
         ~BeamTimeRam();

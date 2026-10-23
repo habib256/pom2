@@ -378,6 +378,39 @@ void testOutputFileEscaping()
 
 } // namespace
 
+// The raster is bounded by Ghostscript's own arguments (bug hunt
+// 2026-10-23): a job may not enlarge its page past -g (an ~830 MB file once
+// landed in the spool before any size check ran), and a job with more pages
+// than the budget holds keeps the pages that fit instead of printing nothing.
+void testHostileJobsAreBounded()
+{
+    const std::string gs = pom2::findPostScriptInterpreter();
+    if (gs.empty()) {
+        std::printf("  skip: no interpreter for the bounded-raster jobs\n");
+        return;
+    }
+    const std::string scratch = pom2test::tempPath("pom2_ps_bound_scratch");
+    pom2::PsRenderRequest req;
+    req.dpi = 72; req.widthIn = 2.0; req.heightIn = 2.0;
+
+    req.postscript = bytesOf("%!PS\n<< /PageSize [14400 14400] >> setpagedevice"
+                             " showpage\n");
+    pom2::PsRenderResult page;
+    assert(pom2::renderPostScript(gs, scratch, req, page));
+    assert(page.w == 144 && page.h == 144 && "the job resized its own page");
+
+    // 40 Letter pages at 144 dpi is ~77 MB of raster, over the 64 MiB
+    // budget: the whole job used to be refused and print nothing.
+    pom2::PsRenderRequest letter;
+    letter.postscript = bytesOf("%!PS\n40 { showpage } repeat\n");
+    pom2::PsRenderResult many;
+    assert(pom2::renderPostScript(gs, scratch, letter, many) &&
+           "a job over the raster budget printed nothing");
+    assert(many.extraPages + 1 >= 30 && many.extraPages + 1 < 40);
+    std::printf("  ok: a job cannot grow its page, and 40 Letter pages keep %d\n",
+                many.extraPages + 1);
+}
+
 int main()
 {
     std::puts("PostScript delegation test");
@@ -393,6 +426,7 @@ int main()
     testSpoolerWithoutInterpreter();
     testAdoptRenderedPage();
     testPostScriptHeadFallsBackToText();
+    testHostileJobsAreBounded();
     std::puts("postscript_render: OK");
     return 0;
 }

@@ -2621,7 +2621,19 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
         crJustFed_ = true;
         return true;
     case 0x0A:                                               // LF
-        if (wasCrFed) return true;      // the guest feeds its own lines
+        if (wasCrFed) {
+            // The guest feeds its own lines: swallow this LF and, in Auto,
+            // stop feeding on CR — as the other two heads do. A daisywheel
+            // driver underlines and bolds by overprinting after a bare CR,
+            // and that pass landed a line low here (bug hunt 2026-10-23).
+            if (feedMode_ == AutoFeed::Auto && !feedLatchedOff_) {
+                feedLatchedOff_ = true;
+                if (trace_)
+                    traceEvent("auto line-feed OFF — the guest sent its "
+                               "own LF after a CR");
+            }
+            return true;
+        }
         lineFeed();
         return true;
     case 0x0C:                                               // FF

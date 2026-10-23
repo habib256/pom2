@@ -321,8 +321,22 @@ bool renderPostScript(const std::string& interpreterPath,
     // PostScript can open and delete host files. It confines the interpreter
     // to reading what it was given. -dPARANOIDSAFER is the older spelling and
     // is accepted as an alias by every version that matters.
+    //
+    // The raster is bounded HERE, before it reaches the disk (bug hunt
+    // 2026-10-23). -dFIXEDMEDIA / -dFIXEDRESOLUTION: without them a job's own
+    // `setpagedevice /PageSize` overrides -g, and `[14400 14400]` wrote an
+    // ~830 MB file into the spool before the size check below ever ran.
+    // -dLastPage: no more pages than parsePgm can keep — `{showpage} loop`
+    // used to write ~2 MB a page until the timeout.
+    const std::size_t pageBytes =
+        static_cast<std::size_t>(wpx) * static_cast<std::size_t>(hpx);
+    const std::size_t lastPage = std::max<std::size_t>(1,
+        std::min<std::size_t>(kMaxPagesPerJob + 1,
+                              pageBytes ? kMaxRasterBytes / pageBytes : 1));
     const std::vector<std::string> args = {
         "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dNOPROMPT",
+        "-dFIXEDMEDIA", "-dFIXEDRESOLUTION",
+        "-dLastPage=" + std::to_string(lastPage),
         "-sDEVICE=pgmraw",
         "-r" + std::to_string(req.dpi),
         "-g" + std::to_string(wpx) + "x" + std::to_string(hpx),
@@ -360,14 +374,23 @@ bool renderPostScript(const std::string& interpreterPath,
     if (!in) { out.error = "the interpreter produced no page"; return false; }
     const std::streampos end = in.tellg();
     // A multi-page job is several P5 blocks in this one file, so the ceiling
-    // is the raster budget plus one header per page it may hold.
-    if (end <= 0 ||
-        static_cast<std::size_t>(end) > kMaxRasterBytes + 64 * kMaxPagesPerJob) {
-        out.error = "the rendered page is empty or absurdly large";
+    // is the raster budget plus one header per page it may hold. A longer
+    // job (an interpreter that ignored -dLastPage) is read up to the ceiling:
+    // parsePgm keeps the whole pages that fit and drops the cut one. The
+    // gate used to refuse the whole file — 35 pages at 144 dpi printed
+    // nothing at all.
+    if (end <= 0) {
+        out.error = "the rendered page is empty";
         return false;
     }
+    const std::size_t ceiling = kMaxRasterBytes + 64 * (kMaxPagesPerJob + 1);
+    if (static_cast<std::size_t>(end) > ceiling)
+        pom2::log().warn("LaserWriter", "the job rendered " +
+            std::to_string(static_cast<long long>(end)) +
+            " bytes; keeping the pages within the " +
+            std::to_string(kMaxRasterBytes >> 20) + " MiB budget");
     in.seekg(0, std::ios::beg);
-    std::vector<uint8_t> raw(static_cast<std::size_t>(end));
+    std::vector<uint8_t> raw(std::min(static_cast<std::size_t>(end), ceiling));
     if (!in.read(reinterpret_cast<char*>(raw.data()),
                  static_cast<std::streamsize>(raw.size()))) {
         out.error = "short read on the rendered page";

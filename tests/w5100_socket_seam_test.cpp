@@ -428,6 +428,10 @@ void testDiscardedDatagramKeepsTheSocket()
         if (genuine) {
             assert(device.socketInfo(0).status == kW5100SnSrClosed &&
                    "a genuine socket fault must still close the socket");
+            // …and say so: ioLibrary's sendto() polls Sn_IR for SEND_OK or
+            // TIMEOUT only, and the close had zeroed it (bug hunt 2026-10-23).
+            assert((device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout) &&
+                   "a UDP send fault left sendto() nothing to end its wait");
         } else {
             assert(device.socketInfo(0).status == kW5100SnSrUdp &&
                    "one undeliverable datagram destroyed the guest's UDP socket");

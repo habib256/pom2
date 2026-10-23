@@ -166,7 +166,8 @@ void SmartPortBusDevice::reset()
 
 void SmartPortBusDevice::busReset()
 {
-    // The wire's own reset (PH0 + PH2 together, $C9E5 in the Liron dump): the
+    // The wire's own reset (PH0 + PH2 high, PH1 + PH3 low; $C9E5 in the Liron
+    // dump): the
     // chain forgets its numbers because the host is about to re-run the INIT
     // scan that assigns them.
     ids_.fill(0);

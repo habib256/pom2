@@ -88,15 +88,23 @@ bool IIcExternalSmartPort::addressed(uint8_t phases, uint8_t control,
     // the bus responder (bug hunt 2026-09-16). The //c+ routes its rear port
     // through the MIG and addresses the chain with either select, so its
     // shared-IWM path keeps the looser test.
-    return (phases & 0x02) && (phases & 0x08) && (control & 0x10) &&
-           (!rearIsDrive2 || (control & 0x20));
+    // ENABLE is PH1 + PH3 high with PH2 LOW (BMOW, "4th Quarter Fumble",
+    // 2021, from the drive side): the two opposite pairs never high at once.
+    return (phases & 0x02) && (phases & 0x08) && !(phases & 0x04) &&
+           (control & 0x10) && (!rearIsDrive2 || (control & 0x20));
 }
 
 void IIcExternalSmartPort::syncLines(uint8_t phases)
 {
     if (phases == lastPhases_) return;
     lastPhases_ = phases;
-    if ((phases & 0x05) == 0x05) bus_.busReset();
+    // RESET is PH0 + PH2 high with PH1 and PH3 LOW — the exact pattern, as
+    // the drives decode it (BMOW, "4th Quarter Fumble", 2021). PH0 + PH2
+    // alone also matched Sony register selects with CA1 or LSTRB set, so
+    // on the //c+ the internal drive's traffic dropped the external
+    // chain's INIT numbering, and chain number 2 then read unit 1's bay
+    // (bug hunt 2026-10-23).
+    if ((phases & 0x0F) == 0x05) bus_.busReset();
     bus_.reqChanged((phases & 0x01) != 0);
 }
 
@@ -161,22 +169,24 @@ bool IIcExternalSmartPort::write(uint8_t offset, uint8_t value, uint64_t cycles)
 
 bool IIcExternalSmartPort::sharedWantsWrite(const IWMDevice& iwm)
 {
-    return live() && (addressed(iwm.phases(), iwm.control(), false) || bus_.active());
+    const uint8_t ph = upstreamSony_ ? 0 : iwm.phases();   // see the header
+    return live() && (addressed(ph, iwm.control(), false) || bus_.active());
 }
 
 void IIcExternalSmartPort::sharedAfterWrite(const IWMDevice& iwm, uint8_t offset,
                                             uint8_t value, bool forBus)
 {
-    syncLines(iwm.phases());
+    syncLines(upstreamSony_ ? 0 : iwm.phases());
     if (forBus) takeByte(iwm, offset, value);
 }
 
 bool IIcExternalSmartPort::sharedAfterRead(const IWMDevice& iwm, uint8_t iwmValue,
                                            uint8_t& out)
 {
-    syncLines(iwm.phases());
+    const uint8_t ph = upstreamSony_ ? 0 : iwm.phases();
+    syncLines(ph);
     if (!live()) return false;
-    if (!addressed(iwm.phases(), iwm.control(), false) && !bus_.active()) return false;
+    if (!addressed(ph, iwm.control(), false) && !bus_.active()) return false;
     return answer(iwm.control(), iwmValue, out);
 }
 

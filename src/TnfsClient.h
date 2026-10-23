@@ -59,6 +59,7 @@
 #include "SocketCompat.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -146,6 +147,19 @@ public:
     /// borrowed and must outlive the client.
     void setAbortFlag(const std::atomic<bool>* flag) { abort_ = flag; }
     bool aborted() const { return abort_ && abort_->load(); }
+    /// Whole-transfer deadline, polled with the abort flag before every
+    /// request and every TCP `recv`. Without it a server answering each READ
+    /// just inside the per-request timeout — or trickling a TCP reply a byte
+    /// at a time, which restarts SO_RCVTIMEO on every recv — held a fetch
+    /// far past the caller's deadline, Ctrl+C unanswered (bug hunt
+    /// 2026-10-23).
+    void setDeadline(std::chrono::steady_clock::time_point t) {
+        deadline_ = t; hasDeadline_ = true;
+    }
+    bool stopped() const {
+        return aborted() ||
+               (hasDeadline_ && std::chrono::steady_clock::now() >= deadline_);
+    }
 
 private:
     /// One request/response round trip. `payload` is the request payload;
@@ -176,6 +190,8 @@ private:
     uint16_t    port_ = kDefaultPort;
     /// Borrowed cancellation flag; see setAbortFlag().
     const std::atomic<bool>* abort_ = nullptr;
+    std::chrono::steady_clock::time_point deadline_{};
+    bool hasDeadline_ = false;
 };
 
 }  // namespace pom2

@@ -235,6 +235,9 @@ public:
     void onReset() override;
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override;
+    /// The un-accelerated bus clock: the card's 65C02 and its interval timer
+    /// keep their own crystal's pace whatever accelerator the HOST runs.
+    void setStandardClock(double hz) override;
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
@@ -346,6 +349,10 @@ private:
     bool sccInt_ = false;
     uint64_t sccAcc_ = 0;                   ///< PCLK accumulator
     uint64_t cpuClockHz_ = 1020000;
+    /// Host cycles → card cycles (standard / host clock), remainder kept.
+    /// Equal clocks (no accelerator) leave it at zero: one for one.
+    uint64_t standardClockHz_ = 1020000;
+    uint64_t cardAcc_ = 0;
 
     std::unique_ptr<Bus>    bus_;
     std::unique_ptr<Memory> cardMem_;

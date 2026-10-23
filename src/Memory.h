@@ -1015,6 +1015,7 @@ private:
     static constexpr int kVideoLogQuietFrames = 600;
     void noteVideoWrite(uint16_t addr, uint8_t value);
     void onVideoFramePublished(uint64_t frameStart, bool hadEvents);
+    void resetVideoWriteLogForClockJump();
     uint8_t* videoWriteTarget(const VideoWrite& w);
     bool     videoLogArmed_      = false;
     uint64_t videoLogValidFrom_  = 0;

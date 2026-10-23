@@ -598,6 +598,46 @@ void testIpRawUsesBroadcastMacForSubnetBroadcast()
     std::printf("  IPRAW subnet broadcast uses Ethernet broadcast\n");
 }
 
+// The chip answers ARP for SIPR in hardware. The model never did, so a peer
+// that learns the guest's MAC from ARP — libslirp, the only way it learns
+// one — dropped every reply: an IPRAW ping saw 100 % loss (bug hunt
+// 2026-10-23).
+void testIpRawAnswersArpForSipr()
+{
+    UthernetIICard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    const uint8_t sipr[] = { 10, 0, 2, 15 };
+    for (int i = 0; i < 4; ++i)
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100Sipr0 + i), sipr[i]);
+    const uint16_t base = socketBase(1);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnMr), pom2::kW5100SnMrIpRaw);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnProto), 1);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrOpen);
+
+    // who-has 10.0.2.15 tell 10.0.2.2, from 52:55:0a:00:02:02.
+    uint8_t req[60] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0x52,0x55,10,0,2,2, 0x08,0x06,
+                        0x00,0x01, 0x08,0x00, 6, 4, 0x00,0x01,
+                        0x52,0x55,10,0,2,2, 10,0,2,2,
+                        0,0,0,0,0,0, 10,0,2,15 };
+    raw->transmit(req, sizeof req);
+    // Received frames are pulled when the guest polls Sn_RX_RSR, as a ping
+    // utility does while it waits for the echo reply.
+    (void)readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRsr0));
+
+    uint8_t frame[pom2::kMaxEthFrame]{};
+    const int len = raw->receive(frame, sizeof(frame));
+    assert(len >= 42 && "no ARP reply for SIPR");
+    const uint8_t asker[6] = { 0x52,0x55,10,0,2,2 };
+    assert(std::memcmp(frame, asker, 6) == 0);
+    assert(frame[12] == 0x08 && frame[13] == 0x06 && frame[21] == 0x02);
+    assert(std::memcmp(frame + 28, sipr, 4) == 0);            // sender IP = SIPR
+    assert(std::memcmp(frame + 32, asker, 6) == 0 &&
+           std::memcmp(frame + 38, req + 28, 4) == 0);
+    std::printf("  IPRAW: ARP for SIPR is answered\n");
+}
+
 void testSnapshotRoundTrip()
 {
     LocalListener listener;
@@ -1229,6 +1269,7 @@ int main()
     testMacRaw();
     testMacRawOnlyOnSocketZero();
     testIpRawUsesBroadcastMacForSubnetBroadcast();
+    testIpRawAnswersArpForSipr();
     testSnapshotRoundTrip();
     testHalfCloseWait();
     testSendAfterPeerResetSurvives();

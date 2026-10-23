@@ -213,6 +213,11 @@ void WorkstationCard::setCpuClock(double hz)
     if (hz > 0.0) cpuClockHz_ = static_cast<uint64_t>(hz);
 }
 
+void WorkstationCard::setStandardClock(double hz)
+{
+    if (hz > 0.0) standardClockHz_ = static_cast<uint64_t>(hz);
+}
+
 void WorkstationCard::advanceCycles(int cycles)
 {
     if (!cardCpu_ || cycles <= 0) return;
@@ -235,18 +240,28 @@ void WorkstationCard::advanceCycles(int cycles)
         const int slice = remaining < kSliceCycles ? remaining : kSliceCycles;
         remaining -= slice;
 
+        // The card's own 65C02 and timer run off the card's crystal, not the
+        // host's: under a Zip or a TransWarp the host hands out ~4 cycles per
+        // card cycle. Running one card cycle per host cycle ran the card ~4x
+        // fast against its SCC (which is scaled below), and the POST's
+        // loopback poll — which closes only below ~2 MHz — failed, halting
+        // the card at $C174 (bug hunt 2026-10-23).
+        cardAcc_ += static_cast<uint64_t>(slice) * standardClockHz_;
+        const int cardSlice = static_cast<int>(cardAcc_ / cpuClockHz_);
+        cardAcc_ %= cpuClockHz_;
+
         if (!cardCpu_->isHalted()) {
             // `run(n)` finishes the instruction it is inside, so it returns
             // n..n+6; the surplus is DEBT against the next slice, not free
             // card time. Dropping it made the card's clock a function of the
             // caller's granularity — and the caller is `M6502::step()`, one
             // call per host instruction. See `cpuDebt_` in the header.
-            const int want = slice - cpuDebt_;
+            const int want = cardSlice - cpuDebt_;
             if (want > 0) {
                 const int ran = cardCpu_->run(want);
                 cpuDebt_ = ran > want ? ran - want : 0;
             } else {
-                cpuDebt_ -= slice;
+                cpuDebt_ -= cardSlice;
                 if (cpuDebt_ < 0) cpuDebt_ = 0;
             }
         }
@@ -261,8 +276,8 @@ void WorkstationCard::advanceCycles(int cycles)
         sccAcc_ %= cpuClockHz_;
 
         // Interval timer, and the free-running byte the backoff seeds from.
-        entropy_ = static_cast<uint8_t>(entropy_ + slice);
-        timerAcc_ += slice;
+        entropy_ = static_cast<uint8_t>(entropy_ + cardSlice);
+        timerAcc_ += cardSlice;
         while (timerAcc_ >= kTimerPeriodCycles) {
             timerAcc_ -= kTimerPeriodCycles;
             if (!timerFlag_) {

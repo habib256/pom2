@@ -106,6 +106,18 @@ public:
     /// so the call must not need a symbol from this TU.
     void setHostMouse(uint8_t rawX, uint8_t rawY, bool button)
     {
+        // Bank the motion HERE, per host update. The UI clamps each update
+        // to ±127, but several can land before the CPU polls (a flick, or
+        // any captured motion while paused), and a delta taken from the
+        // 8-bit counter at poll time wrapped past 128 — +200 read as −56,
+        // the pointer jumped backwards (bug hunt 2026-10-23).
+        int dx = static_cast<int>(rawX) - static_cast<int>(hostSetX_);
+        int dy = static_cast<int>(rawY) - static_cast<int>(hostSetY_);
+        if (dx > 0x80) dx -= 0x100; else if (dx < -0x80) dx += 0x100;
+        if (dy > 0x80) dy -= 0x100; else if (dy < -0x80) dy += 0x100;
+        hostAccX_.fetch_add(dx, std::memory_order_relaxed);
+        hostAccY_.fetch_add(dy, std::memory_order_relaxed);
+        hostSetX_ = rawX; hostSetY_ = rawY;
         hostX.store(rawX, std::memory_order_relaxed);
         hostY.store(rawY, std::memory_order_relaxed);
         hostButton.store(button, std::memory_order_relaxed);
@@ -261,6 +273,10 @@ private:
     /// Bumped by setHostMouse, read by advanceCycles: while it is unchanged
     /// there is nothing to drain and the per-instruction poll is skipped.
     std::atomic<uint32_t> hostGen  { 0 };
+    /// Motion banked by setHostMouse since the last poll (see there).
+    std::atomic<int> hostAccX_{ 0 };
+    std::atomic<int> hostAccY_{ 0 };
+    uint8_t hostSetX_ = 0, hostSetY_ = 0;   // the counter the last update set
     uint32_t lastHostGen_ = 0;
     uint8_t  lastHostX = 0;
     uint8_t  lastHostY = 0;

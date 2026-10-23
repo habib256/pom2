@@ -276,7 +276,12 @@ private:
         INT_TRANSMIT_PRIO = 1,
         INT_EXTERNAL_PRIO = 0,
         INT_RECEIVE_PRIO  = 2,
-        INT_SPECIAL_PRIO  = 0,
+        // A Special Receive Condition is a RECEIVE interrupt: it sets the
+        // channel's Rx IP in RR3 (Z8530 manual, RR3 and "Receive Interrupts")
+        // and Error Reset clears it. MAME files it with Ext/Status, where a
+        // Reset Ext/Status cleared it as a side effect and Error Reset never
+        // did (bug hunt 2026-10-23).
+        INT_SPECIAL_PRIO  = 2,
     };
 
     struct Channel

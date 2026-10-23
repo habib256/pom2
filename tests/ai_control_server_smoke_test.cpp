@@ -349,6 +349,12 @@ void testAuth(EmulationController& /*ctrl*/, pom2::AiControlServer& srv)
         "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
         "Origin: https://attacker.invalid\r\n\r\n");
     assert(r.status == 401);
+    // A cross-site `<img src>` GET carries NO Origin, only Fetch metadata
+    // (bug hunt 2026-10-23): it passed for a native client.
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1:6503\r\n"
+        "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: no-cors\r\n\r\n");
+    assert(r.status == 401);
 
     srv.setAuthToken("s3cret");
 
@@ -623,6 +629,18 @@ void testReset(EmulationController& /*ctrl*/, pom2::AiControlServer& /*srv*/)
     const HttpResponse r = oneShot(kTestPort, req);
     assert(r.status == 200);
     assert(contains(r.body, "\"kind\":\"hard\""));
+    // A body with no readable "kind" is refused, not read as "hard" (bug
+    // hunt 2026-10-23: single-quoted JSON hard-reset and answered 200).
+    for (const std::string bad : {"{'kind':'soft'}", "kind=soft"}) {
+        std::snprintf(req, sizeof(req),
+            "POST /reset HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            "Content-Length: %zu\r\n\r\n%s", bad.size(), bad.c_str());
+        assert(oneShot(kTestPort, req).status == 400);
+    }
+    // No body at all is still the documented default.
+    assert(oneShot(kTestPort,
+        "POST /reset HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "Content-Length: 0\r\n\r\n").status == 200);
     std::puts("  reset: OK");
 }
 
@@ -1104,9 +1122,13 @@ void testAuthHardening(EmulationController& /*ctrl*/, pom2::AiControlServer& srv
     // Origin, and a rebound one carries a foreign Host: both are refused by
     // policy, and counting them let any open page keep the agent at 429.
     for (int i = 0; i < 12; ++i) {
-        const HttpResponse rr = oneShot(kTestPort, (i % 2)
+        const HttpResponse rr = oneShot(kTestPort, (i % 3 == 1)
             ? "POST /reset HTTP/1.1\r\nHost: 127.0.0.1\r\n"
               "Origin: https://attacker.invalid\r\nContent-Length: 0\r\n\r\n"
+            : (i % 3 == 2)
+            // An <img src> from any page: no Origin, real loopback Host.
+            ? "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+              "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: no-cors\r\n\r\n"
             : "GET /status HTTP/1.1\r\nHost: attacker.invalid\r\n\r\n");
         assert(rr.status == 401);
     }

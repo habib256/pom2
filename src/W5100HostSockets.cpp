@@ -123,11 +123,30 @@ public:
     bool listen(uint16_t port) override
     {
         if (kind_ != W5100SocketKind::Tcp) return false;
-        if (!setListenerBindPolicy(fd_)) return false;
         sockaddr_in local{};
         local.sin_family = AF_INET;
         local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         local.sin_port = hostToNet16(port);
+#ifndef _WIN32
+        // On BSD and macOS, SO_REUSEADDR lets 127.0.0.1:P bind beside a host
+        // service listening on 0.0.0.0:P — and the more specific socket then
+        // takes that service's loopback clients: a guest LISTEN siphoning a
+        // local dev server's connections (bug hunt 2026-10-23). The option
+        // stays, because a guest server re-LISTENs on its port after every
+        // connection and TIME_WAIT would refuse it; what is refused instead
+        // is a port where something on this host already answers.
+        {
+            socket_t probe = ::socket(AF_INET, SOCK_STREAM, 0);
+            if (isValidSocket(probe)) {
+                const bool taken = ::connect(probe,
+                    reinterpret_cast<sockaddr*>(&local),
+                    static_cast<socklen_c>(sizeof(local))) == 0;
+                closeHostSocketValue(probe);
+                if (taken) return false;
+            }
+        }
+#endif
+        if (!setListenerBindPolicy(fd_)) return false;
         return ::bind(fd_, reinterpret_cast<sockaddr*>(&local),
                       static_cast<socklen_c>(sizeof(local))) == 0 &&
                ::listen(fd_, 1) == 0;
@@ -226,7 +245,7 @@ public:
         const int e = lastSocketError();
         if (errWouldBlock(e) || errInterrupted(e)) {
             out.status = W5100IoStatus::WouldBlock;
-        } else if (kind_ == W5100SocketKind::Udp && errDatagramDiscard(e)) {
+        } else if (kind_ == W5100SocketKind::Udp && errDatagramSendDiscard(e)) {
             // The classification the RECEIVE path has had since SocketCompat.h
             // trap 7, applied to the other direction. On a datagram socket
             // these errnos describe the datagram (no route right now, an ICMP

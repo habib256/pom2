@@ -114,6 +114,15 @@ ClockCard::ClockCard(int slotNum, TimeFn fn, bool probeDump)
     buildRom();
     if (probeDump) tryLoadDump();
     onReset();
+    // The chip's latched mode starts as REGISTER_HOLD (MAME `upd1990a.cpp`
+    // device_start: `m_c = 0`), and REGISTER_HOLD is a 64 Hz TP mode
+    // (`:222-227`) — so TP runs. MAME only arms the timer at the first STB,
+    // which leaves a freshly started chip with TP off in a mode that drives
+    // it. A real card's chip is battery-backed and has been ticking since
+    // its NiCd was charged; A2osX's ThunderClock IRQ setup relies on that:
+    // it writes $60 (enable + C2) with no STB and waits for 64 Hz ticks that
+    // POM2 never produced, so every task that sleeps never woke (2026-10-23).
+    setTpRate(kChipXtalHz / 512);
 }
 
 std::unique_ptr<ClockCard> ClockCard::makeForTest(int slotNum, TimeFn fn,
@@ -136,14 +145,15 @@ void ClockCard::onReset()
     // operation; mirrored by MAME `upd1990a.cpp` whose device_reset never
     // touches the time counter). Wiping the user-set time here made every
     // Ctrl-Reset / profile switch forget a TIME_SET.
-    // RESET disables interrupts (manual 5-2 point 2) and stops the TP
-    // timer — the real chip doesn't program m_timer_tp until an STB
-    // latches a TP/REGISTER_HOLD mode.
+    // RESET disables the CARD's interrupt hardware (manual 5-2 point 2).
+    // It does not stop TP: the uPD1990AC has no reset pin and runs from its
+    // own battery, so TP keeps the rate it had, as the time counter keeps
+    // its time (see above). Stopping TP here left a guest that enables
+    // interrupts after a reset with no tick at all.
     irqEnabled_        = false;
     // MAME `upd1990a.cpp:89` `m_testmode = false;` in `device_start`'s
     // init block; the flag is only ever raised by a MODE_TEST latch.
     testMode_          = false;
-    setTpRate(0);
     clearIrqRequest();
 }
 

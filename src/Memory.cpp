@@ -1048,18 +1048,6 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
     }
 }
 
-void Memory::resetVideoEventLogForClockJump()
-{
-    videoEvents_.clear();
-    publishedEvents_.clear();
-    constexpr uint64_t kCyclesPerScanline = 65;   // as in advanceCycles
-    const uint64_t kCyclesPerFrame =
-        kCyclesPerScanline *
-        static_cast<uint64_t>(
-            pom2VideoTiming(videoStandard_.load()).scanlinesPerFrame);
-    lastVideoFrameStart_ = cycleCounter - (cycleCounter % kCyclesPerFrame);
-}
-
 bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
                               uint32_t* savedRamWorksBanks)
 {

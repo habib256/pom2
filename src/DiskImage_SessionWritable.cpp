@@ -17,7 +17,9 @@ bool DiskImage::appendSessionMedia(std::vector<uint8_t>& out, std::string& error
         if (!image->applyWozFluxWriteBack()) { error = image->lastError; return false; }
         for (int qt = 0; qt < kQuarterTracks; ++qt) {
             if (!wozQtDirty[qt] || wozQtFluxPeriodTicks[qt]) continue;
-            const size_t bits = wozQtBitCount[qt], offset = wozQtByteOff[qt];
+            // The COPY's offset: a FLUX slot grown by applyWozFluxWriteBack
+            // above moved its chunk layout, as it does for saveDirty.
+            const size_t bits = wozQtBitCount[qt], offset = image->wozQtByteOff[qt];
             if (!bits || bitStream[qt].size() < bits || offset > image->wozRaw.size() ||
                 (bits + 7) / 8 > image->wozRaw.size() - offset) {
                 error = "session WOZ track cannot be serialized"; return false;

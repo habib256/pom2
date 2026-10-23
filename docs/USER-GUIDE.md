@@ -278,6 +278,8 @@ buffer. Machine rewind and `.pom2snap` do not restore them; v7
 | **Ctrl+V** | Paste the host clipboard into the Apple II |
 | Left / right Alt | Open-Apple / Solid-Apple, when enabled |
 | Enter / Backspace / arrow keys | Return / left arrow / Apple II arrows |
+| Delete (forward; fn+delete on a Mac) | DELETE ($7F) on a //e or //c — a ][ / ][+ has no such key |
+| Alt+key | Open-Apple / Solid-Apple + that key (AppleWorks commands) |
 | Ctrl+A…Z | Apple II control characters; Ctrl+V is intercepted for paste |
 
 Both reset keys preserve RAM. F11 also preserves A/X/Y; F12 clears them.

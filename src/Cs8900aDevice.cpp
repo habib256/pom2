@@ -681,19 +681,30 @@ void Cs8900aDevice::sideEffectsWritePp(uint16_t ppAddress, bool oddAddress)
         break;
 
     case kPpTxLength:
-        if (oddAddress && txState_ == kTxGotCmd) {
+        // Either byte, until BusST is read. The length the chip sends is the
+        // register as it stands when the host goes on to BusST, not a snapshot
+        // taken at the high byte: A2osX's uthernet.drv writes the HIGH byte
+        // first, then the low, and VICE's commit-on-odd (which this was
+        // ported from) paired the new high byte with the previous frame's
+        // low one — a 298-byte DHCP REQUEST left as 292, a 292-byte DISCOVER
+        // as 256, so slirp never answered (2026-10-23). AppleWin
+        // (`Uthernet1.cpp` tfe_sideeffects_write_pp) re-validates on every
+        // byte and reads TxLength live when the frame fills; so does this.
+        // A rejected value keeps the transmit command pending, so the second
+        // byte can still make the length valid.
+        if (txState_ == kTxGotCmd || txState_ == kTxGotLen) {
             const uint16_t txLength  = ppRead16(kPpTxLength);
             const uint16_t txCommand = ppRead16(kPpCcTxCmd);
 
             if (txLength < kMinTxLength) {
                 // Too short: report space available but commit nothing.
-                txState_ = kTxIdle;
+                txState_ = kTxGotCmd;
                 setTxStatus(true, false);
             } else if (txLength > kMaxTxLength ||
                        (txLength > kMaxTxLength - 4 && !(txCommand & 0x1000))) {
                 // Too long (the -4 slack is the CRC the chip appends
                 // unless the driver asked to supply its own).
-                txState_ = kTxIdle;
+                txState_ = kTxGotCmd;
                 setTxStatus(false, true);
             } else {
                 txBuffer_ = kPpTxFrameLoc;

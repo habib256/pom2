@@ -344,6 +344,50 @@ void testTransmitLengthBounds()
     std::printf("  TX length bounds OK\n");
 }
 
+// A2osX's uthernet.drv writes TxCMD and TxLength through the I/O ports,
+// HIGH byte first. The length sent must be the whole register as it stands
+// at the BusST read: committing at the high byte paired it with the previous
+// frame's low byte (0x0124 then 0x012A went out as 0x0100 and 0x0124 — a
+// truncated DHCP exchange slirp never answered, 2026-10-23). A first byte
+// that makes the length invalid must not lose the transmit command either.
+void testTransmitLengthHighByteFirst()
+{
+    pom2::UthernetCard card(3);
+    auto backend = std::make_unique<pom2::LoopbackNetworkBackend>();
+    auto* raw = backend.get();
+    card.setBackend(std::move(backend));
+    programMac(card, kOurMac);
+    enableTxRx(card);
+
+    // `UTHERNET.DRV.S` WRITE: TxCMD hi/lo, TxLength hi/lo, BusST hi/lo.
+    auto sendHighFirst = [&](const std::vector<uint8_t>& frame) {
+        card.deviceSelectWrite(0x5, 0x00);
+        card.deviceSelectWrite(0x4, 0xC9);
+        card.deviceSelectWrite(0x7, static_cast<uint8_t>(frame.size() >> 8));
+        card.deviceSelectWrite(0x6, static_cast<uint8_t>(frame.size() & 0xFF));
+        setPpPointer(card, kPpSeBusSt);
+        (void)card.deviceSelectRead(kPpDataHi);
+        (void)card.deviceSelectRead(kPpDataLo);
+        for (size_t i = 0; i < frame.size(); ++i)
+            card.deviceSelectWrite((i & 1) ? kRxTxDataHi : kRxTxDataLo, frame[i]);
+    };
+    std::vector<uint8_t> out(pom2::kMaxEthFrame);
+    for (const size_t len : {size_t{292}, size_t{298}, size_t{64}, size_t{1514}}) {
+        const auto frame = makeFrame(kOurMac, kOurMac, len, static_cast<uint8_t>(len));
+        sendHighFirst(frame);
+        const int n = raw->receive(out.data(), static_cast<int>(out.size()));
+        assert(n == static_cast<int>(len));
+        assert(std::memcmp(out.data(), frame.data(), len) == 0);
+    }
+    // After a 1514-byte frame (low byte 0xEA), a high byte of 0x05 reads as
+    // 0x05EA — too long — until the low byte arrives and makes it 0x0500.
+    const auto frame = makeFrame(kOurMac, kOurMac, 0x500, 0x33);
+    sendHighFirst(frame);
+    assert(raw->receive(out.data(), static_cast<int>(out.size())) == 0x500);
+
+    std::printf("  TX length written high byte first OK\n");
+}
+
 void testReceivePath()
 {
     pom2::UthernetCard card(3);
@@ -1416,6 +1460,7 @@ int main()
     testRegisterSelfAddress();
     testTransmitHandshake();
     testTransmitLengthBounds();
+    testTransmitLengthHighByteFirst();
     testReceivePath();
     testEmptyRxEventKeepsCommittedFrameStatus();
     testAddressFilter();

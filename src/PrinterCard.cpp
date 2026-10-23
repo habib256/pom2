@@ -146,15 +146,18 @@ void PrinterCard::buildRom()
     pom2::assemblePascalPrinterEntries(a, dataLo, 0x40, 0x60);
 
     // PR#n trampoline — hook CSWL/CSWH ($36/$37) to point at the output
-    // handler. The next COUT call lands there instead of the standard
-    // screen routine. The handler's address is a LABEL: it used to be the
-    // literal $31 written twice, here and in the region below it.
+    // handler, then print the character it was called with. `PR#n` only sets
+    // CSW to $Cn00: the FIRST character after it arrives HERE, in A, through
+    // COUT's JMP (CSWL). Returning without printing it dropped it — the 'H'
+    // of `PR#1 : PRINT "HELLO"` — and handed back A = $Cn (bug hunt
+    // 2026-10-23). The handler's address is a LABEL.
     a.region("prn", 0x20, 0x31)
-     .emit({ 0xA9 }).byteOf("cout")   // LDA #<cout
+     .emit({ 0x48, 0xA9 }).byteOf("cout")   // PHA / LDA #<cout
      .emit({ 0x85, 0x36,              // STA CSWL
              0xA9, a.pageHi(),        // LDA #>cout
              0x85, 0x37,              // STA CSWH
-             0x60 });                 // RTS
+             0x68 })                  // PLA
+     .jmp("cout");                    // JMP cout
 
     // Output handler — write A to the data port. A is preserved (STA does
     // not modify it), satisfying COUT's "A unchanged on exit" convention.

@@ -174,6 +174,41 @@ inline bool altDrivesAppleKeys(int mods, bool settingEnabled, bool hostIsWindows
     return true;
 }
 
+/// The character an Open-Apple / Solid-Apple chord types: the key's own,
+/// as the user's layout prints it, or 0 for a key that types nothing.
+///
+/// Needed because GLFW sends NO character for Alt+key — X11 and Win32 call
+/// the char callback only for "plain" input (Win32's Alt+letter is a
+/// WM_SYSCHAR), and macOS composes Option+S into U+00DF, which the ASCII
+/// filter drops. So OA-S, OA-Q, OA-? — every AppleWorks and ProDOS-utility
+/// command — set $C061 and latched no key at all (bug hunt 2026-10-23).
+///
+/// `name` / `key` as for letterFromKeyName. Letters follow Shift; digits and
+/// US punctuation take their US shifted symbol (the Apple //e's own keycaps).
+/// A multi-byte name falls back to the US position for letters and digits.
+inline char appleChordChar(const char* name, int key, bool shift)
+{
+    char base = 0;
+    if (name && name[0] && name[1] == '\0' &&
+        static_cast<unsigned char>(name[0]) >= 0x21 &&
+        static_cast<unsigned char>(name[0]) < 0x7F) {
+        base = name[0];
+    } else if (!name || !name[0] || name[1] != '\0') {
+        if (key >= kKeyA && key <= kKeyZ) base = static_cast<char>('a' + (key - kKeyA));
+        else if (key >= 48 && key <= 57) base = static_cast<char>(key);   // GLFW_KEY_0..9
+    }
+    if (!base) return 0;
+    if (base >= 'A' && base <= 'Z') base = static_cast<char>(base - 'A' + 'a');
+    if (base >= 'a' && base <= 'z')
+        return shift ? static_cast<char>(base - 'a' + 'A') : base;
+    if (!shift) return base;
+    static const char kUnshifted[] = "1234567890-=[]\\;',./`";
+    static const char kShifted[]   = "!@#$%^&*()_+{}|:\"<>?~";
+    for (int i = 0; kUnshifted[i]; ++i)
+        if (kUnshifted[i] == base) return kShifted[i];
+    return base;
+}
+
 }  // namespace keychord
 }  // namespace pom2
 

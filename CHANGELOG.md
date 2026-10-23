@@ -10,6 +10,305 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — ThunderClock: TP runs from power-up and survives RESET
+
+A2osX (0.95 and 1.00) takes the ThunderClock as its interrupt source and
+never reached its shell with one plugged: it enables the card's interrupts
+with `$60` — enable plus C2, and no STB — and waits for the 64 Hz ticks of
+a uPD1990AC that has been pulsing TP since its battery was charged. POM2,
+following MAME, armed TP only at the first STB, and stopped it again on
+every RESET. The chip's latched mode starts as REGISTER_HOLD
+(`upd1990a.cpp` device_start, `m_c = 0`), which is a 64 Hz TP mode
+(`:222-227`), so TP now runs from power-up; and RESET only disables the
+card's interrupt hardware (manual 5-2 point 2), because the battery-backed
+chip has no reset pin. A2osX boots with "Clock Card IRQ Activated" and is
+faster for it (15 s against 19.5 s polled). `clock_card` (fails on the old
+code) and `a2osx_boot`.
+
+Also checked under A2osX, with no POM2 bug behind them: a serial login on
+the SSC works both ways with the interrupt driver (`ssc.i.drv`); with the
+polled one every byte reaches the driver's RDR read (read watch) and A2osX
+loses some above it. Out through libslirp: DNS (once `/etc/resolv.conf`
+names 10.0.2.3 — the 1.00 BUILD disk ships its developer's LAN), NTP by
+name, and TCP (Floodgap's Gopher menu over `telnet`). `ntpdate` prints a
+date one day early, an A2osX conversion. The probe gained `@ssc:`,
+`@sscread:`, `@wait:` (wall-clock pace for the real network), `@send:`,
+`@reboot:N`, `A2OSX_RWATCH` and the m/x bank dumps.
+
+## 2026-10-23 — A2osX drives the cards: printing, serial, DHCP and ping
+
+`a2osx_boot` now checks bytes leaving the machine, not just drivers loading.
+Under A2osX, `echo` to `/dev/lpt1` prints on the Grappler+, `echo` to
+`/dev/com2` reaches the SSC's wire, and on the Uthernet II (MACRAW and
+IP-offload drivers) and the Uthernet I, `networkd` gets a DHCP lease from
+libslirp (10.0.2.16) and `ping 10.0.2.2` is answered. The harness gives the
+Ethernet cards the window's libslirp backend; `a2osx_boot_probe` gained
+`--netlog`, `--hot`, `--trap` and `@reboot` for the hunt below.
+
+Two POM2 bugs fell out of it:
+
+- **SSC: closing the port threw away what had been sent.** Dropping DTR
+  cleared the host-side TX ring. That ring is not the 6551 — TDRE reads 1
+  the moment a byte is written, so to the guest every byte in it has
+  already left the chip, and the ring only paces them onto the wire.
+  A2osX's CLOSE is a programmed reset straight after the last byte, so
+  `echo HELLO > /dev/com2` sent nothing at all. A 6551 that loses DTR stops
+  its transmitter (MAME `mos6551.cpp:384-388`), losing at most the byte in
+  the shift register; POM2 now drops only a byte still parked in TDR
+  (`ssc_acia_smoke`).
+- **Uthernet I: TxLength was taken from half-written registers.**
+  A2osX's `uthernet.drv` writes TxLength HIGH byte first. POM2's model
+  (from VICE) committed the length on the high-byte write, pairing it with
+  the previous frame's low byte: a 292-byte DHCP DISCOVER went out as 256
+  bytes, the 298-byte REQUEST as 292, and slirp never answered. AppleWin
+  (`Uthernet1.cpp`) re-validates on every byte and reads the register live
+  when the frame fills; POM2 now re-validates on either byte until BusST is
+  read, and a value rejected after the first byte keeps the command pending
+  (`uthernet_cs8900_smoke`, which fails on the old code).
+
+A2osX's `dhgr.drv` also recognises POM2's Le Chat Mauve **Eve** ("'LCM Eve'
+Board Detected") by its CPREG auto-write, now pinned too. Its GUI does not
+run: loading `mouse.drv` after `dhgr.drv` runs out of memory and
+`/sbin/gui` ends in the kernel's BRK trap, and A2osX 0.95's own User Guide
+says the GUI "will be part of a future release".
+
+A2osX master (`_Media/A2OSX.BUILD.po`, 32 MB, which announces itself
+"1.00 PREVIEW") boots in the harness too: `a2osx_boot_probe --disk` takes
+another image (a hard-disk unit above 800K), `--launch -A2OSX.SYSTEM` types
+at the S-C assembler's prompt that disk stops on, and `--png` saves the
+screen as POM2's software display paints it. Its kernel-module network
+(`ifconfig eth3 inet auto` from `/etc/init`) answers `ping 10.0.2.2` on the
+Uthernet II. Its GUI stops in the kernel on E.BADPTR ($71) after
+`dhgr.drv` finds the Eve, and that one is A2osX's: the driver copies itself
+to main $4000-$59D0 and writes `MEM.LoMem` = $59D1, but the 1.00 kernel's own
+heap (main, `$B800`) already reaches down to $4C20 by then. The kernel goes on
+allocating in the driver's tables — a file buffer at $4EC0 lands on the
+DIV7 table, and an object's pointer read from there is $1515. Traced with
+`--trap`/`A2OSX_WATCH` and the m/x bank dumps. With `km.inet` moved out of
+`/sys` the kernel heap stays clear of the driver and the BADPTR goes away;
+the GUI then quits further on, not yet traced.
+
+One A2osX bug, not POM2's: started by hand as `networkd libtcpip &`, A2osX
+0.95 copies the subshell's argument list (`/FULL800/bin/sh` plus a double
+NUL, 17 bytes) into a 16-byte block. The 17th byte lands on the first byte
+of libtcpip, loaded right behind it: its `CLD` becomes a `BRK`, and the
+next call into the library parks the CPU in the kernel's BRK trap — whatever
+the network card. Traced through the handle table ($0800 + h×8) with the
+probe. Started from `etc/init`, as A2osX intends, networking works, and
+that is how the test runs it.
+
+## 2026-10-23 — A2osX as a hardware bench; SmartPort size bytes
+
+A2osX 0.95 (`disks_3.5/A2osX-0.95-STABLE.800.po`, GPL v2, unmodified
+upstream) boots to its shell on a //e enhanced and a //c, and ten of its
+drivers find their POM2 card: Grappler, Grappler+, Parallel Interface, SSC
+polled and interrupt-driven, Uthernet I, Uthernet II and its ARP/IP-offload
+variant, the Mouse Card, the Mockingboard. `a2osx_boot` pins all of it in
+three seconds; `a2osx_boot_probe` is the manual tool; both share
+`tests/A2osxHarness.h`.
+
+It found one bug: the SmartPortCard's synthetic slot page (no `liron.rom`)
+left NOP fill at `$CnFC-$CnFD`, the device size the ProDOS block-device
+convention reads for a `$Cn07 != 0` controller ($0000 = ask STATUS). A2osX
+listed every bay at $EAEA = 60 138 blocks, the empty one included. It is
+$0000 now, as on the real Liron page (`smartport_rom_layout`).
+
+And one it did not solve: on a //c with the internal Mockingboard 4c,
+A2osX never reaches its shell — its Z80 probe's write to `$C400` wakes the
+4c, as in MAME. Recorded as CARDS-014.
+
+## 2026-10-23 — macOS: a disk on the command line booted twice
+
+`POM2 disk.po` booted the disk twice: once through the CLI's positional
+path, and once more because AppKit turns every non-option argv word into an
+"open this file" for `application:openFiles:` — the method POM2 adds for
+Finder double-clicks and Dock drops (`HostOpenFiles_mac.mm`). The CLI owns
+argv: `NSTreatUnknownArgumentsAsOpen` is now registered as NO before AppKit
+starts. Finder opens and Dock drops are real Apple Events, not argv, and are
+unaffected. Checked by launching with a disk: one boot in the log, where
+there were two.
+
+## 2026-10-23 — Bug hunt, round four: accelerators, serial, cassette
+
+- **Audio under an accelerator played at the wrong pitch.** The speaker
+  and the Mockingboard / Phasor AY replays stamped events in CPU cycles and
+  converted them with the clock in force at PLAYBACK; the //c+ Zip opens a
+  1 MHz window on every speaker access, so a backlog made at 4 MHz was
+  played as if made at 1 MHz and back — a 1 kHz tone measured 250 Hz. The
+  speaker now stamps in stock time from each clock change
+  (`SpeakerDevice::setCpuClockAt`), the cards in slot-bus time (`busNow_`,
+  the ticks their 6522s get), and both play back at a clock that never
+  changes. With no accelerator the stamps are unchanged, cycle for cycle
+  (`speaker_audio_quality`).
+- **Workstation Card**: its 65C02 and interval timer ran one card cycle
+  per HOST cycle, so a 4 MHz Zip ran the card 4x against its SCC and the
+  POST halted it at `$C174`. They now run off the card's own clock
+  (`workstation_card`).
+- **Z8530**: a Special Receive Condition is a receive interrupt (Rx IP in
+  RR3), cleared by Error Reset — not an Ext/Status one as in MAME. After an
+  SDLC frame (its last byte is End Of Frame) /INT stayed asserted with the
+  FIFO empty (`scc8530_sdlc_recovery`).
+- **6551**: mark and space parity transmit a fixed bit with the check
+  DISABLED (datasheet PMC table); checking them flagged every byte of a 7M1
+  link as a parity error (`ssc_acia_smoke`).
+- **Zip Chip**: a write to `$C070` opens the paddle delay too — MAME's
+  `c000_w` reaches `do_io`, where it lives; the comment saying otherwise was
+  wrong (`zip_chip`). `ZipChip.h` and DEV.md no longer say the //c Plus has
+  a fixed 4x budget.
+- **Cassette**: REW mid-segment left the forward countdown set, so a
+  session saved during the rewind failed its own reader and was refused
+  whole (`session_machine`).
+
+## 2026-10-23 — The five left over, settled against the hardware
+
+- **SmartPort phase decode, as the drives decode it** (BMOW, "4th Quarter
+  Fumble", 2021, from the drive side): a bus RESET is PH0 + PH2 high with
+  PH1 + PH3 LOW, an ENABLE is PH1 + PH3 high with PH2 LOW, and an enabled
+  3.5" drive ahead on the chain forces every phase low for the devices after
+  it. POM2 reset on PH0 + PH2 alone and enabled without looking at PH2 —
+  both on the //c / //c+ rear port and on the Liron. The //c+ shared IWM
+  now hides its phases from the external chain while a Sony drive is
+  selected. The suspected symptom (the internal drive's register selects
+  renumbering the external chain) did NOT reproduce with the real //c+ ROM:
+  `iic_external_smartport` case F pins the numbering after an internal boot
+  with two rear-port disks, and passes on both decodes. On the Liron the
+  "upstream Sony" rule is not applied: its firmware enables a drive line
+  for every bus transaction (the IWM shifts nothing without /ENBL).
+- **SmartPort HLE exit registers**: X / Y = the byte count transferred (low
+  / high), A = error, carry iff error — the Liron's own exit (`$CDC1` in
+  liron-if.asm). The handler returned the error in X and the count in Y
+  (`smartport_call_error_isolation`).
+- **DELETE**: the host's forward-Delete types $7F on a //e or //c, which
+  have that key; Backspace stays ←. Keys an Apple keyboard does not have no
+  longer raise any-key-down, and the ISO `<>` key now does.
+- **Host folder, big directories**: the decode followed 256 blocks of a
+  directory chain (~3300 entries) and dropped the rest without a word.
+  ProDOS bounds a directory by its 16-bit count and the volume only; so
+  does the decode now (`prodos_volume_smoke` case 7).
+- **Host folder, text exchange**: a CRLF (or old-Mac CR) file came back LF
+  on the first flush, untouched or not; it now keeps its own convention
+  (case 6).
+
+## 2026-10-23 — Bug hunt, round three: host folder, debugger, input, Liron
+
+- **ProDOS host folder write-back** (`prodos_volume_smoke`):
+  - A subfolder the build renamed (`My Stuff` served as `MY.STUFF`, a
+    lowercase `games` on Linux) came back as a NEW folder named after the
+    ProDOS entry, holding a copy of the whole subtree — one more per cycle,
+    and the guest's edits never reached the real folder. Subfolders are now
+    matched to their source like files.
+  - A guest directory the host could not create (a host FILE of that name)
+    was dropped and the save reported success; it now fails the save.
+  - Two NEW guest files whose host names differ only in case (`HELLO` and
+    `HELLO.TXT`, both TXT) landed on one file on macOS / Windows. A name
+    going back to its own source keeps exact matching, so a Linux folder's
+    `Foo.txt` / `FOO.TXT` pair is untouched.
+  - Sparse guest files made the folder unmountable: the build gated on the
+    files' logical size. That gate is now a 512 MB memory bound — the real
+    capacity test always counted allocated blocks — and the decode has the
+    same budget, so a crafted volume of 16 MB seedlings cannot fill the host.
+  - An in-root symlinked file, served by the build and refused by the
+    decode, failed every save; unchanged, it is no longer a save. A
+    symlinked folder is no longer served.
+- **Debugger** (`debugger`, `memory_cpu_view`): the CPU view read a //e slot
+  card's firmware from the never-filled flat mirror, so card ROM was BRKs
+  and F8 on a `JSR $C5xx` SmartPort call became an unbounded Run; the card's
+  side-effect-free peek is asked now. Step Over follows nested calls by
+  frame, not by SP alone (an inline-string routine that pops its return and
+  then calls COUT stopped inside itself); Step Out finds the return of a
+  routine that pushed registers; a step / run-to-cursor stop on a
+  breakpointed address gets the resume amnesty a breakpoint gets; a Memory
+  Viewer edit no longer latches as a CPU write on a watched address.
+- **Input**: Open-Apple / Solid-Apple + key typed no key at all — GLFW sends
+  no character for an Alt chord (`KeyChord.h` `appleChordChar`,
+  `key_chord_policy`). Holding Ctrl+V pasted the clipboard again on every
+  auto-repeat. A file paste cut mid-UTF-8 character turned every accent of
+  the file into Apple high-ASCII. The Mouse Card (both models) banks motion
+  per host update: several updates before one poll wrapped the 8-bit delta
+  past 128 and threw the pointer backwards (`mouse_card_applewin_smoke`).
+- **Liron**: STATUS reported 1600 blocks for every 3.5" disk; a 400K disk
+  now says 800, so a formatter no longer lays an 800K volume on it and a
+  block past the end answers $2D, not an I/O error.
+
+## 2026-10-23 — Bug hunt, round two: printers, TNFS, Uthernet II, the CLI
+
+- **`PR#n` dropped the first character** on the synthetic printer card and
+  on a Grappler+ without its ROM. `PR#n` only points CSW at `$Cn00`; the
+  first COUT then arrives THERE with the character in A, and the entry
+  hooked CSW and returned without printing it — `PR#1 : PRINT "HELLO"`
+  spooled `ELLO`. The test called `$Cn00` with no character, which is how it
+  hid. The entry now saves A, hooks CSW and prints it (`printer_card_smoke`).
+- **LaserWriter**: a job of more than ~34 pages at 144 dpi printed nothing —
+  the size gate refused the whole raster that `parsePgm` was written to
+  trim. Ghostscript now runs with `-dFIXEDMEDIA -dFIXEDRESOLUTION` (a job's
+  own `setpagedevice /PageSize [14400 14400]` wrote ~830 MB into the spool
+  before any check) and `-dLastPage` at what the budget holds; each sheet is
+  archived as it is ejected, so pages beyond the 32-sheet stack reach the
+  print history (`postscript_render`, with an interpreter installed).
+- The Diablo head never latched Auto line-feed off after the guest's own LF,
+  so a daisywheel driver's overprint after a bare CR landed a line low. A
+  "Clear spool" click now rewinds the drain cursor itself: inferred from a
+  shorter spool a frame later, it missed a guest that had spooled as much
+  again, and skipped the start of the next printout.
+- **TNFS**: the 60 s deadline and Ctrl+C were only checked between 64 KiB
+  chunks — a server answering each READ just inside the per-request timeout,
+  or trickling a TCP reply a byte at a time, held the black window for
+  minutes. The client now polls both before every request and every `recv`.
+  And the cache prune no longer evicts an image the guest saved into: each
+  fetch leaves a `.fetched` stamp, and only an image still matching it is a
+  cache entry (`tnfs_client`).
+- **`--prodos-folder` with an 800K boot disk**: the folder took SmartPort
+  unit 1 and the 3.5" replaced it — the 2026-10-16 HDV fix, missing for
+  3.5". The folder is now mounted after the boot disk.
+- **Uthernet II**: a UDP send error outside the short "per-datagram" list
+  (EACCES on a subnet broadcast, macOS EHOSTDOWN, EPERM, ENOBUFS, port 0)
+  closed the socket AND zeroed Sn_IR, so ioLibrary's `sendto()` waited for
+  ever; the send side has its own wider list, and a genuine fault now raises
+  TIMEOUT. The model answers ARP for SIPR, as the chip does in hardware —
+  libslirp learns a MAC only from ARP, so an IPRAW ping got 100 % loss. A
+  guest LISTEN is refused on a port a host service already answers on
+  loopback: on BSD/macOS `SO_REUSEADDR` let it bind beside `0.0.0.0:P` and
+  take that service's clients (`w5100_socket_seam`, `uthernet2_w5100_smoke`).
+- The on-board 3.5" mount saves the outgoing disk unlocked first, as the
+  Disk II mount already did.
+
+## 2026-10-23 — Bug hunt: the video write log, the AI server, //c Plus sessions
+
+Four reviews (sessions, AI control server, //e paging, display), each
+finding confirmed in the code and pinned by a test that fails without its fix.
+
+- **A rewind could write the abandoned future into live RAM.** The video
+  write log (28700c39) survived a clock jump: `resetVideoEventLogForClockJump`
+  cleared the soft-switch events only. The old timeline's entries, stamped
+  later than the new clock, blocked the log's front-only trim; an entry from
+  before the published frame then got an underflowed cut ("after the
+  picture") and the paint's final re-apply left its byte in RAM. The jump now
+  clears the log, and `videoRewindBegin` refuses a log that is not in clock
+  order or reaches before the frame (`drol_pageflip_render`).
+- **RamWorks: aux entries were rewound in the selected bank**, while they
+  describe bank 0, which sits in the backing store when another bank is
+  selected. The newest-byte check failed and the log was dropped.
+- **A poke while stopped stayed invisible** (debugger memory edit, a stepped
+  `STA`): stamped after the published frame, it was rewound away until the
+  machine ran a whole frame. Stopped, the display paints live RAM, as it
+  already folds in soft switches poked while idle.
+- **VidHD SHR sheared at line ~102**: the rewind was armed before the card
+  picture, which paints aux `$2000-$9FFF` in one pass — the part below
+  `$6000` at frame start, the rest live. The rewind now starts after it.
+- The composite pipelines' mixed-text patch walks the beam cuts inside rows
+  160-191 like the LUT path; the Eve's shadow write is logged on a //e only.
+- **AI control server**: a cross-site `<img src>` GET has no `Origin` and
+  passed as a native client — token-less it was authorised, with a token it
+  armed the 429 brake against the real agent. Fetch metadata headers now mark
+  a browser. `POST /reset` with an unreadable body is a 400, not a hard reset.
+  DEV.md's path fence now says what `safeCwdRelativePath` does.
+- **//c Plus sessions from before 2026-10-21 would not load.** Its built-in
+  accelerator made every live configuration the 6-byte v2 one, and the 4-byte
+  v1 archives were refused with "select the matching configuration first" —
+  which nobody can. The soldered accelerator is now implied (`session_machine`).
+- A session's WOZ bit tracks are spliced at the copy's offsets, which a grown
+  FLUX slot may have moved (as `saveDirty` already did).
+
 ## 2026-10-23 — Browser audio: a buffer the main thread can keep up with
 
 The WASM build crackled. It has no audio thread: without `-sAUDIO_WORKLET`

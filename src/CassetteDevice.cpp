@@ -666,6 +666,12 @@ void CassetteDevice::rewindTape()
     }
     rewinding = true;
     rewCarryCycles = 0;
+    // The forward segment's countdown means nothing once the head moves
+    // back, and it is saved with the session: left set, a session taken
+    // mid-rewind failed its own reader's check (remaining > the segment now
+    // under the head) and the whole session was refused (bug hunt
+    // 2026-10-23).
+    cyclesUntilInputToggle = 0;
     playbackActive = false;
     playbackArmed  = false;
     stopPulseAudio();

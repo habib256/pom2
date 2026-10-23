@@ -690,6 +690,19 @@ void Scc8530Device::doWr0(int index, uint8_t data)
             c.rxEof[c.rxFifoRp] = false;
             rxFifoRpStep(index);
         }
+        // Error Reset is what clears the Special Receive Condition's IP. The
+        // locked byte's read never stepped the FIFO, so the IP outlived it:
+        // after an SDLC frame (whose last byte is End Of Frame) /INT stayed
+        // asserted with nothing left to read (bug hunt 2026-10-23). Cleared
+        // when the FIFO is empty; re-raised for what is still waiting.
+        if (c.rxFifoWp == c.rxFifoRp) {
+            intState_[INT_RECEIVE_PRIO + (index == CHAN_A ? 0 : 3)] = 0;
+            ch_[CHAN_A].rr3 &= static_cast<uint8_t>(
+                ~(1 << (INT_RECEIVE_PRIO + ((index == CHAN_A) ? 3 : 0))));
+            checkInterrupts();
+        } else {
+            checkReceiveInterrupt(index);
+        }
         pumpRxPending(index);   // SDLC: a slot just freed
         break;
 

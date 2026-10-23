@@ -233,7 +233,7 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             }
             clockScaleSnap = parent->clockScale();
             echoStereoSnap = parent->mode_ == PH_EchoPlus;
-            cpuNowSnap = parent->lastSyncCycle_;
+            cpuNowSnap = parent->busNow_;   // bus time, as the stamps
             if (parent->ayQueueGen_ != lastSeenQueueGen) {
                 lastSeenQueueGen = parent->ayQueueGen_;
                 pending.clear();
@@ -264,11 +264,11 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             liveEchoStereo = echoStereoSnap;
         }
         const double cyclesPerSample =
-            cpuClockHz.load(std::memory_order_relaxed) / static_cast<double>(sr);
+            ayClockHz() / static_cast<double>(sr);   // stamps are bus ticks
         // Jitter buffer: the cursor trails the producer by two 20 ms bursts
         // and is re-anchored when it starves or catches up.
         const uint64_t burst = static_cast<uint64_t>(
-            cpuClockHz.load(std::memory_order_relaxed) / 50.0);
+            ayClockHz() / 50.0);
         // Plus this callback's own span: the whole buffer is rendered at
         // once, so the backlog must cover it or its tail renders ahead of
         // the producer. Negligible at a desktop's 256 frames; ~43 ms with
@@ -567,6 +567,7 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     //     it until the next VIA access — which a guest waiting in its IRQ
     //     handler never makes.
     lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    busNow_ = lastSyncCycle_;
     for (int i = 0; i < 4; ++i) ++ayResetCount_[i];
     updateIrq();
 }
@@ -586,6 +587,7 @@ void PhasorCard::resetCard(bool powerCycle)
     mode_ = PH_Mockingboard;       // power-up default = MB compat
     assertIrq(false);
     lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    busNow_ = lastSyncCycle_;
     viaWriteCount_[0] = viaWriteCount_[1] = 0;
     for (int i = 0; i < 4; ++i) {
         ayWriteCount_[i]    = 0;
@@ -674,6 +676,7 @@ void PhasorCard::advanceVias(uint64_t cpuCycles)
             via_[1 - i]->setCa1NegativeEdge();
     }
     const uint64_t ticks = busClock_.busTicks(cpuCycles);
+    busNow_ += ticks;
     // The VIAs' `advance()` takes an int; clamp to a sane upper bound
     // (a single CPU run-slice is ~17 045 cycles, so anything beyond a
     // few million here means our sync clock got desynchronised) — without
@@ -722,6 +725,7 @@ void PhasorCard::syncToCpuCycleAt(uint64_t now)
         // already synced past that point. Pin lastSyncCycle_ to the
         // smaller value so the next syncs the freshly-elapsed delta and
         // doesn't no-op every batch tick.
+        rewindBusNow(lastSyncCycle_ - now);
         lastSyncCycle_ = now;
         // The line still has to be re-evaluated: `updateIrq()` is what
         // publishes IFR&IER onto the slot bus, and an MMIO access that
@@ -960,9 +964,9 @@ void PhasorCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
     // Overflow (audio device stalled or absent): break the timeline rather
     // than evict — an evicted write diverges the two banks for good.
     if (ayEvents_.size() >= kMaxAyEvents) invalidateAyTimeline();
-    ayEvents_.push_back(AyRegEvent{ lastSyncCycle_,
+    ayEvents_.push_back(AyRegEvent{ busNow_,
                                     static_cast<uint8_t>(chip), reg, val });
-    latestAyEventCycle_.store(lastSyncCycle_, std::memory_order_relaxed);
+    latestAyEventCycle_.store(busNow_, std::memory_order_relaxed);
 }
 
 void PhasorCard::invalidateAyTimeline(bool resetChips)

@@ -99,6 +99,7 @@ struct Outcome {
     bool slot5Drive1 = false, slot5Drive2 = false;
     bool slot6Drive1 = false;
     int  devcnt = -1;
+    int  chain2Bay = -2;   // bay that chain number 2 reaches after the run
     pom2::SmartPortBusDevice::Progress bus;
     std::string screen;
 };
@@ -193,7 +194,8 @@ Outcome run(const std::string& rom, const std::string& disk525,
 // registers of its own. `internal35` fills the internal bay the way
 // iicplus_boot35 does; `disk35` goes on the slot-5 card = the rear port.
 Outcome runPlus(const std::string& rom, const std::string& internal35,
-                const std::string& disk35, bool bootSlot5)
+                const std::string& disk35, bool bootSlot5,
+                const std::string& disk35b = std::string())
 {
     Outcome o;
     Memory mem;
@@ -234,6 +236,10 @@ Outcome runPlus(const std::string& rom, const std::string& internal35,
         std::string err;
         if (!sp->mountBay(0, disk35, err)) std::printf("mount: %s\n", err.c_str());
     }
+    if (!disk35b.empty()) {
+        std::string err;
+        if (!sp->mountBay(1, disk35b, err)) std::printf("mount: %s\n", err.c_str());
+    }
     mem.slotBus().plug(5, std::move(sp));
     mem.setIIEMode(true);
     mem.clearRam();
@@ -269,6 +275,7 @@ Outcome runPlus(const std::string& rom, const std::string& internal35,
             if (slot == 6 && !dr2) o.slot6Drive1 = true;
         }
     }
+    o.chain2Bay = port.device().bayForChainNumber(2);
     o.bus = port.device().progress();
     o.diskIIFlushes = diskII->getWriteFlushCount();
     o.diskIIDirty   = diskII->hasUnsavedChanges(0) || diskII->hasUnsavedChanges(1);
@@ -453,6 +460,30 @@ int main()
                 fail("E: the firmware never spoke to the rear port");
             if (o.diskIIFlushes || o.diskIIDirty)
                 fail("E: the //c+'s boot disk in drive 1 took flux from the bus");
+            if (g_failures) std::printf("%s", o.screen.c_str());
+        }
+    }
+
+    // F. //c+ booted from its internal 3.5", two disks on the rear port. The
+    //    firmware's INIT numbers that chain from 2 (the internal drive is 1),
+    //    so chain number 2 must still reach bay 0 once the boot is over. The
+    //    internal drive's register selects put PH0 + PH2 high with CA1 or
+    //    LSTRB set, which POM2 took for a bus reset: the numbering was lost
+    //    and chain number 2 fell back to bay 1 (bug hunt 2026-10-23). A
+    //    drive resets on PH0+PH2 with PH1+PH3 LOW only, and an enabled 3.5"
+    //    ahead of it holds every phase low.
+    if (!romPlus.empty()) {
+        const std::string bay1 = pom2::findResource("disks_3.5/AppleShare IIe Workstation.po");
+        if (bay1.empty()) {
+            std::printf("NOTE: case F needs the AppleShare 800K image — skipped\n");
+        } else {
+            const Outcome o = runPlus(romPlus, disk35, disk35, false, bay1);
+            dump("F //c+ internal boot + two rear-port disks", o);
+            std::printf("    chain number 2 -> bay %d\n", o.chain2Bay);
+            if (!o.prodosSeen) fail("F: ProDOS did not boot from the internal bay");
+            else if (o.chain2Bay != 0)
+                fail("F: after the internal boot, chain number 2 does not reach "
+                     "bay 0 — the internal drive's traffic renumbered the chain");
             if (g_failures) std::printf("%s", o.screen.c_str());
         }
     }

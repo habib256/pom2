@@ -23,6 +23,7 @@
 #include "MouseCard.h"
 #include "Logger.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -157,6 +158,17 @@ bool MouseCard::loadRoms(const std::string& slotRomPath,
 
 void MouseCard::setHostMouse(uint8_t rawX, uint8_t rawY, bool button)
 {
+    // Banked per host update, not diffed from the 8-bit counter at MCU poll
+    // time: several updates can land before a poll, and past 128 the diff
+    // wrapped and reversed the motion (bug hunt 2026-10-23).
+    const uint8_t prev[2] = { hostSetX_, hostSetY_ };
+    const uint8_t now[2]  = { rawX, rawY };
+    for (int a = 0; a < 2; ++a) {
+        int d = static_cast<int>(now[a]) - static_cast<int>(prev[a]);
+        if (d > 0x80) d -= 0x100; else if (d < -0x80) d += 0x100;
+        hostAcc_[a].fetch_add(d, std::memory_order_relaxed);
+    }
+    hostSetX_ = rawX; hostSetY_ = rawY;
     hostX.store(rawX, std::memory_order_relaxed);
     hostY.store(rawY, std::memory_order_relaxed);
     hostButton.store(button, std::memory_order_relaxed);
@@ -267,6 +279,8 @@ void MouseCard::onReset()
     lastAxis[0] = hostX.load(std::memory_order_relaxed);
     lastAxis[1] = hostY.load(std::memory_order_relaxed);
     countAxis[0] = countAxis[1] = 0;
+    hostAcc_[0].store(0, std::memory_order_relaxed);   // same rule for the
+    hostAcc_[1].store(0, std::memory_order_relaxed);   // banked motion
     portBState = 0xFF;
     assertIrq(false);
     mcuCycleAccum = 0;
@@ -384,11 +398,9 @@ void MouseCard::updateAxis(int axis, uint8_t dirBit, uint8_t clkBit)
     const uint8_t cur = (axis == 0)
         ? hostX.load(std::memory_order_relaxed)
         : hostY.load(std::memory_order_relaxed);
-    int diff = static_cast<int>(cur) - static_cast<int>(lastAxis[axis]);
-    if (diff > 0x80)       diff -= 0x100;
-    else if (diff < -0x80) diff += 0x100;
-
-    countAxis[axis] += diff;
+    const int diff = hostAcc_[axis].exchange(0, std::memory_order_relaxed);
+    countAxis[axis] = static_cast<int16_t>(std::clamp(
+        static_cast<int>(countAxis[axis]) + diff, -32767, 32767));
     lastAxis[axis]   = cur;
 
     if (countAxis[axis] != 0) {
