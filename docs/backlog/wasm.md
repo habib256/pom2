@@ -44,8 +44,8 @@ supported media in sessions. See the
 
 The selector's native/WebAssembly builds, DOM/FS tests and Chrome smoke also
 passed locally, including same-name drive-2 import and both media in a
-session archive. These are local results, not a candidate remote CI result;
-see [RELEASE-005](release-1.0.md#release-005).
+session archive. The same smoke has since passed in CI (2026-10-23); see
+[RELEASE-005](release-1.0.md#release-005).
 
 <a id="wasm-002"></a>
 
