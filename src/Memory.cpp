@@ -712,11 +712,15 @@ void Memory::resetSoftSwitches(bool warm)
     // SET/CLR — the read at $C07E still returns the bit.
     ioudis = true;
     // RamWorks III — MAME `a2eramworks3.cpp:65-68 device_reset` snaps
-    // `m_bank = 0` on every reset. Match that: swap the visible aux
-    // back to bank 0 so Ctrl-Reset / F12 don't leave the user looking
-    // at whatever bank software last selected. Data in all banks is
-    // preserved (reset clears the bank selector, not the DRAM).
-    if (iieMode && ramWorksBanks_ > 1) {
+    // `m_bank = 0`, but that is a MACHINE reset: the reset key
+    // (`apple2e.cpp:1430-1508` reset_w) runs the MMU/IOU/LC list and
+    // `m_a2bus->reset_bus()` and never touches the aux slot. AppleWin
+    // agrees (Ctrl-Reset → MemResetPaging keeps g_uActiveBank; only
+    // MemReset, the power cycle, clears it — GH#1414). So only the cold
+    // path (coldBoot / bootFromSlot / profile switch) returns to bank 0;
+    // Ctrl-Reset and F12 keep the bank software selected. Data in all
+    // banks is preserved either way.
+    if (!warm && iieMode && ramWorksBanks_ > 1) {
         ramWorksSwapToBank(0);
     }
     // Annunciators AN0-AN2. The 74LS259 addressable latch that drives them

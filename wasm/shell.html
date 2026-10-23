@@ -30,6 +30,10 @@
      keeps its own aspect inside its window. */
   canvas    { position: fixed; inset: 0; display: block;
               width: 100vw; height: 100vh;
+              /* Mobile: 100vh is the LARGE viewport, under the toolbar, and
+                 main.cpp would size the DockSpace (status bar included) past
+                 the visible bottom. dvh is the visible one. */
+              height: 100dvh;
               background: #000; cursor: default; outline: none; }
   #err      { position: fixed; left: 16px; right: 16px; top: 16px;
               padding: 12px 16px; background: #4a1a1a; color: #ffe;
@@ -45,6 +49,9 @@
               background: rgba(12,12,18,0.75); color: #9ab;
               text-decoration: none; opacity: 0.7; }
   #repoLink:hover, #repoLink:focus { opacity: 1; color: #fff; }
+  /* Once the machine runs the canvas fills the page and this corner is the
+     ImGui status bar (media chips, resize grips): the link leaves it. */
+  #repoLink.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -78,6 +85,9 @@
     setTimeout(() => {
       document.getElementById('status').classList.add('hidden');
     }, 250);
+    setTimeout(() => {
+      document.getElementById('repoLink').classList.add('hidden');
+    }, 10000);
   };
 
   // Default WASM experience: the PAL Apple //c
@@ -122,19 +132,52 @@
     if (!_urlDiskExt.test(name))
       throw new Error('the file name must end in .dsk, .do, .d13, .po, .nib, ' +
                       '.woz, .moof, .2mg, .hdv or .image');
-    let response;
-    try { response = await fetch(target.href, { mode: 'cors', credentials: 'omit' }); }
-    catch (e) {
-      throw new Error('download failed (network error, or the server does ' +
-                      'not allow cross-origin requests)');
+    // preRun holds main() on this download, so a server that stalls must
+    // not hold the page on the splash forever: abort after 60 s and boot
+    // without the disk. And a body with no (or a false) Content-Length is
+    // counted as it streams, so a huge one is cut at the limit instead of
+    // being buffered whole first.
+    const abort = new AbortController();
+    const deadline = setTimeout(function() { abort.abort(); }, 60000);
+    try {
+      let response;
+      try {
+        response = await fetch(target.href, { mode: 'cors', credentials: 'omit',
+                                              signal: abort.signal });
+      } catch (e) {
+        if (abort.signal.aborted) throw new Error('download timed out after 60 s');
+        throw new Error('download failed (network error, or the server does ' +
+                        'not allow cross-origin requests)');
+      }
+      if (!response.ok) throw new Error('download failed: HTTP ' + response.status);
+      const declared = Number(response.headers.get('Content-Length') || 0);
+      if (declared > _urlDiskLimit) throw new Error('image exceeds 64 MiB');
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        let r;
+        try { r = await reader.read(); }
+        catch (e) {
+          throw new Error(abort.signal.aborted ? 'download timed out after 60 s'
+                                               : 'download interrupted');
+        }
+        if (r.done) break;
+        total += r.value.length;
+        if (total > _urlDiskLimit) {
+          abort.abort();
+          throw new Error('image exceeds 64 MiB');
+        }
+        chunks.push(r.value);
+      }
+      if (total === 0) throw new Error('the server returned an empty file');
+      const bytes = new Uint8Array(total);
+      let at = 0;
+      for (const c of chunks) { bytes.set(c, at); at += c.length; }
+      return { name: name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-128), bytes };
+    } finally {
+      clearTimeout(deadline);
     }
-    if (!response.ok) throw new Error('download failed: HTTP ' + response.status);
-    const declared = Number(response.headers.get('Content-Length') || 0);
-    if (declared > _urlDiskLimit) throw new Error('image exceeds 64 MiB');
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > _urlDiskLimit) throw new Error('image exceeds 64 MiB');
-    if (bytes.length === 0) throw new Error('the server returned an empty file');
-    return { name: name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-128), bytes };
   })() : null;
   // Keep a rejection from reaching the page-wide unhandledrejection handler
   // before preRun looks at it: a bad link is reported and the machine boots
@@ -244,13 +287,22 @@
     _urlDisk.then(function(disk) {
       fs.mkdirTree('/uploads/url');
       const path = '/uploads/url/' + disk.name;
-      fs.writeFile(path, disk.bytes);
+      // canOwn: MEMFS keeps this buffer instead of copying it, and the
+      // resolved promise (a page-lifetime const) lets go of it, so the image
+      // is not held twice in the JS heap for the whole session.
+      fs.writeFile(path, disk.bytes, { canOwn: true });
+      disk.bytes = null;
       _args.push(path);
     }).catch(function(e) {
+      const msg = 'Could not load the disk image from\n' + _url +
+                  '\n' + e.message + '\nStarting without a disk.';
       errEl.style.display = 'block';
-      errEl.textContent = 'Could not load the disk image from\n' + _url +
-                          '\n' + e.message + '\nStarting without a disk.';
-      setTimeout(function() { errEl.style.display = 'none'; }, 12000);
+      errEl.textContent = msg;
+      // Only hide OUR message: an abort or a lost GL context reported in
+      // the meantime writes this same box and must stay up.
+      setTimeout(function() {
+        if (errEl.textContent === msg) errEl.style.display = 'none';
+      }, 12000);
     }).finally(function() {
       if (delDep) delDep('pom2-url-disk');
     });

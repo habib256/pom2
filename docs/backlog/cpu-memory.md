@@ -17,6 +17,7 @@ an explicit request before scheduling.
 |---|---|---|---|
 | [MEMORY-002](#memory-002) | 🟡 | To verify | `Memory::memRead` hot path |
 | [MEMORY-004](#memory-004) | 🟡 | To verify | Bug hunt #14's CPU residue |
+| [MEMORY-005](#memory-005) | 🟢 | Ready | `$CFFF` never reaches the card that owns `$C800` |
 | [MEMORY-003](#memory-003) | 🟢 | To verify | Dedicated Pascal LC |
 | [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
 
@@ -93,3 +94,21 @@ See [the changelog](../../CHANGELOG.md#2026-10-20--debugger-stops-survive-dma-ha
   `$D000-$FFFF`, switches `$C080-$C08F` slot-relative. MAME refs
   `bus/a2bus/a2memexp.cpp`. *2-3 d.*
   Frozen by the scope ruling: it leaves *Parked* only when named software needs it.
+
+<a id="memory-005"></a>
+
+## MEMORY-005 — `$CFFF` never reaches the card that owns `$C800`
+
+**Priority:** 🟢 · **State:** Ready (found by the 2026-10-23 bug hunt, round five).
+
+**Acceptance criterion:** a card's `expansionRomRead(0x7FF)` /
+`expansionRomWrite(0x7FF)` sees the `$CFFF` access before the window is
+released, pinned in a SlotBus test; the //e result checked against MAME.
+
+MAME `apple2e.cpp:3137-3152` `c800_r` saves `m_cnxx_slot` before clearing it
+and returns `read_c800(0x7ff)` from that card; `c800_w` forwards too.
+`SlotBus::expansionRomRead/Write` deactivate first and return the floating
+bus, and `Memory::memReadSlowBody` deactivates before calling SlotBus. Only
+a card whose `$CFFF` byte or write matters is affected; firmware discards
+the value of `BIT $CFFF`. Check `apple2.cpp` (][+) before changing the
+shared SlotBus path.

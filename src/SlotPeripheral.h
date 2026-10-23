@@ -123,6 +123,9 @@ public:
     /// Loss and restoration of slot power. Most cards share their reset
     /// path; cards with chips disconnected from RESET distinguish it.
     virtual void onPowerCycle() { onReset(); }
+    /// The CPU/RAM just jumped in time (rewind, snapshot load). A card that
+    /// queues cycle-stamped output and has no snapshot state drops it here.
+    virtual void onTimeJump() {}
 
     /// The motherboard ROM is about to be rewritten (`Memory::loadAppleIIRom`,
     /// e.g. Reload ROM) and has just been. A card that maps something OVER

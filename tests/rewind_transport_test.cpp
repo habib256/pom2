@@ -184,6 +184,20 @@ int main()
         assert(rb.newestCycle() >= bareCycle);
     }
 
+    // (7) The profile-switch shape: scrub, stop(), clear the ring, start().
+    //     stop() is setMode(Stopped), which leaves a scrub standing, and
+    //     start() stored Running directly — so the machine ran on with
+    //     rewindScrubbing() true, and the floppy autosave poll (which returns
+    //     early during a scrub) never ran again.
+    assert(waitForFrames(ctrl, 8, 4000) && "ring did not refill");
+    assert(ctrl.rewindBeginScrub());
+    assert(ctrl.rewindScrubbing());
+    ctrl.stop();
+    { std::lock_guard<std::mutex> lk(ctrl.stateMutex()); ctrl.rewind().clear(); }
+    ctrl.start();
+    assert(!ctrl.rewindScrubbing() && "start() left a scrub flagged live");
+    assert(waitForFrames(ctrl, 3, 4000) && "capture did not resume after start()");
+
     ctrl.stop();   // dtor also joins, but be explicit
 
     // ── WASM path: tickFrame() captures too (no worker thread) ─────────────
