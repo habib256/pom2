@@ -10727,6 +10727,14 @@ on the main thread between frames; hence a 2048-frame period there (256 on
 the desktop), and jitter buffers (Mockingboard / Phasor `targetLag`) that
 add the callback's own span. See CHANGELOG 2026-10-23.
 
+**The canvas is the whole page.** `wasm/shell.html` sizes it to the
+viewport (`100vw` × `100vh`), and `main.cpp` sets the GLFW window to the
+canvas's CSS size at start-up and on every page resize
+(`emscripten_set_resize_callback`), so ImGui's main viewport — and the
+DockSpace over it — is the browser window. It used to stay 1125×825 with
+the page letterboxing it, and a wide window gave the panels nothing. The
+backing store is in CSS pixels (no `GLFW_SCALE_TO_MONITOR`), as before.
+
 **CMake Emscripten branch** (`if(EMSCRIPTEN)`):
 
 - `-sUSE_GLFW=3 -sUSE_WEBGL2=1 -sFULL_ES3=1` — Emscripten ships
