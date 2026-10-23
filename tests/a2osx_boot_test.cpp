@@ -39,11 +39,14 @@
 //     CLOSE resets the 6551 right after the last byte), and on Uthernet II
 //     (MACRAW and IP-offload drivers) and Uthernet I, networkd gets a DHCP
 //     lease from libslirp and `ping 10.0.2.2` is answered.
-//
-// Known and NOT pinned here: on a //c with the internal Mockingboard 4c the
-// boot never reaches the shell. A2osX's Z80-card probe writes $C100-$C700;
-// the write to $C400 wakes the 4c (POM2 follows MAME's c400_w), which then
-// owns $C400-$C4FF. Recorded in TODO.md; see a2osx_boot_probe --mb4c.
+//   * on a //c with the internal Mockingboard 4c the boot never reaches the
+//     shell, and that is the machine's behaviour, not POM2's (CHANGELOG
+//     2026-10-23, CARDS-014): A2osX's Z80-card probe writes $C100-$C700,
+//     the write to $C400 wakes the 4c (MAME c400_w; 4sports wakes it the
+//     same way, `stx $C403`), the 4c then answers $C400-$C4FF, so the
+//     mouse search finds no $D6 at $C4FB and the kernel falls back to
+//     polling $C019 — which on a //c is the VBL *interrupt* latch (IIc
+//     Tech Note #9), never set with VBL interrupts off: no tick, ever.
 //
 // Skips (77) when the //e ROM or the A2osX disk is missing.
 
@@ -242,6 +245,25 @@ int main()
             m.plug(4, "iicmouse");
             const bool booted = m.boot();
             check(booted, "//c: A2osX reaches the shell");
+        }
+    }
+
+    // ── The //c with the Mockingboard 4c: the hang the hardware makes ──────
+    {
+        pom2test::A2osxMachine m(true, "pom2_a2osx_iic4c.po");
+        if (!m.ready()) {
+            std::printf("[SKIP] //c + 4c: roms/apple2c-32Kv0.rom not found\n");
+        } else {
+            m.plug(4, "iicmouse");
+            m.plug(3, "mb4c");
+            const bool booted = m.boot(40);   // twice the 18 s the //c needs
+            Memory& mem = m.memory();
+            check(!booted && mem.iicExpansionAwake(),
+                  "//c + 4c: the Z80 probe wakes the 4c and A2osX stops short of the shell");
+            check(mem.memRead(0xC4FB) != 0xD6,
+                  "//c + 4c: $C4FB is the 4c's, not the mouse firmware's ID byte");
+            check((mem.memRead(0xC019) & 0x80) == 0,
+                  "//c + 4c: $C019 (VBLINT latch) stays clear, so polled mode never ticks");
         }
     }
 
