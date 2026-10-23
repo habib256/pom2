@@ -210,7 +210,7 @@ int main()
     // first byte of libtcpip (the subshell's argument list is copied with its
     // double NUL into a block sized for one; the 17th byte lands on the
     // library's CLD, which becomes a BRK). That is not POM2's to fix.
-    if (!pom2::makeSlirpBackend("probe")->isValid()) {
+    if (!pom2::makeSlirpBackend("probe")) {
         std::printf("[SKIP] network: this build has no libslirp\n");
     } else {
         struct Nic { int slot; const char* card; const char* drv; };

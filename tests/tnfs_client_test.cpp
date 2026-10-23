@@ -709,18 +709,20 @@ int main()
     // ── The deadline is honoured INSIDE a 64 KiB chunk ──────────────────
     // A server that answers every READ, each just inside the per-request
     // timeout, used to hold the fetch until the chunk ended: `giveUp` ran
-    // only between chunks (bug hunt 2026-10-23). 76 READs x 150 ms is ~11 s
-    // inside one chunk; a 2 s deadline must still be honoured.
+    // only between chunks (bug hunt 2026-10-23). 76 READs x 80 ms is ~6 s
+    // inside one chunk; a 3 s deadline must still be honoured. The per-request
+    // timeout that deadline yields is 375 ms (3 s / 8): the margin over the
+    // stub's 80 ms must absorb a loaded CI runner (150 ms against 250 ms did not).
     {
         TcpStub stub;
         stub.s.content = makeContent(40000);
-        stub.s.readDelayMs.store(150);
+        stub.s.readDelayMs.store(80);
         if (!stub.start()) { std::printf("FAIL: cannot start slow stub\n"); return 1; }
         const auto cache = fs::temp_directory_path() / "pom2_tnfs_slow_cache";
         std::error_code ec;
         fs::remove_all(cache, ec);
         pom2::TnfsFetchLimits limits;
-        limits.deadlineSeconds = 2;
+        limits.deadlineSeconds = 3;
         const auto t0 = std::chrono::steady_clock::now();
         const auto got = pom2::tnfsFetchImage(
             "tnfs://127.0.0.1:" + std::to_string(stub.port) + "/" + kFileName,
