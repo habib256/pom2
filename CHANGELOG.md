@@ -10,6 +10,27 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — Browser audio: a buffer the main thread can keep up with
+
+The WASM build crackled. It has no audio thread: without `-sAUDIO_WORKLET`
+miniaudio plays through a ScriptProcessorNode whose callback runs on the
+main thread, queued behind the rAF frame that runs the CPU and paints ImGui.
+POM2 asked for the desktop's 256-frame period — 5.3 ms at 48 kHz, shorter
+than one emulated frame — so it missed its deadline almost every frame. The
+browser now asks for 2048 frames (~43 ms; `AudioDevice.cpp`).
+
+That alone would have broken the Mockingboard and the Phasor: their replay
+cursor trails the producer by two PAL frames (40 ms), and a callback that
+renders 43 ms at once runs past the producer's present, so writes stamped
+in that tail arrive behind the cursor and are folded in at the next buffer's
+first sample — measured 10.8 % inharmonic energy on the dense digi test. The
+target lag now adds the callback's own span, and the starve / catch-up
+bounds move with it (negligible at 256 frames). The test did not see it at
+first: it only asked for a buffer once the producer had covered it, which
+no device waits for; it now asks when the period starts (`ceil`), and runs
+at 256 and 2048 frames. The speaker (100 ms lead) and the DAC were already
+wide enough. Cost: more latency in the browser, which WASM-003 tracks.
+
 ## 2026-10-23 — Browser: `?url=` boots a disk image from another site
 
 A game repository (pom2games's `dist/`) can now link "play in the browser"

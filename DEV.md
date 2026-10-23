@@ -10692,8 +10692,10 @@ Pages, plain S3). The CPU worker thread is replaced by
 `EmulationController::tickFrame()` called from the render loop in
 `main.cpp` (look for `#ifdef __EMSCRIPTEN__`). Trade-off vs the
 native build: no POM2 CPU worker thread. Audio is delivered through
-miniaudio's Web Audio backend; browser/platform latency still requires
-measurement and tuning rather than assuming desktop-equivalent behavior.
+miniaudio's Web Audio backend — a ScriptProcessorNode, so the callback runs
+on the main thread between frames; hence a 2048-frame period there (256 on
+the desktop), and jitter buffers (Mockingboard / Phasor `targetLag`) that
+add the callback's own span. See CHANGELOG 2026-10-23.
 
 **CMake Emscripten branch** (`if(EMSCRIPTEN)`):
 

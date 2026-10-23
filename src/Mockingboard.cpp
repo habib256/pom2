@@ -410,7 +410,13 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // cheaper than a resync.
         const uint64_t burst = static_cast<uint64_t>(
             cpuClockHz.load(std::memory_order_relaxed) / 50.0);
-        const uint64_t targetLag = 2 * burst;
+        // Plus this callback's own span: the whole buffer is rendered at
+        // once, so the backlog must cover it or its tail renders ahead of
+        // the producer. Negligible at a desktop's 256 frames; ~43 ms with
+        // the browser's 2048-frame ScriptProcessor (AudioDevice.cpp).
+        const uint64_t span = static_cast<uint64_t>(
+            cyclesPerSample * static_cast<double>(frameCount));
+        const uint64_t targetLag = 2 * burst + span;
         // TWO preconditions, both learned the hard way (2026-08-01):
         //
         //   `!pending.empty()` — re-anchoring is only meaningful when there
@@ -465,8 +471,9 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
             // free-runs at cyclesPerSample and the timeline is continuous.
             const bool starved =
                 producerNow > audioCursor &&
-                (producerNow - audioCursor) > 5 * burst;
-            const bool caughtUp = audioCursor + burst / 2 > producerNow;
+                (producerNow - audioCursor) > targetLag + 3 * burst;
+            const bool caughtUp =
+                audioCursor + span + burst / 2 > producerNow;
             if (starved || caughtUp) {
                 audioCursor = desired;
                 cursorFrac  = 0.0;

@@ -346,7 +346,7 @@ void testVolumePwmUnderBurstyProducer()
 // behind the cursor, the backward guard yanked it back, and the two
 // alternated every callback — audible as tempo instability on DD1 while
 // DD2, with a far sparser stream, mostly got away with it.
-void testDenseDigiStreamBothChips()
+void testDenseDigiStreamBothChips(int kChunk)
 {
     Memory mem;
     M6502  cpu(&mem);
@@ -385,7 +385,11 @@ void testDenseDigiStreamBothChips()
 
     constexpr int    kFrameCycles  = 20313;   // one PAL video frame
     constexpr double kFrameSamples = 882.0;   // 44100 / 50
-    // The REAL miniaudio period (AudioDevice.cpp: periodSizeInFrames).
+    // `kChunk` is the REAL miniaudio period (AudioDevice.cpp:
+    // periodSizeInFrames): 256 on the desktop, 2048 in the browser, whose
+    // ScriptProcessor callback renders ~2.3 producer frames at once — the
+    // replay cursor's lag must cover the whole callback or it re-anchors on
+    // every one (2026-10-23, the WASM build's choppy Mockingboard).
     // Deliberately not a divisor of kFrameSamples: 882/256 = 3.445
     // buffers per producer tick, so the phase between producer and
     // consumer drifts continuously and the replay cursor's lag sweeps its
@@ -393,7 +397,6 @@ void testDenseDigiStreamBothChips()
     // this test consumed exactly 882 samples per frame in 3 equal chunks;
     // that locks the lag at a constant and made the test pass against the
     // very cursor bug it was written to catch.
-    constexpr int    kChunk        = 256;
     constexpr int    kFrames       = 200;
 
     AudioSource* src = card.audioSource();
@@ -431,8 +434,17 @@ void testDenseDigiStreamBothChips()
         // lag actually sweep its range.
         samplesOwed += kFrameSamples;
         jitter = jitter * 1103515245u + 12345u;
-        const int extra = static_cast<int>((jitter >> 16) % 5u) - 2;
-        int budget = static_cast<int>(samplesOwed / kChunk) + extra;
+        // +/-512 samples of wander: two desktop buffers, none on top of
+        // the browser's 2048 (its own 2.3-frame quantisation is the sweep).
+        const int spread = 512 / kChunk;
+        const int extra = static_cast<int>(
+            (jitter >> 16) % static_cast<uint32_t>(2 * spread + 1)) - spread;
+        // CEIL, not floor: a device asks for a buffer when its period
+        // STARTS, whether or not the producer has covered all of it yet —
+        // the callback that renders past the producer's present. Flooring
+        // only ever asked once the samples existed, which no real device
+        // waits for, and hid the browser's 2048-frame overrun.
+        int budget = static_cast<int>(std::ceil(samplesOwed / kChunk)) + extra;
         for (int c = 0; c < budget; ++c) {
             src->fillAudioBuffer(chunk.data(), kChunk);
             all.insert(all.end(), chunk.begin(), chunk.end());
@@ -450,9 +462,10 @@ void testDenseDigiStreamBothChips()
     const double rms = std::sqrt(sumSq / static_cast<double>(kN));
 
     const double frac = inharmonicFraction(tail, kFundamentalHz, kSr);
-    std::printf("  dense digi (%.0f Hz PCM @ %.0f Hz writes, 2 chips): "
+    std::printf("  dense digi (%.0f Hz PCM @ %.0f Hz writes, 2 chips, "
+                "%d-frame callbacks): "
                 "rms=%.4f inharmonic=%.2f %%\n",
-                kFundamentalHz, kPalClockHz / kWriteIntervalCycles, rms,
+                kFundamentalHz, kPalClockHz / kWriteIntervalCycles, kChunk, rms,
                 frac * 100.0);
     assert(rms > 0.01);
     // Cursor thrash scatters broadband energy here. A stable cursor keeps
@@ -846,8 +859,10 @@ int main()
     std::printf("DC offset ............ OK\n");
     testVolumePwmUnderBurstyProducer();
     std::printf("volume PWM placement . OK\n");
-    testDenseDigiStreamBothChips();
+    testDenseDigiStreamBothChips(256);
     std::printf("dense digi stream .... OK\n");
+    testDenseDigiStreamBothChips(2048);
+    std::printf("dense digi, browser .. OK\n");
     testIdleProducerThenResume();
     std::printf("idle then resume ..... OK\n");
     testEnvelopeShapes();
