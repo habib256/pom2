@@ -10,6 +10,60 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-23 — DIX plays through on the fresh-install machine (VALIDATION-002)
+
+DIX (`disks_3.5/DIX.po`), the corpus's priority benchmark, was rechecked on
+current main (`070c0b82`) with the documented profile and today's default
+slot map: //e Enhanced PAL, Grappler+ 1, Mockingboard A/C **2**, mouse 4,
+SmartPort 5, Le Chat Mauve 7. The 2026-07 run had the Mockingboard in slot 4.
+
+- **GUI** (`POM2 DIX.po`, a fresh config): the intro picture, then the menu
+  — logo, particle spiral, scroller — at ~29 s; RIGHT selects part 1.
+- **Every part**, headless, through DIX's own automatic mode (menu LEFT →
+  "ALL DEMOS IN AUTOMATIC MODE"): Unlimited Bobs, Scroll Scroll Scroll,
+  Crazy Cycles, A Question of Frames, Plasmagoria, Raster Bars, Crazy
+  Cycles 2, One More Thing, Mad Effect 1-3, Unreeeal Superhero 3 Tribute,
+  Digidream, Oldskool Fort et Vert and Digidream SID Voice Edition each run
+  until their timer and hand over; the cycle takes ~28 emulated minutes and
+  restarts. The PC is never found on a `$00`, and every part paints its
+  own picture (frames checked by eye). A hung part could not hand over: the
+  timers count in each part's main loop.
+
+Mad Effect 1-2 and Digidream barely change video RAM — raster effects over a
+static picture, and a sample player — so "still" there is expected. Not
+covered: sound and tempo (no audio is checked headlessly), and the GPU
+composite path (the frames are the software renderer's). The Mockingboard
+side of the slot-4 hint, which VALIDATION-002 carried, is now UI-011.
+
+The run is `dix_auto_tour_probe [--png]` (in the `probes` target):
+parts are told apart by the first SmartPort block each load asks for, read
+at the `$C50A` entry the loader calls.
+
+## 2026-10-23 — A2osX on a //c with the Mockingboard 4c: the machine's hang, not POM2's (CARDS-014)
+
+A2osX 0.95 never reaches its shell on a //c with the 4c fitted. Traced to
+the end, every step is the hardware as MAME models it:
+
+1. At 6.03 s A2osX's Z80-card probe (`INIT3.CPUZ80`) does `STA ($00)` to
+   `$C100`…`$C700`. The write to `$C400` wakes the 4c (MAME `c400_w`; real
+   software wakes it the same way — 4sports' `hw.mockingboard.a` does
+   `stx $C403` / `stx $C404` "to enable Mockingboard 4C support"), and the
+   4c answers `$C400-$C4FF` until the next reset.
+2. `INIT3.IrqMgr` skips the ThunderClock search on a //c and looks for the
+   mouse firmware: `$C4FB` now reads `$00` from the VIA instead of `$D6`, so
+   A2osX falls back to polled ticks (`IrqMode` "P").
+3. Polled ticks watch bit 7 of `$C019` flip (`CORE.GetSig`). On a //c that
+   address is the VBL *interrupt* latch, not the beam (IIc Tech Note #9,
+   MAME `c000_iic_r` case `0x19`); with VBL interrupts never enabled it
+   stays clear — 1 367 reads in 10 s, none set. No tick, so no sleep ever
+   ends, and the kernel spins in its scheduler with a blank screen.
+
+POM2 already matched MAME at every step; nothing changed in the emulator.
+What a real //c with a real 4c does is inferred from MAME and the software
+that wakes the card, not measured. `a2osx_boot` now pins the three facts on
+a //c + 4c (no shell in 40 s, `$C4FB` not `$D6`, `$C019` clear); a build
+with the wake removed fails two of them.
+
 ## 2026-10-23 — ThunderClock: TP runs from power-up and survives RESET
 
 A2osX (0.95 and 1.00) takes the ThunderClock as its interrupt source and

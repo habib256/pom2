@@ -24,6 +24,7 @@ an explicit request before scheduling.
 | [UI-008](#ui-008) | 🧊 | Frozen | On-screen touchscreen / virtual joystick |
 | [UI-009](#ui-009) | 🟢 | Ready for design | Disk Library miniatures |
 | [UI-010](#ui-010) | 🟢 | Partial: macOS/Linux declarations and open handling exist | OS file associations for disk images |
+| [UI-011](#ui-011) | 🟢 | Ready | Slot Config hint: some titles want the Mockingboard in slot 4 |
 
 <a id="ui-002"></a>
 
@@ -204,3 +205,22 @@ winning against gettext files. Linux/Windows positional disk arguments are
 handled by the CLI. This is implemented plumbing, not proof of an installed
 package's association behavior. Remaining: Windows registration, extension
 coverage (including `.moof`) and clean-host open/default-association checks.
+
+<a id="ui-011"></a>
+
+## UI-011 — Slot Config hint: some titles want the Mockingboard in slot 4
+
+**Priority:** 🟢 · **State:** Ready (carried over from VALIDATION-002, closed 2026-10-23).
+
+**Acceptance criterion:** Slot Configuration shows a hint on the Mockingboard
+row, like the existing "Extasie & friends want the mouse in slot 4" one on the
+mouse row, saying that titles which address `$C4xx` with no scan need the
+Mockingboard in slot 4 — and therefore the mouse moved.
+
+**Evidence:** the fresh-install map is mouse@4, Mockingboard@2 (swapped
+2026-09-02 for Extasie's self-modified `JSR $C4xx`). DIX scans `$C7→$C1` and
+runs on that map (CHANGELOG 2026-10-23), but standalone **MAD EFFECT**
+(`disks_5.4/demo/madef/Sources/main.a:176-218`) addresses `$C4xx` with no
+scan and its frame sync is the T1 IRQ: with the card elsewhere it waits
+forever after the loader. `MainWindow_Slots.cpp` warns about the mouse side
+only.
