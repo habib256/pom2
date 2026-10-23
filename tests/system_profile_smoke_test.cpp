@@ -791,8 +791,29 @@ void testSnapshotMachineId()
     assert(pom2::profileNameForMachineId(0xDEADBEEFu).empty());
 }
 
+// Internal Disks & Media lists its slots in this order: every slot exactly
+// once, and the slot the firmware boots from first at the top.
+void testBootScanOrder()
+{
+    using pom2::SystemProfile;
+    for (const auto p : pom2::allProfiles()) {
+        const auto order = pom2::bootScanOrder(p);
+        std::array<int, 8> seen{};
+        for (int s : order) { assert(s >= 1 && s <= 7); ++seen[s]; }
+        for (int s = 1; s <= 7; ++s) assert(seen[s] == 1);
+    }
+    assert(pom2::bootScanOrder(SystemProfile::AppleIIe)[0] == 7);
+    assert(pom2::bootScanOrder(SystemProfile::AppleIIPlus)[1] == 6);
+    assert(pom2::bootScanOrder(SystemProfile::AppleIIc)[0] == 6);
+    assert(pom2::bootScanOrder(SystemProfile::AppleIIcPAL)[1] == 5);
+    assert(pom2::bootScanOrder(SystemProfile::AppleIIcPlus)[0] == 5);
+}
+
 int main()
 {
+    testBootScanOrder();
+    std::printf("  ok: boot scan order (7 -> 1, //c 6 first, //c+ 5 first)\n");
+
     testAllProfilesEnumerated();
     std::printf("  ok: all 8 profiles enumerated (+ //e PAL, //c PAL)\n");
 

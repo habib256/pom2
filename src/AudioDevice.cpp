@@ -174,7 +174,21 @@ bool AudioDevice::initAudio()
     // Now the sources are told the real rate and synthesise straight to it
     // (`AudioSource.h`'s RateAware contract, which `addSource` applies).
     config.sampleRate         = 0;
+#ifdef __EMSCRIPTEN__
+    // The browser build has no audio thread: without -sAUDIO_WORKLET
+    // miniaudio plays through a ScriptProcessorNode whose `onaudioprocess`
+    // runs on the MAIN thread, queued behind the rAF frame that runs the
+    // CPU and paints ImGui (`miniaudio.h`, ma_device_init__webaudio). A
+    // 256-frame period is 5.3 ms at 48 kHz — shorter than one emulated
+    // frame — so the callback missed its deadline almost every frame and
+    // the output crackled. 2048 frames (~43 ms) rides out a slow frame;
+    // the sources' jitter buffers size themselves from the frameCount
+    // they are asked for (Mockingboard / Phasor `targetLag`), so the
+    // larger callback does not make them re-anchor.
+    config.periodSizeInFrames = 2048;
+#else
     config.periodSizeInFrames = 256;
+#endif
     config.periods            = 3;
     config.performanceProfile = ma_performance_profile_low_latency;
     config.dataCallback       = &AudioDevice::audioDataCallback;

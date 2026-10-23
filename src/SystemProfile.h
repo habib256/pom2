@@ -132,6 +132,16 @@ std::string_view profileKey(SystemProfile p);
 /// #10: Reload ROM used the //e slicing on a //c and rebooted into bank 1).
 bool profileUsesLowerRomHalf(SystemProfile p);
 
+/// The order in which the machine's firmware looks for a disk to boot,
+/// slot numbers 1-7. The Autostart ROM of the ][+ / //e scans $C7 down to
+/// $C1 and takes the first slot that signs (`$FAB4-$FAD2`), hence 7 → 1.
+/// The //c starts from its internal 5.25" (slot 6) and then the SmartPort
+/// on the rear port (slot 5); the //c+ from its internal 3.5" (slot 5),
+/// then the 5.25" (slot 6). The slots no firmware boots from follow,
+/// descending. Used by Internal Disks & Media to list its slots in that
+/// order.
+std::array<int, 7> bootScanOrder(SystemProfile p);
+
 /// The settings key that holds `slot`'s card under `cfg`: `slot_N_card`,
 /// except for the //c-class INTERNAL expansion connector (POM2 slot 3), which
 /// has its own key, `iic_expansion_card`. It used to share `slot_3_card` with
