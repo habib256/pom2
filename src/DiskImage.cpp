@@ -1115,6 +1115,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    wozAllocFailed_.fill(false);
     for (auto& ticks : wozQtFluxTicks) ticks.clear();
     wozQtFluxPeriodTicks.fill(0);
     wozQtFluxHeaderOff.fill(0);
@@ -1434,6 +1435,7 @@ void DiskImage::eject()
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    wozAllocFailed_.fill(false);
     for (auto& ticks : wozQtFluxTicks) ticks.clear();
     wozQtFluxPeriodTicks.fill(0);
     wozQtFluxHeaderOff.fill(0);
@@ -2103,7 +2105,22 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         // into bitStream rather than re-deriving the whole track from
         // a nibble buffer. saveDirty() later re-packs the live bits
         // back into wozRaw at wozQtByteOff[qt].
-        if (wozQtBitCount[qt] == 0) return;        // unpopulated qt
+        // A quarter-track the image does not carry (TMAP $FF — Applesauce
+        // leaves a half-used disk's empty tracks out) is unformatted
+        // surface, and real media takes the write. Dropping it here lost
+        // INIT / FORMAT silently: no dirty flag, no error, a verify that
+        // failed and a disk that could never be reformatted. MAME writes
+        // the flux and creates the track on save.
+        if (wozQtBitCount[qt] == 0 && !allocateWozTrack(qt)) {
+            if (!wozAllocFailed_[qt]) {
+                wozAllocFailed_[qt] = true;
+                lastError = "WOZ: cannot add quarter-track " +
+                            std::to_string(qt / 4.0) +
+                            " to this image; writes to it are lost";
+                pom2::log().warn("Disk II", lastError);
+            }
+            return;
+        }
         const int period = trackPeriod(qt);
         if (period <= 0) return;
 
@@ -2227,10 +2244,10 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         }
         return;
     }
-    // Non-WOZ: write-back lands on the whole track containing `qt`.
+    // Non-WOZ: write-back lands on the whole track under the head.
     // Quarter-track sub-positions on standard .dsk/.do/.po share their
     // nibble buffer with the parent whole track (`qtSlot` alias).
-    const int track = qt / 4;
+    const int track = wholeTrackOf(qt);
     if (track < 0 || track >= kTracks) return;
 
     const int period = trackPeriod(qt);

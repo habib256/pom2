@@ -18,8 +18,6 @@ an explicit request before scheduling.
 | [STORAGE-002](#storage-002) | 🟡 | To verify | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
 | [STORAGE-010](#storage-010) | 🟡 | To verify | Bug hunt #16's Disk II read residue |
-| [STORAGE-012](#storage-012) | 🟡 | Ready | A WOZ write to a track the file does not have is dropped silently |
-| [STORAGE-013](#storage-013) | 🟢 | Ready | Off-track quarter positions and long FLUX writes |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
@@ -192,42 +190,3 @@ and [CHANGELOG](../../CHANGELOG.md).
 
 - 🟢 **Floppy Emu Dual-5.25" + Smartport-Unit-2 modes** — out of scope
   for v1 (4 main modes covered).
-
-<a id="storage-012"></a>
-
-## STORAGE-012 — A WOZ write to a track the file does not have is dropped silently
-
-**Priority:** 🟡 · **State:** Ready (found by the 2026-10-23 bug hunt, round five).
-
-**Acceptance criterion:** INIT or ProDOS FORMAT of a WOZ whose TMAP leaves
-tracks at `$FF` either succeeds and saves the new tracks, or refuses with a
-visible error; never a silent drop.
-
-`DiskImage::writeFlux`, WOZ bit-cell branch: `if (wozQtBitCount[qt] == 0)
-return;`. An Applesauce image of a half-used disk often maps its unused
-tracks to `$FF`; writes there vanish with no dirty flag and no error, the
-format's verify then fails, and the disk cannot be reformatted. The fix is
-to allocate a TRKS slot on the first write to an empty quarter-track (about
-51,200 bits; `growWozFluxSlot` has the shape: append blocks at the end of
-TRKS, point TMAP qt-1/qt/qt+1 at it), WOZ1 and WOZ2 both. Failing that,
-set `lastError` and report it.
-
-<a id="storage-013"></a>
-
-## STORAGE-013 — Off-track quarter positions and long FLUX writes
-
-**Priority:** 🟢 · **State:** Ready (found by the 2026-10-23 bug hunt, round five).
-
-**Acceptance criterion:** a pinned test for each case below.
-
-- **Non-WOZ quarter-tracks round down.** `qtSlot` is `qt & ~3` and the
-  non-WOZ `writeFlux` uses `qt / 4`, so a head parked at qt 4k+3 (physically
-  next to track k+1) reads and writes track k. Fields written there name
-  k+1, `decodeNibbles` rejects them on save, and if nothing on track k still
-  decodes every save of that disk is refused. Standard RWTS / ProDOS never
-  stop there. Round to the nearest track, or ignore writes at qt%4 == 2/3.
-- **A FLUX write window longer than one revolution folds.**
-  `DiskImageWozFlux.cpp:17-35` clamps the duration to one period but keeps
-  every transition modulo the period, so a sparse burst lasting more than
-  ~200 ms lays revolution two on top of revolution one. Split per
-  revolution as the bit-cell path already does.

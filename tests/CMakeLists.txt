@@ -2930,6 +2930,74 @@ endif()
 
 add_test(NAME diskii_format_smoke COMMAND test_diskii_format)
 set_tests_properties(diskii_format_smoke PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+add_test(NAME diskii_format_woz_unmapped COMMAND test_diskii_format woz)
+set_tests_properties(diskii_format_woz_unmapped PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+
+# CARDS-012: DOS 3.3 + PR#2 + CATALOG on the SSC's hand-assembled page.
+add_executable(test_ssc_fallback_dos
+    ssc_fallback_dos_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_ssc_fallback_dos PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ssc_fallback_dos PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ssc_fallback_dos PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ssc_fallback_dos PRIVATE winmm)
+endif()
+add_test(NAME ssc_fallback_dos COMMAND test_ssc_fallback_dos)
+set_tests_properties(ssc_fallback_dos PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+
+# CARDS-005: the ThunderClock+ EPROM driver run from Applesoft under DOS 3.3.
+add_executable(test_clock_card_dos_driver
+    clock_card_dos_driver_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_clock_card_dos_driver PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_clock_card_dos_driver PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_clock_card_dos_driver PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_clock_card_dos_driver PRIVATE winmm)
+endif()
+add_test(NAME clock_card_dos_driver COMMAND test_clock_card_dos_driver)
+set_tests_properties(clock_card_dos_driver PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 
 
 # ─── An UNFORMATTED diskette: the address fields a format has to CREATE ──
@@ -4629,6 +4697,48 @@ if(WIN32)
 endif()
 add_test(NAME woz_writeflux_smoke COMMAND test_woz_writeflux)
 set_tests_properties(woz_writeflux_smoke PROPERTIES TIMEOUT 10)
+
+# ─── STORAGE-012: a WOZ write to a track TMAP leaves out ─────────────────
+# writeFlux adds a TRKS slot instead of dropping the write; WOZ2 + WOZ1,
+# save + reload, and a write-protected image never mutated.
+add_executable(test_woz_unmapped_track_write
+    woz_unmapped_track_write_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_woz_unmapped_track_write PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_woz_unmapped_track_write PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_woz_unmapped_track_write PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_woz_unmapped_track_write PRIVATE winmm)
+endif()
+add_test(NAME woz_unmapped_track_write COMMAND test_woz_unmapped_track_write)
+set_tests_properties(woz_unmapped_track_write PROPERTIES TIMEOUT 10)
+
+# ─── STORAGE-013: the whole track a .dsk serves at a quarter-track ───────
+add_executable(test_disk_quarter_track_alias
+    disk_quarter_track_alias_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_disk_quarter_track_alias PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_disk_quarter_track_alias PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_disk_quarter_track_alias PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_disk_quarter_track_alias PRIVATE winmm)
+endif()
+add_test(NAME disk_quarter_track_alias COMMAND test_disk_quarter_track_alias)
+set_tests_properties(disk_quarter_track_alias PROPERTIES TIMEOUT 10)
 
 # ─── Floating-bus PAGE2 / 80STORE gating regression ───────────────────────
 # Pins Memory::floatingBus to MAME's use_page_2() = page2 && !80store.

@@ -713,7 +713,9 @@ void testPascalIdBlock()
     const uint8_t pread  = ssc.slotRomRead(0x0E);
     const uint8_t pwrite = ssc.slotRomRead(0x0F);
     const uint8_t pstat  = ssc.slotRomRead(0x10);
-    assert(pinit == 0x50 && pread == 0x60 && pwrite == 0x70 && pstat == 0x80);
+    // Moved 2026-10-24 when `dispatch` grew the real firmware's KSW test
+    // (CARDS-012); the routines follow, and the table with them.
+    assert(pinit == 0x60 && pread == 0x68 && pwrite == 0x78 && pstat == 0x88);
 
     // Each offset must point at real code, not NOP ($EA) fill.
     assert(ssc.slotRomRead(pinit)  == 0xA9);   // PINIT   : LDA #$0B
@@ -722,13 +724,13 @@ void testPascalIdBlock()
     assert(ssc.slotRomRead(pstat)  == 0x4A);   // PSTATUS : LSR A
 
     // PSTATUS is the one routine with branch targets computed BY HAND against
-    // its own internal offsets — `BCS $Cn8B` and `JMP $Cn8D`. Nothing else in
+    // its own internal offsets — `BCS $Cn93` and `JMP $Cn95`. Nothing else in
     // the ROM would notice if those two labels drifted, so they are checked
-    // where they land: the input mask at $Cn8B and the shared CMP at $Cn8D.
-    assert(ssc.slotRomRead(0x84) == 0xB0 && ssc.slotRomRead(0x85) == 0x05);
-    assert(ssc.slotRomRead(0x88) == 0x4C && ssc.slotRomRead(0x89) == 0x8D);
-    assert(ssc.slotRomRead(0x8B) == 0x29 && ssc.slotRomRead(0x8C) == 0x08);
-    assert(ssc.slotRomRead(0x8D) == 0xC9 && ssc.slotRomRead(0x8E) == 0x01);
+    // where they land: the input mask at $Cn93 and the shared CMP at $Cn95.
+    assert(ssc.slotRomRead(0x8C) == 0xB0 && ssc.slotRomRead(0x8D) == 0x05);
+    assert(ssc.slotRomRead(0x90) == 0x4C && ssc.slotRomRead(0x91) == 0x95);
+    assert(ssc.slotRomRead(0x93) == 0x29 && ssc.slotRomRead(0x94) == 0x08);
+    assert(ssc.slotRomRead(0x95) == 0xC9 && ssc.slotRomRead(0x96) == 0x01);
 
     // The PR#n / IN#n binds publish $CnB0 and $CnE0 as the character-in/out
     // vectors. Same question, same answer: both must be code, not fill.
@@ -790,7 +792,8 @@ void testPrinterTapSpool()
 
 void testRomPrInEntriesInitAcia()
 {
-    // The PR#n ($Cn20) and IN#n ($Cn40) firmware entries must program the
+    // The PR#n output path ($Cn30, `prOut`, which the CSW bind falls into)
+    // and the IN#n bind ($Cn50) must program the
     // ACIA command register (cmd=$0B: DTR on, RX IRQ off) before hooking
     // CSW/KSW — the real SSC ROM initialises the 6551 from its DIP
     // switches on first entry (6502disassembly.com/a2-rom/SSC). Without
@@ -798,7 +801,7 @@ void testRomPrInEntriesInitAcia()
     // byte is dropped (MAME `mos6551.cpp:317-321`).
     SuperSerialCard ssc(2);
     const uint8_t cmdRegAddr = 0x80 + 2 * 16 + 0xA;   // $C0AA low byte
-    for (uint8_t base : { uint8_t{0x20}, uint8_t{0x40} }) {
+    for (uint8_t base : { uint8_t{0x30}, uint8_t{0x50} }) {
         assert(ssc.slotRomRead(base + 0) == 0xA9);        // LDA #$0B
         assert(ssc.slotRomRead(base + 1) == 0x0B);
         assert(ssc.slotRomRead(base + 2) == 0x8D);        // STA $C0nA
@@ -809,10 +812,10 @@ void testRomPrInEntriesInitAcia()
     // jumps to the dispatcher, not straight to the PR# bind.
     assert(ssc.slotRomRead(0x00) == 0x4C);                // JMP dispatch
     assert(ssc.slotRomRead(0x01) == 0x11 && ssc.slotRomRead(0x02) == 0xC2);
-    // The IN#n bind ends in JMP cin and must not overrun PINIT at $Cn50.
-    assert(ssc.slotRomRead(0x4D) == 0x4C);                // JMP cin
-    assert(ssc.slotRomRead(0x4E) == 0xE0 && ssc.slotRomRead(0x4F) == 0xC2);
-    assert(ssc.slotRomRead(0x50) == 0xA9);                // PINIT intact
+    // The IN#n bind ends in JMP cin and must not overrun PINIT at $Cn60.
+    assert(ssc.slotRomRead(0x5D) == 0x4C);                // JMP cin
+    assert(ssc.slotRomRead(0x5E) == 0xE0 && ssc.slotRomRead(0x5F) == 0xC2);
+    assert(ssc.slotRomRead(0x60) == 0xA9);                // PINIT intact
     std::printf("  ok: PR#/IN# ROM entries init the ACIA (cmd=$0B)\n");
 }
 

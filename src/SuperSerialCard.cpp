@@ -1226,22 +1226,32 @@ void SuperSerialCard::buildRom()
 
     // $Cn00 is BOTH hooks: the Monitor's PR#n stores $Cn00 in CSW and its
     // IN#n stores $Cn00 in KSW, so the $Cn08 entry above is never what IN#n
-    // reaches. An output call is the one where CSW still names this page's
-    // entry; anything else came through KSW. The page used to bind the
-    // output hook for both — IN#n then read nothing, rewrote CSW on every
-    // key poll and handed BASIC $Cn as a keystroke (bug hunt 2026-09-29).
+    // reaches. The decision is the real firmware's (341-0065-A, $C245-$C25C
+    // with the card in slot 2):
+    //   CSWH == $Cn and CSW not yet bound → bind CSW, output;
+    //   else KSWH == $Cn                  → input;
+    //   else                              → output, CSW left alone.
+    // The page used to call everything but "CSW = $Cn00" input. DOS 3.3
+    // survives either rule — it puts the true hook back in CSW around the
+    // call (`ssc_fallback_dos`) — but a host that calls the card through a
+    // hook of its own would have spun on RDRF, where the real card prints.
+    // Output without a bind there: binding CSW would cut that host out.
     // Both paths keep A and carry on into the routine the call was for.
-    a.region("dispatch", 0x11, 0x20)
+    a.region("dispatch", 0x11, 0x28)
      .emit({ 0x48,                   // PHA         (the char, for output)
              0xA5, 0x37,             // LDA $37     (CSWH)
              0xC9, a.pageHi() })     // CMP #$Cn
-     .branch(0xD0, "toInput")        // BNE toInput
+     .branch(0xD0, "checkKsw")       // BNE checkKsw
      .emit({ 0xA5, 0x36 })           // LDA $36     (CSWL)
-     .branch(0xD0, "toInput")        // BNE toInput (already bound → input)
-     .jmp("prBind");                 // the char stays pushed for prBind
+     .branch(0xF0, "prBind")         // BEQ prBind  (CSW = $Cn00: bind it)
+     .label("checkKsw")
+     .emit({ 0xA5, 0x39,             // LDA $39     (KSWH)
+             0xC9, a.pageHi() })     // CMP #$Cn
+     .branch(0xF0, "toInput")        // BEQ toInput
+     .jmp("prOut");                  // someone else's hook: just print
 
-    // PR#n bind — initialise the ACIA, then patch CSWL/CSWH to point at the
-    // output routine and continue into it with the character the call
+    // PR#n bind — patch CSWL/CSWH to point at the output routine, then
+    // initialise the ACIA and continue into it with the character the call
     // carried (it was dropped when this returned with RTS).
     //
     // The ACIA init (cmd=$0B: DTR asserted, RX IRQ off, RTS low) mirrors what
@@ -1251,13 +1261,14 @@ void SuperSerialCard::buildRom()
     // de-asserted and the transmitter (correctly, per MAME
     // `mos6551.cpp:317-321`) drops every byte on the floor — only Pascal,
     // whose PINIT does the same $0B write, could ever transmit.
-    a.region("prBind", 0x20, 0x40)
-     .emit({ 0xA9, 0x0B,             // LDA #$0B    (DTR on, RX IRQ off)
-             0x8D, cmdRegAddr, 0xC0, // STA $C0nA   (command register)
-             0xA9 }).byteOf("cout")  // LDA #<cout
+    a.region("prBind", 0x28, 0x50)
+     .emit({ 0xA9 }).byteOf("cout")  // LDA #<cout
      .emit({ 0x85, 0x36,             // STA $36   (CSWL)
              0xA9, a.pageHi(),       // LDA #>cout
-             0x85, 0x37,             // STA $37   (CSWH)
+             0x85, 0x37 })           // STA $37   (CSWH)
+     .label("prOut")
+     .emit({ 0xA9, 0x0B,             // LDA #$0B    (DTR on, RX IRQ off)
+             0x8D, cmdRegAddr, 0xC0, // STA $C0nA   (command register)
              0x68 })                 // PLA         (dispatch pushed the char)
      .jmp("cout")
      .label("toInput")
@@ -1266,7 +1277,7 @@ void SuperSerialCard::buildRom()
 
     // IN#n bind — same ACIA init, then patch KSWL/KSWH (input vector) and
     // read the key the caller is waiting for.
-    a.region("inBind", 0x40, 0x50)
+    a.region("inBind", 0x50, 0x60)
      .emit({ 0xA9, 0x0B,
              0x8D, cmdRegAddr, 0xC0,
              0xA9 }).byteOf("cin")   // LDA #<cin
@@ -1277,7 +1288,7 @@ void SuperSerialCard::buildRom()
 
     // PINIT — assert DTR + RTS-low/TX-IRQ-off (cmd=$0B) so the port can
     // transmit, then return success (X=0).
-    a.region("pinit", 0x50, 0x60)
+    a.region("pinit", 0x60, 0x68)
      .emit({ 0xA9, 0x0B,             // LDA #$0B
              0x8D, cmdRegAddr, 0xC0, // STA $C0nA   (command register)
              0xA2, 0x00,             // LDX #$00    (no error)
@@ -1285,7 +1296,7 @@ void SuperSerialCard::buildRom()
 
     // PREAD — spin until RDRF, return the byte in A with the high bit
     // cleared (Pascal wants 7-bit ASCII), X=0.
-    a.region("pread", 0x60, 0x70)
+    a.region("pread", 0x68, 0x78)
      .label("preadWait")
      .emit({ 0xAD, statusReg, 0xC0,  // LDA $C0n9
              0x29, 0x08 })           // AND #$08  (RDRF)
@@ -1296,7 +1307,7 @@ void SuperSerialCard::buildRom()
              0x60 });                // RTS
 
     // PWRITE — spin until TDRE, send the char in A, X=0.
-    a.region("pwrite", 0x70, 0x80)
+    a.region("pwrite", 0x78, 0x88)
      .emit({ 0x48 })                 // PHA
      .label("pwriteWait")
      .emit({ 0xAD, statusReg, 0xC0,  // LDA $C0n9
@@ -1310,7 +1321,7 @@ void SuperSerialCard::buildRom()
     // PSTATUS — A=0 → output-ready (TDRE), A=1 → input-avail (RDRF).
     // LSR moves the request code into carry; CMP #$01 maps "masked bit set"
     // back into the carry flag (ready). X=0.
-    a.region("pstatus", 0x80, 0xB0)
+    a.region("pstatus", 0x88, 0xB0)
      .emit({ 0x4A,                   // LSR A       (C=0 output, C=1 input)
              0xAD, statusReg, 0xC0 })// LDA $C0n9
      .branch(0xB0, "psInput")        // BCS psInput

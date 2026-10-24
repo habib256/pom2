@@ -14,6 +14,11 @@
 // CATALOGs it and round-trips a SAVE / LOAD through the freshly formatted
 // disk. Skips (77) without apple2.rom / disk2.rom / diskii_p6.rom / the
 // master image.
+//
+// `woz` (STORAGE-012): the blank is a WOZ2 that carries track 0 only, every
+// other TMAP entry $FF — how Applesauce images a half-used disk. The WOZ
+// write path used to drop writes to an absent track without a word, so the
+// format's verify failed on track 1 and the disk could never be INITed.
 
 #include "DiskIICard.h"
 #include "M6502.h"
@@ -26,6 +31,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -87,7 +93,8 @@ bool waitForText(M6502& cpu, const uint8_t* ram, const char* needle,
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const bool woz = argc > 1 && std::strcmp(argv[1], "woz") == 0;
     const std::string romPath  = findFirst({
         "../roms/apple2.rom", "roms/apple2.rom", "../../roms/apple2.rom" });
     const std::string promPath = findFirst({
@@ -106,9 +113,29 @@ int main() {
     std::error_code ec;
     fs::create_directories(scratchDir, ec);
     const fs::path master = scratchDir / "master.dsk";
-    const fs::path blank  = scratchDir / "blank.dsk";
+    const fs::path blank  = scratchDir / (woz ? "blank.woz" : "blank.dsk");
     if (!copyFile(masterPath, master)) { std::fprintf(stderr, "cannot copy master\n"); return 1; }
-    {
+    if (woz) {
+        // WOZ2: INFO v2 (4 µs cells), TMAP with only qt 0, TRKS header 0 at
+        // block 3 for 13 blocks of 50 000 blank cells.
+        std::vector<uint8_t> w = {'W','O','Z','2',0xFF,0x0A,0x0D,0x0A,0,0,0,0};
+        auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) w.push_back(uint8_t(v >> (8 * i))); };
+        auto u16 = [&](uint16_t v) { w.push_back(uint8_t(v)); w.push_back(uint8_t(v >> 8)); };
+        w.insert(w.end(), {'I','N','F','O'}); u32(60);
+        std::vector<uint8_t> info(60, 0);
+        info[0] = 2; info[1] = 1; info[37] = 1; info[39] = 32; info[44] = 13;
+        for (int i = 5; i < 37; ++i) info[size_t(i)] = ' ';
+        w.insert(w.end(), info.begin(), info.end());
+        w.insert(w.end(), {'T','M','A','P'}); u32(160);
+        w.push_back(0); w.insert(w.end(), 159, 0xFF);
+        w.insert(w.end(), {'T','R','K','S'}); u32(160 * 8 + 13 * 512);
+        u16(3); u16(13); u32(50000);
+        w.resize(1536, 0);
+        w.resize(1536 + 13 * 512, 0);
+        std::ofstream f(blank, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(w.data()), static_cast<std::streamsize>(w.size()));
+        if (!f) { std::fprintf(stderr, "cannot write blank WOZ\n"); return 1; }
+    } else {
         std::ofstream f(blank, std::ios::binary | std::ios::trunc);
         std::vector<char> zeros(143360, 0);
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));

@@ -2541,13 +2541,10 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             }
             return v;
         }
-        // $CFFF without intC8Rom set: still release the slot expansion
-        // owner — real //e wires the address decode directly to the
-        // slot latch reset, bypassing the INTCXROM mux (MAME
-        // `apple2e.cpp:2636-2645` `c800_r` always runs the deactivate).
-        if (addr == 0xCFFF) {
-            slots.deactivateExpansion();
-        }
+        // $CFFF without intC8Rom set falls through to
+        // SlotBus::expansionRomRead, which reads the owner's byte and then
+        // releases it (MAME `c800_r`). Releasing here first starved the
+        // card of the access.
     }
     if (addr <= 0xC7FF) {
         uint8_t v = slots.slotRomRead(addr);
@@ -2683,13 +2680,14 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         slots.deviceSelectWrite(addr, value);
         return;
     }
-    // Same $CFFF + INTCXROM deactivate handling as memRead (MAME
-    // `apple2e.cpp:2636-2645`). The write goes through to the slot
-    // bus regardless so cards that decode their own $C800-$CFFF
-    // window (rare on a IIe) still see it.
+    // Same $CFFF + INTCXROM deactivate handling as memRead. MAME's
+    // `c800_w` serves both banks (`m_c800bank[0..2]` all write through
+    // it): the owning card gets `write_c800(0x7ff)`, then the window is
+    // released — so the write reaches the owner even when INTCXROM absorbs
+    // the rest of $C100-$CFFF below.
     if (iieMode && addr == 0xCFFF) {
         intC8Rom = false;   // same flip-flop reset as the read side
-        slots.deactivateExpansion();
+        slots.expansionRomWrite(addr, value);
     }
     // Mirror the memRead INTCXROM override for //c: when internal ROM
     // is mapped at $C100-$CFFF, writes are absorbed (real silicon: ROM

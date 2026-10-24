@@ -929,11 +929,15 @@ bool CassetteDevice::loadWavTape(const std::string& path)
         lastError = "Unsupported WAV format (only PCM and float are supported)";
         return false;
     }
+    // 24- and 32-bit integer PCM are what a studio capture or a
+    // high-resolution rip of a real tape produces (CASSETTE-002); they were
+    // refused outright.
     const bool supportedSamples =
-        (audioFormat == 1 && (bitsPerSample == 8 || bitsPerSample == 16)) ||
+        (audioFormat == 1 && (bitsPerSample == 8 || bitsPerSample == 16 ||
+                              bitsPerSample == 24 || bitsPerSample == 32)) ||
         (audioFormat == 3 && bitsPerSample == 32);
     if (!supportedSamples) {
-        lastError = "Only WAV PCM 8/16-bit and float32 are supported";
+        lastError = "Only WAV PCM 8/16/24/32-bit and float32 are supported";
         return false;
     }
     const size_t bytesPerSample = bitsPerSample / 8;
@@ -950,6 +954,11 @@ bool CassetteDevice::loadWavTape(const std::string& path)
             float v = 0.0f;
             if      (audioFormat == 1 && bitsPerSample == 8)  v = (static_cast<int>(p[0]) - 128) / 128.0f;
             else if (audioFormat == 1 && bitsPerSample == 16) v = static_cast<float>(static_cast<int16_t>(readLe16(p))) / 32768.0f;
+            else if (audioFormat == 1 && bitsPerSample == 24) {
+                const uint32_t u = uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16);
+                v = static_cast<float>(static_cast<int32_t>(u << 8) >> 8) / 8388608.0f;
+            }
+            else if (audioFormat == 1 && bitsPerSample == 32) v = static_cast<float>(static_cast<int32_t>(readLe32(p)) / 2147483648.0);
             else if (audioFormat == 3 && bitsPerSample == 32) std::memcpy(&v, p, 4);
             mixed += v;
         }

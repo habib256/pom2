@@ -2861,7 +2861,11 @@ delay disable, reset, and the ][+ gate).
 - `$C100-$C7FF` slot ROM (256 B/slot 1-7).
 - `$C800-$CFFF` shared expansion ROM, claimed by the **first** slot to
   touch `$CnXX` while the window is unowned. `$CFFF` deactivates the
-  active slot; auto-latch on slot-ROM access.
+  active slot — after that slot served the access: a read returns the
+  owner's `expansionRomRead(0x7FF)`, a write reaches its
+  `expansionRomWrite(0x7FF)` (MAME `c800_r`/`c800_w` in `apple2.cpp` and
+  `apple2e.cpp`); only an unowned window reads the floating bus. Auto-latch
+  on slot-ROM access.
 
 `advanceCycles()` forwards to every plugged card. Ctrl-Reset
 propagates `onReset()`.
@@ -3678,6 +3682,22 @@ rewritten in place.
 `useBitLss=true` when any drive holds WOZ. Pinned:
 `woz_load_smoke`, `woz_writeback_smoke`.
 
+**A write to a track the image does not carry** (TMAP `$FF`, how
+Applesauce images a half-used disk) is unformatted surface, and it takes
+the write: `allocateWozTrack` (`DiskImageWozFlux.cpp`) adds a TRKS slot to
+`wozRaw` on the first write — WOZ2: a free 8-byte header and blocks
+appended at TRKS's block-aligned end, later block numbers (other tracks,
+the FLUX chunk at INFO+46) shifted, `largest_track` raised; WOZ1: one more
+6656-byte slot — points that quarter-track's TMAP entry at it, and seeds a
+blank bit stream as long as the nearest populated whole track. Only the
+written quarter-track is mapped, not its neighbours. Save, autosave and
+sessions need nothing more: they splice `bitStream` at `wozQtByteOff` as
+for any track. A WOZ that cannot grow (TRKS not block-aligned, no free
+header, 16 MiB) refuses the write with one warning per quarter-track.
+Pinned: `woz_unmapped_track_write` (WOZ2, WOZ1, save + reload, a chunk
+after TRKS, write protection) and `diskii_format_woz_unmapped` (DOS 3.3
+INIT, CATALOG and SAVE/LOAD on a WOZ that carried track 0 only).
+
 ### WOZ2 `optimal_bit_timing`
 
 INFO+39 (units of 125 ns) — bit-cell duration. Default 32 = 4 µs =
@@ -3918,9 +3938,13 @@ tracks for the 5.25" SD drive; `kQuarterTracks - 4`, track 39), not to the
 image's, so every TMAP slot `loadWoz` fills is reachable; past a 35-track
 `.dsk`'s data the expander yields an empty stream and the position reads as
 amplifier noise, which is what the surface holds. Noted, not changed: `.nib`
-bytes get flat 8-cell timing (no self-sync slip); half-tracks on non-WOZ
-images snap to the lower whole track (AppleWin's rule, not MAME's); a WOZ
-CRC mismatch is refused where AppleWin warns. History: CHANGELOG 2026-09-09
+bytes get flat 8-cell timing (no self-sync slip); a WOZ CRC mismatch is
+refused where AppleWin warns. Off-track positions on non-WOZ images serve
+the whole track under the head, `DiskImage::wholeTrackOf`: 4k..4k+2 are
+track k and 4k+3 is track k+1, AppleWin's `PhaseToTrack` (`ceil(phase) >>
+1` on half-track phases; MAME leaves them empty instead). Until 2026-10-24
+every off-track position rounded down, which AppleWin does not do, and a
+write at 4k+3 put fields naming k+1 into track k's buffer. History: CHANGELOG 2026-09-09
 (bug hunt #16).
 
 **Write framing (non-WOZ).** A nibble store has no angular length, so

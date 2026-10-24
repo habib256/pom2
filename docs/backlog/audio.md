@@ -19,7 +19,6 @@ an explicit request before scheduling.
 | [AUDIO-003](#audio-003) | 🟡 | Partial: nominal single-tone balance calibrated | Compare Mockingboard output level with MAME |
 | [AUDIO-005](#audio-005) | 🟢 | To verify | Analog output stage. |
 | [AUDIO-006](#audio-006) | 🟢 | To verify | Mutex contention. |
-| [AUDIO-010](#audio-010) | 🟢 | To verify | AY Port A read mask by DDR |
 | [AUDIO-004](#audio-004) | 🧊 | Frozen | ayumi-grade resampling |
 | [AUDIO-008](#audio-008) | 🧊 | Frozen | 8-bit DAC (Marczewski) |
 | [AUDIO-009](#audio-009) | 🧊 | Frozen | Passport MIDI Music Card |
@@ -167,23 +166,6 @@ speech cursors advancing while output gain fades to zero. Mute changes gain,
 not playback state. The smoke suites verify the 5 ms fade; `phasor_timeline`
 also compares muted/unmuted playback against an independently running audible
 card. The historical early-out/lost-queue description is superseded.
-
-<a id="audio-010"></a>
-
-## AUDIO-010 — AY Port A read mask by DDR
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Validate AY port reads for input/output DDR combinations against the chosen chip reference.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1461). Original dates and estimates are retained below.
-
-- 🟢 **AY Port A read mask by DDR** (R14/R15) — academic.
-
-Current AY register reads apply register-width masks. Generic port-direction
-behavior for R14/R15 remains a separate limitation: these ports are not wired
-by POM2's Mockingboard/Phasor model. Do not confuse it with the VIA Port A DDR
-masking already covered by the bus tests.
 
 <a id="audio-004"></a>
 

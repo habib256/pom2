@@ -22,7 +22,6 @@ an explicit request before scheduling.
 | [DISPLAY-004](#display-004) | 🟢 | To verify | Beam-racing residuals |
 | [DISPLAY-005](#display-005) | 🟢 | To verify | Mid-scanline split residuals |
 | [DISPLAY-006](#display-006) | 🟢 | To verify | PAL residuals |
-| [DISPLAY-007](#display-007) | 🟢 | To verify | Unidirectional mid-frame page split renders full-page |
 | [DISPLAY-008](#display-008) | 🟢 | To verify | "Smooth" interpolated sub-pixel mode |
 | [DISPLAY-009](#display-009) | 🟢 | To verify | DHGR mono 1-px alignment + floating-TTL `empty_words` + per-scanline mode switch |
 | [DISPLAY-010](#display-010) | 🟢 | To verify | CRT parity refinements vs OpenEmulator |
@@ -193,20 +192,6 @@ a 60 Hz display does not make the PAL guest run at 60 Hz. The historical
 request to switch RAF to 50 Hz is therefore not a missing implementation.
 Manual standard selection/automatic Chat Mauve selection remains a separate
 proposal; PAL machine profiles already select the standard.
-
-<a id="display-007"></a>
-
-## DISPLAY-007 — Unidirectional mid-frame page split renders full-page
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Render the two sides of a mid-frame page switch correctly in a reproducing test.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1107). Original dates and estimates are retained below.
-
-- 🟢 **Unidirectional mid-frame page split renders full-page** — assumed
-  limit inherited from the DROL page-flip fix; the true remedy is
-  incremental per-scanline rendering, MAME-style. → `CHANGELOG.md`.
 
 <a id="display-008"></a>
 

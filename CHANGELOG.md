@@ -10,6 +10,85 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Backlog sweep: FLUX long writes, off-track .dsk positions, `$CFFF`, SSC page, 24-bit WAV
+
+Each item checked against MAME and, where they differ, AppleWin; each new
+test fails with its fix reverted.
+
+- **STORAGE-013, FLUX: a write window longer than one revolution kept the
+  first one.** `writeWozFlux` clamped the duration from the front, then
+  folded every later transition onto it modulo the period, so a sparse
+  burst lasting past ~200 ms laid revolution two on top of one. The surface
+  keeps the LAST revolution, and a window only takes its own transitions.
+  Pinned in `woz_writeback_smoke`.
+- **STORAGE-013, .dsk: quarter-track 4k+3 served track k.** A sector image
+  carries whole tracks only; POM2 rounded every off-track position down,
+  so a write at 4k+3 put fields naming k+1 into track k, which the sector
+  save then refused to decode. AppleWin's `PhaseToTrack` (`ceil(phase) >>
+  1` on half-track phases) serves k+1 there and k at 4k+1/4k+2; MAME leaves
+  off-track positions of a .dsk empty and drops their writes. POM2 follows
+  AppleWin, the nearer to the head's position (`DiskImage::wholeTrackOf`,
+  also used by the legacy nibble gate). DEV.md had called the old rounding
+  "AppleWin's rule"; it was not. Pinned by `disk_quarter_track_alias`.
+- **MEMORY-005: `$CFFF` never reached the card that owned `$C800`.** MAME's
+  `c800_r` (`apple2.cpp:563`, `apple2e.cpp:3137`) saves the owner, releases
+  the window and returns that card's `read_c800(0x7ff)`; `c800_w` writes it
+  through before releasing — even with INTCXROM on. POM2 released first and
+  read the floating bus. Pinned in `slot_bus_smoke`.
+- **CARDS-012: the SSC page under DOS 3.3 was fine.** The 2026-10-06 hunt
+  feared `PR#2` under DOS would reach `$C200` with CSW still naming DOS and
+  take the input path; DOS puts the true hook back around the call, and
+  the new `ssc_fallback_dos` (DOS 3.3 master, `PR#2`, `CATALOG`, `PR#0`)
+  passes on the old page too. The page's dispatch now follows the real
+  firmware anyway (341-0065-A, `$C245-$C25C`: bind CSW if it names `$Cn00`,
+  input if KSW names the card, output without a bind otherwise), where the
+  page called everything else input. No software was found that tells the
+  two apart. The routines below moved down; `ssc_acia_smoke` follows them.
+- **CASSETTE-002: 24- and 32-bit integer PCM WAV were refused.** A studio
+  capture or a high-resolution rip of a real tape is usually 24-bit; the
+  decoder took 8/16-bit PCM and float32 only. Both widths now decode
+  (sign-extended 24-bit, full-scale 32-bit). Pinned in `cassette_hostile`.
+  What remains of the entry is a decision: whether a cassette recording is
+  irreversible output like a printout.
+- **CARDS-005: the ThunderClock+ EPROM's driver now runs from guest code
+  in a test.** `clock_card_dos_driver` boots DOS 3.3 with the Thunderware
+  U9 dump in slot 4 and runs the manual's Applesoft read (`IN#4`,
+  `INPUT "%";T$`) against a fixed clock: `T=05/09 14;37;42.000`, the
+  EPROM's own format. Nothing needed fixing.
+- **CARDS-003 closed, both halves already done:** a failed boot no longer
+  loops on `JMP $CnE0` — it hands the autostart scan to the next slot, or
+  prints "ERR" and goes to BASIC, as the Liron firmware does (pinned by
+  `hdv_boot_scan`). CONTROL serves reset (0) and EJECT (4); codes 1-3
+  answer BADCTL `$21`, the IIgs Firmware Reference's error for a control
+  code the device does not take, now pinned in `liron_smartport_dispatch`.
+- **Closed with no change, matching MAME:** CARDS-013 (the `$C800` owner
+  survives Ctrl-Reset: `apple2e.cpp` clears `m_cnxx_slot` only in
+  `machine_start`, `apple2.cpp`'s keyboard reset only pulls the CPU line;
+  already pinned in `slot_bus_smoke`), AUDIO-010 (R14/R15 read back the
+  stored byte whatever R7 says, as `ay8910_read_ym` does with no port
+  callback; pinned in `ay_mame_parity`), and DISPLAY-007 (a lone mid-frame
+  flip already shows the real tear since the video write log, 2026-10-23,
+  pinned in `drol_pageflip_render`).
+
+## 2026-10-24 — A WOZ can be formatted on the tracks it does not carry (STORAGE-012)
+
+Applesauce images a half-used disk with its empty tracks left out of TMAP
+(`$FF`). The WOZ branch of `DiskImage::writeFlux` returned on such a track:
+no dirty flag, no error, and DOS 3.3 INIT answered I/O ERROR because its
+verify found nothing on the track it had just written — the disk could
+never be reformatted. Real media takes the write, and MAME creates the
+track on save. `allocateWozTrack` now adds a TRKS slot to `wozRaw` on the
+first write (WOZ2 and WOZ1), points TMAP at it and seeds a blank stream as
+long as the image's own tracks, so the save path, the autosave and the
+session capture carry it like any other track. An image that cannot grow
+refuses with a warning instead of dropping the write silently.
+
+Pinned by `woz_unmapped_track_write` (WOZ2 + WOZ1, save and reload, a META
+chunk after TRKS keeps its bytes, a write-protected image gains nothing)
+and `diskii_format_woz_unmapped`, a variant of the INIT smoke on a WOZ
+holding track 0 only: INIT, CATALOG and SAVE/LOAD pass. With the allocation
+disabled, the first fails eight checks and the INIT answers I/O ERROR.
+
 ## 2026-10-24 — The browser smoke hung CI for 6 h after "Screen opens alone"
 
 Three CI runs in a row lost their WASM job to GitHub's 6 h limit. The

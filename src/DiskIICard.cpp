@@ -1118,9 +1118,9 @@ void DiskIICard::legacyAdvance(int cycles)
     // Legacy 32-cycle gate operates on whole-track nibble buffers
     // (.dsk/.do/.po/.nib formats only — WOZ disks force the LSS path
     // via `useBitLss=true` on insert). Quarter-track granularity isn't
-    // meaningful on the legacy gate; snap to the containing whole
-    // track.
-    const int track = headQuarterTrack[activeDrive] / 4;
+    // meaningful on the legacy gate; snap to the whole track the head
+    // sits over (DiskImage::wholeTrackOf).
+    const int track = DiskImage::wholeTrackOf(headQuarterTrack[activeDrive]);
     cycleAccum += cycles;
     while (cycleAccum >= kCyclesPerNibble) {
         cycleAccum -= kCyclesPerNibble;

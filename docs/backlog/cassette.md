@@ -15,48 +15,29 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [CASSETTE-002](#cassette-002) | 🟡 | To verify | Bug hunt #17's cassette and Workstation residue |
+| [CASSETTE-002](#cassette-002) | 🟡 | Decision pending | A rewind across a live cassette recording |
 | [CASSETTE-001](#cassette-001) | 🧊 | Frozen | Enriched WAV record/playback |
 
 <a id="cassette-002"></a>
 
-## CASSETTE-002 — Bug hunt #17's cassette and Workstation residue
+## CASSETTE-002 — A rewind across a live cassette recording
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Decision pending.
 
-**Acceptance criterion (after revalidation):** Revalidate 24-bit WAV and capture rewind separately; retain the corrected CLI suffix behavior and keep Workstation transport subject to its frozen scope.
+**Acceptance criterion:** Decide whether cassette output is irreversible
+like printed output; implement and pin whichever rule is chosen.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1935). Original dates and estimates are retained below.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1935).
+A rewind across a live cassette capture keeps `recordedDurations`, since
+cassette output never bumps the media epoch — while the printer's output
+does, and clears the rewind ring. Either the tape is like paper (bump the
+epoch, the ring goes) or the capture is part of the machine (truncate it on
+a rewind). v7 sessions already carry the in-progress recording.
 
-- 🟡 **Bug hunt #17's cassette and Workstation residue** *(2026-09-09;
-  read, not fixed)*: 24-bit PCM WAV is refused (three lines in the sample
-  decoder); a rewind across a live cassette capture keeps
-  `recordedDurations` since cassette output never bumps the media epoch
-  (a design call — the printer's output does). The original report also
-  described ACI bytes written under a `.mp3` suffix; that CLI finding is
-  superseded by the current resolver described below. Nothing is wired to the
-  Workstation Card's SCC (`frameCb_`/`receiveFrame` have no owner — two
-  SCCs back to back is the end-to-end shape); the AppleShare disk never
-  reaches the card at all (zero `$Cn00` accesses over 120 M instructions,
-  byte-identical to a run with no card), so "boots, does not netboot" is
-  the ProDOS/SmartPort boot of that image, upstream of the card. *1 d.*
-  The Workstation half overlaps [CARDS-002](cards.md#cards-002) step 3
-  (host-side LocalTalk endpoint), which is frozen; that entry is its home.
-
-**Code reconciliation 2026-10-19:** v7 `.pom2session` archives embed
-program-tape pulses, playback/rewind position, comparator/output state and
-in-progress recording buffers through `CassetteDevice_Session`. Restoring
-these sessions is supported independently of the historical rewind-ring
-capture finding above. Streamed audio decks are explicitly refused; 24-bit
-PCM WAV is still rejected by the decoder.
-
-**CLI suffix recheck 2026-10-20:** `resolveSaveTapePath` appends `.aci` to
-`out.mp3` by default, or `.wav` with the WAV hint. An existing `.aci`/`.wav`
-suffix is kept case-insensitively and overrides the hint. `cli_runner` covers
-default/hinted suffixes and explicit `.WAV` precedence; the unsupported-suffix
-case here is a source check, not a newly executed regression. The historical
-CLI extension defect is no longer an open implementation task. See the
-[session contract](../session-format.md) for replacement/persistence rules.
+Closed parts: 24- and 32-bit integer PCM WAV now load (2026-10-24, pinned in
+`cassette_hostile`); the CLI `--save-tape` suffix was settled on 2026-10-20
+(`resolveSaveTapePath`, covered by `cli_runner`); the Workstation Card half
+lives in [CARDS-002](cards.md#cards-002), which is frozen.
 
 <a id="cassette-001"></a>
 
