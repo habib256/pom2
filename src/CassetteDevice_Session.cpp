@@ -54,7 +54,7 @@ bool CassetteDevice::loadSessionState(const std::vector<uint8_t>& bytes, std::st
     if (!apply) return true;
     // No host filename/decoder survives. The saved pulse source is complete.
     closeAudioStream(); stopPulseAudio();
-    loadedDurations = std::move(loaded); recordedDurations = std::move(recorded);
+    loadedDurations = std::move(loaded); recordedDurations = std::move(recorded); recordRedo_.clear();
     currentCycle = cycle; lastOutputToggleCycle = outputCycle; lastTapeInputCycle = inputCycle;
     cyclesUntilInputToggle = remaining; playbackIndex = index; rewCarryCycles = carry;
     outputLevel = flags & 1; recordedInitialLevel = flags & 2; recordingStarted = flags & 4;

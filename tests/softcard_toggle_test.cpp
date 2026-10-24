@@ -61,6 +61,18 @@ void testXlate()
     assert(SoftCardZ80::xlate(0xEFFF) == 0xCFFF);
     assert(SoftCardZ80::xlate(0xF000) == 0x0000);   // zero page
     assert(SoftCardZ80::xlate(0xFFFF) == 0x0FFF);
+    // Every address against MAME's six-window chain (a2softcard.cpp:111-176),
+    // which the page table replaced (ARCH-007).
+    for (uint32_t a = 0; a <= 0xFFFF; ++a) {
+        uint16_t ref;
+        if      (a <= 0xAFFF) ref = uint16_t(a + 0x1000);
+        else if (a <= 0xBFFF) ref = uint16_t((a & 0x0FFF) + 0xD000);
+        else if (a <= 0xCFFF) ref = uint16_t((a & 0x0FFF) + 0xE000);
+        else if (a <= 0xDFFF) ref = uint16_t((a & 0x0FFF) + 0xF000);
+        else if (a <= 0xEFFF) ref = uint16_t((a & 0x0FFF) + 0xC000);
+        else                  ref = uint16_t(a & 0x0FFF);
+        assert(SoftCardZ80::xlate(uint16_t(a)) == ref);
+    }
 }
 
 void testToggleAndResume()

@@ -1115,6 +1115,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    wozAllocFailed_.fill(false);
     for (auto& ticks : wozQtFluxTicks) ticks.clear();
     wozQtFluxPeriodTicks.fill(0);
     wozQtFluxHeaderOff.fill(0);
@@ -1434,6 +1435,7 @@ void DiskImage::eject()
     wozQtByteLen.fill(0);
     wozQtBitCount.fill(0);
     wozQtDirty.fill(false);
+    wozAllocFailed_.fill(false);
     for (auto& ticks : wozQtFluxTicks) ticks.clear();
     wozQtFluxPeriodTicks.fill(0);
     wozQtFluxHeaderOff.fill(0);
@@ -2103,7 +2105,8 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         // into bitStream rather than re-deriving the whole track from
         // a nibble buffer. saveDirty() later re-packs the live bits
         // back into wozRaw at wozQtByteOff[qt].
-        if (wozQtBitCount[qt] == 0) return;        // unpopulated qt
+        // A track TMAP leaves out takes the write (STORAGE-012).
+        if (wozQtBitCount[qt] == 0 && !allocateWozTrack(qt)) return;
         const int period = trackPeriod(qt);
         if (period <= 0) return;
 
@@ -2227,10 +2230,10 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         }
         return;
     }
-    // Non-WOZ: write-back lands on the whole track containing `qt`.
+    // Non-WOZ: write-back lands on the whole track under the head.
     // Quarter-track sub-positions on standard .dsk/.do/.po share their
     // nibble buffer with the parent whole track (`qtSlot` alias).
-    const int track = qt / 4;
+    const int track = wholeTrackOf(qt);
     if (track < 0 || track >= kTracks) return;
 
     const int period = trackPeriod(qt);

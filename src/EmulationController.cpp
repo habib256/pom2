@@ -746,13 +746,9 @@ void EmulationController::start()
     // Running, and this path stores the mode directly instead of going
     // through setMode(). Missing it would leave a resumed machine mute.
     if (audioDev) audioDev->setSuspended(false);
-    // And the scrub setMode() would have ended. stop() is setMode(Stopped),
-    // which leaves a scrub standing, and the profile switch's hardReset()
-    // never cleared it: the machine came back Running with
-    // rewindScrubbing() true, so the floppy autosave poll returned early for
-    // the rest of the session, `/disk/sync` refused, and the next Pause/Play
-    // truncated the new ring at the old scrub index. A restart after a
-    // rebuild never continues a scrub.
+    // And end the scrub setMode() would have: stop() leaves one standing, and
+    // a profile switch then ran on "scrubbing" — no floppy autosave for the
+    // session (bug hunt round five).
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
     resumeTruncate_.store(pom2::RewindBuffer::kNoFrame);
     mode.store(Mode::Running);
@@ -1180,10 +1176,7 @@ bool EmulationController::bootFromSlot(int slot)
     processor.setProgramCounter(cnxx);
     workerParked_.store(false);  // same setter-thread invariant as setMode()
     if (audioDev) audioDev->setSuspended(false);   // ditto for the bus
-    // setMode() cancels queued single-steps on Running; this path stores the
-    // mode directly, so a `--step 20000` interrupted by a Library Boot left
-    // its remainder for the next debugger Step to run in one go.
-    stepsPending.store(0);
+    stepsPending.store(0);   // Running cancels queued steps, as setMode()
     resumeTruncate_.store(pom2::RewindBuffer::kNoFrame);
     mode.store(Mode::Running);
     wakeCv.notify_all();
@@ -1338,6 +1331,7 @@ size_t EmulationController::rewindSeek(size_t index)
         return pom2::RewindBuffer::kNoFrame;
     scrubIndex_.store(clamped);
     flushAudioForRewind();
+    rewindTapeTo(clamped);
     return clamped;
 }
 
@@ -1349,6 +1343,7 @@ size_t EmulationController::rewindSeekToCycle(uint64_t cycle)
     if (got != pom2::RewindBuffer::kNoFrame) {
         scrubIndex_.store(got);
         flushAudioForRewind();
+        rewindTapeTo(got);
     }
     return got;
 }
@@ -1370,6 +1365,7 @@ void EmulationController::rewindEndAndResume(size_t index)
             }
             rewind_.truncateAfter(index);
             flushAudioForRewind();
+            rewindTapeTo(index);
         }
     }
     setMode(Mode::Running);
@@ -1377,15 +1373,20 @@ void EmulationController::rewindEndAndResume(size_t index)
 
 void EmulationController::captureRewindLocked()
 {
-    // A scrub owns the ring. stop() waits for the worker to park for 200 ms
-    // only; a worker descheduled past that still finishes its chunk and
-    // lands here after the UI has begun scrubbing, and the capture's
-    // dropAbandonedFuture would delete every frame after the one on screen.
+    // A scrub owns the ring: a worker that overran stop()'s 200 ms park wait
+    // would otherwise drop the frames after the one on screen.
     if (scrubIndex_.load() != pom2::RewindBuffer::kNoFrame) return;
     noteMediaWrite();   // a rewind may not cross a media write
     const size_t at = resumeTruncate_.exchange(pom2::RewindBuffer::kNoFrame);
     if (at != pom2::RewindBuffer::kNoFrame) rewind_.truncateAfter(at);
-    rewind_.capture(processor, mem);
+    rewind_.capture(processor, mem, tape ? tape->recordMark() : 0);
+}
+
+void EmulationController::rewindTapeTo(size_t index)
+{
+    // After flushAudioForRewind: its resetForTimeJump re-bases the deck's
+    // clock, which rewindRecordingTo then places relative to the frame.
+    if (tape) tape->rewindRecordingTo(rewind_.infoAt(index).sideMark);
 }
 
 void EmulationController::noteMediaWrite()
@@ -1428,10 +1429,8 @@ void EmulationController::noteTimeJump()
     //    CassetteDevice::resetForTimeJump). It keeps its tape and cursor.
     //
     // Mockingboard / Phasor serialize their VIA + AY + SSI263 state through
-    // the SLOTn sections. A card that queues cycle-stamped samples and has
-    // no snapshot (the S.A.M. DAC) gets onTimeJump(): its queue holds the
-    // abandoned future's stamps, and new writes queued behind them broke
-    // Dac8Audio's non-decreasing contract (~0.1-0.2 s of stale audio).
+    // the SLOTn sections; a card with stamped output and no snapshot (the
+    // S.A.M. DAC) drops its queue in onTimeJump().
     for (int s = 1; s <= 7; ++s)
         if (SlotPeripheral* p = mem.slotBus().peripheral(s)) p->onTimeJump();
     if (spk)  spk->reset();

@@ -10,7 +10,8 @@
 # `a && b` and an untaken `else` are visible rather than reading as covered.
 #
 #   tools/coverage.sh                # measure, report, check the floor
-#   tools/coverage.sh --update       # re-record the floor from this run
+#   tools/coverage.sh --update       # raise the floor to this run (never lowers it)
+#   tools/coverage.sh --update --lower  # record a LOWER floor, deliberately
 #   tools/coverage.sh --html DIR     # also write a browsable report
 #   tools/coverage.sh --self-test    # exercise the text guards, no build
 #
@@ -27,15 +28,17 @@ BUILD_DIR="${POM2_COVERAGE_BUILD:-build-coverage}"
 FLOOR_FILE="tools/coverage_floor.txt"
 LINKED_FILE="tools/coverage_linked_sources.txt"
 UPDATE=0
+LOWER=0
 SELF_TEST=0
 HTML_DIR=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --update)    UPDATE=1 ;;
+        --lower)     LOWER=1 ;;
         --self-test) SELF_TEST=1 ;;
         --html)      shift; HTML_DIR="${1:-coverage-html}" ;;
-        *) echo "usage: $0 [--update] [--html DIR] [--self-test]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--update [--lower]] [--html DIR] [--self-test]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -409,6 +412,20 @@ if [ "$UPDATE" -eq 1 ]; then
     # point absorbs that and still catches a real regression: adding one
     # untested file moves the number by far more.
     MARGIN=$(awk -v v="$LINES_PCT" 'BEGIN { m = v - 0.5; if (m < 0) m = 0; printf "%.2f", m }')
+    # The floor may rise, not fall (header): --update used to write the new
+    # reading whatever the old floor was, so a run that lost coverage
+    # quietly re-based the ratchet below itself (ARCH-005). Lowering it now
+    # takes --lower — a decision, made in the open, like a budget raise in
+    # check_file_sizes.sh.
+    if [ -f "$FLOOR_FILE" ] && [ "$LOWER" -eq 0 ]; then
+        OLD=$(tr -d ' \n' < "$FLOOR_FILE")
+        if awk -v m="$MARGIN" -v o="$OLD" 'BEGIN { exit !(m < o) }'; then
+            echo "coverage: measured ${LINES_PCT}% would put the floor at ${MARGIN}%," \
+                 "below the recorded ${OLD}% — kept ${OLD}%." >&2
+            echo "          Pass --lower with --update to record the lower floor." >&2
+            MARGIN="$OLD"
+        fi
+    fi
     printf '%s\n' "$MARGIN" > "$FLOOR_FILE"
     echo ""
     echo "coverage: measured ${LINES_PCT}%, floor recorded at ${MARGIN}%"

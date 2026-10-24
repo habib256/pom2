@@ -566,6 +566,34 @@ bool testFluxWriteBackRoundTrip()
     return true;
 }
 
+// A write window longer than one revolution: the surface keeps the LAST
+// revolution's flux (STORAGE-013). Period 400 LSS cycles; the window runs
+// 0..900, so 500..900 is what stays. Transitions at 30 and 470 belong to
+// revolutions the head wrote over again; 610 (position 210) and 850
+// (position 50) are the last pass. The old code kept the first revolution
+// and folded the rest onto it: {30, 50, 70, 210}.
+bool testFluxLongWindowKeepsLastRevolution()
+{
+    const auto path = writeTempFile(buildFluxWoz(), "flux_long");
+    DiskImage img;
+    if (!img.loadFile(path) || img.trackPeriod(0) != 400) {
+        std::printf("FAIL: load FLUX for the long window\n"); return false;
+    }
+    img.setWriteBackEnabled(true);
+    const int64_t pulses[] = {30, 470, 610, 850};
+    img.writeFlux(0, 0, 900, 4, pulses);
+    const std::vector<int> expected{50, 210};
+    if (img.fluxEvents(0) != expected) {
+        std::printf("FAIL: long FLUX window kept %zu events, not the last revolution\n",
+                    img.fluxEvents(0).size());
+        return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    std::printf("  ok: a FLUX window past one revolution keeps the last one\n");
+    return true;
+}
+
 bool testFluxSlotGrowth()
 {
     auto source = buildFluxWoz();
@@ -656,6 +684,7 @@ bool testFluxSlotGrowthInMacBinary()
 int main()
 {
     if (!testFluxWriteBackRoundTrip()) return 1;
+    if (!testFluxLongWindowKeepsLastRevolution()) return 1;
     if (!testFluxSlotGrowth()) return 1;
     if (!testFluxSlotGrowthInMacBinary()) return 1;
     if (!testSharedTrkQuarterTracksAlias()) return 1;

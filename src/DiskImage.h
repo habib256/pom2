@@ -49,6 +49,7 @@
 
 #include "MediaAutosave.h"
 #include "MediaWritePolicy.h"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -263,10 +264,19 @@ public:
     //   • everything else                          → 8 cells
     // .nib raw nibble images have no sync semantics — every byte = 8 cells.
 
+    /// The whole track a head at quarter-track `qt` reads and writes on a
+    /// format that carries whole tracks only: 4k, 4k+1 and 4k+2 are track
+    /// k, 4k+3 is track k+1 — the head is three quarters of the way there.
+    /// AppleWin's `PhaseToTrack` (DiskImageHelper.h:85, `ceil(phase) >> 1`
+    /// on half-track phases) gives exactly this. MAME leaves the off-track
+    /// positions of a .dsk empty, and their writes never reach the file.
+    /// Rounding 4k+3 DOWN (the old `qt & ~3`) wrote fields naming k+1 into
+    /// track k, which the sector save then refused to decode.
+    static int wholeTrackOf(int qt) { return (qt + 1) >> 2; }
+
     /// Total bit-cell count for quarter-track `qt` (0..159). For non-WOZ
-    /// formats, all four quarter-tracks of a whole-track alias to the
-    /// same stream (matching the "snap to nearest whole track" behaviour
-    /// real Disk II hardware approximates when reading a standard .dsk).
+    /// formats, every quarter-track aliases to the stream of the whole
+    /// track the head sits over (`wholeTrackOf`).
     /// For WOZ, each quarter-track has its own bit stream sourced from
     /// the matching TMAP entry. Standard 16-sector .dsk/.do/.po:
     /// ~54944 cells. .nib raw images: exactly 53248 cells (= 6656 × 8).
@@ -572,6 +582,13 @@ private:
                       const int64_t* transitions, int64_t revolutionStart);
     bool applyWozFluxWriteBack();
     bool growWozFluxSlot(int qt, size_t bytesNeeded);
+    // A write to a quarter-track the WOZ does not carry (TMAP $FF): add a
+    // TRKS slot to `wozRaw`, point TMAP at it and seed a blank bit stream.
+    bool allocateWozTrack(int qt);
+    bool growWozForTrack(int qt);
+    // One log line per quarter-track whose allocation failed, not one per
+    // ~30-transition flush.
+    std::array<bool, kQuarterTracks> wozAllocFailed_{};
     void expandTrackBits(int qt) const;
 
     // Lazy per-quarter-track flux event cache (sorted ascending, in
@@ -620,11 +637,11 @@ private:
 
     /// Aliasing function: maps an externally-supplied quarter-track index
     /// to the actual storage slot. Non-WOZ formats only carry whole-track
-    /// data, so qt 0..3 alias to slot 0, qt 4..7 alias to slot 4, etc.
-    /// WOZ formats keep distinct streams per quarter-track and pass the
-    /// index through unchanged.
+    /// data, so every qt aliases to its `wholeTrackOf` slot. WOZ formats
+    /// keep distinct streams per quarter-track and pass the index through.
     int qtSlot(int qt) const {
-        return wozFormat ? qt : (qt & ~3);
+        return wozFormat ? qt
+                         : std::min(wholeTrackOf(qt) * 4, kQuarterTracks - 4);
     }
 
     void invalidateBitStream(int slot) {

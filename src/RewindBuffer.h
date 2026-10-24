@@ -56,6 +56,7 @@ public:
         uint64_t cycle    = 0;       ///< emuCycles stamp when captured
         size_t   bytes    = 0;       ///< stored size (full blob or delta)
         bool     keyframe = false;   ///< true = full snapshot, false = delta
+        uint64_t sideMark = 0;       ///< see capture(): state kept outside the blob
     };
 
     /// ~30 s at 60 Hz. Tunable via setMaxFrames / a UI setting.
@@ -122,7 +123,12 @@ public:
     /// future is dropped first. Every seek helper — `indexForCycle` and the
     /// span readout above it — walks the deque expecting that order and
     /// silently lies without it.
-    void capture(M6502& cpu, Memory& mem);
+    ///
+    /// `sideMark` rides along with the frame, opaque to the ring: state a
+    /// device keeps OUTSIDE the snapshot blob but that must follow the
+    /// timeline — today the cassette recording's length
+    /// (`CassetteDevice::recordMark`). Read back with `infoAt(i).sideMark`.
+    void capture(M6502& cpu, Memory& mem, uint64_t sideMark = 0);
 
     size_t size()  const { return frames_.size(); }
     bool   empty() const { return frames_.empty(); }
@@ -159,6 +165,7 @@ public:
 private:
     struct Frame {
         uint64_t             cycle = 0;
+        uint64_t             sideMark = 0;
         bool                 isKeyframe = false;
         std::vector<uint8_t> data;   ///< full snapshot (keyframe) or XOR delta
     };

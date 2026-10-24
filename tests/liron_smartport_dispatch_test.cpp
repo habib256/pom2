@@ -264,7 +264,15 @@ int main()
         assert(!r.carry && r.a == 0x00);
 
         // CONTROL code 4 is EJECT since May 1988 and must not be an error
-        // (TN SmartPort #2); a code the card has no use for still is.
+        // (TN SmartPort #2); a code the card has no use for still is. Codes
+        // 1-3 (set DCB, set newline, service interrupt) carry a control
+        // list these HLE units have no use for: BADCTL, $21 (IIgs Firmware
+        // Reference, SmartPort error codes) — CARDS-003.
+        for (uint8_t code : {uint8_t(0x01), uint8_t(0x02), uint8_t(0x03), uint8_t(0x7F)}) {
+            setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, code});
+            r = spCall(cpu, mem, 0x04);
+            assert(r.carry && r.a == 0x21 && "an unsupported CONTROL code is BADCTL");
+        }
         assert(cardRaw->takeGuestEjectRequests().empty() && "code 0 asks nothing");
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);

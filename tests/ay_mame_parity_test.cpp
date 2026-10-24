@@ -98,6 +98,31 @@ void resetSelection()
     }
 }
 
+// AUDIO-010: R14/R15 read back what was written, whatever R7's port
+// direction bits say. MAME `ay8910_read_ym`: with no port callback bound (a
+// Mockingboard wires neither port) it only logs a warning for a port set as
+// output and returns the stored register — no DDR mask either way.
+void portReadBack()
+{
+    pom2::Ay3_8910 ay;
+    auto store = [&](uint8_t reg, uint8_t v) {
+        ay.applyControl(reg, 7);       // latch (BDIR|BC1, /RESET high)
+        ay.applyControl(v, 6);         // write (BDIR)
+    };
+    auto load = [&](uint8_t reg) {
+        ay.applyControl(reg, 7);
+        assert(ay.applyControl(0, 5) == pom2::Ay3_8910::Read);   // read (BC1)
+        return ay.busOut;
+    };
+    for (uint8_t enable : {uint8_t(0x00), uint8_t(0x40), uint8_t(0x80), uint8_t(0xC0)}) {
+        store(7, enable);
+        store(14, 0x5A);
+        store(15, 0xA5);
+        assert(load(14) == 0x5A && "port A: input or output, the stored byte");
+        assert(load(15) == 0xA5 && "port B: input or output, the stored byte");
+    }
+}
+
 void repeatedPortB()
 {
     pom2::Via6522 via;
@@ -115,5 +140,6 @@ int main(int argc, char** argv)
     if (!std::strcmp(which, "all") || !std::strcmp(which, "envelope")) envelopeParity();
     if (!std::strcmp(which, "all") || !std::strcmp(which, "reset")) resetSelection();
     if (!std::strcmp(which, "all") || !std::strcmp(which, "bus")) repeatedPortB();
+    if (!std::strcmp(which, "all") || !std::strcmp(which, "ports")) portReadBack();
     std::puts("AY MAME parity OK");
 }

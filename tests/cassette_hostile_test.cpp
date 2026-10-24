@@ -151,6 +151,32 @@ std::vector<uint8_t> buildWav(bool extensible, int32_t forcedDataSize,
     return w;
 }
 
+// The same square wave as integer PCM of any width (CASSETTE-002: 24- and
+// 32-bit were refused).
+std::vector<uint8_t> buildWavPcm(int bits)
+{
+    const int bytes = bits / 8;
+    std::vector<uint8_t> data;
+    bool lvl = true;
+    for (int h = 0; h < kHalves; ++h) {
+        const double v = lvl ? 0.45 : -0.45;
+        const int64_t q = int64_t(v * double((int64_t(1) << (bits - 1)) - 1));
+        for (int i = 0; i < kSamplesPerHalf; ++i)
+            for (int b = 0; b < bytes; ++b) data.push_back(uint8_t(uint64_t(q) >> (8 * b)));
+        lvl = !lvl;
+    }
+    std::vector<uint8_t> body;
+    tagv(body, "fmt "); u32v(body, 16);
+    u16v(body, 1); u16v(body, 1); u32v(body, 44100);
+    u32v(body, uint32_t(44100 * bytes)); u16v(body, uint16_t(bytes)); u16v(body, uint16_t(bits));
+    tagv(body, "data"); u32v(body, uint32_t(data.size()));
+    body.insert(body.end(), data.begin(), data.end());
+    std::vector<uint8_t> w;
+    tagv(w, "RIFF"); u32v(w, uint32_t(4 + body.size())); tagv(w, "WAVE");
+    w.insert(w.end(), body.begin(), body.end());
+    return w;
+}
+
 size_t loadCount(const std::string& path, std::string& err)
 {
     CassetteDevice c;
@@ -192,6 +218,14 @@ void testWavVariants()
         expect(trunc >= 25 && trunc <= 29,
                "truncated WAV: " + std::to_string(trunc) +
                " transitions (expected ~28) " + err);
+    }
+
+    for (int bits : {24, 32}) {
+        const std::string name = "pom2_ch_pcm" + std::to_string(bits) + ".wav";
+        const size_t n = loadCount(writeBlob(name.c_str(), buildWavPcm(bits)), err);
+        expect(n == kExpectedTransitions,
+               std::to_string(bits) + "-bit PCM WAV: " + std::to_string(n) +
+               " transitions (expected 40) " + err);
     }
 
     // DC bias larger than the signal amplitude: every sample is positive, so
@@ -272,6 +306,45 @@ void testRecordingPolarity()
            "first $C020 toggle established");
 }
 
+// ── 6: the recording follows a rewind (CASSETTE-002, option B) ──────────
+// A rewind used to keep the abandoned future's half of a SAVE on the tape
+// and append the new one after it. Mark A sits 300 cycles into a silence
+// after two durations; the abandoned future adds 1000 and 4000.
+void testRecordingFollowsRewind()
+{
+    CassetteDevice deck;
+    deck.armRecording();
+    deck.advanceCycles(1000); deck.toggleOutput();          // 1000
+    deck.advanceCycles(2000); deck.toggleOutput();          // 2000
+    deck.advanceCycles(300);
+    const uint64_t markA = deck.recordMark();
+    deck.advanceCycles(700);  deck.toggleOutput();          // 1000 (abandoned)
+    deck.advanceCycles(4000); deck.toggleOutput();          // 4000 (abandoned)
+    deck.advanceCycles(100);
+    const uint64_t markB = deck.recordMark();
+    expect(deck.getRecordedTransitionCount() == 4, "four durations before the rewind");
+
+    // Scrub back to A, forward to B, back to A: nothing is lost mid-scrub.
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markA);
+    expect(deck.getRecordedTransitionCount() == 2, "rewind to A cuts the tape to A");
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markB);
+    expect(deck.getRecordedTransitionCount() == 4, "scrub forward to B puts it back");
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markA);
+
+    // Resume from A: the next edge, 500 cycles on, closes a duration that
+    // counts the 300 the frame was already into — and drops the redo.
+    deck.advanceCycles(500); deck.toggleOutput();           // 300 + 500
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markB);
+    expect(deck.getRecordedTransitionCount() == 3,
+           "after a new edge the abandoned future cannot come back");
+
+    const std::string path = tmpPath("pom2_ch_rewind.aci");
+    expect(deck.saveTape(path), "rewound recording did not save");
+    const Aci aci = readAci(path);
+    expect(aci.durations == std::vector<uint32_t>({1000, 2000, 800}),
+           "rewound recording: expected {1000, 2000, 800}");
+}
+
 // ── 5: the //c must not reach the deck through $C060 ─────────────────────
 void testIicC060IsNotTheDeck()
 {
@@ -342,6 +415,7 @@ int main()
     testWavVariants();
     testRecordingPolarity();
     testIicC060IsNotTheDeck();
+    testRecordingFollowsRewind();
     if (failures) {
         std::printf("cassette_hostile FAILED (%d)\n", failures);
         return 1;

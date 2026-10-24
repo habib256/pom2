@@ -103,7 +103,9 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   (`Block512Backing.h`) and `EmulationController::noteMediaWrite` drops the ring
   at its capture point. Printed output counts as irreversible too. Non-WOZ Disk II
   nibble writes deliberately do NOT bump — those *are* captured and a rewind is
-  expected to undo them — but the floppy autosave's capture does.
+  expected to undo them — but the floppy autosave's capture does. The cassette
+  recording does not bump either: it follows the rewind, cut to each frame's
+  `sideMark` (CASSETTE-002, DEV § Rewind).
 - **Every long-lived thread wears an exception barrier** — an exception
   escaping a `std::thread` callable calls `std::terminate()`, killing the
   process with no log line: a crash the user cannot report and you cannot

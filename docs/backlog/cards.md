@@ -19,16 +19,12 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [CARDS-001](#cards-001) | 🟡 | To verify | Reconcile four card abstraction levels with the catalog |
-| [CARDS-003](#cards-003) | 🟡 | To verify | SmartPortCard leftovers, still open |
-| [CARDS-005](#cards-005) | 🟡 | Partial: real ROM path covered | ClockCard DOS/Applesoft driver-load coverage |
 | [CARDS-011](#cards-011) | 🟡 | To verify | Ghostscript unreachable on a stock Apple Silicon Homebrew |
 | [CARDS-002](#cards-002) | 🧊 | Frozen | Apple II Workstation Card — it boots, it is identified, and there is no network on the other end. |
 | [CARDS-006](#cards-006) | 🧊 | Frozen | Apple II SCSI / High-Speed SCSI + CHD |
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
-| [CARDS-012](#cards-012) | 🟡 | To verify | SSC fallback page and DOS 3.3 `PR#n` |
-| [CARDS-013](#cards-013) | 🟢 | To verify | `$C800` owner across Ctrl-Reset |
 
 <a id="cards-001"></a>
 
@@ -61,41 +57,6 @@ shows no level for them.
 superseded: `abstractionCatalog()` now contains `liron` at L2. `workstation`,
 `4play` and `transwarp` still have no catalog row. The document already
 describes all four, so do not schedule their documentation as missing.
-
-<a id="cards-003"></a>
-
-## CARDS-003 — SmartPortCard leftovers, still open
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Exercise failed boots and CONTROL data-list calls; document unsupported commands with the correct guest error.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1772). Original dates and estimates are retained below.
-
-- 🟡 **SmartPortCard leftovers, still open** (2026-07-12 Liron audit
-  follow-ups) — two of the original five remain:
-  - boot failure is a silent `JMP $CnE0` loop; real firmware prints an error.
-  - CONTROL calls that need the control-list DATA: only code 0 works, because
-    the stub has no guest→device list copy. Everything else returns `$21`.
-
-<a id="cards-005"></a>
-
-## CARDS-005 — ClockCard DOS/Applesoft driver-load coverage
-
-**Priority:** 🟡 · **State:** Partial: production ROM selection is covered;
-guest-side DOS/Applesoft driver loading remains to verify.
-
-`rom_path_taken` requires the Thunderware U9 dump through the production
-constructor, so a fallback on a complete checkout fails the regression.
-`clock_card_smoke::testC800ClaimFollowsTheEprom` covers expansion-ROM claiming.
-The remaining gap is running the DOS 3.3 / Applesoft driver load from `$C800`
-through guest code, rather than asserting only the ROM identity/bus contract.
-
-**Acceptance criterion:** Exercise that guest driver path with the real EPROM.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1797),
-`tests/rom_path_taken_test.cpp`, `tests/clock_card_smoke_test.cpp`, and
-[ROM-path policy](../lle_vs_hle.md#keeping-a-level-once-you-have-it).
 
 <a id="cards-011"></a>
 
@@ -309,23 +270,3 @@ map, reference, tests and remaining pin-timing/analog validation limits.
 
 - 🧊 **Apple 3.5" Controller IWM-level** — refactor IWMDevice attached
   to a slot card (rare).
-
-<a id="cards-012"></a>
-
-## CARDS-012 — SSC fallback page and DOS 3.3 `PR#n`
-
-**Priority:** 🟡 · **State:** To verify (lead from bug hunt 2026-10-06, not traced to a defect).
-
-**Acceptance criterion:** With `roms/ssc_341-0065-a.bin` absent, DOS 3.3 + `PR#2` + `CATALOG` prints to the SSC and returns to the prompt; pin it.
-
-**Evidence:** the hand-assembled page's dispatch (`SuperSerialCard.cpp`, region `dispatch`) decides output vs input by `CSWH == $Cn && CSWL == 0`. Under DOS 3.3, `PR#n` stores `$Cn00` in DOS's own hook; if CSW still points at DOS when DOS calls `$Cn00`, the page would take the input path and spin. DOS's own hook swap may make this safe — unverified. Only matters without the EPROM dump, which ships.
-
-<a id="cards-013"></a>
-
-## CARDS-013 — `$C800` owner across Ctrl-Reset
-
-**Priority:** 🟢 · **State:** To verify against a MAME checkout.
-
-**Acceptance criterion:** Cite MAME's `machine_reset` for `m_cnxx_slot`; if it releases the window, `SlotBus::reset()` does too, pinned.
-
-**Evidence:** `SlotBus::reset()` keeps `activeExpansionSlot` deliberately. Bug hunt 2026-10-06 recalled (from memory) `m_cnxx_slot = CNXX_UNCLAIMED` in MAME's reset. Low impact: every shipped ROM opens with `LDA $CFFF`.

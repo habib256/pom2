@@ -73,20 +73,19 @@ void SoftCardZ80::onReset()
 }
 
 // MAME a2softcard.cpp:111-176 dma_r/dma_w — six windows, identical math
-// for reads and writes.
+// for reads and writes. Every window is a whole 4 KB page, so the mapping is
+// one base per Z80 page; this table is that if-chain, flattened (ARCH-007):
+//   Z80 $0000-$AFFF → 6502 $1000-$BFFF   (+$1000)
+//   Z80 $B000-$DFFF → 6502 $D000-$FFFF   (LC $D000/$E000/$F000, or ROM)
+//   Z80 $E000-$EFFF → 6502 $C000-$CFFF   (I/O space)
+//   Z80 $F000-$FFFF → 6502 $0000-$0FFF   (zero page and up)
 uint16_t SoftCardZ80::xlate(uint16_t a)
 {
-    if (a <= 0xAFFF)
-        return uint16_t(a + 0x1000);
-    if (a <= 0xBFFF)                       // LC bank d000-dfff
-        return uint16_t((a & 0x0FFF) + 0xD000);
-    if (a <= 0xCFFF)                       // LC e000-efff
-        return uint16_t((a & 0x0FFF) + 0xE000);
-    if (a <= 0xDFFF)                       // LC f000-ffff (or ROM)
-        return uint16_t((a & 0x0FFF) + 0xF000);
-    if (a <= 0xEFFF)                       // I/O space c000-cfff
-        return uint16_t((a & 0x0FFF) + 0xC000);
-    return uint16_t(a & 0x0FFF);           // zero page
+    static constexpr uint16_t kPageBase[16] = {
+        0x1000, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000, 0x8000,
+        0x9000, 0xA000, 0xB000, 0xD000, 0xE000, 0xF000, 0xC000, 0x0000,
+    };
+    return uint16_t(kPageBase[a >> 12] | (a & 0x0FFF));
 }
 
 uint8_t SoftCardZ80::z80MemRead(uint16_t addr)

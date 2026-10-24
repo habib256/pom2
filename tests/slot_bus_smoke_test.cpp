@@ -244,8 +244,9 @@ int main()
     assert(bus.getActiveExpansionSlot() == 6);   // unplugging a NON-holder
 
     // Writes into $CnXX claim on the same rule (`write_slot_rom`).
-    (void)bus.expansionRomRead(0xCFFF);          // release
+    (void)bus.expansionRomRead(0xCFFF);          // release (slot 6 serves it)
     assert(bus.getActiveExpansionSlot() == -1);
+    assert(card->expansionReads == 1);
     bus.slotRomWrite(0xC400, 0x11);              // empty slot: no claim
     assert(bus.getActiveExpansionSlot() == -1);
     bus.slotRomWrite(0xC600, 0x11);              // populated: claims
@@ -253,10 +254,19 @@ int main()
 
     const uint8_t expByte = bus.expansionRomRead(0xC842);
     assert(expByte == 0x42);  // (0xC842 - 0xC800) & 0xFF == 0x42
-    assert(card->expansionReads == 1);
+    assert(card->expansionReads == 2);
 
-    // $CFFF disables expansion ROM.
-    (void)bus.expansionRomRead(0xCFFF);
+    // $CFFF disables expansion ROM — after the OWNER served the access
+    // (MAME `c800_r`: `read_c800(0x7ff)` from the saved m_cnxx_slot, in
+    // apple2.cpp and apple2e.cpp alike). It used to read the floating bus
+    // and never reach the card.
+    assert(bus.expansionRomRead(0xCFFF) == 0xFF);   // offset 0x7FF & 0xFF
+    assert(card->expansionReads == 3);
+    assert(bus.getActiveExpansionSlot() == -1);
+    // The write half: the owner gets write_c800(0x7ff), then lets go.
+    (void)bus.slotRomRead(0xC600);
+    bus.expansionRomWrite(0xCFFF, 0x5A);
+    assert(card->lastExpOffset == 0x07FF && card->lastExpValue == 0x5A);
     assert(bus.getActiveExpansionSlot() == -1);
     // Read after disable should NOT route to the card.
     const int prevExpansionReads = card->expansionReads;

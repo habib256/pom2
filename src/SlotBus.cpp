@@ -181,14 +181,16 @@ uint8_t SlotBus::expansionRomRead(uint16_t addr)
 {
     if (addr < 0xC800 || addr > 0xCFFF) return openBus();
     if (addr == 0xCFFF) {
-        // Read or write to $CFFF deactivates the expansion ROM (MAME
-        // `apple2e.cpp:3137-3145`, `offset == 0x7ff`). The byte returned is
-        // the floating bus — the same `read_floatingbus()` tail every other
-        // unclaimed read takes.
+        // Read or write to $CFFF deactivates the expansion ROM — but the
+        // access itself still belongs to the card that owned the window:
+        // MAME `apple2e.cpp:3137-3152` and `apple2.cpp:563-578` `c800_r`
+        // save `m_cnxx_slot` before clearing it and return that card's
+        // `read_c800(0x7ff)`. Only an unowned window reads the floating bus.
         const int owner = activeExpansionSlot;
         deactivateExpansion();
-        const uint8_t v = openBus();
-        if (owner >= 1 && owner <= 7) logAccess(owner, addr, v, false);
+        if (owner < 1 || owner > 7 || !slots[owner]) return openBus();
+        const uint8_t v = slots[owner]->expansionRomRead(0x7FF);
+        logAccess(owner, addr, v, false);
         return v;
     }
     const int slot = activeExpansionSlot;
@@ -204,9 +206,14 @@ void SlotBus::expansionRomWrite(uint16_t addr, uint8_t v)
 {
     if (addr < 0xC800 || addr > 0xCFFF) return;
     if (addr == 0xCFFF) {
+        // The owner sees the write, then lets go (MAME `c800_w`: write_c800
+        // first, CNXX_UNCLAIMED after, in both apple2.cpp and apple2e.cpp).
         const int owner = activeExpansionSlot;
+        if (owner >= 1 && owner <= 7) {
+            logAccess(owner, addr, v, true);
+            if (auto* p = slots[owner].get()) p->expansionRomWrite(0x7FF, v);
+        }
         deactivateExpansion();
-        if (owner >= 1 && owner <= 7) logAccess(owner, addr, v, true);
         return;
     }
     const int slot = activeExpansionSlot;

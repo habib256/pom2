@@ -106,6 +106,18 @@ public:
     /// itself because the computer went back in time either.
     void resetForTimeJump();
 
+    /// The recording follows a rewind (CASSETTE-002, option B). A rewind
+    /// frame carries `recordMark()` — how much tape was recorded, the output
+    /// level and the time since the last toggle at that instant — and a
+    /// rewind hands it back to `rewindRecordingTo`, which cuts the recording
+    /// to that length. The cut-off part waits in a redo buffer: a scrub that
+    /// goes back and then forward again puts it back. The first new toggle
+    /// abandons it, as the machine's own future is abandoned. Without this
+    /// the abandoned SAVE stayed on the tape and the new one was appended to
+    /// it. The tape FILE, once written, is not touched.
+    uint64_t recordMark() const;
+    void     rewindRecordingTo(uint64_t mark);
+
     /// Advance the deck by `cycles` CPU cycles.
     ///
     /// Defined inline because `Memory::advanceCycles` calls it once per
@@ -311,6 +323,7 @@ private:
     bool     recordingStarted        = false;
     uint64_t lastOutputToggleCycle   = 0;
     std::vector<uint32_t> recordedDurations;
+    std::vector<uint32_t> recordRedo_;   // cut off by a rewind; see rewindRecordingTo
     bool recordingOverflow = false;
 
     bool     inputLevel        = false;

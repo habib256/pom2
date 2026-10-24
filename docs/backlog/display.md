@@ -17,12 +17,11 @@ an explicit request before scheduling.
 |---|---|---|---|
 | [DISPLAY-001](#display-001) | 🟡 | Landed (2026-10-16), hardware check owed | VidHD on Apple IIe — SHR display support. |
 | [DISPLAY-011](#display-011) | 🟡 | To verify | Le Chat Mauve — what is left after P0-P2 |
-| [DISPLAY-012](#display-012) | 🟡 | To verify | Bug hunt #15's display residue |
+| [DISPLAY-012](#display-012) | 🧊 | Frozen: needs a colour oracle | 80-column text colour phase under the CPU demodulators |
 | [DISPLAY-002](#display-002) | 🟢 | To verify | Golden coverage gaps |
 | [DISPLAY-004](#display-004) | 🟢 | To verify | Beam-racing residuals |
 | [DISPLAY-005](#display-005) | 🟢 | To verify | Mid-scanline split residuals |
 | [DISPLAY-006](#display-006) | 🟢 | To verify | PAL residuals |
-| [DISPLAY-007](#display-007) | 🟢 | To verify | Unidirectional mid-frame page split renders full-page |
 | [DISPLAY-008](#display-008) | 🟢 | To verify | "Smooth" interpolated sub-pixel mode |
 | [DISPLAY-009](#display-009) | 🟢 | To verify | DHGR mono 1-px alignment + floating-TTL `empty_words` + per-scanline mode switch |
 | [DISPLAY-010](#display-010) | 🟢 | To verify | CRT parity refinements vs OpenEmulator |
@@ -97,26 +96,24 @@ fallback and the absence of a C800 claim, as well as the SHR painter.
 
 <a id="display-012"></a>
 
-## DISPLAY-012 — Bug hunt #15's display residue
+## DISPLAY-012 — 80-column text colour phase under the CPU demodulators
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen until a colour reference exists.
 
-**Acceptance criterion (after revalidation):** Compare FLASH phase and 80-column color phase with the cited references; the Videx marker documentation is corrected.
+**Scheduling condition:** a capture of real 80-column text through a colour
+monitor (or another emulator with a stated source) to compare against.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1984). Original dates and estimates are retained below.
+80-column TEXT under the OE/AppleWin CPU demodulators uses phase 0 where
+MAME's `is_80_column` term would apply; there is no colour oracle, and the
+term is per-frame on a beam-raced split.
 
-- 🟡 **Bug hunt #15's display residue** *(2026-09-09; read, not fixed)*:
-  the II/II+ FLASH range blinks in antiphase with MAME's model::II (and
-  with POM2's own //e cursor) — cosmetic; 80-column
-  TEXT under the OE/AppleWin CPU demods uses phase 0 where MAME's
-  `is_80_column` term would apply (no colour oracle, and the term is
-  per-frame on a beam-raced split). *2 h.*
-
-**Videx reconciliation 2026-10-19:** The tracked 2048-byte LOWER CASE CHIP
-dump has bit 7 set in all 512 bytes for glyphs `$40-$7F`.
-`normaliseCharRom` detects the marker and uses the marked-dump rule; the
-offset fallback is for unmarked input. The earlier claim that the shipped
-dump takes the offset path was a documentation error, not a missing code fix.
+**Closed 2026-10-24, no change:** the II/II+ FLASH phase. Bug hunt #15
+noted it blinks in antiphase with MAME's model::II. On those machines the
+blink comes from a free-running 555 (MAME `apple2video.cpp:1176-1178`,
+"approximate 555 flash timer"), unsynchronised with video, so its phase at
+power-on is not defined on the hardware or in MAME; POM2's rate (16-frame
+half period, ~1.9 Hz) matches. The Videx marker documentation was corrected
+on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 
 <a id="display-002"></a>
 
@@ -193,20 +190,6 @@ a 60 Hz display does not make the PAL guest run at 60 Hz. The historical
 request to switch RAF to 50 Hz is therefore not a missing implementation.
 Manual standard selection/automatic Chat Mauve selection remains a separate
 proposal; PAL machine profiles already select the standard.
-
-<a id="display-007"></a>
-
-## DISPLAY-007 — Unidirectional mid-frame page split renders full-page
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Render the two sides of a mid-frame page switch correctly in a reproducing test.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1107). Original dates and estimates are retained below.
-
-- 🟢 **Unidirectional mid-frame page split renders full-page** — assumed
-  limit inherited from the DROL page-flip fix; the true remedy is
-  incremental per-scanline rendering, MAME-style. → `CHANGELOG.md`.
 
 <a id="display-008"></a>
 
