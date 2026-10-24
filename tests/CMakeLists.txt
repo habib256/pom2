@@ -5380,6 +5380,31 @@ endif()
 add_test(NAME imagewriter_smoke COMMAND test_imagewriter)
 set_tests_properties(imagewriter_smoke PROPERTIES TIMEOUT 10)
 
+# CARDS-011: the ImageWriter residue (imagewriter_residue_test.cpp).
+add_executable(test_imagewriter_residue
+    imagewriter_residue_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_imagewriter_residue PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_imagewriter_residue PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_imagewriter_residue PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_imagewriter_residue PRIVATE winmm)
+endif()
+
+add_test(NAME imagewriter_residue COMMAND test_imagewriter_residue)
+set_tests_properties(imagewriter_residue PROPERTIES TIMEOUT 10)
+
 # ─── ImageWriter PDF export test ─────────────────────────────────────────
 # Pins the multi-page PDF serialiser (ImageWriterPdf.cpp): xref byte
 # accounting, per-sheet /MediaBox from Page::dpi, FlateDecode round-trip

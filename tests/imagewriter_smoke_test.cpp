@@ -1862,57 +1862,6 @@ static void testEpsonParamBytesCostNothing()
 // manual's own example: "ESC - ESC I A E Z Z Z CTRL-@ CTRL-@ CTRL-D"
 // loads, on the A key, three columns of $5A (Z) and two blank ones, using
 // the top eight wires; ESC ' prints from the custom set, ESC $ goes back.
-// ── CARDS-011: the ImageWriter residue ───────────────────────────────────
-static void testImageWriterResidue()
-{
-    // An unassigned control code is ignored, not drawn as CP437 art.
-    {
-        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
-        const double x = iw.status().headX;
-        const uint8_t ctl[] = { 0x01, 0x02, 0x10, 0x15, 0x1C, 0x1E };
-        iw.printBytes(ctl, sizeof ctl);
-        assert(inkPixels(iw.currentPage()) == 0 && iw.status().headX == x &&
-               "unassigned control codes printed as glyphs");
-    }
-    // Epson double strike (ESC G) leaves more ink than a single pass.
-    {
-        auto ink = [](bool dbl) {
-            ImageWriter iw(144, ImageWriter::PaperSize::Letter);
-            iw.setModel(pom2::IwModel::EpsonFX80);
-            if (dbl) { const uint8_t g[] = { 0x1B, 'G' }; iw.printBytes(g, 2); }
-            feed(iw, "HHHH");
-            return inkPixels(iw.currentPage());
-        };
-        assert(ink(true) > ink(false) && "ESC G double strike was a no-op");
-    }
-    // The carriage: an 8-inch line from the 1/4" margin, on Letter too —
-    // 80 columns at Pica, 96 at the II's power-on Elite 12 cpi.
-    {
-        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
-        const double y0 = iw.status().headY;
-        const int cols = static_cast<int>(std::lround(8.0 * iw.status().cpi));
-        feed(iw, std::string(static_cast<size_t>(cols - 1), 'H').c_str());
-        assert(iw.status().headY == y0 && "an 8-inch line holds its columns");
-        feed(iw, "H");
-        assert(iw.status().headY > y0 && "the head wraps at the 8-inch line, not the paper edge");
-    }
-    // Paper: a width drag leaves an A4's 11.69" alone, and says Custom until
-    // a named format is picked again.
-    {
-        ImageWriter iw(144, ImageWriter::PaperSize::A4);
-        const double len = iw.paperLengthIn();
-        double cw = 0, cl = 0;
-        iw.setPaperDimensions(9.0, len, &cw, &cl);
-        assert(cw == 9.0 && cl == len && iw.paperLengthIn() == len &&
-               "the length was re-snapped by a width change");
-        assert(iw.paperIsCustom());
-        iw.setPaperSize(ImageWriter::PaperSize::A4);
-        assert(!iw.paperIsCustom() && iw.paperWidthIn() < 8.3 &&
-               "re-picking the same named format must restore it");
-    }
-    std::printf("  ImageWriter residue: controls, double strike, carriage, paper: OK\n");
-}
-
 void testCustomCharacters()
 {
     const std::string load = std::string("\x1B-\x1BIAEZZZ", 9) +
@@ -1993,7 +1942,6 @@ void testCustomCharacters()
 
 int main()
 {
-    testImageWriterResidue();
     testEscPProportionalIsConsumed();
     testEscPMasterSelectMask();
     testTabRackOverflowStaysInsideTheCommand();

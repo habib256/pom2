@@ -26,8 +26,9 @@ as halted. Pinned in `cpu_cycle_count`, which fails on the old WAI.
 ## 2026-10-24 — The ImageWriter residue (CARDS-011, closed)
 
 What bug hunt #15 left on the printer, all within `ImageWriter.cpp`'s size
-ceiling and pinned in `imagewriter_smoke` (the control-code and carriage
-cases fail with their fix reverted):
+ceiling and pinned in `imagewriter_residue` (its own file: the smoke test
+sits at the 2000-line ceiling; the control-code and carriage cases fail
+with their fix reverted):
 
 - **Unassigned control codes printed CP437 art** on the C. Itoh heads
   (`$01-$06`, `$10`, `$15-$17`, `$19`, `$1A`, `$1C-$1E`); a printer ignores a
