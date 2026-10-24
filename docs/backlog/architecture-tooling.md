@@ -24,7 +24,6 @@ an explicit request before scheduling.
 | [ARCH-010](#arch-010) | 🟡 | To verify | Scattered config |
 | [ARCH-011](#arch-011) | 🟡 | To verify | `stateMutex` shared CPU+UI |
 | [ARCH-001](#arch-001) | 🟢 | To verify | Blocking work under `stateMutex` — what is LEFT. |
-| [ARCH-002](#arch-002) | 🟢 | To verify — premise partly false on 2026-10-06 | `persistSession()` reaches `controller->memory()` unlocked, and it is safe by construction — but the invariant is unenforced. |
 | [ARCH-007](#arch-007) | 🟢 | To verify | Z80/SoftCard cleanup backlog |
 | [ARCH-012](#arch-012) | 🟢 | To verify | Inconsistent `pom2::` namespace |
 | [ARCH-013](#arch-013) | 🟢 | To verify | Legacy M6502 style |
@@ -314,33 +313,6 @@ measured − 0.5 whatever the old floor was (`tools/coverage.sh:398-412`);
 `pom2::switchProfile` (`src/ProfileSwitch.cpp`, the documented exception at
 line 108), not `MainWindow_Slots.cpp`.
 
-<a id="arch-002"></a>
-
-## ARCH-002 — `persistSession()` reaches `controller->memory()` unlocked, and it is safe by construction — but the invariant is unenforced.
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Document and enforce the stopped-worker or single-thread condition at every persistSession caller.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-876). Original dates and estimates are retained below.
-
-- 🟢 **`persistSession()` reaches `controller->memory()` unlocked, and it is
-  safe by construction — but the invariant is unenforced.** `~MainWindow` calls
-  `controller->stop()` first, and the WASM heartbeat runs on the CPU-stepping
-  thread because the worker does not exist under Emscripten. Nothing in the file
-  says so, and nothing stops a third caller from adding a mid-session call on
-  the desktop, where the sibling `MainWindow::flushSlotMedia` does take the lock
-  around the identical `flushAll`. Worth a comment at minimum.
-
-**Revalidation 2026-10-06 — premise partly false:** `persistSession`
-(`src/MainWindow_Session.cpp:69`) now flushes through `flushSlotMedia` and takes
-`stateMutex` around every media/storage capture (lines 112-116 and the 3.5"
-block after it). The one unlocked `controller->memory()` left is the FujiNet
-lookup (`src/MainWindow_Session.cpp:219-225`), a UI-thread SlotBus topology
-read with a comment saying the destructor runs after `controller->stop()` —
-one of the unlocked reads CLAUDE.md allows. What remains is the *enforcement*
-half (nothing asserts the stopped-worker condition).
-
 <a id="arch-007"></a>
 
 ## ARCH-007 — Z80/SoftCard cleanup backlog
@@ -359,9 +331,10 @@ half (nothing asserts the stopped-worker condition).
   text-row interleave); Z80.cpp decoder dedup: rp-selector switch pasted 8×
   (readRP/writeRP helpers), JR cc's inline condition test vs `ccTest`,
   `memEA` body re-inlined twice for special timings (chargeless
-  `indexedEA()` split); `xlate` 5-compare chain → 16-entry per-4K-page
-  offset LUT; drop the per-instruction `mem_` null tests in the dmaRun hot
-  loop (guard once at entry). Boot test could also pump a public
+  `indexedEA()` split); drop the per-instruction `mem_` null tests in the
+  dmaRun hot loop (guard once at entry). *Done 2026-10-24:* `xlate` is a
+  16-entry page table, checked against MAME's chain on all 64 K addresses
+  in `softcard_toggle`. Boot test could also pump a public
   controller slice hook instead of re-implementing arbitration.
 
 <a id="arch-012"></a>
@@ -410,4 +383,3 @@ half (nothing asserts the stopped-worker condition).
 **Acceptance criterion:** `MainWindow::plugSlotsFromSettings` (still GUI-side) is either reached by a headless test or its policy moved into `SlotConfigurationCoordinator`, where `slot_configuration_coordinator` already pins it.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md) G5-6, "Not covered". The 2026-10-06 Videx-on-//e bug lived exactly in this seam (the picker refused, the plug path did not). Recovered from the archive 2026-10-07.
-

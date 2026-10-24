@@ -50,6 +50,19 @@ test fails with its fix reverted.
   (sign-extended 24-bit, full-scale 32-bit). Pinned in `cassette_hostile`.
   What remains of the entry is a decision: whether a cassette recording is
   irreversible output like a printout.
+- **ARCH-007, one seam:** the SoftCard's `xlate` is a 16-entry page table
+  instead of a five-compare chain; `softcard_toggle` checks it against
+  MAME's chain on every address, and both CP/M boots pass.
+- **ARCH-002: `persistSession`'s precondition is enforced.** It reads card
+  state and walks the slot bus without `stateMutex`, which is safe only
+  because its desktop caller is `~MainWindow` after `controller->stop()`
+  and the browser has no CPU worker. On the desktop it now logs an error
+  and asserts if the machine is not stopped, so a future mid-session
+  caller is caught instead of racing.
+- **DISPLAY-012, the II/II+ FLASH phase, closed:** the blink comes from a
+  free-running 555 (MAME's "approximate 555 flash timer"), so its phase at
+  power-on is undefined on the machine and in MAME; the rate matches. The
+  80-column colour phase is frozen until a colour reference exists.
 - **CARDS-005: the ThunderClock+ EPROM's driver now runs from guest code
   in a test.** `clock_card_dos_driver` boots DOS 3.3 with the Thunderware
   U9 dump in slot 4 and runs the manual's Applesoft read (`IN#4`,

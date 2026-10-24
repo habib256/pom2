@@ -63,11 +63,25 @@
 #include "Voxel3DRenderer.h"
 
 #include <array>
+#include <cassert>
 #include <mutex>
 #include <string>
 
 void MainWindow::persistSession(bool flushMedia)
 {
+    // Who may call this (ARCH-002). It reads card state and walks the slot
+    // bus without `stateMutex`: safe only while nothing else runs the
+    // machine. The desktop's one caller is ~MainWindow, after
+    // `controller->stop()`; the browser's (heartbeat, `pom2_persist_now`)
+    // run on the thread that steps the CPU, there being no worker. A new
+    // mid-session caller on the desktop must take the lock instead — say
+    // so loudly rather than race.
+#ifndef __EMSCRIPTEN__
+    if (controller->getMode() != EmulationController::Mode::Stopped) {
+        pom2::log().error("Session", "persistSession called with the CPU worker running");
+        assert(false && "persistSession needs the CPU worker stopped (ARCH-002)");
+    }
+#endif
     // Persist the current state so the next launch restores the same
     // mounted disks, video mode, panels, and audio levels.
     // HDV keys: written once, by StorageCoordinator::persistSessionSettings
