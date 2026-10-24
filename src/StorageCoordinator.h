@@ -292,6 +292,14 @@ public:
     /// re-runs on every profile switch and Slot Apply, the store still says
     /// `false` until quit, and re-notching a disk the user had unprotected
     /// meanwhile was silent (bug hunt 2026-10-16).
+    /// A persisted media path as the restore finds it: the path itself, or —
+    /// when it is relative — the same path one or two directories up, since a
+    /// relative path saved from the repo root is reloaded from `build/` or
+    /// `build/tests/` (POM2 run from the IDE, a test binary). Empty when none
+    /// is a regular file. Every bay kind resolves through this one rule; the
+    /// Disk II, HDV and CFFA restores used to skip the `../` probes the
+    /// SmartPort and generic bays made (ARCH-006).
+    static std::string resolvePersistedMediaPath(const std::string& path);
     static bool migrateLegacyWriteBack(bool keyValue,
                                        const std::vector<std::string>& paths,
                                        std::vector<std::string>& warnings,

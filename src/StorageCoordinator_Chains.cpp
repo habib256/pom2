@@ -169,11 +169,11 @@ void StorageCoordinator::restoreHdvDrive2(ProDOSHardDiskCard& hdv,
                                           const Settings& settings,
                                           std::vector<std::string>& warnings)
 {
-    const std::string path = settings.getString(hdvDriveKey("hdv_path", 1), "");
+    const std::string saved = settings.getString(hdvDriveKey("hdv_path", 1), "");
+    const std::string path = resolvePersistedMediaPath(saved);
     const std::string where = "HDV slot " + std::to_string(hdv.getSlot()) + " drive 2";
-    std::error_code ec;
-    if (!path.empty() && !std::filesystem::is_regular_file(path, ec))
-        warnings.push_back(where + ": persisted path not found: " + path);
+    if (!saved.empty() && path.empty())
+        warnings.push_back(where + ": persisted path not found: " + saved);
     else if (!path.empty() && !hdv.loadDrive(1, path))
         warnings.push_back(where + ": " + hdv.getLastError());
     const bool legacy = settings.getBool(hdvDriveKey("hdv_writeback", 1),

@@ -1792,11 +1792,11 @@ StorageCoordinator::restoreMediaFromSettings(
                       : pom2::mediaWritableByDefault());
         card->setWriteBackEnabled(legacyWriteBack);
         for (std::size_t drive = 0; drive < kDiskIIDriveCount; ++drive) {
-            const std::string path = settings.getString(
+            const std::string saved = settings.getString(
                 diskIIPathSettingKey(card->getSlot(), drive),
                 drive == 0 && isPrimary
                     ? settings.getString("disk_path", "") : std::string());
-            std::error_code ec;
+            const std::string found = resolvePersistedMediaPath(saved);
             // A persisted path that no longer names a file is NOT a silent
             // non-event: the mount vanishes here and persistSessionSettings
             // writes "" over the key at quit, so the disk is gone for good —
@@ -1806,13 +1806,13 @@ StorageCoordinator::restoreMediaFromSettings(
             // desktop). The SmartPort and generic-bay loops below have always
             // said so; these three did not, which is the difference between a
             // user who moves the file back and a user who reports nothing.
-            if (!path.empty() && !std::filesystem::is_regular_file(path, ec)) {
+            if (!saved.empty() && found.empty()) {
                 result.warnings.push_back(
                     "Disk II slot " + std::to_string(card->getSlot()) +
                     " drive " + std::to_string(drive + 1) +
-                    ": persisted path not found: " + path);
-            } else if (!path.empty() &&
-                       !card->insertDisk(static_cast<int>(drive), path)) {
+                    ": persisted path not found: " + saved);
+            } else if (!found.empty() &&
+                       !card->insertDisk(static_cast<int>(drive), found)) {
                 result.warnings.push_back(
                     "Disk II slot " + std::to_string(card->getSlot()) +
                     " drive " + std::to_string(drive + 1) + ": " +
@@ -1834,12 +1834,12 @@ StorageCoordinator::restoreMediaFromSettings(
     }
 
     if (cards.primaryHdv) {
-        const std::string path = settings.getString("hdv_path", "");
-        std::error_code ec;
-        if (!path.empty() && !std::filesystem::is_regular_file(path, ec)) {
+        const std::string saved = settings.getString("hdv_path", "");
+        const std::string path = resolvePersistedMediaPath(saved);
+        if (!saved.empty() && path.empty()) {
             result.warnings.push_back(
                 "HDV slot " + std::to_string(cards.primaryHdv->getSlot()) +
-                ": persisted path not found: " + path);
+                ": persisted path not found: " + saved);
         } else if (!path.empty() && !cards.primaryHdv->loadImage(path)) {
             result.warnings.push_back(
                 "HDV slot " + std::to_string(cards.primaryHdv->getSlot()) +
@@ -1860,12 +1860,12 @@ StorageCoordinator::restoreMediaFromSettings(
         if (!card) continue;
         const std::string key =
             "cffa_slot" + std::to_string(card->getSlot());
-        const std::string path = settings.getString(key + "_path", "");
-        std::error_code ec;
-        if (!path.empty() && !std::filesystem::is_regular_file(path, ec)) {
+        const std::string saved = settings.getString(key + "_path", "");
+        const std::string path = resolvePersistedMediaPath(saved);
+        if (!saved.empty() && path.empty()) {
             result.warnings.push_back(
                 "CFFA slot " + std::to_string(card->getSlot()) +
-                ": persisted path not found: " + path);
+                ": persisted path not found: " + saved);
         } else if (!path.empty() && !card->loadImage(path)) {
             result.warnings.push_back(
                 "CFFA slot " + std::to_string(card->getSlot()) + ": " +
@@ -1905,19 +1905,7 @@ StorageCoordinator::restoreMediaFromSettings(
 
             const std::string path =
                 settings.getString(base + "_path", "");
-            std::string resolved;
-            if (!path.empty()) {
-                std::error_code error;
-                for (const std::string& candidate : {
-                         path, std::string("../") + path,
-                         std::string("../../") + path}) {
-                    if (std::filesystem::is_regular_file(candidate, error)) {
-                        resolved = candidate;
-                        break;
-                    }
-                    error.clear();
-                }
-            }
+            const std::string resolved = resolvePersistedMediaPath(path);
             if (!resolved.empty() && !unit->loadImage(resolved)) {
                 result.warnings.push_back(
                     "SmartPort slot " + std::to_string(card->getSlot()) +
@@ -1960,17 +1948,7 @@ StorageCoordinator::restoreMediaFromSettings(
                     legacyWriteBack, {}, result.warnings));
                 continue;
             }
-            std::string resolved;
-            std::error_code error;
-            for (const std::string& candidate : {
-                     path, std::string("../") + path,
-                     std::string("../../") + path}) {
-                if (std::filesystem::is_regular_file(candidate, error)) {
-                    resolved = candidate;
-                    break;
-                }
-                error.clear();
-            }
+            const std::string resolved = resolvePersistedMediaPath(path);
             std::string err;
             if (resolved.empty()) {
                 result.warnings.push_back(

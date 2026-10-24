@@ -181,8 +181,38 @@ void testHostFolderOnSmartPortBay()
     std::puts("  ok: a host folder mounts on an empty SmartPort unit");
 }
 
+// ARCH-006: one rule for every bay kind. A relative path saved from the repo
+// root is found again one or two levels down (build/, build/tests/); an
+// absolute one is only ever itself.
+void testResolvePersistedMediaPath()
+{
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "pom2_resolve_persisted";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "build" / "tests");
+    { std::ofstream(root / "disk.dsk") << 'x'; }
+    const fs::path cwd = fs::current_path();
+    fs::current_path(root / "build" / "tests");
+    using SC = pom2::StorageCoordinator;
+    assert(SC::resolvePersistedMediaPath("disk.dsk") == "../../disk.dsk");
+    fs::current_path(root / "build");
+    assert(SC::resolvePersistedMediaPath("disk.dsk") == "../disk.dsk");
+    fs::current_path(root);
+    assert(SC::resolvePersistedMediaPath("disk.dsk") == "disk.dsk");
+    assert(SC::resolvePersistedMediaPath("gone.dsk").empty());
+    assert(SC::resolvePersistedMediaPath("").empty());
+    fs::current_path(root / "build");
+    assert(SC::resolvePersistedMediaPath((root / "build" / "x.dsk").string()).empty() &&
+           "an absolute path is never searched for elsewhere");
+    fs::current_path(cwd);
+    fs::remove_all(root, ec);
+    std::printf("  ok: persisted media paths resolve one rule for every bay\n");
+}
+
 int main()
 {
+    testResolvePersistedMediaPath();
     testHostFolderLeavesHdvPathAlone();
     testHostFolderOnSmartPortBay();
     // The whole run lives in a sandboxed HOME (and XDG_CONFIG_HOME, which

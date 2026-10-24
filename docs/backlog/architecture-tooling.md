@@ -18,7 +18,6 @@ an explicit request before scheduling.
 | [ARCH-004](#arch-004) | 🟠 | To verify | Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed |
 | [ARCH-009](#arch-009) | 🟠 | Partial: Ethernet concurrency and selected UI interactions covered | Remaining ImGui panel concurrency coverage |
 | [ARCH-003](#arch-003) | 🟡 | To verify | ThreadSanitizer: the GUI half is still open. |
-| [ARCH-006](#arch-006) | 🟡 | To verify | Bug hunt #15's host residue |
 | [ARCH-008](#arch-008) | 🟡 | To verify | `hgrpaint/` has no headless harness |
 | [ARCH-010](#arch-010) | 🟡 | To verify | Scattered config |
 | [ARCH-011](#arch-011) | 🟡 | To verify | `stateMutex` shared CPU+UI |
@@ -170,24 +169,6 @@ The blanket claim that no test drives ImGui is obsolete.
     so the CPU manages only ~400-1 400 emulated cycles/s — the *lock protocol*
     is covered thoroughly, *emulated execution* thinly. What remains is the GUI
     half: ImGui panels, `demodMutex`, slot re-plug under load.
-
-<a id="arch-006"></a>
-
-## ARCH-006 — Bug hunt #15's host residue
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Test settings-list round trips, media search-path consistency and catalog key uniqueness.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2009). Original dates and estimates are retained below.
-
-- 🟡 **Bug hunt #15's host residue** *(2026-09-09; read, not fixed)*:
-  `SettingsList` packs with `0x1F` and escapes nothing, so a path holding
-  that byte splits into two `library_recents` entries (any escape scheme
-  added now mis-reads existing values; cost is one dead recent entry);
-  `restoreMediaFromSettings` probes `../` and `../../` for SmartPort and
-  generic bays but not for the Disk II, HDV and CFFA; `PanelCatalog` has no
-  uniqueness check on `command`/`settingsKey` (none collide today).
 
 <a id="arch-008"></a>
 
