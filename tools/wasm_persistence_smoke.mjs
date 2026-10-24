@@ -60,7 +60,7 @@ let browser;
 let socket;
 try {
   browser = spawn(await chromeBinary(), [
-    '--headless=new', '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--window-size=1280,900', '--no-first-run', '--no-default-browser-check',
     '--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle',
     '--use-angle=swiftshader', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, 'about:blank',
@@ -110,9 +110,13 @@ try {
     pending.set(id, { resolve, reject });
     socket.send(JSON.stringify({ id, method, params }));
   });
-  const event = method => new Promise(resolve => {
+  // Bounded like waitFor: an event that never comes (a click that missed
+  // after a layout change) used to hang the CI job until its 6 h limit with
+  // no output at all.
+  const event = (method, timeout = 30000) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${method}`)), timeout);
     const callbacks = listeners.get(method) || [];
-    callbacks.push(resolve);
+    callbacks.push(params => { clearTimeout(timer); resolve(params); });
     listeners.set(method, callbacks);
   });
   const evaluate = async expression => {
@@ -354,8 +358,13 @@ try {
   await click(110, 10); await click(150, 58); // Pause before inserting drive 2.
   await waitFor(() => evaluate('Module._pom2_browser_running() === 0'), 'imported disk pause');
   await writeFile(importedDisk, Buffer.alloc(35 * 6656, 0xFF));
+  // The browser opens on the Apple II Screen alone (2026-10-23), so open
+  // Drives from Devices; it docks in the Emulation preset's right column.
+  await click(182, 10); // Devices
+  await click(200, 65); // Drives
+  await sleep(500);
   const driveOpened = event('Page.fileChooserOpened');
-  await click(850, 360); // Empty second Disk //c drive picture.
+  await click(1040, 400); // Empty second Disk //c drive picture.
   const driveChooser = await driveOpened;
   await send('DOM.setFileInputFiles', { files: [importedDisk], backendNodeId: driveChooser.backendNodeId });
   await waitFor(() => evaluate(`(() => {

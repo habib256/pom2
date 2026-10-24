@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — The browser smoke hung CI for 6 h after "Screen opens alone"
+
+Three CI runs in a row lost their WASM job to GitHub's 6 h limit. The
+smoke's last step inserts a second disk by clicking the empty drive 2 in
+Drives at (850, 360). Since c8435fcf the browser opens on the Apple II
+Screen alone, and since dd12fe0c the canvas is the window's size (756×413
+in headless Chrome), so that click hit nothing, no file chooser opened, and
+the CDP `event()` wait had no deadline. The smoke now runs in a fixed
+1280×900 window, opens Drives from Devices, and clicks drive 2 where the
+Emulation preset docks it (checked on screenshots). Every CDP event wait is
+bounded at 30 s, and the WASM job has `timeout-minutes: 30`, so the next
+layout change fails the step with a message instead of hanging. Full smoke
+passed locally on a fresh WASM build that includes the round-five
+`shell.html` changes.
+
 ## 2026-10-23 — Bug hunt, round five: rewind scrub, RamWorks, browser ?url=
 
 Five hunters on ground the earlier rounds had not covered: the five newest

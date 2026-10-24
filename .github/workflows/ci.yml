@@ -649,6 +649,9 @@ jobs:
   wasm:
     name: WASM verification build
     runs-on: ubuntu-latest
+    # Build ~5 min + browser smoke ~2 min. Without a limit a hung smoke held
+    # the job for GitHub's 6 h default (2026-10-23).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
