@@ -69,6 +69,14 @@ test fails with its fix reverted.
   (sign-extended 24-bit, full-scale 32-bit). Pinned in `cassette_hostile`.
   What remains of the entry is a decision: whether a cassette recording is
   irreversible output like a printout.
+- **ARCH-005, the tooling residue of bug hunt #16:** `coverage.sh --update`
+  wrote the new reading whatever the old floor was, so a run that lost
+  coverage re-based the ratchet below itself; it now keeps the higher floor
+  and takes `--lower` to record a lower one. `check_file_sizes.sh` now sees
+  `.mm`, `.hpp`, `.cc`, `.inl` and the `include/` and `examples/` trees. The
+  duplicate `POM2_CORE_SOURCES` entries were already gone. Its first run
+  caught this sweep's own growth: `DiskImage.cpp` 11 lines over its ceiling
+  (the WOZ allocation warning moved to `DiskImageWozFlux.cpp`).
 - **ARCH-007, one seam:** the SoftCard's `xlate` is a 16-entry page table
   instead of a five-compare chain; `softcard_toggle` checks it against
   MAME's chain on every address, and both CP/M boots pass.

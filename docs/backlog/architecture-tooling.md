@@ -18,7 +18,6 @@ an explicit request before scheduling.
 | [ARCH-004](#arch-004) | 🟠 | To verify | Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed |
 | [ARCH-009](#arch-009) | 🟠 | Partial: Ethernet concurrency and selected UI interactions covered | Remaining ImGui panel concurrency coverage |
 | [ARCH-003](#arch-003) | 🟡 | To verify | ThreadSanitizer: the GUI half is still open. |
-| [ARCH-005](#arch-005) | 🟡 | To verify | Bug hunt #16's tooling residue |
 | [ARCH-006](#arch-006) | 🟡 | To verify | Bug hunt #15's host residue |
 | [ARCH-008](#arch-008) | 🟡 | To verify | `hgrpaint/` has no headless harness |
 | [ARCH-010](#arch-010) | 🟡 | To verify | Scattered config |
@@ -171,28 +170,6 @@ The blanket claim that no test drives ImGui is obsolete.
     so the CPU manages only ~400-1 400 emulated cycles/s — the *lock protocol*
     is covered thoroughly, *emulated execution* thinly. What remains is the GUI
     half: ImGui panels, `demodMutex`, slot re-plug under load.
-
-<a id="arch-005"></a>
-
-## ARCH-005 — Bug hunt #16's tooling residue
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Check source-list uniqueness, monotonic coverage updates and file-size guard extension coverage with failing mutation controls.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1968). Original dates and estimates are retained below.
-
-- 🟡 **Bug hunt #16's tooling residue** *(2026-09-09; read, not fixed)*:
-  `POM2_CORE_SOURCES` lists three files twice; `coverage.sh --update`
-  lowers the floor unconditionally although its header says the floor may
-  only rise; `check_file_sizes.sh` is blind to `.hpp`/`.cc`/`.inl` and to
-  anything outside `src/` + `tests/`. *1 h.*
-
-**Revalidation note 2026-10-06 (code reading):** all three still hold —
-`POM2_CORE_SOURCES` lists `W5100HostSockets.cpp`, `W5100NameResolver.cpp`
-and `IIcExternalSmartPort.cpp` twice; `coverage.sh --update` writes
-measured − 0.5 whatever the old floor was (`tools/coverage.sh:398-412`);
-`check_file_sizes.sh` scans `src tests` for `*.cpp`/`*.h` only (line 53).
 
 <a id="arch-006"></a>
 
