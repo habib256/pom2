@@ -445,7 +445,11 @@ src/DiskImage.cpp                        3316
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
 src/ProDOSVolume.cpp                     2063
-src/Memory.cpp                           2789
+# 2026-10-24 (ARCH-004): the snapshot trailer — appendSnapshotState /
+# loadSnapshotState — moved to MemorySnapshot.cpp, the seam named here since
+# 2026-09-07.
+#   src/Memory.cpp: 2789 -> 2354 (-435)
+src/Memory.cpp                           2354
 # 2026-10-16: existing media transactions gain mount-identity checks,
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
 # and 3.5-inch latch sounds. These checks belong in their transaction phases.

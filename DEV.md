@@ -4614,7 +4614,9 @@ warning; their firmware/video compatibility cannot be established. ENV is
 identity metadata, not authentication, a whole-configuration manifest, card
 firmware identity or a complete session bundle. Rewind omits it entirely.
 
-`MemorySnapshotValidation.cpp` traverses the core layout, bounds RamWorks to
+The trailer itself is written and applied by `MemorySnapshot.cpp`
+(`appendSnapshotState` / `loadSnapshotState`, split out of `Memory.cpp`
+on 2026-10-24); `MemorySnapshotValidation.cpp` traverses the core layout, bounds RamWorks to
 128 coherent 80 KiB banks, validates the selected bank and visits all nine
 optional device sections. It skips RAM payloads rather than copying them.
 IWM, Sony and No-Slot Clock loaders have a no-commit path; mouse and Zip

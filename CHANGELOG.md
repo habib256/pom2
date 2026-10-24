@@ -10,6 +10,20 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Memory's snapshot trailer is its own file (ARCH-004, one seam)
+
+`appendSnapshotState` / `loadSnapshotState` — the wire format of Memory's
+extended state for snapshots, the rewind ring and sessions — moved verbatim
+from `Memory.cpp` to `MemorySnapshot.cpp`, beside the preflight that
+already lived in `MemorySnapshotValidation.cpp`. It was the seam
+`tools/file_size_budget.txt` had named since 2026-09-07; the ceiling went
+2789 → 2354. The new file is listed wherever `Memory.cpp` is, in the
+machine layer. Snapshot, rewind and session tests pass unchanged.
+
+Also in this branch: `PaddleMouse.h` (INPUT-003) was in no layer header
+manifest, which fails CMake's architecture check at configure time — a
+targeted rebuild had not re-run it. Now classified with the frontend.
+
 ## 2026-10-24 — The host mouse as paddles 0/1 (INPUT-003)
 
 For a machine with no game controller: Machine ▸ "Mouse drives paddles 0/1"
