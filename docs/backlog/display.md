@@ -82,9 +82,10 @@ fallback and the absence of a C800 claim, as well as the SHR painter.
   Remaining and not frozen: **P6's residuals** (the Eve's `$C0Bx` as loggable
   events, the exact in-cell dot position, the TTL-RGBI palette option, DIX /
   PoP golden screens — the first rung, a beam-racing mode latch, landed as
-  `chatmauve_latch_split`); the **Extasie and Arlequin goldens** (both boot
-  headless now — pin the Arlequin demo-menu screen and an Extasie editor
-  screen; Eve Leonard still to find); the **three Féline trim pots** (R/G/B
+  `chatmauve_latch_split`); **Eve Leonard** for a third Eve golden (the
+  Arlequin and Extasie Féline goldens landed 2026-10-24 as
+  `chatmauve_feline_screens`; an Extasie *editor* screen needs the mouse
+  driven and is not pinned yet); the **three Féline trim pots** (R/G/B
   gain, manual p. 13), which belong with the `NtscParams::rgbBandwidthMHz`
   pre-pass that gave the card its second connector on 2026-09-04; and **P7's
   last doc step** — fold § 3.4's corrected table back into § 3 prose, and

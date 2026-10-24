@@ -10,6 +10,17 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Féline goldens: Arlequin and Extasie (DISPLAY-011)
+
+`chatmauve_feline_screens` boots the card's own showcase titles headless
+on a //e with a Féline in slot 7 and freezes every screen that holds for
+2 s: Arlequin's main menu, its interpreter page, the DHGR cat and the
+coloured 40-column demo menu (seven screens), and Extasie's mixed-DHGR
+title page. Each was looked at before it was pinned (`POM2_GOLDEN_DUMP`
+writes them out). The first recording took the Editor branch and pinned
+its "turn the disk over" prompt: `pasteText` folds Ctrl-J into RETURN, so
+a launcher's arrow keys go through `pasteRawKeys`.
+
 ## 2026-10-24 — WDC `WAI` waits for an interrupt (MEMORY-004, closed)
 
 `WAI` charged its three cycles and fell through, so a 65C02 program parked
