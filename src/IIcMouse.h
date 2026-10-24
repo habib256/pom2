@@ -24,7 +24,12 @@ public:
     /// Every queued edge emitted AND serviced: no axis latch still waits for
     /// the ROM's IRQ handler, so the screen-hole position is final. The
     /// absolute cursor sync pushes its next correction only from here.
-    bool settled() const { return hostDrained() && !xIrq_ && !yIrq_; }
+    /// A latch left set with the line released (acknowledged at $C015/$C017
+    /// with no $C048, see step()) waits on no handler, so it counts as done.
+    bool settled() const
+    {
+        return hostDrained() && (!(xIrq_ || yIrq_) || !slotIrqAsserted());
+    }
 private:
     int firmwareSlot_ = 4; // //c+ moves the firmware entry table/screen holes to port 7
     void step();
@@ -34,4 +39,7 @@ private:
     bool button_ = false;
     uint8_t hostX_ = 0, hostY_ = 0;
     int countX_ = 0, countY_ = 0, phase_ = 0;
+    // Scanlines a latch has sat with the line released (see step()).
+    static constexpr int kStaleLatchLines = 4;
+    int releasedFor_ = 0;
 };

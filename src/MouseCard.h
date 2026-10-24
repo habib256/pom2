@@ -115,6 +115,15 @@ public:
     /// with wrap). `button` is true while the mouse button is held.
     /// Called from the UI thread once per frame.
     void setHostMouse(uint8_t rawX, uint8_t rawY, bool button);
+    /// Motion the host has pushed that the MCU has not yet turned into
+    /// quadrature edges — the "previous push not consumed" test of a
+    /// closed-loop absolute drive (MouseSync.h's rule; pom2::Core::setMouse).
+    bool hostMotionPending() const
+    {
+        return hostAcc_[0].load(std::memory_order_relaxed) != 0 ||
+               hostAcc_[1].load(std::memory_order_relaxed) != 0 ||
+               countAxis[0] != 0 || countAxis[1] != 0;
+    }
 
     /// Telemetry: total MCU machine cycles actually retired since the last
     /// `onReset()`. Divided by the CPU cycles handed to `advanceCycles()`

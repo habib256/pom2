@@ -3,7 +3,8 @@
 POM2 exposes one optional C++17 facade: `include/pom2/core.hpp`, implemented by
 `src/Pom2Core.cpp`. It is a PIMPL wrapper over `Memory` + `M6502` + the small
 set of devices an embedding host needs (display, speaker, cassette, Disk II,
-3.5" SmartPort, Mockingboard), so a consumer never sees an internal definition.
+3.5" SmartPort, Mockingboard, Apple Mouse, the //c's built-in mouse), so a
+consumer never sees an internal definition.
 
 Its contract is pinned by the `pom2_core_api` test, which drives the facade
 through a boot, a display frame, audio pulls, a disk mount, a slot-5 boot off an
@@ -17,7 +18,8 @@ self-contained.
 The embedding host schedules `run(minCycles)` or `step()`; `run` returns the
 actual executed cycles and may overshoot the requested budget at an instruction
 boundary. `CoreConfig` selects CPU silicon, PAL/NTSC timing and IIe memory
-at construction, with an initially empty expansion bus.
+at construction, with an initially empty expansion bus — or a named
+`Machine` (see [Machines](#machines-and-the-c)).
 
 The default `CoreConfig{}` selects NMOS 6502, NTSC and non-IIe memory. It does
 not select the desktop's enhanced PAL //e profile. Instances are movable,
@@ -117,6 +119,61 @@ They belong to the application/controller layer. Linking `POM2::core` does
 not expose them through `include/pom2/core.hpp`; see
 [sessions](session-format.md) and [debugging](debugger-banks.md) for those
 application contracts.
+
+## CPU registers
+
+`setCpuState(state)` overwrites A, X, Y, P, S and PC at the current
+instruction boundary; the next `step()`/`run()` executes at the new PC.
+`cycles` and `halted` in the struct are ignored, and nothing else moves: the
+cycle counter, every soft switch (80STORE, RAMRD/RAMWRT, ALTZP, the language
+card, video) and a pending IRQ stay as they were — what a trampoline through
+the RESET vector cannot promise, since a //e reset clears them. P's bit 5
+reads 1 on every 6502 and is forced. A host calls a guest routine by writing
+the return address minus one on page 1, setting S and PC, and stepping until
+the PC comes back (pinned by `pom2_core_api`, NMOS and 65C02).
+
+## Mouse
+
+`attachMouse(slot, model, romDirectory)` installs the Apple Mouse Interface
+Card in an empty slot (4 by convention), reading `mouse_341-0270-c.bin`
+(and, for `MouseModel::AppleMouse`, the MC68705 mask ROM
+`mouse_341-0269.bin`) from `romDirectory`. `AppleMouse` runs Apple's firmware
+on both chips, as MAME does; `AppleMouseAppleWin` runs the slot EPROM
+against AppleWin's high-level MCU. Movement, button and VBL interrupts
+(at the beam's line 192) reach the 6502 through the slot bus, as in the
+application. One mouse per core.
+
+`moveMouse(dx, dy, button)` is relative motion — what the card's hardware
+receives — and exact on both models; on `AppleMouse` keep each axis within
+±127 between two run slices, because the MCU reads an 8-bit counter.
+`setMouse(x, y, button)` aims at an absolute position in the firmware's clamp
+window (the units of the slot's screen holes `$0478+n`/`$04F8+n`). It is a
+closed loop, the application's (`MouseSync.h`): each call pushes at most ±127
+per axis toward the target, and pushes nothing while the previous correction
+has not been consumed and published — the MCU replays a push as quadrature
+over several frames, and correcting against a stale position overshoots.
+Call it once per frame; it returns true when the card reports the target.
+Pinned through Apple's own firmware (INITMOUSE, SETMOUSE, READMOUSE, and
+about one VBL interrupt per frame) on both models.
+
+## Machines and the //c
+
+`CoreConfig::machine` defaults to `Machine::Custom`, which takes `cpu` and
+`iieMemory` as given (the struct's last member, so the positional
+`{cpu, timing, iieMemory}` form keeps its meaning). `AppleIIPlus`,
+`AppleIIe` (NMOS) and `AppleIIeEnhanced` (65C02) set those two fields.
+`AppleIIc` selects the 65C02 and //e memory, loads a 32 KiB system ROM as a
+//c dump (bank 0 at reset; 16 KiB rev-255 dumps load as usual) and plugs the
+//c's IOU mouse on port 4: its firmware is in the system ROM, so
+`moveMouse`/`setMouse` drive it with no `attachMouse`, which refuses on a
+//c. The ROM's IRQ handler integrates the motion, so it moves while the
+guest runs with interrupts enabled. `attachMockingboard()` on a //c is the
+Mockingboard 4c on the internal connector, whatever slot is passed: dormant
+until the guest writes into `$C400-$C4FF`, then answering that page — over
+the mouse firmware, entry table included — until a power cycle (a Ctrl-Reset
+leaves it awake, as MAME's `reset_w` does). Pinned with the 32 KiB rev-0
+and 16 KiB rev-255 ROMs. The //c's serial ports and the external SmartPort
+chain are not part of the facade.
 
 ## 3.5" SmartPort
 

@@ -10,6 +10,39 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — pom2_core: CPU registers, the mouse, and the //c (pom2games' letter)
+
+pom2games' a2shot tests through the public facade only, and three things
+sent them to POM2's internal sources instead. All three are in
+`include/pom2/core.hpp` now (`docs/SDK.md`), pinned by `pom2_core_api`:
+
+- **`setCpuState`** writes A/X/Y/P/S/PC at an instruction boundary and
+  nothing else — no cycle, soft switch or pending IRQ moves, which the
+  RESET-vector trampoline they had considered could not promise on a //e.
+- **`attachMouse` / `moveMouse` / `setMouse`**: the Apple Mouse card, MAME's
+  two-chip model or AppleWin's, with its movement and VBL interrupts on the
+  6502. `setMouse` is the application's closed loop; on the MCU card it
+  overshot and oscillated until it waited for each push to be replayed
+  (`MouseCard::hostMotionPending`) and published in the screen holes.
+- **`CoreConfig::machine`** (`Machine::Custom` by default, last in the
+  struct so the positional form still means the same machine): AppleIIPlus,
+  AppleIIe, AppleIIeEnhanced, and AppleIIc with its IOU mouse built in and
+  the Mockingboard 4c behind `attachMockingboard()`.
+
+**A real bug found on the way, in `IIcMouse`.** Its back-pressure holds the
+next quadrature edge while an axis latch is set (a deliberate divergence
+from MAME, issue #17), waiting for `$C048`. A read of `$C015`/`$C017` releases
+the IRQ line without clearing the latch — READMOUSE called with interrupts
+masked does exactly that — and then no handler ever ran and the //c mouse
+froze for good. A real mouse keeps moving and the next edge raises the line
+again. The hold now ends once the line has been released for four scanlines
+with the latch still set (a handler clears it in well under one), and
+`settled()` follows the same rule. All mouse tests pass; the facade's //c
+test failed without it. The answer to their side question: the 4c's wake
+hides the mouse firmware's `$C4xx` entries until a power cycle — a
+Ctrl-Reset leaves the card awake, as MAME's `reset_w`; `Memory.h` said
+"cleared by every reset", which was wrong.
+
 ## 2026-10-24 — Memory's snapshot trailer is its own file (ARCH-004, one seam)
 
 `appendSnapshotState` / `loadSnapshotState` — the wire format of Memory's
