@@ -10,6 +10,27 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — The ImageWriter residue (CARDS-011, closed)
+
+What bug hunt #15 left on the printer, all within `ImageWriter.cpp`'s size
+ceiling and pinned in `imagewriter_smoke` (the control-code and carriage
+cases fail with their fix reverted):
+
+- **Unassigned control codes printed CP437 art** on the C. Itoh heads
+  (`$01-$06`, `$10`, `$15-$17`, `$19`, `$1A`, `$1C-$1E`); a printer ignores a
+  control it does not know, as the Epson head here already did.
+- **The carriage was the paper**: 82½ Pica columns on Letter. The
+  ImageWriter and the FX-80 strike an 8-inch line from column one (80 Pica,
+  96 at the II's power-on Elite); the Diablo 630 keeps its wide carriage.
+- **Epson double strike (`ESC G`) was a no-op**; it now thickens the dot
+  vertically, the second pass shifted down, as bold widens it.
+- **`status().headX`** is bounded by the right margin.
+- **Paper size**: `setPaperDimensions` re-snapped both axes, so dragging an
+  A4's width moved its 11.69" length to 11.75"; it snaps only the axis that
+  changed. The size combo kept naming the old format after a custom size
+  (it says "Custom" now), and re-picking that same format did nothing,
+  because `setPaperSize` returned early on an unchanged enum.
+
 ## 2026-10-24 — pom2_core: CPU registers, the mouse, and the //c (pom2games' letter)
 
 pom2games' a2shot tests through the public facade only, and three things
