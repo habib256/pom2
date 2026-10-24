@@ -4234,10 +4234,28 @@ error latching), FORMAT $03 (no-op success on a block store), CONTROL $04
 (code 0 reset and code 4 EJECT — accepted, the disk stays in the bay),
 INIT $05. The unit-0 controller status sets bit 6 of byte 1 ("no
 interrupt", TN SmartPort #2). Errors per the ProDOS/SmartPort set: $01 bad
-cmd (incl. `$40-$45`: the dump's `$CC5B` `CPX #$0A`), $04 bad pcount, $21
-bad status/control code, $27 I/O, $28 no device, $2B write-protected,
-$2D bad block, $2F offline. `$C0` is the Apple 3.5 Drive (IIgs, IWM in
-the host), not this card.
+cmd (incl. `$40-$45`: the dump's `$CC5B` `CPX #$0A`), $11 unit 0 on any
+call but STATUS/CONTROL/INIT, $1F CONTROL codes 0/1 to unit 0 (the
+controller's interrupts — this card has none), $21 bad status/control
+code, $27 I/O, $28 no device, $2B write-protected, $2D bad block, $2F
+offline. STATUS code $05 on a 3.5" unit is the UniDisk 3.5's 8-byte status
+(all zero). The caller's parameter count is **not** checked: the Liron
+firmware never reads it — it sends its own from the table at `$CDE3`.
+`$C0` is the Apple 3.5 Drive (IIgs, IWM in the host), not this card.
+
+**The oracle is the real firmware** *(2026-10-24)*. `smartport_liron_parity`
+puts the same 44 SmartPort calls to this card and to `LironCard` — the
+Liron EPROM over the bus to `SmartPortBusDevice` — and compares A, the
+carry and the returned bytes. What the firmware decides on its own (unit
+0, the command range, the chain length, the parameter count) is ground
+truth there; what the drive answers comes from POM2's responder, held to
+the Apple IIc Technical Reference's Protocol Converter chapter ("UniDisk
+3.5" notes; Brutal Deluxe's `iwm_protocolconverter.pdf`). Two divergences
+are kept and pinned: the controller's interrupt byte (`$40` here, `$00` from
+the Liron) and an INIT addressed to a drive (the firmware passes it on and
+reports the drive's answer; `$28` here). That manual gives the general
+status bits 2 and 3 as "0 = protected", "0 = format allowed"; the IIgs
+Firmware Reference and both models here use 1.
 
 The entry itself is `BIT $CFFF` **then** `JMP $CE00` (2026-08-14), which is
 what the real Liron firmware does and is load-bearing on a //e: with
@@ -5483,6 +5501,15 @@ fields that say how long the packet is, which reads like a checksum failure.
 `IWMDevice::setBusCapture` keeps the bytes out of the IWM's shifter so the
 traffic raises no "write underrun".
 
+**What the responder answers, by call** *(2026-10-24, from the Apple IIc
+Technical Reference's UniDisk 3.5 notes)*: STATUS codes $00 and $03, and $05
+on a UniDisk (eight zero bytes); every other code — $01 DCB, $02 newline —
+is $21. CONTROL code $00 (reset) and $04 (eject) succeed; $01-$03 and
+$05-$07 (set DCB, newline, interrupt, and the UniDisk's own 65C02
+EXECUTE / download, not modelled) are $21. READ $08 and WRITE $09, the
+524-byte Macintosh block calls, are $01 — the WRITE after its data packet,
+which the firmware sends regardless.
+
 Backing is a `SmartPortBusUnit` (media / block count / write-protect /
 read / write / UniDisk-or-HD DIB kind) — `LironCard` adapts its
 `Disk35Image`s and `Block512Backing`s, `SmartPortCard` its `SmartPortUnit`s.
@@ -5972,6 +5999,18 @@ legacy gate, which stepped the head with the motor off, now calls
 `seekPhaseW` only while `motorOn` (`diskii_empty_drive`). Not in the
 snapshot blob: a load rebuilds it from the latch when the controller is
 enabled.
+
+**…except that an IWM hands the selected drive the live lines**
+*(2026-10-24)*. That copy is the Disk II controller's rule (`wozfdc`). An
+IWM ends `set_floppy()` in `update_phases()` (MAME `iwm.cpp:111`,
+`applefdintf.cpp:97-101`): when the motor comes on from idle, and when the
+drive select moves under a running motor, the newly selected drive receives
+the phases as they stand. `DiskIICard::iwmSelectsDrive()` does that while the
+card is an IWM host (`setIwmHost`, the //c and //c+). Without it the //c+
+ROM's slot-6 block driver — which drops the four phases with the other drive
+selected (bank 1 `$EAAD`), then selects drive 1 and reads the sense at
+`$F485` — saw phases 1+3 left over from its drive-type probe and answered
+STATUS `$2B` on a writable disk. Pinned in `pom2_core_api` (`testIIcPlus`).
 
 **A step cancelled by its opposing magnet** *(2026-09-16)*. The one
 deliberate divergence from MAME's `seek_phase_w`, which moves the head the

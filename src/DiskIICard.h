@@ -512,6 +512,16 @@ private:
     // phase toggled with the motor off, or while the other drive was
     // selected, never reached it. The WPT line reads THIS (floppy.cpp:817).
     std::array<uint8_t, 2> drivePhases_{};
+    /// An IWM hands the drive it selects the phase lines as they stand —
+    /// MAME `iwm_device::set_floppy` ends in `update_phases()`
+    /// (`iwm.cpp:111`, `applefdintf.cpp:97-101`), when the motor comes on
+    /// from idle and when the drive select moves under a running motor. The
+    /// Disk II controller does not (`wozfdc`), so the card does it only as
+    /// an IWM host. Without it the //c+ ROM's slot-6 block driver, which
+    /// drops all four phases with the other drive selected, read the WP
+    /// sense through magnets that drive had last seen and answered STATUS
+    /// with $2B (STORAGE-014).
+    void iwmSelectsDrive();
     // Head position in quarter-tracks, per drive. 35 tracks × 4 qt = 140;
     // the head can sit at any qt from 0 (track 0) to 4*(kTracks-1) = 136
     // (track 34). Quarter-tracks are needed for some copy protections;
@@ -728,6 +738,19 @@ private:
     /// note at the $C0nD hook), so each site adds `!isLoaded()` itself.
     bool senseWriteProtect() const {
         return writingInhibited();
+    }
+
+    /// The IWM status register an IWM host reads at $C0nE with Q6 high:
+    /// bit 7 the sense (an empty drive reads protected), bit 5 the drive
+    /// enabled, bits 0-4 the mode — MAME `iwm.cpp:126` returns
+    /// `(m_status & 0x7f) | wpt`, and `m_status` carries $20 from the moment
+    /// the drive goes active (:157-159) until it is idle again (:199). The
+    /// //c+ ROM's slot-6 block driver ($C64E) reads it and answered STATUS
+    /// with $2B, write-protected, without that bit.
+    uint8_t iwmStatus() const {
+        const DiskImage& img = images[activeDrive];
+        const uint8_t wpt = (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
+        return static_cast<uint8_t>(wpt | (motorOn ? 0x20 : 0x00) | (iwmMode & 0x1F));
     }
 
     /// Read-amplifier noise for a head over a surface that modulates

@@ -442,7 +442,8 @@ void testIIcMachine(const std::string& sourceDir)
 
 /// Copy `code` to $0300, close it with a JMP to itself, and run it there
 /// with interrupts masked until it reaches that JMP.
-void runProgram(pom2::Core& c, std::initializer_list<std::uint8_t> code)
+void runProgram(pom2::Core& c, std::initializer_list<std::uint8_t> code,
+                int maxSteps = 1000)
 {
     std::uint16_t at = 0x0300;
     for (const std::uint8_t b : code) c.write(at++, b);
@@ -453,7 +454,7 @@ void runProgram(pom2::Core& c, std::initializer_list<std::uint8_t> code)
     st.programCounter = 0x0300;
     st.status = 0x24;                                // I set
     c.setCpuState(st);
-    for (int i = 0; i < 1000 && c.cpuState().programCounter != at; ++i) c.step();
+    for (int i = 0; i < maxSteps && c.cpuState().programCounter != at; ++i) c.step();
     assert(c.cpuState().programCounter == at);
 }
 
@@ -683,6 +684,83 @@ void testUnenhancedIIe(const std::string& sourceDir)
     assert(!core.cpuState().halted);
 }
 
+/// A 140 KiB ProDOS-order image whose block b is filled with the byte b.
+void writeBlocks140K(const std::string& path)
+{
+    std::vector<char> image(280u * 512u);
+    for (std::size_t b = 0; b < 280; ++b)
+        std::fill(image.begin() + static_cast<std::ptrdiff_t>(b * 512),
+                  image.begin() + static_cast<std::ptrdiff_t>((b + 1) * 512),
+                  static_cast<char>(b));
+    std::ofstream disk(path, std::ios::binary);
+    disk.write(image.data(), static_cast<std::streamsize>(image.size()));
+    assert(disk.good());
+}
+
+// Machine::AppleIIcPlus: its own ROM drives the MIG, the IWM and the 3.5"
+// Sony behind the SmartPort calls, and boots it from slot 5; and its slot-6
+// ProDOS block driver at $C64E — the slot-5 SmartPort code called as slot 6
+// (M.G., "Apple IIc Plus: SmartPort Secrets", 2018) — reads the 5.25" disk.
+void testIIcPlus(const std::string& sourceDir)
+{
+    pom2::CoreConfig cfg;
+    cfg.machine = pom2::Machine::AppleIIcPlus;
+    pom2::Core core(cfg);
+    assert(core.loadRom(sourceDir + "/roms/apple2cp.rom"));
+    assert(core.mouseAttached() && "the //c+ mouse is built in");
+    assert(!core.attachSmartPort(5) && "the 3.5\" drives are built in");
+    assert(!core.smartPortDiskInserted(0));
+    assert(!core.bootSlot(5) && "nothing to boot");
+    assert(!core.insertSmartPortDisk(2, "x.po"));
+
+    const std::string disk35 = "pom2_core_api_iicplus_800k.po";
+    writeBoot800K(disk35);
+    assert(core.insertSmartPortDisk(0, disk35));
+    assert(core.smartPortDiskInserted(0) && !core.smartPortDiskInserted(1));
+    assert(core.bootSlot(5));
+    for (int i = 0; i < 60 && core.read(0x0300) != 0xA5; ++i) core.run(500000);
+    assert(core.read(0x0300) == 0xA5 && "the ROM booted the internal 3.5\"");
+    assert(core.read(0x0301) == 0x50);               // X = slot 5, drive 1
+    assert(core.flushSmartPortDisk(0));
+
+    // $C64E: STATUS then READ block 2 of the 5.25" disk, as the article's
+    // monitor session does. A = error, X/Y = block count after STATUS.
+    const std::string disk525 = "pom2_core_api_iicplus_140k.po";
+    writeBlocks140K(disk525);
+    assert(core.insertDisk(0, disk525));
+    const auto blockCall = [&core](std::uint8_t command) {
+        const std::uint8_t params[6] = { command, 0x60, 0x00, 0x10, 0x02, 0x00 };
+        for (int i = 0; i < 6; ++i)
+            core.write(static_cast<std::uint16_t>(0x0320 + i), params[i]);
+        runProgram(core, {
+            0xA2, 0x05,             // LDX #5
+            0xBD, 0x20, 0x03,       // LDA $0320,X
+            0x95, 0x42,             // STA $42,X
+            0xCA,                   // DEX
+            0x10, 0xF8,             // BPL
+            0x20, 0x4E, 0xC6,       // JSR $C64E
+            0x8D, 0x30, 0x03,       // STA $0330
+            0x8E, 0x31, 0x03,       // STX $0331
+            0x8C, 0x32, 0x03,       // STY $0332
+        }, 5000000);
+    };
+    // STATUS: A = $00 on a writable disk, X/Y = 280 blocks — the article's
+    // numbers. The ROM drops the four phases with the 3.5" side selected and
+    // reads the WP sense ($F485) once drive 1 is on: the IWM hands the drive
+    // it selects the phases as they stand (DiskIICard::iwmSelectsDrive).
+    blockCall(0x00);
+    assert(core.read(0x0330) == 0x00 && "STATUS on a writable disk");
+    assert(core.read(0x0331) == 0x18 && core.read(0x0332) == 0x01);   // 280
+    blockCall(0x01);                                 // READ block 2
+    assert(core.read(0x0330) == 0x00);
+    for (std::uint16_t a = 0x1000; a < 0x1200; ++a) assert(core.read(a) == 0x02);
+
+    assert(core.ejectSmartPortDisk(0) && !core.smartPortDiskInserted(0));
+    assert(std::remove(disk35.c_str()) == 0);
+    assert(core.ejectDisk(0));
+    assert(std::remove(disk525.c_str()) == 0);
+}
+
 int main()
 {
     testSetCpuState();
@@ -701,6 +779,7 @@ int main()
     testDisplayState(POM2_TEST_SOURCE_DIR);
     testRgbCard(POM2_TEST_SOURCE_DIR);
     testUnenhancedIIe(POM2_TEST_SOURCE_DIR);
+    testIIcPlus(POM2_TEST_SOURCE_DIR);
 
     pom2::Core core;
 

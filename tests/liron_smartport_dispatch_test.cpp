@@ -209,8 +209,9 @@ int main()
         for (int i = 0; i < 512; ++i) assert(blk[i] == 0x5A);
         assert(mem.memRead(0x2800) == 0x5A && "caller buffer intact");
 
-        // ── Errors: empty bay ($28), bad block ($2D), bad pcount ($04),
-        //    bad command ($01), FORMAT ok, CONTROL code 0 ok ─────────────
+        // ── Errors: empty bay ($28), bad block ($2D), bad command ($01),
+        //    FORMAT ok, CONTROL code 0 ok; a wrong parameter count is no
+        //    error ─────────────────────────────────────────────────────
         setPlist(mem, {3, 2, kBuf & 0xFF, kBuf >> 8, 0, 0, 0});
         r = spCall(cpu, mem, 0x01);
         assert(r.carry && r.a == 0x28);
@@ -219,21 +220,24 @@ int main()
         r = spCall(cpu, mem, 0x01);
         assert(r.carry && r.a == 0x2D);
 
+        // The Liron firmware never checks the caller's count — it sends its
+        // own from the table at $CDE3 (smartport_liron_parity) — so a READ
+        // with five parameters reads.
         setPlist(mem, {5, 1, kBuf & 0xFF, kBuf >> 8, 0, 0, 0});
         r = spCall(cpu, mem, 0x01);
-        assert(r.carry && r.a == 0x04);
+        assert(!r.carry && r.a == 0x00);
 
         setPlist(mem, {1, 1, 0, 0, 0});
         r = spCall(cpu, mem, 0x42);          // Liron $CC5B: cmd >= $0A → $01
         assert(r.carry && r.a == 0x01);
 
-        // FORMAT and INIT take one parameter, unlike READ/WRITE/STATUS.
-        // Exercise the firmware entry so both carry and A reach the caller.
+        // FORMAT and INIT take one parameter, unlike READ/WRITE/STATUS, and
+        // the count the caller wrote does not matter either.
         for (uint8_t cmd : {uint8_t{0x03}, uint8_t{0x05}}) {
             for (uint8_t count : {uint8_t{0}, uint8_t{2}, uint8_t{3}, uint8_t{255}}) {
                 setPlist(mem, {count, cmd == 0x03 ? uint8_t{1} : uint8_t{0}});
                 r = spCall(cpu, mem, cmd);
-                if (!r.carry || r.a != 0x04 || r.sentinel != 0x77) {
+                if (r.carry || r.a != 0x00 || r.sentinel != 0x77) {
                     std::printf("FAIL: cmd=$%02X count=%u returned C=%d A=$%02X\n",
                                 cmd, count, r.carry, r.a);
                     return 1;

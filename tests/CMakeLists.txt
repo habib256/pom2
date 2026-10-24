@@ -8421,6 +8421,16 @@ pom2_add_headless_test(test_liron_chain
 set_tests_properties(liron_chain PROPERTIES LABELS slow SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# The HLE SmartPortCard against the real Liron firmware (LironCard + the
+# UniDisk bus responder): the same SmartPort calls, the same A, carry and
+# returned bytes. The firmware is the oracle for host-side errors.
+pom2_add_headless_test(test_smartport_liron_parity
+    NAME smartport_liron_parity TIMEOUT 120
+    SOURCES smartport_liron_parity_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(smartport_liron_parity PROPERTIES SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # An HDV mounted from the library adds a volume into the first free bay and
 # refuses, mounting nothing, when the card's units are all taken.
 pom2_add_headless_test(test_hdv_free_bay
