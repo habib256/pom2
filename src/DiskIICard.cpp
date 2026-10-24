@@ -366,23 +366,30 @@ void DiskIICard::commitInFlightWrite()
 // write-protected medium, is a no-op returning success).
 bool DiskIICard::flushPendingWrites()
 {
+    bool ok = true;
+    for (int d = 0; d < kDriveCount; ++d)
+        if (!flushDrive(d)) ok = false;
+    return ok;
+}
+
+bool DiskIICard::flushDrive(int drive)
+{
+    if (!validDrive(drive)) return false;
     // Fold the burst the controller is part-way through into its image
     // first, so a shutdown / profile switch mid-`SAVE` persists it like a
-    // completed sector rather than dropping it on the floor.
+    // completed sector rather than dropping it on the floor. Idempotent: the
+    // commit re-bases the burst, so the second drive's call finds none.
     commitInFlightWrite();
-    bool ok = true;
-    for (int d = 0; d < kDriveCount; ++d) {
-        DiskImage& img = images[d];
-        if (!img.isLoaded() || !img.hasUnsavedChanges()) continue;
-        if (!img.saveDirty()) {
-            ok = false;
-            mediaErrors[d] = img.getLastError();
-            pom2::log().warn("Disk II",
-                "Flush failed for drive " + std::to_string(d + 1) + ": " +
-                img.getLastError());
-        }
+    DiskImage& img = images[drive];
+    if (!img.isLoaded() || !img.hasUnsavedChanges()) return true;
+    if (!img.saveDirty()) {
+        mediaErrors[drive] = img.getLastError();
+        pom2::log().warn("Disk II",
+            "Flush failed for drive " + std::to_string(drive + 1) + ": " +
+            img.getLastError());
+        return false;
     }
-    return ok;
+    return true;
 }
 
 DiskIICard::~DiskIICard()

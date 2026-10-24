@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -41,6 +42,23 @@ enum class MockingboardModel : std::uint8_t {
 enum class MouseModel : std::uint8_t {
     AppleMouse,
     AppleMouseAppleWin,
+};
+
+/// An RGB card on the video output. LeChatMauveFeline is the //e's
+/// aux-slot card; LeChatMauveIIcAdapter is the "Adaptateur IIc" on the //c's
+/// DB-15. Both are told their mode by the 80COL/AN3 sequence the guest
+/// writes; neither has a slot ROM or I/O space for a program to detect.
+enum class RgbCardModel : std::uint8_t {
+    LeChatMauveFeline,
+    LeChatMauveIIcAdapter,
+};
+
+/// What an RGB card makes of double hi-res: 140 cells of 16 colours, 560
+/// dots in black and white, or the two mixed per byte (bit 7 of each byte).
+enum class RgbDhgrMode : std::uint8_t {
+    Color140,
+    Mono560,
+    Mixed,
 };
 
 /// A named machine, or Custom to take `cpu` and `iieMemory` as given.
@@ -78,6 +96,22 @@ struct CpuState {
     std::uint16_t programCounter = 0;
     std::uint64_t cycles       = 0;
     bool          halted       = false;
+};
+
+/// The video soft switches as the motherboard holds them, read without side
+/// effects. On a ][/][+ only the first four (and an3) exist; the others stay
+/// false. `doubleHiRes` is the //e's DHIRESON latch ($C05E, AN3 low): the
+/// screen shows double hi-res only with !text, hiRes and eightyColumn too.
+struct DisplayState {
+    bool text         = true;    ///< $C050 off / $C051 on
+    bool mixed        = false;   ///< $C052 / $C053
+    bool page2        = false;   ///< $C054 / $C055
+    bool hiRes        = false;   ///< $C056 / $C057
+    bool eightyColumn = false;   ///< 80COL, $C00C / $C00D
+    bool doubleHiRes  = false;   ///< $C05E on / $C05F off
+    bool an3          = false;   ///< set by $C05F, cleared by $C05E, every machine
+    bool altCharSet   = false;   ///< ALTCHAR, $C00E / $C00F
+    bool eightyStore  = false;   ///< 80STORE, $C000 / $C001
 };
 
 /// Non-owning view of the most recently rendered software framebuffer.
@@ -125,15 +159,34 @@ public:
     bool loadCharacterRom(std::string_view path, int bank = 0);
     std::string lastError() const;
 
-    /// Install a Disk II controller in slot 6. The P5 boot ROM is required;
-    /// the P6 logic-state-sequencer ROM is optional but recommended.
+    /// Install the core's Disk II controller, with its two drives, in `slot`
+    /// (1-7, 6 by convention). The P5 boot ROM is required; the P6
+    /// logic-state-sequencer ROM is optional but recommended. A second call
+    /// replaces the controller, moving it if `slot` differs; a //c's disk
+    /// port is wired to slot 6, so another slot is refused there.
     bool attachDiskII(std::string_view bootRom,
-                      std::string_view sequencerRom = {});
+                      std::string_view sequencerRom = {},
+                      int slot = 6);
+    /// Drive 0 or 1 (drive 1 and drive 2 of the controller).
     bool insertDisk(int drive, std::string_view path);
     bool ejectDisk(int drive);
     bool diskInserted(int drive = 0) const;
-    /// Cold boot directly at the slot-6 boot PROM. Returns false unless the
-    /// controller, its boot ROM and at least one disk are present.
+    /// Write `drive`'s guest writes back to its file now, without ejecting.
+    /// True when there was nothing to write.
+    bool flushDisk(int drive);
+    /// Protect the mounted disk, as a sticker over its notch would: the guest
+    /// gets the drive's write-protect signal and nothing reaches the image or
+    /// its file. Lasts until the disk is ejected or replaced, and does not
+    /// touch the file's own read-only bit. Lifting it cannot unprotect a
+    /// read-only file, a write-protected WOZ/2IMG, or a run under
+    /// POM2_MEDIA_WRITE_DEFAULT=protected.
+    bool setDiskWriteProtected(int drive, bool protectedOn);
+    /// The protection the guest sees, whatever its cause.
+    bool diskWriteProtected(int drive = 0) const;
+    /// Cold boot directly at the controller's boot PROM ($Cn00). Returns
+    /// false unless the controller, its boot ROM and a disk in drive 0 are
+    /// present — the PROM boots drive 1 only — and false, after the cold
+    /// boot, when the machine maps its own firmware over that page.
     bool bootDisk();
 
     /// Install a 3.5" SmartPort controller in an empty slot (5 by convention)
@@ -161,7 +214,7 @@ public:
     /// signature ($Cn01=$20, $Cn03=$00, $Cn05=$03), with RAM untouched; and
     /// false, after the cold boot, when the machine maps its own firmware
     /// over that page out of reset (slot 3 on a //e, slots other than 5 on a
-    /// //c). Slot 6 is bootDisk().
+    /// //c). The Disk II's slot is bootDisk().
     bool bootSlot(int slot);
 
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
@@ -202,6 +255,17 @@ public:
     bool attachMouse(int slot = 4, MouseModel model = MouseModel::AppleMouse,
                      std::string_view romDirectory = "roms");
     bool mouseAttached() const;
+    /// Install an RGB card (slot 7 by convention). The Féline needs a slotted
+    /// machine and the //c adapter a Machine::AppleIIc; on a //c `slot` only
+    /// names where the adapter is recorded (POM2 keeps it on slot 7).
+    /// renderFrame() keeps painting the composite picture: the card changes
+    /// what rgbDhgrMode() reports, not the software framebuffer.
+    bool attachRgbCard(int slot = 7,
+                       RgbCardModel model = RgbCardModel::LeChatMauveFeline);
+    bool rgbCardAttached() const;
+    /// The card's double hi-res mode now; Color140 (its power-on and reset
+    /// mode) when no card is attached.
+    RgbDhgrMode rgbDhgrMode() const;
     /// Relative motion and the button, what the card's hardware receives.
     /// Exact on both models; on AppleMouse keep each axis within ±127
     /// between two run() slices (the MCU reads an 8-bit counter).
@@ -300,6 +364,28 @@ public:
     /// trampoline could not do. Bit 5 of P reads 1 on every 6502, so it is
     /// forced. Same on the NMOS 6502 and the 65C02. Call between run()/step().
     void setCpuState(const CpuState& state);
+
+    DisplayState displayState() const;
+    /// Speaker toggles (accesses to $C030-$C03F) since the Core was created,
+    /// a host read()/write() there included — as on the bus, it clicks.
+    std::uint64_t speakerToggleCount() const;
+
+    /// Called for each CPU bus access to a watched address, after it was
+    /// performed, with the value read or written and the cycle it lands on
+    /// (cpuState().cycles counts the same clock). Opcode fetches, interrupt
+    /// stack pushes and soft-switch reads count; read()/write() from the
+    /// host do not. A read watch sends every read through the slow path
+    /// while armed, so arm only what you watch. Do not call run() or step()
+    /// from inside the callback.
+    using BusWatch = std::function<void(std::uint16_t address,
+                                        std::uint8_t value, bool write,
+                                        std::uint64_t cycle)>;
+    void setBusWatch(BusWatch watch);                 ///< empty: off
+    /// Arm [first, last] for reads and/or writes. Watches add up; returns
+    /// false when first > last.
+    bool watchAddresses(std::uint16_t first, std::uint16_t last,
+                        bool reads, bool writes);
+    void clearWatchedAddresses();
 
 private:
     class Impl;

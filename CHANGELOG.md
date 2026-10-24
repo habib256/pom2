@@ -10,6 +10,34 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — pom2_core: the bus, the display, the RGB card, a Disk II anywhere (pom2games' CHROMABREAK letter)
+
+CHROMABREAK's probe was the last of pom2games' tests compiled against
+POM2's internal sources. What it reached for is now in
+`include/pom2/core.hpp` (`docs/SDK.md`), pinned by `pom2_core_api`:
+
+- **`setBusWatch` / `watchAddresses` / `clearWatchedAddresses`** — each CPU
+  access to a watched address, at the cycle it lands on
+  (`Memory::accessCycle`, not the instruction start, which a mutant of the
+  test catches). The debugger's own watch tables carry it, so write watches
+  stay free; the host's `read()`/`write()` are not reported. Plus
+  `speakerToggleCount()`.
+- **`displayState()`** — the soft switches without side effects, the ][+
+  included, where `$C01A-$C01F` do not exist.
+- **`attachRgbCard` / `rgbDhgrMode`** — Le Chat Mauve, Féline on a //e or
+  the Adaptateur IIc on a //c (the model is hardware, as in the
+  application), and the DHGR mode its AN3-clocked latch holds.
+- **The Disk II** — one controller, in any slot (`attachDiskII(…, slot)`;
+  the //c keeps slot 6), booted at its own `$Cn00` and only from drive 0:
+  `bootDisk()` used to succeed with a disk in drive 1 alone, which the PROM
+  never reads. `flushDisk(drive)` for either drive, and
+  `setDiskWriteProtected(drive, on)`, a sticker over the mounted disk's
+  notch that the guest reads on the write-protect line; it never touches the
+  file's read-only bit. `DiskIICard::flushDrive` is the per-drive half of
+  `flushPendingWrites`.
+- **`Machine::AppleIIe`** boots `roms/apple2e_unenh.rom` (pinned by its ID
+  bytes `$FBB3 = $06`, `$FBC0 = $EA`).
+
 ## 2026-10-24 — Bug hunt #14's network residue, closed (NETWORK-011)
 
 The last three reports, checked on current main. `ChildProcess::stop()`
