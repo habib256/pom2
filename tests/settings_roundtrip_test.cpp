@@ -356,6 +356,11 @@ int main()
         assert(pom2::splitSettingList("").empty());
         assert(pom2::splitSettingList(std::string("a") + pom2::kSettingListSep)
                == std::vector<std::string>{"a"});
+        // ARCH-006: an entry holding the separator byte is left out rather
+        // than coming back as two bogus paths; its neighbours survive.
+        const std::string odd = std::string("/home/u/x") + pom2::kSettingListSep + "y.dsk";
+        assert(pom2::splitSettingList(pom2::joinSettingList({"/a.dsk", odd, "/b.dsk"}))
+               == (std::vector<std::string>{"/a.dsk", "/b.dsk"}));
     }
 
     // ── KEYS, which were never escaped ──────────────────────────────────

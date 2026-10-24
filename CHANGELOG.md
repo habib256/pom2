@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — ARCH-006: one rule to find a persisted disk, and the 0x1F list byte
+
+- **Every bay finds a relative path the same way.** The SmartPort and
+  generic bays tried the saved path, then `../` and `../../` (a relative
+  path saved from the repo root, reloaded from `build/` or `build/tests/`);
+  the Disk II, HDV (both drives) and CFFA restores tried the path alone and
+  reported it missing. `StorageCoordinator::resolvePersistedMediaPath` is
+  now the one rule for all five, and an absolute path is never searched
+  for elsewhere. Pinned in `storage_coordinator`.
+- **A list entry holding the 0x1F separator is left out** of
+  `joinSettingList` instead of coming back as two bogus paths; changing the
+  separator or adding an escape would mis-read every list already saved.
+  Pinned in `settings_roundtrip`.
+- The third item, `PanelCatalog` key uniqueness, was already pinned by
+  `panel_registry`.
+
 ## 2026-10-24 — The cassette recording follows the rewind (CASSETTE-002)
 
 A rewind across a live cassette recording kept the abandoned future's part

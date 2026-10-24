@@ -24,6 +24,8 @@
 
 #include "StorageCoordinator.h"
 
+#include <filesystem>
+
 #include "CffaCard.h"
 #include "DiskIICard.h"
 #include "ProDOSBlockCard.h"
@@ -279,6 +281,19 @@ void StorageCoordinator::persistHdvDrive2(Settings& settings,
     settings.setString(hdvDriveKey("hdv_path", 1),
                        persistable ? medium.path : std::string());
     settings.setBool(hdvDriveKey("hdv_writeback", 1), medium.writeBackEnabled);
+}
+
+std::string StorageCoordinator::resolvePersistedMediaPath(const std::string& path)
+{
+    if (path.empty()) return {};
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec)) return path;
+    if (std::filesystem::path(path).is_absolute()) return {};
+    for (const std::string& candidate : { "../" + path, "../../" + path }) {
+        ec.clear();
+        if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+    }
+    return {};
 }
 
 } // namespace pom2

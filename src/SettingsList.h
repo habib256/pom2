@@ -38,12 +38,19 @@ namespace pom2 {
 
 inline constexpr char kSettingListSep = '\x1f';
 
+// An entry that holds the separator itself is left out: written as is it
+// would come back as two bogus paths, and any escape added now would
+// mis-read every list already saved (ARCH-006). A path with a 0x1F byte in
+// it is not a path anyone types; losing it costs one recent entry.
 inline std::string joinSettingList(const std::vector<std::string>& v)
 {
     std::string out;
-    for (size_t i = 0; i < v.size(); ++i) {
-        if (i) out += kSettingListSep;
-        out += v[i];
+    bool first = true;
+    for (const std::string& item : v) {
+        if (item.find(kSettingListSep) != std::string::npos) continue;
+        if (!first) out += kSettingListSep;
+        out += item;
+        first = false;
     }
     return out;
 }
