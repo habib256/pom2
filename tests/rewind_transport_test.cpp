@@ -224,6 +224,48 @@ int main()
         assert(liveCycle(wasm) == c);
     }
 
+    // ── The cassette recording follows the rewind (CASSETTE-002) ──────────
+    // A program that toggles the cassette output ($C020) without pause is
+    // recording all the time. Seeking back cuts the tape to the frame's
+    // length; seeking forward again inside the scrub puts it back; resuming
+    // records from the frame on.
+    {
+        EmulationController m;
+        {
+            std::lock_guard<std::mutex> lk(m.stateMutex());
+            Memory& mem = m.memory();
+            const uint8_t loop[] = { 0xAD, 0x20, 0xC0,     // LDA $C020
+                                     0x4C, 0x00, 0x08 };   // JMP $0800
+            for (uint16_t i = 0; i < sizeof loop; ++i) mem.memWrite(0x0800 + i, loop[i]);
+            m.cpu().setProgramCounter(0x0800);
+        }
+        m.rewind().setEnabled(true);
+        m.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 20; ++i) m.tickFrame();
+        m.setMode(EmulationController::Mode::Stopped);
+        auto recorded = [&] {
+            std::lock_guard<std::mutex> lk(m.stateMutex());
+            return m.cassette().getRecordedTransitionCount();
+        };
+        auto markCount = [&](size_t i) {
+            std::lock_guard<std::mutex> lk(m.stateMutex());
+            return size_t(m.rewind().infoAt(i).sideMark & 0xFFFFFFFFu);
+        };
+        const size_t live = recorded();
+        assert(live > 0 && "the loop records");
+        assert(m.rewindBeginScrub());
+        assert(m.rewindSeek(5) == 5);
+        assert(recorded() == markCount(5) && recorded() < live && "seek back cuts the tape");
+        const size_t last = ringSize(m) - 1;
+        assert(m.rewindSeek(last) == last);
+        assert(recorded() == markCount(last) && "seek forward puts it back");
+        assert(m.rewindSeek(5) == 5);
+        m.rewindEndAndResume(5);
+        for (int i = 0; i < 3; ++i) m.tickFrame();
+        m.setMode(EmulationController::Mode::Stopped);
+        assert(recorded() > markCount(5) && "recording carries on from the frame");
+    }
+
     // ── Resuming a scrub with Play cuts the ring at the frame left ─────────
     // `setMode(Running)` (toolbar Play, Machine > Run) is a resume too. The
     // ring used to be cut only at the NEXT capture's cycle, so every old-

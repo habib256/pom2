@@ -2105,22 +2105,8 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         // into bitStream rather than re-deriving the whole track from
         // a nibble buffer. saveDirty() later re-packs the live bits
         // back into wozRaw at wozQtByteOff[qt].
-        // A quarter-track the image does not carry (TMAP $FF — Applesauce
-        // leaves a half-used disk's empty tracks out) is unformatted
-        // surface, and real media takes the write. Dropping it here lost
-        // INIT / FORMAT silently: no dirty flag, no error, a verify that
-        // failed and a disk that could never be reformatted. MAME writes
-        // the flux and creates the track on save.
-        if (wozQtBitCount[qt] == 0 && !allocateWozTrack(qt)) {
-            if (!wozAllocFailed_[qt]) {
-                wozAllocFailed_[qt] = true;
-                lastError = "WOZ: cannot add quarter-track " +
-                            std::to_string(qt / 4.0) +
-                            " to this image; writes to it are lost";
-                pom2::log().warn("Disk II", lastError);
-            }
-            return;
-        }
+        // A track TMAP leaves out takes the write (STORAGE-012).
+        if (wozQtBitCount[qt] == 0 && !allocateWozTrack(qt)) return;
         const int period = trackPeriod(qt);
         if (period <= 0) return;
 

@@ -306,6 +306,45 @@ void testRecordingPolarity()
            "first $C020 toggle established");
 }
 
+// ── 6: the recording follows a rewind (CASSETTE-002, option B) ──────────
+// A rewind used to keep the abandoned future's half of a SAVE on the tape
+// and append the new one after it. Mark A sits 300 cycles into a silence
+// after two durations; the abandoned future adds 1000 and 4000.
+void testRecordingFollowsRewind()
+{
+    CassetteDevice deck;
+    deck.armRecording();
+    deck.advanceCycles(1000); deck.toggleOutput();          // 1000
+    deck.advanceCycles(2000); deck.toggleOutput();          // 2000
+    deck.advanceCycles(300);
+    const uint64_t markA = deck.recordMark();
+    deck.advanceCycles(700);  deck.toggleOutput();          // 1000 (abandoned)
+    deck.advanceCycles(4000); deck.toggleOutput();          // 4000 (abandoned)
+    deck.advanceCycles(100);
+    const uint64_t markB = deck.recordMark();
+    expect(deck.getRecordedTransitionCount() == 4, "four durations before the rewind");
+
+    // Scrub back to A, forward to B, back to A: nothing is lost mid-scrub.
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markA);
+    expect(deck.getRecordedTransitionCount() == 2, "rewind to A cuts the tape to A");
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markB);
+    expect(deck.getRecordedTransitionCount() == 4, "scrub forward to B puts it back");
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markA);
+
+    // Resume from A: the next edge, 500 cycles on, closes a duration that
+    // counts the 300 the frame was already into — and drops the redo.
+    deck.advanceCycles(500); deck.toggleOutput();           // 300 + 500
+    deck.resetForTimeJump(); deck.rewindRecordingTo(markB);
+    expect(deck.getRecordedTransitionCount() == 3,
+           "after a new edge the abandoned future cannot come back");
+
+    const std::string path = tmpPath("pom2_ch_rewind.aci");
+    expect(deck.saveTape(path), "rewound recording did not save");
+    const Aci aci = readAci(path);
+    expect(aci.durations == std::vector<uint32_t>({1000, 2000, 800}),
+           "rewound recording: expected {1000, 2000, 800}");
+}
+
 // ── 5: the //c must not reach the deck through $C060 ─────────────────────
 void testIicC060IsNotTheDeck()
 {
@@ -376,6 +415,7 @@ int main()
     testWavVariants();
     testRecordingPolarity();
     testIicC060IsNotTheDeck();
+    testRecordingFollowsRewind();
     if (failures) {
         std::printf("cassette_hostile FAILED (%d)\n", failures);
         return 1;

@@ -405,6 +405,7 @@ void CassetteDevice::reset()
     recordingStarted = false;
     lastOutputToggleCycle = 0;
     recordedDurations.clear();
+    recordRedo_.clear();
     recordingOverflow = false;
     playbackPaused.store(false, std::memory_order_release);
     resetPlaybackState();
@@ -437,6 +438,46 @@ void CassetteDevice::resetForTimeJump()
     lastOutputToggleCycle = 0;
     lastTapeInputCycle    = 0;
     stopPulseAudio();
+}
+
+// Packed into the ring's 64-bit side mark: recorded count (32 bits), cycles
+// since the last toggle (30 bits, clamped — a longer gap is a silence the
+// next toggle clamps anyway), output level, recording started.
+uint64_t CassetteDevice::recordMark() const
+{
+    const uint64_t count = std::min<uint64_t>(recordedDurations.size(), UINT32_MAX);
+    const uint64_t since = recordingStarted && currentCycle > lastOutputToggleCycle
+        ? std::min<uint64_t>(currentCycle - lastOutputToggleCycle, (1u << 30) - 1) : 0;
+    return count | (since << 32) | (uint64_t(outputLevel) << 62) |
+           (uint64_t(recordingStarted) << 63);
+}
+
+void CassetteDevice::rewindRecordingTo(uint64_t mark)
+{
+    const size_t count   = size_t(mark & 0xFFFFFFFFu);
+    const uint64_t since = (mark >> 32) & ((1u << 30) - 1);
+    if (count < recordedDurations.size()) {
+        // Back: the tail goes to the FRONT of the redo buffer, which holds
+        // the abandoned future in order.
+        recordRedo_.insert(recordRedo_.begin(), recordedDurations.begin() + count,
+                           recordedDurations.end());
+        recordedDurations.resize(count);
+    } else if (count > recordedDurations.size()) {
+        // Forward again within the same scrub: put back what the redo holds.
+        const size_t want = std::min(count - recordedDurations.size(), recordRedo_.size());
+        recordedDurations.insert(recordedDurations.end(), recordRedo_.begin(),
+                                 recordRedo_.begin() + want);
+        recordRedo_.erase(recordRedo_.begin(), recordRedo_.begin() + want);
+    }
+    recordingOverflow = false;
+    recordingStarted = (mark >> 63) & 1;
+    outputLevel      = (mark >> 62) & 1;
+    // resetForTimeJump re-based the deck's clock to 0; place the last toggle
+    // `since` cycles back so the next duration counts the silence the frame
+    // was already in.
+    currentCycle          = since;
+    lastOutputToggleCycle = 0;
+    lastTapeInputCycle    = since;
 }
 
 void CassetteDevice::setPlaybackPaused(bool paused)
@@ -578,6 +619,8 @@ void CassetteDevice::beginRecordingIfNeeded()
 uint8_t CassetteDevice::toggleOutput()
 {
     beginRecordingIfNeeded();
+    // A new edge writes a new future: the one a rewind set aside is gone.
+    if (!recordRedo_.empty()) recordRedo_.clear();
 
     if (currentCycle > lastOutputToggleCycle) {
         const uint64_t delta = currentCycle - lastOutputToggleCycle;
@@ -728,6 +771,7 @@ void CassetteDevice::ejectTape()
 void CassetteDevice::clearRecordedTape()
 {
     recordedDurations.clear();
+    recordRedo_.clear();
     recordingOverflow = false;
     recordedInitialLevel = outputLevel;
     recordingStarted = false;

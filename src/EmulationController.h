@@ -627,6 +627,8 @@ private:
     void workerLoop();
     void waitUntilParked();      // block (bounded) until workerParked_ is set
     void flushAudioForRewind();  // → flushAudioForTimeJump (rewind callers)
+    // The cassette recording follows the restored frame (CASSETTE-002).
+    void rewindTapeTo(size_t index);   // stateMtx held, after flushAudioForRewind
 };
 
 namespace pom2 {

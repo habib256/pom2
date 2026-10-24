@@ -49,8 +49,12 @@ is_exempt() {
 # meant the one directory whose files are ADDED to fastest had no ceiling at
 # all. (tests/CMakeLists.txt, 6800 lines, is not covered: it is a build
 # manifest, not a translation unit, and the ratchet only speaks about .cpp/.h.)
+# Every first-party source, whatever its extension (ARCH-005: `.mm`, `.hpp`
+# and the include/ + examples/ trees used to slip past).
 list_sources() {
-    find src tests -type f \( -name '*.cpp' -o -name '*.h' \) | sort
+    find src tests include examples -type f \( -name '*.cpp' -o -name '*.h' \
+         -o -name '*.hpp' -o -name '*.cc' -o -name '*.inl' -o -name '*.mm' \) \
+         2>/dev/null | sort
 }
 
 # ── --update: rewrite the budget from what is on disk ─────────────────────

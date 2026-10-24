@@ -10,6 +10,25 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — The cassette recording follows the rewind (CASSETTE-002)
+
+A rewind across a live cassette recording kept the abandoned future's part
+of the tape, and the new SAVE was appended after it: two half-SAVEs end to
+end, which a LOAD answers with a checksum error. Decided: the recording is
+part of the machine's timeline, not irreversible output like a printout —
+clearing the ring on every `$C020` edge would have made rewind useless for
+the whole length of a SAVE and dropped everything before it.
+
+Each rewind frame now carries a 64-bit side mark (`RewindBuffer::capture`),
+the cassette's `recordMark()`: how much was recorded, the time since the
+last edge, the output level. Every restore cuts the recording back to it
+(`rewindRecordingTo`). What is cut waits in a redo buffer, so scrubbing back
+and forward again loses nothing; the first new edge drops it. The next
+duration includes the silence the frame was already in. A tape file already
+written is not touched. Pinned by `cassette_hostile` (cut, redo, a new edge,
+the 300 + 500 duration) and `rewind_transport` (a `LDA $C020` loop through
+the controller); both fail with the wiring removed.
+
 ## 2026-10-24 — Backlog sweep: FLUX long writes, off-track .dsk positions, `$CFFF`, SSC page, 24-bit WAV
 
 Each item checked against MAME and, where they differ, AppleWin; each new

@@ -585,6 +585,7 @@ private:
     // A write to a quarter-track the WOZ does not carry (TMAP $FF): add a
     // TRKS slot to `wozRaw`, point TMAP at it and seed a blank bit stream.
     bool allocateWozTrack(int qt);
+    bool growWozForTrack(int qt);
     // One log line per quarter-track whose allocation failed, not one per
     // ~30-transition flush.
     std::array<bool, kQuarterTracks> wozAllocFailed_{};

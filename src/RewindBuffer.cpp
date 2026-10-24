@@ -188,7 +188,7 @@ void RewindBuffer::clear()
     prevBlob_.clear();
 }
 
-void RewindBuffer::capture(M6502& cpu, Memory& mem)
+void RewindBuffer::capture(M6502& cpu, Memory& mem, uint64_t sideMark)
 {
     if (!enabled_.load()) return;
 
@@ -216,6 +216,7 @@ void RewindBuffer::capture(M6502& cpu, Memory& mem)
 
     Frame f;
     f.cycle = mem.getCycleCounter();
+    f.sideMark = sideMark;
 
     // `sinceKeyframe_` is the previous frame's distance from its keyframe
     // (keyframe itself = 0). The frame we're about to store sits one further;
@@ -369,7 +370,8 @@ size_t RewindBuffer::keyframeCount() const
 RewindBuffer::FrameInfo RewindBuffer::infoAt(size_t index) const
 {
     if (index >= frames_.size()) return {};
-    return { frames_[index].cycle, frames_[index].data.size(), frames_[index].isKeyframe };
+    return { frames_[index].cycle, frames_[index].data.size(), frames_[index].isKeyframe,
+             frames_[index].sideMark };
 }
 
 bool RewindBuffer::restore(size_t index, M6502& cpu, Memory& mem)

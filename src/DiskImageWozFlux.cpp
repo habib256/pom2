@@ -4,8 +4,10 @@
 
 #include "DiskImage.h"
 #include "Block512Backing.h"
+#include "Logger.h"
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <utility>
 
 void DiskImage::writeWozFlux(int qt, int64_t start, int64_t end, int count,
@@ -153,7 +155,27 @@ bool DiskImage::growWozFluxSlot(int qt, size_t bytesNeeded)
     return true;
 }
 
+// A quarter-track the image does not carry (TMAP $FF — Applesauce leaves a
+// half-used disk's empty tracks out) is unformatted surface, and real media
+// takes the write. writeFlux used to drop it: no dirty flag, no error, a
+// format verify that failed and a disk that could never be reformatted.
+// MAME writes the flux and creates the track on save. A WOZ that cannot grow
+// refuses with one warning per quarter-track, not one per flush.
 bool DiskImage::allocateWozTrack(int qt)
+{
+    if (!growWozForTrack(qt)) {
+        if (qt >= 0 && qt < kQuarterTracks && !wozAllocFailed_[qt]) {
+            wozAllocFailed_[qt] = true;
+            lastError = "WOZ: cannot add quarter-track " + std::to_string(qt / 4.0) +
+                        " to this image; writes to it are lost";
+            pom2::log().warn("Disk II", lastError);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool DiskImage::growWozForTrack(int qt)
 {
     if (!wozFormat || qt < 0 || qt >= kQuarterTracks ||
         wozQtBitCount[qt] != 0 || wozQtFluxPeriodTicks[qt] != 0 ||

@@ -5065,6 +5065,22 @@ and it lives in the wrong lock domain — `Memory::kbMutex`, not `stateMutex`).
 un-crossable by the epoch policy above. WOZ originals are typically
 write-protected anyway. A clean follow-up if a writable-WOZ workflow needs it.
 
+**The cassette recording follows the rewind** *(2026-10-24, CASSETTE-002)*.
+It is not irreversible output like a printout: a SAVE in progress lives in
+memory until the tape file is written, so the ring keeps time-travel during
+one instead of clearing on every edge. Each frame carries an opaque 64-bit
+`sideMark` (`RewindBuffer::capture`, `FrameInfo::sideMark`) — here
+`CassetteDevice::recordMark()`: recorded-duration count, cycles since the
+last toggle, output level, recording-started. Every restore
+(`rewindSeek`, `rewindSeekToCycle`, `rewindEndAndResume`) calls
+`rewindTapeTo` after `flushAudioForRewind`, and `rewindRecordingTo` cuts the
+recording to that count. The cut-off tail goes to a redo buffer, so a scrub
+that goes back and forward again loses nothing; the first new `$C020` edge
+drops it, as the machine's own abandoned future is dropped. The next
+duration counts the silence the frame was already in. A tape FILE already
+written is left alone. Pinned by `cassette_hostile` (device) and
+`rewind_transport` (controller, a `LDA $C020` loop).
+
 ### 3D voxel view
 
 `Voxel3DRenderer.{h,cpp}` + `Mat4.h` — MicroM8's **"Voxel Cube"** view:
