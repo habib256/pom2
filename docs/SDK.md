@@ -241,8 +241,28 @@ leaves it awake, as MAME's `reset_w` does). Pinned with the 32 KiB rev-0
 and 16 KiB rev-255 ROMs. The //c's serial ports and the external SmartPort
 chain are not part of the facade.
 
+`AppleIIcPlus` is the //c+ (`roms/apple2cp.rom`): a //c whose mouse firmware
+sits at `$C700`, with the MIG, the IWM and the two Sony 3.5" drives its ROM
+drives itself. They answer the SmartPort calls of the next section — unit 0
+the internal drive, unit 1 the external one, which joins the chain when a
+disk is first put in it — with nothing to attach (`attachSmartPort` refuses).
+`bootSlot(5)` is a cold boot through the ROM's own scan, as the application's
+slot-5 boot is: internal drive first, the external one when the internal bay
+is empty. A Disk II sits in slot 6 from the start, sharing the IWM — the ROM
+reads the 5.25" port even with no 5.25" disk — so `insertDisk` works without
+`attachDiskII`, and `bootDisk` needs no PROM (`$C600` is the system ROM, as on
+the //c). `attachMockingboard()` is the 4c+, the same rule as the 4c, over the
+ROM's memory-expansion page. The facade runs it at 1 MHz: the CGGA
+accelerator, which the ROM switches on at every reset, is the application's.
+The ROM's slot-6 ProDOS block driver at `$C64E` (the slot-5 SmartPort code
+called as slot 6) serves the 5.25" disk. Pinned by `pom2_core_api`: a 3.5"
+boot from the internal drive (X = `$50`), and through `$C64E` the numbers of
+M.G.'s "Apple IIc Plus: SmartPort Secrets" — STATUS A = `$00`, 280 blocks,
+and block 2 read back.
+
 ## 3.5" SmartPort
 
+On a //c+ the calls below reach its built-in drives (previous section).
 `attachSmartPort(slot)` plugs POM2's block-level `SmartPortCard` with two
 `SmartPort35Unit`s (ProDOS drive 1 / drive 2 of the slot) and its **synthetic**
 slot ROM; no Liron dump is read. It identifies as a ProDOS block device

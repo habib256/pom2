@@ -10,6 +10,67 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — pom2_core: the //c+; SmartPort calls held to the Liron firmware
+
+**`Machine::AppleIIcPlus`.** The //c+ in the facade: its ROM drives the MIG,
+the IWM and the two Sony 3.5" drives, reached through the SmartPort calls
+(unit 0 internal, unit 1 external); `bootSlot(5)` is the ROM's own reset
+scan; a Disk II shares the IWM in slot 6 from the start; mouse at `$C700`,
+4c+ behind `attachMockingboard()`. The disk hardware is allocated for that
+machine only — every other `Core` would otherwise build a `Disk35Image`, and
+the first one fixes the process-wide `POM2_MEDIA_WRITE_DEFAULT` reading.
+Pinned by `pom2_core_api`: a 3.5" boot (X = `$50`) and, through the ROM's
+hidden slot-6 block driver at `$C64E`, the numbers of M.G.'s "Apple IIc
+Plus: SmartPort Secrets" — STATUS A = `$00` with 280 blocks, and block 2.
+
+**An IWM hands the drive it selects the phases as they stand.** That STATUS
+answered `$2B`, write-protected, on a writable disk. A bus trace (the new
+`setBusWatch`) showed why: the ROM drops all four phases with the other
+drive selected (bank 1 `$EAAD`), selects drive 1, and reads the sense at
+`$F485`; `DiskIICard` keeps what each drive last received, MAME's per-floppy
+`m_phases`, and drive 1 still held phases 1+3 from the 3.5" probe — phase 1
+reads as protected (`floppy.cpp:842`, "for drive detection"). The per-drive
+state is right for the Disk II controller (`wozfdc`), but MAME's IWM ends
+`set_floppy()` in `update_phases()` (`iwm.cpp:111`, `applefdintf.cpp:97`):
+the drive gets the lines as they are when the motor comes on from idle and
+when the select moves under a running motor. `DiskIICard::iwmSelectsDrive`
+does that, as an IWM host only, and the STATUS then gives the article's
+`$00`. (Clemens, a IIgs emulator, would give `$00` too, but only because
+its 5.25" sense is the disk's notch alone, phase 1 playing no part —
+`clem_drive.c:236-239` — so it is no evidence for this rule.) The facade's `attachDiskII` also sets the card's
+IWM-host flag from the machine, as `SlotCardFactory` does — it was left on
+for a ][+ or //e.
+
+**The IWM status register carries bit 5.** `DiskIICard`'s IWM-host read of
+`$C0nE` under Q6 returned the sense and the mode, not the "drive enabled"
+bit MAME sets while the drive is active (`iwm.cpp:126`, `:157-159`). The
+//c+ ROM waits on it (bank 1 `$E51D`) before it writes the mode register.
+
+**SmartPort calls, checked against the real firmware.** A new test,
+`smartport_liron_parity`, puts 44 SmartPort calls to the HLE
+`SmartPortCard` and to `LironCard` — the Liron EPROM over the bus to POM2's
+UniDisk responder — and compares A, carry and data. The firmware is the
+oracle for what it decides itself; the Apple IIc Technical Reference
+("Calls to the Protocol Converter", Brutal Deluxe's scan) for what the
+drive answers. Corrected:
+
+- `SmartPortCard`: unit 0 on READ/WRITE/FORMAT/OPEN… is `$11` BADUNIT, not
+  `$28`; CONTROL to unit 0 is `$1F` for codes 0/1 and `$21` otherwise; the
+  caller's parameter count is no longer checked (`$04`) — the Liron sends
+  its own from `$CDE3` and accepts any; STATUS `$05` on a 3.5" unit returns
+  the UniDisk 3.5's eight-byte status; the general status byte reports
+  "format allowed" with or without a disk, and the DIB version is `$0100`,
+  as the responder answers.
+- `SmartPortBusDevice` (the UniDisk responder): STATUS `$01`/`$02` and any
+  undefined code were answered as code 0, CONTROL codes `$01`-`$03` and
+  `$05`+ as success, and WRITE `$09` as success while READ `$08` was `$01`.
+  The manual gives `$21` for the UniDisk's missing DCB and newline; the
+  UniDisk's own EXECUTE/download is not modelled and is refused, and the
+  524-byte Macintosh calls are `$01` both ways.
+
+Kept and pinned as divergences: the controller's interrupt byte (`$40`, TN
+SmartPort #2; the Liron answers `$00`) and an INIT addressed to a drive.
+
 ## 2026-10-24 — pom2_core: the bus, the display, the RGB card, a Disk II anywhere (pom2games' CHROMABREAK letter)
 
 CHROMABREAK's probe was the last of pom2games' tests compiled against

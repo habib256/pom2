@@ -44,6 +44,7 @@ bool dataFollows(uint8_t cmd)
 // SmartPort result codes.
 constexpr uint8_t kErrBadCmd    = 0x01;
 constexpr uint8_t kErrBadUnit   = 0x11;
+constexpr uint8_t kErrBadCtl    = 0x21;
 constexpr uint8_t kErrIo        = 0x27;
 constexpr uint8_t kErrWriteProt = 0x2B;
 constexpr uint8_t kErrBadBlock  = 0x2D;
@@ -471,8 +472,19 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
             st[22] = floppy ? 0x00 : 0x20;
             st[23] = 0x00; st[24] = 0x01;         // firmware 1.0
             buildReply(0x00, st, 25, false);
-        } else {
+        } else if (code == 0x00) {
             buildReply(0x00, st, 4, false);
+        } else if (code == 0x05 && u->isUnidisk35()) {
+            // "Return UniDisk 3.5 status" (Apple IIc Technical Reference,
+            // Protocol Converter STATUS): $00, soft error, retries, $00, then
+            // A/X/Y/P after a CONTROL EXECUTE. Nothing here ever fails a read
+            // or runs drive code, so all eight are zero.
+            const uint8_t unidisk[8] = {};
+            buildReply(0x00, unidisk, 8, false);
+        } else {
+            // Same manual: the UniDisk 3.5 has no DCB ($01) and is no
+            // character device ($02); the other codes are not defined.
+            buildReply(kErrBadCtl, nullptr, 0, false);
         }
         break;
     }
@@ -521,15 +533,28 @@ void SmartPortBusDevice::serveWriteData(const std::vector<uint8_t>& body)
         // `serveCommand` decoded as a block number. EJECT on a UniDisk 3.5
         // takes the disk out, as the drive's motor does; a hard disk "should
         // simply return from this call without an error" (TN SmartPort #2).
+        // Code 0 (reset) is a no-op. Everything else is $21, as the Apple
+        // IIc Technical Reference gives it for the UniDisk 3.5: no DCB to
+        // set ($01), no newline ($02, character devices), no interrupts
+        // ($03). Codes $05-$07 run or load 65C02 code in the UniDisk's own
+        // RAM, which POM2 does not model — refused rather than accepted
+        // and silently not run.
         if (!u) { buildReply(kErrBadUnit, nullptr, 0, false); return; }
-        if ((pendingBlock_ & 0xFF) == 0x04 && u->isUnidisk35() && u->hasMedia())
-            u->requestEject();
+        const uint8_t code = static_cast<uint8_t>(pendingBlock_ & 0xFF);
+        if (code == 0x04) {
+            if (u->isUnidisk35() && u->hasMedia()) u->requestEject();
+        } else if (code != 0x00) {
+            buildReply(kErrBadCtl, nullptr, 0, false);
+            return;
+        }
         buildReply(0x00, nullptr, 0, false);
         return;
     }
     if (pendingCmd_ != kCmdWrite) {
-        // Character WRITE: taken, nothing to do with it.
-        buildReply(0x00, nullptr, 0, false);
+        // WRITE $09, the byte-count write a UniDisk 3.5 uses for 524-byte
+        // Macintosh blocks: not modelled, and refused like READ $08 is,
+        // after the data packet the firmware sends regardless.
+        buildReply(kErrBadCmd, nullptr, 0, false);
         return;
     }
     if (!u)                                { buildReply(kErrBadUnit, nullptr, 0, false); return; }

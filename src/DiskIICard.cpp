@@ -1600,7 +1600,16 @@ void DiskIICard::selectDrive(int newDrive)
         // selection for the next motor-on event.
         activeDrive = newDrive;
     }
+    if (useBitLss ? active != MODE_IDLE : motorOn.load()) iwmSelectsDrive();
     pushIwmFloppy();
+}
+
+void DiskIICard::iwmSelectsDrive()
+{
+    if (!iwmHost_) return;
+    int mask = 0;
+    for (int i = 0; i < 4; ++i) if (phaseOn[i]) mask |= (1 << i);
+    seekPhaseW(mask);
 }
 
 // MAME `wozfdc_device::control(offset)` — verbatim port. Only POM2-
@@ -1643,6 +1652,7 @@ void DiskIICard::control(int offset)
                 case MODE_IDLE:
                     motorOn = true;
                     active  = MODE_ACTIVE;
+                    iwmSelectsDrive();
                     // UNCONDITIONAL, as in MAME (`wozfdc.cpp` case 0x9:
                     // `if(floppy) lss_start();`). There `floppy` is the
                     // selected DRIVE — a device that exists whether or not a
@@ -1800,6 +1810,8 @@ void DiskIICard::handleSwitchAccess(uint8_t low4)
             case 0x9:
                 if (!motorOn) {
                     cycleAccum = 0;
+                    motorOn = true;
+                    iwmSelectsDrive();
                     if (sound_) sound_->motor(true, images[activeDrive].isLoaded());
                     if (debugEnabled() && !trace.sawMotorOn) {
                         trace.sawMotorOn = true;
@@ -1896,7 +1908,9 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         // IWM status read hook (MAME `iwm.cpp:107-109`, case 0x40):
         //   read $C0nE with Q6 high + Q7 low (this access clears Q7 but
         //   Q6 was already on) → return (status & 0x7F) | (wpt ? 0x80 : 0).
-        //   status low 5 = mode low 5 (MAME `iwm.cpp:259`). The Apple //c+
+        //   status low 5 = mode low 5 (MAME `iwm.cpp:267`), bit 5 = the drive
+        //   is enabled (`iwm.cpp:157-159`, cleared at :199 when it goes
+        //   idle) — see iwmStatus(). The Apple //c+
         //   alt firmware probes this; without it the boot loop at $E51B
         //   (BEQ on `Y EOR status & $1F`) never falls through and the
         //   Monitor hangs before clearing the text page.
@@ -1906,9 +1920,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
             // same cycle with the same inputs — but the hook must not be
             // the one place that skips it.
             lssSync(1);
-            DiskImage& img = images[activeDrive];
-            const uint8_t wpt = (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
-            return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
+            return iwmStatus();
         }
         // IWM write-handshake read hook (MAME `iwm.cpp:107-110`, case
         // 0x80): read $C0nC with Q7 high + Q6 low → return m_whd.
@@ -1995,11 +2007,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     // `useBitLss = false` until a WOZ image or P6 PROM is in flight —
     // and the //c+ alt firmware probes $C0EE *before* the user clicks
     // a disk in the library.
-    if (iwmHost_ && low4 == 0xE && wasQ6Legacy) {
-        DiskImage& img = images[activeDrive];
-        const uint8_t wpt = (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
-        return static_cast<uint8_t>(wpt | (iwmMode & 0x1F));
-    }
+    if (iwmHost_ && low4 == 0xE && wasQ6Legacy) return iwmStatus();
     if (iwmHost_ && low4 == 0xC && writeMode) {
         return iwmWhd;
     }

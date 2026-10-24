@@ -1199,9 +1199,19 @@ uint8_t SmartPortCard::spExecute()
         return units_[n - 1].get();
     };
 
+    // What the host firmware decides before a packet reaches a drive, as the
+    // real Liron EPROM does it (smartport_liron_parity runs both): a command
+    // past $09 is $01 ($CC5B CPX #$0A); unit 0 is the controller, which only
+    // STATUS, CONTROL and INIT may address — anything else is $11 BADUNIT
+    // (Apple IIc Technical Reference, Protocol Converter error codes); and
+    // the caller's parameter count is never checked — the firmware sends
+    // its own count from the table at $CDE3, so a wrong one is no error.
+    if (cmd >= 0x0A) return fail(0x01);
+    if (unitNo == 0 && cmd != 0x00 && cmd != 0x04 && cmd != 0x05)
+        return fail(0x11);
+
     switch (cmd) {
         case 0x00: {                                   // STATUS
-            if (pcount != 3) return fail(0x04);        // bad param count
             const uint8_t code = spCollect_[5];
             if (unitNo == 0) {
                 if (code != 0x00) return fail(0x21);   // bad status code
@@ -1219,14 +1229,17 @@ uint8_t SmartPortCard::spExecute()
             if (!u) return fail(0x28);                 // no device connected
             const bool     loaded = guestLoaded(unitNo - 1u);
             const uint32_t blocks = loaded ? u->blockCount() : 0;
+            const bool     is35   = u->kindKey() == SmartPort35Unit::kKindKey;
             // General status byte: bit7 block dev, bit6 write allowed,
             // bit5 read allowed, bit4 online, bit3 format allowed,
-            // bit2 write-protected, bit1 interrupting, bit0 open.
-            uint8_t g = 0xA0;                          // block + readable
+            // bit2 write-protected, bit1 interrupting, bit0 open. Format
+            // is the device's capability, set with or without a disk, as
+            // the bus responder (SmartPortBusDevice) answers it.
+            uint8_t g = 0xA8;                          // block, read, format
             if (loaded) {
                 g |= 0x10;                             // online
                 if (u->isWriteProtected()) g |= 0x04;
-                else                       g |= 0x48;  // writable+formattable
+                else                       g |= 0x40;  // writable
             }
             if (code == 0x00) {
                 spResult_ = { g,
@@ -1243,7 +1256,6 @@ uint8_t SmartPortCard::spExecute()
                 // The name: "DISK 3.5" is what both the UniDisk 3.5 and the
                 // Apple 3.5 Drive answer (TN SmartPort #7), and what a
                 // program identifying drives by name looks for.
-                const bool is35 = u->kindKey() == SmartPort35Unit::kKindKey;
                 const std::string_view kId = is35 ? "DISK 3.5" : "POM2 HARDDISK";
                 spResult_.push_back(static_cast<uint8_t>(kId.size()));
                 for (size_t i = 0; i < 16; ++i)
@@ -1255,15 +1267,22 @@ uint8_t SmartPortCard::spExecute()
                 // Apple 3.5 Drive on the IIgs, not this card. HDV is type
                 // $02 with bit 5 set (not removable) and bit 7 clear.
                 spResult_.push_back(is35 ? 0x00 : 0x20);
-                spResult_.push_back(0x01);                // firmware version
-                spResult_.push_back(0x00);
+                spResult_.push_back(0x00);                // firmware 1.0,
+                spResult_.push_back(0x01);                // as the bus responder
                 return ok();
             }
+            if (code == 0x05 && is35) {
+                // "Return UniDisk 3.5 status": $00, soft error, retries,
+                // $00, A/X/Y/P after a CONTROL EXECUTE — all zero here.
+                spResult_.assign(8, 0x00);
+                return ok();
+            }
+            // No DCB ($01), not a character device ($02), nothing else
+            // defined: BADCTL, as the manual gives it for the UniDisk 3.5.
             return fail(0x21);
         }
         case 0x01:                                     // READ BLOCK
         case 0x02: {                                   // WRITE BLOCK
-            if (pcount != 3) return fail(0x04);
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
             if (!guestLoaded(unitNo - 1u)) return fail(0x2F);   // device offline
@@ -1295,7 +1314,6 @@ uint8_t SmartPortCard::spExecute()
         case 0x03: {                                   // FORMAT
             // Apple IIgs Firmware Reference, SmartPort FORMAT / INIT
             // (pp. 7-14, 7-17): one parameter, the unit number.
-            if (pcount != 1) return fail(0x04);
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
             if (!guestLoaded(unitNo - 1u)) return fail(0x2F);
@@ -1303,20 +1321,23 @@ uint8_t SmartPortCard::spExecute()
             return ok();  // block devices "need only lay down marks" — no-op
         }
         case 0x04: {                                   // CONTROL
-            if (pcount != 3) return fail(0x04);
             // Code 0 (device reset) is a no-op success. Code 4 is EJECT
             // since May 1988 (TN SmartPort #2): "all SmartPort devices which
             // support removable media must support this call", and a fixed
             // one "should simply return from this call without an error".
             // A 3.5" disk really leaves the drive: the request goes to the
             // UI thread, which ejects through the three-phase path (the
-            // write-back cannot run here, under the machine lock). Unit 0 or
-            // a number past the chain is no device ($28), as for FORMAT.
-            // Anything else needs the control list's data, which the stub
-            // cannot copy guest→device → bad control code.
-            if (unitNo == 0 || unitNo > static_cast<uint8_t>(unitCount_))
-                return fail(0x28);
+            // write-back cannot run here, under the machine lock).
+            // Unit 0 is the controller: codes 0 and 1 (enable / disable its
+            // interrupts, which on a //c are the ACIA's) answer $1F — this
+            // card, like the Liron, has none — and any other code $21, as
+            // the Liron firmware answers them. A number past the chain is
+            // no device ($28). Every other code is $21 — no DCB, newline or
+            // interrupts on these units, and the UniDisk's own code
+            // download/EXECUTE is not modelled (SmartPortBusDevice agrees).
             const uint8_t code = spCollect_[5];
+            if (unitNo == 0) return fail(code <= 0x01 ? 0x1F : 0x21);
+            if (unitNo > static_cast<uint8_t>(unitCount_)) return fail(0x28);
             if (code != 0x00 && code != 0x04) return fail(0x21);
             SmartPortUnit* u = unitFor(unitNo);
             if (code == 0x04 && u && guestLoaded(unitNo - 1u) &&
@@ -1325,8 +1346,10 @@ uint8_t SmartPortCard::spExecute()
             return ok();
         }
         case 0x05:                                     // INIT
-            if (pcount != 1) return fail(0x04);
-            if (unitNo != 0) return fail(0x28);        // controller only
+            // Unit 0 only. The Liron firmware passes another number on to
+            // the drive as an INIT and reports what that drive answers,
+            // which depends on the chain; $28 here is POM2's own choice.
+            if (unitNo != 0) return fail(0x28);
             return ok();
         default:
             return fail(0x01);                         // bad command

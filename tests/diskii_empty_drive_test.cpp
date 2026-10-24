@@ -178,10 +178,15 @@ struct WpAnswers {
 WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
                            const std::string& nib, bool probeLoadedDrive,
                            bool phase1On = false,
-                           bool phase1BeforeMotor = false)
+                           bool phase1BeforeMotor = false,
+                           bool iwmHost = true)
 {
     Memory mem;
     auto card = std::make_unique<DiskIICard>();
+    // The card's own default is the IWM host of a //c, whose $C0nE status
+    // hook answers the sense with no sequencer time; the Disk II controller
+    // case below turns it off.
+    card->setIwmHost(iwmHost);
     if (useBitLss && !card->loadLssRom(p6Rom)) {
         std::fprintf(stderr, "FAIL: P6 LSS PROM would not load\n");
         return { 0, 0, false };
@@ -223,7 +228,7 @@ WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
     // is `m_wpt || (m_phases & 2)`. $C0n3 energizes it, $C0n2 releases it.
     if (phase1On) mem.memRead(0xC0E3);
 
-    if (phase1BeforeMotor && raw->getQuarterTrack(0) != 0) {
+    if (phase1BeforeMotor && !iwmHost && raw->getQuarterTrack(0) != 0) {
         std::fprintf(stderr, "FAIL: a phase latched with the motor off moved "
                      "the head to quarter-track %d\n", raw->getQuarterTrack(0));
         return { 0x80, 0x80, true };
@@ -358,7 +363,8 @@ int main()
         const WpAnswers w = readWriteProtect(bitLss, p6, nib,
                                              /*probeLoadedDrive=*/true,
                                              /*phase1On=*/false,
-                                             /*phase1BeforeMotor=*/true);
+                                             /*phase1BeforeMotor=*/true,
+                                             /*iwmHost=*/false);
         if (!w.ok) return 1;
         const char* gate = bitLss ? "bit-LSS" : "legacy ";
         const bool sProt = (w.shortcut  & 0x80) != 0;
@@ -374,6 +380,33 @@ int main()
         } else {
             std::printf("[ OK ] %s phase 1 before motor  both WP probes say "
                         "writable\n", gate);
+        }
+    }
+
+    // ── …on a Disk II controller. An IWM hands the drive it selects the
+    // lines as they stand (MAME iwm_device::set_floppy → update_phases), so
+    // there the same phase 1 reaches the drive when the motor comes on.
+    for (bool bitLss : { true, false }) {
+        const WpAnswers w = readWriteProtect(bitLss, p6, nib,
+                                             /*probeLoadedDrive=*/true,
+                                             /*phase1On=*/false,
+                                             /*phase1BeforeMotor=*/true,
+                                             /*iwmHost=*/true);
+        if (!w.ok) return 1;
+        const char* gate = bitLss ? "bit-LSS" : "legacy ";
+        const bool sProt = (w.shortcut  & 0x80) != 0;
+        const bool cProt = (w.canonical & 0x80) != 0;
+        if (!sProt || !cProt) {
+            std::fprintf(stderr,
+                "FAIL: %s IWM host, phase 1 latched before the motor — $C0nD "
+                "says %s, $C0nE says %s; the IWM hands it to the drive it "
+                "selects, both must say protected.\n",
+                gate, sProt ? "protected" : "writable",
+                cProt ? "protected" : "writable");
+            ++failures;
+        } else {
+            std::printf("[ OK ] %s IWM host, phase 1 before motor  both say "
+                        "protected\n", gate);
         }
     }
 

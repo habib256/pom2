@@ -66,13 +66,19 @@ enum class RgbDhgrMode : std::uint8_t {
 /// AppleIIeEnhanced = 65C02, //e memory; AppleIIc = 65C02, //e memory, the
 /// //c's built-in mouse on port 4 (its firmware is in the system ROM, so
 /// moveMouse()/setMouse() drive it with no attachMouse()), and a 32 KiB ROM
-/// loaded as a //c dump (bank 0 at reset). The ROM itself is still loadRom().
+/// loaded as a //c dump (bank 0 at reset). AppleIIcPlus is the //c+: the same,
+/// its mouse firmware at $C700, plus the MIG, the IWM and the two 3.5" drives
+/// its ROM drives — reached through the SmartPort calls below — and a Disk II
+/// in slot 6 from the start. It runs at 1 MHz: the CGGA accelerator is the
+/// application's, not the facade's. The ROM itself is still loadRom().
+/// New machines are added at the end.
 enum class Machine : std::uint8_t {
     Custom,
     AppleIIPlus,
     AppleIIe,
     AppleIIeEnhanced,
     AppleIIc,
+    AppleIIcPlus,
 };
 
 /// Construction-time machine choices. Slot cards remain opt-in: the public
@@ -184,7 +190,8 @@ public:
     /// The protection the guest sees, whatever its cause.
     bool diskWriteProtected(int drive = 0) const;
     /// Cold boot directly at the controller's boot PROM ($Cn00). Returns
-    /// false unless the controller, its boot ROM and a disk in drive 0 are
+    /// false unless the controller, its boot ROM (on a //c or //c+, whose
+    /// $C600 is the system ROM, not needed) and a disk in drive 0 are
     /// present — the PROM boots drive 1 only — and false, after the cold
     /// boot, when the machine maps its own firmware over that page.
     bool bootDisk();
@@ -195,6 +202,9 @@ public:
     /// Liron dump is read — identifying as a ProDOS block device ($Cn07=$01).
     /// It has no mechanical timing: a block costs exactly the CPU cycles of
     /// the driver's 512-byte copy loop, so runs are cycle-reproducible.
+    /// On Machine::AppleIIcPlus there is nothing to attach (false): its two
+    /// built-in 3.5" drives answer the calls below, unit 0 the internal one
+    /// and unit 1 the external one, and bootSlot(5) boots them.
     bool attachSmartPort(int slot = 5);
     /// Mount raw ProDOS-order 400/800 KiB, supported 2IMG or GCR WOZ/MOOF on
     /// unit 0 or 1. Captures are block-write-protected; MFM/1.44 MB is disabled.
@@ -214,7 +224,9 @@ public:
     /// signature ($Cn01=$20, $Cn03=$00, $Cn05=$03), with RAM untouched; and
     /// false, after the cold boot, when the machine maps its own firmware
     /// over that page out of reset (slot 3 on a //e, slots other than 5 on a
-    /// //c). The Disk II's slot is bootDisk().
+    /// //c). The Disk II's slot is bootDisk(). On a //c+, slot 5 is a cold
+    /// boot through the ROM's own scan — internal drive first, the external
+    /// one when the internal bay is empty — and needs a 3.5" disk in either.
     bool bootSlot(int slot);
 
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
@@ -239,7 +251,9 @@ public:
     /// convention). SoundII adds the SSI263 speech synthesizer. On a
     /// Machine::AppleIIc it is the Mockingboard 4c on the internal connector
     /// (`slot` is ignored): dormant until the guest writes into $C400-$C4FF,
-    /// then answering that page — over the mouse firmware — until a reset.
+    /// then answering that page — over the mouse firmware — until a power
+    /// cycle. On AppleIIcPlus it is the 4c+, the same way, over the ROM's
+    /// memory-expansion firmware.
     bool attachMockingboard(int slot = 4,
                             MockingboardModel model = MockingboardModel::AC);
     bool mockingboardAttached() const;
