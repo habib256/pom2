@@ -34,12 +34,38 @@ enum class MockingboardModel : std::uint8_t {
     SoundII,
 };
 
+/// The Apple Mouse Interface Card. AppleMouse runs Apple's own firmware on
+/// both chips — the slot EPROM 341-0270-C and the MC68705 MCU's mask ROM
+/// 341-0269, emulated as in MAME. AppleMouseAppleWin runs the same slot
+/// EPROM against AppleWin's high-level model of the MCU (one ROM).
+enum class MouseModel : std::uint8_t {
+    AppleMouse,
+    AppleMouseAppleWin,
+};
+
+/// A named machine, or Custom to take `cpu` and `iieMemory` as given.
+/// AppleIIPlus = NMOS, II+ memory; AppleIIe = NMOS, //e memory;
+/// AppleIIeEnhanced = 65C02, //e memory; AppleIIc = 65C02, //e memory, the
+/// //c's built-in mouse on port 4 (its firmware is in the system ROM, so
+/// moveMouse()/setMouse() drive it with no attachMouse()), and a 32 KiB ROM
+/// loaded as a //c dump (bank 0 at reset). The ROM itself is still loadRom().
+enum class Machine : std::uint8_t {
+    Custom,
+    AppleIIPlus,
+    AppleIIe,
+    AppleIIeEnhanced,
+    AppleIIc,
+};
+
 /// Construction-time machine choices. Slot cards remain opt-in: the public
 /// facade starts with an empty expansion bus and never opens a host device.
+/// `machine` is LAST so the positional `{cpu, timing, iieMemory}` form
+/// written before it existed still compiles and means the same machine.
 struct CoreConfig {
-    CpuModel   cpu       = CpuModel::NMOS6502;
+    CpuModel   cpu       = CpuModel::NMOS6502;   ///< Custom only
     VideoTiming timing   = VideoTiming::NTSC;
-    bool       iieMemory = false;
+    bool       iieMemory = false;                ///< Custom only
+    Machine    machine   = Machine::Custom;
 };
 
 /// Register snapshot taken at an instruction boundary.
@@ -157,11 +183,36 @@ public:
     void setCassetteVolume(float volume);
 
     /// Install a stereo Mockingboard in an empty expansion slot (slot 4 by
-    /// convention). SoundII adds the SSI263 speech synthesizer.
+    /// convention). SoundII adds the SSI263 speech synthesizer. On a
+    /// Machine::AppleIIc it is the Mockingboard 4c on the internal connector
+    /// (`slot` is ignored): dormant until the guest writes into $C400-$C4FF,
+    /// then answering that page — over the mouse firmware — until a reset.
     bool attachMockingboard(int slot = 4,
                             MockingboardModel model = MockingboardModel::AC);
     bool mockingboardAttached() const;
     void setMockingboardVolume(float volume);
+
+    /// Install an Apple Mouse card in an empty slot (4 by convention: the
+    /// slot Apple sold it for, and the one software that skips the scan
+    /// calls). A Machine::AppleIIc has its mouse built in and refuses this.
+    /// Reads `mouse_341-0270-c.bin` (and, for AppleMouse,
+    /// `mouse_341-0269.bin`) from `romDirectory`. Its interrupts — movement,
+    /// button, VBL at the beam's line 192 — reach the 6502 as in the
+    /// application.
+    bool attachMouse(int slot = 4, MouseModel model = MouseModel::AppleMouse,
+                     std::string_view romDirectory = "roms");
+    bool mouseAttached() const;
+    /// Relative motion and the button, what the card's hardware receives.
+    /// Exact on both models; on AppleMouse keep each axis within ±127
+    /// between two run() slices (the MCU reads an 8-bit counter).
+    void moveMouse(int dx, int dy, bool button);
+    /// Absolute position in the firmware's clamp window (the units of the
+    /// screen holes $0478+n / $04F8+n). A closed loop, as in the
+    /// application: each call pushes one correction of at most ±127 per
+    /// axis toward the target, which the card takes as the guest runs; call
+    /// it every frame and a large jump converges in a few. Returns true once
+    /// the card reports the target.
+    bool setMouse(int x, int y, bool button);
 
     /// CPU/RAM reset variants: soft reset preserves A/X/Y while updating
     /// PC/P/SP; hard reset clears A/X/Y, and cold boot also clears RAM.
@@ -241,6 +292,14 @@ public:
                           std::uint32_t sampleRate = 44100);
 
     CpuState cpuState() const;
+    /// Overwrite A, X, Y, P, S and PC at the current instruction boundary;
+    /// the next step()/run() executes at `programCounter`. `cycles` and
+    /// `halted` are ignored, and nothing else moves: the cycle counter, the
+    /// soft switches (80STORE, RAMRD/RAMWRT, ALTZP, language card, video)
+    /// and a pending IRQ are left as they are — which is what a RESET-vector
+    /// trampoline could not do. Bit 5 of P reads 1 on every 6502, so it is
+    /// forced. Same on the NMOS 6502 and the 65C02. Call between run()/step().
+    void setCpuState(const CpuState& state);
 
 private:
     class Impl;

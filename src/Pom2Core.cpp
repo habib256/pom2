@@ -24,7 +24,10 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
+#include "IIcMouse.h"
 #include "Mockingboard.h"
+#include "MouseCard.h"
+#include "MouseCardAppleWin.h"
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
@@ -40,14 +43,17 @@ namespace pom2 {
 
 class Core::Impl {
 public:
-    explicit Impl(const CoreConfig& config)
+    explicit Impl(const CoreConfig& requested)
         : cpu(&memory)
     {
+        const CoreConfig config = resolve(requested);
+        machine = config.machine;
         memory.setCpu(&cpu);
         memory.setIIEMode(config.iieMemory);
-        memory.setVideoStandard(config.timing == VideoTiming::PAL
+        videoStandard = config.timing == VideoTiming::PAL
             ? ::VideoStandard::PAL
-            : ::VideoStandard::NTSC);
+            : ::VideoStandard::NTSC;
+        memory.setVideoStandard(videoStandard);
         cpu.setCpuMode(config.cpu == CpuModel::CMOS65C02
             ? M6502::CpuMode::CMOS
             : M6502::CpuMode::NMOS);
@@ -62,6 +68,26 @@ public:
         cassette.setAudioOutputSampleRate(audioSampleRate);
         memory.setSpeakerDevice(&speaker);
         memory.setCassetteDevice(&cassette);
+        if (machine == Machine::AppleIIc) {
+            // The //c's IOU mouse: no card, no ROM of its own — port 4 only
+            // owns its lifecycle, IRQ and snapshot (SlotCardFactory "iicmouse").
+            auto mouse = std::make_unique<IIcMouse>(4);
+            mouseIic = mouse.get();
+            mouseSlot = 4;
+            memory.slotBus().plug(4, std::move(mouse));
+        }
+    }
+
+    static CoreConfig resolve(CoreConfig c)
+    {
+        switch (c.machine) {
+        case Machine::Custom:           break;
+        case Machine::AppleIIPlus:      c.cpu = CpuModel::NMOS6502;  c.iieMemory = false; break;
+        case Machine::AppleIIe:         c.cpu = CpuModel::NMOS6502;  c.iieMemory = true;  break;
+        case Machine::AppleIIeEnhanced: c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
+        case Machine::AppleIIc:         c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
+        }
+        return c;
     }
 
     ~Impl()
@@ -83,6 +109,18 @@ public:
     // simply overwrote the single pointer and the earlier card kept 44 100
     // while the mixer consumed 48 000.
     std::vector<MockingboardCard*> mockingboards;
+    // Non-owning; the slot owns the card. One of the two, or neither.
+    MouseCard*         mouseMcu = nullptr;
+    MouseCardAppleWin* mouseHle = nullptr;
+    IIcMouse*          mouseIic = nullptr;   // the //c's built-in one
+    Machine            machine  = Machine::Custom;
+    int                mouseSlot = 0;
+    std::uint8_t       mouseRawX = 0, mouseRawY = 0;   // the host's running counters
+    // setMouse on the MCU card: where the screen holes stood when the last
+    // correction went out. Until they move, that correction is not published.
+    bool               mousePushOut = false;
+    int                mousePushHoleX = 0, mousePushHoleY = 0;
+    ::VideoStandard    videoStandard = ::VideoStandard::NTSC;
     double cpuClockHz = static_cast<double>(POM2_CPU_CLOCK_HZ);
     std::uint32_t audioSampleRate = 44100;
     std::vector<float> speakerScratch;
@@ -109,8 +147,10 @@ Core& Core::operator=(Core&&) noexcept = default;
 bool Core::loadRom(std::string_view path, bool lowerBankFor32K)
 {
     const std::string ownedPath(path);
+    // A //c's 32 KiB dump boots from its lower bank (IIcClassProfile).
     const bool loaded = impl_->memory.loadAppleIIRom(
-        ownedPath.c_str(), lowerBankFor32K) != 0;
+        ownedPath.c_str(),
+        lowerBankFor32K || impl_->machine == Machine::AppleIIc) != 0;
     impl_->error = loaded ? std::string{} : impl_->memory.getLastError();
     return loaded;
 }
@@ -412,6 +452,10 @@ void Core::setCassetteVolume(float volume)
 
 bool Core::attachMockingboard(int slot, MockingboardModel model)
 {
+    // The //c has no slots: its Mockingboard is the 4c on the internal
+    // expansion connector, which POM2 hosts on virtual slot 3 and Memory
+    // maps at $C400-$C4FF once a write there wakes it (iicExpansionAwake).
+    if (impl_->machine == Machine::AppleIIc) slot = 3;
     if (slot < 1 || slot > 7) {
         impl_->error = "Mockingboard slot must be between 1 and 7";
         return false;
@@ -444,6 +488,125 @@ void Core::setMockingboardVolume(float volume)
     // Every attached card, not just the last one: they are all mixed.
     for (MockingboardCard* card : impl_->mockingboards)
         if (card) card->setVolume(volume);
+}
+
+bool Core::attachMouse(int slot, MouseModel model, std::string_view romDirectory)
+{
+    if (slot < 1 || slot > 7) {
+        impl_->error = "Mouse slot must be between 1 and 7";
+        return false;
+    }
+    if (impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "Requested mouse slot is already occupied";
+        return false;
+    }
+    if (impl_->mouseIic) {
+        impl_->error = "The //c has its mouse built in; moveMouse()/setMouse() drive it";
+        return false;
+    }
+    if (impl_->mouseMcu || impl_->mouseHle) {
+        impl_->error = "A mouse card is already attached";
+        return false;
+    }
+    const std::string dir(romDirectory);
+    const std::string slotRom = dir + "/mouse_341-0270-c.bin";
+    if (model == MouseModel::AppleMouseAppleWin) {
+        auto card = std::make_unique<MouseCardAppleWin>(slot);
+        if (!card->loadRom(slotRom)) {
+            impl_->error = "Cannot load " + slotRom + " (2048 bytes expected)";
+            return false;
+        }
+        // VBL on the beam: line 192 of a 262- or 312-line frame (SlotCardFactory).
+        const auto& timing = pom2VideoTiming(impl_->videoStandard);
+        card->setVblCycles(timing.scanlinesPerFrame * timing.cyclesPerScanline);
+        card->setCpuClock(impl_->cpuClockHz);
+        impl_->mouseHle = card.get();
+        impl_->memory.slotBus().plug(slot, std::move(card));
+    } else {
+        const std::string mcuRom = dir + "/mouse_341-0269.bin";
+        auto card = std::make_unique<MouseCard>(slot);
+        if (!card->loadRoms(slotRom, mcuRom)) {
+            impl_->error = "Cannot load " + slotRom + " and " + mcuRom +
+                           " (2048 bytes each expected)";
+            return false;
+        }
+        card->setCpuClock(impl_->cpuClockHz);
+        impl_->mouseMcu = card.get();
+        impl_->memory.slotBus().plug(slot, std::move(card));
+    }
+    impl_->mouseSlot = slot;
+    impl_->mouseRawX = impl_->mouseRawY = 0;
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::mouseAttached() const
+{
+    return impl_->mouseMcu || impl_->mouseHle || impl_->mouseIic;
+}
+
+void Core::moveMouse(int dx, int dy, bool button)
+{
+    if (!mouseAttached()) return;
+    // In steps of at most ±127: the AppleWin model banks each call's signed
+    // 8-bit delta, so a large move arrives whole; the MCU reads the counter
+    // difference at its next poll (see the header).
+    do {
+        const int sx = std::clamp(dx, -127, 127), sy = std::clamp(dy, -127, 127);
+        impl_->mouseRawX = static_cast<std::uint8_t>(impl_->mouseRawX + sx);
+        impl_->mouseRawY = static_cast<std::uint8_t>(impl_->mouseRawY + sy);
+        if (impl_->mouseHle)      impl_->mouseHle->setHostMouse(impl_->mouseRawX, impl_->mouseRawY, button);
+        else if (impl_->mouseIic) impl_->mouseIic->setHostMouse(impl_->mouseRawX, impl_->mouseRawY, button);
+        else                      impl_->mouseMcu->setHostMouse(impl_->mouseRawX, impl_->mouseRawY, button);
+        dx -= sx; dy -= sy;
+    } while (dx != 0 || dy != 0);
+}
+
+bool Core::setMouse(int x, int y, bool button)
+{
+    if (!mouseAttached()) return false;
+    int curX = 0, curY = 0;
+    if (impl_->mouseHle) {
+        // The application's closed-loop rule (MouseSync.h): a correction is
+        // computed only once the previous one has been consumed.
+        const auto s = impl_->mouseHle->debugSnapshot();
+        if (!s.hostDrained) { moveMouse(0, 0, button); return false; }
+        curX = s.iX; curY = s.iY;
+        x = std::clamp(x, s.iMinX, std::max(s.iMinX, s.iMaxX));
+        y = std::clamp(y, s.iMinY, std::max(s.iMinY, s.iMaxY));
+    } else {
+        // The MCU keeps its position to itself; the firmware publishes it in
+        // the slot's screen holes when the guest reads the mouse. The MCU
+        // replays a push as quadrature edges over several frames, so a
+        // correction computed before it has been replayed — and published —
+        // stacks on the previous one and overshoots (the A2FILECMD jump,
+        // MouseSync.h). Wait for both.
+        // The //c's IOU: settled() = every edge emitted and serviced by the
+        // ROM's IRQ handler, so the screen holes are final (MouseCoordinator).
+        const bool pending = impl_->mouseIic ? !impl_->mouseIic->settled()
+                                             : impl_->mouseMcu->hostMotionPending();
+        if (pending) { moveMouse(0, 0, button); return false; }
+        const int n = impl_->mouseSlot;
+        Memory& m = impl_->memory;
+        curX = m.peekCpuView(static_cast<std::uint16_t>(0x0478 + n)) |
+               (m.peekCpuView(static_cast<std::uint16_t>(0x0578 + n)) << 8);
+        curY = m.peekCpuView(static_cast<std::uint16_t>(0x04F8 + n)) |
+               (m.peekCpuView(static_cast<std::uint16_t>(0x05F8 + n)) << 8);
+        curX = static_cast<std::int16_t>(curX);
+        curY = static_cast<std::int16_t>(curY);
+        if (impl_->mousePushOut && curX == impl_->mousePushHoleX &&
+            curY == impl_->mousePushHoleY) {
+            moveMouse(0, 0, button);            // replayed, not yet read back
+            return false;
+        }
+    }
+    const int dx = std::clamp(x - curX, -127, 127);
+    const int dy = std::clamp(y - curY, -127, 127);
+    moveMouse(dx, dy, button);
+    impl_->mousePushOut = dx != 0 || dy != 0;
+    impl_->mousePushHoleX = curX;
+    impl_->mousePushHoleY = curY;
+    return dx == 0 && dy == 0;
 }
 
 void Core::softReset()
@@ -645,6 +808,17 @@ std::size_t Core::pullAudio(float* interleavedStereo,
         produced += count;
     }
     return produced;
+}
+
+void Core::setCpuState(const CpuState& state)
+{
+    M6502& cpu = impl_->cpu;
+    cpu.setAccumulator(state.accumulator);
+    cpu.setXRegister(state.x);
+    cpu.setYRegister(state.y);
+    cpu.setStatusRegister(static_cast<std::uint8_t>(state.status | 0x20));
+    cpu.setStackPointer(state.stackPointer);
+    cpu.setProgramCounter(state.programCounter);
 }
 
 CpuState Core::cpuState() const

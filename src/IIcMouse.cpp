@@ -26,6 +26,7 @@ void IIcMouse::onReset()
     enabled_ = xEdge_ = yEdge_ = false;
     x0_ = y0_ = x1_ = y1_ = xIrq_ = yIrq_ = false;
     countX_ = countY_ = phase_ = 0;
+    releasedFor_ = 0;
     assertIrq(false);
 }
 
@@ -96,14 +97,25 @@ void IIcMouse::step()
     // transition every scanline unconditionally (and loses the same edges):
     // the host pointer can move faster than any physical mouse, so the
     // shaping belongs on this side of the quadrature (GitHub issue #17).
+    //
+    // The hold ends if the line was released with the latch still set and
+    // nobody clears it — a guest that reads $C015/$C017 with interrupts
+    // masked (READMOUSE under SEI) acknowledges the line without $C048, the
+    // ROM's handler never runs, and a held queue then froze the mouse for
+    // good. A real mouse keeps moving: the next edge raises the line again.
+    // A handler goes from $C015 to $C048 in well under a scanline, so a few
+    // scanlines of a released line mean no handler is coming.
+    const bool latched = xIrq_ || yIrq_;
+    releasedFor_ = (latched && !slotIrqAsserted()) ? releasedFor_ + 1 : 0;
+    const bool stale = releasedFor_ >= kStaleLatchLines;
     bool irq = false;
-    if (countX_ && !(enabled_ && xIrq_)) {
+    if (countX_ && !(enabled_ && xIrq_ && !stale)) {
         x1_ = countX_ > 0;
         countX_ += countX_ > 0 ? -1 : 1;
         if (enabled_ && x0_ == xEdge_) { xIrq_ = true; irq = true; }
         x0_ = !x0_;
     }
-    if (countY_ && !(enabled_ && yIrq_)) {
+    if (countY_ && !(enabled_ && yIrq_ && !stale)) {
         y1_ = countY_ < 0;
         countY_ += countY_ > 0 ? -1 : 1;
         if (enabled_ && y0_ == yEdge_) { yIrq_ = true; irq = true; }

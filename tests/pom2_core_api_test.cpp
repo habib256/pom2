@@ -255,8 +255,195 @@ void testSmartPort(const std::string& sourceDir)
 
 } // namespace
 
+// setCpuState (pom2games' a2shot `call:ADR`): push a return address, place
+// S and PC, run to the RTS. Nothing else may move — the cycle counter and the
+// //e soft switches a test sets up stay as they were, which a RESET-vector
+// trampoline could not promise. NMOS and 65C02 alike.
+void testSetCpuState()
+{
+    for (const auto model : { pom2::CpuModel::NMOS6502, pom2::CpuModel::CMOS65C02 }) {
+        pom2::CoreConfig cfg;
+        cfg.cpu = model;
+        cfg.iieMemory = model == pom2::CpuModel::CMOS65C02;
+        pom2::Core c(cfg);
+        // $0300: INX / RTS. $0400: JMP $0400, the landing site.
+        const std::uint8_t code[] = { 0xE8, 0x60 };
+        for (std::uint16_t i = 0; i < sizeof code; ++i) c.write(0x0300 + i, code[i]);
+        c.write(0x0400, 0x4C); c.write(0x0401, 0x00); c.write(0x0402, 0x04);
+        // JSR convention: the stack holds the return address minus one.
+        c.write(0x01FF, 0x03); c.write(0x01FE, 0xFF);           // $03FF → RTS lands at $0400
+        if (cfg.iieMemory) c.write(0xC001, 0);                  // 80STORE on
+        const std::uint64_t cyclesBefore = c.cpuState().cycles;
+
+        pom2::CpuState st = c.cpuState();
+        st.accumulator = 0x5A; st.x = 0x05; st.y = 0xA5;
+        st.status = 0x00;                                        // bit 5 must come back set
+        st.stackPointer = 0xFD; st.programCounter = 0x0300;
+        st.cycles = 12345; st.halted = true;                     // both ignored
+        c.setCpuState(st);
+        const pom2::CpuState got = c.cpuState();
+        assert(got.accumulator == 0x5A && got.x == 0x05 && got.y == 0xA5);
+        assert(got.stackPointer == 0xFD && got.programCounter == 0x0300);
+        assert((got.status & 0x20) && "bit 5 reads 1 on every 6502");
+        assert(got.cycles == cyclesBefore && !got.halted);
+        if (cfg.iieMemory)
+            assert((c.read(0xC018) & 0x80) && "80STORE survives setCpuState");
+
+        c.step();                                                // INX
+        assert(c.cpuState().x == 0x06);
+        c.step();                                                // RTS
+        assert(c.cpuState().programCounter == 0x0400 && c.cpuState().stackPointer == 0xFF);
+    }
+    std::printf("  ok: setCpuState runs a routine and returns, nothing else moves\n");
+}
+
+// Call a guest routine the way pom2games' a2shot `call:` does: return
+// address on the stack, registers set, step until it comes back to $0400.
+void callRoutine(pom2::Core& c, std::uint16_t entry, std::uint8_t a,
+                 std::uint8_t x, std::uint8_t y)
+{
+    c.write(0x0400, 0x4C); c.write(0x0401, 0x00); c.write(0x0402, 0x04);
+    c.write(0x01FF, 0x03); c.write(0x01FE, 0xFF);               // RTS → $0400
+    pom2::CpuState st = c.cpuState();
+    st.accumulator = a; st.x = x; st.y = y; st.status = 0x04;  // I set
+    st.stackPointer = 0xFD; st.programCounter = entry;
+    c.setCpuState(st);
+    for (int i = 0; i < 200000 && c.cpuState().programCounter != 0x0400; ++i) c.step();
+    assert(c.cpuState().programCounter == 0x0400 && "the firmware routine returned");
+}
+
+// attachMouse / moveMouse / setMouse (pom2games' request 2), both models,
+// through Apple's own firmware: INITMOUSE, SETMOUSE on, then READMOUSE
+// publishes the position in the slot-4 screen holes.
+void testMouse(const std::string& sourceDir)
+{
+    for (const auto model : { pom2::MouseModel::AppleMouse,
+                              pom2::MouseModel::AppleMouseAppleWin }) {
+        pom2::CoreConfig cfg;
+        cfg.cpu = pom2::CpuModel::CMOS65C02;
+        cfg.iieMemory = true;
+        pom2::Core c(cfg);
+        assert(c.loadRom(sourceDir + "/roms/apple2e.rom"));
+        assert(!c.mouseAttached());
+        assert(c.attachMouse(4, model, sourceDir + "/roms"));
+        assert(c.mouseAttached());
+        assert(!c.attachMouse(5, model, sourceDir + "/roms") && "one mouse card");
+        // The entry table at $C412: SETMOUSE, SERVE, READ, CLEAR, POS, CLAMP, HOME, INIT.
+        c.coldBoot();      // soft switches at power-on: $C4xx is the card's ROM
+        auto entry = [&](int i) { return static_cast<std::uint16_t>(0xC400 | c.read(0xC412 + i)); };
+        const std::uint16_t setMouse = entry(0), readMouse = entry(2), initMouse = entry(7);
+        callRoutine(c, initMouse, 0, 0xC4, 0x40);
+        callRoutine(c, setMouse, 0x01, 0xC4, 0x40);              // mouse on, no interrupts
+        auto holeX = [&] { return c.read(0x047C) | (c.read(0x057C) << 8); };
+        auto holeY = [&] { return c.read(0x04FC) | (c.read(0x05FC) << 8); };
+
+        c.moveMouse(10, 5, false);
+        c.run(40000);
+        callRoutine(c, readMouse, 0, 0xC4, 0x40);
+        assert(holeX() == 10 && holeY() == 5 && "relative motion reaches the firmware");
+
+        bool there = false;
+        for (int frame = 0; frame < 20 && !there; ++frame) {
+            there = c.setMouse(300, 120, false);
+            c.run(17030);
+            callRoutine(c, readMouse, 0, 0xC4, 0x40);
+        }
+        assert(holeX() == 300 && holeY() == 120 && "absolute position converges");
+
+        // The card's VBL interrupt reaches the 6502 as in the application.
+        // SETMOUSE $09 = on + VBL interrupt. The //e ROM's IRQ handler ends in
+        // JMP ($03FE): ours services the card, counts, and returns.
+        const std::uint16_t serve = entry(1);
+        const std::uint8_t handler[] = {
+            0xA2, 0xC4, 0xA0, 0x40,                              // LDX #$C4 / LDY #$40
+            0x20, static_cast<std::uint8_t>(serve), 0xC4,        // JSR SERVEMOUSE
+            0xEE, 0x10, 0x03,                                    // INC $0310
+            0xA5, 0x45, 0x40 };                                  // LDA $45 / RTI
+        for (std::uint16_t i = 0; i < sizeof handler; ++i) c.write(0x0320 + i, handler[i]);
+        c.write(0x03FE, 0x20); c.write(0x03FF, 0x03);
+        c.write(0x0310, 0);
+        callRoutine(c, setMouse, 0x09, 0xC4, 0x40);
+        c.write(0x0330, 0x58);                                   // CLI
+        c.write(0x0331, 0x4C); c.write(0x0332, 0x31); c.write(0x0333, 0x03); // JMP $0331
+        pom2::CpuState st = c.cpuState();
+        st.programCounter = 0x0330; st.stackPointer = 0xF0;
+        c.setCpuState(st);
+        c.run(17030 * 6);                                        // six frames
+        const int vbls = c.read(0x0310);
+        assert(vbls >= 5 && vbls <= 7 && "about one VBL interrupt per frame");
+    }
+    std::printf("  ok: attachMouse, moveMouse and setMouse through the real firmware\n");
+}
+
+// Machine::AppleIIc (pom2games' request 3): the 65C02, //e memory and the
+// IOU mouse built in — moveMouse()/setMouse() drive it through the system
+// ROM's own firmware, whose IRQ handler integrates the motion; attachMouse()
+// is refused. The 32 KiB (rev 0) and the 16 KiB (rev 255) ROMs.
+void testIIcMachine(const std::string& sourceDir)
+{
+    for (const char* rom : { "/roms/apple2c-32Kv0.rom", "/roms/apple2c-16K.rom" }) {
+        pom2::CoreConfig cfg;
+        cfg.machine = pom2::Machine::AppleIIc;
+        pom2::Core c(cfg);
+        assert(c.loadRom(sourceDir + rom));
+        assert(c.mouseAttached() && "the //c's mouse is built in");
+        assert(!c.attachMouse(4, pom2::MouseModel::AppleMouse, sourceDir + "/roms"));
+        c.coldBoot();
+        auto entry = [&](int i) { return static_cast<std::uint16_t>(0xC400 | c.read(0xC412 + i)); };
+        const std::uint16_t setMouse = entry(0), readMouse = entry(2), initMouse = entry(7);
+        callRoutine(c, initMouse, 0, 0xC4, 0x40);
+        callRoutine(c, setMouse, 0x01, 0xC4, 0x40);
+        // Let the ROM's IRQ handler run: CLI / JMP *.
+        auto runOpen = [&](int cycles) {
+            c.write(0x0330, 0x58); c.write(0x0331, 0x4C); c.write(0x0332, 0x31); c.write(0x0333, 0x03);
+            pom2::CpuState st = c.cpuState();
+            st.programCounter = 0x0330; st.stackPointer = 0xF0;
+            c.setCpuState(st);
+            c.run(cycles);
+        };
+        auto holeX = [&] { return c.read(0x047C) | (c.read(0x057C) << 8); };
+        auto holeY = [&] { return c.read(0x04FC) | (c.read(0x05FC) << 8); };
+        c.moveMouse(10, 5, false);
+        runOpen(17030 * 4);
+        callRoutine(c, readMouse, 0, 0xC4, 0x40);
+        assert(holeX() == 10 && holeY() == 5 && "the //c's IOU mouse moves");
+        bool there = false;
+        for (int frame = 0; frame < 40 && !there; ++frame) {
+            there = c.setMouse(200, 90, false);
+            runOpen(17030);
+            callRoutine(c, readMouse, 0, 0xC4, 0x40);
+        }
+        assert(holeX() == 200 && holeY() == 90 && "absolute position converges on the //c");
+    }
+    // The Mockingboard 4c on a //c (the letter's question): dormant, the
+    // mouse firmware answers $C4xx; a write to $C403 wakes it (as 4sports'
+    // and DIGIDREAM's detection do) and it answers that page, mouse entry
+    // table included. Ctrl-Reset leaves it awake (MAME reset_w); only a power
+    // cycle (machine_reset, apple2e.cpp:1292) hands the page back.
+    {
+        pom2::CoreConfig cfg;
+        cfg.machine = pom2::Machine::AppleIIc;
+        pom2::Core c(cfg);
+        assert(c.loadRom(sourceDir + "/roms/apple2c-32Kv0.rom"));
+        assert(c.attachMockingboard());          // slot ignored: the internal connector
+        c.coldBoot();
+        const std::uint8_t sig = c.read(0xC4FB);  // the mouse firmware's ID byte
+        assert(sig == 0xD6 && "dormant: $C4xx is the mouse firmware");
+        c.write(0xC403, 0x00);                   // the wake
+        assert(c.read(0xC4FB) != 0xD6 && "awake: the 4c answers $C400-$C4FF");
+        c.hardReset();
+        assert(c.read(0xC4FB) != 0xD6 && "Ctrl-Reset: still awake");
+        c.coldBoot();
+        assert(c.read(0xC4FB) == 0xD6 && "power cycle: the firmware is back");
+    }
+    std::printf("  ok: Machine::AppleIIc — built-in mouse, 32 K and 16 K ROMs, 4c wake\n");
+}
+
 int main()
 {
+    testSetCpuState();
+    testMouse(POM2_TEST_SOURCE_DIR);
+    testIIcMachine(POM2_TEST_SOURCE_DIR);
     // ctest protects media for every test (CLAUDE.md, MediaWritePolicy.h);
     // this one writes only images it created, and pins that writes land.
 #ifdef _WIN32

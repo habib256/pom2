@@ -1270,7 +1270,9 @@ private:
     bool iic40ColSwitch_ = false;   // setIic40ColumnSwitch
     /// //c-class internal expansion connector: has the program written into
     /// the card's page yet? Until it has, reads there stay the machine's own
-    /// firmware (MAME `m_mockingboard4c`). Cleared by every reset.
+    /// firmware (MAME `m_mockingboard4c`). Cleared at power-on only
+    /// (`clearRam`, MAME machine_reset `apple2e.cpp:1292`); Ctrl-Reset
+    /// (`reset_w`) leaves the card awake.
     bool iicExpansionAwake_ = false;
     /// //c-classe : le flux d'execution est-il "chez" la carte percee ?
     /// Ouvert par un fetch dans sa page $C5xx, referme par tout acces
