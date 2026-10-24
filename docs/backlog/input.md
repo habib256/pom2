@@ -15,29 +15,7 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [INPUT-001](#input-001) | 🟡 | To verify | Host Shift is not wired to `$C063`, and the dead code that would wire it has the polarity backwards |
 | [INPUT-003](#input-003) | 🟡 | To verify | Mouse → paddles mapping |
-
-<a id="input-001"></a>
-
-## INPUT-001 — Host Shift is not wired to `$C063`, and the dead code that would wire it has the polarity backwards
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Test PB2 polarity with Shift up/down and the SHK option enabled/disabled for the applicable machine profile.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-816). Original dates and estimates are retained below.
-
-- 🟡 **Host Shift is not wired to `$C063`, and the dead code that would wire it
-  has the polarity backwards** (bug hunt #4). `PaddleInputs::button2(iieMode)`
-  folds a `shift_` atomic into PB2 and `Memory::setShiftKey` forwards to it;
-  **nothing in the tree calls either**. Wiring it up as written would make wrong
-  behaviour visible instead of invisible, twice over. MAME's `c000_r` returns
-  `0x80` when Shift is **UP** — the SHK jumper grounds PB2, so pressing the key
-  pulls the line low — and it does so only when the machine option
-  `m_kbd_shift_mod` is set, which is a IIe Platinum machine option POM2 has no concept of.
-  A real fix owns `PaddleInputs.h`, inverts the sense, and adds the machine
-  option; a lone `onKey` branch does not.
 
 <a id="input-002"></a>
 

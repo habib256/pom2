@@ -874,6 +874,9 @@ private:
     /// CONTROL|ALT on the right Alt and must not fire POM2's Ctrl+Alt chords
     /// nor press Solid-Apple.
     bool        rightAltDown_ = false;
+    /// Host Shift keys held, OR'd onto the //e Shift-key mod's PB2 wire.
+    bool        leftShiftDown_  = false;
+    bool        rightShiftDown_ = false;
     /// `keyboard_alt_apple_keys` (default on): Left/Right Alt drive
     /// Open/Solid Apple, i.e. the PB0/PB1 fire buttons. Off is the escape
     /// hatch for layouts where Alt/Option is how ordinary characters are

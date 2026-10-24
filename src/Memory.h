@@ -808,6 +808,7 @@ public:
     void setOpenAppleKey  (bool down) { paddles_.setOpenAppleKey(down); }
     void setSolidAppleKey (bool down) { paddles_.setSolidAppleKey(down); }
     void setShiftKey      (bool down) { paddles_.setShiftKey(down); }
+    void setShiftKeyMod   (bool on)   { paddles_.setShiftKeyMod(on); }
 
     // Reset — returns LC/MMU/IOU/video switches to cold-boot defaults.
     // Does NOT touch RAM. Used by power-on (`coldBoot`), profile apply,

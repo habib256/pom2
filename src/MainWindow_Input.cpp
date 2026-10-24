@@ -201,6 +201,14 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     //     text-entry modifier there, not Solid-Apple.
     // `rightAltDown_` is tracked here because GLFW's `mods` folds both Alts
     // into one bit — the AltGr tests below need to know which one it was.
+    // Host Shift → the //e Shift-key mod's wire (PB2), which only reads it
+    // when Machine ▸ "Shift key mod" is on (PaddleInputs.h). Either Shift;
+    // not consumed — Shift still shifts. An atomic: no lock (CLAUDE.md).
+    if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) {
+        (key == GLFW_KEY_LEFT_SHIFT ? leftShiftDown_ : rightShiftDown_) =
+            (action != GLFW_RELEASE);
+        controller->memory().setShiftKey(leftShiftDown_ || rightShiftDown_);
+    }
     if (key == GLFW_KEY_RIGHT_ALT) rightAltDown_ = (action != GLFW_RELEASE);
     if (key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT) {
         const bool drive = pom2::keychord::altDrivesAppleKeys(

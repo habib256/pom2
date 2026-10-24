@@ -51,10 +51,20 @@ public:
     void setOpenAppleKey (bool down) { openApple_.store(down,  std::memory_order_relaxed); }
     void setSolidAppleKey(bool down) { solidApple_.store(down, std::memory_order_relaxed); }
     void setShiftKey     (bool down) { shift_.store(down,      std::memory_order_relaxed); }
+    /// The //e "Shift key = SW2" modification (MAME `kbd_shift_mod`, Apple
+    /// IIe Technical Note #9): a wire from the Shift key to PB2. Off by
+    /// default, as in MAME.
+    void setShiftKeyMod  (bool on)   { shiftMod_.store(on,     std::memory_order_relaxed); }
+    bool shiftKeyMod() const         { return shiftMod_.load(std::memory_order_relaxed); }
 
     // ── Push-button reads ($C061-$C063 bit 7) ─────────────────────────────
-    // PB0/PB1 OR the paddle button with Open/Solid-Apple; PB2 also folds in
-    // the //e Shift-key mod (SHK jumper), but only in IIe mode.
+    // PB0/PB1 OR the paddle button with Open/Solid-Apple. PB2 is the game
+    // port's third button — unless the //e Shift-key mod is fitted, and then
+    // it is the Shift key ALONE and active LOW: the wire grounds PB2 while
+    // Shift is held, so $C063 reads $80 with Shift UP. MAME `apple2e.cpp`
+    // c000_r, $C063: `m_kbd_shift_mod ? (kbspecial & 0x06) == 0 : sw2_r()`.
+    // The dead code this replaced OR'd Shift in HIGH and was never called
+    // (INPUT-001).
     bool button0() const {
         return button_[0] || openApple_.load(std::memory_order_relaxed);
     }
@@ -62,7 +72,9 @@ public:
         return button_[1] || solidApple_.load(std::memory_order_relaxed);
     }
     bool button2(bool iieMode) const {
-        return button_[2] || (iieMode && shift_.load(std::memory_order_relaxed));
+        if (iieMode && shiftMod_.load(std::memory_order_relaxed))
+            return !shift_.load(std::memory_order_relaxed);
+        return button_[2];
     }
 
     // ── Paddle read ($C064-$C067 bit 7) ───────────────────────────────────
@@ -87,6 +99,7 @@ private:
     std::atomic<bool> openApple_ { false };
     std::atomic<bool> solidApple_{ false };
     std::atomic<bool> shift_     { false };
+    std::atomic<bool> shiftMod_  { false };
     // Boot-time value: cycleCounter - latchCycle_ must exceed every paddle
     // threshold (max 255*11 = 2805) at power-on so an un-strobed $C064-$C067
     // reads low — else the //e "no paddle connected" self-test is confused.

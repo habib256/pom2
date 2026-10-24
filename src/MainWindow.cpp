@@ -885,6 +885,9 @@ MainWindow::MainWindow(bool forceIIPlus)
     // The //c 40/80 key (Machine menu): a physical setting, applied once.
     controller->lockState().memory().setIic40ColumnSwitch(
         settings->getBool("iic_40col_switch", false));
+    // The //e Shift-key mod (Machine menu), a wire someone soldered in.
+    controller->lockState().memory().setShiftKeyMod(
+        settings->getBool("keyboard_shift_key_mod", false));
     // Profile-specific floppy motor pitch — applies only to the 5.25"
     // bank. The 3.5" instance keeps motorPitch=1.0 because the 35_*.wav
     // samples are already recorded at the Sony 800K cadence, so a pitch

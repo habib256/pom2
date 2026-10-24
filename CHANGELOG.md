@@ -10,6 +10,19 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — The //e Shift-key mod, wired the right way round (INPUT-001)
+
+`PaddleInputs` carried a Shift→PB2 path that nothing called, and it OR'd
+Shift in HIGH. The real modification (Apple IIe Technical Note #9) is a wire
+from the Shift key to PB2 that grounds it while Shift is held: MAME's
+`c000_r` returns `$80` on `$C063` with Shift UP, and only when the machine
+option `kbd_shift_mod` is set — the game port's button 2 is then out of
+the circuit. POM2 now has that option, `keyboard_shift_key_mod` (default
+off, as in MAME), in the Machine menu on //e profiles; the host's Shift
+keys drive the wire, and Shift still shifts. A //c never reads it. Pinned
+in `input_io_smoke` (no mod: Shift absent; mod: Shift up = `$80`, down =
+`$00`, button 2 cut off; ][+ untouched).
+
 ## 2026-10-24 — Ghostscript found on a stock Apple Silicon Homebrew (CARDS-011)
 
 `ChildProcess::findOnPath` refuses any directory the group or the world can

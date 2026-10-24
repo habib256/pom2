@@ -130,6 +130,34 @@ void testButtons()
     std::printf("[ OK ] push-buttons + Open/Solid-Apple on PB0/PB1\n");
 }
 
+// ── 2b. The //e Shift-key mod on PB2 (INPUT-001) ──────────────────────────
+// MAME `apple2e.cpp` c000_r $C063: with `kbd_shift_mod` the bit is the
+// Shift key, active LOW (the wire grounds PB2 while Shift is held), and the
+// game port's button 2 is out of the circuit. Without the mod, Shift is not
+// on $C063 at all. The old dead code OR'd Shift in HIGH.
+void testShiftKeyMod()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    mem.setShiftKey(true);
+    assert((mem.memRead(kBtn2) & 0x80) == 0 && "no mod: Shift is not on PB2");
+    mem.setShiftKey(false);
+
+    mem.setShiftKeyMod(true);
+    assert((mem.memRead(kBtn2) & 0x80) != 0 && "mod: Shift UP reads $80");
+    mem.setShiftKey(true);
+    assert((mem.memRead(kBtn2) & 0x80) == 0 && "mod: Shift DOWN grounds PB2");
+    mem.setShiftKey(false);
+    mem.setPaddleButton(2, true);
+    assert((mem.memRead(kBtn2) & 0x80) != 0 && "mod: button 2 is cut off, Shift up");
+    mem.setPaddleButton(2, false);
+
+    // A ][+ has no such option here (MAME wires it through another switch).
+    mem.setIIEMode(false);
+    assert((mem.memRead(kBtn2) & 0x80) == 0 && "][+: PB2 is the game port's");
+    std::printf("[ OK ] //e Shift-key mod: Shift on PB2, active low\n");
+}
+
 // ── 3. Paddle RC discharge timing and the $C070 re-arm ────────────────────
 void testPaddleTiming()
 {
@@ -173,6 +201,7 @@ int main()
 {
     testKeyboardLatch();
     testButtons();
+    testShiftKeyMod();
     testPaddleTiming();
     std::printf("input_io_smoke_test: OK\n");
     return 0;

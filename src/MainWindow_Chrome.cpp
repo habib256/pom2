@@ -618,6 +618,22 @@ void MainWindow::renderMenuBar()
                     "and use the on-screen //e keyboard for the Apple keys.\n"
                     "Windows AltGr never presses them either way.");
         }
+        if (pom2::profileConfig(activeProfile).iieMode &&
+            !pom2::profileConfig(activeProfile).noPhysicalSlots) {
+            // The //e Shift-key mod (INPUT-001): Shift wired to PB2.
+            bool shiftMod = settings->getBool("keyboard_shift_key_mod", false);
+            if (ImGui::MenuItem("Shift key mod (Shift on $C063)", nullptr, &shiftMod)) {
+                settings->setBool("keyboard_shift_key_mod", shiftMod);
+                if (!settingsReadOnly()) settings->save();
+                controller->lockState().memory().setShiftKeyMod(shiftMod);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "The //e modification that wires the Shift key to the third\n"
+                    "game-port button: $C063 reads Shift instead (bit 7 = 1 with\n"
+                    "Shift UP). Some word processors use it to tell upper from\n"
+                    "lower case. The game port's own button 2 is cut off.");
+        }
         if (pom2::profileConfig(activeProfile).noPhysicalSlots) {
             // The //c keyboard's 80/40 key, read at $C060 (Memory.h). A
             // latching key on the real machine, so it is a setting, not state.
