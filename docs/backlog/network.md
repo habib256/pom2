@@ -24,7 +24,6 @@ an explicit request before scheduling.
 | [NETWORK-011](#network-011) | 🟡 | Partial: corrected findings separated from remaining reports | Bug hunt #14's network residue |
 | [NETWORK-006](#network-006) | 🟢 | To verify | [FujiNet] `PR#n` before the peer attaches prints `FN ERROR` |
 | [NETWORK-008](#network-008) | 🟢 | To verify | [FujiNet] embedded firmware |
-| [NETWORK-013](#network-013) | 🟢 | Shipped (verify) | W5100 name resolution is still inline |
 | [NETWORK-009](#network-009) | 🧊 | Frozen | Uthernet I has no host transport on Windows |
 | [NETWORK-010](#network-010) | 🟡 | Partial: local TCP implemented | Uthernet II inbound (`LISTEN`) |
 | [NETWORK-012](#network-012) | 🧊 | Frozen | Uthernet I on WASM |
@@ -325,31 +324,6 @@ that the next guest request ignores a late reply from the sweep.
   expat, a pinned submodule and a patch set anchored to exact upstream
   text. Revisit only if "having to install a second program" turns out to
   be the real blocker.
-
-<a id="network-013"></a>
-
-## NETWORK-013 — W5100 name resolution is still inline
-
-**Priority:** 🟢 · **State:** Shipped (verify) — premise false on 2026-10-06.
-
-**Revalidation 2026-10-06:** the lift this item asks for landed the same day it
-was written — `0ff494e` (2026-08-27, "Lift the W5100 virtual-DNS resolver out of
-the device"). `W5100NameResolver` (`src/W5100NameResolver.h/.cpp`, behind the
-`W5100Resolver` interface in `src/W5100Resolver.h`) owns the cache, the mailbox,
-the in-flight cap and the bounded off-thread lookup; `W5100Device` keeps only the
-register half (`src/W5100Device.cpp:1440-1450`, `kDnsWaitMs` = 120 in
-`src/W5100Device.h:227`); the production resolver is injected in
-`src/MainWindow_SlotConfig.cpp:427`. Pinned by `w5100_name_resolver`. No
-CHANGELOG entry names the lift; record one when this entry is removed.
-
-**Acceptance criterion (after revalidation):** Test bounded asynchronous name resolution, cache behavior and cancellation without stalling guest register reads.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2241). Original dates and estimates are retained below.
-
-- 🟢 **W5100 name resolution is still inline** *(2026-08-27)* — deliberately
-  left in `W5100Device` when the socket seam landed: an async mailbox with an
-  in-flight cap, a bounded wait and its own cache, wired to register reads.
-  Its own pass, and not on anything's critical path.
 
 <a id="network-009"></a>
 

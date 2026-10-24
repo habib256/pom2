@@ -27,6 +27,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <thread>
 
 namespace {
@@ -109,6 +110,33 @@ void testSlowLookupTimesOutThenArrives()
     assert(now.address == 0x0200007Fu);
 
     std::printf("  a slow lookup times out, then arrives via poll(): OK\n");
+}
+
+// ── The card goes away while a lookup is in flight (NETWORK-013) ─────────
+// Unplugging the Uthernet II, a profile switch: the resolver dies with its
+// device. Its destructor must not wait for the lookup, and the late answer
+// must land in the mailbox the detached thread co-owns, not in freed memory
+// (ASan in CI would see the write).
+void testResolverDiesWithALookupInFlight()
+{
+    std::atomic<bool> answered{false};
+    auto* flag = &answered;
+    auto resolver = std::make_unique<W5100NameResolver>([flag](const std::string&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        flag->store(true);
+        return 0x0300007Fu;
+    });
+    assert(resolver->resolve("gone.test", 5).status == Status::Pending);
+    const auto t0 = std::chrono::steady_clock::now();
+    resolver.reset();
+    const auto took = std::chrono::steady_clock::now() - t0;
+    assert(took < std::chrono::milliseconds(50) && "the destructor waited for the lookup");
+    assert(!answered.load());
+    for (int i = 0; i < 100 && !answered.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    assert(answered.load() && "the lookup still ran to its end");
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));   // its mailbox write
+    std::printf("  the resolver dies mid-lookup, the late answer lands safely: OK\n");
 }
 
 // ── In-flight lookups are capped ─────────────────────────────────────────
@@ -196,6 +224,7 @@ int main()
     testSlowLookupTimesOutThenArrives();
     testInFlightLookupsAreCapped();
     testNewLookupsAreRateLimited();
+    testResolverDiesWithALookupInFlight();
     std::printf("OK\n");
     return 0;
 }

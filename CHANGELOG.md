@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — NETWORK-013 closed: the W5100 resolver was lifted in August
+
+The entry asked for the Uthernet II's name resolution to leave the device;
+that landed the day it was written, `0ff494e` (2026-08-27), with no
+CHANGELOG line. `W5100NameResolver` (behind `W5100Resolver`) owns the cache,
+the mailbox, the in-flight cap and the bounded off-thread lookup;
+`W5100Device` keeps the register half. `w5100_name_resolver` pinned the
+cache, the bounded wait, the cap and the rate limit; it now also pins the
+card going away mid-lookup — the destructor returns at once and the late
+answer lands in the mailbox the detached thread co-owns, not in freed
+memory.
+
 ## 2026-10-24 — Choose a disk's sector order by hand (STORAGE-006)
 
 The DOS/ProDOS sniff (extension, ProDOS volume directory, DOS 3.3 VTOC and
