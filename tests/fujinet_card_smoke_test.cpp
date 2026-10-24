@@ -413,6 +413,30 @@ void testBootWithNoPeerContinuesSlotScan()
     std::printf("  ok: no peer → autostart slot scan continues ($FABA)\n");
 }
 
+// NETWORK-006: the message PR#n prints says why. Read back as the printer
+// loop does — X counting down from 7 over $CnF0-$CnF7.
+std::string romMessage(Machine& m)
+{
+    std::string text;
+    for (int x = 7; x >= 0; --x)
+        text.push_back(static_cast<char>(m.mem.memRead(
+            static_cast<uint16_t>(kSlotRom + 0xF0 + x)) & 0x7F));
+    return text;
+}
+
+void testPrNumberSaysNoPeer()
+{
+    Machine m;
+    m.startLink();                       // listening, nobody attached
+    assert(romMessage(m) == "NO PEER ");
+    FakePeer peer(m.port, standardHandler);
+    assert(waitFor([&] { return m.card->link().isConnected(); }));
+    assert(romMessage(m) == "FN ERROR");
+    peer.stop();
+    m.card->transportLink().stop();
+    std::printf("  ok: PR#n says NO PEER until a FujiNet attaches\n");
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // 3. The SmartPort call: stack fixup, registers, flags
 // ═════════════════════════════════════════════════════════════════════════
@@ -927,6 +951,7 @@ int main()
     testRomSignature();
     testBootWithPeer();
     testBootWithNoPeerContinuesSlotScan();
+    testPrNumberSaysNoPeer();
     testSmartPortStatusCall();
     testSmartPortReadBlock();
     testStackWrapAtPageBoundary();

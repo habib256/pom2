@@ -22,7 +22,6 @@ an explicit request before scheduling.
 | [NETWORK-005](#network-005) | 🟡 | To verify | [FujiNet] a network-backed SmartPort call freezes the emulator |
 | [NETWORK-007](#network-007) | 🟡 | To verify | [FujiNet] //c-class support |
 | [NETWORK-011](#network-011) | 🟡 | Partial: corrected findings separated from remaining reports | Bug hunt #14's network residue |
-| [NETWORK-006](#network-006) | 🟢 | To verify | [FujiNet] `PR#n` before the peer attaches prints `FN ERROR` |
 | [NETWORK-008](#network-008) | 🟢 | To verify | [FujiNet] embedded firmware |
 | [NETWORK-009](#network-009) | 🧊 | Frozen | Uthernet I has no host transport on Windows |
 | [NETWORK-010](#network-010) | 🟡 | Partial: local TCP implemented | Uthernet II inbound (`LISTEN`) |
@@ -291,22 +290,6 @@ shares a 400 ms budget across its device-control notifications. A responsive
 16-unit fake peer taking 80 ms per control previously stalled guest reset for
 over a second. The regression test checks the aggregate bound and confirms
 that the next guest request ignores a late reply from the sweep.
-
-<a id="network-006"></a>
-
-## NETWORK-006 — [FujiNet] `PR#n` before the peer attaches prints `FN ERROR`
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Test PR#n before and after peer attachment and define a useful pending/error indication.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1892). Original dates and estimates are retained below.
-
-- 🟢 **[FujiNet] `PR#n` before the peer attaches prints `FN ERROR`** — the
-  autostart slot scan handles the no-peer case correctly (the card steps
-  aside and the scan carries on to slot 6), but a manual `PR#n` in the same
-  state just fails. The card could wait briefly for a peer, or say *why* it
-  failed. Cosmetic, but it is the first thing anyone hits.
 
 <a id="network-008"></a>
 

@@ -268,7 +268,19 @@ void FujiNetCard::buildRom()
     romLayoutError_ = !a.finish();
 }
 
-uint8_t FujiNetCard::slotRomRead(uint8_t low8) { return rom_[low8]; }
+uint8_t FujiNetCard::slotRomRead(uint8_t low8)
+{
+    // NETWORK-006: `PR#n` with no FujiNet peer attached used to print
+    // "FN ERROR", the same as a peer that answered and failed — the first
+    // thing anyone hits, with no hint. The message bytes are served live:
+    // "NO PEER" while the link has no one on the other end. Same 8 bytes,
+    // same reversed order, so the 6502 printer loop is untouched.
+    if (low8 >= kErrText && low8 < kErrText + 8 && link_ && !link_->isConnected()) {
+        static constexpr char kNoPeer[8] = { ' ', 'R', 'E', 'E', 'P', ' ', 'O', 'N' };
+        return static_cast<uint8_t>(kNoPeer[low8 - kErrText] | 0x80);
+    }
+    return rom_[low8];
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Guest memory access

@@ -10,6 +10,16 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — FujiNet `PR#n` says NO PEER when nothing is attached (NETWORK-006)
+
+With no FujiNet peer on the other end of the link, `PR#n` printed
+"FN ERROR" — the same as a peer that answered and failed, and the first
+thing anyone meets. The autostart scan already stepped aside correctly; a
+manual `PR#n` just did not say why. The card now serves its message bytes
+live: "NO PEER" while the link is down, "FN ERROR" once a peer is attached.
+Same 8 bytes in the same reversed order, so the 6502 printer loop is
+unchanged. Pinned in `fujinet_card_smoke` (no peer, then a peer attaches).
+
 ## 2026-10-24 — NETWORK-013 closed: the W5100 resolver was lifted in August
 
 The entry asked for the Uthernet II's name resolution to leave the device;
