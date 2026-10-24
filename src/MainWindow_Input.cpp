@@ -33,6 +33,7 @@
 // they are among the few things allowed to reach memory without `stateMutex`.
 
 #include "MainWindow.h"
+#include "PaddleMouse.h"
 #include "DriveRackMount.h"
 #include "BrowserFiles.h"
 
@@ -906,17 +907,36 @@ void MainWindow::pollJoystickAndPushToMemory()
         for (int i = 0; i < 4; ++i)
             mem.setPaddle(i, (menuActive || snesMaxInstalled) ? 128 : joystick->paddleValue(i));
 
+        // INPUT-003: the host mouse as paddles 0/1 — over the pad, when the
+        // option is on and the Mouse Card does not hold the pointer.
+        bool mouseButtons[2] = { false, false };
+        const bool mousePaddles = paddleMouseEnabled() && !mouseGrabbed_ &&
+                                  !menuActive && !snesMaxInstalled;
+        if (mousePaddles) {
+            const ImVec2 p = ImGui::GetMousePos();
+            const double range = paddleMouseRange();
+            mem.setPaddle(0, pom2::paddlemouse::axisToPaddle(
+                p.x, screenRectMin.x, screenRectMax.x, range));
+            mem.setPaddle(1, pom2::paddlemouse::axisToPaddle(
+                p.y, screenRectMin.y, screenRectMax.y, range));
+            if (screenHovered_) {            // a click on a panel is not fire
+                mouseButtons[0] = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                mouseButtons[1] = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            }
+        }
+
         if (suppressGame || snesMaxInstalled) {
             for (int i = 0; i < 3; ++i) mem.setPaddleButton(i, false);
         } else if (play.valid) {
             // Gamepad-mapped: only Cross/Circle are Apple game-port buttons;
             // the other face buttons are keyboard keys (below), so PB2 is up.
-            mem.setPaddleButton(0, play.button0);   // Circle → PB0
-            mem.setPaddleButton(1, play.button1);   // Cross  → PB1
+            mem.setPaddleButton(0, play.button0 || mouseButtons[0]);   // Circle → PB0
+            mem.setPaddleButton(1, play.button1 || mouseButtons[1]);   // Cross  → PB1
             mem.setPaddleButton(2, false);
         } else {
             // Raw pad (unknown layout): legacy buttons 0/1/2 → PB0/1/2.
-            for (int i = 0; i < 3; ++i) mem.setPaddleButton(i, joystick->buttonDown(i));
+            for (int i = 0; i < 3; ++i)
+                mem.setPaddleButton(i, joystick->buttonDown(i) || (i < 2 && mouseButtons[i]));
         }
     }
 
@@ -1087,4 +1107,14 @@ void MainWindow::setAltAppleKeysSetting(bool on)
         appleKeys_.hostSolid = false;
         pushAppleKeys();
     }
+}
+
+bool MainWindow::paddleMouseEnabled() const
+{
+    return settings && settings->getBool("paddle_mouse", false);
+}
+
+double MainWindow::paddleMouseRange() const
+{
+    return settings ? settings->getInt("paddle_mouse_range", 100) / 100.0 : 1.0;
 }

@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — The host mouse as paddles 0/1 (INPUT-003)
+
+For a machine with no game controller: Machine ▸ "Mouse drives paddles 0/1"
+(`paddle_mouse`, default off). The pointer's position over the Apple II
+screen turns PDL(0) across and PDL(1) down; the left and right buttons are
+PB0/PB1 while the pointer is over the screen (a click on a panel is not
+fire). Absolute, not relative — a paddle is a knob with stops, and the
+screen's edges are those stops, so the value holds at the edge when the
+pointer leaves. "Paddle mouse range" (`paddle_mouse_range`, 20-100 % of the
+screen) is the sensitivity: the centred fraction that sweeps 0..255. Off
+while the Mouse Card holds the pointer; it replaces a pad's paddles 0/1
+and ORs its buttons in. The arithmetic is `PaddleMouse.h`, pinned in
+`input_io_smoke` (edges, clamping, range); the UI wiring was not exercised
+by a test.
+
 ## 2026-10-24 — FujiNet `PR#n` says NO PEER when nothing is attached (NETWORK-006)
 
 With no FujiNet peer on the other end of the link, `PR#n` printed

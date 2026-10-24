@@ -15,7 +15,6 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [INPUT-003](#input-003) | 🟡 | To verify | Mouse → paddles mapping |
 
 <a id="input-002"></a>
 
@@ -31,16 +30,3 @@ and keep 2/3 centered, because extra raw axes may be triggers.
 `joystick_square_gate` covers independent sticks, right-axis inversion,
 deadzone and disconnect fallback. The historical unbound-axis report is
 superseded; see [CHANGELOG](../../CHANGELOG.md).
-
-<a id="input-003"></a>
-
-## INPUT-003 — Mouse → paddles mapping
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Map host mouse axes to paddles with explicit sensitivity, bounds and an enable/disable control.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2060). Original dates and estimates are retained below.
-
-- 🟡 **Mouse → paddles mapping** — paddle 0/1 on host mouse X/Y axes
-  (alternative to pads).

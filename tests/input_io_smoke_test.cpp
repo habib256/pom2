@@ -34,6 +34,7 @@
 //   * $C070 (mirrored $C070-$C07F) re-arms the paddle timer.
 
 #include "Memory.h"
+#include "PaddleMouse.h"
 
 #include <cassert>
 #include <cstdint>
@@ -158,6 +159,27 @@ void testShiftKeyMod()
     std::printf("[ OK ] //e Shift-key mod: Shift on PB2, active low\n");
 }
 
+// ── 2c. The host mouse as paddles (INPUT-003, PaddleMouse.h) ──────────────
+void testPaddleMouse()
+{
+    using pom2::paddlemouse::axisToPaddle;
+    // Edge to edge over a 100..500 px screen.
+    assert(axisToPaddle(100, 100, 500, 1.0) == 0);
+    assert(axisToPaddle(300, 100, 500, 1.0) == 128);
+    assert(axisToPaddle(500, 100, 500, 1.0) == 255);
+    // The edges are the knob's stops: off-screen holds, never wraps.
+    assert(axisToPaddle(-50, 100, 500, 1.0) == 0);
+    assert(axisToPaddle(900, 100, 500, 1.0) == 255);
+    // Range 0.5: the middle half sweeps it all, twice as fast.
+    assert(axisToPaddle(200, 100, 500, 0.5) == 0);
+    assert(axisToPaddle(400, 100, 500, 0.5) == 255);
+    assert(axisToPaddle(250, 100, 500, 0.5) == 64);
+    // A range below the floor is clamped; a degenerate screen is centred.
+    assert(axisToPaddle(300, 100, 500, 0.0) == 128);
+    assert(axisToPaddle(300, 100, 100, 1.0) == 128);
+    std::printf("[ OK ] mouse → paddles: absolute, clamped at the screen edges\n");
+}
+
 // ── 3. Paddle RC discharge timing and the $C070 re-arm ────────────────────
 void testPaddleTiming()
 {
@@ -202,6 +224,7 @@ int main()
     testKeyboardLatch();
     testButtons();
     testShiftKeyMod();
+    testPaddleMouse();
     testPaddleTiming();
     std::printf("input_io_smoke_test: OK\n");
     return 0;
