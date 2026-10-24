@@ -239,8 +239,8 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         status_ = "Printer reset — pitch, margins and soft switches back to defaults.";
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Power-cycle the printer: factory settings, current "
-                          "sheet discarded. Ejected sheets are kept.");
+        ImGui::SetTooltip("Power-cycle the printer: factory settings; a sheet "
+                          "in progress is ejected onto the stack, not lost.");
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_TRASH " Clear all")) {
         iw.clearAll();

@@ -551,10 +551,23 @@ std::string ChildProcess::findOnPath(const std::string& name)
     // group or the world can write. Sticky directories (/tmp) are still
     // refused: the sticky bit protects existing entries, not the ability to
     // CREATE the name we are about to look up.
+    //
+    // One exception, macOS only: a directory writable by the `admin` group
+    // (gid 80) or `wheel` (gid 0). Homebrew creates `/opt/homebrew/bin` as
+    // `drwxrwxr-x <user>:admin`, so the rule found no Ghostscript on a stock
+    // Apple Silicon install (CARDS-011). Every member of those groups can
+    // already `sudo`: a planted binary there is nothing they could not do
+    // anyway. Any other group, and the world bit, are still refused.
     auto dirIsTrustworthy = [](const std::string& dir) {
         struct stat st{};
         if (::stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return false;
-        if (st.st_mode & (S_IWGRP | S_IWOTH)) return false;
+        if (st.st_mode & S_IWOTH) return false;
+#ifdef __APPLE__
+        const bool privilegedGroup = st.st_gid == 0 || st.st_gid == 80;
+#else
+        const bool privilegedGroup = false;
+#endif
+        if ((st.st_mode & S_IWGRP) && !privilegedGroup) return false;
         // Owned by root or by us. Anything else means a third party controls
         // the contents.
         return st.st_uid == 0 || st.st_uid == ::getuid();

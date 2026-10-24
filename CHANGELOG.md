@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Ghostscript found on a stock Apple Silicon Homebrew (CARDS-011)
+
+`ChildProcess::findOnPath` refuses any directory the group or the world can
+write to, so nobody else can plant the `gs` POM2 runs with `-dSAFER`.
+Homebrew creates `/opt/homebrew/bin` as `drwxrwxr-x <user>:admin`, so with
+Ghostscript installed the LaserWriter path said "install Ghostscript". On
+macOS a directory writable by `admin` (gid 80) or `wheel` (gid 0) is now
+accepted: every member of those groups can already `sudo`, so a planted
+binary is nothing they could not do anyway. Any other group, and the world
+bit, are still refused. Checked on this machine: `postscript_render`
+renders a real page through `/opt/homebrew/bin/gs`. Pinned in
+`child_process` (an ordinary group refused; `admin` accepted when the
+account can chgrp to it — the test fails with the exception removed). The
+"Reset printer" tooltip now says the sheet is ejected, which is what it
+does. The ImageWriter's smaller residue stays in CARDS-011.
+
 ## 2026-10-24 — SSC RDR no longer releases the IRQ; Mockingboard slot hint
 
 - **MEMORY-004: a read of the SSC's RDR released IRQ_RDRF**, under a

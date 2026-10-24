@@ -391,6 +391,48 @@ void testFindOnPathIgnoresWritableDirs()
     fs::remove_all(evil, ec);
 }
 
+// ── 7b'. Group-writable: refused, except by the admin group on macOS ──────
+// CARDS-011: Homebrew ships `/opt/homebrew/bin` as `drwxrwxr-x <user>:admin`,
+// and the writability rule hid every tool in it. A group-writable directory
+// is still refused for an ordinary group; on macOS, `admin` (gid 80) is
+// accepted — its members can already sudo.
+void testFindOnPathGroupWritable()
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path() /
+                         ("pom2_path_group_" + std::to_string(::getpid()));
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    assert(!ec);
+    const fs::path tool = dir / "pom2-group-probe-tool";
+    {
+        std::FILE* f = std::fopen(tool.c_str(), "w");
+        assert(f);
+        std::fputs("#!/bin/sh\nexit 0\n", f);
+        std::fclose(f);
+    }
+    ::chmod(tool.c_str(), 0755);
+    ::chmod(dir.c_str(), 0775);
+    const std::string oldPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+    ::setenv("PATH", dir.c_str(), 1);
+
+    struct stat st{};
+    ::stat(dir.c_str(), &st);
+    if (st.st_gid != 0 && st.st_gid != 80)
+        assert(ChildProcess::findOnPath(tool.filename().string()).empty() &&
+               "an ordinary group-writable directory is refused");
+#ifdef __APPLE__
+    if (::chown(dir.c_str(), static_cast<uid_t>(-1), 80) == 0)   // admin, if we are in it
+        assert(ChildProcess::findOnPath(tool.filename().string()) == tool.string() &&
+               "an admin-group-writable directory (Homebrew) is accepted");
+    else
+        std::printf("  (not in the admin group: the Homebrew case is not exercised)\n");
+#endif
+    ::setenv("PATH", oldPath.c_str(), 1);
+    fs::remove_all(dir, ec);
+}
+
 // ── 7c. The child does not inherit Ghostscript or loader overrides ─────────
 //
 // `execve()` would hand the child POM2's whole environment. Ghostscript reads
@@ -625,6 +667,7 @@ int main()
     testRestartReplaces();
     testFindOnPath();
     testFindOnPathIgnoresWritableDirs();
+    testFindOnPathGroupWritable();
     testChildEnvironmentIsScrubbed();
     testChildDoesNotInheritListeners();
     testStopDetachedDoesNotWait();
