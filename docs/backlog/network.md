@@ -21,7 +21,6 @@ an explicit request before scheduling.
 | [NETWORK-004](#network-004) | 🟡 | Policy/UI implemented; remote-media validation remains | [FujiNet] delayed network-media calls |
 | [NETWORK-005](#network-005) | 🟡 | To verify | [FujiNet] a network-backed SmartPort call freezes the emulator |
 | [NETWORK-007](#network-007) | 🟡 | To verify | [FujiNet] //c-class support |
-| [NETWORK-011](#network-011) | 🟡 | Partial: corrected findings separated from remaining reports | Bug hunt #14's network residue |
 | [NETWORK-008](#network-008) | 🟢 | To verify | [FujiNet] embedded firmware |
 | [NETWORK-009](#network-009) | 🧊 | Frozen | Uthernet I has no host transport on Windows |
 | [NETWORK-010](#network-010) | 🟡 | Partial: local TCP implemented | Uthernet II inbound (`LISTEN`) |
@@ -167,129 +166,6 @@ answer their rear-port SmartPort **bus** through `IIcExternalSmartPort`
 (`src/IIcExternalSmartPort.h`), serving the units of the built-in slot-5
 card; that bus responder, not only the `$C500` stub, is now the seam a //c
 FujiNet would hang off.
-
-<a id="network-011"></a>
-
-## NETWORK-011 — Bug hunt #14's network residue
-
-**Priority:** 🟡 · **State:** Partly resolved; current implementation summary reconciled 2026-10-19.
-
-**Acceptance criterion (after revalidation):** Break down the network register, relay-range, reset and teardown findings into independent reproductions with bounded completion.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2031). Original dates and estimates are retained below.
-
-**Current status, reconciled 2026-10-19:** The original report is not a
-current defect list. Implemented corrections include CS8900A multicast and
-receiver gating, PacketPage reset/receive reads, RxMISS snapshot state, RxCTL
-length/status filtering and receive-event handling; W5100 socket-register
-writes; FujiNet's `$C000-$CFFF` buffer fence and bounded reset sweep; and
-`LD_LIBRARY_PATH` filtering for helper processes. The dated evidence below
-records their regression cases.
-
-Remaining reports to verify independently include W5100 IPRAW policy routing,
-CS8900A implied-skip behavior and child-process teardown. CRC-error acceptance
-is constrained by the backend's already-validated frames. The reported slirp
-oversized-front-frame issue is not reachable with the current card callers'
-1518-byte receive buffers. See the original report for historical details;
-do not reintroduce the corrected items as work still to implement.
-
-**Bug hunt 2026-10-18:** The CS8900A multicast classifier and receive-enable
-gate were reproduced and fixed. A frame with first destination octet `$01`
-was rejected as unicast while `$80` could pass as multicast; the chip uses
-bit 0 for the individual/group distinction. Separately, frames arriving
-with `LineCTL.SerRxON` clear were queued and appeared after the guest enabled
-the receiver. `uthernet_cs8900_smoke` fails on each reverted defect and now
-checks that pre-enable frames are discarded. The other findings in this entry
-remain to verify independently.
-
-**Bug hunt 2026-10-18 (continued):** FujiNet's buffer guard now rejects
-`$C000-$CFFF`, including slot and expansion ROM, and the POSIX helper
-environment filter removes `LD_LIBRARY_PATH`. The `fujinet_card` and
-`child_process` tests failed before each fix and pass afterward. Other
-findings in this entry remain open for independent verification.
-
-**Bug hunt 2026-10-18 (PacketPage reset):** The CS8900A reset now restores
-`packetPagePtr_` to `$3000`, including after SelfCtl RESET. Before the fix,
-the next PacketPage data access used the previous driver's address and
-auto-increment flag. `uthernet_cs8900_smoke` failed on the stale pointer and
-now covers both reset paths. Other findings above remain open.
-
-**Bug hunt 2026-10-18 (RxMISS snapshot):** The chip snapshot now stores
-`framesMissed_` and `rxMissReported_`. Previously the saved `RxMISS` register
-could say two misses were pending while the underlying total had reset to
-zero; the next miss then reported one. The test reproduces this and covers
-both the pending and read-cleared states. Version 1 chip snapshots remain
-readable, with their pending `RxMISS` value as the recoverable starting count.
-
-**Bug hunt 2026-10-18 (W5100 socket registers):** Writes to `Sn_DHAR` and
-`Sn_MSSR` now stick on all four sockets. The register-level test failed before
-the fix and verifies reset defaults afterward. The slirp oversized-front-frame
-note is not reachable through current card callers: both provide a 1518-byte
-buffer, the maximum frame size the backend admits. Other findings above
-remain to verify independently.
-
-**Bug hunt 2026-10-18 (PacketPage receive location):** Reads through the
-PacketPage data window now return the staged receive location at
-`$0400-$09FF`, including `RxStatus`, `RxLength` and frame bytes. The receive
-test failed on a zero `RxStatus` before the fix and now confirms these values
-match the RXTXDATA stream. Other findings above remain to verify.
-
-**Bug hunt 2026-10-18 (RxCTL status acceptance):** `RxOKA` now gates frames
-with valid lengths, while `RuntA` gates short frames independently of the
-destination-address filter. The Uthernet I test failed with `RxOKA` clear
-before the fix. CRC-error acceptance remains limited by the host backend,
-which supplies frames after CRC validation.
-
-**Bug hunt 2026-10-18 (runt status):** An accepted short frame now sets the
-`Runt` status without `RxOK`, and ISQ reports that frame even though `RxOK`
-is clear. The direct-event test failed on the incorrect `RxOK` bit before
-the fix; a separate ISQ test guards delivery to polling drivers.
-
-**Bug hunt 2026-10-18 (queued receive decision):** The CS8900A no longer
-filters an accepted frame a second time when the guest reads `RxEvent`.
-`pumpBackend()` retains the arrival-time address classification with the
-frame, so later `RxCTL` or IA writes cannot discard it or alter its status.
-The register-level test failed before the fix with both settings changed.
-
-**Bug hunt 2026-10-18 (RxCFG Skip_1):** A write to `RxCFG.Skip_1` now frees
-the committed receive frame; it no longer cancels an in-progress transmit.
-The [CS8900A datasheet](https://www.futurlec.com/Datasheet/Others/CS8900A.pdf)
-§4.4.6 and §5.2.5 resolve the earlier MAME-parity uncertainty. The smoke
-test failed before the fix and now checks both the next queued frame and the
-transmit handshake.
-
-**Bug hunt 2026-10-18 (empty RxEvent):** Reading `RxEvent` with no queued
-successor now leaves the committed frame's `RxStatus` intact in PacketPage
-and RXTXDATA. Previously the empty event value `$0004` overwrote it while
-`rxState_` still exposed the frame. The register-level test failed on the
-stale status before the fix.
-
-**Bug hunt 2026-10-18 (hash receive status):** The CS8900A now reports
-`Hashed` in bit 9 and the hash-table index in bits 10–15 for accepted
-multicast and individual frames. Multicast previously discarded the index,
-and individual frames shifted it into the `Hashed` bit. Table 26 of the
-[datasheet](https://www.farnell.com/datasheets/88476.pdf) also confirms that
-an accepted runt uses the ordinary error status. Fixed register-level
-vectors cover all three cases.
-
-**Bug hunt 2026-10-18 (minimum receive length):** `RuntA` now accepts
-frames from eight bytes upward, while shorter frames are always discarded
-as specified by [RxCTL in the datasheet](https://www.farnell.com/datasheets/88476.pdf).
-The loopback test reproduced acceptance of seven bytes before the fix and
-checks that eight bytes still produce a Runt event.
-
-**Bug hunt 2026-10-18 (minimum transmit length and padding):** The CS8900A
-now accepts a three-byte transmit request and pads short frames to 60 data
-bytes unless `TxPadDis` is set. The earlier four-byte floor and unpadded
-backend output disagreed with [the datasheet](https://www.farnell.com/datasheets/88476.pdf)
-§4.4.11 and Table 34. The smoke test failed at the three-byte handshake
-before the fix and checks both padding modes afterward.
-
-**Bug hunt 2026-10-18 (reset courtesy latency):** `notifyGuestReset()` now
-shares a 400 ms budget across its device-control notifications. A responsive
-16-unit fake peer taking 80 ms per control previously stalled guest reset for
-over a second. The regression test checks the aggregate bound and confirms
-that the next guest request ignores a late reply from the sweep.
 
 <a id="network-008"></a>
 

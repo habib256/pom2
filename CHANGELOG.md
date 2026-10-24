@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Bug hunt #14's network residue, closed (NETWORK-011)
+
+The last three reports, checked on current main. `ChildProcess::stop()`
+ended in a blocking `waitpid` after its SIGKILL sweep, on the UI thread
+(`NetworkCoordinator`): a helper stuck in uninterruptible I/O froze the
+window for as long as the kernel kept it. The reap is now a bounded poll —
+the grace, at least a second — as `stopDetached()`'s already was; past it
+the zombie goes to init. No test can put a child in that state portably,
+so this one is pinned only by `child_process` still reaping every ordinary
+stop. The CS8900A's "implied skip with an empty queue" was the empty
+`RxEvent` overwrite fixed on 2026-10-18. W5100 IPRAW still skips
+`checkDestination` by design: its frames leave through the backend, whose
+fence (`SlirpBackend::transmit`, `slirp_loopback_fence`) drops any frame
+naming 127/8, 0/8 or 169.254/16, under the same `uthernet_allow_loopback`.
+
 ## 2026-10-24 — Féline goldens: Arlequin and Extasie (DISPLAY-011)
 
 `chatmauve_feline_screens` boots the card's own showcase titles headless

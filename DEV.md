@@ -7218,8 +7218,9 @@ any IPv4 frame whose destination is 127/8, 0/8 or 169.254/16 while
 guest's DHCP DISCOVER never reaches slirp's own server. Pinned by
 `slirp_loopback_fence` (four cases including the opt-in; exit 77 without
 libslirp). The same policy now lives in three files — `W5100Device`,
-`FujiNetNetDevice`, the backend — which is a drift risk recorded in
-`docs/backlog/network.md` § NETWORK-011.
+`FujiNetNetDevice`, the backend — a drift risk to keep in mind when one of
+them changes; the three are not interchangeable (an IPRAW DHCP broadcast
+must pass the backend and would fail `checkDestination`).
 
 **A CS8900A reset clears the decoded multicast hash mask** *(same hunt)*.
 The Logical Address Filter at PacketPage `$0150-$0157` is zeroed by the
