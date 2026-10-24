@@ -97,16 +97,37 @@ any host output limit required by the destination format.
 
 Disk II drive indices and SmartPort unit indices are **0 and 1**, while
 expansion slot numbers are **1 through 7**. The facade provides one Disk II
-controller in slot 6, one optional SmartPort controller (slot 5 by default),
-and multiple Mockingboards in separate empty slots (slot 4 by default).
+controller with its two drives (slot 6 by default), one optional SmartPort
+controller (slot 5 by default), and multiple Mockingboards in separate empty
+slots (slot 4 by default).
 
-`attachDiskII` can replace this core's existing Disk II controller after
-successfully loading the new PROMs; it does not retain its mounted disks.
-A different card occupying slot 6 refuses attachment. SmartPort can be
-attached only once, and SmartPort/Mockingboard attachment requires an empty
-destination slot. `bootDisk()` cold-boots and enters `$C600`; its success
-means that the controller/PROM/media preconditions passed, not that the guest
-has completed booting. It exposes no drive-2 boot selector.
+`attachDiskII(bootRom, sequencerRom, slot)` takes any slot from 1 to 7: the
+P5 PROM finds its own slot at run time (`JSR $FF58`), so a controller in
+slot 5 boots at `$C500` and hands the boot sector X = `$50`. A second call
+replaces the controller after successfully loading the new PROMs, moving it
+when the slot differs; it does not retain the mounted disks. A different card
+in the requested slot refuses attachment, and a //c, whose disk port is wired
+to slot 6, refuses any other. SmartPort can be attached only once, and
+SmartPort/Mockingboard attachment requires an empty destination slot.
+`bootDisk()` cold-boots and enters `$Cn00` of the controller's slot; its
+success means that the controller/PROM/media preconditions passed, not that
+the guest has completed booting. It needs a disk in **drive 0**: the PROM
+boots drive 1 and nothing else, so a disk in drive 1 alone is refused rather
+than left spinning. As `bootSlot` does, it returns false after the cold boot
+when the machine maps its own firmware over that page (slot 3 on a //e).
+`bootSlot(n)` on the controller's slot is `bootDisk()`.
+
+Both drives take `insertDisk`, `ejectDisk` and `diskInserted`.
+`flushDisk(drive)` writes the guest's writes back to the image file without
+ejecting, as `flushSmartPortDisk` does. `setDiskWriteProtected(drive, on)` is
+a sticker over the mounted disk's notch: the guest reads the drive's
+write-protect line and nothing reaches the image or its file, until the disk
+is ejected or replaced. Protecting first writes back what the guest already
+wrote. It never touches the file's read-only bit, which stays the
+application's notch (`MediaNotch.h`), and lifting it cannot unprotect a
+read-only file, a write-protected WOZ/2IMG, or a run under
+`POM2_MEDIA_WRITE_DEFAULT=protected`. `diskWriteProtected(drive)` reports the
+protection the guest sees, whatever its cause.
 
 Soft reset preserves A/X/Y, but reloads PC from the reset vector, updates P
 and decrements SP. Hard reset clears A/X/Y while preserving RAM; cold boot
@@ -131,6 +152,49 @@ the RESET vector cannot promise, since a //e reset clears them. P's bit 5
 reads 1 on every 6502 and is forced. A host calls a guest routine by writing
 the return address minus one on page 1, setting S and PC, and stepping until
 the PC comes back (pinned by `pom2_core_api`, NMOS and 65C02).
+
+## Observing the bus
+
+`setBusWatch(fn)` receives each **CPU** bus access to a watched address, after
+it was performed, with the value read or written and the cycle it lands on —
+the instruction's own data cycle, the stamp the video soft-switch log uses,
+on the clock `cpuState().cycles` counts. `watchAddresses(first, last, reads,
+writes)` arms a range (ranges add up); `clearWatchedAddresses()` disarms
+everything and an empty `setBusWatch({})` turns reporting off. Opcode fetches,
+interrupt stack pushes and soft-switch reads count. The host's own
+`read()`/`write()`, and the facade's peeks (boot signatures, the mouse's
+screen holes), do not: reporting is limited to `run()`/`step()`. Write watches
+cost nothing on the fast path; a read watch sends every bus read out of line
+while one is armed (`Memory.h` § Read watchpoints), so arm only what you
+watch. Do not call `run()` or `step()` from the callback.
+
+`speakerToggleCount()` counts speaker toggles — accesses to `$C030-$C03F` —
+since the Core was created, a host `read()`/`write()` there included: on the
+bus it clicks too.
+
+## Display state and the RGB card
+
+`displayState()` returns the video soft switches as the motherboard holds
+them, without side effects: `text`, `mixed`, `page2`, `hiRes`, and on a //e
+`eightyColumn`, `doubleHiRes` (the DHIRESON latch, `$C05E`), `altCharSet` and
+`eightyStore`; `an3` follows `$C05E`/`$C05F` on every machine. On a ][+ — which
+has no `$C01A-$C01F` status reads — the //e fields stay false. The screen
+shows double hi-res only when `doubleHiRes`, `eightyColumn` and `hiRes` are
+set and `text` is not.
+
+`attachRgbCard(slot, model)` installs a Le Chat Mauve. `LeChatMauveFeline` is
+the //e's aux-slot card (slot 7 by convention; it needs //e memory);
+`LeChatMauveIIcAdapter` is the "Adaptateur IIc" on the //c's DB-15 and needs
+`Machine::AppleIIc`, where `slot` is ignored and the adapter is kept on slot
+7, as in the application. One card per core. Its mode latch is the
+patent's two-bit shift register: each `$C05E`→`$C05F` edge pushes the current
+80COL level, so `$C00C,$C00D` gives the mixed mode, `$C00C,$C00C` 560 dots
+and `$C00D,$C00D` 140 colours (the power-on and reset mode).
+`rgbDhgrMode()` reports `Color140`, `Mono560` or `Mixed` — `Color140` with no
+card. The card has no slot ROM and no I/O space, so a program cannot detect
+it, which is why a host checks it from here. `renderFrame()` keeps painting
+the composite picture; the card changes what `rgbDhgrMode()` reports, not the
+software framebuffer.
 
 ## Mouse
 
@@ -161,7 +225,9 @@ about one VBL interrupt per frame) on both models.
 `CoreConfig::machine` defaults to `Machine::Custom`, which takes `cpu` and
 `iieMemory` as given (the struct's last member, so the positional
 `{cpu, timing, iieMemory}` form keeps its meaning). `AppleIIPlus`,
-`AppleIIe` (NMOS) and `AppleIIeEnhanced` (65C02) set those two fields.
+`AppleIIe` (NMOS) and `AppleIIeEnhanced` (65C02) set those two fields;
+`AppleIIe` takes the unenhanced //e ROM (`roms/apple2e_unenh.rom`, with
+`apple2e_char_us_unenh.rom`), the machine a "65C02 required" check runs on.
 `AppleIIc` selects the 65C02 and //e memory, loads a 32 KiB system ROM as a
 //c dump (bank 0 at reset; 16 KiB rev-255 dumps load as usual) and plugs the
 //c's IOU mouse on port 4: its firmware is in the system ROM, so

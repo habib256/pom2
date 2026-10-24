@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -439,6 +440,249 @@ void testIIcMachine(const std::string& sourceDir)
     std::printf("  ok: Machine::AppleIIc — built-in mouse, 32 K and 16 K ROMs, 4c wake\n");
 }
 
+/// Copy `code` to $0300, close it with a JMP to itself, and run it there
+/// with interrupts masked until it reaches that JMP.
+void runProgram(pom2::Core& c, std::initializer_list<std::uint8_t> code)
+{
+    std::uint16_t at = 0x0300;
+    for (const std::uint8_t b : code) c.write(at++, b);
+    c.write(at, 0x4C);
+    c.write(static_cast<std::uint16_t>(at + 1), static_cast<std::uint8_t>(at));
+    c.write(static_cast<std::uint16_t>(at + 2), static_cast<std::uint8_t>(at >> 8));
+    pom2::CpuState st = c.cpuState();
+    st.programCounter = 0x0300;
+    st.status = 0x24;                                // I set
+    c.setCpuState(st);
+    for (int i = 0; i < 1000 && c.cpuState().programCounter != at; ++i) c.step();
+    assert(c.cpuState().programCounter == at);
+}
+
+/// A blank 140 KiB DOS-order image whose track 0 sector 0 is a boot
+/// program: at $0801 it stores $A5 and the X the P5 PROM handed over (the
+/// slot × 16 it found with JSR $FF58), then spins.
+void writeBoot140K(const std::string& path)
+{
+    std::vector<char> image(35u * 16u * 256u, 0);
+    const unsigned char boot[] = {
+        0x01,                   // $0800: sectors for the PROM to load
+        0xA9, 0xA5,             // LDA #$A5
+        0x8D, 0x00, 0x03,       // STA $0300
+        0x8E, 0x01, 0x03,       // STX $0301
+        0x4C, 0x09, 0x08,       // JMP $0809
+    };
+    std::copy(std::begin(boot), std::end(boot), image.begin());
+    std::ofstream disk(path, std::ios::binary);
+    disk.write(image.data(), static_cast<std::streamsize>(image.size()));
+    assert(disk.good());
+}
+
+// One Disk II per core, in any slot: the P5 PROM finds its slot at run time,
+// so a controller in slot 5 boots at $C500 and hands the boot sector X=$50.
+void testDiskIISlot(const std::string& sourceDir)
+{
+    const std::string bootRom = sourceDir + "/roms/disk2.rom";
+    const std::string lssRom = sourceDir + "/roms/diskii_p6.rom";
+    const std::string imagePath = "pom2_core_api_boot140k.dsk";
+    writeBoot140K(imagePath);
+
+    pom2::Core core;
+    assert(core.loadRom(sourceDir + "/roms/apple2.rom"));
+    assert(!core.flushDisk(0));                      // no controller yet
+    assert(!core.attachDiskII(bootRom, lssRom, 0));
+    assert(!core.attachDiskII(bootRom, lssRom, 8));
+    assert(core.attachDiskII(bootRom, lssRom, 5));
+    assert(!core.bootSlot(6));                       // slot 6 stays empty
+
+    // Drive 1 alone: the PROM would wait on drive 0 forever.
+    assert(core.insertDisk(1, imagePath));
+    assert(core.diskInserted(1) && !core.diskInserted(0));
+    assert(!core.bootDisk());
+    assert(!core.lastError().empty());
+
+    assert(core.insertDisk(0, imagePath));
+    assert(core.flushDisk(0) && core.flushDisk(1));  // clean: nothing to write
+    assert(!core.flushDisk(2));
+    assert(core.bootSlot(5));
+    assert(core.cpuState().programCounter == 0xC500);
+    core.run(3000000);
+    assert(core.read(0x0300) == 0xA5);
+    assert(core.read(0x0301) == 0x50);               // X = slot × 16
+    const pom2::CpuState booted = core.cpuState();
+    assert(booted.programCounter >= 0x0809 && booted.programCounter <= 0x080B);
+
+    // Moving the controller retires the old one and frees its slot.
+    assert(core.attachDiskII(bootRom, lssRom, 6));
+    assert(!core.diskInserted(0) && !core.diskInserted(1));
+    assert(core.attachSmartPort(5));
+    assert(!core.attachDiskII(bootRom, lssRom, 5));  // taken by the SmartPort
+
+    // The sticker: the guest reads the drive's write-protect line (Q6H, then
+    // a Q7L read: bit 7), and lifting it restores the writable default.
+    assert(!core.setDiskWriteProtected(0, true));    // no disk
+    assert(core.insertDisk(0, imagePath));
+    assert(!core.setDiskWriteProtected(2, true));
+    const auto senseProtect = [&core] {
+        runProgram(core, {
+            0xAD, 0xE9, 0xC0,   // LDA $C0E9   motor on
+            0xAD, 0xED, 0xC0,   // LDA $C0ED   Q6H
+            0xAD, 0xEE, 0xC0,   // LDA $C0EE   Q7L: write-protect in bit 7
+            0x8D, 0x20, 0x03,   // STA $0320
+            0xAD, 0xE8, 0xC0,   // LDA $C0E8   motor off
+        });
+        return (core.read(0x0320) & 0x80) != 0;
+    };
+    assert(!core.diskWriteProtected(0) && !senseProtect());
+    assert(core.setDiskWriteProtected(0, true));
+    assert(core.diskWriteProtected(0) && senseProtect());
+    assert(core.setDiskWriteProtected(0, false));
+    assert(!core.diskWriteProtected(0) && !senseProtect());
+    assert(core.ejectDisk(0));
+
+    // A //c's disk port is slot 6.
+    pom2::CoreConfig cfg;
+    cfg.machine = pom2::Machine::AppleIIc;
+    pom2::Core iic(cfg);
+    assert(iic.loadRom(sourceDir + "/roms/apple2c-32Kv0.rom"));
+    assert(!iic.attachDiskII(bootRom, lssRom, 5));
+    assert(iic.attachDiskII(bootRom, lssRom));
+
+    assert(std::remove(imagePath.c_str()) == 0);
+}
+
+// setBusWatch / watchAddresses (pom2games' CHROMABREAK request 1): each CPU
+// access to a watched address, at the cycle it lands on; the host's own
+// read()/write() click the speaker but are not reported.
+void testBusWatch(const std::string& sourceDir)
+{
+    pom2::Core core;
+    assert(core.loadRom(sourceDir + "/roms/apple2.rom"));
+    struct Access {
+        std::uint16_t address;
+        std::uint8_t  value;
+        bool          write;
+        std::uint64_t cycle;
+    };
+    std::vector<Access> seen;
+    core.setBusWatch([&seen](std::uint16_t a, std::uint8_t v, bool w,
+                             std::uint64_t cycle) {
+        seen.push_back({a, v, w, cycle});
+    });
+    assert(!core.watchAddresses(0x2001, 0x2000, false, true));
+    assert(core.watchAddresses(0xC030, 0xC030, true, false));
+    assert(core.watchAddresses(0x2000, 0x3FFF, false, true));
+
+    const std::uint64_t clicks = core.speakerToggleCount();
+    (void)core.read(0xC030);
+    core.write(0x2000, 0x11);
+    assert(core.speakerToggleCount() == clicks + 1);
+    assert(seen.empty());
+
+    const std::uint64_t start = core.cpuState().cycles;
+    runProgram(core, {
+        0xAD, 0x30, 0xC0,       // LDA $C030
+        0xAD, 0x30, 0xC0,       // LDA $C030
+        0xA9, 0x5A,             // LDA #$5A
+        0x8D, 0x45, 0x23,       // STA $2345
+        0xAD, 0x45, 0x23,       // LDA $2345   (writes only: not reported)
+    });
+    assert(core.speakerToggleCount() == clicks + 3);
+    assert(seen.size() == 3);
+    assert(seen[0].address == 0xC030 && !seen[0].write);
+    assert(seen[1].address == 0xC030 && !seen[1].write);
+    assert(seen[2].address == 0x2345 && seen[2].write && seen[2].value == 0x5A);
+    // The data cycle of each instruction: LDA abs reads on its 4th cycle.
+    assert(seen[0].cycle > start && seen[0].cycle <= start + 4);
+    assert(seen[1].cycle - seen[0].cycle == 4);
+    assert(seen[2].cycle - seen[1].cycle == 2 + 4);  // LDA #, then STA abs
+
+    core.clearWatchedAddresses();
+    runProgram(core, { 0xAD, 0x30, 0xC0, 0x8D, 0x45, 0x23 });
+    assert(seen.size() == 3);
+    assert(core.watchAddresses(0xC030, 0xC030, true, false));
+    core.setBusWatch({});
+    runProgram(core, { 0xAD, 0x30, 0xC0 });
+    assert(seen.size() == 3);
+}
+
+// displayState (request 2): the switches on a ][+, which has no $C01x
+// status reads.
+void testDisplayState(const std::string& sourceDir)
+{
+    pom2::Core core;
+    assert(core.loadRom(sourceDir + "/roms/apple2.rom"));
+    core.write(0xC050, 0);
+    core.write(0xC057, 0);
+    core.write(0xC052, 0);
+    core.write(0xC055, 0);
+    pom2::DisplayState d = core.displayState();
+    assert(!d.text && d.hiRes && !d.mixed && d.page2);
+    assert(!d.eightyColumn && !d.doubleHiRes && !d.eightyStore);
+    (void)core.read(0xC051);
+    (void)core.read(0xC054);
+    d = core.displayState();
+    assert(d.text && d.hiRes && !d.page2);
+}
+
+// attachRgbCard / rgbDhgrMode (request 3): the mode latch clocked by AN3
+// with 80COL as data, on the //e's Féline and on the //c's adapter.
+void testRgbCard(const std::string& sourceDir)
+{
+    // Two AN3 rising edges, each pushing the 80COL level written before it.
+    const auto clockLatch = [](pom2::Core& c, bool first, bool second) {
+        runProgram(c, {
+            0x8D, static_cast<std::uint8_t>(first ? 0x0D : 0x0C), 0xC0,
+            0x8D, 0x5E, 0xC0, 0x8D, 0x5F, 0xC0,
+            0x8D, static_cast<std::uint8_t>(second ? 0x0D : 0x0C), 0xC0,
+            0x8D, 0x5E, 0xC0, 0x8D, 0x5F, 0xC0,
+        });
+    };
+
+    pom2::Core plus;
+    assert(plus.loadRom(sourceDir + "/roms/apple2.rom"));
+    assert(!plus.attachRgbCard());                   // the Féline needs a //e
+
+    pom2::Core core = makeSmartPortCore(sourceDir);
+    assert(!core.rgbCardAttached());
+    assert(core.rgbDhgrMode() == pom2::RgbDhgrMode::Color140);
+    assert(!core.attachRgbCard(7, pom2::RgbCardModel::LeChatMauveIIcAdapter));
+    assert(!core.attachRgbCard(0));
+    assert(core.attachRgbCard());
+    assert(core.rgbCardAttached());
+    assert(!core.attachRgbCard(6));                  // one card
+    assert(core.rgbDhgrMode() == pom2::RgbDhgrMode::Color140);
+    clockLatch(core, false, true);
+    assert(core.rgbDhgrMode() == pom2::RgbDhgrMode::Mixed);
+    clockLatch(core, false, false);
+    assert(core.rgbDhgrMode() == pom2::RgbDhgrMode::Mono560);
+    clockLatch(core, true, true);
+    assert(core.rgbDhgrMode() == pom2::RgbDhgrMode::Color140);
+
+    pom2::CoreConfig cfg;
+    cfg.machine = pom2::Machine::AppleIIc;
+    pom2::Core iic(cfg);
+    assert(iic.loadRom(sourceDir + "/roms/apple2c-32Kv0.rom"));
+    assert(!iic.attachRgbCard());                    // a //c takes the adapter
+    assert(iic.attachRgbCard(7, pom2::RgbCardModel::LeChatMauveIIcAdapter));
+    clockLatch(iic, false, true);
+    assert(iic.rgbDhgrMode() == pom2::RgbDhgrMode::Mixed);
+}
+
+// Request 5: the unenhanced //e's ROM on Machine::AppleIIe — the NMOS //e a
+// "65C02 required" check has to be run on.
+void testUnenhancedIIe(const std::string& sourceDir)
+{
+    pom2::CoreConfig cfg;
+    cfg.machine = pom2::Machine::AppleIIe;
+    pom2::Core core(cfg);
+    assert(core.loadRom(sourceDir + "/roms/apple2e_unenh.rom"));
+    assert(core.loadCharacterRom(sourceDir + "/roms/apple2e_char_us_unenh.rom"));
+    core.coldBoot();
+    assert(core.read(0xFBB3) == 0x06);               // a //e…
+    assert(core.read(0xFBC0) == 0xEA);               // …unenhanced
+    core.run(2000000);
+    assert(!core.cpuState().halted);
+}
+
 int main()
 {
     testSetCpuState();
@@ -452,6 +696,11 @@ int main()
     setenv("POM2_MEDIA_WRITE_DEFAULT", "writable", 1);
 #endif
     testSmartPort(POM2_TEST_SOURCE_DIR);
+    testDiskIISlot(POM2_TEST_SOURCE_DIR);
+    testBusWatch(POM2_TEST_SOURCE_DIR);
+    testDisplayState(POM2_TEST_SOURCE_DIR);
+    testRgbCard(POM2_TEST_SOURCE_DIR);
+    testUnenhancedIIe(POM2_TEST_SOURCE_DIR);
 
     pom2::Core core;
 

@@ -310,6 +310,10 @@ public:
     /// write-back enabled. A no-op when write-back is off or the medium is
     /// physically write-protected.
     bool flushPendingWrites();
+    /// The same for one drive: fold the in-flight burst in, then save
+    /// `drive` if it is dirty. False (with `getLastError(drive)` set) on an
+    /// invalid index or a failed save, which leaves the medium dirty.
+    bool flushDrive(int drive);
 
     // All per-drive getters bound-check `drive` (0..kDriveCount-1) and return
     // a safe default out of range — insertDisk/ejectDisk already validate, so

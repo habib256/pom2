@@ -25,6 +25,8 @@
 #include "Memory.h"
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
 #include "IIcMouse.h"
+#include "LeChatMauveCard.h"
+#include "MediaWritePolicy.h"
 #include "Mockingboard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
@@ -48,6 +50,8 @@ public:
     {
         const CoreConfig config = resolve(requested);
         machine = config.machine;
+        iieMemory = config.iieMemory;
+        busWatchSink.owner = this;
         memory.setCpu(&cpu);
         memory.setIIEMode(config.iieMemory);
         videoStandard = config.timing == VideoTiming::PAL
@@ -92,6 +96,7 @@ public:
 
     ~Impl()
     {
+        memory.setWatchSink(nullptr);
         memory.setCassetteDevice(nullptr);
         memory.setSpeakerDevice(nullptr);
     }
@@ -101,7 +106,7 @@ public:
     Apple2Display display;
     SpeakerDevice speaker;
     CassetteDevice cassette;
-    DiskIICard* diskII = nullptr; // non-owning; slot 6 owns the card
+    DiskIICard* diskII = nullptr; // non-owning; its slot owns the card
     SmartPortCard* smartPort = nullptr; // non-owning; its slot owns the card
     // Non-owning; their slots own them. A LIST, not one pointer: `pullAudio`
     // mixes every card on the bus, so a second attached card was being mixed
@@ -114,6 +119,22 @@ public:
     MouseCardAppleWin* mouseHle = nullptr;
     IIcMouse*          mouseIic = nullptr;   // the //c's built-in one
     Machine            machine  = Machine::Custom;
+    bool               iieMemory = false;
+    LeChatMauveCard*   rgbCard  = nullptr;   // non-owning; its slot owns it
+    // setBusWatch: Memory reports each watched access here. Only the CPU's
+    // accesses go out — `cpuRunning` is set across run()/step(), so the
+    // host's read()/write() and the facade's own peeks (boot signatures,
+    // the mouse's screen holes) stay silent.
+    struct BusWatchSink final : MemoryWatchSink {
+        Impl* owner = nullptr;
+        void noteAccess(std::uint16_t addr, std::uint8_t value, bool write) override
+        {
+            if (owner->cpuRunning && owner->busWatch)
+                owner->busWatch(addr, value, write, owner->memory.accessCycle());
+        }
+    } busWatchSink;
+    Core::BusWatch     busWatch;
+    bool               cpuRunning = false;
     int                mouseSlot = 0;
     std::uint8_t       mouseRawX = 0, mouseRawY = 0;   // the host's running counters
     // setMouse on the MCU card: where the screen holes stood when the last
@@ -168,16 +189,40 @@ std::string Core::lastError() const
     return impl_->error;
 }
 
-bool Core::attachDiskII(std::string_view bootRom,
-                        std::string_view sequencerRom)
+namespace {
+
+// The JSR-dispatch trio of Apple II Reference Manual Appx C, the check the
+// emulator's own bootFromSlot makes. $Cn07 is not checked: a SmartPort reads
+// $00 there and the //c-class block stub $01.
+template <typename Read>
+bool hasBootSignature(Read read)
 {
-    SlotPeripheral* existing = impl_->memory.slotBus().peripheral(
-        DiskIICard::kDefaultSlot);
-    if (existing && existing != impl_->diskII) {
-        impl_->error = "Slot 6 is already occupied";
+    return read(0x01) == 0x20 && read(0x03) == 0x00 && read(0x05) == 0x03;
+}
+
+} // namespace
+
+bool Core::attachDiskII(std::string_view bootRom,
+                        std::string_view sequencerRom,
+                        int slot)
+{
+    if (slot < 1 || slot > 7) {
+        impl_->error = "Disk II slot must be between 1 and 7";
         return false;
     }
-    auto card = std::make_unique<DiskIICard>(DiskIICard::kDefaultSlot);
+    // A //c has no slots: its Disk II is the IWM behind $C0E0-$C0EF, and its
+    // firmware's disk page is $C600.
+    if (impl_->machine == Machine::AppleIIc
+        && slot != DiskIICard::kDefaultSlot) {
+        impl_->error = "The //c's disk port is slot 6";
+        return false;
+    }
+    SlotPeripheral* existing = impl_->memory.slotBus().peripheral(slot);
+    if (existing && existing != impl_->diskII) {
+        impl_->error = "Slot " + std::to_string(slot) + " is already occupied";
+        return false;
+    }
+    auto card = std::make_unique<DiskIICard>(slot);
     card->setCpu(&impl_->cpu);
 
     if (!card->loadBootRom(std::string(bootRom))) {
@@ -191,8 +236,12 @@ bool Core::attachDiskII(std::string_view bootRom,
         return false;
     }
 
+    // One controller per core: moving it retires the old one, whose
+    // destructor writes its drives back.
+    if (impl_->diskII && impl_->diskII->getSlot() != slot)
+        impl_->memory.slotBus().unplug(impl_->diskII->getSlot());
     impl_->diskII = card.get();
-    impl_->memory.slotBus().plug(DiskIICard::kDefaultSlot, std::move(card));
+    impl_->memory.slotBus().plug(slot, std::move(card));
     impl_->error.clear();
     return true;
 }
@@ -234,17 +283,83 @@ bool Core::diskInserted(int drive) const
     return impl_->diskII && impl_->diskII->isDiskLoaded(drive);
 }
 
+bool Core::flushDisk(int drive)
+{
+    if (!impl_->diskII) {
+        impl_->error = "Disk II controller is not attached";
+        return false;
+    }
+    if (!DiskIICard::validDrive(drive)) {
+        impl_->error = "Disk II drive index must be 0 or 1";
+        return false;
+    }
+    const bool flushed = impl_->diskII->flushDrive(drive);
+    impl_->error = flushed ? std::string{}
+                           : impl_->diskII->getLastError(drive);
+    if (!flushed && impl_->error.empty())
+        impl_->error = "the image could not be saved";
+    return flushed;
+}
+
+bool Core::setDiskWriteProtected(int drive, bool protectedOn)
+{
+    if (!impl_->diskII) {
+        impl_->error = "Disk II controller is not attached";
+        return false;
+    }
+    if (!DiskIICard::validDrive(drive)) {
+        impl_->error = "Disk II drive index must be 0 or 1";
+        return false;
+    }
+    if (!impl_->diskII->isDiskLoaded(drive)) {
+        impl_->error = "No disk in that drive";
+        return false;
+    }
+    // A protected image never saves (DiskImage::saveDirty), so writes the
+    // guest already made go to the file first; a failed save refuses.
+    if (protectedOn && !flushDisk(drive)) return false;
+    // The write-back gate is what DiskImage::isWriteProtected() — the
+    // guest's write-protect line — reads. Lifting it goes back to the
+    // process policy, never above it.
+    impl_->diskII->driveImage(drive).setWriteBackEnabled(
+        !protectedOn && pom2::mediaWritableByDefault());
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::diskWriteProtected(int drive) const
+{
+    return impl_->diskII && impl_->diskII->isDiskLoaded(drive)
+        && impl_->diskII->driveImage(drive).isWriteProtected();
+}
+
 bool Core::bootDisk()
 {
-    if (!impl_->diskII || !impl_->diskII->hasBootRom()
-        || (!impl_->diskII->isDiskLoaded(0)
-            && !impl_->diskII->isDiskLoaded(1))) {
-        impl_->error = "Disk II boot requires a controller, boot ROM and disk";
+    if (!impl_->diskII || !impl_->diskII->hasBootRom()) {
+        impl_->error = "Disk II boot requires a controller and its boot ROM";
+        return false;
+    }
+    // The P5 PROM reads drive 1 and nothing else: with drive 0 empty it
+    // waits for a sector that never comes, so the boot is refused here.
+    if (!impl_->diskII->isDiskLoaded(0)) {
+        impl_->error = "Disk II boots from drive 0, which is empty";
         return false;
     }
     coldBoot();
     impl_->diskII->seekTrack0();
-    impl_->cpu.setProgramCounter(0xC600);
+    // The bus, not the card, after the reset — see bootSlot(): a //e maps
+    // its 80-column firmware at $C300 out of reset.
+    const int slot = impl_->diskII->getSlot();
+    const auto cnxx = static_cast<std::uint16_t>(0xC000 | (slot << 8));
+    if (!hasBootSignature([this, cnxx](std::uint8_t off) {
+            return impl_->memory.memRead(static_cast<std::uint16_t>(cnxx + off));
+        })) {
+        impl_->error = "Slot " + std::to_string(slot)
+                     + " boot PROM is not visible at $C" + std::to_string(slot)
+                     + "00 on this machine; it was cold-booted";
+        return false;
+    }
+    impl_->cpu.setProgramCounter(cnxx);
     impl_->error.clear();
     return true;
 }
@@ -338,23 +453,73 @@ bool Core::flushSmartPortDisk(int unit)
     return saved;
 }
 
+bool Core::attachRgbCard(int slot, RgbCardModel model)
+{
+    const bool iic = impl_->machine == Machine::AppleIIc;
+    if (impl_->rgbCard) {
+        impl_->error = "An RGB card is already attached";
+        return false;
+    }
+    // The model is hardware, as in the application (MainWindow_SlotConfig's
+    // plugChatMauve): the //c's DB-15 takes the adapter and nothing else,
+    // and the Féline sits in a //e's aux slot.
+    if (model == RgbCardModel::LeChatMauveFeline && (iic || !impl_->iieMemory)) {
+        impl_->error = iic ? "A //c takes the Adaptateur IIc, not the Feline"
+                           : "The Feline needs a //e (iieMemory)";
+        return false;
+    }
+    if (model == RgbCardModel::LeChatMauveIIcAdapter && !iic) {
+        impl_->error = "The Adaptateur IIc needs Machine::AppleIIc";
+        return false;
+    }
+    if (iic) slot = LeChatMauveCard::kDefaultSlot;
+    if (slot < 1 || slot > 7) {
+        impl_->error = "RGB card slot must be between 1 and 7";
+        return false;
+    }
+    if (impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "Requested RGB card slot is already occupied";
+        return false;
+    }
+    auto card = std::make_unique<LeChatMauveCard>(slot,
+        model == RgbCardModel::LeChatMauveIIcAdapter
+            ? LeChatMauveCard::Variant::IIcAdapter
+            : LeChatMauveCard::Variant::Feline);
+    card->setMemory(&impl_->memory);
+    impl_->rgbCard = card.get();
+    impl_->memory.slotBus().plug(slot, std::move(card));
+    impl_->display.setChatMauveCard(impl_->rgbCard);
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::rgbCardAttached() const
+{
+    return impl_->rgbCard != nullptr;
+}
+
+RgbDhgrMode Core::rgbDhgrMode() const
+{
+    if (!impl_->rgbCard) return RgbDhgrMode::Color140;
+    switch (impl_->rgbCard->dhgrMode()) {
+        case LeChatMauveCard::DhgrMode::BW560: return RgbDhgrMode::Mono560;
+        case LeChatMauveCard::DhgrMode::Mixed: return RgbDhgrMode::Mixed;
+        default:                               return RgbDhgrMode::Color140;
+    }
+}
+
 bool Core::bootSlot(int slot)
 {
-    if (slot == DiskIICard::kDefaultSlot && impl_->diskII) return bootDisk();
+    if (impl_->diskII && slot == impl_->diskII->getSlot()) return bootDisk();
     SlotPeripheral* card = (slot >= 1 && slot <= 7)
         ? impl_->memory.slotBus().peripheral(slot) : nullptr;
     if (!card) {
         impl_->error = "No card in the requested boot slot";
         return false;
     }
-    // The JSR-dispatch trio of Apple II Reference Manual Appx C, the check
-    // the emulator's own bootFromSlot makes. $Cn07 is not checked: a SmartPort
-    // reads $00 there and the //c-class block stub $01. Asked of the card first, so a slot with
-    // nothing bootable is refused with RAM untouched…
-    const auto hasTrio = [](auto read) {
-        return read(0x01) == 0x20 && read(0x03) == 0x00 && read(0x05) == 0x03;
-    };
-    if (!hasTrio([card](std::uint8_t off) { return card->slotRomRead(off); })) {
+    // The boot signature (hasBootSignature) is asked of the card first, so
+    // a slot with nothing bootable is refused with RAM untouched…
+    if (!hasBootSignature([card](std::uint8_t off) { return card->slotRomRead(off); })) {
         impl_->error = "Slot " + std::to_string(slot)
                      + " ROM carries no boot signature";
         return false;
@@ -369,7 +534,7 @@ bool Core::bootSlot(int slot)
     coldBoot();
     impl_->memory.setIicSmartPortArmed(slot == 5);
     const auto cnxx = static_cast<std::uint16_t>(0xC000 | (slot << 8));
-    if (!hasTrio([this, cnxx](std::uint8_t off) {
+    if (!hasBootSignature([this, cnxx](std::uint8_t off) {
             return impl_->memory.memRead(static_cast<std::uint16_t>(cnxx + off));
         })) {
         impl_->memory.setIicSmartPortArmed(false);
@@ -638,14 +803,78 @@ void Core::coldBoot()
     impl_->cpu.hardReset();
 }
 
+namespace {
+
+// Raises Impl::cpuRunning for the CPU's own accesses (see BusWatchSink).
+struct CpuRunningScope {
+    explicit CpuRunningScope(bool& flag) : flag_(flag) { flag_ = true; }
+    ~CpuRunningScope() { flag_ = false; }
+    bool& flag_;
+};
+
+} // namespace
+
 int Core::run(int minCycles)
 {
-    return minCycles > 0 ? impl_->cpu.run(minCycles) : 0;
+    if (minCycles <= 0) return 0;
+    CpuRunningScope running(impl_->cpuRunning);
+    return impl_->cpu.run(minCycles);
 }
 
 void Core::step()
 {
+    CpuRunningScope running(impl_->cpuRunning);
     impl_->cpu.step();
+}
+
+DisplayState Core::displayState() const
+{
+    const Memory::DisplayState d = impl_->memory.getDisplayState();
+    DisplayState out;
+    out.text         = d.textMode;
+    out.mixed        = d.mixedMode;
+    out.page2        = d.page2;
+    out.hiRes        = d.hiRes;
+    out.eightyColumn = d.eightyCol;
+    out.doubleHiRes  = d.dhgr;
+    out.an3          = d.an3;
+    out.altCharSet   = d.altChar;
+    out.eightyStore  = d.eightyStore;
+    return out;
+}
+
+std::uint64_t Core::speakerToggleCount() const
+{
+    return impl_->memory.getSpeakerToggleCount();
+}
+
+void Core::setBusWatch(BusWatch watch)
+{
+    impl_->busWatch = std::move(watch);
+    // A null sink is the zero-cost state Memory checks for.
+    impl_->memory.setWatchSink(impl_->busWatch ? &impl_->busWatchSink : nullptr);
+}
+
+bool Core::watchAddresses(std::uint16_t first, std::uint16_t last,
+                          bool reads, bool writes)
+{
+    if (first > last) {
+        impl_->error = "Watched range is empty: first > last";
+        return false;
+    }
+    for (std::uint32_t a = first; a <= last; ++a) {
+        const auto addr = static_cast<std::uint16_t>(a);
+        if (reads)  impl_->memory.setReadWatch(addr, true);
+        if (writes) impl_->memory.setWriteWatch(addr, true);
+    }
+    impl_->error.clear();
+    return true;
+}
+
+void Core::clearWatchedAddresses()
+{
+    impl_->memory.clearReadWatches();
+    impl_->memory.clearWriteWatches();
 }
 
 std::uint8_t Core::read(std::uint16_t address)
