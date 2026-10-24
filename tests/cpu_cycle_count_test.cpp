@@ -375,51 +375,51 @@ int main()
     // wakes whatever I says, and vectors only when the interrupt is taken.
     // It used to fall through after three cycles.
     {
-        M6502 cpu(&mem);
-        cpu.setCpuMode(M6502::CpuMode::CMOS);
+        M6502 wcpu(&mem);
+        wcpu.setCpuMode(M6502::CpuMode::CMOS);
         auto waitAt0300 = [&](bool iFlag) {
-            cpu.hardReset();
+            wcpu.hardReset();
             mem.memWrite(0x0300, 0xCB);                  // WAI
             mem.memWrite(0x0301, 0xE8);                  // INX
-            cpu.setXRegister(0);
-            cpu.setStatusRegister(iFlag ? 0x24 : 0x20);
-            cpu.setProgramCounter(0x0300);
-            (void)cpu.run(1);                             // the WAI itself
-            for (int i = 0; i < 50; ++i) (void)cpu.run(1);
-            assert(cpu.getProgramCounter() == 0x0301 && cpu.getXRegister() == 0 &&
-                   cpu.isHalted() && "WAI must wait, not run on");
-            assert(cpu.haltCode() == 2);
+            wcpu.setXRegister(0);
+            wcpu.setStatusRegister(iFlag ? 0x24 : 0x20);
+            wcpu.setProgramCounter(0x0300);
+            (void)wcpu.run(1);                             // the WAI itself
+            for (int i = 0; i < 50; ++i) (void)wcpu.run(1);
+            assert(wcpu.getProgramCounter() == 0x0301 && wcpu.getXRegister() == 0 &&
+                   wcpu.isHalted() && "WAI must wait, not run on");
+            assert(wcpu.haltCode() == 2);
         };
         // IRQ with I=1: wakes, no vector, runs the INX.
         waitAt0300(true);
-        cpu.setIrqLine(0, true);
-        (void)cpu.run(1);
-        assert(!cpu.isHalted() && cpu.getXRegister() == 1 &&
+        wcpu.setIrqLine(0, true);
+        (void)wcpu.run(1);
+        assert(!wcpu.isHalted() && wcpu.getXRegister() == 1 &&
                "a masked IRQ wakes WAI without vectoring");
-        cpu.setIrqLine(0, false);
+        wcpu.setIrqLine(0, false);
         // IRQ with I=0: wakes and takes the vector ($FFFE/F).
         waitAt0300(false);
         const uint16_t vec = static_cast<uint16_t>(mem.memRead(0xFFFE) | (mem.memRead(0xFFFF) << 8));
-        cpu.setIrqLine(0, true);
-        (void)cpu.run(1);
-        assert(!cpu.isHalted() && cpu.getProgramCounter() != 0x0302 &&
+        wcpu.setIrqLine(0, true);
+        (void)wcpu.run(1);
+        assert(!wcpu.isHalted() && wcpu.getProgramCounter() != 0x0302 &&
                "an unmasked IRQ wakes WAI and is taken");
         (void)vec;
-        cpu.setIrqLine(0, false);
+        wcpu.setIrqLine(0, false);
         // NMI wakes it too; STP (haltCode 1) ignores both.
         waitAt0300(true);
-        cpu.setNMI();
-        (void)cpu.run(1);
-        assert(!cpu.isHalted() && "NMI wakes WAI");
-        cpu.hardReset();
+        wcpu.setNMI();
+        (void)wcpu.run(1);
+        assert(!wcpu.isHalted() && "NMI wakes WAI");
+        wcpu.hardReset();
         mem.memWrite(0x0300, 0xDB);                      // STP
-        cpu.setProgramCounter(0x0300);
-        (void)cpu.run(1);
-        cpu.setIrqLine(0, true); cpu.setNMI();
-        for (int i = 0; i < 10; ++i) (void)cpu.run(1);
-        assert(cpu.isHalted() && cpu.haltCode() == 1 && "STP stays halted");
-        cpu.setIrqLine(0, false);
-        cpu.hardReset();
+        wcpu.setProgramCounter(0x0300);
+        (void)wcpu.run(1);
+        wcpu.setIrqLine(0, true); wcpu.setNMI();
+        for (int i = 0; i < 10; ++i) (void)wcpu.run(1);
+        assert(wcpu.isHalted() && wcpu.haltCode() == 1 && "STP stays halted");
+        wcpu.setIrqLine(0, false);
+        wcpu.hardReset();
         std::printf("WAI waits for IRQ/NMI, STP ignores them: OK\n");
     }
 
