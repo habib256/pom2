@@ -74,35 +74,25 @@ void testSscAtSlot(int slot)
     assert(mem.memRead(base + 0x01) == 0x11);          // low byte of $Cn11
     assert(mem.memRead(base + 0x02) == slotHi);        // $Cn
 
-    // IN#n entry at $Cn08 → JMP $Cn40.
+    // IN#n entry at $Cn08 → JMP $Cn50 (the IN# bind; moved from $Cn40 when
+    // the dispatcher grew the real firmware's KSW test, CARDS-012).
     assert(mem.memRead(base + 0x08) == 0x4C);
-    assert(mem.memRead(base + 0x09) == 0x40);
+    assert(mem.memRead(base + 0x09) == 0x50);
     assert(mem.memRead(base + 0x0A) == slotHi);
 
-    // PR#n trampoline at $Cn20: ACIA init (cmd=$0B — the real SSC
+    // PR#n bind at $Cn28: LDA #<output_routine ($CnB0) into CSWL/CSWH, then
+    // falls into the output path at $Cn30 — ACIA init (cmd=$0B: the real SSC
     // firmware programs the 6551 before any I/O; without it a plain
-    // `PR#n : PRINT` writes the TDR with DTR de-asserted and every byte
-    // is dropped), then LDA #<output_routine ($CnB0) into CSWL/CSWH, then
-    // on into it with the character the dispatcher pushed.
-    //   A9 0B 8D <devLo+A> C0 A9 B0 85 36 A9 <slotHi> 85 37 68 4C B0 <slotHi>
+    // `PR#n : PRINT` writes the TDR with DTR de-asserted and every byte is
+    // dropped), PLA the character the dispatcher pushed, JMP $CnB0.
+    //   A9 B0 85 36 A9 <slotHi> 85 37 | A9 0B 8D <devLo+A> C0 68 4C B0 <slotHi>
     const uint8_t devLo = static_cast<uint8_t>(0x80 + slot * 16);
-    assert(mem.memRead(base + 0x20) == 0xA9);
-    assert(mem.memRead(base + 0x21) == 0x0B);
-    assert(mem.memRead(base + 0x22) == 0x8D);
-    assert(mem.memRead(base + 0x23) == static_cast<uint8_t>(devLo + 0xA));
-    assert(mem.memRead(base + 0x24) == 0xC0);
-    assert(mem.memRead(base + 0x25) == 0xA9);
-    assert(mem.memRead(base + 0x26) == 0xB0);
-    assert(mem.memRead(base + 0x27) == 0x85);
-    assert(mem.memRead(base + 0x28) == 0x36);          // CSWL
-    assert(mem.memRead(base + 0x29) == 0xA9);
-    assert(mem.memRead(base + 0x2A) == slotHi);
-    assert(mem.memRead(base + 0x2B) == 0x85);
-    assert(mem.memRead(base + 0x2C) == 0x37);          // CSWH
-    assert(mem.memRead(base + 0x2D) == 0x68);          // PLA
-    assert(mem.memRead(base + 0x2E) == 0x4C);          // JMP $CnB0
-    assert(mem.memRead(base + 0x2F) == 0xB0);
-    assert(mem.memRead(base + 0x30) == slotHi);
+    const uint8_t expect[] = {
+        0xA9, 0xB0, 0x85, 0x36, 0xA9, slotHi, 0x85, 0x37,           // CSW = $CnB0
+        0xA9, 0x0B, 0x8D, static_cast<uint8_t>(devLo + 0xA), 0xC0,  // ACIA cmd
+        0x68, 0x4C, 0xB0, slotHi };                                 // PLA; JMP $CnB0
+    for (size_t i = 0; i < sizeof expect; ++i)
+        assert(mem.memRead(static_cast<uint16_t>(base + 0x28 + i)) == expect[i]);
 
     // Output routine at $CnB0 patches the absolute LDA $C0n9 / STA $C0n8
     // addresses to the slot's device-select range.
