@@ -435,13 +435,14 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
     if (ImGui::CollapsingHeader("Printer settings")) {
         int paperIdx = static_cast<int>(iw.paperSize());
         ImGui::SetNextItemWidth(240);
-        if (ImGui::BeginCombo("Paper", ImageWriter::paperSizeName(
-                                           iw.paperSize()))) {
+        // A size set with the inch fields below is no named format any more.
+        if (ImGui::BeginCombo("Paper", iw.paperIsCustom() ? "Custom"
+                                       : ImageWriter::paperSizeName(iw.paperSize()))) {
             for (int i = 0; i < static_cast<int>(
                                     ImageWriter::PaperSize::Count); ++i) {
                 const auto s = static_cast<ImageWriter::PaperSize>(i);
                 if (ImGui::Selectable(ImageWriter::paperSizeName(s),
-                                      i == paperIdx)) {
+                                      i == paperIdx && !iw.paperIsCustom())) {
                     iw.setPaperSize(s);
                     texPage_ = -2;
                 }

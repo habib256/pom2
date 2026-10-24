@@ -343,9 +343,10 @@ void ImageWriter::setDpi(int dpi)
 
 void ImageWriter::setPaperSize(PaperSize s)
 {
-    if (s == paper_ || static_cast<size_t>(s) >=
+    if ((s == paper_ && !customPaper_) || static_cast<size_t>(s) >=
                            static_cast<size_t>(PaperSize::Count)) return;
     paper_ = s;
+    customPaper_ = false;
     const auto i = static_cast<size_t>(paper_);
     defaultPageWidth_  = kPapers[i].wPt / 72.0;
     defaultPageHeight_ = kPapers[i].hPt / 72.0;
@@ -364,8 +365,12 @@ void ImageWriter::setPaperDimensions(double widthIn, double lengthIn,
         return std::clamp(v, lo, hi);
     };
 
-    const double w = snap(widthIn,  kMinPaperWidthIn,  kMaxPaperWidthIn);
-    const double l = snap(lengthIn, kMinPaperLengthIn, kMaxPaperLengthIn);
+    // Snap only the axis that changed (an A4's 11.69" must survive a width drag).
+    auto same = [](double a, double b) { return std::fabs(a - b) < 1e-4; };
+    const double w = same(widthIn, defaultPageWidth_) ? defaultPageWidth_
+                   : snap(widthIn,  kMinPaperWidthIn,  kMaxPaperWidthIn);
+    const double l = same(lengthIn, defaultPageHeight_) ? defaultPageHeight_
+                   : snap(lengthIn, kMinPaperLengthIn, kMaxPaperLengthIn);
 
     if (committedWidth)  *committedWidth  = w;
     if (committedLength) *committedLength = l;
@@ -373,6 +378,7 @@ void ImageWriter::setPaperDimensions(double widthIn, double lengthIn,
 
     defaultPageWidth_  = w;
     defaultPageHeight_ = l;
+    customPaper_       = true;
     // The sheet on the platen is a different size now, so there is nothing
     // meaningful to preserve on it.
     rebuildPage();
@@ -413,7 +419,12 @@ void ImageWriter::resetPrinter()
     // Practically every Apple II printer driver (including GS/OS) assumes
     // the ImageWriter's 1/4 inch left margin (imagewriter.cpp:281).
     leftMargin_   = 0.25;
-    rightMargin_  = pageWidthIn_  = defaultPageWidth_;
+    pageWidthIn_  = defaultPageWidth_;
+    // The ImageWriter and the FX-80 strike an 8-inch line (80 Pica columns)
+    // from column one, whatever the paper; the Diablo 630 is a wide carriage.
+    const IwLineage lin = modelProfile().lineage;
+    rightMargin_  = (lin == IwLineage::CItoh || lin == IwLineage::EscP)
+                  ? std::min(pageWidthIn_, leftMargin_ + 8.0) : pageWidthIn_;
     bottomMargin_ = pageHeightIn_ = defaultPageHeight_;
     lineSpacing_  = 1.0 / 6.0;
     // Power-on pitch is the HEAD's, not a constant: the ImageWriter I comes
@@ -774,7 +785,9 @@ void ImageWriter::renderGlyph(uint8_t ch)
 
     // Bold on a real head is a second pass shifted half a dot — here the
     // dot is simply 1.5x wide, which is what that pass leaves on paper.
+    // Double strike (Epson ESC G) is the second pass shifted DOWN: taller.
     const double inkW = (style_ & kStyleBold) ? dotW * 1.5 : dotW;
+    const double inkH = (style_ & kStyleDoubleStrike) ? dotH * 1.5 : dotH;
     const double shearSpan = (rows > 1) ? 1.0 / (rows - 1) : 0.0;
 
     if (g) {
@@ -796,7 +809,7 @@ void ImageWriter::renderGlyph(uint8_t ch)
                 // the reference's 0.20 FreeType x-shear (imagewriter.cpp:437-442).
                 const double shear = (style_ & kStyleItalics)
                                    ? dotW * (rows - 1 - gy) * shearSpan : 0.0;
-                fillDots(curX_ + gx * dotW + shear, top + gy * dotH, inkW, dotH);
+                fillDots(curX_ + gx * dotW + shear, top + gy * dotH, inkW, inkH);
             }
         }
         return;
@@ -812,7 +825,7 @@ void ImageWriter::renderGlyph(uint8_t ch)
             if (!hgrpaint::bbFontPixel(fallback, gx, gy)) continue;
             const double shear = (style_ & kStyleItalics)
                                ? dotW * (7 - gy) * (1.0 / 7.0) : 0.0;
-            fillDots(curX_ + gx * dotW + shear, top + gy * dotH, inkW, dotH);
+            fillDots(curX_ + gx * dotW + shear, top + gy * dotH, inkW, inkH);
         }
     }
 }
@@ -1690,7 +1703,8 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         case 0x18: return true;                 // CAN
         case 0x1b: escSeen_ = true;  return true;   // ESC
         case 0x1f: fsSeen_  = true;  return true;   // US
-        default:   return false;                // printable
+        // An unassigned control is ignored, not drawn as CP437 art.
+        default:   return ch < 0x20;            // printable from $20 up
         }
     }
 
@@ -2764,7 +2778,7 @@ void ImageWriter::pageToRgba(const Page& p, std::vector<uint8_t>& out)
 ImageWriter::Status ImageWriter::status() const
 {
     Status s;
-    s.headX       = curX_;
+    s.headX       = std::min(curX_, rightMargin_);
     s.headY       = curY_;
     s.cpi         = actcpi_;
     s.lineSpacing = lineSpacing_;

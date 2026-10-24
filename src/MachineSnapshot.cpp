@@ -58,7 +58,7 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
         w.writeU8 (cpu.getStackPointer());
         w.writeU8 (cpu.getCpuMode() == M6502::CpuMode::CMOS ? 1 : 0);
         w.writeU64(mem.getCycleCounter());
-        w.writeU8 (cpu.isHalted() ? 1 : 0);
+        w.writeU8 (cpu.haltCode());   // 2 = WAI waiting (older readers: halted)
         w.endSection(h);
     }
     w.writeSection("MEM", mem.data(), 0x10000);
@@ -162,7 +162,7 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             // — clearing is the correct default AND fixes the common
             // rewind-out-of-a-crash case, where the live `halted` used to
             // survive the restore and keep the machine frozen.
-            const bool halted = (len >= 17) ? (r.readU8() != 0) : false;
+            const uint8_t halted = (len >= 17) ? r.readU8() : 0;
             // REFUSE a core mismatch instead of restoring onto it. cpuMode is
             // machine CONFIGURATION (profile + cpu_mode_override, with
             // resolveCpuMode's soldered-65C02 clamp on //c-class), so it is
@@ -199,7 +199,7 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             cpu.setYRegister(y);
             cpu.setStatusRegister(p);
             cpu.setStackPointer(sp);
-            cpu.setHalted(halted);
+            cpu.setHaltCode(halted);
             mem.setCycleCounter(cycles);
         } else if (name == "MEM" && len == 0x10000) {
             // Restore the main 64 KB through writable[] so the ROM mirror in

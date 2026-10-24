@@ -4041,6 +4041,38 @@ add_test(NAME purplesoft_eve_screens COMMAND test_purplesoft_eve_screens
          WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(purplesoft_eve_screens PROPERTIES TIMEOUT 120)
 
+# DISPLAY-011: Le Chat Mauve Féline — Arlequin and Extasie stable screens.
+add_executable(test_chatmauve_feline_screens
+    chatmauve_feline_screens_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/MC6821.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_chatmauve_feline_screens PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_chatmauve_feline_screens PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_chatmauve_feline_screens PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_chatmauve_feline_screens PRIVATE winmm)
+endif()
+add_test(NAME chatmauve_feline_screens COMMAND test_chatmauve_feline_screens
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(chatmauve_feline_screens PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
 # Extasie mouse probe (diagnostic executable, no add_test): boots the Chat
 # Mauve mixed-mode program with a Féline + AppleWin-HLE mouse, dumps what it
 # shows, logs every device-select write, injects host-mouse motion.
@@ -5379,6 +5411,31 @@ endif()
 
 add_test(NAME imagewriter_smoke COMMAND test_imagewriter)
 set_tests_properties(imagewriter_smoke PROPERTIES TIMEOUT 10)
+
+# CARDS-011: the ImageWriter residue (imagewriter_residue_test.cpp).
+add_executable(test_imagewriter_residue
+    imagewriter_residue_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_imagewriter_residue PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_imagewriter_residue PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_imagewriter_residue PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_imagewriter_residue PRIVATE winmm)
+endif()
+
+add_test(NAME imagewriter_residue COMMAND test_imagewriter_residue)
+set_tests_properties(imagewriter_residue PROPERTIES TIMEOUT 10)
 
 # ─── ImageWriter PDF export test ─────────────────────────────────────────
 # Pins the multi-page PDF serialiser (ImageWriterPdf.cpp): xref byte

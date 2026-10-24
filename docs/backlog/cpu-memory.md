@@ -16,7 +16,6 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [MEMORY-002](#memory-002) | 🟡 | To verify | `Memory::memRead` hot path |
-| [MEMORY-004](#memory-004) | 🟢 | Known limit | WDC `WAI` falls through instead of waiting |
 | [MEMORY-003](#memory-003) | 🟢 | To verify | Dedicated Pascal LC |
 | [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
 
@@ -41,28 +40,6 @@ an explicit request before scheduling.
   differential oracle for the fast paths. Prerequisite: `IIcClassProfile`
   extraction (done). Perf job, orthogonal to the `Keyboard`/`PaddleInputs`
   split that already shipped — do not merge the two.
-
-<a id="memory-004"></a>
-
-## MEMORY-004 — WDC `WAI` falls through instead of waiting
-
-**Priority:** 🟢 · **State:** Known limit, documented in `M6502::WAI`.
-
-**Acceptance criterion:** WAI parks until IRQ or NMI (waking whatever I
-says, vectoring only with I=0, MAME `ow65c02.lst:797-803`), with
-`bench_identity` and the bus fast-path numbers unchanged.
-
-`WAI` charges 3 cycles and falls through to PC+1. A `waiting` latch beside
-`halted` would fix it, but that latch sits on `step()`'s path, which
-`docs/PERFORMANCE.md` §§ 8.2/8.5 measures before anything is added there.
-
-**Closed 2026-10-24 from the original residue:** `$CB`/`$DB` as WAI/STP on
-the CMOS table follows MAME, whose enhanced //e is a `W65C02`
-(`apple2e.cpp:5263`); the SSC's RDR read no longer releases IRQ_RDRF (MAME
-`read_rdr` does not — only `read_status`), pinned in `ssc_acia_smoke`; SW2-6
-(interrupts) ships ON where MAME's `DSWX` default is OFF — kept on purpose,
-so interrupt-driven drivers (A2osX's among them) work out of the box, and
-the panel switches it.
 
 <a id="memory-003"></a>
 

@@ -330,6 +330,8 @@ public:
     // ─── Configuration (host side — not driven by the guest) ─────────────
     int       dpi()       const { return dpi_; }
     PaperSize paperSize() const { return paper_; }
+    /// The sheet was sized by setPaperDimensions, not a named format.
+    bool      paperIsCustom() const { return customPaper_; }
     /// Both rebuild the page raster, so the sheet in progress is lost.
     /// Completed sheets are kept (they carry their own size).
     void setDpi(int dpi);
@@ -602,6 +604,7 @@ private:
     // ─── Page geometry ───────────────────────────────────────────────────
     int       dpi_;
     PaperSize paper_;
+    bool      customPaper_ = false;
     IwModel   model_   = IwModel::ImageWriterII;
     PrinterSoundSink* sound_ = nullptr;
     bool      powered_ = true;

@@ -10,6 +10,67 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Bug hunt #14's network residue, closed (NETWORK-011)
+
+The last three reports, checked on current main. `ChildProcess::stop()`
+ended in a blocking `waitpid` after its SIGKILL sweep, on the UI thread
+(`NetworkCoordinator`): a helper stuck in uninterruptible I/O froze the
+window for as long as the kernel kept it. The reap is now a bounded poll —
+the grace, at least a second — as `stopDetached()`'s already was; past it
+the zombie goes to init. No test can put a child in that state portably,
+so this one is pinned only by `child_process` still reaping every ordinary
+stop. The CS8900A's "implied skip with an empty queue" was the empty
+`RxEvent` overwrite fixed on 2026-10-18. W5100 IPRAW still skips
+`checkDestination` by design: its frames leave through the backend, whose
+fence (`SlirpBackend::transmit`, `slirp_loopback_fence`) drops any frame
+naming 127/8, 0/8 or 169.254/16, under the same `uthernet_allow_loopback`.
+
+## 2026-10-24 — Féline goldens: Arlequin and Extasie (DISPLAY-011)
+
+`chatmauve_feline_screens` boots the card's own showcase titles headless
+on a //e with a Féline in slot 7 and freezes every screen that holds for
+2 s: Arlequin's main menu, its interpreter page, the DHGR cat and the
+coloured 40-column demo menu (seven screens), and Extasie's mixed-DHGR
+title page. Each was looked at before it was pinned (`POM2_GOLDEN_DUMP`
+writes them out). The first recording took the Editor branch and pinned
+its "turn the disk over" prompt: `pasteText` folds Ctrl-J into RETURN, so
+a launcher's arrow keys go through `pasteRawKeys`.
+
+## 2026-10-24 — WDC `WAI` waits for an interrupt (MEMORY-004, closed)
+
+`WAI` charged its three cycles and fell through, so a 65C02 program parked
+on it for its next interrupt ran straight on into the code after it. It
+now waits on the `halted` latch STP and KIL already use, with a `waiting_`
+flag read only inside that branch — `step()` gained no test on its hot
+path (`docs/PERFORMANCE.md` §§ 8.2/8.5) and `bench_identity` is unchanged.
+NMI or any asserted IRQ source wakes it; an unmasked IRQ is then taken, a
+masked one resumes after the WAI (MAME `ow65c02.lst:797-803`); STP still
+ignores both. A snapshot (and the Workstation Card's) stores the state as
+0/1/2 in the byte that was a bool, so an older reader sees a waiting CPU
+as halted. Pinned in `cpu_cycle_count`, which fails on the old WAI.
+
+## 2026-10-24 — The ImageWriter residue (CARDS-011, closed)
+
+What bug hunt #15 left on the printer, all within `ImageWriter.cpp`'s size
+ceiling and pinned in `imagewriter_residue` (its own file: the smoke test
+sits at the 2000-line ceiling; the control-code and carriage cases fail
+with their fix reverted):
+
+- **Unassigned control codes printed CP437 art** on the C. Itoh heads
+  (`$01-$06`, `$10`, `$15-$17`, `$19`, `$1A`, `$1C-$1E`); a printer ignores a
+  control it does not know, as the Epson head here already did.
+- **The carriage was the paper**: 82½ Pica columns on Letter. The
+  ImageWriter and the FX-80 strike an 8-inch line from column one (80 Pica,
+  96 at the II's power-on Elite); the Diablo 630 keeps its wide carriage.
+- **Epson double strike (`ESC G`) was a no-op**; it now thickens the dot
+  vertically, the second pass shifted down, as bold widens it.
+- **`status().headX`** is bounded by the right margin.
+- **Paper size**: `setPaperDimensions` re-snapped both axes, so dragging an
+  A4's width moved its 11.69" length to 11.75"; it snaps only the axis that
+  changed. The size combo kept naming the old format after a custom size
+  (it says "Custom" now), and re-picking that same format did nothing,
+  because `setPaperSize` returned early on an unchanged enum.
+
 ## 2026-10-24 — pom2_core: CPU registers, the mouse, and the //c (pom2games' letter)
 
 pom2games' a2shot tests through the public facade only, and three things

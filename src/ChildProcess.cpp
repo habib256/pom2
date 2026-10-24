@@ -465,8 +465,20 @@ void ChildProcess::stop(int graceMs)
     ::kill(-group, SIGKILL);
     if (exited || pid_ < 0) return;
     // Reap the corpse; without this the zombie outlives us until POM2 exits.
+    // Bounded, for the reason stopDetached() gives: SIGKILL is not instant
+    // while the child sits in uninterruptible I/O, and stop() runs on the UI
+    // thread (NetworkCoordinator) — a blocking wait there froze the window
+    // for as long as the kernel kept the process. Past the grace the zombie
+    // is left to init, which costs nothing. At least a second even for a
+    // zero grace: an ordinary SIGKILLed child needs a few ms to become
+    // reapable, and one WNOHANG poll would leak it as a zombie.
+    const int reapMs = graceMs > 1000 ? graceMs : 1000;
     int status = 0;
-    while (::waitpid(pid_, &status, 0) < 0 && errno == EINTR) {}
+    for (int waited = 0; waited <= reapMs; waited += stepMs) {
+        const pid_t r = ::waitpid(pid_, &status, WNOHANG);
+        if (r != 0 && !(r < 0 && errno == EINTR)) break;
+        ::usleep(static_cast<useconds_t>(stepMs) * 1000);
+    }
     exitCode_ = -1;
     reset();
 }
