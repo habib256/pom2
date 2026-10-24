@@ -647,8 +647,9 @@ private:
     /// Latch new IRQ sources and push the line if it transitioned.
     /// Caller must hold `bufferMtx`.
     void raiseIrqSource(uint8_t mask);
-    /// Clear specific IRQ sources (e.g. status read clears all, RDR read
-    /// clears IRQ_RDRF). Caller must hold `bufferMtx`.
+    /// Clear specific IRQ sources (a status read clears all; a command write
+    /// that disables RX interrupts clears IRQ_RDRF). Caller must hold
+    /// `bufferMtx`.
     void clearIrqSource(uint8_t mask);
     /// Apply `irqState_ != 0` to the CPU pin if it differs from the
     /// previously asserted level. Caller must hold `bufferMtx`.

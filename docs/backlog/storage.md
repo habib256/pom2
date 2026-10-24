@@ -17,7 +17,7 @@ an explicit request before scheduling.
 |---|---|---|---|
 | [STORAGE-002](#storage-002) | 🟡 | To verify | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
-| [STORAGE-010](#storage-010) | 🟡 | To verify | Bug hunt #16's Disk II read residue |
+| [STORAGE-010](#storage-010) | 🟢 | Known limit | `.nib` bytes get flat 8-cell timing |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
@@ -57,19 +57,23 @@ an explicit request before scheduling.
 
 <a id="storage-010"></a>
 
-## STORAGE-010 — Bug hunt #16's Disk II read residue
+## STORAGE-010 — `.nib` bytes get flat 8-cell timing
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟢 · **State:** Known limit.
 
-**Acceptance criterion (after revalidation):** Test NIB self-sync, non-WOZ half-tracks and WOZ CRC policy independently; document deliberate format restrictions.
+**Acceptance criterion:** a protection that depends on self-sync slip
+inside a `.nib` boots, or the limit stays documented (WOZ carries the
+timing; `.nib` cannot).
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1973). Original dates and estimates are retained below.
+`.nib` bytes expand to 8 cells each, with no 10-cell self-sync runs, so a
+loader that counts sync slip on a `.nib` sees none. The sector formats do
+expand sync runs to 10 cells (MAME `ap2_dsk.cpp`).
 
-- 🟡 **Bug hunt #16's Disk II read residue** *(2026-09-09; read, not
-  fixed)*: `.nib` bytes get flat 8-cell timing with no self-sync slip;
-  half-tracks on non-WOZ images snap to the lower whole track (AppleWin's
-  rule; MAME reads the neighbour's flux mix); a WOZ CRC32 mismatch is
-  refused where AppleSauce/AppleWin warn and load. *2 h.*
+**Closed 2026-10-24 from the original residue:** off-track positions on
+non-WOZ images now follow AppleWin's `PhaseToTrack` (STORAGE-013, 4k+3 →
+track k+1); a WOZ CRC32 mismatch is refused, as MAME does
+(`as_dsk.cpp:275-277`, CRC 0 meaning "not computed"), where AppleWin and
+Applesauce warn and load — POM2 follows MAME.
 
 <a id="storage-011"></a>
 

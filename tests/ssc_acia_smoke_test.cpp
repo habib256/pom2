@@ -423,6 +423,27 @@ void testRxIrqGatedByCommand()
     ssc.deliverRxBytes(b1, 1);
     assert((ssc.irqState() & 0x04) == 0);
 
+    // A read of RDR alone does not release the line: only the status read
+    // does (MAME `mos6551.cpp` read_rdr / read_status; MEMORY-004). With
+    // more bytes queued, the RDR read re-arms for the next one.
+    ssc.deviceSelectWrite(kCommandAddr, 0x01);
+    while (ssc.rxQueueDepth()) (void)ssc.deviceSelectRead(kRdrAddr);   // the cases above
+    (void)ssc.deviceSelectRead(kStatusAddr);
+    const uint8_t one[] = { 'x' };
+    ssc.deliverRxBytes(one, 1);
+    assert(ssc.irqState() & 0x04);
+    (void)ssc.deviceSelectRead(kRdrAddr);              // the only byte
+    assert((ssc.irqState() & 0x04) && "RDR read keeps the IRQ");
+    (void)ssc.deviceSelectRead(kStatusAddr);
+    assert(ssc.irqState() == 0 && "status read releases it");
+    // Two queued: the ISR's status read releases, its RDR read re-arms.
+    const uint8_t two[] = { 'y', 'z' };
+    ssc.deliverRxBytes(two, 2);
+    (void)ssc.deviceSelectRead(kStatusAddr);
+    assert(ssc.irqState() == 0);
+    (void)ssc.deviceSelectRead(kRdrAddr);              // 'y'
+    assert((ssc.irqState() & 0x04) && "a byte left: the next interrupt is due");
+
     std::printf("  ok: RX IRQ gated by cmd bit 1 + DTR\n");
 }
 

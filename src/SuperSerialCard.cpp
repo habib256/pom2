@@ -924,19 +924,17 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 // a byte is there) gets that byte again. POM2 handed back $00
                 // on the second read, which reads as "the peer sent a NUL".
                 const uint8_t b = rdrLatch_;
-                // MAME `mos6551.cpp:231-236`: read of RDR clears
-                // PARITY_ERROR / FRAMING_ERROR / OVERRUN / RDRF. RDRF
-                // here is computed from `rxBuf.empty()` at read time so
-                // it clears for free; the sticky error flags need an
-                // explicit reset. Also drop IRQ_RDRF so a polled driver
-                // that *doesn't* read the status register (rare but
-                // legal — the SSC spec lets you arrive directly at RDR
-                // once you know a byte is there) still releases the
-                // line. Mirror of MAME drop-on-RDR via `update_irq`.
+                // MAME `mos6551.cpp:275-280` read_rdr: a read of RDR clears
+                // PARITY_ERROR / FRAMING_ERROR / OVERRUN / RDRF in the
+                // STATUS — RDRF here is computed from `rxBuf.empty()` at
+                // read time, so it clears for free; the sticky error flags
+                // need an explicit reset. It does NOT release the IRQ line:
+                // only a status read does (`read_status`, :282-299, and the
+                // 6551 data sheet). POM2 used to drop IRQ_RDRF here too,
+                // under a comment crediting MAME with it (MEMORY-004).
                 statusErrors_ &= ~uint8_t{SR_PARITY_ERROR |
                                           SR_FRAMING_ERROR |
                                           SR_OVERRUN};
-                clearIrqSource(IRQ_RDRF);
                 // Re-arm while bytes remain queued. Real hardware has a
                 // ONE-byte RDR, so MAME's mos6551 raises IRQ_RDRF for
                 // every byte the receiver assembles (mos6551.cpp:668-672)

@@ -10,6 +10,25 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — SSC RDR no longer releases the IRQ; Mockingboard slot hint
+
+- **MEMORY-004: a read of the SSC's RDR released IRQ_RDRF**, under a
+  comment that credited MAME with it. MAME's `read_rdr`
+  (`mos6551.cpp:275-280`) clears the status bits only; the line drops on a
+  status read (`read_status`), as the 6551 data sheet has it. A driver that
+  read RDR alone got its interrupt withdrawn early. The per-byte re-arm for
+  POM2's host-side ring stays. Pinned in `ssc_acia_smoke` (one queued byte,
+  so the re-arm cannot hide it). The rest of the entry closed against MAME:
+  the CMOS table's WAI/STP is the `W65C02` MAME's enhanced //e uses; SW2-6
+  ships ON (MAME: OFF) on purpose. WAI's fall-through stays a known limit.
+- **UI-011: Slot Configuration warns on a Mockingboard outside slot 4**, as
+  it already did for the mouse: MAD EFFECT addresses `$C4xx` with no scan
+  and hangs after the loader with the card elsewhere; DIX scans and does
+  not care.
+- **STORAGE-010 narrowed** to the `.nib` timing limit: the half-track rule
+  was settled this morning (STORAGE-013) and the WOZ CRC refusal follows
+  MAME.
+
 ## 2026-10-24 — ARCH-006: one rule to find a persisted disk, and the 0x1F list byte
 
 - **Every bay finds a relative path the same way.** The SmartPort and

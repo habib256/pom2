@@ -578,6 +578,23 @@ void MainWindow::renderSlotConfigPanel()
                             "but French titles like Extasie call the slot-4\n"
                             "firmware directly and will not see this card.");
                 }
+                // The other side of the slot-4 swap (UI-011): MAD EFFECT
+                // addresses the Mockingboard at $C4xx with no scan and syncs
+                // on its T1 IRQ, so elsewhere it waits forever after the
+                // loader. DIX scans $C7→$C1 and is fine in any slot.
+                if (s != 4 && (draft[s] == "mockingboard" ||
+                               draft[s] == "mockingboard_c" || draft[s] == "phasor")) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
+                                       "(some demos want it in slot 4)");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "Software that scans the slots (DIX, most music\n"
+                            "players) finds the card here. A few demos — MAD\n"
+                            "EFFECT among them — address it at $C4xx with no\n"
+                            "scan and hang without it: put it in slot 4 and\n"
+                            "move the mouse elsewhere for those.");
+                }
                 // The Videoterm's v2.4 firmware hard-codes $C0B0/$C0B1 (the
                 // slot-3 device select), so anywhere else PR#n finds a card
                 // whose firmware talks to an empty slot.
