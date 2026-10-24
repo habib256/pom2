@@ -618,6 +618,44 @@ void MainWindow::renderMenuBar()
                     "and use the on-screen //e keyboard for the Apple keys.\n"
                     "Windows AltGr never presses them either way.");
         }
+        {
+            // INPUT-003: the host mouse as paddles 0/1 (PaddleMouse.h).
+            bool mousePdl = paddleMouseEnabled();
+            if (ImGui::MenuItem("Mouse drives paddles 0/1", nullptr, &mousePdl)) {
+                settings->setBool("paddle_mouse", mousePdl);
+                if (!settingsReadOnly()) settings->save();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "The pointer over the Apple II screen turns paddle 0 (across)\n"
+                    "and paddle 1 (down); left/right button = PB0/PB1 while over\n"
+                    "the screen. The screen's edges are the knob's stops. Off while\n"
+                    "the Mouse Card holds the pointer. Replaces a pad's paddles 0/1.");
+            if (mousePdl) {
+                int range = settings->getInt("paddle_mouse_range", 100);
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::SliderInt("Paddle mouse range", &range, 20, 100, "%d%% of the screen")) {
+                    settings->setInt("paddle_mouse_range", range);
+                    if (!settingsReadOnly()) settings->save();
+                }
+            }
+        }
+        if (pom2::profileConfig(activeProfile).iieMode &&
+            !pom2::profileConfig(activeProfile).noPhysicalSlots) {
+            // The //e Shift-key mod (INPUT-001): Shift wired to PB2.
+            bool shiftMod = settings->getBool("keyboard_shift_key_mod", false);
+            if (ImGui::MenuItem("Shift key mod (Shift on $C063)", nullptr, &shiftMod)) {
+                settings->setBool("keyboard_shift_key_mod", shiftMod);
+                if (!settingsReadOnly()) settings->save();
+                controller->lockState().memory().setShiftKeyMod(shiftMod);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "The //e modification that wires the Shift key to the third\n"
+                    "game-port button: $C063 reads Shift instead (bit 7 = 1 with\n"
+                    "Shift UP). Some word processors use it to tell upper from\n"
+                    "lower case. The game port's own button 2 is cut off.");
+        }
         if (pom2::profileConfig(activeProfile).noPhysicalSlots) {
             // The //c keyboard's 80/40 key, read at $C060 (Memory.h). A
             // latching key on the real machine, so it is a setting, not state.

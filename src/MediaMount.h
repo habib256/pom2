@@ -117,6 +117,15 @@ bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
                       const std::string& path, std::string& error,
                       bool seekTrack0 = false);
 
+/// Re-read the disk in `drive` as a DOS 3.3 (`prodos` false) or ProDOS
+/// sector-order image, bypassing the content sniff (STORAGE-006: the Disk II
+/// panel's "Sector order" choice, for an image the sniff got wrong). The
+/// outgoing medium is saved first in its old order, as on any swap. Plain
+/// 143 360-byte images only. Not persisted: the next mount sniffs again.
+/// Same caller contract as mountDiskII: UI thread only.
+bool remountDiskIIWithOrder(EmulationController& ctrl, DiskIICard& card, int drive,
+                            bool prodos, std::string& error);
+
 /// The same FILE, whatever the spelling: a relative and an absolute path, or
 /// a symlink and its target, name one image (`std::filesystem::equivalent`).
 /// A path that is not a file on disk — a synthesised host-folder volume's

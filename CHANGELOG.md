@@ -10,6 +10,121 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Memory's snapshot trailer is its own file (ARCH-004, one seam)
+
+`appendSnapshotState` / `loadSnapshotState` — the wire format of Memory's
+extended state for snapshots, the rewind ring and sessions — moved verbatim
+from `Memory.cpp` to `MemorySnapshot.cpp`, beside the preflight that
+already lived in `MemorySnapshotValidation.cpp`. It was the seam
+`tools/file_size_budget.txt` had named since 2026-09-07; the ceiling went
+2789 → 2354. The new file is listed wherever `Memory.cpp` is, in the
+machine layer. Snapshot, rewind and session tests pass unchanged.
+
+Also in this branch: `PaddleMouse.h` (INPUT-003) was in no layer header
+manifest, which fails CMake's architecture check at configure time — a
+targeted rebuild had not re-run it. Now classified with the frontend.
+
+## 2026-10-24 — The host mouse as paddles 0/1 (INPUT-003)
+
+For a machine with no game controller: Machine ▸ "Mouse drives paddles 0/1"
+(`paddle_mouse`, default off). The pointer's position over the Apple II
+screen turns PDL(0) across and PDL(1) down; the left and right buttons are
+PB0/PB1 while the pointer is over the screen (a click on a panel is not
+fire). Absolute, not relative — a paddle is a knob with stops, and the
+screen's edges are those stops, so the value holds at the edge when the
+pointer leaves. "Paddle mouse range" (`paddle_mouse_range`, 20-100 % of the
+screen) is the sensitivity: the centred fraction that sweeps 0..255. Off
+while the Mouse Card holds the pointer; it replaces a pad's paddles 0/1
+and ORs its buttons in. The arithmetic is `PaddleMouse.h`, pinned in
+`input_io_smoke` (edges, clamping, range); the UI wiring was not exercised
+by a test.
+
+## 2026-10-24 — FujiNet `PR#n` says NO PEER when nothing is attached (NETWORK-006)
+
+With no FujiNet peer on the other end of the link, `PR#n` printed
+"FN ERROR" — the same as a peer that answered and failed, and the first
+thing anyone meets. The autostart scan already stepped aside correctly; a
+manual `PR#n` just did not say why. The card now serves its message bytes
+live: "NO PEER" while the link is down, "FN ERROR" once a peer is attached.
+Same 8 bytes in the same reversed order, so the 6502 printer loop is
+unchanged. Pinned in `fujinet_card_smoke` (no peer, then a peer attaches).
+
+## 2026-10-24 — NETWORK-013 closed: the W5100 resolver was lifted in August
+
+The entry asked for the Uthernet II's name resolution to leave the device;
+that landed the day it was written, `0ff494e` (2026-08-27), with no
+CHANGELOG line. `W5100NameResolver` (behind `W5100Resolver`) owns the cache,
+the mailbox, the in-flight cap and the bounded off-thread lookup;
+`W5100Device` keeps the register half. `w5100_name_resolver` pinned the
+cache, the bounded wait, the cap and the rate limit; it now also pins the
+card going away mid-lookup — the destructor returns at once and the late
+answer lands in the mailbox the detached thread co-owns, not in freed
+memory.
+
+## 2026-10-24 — Choose a disk's sector order by hand (STORAGE-006)
+
+The DOS/ProDOS sniff (extension, ProDOS volume directory, DOS 3.3 VTOC and
+catalog chain) gets nearly every image right, and `DiskImage::loadFile(path,
+order)` has long been there for the one it does not — with no way to reach
+it. The Disk II panel now shows "Sector order: DOS 3.3 / ProDOS" for a
+plain 143 360-byte image (not NIB, WOZ, 2IMG or 13-sector) and re-reads the
+disk in the chosen order through the two-phase mount
+(`remountDiskIIWithOrder`), saving it first in its old order like any swap.
+Not persisted: the next mount sniffs again. One trap on the way: putting
+the same file back in its drive takes the same-file re-read under the lock,
+which sniffed afresh and undid the choice; the image now remembers a forced
+order (`sectorOrderForced`) and the re-read keeps it. Pinned in
+`storage_coordinator` (each order lays track 1 out differently; going back
+restores the first layout).
+
+## 2026-10-24 — The //e Shift-key mod, wired the right way round (INPUT-001)
+
+`PaddleInputs` carried a Shift→PB2 path that nothing called, and it OR'd
+Shift in HIGH. The real modification (Apple IIe Technical Note #9) is a wire
+from the Shift key to PB2 that grounds it while Shift is held: MAME's
+`c000_r` returns `$80` on `$C063` with Shift UP, and only when the machine
+option `kbd_shift_mod` is set — the game port's button 2 is then out of
+the circuit. POM2 now has that option, `keyboard_shift_key_mod` (default
+off, as in MAME), in the Machine menu on //e profiles; the host's Shift
+keys drive the wire, and Shift still shifts. A //c never reads it. Pinned
+in `input_io_smoke` (no mod: Shift absent; mod: Shift up = `$80`, down =
+`$00`, button 2 cut off; ][+ untouched).
+
+## 2026-10-24 — Ghostscript found on a stock Apple Silicon Homebrew (CARDS-011)
+
+`ChildProcess::findOnPath` refuses any directory the group or the world can
+write to, so nobody else can plant the `gs` POM2 runs with `-dSAFER`.
+Homebrew creates `/opt/homebrew/bin` as `drwxrwxr-x <user>:admin`, so with
+Ghostscript installed the LaserWriter path said "install Ghostscript". On
+macOS a directory writable by `admin` (gid 80) or `wheel` (gid 0) is now
+accepted: every member of those groups can already `sudo`, so a planted
+binary is nothing they could not do anyway. Any other group, and the world
+bit, are still refused. Checked on this machine: `postscript_render`
+renders a real page through `/opt/homebrew/bin/gs`. Pinned in
+`child_process` (an ordinary group refused; `admin` accepted when the
+account can chgrp to it — the test fails with the exception removed). The
+"Reset printer" tooltip now says the sheet is ejected, which is what it
+does. The ImageWriter's smaller residue stays in CARDS-011.
+
+## 2026-10-24 — SSC RDR no longer releases the IRQ; Mockingboard slot hint
+
+- **MEMORY-004: a read of the SSC's RDR released IRQ_RDRF**, under a
+  comment that credited MAME with it. MAME's `read_rdr`
+  (`mos6551.cpp:275-280`) clears the status bits only; the line drops on a
+  status read (`read_status`), as the 6551 data sheet has it. A driver that
+  read RDR alone got its interrupt withdrawn early. The per-byte re-arm for
+  POM2's host-side ring stays. Pinned in `ssc_acia_smoke` (one queued byte,
+  so the re-arm cannot hide it). The rest of the entry closed against MAME:
+  the CMOS table's WAI/STP is the `W65C02` MAME's enhanced //e uses; SW2-6
+  ships ON (MAME: OFF) on purpose. WAI's fall-through stays a known limit.
+- **UI-011: Slot Configuration warns on a Mockingboard outside slot 4**, as
+  it already did for the mouse: MAD EFFECT addresses `$C4xx` with no scan
+  and hangs after the loader with the card elsewhere; DIX scans and does
+  not care.
+- **STORAGE-010 narrowed** to the `.nib` timing limit: the half-track rule
+  was settled this morning (STORAGE-013) and the WOZ CRC refusal follows
+  MAME.
+
 ## 2026-10-24 — ARCH-006: one rule to find a persisted disk, and the 0x1F list byte
 
 - **Every bay finds a relative path the same way.** The SmartPort and

@@ -282,6 +282,7 @@ set(SOURCES
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
+    src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
@@ -657,6 +658,7 @@ set(POM2_FRONTEND_HEADERS
     src/MouseGrab.h
     src/MouseSync.h
     src/NetworkCoordinator.h
+    src/PaddleMouse.h
     src/PaintCardBatcher.h
     src/PanelCatalog.h
     src/PanelRegistry.h
@@ -796,6 +798,7 @@ set(POM2_MACHINE_SOURCES
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
+    src/MemorySnapshot.cpp
     src/MemoryProfile_IIcClass.cpp
     src/AppleWinNtsc.cpp
     src/CassetteDevice.cpp
@@ -1478,6 +1481,7 @@ set(POM2_CORE_SOURCES
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
+    src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
@@ -1804,6 +1808,7 @@ add_executable(pom2_headless
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
+    src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
@@ -1886,6 +1891,7 @@ add_executable(pom2_bench
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
+    src/MemorySnapshot.cpp
     src/CharRomDump.cpp
     src/MemoryWatch.cpp
     src/MemoryVideoLog.cpp

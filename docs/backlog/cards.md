@@ -19,7 +19,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [CARDS-001](#cards-001) | 🟡 | To verify | Reconcile four card abstraction levels with the catalog |
-| [CARDS-011](#cards-011) | 🟡 | To verify | Ghostscript unreachable on a stock Apple Silicon Homebrew |
+| [CARDS-011](#cards-011) | 🟢 | To verify | ImageWriter residue: margin, paper size combo, carriage width, double strike, control codes |
 | [CARDS-002](#cards-002) | 🧊 | Frozen | Apple II Workstation Card — it boots, it is identified, and there is no network on the other end. |
 | [CARDS-006](#cards-006) | 🧊 | Frozen | Apple II SCSI / High-Speed SCSI + CHD |
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
@@ -60,27 +60,27 @@ describes all four, so do not schedule their documentation as missing.
 
 <a id="cards-011"></a>
 
-## CARDS-011 — Ghostscript unreachable on a stock Apple Silicon Homebrew
+## CARDS-011 — ImageWriter residue: margin, paper size combo, carriage width, double strike, control codes
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟢 · **State:** To verify.
 
-**Acceptance criterion (after revalidation):** Resolve and explain Ghostscript availability on Homebrew; verify the remaining printer margin, sizing and control-code cases independently.
+**Acceptance criterion:** each item checked against the ImageWriter II
+manual and fixed or ruled on, pinned in `imagewriter_smoke`.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1996). Original dates and estimates are retained below.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1996)
+(bug hunt #15, 2026-09-09). `status().headX` can read one dot past the
+right margin; `setPaperDimensions` re-snaps both axes and leaves the size
+combo stale; the carriage is the paper width (82 columns on Letter) where a
+real ImageWriter II has an 8.0 in / 80-column carriage;
+`kStyleDoubleStrike` is a silent no-op; unassigned control codes print
+CP437 art.
 
-- 🟡 **Ghostscript unreachable on a stock Apple Silicon Homebrew**
-  *(2026-09-09, bug hunt #15)*: `ChildProcess::findOnPath` refuses
-  group-writable directories and Homebrew ships `/opt/homebrew/bin` as
-  `drwxrwxr-x root:admin`, so `findPostScriptInterpreter()` returns nothing
-  with `gs` installed and the panel says "install Ghostscript". The refusal
-  is deliberate; at least say why, or accept a root-owned admin-group
-  directory. Smaller printer residue: `status().headX` can read one dot past
-  the right margin; the "Reset printer" tooltip says "discarded" where the
-  sheet is ejected; `setPaperDimensions` re-snaps both axes and leaves the
-  size combo stale; the carriage is the paper width (82 columns on Letter)
-  where a real ImageWriter II has an 8.0 in / 80-column carriage;
-  `kStyleDoubleStrike` is a silent no-op; unassigned control codes print
-  CP437 art. *½ day.*
+**Closed 2026-10-24:** Ghostscript is found on a stock Apple Silicon
+Homebrew — `ChildProcess::findOnPath` accepts a directory writable by the
+`admin` or `wheel` group on macOS (Homebrew's `/opt/homebrew/bin` is
+`<user>:admin` 0775), pinned in `child_process`; `postscript_render` now
+renders a real page through it on such a machine. The "Reset printer"
+tooltip says the sheet is ejected, which is what `resetPrinter` does.
 
 <a id="cards-002"></a>
 

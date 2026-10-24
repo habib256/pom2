@@ -54,6 +54,11 @@ the debt has grown, not shrunk — `Apple2Display.cpp` 2536, `DiskImage.cpp`
 so `tools/check_file_sizes.sh` failed on that revision, as did the
 2026-10-06 push CI's Linux job.
 
+**2026-10-24:** the `Memory.cpp` seam is cut — the snapshot trailer
+(`appendSnapshotState` / `loadSnapshotState`) is `MemorySnapshot.cpp`, and
+the ceiling went 2789 → 2354. Still owed: `DiskImage.cpp`'s WOZ writer,
+`ImageWriter.cpp`, `Apple2Display.cpp`, `hgrpaint/HgrPaintEditor.cpp`.
+
 **Documentation recheck 2026-10-20:** the current file-size guard passes;
 the historical ceiling violation is not a current failure. Responsibility
 splits remain a separate review task; passing a size ceiling does not prove

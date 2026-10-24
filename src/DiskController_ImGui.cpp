@@ -93,6 +93,26 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
                     snap.halfTrack);
         ImGui::Text("Buffer pos: %d / 6656", snap.trackPos);
         ImGui::TextWrapped("Image: %s", snap.diskPath.c_str());
+        // STORAGE-006: the DOS/ProDOS sniff (extension, ProDOS volume
+        // directory, DOS 3.3 VTOC + catalog chain) covers nearly every
+        // image; this is the override for the one it gets wrong. A re-read,
+        // not persisted — the next mount sniffs again.
+        if (snap.sectorOrderChoosable) {
+            ImGui::TextUnformatted("Sector order:");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(snap.persistenceState == "session");
+            if (ImGui::RadioButton("DOS 3.3", !snap.prodosOrder) && snap.prodosOrder)
+                r.requestSectorOrder = 0;
+            ImGui::SameLine();
+            if (ImGui::RadioButton("ProDOS", snap.prodosOrder) && !snap.prodosOrder)
+                r.requestSectorOrder = 1;
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How the 16 sectors of each track map to the file.\n"
+                                  "Detected on insert; change it for an image the\n"
+                                  "detection got wrong (the disk is saved first, then\n"
+                                  "read again in the other order).");
+        }
         if (snap.persistenceState == "session")
             ImGui::TextWrapped("Session disk: changes stay in RAM. Save a session to retain them.");
         // Say WHY the guest sees a read-only disk. Without this the app

@@ -117,7 +117,8 @@ bool refusedAsSecondMount(EmulationController& ctrl, const std::string& path,
 /// is part of preparing the image and has no business inside the lock.
 bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
                        const std::string& path, std::string& error,
-                       bool seekTrack0, bool eraseAfterPrepare)
+                       bool seekTrack0, bool eraseAfterPrepare,
+                       const DiskImage::SectorOrder* forcedOrder = nullptr)
 {
     error.clear();
     std::string current;
@@ -132,7 +133,8 @@ bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
     // Heap, not stack: a DiskImage is ~242 KB and prepareDisk stacks two more
     // below this frame — see the note in DiskIICard::prepareDisk.
     auto prepared = std::make_unique<DiskImage>();
-    if (!DiskIICard::prepareDisk(path, card.isWriteBackEnabled(), *prepared, error))
+    if (!DiskIICard::prepareDisk(path, card.isWriteBackEnabled(), *prepared, error,
+                                 forcedOrder))
         return false;
     if (eraseAfterPrepare) {
         prepared->eraseSurface();
@@ -247,6 +249,21 @@ bool mountBlankDiskII(EmulationController& ctrl, DiskIICard& card, int drive,
 {
     return mountDiskIICommon(ctrl, card, drive, path, error, seekTrack0,
                              /*eraseAfterPrepare=*/true);
+}
+
+bool remountDiskIIWithOrder(EmulationController& ctrl, DiskIICard& card, int drive,
+                            bool prodos, std::string& error)
+{
+    std::string path;
+    {
+        auto st = ctrl.lockState();
+        if (card.isDiskLoaded(drive)) path = card.driveImage(drive).getPath();
+    }
+    if (path.empty()) { error = "no disk in the drive"; return false; }
+    const DiskImage::SectorOrder order =
+        prodos ? DiskImage::SectorOrder::ProDOS : DiskImage::SectorOrder::Dos33;
+    return mountDiskIICommon(ctrl, card, drive, path, error, /*seekTrack0=*/false,
+                             /*eraseAfterPrepare=*/false, &order);
 }
 
 // One image, one drive — at restore too (bug hunt 2026-09-16). The restore

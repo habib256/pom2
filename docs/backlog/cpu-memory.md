@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [MEMORY-002](#memory-002) | 🟡 | To verify | `Memory::memRead` hot path |
-| [MEMORY-004](#memory-004) | 🟡 | To verify | Bug hunt #14's CPU residue |
+| [MEMORY-004](#memory-004) | 🟢 | Known limit | WDC `WAI` falls through instead of waiting |
 | [MEMORY-003](#memory-003) | 🟢 | To verify | Dedicated Pascal LC |
 | [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
 
@@ -44,27 +44,25 @@ an explicit request before scheduling.
 
 <a id="memory-004"></a>
 
-## MEMORY-004 — Bug hunt #14's CPU residue
+## MEMORY-004 — WDC `WAI` falls through instead of waiting
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟢 · **State:** Known limit, documented in `M6502::WAI`.
 
-**Acceptance criterion (after revalidation):** Verify WAI/STP and SSC IRQ behavior against the applicable CPU/firmware model before changing the policy.
+**Acceptance criterion:** WAI parks until IRQ or NMI (waking whatever I
+says, vectoring only with I=0, MAME `ow65c02.lst:797-803`), with
+`bench_identity` and the bus fast-path numbers unchanged.
 
-DMA hand-back stop handling was reproduced and corrected on 2026-10-20;
-the `debugger` regression covers stopping, resuming and hook detachment.
-See [the changelog](../../CHANGELOG.md#2026-10-20--debugger-stops-survive-dma-hand-back).
+`WAI` charges 3 cycles and falls through to PC+1. A `waiting` latch beside
+`halted` would fix it, but that latch sits on `step()`'s path, which
+`docs/PERFORMANCE.md` §§ 8.2/8.5 measures before anything is added there.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2016). Original dates and estimates are retained below.
-
-- 🟡 **Bug hunt #14's CPU residue** *(2026-09-09; read, not fixed)*: `WAI`
-  charges 3 cycles and falls through (a `waiting` latch parallel to
-  `halted` would fix it: wake on the line regardless of I, vector only if
-  I=0); `$CB`/`$DB` are WAI/STP on the CMOS table where the Rockwell/GTE
-  parts in every shipped Apple execute a 1-cycle NOP — a ruling, not a
-  bug. **Bug hunt #14's I/O residue**: the
-  SSC ships SW2-6 (interrupts) on where MAME's DIP default is off, and its
-  RDR read clears `IRQ_RDRF` where MAME's `read_rdr` does not — the
-  in-code comment attributing that to MAME is wrong.
+**Closed 2026-10-24 from the original residue:** `$CB`/`$DB` as WAI/STP on
+the CMOS table follows MAME, whose enhanced //e is a `W65C02`
+(`apple2e.cpp:5263`); the SSC's RDR read no longer releases IRQ_RDRF (MAME
+`read_rdr` does not — only `read_status`), pinned in `ssc_acia_smoke`; SW2-6
+(interrupts) ships ON where MAME's `DSWX` default is OFF — kept on purpose,
+so interrupt-driven drivers (A2osX's among them) work out of the box, and
+the panel switches it.
 
 <a id="memory-003"></a>
 

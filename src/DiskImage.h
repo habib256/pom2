@@ -124,6 +124,9 @@ public:
     bool loadFile(const std::string& path);
     bool loadFile(const std::string& path, SectorOrder order);
     SectorOrder getSectorOrder() const { return sectorOrder; }
+    /// True when the order came from `loadFile(path, order)`, not the sniff:
+    /// a same-file re-read (DiskIICard::installDisk) must keep it.
+    bool sectorOrderForced() const { return sectorOrderForced_; }
     /// 13-sector (pre-DOS-3.3) when true. Lets DiskIICard serve the
     /// 341-0009 boot PROM + 341-0010 LSS instead of the 16-sector pair.
     bool isNib() const { return nibFormat; }
@@ -462,6 +465,7 @@ private:
 
     bool loaded = false;
     SectorOrder sectorOrder = SectorOrder::Dos33;
+    bool        sectorOrderForced_ = false;
     int         sectorsPerTrack_ = kSectorsPerTrack;   // 16, or 13 for DOS 3.x
     bool nibFormat = false;
     /// True iff the source was the rarer 6384-byte/track NIB variant
