@@ -10,6 +10,19 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — WDC `WAI` waits for an interrupt (MEMORY-004, closed)
+
+`WAI` charged its three cycles and fell through, so a 65C02 program parked
+on it for its next interrupt ran straight on into the code after it. It
+now waits on the `halted` latch STP and KIL already use, with a `waiting_`
+flag read only inside that branch — `step()` gained no test on its hot
+path (`docs/PERFORMANCE.md` §§ 8.2/8.5) and `bench_identity` is unchanged.
+NMI or any asserted IRQ source wakes it; an unmasked IRQ is then taken, a
+masked one resumes after the WAI (MAME `ow65c02.lst:797-803`); STP still
+ignores both. A snapshot (and the Workstation Card's) stores the state as
+0/1/2 in the byte that was a bool, so an older reader sees a waiting CPU
+as halted. Pinned in `cpu_cycle_count`, which fails on the old WAI.
+
 ## 2026-10-24 — The ImageWriter residue (CARDS-011, closed)
 
 What bug hunt #15 left on the printer, all within `ImageWriter.cpp`'s size

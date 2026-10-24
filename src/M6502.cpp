@@ -1264,9 +1264,9 @@ template void M6502::BBSn<2>(); template void M6502::BBSn<3>();
 template void M6502::BBSn<4>(); template void M6502::BBSn<5>();
 template void M6502::BBSn<6>(); template void M6502::BBSn<7>();
 
-// WDC WAI / STP. WAI currently falls through after three cycles;
-// STP uses a persistent halt latch cleared by reset. Neither handler
-// parks PC at the opcode; see the WAI approximation below.
+// WDC WAI / STP. Both park on the `halted` latch step() already tests, so
+// neither costs the hot path a branch (docs/PERFORMANCE.md §§ 8.2/8.5):
+// STP until a reset, WAI until an interrupt line (MEMORY-004).
 void M6502::WAI(void)
 {
     // WDC `WAI` suspends the CPU until an IRQ or NMI is asserted. Crucial
@@ -1277,18 +1277,17 @@ void M6502::WAI(void)
     // **without** taking the vector. Some low-power patterns rely on
     // this (poll-and-wait-for-IRQ-with-CLI-deferred).
     //
-    // Previously we modelled the halt by decrementing PC so step()
-    // re-fetched WAI; that deadlocks with I=1 because step() bails on
-    // `!(P & I) && IRQ` and the PC never advances. Removing the decrement
-    // makes WAI act as "consume 3 cycles, fall through to PC+1" — the
-    // next step() then sees IRQ/NMI (handled at top of step()) and
-    // either vectors (NMI / IRQ+I=0) or just executes the byte after
-    // WAI (IRQ+I=1). Software relying on WAI as a "wait here forever"
-    // is rare on the Apple II target and would equally well use a
-    // BNE-to-self loop.
+    // PC already points past WAI. The CPU waits on the `halted` latch with
+    // `waiting_` set; step()'s halted branch lifts it the moment NMI or an
+    // IRQ source is asserted and falls into the normal interrupt poll, which
+    // vectors (NMI, or IRQ with I=0) or resumes after WAI (IRQ with I=1).
+    // It used to fall straight through after three cycles, so a program
+    // waiting for its next interrupt ran on into the code after the WAI.
     //
     // 3 cycles total (MAME `ow65c02.lst` WAI: fetch + 2 internal) — the
     // fetch already seeded 1.
+    halted   = true;
+    waiting_ = true;
     cycles += 2;
 }
 
@@ -1950,7 +1949,7 @@ void M6502::hardReset(void)
     accumulator = 0;
     xRegister = 0;
     yRegister = 0;
-    halted = false;
+    halted = waiting_ = false;
     // RESET drops any pending NMI edge and clears the IRQ source mask.
     // Every reset path deasserts the device side first (slotBus().reset()
     // runs the onReset hooks, resetSoftSwitches clears the VBL source), so
@@ -1983,7 +1982,7 @@ void M6502::softReset(void)
     if (cpuMode == CpuMode::CMOS) {
         statusRegister &= ~M6502::Status::D;
     }
-    halted = false;
+    halted = waiting_ = false;
     // Same interrupt-latch policy as hardReset: RESET drops a pending NMI
     // edge and clears the source mask (devices were deasserted by the
     // slot-bus reset that precedes the CPU reset on every path).
@@ -2093,11 +2092,16 @@ void M6502::step(void)
     }
 
     // STP-halted CPU: burn cycles, ignore IRQ/NMI (only RESET wakes,
-    // and that's `softReset()` / `hardReset()` clearing `halted`).
+    // and that's `softReset()` / `hardReset()` clearing `halted`). A WAI
+    // wakes on either interrupt line, masked or not, and goes on below.
     if (halted) {
-        cycles = 2;
-        if (memory != nullptr) memory->advanceCycles(cycles);
-        return;
+        if (waiting_ && (NMI || irqSourceMask.load(std::memory_order_relaxed) != 0u)) {
+            halted = waiting_ = false;
+        } else {
+            cycles = 2;
+            if (memory != nullptr) memory->advanceCycles(cycles);
+            return;
+        }
     }
 
     // NMI has higher priority than IRQ on real silicon. MAME models

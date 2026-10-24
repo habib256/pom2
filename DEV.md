@@ -188,6 +188,16 @@ NMOS JAM ($02/$12/$22/…) or a CMOS STP ($DB) used to freeze the shared CPU for
 because file `02` poisoned the other 254. Curated-subset runs never noticed
 (no JAM opcode is in the manifest).
 
+**WAI waits on the same latch** *(2026-10-24, MEMORY-004)*. `WAI` sets
+`halted` plus `waiting_`; `step()`'s halted branch — the one test the hot path
+already makes — lifts it when NMI or any IRQ source is asserted and falls into
+the normal interrupt poll: NMI or an unmasked IRQ vectors, a masked IRQ
+resumes after the WAI (MAME `ow65c02.lst:797-803`). It used to fall through
+after three cycles. A snapshot stores `M6502::haltCode()` — 0 running, 1
+STP/KIL, 2 WAI — in the byte that was a bool, so an older reader sees a
+waiting CPU as halted. `bench_identity` unchanged; pinned in
+`cpu_cycle_count`.
+
 Five real decimal bugs the suite surfaced + fixed in `M6502::ADC/SBC` — all
 **provably identical for valid BCD**, only invalid-digit edge cases change
 (cpu_cycle_count_test's decimal-SBC-V pin + Klaus stay green):

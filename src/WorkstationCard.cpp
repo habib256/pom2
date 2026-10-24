@@ -362,7 +362,7 @@ void WorkstationCard::appendSnapshotState(std::vector<uint8_t>& out) const
     byteio::putU8 (out, cardCpu_->getYRegister());
     byteio::putU8 (out, cardCpu_->getStatusRegister());
     byteio::putU8 (out, cardCpu_->getStackPointer());
-    byteio::putU8 (out, cardCpu_->isHalted() ? 1 : 0);
+    byteio::putU8 (out, cardCpu_->haltCode());
 
     for (uint8_t v : latch_) byteio::putU8(out, v);
     byteio::putU32(out, static_cast<uint32_t>(romBase_));
@@ -417,7 +417,7 @@ void WorkstationCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     cardCpu_->setYRegister(r.u8());
     cardCpu_->setStatusRegister(r.u8());
     cardCpu_->setStackPointer(r.u8());
-    cardCpu_->setHalted(r.u8() != 0);
+    cardCpu_->setHaltCode(r.u8());
 
     for (auto& v : latch_) v = r.u8();
     romBase_ = r.u32();

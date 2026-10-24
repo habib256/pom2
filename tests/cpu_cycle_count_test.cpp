@@ -353,6 +353,7 @@ int main()
         const int c03 = oneInstr(ccpu, mem, {0x03}, 0x0200); // reserved $x3
         const int c0b = oneInstr(ccpu, mem, {0x0B}, 0x0200); // reserved $xB
         const int wai = oneInstr(ccpu, mem, {0xCB}, 0x0200); // WAI (no IRQ)
+        ccpu.hardReset();                                    // clear WAI's wait
         const int stp = oneInstr(ccpu, mem, {0xDB}, 0x0200); // STP (halts)
         ccpu.hardReset();                                    // clear STP halt
         M6502 ncpu(&mem);
@@ -367,6 +368,59 @@ int main()
             assert(c03 == 1 && c0b == 1 && wai == 3 && stp == 3 && n1a == 2);
         }
         std::printf("1-byte NOP cycles (C02=1, NMOS=2) + WAI/STP=3: OK\n");
+    }
+
+    // ── WAI waits for an interrupt line (MEMORY-004) ──────────────────────
+    // MAME `ow65c02.lst:797-803`: WAI parks until IRQ or NMI is asserted,
+    // wakes whatever I says, and vectors only when the interrupt is taken.
+    // It used to fall through after three cycles.
+    {
+        M6502 cpu(&mem);
+        cpu.setCpuMode(M6502::CpuMode::CMOS);
+        auto waitAt0300 = [&](bool iFlag) {
+            cpu.hardReset();
+            mem.memWrite(0x0300, 0xCB);                  // WAI
+            mem.memWrite(0x0301, 0xE8);                  // INX
+            cpu.setXRegister(0);
+            cpu.setStatusRegister(iFlag ? 0x24 : 0x20);
+            cpu.setProgramCounter(0x0300);
+            (void)cpu.run(1);                             // the WAI itself
+            for (int i = 0; i < 50; ++i) (void)cpu.run(1);
+            assert(cpu.getProgramCounter() == 0x0301 && cpu.getXRegister() == 0 &&
+                   cpu.isHalted() && "WAI must wait, not run on");
+            assert(cpu.haltCode() == 2);
+        };
+        // IRQ with I=1: wakes, no vector, runs the INX.
+        waitAt0300(true);
+        cpu.setIrqLine(0, true);
+        (void)cpu.run(1);
+        assert(!cpu.isHalted() && cpu.getXRegister() == 1 &&
+               "a masked IRQ wakes WAI without vectoring");
+        cpu.setIrqLine(0, false);
+        // IRQ with I=0: wakes and takes the vector ($FFFE/F).
+        waitAt0300(false);
+        const uint16_t vec = static_cast<uint16_t>(mem.memRead(0xFFFE) | (mem.memRead(0xFFFF) << 8));
+        cpu.setIrqLine(0, true);
+        (void)cpu.run(1);
+        assert(!cpu.isHalted() && cpu.getProgramCounter() != 0x0302 &&
+               "an unmasked IRQ wakes WAI and is taken");
+        (void)vec;
+        cpu.setIrqLine(0, false);
+        // NMI wakes it too; STP (haltCode 1) ignores both.
+        waitAt0300(true);
+        cpu.setNMI();
+        (void)cpu.run(1);
+        assert(!cpu.isHalted() && "NMI wakes WAI");
+        cpu.hardReset();
+        mem.memWrite(0x0300, 0xDB);                      // STP
+        cpu.setProgramCounter(0x0300);
+        (void)cpu.run(1);
+        cpu.setIrqLine(0, true); cpu.setNMI();
+        for (int i = 0; i < 10; ++i) (void)cpu.run(1);
+        assert(cpu.isHalted() && cpu.haltCode() == 1 && "STP stays halted");
+        cpu.setIrqLine(0, false);
+        cpu.hardReset();
+        std::printf("WAI waits for IRQ/NMI, STP ignores them: OK\n");
     }
 
     // ── NMOS decimal-mode SBC: V is deterministic (binary difference) ─────

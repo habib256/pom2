@@ -193,7 +193,11 @@ public:
     /// pre-halt frame used to leave the machine frozen (live `halted`
     /// kept), and restoring a halted snapshot woke STP without RESET.
     bool isHalted() const   { return halted; }
-    void setHalted(bool v)  { halted = v; }
+    /// 0 running, 1 halted until RESET (STP, KIL), 2 waiting for an
+    /// interrupt (WAI). What a snapshot saves: older readers see 2 as halted.
+    uint8_t haltCode() const { return halted ? (waiting_ ? 2 : 1) : 0; }
+    void setHaltCode(uint8_t c) { halted = c != 0; waiting_ = c == 2; }
+    void setHalted(bool v)  { halted = v; if (!v) waiting_ = false; }
 
     /// Cycles accumulated inside the *current* opcode (reset to 1 at the
     /// fetch by executeOpcode and incremented as the instruction runs).
@@ -440,6 +444,7 @@ private :
     /// `reset_c` can exit). Previously POM2 parked PC and let NMI vector
     /// out, which woke STP spuriously.
     bool halted = false;
+    bool waiting_ = false;   // WAI: `halted` until an interrupt line rises
 
 
 
