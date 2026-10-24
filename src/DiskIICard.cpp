@@ -393,7 +393,8 @@ DiskIICard::~DiskIICard()
 // Phase 1 of the two-phase mount — see the header. Pure file I/O against a
 // detached image: no card state is read or written, so this needs no lock.
 bool DiskIICard::prepareDisk(const std::string& path, bool writeBackEnabled,
-                             DiskImage& out, std::string& error)
+                             DiskImage& out, std::string& error,
+                             const DiskImage::SectorOrder* forcedOrder)
 {
     // Heap, not stack: a DiskImage is ~242 KB and this sits mid-chain on the
     // insert path (insertDisk → here → loadFile, one temporary per frame) —
@@ -401,7 +402,7 @@ bool DiskIICard::prepareDisk(const std::string& path, bool writeBackEnabled,
     // server's HTTP thread reaches insertDisk directly.
     auto staged = std::make_unique<DiskImage>();
     staged->setWriteBackEnabled(writeBackEnabled);
-    if (!staged->loadFile(path)) {
+    if (!(forcedOrder ? staged->loadFile(path, *forcedOrder) : staged->loadFile(path))) {
         error = staged->getLastError();
         pom2::log().warn("Disk II", "Insert failed: " + error);
         return false;
@@ -508,7 +509,11 @@ bool DiskIICard::installDisk(int drive, DiskImage&& prepared)
         // Heap for the same stack-size reason as prepareDisk above.
         auto reread = std::make_unique<DiskImage>();
         std::string error;
-        if (!prepareDisk(path, writeBackEnabled, *reread, error)) {
+        // Keep a hand-chosen sector order (STORAGE-006): the re-read would
+        // otherwise sniff again and undo it.
+        const DiskImage::SectorOrder order = prepared.getSectorOrder();
+        if (!prepareDisk(path, writeBackEnabled, *reread, error,
+                         prepared.sectorOrderForced() ? &order : nullptr)) {
             mediaErrors[drive] = error;
             return false;
         }

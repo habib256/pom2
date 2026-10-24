@@ -875,6 +875,7 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath, SectorOrder order)
     path.clear();
     const bool ok = loadSectorImageFromBuffer(buf.data(), buf.size(),
                                               order, /*volume=*/254, imgPath);
+    sectorOrderForced_ = ok;
     hostReadOnly_ = ok && hostFileIsReadOnly(imgPath);
     if (hostReadOnly_) {
         pom2::log().info("Disk II",

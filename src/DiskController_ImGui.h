@@ -72,6 +72,10 @@ public:
         /// With `writeBackEnabled` this tells the panel WHY the guest sees
         /// a read-only disk — the notch on the sleeve, or the host toggle.
         bool        fileWriteProtected = false;
+        /// A plain 143 360-byte sector image (not NIB/WOZ/2IMG/13-sector):
+        /// the only kind whose DOS/ProDOS order can be chosen by hand.
+        bool        sectorOrderChoosable = false;
+        bool        prodosOrder = false;     ///< the order it is read in now
         // Disks library — populated by the host from the disks_5.4/ directory.
         // The panel shows them as a one-click "insert + cold boot" list.
         std::vector<LibraryEntry> library;
@@ -88,6 +92,7 @@ public:
         std::string requestInsertOnly;
         bool        turboToggleChanged  = false;
         bool        turboNewValue       = true;
+        int         requestSectorOrder  = -1;    ///< 0 DOS 3.3, 1 ProDOS (STORAGE-006)
         bool        writeBackToggleChanged = false;
         bool        writeBackNewValue      = false;
         std::string statusMessage;

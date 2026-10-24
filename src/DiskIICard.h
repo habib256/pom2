@@ -236,8 +236,11 @@ public:
     ///
     /// Returns false with `error` filled in if the file cannot be used; the
     /// caller should report it and NOT proceed to phase 2.
+    /// `forcedOrder` (STORAGE-006) bypasses the DOS/ProDOS sniff for a plain
+    /// 143 360-byte sector image; null = auto-detect.
     static bool prepareDisk(const std::string& path, bool writeBackEnabled,
-                            DiskImage& out, std::string& error);
+                            DiskImage& out, std::string& error,
+                            const DiskImage::SectorOrder* forcedOrder = nullptr);
 
     /// Phase 2, to be called WITH `stateMutex` held: take over an image
     /// prepared by phase 1. Cheap — a move plus the LSS re-anchor — with one

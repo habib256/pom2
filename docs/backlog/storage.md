@@ -19,7 +19,6 @@ an explicit request before scheduling.
 | [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
 | [STORAGE-010](#storage-010) | 🟢 | Known limit | `.nib` bytes get flat 8-cell timing |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
-| [STORAGE-006](#storage-006) | 🟢 | To verify | UI "Force DOS / Force ProDOS" |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
 
@@ -144,24 +143,6 @@ write-back. This is not an active missing-validation task.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1512)
 and [CHANGELOG](../../CHANGELOG.md).
-
-<a id="storage-006"></a>
-
-## STORAGE-006 — UI "Force DOS / Force ProDOS"
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Expose forced DOS/ProDOS interpretation and verify it reaches the existing backend and survives reload as specified.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1530). Original dates and estimates are retained below.
-
-- 🟢 **UI "Force DOS / Force ProDOS"** — backend ready
-  (`DiskImage::loadFile(path, SectorOrder)`, log at `DiskImage.cpp:820-827`),
-  button missing in `DiskLibrary_ImGui` / `DiskController_ImGui`.
-  Auto-detect (extension + ProDOS vol-dir sniff `0x400`/`0xB00` + DOS 3.3
-  VTOC/catalog-chain sniff, both pinned by `sector_order_smoke` since
-  2026-09-07) already covers 99 % of cases; manual override useful for ambiguous /
-  non-standard / debug images. *~30 min.*
 
 <a id="storage-007"></a>
 

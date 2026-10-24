@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-24 — Choose a disk's sector order by hand (STORAGE-006)
+
+The DOS/ProDOS sniff (extension, ProDOS volume directory, DOS 3.3 VTOC and
+catalog chain) gets nearly every image right, and `DiskImage::loadFile(path,
+order)` has long been there for the one it does not — with no way to reach
+it. The Disk II panel now shows "Sector order: DOS 3.3 / ProDOS" for a
+plain 143 360-byte image (not NIB, WOZ, 2IMG or 13-sector) and re-reads the
+disk in the chosen order through the two-phase mount
+(`remountDiskIIWithOrder`), saving it first in its old order like any swap.
+Not persisted: the next mount sniffs again. One trap on the way: putting
+the same file back in its drive takes the same-file re-read under the lock,
+which sniffed afresh and undid the choice; the image now remembers a forced
+order (`sectorOrderForced`) and the re-read keeps it. Pinned in
+`storage_coordinator` (each order lays track 1 out differently; going back
+restores the first layout).
+
 ## 2026-10-24 — The //e Shift-key mod, wired the right way round (INPUT-001)
 
 `PaddleInputs` carried a Shift→PB2 path that nothing called, and it OR'd

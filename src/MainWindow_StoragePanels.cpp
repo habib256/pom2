@@ -195,6 +195,12 @@ void MainWindow::renderDiskPanelWindow()
             snap.persistenceState  = persisted.state;
             snap.persistenceError  = persisted.error;
             snap.fileWriteProtected = card->isFileWriteProtected();
+            if (card->isDiskLoaded()) {
+                const DiskImage& img = card->driveImage(0);
+                snap.prodosOrder = img.getSectorOrder() == DiskImage::SectorOrder::ProDOS;
+                snap.sectorOrderChoosable = !img.isNib() && !img.isWoz() &&
+                                            !img.is13Sector();
+            }
             for (int d = 0; d < 2; ++d) {
                 auto& flux = snap.flux[d];
                 flux.loaded = card->isDiskLoaded(d);
@@ -204,6 +210,11 @@ void MainWindow::renderDiskPanelWindow()
                 flux.position = card->getFluxPosition(d);
                 flux.transitions = card->driveImage(d).fluxEvents(flux.quarterTrack);
             }
+        }
+        if (snap.sectorOrderChoosable) {   // a 2IMG or odd size cannot be re-read raw
+            std::error_code ec;
+            snap.sectorOrderChoosable =
+                std::filesystem::file_size(snap.diskPath, ec) == 143360 && !ec;
         }
         snap.turboWhileMotor = diskTurboWhileMotor;
         snap.turboActive     = diskTurboActive;
@@ -239,6 +250,15 @@ void MainWindow::renderDiskPanelWindow()
                 (n.ok ? (protect ? ": disk WRITE-PROTECTED"
                                  : ": disk WRITABLE (saved as it is written)")
                       : ": " + n.error);
+            tapeStatusUntil = lastFrameTime + 4.0;
+        }
+        if (result.requestSectorOrder >= 0) {
+            std::string err;
+            const bool prodos = result.requestSectorOrder == 1;
+            const bool ok = pom2::remountDiskIIWithOrder(*controller, *card, 0, prodos, err);
+            tapeStatusMessage = ok ? std::string("Disk re-read in ") +
+                                     (prodos ? "ProDOS" : "DOS 3.3") + " sector order"
+                                   : "Sector order not changed: " + err;
             tapeStatusUntil = lastFrameTime + 4.0;
         }
         if (result.requestEject) {

@@ -634,6 +634,48 @@ int main()
         assert(!command.ok);
         assert(!command.error.empty());
 
+        // ── STORAGE-006: re-read a disk in the other sector order ───────
+        // Each file sector holds its own index, so the two orders lay a
+        // track down differently; going back must restore the first layout.
+        {
+            const auto orderPath = std::filesystem::temp_directory_path() / "pom2_sector_order.dsk";
+            {
+                std::vector<std::uint8_t> img(35u * 16u * 256u);
+                for (std::size_t i = 0; i < img.size(); ++i)
+                    img[i] = static_cast<std::uint8_t>((i / 256u) % 16u);
+                std::ofstream f(orderPath, std::ios::binary | std::ios::trunc);
+                f.write(reinterpret_cast<const char*>(img.data()), std::streamsize(img.size()));
+            }
+            command = mediaStorage.mountDiskII(
+                mediaController, commandSettings, 4, 0, orderPath.string());
+            assert(command.ok);
+            DiskIICard* card = nullptr;
+            auto trackNibbles = [&] {
+                auto st = mediaController.lockState();
+                card = dynamic_cast<DiskIICard*>(st.memory().slotBus().peripheral(4));
+                std::vector<std::uint8_t> t;
+                for (int n = 0; n < 6656; ++n) t.push_back(card->driveImage(0).nibbleAt(1, n));
+                return t;
+            };
+            auto order = [&] {
+                auto st = mediaController.lockState();
+                return card->driveImage(0).getSectorOrder();
+            };
+            const auto dosTrack = trackNibbles();
+            assert(order() == DiskImage::SectorOrder::Dos33);
+            std::string err;
+            assert(pom2::remountDiskIIWithOrder(mediaController, *card, 0, true, err));
+            assert(order() == DiskImage::SectorOrder::ProDOS);
+            assert(trackNibbles() != dosTrack && "the ProDOS order lays the track out differently");
+            assert(pom2::remountDiskIIWithOrder(mediaController, *card, 0, false, err));
+            assert(order() == DiskImage::SectorOrder::Dos33);
+            assert(trackNibbles() == dosTrack && "back to DOS order: the first layout");
+            command = mediaStorage.ejectDiskII(mediaController, commandSettings, 4, 0);
+            assert(command.ok);
+            std::error_code ec;
+            std::filesystem::remove(orderPath, ec);
+        }
+
         // ── Two-phase Disk II eject (bug hunt 2026-09-06 #13) ───────────
         // `ejectDisk` re-encodes the dirty tracks, rewrites the image and
         // fsyncs twice; doing that under `stateMutex` froze the CPU worker
