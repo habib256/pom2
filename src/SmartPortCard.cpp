@@ -70,6 +70,9 @@ constexpr uint16_t kBootScanAddr  = 0xC800 + kBootScanC800;
 /// $CD60.
 constexpr size_t   kOtherCmdC800  = 0x560;
 constexpr uint16_t kOtherCmdAddr  = 0xC800 + kOtherCmdC800;
+/// ProDOS unit byte ($43) → bay index, latched in $C0n0. $CD80.
+constexpr size_t   kUnitSelC800   = 0x580;
+constexpr uint16_t kUnitSelAddr   = 0xC800 + kUnitSelC800;
 
 } // anon namespace
 
@@ -811,7 +814,8 @@ void SmartPortCard::buildRom()
 
     // ── ProDOS driver dispatch ($Cn50) ─────────────────────────────────
     // ProDOS calls here with $42 = command, $43 = unit, $44/$45 = buffer,
-    // $46/$47 = block. Unit byte bit 7 = drive (0 = drive 1, 1 = drive 2).
+    // $46/$47 = block. The unit byte names a slot as well as a drive; the
+    // routine at $CD80 turns both into a bay (units 3/4 are slot 2's).
     // `BIT $CFFF` en tete, comme le vrai firmware Liron sur SON entree — et
     // ce n'est pas un ornement : l'entree ProDOS est appelee par le noyau
     // APRES que le firmware 80 colonnes a verrouille la fenetre interne
@@ -824,12 +828,9 @@ void SmartPortCard::buildRom()
     // direct economise le CMP #$00, et le pad historique fournit le reste.
     a.region("driver", kDriverOff, kReadOff)
      .emit({ 0x2C, 0xFF, 0xCF,      // BIT $CFFF         ; libere INTC8ROM
-             0xA5, 0x43,            // LDA $43           ; unit byte
-             0x0A,                  // ASL A             ; bit7 → carry
-             0xA9, 0x00,
-             0x2A,                  // ROL A             ; A = drive (0 or 1)
-             0x8D, static_cast<uint8_t>(kDeviceBase + 0x00), 0xC0,
-                                    // STA $C0n0         ; latch unit
+             0x20, static_cast<uint8_t>(kUnitSelAddr & 0xFF),
+                   static_cast<uint8_t>(kUnitSelAddr >> 8),
+                                    // JSR $CD80         ; $43 → $C0n0
              0xA5, 0x42 })          // LDA $42           ; command
      .branch(0xF0, "dispStatus")    // BEQ — STATUS ($00)
      .emit({ 0xC9, 0x01 })          // CMP #$01
@@ -1154,6 +1155,33 @@ void SmartPortCard::buildC800()
         static_assert(kOtherCmdC800 + sizeof oc <= 0x600,
                       "the command fallback must not run into the handler at $CE00");
         std::memcpy(c800_.data() + kOtherCmdC800, oc, sizeof oc);
+    }
+
+    // ── ProDOS unit byte → bay ($CD80) ─────────────────────────────────
+    // $43 is DSSS0000, and the slot bits matter: ProDOS 8 mirrors SmartPort
+    // units 3 and 4 of a slot-5 card into slot 2 and calls THIS driver with
+    // $43 = $20/$A0. The Liron's own decode ($CC1E in roms/liron.rom) is
+    // bay = D + 2 x (S2 of $43 != S2 of its own slot). Taking bit 7 alone
+    // made S2,D1 read unit 1 again, so one image was listed twice (S5,D1 and
+    // S2,D1) by A2FileCmd on a fresh browser profile (2026-10-25).
+    {
+        const uint8_t unitReg = static_cast<uint8_t>(0x80 + slot_ * 16 + 0x00);
+        const uint8_t us[] = {
+            0xA5, 0x43,                              // LDA $43
+            0x49, static_cast<uint8_t>(slot_ << 4),  // EOR #slot<<4
+            0x0A,                  // ASL A       ; C = D, bit 7 = S2 differs
+            0x08,                  // PHP
+            0x0A,                  // ASL A       ; C = S2 differs
+            0xA9, 0x00,            // LDA #$00
+            0x2A,                  // ROL A       ; A = 0 or 1
+            0x28,                  // PLP         ; C = D
+            0x2A,                  // ROL A       ; A = 2 x S2 differs + D
+            0x8D, unitReg, 0xC0,   // STA $C0n0   ; latch unit
+            0x60                   // RTS
+        };
+        static_assert(kUnitSelC800 + sizeof us <= 0x600,
+                      "the unit decode must not run into the handler at $CE00");
+        std::memcpy(c800_.data() + kUnitSelC800, us, sizeof us);
     }
 
     constexpr size_t kHandlerOff = 0x600;   // $CE00
