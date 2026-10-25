@@ -63,10 +63,12 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -100,6 +102,7 @@ struct Outcome {
     bool slot6Drive1 = false;
     int  devcnt = -1;
     int  chain2Bay = -2;   // bay that chain number 2 reaches after the run
+    int  chain2BayBeforeReset = -2;   // the same, just before a Ctrl-Reset
     pom2::SmartPortBusDevice::Progress bus;
     std::string screen;
 };
@@ -195,7 +198,8 @@ Outcome run(const std::string& rom, const std::string& disk525,
 // iicplus_boot35 does; `disk35` goes on the slot-5 card = the rear port.
 Outcome runPlus(const std::string& rom, const std::string& internal35,
                 const std::string& disk35, bool bootSlot5,
-                const std::string& disk35b = std::string())
+                const std::string& disk35b = std::string(),
+                bool ctrlReset = false)
 {
     Outcome o;
     Memory mem;
@@ -260,6 +264,15 @@ Outcome runPlus(const std::string& rom, const std::string& internal35,
                 o.prodosSeen = true;
         }
     }
+    if (ctrlReset) {
+        // Ctrl-Reset, in EmulationController::softReset's order.
+        o.chain2BayBeforeReset = port.device().bayForChainNumber(2);
+        mem.resetSoftSwitchesWarm();
+        mem.slotBus().reset();
+        hub.reset();
+        cpu.softReset();
+        for (long total = 0; total < 20'000'000; ) total += cpu.run(4096);
+    }
     o.screen = scrapeTextPage(mem);
     if (!o.prodosSeen && o.screen.find("ProDOS") != std::string::npos)
         o.prodosSeen = true;
@@ -283,6 +296,58 @@ Outcome runPlus(const std::string& rom, const std::string& internal35,
     return o;
 }
 
+// H. The //c+ with an external 3.5" selected that is not there (devsel 1 +
+//    35sel, no rear Sony — the default). The write path already kept those
+//    $C0Ex accesses from the Disk II; the read path asked whether a Sony
+//    was bound instead, so the same phase pattern stepped the 5.25" head
+//    when read and left it alone when written. Returns the head movement
+//    {by reads, by writes} in quarter-tracks.
+std::pair<int, int> phaseProbeMovesDiskII(const std::string& rom)
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    mem.setCpu(&cpu);
+    pom2::IWMDevice    iwm;
+    pom2::SmartPortHub hub;
+    pom2::Disk35Image  imgInt;
+    pom2::Sony35Drive  drvInt;
+    drvInt.setImage(&imgInt);
+    hub.attach(&iwm);
+    hub.setSony35(&drvInt, nullptr);
+    mem.setIWM(&iwm);
+    mem.setSmartPortHub(&hub);
+    auto d2 = std::make_unique<DiskIICard>(6);
+    DiskIICard* diskII = d2.get();
+    diskII->setIWM(&iwm);
+    mem.slotBus().plug(6, std::move(d2));
+    mem.setIIEMode(true);
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    if (!mem.loadAppleIIRom(rom.c_str(), /*pickLowerHalf=*/true)) return {-1, -1};
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
+    cpu.hardReset();
+
+    (void)mem.memRead(0xC0E9);            // motor on
+    (void)mem.memRead(0xC0EA);            // drive 1 → devsel 1
+    hub.setMig35Sel(true);                // STA $CE40: the rear 3.5"
+    if (!hub.active35Selected() || iwm.getSony35()) {
+        std::printf("H: setup — hub 3.5 %d, Sony bound %d\n",
+                    int(hub.active35Selected()), iwm.getSony35() ? 1 : 0);
+        return {-1, -1};
+    }
+    // Walk the magnets 1, 2, 3, 0 — four quarter-track steps outward on a
+    // Disk II that sees them.
+    const uint16_t seq[] = { 0xC0E3, 0xC0E0, 0xC0E5, 0xC0E2,
+                             0xC0E7, 0xC0E4, 0xC0E1, 0xC0E6, 0xC0E0 };
+    const int q0 = diskII->getQuarterTrack(0);
+    for (uint16_t a : seq) (void)mem.memRead(a);
+    const int byReads = diskII->getQuarterTrack(0) - q0;
+    const int q1 = diskII->getQuarterTrack(0);
+    for (uint16_t a : seq) mem.memWrite(a, 0x00);
+    const int byWrites = diskII->getQuarterTrack(0) - q1;
+    return {byReads, byWrites};
+}
+
 void dump(const char* label, const Outcome& o)
 {
     std::printf("--- %s: prodos=%d devcnt=%d S5D1=%d S5D2=%d S6D1=%d bus{tx=%d "
@@ -299,6 +364,17 @@ void dump(const char* label, const Outcome& o)
 
 int main()
 {
+    // These boots run tracked images (A2DeskTop writes its settings at
+    // boot). ctest sets the protected default for every test; a hand run
+    // of this binary did not, and wrote to disks_3.5/ (bug hunt
+    // 2026-10-25). Same default here, unless the caller chose one.
+#ifdef _WIN32
+    if (!std::getenv("POM2_MEDIA_WRITE_DEFAULT"))
+        _putenv_s("POM2_MEDIA_WRITE_DEFAULT", "protected");
+#else
+    setenv("POM2_MEDIA_WRITE_DEFAULT", "protected", 0);
+#endif
+
     const std::string rom    = pom2::findResource("roms/apple2c-32Kv0.rom");
     const std::string disk525 = pom2::findResource("disks_5.4/dsk/ProDOS_2_4_3.po");
     const std::string disk35  = pom2::findResource("disks_3.5/A2DeskTop-1.5-en_800k.2mg");
@@ -484,6 +560,38 @@ int main()
             else if (o.chain2Bay != 0)
                 fail("F: after the internal boot, chain number 2 does not reach "
                      "bay 0 — the internal drive's traffic renumbered the chain");
+            if (g_failures) std::printf("%s", o.screen.c_str());
+        }
+    }
+
+    if (!romPlus.empty()) {
+        const auto [byReads, byWrites] = phaseProbeMovesDiskII(romPlus);
+        std::printf("--- H //c+ absent rear 3.5\" selected: 5.25\" head moved "
+                    "%d qt by reads, %d by writes\n", byReads, byWrites);
+        if (byReads != 0 || byWrites != 0)
+            fail("H: $C0Ex phase accesses for an absent rear 3.5\" reached "
+                 "the Disk II's stepper");
+    }
+
+    // G. The same machine, then Ctrl-Reset under the running ProDOS. POM2's
+    //    reset drops the chain numbers (IIcClassProfile::onResetSoftSwitches),
+    //    and with none assigned `unitFor` counts from 1 — chain number 2 would
+    //    then be bay 1 on a //c+, whose rear chain starts at 2. It is safe only
+    //    because the //c+ ROM runs its INIT scan again after the reset; this
+    //    pins that measurement (bug hunt 2026-10-25), so a change on either
+    //    side that sends ProDOS's next WRITE to the wrong disk fails here.
+    if (!romPlus.empty()) {
+        const std::string bay1 = pom2::findResource("disks_3.5/AppleShare IIe Workstation.po");
+        if (!bay1.empty()) {
+            const Outcome o = runPlus(romPlus, disk35, disk35, false, bay1, true);
+            dump("G //c+ two rear-port disks, then Ctrl-Reset", o);
+            std::printf("    chain number 2 -> bay %d before, bay %d after\n",
+                        o.chain2BayBeforeReset, o.chain2Bay);
+            if (o.chain2BayBeforeReset != 0)
+                fail("G: chain number 2 did not reach bay 0 before the reset");
+            else if (o.chain2Bay != 0)
+                fail("G: after a Ctrl-Reset chain number 2 reaches another bay — "
+                     "the reset renumbered the chain behind ProDOS's back");
             if (g_failures) std::printf("%s", o.screen.c_str());
         }
     }

@@ -131,6 +131,7 @@ void M6502::handleIRQ(void)
     // 65C02 clears D on interrupt entry (MAME ow65c02.lst:259 brk_c_imp:
     // `m_P = (m_P | F_I) & ~F_D;`). NMOS leaves D untouched.
     if (cpuMode == CpuMode::CMOS) statusRegister &= ~M6502::Status::D;
+    memory->noteInterruptEntry();
     programCounter = memReadAbsolute(0xFFFE);
     cycles += 5;
 }
@@ -143,6 +144,7 @@ void M6502::handleNMI(void)
     statusRegister |= M6502::Status::I;
     if (cpuMode == CpuMode::CMOS) statusRegister &= ~M6502::Status::D;
     NMI = 0;
+    memory->noteInterruptEntry();
     programCounter = memReadAbsolute(0xFFFA);
     cycles += 5;
 }
@@ -921,6 +923,7 @@ void M6502::BRK(void)
     stackPointer--;
     statusRegister |= M6502::Status::I;
     if (cpuMode == CpuMode::CMOS) statusRegister &= ~M6502::Status::D;
+    memory->noteInterruptEntry();
     programCounter = memReadAbsolute(0xFFFE);
     // BRK = 7 cycles on both NMOS and CMOS (MAME `om6502.lst` /
     // `ow65c02.lst:234-261`). fetch(1)+Imp(1)+pushPC(2)+body(3) = 7.
@@ -934,6 +937,7 @@ void M6502::RTI(void)
     // `cycles++` over-counted by 1.
     PLP();
     popProgramCounter();
+    memory->noteInterruptReturn();
 }
 
 void M6502::JMP(void)

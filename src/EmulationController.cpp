@@ -257,6 +257,11 @@ EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     mem.setSpeakerDevice(spk.get());
     mem.setCpu(&processor);
     mem.setIWM(iwmDev.get());
+    // The IWM's drive-disable delay runs on the crystal, not on the //c+
+    // 4 MHz (IWMDevice::setStockSpan). Called under stateMtx, from tick().
+    iwmDev->setStockSpan([this](uint64_t from, uint64_t to) {
+        return mem.stockCyclesBetween(from, to);
+    });
     mem.setSmartPortHub(hub.get());
     // The plain //c's external 3.5": its own firmware over the SmartPort
     // bus, answered by whatever the built-in slot 5 holds. Only the
@@ -997,11 +1002,11 @@ void EmulationController::softReset()
     mem.setIicSmartPortArmed(false);   // reboot → //c sees its real $C500 firmware
     mem.resetSoftSwitchesWarm();
     mem.slotBus().reset();
-    // SmartPort hub state — MAME re-asserts m_35sel=false and
-    // m_intdrive=false on every reset (`apple2e.cpp:1266`). Without
-    // this (E-3-1), Ctrl-Reset would keep the //c+ alt firmware's
-    // last drive selection across the warm-reset boundary.
-    if (hub) hub->reset();
+    // SmartPort hub: the MIG selection goes with the profile's copy of it
+    // (E-3-1), the Sony mechanisms and the IWM stay — MAME's `reset_w`
+    // touches no floppy state (its `m_35sel = false` is machine_reset's,
+    // power-on). See SmartPortHub::warmReset.
+    if (hub) hub->warmReset();
     // Parity with hardReset() / coldBoot() / bootFromSlot(): a step-over or
     // run-to-cursor transient names an address in the code that was running,
     // and Ctrl-Reset restarts the machine from $FFFC. Leaving it armed made a

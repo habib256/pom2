@@ -31,10 +31,10 @@
 //   devsel  35sel  intdrive   →  selected slot
 //   ─────────────────────────────────────────
 //      1       0       *      →  floppy[0]  (5.25" internal)
-//      1       1       *      →  floppy[3]  (3.5"  external #2)
+//      1       1       *      →  floppy[3]  (3.5"  external #1)
 //      2       *       1      →  floppy[2]  (3.5"  internal)   ← //c+ on-board
 //      2       0       0      →  floppy[1]  (5.25" external)
-//      2       1       0      →  floppy[4]  (3.5"  external #2)
+//      2       1       0      →  floppy[4]  (3.5"  external #2; MAME: null)
 //
 // The hub maintains the five drive pointers and recalculates the active
 // drive on any of the state inputs changing. The active drive's
@@ -101,8 +101,19 @@ public:
     /// active OR none is mounted in the resolved slot).
     Sony35Drive* active35() const { return active35_; }
 
-    /// Reset hub state (called on profile switch / cold boot).
+    /// Reset hub state (called on profile switch / cold boot / F12, each
+    /// after the IWM's own reset): the selection, and the drives.
     void reset();
+    /// Ctrl-Reset. The MIG's selection is dropped, as the profile drops its
+    /// own copy (IIcClassProfile::onResetSoftSwitches), but nothing else:
+    /// a Sony drive has no RESET line on its connector, and the IWM is not
+    /// reset either (MAME `reset_w` touches no floppy state), so the drives
+    /// keep head and motor and the routing is recomputed from the devsel
+    /// the IWM is still driving. `reset()` here sent the heads to track 0
+    /// under a running ProDOS, and left the hub at devsel 0 with the IWM at
+    /// 2 — its callback fires on a change only, so the internal drive was
+    /// unreachable until the next motor cycle (bug hunt 2026-10-25).
+    void warmReset();
 
 private:
     IWMDevice*   iwm_              = nullptr;

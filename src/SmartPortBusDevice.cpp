@@ -641,6 +641,12 @@ constexpr uint8_t kBusBlobMagic  [4] = { 'S', 'P', 'B', '3' };
 constexpr uint8_t kBusBlobMagicV2[4] = { 'S', 'P', 'B', '2' };
 constexpr uint8_t kBusBlobMagicV1[4] = { 'S', 'P', 'B', '1' };
 constexpr int     kBusBlobV1Ids      = 4;
+// The longest frame `hostWrote` can be holding: up to 16 sync bytes kept
+// ahead of the begin marker, the marker, 7 header bytes, an odd section
+// (1 + 127 — the header's count is 7 bits) and 127 groups of 8, then two
+// check bytes and the end mark. 1024 refused a snapshot taken inside a
+// guest-built frame that `hostWrote` had accepted.
+constexpr std::size_t kMaxBlobFrame  = 16 + 1 + 7 + (1 + 127) + 127 * 8 + 3;
 void put16(std::vector<uint8_t>& o, std::size_t v)
 { o.push_back(static_cast<uint8_t>(v)); o.push_back(static_cast<uint8_t>(v >> 8)); }
 std::size_t get16(const uint8_t* p) { return p[0] | (static_cast<std::size_t>(p[1]) << 8); }
@@ -687,7 +693,7 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     auto need = [&](std::size_t k) { return i + k <= n; };
     if (!need(2)) return 0;
     const std::size_t rxLen = get16(data + i); i += 2;
-    if (rxLen > 1024 || !need(rxLen)) return 0;
+    if (rxLen > kMaxBlobFrame || !need(rxLen)) return 0;
     rx_.assign(data + i, data + i + rxLen); i += rxLen;
     // busReset() again on every later failure, not a bare `return 0`. The
     // header promises "state is left reset" on a malformed blob, and the
@@ -698,7 +704,7 @@ std::size_t SmartPortBusDevice::loadSnapshotState(const uint8_t* data, std::size
     // from another timeline (bug hunt #13).
     if (!need(2)) { busReset(); return 0; }
     const std::size_t replyLen = get16(data + i); i += 2;
-    if (replyLen > 1024 || !need(replyLen)) { busReset(); return 0; }
+    if (replyLen > kMaxBlobFrame || !need(replyLen)) { busReset(); return 0; }
     reply_.assign(data + i, data + i + replyLen); i += replyLen;
     // A v1 blob's id table is four entries; a v2 blob states its own length.
     // Either way the count is known BEFORE the table is read, so the section

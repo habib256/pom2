@@ -64,6 +64,7 @@ public:
     explicit IIcExternalSmartPort(SlotBus* slots, int slot = kDefaultSlot);
 
     bool live() override;
+    bool peekLive() const override;
     bool read(uint8_t offset, uint64_t cycles, uint8_t& out) override;
     bool write(uint8_t offset, uint8_t value, uint64_t cycles) override;
     void reset() override;

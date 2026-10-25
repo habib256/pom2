@@ -20,6 +20,8 @@
 
 #include "ByteIO.h"
 
+#include <algorithm>
+
 namespace pom2 {
 namespace {
 constexpr uint32_t kSnapMagic   = 0x5049505Au;   // 'ZPIP'
@@ -41,6 +43,18 @@ double ZipChip::cpuSpeedMultiplier(uint64_t now) const
 {
     if (!fast_ || now < slowUntil_) return 1.0;
     return kFastHz / stockHz_;
+}
+
+// The span at 1x up to the slow window's end, at kFastHz past it. The window
+// is the one in force now: one that ended inside the span and was re-armed
+// before this call reads as slow throughout, the error on the safe side.
+uint64_t ZipChip::stockCyclesBetween(uint64_t from, uint64_t to) const
+{
+    if (to <= from) return 0;
+    if (!fast_) return to - from;
+    const uint64_t slowEnd = std::clamp(slowUntil_, from, to);
+    const double fastPart = static_cast<double>(to - slowEnd) * (stockHz_ / kFastHz);
+    return (slowEnd - from) + static_cast<uint64_t>(fastPart);
 }
 
 // accel_reset (:1527-1545), from reset_w (:1438-1439).

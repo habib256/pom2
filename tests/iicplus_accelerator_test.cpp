@@ -26,11 +26,13 @@
 // 4× budget and Esc did nothing.
 
 #include "EmulationController.h"
+#include "IWMDevice.h"
 #include "M6502.h"
 #include "Memory.h"
 #include "ResourcePaths.h"
 #include "ZipChip.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <mutex>
@@ -180,6 +182,46 @@ int main()
         copy.setSoldered(true);
         expect(copy.loadSnapshotState(own.data(), own.size()) && copy.fast(),
                "the chip's own blob round-trips");
+    }
+
+    // The IWM's drive-disable delay (8388608 ticks of the 7M crystal,
+    // ~1.17 s) is crystal time. Under the 4 MHz it was counted in CPU
+    // cycles and the drive went idle after ~0.3 s once the slot-6 slow
+    // window had lapsed (bug hunt 2026-10-25). A chip left fast, no slow
+    // window: the delay must last its stock length in CPU cycles x 3.9.
+    {
+        pom2::ZipChip fastZip;               // fast, slowUntil = 0
+        constexpr uint64_t kDelayStock = (8388608ull * 1022727ull) / 7159090ull;
+        const uint64_t kDelayFast = static_cast<uint64_t>(
+            static_cast<double>(kDelayStock) * (pom2::ZipChip::kFastHz / 1022727.0));
+        auto spinDown = [&](bool stockTime) {
+            pom2::IWMDevice iwm;
+            if (stockTime)
+                iwm.setStockSpan([&](uint64_t a, uint64_t b) {
+                    return fastZip.stockCyclesBetween(a, b);
+                });
+            iwm.tick(1000);
+            iwm.write(0x09, 0);              // motor on
+            iwm.tick(1002);
+            iwm.write(0x08, 0);              // motor off → MODE_DELAY
+            const bool armed = !iwm.isIdle();
+            iwm.tick(1002 + kDelayStock + 100);
+            const bool idleAtStock = iwm.isIdle();
+            iwm.tick(1002 + kDelayFast + 100);
+            return std::array<bool, 3>{ armed, idleAtStock, iwm.isIdle() };
+        };
+        const auto cpuTime = spinDown(false);
+        expect(cpuTime[0] && cpuTime[1], "control: without the stock span the delay is CPU cycles");
+        const auto crystal = spinDown(true);
+        expect(crystal[0] && !crystal[1],
+               "under the 4 MHz the IWM drive-disable delay ran out in CPU time");
+        expect(crystal[2], "…and it must still end, at its crystal length");
+        // The span itself: 1x inside the slow window, 4 MHz past it.
+        fastZip.ioRead(0xEC, 0, 0);          // a slot-6 access: 52 ms slow
+        const uint64_t slowEnd = static_cast<uint64_t>(1022727.0 * 0.052);
+        const uint64_t s = fastZip.stockCyclesBetween(0, slowEnd + 4000);
+        expect(s + 2 >= slowEnd + 1000 && s <= slowEnd + 1024,
+               "stockCyclesBetween: the slow window counts 1x, the rest at 4 MHz");
     }
 
     c.setMode(EmulationController::Mode::Stopped);

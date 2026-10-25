@@ -180,7 +180,16 @@ public:
     /// on-board SmartPort). Exposing the stub only for an explicit GUI
     /// "Boot" (bootFromSlot) avoids that. See project_iic_smartport_boot.
     void setIicSmartPortArmed(bool on) { iicSmartPortArmed_ = on;
-                                         iicCardWindow_ = false; }
+                                         iicCardWindow_ = false;
+                                         irqWindowDepth_ = 0; }
+    /// The CPU took an interrupt (IRQ, NMI, BRK) / ran an RTI. A //c's
+    /// interrupt handler is internal-ROM code that touches the soft switches
+    /// and $C3xx, which closes the armed stub's $C800 window; an interrupt
+    /// that lands inside the stub's $C800 code then returned into internal
+    /// ROM bytes. The window open at entry is open again at the matching
+    /// RTI (bug hunt 2026-10-25). //c-class only; never on the bus path.
+    void noteInterruptEntry();
+    void noteInterruptReturn();
     bool iicSmartPortArmed() const     { return iicSmartPortArmed_; }
     /// Whether a card on the //c internal expansion connector has been woken
     /// by a write into its page (see iicExpansionAwake_).
@@ -1177,6 +1186,15 @@ private:
                    ? accel_ : nullptr;
     }
     uint64_t accelNow() const;
+ public:
+    /// Stock-clock cycles in the CPU span [from, to): the socket
+    /// accelerator's answer, one for one without it.
+    uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const
+    {
+        if (const auto* a = activeAccel()) return a->stockCyclesBetween(from, to);
+        return to > from ? to - from : 0;
+    }
+ private:
     /// MAME apple2e.cpp:2266-2275 — the Zip's $C05E STATEREG-like byte.
     uint8_t zipStateByte() const
     {
@@ -1278,14 +1296,22 @@ private:
     /// Ouvert par un fetch dans sa page $C5xx, referme par tout acces
     /// $C0xx hors de son device-select. Gouverne le perçage $C800-$CFFE.
     bool iicCardWindow_ = false;
+    /// noteInterruptEntry/Return: whether the window was open, per nesting
+    /// level (four kept; deeper levels are counted so the pairing holds).
+    /// Not snapshotted — a rewind landing inside a handler that interrupted
+    /// the stub's $C800 code is the one case it does not cover.
+    std::array<bool, 4> irqWindowStack_{};
+    uint8_t irqWindowDepth_ = 0;
 
     // VBL (vertical-blank) state. Apple II frame = 262 NTSC scanlines
     // × 65 CPU cycles = 17030 cycles (the long-cycle stretch is not
     // modelled here; nominal 17046 cycles/frame is close enough).
     // Visible video = scanlines 0..191; vertical blank = 192..261.
-    // `vblIrqMask` (IIe only) gates the IRQ. The pending flag is set
-    // when entering VBL with mask on; cleared on $C019 read or $C05A
-    // (disable) write. Asserted on the CPU IRQ line via cpu->setIRQ.
+    // `vblIrqMask` gates the IRQ — the //c's VBL interrupt ($C05B enable,
+    // $C05A disable, decoded while IOUDIS is clear). The pending flag is set
+    // when entering VBL with the mask on and cleared by $C070-$C07F or
+    // $C05A — NOT by the $C019 read (Apple IIc Technical Note #9; MAME
+    // c000_iic_r case 0x19). It drives the CPU's IRQ_SRC_VBL line.
     bool vblIrqMask    = false;
     bool vblIrqPending = false;
     bool vblWasActive  = true;       // tracks transition into VBL window

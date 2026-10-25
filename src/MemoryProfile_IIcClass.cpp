@@ -105,6 +105,16 @@ bool IIcClassProfile::servesExternalSmartPort()
     return hasAltBank_ && extPort_ && extPort_->live();
 }
 
+bool IIcClassProfile::peekServesExternalSmartPort() const
+{
+    return hasAltBank_ && extPort_ && extPort_->peekLive();
+}
+
+bool IIcClassProfile::iwmRoutedTo35() const
+{
+    return hub_ && hub_->active35Selected();
+}
+
 bool IIcClassProfile::ioReadIWM(uint16_t addr, uint64_t cyc, uint8_t& out)
 {
     // Plain //c: the external SmartPort port answers its own traffic and

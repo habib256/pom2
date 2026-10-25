@@ -44,6 +44,9 @@ public:
     /// it reports $28, and the machine boots from its internal drive — so
     /// an empty port must read as silence, not as an absent-media error.
     virtual bool live() = 0;
+    /// `live()` without its side effects (no rebind, no media-change report
+    /// to the bus): what a debugger peek may ask. Default: never live.
+    virtual bool peekLive() const { return false; }
 
     /// A read of $C0E0 + offset. Returns true with the byte when the port
     /// answers it — the caller then owns nothing else about that access

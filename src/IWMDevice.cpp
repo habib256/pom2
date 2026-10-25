@@ -500,6 +500,7 @@ void IWMDevice::controlAccess(int offset, uint8_t data)
                     (control_ & 0x20) ? 2 : 1));
                 active_         = MODE_DELAY;
                 delayDeadline_  = now_ + kDriveDisableDelayCycles;
+                delayClock_     = now_;
             }
         }
     }
@@ -732,6 +733,16 @@ void IWMDevice::sync(uint64_t nowCycles)
     //                              owned by DiskIICard (see notifyMonW)
     //   * m_devsel_cb(0); m_devsel = 0
     //   * m_status &= ~0x20; m_whd &= ~0x40
+    // The deadline is stock time: every CPU cycle the accelerator ran
+    // beyond the crystal's pace pushes it back by one. Zero at 1x.
+    if (active_ == MODE_DELAY && delayDeadline_ != 0) {
+        if (stockSpan_ && nowCycles > delayClock_) {
+            const uint64_t span  = nowCycles - delayClock_;
+            const uint64_t stock = stockSpan_(delayClock_, nowCycles);
+            if (stock < span) delayDeadline_ += span - stock;
+        }
+        if (nowCycles > delayClock_) delayClock_ = nowCycles;
+    }
     if (active_ == MODE_DELAY &&
         delayDeadline_ != 0 &&
         nowCycles >= delayDeadline_) {
@@ -1159,6 +1170,7 @@ bool IWMDevice::loadSnapshotState(const uint8_t* data, size_t n, bool commit)
     asyncUpdate_     = asyncV * k;
     fluxWriteStart_  = fluxStart * k;
     delayDeadline_   = delayV;
+    delayClock_      = now_;
 
     fluxWrite_.fill(0);
     for (uint32_t i = 0; i < fwCount; ++i) fluxWrite_[i] = flux[i] * k;

@@ -10,6 +10,71 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v0.9.9 marker** — 2026-10-25. Release notes: [v0.9.9](docs/releases/v0.9.9.md).
+
+## 2026-10-25 — Bug hunt: SmartPort, //c and //c+
+
+**A firmware 3.5" eject left the drive reading the ejected disk.**
+`Sony35Drive::completeEject` dropped the medium but not the track cache,
+which is keyed on track and side alone, so the IWM kept walking the old
+disk's cells until the head moved; only the sense lines said "empty".
+It invalidates the cache now.
+
+**The queued eject's late capture was written under the machine lock.**
+A guest write landing while a firmware eject's commit was queued re-dirtied
+the medium, and the completion committed that capture — the whole 800 KB
+image, with fsync — inline, from a callback the `Disk35WriteBackSink`
+contract says runs under `stateMutex` and must do no file I/O. The capture
+goes back on the queue (`Sony35Drive::queueEjectWriteBack`) and the medium
+stays until it lands. Both pinned in `disk35_eject_pending`.
+
+**Measured, not changed: Ctrl-Reset renumbers the rear SmartPort chain.**
+`IIcClassProfile::onResetSoftSwitches` resets the bus, so with no numbers
+assigned `unitFor` counts from 1 — on a //c+, whose rear chain starts at 2,
+that would point device 2 at the second disk. It is safe because the //c+ ROM
+re-runs its INIT scan after the reset; `iic_external_smartport` case G pins
+that, so a change on either side that misroutes the next WRITE fails there.
+
+**A //c+ Ctrl-Reset reset the 3.5" mechanisms.** The soft reset called
+`SmartPortHub::reset()`: every Sony went to track 0 with its motor off — a
+drive has no RESET line on its connector, and MAME's `reset_w` touches no
+floppy state (the `m_35sel = false` the comment cited is `machine_reset`'s)
+— and the hub dropped to devsel 0 while the IWM, not reset, still drove 2.
+The IWM reports devsel on a change only, so the firmware's next `$CC80`
+was routed with devsel 0 and the internal drive stayed unreachable until a
+motor cycle. `SmartPortHub::warmReset()` drops the MIG selection only (as
+the profile drops its copy) and recomputes the routing from the IWM;
+F12 and power-on keep the full reset. Pinned by `smartport_hub_warm_reset`.
+
+**The //c+ IWM's drive-disable delay ran on the 4 MHz.** 8388608 ticks of
+the 7M crystal (~1.17 s), counted in CPU cycles: the firmware's slot mask
+($67) slows every `$C0Ex` access for 52 ms, so the cells are walked at 1x,
+but past that window the delay ran out about 4x early. While it runs, the
+deadline is pushed back by the cycles the accelerator ran beyond the
+crystal's pace (`ZipChip::stockCyclesBetween` through
+`IWMDevice::setStockSpan`); at 1x nothing moves, and the snapshot format
+is unchanged. Pinned in `iicplus_accelerator`, with a CPU-time control.
+
+**An interrupt inside the 16 KB //c stub's `$C800` code returned into
+internal ROM.** The //c handler reads the soft switches and runs `$C3xx`,
+which close the card window, and only a `$C5xx` access reopened it.
+`Memory::noteInterruptEntry/Return` (IRQ, NMI and BRK entry, RTI — none on
+the bus path) reopen the window that was open when the interrupt came.
+Pinned in `iic_onboard_smartport`.
+
+**The //c+ disk port's reads and writes disagreed on the Disk II.** With
+devsel 1 + 35sel and no rear Sony (the default), a write was kept from the
+Disk II (the hub's 3.5" routing) but a read was not (no Sony bound): the
+firmware's probe reads stepped the 5.25" head. Both follow the routing now
+(`MemoryProfile::iwmRoutedTo35`); `iic_external_smartport` case H.
+
+Smaller: the debugger's side-effect-free view asked the //c port `live()`,
+which rebinds and reports media changes — `peekLive()` now; the bus
+blob's frame cap (1024) sat below the longest frame `hostWrote` accepts;
+`iic_external_smartport` forces the protected media default when run by
+hand (it wrote A2DeskTop's settings into `disks_3.5/`); stale comments in
+`SmartPortHub.h` and on `Memory::vblIrqMask`.
+
 ## 2026-10-24 — pom2_core: the //c+; SmartPort calls held to the Liron firmware
 
 **`Machine::AppleIIcPlus`.** The //c+ in the facade: its ROM drives the MIG,

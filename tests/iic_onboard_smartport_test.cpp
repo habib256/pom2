@@ -556,10 +556,77 @@ static void testSoftSwitchWriteClosesTheC800Window()
     std::printf("  ok: a soft-switch write closes the //c $C800 card window\n");
 }
 
+// An interrupt taken while the CPU runs the stub's $C800 code. The //c's
+// handler is internal ROM: it reads the soft switches and runs through
+// $C3xx, both of which close the card window — and nothing reopened it, so
+// the RTI came back to internal ROM bytes where the driver had been
+// (bug hunt 2026-10-25). The window open at entry is open again at the
+// matching RTI.
+static void testInterruptKeepsTheC800Window()
+{
+    const std::string rom = firstExisting({
+        "roms/apple2c-16K.rom", "roms/apple2c-32Kv0.rom",
+    });
+    if (rom.empty()) {
+        std::printf("  SKIP: no //c ROM present\n");
+        return;
+    }
+
+    Memory mem;
+    M6502  cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.setIIEMode(true);
+    assert(mem.loadAppleIIRom(rom.c_str(), /*pickLowerHalf=*/true));
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
+
+    auto card = std::make_unique<pom2::SmartPortCard>(5);
+    pom2::SmartPortCard* raw = card.get();
+    mem.slotBus().plug(5, std::move(card));
+    const std::string img = makeRaw800k(0x66);
+    std::string err;
+    raw->setUnit(0, std::make_unique<pom2::SmartPort35Unit>());
+    assert(raw->mountBay(0, img, err));
+    mem.setIicSmartPortArmed(true);
+
+    const uint8_t internalC800 = mem.memRead(0xC800);
+    const uint8_t cardC800     = raw->expansionRomRead(0);
+    assert(internalC800 != cardC800);
+    (void)mem.memRead(0xC500);                       // into the driver
+    assert(mem.memRead(0xC800) == cardC800);
+
+    // The IRQ lands with the driver at $C800.
+    cpu.setStackPointer(0xF0);
+    cpu.setStatusRegister(0x20);                     // I clear
+    cpu.setProgramCounter(0xC800);
+    cpu.setIrqLine(M6502::IRQ_SRC_VBL, true);
+    cpu.step();                                      // entry + the handler's first opcode
+    cpu.setIrqLine(M6502::IRQ_SRC_VBL, false);
+    (void)mem.memRead(0xC013);                       // what the handler does
+    (void)mem.memRead(0xC3FA);
+    assert(mem.memRead(0xC800) == internalC800 && "the handler sees its own ROM");
+
+    // Its RTI, on the frame the entry pushed.
+    cpu.setStackPointer(0xF0 - 3);
+    mem.memWrite(0x0300, 0x40);                      // RTI
+    cpu.setProgramCounter(0x0300);
+    cpu.step();
+    assert(cpu.getProgramCounter() == 0xC800);
+    if (mem.memRead(0xC800) != cardC800) {
+        std::printf("  FAIL: the RTI returned into internal ROM, not the driver\n");
+        std::exit(1);
+    }
+
+    fs::remove(img);
+    std::printf("  ok: an interrupt inside the stub's $C800 code returns to the card bank\n");
+}
+
 int main()
 {
     std::printf("\n[//c on-board SmartPort smoke]\n");
     testSoftSwitchWriteClosesTheC800Window();
+    testInterruptKeepsTheC800Window();
     testExposesRomOnlyWithMedia();
     testHdvUnitBlockReadThroughMemory();
     testHdvBootExecution();

@@ -301,6 +301,10 @@ private:
     /// Drop the medium and ring the mechanism — the tail of a firmware
     /// eject, once the write-back is known to be on disk.
     void completeEject();
+    /// Hand a firmware eject's capture to the sink and hold the medium until
+    /// it reports; a capture taken after it (a late guest write) is queued
+    /// again, never committed from the completion (no file I/O under the lock).
+    void queueEjectWriteBack(Disk35Image::PendingWriteBack&& pending);
 
     Disk35Image* image_         = nullptr;
     bool         motorOn_       = false;

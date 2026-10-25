@@ -927,7 +927,7 @@ void Core::softReset()
     impl_->memory.setIicSmartPortArmed(false);
     impl_->memory.resetSoftSwitchesWarm();
     impl_->memory.slotBus().reset();
-    if (impl_->plus) impl_->plus->hub.reset();
+    if (impl_->plus) impl_->plus->hub.warmReset();
     impl_->cpu.softReset();
 }
 
