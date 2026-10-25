@@ -98,7 +98,7 @@ int main()
 
     // ProDOS driver parameters in zero page.
     mem.memWrite(0x42, 0x02);                // command = WRITE
-    mem.memWrite(0x43, 0x00);                // unit byte: bit7=0 → drive 0
+    mem.memWrite(0x43, 0x50);                // unit byte: slot 5, drive 1
     mem.memWrite(0x44, 0x00);                // buffer LO
     mem.memWrite(0x45, 0x08);                // buffer HI  → $0800
     mem.memWrite(0x46, kBlockNum & 0xFF);    // block LO

@@ -89,7 +89,7 @@ int main()
     // ProDOS-style params (exactly what DIX's boot_unidisk.a stores): read,
     // unit 0, buffer $0800, block 7.
     mem.memWrite(0x42, 0x01);                  // command = READ
-    mem.memWrite(0x43, 0x00);                  // unit byte: bit7=0 → drive 0
+    mem.memWrite(0x43, 0x50);                  // unit byte: slot 5, drive 1 (DIX bSLOT)
     mem.memWrite(0x44, 0x00);                  // buffer LO
     mem.memWrite(0x45, 0x08);                  // buffer HI → $0800
     mem.memWrite(0x46, kBlockNum & 0xFF);      // block LO

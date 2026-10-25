@@ -101,7 +101,7 @@ CallResult runCaller(Memory& mem, M6502& cpu,
 CallResult prodosRead(Memory& mem, M6502& cpu, uint16_t block)
 {
     mem.memWrite(0x42, 0x01);                       // READ
-    mem.memWrite(0x43, 0x00);                       // unit byte, drive 1
+    mem.memWrite(0x43, 0x50);                       // unit byte: slot 5, drive 1
     mem.memWrite(0x44, static_cast<uint8_t>(kBuf));
     mem.memWrite(0x45, static_cast<uint8_t>(kBuf >> 8));
     mem.memWrite(0x46, static_cast<uint8_t>(block));

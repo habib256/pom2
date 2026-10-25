@@ -60,6 +60,7 @@
 #include "SmartPortCard.h"
 #include "ResourcePaths.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -89,7 +90,11 @@ void expect(bool cond, const std::string& what)
 std::string writeSyntheticPo(const char* name)
 {
     const auto p = fs::temp_directory_path() / name;
+    // Block N holds N (low byte), so a READ shows which block it fetched.
     std::vector<uint8_t> img(kBlocks * kBlockBytes, 0x00);
+    for (size_t b = 0; b < kBlocks; ++b)
+        std::fill_n(img.data() + b * kBlockBytes, kBlockBytes,
+                    static_cast<uint8_t>(b));
     std::ofstream f(p, std::ios::binary);
     f.write(reinterpret_cast<const char*>(img.data()),
             static_cast<std::streamsize>(img.size()));
@@ -184,8 +189,12 @@ int main()
                  mem.memRead(0x12), mem.memRead(0x13) };
     };
 
-    constexpr uint8_t kDrive1 = 0x00;
-    constexpr uint8_t kDrive2 = 0x80;          // unit byte bit 7 = drive 2
+    // The unit byte is DSSS0000: drive in bit 7, the slot in bits 6-4.
+    constexpr uint8_t kDrive1 = static_cast<uint8_t>(kSlot << 4);
+    constexpr uint8_t kDrive2 = static_cast<uint8_t>(0x80 | kSlot << 4);
+    // ProDOS 8 mirrors SmartPort units 3/4 of a slot-5 card into slot 2.
+    constexpr uint8_t kMirror1 = 0x20;
+    constexpr uint8_t kMirror2 = 0xA0;
 
     // ── 2. STATUS on a healthy bay: the routine is REACHABLE ─────────────
     // This is the case the old layout could not pass. It answered $27
@@ -249,6 +258,33 @@ int main()
             static_cast<uint16_t>(t.x) | static_cast<uint16_t>(t.y) << 8;
         expect(wpBlocks == kBlocks,
                tag + "STATUS must still report the block count on a locked bay");
+    }
+
+    // ── 5. Slot 2 is units 3/4, not units 1/2 again ──────────────────────
+    // The driver used to keep only bit 7 of $43, so ProDOS's mirrored S2,D1
+    // read bay 0 and one image was listed twice, as S5,D1 and S2,D1
+    // (A2FileCmd, 2026-10-25). The Liron's decode ($CC1E): bay = D + 2 when
+    // the unit byte's slot differs from the card's in bit 2.
+    {
+        Result r = call(0x00, kMirror1, 0);
+        expect(r.carry == 1 && r.a == 0x28,
+               tag + "S2,D1 must be bay 2 (empty, $28), not bay 0 again");
+        r = call(0x00, kMirror2, 0);
+        expect(r.carry == 1 && r.a == 0x28,
+               tag + "S2,D2 must be bay 3 (empty, $28), not bay 1 again");
+
+        auto third = std::make_unique<pom2::SmartPort35Unit>();
+        expect(third->loadImage(po), tag + "load bay 2");
+        craw->setUnit(2, std::move(third));
+        r = call(0x00, kMirror1, 0);
+        expect(r.carry == 0 && r.a == 0x00,
+               tag + "S2,D1 must answer for a loaded bay 2");
+        r = call(0x01, kMirror1, 3);
+        expect(r.carry == 0 && mem.memRead(0x0800) == static_cast<uint8_t>(3),
+               tag + "S2,D1 must READ bay 2's blocks");
+        r = call(0x00, kMirror2, 0);
+        expect(r.carry == 1 && r.a == 0x28,
+               tag + "S2,D2 must stay bay 3 once bay 2 is loaded");
     }
 
     }  // pass

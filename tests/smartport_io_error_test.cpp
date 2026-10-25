@@ -102,7 +102,7 @@ int main()
 
     auto callDriver = [&](uint8_t cmd, uint16_t block) -> CallResult {
         mem.memWrite(0x42, cmd);
-        mem.memWrite(0x43, 0x00);                 // unit byte: drive 0
+        mem.memWrite(0x43, 0x50);                 // unit byte: slot 5, drive 1
         mem.memWrite(0x44, 0x00);
         mem.memWrite(0x45, 0x08);                 // buffer → $0800
         mem.memWrite(0x46, block & 0xFF);
@@ -166,13 +166,13 @@ int main()
             cpu.run(60000);
             return { mem.memRead(0x10), mem.memRead(0x11) };
         };
-        CallResult r = callUnit(0x80, 0x03);
+        CallResult r = callUnit(0xD0, 0x03);
         assert(r.carry == 1 && r.a == 0x28 && "FORMAT on an empty bay: no device");
         uraw->setWriteBackEnabled(false);         // the notch: write-protected
-        r = callUnit(0x00, 0x03);
+        r = callUnit(0x50, 0x03);
         assert(r.carry == 1 && r.a == 0x2B && "FORMAT on a protected disk: $2B");
         uraw->setWriteBackEnabled(true);
-        r = callUnit(0x00, 0x04);
+        r = callUnit(0x50, 0x04);
         assert(r.carry == 1 && r.a == 0x27 && "an unknown driver command stays $27");
     }
 

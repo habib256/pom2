@@ -10,6 +10,18 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-25 — One SmartPort image listed twice, as S5,D1 and S2,D1
+
+ProDOS 8 mirrors SmartPort units 3 and 4 of a slot-5 card into slot 2 and
+calls the card's own block driver with `$43 = $20/$A0`. `SmartPortCard`'s
+driver kept only bit 7 of `$43`, so S2,D1 read unit 1 again and A2FileCmd
+showed a single configured image under two addresses. The unit byte is now
+decoded as the Liron does it (`$CC1E` in `roms/liron.rom`): bay = D, plus 2
+when the slot's bit 2 differs from the card's. The routine lives at `$CD80`
+because the `$Cn50` dispatch had no byte left. Tests that called the driver
+with a slot-less `$00` now pass the slot, as ProDOS and DIX (`bSLOT`) do.
+Pinned in `smartport_rom_layout` § 5, on both ROM bases.
+
 **v0.9.9 marker** — 2026-10-25. Release notes: [v0.9.9](docs/releases/v0.9.9.md).
 
 ## 2026-10-25 — Bug hunt: SmartPort, //c and //c+
