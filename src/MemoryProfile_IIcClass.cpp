@@ -16,6 +16,8 @@
 
 #include "MemoryProfile_IIcClass.h"
 
+#include "Memory.h"
+
 #include "SmartPortBusPort.h"
 
 #include "IWMDevice.h"
@@ -103,6 +105,17 @@ bool IIcClassProfile::servesExternalSmartPort()
     // scan), and boots or lists what answers. With a device answering, the
     // real $C500 must run, not the substitute.
     return hasAltBank_ && extPort_ && extPort_->live();
+}
+
+// Memory's IWM seam lives with the //c-class code that drives the chip.
+void Memory::setIWM(pom2::IWMDevice* iwm)
+{
+    iwmDevice = iwm;
+    if (iicProfile_) iicProfile_->setIwm(iwm);
+    // Called from IWMDevice::tick(), under stateMutex like every access.
+    if (iwm) iwm->setStockSpan([this](uint64_t from, uint64_t to) {
+        return stockCyclesBetween(from, to);
+    });
 }
 
 bool IIcClassProfile::peekServesExternalSmartPort() const

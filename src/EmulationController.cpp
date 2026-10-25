@@ -257,11 +257,6 @@ EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     mem.setSpeakerDevice(spk.get());
     mem.setCpu(&processor);
     mem.setIWM(iwmDev.get());
-    // The IWM's drive-disable delay runs on the crystal, not on the //c+
-    // 4 MHz (IWMDevice::setStockSpan). Called under stateMtx, from tick().
-    iwmDev->setStockSpan([this](uint64_t from, uint64_t to) {
-        return mem.stockCyclesBetween(from, to);
-    });
     mem.setSmartPortHub(hub.get());
     // The plain //c's external 3.5": its own firmware over the SmartPort
     // bus, answered by whatever the built-in slot 5 holds. Only the

@@ -1928,12 +1928,7 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
     if (addr >= 0xC0E0 && addr <= 0xC0EF && iicProfile_) {
         uint8_t v;
         if (iicProfile_->ioReadIWM(addr, cycleCounter, v)) {
-            // Sony / external SmartPort switches do not belong to Disk II —
-            // the same rule as the write path (ioWriteIWM): the hub's 3.5"
-            // routing, not whether a Sony is bound. With devsel 1 + 35sel
-            // and no external drive, the IWM holds no Sony, so the firmware's
-            // probe READS of the phases stepped the 5.25" head while its
-            // writes did not (bug hunt 2026-10-25).
+            // Not the Disk II's while the hub routes to a 3.5" (= ioWriteIWM).
             if (!iicProfile_->servesExternalSmartPort() && !iicProfile_->iwmRoutedTo35())
                 (void)slots.deviceSelectRead(addr);
             return v;
@@ -2356,23 +2351,4 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
     // through SlotBus so $CFFF disable still works on writes (the
     // address bus is what matters, not the direction).
     slots.expansionRomWrite(addr, value);
-}
-
-void Memory::noteInterruptEntry()
-{
-    if (!iicProfile_) return;
-    if (irqWindowDepth_ < irqWindowStack_.size())
-        irqWindowStack_[irqWindowDepth_] = iicCardWindow_ && !intC8Rom;
-    if (irqWindowDepth_ < 0xFF) ++irqWindowDepth_;
-}
-
-void Memory::noteInterruptReturn()
-{
-    if (!iicProfile_ || irqWindowDepth_ == 0) return;
-    --irqWindowDepth_;
-    if (irqWindowDepth_ < irqWindowStack_.size() &&
-        irqWindowStack_[irqWindowDepth_] && iicSmartPortArmed_) {
-        iicCardWindow_ = true;
-        intC8Rom = false;
-    }
 }

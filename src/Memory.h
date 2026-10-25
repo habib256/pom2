@@ -122,10 +122,9 @@ public:
     /// machine (MAME `iwm.cpp` port — see `IWMDevice.{h,cpp}`)
     /// evolves in lock-step with the slot-6 DiskIICard's lightweight
     /// IWM-mode shadow.
-    void setIWM(pom2::IWMDevice* iwm) {
-        iwmDevice = iwm;
-        if (iicProfile_) iicProfile_->setIwm(iwm);
-    }
+    /// Also hands it stockCyclesBetween: its drive-disable delay runs on the
+    /// crystal, not on the //c+ 4 MHz (defined in MemoryProfile_IIcClass.cpp).
+    void setIWM(pom2::IWMDevice* iwm);
 
     /// When true (default), `$C0E0-$C0EF` reads on iicHasAltBank
     /// profiles return the IWMDevice's value for a selected Sony rather
@@ -188,8 +187,23 @@ public:
     /// that lands inside the stub's $C800 code then returned into internal
     /// ROM bytes. The window open at entry is open again at the matching
     /// RTI (bug hunt 2026-10-25). //c-class only; never on the bus path.
-    void noteInterruptEntry();
-    void noteInterruptReturn();
+    void noteInterruptEntry()
+    {
+        if (!iicProfile_) return;
+        if (irqWindowDepth_ < irqWindowStack_.size())
+            irqWindowStack_[irqWindowDepth_] = iicCardWindow_ && !intC8Rom;
+        if (irqWindowDepth_ < 0xFF) ++irqWindowDepth_;
+    }
+    void noteInterruptReturn()
+    {
+        if (!iicProfile_ || irqWindowDepth_ == 0) return;
+        --irqWindowDepth_;
+        if (irqWindowDepth_ < irqWindowStack_.size() &&
+            irqWindowStack_[irqWindowDepth_] && iicSmartPortArmed_) {
+            iicCardWindow_ = true;
+            intC8Rom = false;
+        }
+    }
     bool iicSmartPortArmed() const     { return iicSmartPortArmed_; }
     /// Whether a card on the //c internal expansion connector has been woken
     /// by a write into its page (see iicExpansionAwake_).
