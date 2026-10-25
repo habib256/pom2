@@ -114,14 +114,15 @@ write-back rules and setup.
 
 ## Bundled disks
 
-Four disks are ready in **File → Disk Library**:
+Five disks are ready in **File → Disk Library**:
 
 | Disk | Try it for |
 |---|---|
 | [A2 File Cmd XL v0.9.8](https://github.com/habib256/a2filecmd/releases/tag/v0.9.8) | A ProDOS file manager on a 32 MB hard-disk image; mount in an HDV/SmartPort bay. |
 | [DIX-fix](https://github.com/Fr3nchT0uch/DIX/) | French Touch demos; use a PAL machine with 128 KB and Mockingboard. The recorded //e setup uses slots 4 (sound) and 5 (SmartPort); the browser uses a //c with Mockingboard 4c. |
-| [ChromaBreak 1.0](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.0) | A colourful brick-breaking game. |
-| [Micro-Sokoban 1.2](https://github.com/habib256/pom2games/releases/tag/1.2) | A small puzzle with many crates to move. |
+| [Dirtbike 1.1](https://github.com/habib256/pom2games/releases/tag/dirtbike-1.1) | A motocross time trial across 30 tracks; use II+ or later with 48 KB. |
+| [ChromaBreak 1.1](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.1) | A colourful brick-breaking game. |
+| [Micro-Sokoban 1.3](https://github.com/habib256/pom2games/releases/tag/micro-sokoban-1.3) | A small puzzle with many crates to move. |
 
 [Disk setup and sources](packaging/disks/README.txt) ·
 [SHA-256 checksums](packaging/disks/SHA256SUMS.txt)
