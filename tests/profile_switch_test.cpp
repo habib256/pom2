@@ -109,14 +109,22 @@ void checkSwitch(EmulationController& c, pom2::StorageCoordinator& storage,
     // Something in the rewind ring, so the clear is observable.
     c.rewind().setEnabled(true);
     {
+        // Captured, checked and paused under ONE lock. The worker is running:
+        // it takes its CPU slices, the IWM tick and its own capture under
+        // separate locks, so this capture can land between its last slice
+        // and its capture, at the same cycle. Its capture then drops this
+        // frame as "not older" (dropAbandonedFuture empties the ring) and
+        // pushes its own — and `empty()`, read here after the unlock, raced
+        // that: the nightly ASan leg, slow enough to land in it, failed on
+        // 44e97d5a (issue #18).
         auto st = c.lockState();
         c.rewind().capture(st.cpu(), st.memory());
+        expect(!c.rewind().empty(), "the rewind ring holds a frame before the switch");
+        // Paused recording keeps its frames but takes no new ones. Left on,
+        // the worker the switch restarts could capture a fresh frame before
+        // the check below — it did, under a loaded full ctest run.
+        c.rewind().setEnabled(false);
     }
-    expect(!c.rewind().empty(), "the rewind ring holds a frame before the switch");
-    // Paused recording keeps its frames but takes no new ones. Left on, the
-    // worker the switch restarts could capture a fresh frame before the
-    // check below — it did, under a loaded full ctest run.
-    c.rewind().setEnabled(false);
 
     Recorder rec;
     const auto r = pom2::switchProfile(c, storage, settings, to, true, rec.hooks());
