@@ -340,9 +340,10 @@ jobs:
   macos:
     name: macOS build + ctest (no packaging)
     runs-on: macos-15
-    # 60, not 45: on 2026-09-17 the build took 41 minutes and the suite
-    # (330 tests, controller_mode_races alone ~70 s) was cancelled at 45.
-    timeout-minutes: 60
+    # 90, not 60: on 2026-10-24 three runs took 51, 53 and 60+ minutes (392
+    # tests; the build alone reached 58 on one runner, which cut ctest at
+    # test 158). 60 was itself raised from 45 on 2026-09-17 (41-minute build).
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
