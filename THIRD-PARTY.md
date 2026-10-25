@@ -88,8 +88,9 @@ geometry. Their reference photographs are not distributed in this directory.
 |---|---|---|
 | A2FC XL v0.9.8 (6502 edition) | GPL-3.0 | [A2FileCommander](https://github.com/habib256/a2filecmd/releases/tag/v0.9.8) |
 | DIX-fix | GPL-3.0 | [French Touch DIX](https://github.com/Fr3nchT0uch/DIX/); reproduced with `tools/make_dix_fix.py`. Browser default disk. |
-| ChromaBreak 1.0 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.0) |
-| Micro-Sokoban 1.2 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/1.2) |
+| Dirtbike 1.1 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/dirtbike-1.1) |
+| ChromaBreak 1.1 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.1) |
+| Micro-Sokoban 1.3 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/micro-sokoban-1.3) |
 
 The shipped README records machine requirements and source links; SHA256SUMS
 records the pristine images. User disk libraries remain excluded.

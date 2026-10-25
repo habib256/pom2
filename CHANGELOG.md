@@ -10,6 +10,14 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-25 — Refresh the bundled pom2games disks
+
+Add Dirtbike 1.1 and update Micro-Sokoban to 1.3 and ChromaBreak to 1.1
+for the next release. The pristine images match the SHA-256 digests of the
+published pom2games release assets. The shared desktop/browser bundle
+manifest includes Dirtbike; disk-library documentation, source links and
+checksums cover all five bundled disks.
+
 ## 2026-10-25 — One SmartPort image listed twice, as S5,D1 and S2,D1
 
 ProDOS 8 mirrors SmartPort units 3 and 4 of a slot-5 card into slot 2 and

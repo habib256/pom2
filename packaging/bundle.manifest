@@ -71,6 +71,7 @@ wasm floppyemu
 # excluded; named source/destination pairs also feed the WASM preload.
 file packaging/disks/A2FILECMD-PRODOS-XL-0.9.8.2mg bundled_disks/A2FILECMD-PRODOS-XL-0.9.8.2mg
 file packaging/disks/DIX-fix.po bundled_disks/DIX-fix.po
+file packaging/disks/DIRTBIKE.dsk bundled_disks/DIRTBIKE.dsk
 file packaging/disks/CHROMABREAK.po bundled_disks/CHROMABREAK.po
 file packaging/disks/MICRO-SOKOBAN.dsk bundled_disks/MICRO-SOKOBAN.dsk
 file packaging/disks/README.txt bundled_disks/README.txt
