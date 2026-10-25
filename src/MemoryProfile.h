@@ -93,6 +93,11 @@ public:
     /// True while the machine's own firmware is serving slot 5 over that
     /// port — Memory must then leave the real $C500 page alone.
     virtual bool servesExternalSmartPort() { return false; }
+    /// The same answer with no side effect, for the debugger's peek.
+    virtual bool peekServesExternalSmartPort() const { return false; }
+    /// The hub routes the IWM to a 3.5" connector, a drive there or not: a
+    /// $C0Ex access then belongs to that connector, never to the Disk II.
+    virtual bool iwmRoutedTo35() const { return false; }
 
     /// Serialize any profile-private device state that survives across
     /// frames. Only the //c-class profile has any (the //c+ MIG gate

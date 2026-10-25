@@ -74,6 +74,21 @@ bool IIcExternalSmartPort::live()
     return enabled_ && bound && (mask != 0 || bus_.active());
 }
 
+bool IIcExternalSmartPort::peekLive() const
+{
+    // live()'s answer from the card as it stands, touching nothing: no
+    // rebind, no mediaMask_ update, no mediaChanged() to the bus.
+    if (!enabled_) return false;
+    SlotPeripheral* card = slots_ ? slots_->peripheral(slot_) : nullptr;
+    const int n = card ? card->smartPortBusUnitCount() : 0;
+    if (n <= 0) return false;
+    if (bus_.active()) return true;
+    for (int i = 0; i < n && i < SmartPortBusDevice::kMaxUnits; ++i)
+        if (const SmartPortBusUnit* u = card->smartPortBusUnit(i); u && u->hasMedia())
+            return true;
+    return false;
+}
+
 bool IIcExternalSmartPort::addressed(uint8_t phases, uint8_t control,
                                      bool rearIsDrive2)
 {

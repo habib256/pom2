@@ -8216,6 +8216,12 @@ pom2_add_headless_test(test_iwm_stale_sony
     SOURCES iwm_stale_sony_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# A //c+ Ctrl-Reset keeps the Sony mechanisms and the IWM's routing.
+pom2_add_headless_test(test_smartport_hub_warm_reset
+    NAME smartport_hub_warm_reset TIMEOUT 30
+    SOURCES smartport_hub_warm_reset_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 # A profile switch, step by step, through pom2::switchProfile (TODO G5-6).
 pom2_add_headless_test(test_profile_switch
     NAME profile_switch TIMEOUT 60

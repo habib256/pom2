@@ -794,11 +794,51 @@ void Sony35Drive::completeEject()
 {
     if (!image_) return;
     image_->eject();
+    // The flux under the head left with the disk: a cache keyed on track and
+    // side alone kept serving it to the IWM until the head moved.
+    invalidateCache();
     dskchg_ = false;   // MAME unload(): m_dskchg = 0
     writeActive_     = false;
     writeCursorTick_ = INT64_MIN;
     emitInsertClick(false);
     pom2::log().info("Sony35", "eject requested by host");
+}
+
+void Sony35Drive::queueEjectWriteBack(Disk35Image::PendingWriteBack&& pending)
+{
+    ejectPending_ = true;
+    const std::string path = pending.path;
+    std::weak_ptr<int> alive = aliveToken_;
+    writeBackSink_->submit(
+        std::move(pending),
+        [this, alive, path](bool ok, const std::string& err) {
+            // The completion arrives under the machine lock but possibly a
+            // slot rebuild later: an expired token means this drive died
+            // with its card.
+            if (alive.expired()) return;
+            ejectPending_ = false;
+            // Only if the SAME medium is still in the bay — a mount that
+            // landed while the commit ran owns the drive now (same rule as
+            // EmulationController::eject35).
+            if (!image_ || !image_->isLoaded() || image_->path() != path)
+                return;
+            if (!ok) {
+                image_->restoreDirty();
+                pom2::log().warn("Sony35", "eject refused: " + err);
+                return;
+            }
+            // A block written while the queued commit ran re-dirtied the
+            // medium after the capture (bug hunt 2026-10-06). That capture
+            // is the WHOLE image, and this callback runs under the machine
+            // lock, which the sink contract forbids holding across file I/O
+            // — so it goes back on the queue, and the medium stays until it
+            // lands. It used to be committed right here, inline.
+            if (auto late = image_->takeWriteBack(); late.valid) {
+                queueEjectWriteBack(std::move(late));
+                return;
+            }
+            completeEject();
+        });
 }
 
 void Sony35Drive::strobeWriteRegister(uint8_t reg)
@@ -869,48 +909,7 @@ void Sony35Drive::strobeWriteRegister(uint8_t reg)
                     // only logged a line — the disk was already gone and its
                     // writes with it, while the sinkless branch below has
                     // always refused the eject for exactly that case.
-                    ejectPending_ = true;
-                    const std::string path = pending.path;
-                    std::weak_ptr<int> alive = aliveToken_;
-                    writeBackSink_->submit(
-                        std::move(pending),
-                        [this, alive, path](bool ok, const std::string& err) {
-                            // The completion arrives under the machine lock
-                            // but possibly a slot rebuild later: an expired
-                            // token means this drive died with its card.
-                            if (alive.expired()) return;
-                            ejectPending_ = false;
-                            // Only if the SAME medium is still in the bay —
-                            // a mount that landed while the commit ran owns
-                            // the drive now (same rule as
-                            // EmulationController::eject35).
-                            if (!image_ || !image_->isLoaded() ||
-                                image_->path() != path)
-                                return;
-                            if (!ok) {
-                                image_->restoreDirty();
-                                pom2::log().warn(
-                                    "Sony35", "eject refused: " + err);
-                                return;
-                            }
-                            // A block written while the queued commit ran
-                            // re-dirtied the medium after the capture; the
-                            // same late capture as EmulationController::
-                            // eject35 (bug hunt 2026-10-06) — normally a
-                            // no-op, one block's I/O when it is not.
-                            if (auto late = image_->takeWriteBack();
-                                late.valid) {
-                                std::string lateErr;
-                                if (!Disk35Image::commitWriteBack(
-                                        std::move(late), lateErr)) {
-                                    image_->restoreDirty();
-                                    pom2::log().warn(
-                                        "Sony35", "eject refused: " + lateErr);
-                                    return;
-                                }
-                            }
-                            completeEject();
-                        });
+                    queueEjectWriteBack(std::move(pending));
                     break;
                 }
                 if (pending.valid) {

@@ -146,6 +146,68 @@ int main()
         assert(static_cast<unsigned char>(
                    bytes[4 * pom2::Disk35Image::kBlockBytes]) == 0x9B);
     }
+
+    // A guest write that lands while the firmware eject's commit is queued
+    // re-dirties the medium; the completion's late capture (the whole image)
+    // used to be committed right there, under the machine lock. It is queued
+    // again now: the write still reaches the file and the eject still ends.
+    assert(controller.mount35(0, po.string()));
+    {
+        auto st = controller.lockState();
+        pom2::Disk35Image& image = controller.disk35Internal();
+        image.setWriteBackEnabled(true);
+        const std::vector<std::uint8_t> first(pom2::Disk35Image::kBlockBytes, 0x5A);
+        assert(image.writeBlock(6, first.data()));
+        pom2::Sony35Drive& drive = controller.sony35Internal();
+        drive.seekPhaseW(0x07, 0);
+        drive.seekPhaseW(0x0F, 0);
+        assert(drive.isEjectPending());
+        // Still under the lock, so the completion cannot have run yet.
+        const std::vector<std::uint8_t> late(pom2::Disk35Image::kBlockBytes, 0xC3);
+        assert(image.writeBlock(7, late.data()));
+    }
+    // One drain covers both commits: the late one is queued from inside the
+    // first one's completion, while the worker still counts as busy.
+    controller.drainDeferredWriteBacks();
+    {
+        auto st = controller.lockState();
+        if (controller.disk35Internal().isLoaded() ||
+            controller.sony35Internal().isEjectPending()) {
+            std::puts("FAIL: the firmware eject never finished after a late write");
+            cleanup();
+            return 1;
+        }
+    }
+    {
+        std::ifstream f(po, std::ios::binary);
+        std::vector<char> bytes(pom2::Disk35Image::kBytesPerImage);
+        f.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (static_cast<unsigned char>(bytes[6 * pom2::Disk35Image::kBlockBytes]) != 0x5A ||
+            static_cast<unsigned char>(bytes[7 * pom2::Disk35Image::kBlockBytes]) != 0xC3) {
+            std::puts("FAIL: a write made during the queued eject did not reach the file");
+            cleanup();
+            return 1;
+        }
+    }
+
+    // The flux left with the disk. A firmware eject dropped the medium but
+    // not the drive's track cache, so the IWM kept reading the ejected
+    // disk's cells until the head moved.
+    {
+        pom2::Disk35Image image;
+        assert(image.loadFile(po.string()));
+        pom2::Sony35Drive drive;
+        drive.setImage(&image);
+        assert(drive.nextTransition(0, 0) != INT64_MAX && "a formatted track has flux");
+        drive.seekPhaseW(0x07, 0);                 // EjectOn, no sink: inline
+        drive.seekPhaseW(0x0F, 0);
+        assert(!image.isLoaded());
+        if (drive.nextTransition(0, 0) != INT64_MAX) {
+            std::puts("FAIL: the drive still serves the ejected disk's flux");
+            cleanup();
+            return 1;
+        }
+    }
     cleanup();
     std::puts("OK: a host eject or mount waits for the firmware eject's commit");
     return 0;

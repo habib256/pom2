@@ -102,7 +102,7 @@ uint8_t Memory::peekCpuView(uint16_t addr) const
             if (iicProfile_ && slotPage) {
                 const int slot = (addr >> 8) & 0x07;
                 const bool armOk = (slot != 5) ||
-                    (iicSmartPortArmed_ && !iicProfile_->servesExternalSmartPort());
+                    (iicSmartPortArmed_ && !iicProfile_->peekServesExternalSmartPort());
                 if (armOk)
                     if (const SlotPeripheral* p = slots.peripheral(slot);
                         p && p->exposesIicOnboardRom())
@@ -219,7 +219,7 @@ pom2::DebugBank Memory::debugBank(uint16_t addr, bool write) const
             if (iicExpansionAwake_ && slots.peripheralForIicRomPage(slot))
                 return {B::Slot,static_cast<uint8_t>(slot)};
             if (!iicProfile_->debugRomBank() && (slot != 5 ||
-                (iicSmartPortArmed_ && !iicProfile_->servesExternalSmartPort())))
+                (iicSmartPortArmed_ && !iicProfile_->peekServesExternalSmartPort())))
                 if (const auto* p = slots.peripheral(slot); p && p->exposesIicOnboardRom())
                     return {B::Slot,static_cast<uint8_t>(slot)};
         }

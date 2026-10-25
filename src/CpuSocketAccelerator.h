@@ -60,6 +60,11 @@ public:
 
     /// The 6502 clock multiplier at `now` (1.0 = stock).
     virtual double cpuSpeedMultiplier(uint64_t now) const = 0;
+    /// How many STOCK-clock cycles the CPU span [from, to) is worth — for a
+    /// device whose time is the machine's crystal, not the 6502's (the //c+
+    /// IWM's drive-disable delay). Default: no acceleration, one for one.
+    virtual uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const
+    { return to > from ? to - from : 0; }
 
     /// The machine's reset line.
     virtual void onReset(uint64_t now) = 0;

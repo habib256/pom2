@@ -57,6 +57,8 @@ public:
     void setIwmAuthoritative(bool on) override            { iwmAuthoritative_ = on; }
     void setExternalSmartPort(pom2::SmartPortBusPort* port) override { extPort_ = port; }
     bool servesExternalSmartPort() override;
+    bool iwmRoutedTo35() const override;
+    bool peekServesExternalSmartPort() const override;
     uint8_t debugRomBank() const override { return romBank_ && hasAltBank_ ? 1 : 0; }
     bool isIIcPlus() const override { return isPlus_; }
     void appendSnapshotFirmware(std::vector<uint8_t>& out) const override

@@ -100,6 +100,7 @@ public:
     ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte) override;
     void   ioWrite(uint8_t low, uint8_t value, uint64_t now) override;
     double cpuSpeedMultiplier(uint64_t now) const override;
+    uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const override;
     void   onReset(uint64_t now) override;
     void   appendSnapshotState(std::vector<uint8_t>& out) const override;
     bool   loadSnapshotState(const uint8_t* data, std::size_t len) override;

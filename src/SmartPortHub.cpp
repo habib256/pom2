@@ -84,6 +84,15 @@ void SmartPortHub::reset()
     if (drive35External2_) drive35External2_->reset();
 }
 
+void SmartPortHub::warmReset()
+{
+    sel35_    = false;
+    intDrive_ = false;
+    hdSel_    = false;
+    devsel_   = iwm_ ? iwm_->devsel() : 0;
+    recalcActiveDevice();
+}
+
 void SmartPortHub::recalcActiveDevice()
 {
     // MAME line 644-666 routing table.

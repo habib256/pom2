@@ -157,6 +157,13 @@ public:
     /// `DiskIICard::cpuCycleTotal` on the 5.25" side.
     uint64_t emuCycles() const { return now_; }
 
+    /// Stock-clock cycles in a CPU span (Memory::stockCyclesBetween). The
+    /// drive-disable delay is 8388608 ticks of the 7M crystal; under the
+    /// //c+ 4 MHz it was counted in CPU cycles and ran out about 4x early
+    /// once the slot-6 slow window lapsed. Unset = no accelerator.
+    using StockSpanFn = std::function<uint64_t(uint64_t from, uint64_t to)>;
+    void setStockSpan(StockSpanFn fn) { stockSpan_ = std::move(fn); }
+
     // ─── Snapshot / rewind ───────────────────────────────────────────────
     /// Serialize the IWM's registers, state machine and — critically —
     /// its **emuCycles timestamps**. Every one of `now_`, `lastSync_`,
@@ -205,6 +212,8 @@ public:
     /// 4-bit phase register snapshot (m_phases in MAME). Bits 0..3 =
     /// CA0/CA1/CA2/LSTRB on a 3.5" Sony drive.
     uint8_t phases() const { return phases_; }
+    /// The drive-enable lines as last driven (0 none, 1 or 2).
+    uint8_t devsel() const { return devsel_; }
 
     // Register accessors for inspectors / save state (`m_data`,
     // `m_mode`, etc. in MAME).
@@ -292,6 +301,11 @@ private:
     // so the drain fires even if no further $C0Ex accesses arrive.
     // Zero means "no delay pending" (active is ACTIVE or IDLE).
     uint64_t delayDeadline_ = 0;
+    /// CPU cycle up to which the deadline has been pushed back for the
+    /// accelerator's extra cycles (see setStockSpan). Not snapshotted: a
+    /// restore re-anchors it at `now_`.
+    uint64_t delayClock_ = 0;
+    StockSpanFn stockSpan_;
 
     // Mode / read-or-write / state-machine state.
     bool restoring_ = false;   // see setRestoring
