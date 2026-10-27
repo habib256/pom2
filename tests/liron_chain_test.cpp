@@ -210,10 +210,38 @@ int count(const std::vector<std::string>& kinds, std::string_view kind)
     return n;
 }
 
+// The Liron's IWM drive-disable delay (8388608 ticks of the 7M crystal) is
+// real time. Under a 4x accelerator it was counted in accelerated cycles and
+// dropped the drive after ~0.3 s (bug hunt 2026-10-27).
+bool lironDelayIsCrystalTime()
+{
+    pom2::LironCard card(5);
+    if (!card.romLoaded()) return true;          // the SKIP below says why
+    constexpr double kStock = 1022727.0;
+    card.setStandardClock(kStock);
+    card.setCpuClock(4.0 * kStock);
+    constexpr uint64_t kDelayStock = (8388608ull * 1022727ull) / 7159090ull;
+    card.advanceCycles(1000);
+    (void)card.deviceSelectRead(0x9);            // motor on
+    card.advanceCycles(2);
+    (void)card.deviceSelectRead(0x8);            // motor off → drive-disable delay
+    if (card.iwm().isIdle()) { std::printf("FAIL: the delay did not arm\n"); return false; }
+    card.advanceCycles(static_cast<int>(kDelayStock + 100));
+    if (card.iwm().isIdle()) {
+        std::printf("FAIL: under 4x the Liron IWM delay ran out in CPU time\n");
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) card.advanceCycles(static_cast<int>(kDelayStock));
+    if (!card.iwm().isIdle()) { std::printf("FAIL: the delay never ended\n"); return false; }
+    std::printf("OK Liron IWM drive-disable delay is crystal time under 4x\n");
+    return true;
+}
+
 }  // namespace
 
 int main()
 {
+    if (!lironDelayIsCrystalTime()) return 1;
     const std::string rom   = pom2::findResource("roms/apple2e.rom");
     const std::string liron = pom2::findResource("roms/liron.rom");
     const std::string disk  = pom2::findResource("disks_3.5/A2DeskTop-1.5-en_800k.2mg");

@@ -51,6 +51,7 @@
 #include <functional>
 #include <atomic>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -98,12 +99,16 @@ public:
     /// which chip that is after a profile switch.
     void setCpuSocketAccelerator(pom2::CpuSocketAccelerator* a) { accel_ = a; }
     pom2::CpuSocketAccelerator* cpuSocketAccelerator() const { return accel_; }
-    /// The 6502 clock multiplier the frame loop burns at: any slot
-    /// accelerator (SlotBus) times the socket one. Sampled per chunk.
+    /// The 6502 clock multiplier the frame loop burns at. Sampled per chunk.
+    /// A slot accelerator (TransWarp) DMA-halts the socket CPU and runs its
+    /// own, so while it is fast its speed is THE speed; the socket one (a
+    /// Zip, the //c+ CGGA) counts only when it is not. The two used to be
+    /// multiplied — 3.6 x 4 = ~14x with both fitted.
     double cpuSpeedMultiplier() const
     {
-        double m = slots.cpuSpeedMultiplier();
-        if (const auto* a = activeAccel()) m *= a->cpuSpeedMultiplier(cycleCounter);
+        const double m = slots.cpuSpeedMultiplier();
+        if (m > 1.0) return m;
+        if (const auto* a = activeAccel()) return m * a->cpuSpeedMultiplier(cycleCounter);
         return m;
     }
     /// Wire the host CPU. Also installs a SlotBus IRQ router so cards
@@ -265,7 +270,7 @@ public:
     /// undriven soft-switch read returns) at EXACTLY `cycleCounter` — no
     /// in-instruction offset, so a test that sets the cycle gets a
     /// deterministic byte. (The CPU read path uses the access-cycle variant.)
-    uint8_t peekFloatingBus() const { return floatingBus(cycleCounter); }
+    uint8_t peekFloatingBus() const { return floatingBus(videoNow()); }
 
     /// Read a byte from MAIN-bank RAM directly, bypassing IIe aux paging
     /// (80STORE/RAMRD/PAGE2/ALTZP) and the soft-switch / slot-bus / ROM
@@ -881,6 +886,13 @@ public:
             ? ramWorksBacking_.data() : aux.data();
     }
     uint8_t*       auxDataMutable()          { return aux.data(); }
+    /// Writable twin of videoAuxData(): the bank the screen shows, for a
+    /// tool that edits the PICTURE (the DHGR paint host), not the CPU's view.
+    uint8_t* videoAuxDataMutable()
+    {
+        return (ramWorksBanks_ > 1 && ramWorksBank_ != 0)
+            ? ramWorksBacking_.data() : aux.data();
+    }
     const uint8_t* internalIORomData() const { return internalIORom.data(); }
 
     /// Applied Engineering RamWorks III — IIe aux-slot RAM expansion up
@@ -933,6 +945,30 @@ public:
         if (cycleCounter >= vblNextEventCycle_) advanceCyclesVideo();
     }
     uint64_t getCycleCounter() const { return cycleCounter; }
+    /// The beam's clock. The video counters run off the 14.318 MHz crystal
+    /// and an accelerator never touches them, so under one the 6502 burns
+    /// more cycles per frame while the frame keeps its length. Identity on
+    /// a stock machine; EmulationController re-anchors it with each chunk's
+    /// ratio (setVideoClockRatio). Off the hot path: advanceCycles' gate
+    /// compares CPU cycles against a threshold converted back once.
+    uint64_t videoCycleAt(uint64_t cpuCycle) const
+    {
+        const uint64_t d = cpuCycle - vAnchorCpu_;
+        return vAnchorVideo_ + (vRatio_ == 1.0 ? d
+            : static_cast<uint64_t>(static_cast<double>(d) * vRatio_));
+    }
+    uint64_t videoNow() const { return videoCycleAt(cycleCounter); }
+    uint64_t videoAccessCycle() const { return videoCycleAt(accessCycle()); }
+    uint64_t nextVblCpuCycle(uint64_t cpuNow) const;   // SlotBus::nextVblCpuCycle
+    /// Video cycles per CPU cycle from now on (1 / the accelerator's speed).
+    void setVideoClockRatio(double r)
+    {
+        if (!(r > 0.0) || r == vRatio_) return;
+        vAnchorVideo_ = videoNow();
+        vAnchorCpu_   = cycleCounter;
+        vRatio_       = r;
+        vblNextEventCycle_ = 0;
+    }
     /// The cycle the IN-FLIGHT bus access lands on — `cycleCounter` plus the
     /// current instruction's elapsed cycles. This is the stamp
     /// pushVideoEventLocked puts on every VideoEvent, so a card keeping its
@@ -945,7 +981,8 @@ public:
     /// the display tests use this as a plain "put the beam here" primitive and
     /// push events around it. A restore that MOVES the clock has to invalidate
     /// separately — see resetVideoEventLogForClockJump().
-    void     setCycleCounter(uint64_t c) { cycleCounter = c; vblNextEventCycle_ = 0; }
+    void     setCycleCounter(uint64_t c)
+    { cycleCounter = c; vAnchorCpu_ = vAnchorVideo_ = c; vblNextEventCycle_ = 0; }
 
     /// Throw away the beam-race event log and re-derive the frame start from
     /// the clock. Every event carries an emuCycle stamp, so moving the clock
@@ -1180,6 +1217,17 @@ private:
     // current frame, then its end). 0 = run it on the next call.
     uint64_t vblNextEventCycle_ = 0;
     uint64_t cycleCounter     = 0;       // hand-rolled, see advanceCycles()
+    // videoCycleAt's anchor and slope. Not snapshotted: a restore re-anchors
+    // to the identity (setCycleCounter), as the clock did before it existed.
+    uint64_t vAnchorCpu_   = 0;
+    uint64_t vAnchorVideo_ = 0;
+    double   vRatio_       = 1.0;
+    uint64_t cpuCycleForVideo(uint64_t v) const
+    {
+        const uint64_t d = v - vAnchorVideo_;
+        return vAnchorCpu_ + (vRatio_ == 1.0 ? d
+            : static_cast<uint64_t>(std::ceil(static_cast<double>(d) / vRatio_)));
+    }
 
     // Cassette: non-owning pointer set by EmulationController.
     CassetteDevice* cassette = nullptr;
@@ -1203,6 +1251,19 @@ private:
  public:
     /// Stock-clock cycles in the CPU span [from, to): the socket
     /// accelerator's answer, one for one without it.
+    /// Stock cycles since the last $C070: the socket accelerator's exact
+    /// span, then a slot accelerator's (TransWarp) multiplier on top.
+    uint64_t stockSincePaddleStrobe() const
+    {
+        // The power-on sentinel sits "after" the counter on purpose and
+        // relies on the unsigned wrap (PaddleInputs.h); stockCyclesBetween
+        // reads a reversed span as 0, which made every paddle discharge.
+        const uint64_t latch = paddles_.latchCycle();
+        const uint64_t s = latch <= cycleCounter
+            ? stockCyclesBetween(latch, cycleCounter) : cycleCounter - latch;
+        const double m = slots.cpuSpeedMultiplier();
+        return m > 1.0 ? static_cast<uint64_t>(static_cast<double>(s) / m) : s;
+    }
     uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const
     {
         if (const auto* a = activeAccel()) return a->stockCyclesBetween(from, to);
@@ -1260,10 +1321,11 @@ private:
     // Klaus harness flat-RAM mode. See setTestMode().
     bool testMode = false;
 
-    // Language Card latch state. Reset default is ROM visible, writes
-    // protected. Write-enable follows the real prewrite rule: an odd
-    // $C08x switch must be accessed twice consecutively before RAM writes
-    // to $D000-$FFFF are accepted.
+    // Language Card latch state. These initialisers are the object's; a
+    // power-on (resetSoftSwitches) puts ROM read, WRITE-ENABLED, bank 2 —
+    // MAME's ramcard16k and AppleWin agree on read/write, and differ only on
+    // the bank (MAME 1, AppleWin 2; no primary source found). Write-enable
+    // follows the prewrite rule: an odd $C08x switch read twice in a row.
     bool lcReadRam      = false;
     bool lcWriteEnable  = false;
     bool lcBank2Active  = true;

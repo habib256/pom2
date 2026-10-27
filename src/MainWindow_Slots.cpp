@@ -723,8 +723,12 @@ void MainWindow::renderSlotConfigPanel()
             std::array<bool, 8> changed{};
             for (int s = 1; s <= 7; ++s) {
                 const std::string key = pom2::slotCardSettingKey(profileCfg, s);
-                if (!pom2::slotKeyIsUserChoice(profileCfg, s, draft[s],
-                                               settings->getString(key, "")))
+                // slotKeyShouldPersist also skips a slot resolve() emptied:
+                // Apply used to write "" there, so a ][+ Videoterm was gone
+                // after any Apply on a //e (bug hunt 2026-10-27).
+                if (!pom2::slotKeyShouldPersist(
+                        profileCfg, s, draft[s], settings->getString(key, ""),
+                        slotConfigCoordinator_->dedupCleared(s)))
                     continue;
                 previous[s] = settings->getString(key, "");
                 changed[s] = true;

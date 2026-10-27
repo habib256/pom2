@@ -90,6 +90,11 @@ public:
     // ── DMA bus mastery (consumed by EmulationController) ────────────
     bool dmaActive() const override { return enabled_; }
     int  dmaRun(int cycles6502) override;
+    /// The Z80 is clocked from the Apple bus (MAME a2softcard.cpp:41,
+    /// 1021800 x 2), not by the 6502 accelerator: under a Zip or TransWarp a
+    /// bus cycle costs cpuHz / stockHz cycles of the accelerated budget.
+    void setCpuClock(double hz) override { if (hz > 0.0) { cpuHz_ = hz; } }
+    void setStandardClock(double hz) override { if (hz > 0.0) { stockHz_ = hz; } }
 
     // ── snapshot / rewind ────────────────────────────────────────────
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
@@ -115,6 +120,11 @@ private:
     bool enabled_      = false;   // MAME m_bEnabled — Z80 owns the bus
     bool firstZ80Boot_ = true;    // MAME m_FirstZ80Boot
     int  tCarry_       = 0;       // odd Z80 T-state carried between dmaRun calls
+    double cpuHz_      = 0.0;     // 0 = never given: 1 bus cycle = 1 CPU cycle
+    double stockHz_    = 0.0;
+    double busCarry_   = 0.0;     // fractional accelerated cycles owed
+    double busRatio_   = 1.0;     // dmaRun's CPU cycles per bus cycle, for stampAccess
+    void   stampAccess();         // put the Z80's access position in the 6502's in-flight count
 };
 
 #endif // POM2_SOFTCARD_Z80_H

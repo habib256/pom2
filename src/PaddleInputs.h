@@ -79,11 +79,13 @@ public:
 
     // ── Paddle read ($C064-$C067 bit 7) ───────────────────────────────────
     // The RC network is still charging — bit 7 high — while fewer than
-    // `value * 11` cycles have elapsed since the last $C070 strobe.
-    bool discharging(int idx, uint64_t cycleCounter) const {
-        const uint64_t elapsed   = cycleCounter - latchCycle_;
+    // `value * 11` STOCK cycles (~10.8 us a count, MAME apple2e.cpp:1007)
+    // have elapsed since the last $C070 strobe. The 558 is an RC timer: real
+    // time, not CPU cycles — the caller converts (Memory::stockCyclesBetween),
+    // or under a Zip with its paddle slow-down off the paddles read 3-4x low.
+    bool discharging(int idx, uint64_t stockElapsed) const {
         const uint64_t threshold = static_cast<uint64_t>(value_[idx]) * 11;
-        return elapsed < threshold;
+        return stockElapsed < threshold;
     }
 
     // $C070 (mirrored $C070-$C07F): re-arm the discharge timer.

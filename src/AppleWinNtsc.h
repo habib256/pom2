@@ -34,8 +34,9 @@
 //      (signal pre-filter, chroma band-pass, luma low-pass), the I/Q
 //      quadrature demodulation and the YIQ→RGB matrix into one RGBA8
 //      value. Two tables: Monitor (luma y0) and Color-TV (comb luma y1).
-//   3. Tv sub-mode: comb-luma table + 50% blend with the previous frame's
-//      same scanline (history kept in Apple2Display::appleWinPrev).
+//   3. Tv sub-mode: comb-luma table + AppleWin's in-between line, a 50 %
+//      blend with the previous Apple scanline of the same frame, folded
+//      into one row per line (3/4 this line + 1/4 the previous).
 //      Idealized sub-mode: Monitor luma with boosted chroma (POM2-only;
 //      no AppleWin equivalent) — modern flat-panel-friendly look.
 //
@@ -69,10 +70,8 @@ struct AppleWinNtsc
     // Render one scanline of width `w` samples (`w` is typically 560)
     // from the 1-bit luminance signal `src` into RGBA destination `dst`.
     // `prevLine` is only consulted when `mode == Tv` and `prevValid` is
-    // true; it holds the same scanline from the previous frame and gets
-    // 50% blended into the output. After rendering, `dst` is also copied
-    // back into a caller-managed buffer so the next frame can blend
-    // against it (handled by Apple2Display via appleWinPrev*).
+    // true: the PREVIOUS Apple scanline's unblended colours (same frame),
+    // blended in as AppleWin's in-between line (see renderFrame).
     static void renderLine(const uint8_t* src,
                            uint32_t*      dst,
                            int            w,
@@ -82,16 +81,14 @@ struct AppleWinNtsc
                            int            phaseOffset = 0);
 
     // Convenience entry point: render the whole signal buffer (h
-    // scanlines of `w` samples each) into `dst`. `prevFrame` is the
-    // RGBA buffer holding last frame's output for the Tv sub-mode;
-    // pass nullptr if not in Tv mode or for the very first frame.
+    // scanlines of `w` samples each) into `dst`, the Tv blend included.
     // `phaseOffset` is 1 for DHGR (MAME rotl4 absX+1), else 0.
     static void renderFrame(const uint8_t* src,
                             uint32_t*      dst,
                             int            w, int h,
                             SubMode        mode,
-                            const uint32_t* prevFrame = nullptr,
-                            int            phaseOffset = 0);
+                            int            phaseOffset = 0,
+                            const uint8_t* rowPhase = nullptr);   // per row, overrides
 };
 
 } // namespace pom2

@@ -207,8 +207,15 @@ void M6502::nmosIndexDummyRead(uint16_t base, uint16_t indexed, bool always)
 {
     if (cpuMode == CpuMode::CMOS) return;
     if (!always && (base & 0xFF00) == (indexed & 0xFF00)) return;
+    // The dummy read is the bus cycle JUST BEFORE the real access (SingleStep
+    // Tests 6502 traces for bd/9d/91/fe; MAME om6502.lst). Every caller has
+    // already advanced `cycles` to the real access, so step back one for it:
+    // `STA $C08F,X` used to stamp its Q7H dummy and its latch-load write on
+    // the same cycle, and the Disk II LSS saw no cycle between them.
+    --cycles;
     (void)memory->memRead(static_cast<uint16_t>((base & 0xFF00) |
                                                 (indexed & 0x00FF)));
+    ++cycles;
 }
 
 void M6502::AbsX(void)
@@ -675,7 +682,9 @@ void M6502::ASL(void)
     // intermediate cycle through `softSwitchAccess` when `op` is in
     // $C000-$C07F, so `INC $C030` / `ROL $C030` toggle the speaker
     // twice on writes, paddle resets fire twice on $C070, etc.
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
 
     if (orig & 0x80) statusRegister |= M6502::Status::C;
     else             statusRegister &= ~M6502::Status::C;
@@ -683,7 +692,7 @@ void M6502::ASL(void)
     uint8_t val = static_cast<uint8_t>(orig << 1);
     setStatusRegisterNZ(val);
     memory->memWrite(op, val);
-    cycles += 3;
+    cycles += 1;
 }
 
 void M6502::ASL_A(void)
@@ -697,7 +706,9 @@ void M6502::ASL_A(void)
 void M6502::LSR(void)
 {
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
 
     if (orig & 1) statusRegister |= M6502::Status::C;
     else          statusRegister &= ~M6502::Status::C;
@@ -705,7 +716,7 @@ void M6502::LSR(void)
     uint8_t val = static_cast<uint8_t>(orig >> 1);
     setStatusRegisterNZ(val);
     memory->memWrite(op, val);
-    cycles += 3;
+    cycles += 1;
 }
 
 void M6502::LSR_A(void)
@@ -722,7 +733,9 @@ void M6502::LSR_A(void)
 void M6502::ROL(void)
 {
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
     const uint8_t newCarry = orig & 0x80;
     uint8_t val = static_cast<uint8_t>(
         (orig << 1) | (statusRegister & M6502::Status::C ? 1 : 0));
@@ -732,7 +745,7 @@ void M6502::ROL(void)
 
     setStatusRegisterNZ(val);
     memory->memWrite(op, val);
-    cycles += 3;
+    cycles += 1;
 }
 
 void M6502::ROL_A(void)
@@ -746,7 +759,9 @@ void M6502::ROL_A(void)
 void M6502::ROR(void)
 {
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
     const int newCarry = orig & 1;
     uint8_t val = static_cast<uint8_t>(
         (orig >> 1) | (statusRegister & M6502::Status::C ? 0x80 : 0));
@@ -756,7 +771,7 @@ void M6502::ROR(void)
 
     setStatusRegisterNZ(val);
     memory->memWrite(op, val);
-    cycles += 3;
+    cycles += 1;
 }
 
 void M6502::ROR_A(void)
@@ -775,11 +790,13 @@ void M6502::ROR_A(void)
 void M6502::INC(void)
 {
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
     uint8_t val = static_cast<uint8_t>(orig + 1);
     setStatusRegisterNZ(val);
     memory->memWrite(op, val);
-    cycles += 3;     // RMW: read + dummy (rmwSecondBusCycle) + write — was
+    cycles += 1;     // RMW: read + dummy (rmwSecondBusCycle) + write — was
                      // 2, undercounting the dummy cycle that ASL/LSR/ROL/
                      // ROR/TSB/TRB already charge. The 1-cycle shortfall
                      // drifted disk timing on tight RWTS loops (Mr. Robot
@@ -790,11 +807,13 @@ void M6502::INC(void)
 void M6502::DEC(void)
 {
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
     uint8_t val = static_cast<uint8_t>(orig - 1);
     setStatusRegisterNZ(val);
     memory->memWrite(op, val);
-    cycles += 3;     // RMW: read + dummy + write (see INC) — fixes the
+    cycles += 1;     // RMW: read + dummy + write (see INC) — fixes the
                      // 1-cycle undercount that broke Mr. Robot's boot.
 }
 
@@ -1172,22 +1191,26 @@ void M6502::TSB(void)
 {
     // Test and Set Bits: Z = (mem AND A == 0); mem = mem | A.
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
     if (!(orig & accumulator)) statusRegister |= M6502::Status::Z;
     else                       statusRegister &= ~M6502::Status::Z;
     memory->memWrite(op, static_cast<uint8_t>(orig | accumulator));
-    cycles += 3;     // RMW: read + 2 internal + write
+    cycles += 1;     // RMW: read + 2 internal + write
 }
 
 void M6502::TRB(void)
 {
     // Test and Reset Bits: Z = (mem AND A == 0); mem = mem & ~A.
     const uint8_t orig = memory->memRead(op);
+    cycles++;                       // the second bus cycle lands on k+1
     rmwSecondBusCycle(op, orig);
+    cycles++;                       // ...and the write on k+2
     if (!(orig & accumulator)) statusRegister |= M6502::Status::Z;
     else                       statusRegister &= ~M6502::Status::Z;
     memory->memWrite(op, static_cast<uint8_t>(orig & ~accumulator));
-    cycles += 3;
+    cycles += 1;
 }
 
 // ── Rockwell SMBn / RMBn / BBRn / BBSn ────────────────────────────────
@@ -1195,38 +1218,51 @@ void M6502::TRB(void)
 // member-function instantiation that the dispatch table can target.
 
 // Rockwell zp-bit ops are 5-cycle on real silicon. MAME
-// `ow65c02.lst:497-504, 700-707` (RMB/SMB) and `:168-181` (BBR/BBS
-// not-taken) all charge 5; BBR/BBS-taken adds +1, +1 more on page cross.
-// `executeOpcode` seeds cycles=1 for the opcode fetch, so the bodies
-// below add 4 (RMB/SMB) or 4 baseline (BBR/BBS).
+// `ow65c02.lst` rmb_bzp / smb_bzp / bbr_zpb / bbs_zpb all charge 5;
+// BBR/BBS-taken adds +1, +1 more on page cross. Each bus access is issued
+// while `cycles` equals its bus cycle (the opcode fetch is cycle 0), in
+// MAME's order: zp operand, zp read, a second (dummy) zp read, then the
+// write — or, for BBR/BBS, the branch offset AFTER the two zp reads.
 
 template <int N>
 void M6502::SMBn(void)
 {
-    const uint8_t zp = memory->memRead(programCounter++);
-    uint8_t v = memory->memRead(zp);
+    const uint8_t zp = memory->memRead(programCounter++);   // cycle 1
+    cycles++;
+    uint8_t v = memory->memRead(zp);                         // cycle 2
+    cycles++;
+    (void)memory->memRead(zp);                               // cycle 3
+    cycles++;
     v |= static_cast<uint8_t>(1u << N);
-    memory->memWrite(zp, v);
-    cycles += 4;
+    memory->memWrite(zp, v);                                 // cycle 4
+    cycles++;
 }
 
 template <int N>
 void M6502::RMBn(void)
 {
     const uint8_t zp = memory->memRead(programCounter++);
+    cycles++;
     uint8_t v = memory->memRead(zp);
+    cycles++;
+    (void)memory->memRead(zp);
+    cycles++;
     v &= static_cast<uint8_t>(~(1u << N));
     memory->memWrite(zp, v);
-    cycles += 4;
+    cycles++;
 }
 
 template <int N>
 void M6502::BBRn(void)
 {
-    const uint8_t zp     = memory->memRead(programCounter++);
-    const int8_t  offset = static_cast<int8_t>(memory->memRead(programCounter++));
-    const uint8_t v      = memory->memRead(zp);
-    cycles += 4;
+    const uint8_t zp = memory->memRead(programCounter++);   // cycle 1
+    cycles++;
+    const uint8_t v = memory->memRead(zp);                   // cycle 2
+    cycles++;
+    (void)memory->memRead(zp);                               // cycle 3
+    cycles++;
+    const int8_t offset = static_cast<int8_t>(memory->memRead(programCounter++));
+    cycles++;                                                // cycle 4
     if ((v & (1u << N)) == 0) {
         const uint16_t old = programCounter;
         programCounter = static_cast<uint16_t>(programCounter + offset);
@@ -1238,10 +1274,14 @@ void M6502::BBRn(void)
 template <int N>
 void M6502::BBSn(void)
 {
-    const uint8_t zp     = memory->memRead(programCounter++);
-    const int8_t  offset = static_cast<int8_t>(memory->memRead(programCounter++));
-    const uint8_t v      = memory->memRead(zp);
-    cycles += 4;
+    const uint8_t zp = memory->memRead(programCounter++);
+    cycles++;
+    const uint8_t v = memory->memRead(zp);
+    cycles++;
+    (void)memory->memRead(zp);
+    cycles++;
+    const int8_t offset = static_cast<int8_t>(memory->memRead(programCounter++));
+    cycles++;
     if ((v & (1u << N)) != 0) {
         const uint16_t old = programCounter;
         programCounter = static_cast<uint16_t>(programCounter + offset);
@@ -1336,7 +1376,20 @@ void M6502::applyDispatch(CpuMode mode)
 {
     cpuMode = mode;
     std::memcpy(opcodeTable, kCmosTable, sizeof(opcodeTable));
-    if (mode == CpuMode::CMOS) return;
+    if (mode == CpuMode::CMOS) {
+        // NCR65C02 (setNcr65C02): no Rockwell bit ops, no WAI/STP — 1-byte,
+        // 1-cycle NOPs. Not while a TransWarp's own 65C02 runs the program.
+        if (ncr_ && !cmosSubstitute_) {
+            const auto nop = OpcodeEntry{&M6502::Unoff, nullptr};
+            for (int hi = 0; hi < 16; ++hi) {
+                opcodeTable[(hi << 4) | 0x07] = nop;
+                opcodeTable[(hi << 4) | 0x0F] = nop;
+            }
+            opcodeTable[0xCB] = nop;
+            opcodeTable[0xDB] = nop;
+        }
+        return;
+    }
 
     // NMOS 6502: replace every 65C02-only addition with a placeholder
     // matching the original NMOS behaviour (NOP of correct byte length,
@@ -1473,8 +1526,9 @@ void M6502::UnoffAbs4(void)  // 3 bytes, 4 cycles: NOP abs ($0C/$AF, $DC/$FC on 
 {
     uint16_t ea = memory->memRead(programCounter++);
     ea |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
+    cycles += 2;                        // the read is bus cycle 3, as LDA abs
     (void)memory->memRead(ea);
-    cycles += 3;
+    cycles += 1;
 }
 void M6502::UnoffAbsX(void)  // 3 bytes, 4+p cycles: NOP abs,X (NMOS TOP)
 {
@@ -1486,10 +1540,11 @@ void M6502::UnoffAbsX(void)  // 3 bytes, 4+p cycles: NOP abs,X (NMOS TOP)
     uint16_t base = memory->memRead(programCounter++);
     base |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
     const uint16_t ea = static_cast<uint16_t>(base + xRegister);
-    cycles += 3;
+    cycles += 2;                        // the read lands where LDA abs,X's does
     if ((base & 0xFF00) != (ea & 0xFF00)) cycles++;
     nmosIndexDummyRead(base, ea, /*always=*/false);
     (void)memory->memRead(ea);          // NOP abs,X really reads — see UnoffAbs4
+    cycles += 1;
 }
 void M6502::Unoff5C(void)    // 3 bytes, 8 cycles: the 65C02 oddball $5C
 {

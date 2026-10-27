@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "Memory.h"
+#include <cmath>
+#include <cstring>
 
 #include "CpuSocketAccelerator.h"
 #include "IWMDevice.h"
@@ -81,6 +83,14 @@ bool Memory::validateSnapshotState(const uint8_t* data, size_t n,
         })) return false;
     if (!section([&](const uint8_t* p, size_t k) {
             return !accel_ || accel_->validateSnapshotState(p, k);
+        })) return false;
+    if (!section([](const uint8_t* p, size_t k) {   // the beam's clock
+            if (k != 24) return false;
+            uint64_t bits = 0;
+            for (int i = 0; i < 8; ++i) bits |= static_cast<uint64_t>(p[16 + i]) << (8 * i);
+            double r = 0.0;
+            std::memcpy(&r, &bits, sizeof r);
+            return std::isfinite(r) && r > 0.0 && r <= 1.0;
         })) return false;
     // Unknown future trailers, like the apply path, are intentionally ignored.
     return true;

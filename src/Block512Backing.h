@@ -47,6 +47,8 @@
 
 namespace pom2 {
 
+struct HostNameMap;   // ProDOSVolume.h
+
 // ── Media-write epoch ────────────────────────────────────────────────────
 //
 // The rewind ring captures CPU + RAM + slot-card state, never the MEDIA of a
@@ -229,6 +231,8 @@ public:
         /// with the backing so a preservation outlives the pass (see
         /// `decodeVolumeToFolder`'s `stickyPreserved`).
         std::shared_ptr<PreservedHostFiles> preserved;
+        /// Synth case: the names the folder was served under (ProDOSVolume.h).
+        std::shared_ptr<const HostNameMap> nameMap;
     };
 
     /// Phase 1, to be called WITH `stateMutex` held: MOVE out exactly what
@@ -296,6 +300,15 @@ public:
                                 std::filesystem::file_time_type* newMountTime
                                     = nullptr,
                                 std::string* notice = nullptr);
+
+    /// A failed eject's commit, host-folder case: the decode may already have
+    /// written part of the tree before failing, and the medium stays mounted.
+    /// Adopt the stamp `commitWriteBack` published, as `saveDirty` does,
+    /// or the retry files POM2's own output as host edits
+    /// (`.pom2-conflicts/`). No-op unless this backing still serves `folder`
+    /// and the stamp is real (`min()` = the walk never ran).
+    void adoptFolderStamp(const std::string& folder,
+                          std::filesystem::file_time_type stamp);
 
     /// Undo a `takeWriteBack` whose commit failed: re-mark its captured
     /// blocks dirty (merging with any block dirtied since). Out-of-range
@@ -407,6 +420,7 @@ private:
     bool    hasMountTime_      = false;
     std::filesystem::file_time_type mountTime_{};
     std::shared_ptr<PreservedHostFiles> preserved_;
+    std::shared_ptr<const HostNameMap> nameMap_;   // synth: takeFolderNameMap
     std::string hostFolder_;
     std::string path_;
     std::string lastError_;

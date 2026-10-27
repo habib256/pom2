@@ -15,6 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskIICard.h"
+
+#include <cmath>
 #include "FloppySoundSink.h"
 
 void DiskIICard::advanceCycles(int cycles)
@@ -24,14 +26,26 @@ void DiskIICard::advanceCycles(int cycles)
     // the remaining CPU time with the motor stopped. Otherwise the LSS
     // processes extra flux/PROM states, making later reads depend on the
     // caller's batch size (even after lssStart resets the read register).
-    if (motorOffDelay > 0 && cycles > motorOffDelay) {
-        const int remaining = cycles - motorOffDelay;
-        advanceCycles(motorOffDelay);
-        advanceCycles(remaining);
-        return;
+    // The deadline in CPU cycles: motorOffDelay is stock time (setCpuClock).
+    const double ratio = motorClock_.ratio();          // <= 1 under an accelerator
+    if (motorOffDelay > 0) {
+        const int toDeadline = ratio >= 1.0 ? motorOffDelay
+            : static_cast<int>(std::ceil(motorOffDelay / ratio));
+        if (cycles > toDeadline) {
+            const int remaining = cycles - toDeadline;
+            advanceCycles(toDeadline);
+            advanceCycles(remaining);
+            return;
+        }
     }
 
-    cpuCycleTotal += static_cast<uint64_t>(cycles);
+    // The LSS, the spindle and the stepper run on the card's 2 MHz Q3 and
+    // the disk's own rotation — wall-clock, not the 6502's. An accelerator
+    // only shortens the CPU cycle, so the timeline below is in STOCK bus
+    // cycles (MAME's wozfdc runs on machine time). The ratio follows each
+    // chunk's speed, slow windows included (applyAcceleratorClock).
+    const uint64_t stock = motorClock_.busTicks(static_cast<uint64_t>(cycles));
+    cpuCycleTotal += stock;
 
     // Idle drive on the bit-level path (motor off AND spin-down elapsed):
     // nothing below would do anything — lssSync() returns on MODE_IDLE, the
@@ -48,7 +62,7 @@ void DiskIICard::advanceCycles(int cycles)
     // countdown below whenever the active drive had no disk.
     if (images[activeDrive].isLoaded()) {
         if (!useBitLss) {
-            if (motorOn) legacyAdvance(cycles);
+            if (motorOn) legacyAdvance(static_cast<int>(stock));
         } else {
             // MAME wozfdc: catch up the LSS to the new CPU time. lss_sync
             // skips when active == MODE_IDLE so a stopped drive is cheap.
@@ -59,7 +73,7 @@ void DiskIICard::advanceCycles(int cycles)
     // Tick the spin-down delay. When it expires the motor truly stops
     // (active drops to MODE_IDLE).
     if (motorOffDelay > 0) {
-        motorOffDelay -= cycles;
+        motorOffDelay -= static_cast<int>(stock);
         if (motorOffDelay <= 0) {
             motorOffDelay = 0;
             motorOn       = false;

@@ -262,6 +262,35 @@ int main()
         assert(saved && "the guest's PHOTO was not written under a fresh name");
     }
 
+    // ── Part 6: past the depth cap (STORAGE-014 #4) ──────────────────────
+    // D1/…/D17: the 17th level is deeper than the decode walks. Empty, it is
+    // what the build serves for a too-deep host folder and nothing is lost —
+    // the save succeeds with no error. Holding a file the guest wrote, the
+    // save FAILS and names it; it used to report ok with the file gone.
+    for (const bool withFile : { false, true }) {
+        const fs::path root = base / (withFile ? "deep_file" : "deep_empty");
+        std::vector<std::uint8_t> deep(32 * kBlk, 0);
+        putEntry(deep, 2, 0, /*storage=*/0xF, "VOL", 0x0F, 0, 0);
+        putEntry(deep, 2, 1, /*subdir=*/0xD, "D1", 0x0F, /*key=*/6, kBlk);
+        for (int level = 1; level <= 17; ++level) {
+            const size_t blk = 5 + static_cast<size_t>(level);          // 6..22
+            putEntry(deep, blk, 0, /*subdir header=*/0xE, "D" + std::to_string(level), 0x75, 0, 0);
+            if (level < 17)
+                putEntry(deep, blk, 1, 0xD, "D" + std::to_string(level + 1), 0x0F,
+                         static_cast<std::uint16_t>(blk + 1), kBlk);
+            else if (withFile)
+                putEntry(deep, blk, 1, /*seedling=*/0x1, "DEEP", 0x00, /*key=*/24, 4);
+        }
+        std::memcpy(deep.data() + 24 * kBlk, "DATA", 4);
+        const auto d = pom2::decodeVolumeToFolder(deep, root.string());
+        if (withFile) {
+            assert(!d.ok && d.filesUnsaved == 1 && "a file past the depth cap is a failed save");
+        } else {
+            assert(d.ok && d.error.empty() && !d.aborted &&
+                   "an empty too-deep folder (the build's stand-in) is no error");
+        }
+    }
+
     fs::remove_all(base);
     std::printf("OK prodos_decode_safety (validator + traversal blocked, "
                 "benign OK, cyclic volume bounded)\n");

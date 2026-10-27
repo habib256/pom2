@@ -3,6 +3,12 @@
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+      <!-- The process code page is UTF-8 (Windows 10 1903+): std::filesystem's
+           path::string() then converts every file name instead of throwing on
+           one the ANSI code page cannot hold (a disk image named in Japanese
+           crashed the Disk Library scan and the ProDOS host folder), and the
+           narrow file APIs POM2 uses open UTF-8 names. -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
     </windowsSettings>
   </application>
 </assembly>

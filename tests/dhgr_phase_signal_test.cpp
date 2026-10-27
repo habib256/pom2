@@ -33,6 +33,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -167,6 +168,117 @@ int main()
     oeHgr.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
     oeHgr.render(memHgr);
     assert(oeHgr.signalPhaseOffset() == 0 && "HGR must not apply DHGR phase offset");
+
+    // ── 80-column TEXT demodulates with the same +1 (MAME text_update passes
+    //    is_80_column to render_line); 40-column text keeps 0. Used when the
+    //    user turns "Sharp text" off and the composite demod sees text.
+    for (const bool eighty : { true, false }) {
+        Memory memT;
+        memT.setIIEMode(true);
+        if (eighty) memT.memWrite(0xC00D, 0);         // 80COL on
+        memT.memWrite(0x0400, 0xC1);
+        Apple2Display oeT;
+        oeT.setAuxMemory(memT.auxData());
+        oeT.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+        oeT.render(memT);
+        assert(oeT.signalProduced());
+        assert(oeT.signalPhaseOffset() == (eighty ? 1 : 0) &&
+               "80-column text must demodulate with MAME's is_80_column phase");
+    }
+
+    // ── DISPLAY-004: an HGR → DHGR split at scanline 96 demodulates each band
+    //    with its own phase. The phase was one constant per frame (the last
+    //    band's), so the HGR band above came out rotated by a quarter cycle.
+    //    Each band must equal, pixel for pixel, the same rows of a frame
+    //    entirely in its mode.
+    {
+        auto rowOf = [](Memory& m, int y) {
+            Apple2Display d;
+            d.setAuxMemory(m.auxData());
+            d.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+            d.render(m);
+            std::vector<uint32_t> r(d.pixels() + y * d.width(), d.pixels() + (y + 1) * d.width());
+            return r;
+        };
+        auto pattern = [](Memory& m) {           // HGR-meaningful bytes, both banks
+            uint8_t* aux = m.auxDataMutable();
+            for (int y = 0; y < 192; ++y)
+                for (int c = 0; c < 40; ++c) {
+                    m.memWrite(hgrAddr(y) + c, static_cast<uint8_t>(0x2A + c * 7));
+                    aux[hgrAddr(y) + c] = static_cast<uint8_t>(0x55 ^ c);
+                }
+        };
+        Memory refH; refH.setIIEMode(true); pattern(refH);
+        refH.memRead(CLR_TEXT); refH.memWrite(IIE_80COL_ON, 0); refH.memRead(SET_HIRES);
+        Memory refD; refD.setIIEMode(true); pattern(refD); dhgrSwitches(refD);
+        const auto hgrRow = rowOf(refH, 40), dhgrRow = rowOf(refD, 150);
+
+        Memory split; split.setIIEMode(true); pattern(split);
+        split.memRead(CLR_TEXT); split.memWrite(IIE_80COL_ON, 0); split.memRead(SET_HIRES);
+        split.setCycleCounter(0);
+        split.beginVideoEventFrame();
+        split.setCycleCounter(96 * 65);
+        split.memRead(DHIRES_ON);                    // DHGR from scanline 96
+        // One render: the legacy event bracket hands its log to the first.
+        Apple2Display d;
+        d.setAuxMemory(split.auxData());
+        d.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+        d.render(split);
+        assert(d.signalPhaseAt(40) == 0 && d.signalPhaseAt(150) == 1);
+        const uint32_t* p = d.pixels();
+        const std::vector<uint32_t> top(p + 40 * d.width(), p + 41 * d.width());
+        const std::vector<uint32_t> bottom(p + 150 * d.width(), p + 151 * d.width());
+        assert(top == hgrRow && "the HGR band took the DHGR band's phase");
+        assert(bottom == dhgrRow);
+        std::printf("split HGR/DHGR: each band demodulates with its own phase\n");
+    }
+
+    // ── DISPLAY-004 (AppleWin pipeline): an HGR → DHGR split at scanline 96 demodulates each band
+    //    with its own phase. The phase was one constant per frame (the last
+    //    band's), so the HGR band above came out rotated by a quarter cycle.
+    //    Each band must equal, pixel for pixel, the same rows of a frame
+    //    entirely in its mode.
+    {
+        auto rowOf = [](Memory& m, int y) {
+            Apple2Display d;
+            d.setAuxMemory(m.auxData());
+            d.setHiResMode(Apple2Display::HiResMode::ColorAppleWin);
+            d.render(m);
+            std::vector<uint32_t> r(d.pixels() + y * d.width(), d.pixels() + (y + 1) * d.width());
+            return r;
+        };
+        auto pattern = [](Memory& m) {           // HGR-meaningful bytes, both banks
+            uint8_t* aux = m.auxDataMutable();
+            for (int y = 0; y < 192; ++y)
+                for (int c = 0; c < 40; ++c) {
+                    m.memWrite(hgrAddr(y) + c, static_cast<uint8_t>(0x2A + c * 7));
+                    aux[hgrAddr(y) + c] = static_cast<uint8_t>(0x55 ^ c);
+                }
+        };
+        Memory refH; refH.setIIEMode(true); pattern(refH);
+        refH.memRead(CLR_TEXT); refH.memWrite(IIE_80COL_ON, 0); refH.memRead(SET_HIRES);
+        Memory refD; refD.setIIEMode(true); pattern(refD); dhgrSwitches(refD);
+        const auto hgrRow = rowOf(refH, 40), dhgrRow = rowOf(refD, 150);
+
+        Memory split; split.setIIEMode(true); pattern(split);
+        split.memRead(CLR_TEXT); split.memWrite(IIE_80COL_ON, 0); split.memRead(SET_HIRES);
+        split.setCycleCounter(0);
+        split.beginVideoEventFrame();
+        split.setCycleCounter(96 * 65);
+        split.memRead(DHIRES_ON);                    // DHGR from scanline 96
+        // One render: the legacy event bracket hands its log to the first.
+        Apple2Display d;
+        d.setAuxMemory(split.auxData());
+        d.setHiResMode(Apple2Display::HiResMode::ColorAppleWin);
+        d.render(split);
+        assert(d.signalPhaseAt(40) == 0 && d.signalPhaseAt(150) == 1);
+        const uint32_t* p = d.pixels();
+        const std::vector<uint32_t> top(p + 40 * d.width(), p + 41 * d.width());
+        const std::vector<uint32_t> bottom(p + 150 * d.width(), p + 151 * d.width());
+        assert(top == hgrRow && "the HGR band took the DHGR band's phase");
+        assert(bottom == dhgrRow);
+        std::printf("split HGR/DHGR: AppleWin demod, same\n");
+    }
 
     std::printf("dhgr_phase_signal OK\n");
     return 0;

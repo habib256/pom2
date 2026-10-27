@@ -267,6 +267,66 @@ int main()
         fs::remove_all(vol, ec);
     }
 
+    // The two-phase EJECT path (StorageCoordinator): capture under the lock,
+    // static commit unlocked, and on failure the medium stays mounted. It
+    // passed a null stamp and only re-marked the blocks, so the retry saw the
+    // files the failed pass wrote as host edits (STORAGE-014 #2). The caller
+    // now hands the published stamp to `adoptFolderStamp`.
+    {
+        const fs::path vol = fs::temp_directory_path() / "pom2_synth_eject_fail";
+        fs::remove_all(vol, ec);
+        fs::create_directories(vol, ec);
+        writeHostFile(vol / "AFILE.TXT", "AAAAAAAAAAAAAAAA");
+        writeHostFile(vol / "BFILE.TXT", "BBBBBBBBBBBBBBBB");
+        std::vector<std::uint8_t> img;
+        assert(pom2::buildVolumeFromFolder(vol.string(), "HOST", img).ok);
+        pom2::Block512Backing b;
+        assert(b.loadFromBytes(img, "[host folder] eject", vol.string()));
+        b.setWriteBackEnabled(true);
+        assert(guestPatch(b, "AAAAAAAAAAAAAAAA", "GUESTWROTETHISE1"));
+        assert(guestPatch(b, "BBBBBBBBBBBBBBBB", "GUESTWROTETHISF1"));
+        const fs::path bf = findHostFile(vol, "BFILE");
+        fs::remove(bf, ec);
+        fs::create_directories(bf / "occupied", ec);
+        writeHostFile(bf / "occupied" / "x", "x");
+        fs::last_write_time(bf, fs::file_time_type::clock::now() -
+                                    std::chrono::hours(24), ec);
+
+        auto pending = b.takeWriteBack();
+        assert(pending.valid && pending.synth);
+        const auto captured = pending.dirtyIndices;
+        const std::string folder = pending.hostFolder;
+        auto stamp = fs::file_time_type::min();
+        std::string err;
+        const bool ok = pom2::Block512Backing::commitWriteBack(
+            std::move(pending), err, &stamp);
+        if (!ok && readHostFile(findHostFile(vol, "AFILE")) == "GUESTWROTETHISE1") {
+            b.restoreDirty(captured);
+            // A stamp for another folder, or none at all, changes nothing.
+            b.adoptFolderStamp((vol / "elsewhere").string(), stamp);
+            b.adoptFolderStamp(folder, fs::file_time_type::min());
+            b.adoptFolderStamp(folder, stamp);
+
+            fs::remove_all(bf, ec);
+            assert(guestPatch(b, "GUESTWROTETHISE1", "GUESTWROTETHISE2"));
+            if (!b.saveDirty()) {
+                std::printf("FAIL: eject retry failed (%s)\n", b.lastError().c_str());
+                return 1;
+            }
+            const std::string got = readHostFile(findHostFile(vol, "AFILE"));
+            if (got.rfind("GUESTWROTETHISE2", 0) != 0) {
+                std::printf("FAIL: after a failed eject commit the guest's next "
+                            "save was preserved away (AFILE='%s') — the mount "
+                            "stamp was not adopted (STORAGE-014 #2)\n",
+                            got.substr(0, 16).c_str());
+                return 1;
+            }
+        } else {
+            std::printf("SKIP eject half: no partial failure on this platform\n");
+        }
+        fs::remove_all(vol, ec);
+    }
+
     std::printf("OK prodos_synth_failed_flush (a partial write-back failure "
                 "no longer freezes the files it wrote)\n");
     return 0;

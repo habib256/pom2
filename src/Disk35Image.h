@@ -81,6 +81,10 @@ public:
     /// MFM block writes splice existing CRC-valid sectors.
     /// On failure, returns false and populates `lastError`.
     bool loadFile(const std::string& path);
+    /// loadFile on bytes already read (phase 1 of a two-phase mount, off the
+    /// machine lock); `hostReadOnly` is the file's notch (MediaNotch.h).
+    bool loadPrepared(std::vector<uint8_t>&& bytes, const std::string& path,
+                      bool hostReadOnly);
 
     /// Original MOOF bit cells for the physical track and head. Null when
     /// this is a block image, or when the MOOF track is unformatted. The
@@ -166,11 +170,15 @@ public:
         uint64_t             seq = 0;
         uint64_t             lineage = 0;   ///< the mount it came from
         std::string          error{};      ///< serialization refused; preserve dirty state
+        /// WOZ/MOOF: the track capture, serialised in phase 2 into `bytes`
+        /// (re-encode + CRC32 over up to 16 MiB — not under stateMutex).
+        /// Immutable: writeFlux copies the live one before writing again.
+        std::shared_ptr<const Disk35Bitstream> bitstream;
     };
 
-    /// Phase 1, WITH the lock: serialise what `saveDirty()` would write and
-    /// retire the dirty flag, atomically with the capture. Memcpy only — no
-    /// syscall. A no-op capture (nothing dirty, write-back off, medium WP)
+    /// Phase 1, WITH the lock: capture what `saveDirty()` would write and
+    /// retire the dirty flag, atomically with the capture. Memcpy (or, for
+    /// WOZ/MOOF, a reference to the track capture) — no syscall. A no-op capture (nothing dirty, write-back off, medium WP)
     /// returns `valid == false` and leaves `dirty_` alone, so opting back in
     /// to write-back still saves the session's writes.
     PendingWriteBack takeWriteBack();
@@ -234,12 +242,17 @@ public:
 
 private:
     bool loadFileUnchecked(const std::string& path);
+    bool parseImageBytes(std::vector<uint8_t>& buf, const std::string& path,
+                         bool hostReadOnly);
     /// The atomic temp + rename itself, for `commitWriteBack`.
     static bool writeWholeFile(const PendingWriteBack& pending, std::string& error);
     /// WOZ2/MOOF chunk walk + GCR decode into `blocks_`. See the .cpp.
     bool loadBitstream(const std::vector<uint8_t>& buf, const std::string& path,
                        bool moof);
     bool serializeBitstream(std::vector<uint8_t>& bytes, std::string& error) const;
+    static bool serializeBitstreamOf(const Disk35Bitstream& bs, std::vector<uint8_t>& bytes,
+                                     std::string& error);
+    static bool bitstreamRewritable(const Disk35Bitstream& bs, std::string& why);
     void refreshDecodedTrack(int slot) const;
     bool writeMfmBlock(uint32_t idx, const uint8_t* in);
 

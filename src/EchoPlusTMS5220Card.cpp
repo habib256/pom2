@@ -50,10 +50,18 @@ void EchoPlusTMS5220Card::onReset() { resetCard(false); }
 void EchoPlusTMS5220Card::onPowerCycle() { resetCard(true); }
 void EchoPlusTMS5220Card::resetCard(bool powerCycle) {
     std::lock_guard<std::mutex> lock(mtx_);
-    speech_.reset(); via_.reset(powerCycle);
+    // The TMS5220C has no RESET pin — only its software Reset command ($70)
+    // and power-up reset it (MAME tms5220.cpp pinout; a2mockingboard.cpp's
+    // reset_from_bus resets the VIA and the AYs only). Ctrl-Reset used to
+    // cut an utterance mid-word and clear its FIFO and status.
+    if (powerCycle) {
+        speech_.reset();
+        pcm_.clear(); speechPhase_ = samplePhase_ = 0;
+        lastSpeech_ = -1; lastWrite_ = 0;
+    }
+    via_.reset(powerCycle);
     for (int i = 0; i < 2; ++i) { ay_[i].reset(); synth_[i] = {}; }
-    pcm_.clear(); viaPhase_ = speechPhase_ = samplePhase_ = 0;
-    lastSpeech_ = -1; lastWrite_ = 0;
+    viaPhase_ = 0;
     lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
     assertIrq(false);
 }

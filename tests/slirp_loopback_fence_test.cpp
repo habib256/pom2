@@ -299,6 +299,69 @@ void testDhcpStillWorks()
     assert(offered && "the loopback fence swallowed the guest's DHCP DISCOVER");
 }
 
+// 6 — frames from slirp reach the NIC padded to the 60-byte wire minimum.
+//     An unpadded SYN-ACK or pure ACK is a runt to the CS8900A's filter, so
+//     TCP through an Uthernet I would never connect (DHCP, at 300+ bytes,
+//     would hide it). libslirp 4.9.3 already pads, so on such a host this
+//     passes with or without the backend's own pad; it guards the older
+//     libslirp builds that do not.
+void testShortFramesArePadded()
+{
+    SlirpOptions options;
+    auto backend = makeSlirpBackend("pom2test", options);
+    assert(backend);
+    static const uint8_t mac[6] = { 0x02, 0x00, 0x00, 0x11, 0x22, 0x33 };
+    std::vector<uint8_t> f(42, 0);               // ARP who-has 10.0.2.2
+    std::memset(f.data(), 0xFF, 6);
+    std::memcpy(f.data() + 6, mac, 6);
+    f[12] = 0x08; f[13] = 0x06;
+    uint8_t* a = f.data() + 14;
+    a[1] = 1; a[2] = 0x08; a[4] = 6; a[5] = 4; a[7] = 1;   // ether/IPv4/request
+    std::memcpy(a + 8, mac, 6);
+    a[14] = 10; a[15] = 0; a[16] = 2; a[17] = 15;          // sender 10.0.2.15
+    a[24] = 10; a[25] = 0; a[26] = 2; a[27] = 2;           // target 10.0.2.2
+    // The ARP teaches slirp the guest's MAC (its own ARP reply is already
+    // padded); the ICMP echo reply that follows goes out through if_encap
+    // at 14 + 20 + 8 = 42 bytes — the unpadded case.
+    backend->transmit(f.data(), static_cast<int>(f.size()));
+    backend->poll();
+    std::vector<uint8_t> e(42, 0);               // ICMP echo to 10.0.2.2
+    std::memset(e.data(), 0xFF, 6);
+    std::memcpy(e.data() + 6, mac, 6);
+    e[12] = 0x08; e[13] = 0x00;
+    uint8_t* ip = e.data() + 14;
+    ip[0] = 0x45;
+    const uint16_t total = htons(28);
+    std::memcpy(ip + 2, &total, 2);
+    ip[8] = 64; ip[9] = 1;
+    const uint8_t src[4] = { 10, 0, 2, 15 }, dst[4] = { 10, 0, 2, 2 };
+    std::memcpy(ip + 12, src, 4);
+    std::memcpy(ip + 16, dst, 4);
+    const uint16_t ick = internetChecksum(ip, 20);
+    std::memcpy(ip + 10, &ick, 2);
+    uint8_t* ic = e.data() + 34;
+    ic[0] = 8; ic[4] = 0x12; ic[5] = 0x34; ic[7] = 1;     // echo, id, seq
+    const uint16_t cck = internetChecksum(ic, 8);
+    std::memcpy(ic + 2, &cck, 2);
+    int replyLen = 0;
+    for (int i = 0; i < 200 && !replyLen; ++i) {
+        if (i % 25 == 0) backend->transmit(e.data(), static_cast<int>(e.size()));
+        backend->poll();
+        uint8_t r[2048];
+        int n;
+        while ((n = backend->receive(r, sizeof(r))) > 0)
+            if (r[12] == 0x08 && r[13] == 0x00 && r[23] == 1 && r[34] == 0) replyLen = n;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    std::printf("  ICMP echo reply length %d\n", replyLen);
+    if (replyLen == 0) {
+        // Some hosts refuse unprivileged ICMP; slirp then has nothing to say.
+        std::puts("  (no echo reply on this host — padding not exercised)");
+        return;
+    }
+    assert(replyLen >= 60 && "slirp's short frame reached the NIC as a runt");
+}
+
 }  // namespace
 
 // 5 — the virtual DNS server: libslirp re-dials 10.0.2.3 on the host's
@@ -336,6 +399,7 @@ int main()
     testGuestCannotReachHostLoopback();
     testOptInStillReachesLoopback();
     testDhcpStillWorks();
+    testShortFramesArePadded();
     std::puts("slirp_loopback_fence: OK");
     return 0;
 }

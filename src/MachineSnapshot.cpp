@@ -88,10 +88,13 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
     // Cards with nothing rewindable append nothing → no section.
     if (includeSlots) {
         SlotBus& bus = mem.slotBus();
+        // Reused for the reason mexScratch is: a writable Disk II's blob is
+        // hundreds of KB, allocated and freed 60 times a second in the lock.
+        static thread_local std::vector<uint8_t> blob;
         for (int slot = 1; slot <= 7; ++slot) {
             SlotPeripheral* card = bus.peripheral(slot);
             if (!card) continue;
-            std::vector<uint8_t> blob;
+            blob.clear();
             card->appendSnapshotState(blob);
             if (blob.empty()) continue;
             const char name[6] = { 'S', 'L', 'O', 'T',

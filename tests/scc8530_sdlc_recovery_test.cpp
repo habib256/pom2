@@ -38,6 +38,7 @@
 
 #include "Scc8530Device.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -117,18 +118,24 @@ void testWholeFrameReachesTheDriver()
     scc.receiveFrame(A, llap, sizeof llap);
     assert(scc.rxFifoCount(A) == 3 && "the FIFO takes three and holds the rest");
 
+    // The driver checks RR1 BEFORE each read — it describes the character
+    // at the FIFO exit (Zilog manual p. 47) — and the frame ends with its two
+    // FCS bytes, End Of Frame on the second (pp. 123-124).
     std::vector<uint8_t> got;
     bool eofOnLast = false;
     for (int guard = 0; guard < 16 && scc.rxFifoCount(A) > 0; ++guard) {
-        got.push_back(scc.dataRead(A));
-        if (scc.peekRr(A, 1) & 0x80) {          // End Of Frame: FIFO locked
-            eofOnLast = (got.size() == sizeof llap);
+        const bool eof = (scc.peekRr(A, 1) & 0x80) != 0;
+        if (eof)
             assert((scc.peekRr(A, 1) & 0x0E) == 0x06 &&
                    "residue: no residue, 8-bit character");
-            scc.controlWrite(A, 0x30);          // WR0 Error Reset unlocks it
+        got.push_back(scc.dataRead(A));
+        if (eof) {
+            eofOnLast = (got.size() == sizeof llap + 2);
+            scc.controlWrite(A, 0x30);          // WR0 Error Reset
         }
     }
-    assert(got == std::vector<uint8_t>(llap, llap + sizeof llap) &&
+    assert(got.size() == sizeof llap + 2 &&
+           std::equal(llap, llap + sizeof llap, got.begin()) &&
            "the frame lost bytes on the way to the driver");
     assert(eofOnLast && "End Of Frame never reached RR1 D7");
     assert(scc.rxFifoCount(A) == 0);
@@ -147,7 +154,9 @@ void testWholeFrameReachesTheDriver()
         back.push_back(scc.dataRead(A));
         if (scc.peekRr(A, 1) & 0x80) scc.controlWrite(A, 0x30);
     }
-    assert(back == big && "a 35-byte SDLC frame did not survive the 3-byte FIFO");
+    assert(back.size() == big.size() + 2 &&
+           std::equal(big.begin(), big.end(), back.begin()) &&
+           "a 35-byte SDLC frame did not survive the 3-byte FIFO");
     std::printf("  ok: a whole SDLC frame reaches the driver, End Of Frame included\n");
 }
 
@@ -160,13 +169,14 @@ void testBadFcsMarksTheClosingByteOnly()
     const uint8_t frame[] = { 0x11, 0x22, 0x33, 0x44 };
     scc.receiveFrame(A, frame, sizeof frame, /*crcError=*/true);
 
-    for (std::size_t i = 0; i < sizeof frame; ++i) {
+    // The closing byte is the SECOND FCS byte. RR1 shows the exit
+    // character's status, so the verdict appears once that byte is next —
+    // after the first FCS byte has been read — and not before.
+    for (std::size_t i = 0; i < sizeof frame + 2; ++i) {
         const uint8_t b = scc.dataRead(A);
-        assert(b == frame[i]);
-        const bool last = (i + 1 == sizeof frame);
-        assert(((scc.peekRr(A, 1) & 0x40) != 0) == last &&
+        if (i < sizeof frame) assert(b == frame[i]);
+        assert(((scc.peekRr(A, 1) & 0x40) != 0) == (i >= sizeof frame) &&
                "the FCS verdict belongs to the closing byte");
-        if (scc.peekRr(A, 1) & 0x80) scc.controlWrite(A, 0x30);
     }
     std::printf("  ok: a bad FCS lands on the frame's closing byte\n");
 }
@@ -194,7 +204,8 @@ void testPendingTailRoundTrips()
         back.push_back(other.dataRead(A));
         if (other.peekRr(A, 1) & 0x80) other.controlWrite(A, 0x30);
     }
-    assert(back == std::vector<uint8_t>(frame, frame + sizeof frame) &&
+    assert(back.size() == sizeof frame + 2 &&
+           std::equal(frame, frame + sizeof frame, back.begin()) &&
            "the frame still arriving was lost across the snapshot");
     // A blob truncated inside the new tail must be refused whole.
     assert(!other.restoreSnapshot(blob.data(), blob.size() - 1));

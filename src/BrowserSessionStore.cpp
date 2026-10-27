@@ -38,6 +38,12 @@ void BrowserSessionStore::initialize(EmulationController& ctrl)
 }
 bool BrowserSessionStore::setEnabled(EmulationController& ctrl, bool enabled)
 {
+    // A click that beats the startup restore (main.cpp waits out the boot
+    // countdown first) used to mark the store initialised WITHOUT reading the
+    // marker: the stored machine was never restored, and with active_ still
+    // -1 the next checkpoint overwrote the COMMITTED generation, breaking the
+    // write-the-inactive-file-first rule. Read it first.
+    if (!initialized_) initialize(ctrl);
     initialized_ = true;
     if (!enabled) {
         std::error_code ec;

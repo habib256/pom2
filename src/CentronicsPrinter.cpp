@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "CentronicsPrinter.h"
+#include "Block512Backing.h"   // pom2::noteMediaWrite
 
 #include <algorithm>
 
@@ -47,6 +48,7 @@ void CentronicsPrinter::print(uint8_t byte)
         ++spoolBase_;
     }
     spool_.push_back(byte);
+    pom2::noteMediaWrite();   // printed output is irreversible: bump at the leaf (see PrinterCoordinator::notePrinted)
 }
 
 std::size_t CentronicsPrinter::drainSpoolFrom(std::size_t from,

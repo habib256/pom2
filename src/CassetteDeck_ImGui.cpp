@@ -798,15 +798,19 @@ std::string CassetteDeck_ImGui::onPlay(EmulationController* emu,
 std::string CassetteDeck_ImGui::onRewind(EmulationController* emu,
                                          const DeckSnapshot& snap)
 {
+    // Audio-stream tapes scrub: the press steps back 5 s (FF's +5 s mirror)
+    // and holding REW keeps winding back. Jumping to 0 on the press left the
+    // hold scrubbing from the start of the tape, i.e. nowhere.
     if (emu) {
         emu->pauseTape(false);
-        emu->rewindTape();
+        if (snap.audioStreamMode && snap.loadedTape) emu->seekTapeRelative(-5.0);
+        else                                         emu->rewindTape();
     }
     transport_ = Transport::Rewinding;
     paused_    = false;
     rewEndsAt_ = wallClock_ + kWindDurationSeconds;
     if (!snap.audioStreamMode) return "Cassette: REW - tape rewinding...";
-    return "Cassette: REW - tape rewound to start";
+    return "Cassette: REW - winding back (hold to keep going)";
 }
 
 std::string CassetteDeck_ImGui::onFForward(EmulationController* emu,

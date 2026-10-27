@@ -32,11 +32,14 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "RewindBuffer.h"
+#include "SlotPeripheral.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -79,6 +82,18 @@ void scramble(M6502& cpu, Memory& mem) { setState(cpu, mem, 0x5A, 0xDEADBEEF); }
 // tag/cycle for the k-th captured frame.
 uint8_t  tagOf(int k)   { return static_cast<uint8_t>(1 + k); }
 uint64_t cycOf(int k)   { return static_cast<uint64_t>(1 + k) * 1000; }
+
+// A card whose snapshot changes LENGTH frame to frame, as the Disk II's does
+// while a write burst is in flight (v4 appends `wp` × 8 bytes).
+struct GrowingCard : SlotPeripheral {
+    std::vector<uint8_t> state;
+    std::vector<uint8_t> loaded;
+    std::string_view name() const override { return "growing"; }
+    void appendSnapshotState(std::vector<uint8_t>& out) const override
+    { out.insert(out.end(), state.begin(), state.end()); }
+    void loadSnapshotState(const uint8_t* d, std::size_t n) override
+    { loaded.assign(d, d + n); }
+};
 
 }  // namespace
 
@@ -399,6 +414,37 @@ int main()
         assert(rb.scratchCapacity() >= rb.infoAt(0).bytes &&
                "the capture scratch was handed away — the next capture "
                "re-grows the whole blob under the lock");
+    }
+
+    // ── (8) A blob that changes length is still a DELTA ──────────────────
+    // It used to force a full keyframe on every size change: through a DOS
+    // INIT or a long SAVE nearly every frame, 10.5 MB each with RamWorks.
+    {
+        Memory m2;
+        M6502  c2(&m2);
+        auto owned = std::make_unique<GrowingCard>();
+        GrowingCard* card = owned.get();
+        m2.slotBus().plug(6, std::move(owned));
+        pom2::RewindBuffer rb(1000);
+        rb.setEnabled(true);
+        rb.setKeyframeInterval(1000);
+        const size_t lens[] = { 16, 40, 8, 8, 64, 0, 24 };   // grow, shrink, equal, empty
+        for (size_t k = 0; k < 7; ++k) {
+            card->state.assign(lens[k], static_cast<uint8_t>(0x30 + k));
+            for (size_t i = 0; i < card->state.size(); ++i) card->state[i] ^= uint8_t(i);
+            setState(c2, m2, tagOf(int(k)), cycOf(int(k)));
+            rb.capture(c2, m2);
+        }
+        assert(rb.keyframeCount() == 1 && "a length change forced a keyframe");
+        for (size_t k = 0; k < 7; ++k) {
+            card->loaded.assign(1, 0xEE);
+            assert(rb.restore(k, c2, m2));
+            checkState(c2, m2, tagOf(int(k)), cycOf(int(k)));
+            std::vector<uint8_t> want(lens[k], static_cast<uint8_t>(0x30 + k));
+            for (size_t i = 0; i < want.size(); ++i) want[i] ^= uint8_t(i);
+            // An empty blob writes no SLOT section, so nothing is loaded.
+            if (lens[k]) assert(card->loaded == want);
+        }
     }
 
     std::printf("Rewind delta codec: OK (keyframe/delta exact + evict + truncate + "

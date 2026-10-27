@@ -112,7 +112,9 @@ void testThroughTheSlotBus()
     live->setPlayer(2, p);
     assert(mem.memRead(0xC0C2) == 0x68);     // RIGHT | BUTTON2 | unused
     assert(mem.memRead(0xC0C0) == 0x20);
-    assert(mem.memRead(0xC0CF) == 0xFF);
+    // $C0n4-$C0nF are undriven: the floating bus (AppleWin FourPlay.cpp, by
+    // the card's designer), not MAME's $FF.
+    assert(mem.memRead(0xC0CF) == mem.peekFloatingBus());
 
     // A reset leaves the sticks alone: they are host input, not emulated
     // state, so nothing about the machine restarting moves somebody's thumb.

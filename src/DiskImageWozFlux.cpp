@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 void DiskImage::writeWozFlux(int qt, int64_t start, int64_t end, int count,
                              const int64_t* transitions, int64_t revolutionStart)
@@ -396,4 +397,28 @@ void DiskImage::refitMacBinaryEnvelope(std::vector<uint8_t>& header,
     const std::size_t drop = std::min(oldPad, trailer.size());
     trailer.erase(trailer.begin(), trailer.begin() + static_cast<std::ptrdiff_t>(drop));
     trailer.insert(trailer.begin(), newPad, 0x00);
+}
+
+// A .nib holds nibbles, not cells, so where the self-sync bytes were has to
+// be inferred. MAME's rule (ap2_dsk.cpp a2_nib_format,
+// generate_levels_from_nibbles): only "FF ... FF D5" is a sync pattern —
+// every $FF of a run that the next bit-7 byte ends with $D5 is 10 cells, any
+// other $FF stays 8, and a byte with bit 7 clear (padding MAME drops; kept
+// here at 8 cells) neither ends nor joins a run. It used to give every .nib
+// byte 8 cells, so a loader counting sync slip saw none (STORAGE-010).
+void DiskImage::computeNibSyncWidths(const uint8_t* buf, uint8_t* widths)
+{
+    int anchor = -1;                    // a bit-7, non-$FF byte to start from
+    for (int i = 0; i < kNibblesPerTrack; ++i)
+        if (buf[i] != 0xFF && (buf[i] & 0x80)) { anchor = i; break; }
+    if (anchor < 0) return;             // no address mark anywhere: no syncs
+    std::vector<int> run;
+    for (int k = 1; k <= kNibblesPerTrack; ++k) {
+        const int idx = (anchor + k) % kNibblesPerTrack;
+        const uint8_t b = buf[idx];
+        if (b == 0xFF) { run.push_back(idx); continue; }
+        if (!(b & 0x80)) continue;      // dropped by MAME: transparent here
+        if (b == 0xD5) for (int r : run) widths[r] = 10;
+        run.clear();
+    }
 }

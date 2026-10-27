@@ -874,6 +874,7 @@ private:
     /// CONTROL|ALT on the right Alt and must not fire POM2's Ctrl+Alt chords
     /// nor press Solid-Apple.
     bool        rightAltDown_ = false;
+    bool rightAltLevel3_ = false;   // Right Alt proven to be Linux AltGr (KeyChord.h)
     /// INPUT-003: `paddle_mouse` (default off) and `paddle_mouse_range`
     /// (percent of the screen that sweeps 0..255, default 100). PaddleMouse.h.
     bool   paddleMouseEnabled() const;

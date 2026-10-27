@@ -143,6 +143,48 @@ int main()
         expect(dac.queuedWrites() == 0, "reset empties the queue");
     }
 
+    // ── 5. A clock change does not re-time queued writes ─────────────────
+    // A Zip at 4x drops to stock for 52 ms after a slot access, then speeds
+    // back up. A pulse written while accelerated is 400 CPU cycles long but
+    // only 100 cycles of real (stock) time: it must play as 10 samples at
+    // 10 stock cycles a sample, whatever the clock is when the audio thread
+    // reaches it. Stamping raw CPU cycles played it as 40.
+    {
+        constexpr int kSlot = 4;
+        constexpr double kStock = 441000.0;   // 10 cycles per output sample
+        Memory mem;
+        M6502  cpu(&mem);
+        cpu.hardReset();
+        auto card = std::make_unique<SamCard>(kSlot);
+        SamCard* sam = card.get();
+        mem.slotBus().plug(kSlot, std::move(card));
+        sam->dac().setDcBlock(false);
+        sam->dac().setSampleRate(44100);
+        sam->setStandardClock(kStock);
+        sam->setCpuClock(kStock);
+        mem.memWrite(0x0300, 0x4C); mem.memWrite(0x0301, 0x00); mem.memWrite(0x0302, 0x03);
+        cpu.setProgramCounter(0x0300);   // JMP * — only advances the clock
+        cpu.run(300);                    // some stock time first
+
+        sam->setCpuClock(4.0 * kStock);  // accelerator engages
+        const uint64_t start = mem.getCycleCounter();
+        sam->deviceSelectWrite(0, 0xFF);
+        while (mem.getCycleCounter() < start + 400) cpu.run(3);
+        const uint64_t span = mem.getCycleCounter() - start;
+        sam->deviceSelectWrite(0, 0x80);
+        sam->setCpuClock(kStock);        // ...and drops before playback
+
+        std::vector<float> out(8000);
+        sam->dac().fillAudioBuffer(out.data(), static_cast<int>(out.size()));
+        int high = 0;
+        for (float v : out) if (v > Dac8Audio::levelFor(0xC0)) ++high;
+        const int expected = static_cast<int>(span / 4 / 10);
+        std::printf("accelerated pulse: %llu CPU cycles -> %d samples (expect ~%d)\n",
+                    static_cast<unsigned long long>(span), high, expected);
+        expect(high >= expected - 1 && high <= expected + 1,
+               "an accelerated write plays at the speed it was made");
+    }
+
     std::printf("sam_card: %d failure(s)\n", failures);
     return failures ? 1 : 0;
 }

@@ -43,7 +43,7 @@ public:
     virtual bool forcesIntCxRom() const = 0;
 
     // Ctrl-Reset / power-on: drop ROMBANK back to bank 0 (cold-start).
-    virtual void onResetSoftSwitches() = 0;
+    virtual void onResetSoftSwitches(bool warm) = 0;
 
     // $C02x ROMBANK toggle. Returns true (consumed) on //c-class so the
     // caller skips the II/II+ cassette-output fallback.

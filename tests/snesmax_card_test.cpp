@@ -42,8 +42,12 @@ int main()
     for (int bit = 0; bit < 16; ++bit) {
         const uint8_t expected = static_cast<uint8_t>(0x3F |
             ((p0 & (1u << bit)) ? 0 : 0x80) | ((p1 & (1u << bit)) ? 0 : 0x40));
-        for (int mirror = 0; mirror < 16; ++mirror)
-            assert(card.deviceSelectRead(mirror) == expected); // reads never clock
+        // Only $C0n0 is driven, and only its bits 7-6; the rest is the
+        // floating bus — $FF on a standalone card (AppleWin SNESMAX.cpp, by
+        // the card's designer). Reads never clock.
+        assert(card.deviceSelectRead(0) == expected);
+        for (int mirror = 1; mirror < 16; ++mirror)
+            assert(card.deviceSelectRead(mirror) == 0xFF);
         // A changed live pad cannot change the latched serial word.
         card.setButtons(0, 0); card.setButtons(1, 0);
         const auto saved = capture(card);
@@ -101,5 +105,6 @@ int main()
     bus.plug(4, std::move(device));
     bus.deviceSelectWrite(0xC0C0, 0);
     bus.advanceCycles(7);
-    assert(bus.deviceSelectRead(0xC0CF) == 0x7F);
+    assert(bus.deviceSelectRead(0xC0C0) == 0x7F);
+    assert(bus.deviceSelectRead(0xC0CF) == 0xFF);   // undriven: open bus here
 }

@@ -170,8 +170,10 @@ int main()
                 expect(mem.memRead(0xC07E) == bus, "//e: $C07E answered RDIOUDIS");
                 mem.memWrite(0xC07E, 0);      // write is //c-only too
                 expect(mem.memRead(0xC07E) == bus, "//e: $C07E answered RDIOUDIS");
+                // No deck connected: the comparator reads HIGH (MAME
+                // `input() > 0.0 ? 0 : 0x80` with no input; AppleWin Tape.cpp).
                 expect(mem.memRead(0xC060) ==
-                           static_cast<uint8_t>(bus & 0x7F),
+                           static_cast<uint8_t>(0x80 | (bus & 0x7F)),
                        "//e: $C060 lost the floating bus");
                 ++tested;
             }

@@ -149,6 +149,7 @@ uint16_t Z80::memEA(int mode)
     if (mode == MODE_HL)
         return hl();
     int8_t d = int8_t(fetch8());
+    busT_ += 5;      // the index add, before the access
     uint16_t base = (mode == MODE_IX) ? st.ix : st.iy;
     uint16_t ea = uint16_t(base + d);
     st.wz = ea;      // hardware latches the effective address into WZ
@@ -386,6 +387,7 @@ void Z80::serviceIrq()
 int Z80::step()
 {
     cyc = 0;
+    busT_ = 0;
     int mode = MODE_HL;
     if (st.pendingPrefix) {
         // Resuming a DD/FD chain: no interrupt sampling between a prefix
@@ -410,7 +412,7 @@ int Z80::step()
         }
     }
 
-    uint8_t op = fetch8();
+    uint8_t op = fetchOp();
     bumpR();
     if (op == 0xDD || op == 0xFD) {
         // Each prefix retires as its own 4-T M1 cycle so a run of
@@ -626,7 +628,7 @@ void Z80::execMain(uint8_t op, int mode)
         case 4:                        // INC r
             if (y == 6) {
                 uint16_t ea = memEA(mode);
-                wr(ea, inc8(rd(ea)));
+                { const uint8_t v = inc8(rd(ea)); ++busT_; wr(ea, v); }   // read M-cycle is 4 T
                 cyc += 11;
             } else {
                 writeReg(y, mode, inc8(readReg(y, mode)));
@@ -637,7 +639,7 @@ void Z80::execMain(uint8_t op, int mode)
         case 5:                        // DEC r
             if (y == 6) {
                 uint16_t ea = memEA(mode);
-                wr(ea, dec8(rd(ea)));
+                { const uint8_t v = dec8(rd(ea)); ++busT_; wr(ea, v); }   // read M-cycle is 4 T
                 cyc += 11;
             } else {
                 writeReg(y, mode, dec8(readReg(y, mode)));
@@ -659,6 +661,7 @@ void Z80::execMain(uint8_t op, int mode)
                     uint16_t ea = uint16_t(base + d);
                     st.wz = ea;
                     uint8_t n = fetch8();
+                    busT_ += 2;            // n's M-cycle is 5 T (index add)
                     wr(ea, n);
                     cyc += 15;
                 }
@@ -741,6 +744,7 @@ void Z80::execMain(uint8_t op, int mode)
 
     switch (z) {
     case 0:                            // RET cc
+        ++busT_;                       // its M1 is 5 T (Zilog UM0080), before the pops
         if (ccTest(y)) {
             st.pc = pop16();
             st.wz = st.pc;
@@ -825,8 +829,13 @@ void Z80::execMain(uint8_t op, int mode)
             break;
         }
         case 4: {                      // EX (SP),HL/IX/IY
+            // Zilog UM0080: M1 4, MR (SP) 3, MR (SP+1) 4, MW (SP+1) 3,
+            // MW (SP) 5 — the high byte is written FIRST.
             uint16_t t = rd16(st.sp);
-            wr16(st.sp, idxPair(mode));
+            ++busT_;
+            const uint16_t v = idxPair(mode);
+            wr(uint16_t(st.sp + 1), uint8_t(v >> 8));
+            wr(st.sp, uint8_t(v));
             setIdxPair(mode, t);
             st.wz = t;
             cyc += 19;
@@ -902,7 +911,7 @@ void Z80::execMain(uint8_t op, int mode)
 
 void Z80::execCB()
 {
-    uint8_t op = fetch8();
+    uint8_t op = fetchOp();
     bumpR();
     const int x = op >> 6;
     const int y = (op >> 3) & 7;
@@ -911,6 +920,7 @@ void Z80::execCB()
     if (z == 6) {
         uint16_t ea = hl();
         uint8_t v = rd(ea);
+        if (x != 1) ++busT_;           // the read M-cycle is 4 T before a write
         switch (x) {
         case 0: wr(ea, rotShift(y, v)); cyc += 15; break;
         case 1: bitMem(y, v, uint8_t(st.wz >> 8)); cyc += 12; break;
@@ -938,6 +948,7 @@ void Z80::execIndexedCB(int mode)
     uint16_t ea = uint16_t(base + d);
     st.wz = ea;
     uint8_t op = fetch8();
+    busT_ += 2;      // the op byte's M-cycle is 5 T (3 + 2 internal)
     const int x = op >> 6;
     const int y = (op >> 3) & 7;
     const int z = op & 7;
@@ -955,6 +966,7 @@ void Z80::execIndexedCB(int mode)
     case 2: res = uint8_t(v & ~(1 << y)); break;
     case 3: res = uint8_t(v | (1 << y));  break;
     }
+    ++busT_;                           // the read M-cycle is 4 T before the write
     wr(ea, res);
     if (z != 6)                        // undocumented: result also lands in r
         writeReg(z, MODE_HL, res);
@@ -1006,7 +1018,7 @@ void Z80::blockIoInterruptedFlags(uint8_t ioByte)
 
 void Z80::execED()
 {
-    uint8_t op = fetch8();
+    uint8_t op = fetchOp();
     bumpR();
     const int x = op >> 6;
     const int y = (op >> 3) & 7;
@@ -1117,6 +1129,7 @@ void Z80::execED()
             }
             case 4: {                  // RRD
                 uint8_t v = rd(hl());
+                busT_ += 4;            // 4 internal T between read and write
                 wr(hl(), uint8_t((v >> 4) | (st.a << 4)));
                 st.a = uint8_t((st.a & 0xF0) | (v & 0x0F));
                 st.f = uint8_t((st.f & F::C) | szpTable[st.a]);
@@ -1126,6 +1139,7 @@ void Z80::execED()
             }
             case 5: {                  // RLD
                 uint8_t v = rd(hl());
+                busT_ += 4;            // 4 internal T between read and write
                 wr(hl(), uint8_t((v << 4) | (st.a & 0x0F)));
                 st.a = uint8_t((st.a & 0xF0) | (v >> 4));
                 st.f = uint8_t((st.f & F::C) | szpTable[st.a]);

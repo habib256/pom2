@@ -66,5 +66,37 @@ int main() {
     std::vector<uint8_t> before; restored.appendSnapshot(before);
     assert(!restored.loadSnapshot(saved.data(), saved.size()));
     after.clear(); restored.appendSnapshot(after); assert(before == after);
+    // A late refill: SPEN rises on the byte that lifts Buffer Low, and MAME
+    // (tms5220.cpp:688-712) zeroes the frame it will interpolate from, as
+    // SPEAK EXTERNAL does. Stale indices from a phrase that ran dry used to
+    // survive into the resumed one. Offsets are appendSnapshot's.
+    {
+        pom2::Tms5220 late; late.write(0x60);
+        for (int i = 0; i < 8; ++i) late.write(bytes[i]);   // BL still set
+        std::vector<uint8_t> st; late.appendSnapshot(st);
+        st[29] = st[30] = 0;                  // OLDE, OLDP
+        st[33] = 5; st[34] = 3; st[35] = 9;   // energy, pitch, k0 indices
+        st[76] = st[77] = 0;                  // uv_zpar, zpar
+        assert(late.loadSnapshot(st.data(), st.size()));
+        late.write(bytes[8]);                 // ninth byte: SPEN edge
+        std::vector<uint8_t> got; late.appendSnapshot(got);
+        assert(got[21] == 1);                                  // SPEN
+        assert(got[29] == 1 && got[30] == 1);
+        assert(got[33] == 0 && got[34] == 0 && got[35] == 0 && got[39] == 15 && got[42] == 7);
+        assert(got[76] == 1 && got[77] == 1);
+    }
+    // Read Byte ($10) while talking is held until talk status falls, not run
+    // at once: the status stays readable mid-utterance (MAME :1395-1415).
+    {
+        pom2::Tms5220 rb; rb.write(0x60);
+        for (int i = 0; i < 9; ++i) rb.write(bytes[i]);
+        assert(rb.status() & 0x80);           // talking
+        rb.write(0x10);                       // speak-external: this is DATA
+        pom2::Tms5220 cmd;                    // command mode instead:
+        cmd.write(0x50);                      // SPEAK from the (absent) VSM
+        assert(cmd.status() & 0x80);
+        cmd.write(0x10);
+        assert(cmd.status() != 0xFF && (cmd.status() & 0x80) && "Read Byte ran mid-speech");
+    }
     std::cout << "TMS5220C: FIFO, voiced synthesis, stop/underflow and exact continuation OK\n";
 }

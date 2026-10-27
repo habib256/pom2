@@ -231,7 +231,8 @@ void MouseCard::advanceCycles(int cycles)
     // MCU cycles here; dropping the overshoot instead ran the 68705 at
     // 1.26-1.50× its 2043600 Hz (MAME mouse.cpp:148
     // `M68705P3(config, m_mcu, 2043600);`).
-    mcuCycleAccum += cycles * MCU_CLOCK_NUMERATOR;
+    const int ticks = static_cast<int>(busClock_.busTicks(static_cast<uint64_t>(cycles)));
+    mcuCycleAccum += ticks * MCU_CLOCK_NUMERATOR;
     const int mcuCycles = mcuCycleAccum / MCU_CLOCK_DENOMINATOR;
     if (mcuCycles > 0) {
         const int ran = mcu.run(mcuCycles);

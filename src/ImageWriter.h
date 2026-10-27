@@ -303,6 +303,11 @@ public:
     };
 
     static constexpr int    kDefaultDpi = 144;
+    /// The head's power-on position, position 0 / column 000: "as far left
+    /// as the print head can travel" (ImageWriter II Tech. Ref. p. 59). The
+    /// manual gives no distance from the paper edge; 0.25" is the reference
+    /// emulator's and every GS/OS driver's assumption. Margins count from it.
+    static constexpr double kHomeX = 0.25;
     static constexpr int    kMinDpi     = 72;
     static constexpr int    kMaxDpi     = 300;
     /// Completed sheets kept in RAM. A Letter page at 144 dpi is ~1.9 MB
@@ -657,6 +662,18 @@ private:
     uint8_t  params_[20]{};
 
     uint16_t style_ = 0;
+    // ESC/P double width has two sources: ESC W / ESC ! bit 5 (persistent)
+    // and SO / ESC SO (one line, cancelled by CR, LF, FF or DC4 — ESC/P
+    // reference). They shared kStyleDoubleWidth alone, so `SO "TITLE" CR LF`
+    // printed the whole document expanded and DC4 cancelled an ESC W 1.
+    bool epsonWide_     = false;
+    bool epsonLineWide_ = false;
+    void endEpsonLineWide()   // CR / LF / FF / DC4; ESC W 1 is untouched
+    {
+        if (!epsonLineWide_) return;
+        epsonLineWide_ = false;
+        if (!epsonWide_) { style_ &= static_cast<uint16_t>(~kStyleDoubleWidth); updateMetrics(); }
+    }
     double   cpi_ = 12.0, actcpi_ = 12.0;
     uint8_t  verticalDot_ = 0;
 
@@ -830,6 +847,19 @@ private:
     uint8_t  epsonParams_[4]{};
     uint8_t  epsonCount_ = 0;
     uint8_t  epsonNeed_  = 0;
+    // ESC/P lists and bodies (ImageWriter_EscP.cpp, FX vol. 2 App. B):
+    // ESC D / ESC B / ESC b collect bytes until NUL or a value not above the
+    // previous one; ESC ^ and ESC & are followed by data the head swallows.
+    uint8_t  epsonListCmd_     = 0;       // 'D', 'B', 'b' while collecting
+    bool     epsonListChannel_ = false;   // ESC b: the channel byte comes first
+    int      epsonListPrev_    = -1;
+    uint32_t epsonSkip_        = 0;       // body bytes left to swallow
+    std::vector<double> epsonHTabs_;      // inches from the left margin; empty = every 8 Pica
+    std::vector<double> epsonVTabs_;      // inches from top of form
+    bool     epsonVTabsSet_    = false;   // false = power-on stops, every 2 lines at 1/6"
+    void     epsonListByte(uint8_t ch);
+    void     epsonTab();
+    void     epsonVerticalTab();
 
     /// ASCII → CP437 glyph index. Identity except for the ten positions
     /// the international soft-switches (A-1..A-3) remap.
@@ -875,6 +905,7 @@ private:
     /// Column tab stops, inches from the left edge. The 630 sets them at the
     /// CURRENT position (ESC 1) rather than by number.
     std::vector<double> diabloTabs_;
+    std::vector<double> diabloVTabs_;   // ESC - stops, inches from the top of the page
 
     // ── Epson ESC/P (printer plan phase C3) ──────────────────────────────
     // A second parser over the SAME mechanism. Everything below the command

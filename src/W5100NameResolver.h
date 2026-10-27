@@ -81,6 +81,12 @@ public:
     /// Bound on concurrent resolver threads, and on the cache.
     static constexpr int         kMaxInFlight = 8;
     static constexpr std::size_t kMaxCache    = 512;
+    /// How long a FAILED lookup is remembered. Negative caching stops a guest
+    /// retrying a bad name from starting a resolver thread per attempt, but
+    /// kept for the whole session it also pinned a name that failed while
+    /// the host network was still coming up: unresolvable until a cold boot.
+    static constexpr std::chrono::seconds kFailureTtl{ 30 };
+    void setFailureTtl(std::chrono::steady_clock::duration ttl) { failureTtl_ = ttl; }
 
     /// New lookups per second, as a token bucket.
     ///
@@ -111,6 +117,12 @@ private:
         uint32_t    address = 0;
     };
 
+    struct CacheEntry {
+        uint32_t                              address = 0;
+        std::chrono::steady_clock::time_point stored;
+    };
+    void store(const std::string& name, uint32_t address);
+
     /// Written by detached resolver threads, drained by poll().
     struct Mailbox {
         std::mutex           mutex;
@@ -119,7 +131,8 @@ private:
     };
 
     LookupFn                        lookup_;
-    std::map<std::string, uint32_t> cache_;
+    std::map<std::string, CacheEntry> cache_;
+    std::chrono::steady_clock::duration failureTtl_ = kFailureTtl;
     std::shared_ptr<Mailbox>        mailbox_ = std::make_shared<Mailbox>();
 
     /// Token bucket. CPU thread only, like the cache — resolve() is called

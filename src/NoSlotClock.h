@@ -162,6 +162,13 @@ private:
     uint8_t  bitsMatched_  = 0;        // 0..63 (key-feed progress)
     uint8_t  bitsRead_     = 0;        // 0..63 (clock-out progress)
     uint64_t clockShift_   = 0;        // shifted out LSB-first to D0
+    // Setting the clock (DS1216 data sheet): after recognition each A2=0
+    // access writes A0 into the register bit being transferred; the 64th
+    // commits it. Bits not written keep the time the transfer started from.
+    uint64_t writeShift_   = 0;
+    bool     written_      = false;
+    int64_t  offsetSec_    = 0;        // guest-set time minus host time
+    void     endTransfer();
 };
 
 }  // namespace pom2

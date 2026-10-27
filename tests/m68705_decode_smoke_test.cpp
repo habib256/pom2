@@ -334,6 +334,18 @@ void test_port_latch_and_callback()
     // input (DDR=0) so they float high. Pin observation: $AA & $0F |
     // $FF & $F0 = $0A | $F0 = $FA.
     assert(cpu.getPortPins(0) == 0xFA);
+
+    // RESET clears the DDR and nothing else: the latch keeps $AA (MC68705P3
+    // data sheet; MAME device_reset only calls port_ddr_w<N>(0)), the pins
+    // float high, and the host hears about it — the Mouse Card's slot IRQ
+    // on PB6 must be released by a reset, not left at the old pin level.
+    callbacks = 0;
+    lastPort = -1;
+    cpu.reset();
+    assert(cpu.getPortDdr(0) == 0x00);
+    assert(cpu.getPortLatch(0) == 0xAA);
+    assert(cpu.getPortPins(0) == 0xFF);
+    assert(callbacks == 1 && lastPort == 0);   // only port A's DDR changed
 }
 
 void test_port_input_read()
@@ -388,37 +400,25 @@ void test_clr_is_write_only()
 
 void test_mul()
 {
-    // MUL ($42): X:A = X × A, clears H and C. Set H (via a half-carrying
-    // ADD) and C (via SEC) first so we can prove MUL clears both.
+    // $42 is MUL on the HC05 and the CMOS 146805, but the HMOS 68705P3 the
+    // mouse card carries has no MUL, STOP or WAIT (MAME s_hmos_s_ops: all
+    // three illegal). An illegal opcode is a one-byte NOP of 4 cycles there.
     RomImage rom;
-    // $0080: LDA #$08   A6 08
-    // $0082: ADD #$08   AB 08    ; A=$10, H set (carry out of bit 3)
-    // $0084: LDA #$20   A6 20    ; A=$20 (LDA leaves H untouched)
-    // $0086: LDX #$10   AE 10
-    // $0088: SEC        99       ; C set
-    // $0089: MUL        42       ; $10 × $20 = $0200 → X=$02, A=$00
-    // $008A: BRA $008A  20 FE
-    rom.emit(0x80, { 0xA6, 0x08, 0xAB, 0x08, 0xA6, 0x20,
-                     0xAE, 0x10, 0x99, 0x42, 0x20, 0xFE });
+    // $0080: LDA #$20  A6 20 ; LDX #$10  AE 10 ; SEC  99 ; $42 ; $8E ; $8F ; BRA *
+    rom.emit(0x80, { 0xA6, 0x20, 0xAE, 0x10, 0x99, 0x42, 0x8E, 0x8F, 0x20, 0xFE });
     rom.setReset(0x0080);
 
     M68705P3 cpu;
     cpu.loadRomBytes(rom.bytes.data(), rom.bytes.size());
     cpu.reset();
-
-    cpu.step();   // LDA #$08
-    cpu.step();   // ADD #$08
-    assert(cpu.getCC() & 0x10);    // H set by the half-carry
-    cpu.step();   // LDA #$20
-    cpu.step();   // LDX #$10
-    cpu.step();   // SEC
-    assert(cpu.getCC() & 0x01);    // C set
-    cpu.step();   // MUL
-    assert(cpu.getX() == 0x02);            // high byte
-    assert(cpu.getA() == 0x00);            // low byte
-    assert((cpu.getCC() & 0x01) == 0);     // C cleared
-    assert((cpu.getCC() & 0x10) == 0);     // H cleared
-    std::printf("  ok: MUL ($42) X:A = X*A, clears H and C\n");
+    cpu.step(); cpu.step(); cpu.step();          // LDA, LDX, SEC
+    const uint8_t cc = cpu.getCC();
+    assert(cpu.step() == 4);                     // $42
+    assert(cpu.getA() == 0x20 && cpu.getX() == 0x10 && cpu.getCC() == cc);
+    assert(cpu.getPC() == 0x0086);
+    assert(cpu.step() == 4 && cpu.getPC() == 0x0087);   // $8E: no STOP
+    assert(cpu.step() == 4 && cpu.getPC() == 0x0088);   // $8F: no WAIT
+    std::printf("  ok: $42/$8E/$8F are HMOS illegal NOPs (no MUL/STOP/WAIT)\n");
 }
 
 // ── Timer: the MOR decides the prescaler, not TCR ────────────────────────

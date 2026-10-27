@@ -53,6 +53,10 @@
 #ifndef POM2_KEY_CHORD_H
 #define POM2_KEY_CHORD_H
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>   // EM_ASM_INT: hostIsWindows()
+#endif
+
 namespace pom2 {
 namespace keychord {
 
@@ -73,6 +77,14 @@ inline constexpr int kKeyRightAlt = 346;     // GLFW_KEY_RIGHT_ALT
 inline constexpr int kModShift    = 0x0001;  // GLFW_MOD_SHIFT
 inline constexpr int kModControl  = 0x0002;  // GLFW_MOD_CONTROL
 inline constexpr int kModAlt      = 0x0004;  // GLFW_MOD_ALT
+inline constexpr int kKey2        = 50;      // GLFW_KEY_2
+inline constexpr int kKey6        = 54;      // GLFW_KEY_6
+inline constexpr int kKeyMinus    = 45;      // GLFW_KEY_MINUS
+inline constexpr int kKeyLBracket = 91;      // GLFW_KEY_LEFT_BRACKET
+inline constexpr int kKeyBackslash= 92;      // GLFW_KEY_BACKSLASH
+inline constexpr int kKeyRBracket = 93;      // GLFW_KEY_RIGHT_BRACKET
+inline constexpr int kKeyFirstModifier = 340; // GLFW_KEY_LEFT_SHIFT
+inline constexpr int kKeyLastModifier  = 348; // GLFW_KEY_MENU
 
 /// True on the build that has Windows' AltGr semantics. A compile-time
 /// constant rather than an `#ifdef` inside each policy call, so a test can
@@ -81,6 +93,25 @@ inline constexpr int kModAlt      = 0x0004;  // GLFW_MOD_ALT
 inline constexpr bool kHostIsWindows = true;
 #else
 inline constexpr bool kHostIsWindows = false;
+#endif
+
+/// The host's AltGr semantics at run time. The browser build is compiled
+/// once for every host, and a browser on Windows delivers AltGr the way
+/// Windows does — a synthesised Ctrl plus the right Alt, both flags set on
+/// every key typed under it — so there the Windows rule (isAltGr) applies
+/// and the Linux one (rightAltIsLevel3) must not. Asked once.
+#ifdef __EMSCRIPTEN__
+inline bool hostIsWindows()
+{
+    static const bool windows = EM_ASM_INT({
+        const p = (navigator.userAgentData && navigator.userAgentData.platform) ||
+                  navigator.platform || navigator.userAgent || "";
+        return /win/i.test(p) ? 1 : 0;
+    }) != 0;
+    return windows;
+}
+#else
+inline constexpr bool hostIsWindows() { return kHostIsWindows; }
 #endif
 
 /// The letter the user's KEYBOARD LAYOUT prints on this key, uppercased, or
@@ -135,14 +166,15 @@ inline bool isAltGr(int mods, bool rightAltHeld, bool hostIsWindows)
 /// Is this modifier state a genuine "Ctrl held" for the Ctrl-A..Ctrl-Z
 /// injection path?
 ///
-/// Alt disqualifies it on every platform, not only Windows: every Ctrl+Alt
-/// chord POM2 owns (Ctrl+Alt+F kiosk, Ctrl+Alt+G grab) is matched earlier
-/// and returns, so nothing downstream ever wants a Ctrl-letter with Alt
-/// down — while on Windows that combination IS AltGr and must not type
-/// $01..$1A at the guest.
-inline bool isCtrlLetter(int mods)
+/// Only Windows' AltGr disqualifies it: there Ctrl+Alt IS a text-entry
+/// modifier, and AltGr+E on a QWERTZ layout typed $05 instead of "€". Any
+/// other Alt is Open-/Solid-Apple, and a //e program reading OA+Ctrl+key
+/// wants the control code: refusing every Alt typed a plain `s` for
+/// OA+Ctrl+S, the game's sound toggle pressed while holding fire (bug hunt
+/// 2026-10-27). POM2's own Ctrl+Alt chords are matched earlier and return.
+inline bool isCtrlLetter(int mods, bool rightAltHeld, bool hostIsWindows)
 {
-    return (mods & kModControl) != 0 && (mods & kModAlt) == 0;
+    return (mods & kModControl) != 0 && !isAltGr(mods, rightAltHeld, hostIsWindows);
 }
 
 /// May a Ctrl+Alt chord (kiosk toggle, mouse grab) fire for this event?
@@ -197,6 +229,9 @@ inline char appleChordChar(const char* name, int key, bool shift)
         if (key >= kKeyA && key <= kKeyZ) base = static_cast<char>('a' + (key - kKeyA));
         else if (key >= 48 && key <= 57) base = static_cast<char>(key);   // GLFW_KEY_0..9
     }
+    // Space has no layout name (glfwGetKeyName returns NULL for it), so
+    // OA+Space — fire and jump in one — latched no key at all.
+    if (!base && key == 32) return ' ';   // GLFW_KEY_SPACE
     if (!base) return 0;
     if (base >= 'A' && base <= 'Z') base = static_cast<char>(base - 'A' + 'a');
     if (base >= 'a' && base <= 'z')
@@ -207,6 +242,48 @@ inline char appleChordChar(const char* name, int key, bool shift)
     for (int i = 0; kUnshifted[i]; ++i)
         if (kUnshifted[i] == base) return kShifted[i];
     return base;
+}
+
+/// The control code a Ctrl+punctuation key makes on the //e keyboard
+/// encoder, or -1. Apple IIe Technical Reference, Table 2-3 ("Keys and ASCII
+/// codes"): Ctrl with `2 @` → $00, `6 ^` → $1E, `- _` → $1F, `[` → $1B,
+/// `\` → $1C, `]` → $1D — with or without Shift; every other key is
+/// unchanged by Ctrl. Only Ctrl-A..Z used to reach the guest. `name` /
+/// `key` as for letterFromKeyName (the layout's cap, else the US position).
+inline int ctrlPunctCode(const char* name, int key)
+{
+    if (name && name[0] && name[1] == '\0') {
+        switch (name[0]) {
+        case '2': case '@': return 0x00;
+        case '6': case '^': return 0x1E;
+        case '-': case '_': return 0x1F;
+        case '[': return 0x1B;
+        case '\\': return 0x1C;
+        case ']': return 0x1D;
+        default:  return -1;
+        }
+    }
+    if (name && name[0]) return -1;              // a cap with no such symbol
+    switch (key) {
+    case kKey2: return 0x00;      case kKey6: return 0x1E;
+    case kKeyMinus: return 0x1F;  case kKeyLBracket: return 0x1B;
+    case kKeyBackslash: return 0x1C; case kKeyRBracket: return 0x1D;
+    default: return -1;
+    }
+}
+
+/// Linux AltGr. X11 and Wayland report ISO_Level3_Shift as the RIGHT Alt
+/// key (GLFW_KEY_RIGHT_ALT) but as Mod5, not Mod1, so the keys typed while it
+/// is held carry no ALT bit — a real (Mod1) Alt always sets it, and GLFW then
+/// sends no character at all. A non-modifier key seen with Right Alt held
+/// and no ALT bit therefore means the Right Alt is AltGr: it must stop being
+/// Solid-Apple, and the composed character must reach the guest. (It used to
+/// press PB1 — fire — and type the key's base character: German AltGr+Q gave
+/// `q`, not `@`.) Windows has its own CONTROL|ALT form (isAltGr).
+inline bool rightAltIsLevel3(int key, int mods, bool rightAltHeld, bool hostIsWindows)
+{
+    return !hostIsWindows && rightAltHeld && (mods & kModAlt) == 0 &&
+           !(key >= kKeyFirstModifier && key <= kKeyLastModifier);
 }
 
 }  // namespace keychord

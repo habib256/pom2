@@ -1011,6 +1011,11 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
     auto g32 = [&]() -> uint32_t { uint32_t v = 0; for (int i = 0; i < 4; ++i) v |= static_cast<uint32_t>(data[p++]) << (8 * i); return v; };
     auto g64 = [&]() -> uint64_t { uint64_t v = 0; for (int i = 0; i < 8; ++i) v |= static_cast<uint64_t>(data[p++]) << (8 * i); return v; };
 
+    // A step still inside its cancel window belongs to the timeline being
+    // left: confirmed later, it clicked with a stamp from that abandoned
+    // future (rewind) or from another machine (session load). Not part of
+    // the blob, so a capture inside the window loses the cancel — rare.
+    lastStep_ = PendingStep{};
     activeDrive   = static_cast<int>(g32());
     if (activeDrive < 0 || activeDrive >= kDriveCount) activeDrive = 0;  // index guard
     active        = static_cast<ActiveMode>(g8());
@@ -1900,8 +1905,8 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         //   control(offset);
         //   if(!(offset & 1)) { lss_sync(1); return data_reg; }
         //   return 0xff;
-        SubInstructionScope sub(cpuCycleTotal,
-            cpu_ ? static_cast<uint64_t>(cpu_->getCurrentInstructionCycles()) : 0);
+        SubInstructionScope sub(cpuCycleTotal, motorClock_.peekBusTicks(
+            cpu_ ? static_cast<uint64_t>(cpu_->getCurrentInstructionCycles()) : 0));
         lssSync(0);
         const bool wasQ6 = loadMode;
         handleSwitchAccess(low4);
@@ -2054,8 +2059,8 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
         //   lss_sync();
         //   control(offset);
         //   last_6502_write = data;
-        SubInstructionScope sub(cpuCycleTotal,
-            cpu_ ? static_cast<uint64_t>(cpu_->getCurrentInstructionCycles()) : 0);
+        SubInstructionScope sub(cpuCycleTotal, motorClock_.peekBusTicks(
+            cpu_ ? static_cast<uint64_t>(cpu_->getCurrentInstructionCycles()) : 0));
         lssSync(0);
         const bool wasQ6 = loadMode;
         handleSwitchAccess(low4);

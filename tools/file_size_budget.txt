@@ -435,6 +435,13 @@
 # every entry to its host file, and the two halves drifting apart is what lost
 # or duplicated host files in every write-back bug fixed that day. Splitting
 # them needs the naming pass as a shared unit first — owed, not forgotten.
+# 2026-10-27 (open-bug pass, STORAGE-014): a guest name ending in a stripped
+# extension (HELLO.BAS) leaves tagged and comes back whole; the build records
+# what it served per directory and the decode matches entries against THAT,
+# not a replay of the folder at eject; a too-deep directory fails the save
+# only when it holds guest data. The registries and the map itself moved to
+# their own TU (ProDOSHostNameMap.cpp); what stays is the walk that uses them.
+#   src/ProDOSVolume.cpp         2063 -> 2146 (+83)
 #
 src/Apple2Display.cpp                    2536
 src/DiskIICard.cpp                       2143
@@ -444,7 +451,7 @@ src/DiskIICard.cpp                       2143
 src/DiskImage.cpp                        3316
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
-src/ProDOSVolume.cpp                     2063
+src/ProDOSVolume.cpp                     2146
 # 2026-10-24 (ARCH-004): the snapshot trailer — appendSnapshotState /
 # loadSnapshotState — moved to MemorySnapshot.cpp, the seam named here since
 # 2026-09-07.

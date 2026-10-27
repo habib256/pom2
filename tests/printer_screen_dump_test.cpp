@@ -924,9 +924,29 @@ void testDiablo630()
     }
 }
 
+// The pitch fits the picture on the 8" line (Tech. Ref. table 8-2), and the
+// line spacing the dump set is put back: a 720-dot Videx picture used to run
+// 2" past the line at ESC n, and the next text printed at 1/9" lines.
+void testDumpPitchAndRestore()
+{
+    auto first = [](int w) {
+        std::vector<uint32_t> fb(static_cast<size_t>(w) * 8, kBlack);
+        std::vector<uint8_t> out;
+        ScreenDumpOptions opt; opt.autoInvert = false; opt.formFeed = false;
+        pom2::buildScreenDumpImageWriter(fb.data(), w, 8, w, opt, out);
+        return out;
+    };
+    const auto narrow = first(560), videx = first(720);
+    assert(narrow[0] == 0x1B && narrow[1] == 'n');
+    assert(videx[0] == 0x1B && videx[1] == 'E');
+    assert(narrow[narrow.size() - 2] == 0x1B && narrow.back() == 'A');
+    std::printf("  dump pitch fits the line and spacing is restored: OK\n");
+}
+
 int main()
 {
     testStreamShape();
+    testDumpPitchAndRestore();
     testRoundTripReproducesPattern();
     testBandsAbut();
     testAutoInvert();

@@ -53,6 +53,9 @@
 #include "SocketUtil.h"
 
 #include <cassert>
+#ifndef _WIN32
+#include <fcntl.h>
+#endif
 #include <cstdio>
 #include <cstring>
 
@@ -182,6 +185,21 @@ void testConnectSucceeds()
     assert(pa == PollAccept::Accepted);
     assert(isValidSocket(client));
     std::printf("  accepted from: %s\n", peerAddressText(peer).c_str());
+#ifndef _WIN32
+    // A reset between poll() and accept() leaves nothing queued on BSD: a
+    // blocking listener then hung in accept() and its owner's stop() with
+    // it. The listener is non-blocking after the call; the client, which
+    // would inherit that on macOS, is handed back blocking.
+    assert((::fcntl(listener, F_GETFL, 0) & O_NONBLOCK) != 0);
+    assert((::fcntl(client, F_GETFL, 0) & O_NONBLOCK) == 0);
+    {
+        sockaddr_in none{};
+        socklen_c len = sizeof(none);
+        const socket_t extra = ::accept(listener,
+                                        reinterpret_cast<sockaddr*>(&none), &len);
+        assert(!isValidSocket(extra) && errWouldBlock(lastSocketError()));
+    }
+#endif
 
     // Round-trip a byte so the pair is proven usable, not merely open.
     const char out = 'A';

@@ -424,6 +424,7 @@ set(SOURCES
     src/PrinterCard.cpp
     src/ImageWriter.cpp
     src/ImageWriter_CustomChars.cpp
+    src/ImageWriter_EscP.cpp
     src/ImageWriterPdf.cpp
     src/ImageWriter_ImGui.cpp
     src/Rewind_ImGui.cpp
@@ -434,6 +435,7 @@ set(SOURCES
     src/Block512Backing_Session.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
+    src/ProDOSHostNameMap.cpp
     src/ResourcePaths.cpp
     src/FloppyEmuDevice.cpp
     src/FloppyEmu_ImGui.cpp
@@ -837,6 +839,7 @@ set(POM2_MEDIA_SOURCES
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
     src/ProDOSVolume.cpp
+    src/ProDOSHostNameMap.cpp
     src/ResourcePaths.cpp
     src/SnapshotIO.cpp
     src/Sony35Gcr.cpp
@@ -905,6 +908,7 @@ set(POM2_RUNTIME_SOURCES
     src/FujiNetNetDevice.cpp
     src/ImageWriter.cpp
     src/ImageWriter_CustomChars.cpp
+    src/ImageWriter_EscP.cpp
     src/ImageWriterPdf.cpp
     src/MachineSnapshot.cpp
     src/Pom2Core.cpp
@@ -1577,6 +1581,7 @@ set(POM2_CORE_SOURCES
     src/hgrpaint/HgrFont.cpp
     src/ImageWriter.cpp
     src/ImageWriter_CustomChars.cpp
+    src/ImageWriter_EscP.cpp
     src/ImageWriterPdf.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
@@ -1585,6 +1590,7 @@ set(POM2_CORE_SOURCES
     src/Block512Backing_Session.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
+    src/ProDOSHostNameMap.cpp
     src/ResourcePaths.cpp
     src/FloppyEmuDevice.cpp
     src/Settings.cpp
@@ -1793,6 +1799,7 @@ add_executable(pom2_headless
     src/Block512Backing_WriteBack.cpp
     src/Block512Backing_Session.cpp
     src/ProDOSVolume.cpp
+    src/ProDOSHostNameMap.cpp
     src/IIcExternalSmartPort.cpp
     src/SmartPortBusDevice.cpp
     src/Debugger.cpp

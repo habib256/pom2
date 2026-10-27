@@ -461,6 +461,7 @@ private:
     /// ~30-transition LSS flush under stateMutex, so it must stay O(N)
     /// and allocation-free (the old per-nibble ±4 neighbour probe was
     /// O(9N) plus a heap vector per flush).
+    static void computeNibSyncWidths(const uint8_t* buf, uint8_t* widths);   // MAME a2_nib_format
     void computeCellWidths(int track, uint8_t* widths) const;
 
     bool loaded = false;

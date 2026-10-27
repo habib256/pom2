@@ -1,6 +1,15 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
 #include "VsDriveProtocol.h"
 
+#include "Block512Backing.h"   // pom2::noteMediaWrite
+
+#include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <ctime>
 #include <utility>
 
@@ -83,6 +92,31 @@ bool VsDriveProtocol::open(const std::array<std::string, 2>& paths,
     return true;
 }
 
+std::FILE* VsDriveProtocol::liveFile(std::size_t drive)
+{
+    std::FILE* f = files_[drive];
+#if !defined(_WIN32)
+    if (!f || paths_[drive].empty()) return f;
+    struct stat open{}, named{};
+    if (::fstat(fileno(f), &open) != 0 || ::stat(paths_[drive].c_str(), &named) != 0)
+        return f;
+    if (open.st_dev == named.st_dev && open.st_ino == named.st_ino) return f;
+    std::FILE* fresh = std::fopen(paths_[drive].c_str(), writable_[drive] ? "r+b" : "rb");
+    if (!fresh) return f;
+    if (std::fseek(fresh, 0, SEEK_END) == 0) {
+        const long length = std::ftell(fresh);
+        if (length >= 512 && length % 512 == 0 && length <= 65536L * 512L) {
+            std::fclose(f);
+            files_[drive] = fresh;
+            blocks_[drive] = static_cast<uint32_t>(length / 512);
+            return fresh;
+        }
+    }
+    std::fclose(fresh);
+#endif
+    return f;
+}
+
 void VsDriveProtocol::close()
 {
     for (auto& file : files_) {
@@ -111,7 +145,10 @@ void VsDriveProtocol::feed(const uint8_t* bytes, size_t count,
         packet_[used_++] = byte;
         if (used_ == 5) {
             const uint8_t cmd = packet_[1];
-            if (checksum(packet_.data(), 4) != packet_[4] || cmd < 2 || cmd > 5) {
+            // $01 is ADTPro's original read (drive 1, no timestamp); $02-$05
+            // are write/read for drives 1 and 2 (CommsThread.java). $01 was
+            // refused, so a client that used it hung waiting for a reply.
+            if (checksum(packet_.data(), 4) != packet_[4] || cmd < 1 || cmd > 5) {
                 resetPacket();
                 continue;
             }
@@ -127,21 +164,23 @@ void VsDriveProtocol::feed(const uint8_t* bytes, size_t count,
 void VsDriveProtocol::respond(std::vector<uint8_t>& replies)
 {
     const uint8_t cmd = packet_[1];
-    const size_t drive = static_cast<size_t>((cmd - 2) >> 1);
+    const size_t drive = cmd == 1 ? 0 : static_cast<size_t>((cmd - 2) >> 1);
     const uint32_t block = static_cast<uint32_t>(packet_[2] | packet_[3] << 8);
-    std::FILE* file = files_[drive];
+    std::FILE* file = liveFile(drive);
     const bool inRange = file && block < blocks_[drive];
     std::array<uint8_t, 512> data{};
 
     if (cmd & 1) {
         bool ok = inRange && std::fseek(file, static_cast<long>(block * 512), SEEK_SET) == 0 &&
                   std::fread(data.data(), 1, data.size(), file) == data.size();
+        // $01 carries no date/time: the 4-byte echo and its checksum only.
+        const size_t headerLen = cmd == 1 ? 4 : 8;
         std::array<uint8_t, 8> header{};
         for (size_t i = 0; i < 4; ++i) header[i] = packet_[i];
         const auto date = prodosDateTime();
-        for (size_t i = 0; i < 4; ++i) header[i + 4] = date[i];
-        replies.insert(replies.end(), header.begin(), header.end());
-        replies.push_back(static_cast<uint8_t>(checksum(header.data(), header.size()) + !ok));
+        if (cmd != 1) for (size_t i = 0; i < 4; ++i) header[i + 4] = date[i];
+        replies.insert(replies.end(), header.begin(), header.begin() + headerLen);
+        replies.push_back(static_cast<uint8_t>(checksum(header.data(), headerLen) + !ok));
         if (ok) {
             replies.insert(replies.end(), data.begin(), data.end());
             replies.push_back(checksum(data.data(), data.size()));
@@ -153,6 +192,15 @@ void VsDriveProtocol::respond(std::vector<uint8_t>& replies)
                   std::fseek(file, static_cast<long>(block * 512), SEEK_SET) == 0 &&
                   std::fwrite(packet_.data() + 5, 1, 512, file) == 512 &&
                   std::fflush(file) == 0;
+        // Durable before the guest is told "written" (the media layer's
+        // commit rule): flushed to the OS was not on the disk.
+#if defined(_WIN32)
+        if (ok) ok = _commit(_fileno(file)) == 0;
+#else
+        if (ok) ok = ::fsync(fileno(file)) == 0;
+#endif
+        // In place on the host file: a rewind must not cross it (CLAUDE.md).
+        if (ok) noteMediaWrite();
         replies.insert(replies.end(), packet_.begin(), packet_.begin() + 4);
         replies.push_back(static_cast<uint8_t>(dataXor + !ok));
     }

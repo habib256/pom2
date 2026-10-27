@@ -99,9 +99,31 @@ void test(bool moof) {
     pom2::Disk35Image locked; assert(locked.loadFile(protectedPath.string())); locked.setWriteBackEnabled(true);
     assert(locked.isWriteProtected() && !locked.writeFlux125ns(0, 0, 0, 100, more, 1, period));
     std::filesystem::remove(path); std::filesystem::remove(protectedPath);
+    {   // STORAGE-012: phase 1 (under stateMutex) keeps a reference to the
+        // track capture; the re-encode + CRC32 runs in phase 2, unlocked.
+        const auto p2 = writeTemp(moof ? "pom2-write35-p2.moof" : "pom2-write35-p2.woz", bytes);
+        pom2::Disk35Image img; assert(img.loadFile(p2.string())); img.setWriteBackEnabled(true);
+        const int64_t first[] = {333};
+        assert(img.writeFlux125ns(0, 0, 320, 340, first, 1, period));
+        auto cap = img.takeWriteBack();
+        assert(cap.valid && cap.bytes.empty() && cap.bitstream && "nothing serialised under the lock");
+        const int64_t later[] = {555};
+        assert(img.writeFlux125ns(0, 0, 540, 560, later, 1, period));   // copy-on-write: not in `cap`
+        std::string err; assert(pom2::Disk35Image::commitWriteBack(std::move(cap), err));
+        pom2::Disk35Image r1; assert(r1.loadFile(p2.string()));
+        const auto* t1 = r1.originalFluxTicks(0, 0);
+        assert(std::binary_search(t1->begin(), t1->end(), 333));
+        assert(!std::binary_search(t1->begin(), t1->end(), 555) && "the capture moved after phase 1");
+        assert(img.saveDirty());
+        pom2::Disk35Image r2; assert(r2.loadFile(p2.string()));
+        const auto* t2 = r2.originalFluxTicks(0, 0);
+        assert(std::binary_search(t2->begin(), t2->end(), 555));
+        std::filesystem::remove(p2);
+    }
     if (!moof) {
         // Valid old short INFO can be read, but lacks the fields needed to
-        // publish FLUX. Refusal must never become an empty-file flush.
+        // publish FLUX. It mounts write-protected (STORAGE-012): accepting
+        // writes the serialiser must refuse kept the disk dirty for ever.
         auto old = bytes; old[16] = 44;
         std::copy_n("JUNK", 4, old.begin() + 64);
         old[68] = 8;
@@ -111,13 +133,12 @@ void test(bool moof) {
         auto unit = std::make_unique<pom2::SmartPort35Unit>();
         assert(unit->loadImage(shortPath.string()));
         auto& medium = unit->image(); medium.setWriteBackEnabled(true);
-        assert(medium.writeFlux125ns(0, 0, 0, 100, more, 1, period));
+        assert(medium.isWriteProtected() && "an unrewritable layout mounts protected");
+        assert(!medium.writeFlux125ns(0, 0, 0, 100, more, 1, period));
+        assert(!medium.hasUnsavedChanges());
         card.setUnit(0, std::move(unit));
         pom2::MountableMediaCard::PendingBayFlush pending; std::string error;
-        assert(!card.prepareFlushBay(0, pending, error));
-        assert(!error.empty() && medium.hasUnsavedChanges() && !pending.valid);
-        assert(read(shortPath) == old);
-        assert(!medium.saveDirty() && medium.hasUnsavedChanges());
+        assert(card.prepareFlushBay(0, pending, error) && !pending.valid && error.empty());
         assert(read(shortPath) == old);
         // Explicitly discard this synthetic fixture's rejected dirty state.
         medium.setWriteBackEnabled(false); std::filesystem::remove(shortPath);

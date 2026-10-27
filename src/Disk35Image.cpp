@@ -127,7 +127,37 @@ bool Disk35Image::loadFileUnchecked(const std::string& imgPath)
     // with write-back on, a chmod-read-only image accepted a session of
     // writes and lost them at flush. Probe once; OR-ed into both branches'
     // header/extension-derived flag below.
-    const bool hostReadOnly = pom2::mediaFileIsReadOnly(imgPath);   // MediaNotch.h
+    return parseImageBytes(buf, imgPath, pom2::mediaFileIsReadOnly(imgPath));   // MediaNotch.h
+}
+
+bool Disk35Image::loadPrepared(std::vector<uint8_t>&& bytes, const std::string& imgPath,
+                               bool hostReadOnly)
+{
+    // loadFile without the file read: phase 2 of a two-phase mount, under the
+    // machine lock, on bytes phase 1 read unlocked (MediaMount.h).
+    if (!saveDirty()) return false;
+    Disk35Image replacement;
+    replacement.writeBackEnabled_ = writeBackEnabled_;
+    replacement.mfmCapable_ = mfmCapable_;
+    replacement.eject();
+    replacement.path_ = imgPath;
+    constexpr std::size_t kMaxDisk35ImageBytes = 16 * 1024 * 1024;   // as loadFileUnchecked
+    if (bytes.empty() || bytes.size() > kMaxDisk35ImageBytes) {
+        lastError_ = "Disk35Image: unusable image size " + imgPath;
+        return false;
+    }
+    if (!replacement.parseImageBytes(bytes, imgPath, hostReadOnly)) {
+        lastError_ = replacement.lastError_;
+        return false;
+    }
+    *this = std::move(replacement);
+    lineage_ = nextMediaCaptureSeq();
+    return true;
+}
+
+bool Disk35Image::parseImageBytes(std::vector<uint8_t>& buf, const std::string& imgPath,
+                                  bool hostReadOnly)
+{
     hostReadOnly_ = hostReadOnly;
     const std::size_t n = buf.size();
 
@@ -414,7 +444,7 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
     out.lineage = lineage_;
     out.path  = path_;
     if (bitstream_) {
-        serializeBitstream(out.bytes, out.error);
+        out.bitstream = bitstream_;   // serialised in phase 2 (STORAGE-012)
     } else {
     out.bytes.reserve(twoImgHeaderRaw_.size() + blocks_.size() +
                       twoImgTrailerRaw_.size());
@@ -439,6 +469,8 @@ bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
     error.clear();
     if (!pending.valid) return true;
     if (!pending.error.empty()) { error = pending.error; return false; }
+    if (pending.bitstream && !serializeBitstreamOf(*pending.bitstream, pending.bytes, error))
+        return false;   // the caller re-marks the medium dirty, as for an I/O failure
     // In capture order: the background autosave and the explicit eject /
     // flush paths commit from different threads (MediaAutosave.h).
     return commitMediaInOrder(pending.path, pending.lineage, pending.seq, error,
@@ -789,6 +821,15 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         moofBitTiming_ = bitTiming;
         fileWriteProtected_ = buf[infoOff + 2] != 0;
         bitstream_ = std::move(backing);
+        // A layout the write-back serialiser refuses (trailing garbage, an
+        // unaligned TRKS end, FLUX before TRKS) mounts write-protected: its
+        // guest writes could never reach the file, so eject would keep it
+        // dirty for ever and quit would drop them (STORAGE-012).
+        std::string why;
+        if (!fileWriteProtected_ && !bitstreamRewritable(*bitstream_, why)) {
+            fileWriteProtected_ = true;
+            pom2::log().warn("Disk35", imgPath + " mounts write-protected: " + why);
+        }
     }
     return true;
 }

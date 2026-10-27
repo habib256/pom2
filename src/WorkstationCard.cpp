@@ -250,7 +250,10 @@ void WorkstationCard::advanceCycles(int cycles)
         const int cardSlice = static_cast<int>(cardAcc_ / cpuClockHz_);
         cardAcc_ %= cpuClockHz_;
 
-        if (!cardCpu_->isHalted()) {
+        // A WAI-parked core must keep being stepped: step()'s halted branch
+        // is what wakes it when the timer or the SCC raises IRQ. Skipping it
+        // left the card asleep for good. STP (code 1) stays parked.
+        if (!cardCpu_->isHalted() || cardCpu_->haltCode() == 2) {
             // `run(n)` finishes the instruction it is inside, so it returns
             // n..n+6; the surplus is DEBT against the next slice, not free
             // card time. Dropping it made the card's clock a function of the

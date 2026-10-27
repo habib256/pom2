@@ -35,6 +35,9 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
+#include <string_view>
+#include <memory>
+#include "SlotPeripheral.h"
 #include "ZipChip.h"
 
 #include <cmath>
@@ -58,6 +61,12 @@ long burnFrame(EmulationController& c)
     return static_cast<long>(st.memory().getCycleCounter() - before);
 }
 } // namespace
+
+// A slot accelerator that is always fast, for the speed arbitration.
+struct FastSlotStub : SlotPeripheral {
+    std::string_view name() const override { return "fast slot stub"; }
+    double cpuSpeedMultiplier() const override { return 3.6; }
+};
 
 int main()
 {
@@ -154,10 +163,38 @@ int main()
         expect(m.cpuSpeedMultiplier() == 1.0, "STA $C070 slows down for the paddles");
         m.advanceCycles(static_cast<int>(0.006 * 1022727));
         expect(m.cpuSpeedMultiplier() > 3.0, "5 ms later the chip is fast again");
+        // A second event RE-ARMS the window (MAME accel_temp_delay's
+        // timer adjust): a PTRIG 1 ms into a slot window leaves 5 ms.
+        (void)m.memRead(0xC0E0);                    // 52 ms
+        m.advanceCycles(static_cast<int>(0.001 * 1022727));
+        (void)m.memRead(0xC070);                    // paddles: 5 ms from now
+        m.advanceCycles(static_cast<int>(0.006 * 1022727));
+        expect(m.cpuSpeedMultiplier() > 3.0, "the PTRIG event re-armed the window to 5 ms");
+        // A TransWarp DMA-halts the socket CPU: with one running, ITS speed
+        // is the machine's, not the product with the Zip's (~14x).
+        {
+            m.advanceCycles(static_cast<int>(0.06 * 1022727));
+            const double zipOnly = m.cpuSpeedMultiplier();
+            m.slotBus().plug(3, std::make_unique<FastSlotStub>());
+            expect(m.cpuSpeedMultiplier() == 3.6 && zipOnly > 3.0,
+                   "a TransWarp and a Zip multiplied their speeds");
+            m.slotBus().plug(3, nullptr);
+        }
         // $C05E bit 7 disables the delays.
         m.memWrite(0xC05E, 0x80);
         (void)m.memRead(0xC0E0);
         expect(m.cpuSpeedMultiplier() > 3.0, "$C05E bit 7 disables the delays");
+        // With the paddle slow-down off the chip stays fast through a PTRIG,
+        // and the 558 still times in REAL time (an RC network, ~10.8 us a
+        // count, MAME apple2e.cpp:1007): paddle 100 is ~1100 stock cycles,
+        // ~4300 at 3.9x. Counted in CPU cycles it ran out ~4x early.
+        m.setPaddle(0, 100);
+        m.memWrite(0xC070, 0x00);
+        m.advanceCycles(2200);                      // ~560 stock cycles
+        expect((m.memRead(0xC064) & 0x80) != 0,
+               "a fast Zip ran the paddle timer out in CPU time");
+        m.advanceCycles(4000);
+        expect((m.memRead(0xC064) & 0x80) == 0, "...and it still ends");
 
         // ── Lock, then reset ─────────────────────────────────────────────
         m.memWrite(0xC05A, 0xA5);

@@ -231,6 +231,27 @@ int main()
         mem.memWrite(0xC022, 0xF0);            // the default: plain text again
         disp.render(mem);
         expect(disp.pixels()[0] == 0xFF000000u, "$F0: white on black, untouched");
+        // The composite mixed screen paints its four text rows apart from
+        // the demodulated graphics (patchMixedTextBand); they used to skip
+        // the tint, so the same text was coloured in TEXT and white in MIXED.
+        {
+            Apple2Display comp;
+            comp.setCardVideoSource(card);
+            comp.setHiResMode(Apple2Display::HiResMode::ColorCompositeOECpu);
+            mem.memWrite(0xC022, 0xD6);
+            mem.memWrite(0x0650, 0x20);        // inverse space, row 20 col 0
+            mem.memWrite(0xC050, 0);           // graphics
+            mem.memWrite(0xC053, 0);           // mixed
+            mem.memWrite(0xC057, 0);           // hi-res
+            comp.render(mem);
+            const uint32_t* px = comp.pixels();
+            expect(comp.width() == 560 &&
+                   px[static_cast<size_t>(161) * 560 + 3] == VidHDCard::iigsColour(0xD),
+                   "composite MIXED: the text rows carry the $C022 text colour");
+            mem.memWrite(0xC051, 0);           // TEXT again
+            mem.memWrite(0xC052, 0);
+            mem.memWrite(0xC056, 0);
+        }
         mem.memWrite(0xC022, 0xF6);            // back to what section 2 left
 
         // BORDERCOLOR, low nibble, in the same sixteen colours; black (the

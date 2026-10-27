@@ -29,6 +29,7 @@ void Keyboard::queueKey(uint8_t apple2Key)
     std::lock_guard<std::mutex> lk(mtx_);
     const uint8_t b = apple2Key & 0x7F;
     if (!pressCodeValid_) { pressCode_ = b; pressCodeValid_ = true; }
+    injectedKey_ = heldKeys_.none();
     if (!pasteQueue_.empty()) {
         // A host paste is draining — append so this live keystroke is
         // delivered in order AFTER it, instead of clobbering the currently

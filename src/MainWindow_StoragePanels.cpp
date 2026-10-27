@@ -278,9 +278,13 @@ void MainWindow::renderDiskPanelWindow()
         }
         if (!result.requestInsertAndBoot.empty()) {
             const std::string path = result.requestInsertAndBoot;
-            std::string err;
-            const bool ok = pom2::mountDiskII(*controller, *card, 0, path, err,
-                                              /*seekTrack0=*/true);
+            // Through the coordinator, as insert-only is: it alone writes
+            // `disk_path_slot<N>`, and insert + boot is the DEFAULT click —
+            // the disk was forgotten if POM2 died before a clean quit.
+            const auto m = storageCoordinator_->mountDiskII(
+                *controller, *settings, card->getSlot(), 0, path, /*seekTrackZero=*/true);
+            std::string err = m.error;
+            const bool ok = m.ok;
             if (ok) {
                 const bool booted = pom2::bootMountedMedia(*controller, card->getSlot(), 0, err);
                 pom2::log().info("Disk II",
@@ -481,10 +485,16 @@ void MainWindow::renderDiskLibraryWindow()
         DiskIICard* target = resolve525(r.request525Slot);
         const int   drive  = (r.request525Drive == 1) ? 1 : 0;
         const std::string path = r.request525InsertAndBoot;
-        std::string err;
-        const bool ok = target && pom2::mountDiskII(*controller, *target, drive,
-                                                    path, err,
-                                                    /*seekTrack0=*/true);
+        // Coordinator, not the raw helper — see the Disk II panel's insert +
+        // boot: only it persists `disk_path_slot<N>[_drive2]`.
+        std::string err = "no DiskII card";
+        bool ok = false;
+        if (target) {
+            const auto m = storageCoordinator_->mountDiskII(
+                *controller, *settings, target->getSlot(), drive, path,
+                /*seekTrackZero=*/true);
+            ok = m.ok; err = m.error;
+        }
         if (ok && target) {
             // Boot the target card's slot (its boot PROM boots drive 1).
             const bool booted = pom2::bootMountedMedia(*controller, target->getSlot(), drive, err);
@@ -672,6 +682,10 @@ void MainWindow::renderDiskLibraryWindow()
             for (auto* c : diskIICards()) {
                 if (!c) continue;
                 for (int d = 0; d < DiskIICard::kDriveCount; ++d) {
+                    if (r.request525EjectSlot >= 0 &&
+                        (c->getSlot() != r.request525EjectSlot ||
+                         d != r.request525EjectDrive))
+                        continue;   // a header row names one drive
                     if (c->isDiskLoaded(d) &&
                         c->getDiskPath(d) == r.request525EjectPath)
                         targets.emplace_back(c->getSlot(), d);

@@ -272,8 +272,12 @@ void AtaBlockDevice::startCommand(uint8_t cmd)
                 // an address off the end is ID NOT FOUND. They used to share
                 // ABRT, so a driver could not tell "locked disk" from "block
                 // past the end" — and READ reported neither.
+                // ERR alone: DF is ATA-1's Drive Write Fault, a write that
+                // was attempted and failed — not a command refused before any
+                // data moved. MAME's security_error / IDNF paths set ERR only
+                // (atastorage.cpp, `m_status |= IDE_STATUS_ERR`).
                 error_  = outside ? kErrIDNF : kErrABRT;
-                status_ = kStDRDY | kStDSC | kStDF | kStERR;
+                status_ = kStDRDY | kStDSC | kStERR;
                 phase_  = Phase::Idle;
                 break;
             }

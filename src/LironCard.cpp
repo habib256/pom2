@@ -56,6 +56,11 @@ LironCard::LironCard(int slot)
     // MAME-shaped callbacks, minus the MIG. `SmartPortHub` does the same job
     // for the //c+; a Liron's chain is simpler, so the card is its own hub.
     iwm_.setPhasesCallback([this](uint8_t p) { onPhases(p); });
+    iwm_.setStockSpan([this](uint64_t from, uint64_t to) -> uint64_t {
+        const uint64_t span = to > from ? to - from : 0;
+        if (!(cpuHz_ > stockHz_) || !(stockHz_ > 0.0)) return span;
+        return static_cast<uint64_t>(static_cast<double>(span) * stockHz_ / cpuHz_);
+    });
     iwm_.setDevselCallback([this](uint8_t d) { onDevsel(d); });
     iwm_.setSel35Callback([](bool) {});   // no MIG, nothing to route
 
@@ -438,6 +443,7 @@ void LironCard::onDevsel(uint8_t devsel)
 void LironCard::setStandardClock(double hz)
 {
     for (auto& d : drives_) d.setStandardClock(hz);
+    if (hz > 0.0) stockHz_ = hz;
 }
 
 void LironCard::syncHeadSelect()
@@ -715,6 +721,7 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
     out.lineage = pending.lineage;
     out.path  = std::move(pending.path);
     out.bytes = std::move(pending.bytes);
+    out.bitstream = std::move(pending.bitstream);
     return true;
 }
 

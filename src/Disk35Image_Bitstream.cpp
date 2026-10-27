@@ -134,44 +134,77 @@ void Disk35Image::refreshDecodedTrack(int slot) const {
     decodedTrackDirty_[size_t(slot)] = false;
 }
 bool Disk35Image::serializeBitstream(std::vector<uint8_t>& out, std::string& error) const {
-    auto fail = [&](const char* why) { error = why; out.clear(); return false; };
-    if (!bitstream_) return fail("No captured track data.");
-    const auto& raw = bitstream_->raw;
+    if (!bitstream_) { error = "No captured track data."; out.clear(); return false; }
+    return serializeBitstreamOf(*bitstream_, out, error);
+}
+
+namespace {
+// Where serializeBitstreamOf finds what it rewrites, and the checks it
+// refuses on. Shared with the loader: an image these refuse must not mount
+// writable, or its guest writes could never be saved (STORAGE-012).
+struct BitstreamLayout {
+    size_t info = 0, infoLen = 0, tmap = 0, trks = 0, end = 0, flux = 0, fluxEnd = 0, fields = 0;
+    std::array<uint8_t, 160> bits{}, fluxMap{};
+};
+const char* readBitstreamLayout(const Disk35Bitstream& bs, BitstreamLayout& l)
+{
+    const auto& raw = bs.raw;
     auto u16 = [&](size_t p) { return uint16_t(raw[p] | (uint16_t(raw[p + 1]) << 8)); };
     auto u32 = [&](size_t p) { return uint32_t(u16(p)) | (uint32_t(u16(p + 2)) << 16); };
-    size_t info = 0, infoLen = 0, tmap = 0, trks = 0, end = 0, flux = 0, fluxEnd = 0;
     for (size_t p = 12; p < raw.size();) {
-        if (raw.size() - p < 8 || u32(p + 4) > raw.size() - p - 8) return fail("Truncated bitstream chunk.");
+        if (raw.size() - p < 8 || u32(p + 4) > raw.size() - p - 8) return "Truncated bitstream chunk.";
         const size_t len = u32(p + 4);
-        if (!std::memcmp(raw.data() + p, "INFO", 4)) { info = p + 8; infoLen = len; }
-        if (!std::memcmp(raw.data() + p, "TMAP", 4) && len >= 160) tmap = p + 8;
-        if (!std::memcmp(raw.data() + p, "TRKS", 4) && len >= 1280) { trks = p + 8; end = p + 8 + len; }
-        if (!std::memcmp(raw.data() + p, "FLUX", 4) && len >= 160) { flux = p; fluxEnd = p + 8 + len; }
+        if (!std::memcmp(raw.data() + p, "INFO", 4)) { l.info = p + 8; l.infoLen = len; }
+        if (!std::memcmp(raw.data() + p, "TMAP", 4) && len >= 160) l.tmap = p + 8;
+        if (!std::memcmp(raw.data() + p, "TRKS", 4) && len >= 1280) { l.trks = p + 8; l.end = p + 8 + len; }
+        if (!std::memcmp(raw.data() + p, "FLUX", 4) && len >= 160) { l.flux = p; l.fluxEnd = p + 8 + len; }
         p += 8 + len;
     }
-    const size_t fields = bitstream_->moof ? 40 : 46;
-    if (!info || infoLen < fields + 4 || !tmap || !trks || end % 512 ||
-        info >= trks || tmap >= trks || (flux && flux < end))
-        return fail("Capture layout cannot be rewritten safely.");
+    l.fields = bs.moof ? 40 : 46;
+    if (!l.info || l.infoLen < l.fields + 4 || !l.tmap || !l.trks || l.end % 512 ||
+        l.info >= l.trks || l.tmap >= l.trks || (l.flux && l.flux < l.end))
+        return "Capture layout cannot be rewritten safely.";
+    std::copy_n(raw.data() + l.tmap, 160, l.bits.begin());
+    l.fluxMap.fill(0xFF);
+    if (l.flux) std::copy_n(raw.data() + l.flux + 8, 160, l.fluxMap.begin());
+    for (size_t slot = 0; slot < 160; ++slot) {
+        const uint8_t index = l.fluxMap[slot] != 0xFF ? l.fluxMap[slot] : l.bits[slot];
+        if (index == 0xFF) continue;
+        if (index >= 160) return "Invalid capture track map.";
+        const size_t entry = l.trks + size_t(index) * 8;
+        const size_t offset = size_t(u16(entry)) * 512, length = size_t(u16(entry + 2)) * 512;
+        if (offset < l.trks + 1280 || offset > l.end || length > l.end - offset)
+            return "Track data lies outside its TRKS chunk.";
+    }
+    return nullptr;
+}
+}  // namespace
+
+bool Disk35Image::bitstreamRewritable(const Disk35Bitstream& bs, std::string& why)
+{
+    BitstreamLayout l;
+    if (const char* e = readBitstreamLayout(bs, l)) { why = e; return false; }
+    return true;
+}
+
+// Static: phase 2 of a write-back runs it with no lock on the immutable
+// capture `takeWriteBack` kept (writeFlux copies before it writes again).
+bool Disk35Image::serializeBitstreamOf(const Disk35Bitstream& bs, std::vector<uint8_t>& out,
+                                       std::string& error) {
+    auto fail = [&](const char* why) { error = why; out.clear(); return false; };
+    const auto& raw = bs.raw;
+    auto u16 = [&](size_t p) { return uint16_t(raw[p] | (uint16_t(raw[p + 1]) << 8)); };
+    BitstreamLayout l;
+    if (const char* e = readBitstreamLayout(bs, l)) return fail(e);
+    const size_t info = l.info, tmap = l.tmap, trks = l.trks, end = l.end, flux = l.flux,
+                 fluxEnd = l.fluxEnd, fields = l.fields;
     out.assign(raw.begin(), raw.begin() + end);
     auto put16 = [&](size_t p, size_t v) { out[p] = uint8_t(v); out[p + 1] = uint8_t(v >> 8); };
     auto put32 = [&](size_t p, size_t v) { put16(p, v); put16(p + 2, v >> 16); };
-    std::array<uint8_t, 160> bits{}, fluxMap{};
-    std::copy_n(raw.data() + tmap, 160, bits.begin());
-    fluxMap.fill(0xFF);
-    if (flux) std::copy_n(raw.data() + flux + 8, 160, fluxMap.begin());
-    for (size_t slot = 0; slot < 160; ++slot) {
-        const uint8_t index = fluxMap[slot] != 0xFF ? fluxMap[slot] : bits[slot];
-        if (index == 0xFF) continue;
-        if (index >= 160) return fail("Invalid capture track map.");
-        const size_t entry = trks + size_t(index) * 8;
-        const size_t offset = size_t(u16(entry)) * 512, length = size_t(u16(entry + 2)) * 512;
-        if (offset < trks + 1280 || offset > end || length > end - offset)
-            return fail("Track data lies outside its TRKS chunk.");
-    }
+    std::array<uint8_t, 160> bits = l.bits, fluxMap = l.fluxMap;
     constexpr size_t maxBytes = 16u * 1024u * 1024u;
     for (size_t slot = 0; slot < 160; ++slot) {
-        if (!bitstream_->changed[slot]) continue;
+        if (!bs.changed[slot]) continue;
         std::array<bool, 160> used{};
         for (size_t other = 0; other < 160; ++other) {
             if (other == slot) continue;
@@ -188,8 +221,8 @@ bool Disk35Image::serializeBitstream(std::vector<uint8_t>& out, std::string& err
             encoded.push_back(uint8_t(ticks));
         };
         uint32_t previous = 0;
-        for (auto tick : bitstream_->transitions[slot]) { delta(tick - previous); previous = tick; }
-        delta(bitstream_->periods[slot] - previous);
+        for (auto tick : bs.transitions[slot]) { delta(tick - previous); previous = tick; }
+        delta(bs.periods[slot] - previous);
         const size_t blocks = (encoded.size() + 511) / 512;
         if (encoded.size() > (1u << 20) || blocks > 65535 || out.size() / 512 > 65535)
             return fail("Capture rewrite exceeds the 16 MiB limit.");
@@ -235,7 +268,7 @@ bool Disk35Image::serializeBitstream(std::vector<uint8_t>& out, std::string& err
     out.resize(out.size() + 344, 0);
     if (out.size() > maxBytes || fluxBlock > 65535) return fail("Capture rewrite exceeds the 16 MiB limit.");
     std::copy(bits.begin(), bits.end(), out.begin() + tmap);
-    if (!bitstream_->moof) out[info] = std::max<uint8_t>(3, out[info]);
+    if (!bs.moof) out[info] = std::max<uint8_t>(3, out[info]);
     put16(info + fields, fluxBlock);
     size_t largestFlux = 0, largest = 0;
     for (size_t i = 0; i < 160; ++i) {
@@ -245,7 +278,7 @@ bool Disk35Image::serializeBitstream(std::vector<uint8_t>& out, std::string& err
         if (std::find(fluxMap.begin(), fluxMap.end(), uint8_t(i)) != fluxMap.end()) largestFlux = std::max(largestFlux, size);
     }
     put16(info + fields + 2, largestFlux);
-    put16(info + (bitstream_->moof ? 38 : 44), largest);
+    put16(info + (bs.moof ? 38 : 44), largest);
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 12; i < out.size(); ++i) {
         crc ^= out[i];

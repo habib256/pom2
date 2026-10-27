@@ -278,40 +278,50 @@ void testReceiveFifoOverrun()
     scc.receiveByte(A, 0x40);
     assert(scc.rxFifoCount(A) == 3);            // dropped, not queued
 
+    // The overrunning character overwrites the NEWEST entry, which carries
+    // the Overrun flag: "only the character that has been written over is
+    // flagged" (Zilog SCC/ESCC User Manual, RR1 D5; MAME master writes the
+    // newest slot too). POM2 used to park it in the ring's unused sentinel,
+    // where the next write cleared it — an overrun was never reported.
     assert(scc.dataRead(A) == 0x10);
     assert(scc.dataRead(A) == 0x20);
-    assert(scc.dataRead(A) == 0x30);
+    // RR1 describes the character at the EXIT, before it is read (manual
+    // p. 47) — so the flag shows here, ahead of the flagged read.
+    assert((scc.peekRr(A, 1) & 0x20) != 0);
+    assert(scc.dataRead(A) == 0x40);
+    assert((scc.peekRr(A, 1) & 0x20) != 0 && "the overrun reached RR1");
     assert(scc.rxFifoCount(A) == 0);
     assert((scc.peekRr(A, 0) & 0x01) == 0);
-
-    // Worth pinning because it is a MAME divergence POM2 inherits on
-    // purpose: MAME writes the overrunning byte into the slot the write
-    // pointer is parked on and flags RR1 D5 in the *error* FIFO, but never
-    // advances the pointer past it — so that slot is unreachable and the
-    // Overrun status never reaches RR1 through a data read. On real
-    // silicon the byte is discarded and the error surfaces. Reproducing
-    // MAME rather than the datasheet keeps the oracle usable; a driver
-    // that depends on seeing Overrun would be the reason to revisit it.
-    assert((scc.peekRr(A, 1) & 0x20) == 0);
-    std::printf("  ok: 3-deep Rx FIFO with MAME's overrun handling\n");
+    std::printf("  ok: 3-deep Rx FIFO; an overrun flags the overwritten character\n");
 }
 
 void testErrorResetStepsFifo()
 {
-    // WR0's Error Reset command unlocks the FIFO by stepping the read
-    // pointer one slot (z80scc.cpp:1811) — the half of the lock/unlock
-    // pair that is observable on this part.
+    // WR0 Error Reset releases only a character the FIFO is HOLDING — one
+    // with a special condition, in "Rx Int on First Character" / "Special
+    // Condition only" (Zilog manual, Error Reset and WR1 D4-D3). It used to
+    // step the FIFO whenever it was non-empty, throwing away a good,
+    // unread character.
     Scc8530Device scc;
     writeReg(scc, A, 3, 0xC1);
     scc.receiveByte(A, 0x11);
     scc.receiveByte(A, 0x22);
     assert(scc.rxFifoCount(A) == 2);
+    scc.controlWrite(A, 0x30);      // WR0 Error Reset — nothing held
+    assert(scc.rxFifoCount(A) == 2 && "Error Reset dropped a good character");
+    assert(scc.dataRead(A) == 0x11 && scc.dataRead(A) == 0x22);
 
-    scc.controlWrite(A, 0x30);      // WR0 Error Reset
-    assert(scc.rxFifoCount(A) == 1);
-    assert(scc.dataRead(A) == 0x22);
+    // Special Condition only (WR1 D4-D3 = 11): an overrun character is held
+    // after its read, until Error Reset.
+    writeReg(scc, A, 1, 0x18);
+    for (uint8_t b : { 0x31, 0x32, 0x33, 0x34 }) scc.receiveByte(A, b);
+    assert(scc.dataRead(A) == 0x31 && scc.dataRead(A) == 0x32);
+    assert(scc.dataRead(A) == 0x34);            // the flagged one
+    assert(scc.rxFifoCount(A) == 1 && "mode 11 holds the special character");
+    scc.controlWrite(A, 0x30);
     assert(scc.rxFifoCount(A) == 0);
-    std::printf("  ok: WR0 Error Reset steps the receive FIFO\n");
+    assert((scc.peekRr(A, 1) & 0x20) == 0 && "Error Reset clears RR1's error bits");
+    std::printf("  ok: WR0 Error Reset releases only a held character\n");
 }
 
 void testInterruptVectorAndIus()
@@ -554,18 +564,24 @@ void testWr9Resets()
     writeReg(scc, A, 4, 0x44);
     writeReg(scc, B, 4, 0x44);
 
-    // Channel B reset leaves channel A alone (z80scc.cpp:2024).
+    // Channel B reset leaves channel A alone (z80scc.cpp:2024). WR4 on a
+    // reset is XXXXX1XX — only D2 is forced (Zilog manual, "Register reset
+    // value" table, p. 35); POM2 used to write $04 over the whole register.
+    writeReg(scc, A, 4, 0x40);
+    writeReg(scc, B, 4, 0x40);
     writeReg(scc, A, 9, 0x40);
-    assert(scc.peekWr(B, 4) == 0x04);   // channel reset value
-    assert(scc.peekWr(A, 4) == 0x44);
+    assert(scc.peekWr(B, 4) == 0x44);   // D2 forced, the rest kept
+    assert(scc.peekWr(A, 4) == 0x40);   // channel A untouched
 
     // Force Hardware Reset restores the device-wide values and takes the
-    // MIE / Status-High / DLC bits from the command byte itself.
-    writeReg(scc, A, 4, 0x44);
-    writeReg(scc, A, 9, 0xC8);          // hardware reset + MIE
-    assert(scc.peekWr(A, 4) == 0x04);
+    // MIE / Status-High / DLC bits from the command byte itself; NV and VIS
+    // (D1/D0) are KEPT — WR9 resets to 110000xx — so $C9 keeps VIS.
+    writeReg(scc, A, 4, 0x40);
+    writeReg(scc, A, 9, 0xC9);          // hardware reset + MIE + VIS
+    assert(scc.peekWr(A, 4) == 0x44);
     assert(scc.peekWr(A, 11) == 0x08);
     assert((scc.peekWr(A, 9) & 0x08) != 0);
+    assert((scc.peekWr(A, 9) & 0x01) != 0 && "a hardware reset cleared VIS");
     std::printf("  ok: WR9 channel and hardware reset commands\n");
 }
 
@@ -700,30 +716,55 @@ void testSdlcReceive()
     const uint8_t frame[] = { 0x21, 0x01, 0x81 };
     scc.receiveFrame(A, frame, 2);          // a two-byte frame
     assert((scc.peekRr(A, 0) & 0x10) == 0 && "the opening flag clears hunt");
-    assert(scc.rxFifoCount(A) == 2);
+    // Data, then the two FCS bytes (Zilog manual pp. 123-124): four bytes
+    // through a 3-deep FIFO, the last one waiting for room.
+    assert(scc.rxFifoCount(A) == 3);
 
     assert(scc.dataRead(A) == 0x21);
-    assert((scc.peekRr(A, 1) & 0x80) == 0 && "not the last byte");
-
-    // The last byte carries End Of Frame with the no-residue code, and is a
-    // special receive condition: the FIFO locks until Error Reset.
+    assert((scc.peekRr(A, 1) & 0x80) == 0 && "not the end yet");
     assert(scc.dataRead(A) == 0x01);
-    assert((scc.peekRr(A, 1) & 0x80) != 0 && "End Of Frame");
+    const uint8_t fcs1 = scc.dataRead(A);
+    // RR1 describes the EXIT character before it is read: the second FCS
+    // byte, with End Of Frame and the no-residue code.
+    assert((scc.peekRr(A, 1) & 0x80) != 0 && "End Of Frame, ahead of the read");
     assert((scc.peekRr(A, 1) & 0x0E) == 0x06 && "residue: no residue, 8 bits");
-    assert(scc.rxFifoCount(A) == 1 && "the FIFO is locked on the special condition");
-
+    const uint8_t fcs2 = scc.dataRead(A);
+    {
+        // A valid FCS: the CRC over data + FCS is the CCITT residue $F0B8.
+        uint16_t crc = 0xFFFF;
+        for (uint8_t b : { uint8_t(0x21), uint8_t(0x01), fcs1, fcs2 }) {
+            crc ^= b;
+            for (int k = 0; k < 8; ++k) crc = uint16_t((crc >> 1) ^ ((crc & 1) ? 0x8408 : 0));
+        }
+        assert(crc == 0xF0B8 && "the FCS bytes are the line's CRC-CCITT");
+    }
+    // "Rx Int on All Characters" (WR1 D4-D3 = 10) does not HOLD a special
+    // condition (Zilog manual, WR1 / Error Reset); RR1 keeps End Of Frame
+    // until Error Reset.
+    assert(scc.rxFifoCount(A) == 0 && "mode 10 does not hold the character");
+    assert((scc.peekRr(A, 1) & 0x80) != 0);
     scc.controlWrite(A, 0x30);              // WR0 Error Reset
     assert((scc.peekRr(A, 1) & 0x80) == 0);
-    assert(scc.rxFifoCount(A) == 0);
-    std::printf("  ok: End Of Frame locks the FIFO until Error Reset\n");
 
-    // A frame received with a bad FCS raises the CRC error bit.
+    // "Special Condition only" (11) HOLDS it until Error Reset.
+    writeReg(scc, A, 1, 0x18);
+    scc.receiveFrame(A, frame, 2);
+    for (int k = 0; k < 4; ++k) (void)scc.dataRead(A);
+    assert(scc.rxFifoCount(A) == 1 && "mode 11 holds the special character");
+    scc.controlWrite(A, 0x30);
+    assert(scc.rxFifoCount(A) == 0);
+    std::printf("  ok: SDLC frames carry their FCS; End Of Frame is held in 01/11 only\n");
+
+    // A frame received with a bad FCS raises the CRC error bit — on the
+    // frame's last character, the second FCS byte.
     Scc8530Device bad;
     writeReg(bad, A, 4, 0x20);
     writeReg(bad, A, 3, 0xC1);
     const uint8_t one[] = { 0x55 };
     bad.receiveFrame(A, one, 1, /*crcError=*/true);
     assert(bad.dataRead(A) == 0x55);
+    assert((bad.peekRr(A, 1) & 0x40) == 0 && "the error is on the frame's END");
+    (void)bad.dataRead(A);
     assert((bad.peekRr(A, 1) & 0x40) != 0 && "CRC/framing error");
     std::printf("  ok: a bad FCS reaches RR1\n");
 
@@ -739,11 +780,12 @@ void testSdlcReceive()
     assert(addr.rxFifoCount(A) == 0 && "a frame for another node is ignored");
     assert((addr.peekRr(A, 0) & 0x10) != 0 && "and it stays in hunt");
     addr.receiveFrame(A, mine, 2);
-    assert(addr.rxFifoCount(A) == 2);
+    assert(addr.rxFifoCount(A) == 3);       // 2 data + FCS, 3-deep
     assert(addr.dataRead(A) == 0x42);
+    for (int k = 0; k < 3; ++k) (void)addr.dataRead(A);   // the rest + FCS
     addr.controlWrite(A, 0x30);
     addr.receiveFrame(A, bcast, 2);
-    assert(addr.rxFifoCount(A) == 2);
+    assert(addr.rxFifoCount(A) == 3);
     std::printf("  ok: SDLC address search accepts WR6 and the broadcast\n");
 
     // Outside SDLC, and with the receiver off, frames are not accepted.
@@ -772,7 +814,9 @@ void testSdlcCrcErrorDoesNotPoisonTheSlot()
     const uint8_t one[] = { 0xAA };
     scc.receiveFrame(A, one, 1, /*crcError=*/true);
     assert(scc.dataRead(A) == 0xAA);
+    (void)scc.dataRead(A);                  // FCS 1
     assert((scc.peekRr(A, 1) & 0x40) != 0 && "the bad frame reports CRC");
+    (void)scc.dataRead(A);                  // FCS 2, End Of Frame
     scc.controlWrite(A, 0x30);              // WR0 Error Reset
     assert(scc.rxFifoCount(A) == 0);
 
@@ -938,21 +982,22 @@ void testChannelResetClearsOnlyItsOwnInterrupts()
     }
     {
         // IUS too: an in-service channel B interrupt survives channel A's
-        // reset and still blocks the lower-priority sources behind it (in
-        // POM2's daisy order channel B Rx sits after channel B Tx) until its
-        // own Reset Highest IUS.
+        // reset and still blocks the LOWER-priority sources behind it until
+        // its own Reset Highest IUS. The Zilog order is Rx > Tx > Ext/Status
+        // per channel (manual p. 36), so Rx B in service blocks Tx B.
         Scc8530Device scc;
         writeReg(scc, A, 9, 0x08);
-        armTxIp(scc, B);
-        assert(scc.intAck() >= 0);      // channel B Tx now in service
+        writeReg(scc, B, 3, 0xC1);
+        writeReg(scc, B, 1, 0x10);      // Rx on all chars
+        scc.receiveByte(B, 0x99);
+        assert(scc.intAck() >= 0);      // channel B Rx now in service
         assert(!scc.intAsserted());
         writeReg(scc, A, 9, 0x88);      // Channel A Reset
-        writeReg(scc, B, 3, 0xC1);
-        writeReg(scc, B, 1, 0x12);      // Rx on all chars (+ Tx IE kept)
-        scc.receiveByte(B, 0x99);
+        armTxIp(scc, B);                // Tx B: lower than the Rx B in service
+        writeReg(scc, B, 1, 0x12);
         assert(!scc.intAsserted() && "channel A's reset dropped channel B's IUS");
         scc.controlWrite(B, 0x38);      // Reset Highest IUS
-        assert(scc.intAsserted() && "channel B Rx is served once the IUS clears");
+        assert(scc.intAsserted() && "channel B Tx is served once the IUS clears");
     }
     std::printf("  ok: a WR9 channel reset clears only that channel's IP/IUS\n");
 }
@@ -1061,8 +1106,12 @@ void testSpecialConditionObeysRxIntMode()
     const uint8_t one[] = { 0x7E };
     scc.receiveFrame(A, one, 1);
     assert(scc.dataRead(A) == 0x7E);
+    (void)scc.dataRead(A);                  // FCS 1
+    (void)scc.dataRead(A);                  // FCS 2 — End Of Frame
     assert((scc.peekRr(A, 1) & 0x80) != 0);
-    assert(scc.rxFifoCount(A) == 1 && "the special condition still locks");
+    // Polled mode (WR1 D4-D3 = 00) does not HOLD the character either — only
+    // modes 01 and 11 do (Zilog manual, WR1 / Error Reset).
+    assert(scc.rxFifoCount(A) == 0 && "polled mode does not hold the character");
     assert(!scc.intAsserted() && scc.peekRr(A, 3) == 0x00 &&
            "a special condition interrupted with Rx interrupts disabled");
     std::printf("  ok: the special condition obeys WR1's Rx interrupt mode\n");

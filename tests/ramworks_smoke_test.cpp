@@ -254,6 +254,23 @@ void testSetIIEModeFalseDropsBacking()
     assert(mem.ramWorksBank()  == 0);
 }
 
+// The DHGR paint host edits the PICTURE: its writes go to the bank the
+// screen shows (bank 0), whatever bank the CPU has selected. It used
+// auxDataMutable(), the CPU's bank, so with bank 1 selected every stroke
+// landed in the program's private bank and nothing changed on screen.
+void testVideoAuxMutableIsTheVisibleBank()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    mem.setRamWorksBanks(4);
+    selectBank(mem, 1);
+    mem.videoAuxDataMutable()[0x2000] = 0x5A;
+    assert(mem.videoAuxData()[0x2000] == 0x5A);
+    assert(mem.auxData()[0x2000] != 0x5A && "wrote the CPU's bank, not the screen's");
+    selectBank(mem, 0);
+    assert(mem.auxData()[0x2000] == 0x5A && "the byte is in bank 0");
+}
+
 void testResetSnapsBankToZero()
 {
     // MAME `a2eramworks3.cpp:65-68 device_reset` snaps `m_bank = 0` on a
@@ -354,6 +371,7 @@ int main()
     testResetWipesAndBankZero();
     testIIPlusNotAffected();
     testSetIIEModeFalseDropsBacking();
+    testVideoAuxMutableIsTheVisibleBank();
     testResetSnapsBankToZero();
     testMaxBanksCap();
 

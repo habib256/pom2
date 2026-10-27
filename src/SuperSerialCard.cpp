@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "SuperSerialCard.h"
+#include "Block512Backing.h"   // pom2::noteMediaWrite
 #include "SlotRomAsm.h"
 
 #include "SuperSerialTransport.h"
@@ -1074,6 +1075,7 @@ void SuperSerialCard::transmitByte(uint8_t v)
     // is capped; this one wasn't).
     if (printerTap_) {
         printerSpool_.push_back(v);
+        pom2::noteMediaWrite();   // printed output is irreversible: bump at the leaf (see PrinterCoordinator::notePrinted)
         constexpr size_t kSpoolCap = 1u << 20;
         if (printerSpool_.size() > kSpoolCap) {
             const size_t drop = kSpoolCap / 2;

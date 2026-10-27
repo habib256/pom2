@@ -362,6 +362,54 @@ void test_vbl_irq_locked_to_beam()
     std::remove(slotPath.c_str());
 }
 
+// Under a 4x accelerator the beam keeps the crystal's time (Memory's video
+// clock), so the card's on-beam VBL must land on line 192 of the BEAM's
+// frame — not every 17030 CPU cycles, which is four times a frame.
+void test_vbl_irq_on_beam_under_accelerator()
+{
+    std::vector<uint8_t> rom(0x800, 0x00);
+    const auto slotPath = writeTempBlob(rom, "vbl_accel_slot.bin");
+    const uint16_t devBase = 0xC0C0;
+    const uint64_t frame = 262 * 65;
+
+    Memory mem;
+    mem.setIIEMode(true);
+    auto card = std::make_unique<MouseCardAppleWin>(4);
+    assert(card->loadRom(slotPath));
+    MouseCardAppleWin* raw = card.get();
+    raw->setVblCycles(static_cast<int>(frame));
+    mem.slotBus().plug(4, std::move(card));
+    mem.setCycleCounter(frame * 57 + 3000);
+    mem.slotBus().reset();
+    primePiaForOutput(mem, devBase);
+    pulseCommand(mem, devBase, 0x09);            // MOUSE_SET: ON | INT_VBL
+
+    // The machine speeds up (EmulationController::applyAcceleratorClock
+    // re-anchors Memory first, then tells the cards).
+    mem.setVideoClockRatio(0.25);
+    raw->setStandardClock(1022727.0);
+    raw->setCpuClock(4.0 * 1022727.0);
+
+    for (int irq = 0; irq < 3; ++irq) {
+        int line = -1;
+        for (uint64_t i = 0; i < 8 * frame; i += 4) {
+            mem.advanceCycles(4);
+            if (raw->slotIrqAsserted()) {
+                line = static_cast<int>((mem.videoNow() % frame) / 65);
+                assert((mem.memRead(0xC019) & 0x80) == 0);
+                break;
+            }
+        }
+        if (line < 191 || line > 193)
+            std::fprintf(stderr, "4x: VBL IRQ %d on beam line %d, want 192\n", irq, line);
+        assert(line >= 191 && line <= 193);
+        pulseCommand(mem, devBase, 0x20);        // MOUSE_SERV
+        pulseCommand(mem, devBase, 0x10);        // MOUSE_READ
+        assert(!raw->slotIrqAsserted());
+    }
+    std::remove(slotPath.c_str());
+}
+
 // MOUSE_HOME ($70) homes to the UPPER-LEFT CORNER OF THE CLAMPING WINDOW,
 // not to (0,0) — "sets the mouse position to the upper-left corner of the
 // clamping window" is Apple's own wording for the HOMEMOUSE firmware entry
@@ -667,7 +715,8 @@ void test_timedata_sets_the_vbl_rate()
 
     // The default is 60 Hz on a PAL machine too: the card does not see the
     // 50 Hz frame, a program has to ask for it.
-    r.card->setVblCycles(20280);                        // PAL beam, 312 × 65
+    r.mem.setVideoStandard(VideoStandard::PAL);         // the machine's beam…
+    r.card->setVblCycles(20280);                        // …and the card's: 312 × 65
     r.call(0x19, 0);
     const int palDefault = countIrqs();
     r.call(0x1C, 0x01);                                 // TIMEDATA 50 Hz
@@ -758,6 +807,7 @@ int main()
     test_snapshot_round_trip_and_irq_rewind();
     test_vbl_pacing_follows_set_cycles();
     test_vbl_irq_locked_to_beam();
+    test_vbl_irq_on_beam_under_accelerator();
     test_getclamp_reads_the_window_and_leaves_the_pointer();
     test_timedata_sets_the_vbl_rate();
     test_mouse_off_ignores_motion();

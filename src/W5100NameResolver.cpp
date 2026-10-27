@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <thread>
 
@@ -94,9 +95,13 @@ W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
 
     const auto cached = cache_.find(name);
     if (cached != cache_.end()) {
-        out.status  = cached->second ? Status::Resolved : Status::Failed;
-        out.address = cached->second;
-        return out;
+        const CacheEntry& e = cached->second;
+        if (e.address || std::chrono::steady_clock::now() - e.stored < failureTtl_) {
+            out.status  = e.address ? Status::Resolved : Status::Failed;
+            out.address = e.address;
+            return out;
+        }
+        cache_.erase(cached);   // a failure past its lifetime: ask again
     }
 
     // A cache MISS is the only thing that puts a query on the wire, so the
@@ -130,14 +135,23 @@ W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
     }
 
     auto lookup = lookup_;
-    auto future = std::async(std::launch::async,
-                             [lookup, name]() { return lookup(name); });
+    // Thread creation can throw (std::system_error) — on the CPU thread,
+    // under stateMutex. One OPEN failing is the right outcome; the worker
+    // dying through its exception barrier is not.
+    std::future<uint32_t> future;
+    try {
+        future = std::async(std::launch::async,
+                            [lookup, name]() { return lookup(name); });
+    } catch (const std::exception&) {
+        log().warn("W5100", "could not start a DNS lookup thread");
+        out.status = Status::Refused;
+        return out;
+    }
 
     if (future.wait_for(std::chrono::milliseconds(waitMs)) ==
         std::future_status::ready) {
         const uint32_t address = future.get();
-        if (cache_.size() >= kMaxCache) cache_.clear();
-        cache_[name] = address;
+        store(name, address);
         out.status  = address ? Status::Resolved : Status::Failed;
         out.address = address;
         return out;
@@ -154,6 +168,7 @@ W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
         std::lock_guard<std::mutex> lk(mailbox->mutex);
         ++mailbox->inFlight;
     }
+    try {
     std::thread([name, shared, mailbox]() {
         bool counted = false;
         runGuarded("W5100", [&] {
@@ -170,6 +185,14 @@ W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
             --mailbox->inFlight;
         }
     }).detach();
+    } catch (const std::exception&) {
+        // The slot was counted before the thread existed: give it back, or
+        // eight such failures refuse virtual DNS for good.
+        std::lock_guard<std::mutex> lk(mailbox->mutex);
+        --mailbox->inFlight;
+        out.status = Status::Refused;
+        return out;
+    }
 
     log().info("W5100", "DNS lookup for '" + name +
                             "' still in flight — retry the connection");
@@ -185,8 +208,13 @@ void W5100NameResolver::poll()
         if (mailbox_->pending.empty()) return;
         ready.swap(mailbox_->pending);
     }
-    if (cache_.size() >= kMaxCache) cache_.clear();   // same cap as resolve()
-    for (const Pending& p : ready) cache_[p.name] = p.address;
+    for (const Pending& p : ready) store(p.name, p.address);
+}
+
+void W5100NameResolver::store(const std::string& name, uint32_t address)
+{
+    if (cache_.size() >= kMaxCache) cache_.clear();
+    cache_[name] = { address, std::chrono::steady_clock::now() };
 }
 
 void W5100NameResolver::clearCache()

@@ -335,6 +335,15 @@ int main()
         assert(target->memory().slotBus().peripheral(7) == oldCard);
         assert(capture(*target).core == session.core); assert(detached == 1);
     }
+    // A session that puts an NMOS core under a soldered 65C02 (enhanced //e
+    // PAL here) is refused, not built: the ROM would hit KIL opcodes.
+    {
+        source->cpu().setCpuMode(M6502::CpuMode::NMOS);
+        const auto nmos = capture(*source);
+        source->cpu().setCpuMode(M6502::CpuMode::CMOS);
+        std::string e; assert(!reconstructSession(*target, nmos, e, hooks)); assert(!e.empty());
+        assert(target->cpu().getCpuMode() == M6502::CpuMode::CMOS && detached == 1);
+    }
     // A UI queue runs background loads on the owner and closes pending waits.
     const auto owner = std::this_thread::get_id();
     auto queue = std::make_shared<SessionLoadQueue>([&](const SessionArchive&, std::string&) {

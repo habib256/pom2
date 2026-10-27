@@ -10,6 +10,562 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-27 — The backlog's hardware entries, reproduced first
+
+The eleven backlog entries about machine behaviour, each reproduced on main
+before anything was changed (`docs/backlog/`).
+
+**Fixed:**
+- **DISPLAY-004.** The composite colour phase was one value per frame: a
+  frame that switches HGR ⇄ DHGR (or 40 ⇄ 80 columns) mid-picture
+  demodulated every band with the last band's phase. The phase is now per
+  scanline, as MAME's per-line `render_line(..., is_80_column)`. The OE CPU
+  and AppleWin demodulators read it row by row, and the GPU shader, which
+  has one uniform, hands such a frame to the CPU demod, as it already does
+  for the mixed band (`dhgr_phase_signal`). The entry's other half, lo-res
+  splits clipped to 4-line blocks, was stale: both painters clip by
+  scanline.
+- **STORAGE-010.** A `.nib` holds nibbles, not cells. POM2 gave every byte
+  8 cells, so a loader counting sync slip saw none. The sync bytes now follow
+  MAME's `a2_nib_format`: only "FF … FF D5" is sync, at 10 cells per $FF;
+  other $FF stay 8; a bit-7-clear byte is transparent; runs wrap at the seam
+  (`disk_cnib2_smoke`). Not done: MAME's rescale of the track to one 200 ms
+  revolution.
+- **AUDIO-011, the SSI263's A/!R period** follows the data sheet:
+  4096 × (16 − R) × (4 − D) periods of XCK, the slot bus's phase 0 (PAL or
+  NTSC; no accelerator raises it). It followed the PCM phoneme's length, so
+  the rate nibble changed nothing the guest could see. The PCM audio is cut
+  or looped to that period. This departs from AppleWin's primary path, which
+  times on PCM length; its own log formula is the data sheet's.
+
+**Already correct, now pinned:** DISPLAY-005. A line mixing 40- and
+80-column cells renders in frame80 (`force560_`, then `usesLegacyPath`), but
+nothing tested it, and a comment still called it out of scope
+(`horizontal_split_560` § 3).
+
+**Closed after checking against MAME:**
+- **DISPLAY-009.** MAME's one-pixel DHGR mono shift exists only for its
+  NTSC shader. `empty_words` is HGR on a machine with too little RAM.
+  Per-line mode switches were already supported.
+- **DISPLAY-006.** Nothing left beyond the SSI263's XCK, fixed above.
+
+**Researched, still open:**
+- **MEMORY-003.** No write-protect DIP exists on the Apple Language Card,
+  and POM2's decode is MAME's. Two points are open: the power-on bank
+  (MAME 1, AppleWin 2) and the card's own Autostart F8 ROM.
+- **AUDIO-003.** MAME 0.288 ran the Mockingboard from the repo's dumps for
+  a reference WAV, but its five-channel output mapping gives the two sources
+  different gains. The method is recorded for the next step.
+- **VALIDATION-001.** The 256-cycle stepper cancel stays. AppleWin's
+  10-cycle deferred step agrees with it; MAME, with no mechanical inertia,
+  moves the head.
+- **VALIDATION-003** and **DISPLAY-011** need disks, a real machine or
+  board measurements. The non-frozen DISPLAY-011 items (trim pots, RGBI
+  palette, the Eve's switches as beam-raced events, goldens) are features
+  without an oracle.
+
+## 2026-10-27 — Open bugs, fixed against the hardware
+
+The items the six hunts above left open, taken against MAME, AppleWin, VICE,
+the Tom Harte single-step vectors and the chips' own data sheets. Each fix
+has a test that fails with the fix reverted.
+
+**Accelerators: the bus keeps the crystal's time.** An accelerator shortens
+the 6502's cycle and nothing else. Five things counted CPU cycles anyway:
+- **The beam and VBL.** `$C019`, the floating bus, the video event log and
+  the frame publication ran on the CPU counter, so a TransWarp or a 4×
+  //c+ saw 240 VBLs a second. Memory now keeps a video clock: the CPU
+  counter mapped through a slope EmulationController re-anchors per chunk
+  (`Memory::videoCycleAt`). It is the identity without an accelerator. The
+  AppleWin mouse's on-beam VBL interrupt asks Memory for the next edge, and
+  the clock rides the snapshot trailer (`vbl_smoke` §§ 3-4,
+  `mouse_card_applewin_smoke`).
+- **The Disk II.** The LSS, the spindle, the stepper and the motor-off 556
+  run on stock bus cycles. A WOZ now delivers 489 nibbles in 64 k CPU
+  cycles at 4×, against 1967 at 1×, as the disk turns in real time
+  (`diskii_motor_coast` § 6).
+- **The SoftCard Z80, the Liron's IWM and the paddle timers** are scaled the
+  same way (`softcard_toggle`, `liron_chain`, `zip_chip`). A Zip and a
+  TransWarp no longer multiply each other, and the Zip re-arms its slow
+  window as MAME does.
+
+**CPU** (`m6502_undoc_access_timing`):
+- RMW instructions write the old value back on cycle 4 and the new one on
+  cycle 5 (MAME `om6502.lst` `asl_aba`). Both writes used to be stamped on
+  the read's cycle. NMOS indexed dummy reads moved to their own cycle.
+- The Apple 65C02 is an NCR/GTE part: `$x7`, `$xF`, `$CB` and `$DB` are
+  one-byte, one-cycle NOPs (IIe/IIc Technical Reference, Appendix A). They
+  ran as RMB/BBR/WAI/STP, and STP stopped the machine.
+- The Rockwell bit instructions follow MAME's bus order and the R65C02 Tom
+  Harte traces: zero-page operand, read, dummy read, then the write (or the
+  branch offset).
+
+**6522** (`via_t1_rearm_chain`, against the 6502.org die notes and VICE):
+- One-shot T1 reloads from the latch.
+- PB7 toggles only with ACR7 set and T1 armed.
+- An ACR write no longer re-arms T1. It captures port A on an ACR0 rising
+  edge while CA1 is set, and freezes or resumes T2 pulse counting.
+- T2 in pulse mode loads N+1.
+
+**Z8530 SCC** (Zilog UM010902; `scc8530_smoke`, `scc8530_sdlc_recovery`):
+- Interrupt priority and the RR2B "nothing pending" vector are corrected.
+- The hardware-reset masks follow the manual.
+- An overrun lands in the newest FIFO slot.
+- The receive FIFO is held only in WR1 modes 01/11. Error Reset clears
+  RR1 D7-D4 and pops only a held character.
+- RR1 shows the status of the byte at the FIFO exit.
+- SDLC frames end with their CRC-CCITT FCS.
+- The Workstation card's 65C02 now wakes from WAI.
+
+**SoftCard Z80: each bus access is stamped where it falls in its
+instruction.** Every device stamps an access with Memory's counter plus the
+6502's in-flight cycles. During the Z80's turn that was 0, so all the
+accesses of an instruction landed on its first cycle: a `DEC (IX+d)` on a
+6522 counter read 9 cycles early. The core now tracks the T-state of the
+access in progress from the Zilog M-cycle shapes (`Z80::busT`):
+- M1 is 4 T and a read or write is 3 T.
+- `(IX+d)` adds its 5-T index add, and a DDCB op byte or an `LD (IX+d),n`
+  operand adds 2 T.
+- A stack push is preceded by 1 T.
+- A read-modify-write read is 4 T, and RRD/RLD add 4 internal T between
+  read and write.
+
+The SoftCard puts that position, at 2 T per 6502 cycle, in the in-flight
+count (`softcard_toggle`: `LD A,(nn)` reads on cycle 5 and `INC (HL)`
+writes on cycle 4). `RET cc` has its 5-T M1 before the pops, and
+`EX (SP),HL` writes the high byte first, after a 4-T read, as the manual's
+timing table gives. The remaining internal T-states follow an instruction's
+last access and move no stamp (interrupt acknowledge is not placed; CP/M
+runs with interrupts off).
+
+**Smaller chips:**
+- **68705 (mouse):** RESET clears only the data-direction registers. The
+  data latches keep their contents (MC68705P3 data sheet; MAME
+  `device_reset`), and the floating pins release the slot IRQ
+  (`m68705_decode_smoke`).
+- **68705 opcodes:** `$42`, `$8E` and `$8F` are MUL, STOP and WAIT on the
+  HC05 and CMOS 146805, but the HMOS 68705P3 has none of them (MAME
+  `s_hmos_s_ops`). They are 4-cycle illegal NOPs now. MUL used to multiply,
+  and STOP/WAIT parked the PC.
+- **TMS5220:** a Read Byte issued while the chip is talking is held until
+  talking ends. The Echo+ resets the chip only on power cycle.
+- **No-Slot Clock:** the clock can be set. Writes follow the DS1216
+  protocol, and the snapshot is v2 (`no_slot_clock`). A truncated v2 blob
+  is refused (`card_snapshot_state`).
+- **4play and SNES MAX:** unused bits read the floating bus.
+- **ATA (CFFA):** a refused write sets ERR with ABRT or IDNF, and no longer
+  DF. DF is ATA-1's Drive Write Fault, a write that was tried and failed;
+  MAME sets ERR only (`ata_block_device`).
+- **//c warm reset** keeps ROMBANK and the MIG selects (`iic_mig_hub_sync`).
+
+**Cassette:**
+- `$C060` polarity: an idle deck reads `$80`.
+- A tape saved mid-recording is copied under the lock and written outside
+  it.
+- A time jump keeps the input level.
+- WAV decoding uses the block alignment and the strongest channel.
+- The monitor starts after a 40 ms lead and restarts after running dry, so
+  the gaps between CPU chunks are no longer holes of silence
+  (`cassette_wav_tail`).
+
+**Display:**
+- 80-column text demodulates with MAME's `is_80_column` phase
+  (`text_update`), as DHGR and DLGR do (`dhgr_phase_signal`).
+- The composite mixed-text patch carries the VidHD `$C022` text colours
+  (`vidhd_card`).
+- Le Chat Mauve's colour text works in GR + MIXED, not only HGR
+  (`le_chat_mauve_smoke` § 8c).
+- AppleWin's TV mode is its in-between line: a blend with the previous
+  Apple scanline of the same frame (`NTSC.cpp`
+  `updateFramebufferTVDoubleScanline`), not with the previous frame
+  (`applewin_ntsc_smoke` § 5).
+- The fallback font draws `$80-$9F`. The flash range is remapped only with
+  a 4 KB character ROM.
+
+**Printers:**
+- **Epson** (moved to `ImageWriter_EscP.cpp`):
+  - HT and VT are supported, along with the ESC D/B/b lists and margins
+    counted from the 0.25" home column.
+  - LF also returns the carriage.
+  - Control codes are silent.
+  - ESC W 0 cancels SO.
+- **C. Itoh:** ESC L counts from home.
+- **Diablo 630:**
+  - RS is VMI and US is HMI, as in the manual.
+  - ESC HT/VT count from position 0.
+  - Bold ends at CR.
+- **Screen dump:** the pitch is chosen by width, and the line spacing is
+  restored afterwards.
+
+**Storage:**
+- **STORAGE-012:** the WOZ/MOOF 3.5" write-back serialises in phase 2
+  (re-encode plus CRC32 over up to 16 MiB). Phase 1 keeps a reference to
+  the copy-on-write track capture, under the lock. A layout the serialiser
+  would refuse now mounts write-protected instead of accepting writes it
+  can never save (`disk35_flux_write`).
+- **SmartPort 3.5" units** take the two-phase mount
+  (`SmartPort35Unit::adoptImage`, `smartport_card_smoke`). They used to
+  read 800 KB under the lock.
+- **STORAGE-013:** VSDrive answers command `$01`, reopens a file replaced
+  under it, and syncs after each write (`vsdrive_protocol`).
+- **STORAGE-014, ProDOS host folder:**
+  - The write-back matches entries against the names the build served
+    (`takeFolderNameMap`), not a replay of the folder at eject. A host
+    delete no longer hands the deleted file's ProDOS name, and its bytes,
+    to a colliding survivor.
+  - A file the host deleted and the guest never changed stays deleted
+    (`prodos_volume_smoke`).
+  - A failed eject commit adopts the partial decode's stamp
+    (`prodos_synth_failed_flush`).
+  - The mount stamp is the scan's start.
+  - `HELLO.BAS` keeps its extension across a remount.
+  - A too-deep directory fails the save only when it holds guest data, and
+    the directory budget is the volume's size (`prodos_decode_safety`
+    § 6).
+  - The Windows manifest sets the UTF-8 code page.
+  - An eject repeats its capture-and-commit, up to four times, while the
+    guest keeps writing during the unlocked commit. Phase 3 used to decode
+    those late writes, the whole volume for a host folder, under the lock.
+    No test drives that race yet.
+
+**Rewind: a snapshot that changes length is a delta, not a keyframe**
+(`rewind_delta` § 8). The XOR codec needed equal-length neighbours, so every
+size change forced a full keyframe. The Disk II appends its in-flight write
+burst, and a SmartPort bus reply varies the same way, so during a DOS INIT, a
+long SAVE or a copy program nearly every frame was a keyframe. Each one was
+10.5 MB with `ramworks_banks=128`, copied under the lock, and the 256 MiB ring
+held 0.4 s of history. A delta now opens with a resize record, then the
+spans over the common prefix, then the new tail. The slot blobs of a capture
+reuse one buffer, as MEX already did, instead of a few hundred KB allocated
+and freed 60 times a second.
+
+**AI server:**
+- Responses have a 10 s write deadline.
+- A recv interrupted by `EINTR` is retried.
+- Unknown methods get a 405.
+- The install-tree read fence lists its directories.
+
+**Keyboard:**
+- Linux AltGr (X11/Wayland Level3 Shift) no longer drives Solid-Apple, and
+  the composed character reaches the guest (`key_chord_policy`).
+- The browser build asks the page which OS it runs on
+  (`keychord::hostIsWindows`). A browser on Windows sends AltGr as Windows
+  does (Ctrl + right Alt), and the native build's compile-time "not
+  Windows" applied the Linux rule to it.
+- Ctrl+`[`/`\`/`]`/`^`/`_` type `$1B-$1F`.
+- Injected keys keep any-key-down.
+
+Still open:
+- Session restore tears the live machine down before re-applying a session
+  it already validated on a candidate machine. It has no rollback, and the
+  second apply runs under the lock.
+
+## 2026-10-27 — Bug hunt, round six
+
+**AI control server** (`ai_control_server_smoke`):
+- A native caller could skip the 429 brake by adding `Sec-Fetch-Site:
+  none` to its token guesses. Browser-marked requests are not counted (so a
+  web page cannot lock the agent out), but in token mode they could still
+  succeed: an unbraked 401/200 oracle against a short, user-typed token.
+  A browser-marked request now never authenticates.
+- `Transfer-Encoding : chunked` (whitespace before the colon) slipped past
+  the chunked refusal, and the 2026-09-17 bug came back: a chunked soft
+  reset ran as a hard one. A repeated `Content-Length`, or any
+  `Transfer-Encoding`, is now a 400 (RFC 7230 §3.2.4 and §3.3.3).
+
+**//c without an IOU mouse in slot 4** (`mouseaw`, or empty) read `$C015` /
+`$C017` as the //e's RDCXROM / RDC3ROM. INTCXROM is forced on a //c, so
+every poll saw a phantom mouse X interrupt. They now answer with the IOU's
+flags clear, as MAME's `c000_iic_r` does (`iic_mouse_lle`).
+`system_profile_smoke` had pinned the old behaviour, reading `$C015` bit 7
+as RDCXROM on a //c. It now checks INTCXROM through the internal-ROM
+mapping.
+
+Left open:
+- **CPU** (needs DIX/OLDSKOOL and Disk II corpus runs before any change):
+  - Documented RMW instructions stamp the dummy and final write on the
+    read's cycle, 1 and 2 cycles early.
+  - NMOS indexed dummy reads share the data access's cycle.
+  - `$DC`/`$FC` read the un-indexed base; MAME and the Tom Harte traces
+    disagree here.
+  - Rockwell/WAI/STP on Apple CMOS profiles: MAME uses a plain W65C02
+    without them. This is a documented project choice (DEV.md).
+- **//c reset:** Ctrl-Reset clears IOUDIS, ROMBANK, the MIG selects and
+  the VBL mask; MAME's `reset_w` keeps them. Unchecked against the IIc
+  Technical Reference.
+- **AI server:**
+  - Slow reading of a response holds the single worker; there is no write
+    deadline.
+  - `/disk`'s read fence includes the install tree's parent, and the
+    mounted image is writable.
+  - HEAD and unknown methods are served.
+  - A recv `EINTR` drops the request.
+- **Display:**
+  - 80-column text is demodulated with the 40-column phase (sharp text
+    off).
+  - The composite mixed-text patch skips the VidHD `$C022` tint.
+  - The fallback font draws `$80-$9F` as boxes.
+  - The ][+ flash range is remapped as only II_J_PLUS does.
+
+## 2026-10-27 — Bug hunt, round five
+
+**ImageWriter** (`imagewriter_escape`, new):
+- `ESC V` / `ESC U` stopped masking bit 7 when the command letter arrived,
+  not after the four count digits. Applesoft's high-bit `$B0 $B1 $B0 $B0`
+  read as a count of 0, and the column never printed. `paramDigit` now
+  drops bit 7.
+- Epson SO / `ESC SO` (one-line expanded) shared the double-width bit with
+  `ESC W 1` / `ESC ! $20`. `SO "TITLE" CR LF` printed the whole document
+  expanded, and DC4 cancelled a persistent `ESC W 1`. The two are now
+  tracked apart: CR, LF, FF and DC4 end only the one-line expansion
+  (ESC/P reference).
+
+**Slirp short frames are padded to 60 bytes** before they reach the NIC,
+as QEMU does. An unpadded SYN-ACK or ACK is a runt to the CS8900A, so TCP
+through an Uthernet I would never connect. libslirp 4.9.3 already pads, so
+this guards older builds and could not be shown failing on this machine
+(`slirp_loopback_fence` § 6).
+
+Left open:
+- **ProDOS host folder:** STORAGE-014.
+- **ImageWriter:** the FX-80 and Diablo heads print unhandled control codes
+  as CP437 glyphs, and the FX-80 has no HT. `ESC D/B/b/'/'/?/%` are dropped
+  without their parameters. `ESC L 000` ignores the 0.25" home column.
+- **SCC 8530:**
+  - RR1 shows the status of the byte just read, not the top of the FIFO,
+    so every LocalTalk frame reaches the Workstation firmware one byte
+    short. There are also no FCS bytes in the FIFO.
+  - Error Reset steps the FIFO in every Rx mode.
+  - An async overrun is never reported.
+  - RR2B priority and the no-pending vector are wrong.
+  - The WR9 hardware-reset mask is copied from MAME and inverted against
+    Zilog.
+  - The Workstation CPU could not wake from WAI.
+- **Accelerators:**
+  - The beam and VBL run on CPU cycles under any accelerator (DEV.md listed
+    it for the //c+ only).
+  - The SoftCard Z80 runs on the accelerated budget; the Workstation card
+    already scales its own.
+  - The Liron's private IWM counts its drive-disable delay on accelerated
+    cycles.
+  - A Zip and a TransWarp multiply their speeds.
+  - The Zip's slow-down window takes the maximum where MAME re-arms it.
+
+## 2026-10-27 — Bug hunt, round four
+
+**A held F6 could rewind across a print and print it twice.** Printed
+output bumped the rewind epoch only when the UI drained a card's spool
+(`PrinterCoordinator::notePrinted`). A scrub that began between the
+guest's write and the next drain saw no irreversible write and rolled RAM
+back past the bytes. The drain then printed them, and the guest sent them
+again. Every spool append now bumps at the leaf, as the media writes do:
+`CentronicsPrinter`, `GrapplerCard`, `PrinterCard`, the SSC tap and the
+FujiNet printer unit (`printer_card_smoke`).
+
+**Keyboard** (`key_chord_policy`):
+- Open-/Solid-Apple + Ctrl + letter typed the plain letter (`s` for
+  OA+Ctrl+S), because any Alt disqualified Ctrl. Only Windows AltGr does
+  now.
+- OA+Space typed nothing: Space has no layout name.
+
+**Echo (SSI263 card): the status read was the chip byte raw**, a constant
+`$00`/`$80`. The chip drives bit 7 only; bits 0-6 are the floating bus,
+as `PhasorCard` already merges them (`echoplus_card_smoke`).
+
+Left open:
+- **6522:** after a one-shot timeout, T1 counts on from `$FFFF`. MAME
+  master and AppleWin reload it from the latch; the datasheet wording
+  says it keeps decrementing. POM2's T1 is tuned against the DIX/TRIBU
+  oracle, so this waits for a hardware answer.
+- **6522, also open:** T2 read-back in PB6 mode is one too high; PB7 phase
+  differs when ACR.7 is off; turning on ACR.0 does not latch port A.
+- **Keyboard:** Linux and browser AltGr reaches Solid-Apple (it depends on
+  how GLFW reports AltGr there). Ctrl+`[`/`\`/`]`/`^`/`_` type nothing.
+  Injected keys stop raising any-key-down once a host key has been
+  pressed.
+- **Rewind:** the Disk II's variable-length write-burst blob forces a
+  keyframe every frame during long writes.
+- **SoftCard:** Z80 bus accesses are stamped at the start of their
+  instruction.
+
+## 2026-10-27 — Bug hunt, rounds two and three
+
+**Undocumented NMOS opcodes touched the bus late.** Their handlers added
+the instruction's whole cost before the access, while every documented
+handler stops at the access's own bus cycle. So `LAX $C404` read a 6522
+count one cycle after `LDA $C404` (the OLDSKOOL off-by-one class), `SAX`
+wrote one late, and the RMW forms (`SLO`, `DCP`, `ISC`…) put all three
+accesses three cycles late. Totals were right, so Tom Harte could not see
+it. Each handler now advances to the access, as `Abs` / `ZeroX` /
+`IndZeroX` do, and adds the rest after (`m6502_undoc_access_timing`, new).
+
+**A reset connection could hang a listener's owner for good (macOS).**
+`pollAcceptOnce` called a blocking `accept()` after `poll()`. On BSD a
+queued connection reset in between is dropped, and `accept()` waits for
+the next client; `shutdown()` does not wake it there. The FujiNet card
+joins that worker under `stateMutex`. The listener is now non-blocking at
+the accept, and the accepted socket is handed back blocking, because on
+BSD and Winsock it inherits `O_NONBLOCK` (`socket_compat`).
+
+**Windows helper launches:**
+- `ChildProcess` passed `GS_OPTIONS` (and `GS_LIB`, …) through to
+  gswin64c, so `-dNOSAFER` in the user's environment overrode the
+  `-dSAFER` that keeps guest PostScript off the host filesystem. The
+  POSIX branch already stripped them.
+- `findOnPath` used `SearchPathW(nullptr, …)`, which searches the current
+  directory before System32. It now searches System32, then absolute
+  `PATH` entries only, as the POSIX branch does.
+- `SerialPort::writeAll` re-armed the full timeout on every partial
+  write. It now uses one deadline per call, as the POSIX half does.
+
+None of the three Windows-only fixes can run on this machine; CI's Windows
+job compiles them.
+
+**Le Chat Mauve: the MIXED text window lost its colour text** (Video-7 F/B,
+Eve TXT16) under HGR. MAME renders mixed rows through `text_update`, whose
+RGB branch ignores the upper part. Rows 20-23 now go through
+`renderTextChatMauveFgBg` (`le_chat_mauve_smoke` § 8b). The GR + MIXED
+case is still white on black: its painter writes the 280-wide frame.
+
+**Debugger:**
+- `bootFromSlot` cleared the debugger and then primed text page 1 and the
+  F8 zero page through `memWrite`. A write watch on CSWL stopped the
+  machine at `$Cn00`, blaming "the instruction at $0000". It now clears
+  again after the priming.
+- An NMOS RMW write watch reported the dummy write-back (`INC $10` "wrote
+  $05" while memory held $06). The same instruction's later write to the
+  same byte now updates the hit (`debugger`).
+
+**Uthernet II: Ctrl-Reset power-cycled the W5100**, clearing the indirect
+address and the ARP/DNS caches. The manual (p.10) and AppleWin keep them
+across a soft reset. `onReset` now soft-resets the chip, and the new
+`onPowerCycle` does the full reset (`uthernet2_w5100_smoke`).
+
+**The DHGR paint editor edited the CPU's RamWorks bank, not the screen's.**
+With a program on aux bank ≥1, the canvas showed that bank, and every
+stroke, Apply or load wrote the program's private data. It now goes
+through `videoAuxData()` and the new `videoAuxDataMutable()`
+(`ramworks_smoke`).
+
+**Slot Config Apply erased keys the resolve had dropped.** A ][+ Videoterm
+seen from a //e (or a //e VidHD from a ][+, or a de-duplicated card) is ""
+in the draft, and Apply wrote that "". The shutdown writer already skipped
+those slots. Both writers now share `pom2::slotKeyShouldPersist`
+(`system_profile_smoke`).
+
+**Library: one eject removed every session disk.** Detached session disks
+all carry the path `(session disk)`, and the header-row eject matched by
+path. It now names its slot and drive. The Library header and the drive
+rack also stop offering Eject on a session disk, as the drive panels
+already did: there is no file, so ejecting it discards its writes.
+
+**Browser resume:** enabling it before the startup restore had run marked
+the store initialised without reading the marker. The stored machine was
+never restored, and the next checkpoint could overwrite the committed
+generation. `setEnabled` now initialises first.
+
+**Cassette:**
+- Two `$C020` accesses in one instruction (the NMOS `STA $C020,X` dummy
+  read, then its write) flipped the level without recording a segment.
+  The alternation broke, and the rest of the capture played inverted. It
+  is now a 1-cycle segment.
+- A rewind that stayed past the transition cap cleared the overflow flag,
+  so a truncated tape saved silently (`cassette_wav_tail_smoke`).
+
+Left open:
+- The Disk II motor-off delay and LSS count accelerated CPU cycles. The
+  IWM moved to stock cycles; the Disk II did not.
+- No-Slot Clock: AppleWin ignores the clock until the next A2=1 read after
+  a key mismatch, while MAME restarts recognition. Not checked against the
+  Dallas datasheet. Clock writes are not implemented.
+- 4play `$C0n4+` and SNES MAX: MAME returns `$FF`; AppleWin, by the cards'
+  designer, returns the floating bus. POM2 follows MAME.
+- The //c's DB-15 adapter shares `slot_7_card` with the //e's slot 7.
+- `--slot N=KEY` reports success when the de-dup drops the card.
+- The DHGR sprite export's "aligned byte-column pair" note is wrong at
+  odd columns (14 mod 4 = 2).
+- Paint Undo/Redo during an open stroke corrupts the history.
+- Windows: `path::string()` on a non-ANSI disk filename throws in the
+  Library scan.
+- Library insert + boot bypasses `StorageCoordinator`, so the mount is not
+  saved to settings.
+- REW-hold scrub never moves backwards in audio-stream mode.
+- The cassette monitor has no lead buffer.
+- Saving a tape mid-recording drops toggles.
+- `$C060` polarity differs from MAME; AppleWin not checked.
+- The AppleWin-TV blend is temporal.
+- The Chat Mauve latch ring holds 512 edges.
+- `SmartPort35Unit` saves on eject under the lock.
+
+## 2026-10-27 — Bug hunt: the subsystems no hunt had reached
+
+Aimed at the files no earlier hunt touched (TMS5220, S.A.M., 6821/68705,
+VSDrive, virtual DNS, session/snapshot, 3.5" bitstream, persistence).
+
+**A session protected by default chmod'ed the user's disks at the next
+launch.** Every writer of a `*_writeback` key saved the live flag. Under
+`POM2_MEDIA_WRITE_DEFAULT=protected` every flag is off without the user
+opting out of anything, so quitting wrote the legacy `false` keys, and the
+next normal launch's `migrateLegacyWriteBack` set the read-only bit on every
+mounted image. `pom2::persistedWriteBack` (`MediaWritePolicy.h`) now records
+the default, never an opt-out, in such a process. A real legacy `false`
+whose chmod was refused is still written `false`, so the migration retries.
+
+**`--prodos-folder` wiped the configured HDV.** The rebuild/quit writer
+cleared `hdv_path` (or `hdv_path_drive2`) when the drive held a host folder,
+while the per-mount writer left it alone. Both leave it alone now.
+
+**A VSDrive write did not stop the rewind.** `VsDriveProtocol` writes blocks
+in place in the host file and never bumped `mediaWriteEpoch()`, so a rewind
+could roll ProDOS's RAM back over a SAVE and cross-link the volume.
+
+**S.A.M. tails played ~4x fast under a Zip.** `Dac8Audio` converted queued
+CPU-cycle stamps with whatever clock was current at playback, and a Zip
+drops to 1 MHz for 52 ms after a slot access and then speeds up again. The
+card now stamps writes on the stock timeline, continuous across clock
+changes, and the DAC replays at the stock rate (the speaker's
+`setCpuClockAt` shape). Identity without an accelerator.
+
+**The LLE mouse's 68705 ran at the accelerated clock.** It has its own
+crystal (MAME `mouse.cpp:148`). Under a TransWarp or Zip it ran 3.6-4x
+fast, and its 60 Hz VBL interrupt with it. It is now paced on the bus clock
+through `SlotBusClock`, like the Mockingboard.
+
+**TMS5220: a late FIFO refill resumed from stale frame parameters.** The
+Buffer Low edge that raises SPEN now also zeroes the new frame and sets
+zpar/OLDE/OLDP (MAME `tms5220.cpp:688-712`), as SPEAK EXTERNAL already did.
+
+**A pending Disk II head step survived a rewind.** It was confirmed at the
+next phase access, clicking with a stamp from the abandoned timeline. A
+snapshot load now drops it.
+
+**A failed virtual-DNS lookup was cached for the whole session.** A name
+that failed while the host network came up stayed unresolvable until a cold
+boot. Failures now expire after 30 s; answers do not.
+
+Left open, confirmed by reading: STORAGE-012 and STORAGE-013 in
+`docs/backlog/storage.md`. Lower stakes, also left open:
+- a session file's CPU byte is applied without the soldered-65C02 clamp
+  (crafted files only);
+- the session fast path decodes media under the lock, and so does the slow
+  path's second `restoreSession`;
+- TMS5220 Read Byte is not gated on talk status;
+- Echo+ Ctrl-Reset resets the speech chip, and MAME's `reset_from_bus` does
+  not;
+- the 68705 reset does not re-drive the PIA's port inputs;
+- HMOS opcodes `$42`/`$8E`/`$8F` differ from MAME's illegal handling;
+- the paddle timer counts CPU cycles, not real time, which matters only
+  with a Zip whose paddle slow-down is off;
+- `/printer/spool` cannot reach a FujiNet printer unit;
+- `std::async`/`std::thread` creation in the W5100 resolver can throw on
+  the CPU thread;
+- a screen dump leaves the head's line spacing changed and clips pictures
+  wider than the paper (Videx 720, VidHD 640).
+
+Pinned by `storage_coordinator`, `vsdrive_protocol`, `sam_card`,
+`mouse_card_smoke`, `tms5220`, `diskii_step_rewind` (new) and
+`w5100_name_resolver`. Each pin was checked red against its reverted fix.
+
 ## 2026-10-25 — Refresh the bundled pom2games disks
 
 Add Dirtbike 1.1 and update Micro-Sokoban to 1.3 and ChromaBreak to 1.1

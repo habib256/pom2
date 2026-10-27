@@ -53,6 +53,8 @@ public:
     bool     writeBlock(uint32_t idx, const uint8_t* in) override;
 
     bool     loadImage(const std::string& path) override;
+    /// Phase 2 of a two-phase mount: the 800 KB were read unlocked.
+    bool     adoptImage(Block512Backing::PreparedImage&& p) override;
     bool     eject() override;
     const std::string& path()      const override { return img_.path(); }
     const std::string& lastError() const override { return lastError_; }

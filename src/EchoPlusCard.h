@@ -97,6 +97,7 @@ public:
     /// Forwards the (possibly accelerated) CPU clock to the SSI263's
     /// phoneme timer, which counts a real-time duration in CPU cycles.
     void    setCpuClock(double hz) override;
+    void    setStandardClock(double hz) override;
     void    onReset()  override;
     void    onUnplug() override;
 

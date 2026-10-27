@@ -165,6 +165,16 @@ std::string slotCardSettingKey(const ProfileConfig& cfg, int slot);
 bool slotKeyIsUserChoice(const ProfileConfig& cfg, int slot,
                          std::string_view cardKey, std::string_view savedKey);
 
+/// The full persist rule both slot writers apply (the Slot Config Apply
+/// button and the ~MainWindow shutdown loop): slotKeyIsUserChoice, plus a
+/// slot the configuration resolve EMPTIED on its own — a Videoterm on a //e,
+/// a VidHD on a ][+, the same single-instance card twice. There the plan
+/// reads "" while `savedKey` still names `droppedKey`; writing it erased a
+/// choice the user never made, and the card was gone on the profile it fits.
+bool slotKeyShouldPersist(const ProfileConfig& cfg, int slot,
+                          std::string_view cardKey, std::string_view savedKey,
+                          std::string_view droppedKey);
+
 /// All profiles in DISPLAY order (not enum order): the NTSC machines
 /// chronologically, then the three European PAL variants — Unenhanced //e,
 /// Enhanced //e, //c Le Chat Mauve. Used by the Presets menu / palette /

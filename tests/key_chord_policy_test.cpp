@@ -115,12 +115,16 @@ void testAltGr()
 
 void testCtrlLetter()
 {
-    check(isCtrlLetter(kModControl), "plain Ctrl injects a Ctrl-letter");
-    check(isCtrlLetter(kModControl | kModShift), "Ctrl+Shift still does");
-    check(!isCtrlLetter(kModControl | kModAlt),
-          "Ctrl+Alt does NOT — on Windows that is AltGr (AltGr+E typed $05)");
-    check(!isCtrlLetter(kModAlt), "Alt alone is not Ctrl");
-    check(!isCtrlLetter(0), "no modifier is not Ctrl");
+    check(isCtrlLetter(kModControl, false, true), "plain Ctrl injects a Ctrl-letter");
+    check(isCtrlLetter(kModControl | kModShift, false, false), "Ctrl+Shift still does");
+    check(!isCtrlLetter(kModControl | kModAlt, /*rightAlt=*/true, /*windows=*/true),
+          "Windows AltGr does NOT (AltGr+E typed $05)");
+    check(isCtrlLetter(kModControl | kModAlt, /*rightAlt=*/false, /*windows=*/true),
+          "Open-Apple (left Alt) + Ctrl is still a Ctrl-letter: OA+Ctrl+S is $13");
+    check(isCtrlLetter(kModControl | kModAlt, true, /*windows=*/false),
+          "off Windows, Solid-Apple + Ctrl is a Ctrl-letter too");
+    check(!isCtrlLetter(kModAlt, false, false), "Alt alone is not Ctrl");
+    check(!isCtrlLetter(0, false, false), "no modifier is not Ctrl");
 }
 
 void testAltAppleKeys()
@@ -250,6 +254,38 @@ void testAppleChordChar()
     check(appleChordChar("\xD1\x8F", kKeyA, false) == 'a',
           "a Cyrillic cap falls back to the US letter");
     check(appleChordChar(nullptr, 256, false) == 0, "Escape and friends: nothing");
+    check(appleChordChar(nullptr, 32, false) == ' ',
+          "OA+Space types a space (Space has no layout name)");
+}
+
+// IIe Technical Reference table 2-3: Ctrl with the punctuation keys.
+void testCtrlPunctuation()
+{
+    using pom2::keychord::ctrlPunctCode;
+    check(ctrlPunctCode("[", 91) == 0x1B, "Ctrl+[ is ESC ($1B)");
+    check(ctrlPunctCode("\\", 92) == 0x1C, "Ctrl+\\ is $1C");
+    check(ctrlPunctCode("]", 93) == 0x1D, "Ctrl+] is $1D");
+    check(ctrlPunctCode("6", 54) == 0x1E, "Ctrl+6 (^) is $1E");
+    check(ctrlPunctCode("-", 45) == 0x1F, "Ctrl+- (_) is $1F");
+    check(ctrlPunctCode("2", 50) == 0x00, "Ctrl+2 (@) is $00");
+    check(ctrlPunctCode(nullptr, 93) == 0x1D, "no layout name: the US position");
+    check(ctrlPunctCode(",", 77) == -1, "a cap with no control code: nothing");
+    check(ctrlPunctCode("\xC3\xA0", 48) == -1, "AZERTY's à: nothing");
+}
+
+// Linux AltGr arrives as RIGHT_ALT with Mod5, so the keys typed under it
+// carry no ALT bit; a Mod1 Alt always does.
+void testLinuxAltGr()
+{
+    using pom2::keychord::rightAltIsLevel3;
+    check(rightAltIsLevel3(kKeyA + 16, 0, /*rightAltHeld=*/true, /*windows=*/false),
+          "Right Alt held + a key without ALT = Linux AltGr");
+    check(!rightAltIsLevel3(kKeyA + 16, kModAlt, true, false),
+          "a real Alt (ALT bit set) is still Solid-Apple");
+    check(!rightAltIsLevel3(kKeyA + 16, 0, true, /*windows=*/true),
+          "Windows has its own AltGr form");
+    check(!rightAltIsLevel3(340, 0, true, false), "a modifier key proves nothing");
+    check(!rightAltIsLevel3(kKeyA + 16, 0, false, false), "no Right Alt held");
 }
 
 void testNoEmscriptenAbortStubs()
@@ -274,6 +310,8 @@ int main()
     testCtrlLetter();
     testAltAppleKeys();
     testAppleChordChar();
+    testCtrlPunctuation();
+    testLinuxAltGr();
     testNoEmscriptenAbortStubs();
 
     if (failures) {

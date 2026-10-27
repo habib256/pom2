@@ -119,6 +119,13 @@ public:
     };
     using CycleSourceFn = std::function<uint64_t()>;
     void setCycleSource(CycleSourceFn fn) { cycleSource_ = std::move(fn); }
+    /// The CPU cycle at which the beam next enters VBL, strictly after
+    /// `cpuNow` — on the crystal's clock, so an accelerator stretches it
+    /// (Memory::videoCycleAt). 0 when no Memory is behind the bus. Once a
+    /// frame, not per instruction.
+    using VblEdgeFn = std::function<uint64_t(uint64_t cpuNow)>;
+    void setVblEdgeSource(VblEdgeFn fn) { vblEdge_ = std::move(fn); }
+    uint64_t nextVblCpuCycle(uint64_t cpuNow) const { return vblEdge_ ? vblEdge_(cpuNow) : 0; }
     /// The same counter as a raw pointer, for a card that reads it on its
     /// `advanceCycles` path (`SlotPeripheral::busCycleCounter`) where a
     /// `std::function` call per instruction would cost. Memory installs it
@@ -325,6 +332,7 @@ private:
     };
     std::array<AccessLog, kSlotCount> accessLogs_{};
     CycleSourceFn cycleSource_;
+    VblEdgeFn vblEdge_;
     const uint64_t* cycleCounterRef_ = nullptr;
     const uint8_t*  auxRamRef_ = nullptr;
     void logAccess(int slot, uint16_t addr, uint8_t value, bool write)

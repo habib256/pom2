@@ -138,7 +138,7 @@ void MainWindow::renderHgrPaintWindow()
         const Memory& mem = st.memory();
         hgrPaintMem_.assign(mem.data(), mem.data() + 0x10000);
         if (mem.isIIE())
-            hgrPaintAux_.assign(mem.auxData(), mem.auxData() + 0x10000);
+            hgrPaintAux_.assign(mem.videoAuxData(), mem.videoAuxData() + 0x10000);
         else
             hgrPaintAux_.clear();
     }
@@ -160,7 +160,7 @@ void MainWindow::renderHgrSpriteWindow()
         const Memory& mem = st.memory();
         hgrPaintMem_.assign(mem.data(), mem.data() + 0x10000);
         if (mem.isIIE())
-            hgrPaintAux_.assign(mem.auxData(), mem.auxData() + 0x10000);
+            hgrPaintAux_.assign(mem.videoAuxData(), mem.videoAuxData() + 0x10000);
         else
             hgrPaintAux_.clear();
     }

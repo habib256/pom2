@@ -39,9 +39,8 @@
 //     divides by ONE and the firmware's TCR writes cannot change it.
 //     The old comment here claimed the firmware programmed the divisor
 //     through TCR; it only ever touches TCR bits 6/7 (TIM/TIR).
-//   * STOP / WAIT instructions. MAME aborts on these (`fatalerror`).
-//     We park PC on the instruction so it's diagnosable but never
-//     advance — the mouse firmware never executes either.
+//   * MUL, STOP and WAIT: not HMOS instructions (HC05 / CMOS 146805
+//     only); they are illegal-opcode NOPs here, as in MAME's HMOS table.
 //   * The bootstrap ROM at $07F8 of the user EPROM space (one entry).
 //     Loaded as part of the same 2 KB firmware image but never given
 //     special treatment.
@@ -154,11 +153,17 @@ void M68705P3::reset()
     irq_line_state = false;
     icount = 0;
 
-    // Reset port state.
-    for (auto& p : ports) {
-        p.latch = 0xFF;
-        p.ddr   = 0x00;
-        p.input = 0xFF;
+    // RESET clears the data-direction registers only: the port data
+    // latches keep what the firmware wrote and the input pins are whatever
+    // the outside drives (MC68705P3 data sheet, "Reset"; MAME
+    // m6805_hmos_device::device_reset → port_ddr_w<N>(0) — latch and input
+    // are set once, in the constructor). A DDR that changed tells the host
+    // its pins now float, as MAME's port_cb_w does: on the Mouse Card that
+    // releases the slot IRQ the firmware was holding through PB6.
+    for (int n = 0; n < static_cast<int>(ports.size()); ++n) {
+        const bool changed = ports[n].ddr != 0x00;
+        ports[n].ddr = 0x00;
+        if (changed && portWriteCb) portWriteCb(n);
     }
     // Reset timer. MAME `m6805_timer::reset()` (`m68705.h:73-79`) resets
     // only the edge counter, prescaler, TDR and TCR — the divisor and the
@@ -729,14 +734,6 @@ int M68705P3::step()
 
         // RMW A — $40..$4F.
         case 0x40: rmw_reg(reg.A, neg_op); break;
-        case 0x42: {                            // MUL — X:A = X × A (HMOS op)
-            const uint16_t r = static_cast<uint16_t>(reg.X) *
-                               static_cast<uint16_t>(reg.A);
-            clr_hc();                           // MUL clears H and C
-            reg.X = static_cast<uint8_t>(r >> 8);
-            reg.A = static_cast<uint8_t>(r & 0xFF);
-            break;
-        }
         case 0x43: rmw_reg(reg.A, com_op); break;
         case 0x44: rmw_reg(reg.A, lsr_op); break;
         case 0x46: rmw_reg(reg.A, ror_op); break;
@@ -810,12 +807,6 @@ int M68705P3::step()
             reg.PC = static_cast<uint16_t>((hi << 8) | lo) & kAddrMask;
             break;
         }
-        // STOP / WAIT — park PC on the instruction (firmware never
-        // reaches these on the mouse card; matches MAME's fatalerror
-        // for diagnostic visibility without crashing the host).
-        case 0x8E: case 0x8F:
-            reg.PC = (reg.PC - 1) & kAddrMask;
-            break;
 
         // Inherent — $97..$9F.
         case 0x97: reg.X = reg.A; break;     // TAX
@@ -941,7 +932,10 @@ int M68705P3::step()
         default:
             // Illegal opcode — every illegal slot is one of the entries
             // marked XX in the cycle table above and behaves as a NOP at
-            // run-time. MAME logs and continues; we follow suit.
+            // run-time. MAME logs and continues; we follow suit. That
+            // includes $42 MUL and $8E/$8F STOP/WAIT: the HC05 and CMOS
+            // 146805 have them, the HMOS 68705P3 does not (MAME's
+            // s_hmos_s_ops lists all three illegal). MUL used to run here.
             break;
     }
 

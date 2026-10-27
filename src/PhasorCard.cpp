@@ -659,6 +659,7 @@ void PhasorCard::setStandardClock(double hz)
     if (audio_) audio_->busClockHz.store(hz, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(mtx_);
     busClock_.setBusClock(hz);
+    for (auto& chip : ssi_) chip.setXckHz(hz);   // the SSI263s' XCK is phase 0 too
 }
 
 // CPU cycles -> phase-0 ticks for both VIAs (MockingboardCard::advanceVias).

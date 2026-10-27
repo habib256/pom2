@@ -362,6 +362,9 @@ int main() {
         const uint8_t st = static_cast<uint8_t>(a.cs0_r(7));
         assert((st & AtaBlockDevice::kStERR) != 0);
         assert((st & AtaBlockDevice::kStDRQ) == 0);
+        // Not DF: ATA-1's Drive Write Fault is a write attempted and failed,
+        // not a command refused before data moved (MAME sets ERR only).
+        assert((st & AtaBlockDevice::kStDF) == 0);
         // IDNF, not ABRT: an address off the end and a write-protected medium
         // are different faults and used to share one Error code, so a driver
         // could not tell "locked disk" from "block past the end" (ATA-1 §9.1).

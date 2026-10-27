@@ -59,9 +59,59 @@ NoSlotClock::Phase NoSlotClock::phase() const
     return Phase::Idle;
 }
 
+namespace {
+std::tm addSeconds(std::tm tm, int64_t seconds)
+{
+    if (seconds == 0) return tm;
+    tm.tm_isdst = -1;
+    std::time_t t = std::mktime(&tm);
+    if (t == static_cast<std::time_t>(-1)) return tm;
+    t += static_cast<std::time_t>(seconds);
+    std::tm out{};
+#if defined(_WIN32)
+    localtime_s(&out, &t);
+#else
+    localtime_r(&t, &out);
+#endif
+    return out;
+}
+int fromBcd(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
+}  // namespace
+
+// The 64th bit of a data transfer: a transfer that wrote anything sets the
+// clock — kept as an offset from host time, as MAME's ds1215 `set_time`.
+// Reserved bits read 0 (data sheet register map): seconds/minutes bit 7,
+// hours bits 7-6 (24-hour mode), date bits 7-6, month bits 7-5.
+void NoSlotClock::endTransfer()
+{
+    if (written_) {
+        auto byte = [&](int n) { return static_cast<uint8_t>(writeShift_ >> (8 * n)); };
+        std::tm set{};
+        set.tm_sec  = fromBcd(byte(1) & 0x7F);
+        set.tm_min  = fromBcd(byte(2) & 0x7F);
+        set.tm_hour = fromBcd(byte(3) & 0x3F);
+        set.tm_mday = fromBcd(byte(5) & 0x3F);
+        set.tm_mon  = fromBcd(byte(6) & 0x1F) - 1;
+        const std::tm now = timeFn_();
+        set.tm_year = (now.tm_year / 100) * 100 + fromBcd(byte(7));   // same century
+        set.tm_isdst = -1;
+        std::tm host = now; host.tm_isdst = -1;
+        const std::time_t a = std::mktime(&set), b = std::mktime(&host);
+        if (a != static_cast<std::time_t>(-1) && b != static_cast<std::time_t>(-1))
+            offsetSec_ = static_cast<int64_t>(a) - static_cast<int64_t>(b);
+    }
+    written_      = false;
+    readingClock_ = false;
+    bitsRead_     = 0;
+    // AppleWin: exiting the transfer does NOT auto-restart pattern
+    // matching; the host has to re-issue 64 key bits.
+    writeEnabled_ = true;
+    bitsMatched_  = 0;
+}
+
 void NoSlotClock::loadClockSnapshot()
 {
-    const std::tm tm = timeFn_();
+    const std::tm tm = addSeconds(timeFn_(), offsetSec_);
     auto packBcd = [](int lsb, int msb) -> uint8_t {
         // Clamped, not asserted: a leap-second `tm_sec == 60` is a legal
         // value the C library really does hand out.
@@ -102,6 +152,8 @@ void NoSlotClock::loadClockSnapshot()
     r |= static_cast<uint64_t>(packBcd(mon % 10, mon / 10))                 << 48;
     r |= static_cast<uint64_t>(packBcd(yr  % 10, yr  / 10))                 << 56;
     clockShift_ = r;
+    writeShift_ = r;
+    written_    = false;
     bitsRead_   = 0;
 }
 
@@ -132,12 +184,7 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
         clockShift_ >>= 1;
         ++bitsRead_;
         if (bitsRead_ >= 64) {
-            readingClock_ = false;
-            bitsRead_     = 0;
-            // AppleWin behaviour: exiting readout does NOT auto-restart
-            // pattern matching; the host has to re-issue 64 key bits.
-            writeEnabled_ = true;
-            bitsMatched_  = 0;
+            endTransfer();
         }
         return static_cast<uint8_t>((romByte & 0xFE) | bit);
     }
@@ -171,14 +218,15 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
         // the counter hit 64 — a driver that interleaves a stray write
         // into its read loop got a garbled date rather than a shifted
         // one.
+        // ...and it WRITES: A0 is the data bit, into the register bit this
+        // cycle transfers (DS1216 data sheet; MAME ds1216e). AppleWin drops
+        // it — so a SET-TIME utility's clock reverted to host time.
+        const uint64_t mask = uint64_t(1) << bitsRead_;
+        writeShift_ = (addr & 1) ? (writeShift_ | mask) : (writeShift_ & ~mask);
+        written_ = true;
         clockShift_ >>= 1;
         ++bitsRead_;
-        if (bitsRead_ >= 64) {
-            readingClock_ = false;
-            bitsRead_     = 0;
-            writeEnabled_ = true;
-            bitsMatched_  = 0;
-        }
+        if (bitsRead_ >= 64) endTransfer();
         return romByte;
     }
 
@@ -205,7 +253,7 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
 
 namespace {
 constexpr uint32_t kNscSnapMagic   = 0x43534E32u;   // '2NSC'
-constexpr uint16_t kNscSnapVersion = 1;
+constexpr uint16_t kNscSnapVersion = 2;   // v2: + the set-time offset and transfer
 /// Highest version this reader understands. TOLERANT on purpose — see the
 /// same constant in `Sony35Drive.cpp`: a strict equality test turns the next
 /// format bump into "every .pom2snap the shipped build wrote is unloadable".
@@ -221,6 +269,9 @@ void NoSlotClock::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(bitsMatched_);
     out.push_back(bitsRead_);
     byteio::putU64(out, clockShift_);
+    byteio::putU64(out, writeShift_);                       // v2
+    out.push_back(written_ ? 1 : 0);
+    byteio::putU64(out, static_cast<uint64_t>(offsetSec_));
 }
 
 bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len, bool commit)
@@ -231,6 +282,9 @@ bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len, bool c
     if (r.u32() != kNscSnapMagic) return false;
     const uint16_t version = r.u16();
     if (version == 0 || version > kNscSnapVersionMax) return false;
+    // v2 carries the write path (shifter + written flag + offset): a v2 blob
+    // without it is truncated, not a v1 one, and must be refused whole.
+    if (!r.has(4 + 8 + (version >= 2 ? 8 + 1 + 8 : 0))) return false;
     if (!commit) return true;
 
     writeEnabled_ = r.u8() != 0;
@@ -255,6 +309,13 @@ bool NoSlotClock::loadSnapshotState(const uint8_t* data, std::size_t len, bool c
     // otherwise is inconsistent, so restart the matcher rather than shift.
     if (!readingClock_ && bitsMatched_ >= 64) bitsMatched_ = 0;
     clockShift_   = r.u64();
+    if (version >= 2) {
+        writeShift_ = r.u64();
+        written_    = r.u8() != 0;
+        offsetSec_  = static_cast<int64_t>(r.u64());
+    } else {
+        writeShift_ = clockShift_; written_ = false; offsetSec_ = 0;
+    }
     return true;
 }
 

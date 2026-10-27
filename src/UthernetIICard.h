@@ -96,6 +96,7 @@ public:
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
 
     void onReset() override;
+    void onPowerCycle() override;
     void advanceCycles(int cycles) override;
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
@@ -116,6 +117,7 @@ public:
     void setMacAddress(const std::array<uint8_t, 6>& mac);
 
 private:
+    void resetChip(bool powerCycle);
     int                             slot_;
     W5100Device                     chip_;
     std::unique_ptr<NetworkBackend> backend_;

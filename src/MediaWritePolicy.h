@@ -32,4 +32,16 @@ inline bool mediaWritableByDefault()
     return writable;
 }
 
+/// The `*_writeback` value to PERSIST for a drive whose live flag is `live`.
+/// `false` there is the legacy opt-out that the next launch migrates into a
+/// notch on the disk file (StorageCoordinator::migrateLegacyWriteBack). A
+/// process protected by DEFAULT (POM2_MEDIA_WRITE_DEFAULT=protected) has every
+/// flag off without the user opting out of anything, and used to save those
+/// `false`s: the next normal launch then chmod'ed every mounted image
+/// read-only. Such a process records the default, never an opt-out.
+inline bool persistedWriteBack(bool live)
+{
+    return live || !mediaWritableByDefault();
+}
+
 } // namespace pom2

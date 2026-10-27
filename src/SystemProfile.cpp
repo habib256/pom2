@@ -355,7 +355,21 @@ std::string_view profileKey(SystemProfile p)
 std::string slotCardSettingKey(const ProfileConfig& cfg, int slot)
 {
     if (cfg.noPhysicalSlots && slot == 3) return "iic_expansion_card";
+    // The //c's rear DB-15 RGB adapter is not the //e's slot 7: sharing the
+    // key made adding the adapter on a //c overwrite the //e's slot-7 card
+    // (and removing it erase the //e's Chat Mauve) — the same clobber the
+    // slot-3 key was split for.
+    if (cfg.noPhysicalSlots && slot == 7) return "iic_rgb_adapter";
     return "slot_" + std::to_string(slot) + "_card";
+}
+
+bool slotKeyShouldPersist(const ProfileConfig& cfg, int slot,
+                          std::string_view cardKey, std::string_view savedKey,
+                          std::string_view droppedKey)
+{
+    if (cardKey.empty() && !savedKey.empty() && savedKey == droppedKey)
+        return false;
+    return slotKeyIsUserChoice(cfg, slot, cardKey, savedKey);
 }
 
 bool slotKeyIsUserChoice(const ProfileConfig& cfg, int slot,

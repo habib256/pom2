@@ -42,9 +42,13 @@
 #ifndef POM2_PRODOS_VOLUME_H
 #define POM2_PRODOS_VOLUME_H
 
+#include "ProDOSHostNameMap.h"   // takeFolderScanStart / takeFolderNameMap
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -152,7 +156,8 @@ ProDOSDecodeResult decodeVolumeToFolder(
     const std::string& hostFolder,
     const std::filesystem::file_time_type* preserveNewerThan = nullptr,
     std::set<std::string>* stickyPreserved = nullptr,
-    bool convertText = false);
+    bool convertText = false,
+    const HostNameMap* mountNames = nullptr);
 
 /// True iff `name` (a directory-entry name decoded from an untrusted volume
 /// image) is safe to use as a single host path component. The image is

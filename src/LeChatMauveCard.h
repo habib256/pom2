@@ -298,11 +298,14 @@ private:
     uint8_t    cpreg_           = 0;
     RvbGraphState rvb_;                     // RVB Graph registers
     uint16_t   rvbGeneration_   = 0;        // bumped on every RVB write (frame key)
-    // Rolling latch history for beam-raced replay (latchBefore). 512 edges
-    // is > one PAL frame of per-scanline clocking.
+    // Rolling latch history for beam-raced replay (latchBefore). A mode set
+    // is TWO AN3 clocks, a PAL frame has 312 lines, and the CPU is already
+    // in the next frame when this one is painted: 2 x 2 x 312 = 1248 edges.
+    // 512 overflowed on a per-line mode switcher and painted the top band in
+    // the wrong DHGR mode (bug hunt 2026-10-27).
     struct LatchEdge { uint64_t cycle; uint8_t before; uint8_t after; };
     bool       mixedWarned_ = false;   // one log per plug/variant change
-    static constexpr int kLatchRing = 512;
+    static constexpr int kLatchRing = 2048;
     LatchEdge  latchRing_[kLatchRing] {};
     int        latchRingHead_ = 0;          // next write slot
     int        latchRingSize_ = 0;

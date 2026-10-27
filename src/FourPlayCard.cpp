@@ -59,13 +59,15 @@ void FourPlayCard::onReset()
     // `device_reset`). Left explicit so the absence reads as a decision.
 }
 
-// MAME `4play.cpp:123-140`: offsets 0-3 are the four players, everything
-// else is $FF.
+// Offsets 0-3 are the four players (MAME `4play.cpp:123-140`).
 uint8_t FourPlayCard::deviceSelectRead(uint8_t low4)
 {
     if (low4 < kPlayers)
         return state_[low4].load(std::memory_order_relaxed);
-    return kUnmapped;
+    // $C0n4-$C0nF are not driven: the floating bus (AppleWin FourPlay.cpp,
+    // written by the card's designer; the RevB documentation lists only the
+    // four joystick bytes). MAME returns $FF.
+    return openBus();
 }
 
 } // namespace pom2

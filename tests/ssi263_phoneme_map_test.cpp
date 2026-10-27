@@ -299,7 +299,14 @@ void testDurationsAndPcmShareTheOracle()
                     chip.write(Ssi263::REG_DURPHON, frameMode ? 0x40 : 0xC0);
                     chip.write(Ssi263::REG_CTTRAMP, 0x0F);
                     chip.write(Ssi263::REG_DURPHON, static_cast<uint8_t>((dur << 6) | code));
-                    const int period = static_cast<int>((expected.size() * clock + 22049) / 22050);
+                    // SSI 263A data sheet: 4096 x (16 - R) x (4 - D) XCK periods,
+                    // XCK = the bus's 1.023 MHz; frame mode is D = 3.
+                    const int d = frameMode ? 3 : dur;
+                    auto sheet = [&](int r) {
+                        const int64_t periods = int64_t{4096} * (16 - r) * (4 - d);
+                        return static_cast<int>((periods * clock + 1022726) / 1022727);
+                    };
+                    const int period = sheet(0);
                     if (chip.phonemeRemainingCycles() != period) {
                         std::fprintf(stderr, "SSI263 duration mismatch: frame=%d code=%02X DUR=%d clock=%d got=%d expected=%d\n",
                                      frameMode, code, dur, clock, chip.phonemeRemainingCycles(), period);
@@ -307,10 +314,10 @@ void testDurationsAndPcmShareTheOracle()
                     }
                     assert(!chip.advance(period - 1));
                     assert(chip.advance(1));
-                    // RATEINF has no speed effect in AppleWin's audio path.
+                    // R sets the frame length (AppleWin's PCM path ignored it).
                     chip.write(Ssi263::REG_RATEINF, 0xF0);
                     chip.write(Ssi263::REG_DURPHON, static_cast<uint8_t>((dur << 6) | code));
-                    assert(chip.phonemeRemainingCycles() == period);
+                    assert(chip.phonemeRemainingCycles() == sheet(15));
                     std::vector<float> actual(expected.size() * 2 + 17);
                     chip.fillAudio(actual.data(), static_cast<int>(actual.size()), 22050);
                     for (size_t i = 0; i < actual.size(); ++i)

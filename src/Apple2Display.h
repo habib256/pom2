@@ -42,6 +42,7 @@
 #include "LeChatMauveCard.h"
 #include "Memory.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -103,7 +104,7 @@ public:
         // Distinct from MAME's static 7-bit-window LUT and from
         // OpenEmulator's full subcarrier shader — see DEV.md § AppleWin
         // NTSC. Three sub-modes selected via setAppleWinSubMode():
-        // Monitor (sharp), Tv (Monitor's comb luma + 50% frame blend),
+        // Monitor (sharp), Tv (comb luma + AppleWin's in-between line blend),
         // Idealized (Monitor luma WITH the IIR filters, chroma boosted
         // 1.6× — POM2-only, see AppleWinNtsc.cpp buildPhaseTables).
         // Enum order no longer matters: the mono phosphor tint is picked
@@ -116,7 +117,7 @@ public:
     // VT_COLOR_MONITOR_NTSC / VT_COLOR_TV / VT_COLOR_IDEALIZED entries.
     enum class AppleWinSubMode {
         Monitor,        // sharp, IIR-filtered NTSC artifact decode
-        Tv,             // comb luma + 50% previous-frame blend (TV receiver)
+        Tv,             // comb luma + 50 % blend with the line above (AppleWin TV)
         Idealized,      // Monitor luma (same IIR filters) with 1.6× boosted
                         // chroma — saturated, flat-panel-friendly look
                         // (POM2-only; see AppleWinNtsc.cpp:193-197)
@@ -295,6 +296,7 @@ public:
     /// NTSC subcarrier phase offset (0 = HGR/text, 1 = DHGR) applied by
     /// OE CPU/GPU demod and ColorAppleWin — matches MAME rotl4(absX+1).
     int signalPhaseOffset() const { return signalPhaseOffset_; }
+    int signalPhaseAt(int y) const { return (y >= 0 && y < 192) ? signalPhaseRow_[static_cast<std::size_t>(y)] : signalPhaseOffset_; }
     /// True when mixed-mode composite output was assembled in frame80
     /// (demod top + crisp text band) — MainWindow should present
     /// screenTexture instead of the GPU demod texture.
@@ -346,7 +348,7 @@ private:
         frameCard_.resize(static_cast<std::size_t>(cardPictureW_) *
                           static_cast<std::size_t>(cardPictureH_));
         cardVideo_->paintPicture(frameCard_.data(), monitorLitColor(), 0xFF000000u,
-                             mem.getCycleCounter(),
+                             mem.videoNow(),
                              pom2VideoTiming(mem.videoStandard()).cpuClockHz);
         useCardPicture_ = true;
         framebufferMutated();
@@ -365,18 +367,6 @@ private:
     HiResMode hiResMode = HiResMode::ColorNTSC;
     AppleWinSubMode appleWinSubMode = AppleWinSubMode::Tv;
     LeChatMauveCard* chatMauve = nullptr;   // non-owning, owned by SlotBus
-    // Previous-frame RGBA buffer used by ColorAppleWin's Tv sub-mode for
-    // its 50% line-blur. Same dimensions as `frame` / `frame80`; one set
-    // each so HGR and DHGR don't share state.
-    std::vector<uint32_t> appleWinPrev;
-    std::vector<uint32_t> appleWinPrev80;
-    // `appleWinPrev80` holds a frame this path rendered (so it may be blended
-    // against), and frame80 does (so it may be stashed). Both false at
-    // power-on and after a mode / sub-mode switch: blending the first frame
-    // against a cleared-to-black stash halved its brightness, and stashing
-    // frame80 before it held an AppleWin frame ghosted the outgoing mode in.
-    bool appleWinPrevValid_ = false;
-    bool appleWinPainted_   = false;
     // Native 560-dot monochrome graphics share one phosphor history.
     // One byte per dot (0..255); mode changes clear it.
     std::vector<uint8_t> persistenceL80;
@@ -388,6 +378,19 @@ private:
     std::vector<uint8_t> signalBuf;
     bool signalProducedFlag = false;
     int  signalPhaseOffset_ = 0;
+    // The same, per scanline: a frame that switches HGR <-> DHGR (or 40 <->
+    // 80 columns) mid-picture demodulates each band with its own phase, as
+    // MAME's per-line render_line does. signalPhaseOffset_ is the last band's,
+    // for the GPU shader's single uniform; a non-uniform frame goes to the
+    // CPU demod instead (DISPLAY-004).
+    std::array<std::uint8_t, 192> signalPhaseRow_{};
+    bool signalPhaseUniform_ = true;
+    void setSignalPhase(int phase, int scanY0, int scanY1)
+    {
+        signalPhaseOffset_ = phase;
+        for (int y = std::max(scanY0, 0); y < std::min(scanY1, 192); ++y)
+            signalPhaseRow_[static_cast<std::size_t>(y)] = static_cast<std::uint8_t>(phase);
+    }
     bool mixedCompositeUsesFb_ = false;
     // Set by fillCompositeSignal for every band that is mixed GRAPHICS and
     // reaches into scanlines [160,192): those rows are deliberately left
@@ -650,6 +653,9 @@ private:
     // whichever framebuffer the band was painted into — Eve TXTGREEN (P31
     // green) and the RVB Graph's CT. Text is black and white before this
     // pass, so the remap is exact.
+    void textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1);
+    bool renderChatMauveGrMixed(Memory& mem, const Memory::DisplayState& state,
+                                int scanY0, int scanY1);
     void tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
                   uint32_t colour, uint32_t background = 0);
     // The RGB-card pipeline is selected AND a card is plugged. Without the
@@ -694,6 +700,12 @@ private:
     void renderTextChatMauveFgBg(Memory& mem, const Memory::DisplayState& state,
                                  int firstRow, int lastRow,
                                  int clipY0, int clipY1, bool auxHiIsForeground);
+    // The MIXED text window under the card's HGR when the card says colour
+    // text (Video-7 F/B, Eve TXT16): MAME renders mixed rows through
+    // text_update, whose RGB branch ignores the upper part. False = not that
+    // case, nothing painted. (The window came out white on black.)
+    bool renderChatMauveMixedColourText(Memory& mem, const Memory::DisplayState& state,
+                                        int scanY0, int scanY1);
     // Horizontally double `frame[firstRow*8 .. lastRow*8)` into `frame80`.
     // Used when mixed-mode HGR is on top and 80-col text is at the bottom.
     void upscaleFrameToFrame80(int firstScanline, int lastScanline);

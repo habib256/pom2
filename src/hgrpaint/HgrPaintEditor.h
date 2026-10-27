@@ -391,7 +391,10 @@ private:
     // bracket itself; with none open there is nothing to flush.
     void flushOpenStroke()
     {
-        if (dragging && strokeNest_ > 0) { commitStroke(); dragging = false; }
+        // The right-button erase drag is an open stroke too.
+        if ((dragging || rmbErase) && strokeNest_ > 0) {
+            commitStroke(); dragging = false; rmbErase = false;
+        }
     }
     void applyOps(const std::vector<ByteEdit>& ops, bool forward);
     void doUndo();

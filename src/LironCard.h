@@ -166,6 +166,11 @@ public:
     void         restoreFlushBayDirty(int bay, uint64_t lineage) override;
     /// Forwarded to every mechanism (Sony35Drive::setStandardClock).
     void         setStandardClock(double hz) override;
+    /// The IWM's drive-disable delay (~1 s of the 7M crystal) is real time:
+    /// under a Zip or TransWarp the card's private IWM counted it in
+    /// accelerated cycles and dropped the drive ~4x early, as the //c+ IWM
+    /// did before Memory::stockCyclesBetween (IWMDevice::setStockSpan).
+    void         setCpuClock(double hz) override { if (hz > 0.0) cpuHz_ = hz; }
     void         setBayWriteBack(int bay, bool on) override;
     void         setBayHostWriteProtected(int bay, bool on) override;
 
@@ -383,6 +388,8 @@ private:
     /// second, and 0 means the IWM has dropped both (motor-off drain).
     int      active_ = -1;
     uint64_t cycles_ = 0;
+    double   cpuHz_   = 0.0;   // 0 = never given: no accelerator
+    double   stockHz_ = 0.0;
 
     void onPhases(uint8_t phases);
     void onDevsel(uint8_t devsel);

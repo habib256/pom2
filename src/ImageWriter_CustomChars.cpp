@@ -43,6 +43,7 @@ void ImageWriter::abandonPendingInput()
     numParam_ = neededParam_ = 0;
     epsonNeed_  = 0;
     epsonCount_ = 0;
+    epsonListCmd_ = 0; epsonListChannel_ = false; epsonSkip_ = 0;
     diabloNeed_ = 0;
     diabloCmd_  = 0;
     customFont_ = 0;

@@ -163,6 +163,19 @@ public:
     /// seconds) was unreachable code.
     bool loadAudioStream(const std::string& path);
     bool saveTape(const std::string& path) const;
+    /// The recording, copied — take it under stateMutex, write it without:
+    /// `saveTape` from the controller used to take the deck OFF the bus for
+    /// the whole write, and every $C020 toggle a still-running SAVE made in
+    /// that window was lost (an odd count inverted the rest of the capture).
+    struct RecordingCopy {
+        std::vector<uint32_t> durations;
+        bool initialLevel = false;
+        bool overflow     = false;
+    };
+    RecordingCopy copyRecording() const
+    { return { recordedDurations, recordedInitialLevel, recordingOverflow }; }
+    static bool saveRecording(const RecordingCopy& rec, const std::string& path,
+                              std::string& error);
 
     void rewindTape();
     void playTape();
@@ -206,6 +219,7 @@ public:
     const std::string& getLoadedTapePath() const { return loadedTapePath; }
     const std::string& getLoadInfo()       const { return loadInfo; }
     const std::string& getLastError()      const { return lastError; }
+    void setLastError(const std::string& e) { lastError = e; }
 
     /// AudioSource — generates cassette audio samples.
     void fillAudioBuffer(float* output, int frameCount) override;
@@ -264,9 +278,9 @@ private:
     static constexpr uint32_t kRewSpeedFactor = 20;
 
     bool loadAciTape(const std::string& path);
-    bool saveAciTape(const std::string& path) const;
+    static bool saveAciTape(const RecordingCopy& rec, const std::string& path, std::string& error);
     bool loadWavTape(const std::string& path);
-    bool saveWavTape(const std::string& path) const;
+    static bool saveWavTape(const RecordingCopy& rec, const std::string& path, std::string& error);
     bool loadMiniaudioTape(const std::string& path);
     void closeAudioStream();
 
@@ -294,6 +308,14 @@ private:
 
     mutable std::mutex audioMutex;
     std::deque<AudioSegment> audioQueue;
+    // The CPU fills the queue a chunk at a time, the audio thread drains it
+    // a buffer at a time; draining from the first sample left every gap
+    // between two chunks as a hole of silence. The pulse stream starts (and
+    // restarts after running dry) only once kMonitorLeadSecs is queued —
+    // the lead SpeakerDevice keeps for the same reason. Under audioMutex.
+    static constexpr double kMonitorLeadSecs = 0.04;
+    uint64_t queuedSamples_ = 0;
+    bool     monitorPrimed_ = false;
     float    audioPlaybackSample       = 0.0f;
     // Atomic: touched by the program-tape fill path (under audioMutex), the
     // stream fill path (under audioStreamMutex) and setPlaybackPaused — i.e.

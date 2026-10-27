@@ -164,8 +164,17 @@ std::optional<std::string> safeCwdRelativePath(const std::string& in,
         return full.string();
     if (under(fs::weakly_canonical(pom2::userDataDir(), ec), full)) return full.string();
     if (mustExist) {
+        // The install tree, for reading — its ASSET folders, not the whole
+        // parent of the binary: on an FHS install that parent is /usr, on
+        // Windows C:\Program Files, and a /disk image mounted from there is
+        // writable (bug hunt 2026-10-27). The bundle's own folder, the macOS
+        // Contents/Resources, the FHS share/POM2 and a source tree's disk
+        // folders remain.
         const fs::path exe = fs::weakly_canonical(pom2::executableDir(), ec);
-        if (under(exe, full) || under(exe.parent_path(), full)) return full.string();
+        if (under(exe, full)) return full.string();
+        for (const char* sub : { "Resources", "share/POM2", "bundled_disks",
+                                 "disks_5.4", "disks_3.5", "hdv" })
+            if (under(exe.parent_path() / sub, full)) return full.string();
     }
     return std::nullopt;
 }
@@ -203,7 +212,12 @@ void applySendTimeout(pom2::socket_t fd, int timeoutMs)
 
 bool sendAll(pom2::socket_t fd, const char* buf, size_t n)
 {
+    // One deadline for the whole response, as readRequest has for the
+    // request: SO_SNDTIMEO bounds each send() alone, so a client draining a
+    // few bytes every 3 s held the single worker for as long as it liked.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (n > 0) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
         const pom2::iolen_t s = pom2::sendNoSignal(fd, buf, n);
         if (s <= 0) {
             if (s < 0 && pom2::errInterrupted(pom2::lastSocketError())) continue;
@@ -500,7 +514,12 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
             deadline - std::chrono::steady_clock::now()).count();
         if (left <= 0) return 0;
         applyRecvTimeout(fd, static_cast<int>(std::min<long long>(left, kRecvTimeoutMs)));
-        return recvSocket(fd, buf, n);
+        // A signal (SIGCHLD from a helper process) is not the client giving
+        // up: retry inside the same deadline instead of answering 400.
+        for (;;) {
+            const iolen_t got = recvSocket(fd, buf, n);
+            if (got >= 0 || !errInterrupted(lastSocketError()) || pastDeadline()) return got;
+        }
     };
 
     std::string buffer;
@@ -543,6 +562,10 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
         const size_t colon = line.find(':');
         if (colon == std::string::npos) continue;
         std::string name  = line.substr(0, colon);
+        // RFC 7230 § 3.2.4: whitespace between the field name and the colon
+        // is a 400. Accepted, `Transfer-Encoding : chunked` slipped past the
+        // chunked refusal below and a chunked soft reset ran as a HARD one.
+        if (name.empty() || name.back() == ' ' || name.back() == '\t') return false;
         std::string value = line.substr(colon + 1);
         size_t v = 0;
         while (v < value.size() && (value[v] == ' ' || value[v] == '\t')) ++v;
@@ -564,6 +587,23 @@ bool AiControlServer::readRequest(socket_t fd, Request& req)
     // No chunked bodies: ignoring the header read an empty body, so a chunked
     // `POST /reset {"kind":"soft"}` ran a HARD reset (bug hunt 2026-09-17).
     if (!req.headerValue("Transfer-Encoding").empty()) return false;
+    // Framing headers must be unique (RFC 7230 § 3.3.3): headerValue() reads
+    // the FIRST, so `Content-Length: 2` + `Content-Length: 30` truncated the
+    // body and an empty first Transfer-Encoding hid a second, chunked one.
+    {
+        int framing = 0;
+        for (const auto& h : req.headers) {
+            const std::string& n = h.first;
+            auto is = [&](const char* want) {
+                std::size_t k = 0;
+                for (; want[k] && k < n.size(); ++k)
+                    if (std::tolower(static_cast<unsigned char>(n[k])) != want[k]) return false;
+                return !want[k] && k == n.size();
+            };
+            if (is("transfer-encoding")) return false;   // any one, even empty
+            if (is("content-length") && ++framing > 1) return false;
+        }
+    }
     const std::string clStr = req.headerValue("Content-Length");
     if (!clStr.empty()) {
         long cl = 0;
@@ -737,8 +777,13 @@ bool AiControlServer::checkAuth(const Request& req) const
     // rebinding defence: a page that guessed the secret got everything.
     // A token is a secret, not an origin proof; both gates stand together.
     if (!hostHeaderIsLoopback(req)) return false;
-    if (configured.empty())
-        return !requestFromBrowser(req);
+    // A browser-marked request never authenticates, token or not: it is not
+    // counted toward the 429 brake (so a web page cannot lock the agent out),
+    // so it must not be able to SUCCEED either — a native caller adding
+    // `Sec-Fetch-Site: none` to its guesses used to get an unbraked 401/200
+    // oracle against a short, user-typed token (bug hunt 2026-10-27).
+    if (requestFromBrowser(req)) return false;
+    if (configured.empty()) return true;
     // Constant-time: `operator==` bails on the first differing byte, which
     // over a few thousand requests leaks the prefix. The length is compared
     // first (it is not a secret — the token's ENTROPY is) and the byte loop
@@ -774,6 +819,17 @@ void AiControlServer::handleClient(socket_t fd)
             "Content-Length: 0\r\n"
             "Connection: close\r\n\r\n");
         if (n > 0) sendAll(fd, head, static_cast<size_t>(n));
+        return;
+    }
+    // Only the methods the endpoints implement: HEAD used to get a full
+    // body (RFC 9110 forbids one) and `DELETE /screen.ppm` a 200.
+    if (req.method != "GET" && req.method != "POST") {
+        static const char kHead[] =
+            "HTTP/1.1 405 Method Not Allowed\r\n"
+            "Allow: GET, POST, OPTIONS\r\n"
+            "Content-Length: 0\r\n"
+            "Connection: close\r\n\r\n";
+        sendAll(fd, kHead, sizeof(kHead) - 1);
         return;
     }
     // The brake goes BEFORE the compare so a caller in the penalty box

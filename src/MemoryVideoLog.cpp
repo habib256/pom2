@@ -69,8 +69,7 @@ uint8_t* Memory::videoWriteTarget(const VideoWrite& w)
 
 void Memory::noteVideoWrite(uint16_t addr, uint8_t value)
 {
-    const uint64_t now = cycleCounter +
-        (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0);
+    const uint64_t now = videoAccessCycle();
     const bool toAux = iieMode && iieWriteToAux(addr);
     auto push = [&](bool intoAux, uint8_t v) {
         // An aux write to a RamWorks bank other than 0 is not what the
@@ -94,6 +93,19 @@ void Memory::noteVideoWrite(uint16_t addr, uint8_t value)
     if (iieMode && !toAux && auxShadowCovers(addr)) push(true, auxShadowByte_);
 }
 
+uint64_t Memory::nextVblCpuCycle(uint64_t cpuNow) const
+{
+    // The grid advanceCyclesVideo keeps: frame base = v - v % frame, VBL
+    // from scanline 192 — in video cycles, mapped back to the CPU's.
+    const uint64_t frame = 65u * static_cast<uint64_t>(
+        pom2VideoTiming(videoStandard_.load(std::memory_order_relaxed)).scanlinesPerFrame);
+    const uint64_t v = videoCycleAt(cpuNow);
+    uint64_t edge = v - (v % frame) + 192u * 65u;
+    if (edge <= v) edge += frame;
+    const uint64_t c = cpuCycleForVideo(edge);
+    return c > cpuNow ? c : cpuNow + 1;
+}
+
 void Memory::setVideoWriteLog(bool on)
 {
     if (on == videoLogArmed_) return;
@@ -106,7 +118,7 @@ void Memory::setVideoWriteLog(bool on)
         else if (!auxShadowCovers(addr)) writable[a] = true;   // RAM pages
     }
     videoLog_.clear();
-    videoLogValidFrom_ = cycleCounter;
+    videoLogValidFrom_ = videoNow();
     vrActive_ = false;
 }
 
@@ -122,7 +134,7 @@ void Memory::resetVideoEventLogForClockJump()
         kCyclesPerScanline *
         static_cast<uint64_t>(
             pom2VideoTiming(videoStandard_.load()).scanlinesPerFrame);
-    lastVideoFrameStart_ = cycleCounter - (cycleCounter % kCyclesPerFrame);
+    lastVideoFrameStart_ = videoNow() - (videoNow() % kCyclesPerFrame);
 }
 
 void Memory::resetVideoWriteLogForClockJump()
@@ -130,7 +142,7 @@ void Memory::resetVideoWriteLogForClockJump()
     // The log's cycles belong to the old timeline: undoing them would write
     // bytes of a future that no longer happens into RAM.
     videoLog_.clear();
-    videoLogValidFrom_ = cycleCounter;
+    videoLogValidFrom_ = videoNow();
     vrActive_ = false;
 }
 
@@ -159,7 +171,7 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
     // A rewind / snapshot load moved the clock back under the log, or RAM
     // was rewritten behind it: the newest logged byte of every address must
     // still be what RAM holds, or undoing the log would invent a picture.
-    bool stale = !videoLog_.empty() && videoLog_.back().cycle > cycleCounter + 16;
+    bool stale = !videoLog_.empty() && videoLog_.back().cycle > videoNow() + 16;
     // The cut computation below needs every entry inside or after the
     // published frame, in clock order. A clock that jumped under the log
     // (rewind, snapshot) breaks both, and a write logged after the jump
@@ -178,7 +190,7 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
     }
     if (stale) {
         videoLog_.clear();
-        videoLogValidFrom_ = cycleCounter;
+        videoLogValidFrom_ = videoNow();
         return false;
     }
 

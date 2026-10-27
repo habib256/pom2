@@ -53,7 +53,13 @@ public:
     void setCpu(M6502* cpu) { cpu_ = cpu; }
 
     void deviceSelectWrite(uint8_t low4, uint8_t v) override;
-    void setCpuClock(double hz) override { dac_.setCpuClock(hz); }
+    /// Writes are stamped on the STOCK timeline (cycles of the unaccelerated
+    /// clock), continuous across clock changes, and the DAC replays at the
+    /// stock rate. Handing the DAC the accelerated clock re-timed writes
+    /// already queued: a Zip dropping its 52 ms slot slow-down after the
+    /// last write played the tail of every utterance ~4x fast.
+    void setCpuClock(double hz) override;
+    void setStandardClock(double hz) override;
     void onReset() override {}
     void onTimeJump() override { dac_.reset(); }
 
@@ -67,8 +73,17 @@ public:
     bool  isMuted() const    { return dac_.isMuted(); }
 
 private:
+    /// stock(cycle) = cycle * stockRatio_ + stockOffset_, re-based at every
+    /// clock change so the axis never jumps. Identity on a stock machine.
+    double toStock(uint64_t cycle) const;
+    void   rebase(double cpuHz, double stockHz);
+
     M6502*    cpu_ = nullptr;
     Dac8Audio dac_;
+    double    cpuHz_       = 0.0;   // 0 = never given
+    double    stockHz_     = 0.0;   // 0 = never given: follow the CPU clock
+    double    stockRatio_  = 1.0;
+    double    stockOffset_ = 0.0;
 };
 
 } // namespace pom2

@@ -936,6 +936,7 @@ void MockingboardCard::setStandardClock(double hz)
     if (audio_) audio_->busClockHz.store(hz, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(mtx);
     busClock_.setBusClock(hz);
+    if (ssi_) ssi_->setXckHz(hz);   // the SSI263's XCK is phase 0 too
 }
 
 // The 6522s tick on phase 0, not on the CPU clock (MAME clocks them from the

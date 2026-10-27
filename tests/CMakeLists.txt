@@ -549,6 +549,7 @@ add_executable(test_workstation_card_cardcat
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_workstation_card_cardcat
@@ -612,6 +613,7 @@ add_executable(test_smartport_bus_handshake
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_smartport_bus_handshake
@@ -648,6 +650,7 @@ add_executable(test_liron_boot35
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_liron_boot35 PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -769,6 +772,7 @@ add_executable(test_iic_external_smartport
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iic_external_smartport
@@ -814,6 +818,7 @@ add_executable(test_iic_diskii_after_smartport
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iic_diskii_after_smartport
@@ -1119,6 +1124,7 @@ add_executable(test_rewind_transport
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -1160,6 +1166,7 @@ add_executable(test_ui_worker_contention
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -1374,6 +1381,7 @@ add_executable(test_ata_block_device
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_ata_block_device PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1397,6 +1405,7 @@ add_executable(test_cffa_card
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_cffa_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1437,6 +1446,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/CffaCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AtaBlockDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
@@ -1469,6 +1479,7 @@ add_executable(test_hdv_card
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_hdv_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1500,6 +1511,7 @@ add_executable(test_hdv_mass_storage
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_hdv_mass_storage PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1547,6 +1559,7 @@ add_executable(test_media_write_default
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_media_write_default PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1570,6 +1583,7 @@ add_executable(test_hdv_writeback
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_hdv_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1601,6 +1615,7 @@ add_executable(test_hdv_ram_writable
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_hdv_ram_writable PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -1678,6 +1693,7 @@ set_tests_properties(iie_langcard_writeenable PROPERTIES TIMEOUT 5)
 add_executable(test_prodos_volume
     prodos_volume_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_prodos_volume PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_prodos_volume PRIVATE Threads::Threads)
@@ -1700,6 +1716,7 @@ add_executable(test_prodos_synth_failed_flush
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_prodos_synth_failed_flush
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -1720,6 +1737,7 @@ set_tests_properties(settings_roundtrip PROPERTIES TIMEOUT 5)
 add_executable(test_prodos_decode_safety
     prodos_decode_safety_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_prodos_decode_safety PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME prodos_decode_safety COMMAND test_prodos_decode_safety)
@@ -1914,6 +1932,7 @@ add_executable(test_printer_paper_tray
     printer_paper_tray_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_paper_tray PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2211,6 +2230,7 @@ add_executable(test_two_phase_block_mount
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_two_phase_block_mount PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME two_phase_block_mount COMMAND test_two_phase_block_mount)
@@ -2545,6 +2565,7 @@ add_executable(test_smartport_card
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
 target_include_directories(test_smartport_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2572,6 +2593,7 @@ add_executable(test_iic_onboard_smartport
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iic_onboard_smartport PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2603,6 +2625,7 @@ add_executable(test_iic_dual_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iic_dual_boot_trace PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2629,6 +2652,7 @@ add_executable(test_smartport_mixed_units
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
 target_include_directories(test_smartport_mixed_units PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2659,6 +2683,7 @@ add_executable(test_slot_multi_card
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
 target_include_directories(test_slot_multi_card PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -2705,6 +2730,7 @@ add_executable(test_total_replay_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -2737,6 +2763,7 @@ add_executable(render_total_replay_modes EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3259,6 +3286,7 @@ add_executable(copy2plus_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(copy2plus_boot_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3339,6 +3367,7 @@ add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(hdv_boot_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -3361,6 +3390,7 @@ add_executable(cffa_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(cffa_boot_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4010,6 +4040,29 @@ if(WIN32)
     target_link_libraries(test_diskii_motor_coast PRIVATE winmm)
 endif()
 add_test(NAME diskii_motor_coast COMMAND test_diskii_motor_coast)
+
+# A pending head step does not survive a rewind (bug hunt 2026-10-27).
+add_executable(test_diskii_step_rewind
+    diskii_step_rewind_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_step_rewind PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_step_rewind PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_step_rewind PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_step_rewind PRIVATE winmm)
+endif()
+add_test(NAME diskii_step_rewind COMMAND test_diskii_step_rewind)
 set_tests_properties(diskii_motor_coast PROPERTIES TIMEOUT 10)
 
 # Purplesoft demo screens on an Eve, frozen (docs/chatmauve_plan.md P2 pin):
@@ -4853,6 +4906,7 @@ add_executable(test_smartport_write_dispatch
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_smartport_write_dispatch PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -4883,6 +4937,7 @@ add_executable(test_smartport_unidisk_entry
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_smartport_unidisk_entry PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -4911,6 +4966,7 @@ add_executable(test_smartport_io_error
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_smartport_io_error PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -4939,6 +4995,7 @@ add_executable(test_smartport_rom_layout
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
 )
 target_include_directories(test_smartport_rom_layout PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4968,6 +5025,7 @@ add_executable(test_liron_smartport_dispatch
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
 )
 target_include_directories(test_liron_smartport_dispatch PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -5292,6 +5350,7 @@ add_executable(test_slot_config
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialTcpTransport.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5397,6 +5456,7 @@ add_executable(test_imagewriter
     imagewriter_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5415,6 +5475,31 @@ if(WIN32)
 endif()
 
 add_test(NAME imagewriter_smoke COMMAND test_imagewriter)
+
+# Escape-sequence defects from the 2026-10-27 bug hunt (imagewriter_smoke is
+# at its size budget).
+add_executable(test_imagewriter_escape
+    imagewriter_escape_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
+    ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_imagewriter_escape PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_imagewriter_escape PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_imagewriter_escape PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_imagewriter_escape PRIVATE winmm)
+endif()
+add_test(NAME imagewriter_escape COMMAND test_imagewriter_escape)
 set_tests_properties(imagewriter_smoke PROPERTIES TIMEOUT 10)
 
 # CARDS-011: the ImageWriter residue (imagewriter_residue_test.cpp).
@@ -5422,6 +5507,7 @@ add_executable(test_imagewriter_residue
     imagewriter_residue_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5452,6 +5538,7 @@ add_executable(test_imagewriter_pdf
     imagewriter_pdf_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriterPdf.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5687,6 +5774,7 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -6214,6 +6302,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -6495,6 +6584,7 @@ add_executable(test_hdv_status_driver
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_hdv_status_driver PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -6543,6 +6633,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -6884,6 +6975,7 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -7024,6 +7116,7 @@ add_executable(test_postscript_render
     ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_postscript_render PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7270,6 +7363,7 @@ add_executable(test_card_snapshot_state
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
 )
@@ -7616,6 +7710,7 @@ add_executable(dix_return_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -7755,6 +7850,7 @@ add_executable(test_printer_glyph
     printer_glyph_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_glyph PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7775,6 +7871,7 @@ add_executable(test_printer_screen_dump
     ${CMAKE_SOURCE_DIR}/src/PrinterScreenDump.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_screen_dump PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7818,6 +7915,7 @@ add_executable(test_printer_history
     ${CMAKE_SOURCE_DIR}/src/PrinterHistory.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/ImageWriter_CustomChars.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageWriter_EscP.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrFont.cpp
 )
 target_include_directories(test_printer_history PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7887,6 +7985,7 @@ add_executable(test_debugger
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
@@ -8029,6 +8128,7 @@ add_executable(test_fuzz_disk_image
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_fuzz_disk_image PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -8043,6 +8143,7 @@ add_executable(test_fuzz_snapshot
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/TranswarpCard.cpp
     ${CMAKE_SOURCE_DIR}/src/M68705P3.cpp
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
@@ -8173,6 +8274,13 @@ set_tests_properties(slinky_card PROPERTIES
 pom2_add_headless_test(test_sam_card
     NAME sam_card TIMEOUT 20
     SOURCES sam_card_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Undocumented NMOS opcodes touch the bus at the documented opcode's cycle
+# (bug hunt 2026-10-27).
+pom2_add_headless_test(test_m6502_undoc_access_timing
+    NAME m6502_undoc_access_timing TIMEOUT 20
+    SOURCES m6502_undoc_access_timing_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 # ─── Zip Chip (CPU-socket accelerator) ───────────────────────────────────
@@ -8737,6 +8845,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
@@ -8775,6 +8884,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
@@ -8813,6 +8923,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
@@ -8958,6 +9069,7 @@ add_executable(test_smartport_unit_visibility
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
 )
 target_include_directories(test_smartport_unit_visibility PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9060,6 +9172,7 @@ add_executable(test_block512_notch_flush
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_block512_notch_flush
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9089,6 +9202,7 @@ add_executable(test_hdv_driver_result
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_hdv_driver_result PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -9123,6 +9237,7 @@ add_executable(test_smartport_call_error_isolation
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_smartport_call_error_isolation
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9158,6 +9273,7 @@ add_executable(test_sony35_write_head
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
 )
 target_include_directories(test_sony35_write_head PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -9203,6 +9319,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp

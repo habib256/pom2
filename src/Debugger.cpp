@@ -423,7 +423,16 @@ void Debugger::noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBan
     // Do NOT overwrite an existing un-consumed hit: the first stop wins, and
     // an instruction that touches two watched addresses should report the one
     // that stopped it rather than the last one it happened to reach.
-    if (hit_.valid()) return;
+    if (hit_.valid()) {
+        // ...except the SAME instruction writing the SAME byte again: an NMOS
+        // read-modify-write writes the original value back first (the dummy
+        // cycle, rmwSecondBusCycle), so `INC $10` reported "$0010 was written
+        // ($05)" while memory held $06. The last write is the one that stays.
+        if (write && hit_.reason == Reason::WatchWrite && hit_.addr == addr &&
+            hit_.bank == bank && hit_.pc == curPc_)
+            hit_.value = value;
+        return;
+    }
     hit_ = { write ? Reason::WatchWrite : Reason::WatchRead,
              curPc_, addr, value, curBank_, bank };
     // curPc_, not the CPU's programCounter: the access is mid-instruction and

@@ -36,6 +36,7 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "PrinterCard.h"
+#include "Block512Backing.h"
 
 #include <cassert>
 #include <cstdint>
@@ -280,6 +281,20 @@ void testDirectDriveParallelStream()
     std::printf("  ok: a direct-drive parallel stream spools once per byte\n");
 }
 
+// A spooled byte is paper: the rewind epoch moves the moment the guest
+// writes it, not when the UI next drains the spool. A held F6 that began its
+// scrub in between rewound past the bytes, the drain printed them, and the
+// guest sent them again.
+void testSpoolBumpsTheRewindEpoch()
+{
+    PrinterCard card(1);
+    const uint64_t before = pom2::mediaWriteEpoch().load();
+    card.deviceSelectWrite(0, 'A');
+    assert(pom2::mediaWriteEpoch().load() != before &&
+           "a printed byte did not stop the rewind");
+    std::printf("  spool append bumps the rewind epoch: OK\n");
+}
+
 int main()
 {
     std::printf("PrinterCard smoke test\n");
@@ -288,6 +303,7 @@ int main()
     testDirectDriveParallelStream();
     testSpoolIsBounded();
     testCpuPrintFlow();
+    testSpoolBumpsTheRewindEpoch();
     std::printf("PASS\n");
     return 0;
 }

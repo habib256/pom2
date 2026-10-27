@@ -575,16 +575,27 @@ bool SerialPort::writeAll(const uint8_t* p, std::size_t n, int timeoutMs,
     // Same one-deadline-per-call rule as the POSIX half. WriteTotalTimeout*
     // is only ever programmed by readSome, so before the first read a write
     // here had no timeout at all (bug hunt #11).
+    //
+    // The deadline covers the CALL, not each WriteFile: a timeout that
+    // expires after a partial write returns TRUE with a short count, and
+    // re-arming the full constant for every slice let a board draining a
+    // few bytes per period hold the CPU thread (under stateMutex) for
+    // bytes/trickle x timeout. The remaining time is re-programmed each pass.
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(timeoutMs > 0 ? timeoutMs : 1);
     COMMTIMEOUTS to{};
-    if (GetCommTimeouts(H(handle_), &to)) {
-        to.WriteTotalTimeoutMultiplier = 0;
-        to.WriteTotalTimeoutConstant   =
-            static_cast<DWORD>(timeoutMs > 0 ? timeoutMs : 1);
-        SetCommTimeouts(H(handle_), &to);
-    }
+    const bool haveTimeouts = GetCommTimeouts(H(handle_), &to) != 0;
     std::size_t sent = 0;
     while (sent < n) {
         if (abort && abort->load()) { setError(path_ + ": write aborted"); return false; }
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if (left <= 0) { setError(path_ + ": write timed out"); return false; }
+        if (haveTimeouts) {
+            to.WriteTotalTimeoutMultiplier = 0;
+            to.WriteTotalTimeoutConstant   = static_cast<DWORD>(left);
+            SetCommTimeouts(H(handle_), &to);
+        }
         DWORD wrote = 0;
         if (!WriteFile(H(handle_), p + sent,
                        static_cast<DWORD>(n - sent), &wrote, nullptr)) {

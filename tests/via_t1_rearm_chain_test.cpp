@@ -91,16 +91,71 @@ int main()
         assert(readCounter(v) == L - 40);
     }
 
-    // 3. One-shot: the same line V + 1 - e continues through the underflow.
+    // 3. One-shot: the armed line V + 1 - e, then — after the fire — the
+    //    counter RELOADS from the latch exactly as in continuous mode; only
+    //    the interrupt is one-shot. It used to free-run from $FFFF. Real
+    //    hardware: 6522 die analysis (6502.org "MOS 6522 dissection"),
+    //    mb-audit T6522_9 on real Mockingboards, VICE, AppleWin, MAME master.
     {
         Via6522 v;
         v.write(0xB, 0x00);
         armT1(v, 500);
         v.advance(400);
         assert(readCounter(v) == 500 + 1 - 400);
-        v.advance(200);                // e = 600, past the fire at 503
-        assert(readCounter(v) ==
-               static_cast<uint16_t>((500 + 1 - 600) & 0xFFFF));
+        v.advance(200);                // e = 600, 97 past the fire at 503
+        assert(readCounter(v) == 500 - 97);
+        // ...and no second interrupt from the reloaded counter.
+        v.write(0xD, 0x40);            // clear IFR.T1
+        v.advance(2000);
+        assert(!(v.read(0xD) & 0x40) && "a one-shot fired twice");
+    }
+
+    // 3b. PB7 (die analysis; VICE testprogs VIC20/via_pb7, checked on a
+    //     real VIC-20). A T1C-H write with ACR.7 = 0 leaves the flip-flop
+    //     SET, so enabling ACR.7 shows 1, then 0 at the time-out ("@@b@");
+    //     with ACR.7 already on, the write clears it and the time-out sets it.
+    {
+        Via6522 v;
+        v.write(0xB, 0x00);
+        armT1(v, 100);
+        v.write(0xB, 0x80);            // one-shot, PB7 output on
+        assert(v.read(0x0) & 0x80);
+        v.advance(200);
+        assert(!(v.read(0x0) & 0x80) && "the one-shot time-out toggles PB7");
+        v.advance(500);
+        assert(!(v.read(0x0) & 0x80) && "only the armed time-out toggles");
+
+        Via6522 w;
+        w.write(0xB, 0x80);
+        armT1(w, 100);
+        assert(!(w.read(0x0) & 0x80));
+        w.advance(200);
+        assert(w.read(0x0) & 0x80);
+    }
+
+    // 3c. An ACR write arms nothing: a one-shot that fired stays quiet when
+    //     the guest switches to continuous (die analysis; VICE; MAME master).
+    {
+        Via6522 v;
+        v.write(0xB, 0x00);
+        armT1(v, 100);
+        v.advance(200);
+        v.write(0xD, 0x40);
+        v.write(0xB, 0x40);            // continuous — no re-arm
+        v.advance(1000);
+        assert(!(v.read(0xD) & 0x40) && "an ACR write re-armed T1");
+    }
+
+    // 3d. T2 in PB6 pulse-counting mode does not run on phi2, and reads back
+    //     exactly what was loaded (it read N+1).
+    {
+        Via6522 v;
+        v.write(0xB, 0x20);
+        v.write(0x8, 0x34);
+        v.write(0x9, 0x12);
+        assert(v.read(0x8) == 0x34 && v.read(0x9) == 0x12);
+        v.advance(500);
+        assert(v.read(0x8) == 0x34 && v.read(0x9) == 0x12);
     }
 
     // 4. The TRIBU chain. Five links; per link the handler (entered a fixed

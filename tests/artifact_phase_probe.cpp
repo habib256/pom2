@@ -106,7 +106,7 @@ int main(){
     for(int k=0;k<16;++k){ float phi=PI*k/8.0f;
         pom2::AppleWinNtsc::rebuildForPhase(phi);
         pom2::AppleWinNtsc::renderFrame(sig, awBuf.data(), sw, sh,
-                                        pom2::AppleWinNtsc::SubMode::Monitor, nullptr);
+                                        pom2::AppleWinNtsc::SubMode::Monitor);
         int ok=0; std::string d;
         for(int f=0;f<4;++f){ long r=0,g=0,b=0;int n=0; const uint32_t* p=awBuf.data();
             for(int x=240;x<340;++x){uint32_t c=p[bandRow[f]*sw+x];r+=R(c);g+=G(c);b+=B(c);++n;}
