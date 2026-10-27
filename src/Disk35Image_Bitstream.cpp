@@ -193,7 +193,6 @@ bool Disk35Image::serializeBitstreamOf(const Disk35Bitstream& bs, std::vector<ui
                                        std::string& error) {
     auto fail = [&](const char* why) { error = why; out.clear(); return false; };
     const auto& raw = bs.raw;
-    auto u16 = [&](size_t p) { return uint16_t(raw[p] | (uint16_t(raw[p + 1]) << 8)); };
     BitstreamLayout l;
     if (const char* e = readBitstreamLayout(bs, l)) return fail(e);
     const size_t info = l.info, tmap = l.tmap, trks = l.trks, end = l.end, flux = l.flux,
